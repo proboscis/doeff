@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use crate::frame::CallMetadata;
-use crate::ids::{ContId, DispatchId, FiberId, Marker, SegmentId};
+use crate::ids::{ContId, FiberId, SegmentId};
 use crate::kleisli::KleisliRef;
 use crate::memory_stats;
 use crate::py_shared::PyShared;
@@ -16,12 +16,6 @@ use crate::segment::Segment;
 pub struct PyK {
     continuation: Continuation,
     pending: Option<PendingContinuation>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct DispatchHandlerHint {
-    pub(crate) marker: Marker,
-    pub(crate) prompt_seg_id: SegmentId,
 }
 
 #[derive(Debug)]
@@ -224,12 +218,21 @@ impl PendingContinuation {
         Option<CallMetadata>,
         Option<SegmentId>,
     ) {
+        let this = std::mem::ManuallyDrop::new(self);
+        // `PendingContinuation` only drops bookkeeping, so we can move fields out
+        // and then release the accounting once here.
+        let program = unsafe { std::ptr::read(&this.program) };
+        let handlers = unsafe { std::ptr::read(&this.handlers) };
+        let handler_identities = unsafe { std::ptr::read(&this.handler_identities) };
+        let metadata = unsafe { std::ptr::read(&this.metadata) };
+        let outside_scope = this.outside_scope;
+        memory_stats::unregister_continuation();
         (
-            self.program.clone(),
-            self.handlers.clone(),
-            self.handler_identities.clone(),
-            self.metadata.clone(),
-            self.outside_scope,
+            program,
+            handlers,
+            handler_identities,
+            metadata,
+            outside_scope,
         )
     }
 
@@ -364,9 +367,9 @@ impl Continuation {
         self.fibers.as_slice() == other.fibers.as_slice()
     }
 
-    pub(crate) fn append_owned_fibers(&mut self, other: Continuation) {
+    pub(crate) fn append_owned_fibers(&mut self, mut other: Continuation) {
         if !other.fibers.is_empty() {
-            self.fibers.extend(other.fibers.iter().copied());
+            self.fibers.append(&mut other.fibers);
         }
     }
 
@@ -395,35 +398,6 @@ impl Continuation {
         Ok(dict.into_any())
     }
 
-    pub fn dispatch_id(&self) -> Option<DispatchId> {
-        None
-    }
-
-    pub(crate) fn set_dispatch_id(&mut self, _dispatch_id: Option<DispatchId>) {}
-
-    pub(crate) fn resume_dispatch_id(&self) -> Option<DispatchId> {
-        None
-    }
-
-    pub(crate) fn set_resume_dispatch_id(&mut self, _dispatch_id: Option<DispatchId>) {}
-
-    pub(crate) fn dispatch_handler_hint(&self) -> Option<DispatchHandlerHint> {
-        None
-    }
-
-    pub(crate) fn set_dispatch_handler_hint(&mut self, _hint: Option<DispatchHandlerHint>) {}
-
-    pub(crate) fn dispatch_frame_hint(&self) -> Option<SegmentId> {
-        None
-    }
-
-    pub(crate) fn set_dispatch_frame_hint(&mut self, _hint: Option<SegmentId>) {}
-
-    pub fn captured_caller(&self) -> Option<SegmentId> {
-        None
-    }
-
-    pub(crate) fn set_captured_caller(&mut self, _captured_caller: Option<SegmentId>) {}
 }
 
 impl Drop for Continuation {
@@ -439,7 +413,7 @@ mod tests {
     use crate::memory_stats::live_object_counts;
 
     fn make_test_segment() -> (Segment, SegmentId) {
-        let seg = Segment::new(Marker::fresh(), None);
+        let seg = Segment::new(None);
         let seg_id = SegmentId::from_index(0);
         (seg, seg_id)
     }

@@ -925,7 +925,7 @@ impl PyVM {
             )));
         }
 
-        let seg = Segment::new(Marker::fresh(), None);
+        let seg = Segment::new(None);
         let seg_id = self.vm.alloc_segment(seg);
         self.vm.current_segment = Some(seg_id);
         if self.vm.current_segment_mut().is_none() {
@@ -3478,7 +3478,7 @@ mod tests {
         Python::attach(|py| {
             let mut pyvm = PyVM { vm: VM::new() };
 
-            let root_seg = Segment::new(Marker::fresh(), None);
+            let root_seg = Segment::new(None);
             let root_seg_id = pyvm.vm.alloc_segment(root_seg);
             pyvm.vm.current_segment = Some(root_seg_id);
 
@@ -3792,7 +3792,7 @@ mod tests {
     #[test]
     fn test_get_traceback_classifies_to_doctrl() {
         Python::attach(|py| {
-            let seg = crate::segment::Segment::new(crate::ids::Marker::fresh(), None);
+            let seg = crate::segment::Segment::new(None);
             let continuation = crate::continuation::Continuation::capture(
                 &seg,
                 crate::ids::SegmentId::from_index(0),
@@ -4165,7 +4165,7 @@ mod tests {
             );
 
             // GetTraceback → DoCtrl::GetTraceback
-            let seg = crate::segment::Segment::new(crate::ids::Marker::fresh(), None);
+            let seg = crate::segment::Segment::new(None);
             let continuation = crate::continuation::Continuation::capture(
                 &seg,
                 crate::ids::SegmentId::from_index(0),

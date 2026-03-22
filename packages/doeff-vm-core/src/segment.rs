@@ -172,7 +172,7 @@ pub struct Fiber {
 }
 
 impl Fiber {
-    pub fn new(_marker: Marker, parent: Option<FiberId>) -> Self {
+    pub fn new(parent: Option<FiberId>) -> Self {
         memory_stats::register_segment();
         Fiber {
             frames: Vec::new(),
@@ -311,8 +311,7 @@ mod tests {
 
     #[test]
     fn test_segment_creation() {
-        let marker = Marker::fresh();
-        let seg = Fiber::new(marker, None);
+        let seg = Fiber::new(None);
         assert!(seg.parent.is_none());
         assert!(!seg.is_prompt_boundary());
         assert!(seg.boundary_marker().is_none());
@@ -331,8 +330,7 @@ mod tests {
 
     #[test]
     fn test_segment_frame_push_pop_o1() {
-        let marker = Marker::fresh();
-        let mut seg = Fiber::new(marker, None);
+        let mut seg = Fiber::new(None);
         seg.push_frame(Frame::FlatMapBindResult);
         seg.push_frame(Frame::EvalReturn(Box::new(
             crate::frame::EvalReturnContinuation::TailResumeReturn,
@@ -361,10 +359,10 @@ mod tests {
     #[test]
     fn test_segment_live_count_tracks_live_instances() {
         let baseline = live_object_counts().live_segments;
-        let seg_a = Fiber::new(Marker::fresh(), None);
+        let seg_a = Fiber::new(None);
         assert_eq!(live_object_counts().live_segments, baseline + 1);
 
-        let seg_b = Fiber::new(Marker::fresh(), None);
+        let seg_b = Fiber::new(None);
         assert_eq!(live_object_counts().live_segments, baseline + 2);
 
         drop(seg_b);

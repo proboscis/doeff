@@ -461,9 +461,6 @@ impl VM {
                 self.decrement_interceptor_eval_depth(seg_id);
             }
         }
-        if let Some(metadata) = continuation.interceptor_metadata.as_ref() {
-            self.emit_frame_exited(metadata);
-        }
         match mode {
             Mode::Deliver(value) => {
                 self.mode = self.handle_interceptor_apply_result(continuation, value);
@@ -865,9 +862,6 @@ impl VM {
                 if incoming_throw.is_some() {
                     self.trace_state.clear_preserved_error_frames();
                 }
-                if let Some(ref m) = metadata {
-                    self.emit_frame_exited(m);
-                }
                 if handler_kind.is_some() {
                     self.handle_handler_return(value)
                 } else {
@@ -1049,8 +1043,6 @@ impl VM {
             if let Err(err) = self.push_program_frame(stream, metadata, handler_kind) {
                 return Mode::Throw(PyException::runtime_error(err.to_string()));
             }
-        } else if let Some(ref m) = metadata {
-            self.emit_frame_exited(m);
         }
         Mode::HandleYield(yielded)
     }
@@ -1268,9 +1260,6 @@ impl VM {
             return self.contextual_internal_throw_mode(PyException::runtime_error(
                 "current_segment_mut() returned None while invoking interceptor",
             ));
-        }
-        if let Some(meta) = interceptor_meta.as_ref() {
-            self.emit_frame_entered(meta, None);
         }
         let continuation = InterceptorContinuation {
             marker,
@@ -1890,9 +1879,6 @@ impl VM {
         metadata: Option<CallMetadata>,
         handler_kind: Option<HandlerKind>,
     ) -> StepEvent {
-        if let Some(ref m) = metadata {
-            self.emit_frame_entered(m, handler_kind);
-        }
         if let Err(err) = self.push_program_frame(stream, metadata, handler_kind) {
             return StepEvent::Error(err);
         }
@@ -1901,28 +1887,6 @@ impl VM {
     }
 
     fn handle_yield_eval(&mut self, expr: PyShared, metadata: Option<CallMetadata>) -> StepEvent {
-        if let Some((stream, metadata, handler_kind)) = self
-            .current_seg()
-            .frames
-            .iter()
-            .rev()
-            .find_map(|frame| match frame {
-                Frame::Program {
-                    stream,
-                    metadata: Some(metadata),
-                    handler_kind,
-                    ..
-                } => Some((stream.clone(), metadata.clone(), *handler_kind)),
-                Frame::LexicalScope { .. } => None,
-                Frame::Program { .. }
-                | Frame::EvalReturn(_)
-                | Frame::MapReturn { .. }
-                | Frame::FlatMapBindResult
-                | Frame::FlatMapBindSource { .. } => None,
-            })
-        {
-            self.emit_frame_location(&stream, &metadata, handler_kind);
-        }
         let cont = OwnedControlContinuation::Pending(PendingContinuation::create_with_metadata(
             expr,
             Vec::new(),
@@ -1952,13 +1916,12 @@ impl VM {
         let captured_caller = self.parent_segment(current_seg_id);
         let mut return_to =
             Continuation::from_fiber(current_seg_id, captured_caller, current_dispatch_id);
-        self.annotate_live_continuation(&mut return_to, current_seg_id);
         let Some(scope_parent_seg_id) = self.eval_in_scope_chain_start_segment(&scope) else {
             return StepEvent::Error(VMError::internal(
                 "EvalInScope received scope from unknown segment",
             ));
         };
-        let mut child_seg = Segment::new(Marker::fresh(), Some(scope_parent_seg_id));
+        let mut child_seg = Segment::new(Some(scope_parent_seg_id));
         child_seg.push_frame(Frame::LexicalScope {
             bindings,
             var_overrides: HashMap::new(),
@@ -2407,9 +2370,6 @@ impl VM {
                 }
             }
             PyCallOutcome::GenError(exception) => {
-                if let Some(ref m) = metadata {
-                    self.emit_frame_exited(m);
-                }
                 self.receive_expand_gen_error(handler_return, exception);
             }
             PyCallOutcome::GenYield(_) | PyCallOutcome::GenReturn(_) => {
@@ -2643,9 +2603,6 @@ impl VM {
             PyCallOutcome::GenReturn(value) => {
                 if incoming_throw.is_some() {
                     self.trace_state.clear_preserved_error_frames();
-                }
-                if let Some(ref m) = metadata {
-                    self.emit_frame_exited(m);
                 }
                 if effective_handler_kind == Some(HandlerKind::Python)
                     && self.should_treat_python_handler_gen_return_as_handler_completion()

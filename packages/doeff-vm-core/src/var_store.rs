@@ -77,10 +77,6 @@ impl VarStore {
         self.root_scope_bindings.insert(key, value);
     }
 
-    pub fn init_segment(&mut self) {}
-
-    pub fn remove_segment(&mut self) {}
-
     pub fn replace_handler_state(&mut self, _seg_id: SegmentId, state: HashMap<String, Value>) {
         self.global_state = state;
     }

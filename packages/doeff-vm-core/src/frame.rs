@@ -151,6 +151,7 @@ impl Clone for DispatchTrace {
 #[derive(Debug)]
 pub struct ProgramDispatch {
     pub dispatch_id: DispatchId,
+    pub parent_dispatch_id: Option<DispatchId>,
     pub handler_segment_id: SegmentId,
     pub prompt_segment_id: SegmentId,
     pub effect: DispatchEffect,
@@ -164,6 +165,7 @@ impl Clone for ProgramDispatch {
     fn clone(&self) -> Self {
         Self {
             dispatch_id: self.dispatch_id,
+            parent_dispatch_id: self.parent_dispatch_id,
             handler_segment_id: self.handler_segment_id,
             prompt_segment_id: self.prompt_segment_id,
             effect: self.effect.clone(),
