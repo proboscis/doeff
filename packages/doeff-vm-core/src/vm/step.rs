@@ -256,7 +256,7 @@ impl VM {
                     }
                     Mode::Throw(exc) => {
                         if let Some(parent) =
-                            throw_parent.filter(|parent| !self.is_one_shot_consumed(parent.cont_id))
+                            throw_parent.filter(|parent| !self.continuation_is_consumed(parent))
                         {
                             self.reparent_children(seg_id, caller, scope_parent);
                             self.free_segment(seg_id);

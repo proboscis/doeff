@@ -287,7 +287,7 @@ impl VM {
         } else {
             origin.k_origin
         };
-        (!self.is_one_shot_consumed(continuation.cont_id)).then_some(continuation)
+        (!self.continuation_is_consumed(&continuation)).then_some(continuation)
     }
 
     pub(super) fn active_error_dispatch_original_exception(&self) -> Option<PyException> {

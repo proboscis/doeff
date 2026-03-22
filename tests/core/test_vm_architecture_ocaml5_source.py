@@ -195,6 +195,20 @@ def test_vm_source_does_not_have_consumed_cont_ids() -> None:
     )
 
 
+def test_dispatch_source_checks_one_shot_on_continuation_objects() -> None:
+    """One-shot tracking must live on Continuation, not VM helper side-state."""
+    source = _runtime_source(DISPATCH_RS)
+
+    assert "is_one_shot_consumed" not in source, (
+        "dispatch.rs must not route one-shot checks through VM-level helpers. "
+        "Check Continuation.consumed directly on the continuation object."
+    )
+    assert "mark_one_shot_consumed" not in source, (
+        "dispatch.rs must not maintain separate consumed-continuation bookkeeping. "
+        "Mark the Continuation itself as consumed."
+    )
+
+
 def test_vm_source_does_not_have_handler_lists() -> None:
     """installed_handlers and run_handlers are VM-level lists.
 

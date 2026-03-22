@@ -2,7 +2,7 @@ use super::*;
 
 impl VM {
     fn handler_dispatch_is_live(&self, continuation: &Continuation) -> bool {
-        !self.is_one_shot_consumed(continuation.cont_id)
+        !self.continuation_is_consumed(continuation)
     }
 
     fn dispatch_origin_view_from_context(
@@ -679,10 +679,7 @@ impl VM {
         }
         self.segments.get(seg_id)?;
         Some(
-            self.capture_live_continuation(
-                seg_id,
-                self.dispatch_state.segment_dispatch_id(seg_id),
-            ),
+            self.capture_live_continuation(seg_id, self.dispatch_state.segment_dispatch_id(seg_id)),
         )
     }
 
@@ -709,7 +706,11 @@ impl VM {
         outside_seg_id
     }
 
-    fn initialize_builtin_prompt_segment(&mut self, handler: &KleisliRef, prompt_seg_id: SegmentId) {
+    fn initialize_builtin_prompt_segment(
+        &mut self,
+        handler: &KleisliRef,
+        prompt_seg_id: SegmentId,
+    ) {
         if handler.handler_name() == "StateHandler" {
             self.var_store
                 .replace_handler_state(prompt_seg_id, self.rust_store.entries.clone());
@@ -746,35 +747,32 @@ impl VM {
         self.inherit_interceptor_guard_state(source_seg_id, child_seg_id);
     }
 
-    pub fn is_one_shot_consumed(&self, cont_id: ContId) -> bool {
-        self.continuations
-            .entries
-            .get(&cont_id)
-            .is_some_and(Continuation::consumed)
-    }
-
-    pub fn mark_one_shot_consumed(&mut self, cont_id: ContId) {
-        self.continuations
-            .entries
-            .insert(cont_id, Continuation::consumed_placeholder(cont_id));
-    }
-
     pub fn register_continuation(&mut self, k: Continuation) {
         self.continuations.entries.insert(k.cont_id, k);
     }
 
+    pub fn lookup_any_continuation(&self, cont_id: ContId) -> Option<&Continuation> {
+        self.continuations.entries.get(&cont_id)
+    }
+
     pub fn lookup_continuation(&self, cont_id: ContId) -> Option<&Continuation> {
-        self.continuations
-            .entries
-            .get(&cont_id)
+        self.lookup_any_continuation(cont_id)
             .filter(|continuation| !continuation.consumed())
     }
 
+    pub(super) fn continuation_is_consumed(&self, continuation: &Continuation) -> bool {
+        self.lookup_any_continuation(continuation.cont_id)
+            .is_some_and(Continuation::consumed)
+    }
+
     pub fn take_continuation(&mut self, cont_id: ContId) -> Option<Continuation> {
-        if self.is_one_shot_consumed(cont_id) {
-            return None;
+        match self.continuations.entries.remove(&cont_id) {
+            Some(continuation) if continuation.consumed() => {
+                self.continuations.entries.insert(cont_id, continuation);
+                None
+            }
+            other => other,
         }
-        self.continuations.entries.remove(&cont_id)
     }
 
     fn materialize_owned_continuation(
@@ -785,10 +783,13 @@ impl VM {
         if !k.is_started() || k.owns_fibers() {
             return Ok(k);
         }
-        if self.is_one_shot_consumed(k.cont_id) {
+        if self.continuation_is_consumed(&k) {
             return Err(VMError::one_shot_violation(k.cont_id));
         }
         if let Some(continuation) = self.take_continuation(k.cont_id) {
+            if continuation.consumed() {
+                return Err(VMError::one_shot_violation(k.cont_id));
+            }
             if continuation.owns_fibers() {
                 return Ok(continuation);
             }
@@ -1453,8 +1454,7 @@ impl VM {
         self.copy_interceptor_guard_state(self.current_segment, anchor_seg_id);
         self.set_scope_parent(anchor_seg_id, caller);
         if let Some(dispatch_id) = dispatch_id {
-            self.dispatch_state
-                .bind_segment(anchor_seg_id, dispatch_id);
+            self.dispatch_state.bind_segment(anchor_seg_id, dispatch_id);
         }
         anchor_seg_id
     }
@@ -1472,8 +1472,7 @@ impl VM {
         self.copy_interceptor_guard_state(self.current_segment, anchor_seg_id);
         self.set_scope_parent(anchor_seg_id, caller);
         if let Some(dispatch_id) = dispatch_id {
-            self.dispatch_state
-                .bind_segment(anchor_seg_id, dispatch_id);
+            self.dispatch_state.bind_segment(anchor_seg_id, dispatch_id);
         }
         anchor_seg_id
     }
@@ -1733,14 +1732,14 @@ impl VM {
         if !k.is_started() {
             return self.throw_runtime_error(kind.unstarted_error_message());
         }
-        if self.is_one_shot_consumed(k.cont_id) {
+        if self.continuation_is_consumed(&k) {
             return self.throw_runtime_error(&format!(
                 "one-shot violation: continuation {} already consumed",
                 k.cont_id.raw()
             ));
         }
         k.mark_consumed();
-        self.mark_one_shot_consumed(k.cont_id);
+        self.register_continuation(Continuation::consumed_placeholder(k.cont_id));
         let error_dispatch = self.error_dispatch_for_continuation(&k);
         self.record_continuation_activation(kind, &k, &value);
         if self.exact_dispatch_origin_for_continuation(&k).is_some() {
@@ -1879,7 +1878,7 @@ impl VM {
                 "cannot throw into an unstarted continuation; use ResumeContinuation",
             );
         }
-        if self.is_one_shot_consumed(k.cont_id) {
+        if self.continuation_is_consumed(&k) {
             return self.throw_runtime_error(&format!(
                 "one-shot violation: continuation {} already consumed",
                 k.cont_id.raw()
@@ -1889,7 +1888,7 @@ impl VM {
             .dispatch_id()
             .and_then(|dispatch_id| self.current_handler_identity_for_dispatch(dispatch_id));
         k.mark_consumed();
-        self.mark_one_shot_consumed(k.cont_id);
+        self.register_continuation(Continuation::consumed_placeholder(k.cont_id));
         let mut thrown_by_context_conversion_handler = self
             .current_active_handler_dispatch_id()
             .is_some_and(|dispatch_id| {
@@ -2233,7 +2232,7 @@ impl VM {
                             self.register_continuation(continuation.clone_handle());
                             continuation.into_owned()
                         }
-                        None if self.is_one_shot_consumed(parent_k_user.cont_id) => {
+                        None if self.continuation_is_consumed(&parent_k_user) => {
                             return StepEvent::Error(VMError::one_shot_violation(
                                 parent_k_user.cont_id,
                             ))
@@ -2363,15 +2362,16 @@ impl VM {
             .as_ref()
             .and_then(|(_, _, marker)| self.marker_handler_trace_info(*marker))
             .is_some_and(|(_, kind, _, _)| kind == HandlerKind::Python);
-        let continuation_is_live = continuation.as_ref().is_some_and(|continuation| {
-            self.lookup_continuation(continuation.cont_id).is_some()
-        });
+        let continuation_is_live = continuation
+            .as_ref()
+            .is_some_and(|continuation| self.lookup_continuation(continuation.cont_id).is_some());
         let is_user_defined_python_handler = handler_dispatch
             .as_ref()
             .is_some_and(|(_, _, marker)| self.is_user_defined_python_handler_marker(*marker));
         if is_python_handler && continuation_is_live {
-            let continuation = continuation.clone().expect("checked above");
-            self.mark_one_shot_consumed(continuation.cont_id);
+            let mut continuation = continuation.clone().expect("checked above");
+            continuation.mark_consumed();
+            self.register_continuation(Continuation::consumed_placeholder(continuation.cont_id));
             return self.throw_handler_protocol_error(format!(
                 "handler returned without consuming continuation {}; use Resume(k, v), Transfer(k, v), Discontinue(k, exn), or Pass()",
                 continuation.cont_id.raw(),
@@ -2728,11 +2728,11 @@ impl VM {
             );
         }
 
-        if self.is_one_shot_consumed(k.cont_id) {
+        if self.continuation_is_consumed(&k) {
             return StepEvent::Error(VMError::one_shot_violation(k.cont_id));
         }
         k.mark_consumed();
-        self.mark_one_shot_consumed(k.cont_id);
+        self.register_continuation(Continuation::consumed_placeholder(k.cont_id));
 
         let Some((program, handlers, handler_identities, start_metadata, outside_scope)) =
             k.into_unstarted_parts()
