@@ -20,7 +20,7 @@ impl VM {
             }
             push_segment_chain(
                 vm,
-                continuation.captured_caller(),
+                vm.continuation_parent(continuation),
                 ordered,
                 seen,
                 seen_continuations,

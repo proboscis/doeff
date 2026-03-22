@@ -15,7 +15,7 @@ use crate::ir_stream::IRStreamRef;
 use crate::kleisli::KleisliRef;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
-use crate::segment::SegmentKind;
+use crate::segment::{FiberBoundary, SegmentKind};
 use crate::value::Value;
 
 static NEXT_FRAME_ID: AtomicU64 = AtomicU64::new(1);
@@ -86,34 +86,25 @@ pub struct InterceptorChainLink {
 
 impl InterceptorChainLink {
     pub fn from_boundary(boundary: &SegmentKind) -> Option<Self> {
-        match boundary {
-            SegmentKind::InterceptorBoundary {
-                marker,
-                interceptor,
-                types,
-                mode,
-                metadata,
-            } => Some(Self {
-                marker: *marker,
-                interceptor: interceptor.clone(),
-                types: types.clone(),
-                mode: *mode,
-                metadata: metadata.clone(),
-            }),
-            SegmentKind::Normal { .. }
-            | SegmentKind::PromptBoundary { .. }
-            | SegmentKind::MaskBoundary { .. } => None,
-        }
+        let boundary = boundary.boundary()?;
+        let intercept = boundary.intercept_boundary()?;
+        Some(Self {
+            marker: boundary.marker(),
+            interceptor: intercept.interceptor.clone(),
+            types: intercept.types.clone(),
+            mode: intercept.mode,
+            metadata: intercept.metadata.clone(),
+        })
     }
 
     pub fn into_boundary(self) -> SegmentKind {
-        SegmentKind::InterceptorBoundary {
-            marker: self.marker,
-            interceptor: self.interceptor,
-            types: self.types,
-            mode: self.mode,
-            metadata: self.metadata,
-        }
+        SegmentKind::Boundary(FiberBoundary::intercept(
+            self.marker,
+            self.interceptor,
+            self.types,
+            self.mode,
+            self.metadata,
+        ))
     }
 }
 
