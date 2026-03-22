@@ -2714,7 +2714,6 @@ impl VM {
             handler_identities,
             start_metadata,
             outside_scope,
-            _start_return_to_hint,
         )) =
             k.into_unstarted_parts()
         else {
