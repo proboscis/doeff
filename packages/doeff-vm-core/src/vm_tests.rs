@@ -430,12 +430,7 @@ fn test_dispatch_origin_scan_fails_fast_on_orphaned_segment_dispatch_index() {
 
 #[test]
 fn test_consumed_continuation_stays_detectable_on_cloned_handles() {
-    let continuation = Continuation::with_id(
-        ContId::fresh(),
-        SegmentId::from_index(0),
-        None,
-        None,
-    );
+    let continuation = Continuation::with_id(ContId::fresh(), SegmentId::from_index(0), None, None);
     let handle = continuation.clone_handle();
     let mut owned = continuation.into_owned();
 

@@ -701,29 +701,6 @@ impl VM {
         )
     }
 
-    pub fn instantiate_installed_handlers(&mut self) -> Option<SegmentId> {
-        let installed = self.handlers.installed.clone();
-        let mut outside_seg_id: Option<SegmentId> = None;
-        for entry in installed.into_iter().rev() {
-            let prompt_seg = Segment::new_prompt(
-                entry.marker,
-                outside_seg_id,
-                entry.marker,
-                entry.handler.clone(),
-            );
-            let prompt_seg_id = self.alloc_segment(prompt_seg);
-            self.copy_interceptor_guard_state(outside_seg_id, prompt_seg_id);
-            self.initialize_builtin_prompt_segment(&entry.handler, prompt_seg_id);
-            self.track_run_handler(&entry.handler);
-
-            let body_seg = Segment::new(entry.marker, Some(prompt_seg_id));
-            let body_seg_id = self.alloc_segment(body_seg);
-            self.copy_interceptor_guard_state(outside_seg_id, body_seg_id);
-            outside_seg_id = Some(body_seg_id);
-        }
-        outside_seg_id
-    }
-
     fn initialize_builtin_prompt_segment(
         &mut self,
         handler: &KleisliRef,
@@ -1334,36 +1311,6 @@ impl VM {
         }
     }
 
-    pub fn install_handler(
-        &mut self,
-        marker: Marker,
-        handler: KleisliRef,
-        _py_identity: Option<PyShared>,
-    ) {
-        self.handlers
-            .installed
-            .retain(|entry| entry.marker != marker);
-        self.handlers
-            .installed
-            .push(InstalledHandler { marker, handler });
-    }
-
-    pub fn remove_handler(&mut self, marker: Marker) -> bool {
-        let before = self.handlers.installed.len();
-        self.handlers
-            .installed
-            .retain(|entry| entry.marker != marker);
-        before != self.handlers.installed.len()
-    }
-
-    pub fn installed_handler_markers(&self) -> Vec<Marker> {
-        self.handlers
-            .installed
-            .iter()
-            .map(|entry| entry.marker)
-            .collect()
-    }
-
     pub fn install_handler_on_segment(
         &mut self,
         marker: Marker,
@@ -1374,7 +1321,6 @@ impl VM {
         let Some(seg) = self.segments.get_mut(prompt_seg_id) else {
             let prompt_seg = Segment::new_prompt(marker, None, marker, handler.clone());
             self.alloc_segment(prompt_seg);
-            self.track_run_handler(&handler);
             return true;
         };
         let seg_marker = seg.marker();
@@ -1384,7 +1330,6 @@ impl VM {
             handler: handler.clone(),
             types: None,
         };
-        self.track_run_handler(&handler);
         true
     }
 
@@ -2004,7 +1949,6 @@ impl VM {
         let prompt_seg_id = self.alloc_segment(prompt_seg);
         self.copy_interceptor_guard_state(Some(plan.outside_seg_id), prompt_seg_id);
         self.initialize_builtin_prompt_segment(&prompt_handler, prompt_seg_id);
-        self.track_run_handler(&prompt_handler);
 
         let body_seg = Segment::new(plan.handler_marker, Some(prompt_seg_id));
         let body_seg_id = self.alloc_segment(body_seg);
@@ -2708,13 +2652,7 @@ impl VM {
         }
         k.mark_consumed();
 
-        let Some((
-            program,
-            handlers,
-            handler_identities,
-            start_metadata,
-            outside_scope,
-        )) =
+        let Some((program, handlers, handler_identities, start_metadata, outside_scope)) =
             k.into_unstarted_parts()
         else {
             return StepEvent::Error(VMError::internal(
@@ -2768,7 +2706,6 @@ impl VM {
             let prompt_seg_id = self.alloc_segment(prompt_seg);
             self.copy_interceptor_guard_state(caller_outside, prompt_seg_id);
             self.set_scope_parent(prompt_seg_id, scope_outside);
-            self.track_run_handler(&handler);
             let body_seg = Segment::new(handler_marker, Some(prompt_seg_id));
             let body_seg_id = self.alloc_segment(body_seg);
             self.copy_interceptor_guard_state(caller_outside, body_seg_id);

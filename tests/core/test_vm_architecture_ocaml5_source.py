@@ -282,7 +282,6 @@ def test_vm_source_does_not_have_consumed_tracking_set() -> None:
         )
 
 
-@pytest.mark.xfail(reason="Phase 5: no handler Vec lists on VM", strict=False)
 def test_vm_source_does_not_have_handler_storage() -> None:
     """VM must not store handlers in Vec lists.
 
