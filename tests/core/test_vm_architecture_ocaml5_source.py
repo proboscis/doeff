@@ -197,7 +197,6 @@ def test_vm_source_does_not_have_consumed_cont_ids() -> None:
     )
 
 
-@pytest.mark.xfail(reason="Phase 5: installed_handlers/run_handlers should be on fiber chain", strict=False)
 def test_vm_source_does_not_have_handler_lists() -> None:
     """installed_handlers and run_handlers are VM-level lists.
 
