@@ -58,6 +58,7 @@ pub(crate) struct DispatchHandlerHint {
 struct ContinuationMetadata {
     resume_dispatch_id: Option<DispatchId>,
     dispatch_handler_hint: Option<DispatchHandlerHint>,
+    dispatch_frame_hint: Option<SegmentId>,
     captured_caller: Option<SegmentId>,
 }
 
@@ -65,7 +66,7 @@ struct ContinuationMetadata {
 pub struct Continuation {
     pub cont_id: ContId,
     dispatch_id: Option<DispatchId>,
-    fibers: Vec<FiberId>,
+    fibers: Arc<Vec<FiberId>>,
     owns_fibers: bool,
     consumed: bool,
     consumed_state: Arc<AtomicBool>,
@@ -96,7 +97,7 @@ impl Clone for Continuation {
         let mut continuation = Continuation {
             cont_id: self.cont_id,
             dispatch_id: self.dispatch_id,
-            fibers: self.fibers.clone(),
+            fibers: Arc::clone(&self.fibers),
             owns_fibers: self.owns_fibers,
             consumed: self.consumed(),
             consumed_state: Arc::clone(&self.consumed_state),
@@ -105,6 +106,7 @@ impl Clone for Continuation {
         };
         continuation.set_resume_dispatch_id(metadata.resume_dispatch_id);
         continuation.set_dispatch_handler_hint(metadata.dispatch_handler_hint);
+        continuation.set_dispatch_frame_hint(metadata.dispatch_frame_hint);
         continuation
     }
 }
@@ -118,6 +120,7 @@ impl Continuation {
         Arc::new(Mutex::new(ContinuationMetadata {
             resume_dispatch_id: None,
             dispatch_handler_hint: None,
+            dispatch_frame_hint: None,
             captured_caller,
         }))
     }
@@ -134,7 +137,7 @@ impl Continuation {
         Continuation {
             cont_id,
             dispatch_id: None,
-            fibers: Vec::new(),
+            fibers: Arc::new(Vec::new()),
             owns_fibers: false,
             consumed: false,
             consumed_state: Self::new_consumed_state(false),
@@ -153,7 +156,7 @@ impl Continuation {
         Continuation {
             cont_id,
             dispatch_id,
-            fibers,
+            fibers: Arc::new(fibers),
             owns_fibers: true,
             consumed: false,
             consumed_state: Self::new_consumed_state(false),
@@ -212,7 +215,7 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             dispatch_id: None,
-            fibers: Vec::new(),
+            fibers: Arc::new(Vec::new()),
             owns_fibers: true,
             consumed: false,
             consumed_state: Self::new_consumed_state(false),
@@ -252,7 +255,7 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             dispatch_id: None,
-            fibers: Vec::new(),
+            fibers: Arc::new(Vec::new()),
             owns_fibers: true,
             consumed: false,
             consumed_state: Self::new_consumed_state(false),
@@ -284,7 +287,7 @@ impl Continuation {
         Continuation {
             cont_id: self.cont_id,
             dispatch_id: self.dispatch_id,
-            fibers: self.fibers.clone(),
+            fibers: Arc::clone(&self.fibers),
             owns_fibers: self.owns_fibers,
             consumed: self.consumed(),
             consumed_state: Arc::clone(&self.consumed_state),
@@ -303,7 +306,7 @@ impl Continuation {
     }
 
     pub(crate) fn fibers(&self) -> &[FiberId] {
-        &self.fibers
+        self.fibers.as_slice()
     }
 
     pub(crate) fn outermost_fiber_id(&self) -> Option<FiberId> {
@@ -311,7 +314,8 @@ impl Continuation {
     }
 
     pub(crate) fn same_owned_fibers(&self, other: &Continuation) -> bool {
-        self.fibers == other.fibers && self.captured_caller() == other.captured_caller()
+        self.fibers.as_slice() == other.fibers.as_slice()
+            && self.captured_caller() == other.captured_caller()
     }
 
     pub(crate) fn append_owned_fibers(&mut self, mut other: Continuation) {
@@ -332,7 +336,7 @@ impl Continuation {
             "cannot append non-owning continuation handle fibers"
         );
         if !other.fibers.is_empty() {
-            self.fibers.append(&mut other.fibers);
+            Arc::make_mut(&mut self.fibers).extend(other.fibers.iter().copied());
         }
         self.set_captured_caller(other.captured_caller().or(self.captured_caller()));
     }
@@ -377,6 +381,17 @@ impl Continuation {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .dispatch_handler_hint = hint;
+    }
+
+    pub(crate) fn dispatch_frame_hint(&self) -> Option<SegmentId> {
+        self.shared_metadata().dispatch_frame_hint
+    }
+
+    pub(crate) fn set_dispatch_frame_hint(&mut self, hint: Option<SegmentId>) {
+        self.metadata_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .dispatch_frame_hint = hint;
     }
 
     pub fn captured_caller(&self) -> Option<SegmentId> {
@@ -454,7 +469,7 @@ impl Continuation {
         let mut continuation = Continuation {
             cont_id: ContId::fresh(),
             dispatch_id,
-            fibers: self.fibers.clone(),
+            fibers: Arc::clone(&self.fibers),
             owns_fibers: true,
             consumed: self.consumed(),
             consumed_state: Self::new_consumed_state(self.consumed()),
@@ -463,6 +478,7 @@ impl Continuation {
         };
         continuation.set_resume_dispatch_id(metadata.resume_dispatch_id);
         continuation.set_dispatch_handler_hint(metadata.dispatch_handler_hint);
+        continuation.set_dispatch_frame_hint(metadata.dispatch_frame_hint);
         continuation
     }
 
@@ -615,6 +631,18 @@ mod tests {
     }
 
     #[test]
+    fn test_clone_for_dispatch_copies_dispatch_frame_hint() {
+        let (seg, seg_id) = make_test_segment();
+        let mut cont = Continuation::capture(&seg, seg_id, None);
+        let hint = SegmentId::from_index(9);
+        cont.set_dispatch_frame_hint(Some(hint));
+
+        let cloned = cont.clone_for_dispatch(Some(DispatchId::fresh()));
+
+        assert_eq!(cloned.dispatch_frame_hint(), Some(hint));
+    }
+
+    #[test]
     fn test_clone_handle_keeps_fiber_ids_without_ownership() {
         let (seg, seg_id) = make_test_segment();
         let cont = Continuation::capture(&seg, seg_id, None);
@@ -623,6 +651,18 @@ mod tests {
         assert_eq!(handle.cont_id, cont.cont_id);
         assert_eq!(handle.fibers(), &[seg_id]);
         assert!(!handle.owns_fibers());
+    }
+
+    #[test]
+    fn test_clone_handle_shares_dispatch_frame_hint() {
+        let (seg, seg_id) = make_test_segment();
+        let mut cont = Continuation::capture(&seg, seg_id, None);
+        let mut handle = cont.clone_handle();
+        let hint = SegmentId::from_index(11);
+
+        handle.set_dispatch_frame_hint(Some(hint));
+
+        assert_eq!(cont.dispatch_frame_hint(), Some(hint));
     }
 
     #[test]

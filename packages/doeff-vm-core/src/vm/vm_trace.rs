@@ -187,10 +187,12 @@ impl VM {
         &self,
         dispatch_id: DispatchId,
     ) -> Option<(usize, String)> {
-        let marker = self
+        let active_dispatch = self
             .current_handler_dispatch()
-            .filter(|(_, current_dispatch_id, ..)| *current_dispatch_id == dispatch_id)
-            .map(|(_, _, _, marker, _)| marker)
+            .filter(|(_, current_dispatch_id, ..)| *current_dispatch_id == dispatch_id);
+        let marker = active_dispatch
+            .as_ref()
+            .map(|(_, _, _, marker, _)| *marker)
             .or_else(|| self.active_handler_marker_for_dispatch(dispatch_id))
             .or_else(|| {
                 self.current_segment
@@ -198,9 +200,47 @@ impl VM {
                     .and_then(|seg_id| self.handler_marker_in_caller_chain(seg_id))
             })?;
         let (name, _, _, _) = self.marker_handler_trace_info(marker)?;
+        let origin_seg_id = active_dispatch
+            .as_ref()
+            .and_then(|(_, _, continuation, _, _)| {
+                self.continuation_handler_chain_start(continuation)
+            })
+            .or_else(|| {
+                self.current_segment
+                    .filter(|_| self.current_segment_dispatch_id() == Some(dispatch_id))
+                    .and_then(|seg_id| self.segment_program_dispatch(seg_id))
+                    .and_then(|dispatch| self.continuation_handler_chain_start(&dispatch.origin))
+            })
+            .or_else(|| {
+                self.dispatch_origin_for_dispatch_id(dispatch_id)
+                    .and_then(|origin| self.continuation_handler_chain_start(&origin.k_origin))
+            })
+            .or_else(|| self.dispatch_origin_user_segment_id(dispatch_id))?;
+        let handler_idx = self.handler_index_in_caller_chain(origin_seg_id, marker)?;
+        Some((handler_idx, name))
+    }
+
+    pub(super) fn current_handler_identity_for_continuation(
+        &self,
+        continuation: &Continuation,
+    ) -> Option<(usize, String)> {
+        let dispatch_id = continuation.dispatch_id()?;
+        let marker = continuation
+            .dispatch_handler_hint()
+            .map(|hint| hint.marker)
+            .or_else(|| {
+                self.current_handler_dispatch()
+                    .filter(|(_, current_dispatch_id, ..)| *current_dispatch_id == dispatch_id)
+                    .map(|(_, _, _, marker, _)| marker)
+            })
+            .or_else(|| self.active_handler_marker_for_dispatch(dispatch_id))?;
+        let (name, _, _, _) = self.marker_handler_trace_info(marker)?;
         let origin_seg_id = self
-            .dispatch_origin_for_dispatch_id(dispatch_id)
-            .and_then(|origin| self.continuation_handler_chain_start(&origin.k_origin))
+            .continuation_handler_chain_start(continuation)
+            .or_else(|| {
+                self.dispatch_origin_for_continuation(continuation)
+                    .and_then(|origin| self.continuation_handler_chain_start(&origin.k_origin))
+            })
             .or_else(|| self.dispatch_origin_user_segment_id(dispatch_id))?;
         let handler_idx = self.handler_index_in_caller_chain(origin_seg_id, marker)?;
         Some((handler_idx, name))
@@ -301,6 +341,29 @@ impl VM {
         &self,
         dispatch_id: DispatchId,
     ) -> Option<PyException> {
+        if let Some((seg_id, current_dispatch_id, ..)) = self.current_handler_dispatch() {
+            if current_dispatch_id == dispatch_id {
+                if let Some(dispatch) = self
+                    .fiber_runtime(seg_id)
+                    .and_then(|state| state.pending_program_dispatch.as_ref())
+                    .or_else(|| self.segment_program_dispatch(seg_id))
+                {
+                    return dispatch.original_exception.clone();
+                }
+            }
+        }
+        if let Some(seg_id) = self
+            .current_segment
+            .filter(|_| self.current_segment_dispatch_id() == Some(dispatch_id))
+        {
+            if let Some(dispatch) = self
+                .fiber_runtime(seg_id)
+                .and_then(|state| state.pending_program_dispatch.as_ref())
+                .or_else(|| self.segment_program_dispatch(seg_id))
+            {
+                return dispatch.original_exception.clone();
+            }
+        }
         self.dispatch_origin_for_dispatch_id(dispatch_id)
             .and_then(|origin| origin.original_exception)
     }

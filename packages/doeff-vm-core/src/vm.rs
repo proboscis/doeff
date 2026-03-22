@@ -634,8 +634,12 @@ impl VM {
     pub(crate) fn set_pending_program_dispatch(
         &mut self,
         seg_id: SegmentId,
-        dispatch: ProgramDispatch,
+        mut dispatch: ProgramDispatch,
     ) {
+        dispatch.origin.set_dispatch_frame_hint(Some(seg_id));
+        dispatch
+            .handler_continuation
+            .set_dispatch_frame_hint(Some(seg_id));
         if let Some(runtime) = self.fiber_runtime_mut(seg_id) {
             runtime.pending_program_dispatch = Some(dispatch);
         }
