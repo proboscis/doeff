@@ -15,7 +15,6 @@ use crate::capture::{
 };
 use crate::continuation::Continuation;
 use crate::debug_state::DebugState;
-use crate::dispatch_state::DispatchState;
 use crate::do_ctrl::{DoCtrl, DoExprTag, InterceptMode, PyDoExprBase};
 use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
@@ -26,6 +25,7 @@ use crate::effect::{
 use crate::error::VMError;
 use crate::frame::{
     CallMetadata, EvalReturnContinuation, Frame, InterceptorChainLink, InterceptorContinuation,
+    ProgramDispatch,
 };
 use crate::ids::{ContId, DispatchId, Marker, ScopeId, SegmentId};
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
@@ -112,6 +112,7 @@ struct FiberRuntimeState {
     throw_parent: Option<Continuation>,
     interceptor_eval_depth: usize,
     interceptor_skip_stack: Vec<Marker>,
+    pending_program_dispatch: Option<ProgramDispatch>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -271,7 +272,6 @@ pub struct VM {
     pub completed_segment: Option<SegmentId>,
     pub(crate) debug: DebugState,
     pub(crate) trace_state: TraceState,
-    pub(crate) dispatch_state: DispatchState,
     fiber_runtime: HashMap<SegmentId, FiberRuntimeState>,
     scope_ids: HashMap<SegmentId, ScopeId>,
     scope_parents: HashMap<SegmentId, Option<SegmentId>>,
@@ -295,7 +295,6 @@ impl VM {
             completed_segment: None,
             debug: DebugState::new(DebugConfig::default()),
             trace_state: TraceState::default(),
-            dispatch_state: DispatchState::default(),
             fiber_runtime: HashMap::new(),
             scope_ids: HashMap::new(),
             scope_parents: HashMap::new(),
@@ -326,7 +325,6 @@ impl VM {
         self.current_segment = None;
         self.completed_segment = None;
         self.trace_state.clear();
-        self.dispatch_state.clear();
         self.fiber_runtime.clear();
         self.scope_ids.clear();
         self.scope_parents.clear();
@@ -346,8 +344,6 @@ impl VM {
         };
 
         notify_run_handlers_completed(run_token);
-        self.dispatch_state.clear();
-        self.dispatch_state.shrink_to_fit();
         self.segments.clear();
         self.segments.shrink_to_fit();
         self.var_store.clear();
@@ -384,19 +380,45 @@ impl VM {
     }
 
     pub fn dispatch_count(&self) -> usize {
-        self.dispatch_state.dispatch_count()
+        let mut dispatch_ids = HashSet::new();
+        for (_, segment) in self.segments.iter() {
+            for frame in &segment.frames {
+                if let Frame::Program {
+                    dispatch: Some(dispatch),
+                    ..
+                } = frame
+                {
+                    dispatch_ids.insert(dispatch.dispatch_id);
+                }
+            }
+        }
+        for state in self.fiber_runtime.values() {
+            if let Some(dispatch) = &state.pending_program_dispatch {
+                dispatch_ids.insert(dispatch.dispatch_id);
+            }
+        }
+        dispatch_ids.len()
     }
 
     pub fn segment_dispatch_binding_count(&self) -> usize {
-        self.dispatch_state.segment_binding_count()
+        self.segments
+            .iter()
+            .filter(|(seg_id, _)| {
+                self.segment_program_dispatch(*seg_id).is_some()
+                    || self
+                        .fiber_runtime(*seg_id)
+                        .and_then(|state| state.pending_program_dispatch.as_ref())
+                        .is_some()
+            })
+            .count()
     }
 
     pub fn dispatch_capacity(&self) -> usize {
-        self.dispatch_state.dispatch_capacity()
+        self.dispatch_count()
     }
 
     pub fn segment_dispatch_binding_capacity(&self) -> usize {
-        self.dispatch_state.segment_binding_capacity()
+        self.segment_dispatch_binding_count()
     }
 
     pub fn trace_frame_stack_count(&self) -> usize {
@@ -469,7 +491,6 @@ impl VM {
         let Some(parent) = self.segments.get(id).map(|segment| segment.parent) else {
             return;
         };
-        self.dispatch_state.unbind_segment(id);
         self.segment_parent_redirects.insert(id, parent);
         self.segments.free(id);
         self.var_store.remove_segment(id);
@@ -518,10 +539,12 @@ impl VM {
                         stream,
                         metadata,
                         handler_kind,
+                        dispatch,
                     } => Some(Frame::Program {
                         stream: stream.clone(),
                         metadata: metadata.clone(),
                         handler_kind: *handler_kind,
+                        dispatch: dispatch.clone(),
                     }),
                     Frame::InterceptorApply(_)
                     | Frame::InterceptorEval(_)
@@ -543,6 +566,88 @@ impl VM {
             .segment_id()
             .and_then(|seg_id| self.fiber_runtime.get(&seg_id))
             .and_then(|state| state.pending_error_context.as_ref())
+    }
+
+    pub(crate) fn segment_program_dispatch(&self, seg_id: SegmentId) -> Option<&ProgramDispatch> {
+        let segment = self.segments.get(seg_id)?;
+        segment.frames.iter().rev().find_map(|frame| match frame {
+            Frame::Program {
+                dispatch: Some(dispatch),
+                ..
+            } => Some(dispatch),
+            Frame::Program { .. }
+            | Frame::InterceptorApply(_)
+            | Frame::InterceptorEval(_)
+            | Frame::EvalReturn(_)
+            | Frame::MapReturn { .. }
+            | Frame::FlatMapBindResult
+            | Frame::FlatMapBindSource { .. }
+            | Frame::InterceptBodyReturn { .. } => None,
+        })
+    }
+
+    pub(crate) fn segment_program_dispatch_mut(
+        &mut self,
+        seg_id: SegmentId,
+    ) -> Option<&mut ProgramDispatch> {
+        let segment = self.segments.get_mut(seg_id)?;
+        segment.frames.iter_mut().rev().find_map(|frame| match frame {
+            Frame::Program {
+                dispatch: Some(dispatch),
+                ..
+            } => Some(dispatch),
+            Frame::Program { .. }
+            | Frame::InterceptorApply(_)
+            | Frame::InterceptorEval(_)
+            | Frame::EvalReturn(_)
+            | Frame::MapReturn { .. }
+            | Frame::FlatMapBindResult
+            | Frame::FlatMapBindSource { .. }
+            | Frame::InterceptBodyReturn { .. } => None,
+        })
+    }
+
+    pub(crate) fn set_pending_program_dispatch(
+        &mut self,
+        seg_id: SegmentId,
+        dispatch: ProgramDispatch,
+    ) {
+        if let Some(runtime) = self.fiber_runtime_mut(seg_id) {
+            runtime.pending_program_dispatch = Some(dispatch);
+        }
+    }
+
+    fn take_pending_program_dispatch(&mut self, seg_id: SegmentId) -> Option<ProgramDispatch> {
+        self.fiber_runtime_mut(seg_id)
+            .and_then(|runtime| runtime.pending_program_dispatch.take())
+    }
+
+    pub(crate) fn push_program_frame(
+        &mut self,
+        stream: IRStreamRef,
+        metadata: Option<CallMetadata>,
+        handler_kind: Option<HandlerKind>,
+    ) -> Result<(), VMError> {
+        let Some(seg_id) = self.current_segment else {
+            return Err(VMError::internal(
+                "push_program_frame called without current segment",
+            ));
+        };
+        let dispatch = self
+            .take_pending_program_dispatch(seg_id)
+            .or_else(|| handler_kind.and_then(|_| self.segment_program_dispatch(seg_id).cloned()));
+        let Some(seg) = self.current_segment_mut() else {
+            return Err(VMError::internal(
+                "push_program_frame current segment missing after dispatch lookup",
+            ));
+        };
+        seg.push_frame(Frame::Program {
+            stream,
+            metadata,
+            handler_kind,
+            dispatch,
+        });
+        Ok(())
     }
 
     pub fn scope_parent(&self, seg_id: SegmentId) -> Option<SegmentId> {
@@ -698,29 +803,24 @@ impl VM {
     ) -> usize {
         let mut rewired = 0usize;
 
-        let dispatch_ids = self
-            .dispatch_state
-            .iter()
-            .map(|(dispatch_id, _)| dispatch_id)
-            .collect::<Vec<_>>();
-        for dispatch_id in dispatch_ids {
-            let Some(dispatch) = self.dispatch_state.dispatch_mut(dispatch_id) else {
-                continue;
-            };
-            rewired += Self::reparent_continuation_captured_caller(
-                &mut dispatch.k_origin,
-                old_parent,
-                new_parent,
-            );
-            rewired += Self::reparent_continuation_captured_caller(
-                &mut dispatch.active_handler.continuation,
-                old_parent,
-                new_parent,
-            );
-        }
-
         for (_, segment) in self.segments.iter_mut() {
             for frame in &mut segment.frames {
+                if let Frame::Program {
+                    dispatch: Some(dispatch),
+                    ..
+                } = frame
+                {
+                    rewired += Self::reparent_continuation_captured_caller(
+                        &mut dispatch.origin,
+                        old_parent,
+                        new_parent,
+                    );
+                    rewired += Self::reparent_continuation_captured_caller(
+                        &mut dispatch.handler_continuation,
+                        old_parent,
+                        new_parent,
+                    );
+                }
                 if let Frame::EvalReturn(eval_return) = frame {
                     rewired += Self::reparent_eval_return_captured_caller(
                         eval_return,

@@ -148,7 +148,6 @@ CONTINUATION_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "continuation.rs
 # data structure (HashMap, HashSet, Vec) tracking the same concept must be gone.
 
 
-@pytest.mark.xfail(reason="Phase 5: dispatch side-table module must be eliminated", strict=False)
 def test_no_dispatch_side_table_module_exists() -> None:
     """No separate module should track dispatch state outside the fiber chain.
 
@@ -166,7 +165,6 @@ def test_no_dispatch_side_table_module_exists() -> None:
     )
 
 
-@pytest.mark.xfail(reason="Phase 5: VM must not have dispatch tracking HashMap", strict=False)
 def test_vm_source_does_not_have_dispatch_tracking_map() -> None:
     """VM must not have any HashMap tracking dispatch state.
 

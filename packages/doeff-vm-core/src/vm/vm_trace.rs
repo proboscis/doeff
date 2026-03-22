@@ -183,10 +183,7 @@ impl VM {
         dispatch_id: DispatchId,
     ) -> Option<(usize, String)> {
         let marker = self
-            .dispatch_state
-            .dispatch(dispatch_id)
-            .map(|dispatch| dispatch.active_handler.marker)
-            .or_else(|| self.active_handler_marker_for_dispatch(dispatch_id))
+            .active_handler_marker_for_dispatch(dispatch_id)
             .or_else(|| {
                 self.current_segment
                     .filter(|_| self.current_segment_dispatch_id() == Some(dispatch_id))
@@ -194,9 +191,8 @@ impl VM {
             })?;
         let (name, _, _, _) = self.marker_handler_trace_info(marker)?;
         let origin_seg_id = self
-            .dispatch_state
-            .dispatch(dispatch_id)
-            .and_then(|dispatch| self.continuation_handler_chain_start(&dispatch.k_origin))
+            .dispatch_origin_for_dispatch_id(dispatch_id)
+            .and_then(|origin| self.continuation_handler_chain_start(&origin.k_origin))
             .or_else(|| self.dispatch_origin_user_segment_id(dispatch_id))?;
         let handler_idx = self.handler_index_in_caller_chain(origin_seg_id, marker)?;
         Some((handler_idx, name))
@@ -250,11 +246,11 @@ impl VM {
         &self,
         stream: &IRStreamRef,
     ) -> Option<DispatchId> {
-        self.dispatch_state
-            .iter()
-            .find_map(|(dispatch_id, dispatch)| {
-                self.continuation_uses_stream(&dispatch.k_origin, stream)
-                    .then_some(dispatch_id)
+        self.dispatch_origins()
+            .into_iter()
+            .find_map(|origin| {
+                self.continuation_uses_stream(&origin.k_origin, stream)
+                    .then_some(origin.dispatch_id)
             })
     }
 
