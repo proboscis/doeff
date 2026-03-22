@@ -335,7 +335,6 @@ def test_v41_no_segment_keyed_bindings():
     assert "bindings_by_segment:" not in src
 
 
-@pytest.mark.xfail(reason="V42: overrides_by_segment on VarStore", strict=False)
 def test_v42_no_segment_keyed_overrides():
     """No per-segment override layers. One heap, one value per VarId."""
     src = _src(VAR_STORE_RS)
