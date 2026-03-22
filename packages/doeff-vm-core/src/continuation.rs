@@ -1,8 +1,8 @@
 //! Continuation types for detaching and reattaching fibers.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -367,7 +367,7 @@ impl Continuation {
         self.captured_caller = captured_caller;
     }
 
-    pub(crate) fn consumed(&self) -> bool {
+    pub fn consumed(&self) -> bool {
         self.consumed || self.consumed_state.load(Ordering::Relaxed)
     }
 

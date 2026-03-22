@@ -143,8 +143,7 @@ fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
 
     let root_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
     let captured_caller_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(root_id)));
-    let effect_site_id =
-        vm.alloc_segment(Segment::new(Marker::fresh(), Some(captured_caller_id)));
+    let effect_site_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(captured_caller_id)));
     let effect_site_segment = vm
         .segments
         .get(effect_site_id)
@@ -301,8 +300,7 @@ fn test_resume_unstarted_continuation_inserts_return_anchor_above_outside_scope(
     let mut vm = VM::new();
 
     let outside_scope_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
-    let scheduler_seg_id =
-        vm.alloc_segment(Segment::new(Marker::fresh(), Some(outside_scope_id)));
+    let scheduler_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(outside_scope_id)));
     vm.current_segment = Some(scheduler_seg_id);
 
     let expr = Python::attach(|py| PyShared::new(py.None()));
@@ -357,8 +355,7 @@ fn test_resume_unstarted_continuation_keeps_scope_parent_outside_handler_wrapper
     let mut vm = VM::new();
 
     let outside_scope_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
-    let scheduler_seg_id =
-        vm.alloc_segment(Segment::new(Marker::fresh(), Some(outside_scope_id)));
+    let scheduler_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(outside_scope_id)));
     vm.current_segment = Some(scheduler_seg_id);
 
     let expr = Python::attach(|py| PyShared::new(py.None()));
@@ -426,14 +423,13 @@ fn test_dispatch_origin_scan_fails_fast_on_orphaned_segment_dispatch_index() {
     let seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
     vm.current_segment = Some(seg_id);
 
-    vm.dispatch_state
-        .bind_segment(seg_id, DispatchId::fresh());
+    vm.dispatch_state.bind_segment(seg_id, DispatchId::fresh());
 
     let _ = vm.dispatch_origins();
 }
 
 #[test]
-fn test_consumed_continuation_stays_detectable_without_live_registry_entry() {
+fn test_consumed_continuation_stays_detectable_on_registry_entry() {
     let mut vm = VM::new();
     let seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
     let continuation = Continuation::with_id(ContId::fresh(), seg_id, None, None);
@@ -442,10 +438,15 @@ fn test_consumed_continuation_stays_detectable_without_live_registry_entry() {
     vm.register_continuation(continuation);
     assert_eq!(vm.continuation_count(), 1);
 
-    vm.mark_one_shot_consumed(cont_id);
+    let mut owned = vm
+        .take_continuation(cont_id)
+        .expect("registered continuation must be removable");
+    owned.mark_consumed();
+    vm.register_continuation(owned.clone_handle());
 
-    assert!(vm.is_one_shot_consumed(cont_id));
+    assert!(vm
+        .lookup_any_continuation(cont_id)
+        .is_some_and(|k| k.consumed()));
     assert!(vm.lookup_continuation(cont_id).is_none());
-    assert!(vm.take_continuation(cont_id).is_none());
     assert_eq!(vm.continuation_count(), 0);
 }
