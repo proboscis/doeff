@@ -231,7 +231,6 @@ def test_v29_no_clone_for_dispatch():
         "clone_for_dispatch creates two owners of the same fibers — violates move semantics"
 
 
-@pytest.mark.xfail(reason="V23: dispatch_id on Continuation", strict=False)
 def test_v23_no_dispatch_id_on_continuation():
     """Continuation should not link to dispatch side-tables."""
     src = _src(CONTINUATION_RS)
