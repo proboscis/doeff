@@ -90,6 +90,8 @@ fn install_pending_dispatch(
         handler_seg_id,
         ProgramDispatch {
             dispatch_id,
+            handler_segment_id: handler_seg_id,
+            prompt_segment_id: handler_seg_id,
             effect: crate::effect::make_get_execution_context_effect()
                 .expect("test dispatch effect should be constructible"),
             origin: origin.clone_handle(),

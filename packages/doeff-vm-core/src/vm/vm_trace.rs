@@ -76,7 +76,12 @@ impl VM {
         &self,
         dispatch_id: DispatchId,
     ) -> bool {
-        let Some(marker) = self.active_handler_marker_for_dispatch(dispatch_id) else {
+        let marker = self
+            .current_handler_dispatch()
+            .filter(|(_, current_dispatch_id, ..)| *current_dispatch_id == dispatch_id)
+            .map(|(_, _, _, marker, _)| marker)
+            .or_else(|| self.active_handler_marker_for_dispatch(dispatch_id));
+        let Some(marker) = marker else {
             return false;
         };
         self.find_prompt_boundary_by_marker(marker)
@@ -183,7 +188,10 @@ impl VM {
         dispatch_id: DispatchId,
     ) -> Option<(usize, String)> {
         let marker = self
-            .active_handler_marker_for_dispatch(dispatch_id)
+            .current_handler_dispatch()
+            .filter(|(_, current_dispatch_id, ..)| *current_dispatch_id == dispatch_id)
+            .map(|(_, _, _, marker, _)| marker)
+            .or_else(|| self.active_handler_marker_for_dispatch(dispatch_id))
             .or_else(|| {
                 self.current_segment
                     .filter(|_| self.current_segment_dispatch_id() == Some(dispatch_id))

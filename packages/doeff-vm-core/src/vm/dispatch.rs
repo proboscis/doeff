@@ -39,6 +39,7 @@ impl VM {
         self.fiber_runtime(seg_id)
             .and_then(|state| state.pending_program_dispatch.clone())
             .or_else(|| self.segment_program_dispatch(seg_id).cloned())
+            .filter(|dispatch| self.trace_state.has_dispatch(dispatch.dispatch_id))
             .map(|dispatch| DispatchFrameView { seg_id, dispatch })
     }
 
@@ -187,11 +188,108 @@ impl VM {
         )
     }
 
-    fn find_dispatch_frame(&self, dispatch_id: DispatchId) -> Option<DispatchFrameView> {
-        self.segments.iter().find_map(|(seg_id, _)| {
-            self.dispatch_view_in_segment(seg_id)
+    fn dispatch_frame_in_topology_inner(
+        &self,
+        start_segment: Option<SegmentId>,
+        dispatch_id: DispatchId,
+        seen_segments: &mut HashSet<SegmentId>,
+        seen_continuations: &mut HashSet<ContId>,
+    ) -> Option<DispatchFrameView> {
+        let mut cursor = start_segment;
+        while let Some(seg_id) = cursor {
+            let parent = self.segments.get(seg_id).and_then(|seg| seg.parent);
+            if !seen_segments.insert(seg_id) {
+                cursor = parent;
+                continue;
+            }
+            if let Some(view) = self
+                .dispatch_view_in_segment(seg_id)
                 .filter(|view| view.dispatch.dispatch_id == dispatch_id)
+            {
+                return Some(view);
+            }
+            if let Some(segment) = self.segments.get(seg_id) {
+                for frame in &segment.frames {
+                    if let Frame::EvalReturn(eval_return) = frame {
+                        if let Some(continuation) =
+                            Self::eval_return_continuation(eval_return.as_ref())
+                        {
+                            if !seen_continuations.insert(continuation.cont_id) {
+                                continue;
+                            }
+                            for fiber_id in continuation.fibers() {
+                                if let Some(view) = self.dispatch_frame_in_topology_inner(
+                                    Some(*fiber_id),
+                                    dispatch_id,
+                                    seen_segments,
+                                    seen_continuations,
+                                ) {
+                                    return Some(view);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            cursor = parent;
+        }
+        None
+    }
+
+    fn dispatch_frame_in_topology(
+        &self,
+        start_segment: Option<SegmentId>,
+        dispatch_id: DispatchId,
+    ) -> Option<DispatchFrameView> {
+        self.dispatch_frame_in_topology_inner(
+            start_segment,
+            dispatch_id,
+            &mut HashSet::new(),
+            &mut HashSet::new(),
+        )
+    }
+
+    fn dispatch_frame_in_parent_chain(
+        &self,
+        start_segment: Option<SegmentId>,
+        dispatch_id: DispatchId,
+    ) -> Option<DispatchFrameView> {
+        let mut cursor = start_segment;
+        while let Some(seg_id) = cursor {
+            if let Some(view) = self
+                .dispatch_view_in_segment(seg_id)
+                .filter(|view| view.dispatch.dispatch_id == dispatch_id)
+            {
+                return Some(view);
+            }
+            cursor = self.segments.get(seg_id).and_then(|seg| seg.parent);
+        }
+        None
+    }
+
+    fn active_dispatch_frame(&self, dispatch_id: DispatchId) -> Option<DispatchFrameView> {
+        if let Some(view) = self.dispatch_frame_in_parent_chain(self.current_segment, dispatch_id) {
+            if self.handler_dispatch_is_live(&view.dispatch.handler_continuation) {
+                return Some(view);
+            }
+        }
+
+        self.segments.iter().find_map(|(seg_id, _)| {
+            self.dispatch_view_in_segment(seg_id).filter(|view| {
+                view.dispatch.dispatch_id == dispatch_id
+                    && self.handler_dispatch_is_live(&view.dispatch.handler_continuation)
+            })
         })
+    }
+
+    fn find_dispatch_frame(&self, dispatch_id: DispatchId) -> Option<DispatchFrameView> {
+        self.dispatch_frame_in_parent_chain(self.current_segment, dispatch_id)
+            .or_else(|| {
+                self.segments.iter().find_map(|(seg_id, _)| {
+                    self.dispatch_view_in_segment(seg_id)
+                        .filter(|view| view.dispatch.dispatch_id == dispatch_id)
+                })
+            })
     }
 
     fn handler_prompt_segment_id(&self, seg_id: SegmentId, marker: Marker) -> Option<SegmentId> {
@@ -211,25 +309,35 @@ impl VM {
     }
 
     pub(super) fn finish_dispatch_tracking(&mut self, dispatch_id: DispatchId) {
-        for (_, segment) in self.segments.iter_mut() {
-            for frame in &mut segment.frames {
-                if let Frame::Program { dispatch, .. } = frame {
-                    if dispatch
-                        .as_ref()
-                        .is_some_and(|program_dispatch| program_dispatch.dispatch_id == dispatch_id)
-                    {
-                        *dispatch = None;
+        let dispatch = self
+            .current_segment
+            .and_then(|seg_id| self.dispatch_view_in_segment(seg_id))
+            .filter(|view| view.dispatch.dispatch_id == dispatch_id)
+            .map(|view| view.dispatch)
+            .or_else(|| self.find_dispatch_frame(dispatch_id).map(|view| view.dispatch));
+
+        if let Some(dispatch) = dispatch {
+            let seg_id = dispatch.handler_segment_id;
+            if let Some(segment) = self.segments.get_mut(seg_id) {
+                for frame in &mut segment.frames {
+                    if let Frame::Program { dispatch, .. } = frame {
+                        if dispatch
+                            .as_ref()
+                            .is_some_and(|program_dispatch| program_dispatch.dispatch_id == dispatch_id)
+                        {
+                            *dispatch = None;
+                        }
                     }
                 }
             }
-        }
-        for runtime in self.fiber_runtime.values_mut() {
-            if runtime
-                .pending_program_dispatch
-                .as_ref()
-                .is_some_and(|program_dispatch| program_dispatch.dispatch_id == dispatch_id)
-            {
-                runtime.pending_program_dispatch = None;
+            if let Some(runtime) = self.fiber_runtime.get_mut(&seg_id) {
+                if runtime
+                    .pending_program_dispatch
+                    .as_ref()
+                    .is_some_and(|program_dispatch| program_dispatch.dispatch_id == dispatch_id)
+                {
+                    runtime.pending_program_dispatch = None;
+                }
             }
         }
         self.trace_state.finish_dispatch(dispatch_id);
@@ -437,7 +545,7 @@ impl VM {
         let seg_id = self.current_segment?;
         let view = self.dispatch_view_in_segment(seg_id)?;
         let marker = self.segments.get(seg_id)?.marker();
-        let prompt_seg_id = self.handler_prompt_segment_id(seg_id, marker)?;
+        let prompt_seg_id = view.dispatch.prompt_segment_id;
         self.handler_dispatch_is_live(&view.dispatch.handler_continuation)
             .then(|| {
                 (
@@ -460,7 +568,7 @@ impl VM {
                 continue;
             };
             let marker = self.segments.get(seg_id)?.marker();
-            let prompt_seg_id = self.handler_prompt_segment_id(seg_id, marker)?;
+            let prompt_seg_id = view.dispatch.prompt_segment_id;
             if self.handler_dispatch_is_live(&view.dispatch.handler_continuation) {
                 return Some((
                     seg_id,
@@ -479,7 +587,7 @@ impl VM {
         &self,
         dispatch_id: DispatchId,
     ) -> Option<(SegmentId, Continuation, Marker)> {
-        let view = self.find_dispatch_frame(dispatch_id)?;
+        let view = self.active_dispatch_frame(dispatch_id)?;
         let marker = self.segments.get(view.seg_id)?.marker();
         self.handler_dispatch_is_live(&view.dispatch.handler_continuation)
             .then(|| {
@@ -963,7 +1071,7 @@ impl VM {
     }
 
     pub fn find_matching_handler(
-        &self,
+        &mut self,
         handler_chain: &[Marker],
         effect: &DispatchEffect,
     ) -> Result<(usize, Marker, KleisliRef), VMError> {
@@ -1079,6 +1187,7 @@ impl VM {
                     ))
                 })?;
 
+        let mut full_current_entries: Vec<HandlerChainEntry> = Vec::new();
         let mut current_entries: Vec<HandlerChainEntry> = Vec::new();
         let mut cursor = Some(seg_id);
         while let Some(cursor_id) = cursor {
@@ -1093,6 +1202,12 @@ impl VM {
                 ..
             } = &seg.kind
             {
+                full_current_entries.push(HandlerChainEntry {
+                    marker: *handled_marker,
+                    prompt_seg_id: cursor_id,
+                    handler: handler.clone(),
+                    types: types.clone(),
+                });
                 let is_shared_spawn_writer = handler.handler_name() == "WriterHandler"
                     && self.shared_builtin_handler_prompt(cursor_id) != cursor_id;
                 let restricted_excluded = restricted_excluded_prompts.contains(&cursor_id);
@@ -1112,7 +1227,6 @@ impl VM {
         }
 
         let mut selected: Option<(usize, Marker, SegmentId, KleisliRef)> = None;
-        let mut first_type_filtered_skip: Option<(usize, Marker, SegmentId, KleisliRef)> = None;
         let mut handler_chain_snapshot: Vec<HandlerSnapshotEntry> = Vec::new();
         let mut handler_count = 0usize;
         for entry in &current_entries {
@@ -1127,7 +1241,11 @@ impl VM {
 
             if handler.can_handle(&effect)? {
                 let should_invoke = self
-                    .should_invoke_handler_types(entry.types.as_ref(), &effect_obj)
+                    .should_invoke_handler_types(
+                        Self::handler_type_cache_key(&entry.handler),
+                        entry.types.as_ref(),
+                        &effect_obj,
+                    )
                     .map_err(|err| {
                         VMError::python_error(format!(
                             "failed to evaluate WithHandler type filter: {err:?}"
@@ -1142,21 +1260,19 @@ impl VM {
                             handler.clone(),
                         ));
                     }
-                } else if first_type_filtered_skip.is_none() {
-                    first_type_filtered_skip = Some((
-                        handler_count,
-                        entry.marker,
-                        entry.prompt_seg_id,
-                        handler.clone(),
-                    ));
                 }
             }
 
             handler_count += 1;
         }
 
-        let full_current_entries = self.current_handler_chain();
-        let outer_entries = if self.current_handler_dispatch().is_none() {
+        let selected_is_writer = selected
+            .as_ref()
+            .is_some_and(|(_, _, _, handler)| handler.handler_name() == "WriterHandler");
+        let outer_entries = if selected.is_some()
+            && !selected_is_writer
+            && self.current_handler_dispatch().is_none()
+        {
             self.return_to_continuation()
                 .and_then(|continuation| {
                     self.live_handler_chain_start_for_return_to(&continuation)
@@ -1182,7 +1298,6 @@ impl VM {
                 });
         if prefer_outer_fallback {
             selected = None;
-            first_type_filtered_skip = None;
             handler_count = 0;
         }
         let fallback_return_to = (selected.is_none())
@@ -1199,52 +1314,50 @@ impl VM {
                     break;
                 };
                 let next = seg.parent;
-                if let SegmentKind::PromptBoundary {
-                    handled_marker,
-                    handler,
-                    types,
-                    ..
-                } = &seg.kind
-                {
-                    let restricted_excluded = restricted_excluded_prompts.contains(&cursor_id);
-                    if Some(cursor_id) != exclude_prompt && !restricted_excluded {
-                        let (name, kind, file, line) = Self::handler_trace_info(handler);
-                        handler_chain_snapshot.push(HandlerSnapshotEntry {
-                            handler_name: name,
-                            handler_kind: kind,
-                            source_file: file,
-                            source_line: line,
-                        });
+                let Some((handled_marker, handler, types)) = (match &seg.kind {
+                    SegmentKind::PromptBoundary {
+                        handled_marker,
+                        handler,
+                        types,
+                        ..
+                    } => Some((*handled_marker, handler.clone(), types.clone())),
+                    SegmentKind::Normal { .. }
+                    | SegmentKind::InterceptorBoundary { .. }
+                    | SegmentKind::MaskBoundary { .. } => None,
+                }) else {
+                    cursor = next;
+                    continue;
+                };
+                let restricted_excluded = restricted_excluded_prompts.contains(&cursor_id);
+                if Some(cursor_id) != exclude_prompt && !restricted_excluded {
+                    let (name, kind, file, line) = Self::handler_trace_info(&handler);
+                    handler_chain_snapshot.push(HandlerSnapshotEntry {
+                        handler_name: name,
+                        handler_kind: kind,
+                        source_file: file,
+                        source_line: line,
+                    });
 
-                        if handler.can_handle(&effect)? {
-                            let should_invoke = self
-                                .should_invoke_handler_types(types.as_ref(), &effect_obj)
-                                .map_err(|err| {
-                                    VMError::python_error(format!(
-                                        "failed to evaluate WithHandler type filter: {err:?}"
-                                    ))
-                                })?;
-                            if should_invoke {
-                                if selected.is_none() {
-                                    selected = Some((
-                                        handler_count,
-                                        *handled_marker,
-                                        cursor_id,
-                                        handler.clone(),
-                                    ));
-                                }
-                            } else if first_type_filtered_skip.is_none() {
-                                first_type_filtered_skip = Some((
-                                    handler_count,
-                                    *handled_marker,
-                                    cursor_id,
-                                    handler.clone(),
-                                ));
+                    if handler.can_handle(&effect)? {
+                        let should_invoke = self
+                            .should_invoke_handler_types(
+                                Self::handler_type_cache_key(&handler),
+                                types.as_ref(),
+                                &effect_obj,
+                            )
+                            .map_err(|err| {
+                                VMError::python_error(format!(
+                                    "failed to evaluate WithHandler type filter: {err:?}"
+                                ))
+                            })?;
+                        if should_invoke {
+                            if selected.is_none() {
+                                selected = Some((handler_count, handled_marker, cursor_id, handler.clone()));
                             }
                         }
-
-                        handler_count += 1;
                     }
+
+                    handler_count += 1;
                 }
                 cursor = next;
             }
@@ -1263,20 +1376,8 @@ impl VM {
             return Err(VMError::unhandled_effect(effect));
         }
 
-        let mut bootstrap_with_pass = false;
         let selected = match selected {
-            Some(found) => {
-                if let Some(skipped) = &first_type_filtered_skip {
-                    if skipped.0 < found.0 {
-                        bootstrap_with_pass = true;
-                        skipped.clone()
-                    } else {
-                        found
-                    }
-                } else {
-                    found
-                }
-            }
+            Some(found) => found,
             None => {
                 if let Some(original) = original_exception.clone() {
                     self.mode = Mode::Throw(original);
@@ -1355,10 +1456,13 @@ impl VM {
         self.set_scope_parent(handler_seg_id, Some(seg_id));
         let origin_k = k_user.clone_handle();
         let active_k = k_user.clone_handle();
+        let canonical_prompt_seg_id = self.canonical_output_segment_id(prompt_seg_id);
         self.set_pending_program_dispatch(
             handler_seg_id,
             ProgramDispatch {
                 dispatch_id,
+                handler_segment_id: handler_seg_id,
+                prompt_segment_id: canonical_prompt_seg_id,
                 effect: effect.clone(),
                 origin: origin_k.clone_handle(),
                 handler_continuation: active_k.clone_handle(),
@@ -1388,10 +1492,6 @@ impl VM {
 
         // Preserve handler scope when a type-filtered handler is skipped: this mirrors the
         // `Pass()` forwarding topology without invoking the skipped handler body.
-        if bootstrap_with_pass {
-            return Ok(self.handle_forward(ForwardKind::Pass, effect));
-        }
-
         let handler_k = k_user;
         let ir_node = Self::invoke_kleisli_handler_expr(handler, effect, handler_k)?;
         Ok(self.evaluate(ir_node))
@@ -1734,6 +1834,7 @@ impl VM {
                         if !restoring_outer_dispatch || program_dispatch.dispatch_id == dispatch_id
                         {
                             program_dispatch.dispatch_id = dispatch_id;
+                            program_dispatch.handler_segment_id = seg_id;
                             program_dispatch.handler_continuation = if restoring_outer_dispatch {
                                 outer_handler_continuation.unwrap_or_else(|| k.clone_handle())
                             } else {
@@ -2040,13 +2141,14 @@ impl VM {
             Err(err) => return StepEvent::Error(err),
         };
         let prompt_handler = plan.handler.clone();
+        let shared_types = types.map(Arc::new);
 
         let prompt_seg = Segment::new_prompt_with_types(
             plan.handler_marker,
             Some(plan.outside_seg_id),
             plan.handler_marker,
             prompt_handler.clone(),
-            types,
+            shared_types,
         );
         let prompt_seg_id = self.alloc_segment(prompt_seg);
         self.copy_interceptor_guard_state(Some(plan.outside_seg_id), prompt_seg_id);
@@ -2205,8 +2307,18 @@ impl VM {
                 dispatch_id.raw()
             )));
         };
+        let handler_dispatch = self.nearest_handler_dispatch().or_else(|| {
+            self.current_segment_dispatch_id().and_then(|dispatch_id| {
+                self.active_handler_dispatch_for(dispatch_id).and_then(
+                    |(seg_id, continuation, marker)| {
+                        let prompt_seg_id = self.handler_prompt_segment_id(seg_id, marker)?;
+                        Some((seg_id, dispatch_id, continuation, marker, prompt_seg_id))
+                    },
+                )
+            })
+        });
         let Some((inner_seg_id, _, parent_k_user, current_marker, current_prompt_seg_id)) =
-            self.nearest_handler_dispatch()
+            handler_dispatch
         else {
             return StepEvent::Error(VMError::internal(format!(
                 "{}: active handler dispatch {} not found",
@@ -2338,10 +2450,14 @@ impl VM {
                 self.set_scope_parent(handler_seg_id, Some(inner_seg_id));
                 let observer_k = next_k.clone_handle();
                 let forwarded_exception = self.continuation_pending_error_context(&next_k).cloned();
+                let canonical_prompt_seg_id =
+                    self.canonical_output_segment_id(entry.prompt_seg_id);
                 self.set_pending_program_dispatch(
                     handler_seg_id,
                     ProgramDispatch {
                         dispatch_id,
+                        handler_segment_id: handler_seg_id,
+                        prompt_segment_id: canonical_prompt_seg_id,
                         effect: effect.clone(),
                         origin: origin.k_origin.clone_handle(),
                         handler_continuation: observer_k.clone_handle(),
