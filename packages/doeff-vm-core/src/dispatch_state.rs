@@ -22,12 +22,12 @@ pub(crate) struct DispatchContext {
 }
 
 #[derive(Debug, Default, Clone)]
-pub(crate) struct DispatchObserver {
+pub(crate) struct DispatchState {
     dispatches: HashMap<DispatchId, DispatchContext>,
     segment_dispatch_ids: HashMap<SegmentId, DispatchId>,
 }
 
-impl DispatchObserver {
+impl DispatchState {
     pub(crate) fn clear(&mut self) {
         self.dispatches.clear();
         self.segment_dispatch_ids.clear();
@@ -84,7 +84,7 @@ impl DispatchObserver {
     ) {
         let dispatch = self.dispatches.get_mut(&dispatch_id).unwrap_or_else(|| {
             panic!(
-                "dispatch observer invariant violated: update_forwarded_dispatch({}) missing \
+                "dispatch state invariant violated: update_forwarded_dispatch({}) missing \
                  dispatch context",
                 dispatch_id.raw()
             )
@@ -152,12 +152,12 @@ mod tests {
 
     #[test]
     fn update_forwarded_dispatch_panics_before_creating_orphan_segment_index() {
-        let mut observer = DispatchObserver::default();
+        let mut dispatch_state = DispatchState::default();
         let dispatch_id = DispatchId::fresh();
         let seg_id = SegmentId::from_index(7);
 
         let result = catch_unwind(AssertUnwindSafe(|| {
-            observer.update_forwarded_dispatch(
+            dispatch_state.update_forwarded_dispatch(
                 dispatch_id,
                 None,
                 None,
@@ -171,6 +171,6 @@ mod tests {
         }));
 
         assert!(result.is_err());
-        assert_eq!(observer.segment_dispatch_id(seg_id), None);
+        assert_eq!(dispatch_state.segment_dispatch_id(seg_id), None);
     }
 }

@@ -1,5 +1,8 @@
 //! Continuation types for detaching and reattaching fibers.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::OnceLock;
 
 use pyo3::prelude::*;
@@ -14,19 +17,25 @@ use crate::segment::Segment;
 
 #[pyclass(name = "K")]
 pub struct PyK {
-    pub cont_id: ContId,
+    continuation: Continuation,
 }
 
 impl PyK {
-    pub fn from_cont_id(cont_id: ContId) -> Self {
-        Self { cont_id }
+    pub fn from_continuation(continuation: &Continuation) -> Self {
+        Self {
+            continuation: continuation.clone_handle(),
+        }
+    }
+
+    pub fn continuation(&self) -> Continuation {
+        self.continuation.clone_handle()
     }
 }
 
 #[pymethods]
 impl PyK {
     fn __repr__(&self) -> String {
-        format!("K({})", self.cont_id.raw())
+        format!("K({})", self.continuation.cont_id.raw())
     }
 }
 
@@ -45,16 +54,22 @@ pub(crate) struct DispatchHandlerHint {
     pub(crate) prompt_seg_id: SegmentId,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ContinuationMetadata {
+    resume_dispatch_id: Option<DispatchId>,
+    dispatch_handler_hint: Option<DispatchHandlerHint>,
+    captured_caller: Option<SegmentId>,
+}
+
 #[derive(Debug)]
 pub struct Continuation {
     pub cont_id: ContId,
     dispatch_id: Option<DispatchId>,
-    resume_dispatch_id: Option<DispatchId>,
-    dispatch_handler_hint: Option<DispatchHandlerHint>,
     fibers: Vec<FiberId>,
     owns_fibers: bool,
-    captured_caller: Option<SegmentId>,
     consumed: bool,
+    consumed_state: Arc<AtomicBool>,
+    metadata_state: Arc<Mutex<ContinuationMetadata>>,
     unstarted: Option<UnstartedContinuation>,
 }
 
@@ -76,33 +91,54 @@ impl Clone for Continuation {
             );
         }
 
+        let metadata = self.shared_metadata();
         memory_stats::register_continuation();
-        Continuation {
+        let mut continuation = Continuation {
             cont_id: self.cont_id,
             dispatch_id: self.dispatch_id,
-            resume_dispatch_id: self.resume_dispatch_id,
-            dispatch_handler_hint: self.dispatch_handler_hint,
             fibers: self.fibers.clone(),
             owns_fibers: self.owns_fibers,
-            captured_caller: self.captured_caller,
-            consumed: self.consumed,
+            consumed: self.consumed(),
+            consumed_state: Arc::clone(&self.consumed_state),
+            metadata_state: Self::new_metadata_state(metadata.captured_caller),
             unstarted: self.unstarted.clone(),
-        }
+        };
+        continuation.set_resume_dispatch_id(metadata.resume_dispatch_id);
+        continuation.set_dispatch_handler_hint(metadata.dispatch_handler_hint);
+        continuation
     }
 }
 
 impl Continuation {
+    fn new_consumed_state(consumed: bool) -> Arc<AtomicBool> {
+        Arc::new(AtomicBool::new(consumed))
+    }
+
+    fn new_metadata_state(captured_caller: Option<SegmentId>) -> Arc<Mutex<ContinuationMetadata>> {
+        Arc::new(Mutex::new(ContinuationMetadata {
+            resume_dispatch_id: None,
+            dispatch_handler_hint: None,
+            captured_caller,
+        }))
+    }
+
+    fn shared_metadata(&self) -> ContinuationMetadata {
+        *self
+            .metadata_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     pub fn placeholder(cont_id: ContId) -> Self {
         memory_stats::register_continuation();
         Continuation {
             cont_id,
             dispatch_id: None,
-            resume_dispatch_id: None,
-            dispatch_handler_hint: None,
             fibers: Vec::new(),
             owns_fibers: false,
-            captured_caller: None,
             consumed: false,
+            consumed_state: Self::new_consumed_state(false),
+            metadata_state: Self::new_metadata_state(None),
             unstarted: None,
         }
     }
@@ -117,12 +153,11 @@ impl Continuation {
         Continuation {
             cont_id,
             dispatch_id,
-            resume_dispatch_id: None,
-            dispatch_handler_hint: None,
             fibers,
             owns_fibers: true,
-            captured_caller,
             consumed: false,
+            consumed_state: Self::new_consumed_state(false),
+            metadata_state: Self::new_metadata_state(captured_caller),
             unstarted: None,
         }
     }
@@ -177,12 +212,11 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             dispatch_id: None,
-            resume_dispatch_id: None,
-            dispatch_handler_hint: None,
             fibers: Vec::new(),
             owns_fibers: true,
-            captured_caller: None,
             consumed: false,
+            consumed_state: Self::new_consumed_state(false),
+            metadata_state: Self::new_metadata_state(None),
             unstarted: Some(UnstartedContinuation {
                 program: expr,
                 handlers,
@@ -218,12 +252,11 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             dispatch_id: None,
-            resume_dispatch_id: None,
-            dispatch_handler_hint: None,
             fibers: Vec::new(),
             owns_fibers: true,
-            captured_caller: None,
             consumed: false,
+            consumed_state: Self::new_consumed_state(false),
+            metadata_state: Self::new_metadata_state(None),
             unstarted: Some(UnstartedContinuation {
                 program: expr,
                 handlers,
@@ -251,12 +284,11 @@ impl Continuation {
         Continuation {
             cont_id: self.cont_id,
             dispatch_id: self.dispatch_id,
-            resume_dispatch_id: self.resume_dispatch_id,
-            dispatch_handler_hint: self.dispatch_handler_hint,
             fibers: self.fibers.clone(),
-            owns_fibers: false,
-            captured_caller: self.captured_caller,
-            consumed: self.consumed,
+            owns_fibers: self.owns_fibers,
+            consumed: self.consumed(),
+            consumed_state: Arc::clone(&self.consumed_state),
+            metadata_state: Arc::clone(&self.metadata_state),
             unstarted: self.unstarted.clone(),
         }
     }
@@ -279,7 +311,7 @@ impl Continuation {
     }
 
     pub(crate) fn same_owned_fibers(&self, other: &Continuation) -> bool {
-        self.fibers == other.fibers && self.captured_caller == other.captured_caller
+        self.fibers == other.fibers && self.captured_caller() == other.captured_caller()
     }
 
     pub(crate) fn append_owned_fibers(&mut self, mut other: Continuation) {
@@ -302,7 +334,7 @@ impl Continuation {
         if !other.fibers.is_empty() {
             self.fibers.append(&mut other.fibers);
         }
-        self.captured_caller = other.captured_caller.or(self.captured_caller);
+        self.set_captured_caller(other.captured_caller().or(self.captured_caller()));
     }
 
     pub(crate) fn tail_owned_fibers(&self) -> Option<Self> {
@@ -312,11 +344,12 @@ impl Continuation {
         let mut tail = Self::new_captured(
             ContId::fresh(),
             self.fibers[1..].to_vec(),
-            self.captured_caller,
+            self.captured_caller(),
             self.dispatch_id,
         );
-        tail.resume_dispatch_id = self.resume_dispatch_id;
-        tail.dispatch_handler_hint = self.dispatch_handler_hint;
+        let metadata = self.shared_metadata();
+        tail.set_resume_dispatch_id(metadata.resume_dispatch_id);
+        tail.set_dispatch_handler_hint(metadata.dispatch_handler_hint);
         Some(tail)
     }
 
@@ -325,35 +358,45 @@ impl Continuation {
     }
 
     pub(crate) fn resume_dispatch_id(&self) -> Option<DispatchId> {
-        self.resume_dispatch_id
+        self.shared_metadata().resume_dispatch_id
     }
 
     pub(crate) fn set_resume_dispatch_id(&mut self, dispatch_id: Option<DispatchId>) {
-        self.resume_dispatch_id = dispatch_id;
+        self.metadata_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .resume_dispatch_id = dispatch_id;
     }
 
     pub(crate) fn dispatch_handler_hint(&self) -> Option<DispatchHandlerHint> {
-        self.dispatch_handler_hint
+        self.shared_metadata().dispatch_handler_hint
     }
 
     pub(crate) fn set_dispatch_handler_hint(&mut self, hint: Option<DispatchHandlerHint>) {
-        self.dispatch_handler_hint = hint;
+        self.metadata_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .dispatch_handler_hint = hint;
     }
 
     pub fn captured_caller(&self) -> Option<SegmentId> {
-        self.captured_caller
+        self.shared_metadata().captured_caller
     }
 
     pub(crate) fn set_captured_caller(&mut self, captured_caller: Option<SegmentId>) {
-        self.captured_caller = captured_caller;
+        self.metadata_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .captured_caller = captured_caller;
     }
 
-    pub(crate) fn consumed(&self) -> bool {
-        self.consumed
+    pub fn consumed(&self) -> bool {
+        self.consumed || self.consumed_state.load(Ordering::Relaxed)
     }
 
     pub(crate) fn mark_consumed(&mut self) {
         self.consumed = true;
+        self.consumed_state.store(true, Ordering::Relaxed);
     }
 
     pub fn program(&self) -> Option<&PyShared> {
@@ -364,6 +407,22 @@ impl Continuation {
         self.unstarted
             .as_ref()
             .map(|unstarted| unstarted.handlers.as_slice())
+    }
+
+    pub fn prepend_unstarted_handlers(&mut self, mut handlers: Vec<KleisliRef>) {
+        let Some(unstarted) = self.unstarted.as_mut() else {
+            return;
+        };
+        if handlers.is_empty() {
+            return;
+        }
+        let extra_count = handlers.len();
+        handlers.extend(unstarted.handlers.iter().cloned());
+        unstarted.handlers = handlers;
+
+        let mut handler_identities = vec![None; extra_count];
+        handler_identities.extend(unstarted.handler_identities.iter().cloned());
+        unstarted.handler_identities = handler_identities;
     }
 
     pub fn handler_identities(&self) -> Option<&[Option<PyShared>]> {
@@ -390,18 +449,21 @@ impl Continuation {
         // under its existing `cont_id`. This is safe because the fork is only
         // used for dispatch bookkeeping; user-visible one-shot consumption is
         // still keyed by the fresh `cont_id` on the forwarded branch.
+        let metadata = self.shared_metadata();
         memory_stats::register_continuation();
-        Continuation {
+        let mut continuation = Continuation {
             cont_id: ContId::fresh(),
             dispatch_id,
-            resume_dispatch_id: self.resume_dispatch_id,
-            dispatch_handler_hint: self.dispatch_handler_hint,
             fibers: self.fibers.clone(),
             owns_fibers: true,
-            captured_caller: self.captured_caller,
-            consumed: self.consumed,
+            consumed: self.consumed(),
+            consumed_state: Self::new_consumed_state(self.consumed()),
+            metadata_state: Self::new_metadata_state(metadata.captured_caller),
             unstarted: self.unstarted.clone(),
-        }
+        };
+        continuation.set_resume_dispatch_id(metadata.resume_dispatch_id);
+        continuation.set_dispatch_handler_hint(metadata.dispatch_handler_hint);
+        continuation
     }
 
     pub(crate) fn into_unstarted_parts(

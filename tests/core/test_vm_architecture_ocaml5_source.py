@@ -134,12 +134,13 @@ def test_fiber_runtime_source_does_not_store_marker_field() -> None:
 # OCaml 5 VM has ~5 fields: arena, current_fiber, heap, mode, pending.
 # doeff VM still has dispatch side-tables that accumulate mutable state
 # instead of deriving it from the fiber chain topology.
-# These tests are xfail until Phase 5 completes.
+# These tests codify the remaining Phase 5 architecture targets.
 # ---------------------------------------------------------------------------
 
 DISPATCH_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "vm" / "dispatch.rs"
 DISPATCH_OBSERVER_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "dispatch_observer.rs"
 DISPATCH_STATE_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "dispatch_state.rs"
+CONTINUATION_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "continuation.rs"
 
 
 # NOTE ON TEST DESIGN: These tests check for architectural patterns, not just
@@ -188,7 +189,6 @@ def test_vm_source_does_not_have_dispatch_tracking_map() -> None:
         )
 
 
-@pytest.mark.xfail(reason="Phase 5: no ContId→Continuation HashMap on VM", strict=False)
 def test_vm_source_does_not_have_continuation_map() -> None:
     """VM must not have any HashMap mapping ContId to Continuation.
 
@@ -211,7 +211,56 @@ def test_vm_source_does_not_have_continuation_map() -> None:
         )
 
 
-@pytest.mark.xfail(reason="Phase 5: no HashSet tracking consumed continuations on VM", strict=False)
+def test_dispatch_source_does_not_use_continuation_registry_helpers() -> None:
+    """Dispatch must not bounce continuation ownership through registry helpers."""
+    source = _runtime_source(DISPATCH_RS)
+
+    for forbidden in (
+        "register_continuation(",
+        "take_continuation(",
+        "lookup_continuation(",
+        "lookup_any_continuation(",
+    ):
+        assert forbidden not in source, (
+            "dispatch.rs must pass owned Continuation values directly. "
+            "Registry helper calls reintroduce ContinuationStore indirection."
+        )
+
+
+def test_pyk_runtime_source_holds_continuation_values_not_ids() -> None:
+    """PyK should carry an owned Continuation handle, not only a ContId."""
+    source = _runtime_source(CONTINUATION_RS)
+    pyk_match = re.search(r"pub struct PyK \{(?P<body>.*?)\n\}", source, re.DOTALL)
+    assert pyk_match is not None, "PyK struct definition must exist in continuation.rs."
+    pyk_body = pyk_match.group("body")
+
+    assert "cont_id: ContId" not in pyk_body, (
+        "PyK must not store only a ContId. It should carry a Continuation handle "
+        "so Resume/Transfer can pass ownership directly."
+    )
+    assert "continuation: Continuation" in pyk_body, (
+        "PyK should hold a Continuation handle directly once continuation_registry is removed."
+    )
+    assert "from_cont_id" not in source, (
+        "PyK::from_cont_id keeps continuation reconstruction dependent on a registry. "
+        "Construct PyK from a Continuation value instead."
+    )
+
+
+def test_dispatch_source_checks_one_shot_on_continuation_objects() -> None:
+    """One-shot tracking must live on Continuation, not VM helper side-state."""
+    source = _runtime_source(DISPATCH_RS)
+
+    assert "is_one_shot_consumed" not in source, (
+        "dispatch.rs must not route one-shot checks through VM-level helpers. "
+        "Check Continuation.consumed directly on the continuation object."
+    )
+    assert "mark_one_shot_consumed" not in source, (
+        "dispatch.rs must not maintain separate consumed-continuation bookkeeping. "
+        "Mark the Continuation itself as consumed."
+    )
+
+
 def test_vm_source_does_not_have_consumed_tracking_set() -> None:
     """VM must not have any HashSet tracking consumed continuation IDs.
 
