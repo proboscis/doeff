@@ -99,13 +99,13 @@ fn test_dispatch_resume_uses_current_handler_segment_as_caller() {
     let handler_marker = Marker::fresh();
     let handler_seg = Segment::new(handler_marker, Some(parent_id));
     let handler_seg_id = vm.alloc_segment(handler_seg);
-    vm.dispatch_observer.start_dispatch(
+    vm.dispatch_state.start_dispatch(
         dispatch_id,
         crate::effect::make_get_execution_context_effect()
             .expect("test dispatch effect should be constructible"),
         continuation.clone(),
         None,
-        crate::dispatch_observer::ActiveHandlerContext {
+        crate::dispatch_state::ActiveHandlerContext {
             segment_id: handler_seg_id,
             continuation: continuation.clone(),
             marker: handler_marker,
@@ -143,8 +143,7 @@ fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
 
     let root_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
     let captured_caller_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(root_id)));
-    let effect_site_id =
-        vm.alloc_segment(Segment::new(Marker::fresh(), Some(captured_caller_id)));
+    let effect_site_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(captured_caller_id)));
     let effect_site_segment = vm
         .segments
         .get(effect_site_id)
@@ -157,13 +156,13 @@ fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
     let handler_marker = Marker::fresh();
     let handler_seg = Segment::new(handler_marker, Some(prompt_seg_id));
     let handler_seg_id = vm.alloc_segment(handler_seg);
-    vm.dispatch_observer.start_dispatch(
+    vm.dispatch_state.start_dispatch(
         dispatch_id,
         crate::effect::make_get_execution_context_effect()
             .expect("test dispatch effect should be constructible"),
         continuation.clone(),
         None,
-        crate::dispatch_observer::ActiveHandlerContext {
+        crate::dispatch_state::ActiveHandlerContext {
             segment_id: handler_seg_id,
             continuation: continuation.clone(),
             marker: handler_marker,
@@ -301,8 +300,7 @@ fn test_resume_unstarted_continuation_inserts_return_anchor_above_outside_scope(
     let mut vm = VM::new();
 
     let outside_scope_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
-    let scheduler_seg_id =
-        vm.alloc_segment(Segment::new(Marker::fresh(), Some(outside_scope_id)));
+    let scheduler_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(outside_scope_id)));
     vm.current_segment = Some(scheduler_seg_id);
 
     let expr = Python::attach(|py| PyShared::new(py.None()));
@@ -357,8 +355,7 @@ fn test_resume_unstarted_continuation_keeps_scope_parent_outside_handler_wrapper
     let mut vm = VM::new();
 
     let outside_scope_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
-    let scheduler_seg_id =
-        vm.alloc_segment(Segment::new(Marker::fresh(), Some(outside_scope_id)));
+    let scheduler_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(outside_scope_id)));
     vm.current_segment = Some(scheduler_seg_id);
 
     let expr = Python::attach(|py| PyShared::new(py.None()));
@@ -420,14 +417,31 @@ fn test_resume_unstarted_continuation_keeps_scope_parent_outside_handler_wrapper
 }
 
 #[test]
-#[should_panic(expected = "observer has no context")]
+#[should_panic(expected = "state has no context")]
 fn test_dispatch_origin_scan_fails_fast_on_orphaned_segment_dispatch_index() {
     let mut vm = VM::new();
     let seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
     vm.current_segment = Some(seg_id);
 
-    vm.dispatch_observer
-        .bind_segment(seg_id, DispatchId::fresh());
+    vm.dispatch_state.bind_segment(seg_id, DispatchId::fresh());
 
     let _ = vm.dispatch_origins();
+}
+
+#[test]
+fn test_consumed_continuation_stays_detectable_on_cloned_handles() {
+    let continuation = Continuation::with_id(
+        ContId::fresh(),
+        SegmentId::from_index(0),
+        None,
+        None,
+    );
+    let handle = continuation.clone_handle();
+    let mut owned = continuation.into_owned();
+
+    assert!(!handle.consumed());
+    owned.mark_consumed();
+
+    assert!(owned.consumed());
+    assert!(handle.consumed());
 }

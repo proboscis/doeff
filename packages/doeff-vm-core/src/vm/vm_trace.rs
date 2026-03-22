@@ -183,7 +183,7 @@ impl VM {
         dispatch_id: DispatchId,
     ) -> Option<(usize, String)> {
         let marker = self
-            .dispatch_observer
+            .dispatch_state
             .dispatch(dispatch_id)
             .map(|dispatch| dispatch.active_handler.marker)
             .or_else(|| self.active_handler_marker_for_dispatch(dispatch_id))
@@ -194,7 +194,7 @@ impl VM {
             })?;
         let (name, _, _, _) = self.marker_handler_trace_info(marker)?;
         let origin_seg_id = self
-            .dispatch_observer
+            .dispatch_state
             .dispatch(dispatch_id)
             .and_then(|dispatch| self.continuation_handler_chain_start(&dispatch.k_origin))
             .or_else(|| self.dispatch_origin_user_segment_id(dispatch_id))?;
@@ -250,7 +250,7 @@ impl VM {
         &self,
         stream: &IRStreamRef,
     ) -> Option<DispatchId> {
-        self.dispatch_observer
+        self.dispatch_state
             .iter()
             .find_map(|(dispatch_id, dispatch)| {
                 self.continuation_uses_stream(&dispatch.k_origin, stream)
@@ -287,7 +287,7 @@ impl VM {
         } else {
             origin.k_origin
         };
-        (!self.is_one_shot_consumed(continuation.cont_id)).then_some(continuation)
+        (!self.continuation_is_consumed(&continuation)).then_some(continuation)
     }
 
     pub(super) fn active_error_dispatch_original_exception(&self) -> Option<PyException> {

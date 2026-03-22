@@ -50,11 +50,12 @@ impl VM {
 
     pub(super) fn track_run_handler(&mut self, handler: &KleisliRef) {
         if !self
-            .run_handlers
+            .handlers
+            .running
             .iter()
             .any(|existing| Arc::ptr_eq(existing, handler))
         {
-            self.run_handlers.push(handler.clone());
+            self.handlers.running.push(handler.clone());
         }
     }
 

@@ -15,7 +15,7 @@ use crate::capture::{
 };
 use crate::continuation::Continuation;
 use crate::debug_state::DebugState;
-use crate::dispatch_observer::DispatchObserver;
+use crate::dispatch_state::DispatchState;
 use crate::do_ctrl::{DoCtrl, DoExprTag, InterceptMode, PyDoExprBase};
 use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
@@ -30,6 +30,7 @@ use crate::frame::{
 use crate::ids::{ContId, DispatchId, Marker, ScopeId, SegmentId};
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
 use crate::kleisli::{IdentityKleisli, KleisliRef};
+use crate::memory_stats::live_object_counts;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
@@ -225,6 +226,12 @@ struct DispatchOriginView {
     original_exception: Option<PyException>,
 }
 
+#[derive(Default)]
+struct HandlerStore {
+    installed: Vec<InstalledHandler>,
+    running: Vec<KleisliRef>,
+}
+
 #[derive(Clone)]
 enum CallerChainEntry {
     Handler(HandlerChainEntry),
@@ -266,9 +273,7 @@ impl DebugConfig {
 
 pub struct VM {
     pub segments: FiberArena,
-    pub consumed_cont_ids: HashSet<ContId>,
-    installed_handlers: Vec<InstalledHandler>,
-    run_handlers: Vec<KleisliRef>,
+    handlers: HandlerStore,
     pub rust_store: RustStore,
     pub var_store: VarStore,
     pub env_store: HashMap<HashedPyKey, Value>,
@@ -279,8 +284,7 @@ pub struct VM {
     pub completed_segment: Option<SegmentId>,
     pub(crate) debug: DebugState,
     pub(crate) trace_state: TraceState,
-    pub(crate) dispatch_observer: DispatchObserver,
-    pub continuation_registry: HashMap<ContId, Continuation>,
+    pub(crate) dispatch_state: DispatchState,
     fiber_runtime: HashMap<SegmentId, FiberRuntimeState>,
     scope_ids: HashMap<SegmentId, ScopeId>,
     scope_parents: HashMap<SegmentId, Option<SegmentId>>,
@@ -294,9 +298,7 @@ impl VM {
     pub fn new() -> Self {
         VM {
             segments: FiberArena::new(),
-            consumed_cont_ids: HashSet::new(),
-            installed_handlers: Vec::new(),
-            run_handlers: Vec::new(),
+            handlers: HandlerStore::default(),
             rust_store: RustStore::new(),
             var_store: VarStore::default(),
             env_store: HashMap::new(),
@@ -307,8 +309,7 @@ impl VM {
             completed_segment: None,
             debug: DebugState::new(DebugConfig::default()),
             trace_state: TraceState::default(),
-            dispatch_observer: DispatchObserver::default(),
-            continuation_registry: HashMap::new(),
+            dispatch_state: DispatchState::default(),
             fiber_runtime: HashMap::new(),
             scope_ids: HashMap::new(),
             scope_parents: HashMap::new(),
@@ -339,8 +340,8 @@ impl VM {
         self.current_segment = None;
         self.completed_segment = None;
         self.trace_state.clear();
-        self.dispatch_observer.clear();
-        self.run_handlers.clear();
+        self.dispatch_state.clear();
+        self.handlers.running.clear();
         self.fiber_runtime.clear();
         self.scope_ids.clear();
         self.scope_parents.clear();
@@ -359,17 +360,15 @@ impl VM {
             return;
         };
 
-        for handler in &self.run_handlers {
+        for handler in &self.handlers.running {
             handler.on_run_end(run_token);
         }
-        self.run_handlers.clear();
-        self.run_handlers.shrink_to_fit();
-        self.continuation_registry.clear();
-        self.continuation_registry.shrink_to_fit();
-        self.consumed_cont_ids.clear();
-        self.consumed_cont_ids.shrink_to_fit();
-        self.dispatch_observer.clear();
-        self.dispatch_observer.shrink_to_fit();
+        self.handlers.running.clear();
+        self.handlers.running.shrink_to_fit();
+        self.handlers.installed.clear();
+        self.handlers.installed.shrink_to_fit();
+        self.dispatch_state.clear();
+        self.dispatch_state.shrink_to_fit();
         self.segments.clear();
         self.segments.shrink_to_fit();
         self.var_store.clear();
@@ -398,20 +397,27 @@ impl VM {
         self.debug.trace_events()
     }
 
+    pub fn continuation_count(&self) -> usize {
+        if self.active_run_token.is_none() {
+            return 0;
+        }
+        live_object_counts().live_continuations
+    }
+
     pub fn dispatch_count(&self) -> usize {
-        self.dispatch_observer.dispatch_count()
+        self.dispatch_state.dispatch_count()
     }
 
     pub fn segment_dispatch_binding_count(&self) -> usize {
-        self.dispatch_observer.segment_binding_count()
+        self.dispatch_state.segment_binding_count()
     }
 
     pub fn dispatch_capacity(&self) -> usize {
-        self.dispatch_observer.dispatch_capacity()
+        self.dispatch_state.dispatch_capacity()
     }
 
     pub fn segment_dispatch_binding_capacity(&self) -> usize {
-        self.dispatch_observer.segment_binding_capacity()
+        self.dispatch_state.segment_binding_capacity()
     }
 
     pub fn trace_frame_stack_count(&self) -> usize {
@@ -484,7 +490,7 @@ impl VM {
         let Some(parent) = self.segments.get(id).map(|segment| segment.parent) else {
             return;
         };
-        self.dispatch_observer.unbind_segment(id);
+        self.dispatch_state.unbind_segment(id);
         self.segment_parent_redirects.insert(id, parent);
         self.segments.free(id);
         self.var_store.remove_segment(id);
@@ -713,9 +719,25 @@ impl VM {
     ) -> usize {
         let mut rewired = 0usize;
 
-        for continuation in self.continuation_registry.values_mut() {
-            rewired +=
-                Self::reparent_continuation_captured_caller(continuation, old_parent, new_parent);
+        let dispatch_ids = self
+            .dispatch_state
+            .iter()
+            .map(|(dispatch_id, _)| dispatch_id)
+            .collect::<Vec<_>>();
+        for dispatch_id in dispatch_ids {
+            let Some(dispatch) = self.dispatch_state.dispatch_mut(dispatch_id) else {
+                continue;
+            };
+            rewired += Self::reparent_continuation_captured_caller(
+                &mut dispatch.k_origin,
+                old_parent,
+                new_parent,
+            );
+            rewired += Self::reparent_continuation_captured_caller(
+                &mut dispatch.active_handler.continuation,
+                old_parent,
+                new_parent,
+            );
         }
 
         for (_, segment) in self.segments.iter_mut() {
