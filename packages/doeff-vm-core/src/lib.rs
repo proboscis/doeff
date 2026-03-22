@@ -112,7 +112,7 @@ pub use result::{PyResultErr, PyResultOk};
 #[cfg(feature = "python_bridge")]
 pub use scope_store::ScopeStore;
 #[cfg(feature = "python_bridge")]
-pub use segment::{Fiber, FiberKind, Segment, SegmentKind};
+pub use segment::{Fiber, FiberKind};
 #[cfg(feature = "python_bridge")]
 pub use step::PyException;
 #[cfg(feature = "python_bridge")]
