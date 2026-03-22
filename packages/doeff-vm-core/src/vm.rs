@@ -591,20 +591,24 @@ impl VM {
         seg_id: SegmentId,
     ) -> Option<&mut ProgramDispatch> {
         let segment = self.segments.get_mut(seg_id)?;
-        segment.frames.iter_mut().rev().find_map(|frame| match frame {
-            Frame::Program {
-                dispatch: Some(dispatch),
-                ..
-            } => Some(dispatch),
-            Frame::Program { .. }
-            | Frame::InterceptorApply(_)
-            | Frame::InterceptorEval(_)
-            | Frame::EvalReturn(_)
-            | Frame::MapReturn { .. }
-            | Frame::FlatMapBindResult
-            | Frame::FlatMapBindSource { .. }
-            | Frame::InterceptBodyReturn { .. } => None,
-        })
+        segment
+            .frames
+            .iter_mut()
+            .rev()
+            .find_map(|frame| match frame {
+                Frame::Program {
+                    dispatch: Some(dispatch),
+                    ..
+                } => Some(dispatch),
+                Frame::Program { .. }
+                | Frame::InterceptorApply(_)
+                | Frame::InterceptorEval(_)
+                | Frame::EvalReturn(_)
+                | Frame::MapReturn { .. }
+                | Frame::FlatMapBindResult
+                | Frame::FlatMapBindSource { .. }
+                | Frame::InterceptBodyReturn { .. } => None,
+            })
     }
 
     pub(crate) fn set_pending_program_dispatch(
@@ -614,6 +618,12 @@ impl VM {
     ) {
         if let Some(runtime) = self.fiber_runtime_mut(seg_id) {
             runtime.pending_program_dispatch = Some(dispatch);
+        }
+    }
+
+    pub(crate) fn clear_pending_program_dispatch(&mut self, seg_id: SegmentId) {
+        if let Some(runtime) = self.fiber_runtime_mut(seg_id) {
+            runtime.pending_program_dispatch = None;
         }
     }
 

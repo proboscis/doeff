@@ -2140,6 +2140,7 @@ mod tests {
             source_line: 12,
             args_repr: None,
             program_call: None,
+            auto_unwrap_programlike: false,
         };
 
         state.record_frame_entered(&metadata, None);
