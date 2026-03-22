@@ -185,7 +185,6 @@ def test_vm_source_does_not_have_continuation_registry() -> None:
     )
 
 
-@pytest.mark.xfail(reason="Phase 5: consumed_cont_ids must move to Continuation.consumed", strict=False)
 def test_vm_source_does_not_have_consumed_cont_ids() -> None:
     """consumed_cont_ids is a HashSet tracking one-shot enforcement.
 
