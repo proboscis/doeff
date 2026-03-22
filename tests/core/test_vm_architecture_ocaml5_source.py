@@ -40,8 +40,8 @@ def test_var_store_runtime_source_owns_handler_state_logs_and_bindings() -> None
     assert "global_state: HashMap<String, Value>" in source, (
         "VarStore must keep a single handler-state heap instead of per-segment state maps."
     )
-    assert "HashMap<SegmentId, Vec<Value>>" in source, (
-        "VarStore must own writer log entries after moving them off Fiber."
+    assert "writer_log: Vec<Value>" in source, (
+        "VarStore must keep a single writer log instead of segment-keyed log maps."
     )
     assert "HashMap<SegmentId, HashMap<HashedPyKey, Value>>" in source, (
         "VarStore must continue to own named bindings for lexical scope."

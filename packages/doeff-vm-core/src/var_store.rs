@@ -9,7 +9,7 @@ pub struct VarStore {
     pub cells: HashMap<VarId, Value>,
     global_state: HashMap<String, Value>,
     root_scope_bindings: HashMap<HashedPyKey, Value>,
-    writer_logs_by_segment: HashMap<SegmentId, Vec<Value>>,
+    writer_log: Vec<Value>,
     bindings_by_segment: HashMap<SegmentId, HashMap<HashedPyKey, Value>>,
     overrides_by_segment: HashMap<SegmentId, HashMap<VarId, Value>>,
 }
@@ -23,14 +23,14 @@ impl VarStore {
         self.cells.clear();
         self.global_state.clear();
         self.root_scope_bindings.clear();
-        self.writer_logs_by_segment.clear();
+        self.writer_log.clear();
         self.bindings_by_segment.clear();
         self.overrides_by_segment.clear();
     }
 
     pub fn clear_run_local(&mut self) {
         self.cells.clear();
-        self.writer_logs_by_segment.clear();
+        self.writer_log.clear();
         self.bindings_by_segment.clear();
         self.overrides_by_segment.clear();
     }
@@ -39,14 +39,14 @@ impl VarStore {
         self.cells.shrink_to_fit();
         self.global_state.shrink_to_fit();
         self.root_scope_bindings.shrink_to_fit();
-        self.writer_logs_by_segment.shrink_to_fit();
+        self.writer_log.shrink_to_fit();
         self.bindings_by_segment.shrink_to_fit();
         self.overrides_by_segment.shrink_to_fit();
     }
 
     pub fn shrink_run_local_to_fit(&mut self) {
         self.cells.shrink_to_fit();
-        self.writer_logs_by_segment.shrink_to_fit();
+        self.writer_log.shrink_to_fit();
         self.bindings_by_segment.shrink_to_fit();
         self.overrides_by_segment.shrink_to_fit();
     }
@@ -88,13 +88,11 @@ impl VarStore {
     }
 
     pub fn init_segment(&mut self, seg_id: SegmentId) {
-        self.writer_logs_by_segment.entry(seg_id).or_default();
         self.bindings_by_segment.entry(seg_id).or_default();
         self.overrides_by_segment.entry(seg_id).or_default();
     }
 
     pub fn remove_segment(&mut self, seg_id: SegmentId) {
-        self.writer_logs_by_segment.remove(&seg_id);
         self.bindings_by_segment.remove(&seg_id);
         self.overrides_by_segment.remove(&seg_id);
     }
@@ -122,24 +120,21 @@ impl VarStore {
         self.global_state.capacity()
     }
 
-    pub fn append_writer_log(&mut self, seg_id: SegmentId, message: Value) -> bool {
-        let Some(logs) = self.writer_logs_by_segment.get_mut(&seg_id) else {
-            return false;
-        };
-        logs.push(message);
+    pub fn append_writer_log(&mut self, _seg_id: SegmentId, message: Value) -> bool {
+        self.writer_log.push(message);
         true
     }
 
-    pub fn writer_log(&self, seg_id: SegmentId) -> Option<&Vec<Value>> {
-        self.writer_logs_by_segment.get(&seg_id)
+    pub fn writer_log(&self, _seg_id: SegmentId) -> Option<&Vec<Value>> {
+        Some(&self.writer_log)
     }
 
     pub fn writer_log_count(&self) -> usize {
-        self.writer_logs_by_segment.len()
+        usize::from(!self.writer_log.is_empty())
     }
 
     pub fn writer_log_capacity(&self) -> usize {
-        self.writer_logs_by_segment.capacity()
+        self.writer_log.capacity()
     }
 
     pub fn replace_scope_bindings(
