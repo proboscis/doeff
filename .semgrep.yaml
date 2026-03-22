@@ -3205,6 +3205,18 @@ rules:
         - "**/packages/doeff-vm-core/src/vm/dispatch.rs"
     pattern-regex: 'scope_parent.*find.*handler|find.*handler.*scope_parent|walk.*scope_parent.*handler'
 
+  - id: vm-ocaml5-no-vm-handler-storage
+    languages: [generic]
+    severity: ERROR
+    message: |
+      ISSUE-vm-phase6-pure-dispatch: VM-level handler lists are forbidden.
+      Handler visibility must be derived by walking the fiber chain, not by
+      storing HandlerStore / Vec<InstalledHandler> / Vec<KleisliRef> on VM.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/vm.rs"
+    pattern-regex: 'HandlerStore|handlers:\s*HandlerStore|installed:\s*Vec<InstalledHandler>|running:\s*Vec<KleisliRef>'
+
   # ACTIVE: Ban VM-level handler-specific state fields
   # The VM must not know about specific handler internals (State/Writer/Ask).
   # Handler state goes through generic VM primitives (AllocVar/ReadVar/WriteVar)

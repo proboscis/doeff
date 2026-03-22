@@ -1,6 +1,7 @@
 //! Kleisli arrow types for IR-level callables (SPEC-VM-017).
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
@@ -96,6 +97,35 @@ pub trait Kleisli: std::fmt::Debug + Send + Sync {
 
 /// Shared reference to a Kleisli arrow.
 pub type KleisliRef = Arc<dyn Kleisli>;
+
+fn run_handler_registry() -> &'static Mutex<HashMap<u64, Vec<KleisliRef>>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<u64, Vec<KleisliRef>>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub(crate) fn register_run_handler(run_token: u64, handler: &KleisliRef) {
+    let mut registry = run_handler_registry()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let handlers = registry.entry(run_token).or_default();
+    if !handlers
+        .iter()
+        .any(|existing| Arc::ptr_eq(existing, handler))
+    {
+        handlers.push(handler.clone());
+    }
+}
+
+pub(crate) fn notify_run_handlers_completed(run_token: u64) {
+    let handlers = run_handler_registry()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(&run_token)
+        .unwrap_or_default();
+    for handler in handlers {
+        handler.on_run_end(run_token);
+    }
+}
 
 /// Kleisli wrapper that preserves a specific Python identity object.
 #[derive(Debug, Clone)]
@@ -688,6 +718,10 @@ impl Kleisli for RustKleisli {
         args: Vec<Value>,
         run_token: Option<u64>,
     ) -> Result<DoCtrl, VMError> {
+        if let Some(run_token) = run_token {
+            let handler: KleisliRef = Arc::new(self.clone());
+            register_run_handler(run_token, &handler);
+        }
         if args.len() != 2 {
             return Err(VMError::type_error(format!(
                 "RustKleisli expected 2 args (effect, continuation), got {}",

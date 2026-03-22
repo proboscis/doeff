@@ -334,11 +334,15 @@ impl VM {
                 stream,
                 metadata,
                 handler_kind,
+                dispatch,
             } => {
                 let incoming_throw = match &mode {
                     Mode::Throw(exc) => Some(exc.clone()),
                     Mode::Deliver(_) | Mode::HandleYield(_) | Mode::Return(_) => None,
                 };
+                if let Some(program_dispatch) = dispatch {
+                    self.set_pending_program_dispatch(seg_id, program_dispatch);
+                }
                 let step = {
                     let Some(_segment) = self.segments.get_mut(seg_id) else {
                         return StepEvent::Error(VMError::invalid_segment("segment not found"));
@@ -927,17 +931,9 @@ impl VM {
                     return StepEvent::NeedsPython(call);
                 }
 
-                let Some(seg) = self.current_segment_mut() else {
-                    return StepEvent::Error(VMError::internal(
-                        "current_segment_mut() returned None in apply_stream_step \
-                         (NeedsPython rust continuation)",
-                    ));
-                };
-                seg.push_frame(Frame::Program {
-                    stream,
-                    metadata,
-                    handler_kind,
-                });
+                if let Err(err) = self.push_program_frame(stream, metadata, handler_kind) {
+                    return StepEvent::Error(err);
+                }
                 let (marker, k) = if let Some(dispatch_id) = self.current_dispatch_id() {
                     let Some((_, k, marker)) = self
                         .active_handler_dispatch_for(dispatch_id)
@@ -1047,18 +1043,8 @@ impl VM {
                 | DoCtrl::Pass { .. }
         );
         if !is_terminal {
-            match self.current_segment_mut() {
-                Some(seg) => seg.push_frame(Frame::Program {
-                    stream,
-                    metadata,
-                    handler_kind,
-                }),
-                None => {
-                    return self.contextual_internal_throw_mode(PyException::runtime_error(
-                        "current_segment_mut() returned None in apply_stream_step \
-                         (Yield non-terminal)",
-                    ))
-                }
+            if let Err(err) = self.push_program_frame(stream, metadata, handler_kind) {
+                return Mode::Throw(PyException::runtime_error(err.to_string()));
             }
         } else if let Some(ref m) = metadata {
             self.emit_frame_exited(m);
@@ -1912,16 +1898,9 @@ impl VM {
         if let Some(ref m) = metadata {
             self.emit_frame_entered(m, handler_kind);
         }
-        let Some(seg) = self.current_segment_mut() else {
-            return StepEvent::Error(VMError::internal(
-                "handle_yield_ir_stream called without current segment",
-            ));
-        };
-        seg.push_frame(Frame::Program {
-            stream,
-            metadata,
-            handler_kind,
-        });
+        if let Err(err) = self.push_program_frame(stream, metadata, handler_kind) {
+            return StepEvent::Error(err);
+        }
         self.mode = Mode::Deliver(Value::Unit);
         StepEvent::Continue
     }
@@ -1937,6 +1916,7 @@ impl VM {
                     stream,
                     metadata: Some(metadata),
                     handler_kind,
+                    ..
                 } => Some((stream.clone(), metadata.clone(), *handler_kind)),
                 Frame::Program { .. }
                 | Frame::InterceptorApply(_)
@@ -1959,7 +1939,7 @@ impl VM {
         self.handle_resume_continuation(cont, Value::None)
     }
 
-    fn handle_yield_eval_in_scope(
+    pub(super) fn handle_yield_eval_in_scope(
         &mut self,
         expr: PyShared,
         scope: Continuation,

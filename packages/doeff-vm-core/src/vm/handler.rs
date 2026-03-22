@@ -1,5 +1,4 @@
 use super::*;
-use std::sync::Arc;
 
 impl VM {
     pub(super) fn first_handler_hint_in_caller_chain(
@@ -48,21 +47,10 @@ impl VM {
         }
     }
 
-    pub(super) fn track_run_handler(&mut self, handler: &KleisliRef) {
-        if !self
-            .handlers
-            .running
-            .iter()
-            .any(|existing| Arc::ptr_eq(existing, handler))
-        {
-            self.handlers.running.push(handler.clone());
-        }
-    }
-
     pub(super) fn find_prompt_boundary_by_marker(
         &self,
         marker: Marker,
-    ) -> Option<(SegmentId, KleisliRef, Option<Vec<PyShared>>)> {
+    ) -> Option<(SegmentId, KleisliRef, Option<Arc<Vec<PyShared>>>)> {
         self.segments
             .iter()
             .find_map(|(seg_id, seg)| match &seg.kind {
@@ -181,6 +169,152 @@ impl VM {
         self.handlers_in_caller_chain(seg_id)
     }
 
+    pub(super) fn effect_type_cache_key(effect_obj: &Py<PyAny>) -> PyResult<usize> {
+        Python::attach(|py| Ok(effect_obj.bind(py).get_type().as_ptr() as usize))
+    }
+
+    pub(super) fn collect_dispatch_handler_entries(
+        &self,
+        start_seg_id: SegmentId,
+        exclude_prompt: Option<SegmentId>,
+        restricted_excluded_prompts: &HashSet<SegmentId>,
+    ) -> (Vec<HandlerChainEntry>, Vec<HandlerChainEntry>) {
+        let mut full_entries = Vec::new();
+        let mut current_entries = Vec::new();
+        let mut cursor = Some(start_seg_id);
+        while let Some(seg_id) = cursor {
+            let Some(seg) = self.segments.get(seg_id) else {
+                break;
+            };
+            cursor = seg.parent;
+            let SegmentKind::PromptBoundary {
+                handled_marker,
+                handler,
+                types,
+                ..
+            } = &seg.kind
+            else {
+                continue;
+            };
+
+            let entry = HandlerChainEntry {
+                marker: *handled_marker,
+                prompt_seg_id: seg_id,
+                handler: handler.clone(),
+                types: types.clone(),
+            };
+            full_entries.push(entry.clone());
+
+            let is_shared_spawn_writer = handler.handler_name() == "WriterHandler"
+                && self.shared_builtin_handler_prompt(seg_id) != seg_id;
+            let restricted_excluded = restricted_excluded_prompts.contains(&seg_id);
+            if Some(seg_id) != exclude_prompt && !restricted_excluded && !is_shared_spawn_writer {
+                current_entries.push(entry);
+            }
+        }
+        (full_entries, current_entries)
+    }
+
+    pub(super) fn first_matching_handler_in_entries(
+        &mut self,
+        entries: &[HandlerChainEntry],
+        effect: &DispatchEffect,
+        effect_obj: &Py<PyAny>,
+    ) -> Result<Option<(usize, Marker, SegmentId, KleisliRef)>, VMError> {
+        for (index, entry) in entries.iter().enumerate() {
+            if !entry.handler.can_handle(effect)? {
+                continue;
+            }
+            let should_invoke = self
+                .should_invoke_handler(entry, effect_obj)
+                .map_err(|err| {
+                    VMError::python_error(format!(
+                        "failed to evaluate WithHandler type filter: {err:?}"
+                    ))
+                })?;
+            if should_invoke {
+                return Ok(Some((
+                    index,
+                    entry.marker,
+                    entry.prompt_seg_id,
+                    entry.handler.clone(),
+                )));
+            }
+        }
+        Ok(None)
+    }
+
+    pub(super) fn cached_current_chain_handler_resolution(
+        &mut self,
+        seg_id: SegmentId,
+        effect_type_id: usize,
+        effect: &DispatchEffect,
+        effect_obj: &Py<PyAny>,
+        current_entries: &[HandlerChainEntry],
+    ) -> Result<Option<(usize, Marker, SegmentId, KleisliRef)>, VMError> {
+        let cache_key = (seg_id, effect_type_id);
+        let Some(cached) = self
+            .segment_handler_resolution_cache
+            .get(&cache_key)
+            .copied()
+        else {
+            return Ok(None);
+        };
+
+        if cached.segment_epoch != self.segment_topology_epoch(seg_id) {
+            self.segment_handler_resolution_cache.remove(&cache_key);
+            return Ok(None);
+        }
+
+        let Some((index, entry)) = current_entries
+            .iter()
+            .enumerate()
+            .find(|(_, entry)| entry.prompt_seg_id == cached.prompt_seg_id)
+        else {
+            self.segment_handler_resolution_cache.remove(&cache_key);
+            return Ok(None);
+        };
+
+        if !entry.handler.can_handle(effect)? {
+            self.segment_handler_resolution_cache.remove(&cache_key);
+            return Ok(None);
+        }
+
+        let should_invoke = self
+            .should_invoke_handler(entry, effect_obj)
+            .map_err(|err| {
+                VMError::python_error(format!(
+                    "failed to evaluate WithHandler type filter: {err:?}"
+                ))
+            })?;
+        if !should_invoke {
+            self.segment_handler_resolution_cache.remove(&cache_key);
+            return Ok(None);
+        }
+
+        Ok(Some((
+            index,
+            entry.marker,
+            entry.prompt_seg_id,
+            entry.handler.clone(),
+        )))
+    }
+
+    pub(super) fn cache_current_chain_handler_resolution(
+        &mut self,
+        seg_id: SegmentId,
+        effect_type_id: usize,
+        prompt_seg_id: SegmentId,
+    ) {
+        self.segment_handler_resolution_cache.insert(
+            (seg_id, effect_type_id),
+            CachedHandlerResolution {
+                prompt_seg_id,
+                segment_epoch: self.segment_topology_epoch(seg_id),
+            },
+        );
+    }
+
     pub(super) fn prepare_with_handler(
         handler: KleisliRef,
         current_segment: Option<SegmentId>,
@@ -198,16 +332,21 @@ impl VM {
     }
 
     pub(super) fn should_invoke_handler(
-        &self,
+        &mut self,
         entry: &HandlerChainEntry,
         effect_obj: &Py<PyAny>,
     ) -> Result<bool, PyException> {
-        self.should_invoke_handler_types(entry.types.as_ref(), effect_obj)
+        self.should_invoke_handler_types(
+            Self::handler_type_cache_key(&entry.handler),
+            entry.types.as_ref(),
+            effect_obj,
+        )
     }
 
     pub(super) fn should_invoke_handler_types(
-        &self,
-        types: Option<&Vec<PyShared>>,
+        &mut self,
+        handler_cache_key: usize,
+        types: Option<&Arc<Vec<PyShared>>>,
         effect_obj: &Py<PyAny>,
     ) -> Result<bool, PyException> {
         let Some(types) = types else {
@@ -217,11 +356,42 @@ impl VM {
             return Ok(false);
         }
 
-        Ok(Python::attach(|py| -> PyResult<bool> {
+        let (effect_type_ptr, cached_match) = Python::attach(|py| -> PyResult<(usize, bool)> {
             let effect = effect_obj.bind(py);
-            let type_tuple = PyTuple::new(py, types.iter().map(|ty| ty.clone_ref(py)))?;
-            effect.is_instance(&type_tuple)
-        })?)
+            let effect_type = effect.get_type();
+            let effect_type_ptr = effect_type.as_ptr() as usize;
+            if let Some(cached_match) = self
+                .handler_type_match_cache
+                .get(&(handler_cache_key, effect_type_ptr))
+                .copied()
+            {
+                return Ok((effect_type_ptr, cached_match));
+            }
+
+            let matches_type_ptr =
+                |candidate_ptr| types.iter().any(|ty| candidate_ptr == ty.bind(py).as_ptr());
+
+            if matches_type_ptr(effect_type.as_ptr()) {
+                return Ok((effect_type_ptr, true));
+            }
+
+            for mro_type in effect_type.mro().iter().skip(1) {
+                let mro_type = mro_type.cast::<pyo3::types::PyType>()?;
+                if matches_type_ptr(mro_type.as_ptr()) {
+                    return Ok((effect_type_ptr, true));
+                }
+            }
+
+            Ok((effect_type_ptr, false))
+        })?;
+
+        self.handler_type_match_cache
+            .insert((handler_cache_key, effect_type_ptr), cached_match);
+        Ok(cached_match)
+    }
+
+    pub(super) fn handler_type_cache_key(handler: &KleisliRef) -> usize {
+        Arc::as_ptr(handler) as *const () as usize
     }
 
     pub(super) fn handler_index_in_caller_chain(

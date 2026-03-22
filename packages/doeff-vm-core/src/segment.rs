@@ -22,7 +22,7 @@ pub enum FiberKind {
         marker: Marker,
         handled_marker: Marker,
         handler: KleisliRef,
-        types: Option<Vec<PyShared>>,
+        types: Option<Arc<Vec<PyShared>>>,
     },
     InterceptorBoundary {
         marker: Marker,
@@ -85,7 +85,7 @@ impl Fiber {
         parent: Option<FiberId>,
         handled_marker: Marker,
         handler: KleisliRef,
-        types: Option<Vec<PyShared>>,
+        types: Option<Arc<Vec<PyShared>>>,
     ) -> Self {
         memory_stats::register_segment();
         Fiber {
