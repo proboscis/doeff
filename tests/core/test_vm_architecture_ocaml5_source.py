@@ -134,14 +134,13 @@ def test_fiber_runtime_source_does_not_store_marker_field() -> None:
 # OCaml 5 VM has ~5 fields: arena, current_fiber, heap, mode, pending.
 # doeff VM still has dispatch side-tables that accumulate mutable state
 # instead of deriving it from the fiber chain topology.
-# These tests are xfail until Phase 5 completes.
+# These tests codify the remaining Phase 5 architecture targets.
 # ---------------------------------------------------------------------------
 
 DISPATCH_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "vm" / "dispatch.rs"
 DISPATCH_OBSERVER_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "dispatch_observer.rs"
 
 
-@pytest.mark.xfail(reason="Phase 5: DispatchObserver must be eliminated — derive from stack", strict=False)
 def test_vm_source_does_not_have_dispatch_observer() -> None:
     """DispatchObserver is a side-table tracking dispatch state outside the stack.
 
@@ -158,7 +157,6 @@ def test_vm_source_does_not_have_dispatch_observer() -> None:
     )
 
 
-@pytest.mark.xfail(reason="Phase 5: dispatch_observer.rs must not exist", strict=False)
 def test_dispatch_observer_module_does_not_exist() -> None:
     """The dispatch_observer module should not exist.
 

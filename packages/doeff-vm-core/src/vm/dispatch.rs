@@ -7,7 +7,7 @@ impl VM {
 
     fn dispatch_origin_view_from_context(
         dispatch_id: DispatchId,
-        dispatch: &crate::dispatch_observer::DispatchContext,
+        dispatch: &crate::dispatch_state::DispatchContext,
     ) -> DispatchOriginView {
         DispatchOriginView {
             dispatch_id,
@@ -20,15 +20,15 @@ impl VM {
     fn dispatch_context_for_segment(
         &self,
         seg_id: SegmentId,
-    ) -> Option<(DispatchId, &crate::dispatch_observer::DispatchContext)> {
+    ) -> Option<(DispatchId, &crate::dispatch_state::DispatchContext)> {
         let dispatch_id = self.dispatch_origin_id_in_segment(seg_id)?;
         let dispatch = self
-            .dispatch_observer
+            .dispatch_state
             .dispatch(dispatch_id)
             .unwrap_or_else(|| {
                 panic!(
-                    "dispatch observer invariant violated: segment {} references dispatch {} but \
-                 observer has no context",
+                    "dispatch state invariant violated: segment {} references dispatch {} but \
+                 state has no context",
                     seg_id.index(),
                     dispatch_id.raw()
                 )
@@ -37,12 +37,12 @@ impl VM {
     }
 
     pub(super) fn finish_dispatch_tracking(&mut self, dispatch_id: DispatchId) {
-        self.dispatch_observer.finish_dispatch(dispatch_id);
+        self.dispatch_state.finish_dispatch(dispatch_id);
         self.trace_state.finish_dispatch(dispatch_id);
     }
 
     fn dispatch_origin_view(&self, dispatch_id: DispatchId) -> Option<DispatchOriginView> {
-        let dispatch = self.dispatch_observer.dispatch(dispatch_id)?;
+        let dispatch = self.dispatch_state.dispatch(dispatch_id)?;
         Some(Self::dispatch_origin_view_from_context(
             dispatch_id,
             dispatch,
@@ -99,7 +99,7 @@ impl VM {
     }
 
     fn dispatch_origin_id_in_segment(&self, seg_id: SegmentId) -> Option<DispatchId> {
-        self.dispatch_observer.segment_dispatch_id(seg_id)
+        self.dispatch_state.segment_dispatch_id(seg_id)
     }
 
     fn dispatch_origin_caller_in_segment(
@@ -138,7 +138,7 @@ impl VM {
         &self,
         dispatch_id: DispatchId,
     ) -> Option<SegmentId> {
-        self.dispatch_observer
+        self.dispatch_state
             .dispatch(dispatch_id)
             .and_then(|dispatch| dispatch.k_origin.segment_id())
     }
@@ -156,7 +156,7 @@ impl VM {
         while seen.insert(dispatch_id) {
             depth += 1;
             let next_dispatch_id = self
-                .dispatch_observer
+                .dispatch_state
                 .dispatch(dispatch_id)
                 .and_then(|dispatch| dispatch.k_origin.resume_dispatch_id());
             let Some(next_dispatch_id) = next_dispatch_id else {
@@ -285,7 +285,7 @@ impl VM {
     fn segment_matches_active_handler_context(
         &self,
         seg_id: SegmentId,
-        dispatch: &crate::dispatch_observer::DispatchContext,
+        dispatch: &crate::dispatch_state::DispatchContext,
     ) -> bool {
         dispatch.active_handler.segment_id == seg_id
             && self.handler_dispatch_is_live(&dispatch.active_handler.continuation)
@@ -340,7 +340,7 @@ impl VM {
         &self,
         dispatch_id: DispatchId,
     ) -> Option<(SegmentId, Continuation, Marker)> {
-        let dispatch = self.dispatch_observer.dispatch(dispatch_id)?;
+        let dispatch = self.dispatch_state.dispatch(dispatch_id)?;
         self.handler_dispatch_is_live(&dispatch.active_handler.continuation)
             .then(|| {
                 (
@@ -355,7 +355,7 @@ impl VM {
         &self,
         dispatch_id: DispatchId,
     ) -> Option<(SegmentId, Continuation, Marker)> {
-        let dispatch = self.dispatch_observer.dispatch(dispatch_id)?;
+        let dispatch = self.dispatch_state.dispatch(dispatch_id)?;
         Some((
             dispatch.active_handler.segment_id,
             dispatch.active_handler.continuation.clone_handle(),
@@ -364,7 +364,7 @@ impl VM {
     }
 
     fn clear_forwarded_handler_segment(&mut self, seg_id: SegmentId) {
-        self.dispatch_observer.unbind_segment(seg_id);
+        self.dispatch_state.unbind_segment(seg_id);
         let Some(seg) = self.segments.get_mut(seg_id) else {
             return;
         };
@@ -668,7 +668,7 @@ impl VM {
         let seg_id = self
             .root_live_delegate_parent_segment_id(continuation)
             .and_then(|seg_id| self.delegate_return_target_segment_id(seg_id))?;
-        if let Some(dispatch_id) = self.dispatch_observer.segment_dispatch_id(seg_id) {
+        if let Some(dispatch_id) = self.dispatch_state.segment_dispatch_id(seg_id) {
             if let Some((active_seg_id, continuation, _)) =
                 self.handler_dispatch_for_any(dispatch_id)
             {
@@ -681,7 +681,7 @@ impl VM {
         Some(
             self.capture_live_continuation(
                 seg_id,
-                self.dispatch_observer.segment_dispatch_id(seg_id),
+                self.dispatch_state.segment_dispatch_id(seg_id),
             ),
         )
     }
@@ -848,7 +848,7 @@ impl VM {
             let Some(seg) = self.segments.get(seg_id) else {
                 break;
             };
-            if let Some(dispatch_id) = self.dispatch_observer.segment_dispatch_id(seg_id) {
+            if let Some(dispatch_id) = self.dispatch_state.segment_dispatch_id(seg_id) {
                 return Some(dispatch_id);
             }
             cursor = seg.parent;
@@ -942,7 +942,7 @@ impl VM {
                 .as_ref()
                 .is_some_and(PyException::requires_safe_error_context_dispatch);
         let restricted_excluded_prompts: HashSet<SegmentId> = if restricted_error_context_dispatch {
-            self.dispatch_observer
+            self.dispatch_state
                 .segment_dispatch_id(seg_id)
                 .and_then(|dispatch_id| {
                     self.dispatch_origin_for_dispatch_id(dispatch_id)
@@ -1205,7 +1205,7 @@ impl VM {
 
         let resume_dispatch_id = self
             .current_segment
-            .and_then(|current_seg_id| self.dispatch_observer.segment_dispatch_id(current_seg_id));
+            .and_then(|current_seg_id| self.dispatch_state.segment_dispatch_id(current_seg_id));
         let current_hint = self.first_handler_hint_in_caller_chain(seg_id);
         let mut k_user = if Self::is_execution_context_effect(&effect)
             && original_exception.is_some()
@@ -1268,12 +1268,12 @@ impl VM {
         let origin_k = handler_k.clone_handle();
         let active_k = handler_k.clone_handle();
         self.register_continuation(k_user);
-        self.dispatch_observer.start_dispatch(
+        self.dispatch_state.start_dispatch(
             dispatch_id,
             effect.clone(),
             origin_k,
             original_exception.clone(),
-            crate::dispatch_observer::ActiveHandlerContext {
+            crate::dispatch_state::ActiveHandlerContext {
                 segment_id: handler_seg_id,
                 continuation: active_k,
                 marker: handler_marker,
@@ -1451,7 +1451,7 @@ impl VM {
         self.copy_interceptor_guard_state(self.current_segment, anchor_seg_id);
         self.set_scope_parent(anchor_seg_id, caller);
         if let Some(dispatch_id) = dispatch_id {
-            self.dispatch_observer
+            self.dispatch_state
                 .bind_segment(anchor_seg_id, dispatch_id);
         }
         anchor_seg_id
@@ -1470,7 +1470,7 @@ impl VM {
         self.copy_interceptor_guard_state(self.current_segment, anchor_seg_id);
         self.set_scope_parent(anchor_seg_id, caller);
         if let Some(dispatch_id) = dispatch_id {
-            self.dispatch_observer
+            self.dispatch_state
                 .bind_segment(anchor_seg_id, dispatch_id);
         }
         anchor_seg_id
@@ -1672,7 +1672,7 @@ impl VM {
 
         match dispatch_id {
             Some(dispatch_id) => {
-                self.dispatch_observer.bind_segment(seg_id, dispatch_id);
+                self.dispatch_state.bind_segment(seg_id, dispatch_id);
                 if let Some(hint) = k.dispatch_handler_hint() {
                     let restoring_outer_dispatch = k.dispatch_id() != Some(dispatch_id);
                     let resuming_user_defined_python_handler =
@@ -1682,7 +1682,7 @@ impl VM {
                         || resuming_user_defined_python_handler
                     {
                         let (marker, prompt_seg_id) = if restoring_outer_dispatch {
-                            self.dispatch_observer
+                            self.dispatch_state
                                 .dispatch(dispatch_id)
                                 .map(|dispatch| {
                                     (
@@ -1695,18 +1695,18 @@ impl VM {
                             (hint.marker, hint.prompt_seg_id)
                         };
                         let continuation = if restoring_outer_dispatch {
-                            self.dispatch_observer
+                            self.dispatch_state
                                 .dispatch(dispatch_id)
                                 .map(|dispatch| dispatch.active_handler.continuation.clone_handle())
                                 .unwrap_or_else(|| k.clone_handle())
                         } else {
                             k.clone_for_dispatch(Some(dispatch_id))
                         };
-                        self.dispatch_observer.update_forwarded_dispatch(
+                        self.dispatch_state.update_forwarded_dispatch(
                             dispatch_id,
                             None,
                             None,
-                            crate::dispatch_observer::ActiveHandlerContext {
+                            crate::dispatch_state::ActiveHandlerContext {
                                 segment_id: seg_id,
                                 continuation,
                                 marker,
@@ -1716,7 +1716,7 @@ impl VM {
                     }
                 }
             }
-            None => self.dispatch_observer.unbind_segment(seg_id),
+            None => self.dispatch_state.unbind_segment(seg_id),
         }
         self.current_segment = Some(seg_id);
     }
@@ -2311,11 +2311,11 @@ impl VM {
                 let handler_k = next_k.clone_handle();
                 let observer_k = handler_k.clone_handle();
                 self.register_continuation(next_k);
-                self.dispatch_observer.update_forwarded_dispatch(
+                self.dispatch_state.update_forwarded_dispatch(
                     dispatch_id,
                     self.continuation_pending_error_context(&handler_k).cloned(),
                     None,
-                    crate::dispatch_observer::ActiveHandlerContext {
+                    crate::dispatch_state::ActiveHandlerContext {
                         segment_id: handler_seg_id,
                         continuation: observer_k,
                         marker: entry.marker,

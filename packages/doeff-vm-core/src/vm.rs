@@ -15,7 +15,7 @@ use crate::capture::{
 };
 use crate::continuation::Continuation;
 use crate::debug_state::DebugState;
-use crate::dispatch_observer::DispatchObserver;
+use crate::dispatch_state::DispatchState;
 use crate::do_ctrl::{DoCtrl, DoExprTag, InterceptMode, PyDoExprBase};
 use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
@@ -290,7 +290,7 @@ pub struct VM {
     pub completed_segment: Option<SegmentId>,
     pub(crate) debug: DebugState,
     pub(crate) trace_state: TraceState,
-    pub(crate) dispatch_observer: DispatchObserver,
+    pub(crate) dispatch_state: DispatchState,
     fiber_runtime: HashMap<SegmentId, FiberRuntimeState>,
     scope_ids: HashMap<SegmentId, ScopeId>,
     scope_parents: HashMap<SegmentId, Option<SegmentId>>,
@@ -317,7 +317,7 @@ impl VM {
             completed_segment: None,
             debug: DebugState::new(DebugConfig::default()),
             trace_state: TraceState::default(),
-            dispatch_observer: DispatchObserver::default(),
+            dispatch_state: DispatchState::default(),
             fiber_runtime: HashMap::new(),
             scope_ids: HashMap::new(),
             scope_parents: HashMap::new(),
@@ -348,7 +348,7 @@ impl VM {
         self.current_segment = None;
         self.completed_segment = None;
         self.trace_state.clear();
-        self.dispatch_observer.clear();
+        self.dispatch_state.clear();
         self.handlers.running.clear();
         self.fiber_runtime.clear();
         self.scope_ids.clear();
@@ -379,8 +379,8 @@ impl VM {
         self.continuations.entries.shrink_to_fit();
         self.consumed_continuations.clear();
         self.consumed_continuations.shrink_to_fit();
-        self.dispatch_observer.clear();
-        self.dispatch_observer.shrink_to_fit();
+        self.dispatch_state.clear();
+        self.dispatch_state.shrink_to_fit();
         self.segments.clear();
         self.segments.shrink_to_fit();
         self.var_store.clear();
@@ -414,19 +414,19 @@ impl VM {
     }
 
     pub fn dispatch_count(&self) -> usize {
-        self.dispatch_observer.dispatch_count()
+        self.dispatch_state.dispatch_count()
     }
 
     pub fn segment_dispatch_binding_count(&self) -> usize {
-        self.dispatch_observer.segment_binding_count()
+        self.dispatch_state.segment_binding_count()
     }
 
     pub fn dispatch_capacity(&self) -> usize {
-        self.dispatch_observer.dispatch_capacity()
+        self.dispatch_state.dispatch_capacity()
     }
 
     pub fn segment_dispatch_binding_capacity(&self) -> usize {
-        self.dispatch_observer.segment_binding_capacity()
+        self.dispatch_state.segment_binding_capacity()
     }
 
     pub fn trace_frame_stack_count(&self) -> usize {
@@ -499,7 +499,7 @@ impl VM {
         let Some(parent) = self.segments.get(id).map(|segment| segment.parent) else {
             return;
         };
-        self.dispatch_observer.unbind_segment(id);
+        self.dispatch_state.unbind_segment(id);
         self.segment_parent_redirects.insert(id, parent);
         self.segments.free(id);
         self.var_store.remove_segment(id);
