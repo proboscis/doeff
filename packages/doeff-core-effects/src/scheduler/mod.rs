@@ -966,16 +966,12 @@ fn wrap_spawned_program_for_scheduler(
 ) -> Result<Py<PyAny>, PyException> {
     Python::attach(|py| {
         let module = py.import("doeff.handlers.spawn_handler").map_err(|err| {
-            PyException::runtime_error(format!(
-                "failed to import spawn_handler wrapper: {err:?}"
-            ))
+            PyException::runtime_error(format!("failed to import spawn_handler wrapper: {err:?}"))
         })?;
         let wrapper = module
             .getattr("wrap_spawned_program_for_scheduler")
             .map_err(|err| {
-                PyException::runtime_error(format!(
-                    "failed to load spawn wrapper helper: {err:?}"
-                ))
+                PyException::runtime_error(format!("failed to load spawn wrapper helper: {err:?}"))
             })?;
         let wrapped = wrapper
             .call1((program.bind(py), task_id.raw()))
@@ -3364,8 +3360,7 @@ impl IRStreamProgram for SchedulerProgram {
                 if let Some(error) = result.as_ref().err().cloned() {
                     if let Some(wait_owner) = state.gather_wait_request_for_failed_task(task) {
                         if !state.has_pending_gather_fail_fast(wait_owner) {
-                            if let Err(done_error) =
-                                state.mark_task_done(task, Err(error.clone()))
+                            if let Err(done_error) = state.mark_task_done(task, Err(error.clone()))
                             {
                                 return IRStreamStep::Throw(done_error);
                             }

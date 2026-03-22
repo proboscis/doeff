@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::RwLock;
 
 use pyo3::exceptions::{PyBaseException, PyException as PyStdException};
 use pyo3::prelude::*;
@@ -15,7 +16,6 @@ use crate::capture::{
 };
 use crate::continuation::Continuation;
 use crate::debug_state::DebugState;
-use crate::dispatch_state::DispatchState;
 use crate::do_ctrl::{DoCtrl, DoExprTag, InterceptMode, PyDoExprBase};
 use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
@@ -26,10 +26,11 @@ use crate::effect::{
 use crate::error::VMError;
 use crate::frame::{
     CallMetadata, EvalReturnContinuation, Frame, InterceptorChainLink, InterceptorContinuation,
+    ProgramDispatch,
 };
 use crate::ids::{ContId, DispatchId, Marker, ScopeId, SegmentId};
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
-use crate::kleisli::{IdentityKleisli, KleisliRef};
+use crate::kleisli::{notify_run_handlers_completed, IdentityKleisli, KleisliRef};
 use crate::memory_stats::live_object_counts;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
@@ -112,6 +113,13 @@ struct FiberRuntimeState {
     throw_parent: Option<Continuation>,
     interceptor_eval_depth: usize,
     interceptor_skip_stack: Vec<Marker>,
+    pending_program_dispatch: Option<ProgramDispatch>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CachedHandlerResolution {
+    prompt_seg_id: SegmentId,
+    segment_epoch: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,17 +206,11 @@ impl ForwardKind {
 }
 
 #[derive(Clone)]
-struct InstalledHandler {
-    marker: Marker,
-    handler: KleisliRef,
-}
-
-#[derive(Clone)]
 struct HandlerChainEntry {
     marker: Marker,
     prompt_seg_id: SegmentId,
     handler: KleisliRef,
-    types: Option<Vec<PyShared>>,
+    types: Option<Arc<Vec<PyShared>>>,
 }
 
 #[derive(Clone)]
@@ -224,12 +226,6 @@ struct DispatchOriginView {
     effect: DispatchEffect,
     k_origin: Continuation,
     original_exception: Option<PyException>,
-}
-
-#[derive(Default)]
-struct HandlerStore {
-    installed: Vec<InstalledHandler>,
-    running: Vec<KleisliRef>,
 }
 
 #[derive(Clone)]
@@ -273,7 +269,6 @@ impl DebugConfig {
 
 pub struct VM {
     pub segments: FiberArena,
-    handlers: HandlerStore,
     pub rust_store: RustStore,
     pub var_store: VarStore,
     pub env_store: HashMap<HashedPyKey, Value>,
@@ -284,10 +279,14 @@ pub struct VM {
     pub completed_segment: Option<SegmentId>,
     pub(crate) debug: DebugState,
     pub(crate) trace_state: TraceState,
-    pub(crate) dispatch_state: DispatchState,
     fiber_runtime: HashMap<SegmentId, FiberRuntimeState>,
     scope_ids: HashMap<SegmentId, ScopeId>,
     scope_parents: HashMap<SegmentId, Option<SegmentId>>,
+    handler_type_match_cache: HashMap<(usize, usize), bool>,
+    segment_handler_resolution_cache: HashMap<(SegmentId, usize), CachedHandlerResolution>,
+    segment_topology_epochs: HashMap<SegmentId, u64>,
+    next_segment_topology_epoch: u64,
+    shared_builtin_prompt_cache: RwLock<HashMap<SegmentId, SegmentId>>,
     segment_parent_redirects: HashMap<SegmentId, Option<SegmentId>>,
     completed_state_entries_snapshot: Option<HashMap<String, Value>>,
     completed_log_entries_snapshot: Option<Vec<Value>>,
@@ -298,7 +297,6 @@ impl VM {
     pub fn new() -> Self {
         VM {
             segments: FiberArena::new(),
-            handlers: HandlerStore::default(),
             rust_store: RustStore::new(),
             var_store: VarStore::default(),
             env_store: HashMap::new(),
@@ -309,10 +307,14 @@ impl VM {
             completed_segment: None,
             debug: DebugState::new(DebugConfig::default()),
             trace_state: TraceState::default(),
-            dispatch_state: DispatchState::default(),
             fiber_runtime: HashMap::new(),
             scope_ids: HashMap::new(),
             scope_parents: HashMap::new(),
+            handler_type_match_cache: HashMap::new(),
+            segment_handler_resolution_cache: HashMap::new(),
+            segment_topology_epochs: HashMap::new(),
+            next_segment_topology_epoch: 1,
+            shared_builtin_prompt_cache: RwLock::new(HashMap::new()),
             segment_parent_redirects: HashMap::new(),
             completed_state_entries_snapshot: None,
             completed_log_entries_snapshot: None,
@@ -340,11 +342,17 @@ impl VM {
         self.current_segment = None;
         self.completed_segment = None;
         self.trace_state.clear();
-        self.dispatch_state.clear();
-        self.handlers.running.clear();
         self.fiber_runtime.clear();
         self.scope_ids.clear();
         self.scope_parents.clear();
+        self.handler_type_match_cache.clear();
+        self.segment_handler_resolution_cache.clear();
+        self.segment_topology_epochs.clear();
+        self.next_segment_topology_epoch = 1;
+        self.shared_builtin_prompt_cache
+            .get_mut()
+            .expect("shared builtin prompt cache poisoned")
+            .clear();
         self.segment_parent_redirects.clear();
         self.completed_state_entries_snapshot = None;
         self.completed_log_entries_snapshot = None;
@@ -360,15 +368,7 @@ impl VM {
             return;
         };
 
-        for handler in &self.handlers.running {
-            handler.on_run_end(run_token);
-        }
-        self.handlers.running.clear();
-        self.handlers.running.shrink_to_fit();
-        self.handlers.installed.clear();
-        self.handlers.installed.shrink_to_fit();
-        self.dispatch_state.clear();
-        self.dispatch_state.shrink_to_fit();
+        notify_run_handlers_completed(run_token);
         self.segments.clear();
         self.segments.shrink_to_fit();
         self.var_store.clear();
@@ -385,8 +385,24 @@ impl VM {
         self.scope_ids.clear();
         self.scope_ids.shrink_to_fit();
         self.scope_parents.clear();
-        self.segment_parent_redirects.clear();
         self.scope_parents.shrink_to_fit();
+        self.handler_type_match_cache.clear();
+        self.handler_type_match_cache.shrink_to_fit();
+        self.segment_handler_resolution_cache.clear();
+        self.segment_handler_resolution_cache.shrink_to_fit();
+        self.segment_topology_epochs.clear();
+        self.segment_topology_epochs.shrink_to_fit();
+        self.next_segment_topology_epoch = 1;
+        self.shared_builtin_prompt_cache
+            .get_mut()
+            .expect("shared builtin prompt cache poisoned")
+            .clear();
+        self.shared_builtin_prompt_cache
+            .get_mut()
+            .expect("shared builtin prompt cache poisoned")
+            .shrink_to_fit();
+        self.segment_parent_redirects.clear();
+        self.segment_parent_redirects.shrink_to_fit();
     }
 
     pub fn enable_trace(&mut self, enabled: bool) {
@@ -405,19 +421,45 @@ impl VM {
     }
 
     pub fn dispatch_count(&self) -> usize {
-        self.dispatch_state.dispatch_count()
+        let mut dispatch_ids = HashSet::new();
+        for (_, segment) in self.segments.iter() {
+            for frame in &segment.frames {
+                if let Frame::Program {
+                    dispatch: Some(dispatch),
+                    ..
+                } = frame
+                {
+                    dispatch_ids.insert(dispatch.dispatch_id);
+                }
+            }
+        }
+        for state in self.fiber_runtime.values() {
+            if let Some(dispatch) = &state.pending_program_dispatch {
+                dispatch_ids.insert(dispatch.dispatch_id);
+            }
+        }
+        dispatch_ids.len()
     }
 
     pub fn segment_dispatch_binding_count(&self) -> usize {
-        self.dispatch_state.segment_binding_count()
+        self.segments
+            .iter()
+            .filter(|(seg_id, _)| {
+                self.segment_program_dispatch(*seg_id).is_some()
+                    || self
+                        .fiber_runtime(*seg_id)
+                        .and_then(|state| state.pending_program_dispatch.as_ref())
+                        .is_some()
+            })
+            .count()
     }
 
     pub fn dispatch_capacity(&self) -> usize {
-        self.dispatch_state.dispatch_capacity()
+        self.dispatch_count()
     }
 
     pub fn segment_dispatch_binding_capacity(&self) -> usize {
-        self.dispatch_state.segment_binding_capacity()
+        self.segment_dispatch_binding_count()
     }
 
     pub fn trace_frame_stack_count(&self) -> usize {
@@ -483,6 +525,7 @@ impl VM {
         self.scope_ids.insert(seg_id, ScopeId::fresh());
         let parent = self.segments.get(seg_id).and_then(|segment| segment.parent);
         self.scope_parents.insert(seg_id, parent);
+        self.bump_segment_topology_epoch(seg_id);
         seg_id
     }
 
@@ -490,13 +533,13 @@ impl VM {
         let Some(parent) = self.segments.get(id).map(|segment| segment.parent) else {
             return;
         };
-        self.dispatch_state.unbind_segment(id);
         self.segment_parent_redirects.insert(id, parent);
         self.segments.free(id);
         self.var_store.remove_segment(id);
         self.fiber_runtime.remove(&id);
         self.scope_ids.remove(&id);
         self.scope_parents.remove(&id);
+        self.segment_topology_epochs.remove(&id);
     }
 
     pub fn current_segment_mut(&mut self) -> Option<&mut Segment> {
@@ -539,10 +582,12 @@ impl VM {
                         stream,
                         metadata,
                         handler_kind,
+                        dispatch,
                     } => Some(Frame::Program {
                         stream: stream.clone(),
                         metadata: metadata.clone(),
                         handler_kind: *handler_kind,
+                        dispatch: dispatch.clone(),
                     }),
                     Frame::InterceptorApply(_)
                     | Frame::InterceptorEval(_)
@@ -564,6 +609,102 @@ impl VM {
             .segment_id()
             .and_then(|seg_id| self.fiber_runtime.get(&seg_id))
             .and_then(|state| state.pending_error_context.as_ref())
+    }
+
+    pub(crate) fn segment_program_dispatch(&self, seg_id: SegmentId) -> Option<&ProgramDispatch> {
+        let segment = self.segments.get(seg_id)?;
+        segment.frames.iter().rev().find_map(|frame| match frame {
+            Frame::Program {
+                dispatch: Some(dispatch),
+                ..
+            } if self.trace_state.has_dispatch(dispatch.dispatch_id) => Some(dispatch),
+            Frame::Program { .. }
+            | Frame::InterceptorApply(_)
+            | Frame::InterceptorEval(_)
+            | Frame::EvalReturn(_)
+            | Frame::MapReturn { .. }
+            | Frame::FlatMapBindResult
+            | Frame::FlatMapBindSource { .. }
+            | Frame::InterceptBodyReturn { .. } => None,
+        })
+    }
+
+    pub(crate) fn segment_program_dispatch_mut(
+        &mut self,
+        seg_id: SegmentId,
+    ) -> Option<&mut ProgramDispatch> {
+        let segment = self.segments.get_mut(seg_id)?;
+        segment
+            .frames
+            .iter_mut()
+            .rev()
+            .find_map(|frame| match frame {
+                Frame::Program {
+                    dispatch: Some(dispatch),
+                    ..
+                } if self.trace_state.has_dispatch(dispatch.dispatch_id) => Some(dispatch),
+                Frame::Program { .. }
+                | Frame::InterceptorApply(_)
+                | Frame::InterceptorEval(_)
+                | Frame::EvalReturn(_)
+                | Frame::MapReturn { .. }
+                | Frame::FlatMapBindResult
+                | Frame::FlatMapBindSource { .. }
+                | Frame::InterceptBodyReturn { .. } => None,
+            })
+    }
+
+    pub(crate) fn set_pending_program_dispatch(
+        &mut self,
+        seg_id: SegmentId,
+        mut dispatch: ProgramDispatch,
+    ) {
+        dispatch.origin.set_dispatch_frame_hint(Some(seg_id));
+        dispatch
+            .handler_continuation
+            .set_dispatch_frame_hint(Some(seg_id));
+        if let Some(runtime) = self.fiber_runtime_mut(seg_id) {
+            runtime.pending_program_dispatch = Some(dispatch);
+        }
+    }
+
+    pub(crate) fn clear_pending_program_dispatch(&mut self, seg_id: SegmentId) {
+        if let Some(runtime) = self.fiber_runtime_mut(seg_id) {
+            runtime.pending_program_dispatch = None;
+        }
+    }
+
+    fn take_pending_program_dispatch(&mut self, seg_id: SegmentId) -> Option<ProgramDispatch> {
+        self.fiber_runtime_mut(seg_id)
+            .and_then(|runtime| runtime.pending_program_dispatch.take())
+    }
+
+    pub(crate) fn push_program_frame(
+        &mut self,
+        stream: IRStreamRef,
+        metadata: Option<CallMetadata>,
+        handler_kind: Option<HandlerKind>,
+    ) -> Result<(), VMError> {
+        let Some(seg_id) = self.current_segment else {
+            return Err(VMError::internal(
+                "push_program_frame called without current segment",
+            ));
+        };
+        let dispatch = self
+            .take_pending_program_dispatch(seg_id)
+            .or_else(|| handler_kind.and_then(|_| self.segment_program_dispatch(seg_id).cloned()));
+        let Some(seg) = self.current_segment_mut() else {
+            return Err(VMError::internal(
+                "push_program_frame current segment missing after dispatch lookup",
+            ));
+        };
+        seg.push_frame(Frame::Program {
+            stream,
+            metadata,
+            handler_kind,
+            dispatch,
+        });
+        Ok(())
     }
 
     pub fn scope_parent(&self, seg_id: SegmentId) -> Option<SegmentId> {
@@ -719,29 +860,24 @@ impl VM {
     ) -> usize {
         let mut rewired = 0usize;
 
-        let dispatch_ids = self
-            .dispatch_state
-            .iter()
-            .map(|(dispatch_id, _)| dispatch_id)
-            .collect::<Vec<_>>();
-        for dispatch_id in dispatch_ids {
-            let Some(dispatch) = self.dispatch_state.dispatch_mut(dispatch_id) else {
-                continue;
-            };
-            rewired += Self::reparent_continuation_captured_caller(
-                &mut dispatch.k_origin,
-                old_parent,
-                new_parent,
-            );
-            rewired += Self::reparent_continuation_captured_caller(
-                &mut dispatch.active_handler.continuation,
-                old_parent,
-                new_parent,
-            );
-        }
-
         for (_, segment) in self.segments.iter_mut() {
             for frame in &mut segment.frames {
+                if let Frame::Program {
+                    dispatch: Some(dispatch),
+                    ..
+                } = frame
+                {
+                    rewired += Self::reparent_continuation_captured_caller(
+                        &mut dispatch.origin,
+                        old_parent,
+                        new_parent,
+                    );
+                    rewired += Self::reparent_continuation_captured_caller(
+                        &mut dispatch.handler_continuation,
+                        old_parent,
+                        new_parent,
+                    );
+                }
                 if let Frame::EvalReturn(eval_return) = frame {
                     rewired += Self::reparent_eval_return_captured_caller(
                         eval_return,
@@ -787,15 +923,68 @@ impl VM {
         None
     }
 
+    fn next_segment_topology_epoch(&mut self) -> u64 {
+        let epoch = self.next_segment_topology_epoch;
+        self.next_segment_topology_epoch += 1;
+        epoch
+    }
+
+    fn bump_segment_topology_epoch(&mut self, seg_id: SegmentId) {
+        let epoch = self.next_segment_topology_epoch();
+        self.segment_topology_epochs.insert(seg_id, epoch);
+    }
+
+    fn segment_topology_epoch(&self, seg_id: SegmentId) -> u64 {
+        self.segment_topology_epochs
+            .get(&seg_id)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    fn touch_segment_topology_subtree(&mut self, root_seg_id: SegmentId) {
+        self.touch_segment_topology_subtrees(std::iter::once(root_seg_id));
+    }
+
+    fn touch_segment_topology_subtrees<I>(&mut self, roots: I)
+    where
+        I: IntoIterator<Item = SegmentId>,
+    {
+        let roots = roots.into_iter().collect::<HashSet<_>>();
+        if roots.is_empty() {
+            return;
+        }
+
+        let epoch = self.next_segment_topology_epoch();
+        for (seg_id, _) in self.segments.iter() {
+            let mut cursor = Some(seg_id);
+            while let Some(current_id) = cursor {
+                if roots.contains(&current_id) {
+                    self.segment_topology_epochs.insert(seg_id, epoch);
+                    break;
+                }
+                cursor = self
+                    .segments
+                    .get(current_id)
+                    .and_then(|segment| segment.parent);
+            }
+        }
+    }
+
     pub fn reparent_children(
         &mut self,
         old_parent: SegmentId,
         new_parent: Option<SegmentId>,
         new_scope_parent: Option<SegmentId>,
     ) -> usize {
+        let affected_roots = self
+            .segments
+            .iter()
+            .filter_map(|(seg_id, segment)| (segment.parent == Some(old_parent)).then_some(seg_id))
+            .collect::<Vec<_>>();
         let mut rewired = self.segments.reparent_children(old_parent, new_parent);
         if rewired > 0 {
             self.segment_parent_redirects.insert(old_parent, new_parent);
+            self.touch_segment_topology_subtrees(affected_roots);
         }
         for scope_parent in self.scope_parents.values_mut() {
             if *scope_parent == Some(old_parent) {
@@ -899,14 +1088,36 @@ impl VM {
     }
 
     fn shared_builtin_handler_prompt(&self, prompt_seg_id: SegmentId) -> SegmentId {
+        if let Some(canonical_seg_id) = self
+            .shared_builtin_prompt_cache
+            .read()
+            .expect("shared builtin prompt cache poisoned")
+            .get(&prompt_seg_id)
+            .copied()
+        {
+            return canonical_seg_id;
+        }
+
         let Some(seg) = self.segments.get(prompt_seg_id) else {
+            self.shared_builtin_prompt_cache
+                .write()
+                .expect("shared builtin prompt cache poisoned")
+                .insert(prompt_seg_id, prompt_seg_id);
             return prompt_seg_id;
         };
         let SegmentKind::PromptBoundary { handler, .. } = &seg.kind else {
+            self.shared_builtin_prompt_cache
+                .write()
+                .expect("shared builtin prompt cache poisoned")
+                .insert(prompt_seg_id, prompt_seg_id);
             return prompt_seg_id;
         };
         let handler_name = handler.handler_name();
         if !matches!(handler_name.as_str(), "StateHandler" | "WriterHandler") {
+            self.shared_builtin_prompt_cache
+                .write()
+                .expect("shared builtin prompt cache poisoned")
+                .insert(prompt_seg_id, prompt_seg_id);
             return prompt_seg_id;
         }
         // Spawn/CreateContinuation installs synthetic handler wrappers whose
@@ -916,6 +1127,10 @@ impl VM {
         // redirect reads/writes/log appends to the first matching prompt in
         // that captured scope chain.
         if self.scope_parent(prompt_seg_id) == seg.parent {
+            self.shared_builtin_prompt_cache
+                .write()
+                .expect("shared builtin prompt cache poisoned")
+                .insert(prompt_seg_id, prompt_seg_id);
             return prompt_seg_id;
         }
 
@@ -926,12 +1141,20 @@ impl VM {
             };
             if let SegmentKind::PromptBoundary { handler, .. } = &seg.kind {
                 if handler.handler_name() == handler_name {
+                    self.shared_builtin_prompt_cache
+                        .write()
+                        .expect("shared builtin prompt cache poisoned")
+                        .insert(prompt_seg_id, seg_id);
                     return seg_id;
                 }
             }
             cursor = self.scope_parent(seg_id);
         }
 
+        self.shared_builtin_prompt_cache
+            .write()
+            .expect("shared builtin prompt cache poisoned")
+            .insert(prompt_seg_id, prompt_seg_id);
         prompt_seg_id
     }
 

@@ -1,24 +1,328 @@
 use super::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
+#[derive(Debug)]
+struct TestHandler {
+    name: &'static str,
+}
+
+impl crate::kleisli::Kleisli for TestHandler {
+    fn apply(&self, _py: Python<'_>, _args: Vec<Value>) -> Result<DoCtrl, VMError> {
+        unreachable!("test handler apply should not run")
+    }
+
+    fn debug_info(&self) -> crate::kleisli::KleisliDebugInfo {
+        crate::kleisli::KleisliDebugInfo {
+            name: self.name.to_string(),
+            file: None,
+            line: None,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ReturnStream {
+    next: Option<IRStreamStep>,
+}
+
+impl IRStream for ReturnStream {
+    fn resume(
+        &mut self,
+        _value: Value,
+        _store: &mut RustStore,
+        _scope: &mut crate::segment::ScopeStore,
+    ) -> IRStreamStep {
+        self.next
+            .take()
+            .expect("return stream must only be resumed once")
+    }
+
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _store: &mut RustStore,
+        _scope: &mut crate::segment::ScopeStore,
+    ) -> IRStreamStep {
+        IRStreamStep::Throw(exc)
+    }
+}
+
+fn named_handler(name: &'static str) -> KleisliRef {
+    std::sync::Arc::new(TestHandler { name }) as KleisliRef
+}
+
+#[derive(Debug)]
+struct CountingHandler {
+    name: &'static str,
+    can_handle: bool,
+    can_handle_calls: Arc<AtomicUsize>,
+}
+
+impl crate::kleisli::Kleisli for CountingHandler {
+    fn apply(&self, _py: Python<'_>, _args: Vec<Value>) -> Result<DoCtrl, VMError> {
+        unreachable!("counting handler apply should not run")
+    }
+
+    fn debug_info(&self) -> crate::kleisli::KleisliDebugInfo {
+        crate::kleisli::KleisliDebugInfo {
+            name: self.name.to_string(),
+            file: None,
+            line: None,
+        }
+    }
+
+    fn can_handle(&self, _effect: &DispatchEffect) -> Result<bool, VMError> {
+        self.can_handle_calls.fetch_add(1, Ordering::Relaxed);
+        Ok(self.can_handle)
+    }
+}
+
+fn counting_handler(
+    name: &'static str,
+    can_handle: bool,
+    can_handle_calls: Arc<AtomicUsize>,
+) -> KleisliRef {
+    Arc::new(CountingHandler {
+        name,
+        can_handle,
+        can_handle_calls,
+    }) as KleisliRef
+}
+
+fn return_stream(value: Value) -> IRStreamRef {
+    IRStreamRef::new(Box::new(ReturnStream {
+        next: Some(IRStreamStep::Return(value)),
+    }))
+}
+
+fn push_program_frame(segment: &mut Segment, value: Value, handler_kind: Option<HandlerKind>) {
+    segment.push_frame(Frame::Program {
+        stream: return_stream(value),
+        metadata: None,
+        handler_kind,
+        dispatch: None,
+    });
+}
+
+fn alloc_prompt_boundary(
+    vm: &mut VM,
+    parent: Option<SegmentId>,
+    handled_marker: Marker,
+    handler: KleisliRef,
+) -> SegmentId {
+    vm.alloc_segment(Segment::new_prompt(
+        Marker::fresh(),
+        parent,
+        handled_marker,
+        handler,
+    ))
+}
+
+fn install_pending_dispatch(
+    vm: &mut VM,
+    handler_seg_id: SegmentId,
+    dispatch_id: DispatchId,
+    origin: &Continuation,
+    original_exception: Option<PyException>,
+) {
+    vm.set_pending_program_dispatch(
+        handler_seg_id,
+        ProgramDispatch {
+            dispatch_id,
+            handler_segment_id: handler_seg_id,
+            prompt_segment_id: handler_seg_id,
+            effect: crate::effect::make_get_execution_context_effect()
+                .expect("test dispatch effect should be constructible"),
+            origin: origin.clone_handle(),
+            handler_continuation: origin.clone_handle(),
+            original_exception,
+        },
+    );
+}
+
+fn assert_int(value: Option<&Value>, expected: i64, context: &str) {
+    assert!(
+        matches!(value, Some(Value::Int(actual)) if *actual == expected),
+        "{context}: expected Int({expected}), got {value:?}"
+    );
+}
+
+fn execution_context_effect() -> DispatchEffect {
+    crate::effect::make_get_execution_context_effect()
+        .expect("test dispatch effect should be constructible")
+}
+
+fn effect_object(effect: &DispatchEffect) -> Py<PyAny> {
+    Python::attach(|py| {
+        dispatch_to_pyobject(py, effect)
+            .map(|obj| obj.unbind())
+            .expect("test effect must convert to Python")
+    })
+}
+
+#[test]
+fn test_handler_resolution_cache_skips_rechecking_inner_miss_for_same_segment() {
+    let mut vm = VM::new();
+    let skipped_calls = Arc::new(AtomicUsize::new(0));
+    let selected_calls = Arc::new(AtomicUsize::new(0));
+
+    let outer_prompt_id = alloc_prompt_boundary(
+        &mut vm,
+        None,
+        Marker::fresh(),
+        counting_handler("OuterSelected", true, selected_calls.clone()),
+    );
+    let inner_prompt_id = alloc_prompt_boundary(
+        &mut vm,
+        Some(outer_prompt_id),
+        Marker::fresh(),
+        counting_handler("InnerSkipped", false, skipped_calls.clone()),
+    );
+    let body_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(inner_prompt_id)));
+
+    let effect = execution_context_effect();
+    let effect_obj = effect_object(&effect);
+
+    let (_, current_entries) =
+        vm.collect_dispatch_handler_entries(body_seg_id, None, &HashSet::new());
+    let effect_type_id =
+        VM::effect_type_cache_key(&effect_obj).expect("effect type id should be available");
+
+    assert!(vm
+        .cached_current_chain_handler_resolution(
+            body_seg_id,
+            effect_type_id,
+            &effect,
+            &effect_obj,
+            &current_entries,
+        )
+        .expect("cache lookup should succeed")
+        .is_none());
+
+    let selected = vm
+        .first_matching_handler_in_entries(&current_entries, &effect, &effect_obj)
+        .expect("initial handler scan should succeed")
+        .expect("outer handler should match");
+    vm.cache_current_chain_handler_resolution(body_seg_id, effect_type_id, selected.2);
+
+    let cached = vm
+        .cached_current_chain_handler_resolution(
+            body_seg_id,
+            effect_type_id,
+            &effect,
+            &effect_obj,
+            &current_entries,
+        )
+        .expect("cached lookup should succeed")
+        .expect("cached selection should resolve");
+
+    assert_eq!(cached.2, outer_prompt_id);
+    assert_eq!(skipped_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(selected_calls.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn test_handler_resolution_cache_invalidates_when_segment_topology_changes() {
+    let mut vm = VM::new();
+    let outer_calls = Arc::new(AtomicUsize::new(0));
+    let inner_calls = Arc::new(AtomicUsize::new(0));
+
+    let outer_prompt_id = alloc_prompt_boundary(
+        &mut vm,
+        None,
+        Marker::fresh(),
+        counting_handler("OuterHandler", true, outer_calls.clone()),
+    );
+    let body_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(outer_prompt_id)));
+
+    let effect = execution_context_effect();
+    let effect_obj = effect_object(&effect);
+    let effect_type_id =
+        VM::effect_type_cache_key(&effect_obj).expect("effect type id should be available");
+
+    let (_, initial_entries) =
+        vm.collect_dispatch_handler_entries(body_seg_id, None, &HashSet::new());
+    let initial = vm
+        .first_matching_handler_in_entries(&initial_entries, &effect, &effect_obj)
+        .expect("initial handler scan should succeed")
+        .expect("outer handler should match");
+    vm.cache_current_chain_handler_resolution(body_seg_id, effect_type_id, initial.2);
+
+    let inner_prompt_id = alloc_prompt_boundary(
+        &mut vm,
+        Some(outer_prompt_id),
+        Marker::fresh(),
+        counting_handler("InnerHandler", true, inner_calls.clone()),
+    );
+    let body_seg = vm
+        .segments
+        .get_mut(body_seg_id)
+        .expect("body segment must exist for topology update");
+    body_seg.parent = Some(inner_prompt_id);
+    vm.touch_segment_topology_subtree(body_seg_id);
+
+    let (_, updated_entries) =
+        vm.collect_dispatch_handler_entries(body_seg_id, None, &HashSet::new());
+    assert!(vm
+        .cached_current_chain_handler_resolution(
+            body_seg_id,
+            effect_type_id,
+            &effect,
+            &effect_obj,
+            &updated_entries,
+        )
+        .expect("cache lookup after topology change should succeed")
+        .is_none());
+
+    let updated = vm
+        .first_matching_handler_in_entries(&updated_entries, &effect, &effect_obj)
+        .expect("updated handler scan should succeed")
+        .expect("new inner handler should match");
+
+    assert_eq!(updated.2, inner_prompt_id);
+    assert_eq!(outer_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(inner_calls.load(Ordering::Relaxed), 1);
+}
 
 #[test]
 fn test_step_return_clears_current_segment_after_root_completion() {
     let mut vm = VM::new();
-    let mut seg = Segment::new(Marker::fresh(), None);
-    seg.state_store.insert("answer".to_string(), Value::Int(42));
-    seg.writer_log.push(Value::Int(7));
-    seg.mode = Mode::Return(Value::Int(42));
+    let state_prompt_id = alloc_prompt_boundary(
+        &mut vm,
+        None,
+        Marker::fresh(),
+        named_handler("StateHandler"),
+    );
+    let writer_prompt_id = alloc_prompt_boundary(
+        &mut vm,
+        Some(state_prompt_id),
+        Marker::fresh(),
+        named_handler("WriterHandler"),
+    );
+    let mut seg = Segment::new(Marker::fresh(), Some(writer_prompt_id));
+    push_program_frame(&mut seg, Value::Int(42), None);
 
     let seg_id = vm.alloc_segment(seg);
+    assert!(vm.write_handler_state_at(state_prompt_id, "answer".to_string(), Value::Int(42)));
+    assert!(vm.append_handler_log_at(writer_prompt_id, Value::Int(7)));
     vm.current_segment = Some(seg_id);
 
-    let event = vm.step();
-    assert!(matches!(event, StepEvent::Done(Value::Int(42))));
+    let value = loop {
+        match vm.step() {
+            StepEvent::Continue => {}
+            StepEvent::Done(value) => break value,
+            other => panic!("root completion should finish cleanly, got {other:?}"),
+        }
+    };
+
+    assert!(matches!(value, Value::Int(42)));
     assert_eq!(vm.current_segment, None);
-    assert_eq!(
-        vm.final_state_entries().get("answer"),
-        Some(&Value::Int(42))
-    );
-    assert_eq!(vm.final_log_entries(), vec![Value::Int(7)]);
+    let final_state = vm.final_state_entries();
+    assert_int(final_state.get("answer"), 42, "final state snapshot");
+    let final_log = vm.final_log_entries();
+    assert_eq!(final_log.len(), 1);
+    assert!(matches!(final_log.first(), Some(Value::Int(7))));
 }
 
 #[test]
@@ -84,7 +388,7 @@ fn test_resume_continuation_uses_captured_caller_instead_of_current_sibling_segm
 }
 
 #[test]
-fn test_dispatch_resume_uses_current_handler_segment_as_caller() {
+fn test_dispatch_resume_inserts_resume_anchor_above_captured_caller() {
     let mut vm = VM::new();
 
     let parent_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
@@ -97,21 +401,20 @@ fn test_dispatch_resume_uses_current_handler_segment_as_caller() {
     let continuation = Continuation::capture(child_segment, child_id, Some(dispatch_id));
 
     let handler_marker = Marker::fresh();
-    let handler_seg = Segment::new(handler_marker, Some(parent_id));
-    let handler_seg_id = vm.alloc_segment(handler_seg);
-    vm.dispatch_state.start_dispatch(
-        dispatch_id,
-        crate::effect::make_get_execution_context_effect()
-            .expect("test dispatch effect should be constructible"),
-        continuation.clone(),
-        None,
-        crate::dispatch_state::ActiveHandlerContext {
-            segment_id: handler_seg_id,
-            continuation: continuation.clone(),
-            marker: handler_marker,
-            prompt_seg_id: parent_id,
-        },
+    let prompt_seg_id = alloc_prompt_boundary(
+        &mut vm,
+        Some(parent_id),
+        handler_marker,
+        named_handler("TestHandler"),
     );
+    let mut handler_seg = Segment::new(handler_marker, Some(prompt_seg_id));
+    push_program_frame(
+        &mut handler_seg,
+        Value::Unit,
+        Some(HandlerKind::RustBuiltin),
+    );
+    let handler_seg_id = vm.alloc_segment(handler_seg);
+    install_pending_dispatch(&mut vm, handler_seg_id, dispatch_id, &continuation, None);
     vm.current_segment = Some(handler_seg_id);
 
     let event = vm.handle_dispatch_resume(continuation, Value::Unit);
@@ -124,17 +427,31 @@ fn test_dispatch_resume_uses_current_handler_segment_as_caller() {
         .segments
         .get(resumed_seg_id)
         .expect("resumed continuation segment must exist");
+    let anchor_seg_id = resumed_segment
+        .parent
+        .expect("dispatch resume should insert an anchor segment");
+    let anchor_seg = vm
+        .segments
+        .get(anchor_seg_id)
+        .expect("dispatch resume anchor must exist");
 
-    assert_eq!(
-        resumed_segment.parent,
-        Some(handler_seg_id),
-        "Dispatch Resume must return into the current handler segment"
-    );
     assert_ne!(
-        resumed_segment.parent,
-        Some(parent_id),
-        "Dispatch Resume must not restore the continuation's captured caller"
+        anchor_seg_id, handler_seg_id,
+        "Resume must route back through an anchor, not by rewriting the live handler segment"
     );
+    assert_eq!(
+        anchor_seg.parent,
+        Some(parent_id),
+        "Resume anchor must attach above the continuation's captured caller"
+    );
+    assert!(matches!(
+        anchor_seg.frames.last(),
+        Some(Frame::EvalReturn(continuation))
+            if matches!(
+                continuation.as_ref(),
+                EvalReturnContinuation::ResumeToContinuation { .. }
+            )
+    ));
 }
 
 #[test]
@@ -152,23 +469,21 @@ fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
     let continuation =
         Continuation::capture(effect_site_segment, effect_site_id, Some(dispatch_id));
 
-    let prompt_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(root_id)));
     let handler_marker = Marker::fresh();
-    let handler_seg = Segment::new(handler_marker, Some(prompt_seg_id));
-    let handler_seg_id = vm.alloc_segment(handler_seg);
-    vm.dispatch_state.start_dispatch(
-        dispatch_id,
-        crate::effect::make_get_execution_context_effect()
-            .expect("test dispatch effect should be constructible"),
-        continuation.clone(),
-        None,
-        crate::dispatch_state::ActiveHandlerContext {
-            segment_id: handler_seg_id,
-            continuation: continuation.clone(),
-            marker: handler_marker,
-            prompt_seg_id,
-        },
+    let prompt_seg_id = alloc_prompt_boundary(
+        &mut vm,
+        Some(root_id),
+        handler_marker,
+        named_handler("TestHandler"),
     );
+    let mut handler_seg = Segment::new(handler_marker, Some(prompt_seg_id));
+    push_program_frame(
+        &mut handler_seg,
+        Value::Unit,
+        Some(HandlerKind::RustBuiltin),
+    );
+    let handler_seg_id = vm.alloc_segment(handler_seg);
+    install_pending_dispatch(&mut vm, handler_seg_id, dispatch_id, &continuation, None);
     vm.current_segment = Some(handler_seg_id);
 
     let event = vm.handle_dispatch_resume(continuation.clone(), Value::Unit);
@@ -181,7 +496,14 @@ fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
         .segments
         .get(resumed_seg_id)
         .expect("resumed continuation segment must exist");
-    assert_eq!(resumed_segment.parent, Some(handler_seg_id));
+    let anchor_seg_id = resumed_segment
+        .parent
+        .expect("dispatch resume should insert an anchor segment");
+    let anchor_seg = vm
+        .segments
+        .get(anchor_seg_id)
+        .expect("dispatch resume anchor must exist");
+    assert_eq!(anchor_seg.parent, Some(captured_caller_id));
 
     let handler_segment = vm
         .segments
@@ -194,13 +516,13 @@ fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
     );
 
     vm.current_segment = Some(handler_seg_id);
-    vm.current_seg_mut().mode = Mode::Deliver(Value::Unit);
+    vm.mode = Mode::Deliver(Value::Unit);
     let event = vm.step();
     assert!(matches!(event, StepEvent::Continue));
     let handler_segment = vm
         .segments
         .get(handler_seg_id)
-        .expect("handler segment must still exist after popping HandlerDispatch");
+        .expect("handler segment must still exist after handler return");
     assert_eq!(
         handler_segment.parent,
         Some(prompt_seg_id),
@@ -251,7 +573,7 @@ fn test_transfer_throw_uses_captured_caller_instead_of_reused_sibling_segment() 
         "TransferThrow must not chain the thrown continuation under the reused sibling"
     );
     assert!(matches!(
-        resumed_segment.mode,
+        vm.mode,
         Mode::Throw(PyException::RuntimeError { ref message, .. }) if message == "boom"
     ));
 }
@@ -364,7 +686,7 @@ fn test_resume_unstarted_continuation_keeps_scope_parent_outside_handler_wrapper
             .eval(c"lambda effect, k: None", None, None)
             .expect("lambda should compile");
         std::sync::Arc::new(
-            PyKleisli::from_handler(py, callable.unbind()).expect("handler should coerce"),
+            crate::PyKleisli::from_handler(py, callable.unbind()).expect("handler should coerce"),
         ) as KleisliRef
     });
     let continuation = Continuation::create_unstarted_with_metadata(
@@ -394,48 +716,58 @@ fn test_resume_unstarted_continuation_keeps_scope_parent_outside_handler_wrapper
     let prompt_seg_id = handler_body_seg
         .parent
         .expect("handler body must attach to a prompt segment");
-    let prompt_seg = vm
-        .segments
-        .get(prompt_seg_id)
-        .expect("prompt segment must exist");
 
     assert_eq!(
-        prompt_seg.scope_parent,
+        vm.scope_parent(prompt_seg_id),
         Some(outside_scope_id),
         "spawn prompt must retain the captured lexical scope"
     );
     assert_eq!(
-        handler_body_seg.scope_parent,
+        vm.scope_parent(handler_body_seg_id),
         Some(outside_scope_id),
         "spawn handler body must not become a scope_parent bridge"
     );
     assert_eq!(
-        resumed_seg.scope_parent,
+        vm.scope_parent(resumed_seg_id),
         Some(outside_scope_id),
         "spawned task body must retain the captured lexical scope root"
     );
 }
 
 #[test]
-#[should_panic(expected = "state has no context")]
-fn test_dispatch_origin_scan_fails_fast_on_orphaned_segment_dispatch_index() {
+fn test_dispatch_origins_derive_from_live_program_topology() {
     let mut vm = VM::new();
-    let seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
-    vm.current_segment = Some(seg_id);
 
-    vm.dispatch_state.bind_segment(seg_id, DispatchId::fresh());
+    let root_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
+    let effect_site_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(root_id)));
+    let effect_site_segment = vm
+        .segments
+        .get(effect_site_id)
+        .expect("effect-site segment must exist for continuation capture");
+    let dispatch_id = DispatchId::fresh();
+    let continuation =
+        Continuation::capture(effect_site_segment, effect_site_id, Some(dispatch_id));
 
-    let _ = vm.dispatch_origins();
+    let handler_marker = Marker::fresh();
+    let prompt_seg_id = alloc_prompt_boundary(
+        &mut vm,
+        Some(root_id),
+        handler_marker,
+        named_handler("TestHandler"),
+    );
+    let handler_seg_id = vm.alloc_segment(Segment::new(handler_marker, Some(prompt_seg_id)));
+    install_pending_dispatch(&mut vm, handler_seg_id, dispatch_id, &continuation, None);
+    vm.current_segment = Some(handler_seg_id);
+
+    let origins = vm.dispatch_origins();
+    assert_eq!(origins.len(), 1);
+    assert_eq!(origins[0].dispatch_id, dispatch_id);
+    assert_eq!(origins[0].k_origin.cont_id, continuation.cont_id);
 }
 
 #[test]
 fn test_consumed_continuation_stays_detectable_on_cloned_handles() {
-    let continuation = Continuation::with_id(
-        ContId::fresh(),
-        SegmentId::from_index(0),
-        None,
-        None,
-    );
+    let continuation = Continuation::with_id(ContId::fresh(), SegmentId::from_index(0), None, None);
     let handle = continuation.clone_handle();
     let mut owned = continuation.into_owned();
 
