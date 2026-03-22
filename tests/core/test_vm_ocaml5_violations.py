@@ -292,7 +292,6 @@ def test_v35_no_chain_snapshot_on_frame():
         "Frames must not snapshot chain state — derive from topology"
 
 
-@pytest.mark.xfail(reason="V36: InterceptBodyReturn frame variant", strict=False)
 def test_v36_no_intercept_body_return_frame():
     """No interceptor-specific return frame."""
     src = _src(FRAME_RS)
