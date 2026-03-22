@@ -12,7 +12,7 @@ import linecache
 import logging
 import sysconfig
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import TracebackType
 from typing import (
@@ -420,6 +420,13 @@ else:
 
         def _should_render_effect_entry(self, entry: EffectYield) -> bool:
             result = entry.result
+            normalized_source = entry.source_file.replace("\\", "/")
+            if (
+                entry.function_name == "_program"
+                and normalized_source.endswith("/doeff/handlers/spawn_handler.py")
+                and entry.effect_repr.startswith("TaskCompleted(")
+            ):
+                return False
             if isinstance(result, EffectResultResumed):
                 return False
             if isinstance(result, EffectResultTransferred):
@@ -428,6 +435,43 @@ else:
             if isinstance(result, EffectResultThrew):
                 return self._is_final_exception_type(result.exception_repr)
             return True
+
+        def _synthetic_handler_lines_for_exception(
+            self,
+            exception_index: int,
+            entry: ExceptionSite,
+        ) -> tuple[str, ...] | None:
+            hidden_handler: ProgramYield | None = None
+            for previous in reversed(self.active_chain[:exception_index]):
+                if isinstance(previous, SpawnBoundary):
+                    break
+                if (
+                    isinstance(previous, EffectYield)
+                    and isinstance(previous.result, EffectResultThrew)
+                ):
+                    return None
+                if not isinstance(previous, ProgramYield):
+                    continue
+                if previous.function_name == "sync_spawn_intercept_handler":
+                    continue
+                if not previous.is_handler:
+                    continue
+                if (
+                    previous.function_name == entry.function_name
+                    and previous.source_file == entry.source_file
+                ):
+                    hidden_handler = previous
+                    break
+
+            if hidden_handler is None or hidden_handler.handler_kind != "python":
+                return None
+
+            location = f"{entry.source_file}:{entry.source_line}"
+            return (
+                "handlers:",
+                f"{entry.function_name} ✗  {location}",
+                "· pending",
+            )
 
         @staticmethod
         def _hidden_handler_sub_program(entry: ProgramYield) -> str | None:
@@ -465,7 +509,7 @@ else:
             # the next real program/effect row consumes it.
             pending_hidden_sub_program: str | None = None
             last_user_yield_repr: str | None = None
-            for entry in self.active_chain:
+            for index, entry in enumerate(self.active_chain):
                 if isinstance(entry, ProgramYield):
                     if entry.is_handler:
                         hidden_sub_program = self._hidden_handler_sub_program(entry)
@@ -557,6 +601,13 @@ else:
                     lines.append(
                         f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}"
                     )
+                    synthetic_handler_lines = self._synthetic_handler_lines_for_exception(
+                        index,
+                        entry,
+                    )
+                    if synthetic_handler_lines is not None:
+                        for synthetic_line in synthetic_handler_lines:
+                            lines.append(f"    {synthetic_line}")
                     lines.append(f"    raise {entry.exception_type}({entry.message!r})")
                     lines.append("")
 
@@ -645,12 +696,48 @@ else:
         captured = get_captured_traceback(exception)
         if captured is None:
             captured = capture_traceback(exception)
+        active_chain = _annotate_handler_program_yields_from_python_traceback(
+            active_chain,
+            exception.__traceback__,
+        )
         return DoeffTraceback(
             chain=tuple(projected),
             active_chain=tuple(active_chain),
             python_traceback=captured,
             exception=exception,
         )
+
+    def _python_traceback_handler_sites(
+        traceback_obj: TracebackType | None,
+    ) -> set[tuple[str, str, int]]:
+        sites: set[tuple[str, str, int]] = set()
+        tb = traceback_obj
+        while tb is not None:
+            frame = tb.tb_frame
+            locals_map = frame.f_locals
+            if "effect" in locals_map and "k" in locals_map:
+                sites.add((frame.f_code.co_name, frame.f_code.co_filename, tb.tb_lineno))
+            tb = tb.tb_next
+        return sites
+
+    def _annotate_handler_program_yields_from_python_traceback(
+        active_chain: list[ActiveChainEntry],
+        traceback_obj: TracebackType | None,
+    ) -> list[ActiveChainEntry]:
+        handler_sites = _python_traceback_handler_sites(traceback_obj)
+        if not handler_sites:
+            return active_chain
+        annotated: list[ActiveChainEntry] = []
+        for entry in active_chain:
+            if (
+                isinstance(entry, ProgramYield)
+                and entry.handler_kind is None
+                and (entry.function_name, entry.source_file, entry.source_line) in handler_sites
+            ):
+                annotated.append(replace(entry, handler_kind="python"))
+                continue
+            annotated.append(entry)
+        return annotated
 
     def _exception_context_active_chain_and_entries(
         exception: BaseException,
