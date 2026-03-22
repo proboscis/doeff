@@ -139,6 +139,7 @@ def test_fiber_runtime_source_does_not_store_marker_field() -> None:
 
 DISPATCH_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "vm" / "dispatch.rs"
 DISPATCH_OBSERVER_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "dispatch_observer.rs"
+CONTINUATION_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "continuation.rs"
 
 
 def test_vm_source_does_not_have_dispatch_observer() -> None:
@@ -179,6 +180,40 @@ def test_vm_source_does_not_have_continuation_registry() -> None:
     assert "continuation_registry:" not in source, (
         "VM must not have a continuation_registry. Continuation ownership "
         "should be tracked by the Continuation value itself, not a HashMap."
+    )
+    assert "ContinuationStore" not in source, (
+        "VM must not define or reference a ContinuationStore side-table. "
+        "Continuation ownership should live on Continuation values."
+    )
+
+
+def test_dispatch_source_does_not_use_continuation_registry_helpers() -> None:
+    """Dispatch must not bounce continuation ownership through registry helpers."""
+    source = _runtime_source(DISPATCH_RS)
+
+    for forbidden in (
+        "register_continuation(",
+        "take_continuation(",
+        "lookup_continuation(",
+        "lookup_any_continuation(",
+    ):
+        assert forbidden not in source, (
+            "dispatch.rs must pass owned Continuation values directly. "
+            "Registry helper calls reintroduce ContinuationStore indirection."
+        )
+
+
+def test_pyk_runtime_source_holds_continuation_values_not_ids() -> None:
+    """PyK should carry an owned Continuation handle, not only a ContId."""
+    source = _runtime_source(CONTINUATION_RS)
+
+    assert "pub cont_id: ContId" not in source, (
+        "PyK must not store only a ContId. It should carry a Continuation handle "
+        "so Resume/Transfer can pass ownership directly."
+    )
+    assert "from_cont_id" not in source, (
+        "PyK::from_cont_id keeps continuation reconstruction dependent on a registry. "
+        "Construct PyK from a Continuation value instead."
     )
 
 

@@ -3131,6 +3131,23 @@ rules:
         - "**/packages/doeff-vm-core/src/vm.rs"
     pattern-regex: '\bdispatch_effects:\s*HashMap\b|\bdispatch_error_contexts:\s*HashMap\b|\bcontinuation_registry:\s*HashMap\b'
 
+  - id: vm-ocaml5-no-continuation-registry-helpers
+    languages: [rust]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: continuation ownership must flow through Continuation values,
+      not a ContId registry. Do not reintroduce ContinuationStore, register/take/lookup
+      continuation helpers, or cont_id-only PyK handles. Resume/Transfer must carry the
+      Continuation handle directly through the call chain.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/vm.rs"
+        - "**/packages/doeff-vm-core/src/vm/dispatch.rs"
+        - "**/packages/doeff-vm-core/src/continuation.rs"
+        - "**/packages/doeff-vm-core/src/kleisli.rs"
+        - "**/packages/doeff-vm/src/pyvm.rs"
+    pattern-regex: '\bContinuationStore\b|\bregister_continuation\s*\(|\blookup_any_continuation\s*\(|\blookup_continuation\s*\(|\btake_continuation\s*\(|\bfrom_cont_id\s*\(|\bpub\s+cont_id:\s*ContId\b'
+
   # Persistent epoch is a reconciliation mechanism for stale Arc snapshots.
   # With move semantics, there are no stale snapshots — no reconciliation needed.
   - id: vm-ocaml5-no-epoch-reconciliation
