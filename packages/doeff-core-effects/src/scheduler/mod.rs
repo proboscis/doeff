@@ -3795,7 +3795,7 @@ impl IRStreamProgram for SchedulerProgram {
                     TaskMetadata {
                         parent_task,
                         spawn_site,
-                        spawn_dispatch_id: k_user.dispatch_id(),
+                        spawn_dispatch_id: None,
                     },
                 );
                 state.enqueue_ready_task(task_id, priority);

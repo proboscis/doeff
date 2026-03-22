@@ -107,23 +107,6 @@ impl TraceState {
         });
     }
 
-    pub(crate) fn record_frame_entered(
-        &mut self,
-        _metadata: &CallMetadata,
-        _handler_kind: Option<HandlerKind>,
-    ) {
-    }
-
-    pub(crate) fn record_frame_location(
-        &mut self,
-        _stream: &IRStreamRef,
-        _metadata: &CallMetadata,
-        _handler_kind: Option<HandlerKind>,
-    ) {
-    }
-
-    pub(crate) fn record_frame_exited(&mut self, _frame_id: FrameId) {}
-
     pub(crate) fn record_frame_exited_due_to_error(
         &mut self,
         stream: Option<&IRStreamRef>,

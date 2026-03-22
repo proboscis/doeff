@@ -219,32 +219,6 @@ impl VM {
         Some((handler_idx, name))
     }
 
-    pub(super) fn current_handler_identity_for_continuation(
-        &self,
-        continuation: &Continuation,
-    ) -> Option<(usize, String)> {
-        let dispatch_id = continuation.dispatch_id()?;
-        let marker = continuation
-            .dispatch_handler_hint()
-            .map(|hint| hint.marker)
-            .or_else(|| {
-                self.current_handler_dispatch()
-                    .filter(|(_, current_dispatch_id, ..)| *current_dispatch_id == dispatch_id)
-                    .map(|(_, _, _, marker, _)| marker)
-            })
-            .or_else(|| self.active_handler_marker_for_dispatch(dispatch_id))?;
-        let (name, _, _, _) = self.marker_handler_trace_info(marker)?;
-        let origin_seg_id = self
-            .continuation_handler_chain_start(continuation)
-            .or_else(|| {
-                self.dispatch_origin_for_continuation(continuation)
-                    .and_then(|origin| self.continuation_handler_chain_start(&origin.k_origin))
-            })
-            .or_else(|| self.dispatch_origin_user_segment_id(dispatch_id))?;
-        let handler_idx = self.handler_index_in_caller_chain(origin_seg_id, marker)?;
-        Some((handler_idx, name))
-    }
-
     pub(super) fn current_segment_is_active_handler_for_dispatch(
         &self,
         dispatch_id: DispatchId,
@@ -448,30 +422,6 @@ impl VM {
         }
     }
 
-    pub(super) fn emit_frame_entered(
-        &mut self,
-        metadata: &CallMetadata,
-        handler_kind: Option<HandlerKind>,
-    ) {
-        self.trace_state
-            .record_frame_entered(metadata, handler_kind);
-    }
-
-    pub(super) fn emit_frame_location(
-        &mut self,
-        stream: &IRStreamRef,
-        metadata: &CallMetadata,
-        handler_kind: Option<HandlerKind>,
-    ) {
-        self.trace_state
-            .record_frame_location(stream, metadata, handler_kind);
-    }
-
-    pub(super) fn emit_frame_exited(&mut self, metadata: &CallMetadata) {
-        self.trace_state
-            .record_frame_exited(metadata.frame_id as crate::capture::FrameId);
-    }
-
     pub(super) fn emit_frame_exited_due_to_error(
         &mut self,
         stream: Option<&IRStreamRef>,
@@ -607,8 +557,8 @@ impl VM {
                 )))
             }
         };
-        let (use_scoped_active_chain, context_entries) = Python::attach(
-            |py| -> Result<(bool, Vec<Py<PyAny>>), VMError> {
+        let context_entries = Python::attach(
+            |py| -> Result<Vec<Py<PyAny>>, VMError> {
                 let context_bound = context_obj.bind(py);
                 if !context_bound.is_instance_of::<PyExecutionContext>() {
                     let got_type = context_bound
@@ -630,7 +580,6 @@ impl VM {
                     "GetExecutionContext handler returned non-iterable ExecutionContext.entries: {err}"
                 ))
             })?;
-                let mut use_scoped_active_chain = false;
                 let mut context_entries = Vec::new();
                 for entry_result in iter {
                     let entry = entry_result.map_err(|err| {
@@ -649,20 +598,13 @@ impl VM {
                         context_entries.push(entry.unbind());
                         continue;
                     };
-                    if kind == "spawn_boundary" {
-                        use_scoped_active_chain = true;
-                    }
                     context_entries.push(entry.unbind());
                 }
-                Ok((use_scoped_active_chain, context_entries))
+                Ok(context_entries)
             },
         )?;
 
-        let mut active_chain = if use_scoped_active_chain {
-            self.assemble_active_chain_for_dispatch(dispatch_id, None)
-        } else {
-            self.assemble_active_chain(None)
-        };
+        let mut active_chain = self.assemble_active_chain_for_dispatch(dispatch_id, None);
         for entry in context_entries {
             active_chain.push(ActiveChainEntry::ContextEntry { data: entry });
         }

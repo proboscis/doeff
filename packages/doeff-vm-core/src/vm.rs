@@ -213,6 +213,7 @@ struct WithHandlerPlan {
 
 struct DispatchOriginView {
     dispatch_id: DispatchId,
+    parent_dispatch_id: Option<DispatchId>,
     effect: DispatchEffect,
     k_origin: Continuation,
     original_exception: Option<PyException>,
@@ -222,6 +223,7 @@ impl Clone for DispatchOriginView {
     fn clone(&self) -> Self {
         Self {
             dispatch_id: self.dispatch_id,
+            parent_dispatch_id: self.parent_dispatch_id,
             effect: self.effect.clone(),
             k_origin: self.k_origin.clone_handle(),
             original_exception: self.original_exception.clone(),
@@ -490,7 +492,6 @@ impl VM {
 
     pub fn alloc_segment(&mut self, segment: Segment) -> SegmentId {
         let seg_id = self.segments.alloc(segment);
-        self.var_store.init_segment();
         self.bump_segment_topology_epoch(seg_id);
         seg_id
     }
@@ -500,7 +501,6 @@ impl VM {
             return;
         }
         self.segments.free(id);
-        self.var_store.remove_segment();
         self.segment_topology_epochs.remove(&id);
     }
 
@@ -616,12 +616,8 @@ impl VM {
     pub(crate) fn set_pending_program_dispatch(
         &mut self,
         seg_id: SegmentId,
-        mut dispatch: ProgramDispatch,
+        dispatch: ProgramDispatch,
     ) {
-        dispatch.origin.set_dispatch_frame_hint(Some(seg_id));
-        dispatch
-            .handler_continuation
-            .set_dispatch_frame_hint(Some(seg_id));
         if let Some(segment) = self.segments.get_mut(seg_id) {
             segment.pending_program_dispatch = Some(dispatch);
         }
