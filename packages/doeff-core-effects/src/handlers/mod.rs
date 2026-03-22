@@ -1124,7 +1124,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
             match parse_local_python_effect(&obj) {
                 Ok(Some(local_effect)) => {
                     let (cache_snapshot, semaphore_snapshot) = self.snapshot_lazy_state();
-                    let eval_scope = k.clone();
+                    let eval_scope = k.clone_handle();
                     self.phase = LazyAskPhase::AwaitLocalEval {
                         continuation: k,
                         cache_snapshot,
@@ -1223,7 +1223,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                     return self.begin_release_phase(continuation, Ok(cached), semaphore);
                 }
 
-                let eval_scope = continuation.clone();
+                let eval_scope = continuation.clone_handle();
                 self.phase = LazyAskPhase::AwaitEval {
                     key,
                     continuation,
@@ -1691,7 +1691,7 @@ impl IRStreamProgram for ResultSafeHandlerProgram {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_result_safe_python_effect(&obj) {
                 Ok(Some(sub_program)) => {
-                    let eval_scope = k.clone();
+                    let eval_scope = k.clone_handle();
                     self.phase = ResultSafePhase::AwaitEval { continuation: k };
                     IRStreamStep::Yield(DoCtrl::EvalInScope {
                         expr: sub_program,

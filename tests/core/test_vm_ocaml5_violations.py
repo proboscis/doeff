@@ -231,7 +231,6 @@ def test_v27_no_unstarted_on_continuation():
         "Continuation should not hold unstarted programs — separate type"
 
 
-@pytest.mark.xfail(reason="V28: Continuation implements Clone", strict=False)
 def test_v28_continuation_not_clone():
     """Continuation must not implement Clone. Move-only type."""
     src = _src(CONTINUATION_RS)

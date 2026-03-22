@@ -318,18 +318,18 @@ impl Clone for EvalReturnContinuation {
             },
             EvalReturnContinuation::ResumeToContinuation { continuation } => {
                 EvalReturnContinuation::ResumeToContinuation {
-                    continuation: continuation.clone(),
+                    continuation: continuation.clone_handle(),
                 }
             }
             EvalReturnContinuation::TailResumeReturn => EvalReturnContinuation::TailResumeReturn,
             EvalReturnContinuation::ReturnToContinuation { continuation } => {
                 EvalReturnContinuation::ReturnToContinuation {
-                    continuation: continuation.clone(),
+                    continuation: continuation.clone_handle(),
                 }
             }
             EvalReturnContinuation::EvalInScopeReturn { continuation } => {
                 EvalReturnContinuation::EvalInScopeReturn {
-                    continuation: continuation.clone(),
+                    continuation: continuation.clone_handle(),
                 }
             }
         }
