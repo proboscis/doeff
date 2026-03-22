@@ -73,6 +73,8 @@ doeff-events = { workspace = true }
 
 [tool.pytest.ini_options]
 timeout = 60
+timeout_method = "thread"
+timeout_func_only = false
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
