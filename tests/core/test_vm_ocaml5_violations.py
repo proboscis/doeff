@@ -298,7 +298,6 @@ def test_v36_no_intercept_body_return_frame():
     assert "InterceptBodyReturn" not in src
 
 
-@pytest.mark.xfail(reason="V38: Frame implements Clone", strict=False)
 def test_v38_frame_not_clone():
     """Frame must not implement Clone. Frames live on fibers which are moved."""
     src = _src(FRAME_RS)
