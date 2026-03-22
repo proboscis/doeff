@@ -243,7 +243,6 @@ def test_v23_no_dispatch_id_on_continuation():
 # ============================================================================
 
 
-@pytest.mark.xfail(reason="V30: dispatch_displays accumulated HashMap", strict=False)
 def test_v30_no_dispatch_displays():
     """TraceState must not accumulate dispatch display state."""
     src = _src(TRACE_STATE_RS)
