@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::capture::HandlerKind;
+use crate::capture::{EffectResult, FrameId, HandlerDispatchEntry, HandlerKind};
 use crate::continuation::Continuation;
 use crate::do_ctrl::{DoCtrl, InterceptMode};
 use crate::driver::PyException;
@@ -107,11 +107,54 @@ impl InterceptorChainLink {
 }
 
 #[derive(Debug)]
+pub struct DispatchEffectSite {
+    pub frame_id: FrameId,
+    pub function_name: String,
+    pub source_file: String,
+    pub source_line: u32,
+}
+
+impl Clone for DispatchEffectSite {
+    fn clone(&self) -> Self {
+        Self {
+            frame_id: self.frame_id,
+            function_name: self.function_name.clone(),
+            source_file: self.source_file.clone(),
+            source_line: self.source_line,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct DispatchTrace {
+    pub effect_site: Option<DispatchEffectSite>,
+    pub handler_stack: Vec<HandlerDispatchEntry>,
+    pub transfer_target_repr: Option<String>,
+    pub result: EffectResult,
+    pub resumed_once: bool,
+    pub is_execution_context_effect: bool,
+}
+
+impl Clone for DispatchTrace {
+    fn clone(&self) -> Self {
+        Self {
+            effect_site: self.effect_site.clone(),
+            handler_stack: self.handler_stack.clone(),
+            transfer_target_repr: self.transfer_target_repr.clone(),
+            result: self.result.clone(),
+            resumed_once: self.resumed_once,
+            is_execution_context_effect: self.is_execution_context_effect,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct ProgramDispatch {
     pub dispatch_id: DispatchId,
     pub handler_segment_id: SegmentId,
     pub prompt_segment_id: SegmentId,
     pub effect: DispatchEffect,
+    pub trace: DispatchTrace,
     pub origin: Continuation,
     pub handler_continuation: Continuation,
     pub original_exception: Option<PyException>,
@@ -124,6 +167,7 @@ impl Clone for ProgramDispatch {
             handler_segment_id: self.handler_segment_id,
             prompt_segment_id: self.prompt_segment_id,
             effect: self.effect.clone(),
+            trace: self.trace.clone(),
             origin: self.origin.clone_handle(),
             handler_continuation: self.handler_continuation.clone_handle(),
             original_exception: self.original_exception.clone(),

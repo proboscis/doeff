@@ -12,7 +12,8 @@ use pyo3::types::{PyDict, PyModule, PyTuple};
 use crate::arena::FiberArena;
 use crate::bridge::{classify_yielded_for_vm, doctrl_tag, doctrl_to_pyexpr_for_vm};
 use crate::capture::{
-    ActiveChainEntry, HandlerAction, HandlerKind, HandlerSnapshotEntry, TraceEntry,
+    ActiveChainEntry, EffectResult, FrameId, HandlerAction, HandlerDispatchEntry, HandlerKind,
+    HandlerSnapshotEntry, HandlerStatus, TraceEntry,
 };
 use crate::continuation::{Continuation, OwnedControlContinuation, PendingContinuation};
 use crate::debug_state::DebugState;
@@ -25,8 +26,8 @@ use crate::effect::{
 };
 use crate::error::VMError;
 use crate::frame::{
-    CallMetadata, EvalReturnContinuation, Frame, InterceptorChainLink, InterceptorContinuation,
-    ProgramDispatch, ProgramFrameSnapshot,
+    CallMetadata, DispatchEffectSite, DispatchTrace, EvalReturnContinuation, Frame,
+    InterceptorChainLink, InterceptorContinuation, ProgramDispatch, ProgramFrameSnapshot,
 };
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
@@ -579,7 +580,7 @@ impl VM {
             Frame::Program {
                 dispatch: Some(dispatch),
                 ..
-            } if self.trace_state.has_dispatch(dispatch.dispatch_id) => Some(dispatch),
+            } => Some(dispatch),
             Frame::LexicalScope { .. } => None,
             Frame::Program { .. }
             | Frame::EvalReturn(_)
@@ -602,7 +603,7 @@ impl VM {
                 Frame::Program {
                     dispatch: Some(dispatch),
                     ..
-                } if self.trace_state.has_dispatch(dispatch.dispatch_id) => Some(dispatch),
+                } => Some(dispatch),
                 Frame::LexicalScope { .. } => None,
                 Frame::Program { .. }
                 | Frame::EvalReturn(_)

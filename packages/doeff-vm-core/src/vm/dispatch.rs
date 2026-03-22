@@ -22,6 +22,210 @@ impl VM {
             .collect()
     }
 
+    fn handler_trace_from_snapshot(entries: &[HandlerSnapshotEntry]) -> Vec<HandlerDispatchEntry> {
+        entries
+            .iter()
+            .enumerate()
+            .map(|(index, snapshot)| HandlerDispatchEntry {
+                handler_name: snapshot.handler_name.clone(),
+                handler_kind: snapshot.handler_kind,
+                source_file: snapshot.source_file.clone(),
+                source_line: snapshot.source_line,
+                status: if index == 0 {
+                    HandlerStatus::Active
+                } else {
+                    HandlerStatus::Pending
+                },
+            })
+            .collect()
+    }
+
+    fn effect_site_snapshot(
+        effect_site: Option<(FrameId, String, String, u32)>,
+    ) -> Option<DispatchEffectSite> {
+        effect_site.map(
+            |(frame_id, function_name, source_file, source_line)| DispatchEffectSite {
+                frame_id,
+                function_name,
+                source_file,
+                source_line,
+            },
+        )
+    }
+
+    fn dispatch_trace_from_snapshot(
+        effect: &DispatchEffect,
+        effect_site: Option<(FrameId, String, String, u32)>,
+        handler_chain_snapshot: &[HandlerSnapshotEntry],
+    ) -> DispatchTrace {
+        DispatchTrace {
+            effect_site: Self::effect_site_snapshot(effect_site),
+            handler_stack: Self::handler_trace_from_snapshot(handler_chain_snapshot),
+            transfer_target_repr: None,
+            result: EffectResult::Active,
+            resumed_once: false,
+            is_execution_context_effect: Self::is_execution_context_effect(effect),
+        }
+    }
+
+    fn with_dispatch_mut<R>(
+        &mut self,
+        dispatch_id: DispatchId,
+        update: impl FnOnce(&mut ProgramDispatch) -> R,
+    ) -> Option<R> {
+        for (_, segment) in self.segments.iter_mut() {
+            if segment
+                .pending_program_dispatch
+                .as_ref()
+                .is_some_and(|dispatch| dispatch.dispatch_id == dispatch_id)
+            {
+                return segment.pending_program_dispatch.as_mut().map(update);
+            }
+            for frame in segment.frames.iter_mut().rev() {
+                let Frame::Program {
+                    dispatch: Some(dispatch),
+                    ..
+                } = frame
+                else {
+                    continue;
+                };
+                if dispatch.dispatch_id == dispatch_id {
+                    return Some(update(dispatch));
+                }
+            }
+        }
+        None
+    }
+
+    fn dispatch_trace(&self, dispatch_id: DispatchId) -> Option<&DispatchTrace> {
+        for (_, segment) in self.segments.iter() {
+            if let Some(dispatch) = segment
+                .pending_program_dispatch
+                .as_ref()
+                .filter(|dispatch| dispatch.dispatch_id == dispatch_id)
+            {
+                return Some(&dispatch.trace);
+            }
+            for frame in segment.frames.iter().rev() {
+                let Frame::Program {
+                    dispatch: Some(dispatch),
+                    ..
+                } = frame
+                else {
+                    continue;
+                };
+                if dispatch.dispatch_id == dispatch_id {
+                    return Some(&dispatch.trace);
+                }
+            }
+        }
+        None
+    }
+
+    fn record_dispatch_delegated(
+        &mut self,
+        dispatch_id: DispatchId,
+        from_handler_index: usize,
+        to_handler_index: usize,
+    ) {
+        let _ = self.with_dispatch_mut(dispatch_id, |dispatch| {
+            if let Some(from_entry) = dispatch.trace.handler_stack.get_mut(from_handler_index) {
+                if from_entry.status == HandlerStatus::Active {
+                    from_entry.status = HandlerStatus::Delegated;
+                }
+            }
+            if let Some(to_entry) = dispatch.trace.handler_stack.get_mut(to_handler_index) {
+                to_entry.status = HandlerStatus::Active;
+            }
+        });
+    }
+
+    fn record_dispatch_passed(
+        &mut self,
+        dispatch_id: DispatchId,
+        from_handler_index: usize,
+        to_handler_index: usize,
+    ) {
+        let _ = self.with_dispatch_mut(dispatch_id, |dispatch| {
+            if let Some(from_entry) = dispatch.trace.handler_stack.get_mut(from_handler_index) {
+                if from_entry.status == HandlerStatus::Active {
+                    from_entry.status = HandlerStatus::Passed;
+                }
+            }
+            if let Some(to_entry) = dispatch.trace.handler_stack.get_mut(to_handler_index) {
+                to_entry.status = HandlerStatus::Active;
+            }
+        });
+    }
+
+    pub(super) fn record_handler_completion(
+        &mut self,
+        dispatch_id: DispatchId,
+        handler_name: &str,
+        handler_index: usize,
+        action: &HandlerAction,
+    ) {
+        let _ = self.with_dispatch_mut(dispatch_id, |dispatch| {
+            let status = match action {
+                HandlerAction::Resumed { .. } => HandlerStatus::Resumed,
+                HandlerAction::Transferred { .. } => HandlerStatus::Transferred,
+                HandlerAction::Returned { .. } => HandlerStatus::Returned,
+                HandlerAction::Threw { .. } => HandlerStatus::Threw,
+            };
+            if let Some(target) = dispatch.trace.handler_stack.get_mut(handler_index) {
+                target.status = status;
+            }
+
+            dispatch.trace.result = match action {
+                HandlerAction::Resumed { value_repr } | HandlerAction::Returned { value_repr } => {
+                    EffectResult::Resumed {
+                        value_repr: value_repr
+                            .clone()
+                            .unwrap_or_else(|| "[MISSING] None".to_string()),
+                    }
+                }
+                HandlerAction::Transferred { value_repr } => EffectResult::Transferred {
+                    handler_name: handler_name.to_string(),
+                    target_repr: dispatch
+                        .trace
+                        .transfer_target_repr
+                        .clone()
+                        .or_else(|| value_repr.clone())
+                        .unwrap_or_else(|| "[MISSING] <target>".to_string()),
+                },
+                HandlerAction::Threw { exception_repr } => EffectResult::Threw {
+                    handler_name: handler_name.to_string(),
+                    exception_repr: exception_repr
+                        .clone()
+                        .unwrap_or_else(|| "[MISSING] <exception>".to_string()),
+                },
+            };
+            if matches!(action, HandlerAction::Resumed { .. }) {
+                dispatch.trace.resumed_once = true;
+            }
+        });
+    }
+
+    pub(super) fn record_dispatch_transfer_target(
+        &mut self,
+        dispatch_id: DispatchId,
+        resumed_function_name: &str,
+        source_file: &str,
+        source_line: u32,
+    ) {
+        let target_repr = format!("{resumed_function_name}() {source_file}:{source_line}");
+        let _ = self.with_dispatch_mut(dispatch_id, |dispatch| {
+            dispatch.trace.transfer_target_repr = Some(target_repr.clone());
+            if let EffectResult::Transferred {
+                target_repr: current_target,
+                ..
+            } = &mut dispatch.trace.result
+            {
+                *current_target = target_repr.clone();
+            }
+        });
+    }
+
     fn set_dispatch_frame_hint_on_program(
         dispatch: &mut ProgramDispatch,
         seg_id: Option<SegmentId>,
@@ -67,7 +271,6 @@ impl VM {
             .get(seg_id)
             .and_then(|segment| segment.pending_program_dispatch.clone())
             .or_else(|| self.segment_program_dispatch(seg_id).cloned())
-            .filter(|dispatch| self.trace_state.has_dispatch(dispatch.dispatch_id))
             .map(|dispatch| DispatchFrameView { seg_id, dispatch })
     }
 
@@ -76,7 +279,6 @@ impl VM {
             .get(seg_id)
             .and_then(|segment| segment.pending_program_dispatch.as_ref())
             .or_else(|| self.segment_program_dispatch(seg_id))
-            .filter(|dispatch| self.trace_state.has_dispatch(dispatch.dispatch_id))
     }
 
     fn collect_dispatches_in_continuation(
@@ -357,6 +559,17 @@ impl VM {
                     .map(|view| view.dispatch)
             });
 
+        let preserved = dispatch.as_ref().and_then(|dispatch| {
+            matches!(dispatch.trace.result, EffectResult::Threw { .. }).then(|| {
+                LiveDispatchSnapshot {
+                    dispatch_id: dispatch.dispatch_id,
+                    effect_repr: Self::effect_repr(&dispatch.effect),
+                    trace: dispatch.trace.clone(),
+                    frames: self.continuation_frame_stack(&dispatch.origin),
+                }
+            })
+        });
+
         if let Some(dispatch) = dispatch {
             let seg_id = dispatch.handler_segment_id;
             if let Some(segment) = self.segments.get_mut(seg_id) {
@@ -386,7 +599,7 @@ impl VM {
                 }
             }
         }
-        self.trace_state.finish_dispatch(dispatch_id);
+        self.trace_state.finish_dispatch(preserved);
     }
 
     fn dispatch_origin_view(&self, dispatch_id: DispatchId) -> Option<DispatchOriginView> {
@@ -497,15 +710,17 @@ impl VM {
         &self,
         start_segment: Option<SegmentId>,
     ) -> Vec<LiveDispatchSnapshot> {
-        self.dispatch_origins_from_segment(start_segment)
+        self.dispatch_frames_from_segment(start_segment)
             .into_iter()
-            .map(|origin| {
+            .map(|view| {
                 let continuation = self
-                    .active_handler_dispatch_for(origin.dispatch_id)
+                    .active_handler_dispatch_for(view.dispatch.dispatch_id)
                     .map(|(_, continuation, _)| continuation)
-                    .unwrap_or(origin.k_origin);
+                    .unwrap_or_else(|| view.dispatch.origin.clone_handle());
                 LiveDispatchSnapshot {
-                    dispatch_id: origin.dispatch_id,
+                    dispatch_id: view.dispatch.dispatch_id,
+                    effect_repr: Self::effect_repr(&view.dispatch.effect),
+                    trace: view.dispatch.trace.clone(),
                     frames: self.continuation_frame_stack(&continuation),
                 }
             })
@@ -1504,7 +1719,6 @@ impl VM {
         let handler_marker = selected.1;
         let prompt_seg_id = selected.2;
         let handler = selected.3;
-        let is_execution_context_effect = Self::is_execution_context_effect(&effect);
         if self.segments.get(prompt_seg_id).is_none() {
             return Err(VMError::invalid_segment("dispatch prompt not found"));
         }
@@ -1570,6 +1784,8 @@ impl VM {
             self.clear_pending_error_context(seg_id);
         }
 
+        let effect_frames = self.continuation_frame_stack(&k_user);
+        let effect_site = TraceState::effect_site_from_frames(&effect_frames);
         let handler_seg = Segment::new(handler_marker, Some(prompt_seg_id));
         let handler_seg_id = self.alloc_segment(handler_seg);
         self.copy_interceptor_guard_state(Some(seg_id), handler_seg_id);
@@ -1584,31 +1800,17 @@ impl VM {
                 handler_segment_id: handler_seg_id,
                 prompt_segment_id: canonical_prompt_seg_id,
                 effect: effect.clone(),
+                trace: Self::dispatch_trace_from_snapshot(
+                    &effect,
+                    effect_site.clone(),
+                    &handler_chain_snapshot,
+                ),
                 origin: origin_k.clone_handle(),
                 handler_continuation: active_k.clone_handle(),
                 original_exception: original_exception.clone(),
             },
         );
         self.current_segment = Some(handler_seg_id);
-
-        let effect_frames = self.continuation_frame_stack(&k_user);
-        let effect_site = TraceState::effect_site_from_frames(&effect_frames);
-        self.trace_state.record_dispatch_started(
-            dispatch_id,
-            Self::effect_repr(&effect),
-            is_execution_context_effect,
-            &handler_chain_snapshot,
-            effect_site.as_ref().map(|(frame_id, _, _, _)| *frame_id),
-            effect_site
-                .as_ref()
-                .map(|(_, function_name, _, _)| function_name.clone()),
-            effect_site
-                .as_ref()
-                .map(|(_, _, source_file, _)| source_file.clone()),
-            effect_site
-                .as_ref()
-                .map(|(_, _, _, source_line)| *source_line),
-        );
 
         // Preserve handler scope when a type-filtered handler is skipped: this mirrors the
         // `Pass()` forwarding topology without invoking the skipped handler body.
@@ -1632,8 +1834,10 @@ impl VM {
         ))
     }
 
-    fn dispatch_has_terminal_handler_action(&self, dispatch_id: DispatchId) -> bool {
-        self.trace_state.dispatch_has_terminal_result(dispatch_id)
+    pub(super) fn dispatch_has_terminal_handler_action(&self, dispatch_id: DispatchId) -> bool {
+        self.dispatch_trace(dispatch_id).is_some_and(|trace| {
+            !matches!(trace.result, EffectResult::Active)
+        })
     }
 
     pub(super) fn finalize_active_dispatches_as_threw(&mut self, exception: &PyException) {
@@ -1648,7 +1852,7 @@ impl VM {
             else {
                 continue;
             };
-            self.trace_state.record_handler_completed(
+            self.record_handler_completion(
                 dispatch_id,
                 &handler_name,
                 handler_index,
@@ -1695,7 +1899,7 @@ impl VM {
                 self.current_handler_identity_for_continuation(k)
             {
                 let value_repr = Self::value_repr(value);
-                self.trace_state.record_handler_completed(
+                self.record_handler_completion(
                     dispatch_id,
                     &handler_name,
                     handler_index,
@@ -2197,7 +2401,7 @@ impl VM {
                 self.dispatch_supports_error_context_conversion(dispatch_id);
             if !self.dispatch_has_terminal_handler_action(dispatch_id) {
                 if let Some((handler_index, handler_name)) = handler_identity.as_ref() {
-                    self.trace_state.record_handler_completed(
+                    self.record_handler_completion(
                         dispatch_id,
                         handler_name,
                         *handler_index,
@@ -2353,14 +2557,8 @@ impl VM {
         to_idx: usize,
     ) {
         match kind {
-            ForwardKind::Delegate => {
-                self.trace_state
-                    .record_delegated(dispatch_id, from_idx, to_idx);
-            }
-            ForwardKind::Pass => {
-                self.trace_state
-                    .record_passed(dispatch_id, from_idx, to_idx);
-            }
+            ForwardKind::Delegate => self.record_dispatch_delegated(dispatch_id, from_idx, to_idx),
+            ForwardKind::Pass => self.record_dispatch_passed(dispatch_id, from_idx, to_idx),
         }
     }
 
@@ -2593,6 +2791,19 @@ impl VM {
                         handler_segment_id: handler_seg_id,
                         prompt_segment_id: canonical_prompt_seg_id,
                         effect: effect.clone(),
+                        trace: self
+                            .dispatch_trace(dispatch_id)
+                            .cloned()
+                            .unwrap_or_else(|| DispatchTrace {
+                                effect_site: None,
+                                handler_stack: Vec::new(),
+                                transfer_target_repr: None,
+                                result: EffectResult::Active,
+                                resumed_once: false,
+                                is_execution_context_effect: Self::is_execution_context_effect(
+                                    &effect,
+                                ),
+                            }),
                         origin: origin.k_origin.clone_handle(),
                         handler_continuation: observer_k.clone_handle(),
                         original_exception: forwarded_exception
@@ -2664,7 +2875,7 @@ impl VM {
             if let Some((handler_index, handler_name)) =
                 self.current_handler_identity_for_dispatch(dispatch_id)
             {
-                self.trace_state.record_handler_completed(
+                self.record_handler_completion(
                     dispatch_id,
                     &handler_name,
                     handler_index,
@@ -2694,7 +2905,7 @@ impl VM {
                 if let Some((handler_index, handler_name)) =
                     self.current_handler_identity_for_dispatch(dispatch_id)
                 {
-                    self.trace_state.record_handler_completed(
+                    self.record_handler_completion(
                         dispatch_id,
                         &handler_name,
                         handler_index,
@@ -2719,7 +2930,7 @@ impl VM {
             continuation.as_ref(),
         ) {
             let value_repr = Self::value_repr(&value);
-            self.trace_state.record_handler_completed(
+            self.record_handler_completion(
                 dispatch_id,
                 &handler_name,
                 handler_index,
@@ -2761,7 +2972,7 @@ impl VM {
             self.current_handler_identity_for_dispatch(dispatch_id)
         {
             let value_repr = Self::value_repr(&value);
-            self.trace_state.record_handler_completed(
+            self.record_handler_completion(
                 dispatch_id,
                 &handler_name,
                 handler_index,
