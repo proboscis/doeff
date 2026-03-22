@@ -76,7 +76,6 @@ def test_v02_normal_fiber_no_marker():
         "Normal fibers must not carry a marker field"
 
 
-@pytest.mark.xfail(reason="V5: Segment/SegmentKind type aliases still exported", strict=False)
 def test_v05_no_segment_type_aliases():
     """Old Segment/SegmentKind names should not be exported."""
     src = _src(SEGMENT_RS)

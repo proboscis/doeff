@@ -163,8 +163,8 @@ impl Drop for Fiber {
     }
 }
 
-pub type Segment = Fiber;
-pub type SegmentKind = FiberKind;
+pub(crate) use Fiber as Segment;
+pub(crate) use FiberKind as SegmentKind;
 
 #[cfg(test)]
 mod tests {
