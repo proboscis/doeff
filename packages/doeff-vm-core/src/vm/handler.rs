@@ -1,5 +1,4 @@
 use super::*;
-use std::sync::Arc;
 
 impl VM {
     pub(super) fn first_handler_hint_in_caller_chain(
@@ -45,17 +44,6 @@ impl VM {
         layers.reverse();
         crate::segment::ScopeStore {
             scope_bindings: layers,
-        }
-    }
-
-    pub(super) fn track_run_handler(&mut self, handler: &KleisliRef) {
-        if !self
-            .handlers
-            .running
-            .iter()
-            .any(|existing| Arc::ptr_eq(existing, handler))
-        {
-            self.handlers.running.push(handler.clone());
         }
     }
 

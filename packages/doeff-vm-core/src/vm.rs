@@ -29,7 +29,7 @@ use crate::frame::{
 };
 use crate::ids::{ContId, DispatchId, Marker, ScopeId, SegmentId};
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
-use crate::kleisli::{IdentityKleisli, KleisliRef};
+use crate::kleisli::{notify_run_handlers_completed, IdentityKleisli, KleisliRef};
 use crate::memory_stats::live_object_counts;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
@@ -198,12 +198,6 @@ impl ForwardKind {
 }
 
 #[derive(Clone)]
-struct InstalledHandler {
-    marker: Marker,
-    handler: KleisliRef,
-}
-
-#[derive(Clone)]
 struct HandlerChainEntry {
     marker: Marker,
     prompt_seg_id: SegmentId,
@@ -224,12 +218,6 @@ struct DispatchOriginView {
     effect: DispatchEffect,
     k_origin: Continuation,
     original_exception: Option<PyException>,
-}
-
-#[derive(Default)]
-struct HandlerStore {
-    installed: Vec<InstalledHandler>,
-    running: Vec<KleisliRef>,
 }
 
 #[derive(Clone)]
@@ -273,7 +261,6 @@ impl DebugConfig {
 
 pub struct VM {
     pub segments: FiberArena,
-    handlers: HandlerStore,
     pub rust_store: RustStore,
     pub var_store: VarStore,
     pub env_store: HashMap<HashedPyKey, Value>,
@@ -298,7 +285,6 @@ impl VM {
     pub fn new() -> Self {
         VM {
             segments: FiberArena::new(),
-            handlers: HandlerStore::default(),
             rust_store: RustStore::new(),
             var_store: VarStore::default(),
             env_store: HashMap::new(),
@@ -341,7 +327,6 @@ impl VM {
         self.completed_segment = None;
         self.trace_state.clear();
         self.dispatch_state.clear();
-        self.handlers.running.clear();
         self.fiber_runtime.clear();
         self.scope_ids.clear();
         self.scope_parents.clear();
@@ -360,13 +345,7 @@ impl VM {
             return;
         };
 
-        for handler in &self.handlers.running {
-            handler.on_run_end(run_token);
-        }
-        self.handlers.running.clear();
-        self.handlers.running.shrink_to_fit();
-        self.handlers.installed.clear();
-        self.handlers.installed.shrink_to_fit();
+        notify_run_handlers_completed(run_token);
         self.dispatch_state.clear();
         self.dispatch_state.shrink_to_fit();
         self.segments.clear();
