@@ -48,6 +48,7 @@ struct ActiveChainFrameState {
 #[derive(Debug, Clone)]
 struct DispatchDisplayState {
     dispatch_id: DispatchId,
+    owner_frame_id: Option<FrameId>,
     function_name: Option<String>,
     source_file: Option<String>,
     source_line: Option<u32>,
@@ -63,6 +64,7 @@ struct DispatchDisplayState {
 #[derive(Debug, Clone)]
 pub(crate) struct TraceState {
     frame_stack: Vec<ActiveChainFrameState>,
+    frame_indices: HashMap<FrameId, usize>,
     dispatch_displays: HashMap<DispatchId, DispatchDisplayState>,
 }
 
@@ -70,6 +72,7 @@ impl Default for TraceState {
     fn default() -> Self {
         Self {
             frame_stack: Vec::new(),
+            frame_indices: HashMap::new(),
             dispatch_displays: HashMap::new(),
         }
     }
@@ -82,6 +85,10 @@ impl TraceState {
 
     pub(crate) fn dispatch_display_count(&self) -> usize {
         self.dispatch_displays.len()
+    }
+
+    pub(crate) fn has_dispatch(&self, dispatch_id: DispatchId) -> bool {
+        self.dispatch_displays.contains_key(&dispatch_id)
     }
 
     pub(crate) fn frame_stack_capacity(&self) -> usize {
@@ -103,6 +110,7 @@ impl TraceState {
 
     pub(crate) fn shrink_to_fit(&mut self) {
         self.frame_stack.shrink_to_fit();
+        self.frame_indices.shrink_to_fit();
         self.dispatch_displays.shrink_to_fit();
     }
 
@@ -151,12 +159,90 @@ impl TraceState {
         })
     }
 
+    fn push_frame(&mut self, frame: ActiveChainFrameState) {
+        let index = self.frame_stack.len();
+        self.frame_indices.insert(frame.frame_id, index);
+        self.frame_stack.push(frame);
+    }
+
+    fn frame_index(&self, frame_id: FrameId) -> Option<usize> {
+        self.frame_indices.get(&frame_id).copied()
+    }
+
+    fn frame_mut_by_id(&mut self, frame_id: FrameId) -> Option<&mut ActiveChainFrameState> {
+        let index = self.frame_index(frame_id)?;
+        self.frame_stack.get_mut(index)
+    }
+
+    fn remove_frame_at(&mut self, index: usize) {
+        let removed = self.frame_stack.remove(index);
+        self.frame_indices.remove(&removed.frame_id);
+        for (offset, frame) in self.frame_stack.iter().enumerate().skip(index) {
+            self.frame_indices.insert(frame.frame_id, offset);
+        }
+    }
+
+    fn rebuild_frame_indices(&mut self) {
+        self.frame_indices.clear();
+        for (index, frame) in self.frame_stack.iter().enumerate() {
+            self.frame_indices.insert(frame.frame_id, index);
+        }
+    }
+
+    fn upsert_live_frame_state_from_metadata(
+        &mut self,
+        stream: &IRStreamRef,
+        metadata: &CallMetadata,
+        handler_kind: Option<HandlerKind>,
+    ) {
+        let line = Self::stream_debug_location(stream)
+            .map(|location| location.source_line)
+            .unwrap_or(metadata.source_line);
+        let frame_id = metadata.frame_id as FrameId;
+        if let Some(existing) = self.frame_mut_by_id(frame_id) {
+            existing.source_line = line;
+            if existing.args_repr.is_none() {
+                existing.args_repr = metadata.args_repr.clone();
+            }
+            if existing.sub_program_repr == MISSING_SUB_PROGRAM {
+                if let Some(repr) = Self::program_call_repr(metadata) {
+                    existing.sub_program_repr = repr;
+                }
+            }
+            debug_assert!(
+                existing.handler_kind.is_none() || existing.handler_kind == handler_kind,
+                "frame provenance mismatch for frame_id={}: existing={:?}, new={:?}",
+                metadata.frame_id,
+                existing.handler_kind,
+                handler_kind
+            );
+            if existing.handler_kind.is_none() {
+                existing.handler_kind = handler_kind;
+            }
+            return;
+        }
+
+        self.push_frame(ActiveChainFrameState {
+            frame_id,
+            function_name: metadata.function_name.clone(),
+            source_file: metadata.source_file.clone(),
+            source_line: line,
+            args_repr: metadata.args_repr.clone(),
+            sub_program_repr: Self::program_call_repr(metadata)
+                .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
+            handler_kind,
+            dispatch_display: None,
+            exited: false,
+            preserve_on_error: false,
+        });
+    }
+
     pub(crate) fn record_frame_entered(
         &mut self,
         metadata: &CallMetadata,
         handler_kind: Option<HandlerKind>,
     ) {
-        self.frame_stack.push(ActiveChainFrameState {
+        self.push_frame(ActiveChainFrameState {
             frame_id: metadata.frame_id as FrameId,
             function_name: metadata.function_name.clone(),
             source_file: metadata.source_file.clone(),
@@ -177,20 +263,11 @@ impl TraceState {
         metadata: &CallMetadata,
         handler_kind: Option<HandlerKind>,
     ) {
-        Self::upsert_frame_state_from_metadata(
-            &mut self.frame_stack,
-            stream,
-            metadata,
-            &handler_kind,
-        );
+        self.upsert_live_frame_state_from_metadata(stream, metadata, handler_kind);
     }
 
     pub(crate) fn record_frame_exited(&mut self, frame_id: FrameId) {
-        let Some(index) = self
-            .frame_stack
-            .iter()
-            .rposition(|frame| frame.frame_id == frame_id)
-        else {
+        let Some(index) = self.frame_index(frame_id) else {
             return;
         };
 
@@ -205,7 +282,7 @@ impl TraceState {
             return;
         }
 
-        self.frame_stack.remove(index);
+        self.remove_frame_at(index);
     }
 
     pub(crate) fn record_frame_exited_due_to_error(
@@ -217,18 +294,9 @@ impl TraceState {
     ) {
         let frame_id = metadata.frame_id as FrameId;
         if let Some(stream) = stream {
-            Self::upsert_frame_state_from_metadata(
-                &mut self.frame_stack,
-                stream,
-                metadata,
-                &handler_kind,
-            );
-        } else if !self
-            .frame_stack
-            .iter()
-            .any(|frame| frame.frame_id == frame_id)
-        {
-            self.frame_stack.push(ActiveChainFrameState {
+            self.upsert_live_frame_state_from_metadata(stream, metadata, handler_kind);
+        } else if self.frame_index(frame_id).is_none() {
+            self.push_frame(ActiveChainFrameState {
                 frame_id,
                 function_name: metadata.function_name.clone(),
                 source_file: metadata.source_file.clone(),
@@ -245,22 +313,13 @@ impl TraceState {
         if let Some((function_name, source_file, source_line)) =
             Self::resolved_exception_location(exception)
         {
-            if let Some(frame) = self
-                .frame_stack
-                .iter_mut()
-                .rposition(|frame| frame.frame_id == frame_id)
-                .and_then(|index| self.frame_stack.get_mut(index))
-            {
+            if let Some(frame) = self.frame_mut_by_id(frame_id) {
                 if frame.function_name == function_name && frame.source_file == source_file {
                     frame.source_line = source_line;
                 }
             }
         }
-        let Some(index) = self
-            .frame_stack
-            .iter()
-            .rposition(|frame| frame.frame_id == frame_id)
-        else {
+        let Some(index) = self.frame_index(frame_id) else {
             return;
         };
         let preserve_on_error = self.frame_stack.get(index).is_some_and(|frame| {
@@ -273,12 +332,13 @@ impl TraceState {
             }
             return;
         }
-        self.frame_stack.remove(index);
+        self.remove_frame_at(index);
     }
 
     pub(crate) fn clear_preserved_error_frames(&mut self) {
         self.frame_stack
             .retain(|frame| !(frame.exited && frame.preserve_on_error));
+        self.rebuild_frame_indices();
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -295,6 +355,7 @@ impl TraceState {
     ) {
         let dispatch_display = DispatchDisplayState {
             dispatch_id,
+            owner_frame_id: effect_frame_id,
             function_name: effect_function_name,
             source_file: effect_source_file,
             source_line: effect_source_line,
@@ -312,11 +373,7 @@ impl TraceState {
             return;
         };
 
-        if let Some(frame) = self
-            .frame_stack
-            .iter_mut()
-            .find(|frame| frame.frame_id == frame_id)
-        {
+        if let Some(frame) = self.frame_mut_by_id(frame_id) {
             if is_execution_context_effect
                 && frame
                     .dispatch_display
@@ -458,13 +515,15 @@ impl TraceState {
         if let Some(dispatch) = self.dispatch_displays.get_mut(&dispatch_id) {
             update(dispatch);
             let updated = dispatch.clone();
-            for frame in &mut self.frame_stack {
-                if frame
-                    .dispatch_display
-                    .as_ref()
-                    .is_some_and(|display| display.dispatch_id == dispatch_id)
-                {
-                    frame.dispatch_display = Some(updated.clone());
+            if let Some(frame_id) = updated.owner_frame_id {
+                if let Some(frame) = self.frame_mut_by_id(frame_id) {
+                    if frame
+                        .dispatch_display
+                        .as_ref()
+                        .is_some_and(|display| display.dispatch_id == dispatch_id)
+                    {
+                        frame.dispatch_display = Some(updated);
+                    }
                 }
             }
             return;
@@ -479,39 +538,58 @@ impl TraceState {
     }
 
     fn cleanup_exited_dispatch_frames(&mut self, dispatch_id: DispatchId) {
-        self.frame_stack.retain(|frame| {
-            if !frame.exited {
-                return true;
-            }
-            if frame.preserve_on_error {
-                return true;
-            }
-            let Some(dispatch) = frame.dispatch_display.as_ref() else {
-                return false;
-            };
-            dispatch.dispatch_id != dispatch_id || !dispatch.cleanup_ready
+        let frame_id = self
+            .dispatch_display(dispatch_id)
+            .and_then(|display| display.owner_frame_id);
+        let Some(frame_id) = frame_id else {
+            return;
+        };
+        let Some(index) = self.frame_index(frame_id) else {
+            return;
+        };
+        let should_remove = self.frame_stack.get(index).is_some_and(|frame| {
+            frame.exited
+                && !frame.preserve_on_error
+                && frame.dispatch_display.as_ref().is_some_and(|dispatch| {
+                    dispatch.dispatch_id == dispatch_id && dispatch.cleanup_ready
+                })
         });
+        if should_remove {
+            self.remove_frame_at(index);
+        }
     }
 
     fn clear_dispatch_display_from_frames(&mut self, dispatch_id: DispatchId) {
-        for frame in &mut self.frame_stack {
-            if frame
-                .dispatch_display
-                .as_ref()
-                .is_some_and(|display| display.dispatch_id == dispatch_id)
-            {
-                frame.dispatch_display = None;
+        let frame_id = self
+            .dispatch_display(dispatch_id)
+            .and_then(|display| display.owner_frame_id);
+        if let Some(frame_id) = frame_id {
+            if let Some(frame) = self.frame_mut_by_id(frame_id) {
+                if frame
+                    .dispatch_display
+                    .as_ref()
+                    .is_some_and(|display| display.dispatch_id == dispatch_id)
+                {
+                    frame.dispatch_display = None;
+                }
             }
         }
     }
 
     fn mark_exited_dispatch_frames_preserved_on_error(&mut self, dispatch_id: DispatchId) {
-        for frame in &mut self.frame_stack {
-            let Some(dispatch) = frame.dispatch_display.as_ref() else {
-                continue;
-            };
-            if dispatch.dispatch_id == dispatch_id && frame.exited {
-                frame.preserve_on_error = true;
+        let frame_id = self
+            .dispatch_display(dispatch_id)
+            .and_then(|display| display.owner_frame_id);
+        if let Some(frame_id) = frame_id {
+            if let Some(frame) = self.frame_mut_by_id(frame_id) {
+                if frame
+                    .dispatch_display
+                    .as_ref()
+                    .is_some_and(|dispatch| dispatch.dispatch_id == dispatch_id)
+                    && frame.exited
+                {
+                    frame.preserve_on_error = true;
+                }
             }
         }
     }
@@ -1423,6 +1501,10 @@ impl TraceState {
             }
 
             if Self::should_skip_program_frame(frame_stack, index) {
+                if let Some(entry) = Self::synthetic_hidden_gather_effect_entry(frame_stack, index)
+                {
+                    active_chain.push(entry);
+                }
                 continue;
             }
             active_chain.push(Self::program_yield_entry(
@@ -1799,6 +1881,66 @@ impl TraceState {
         Self::next_visible_program_frame(frame_stack, index + 1).is_some()
     }
 
+    fn extract_hidden_gather_effect_repr(args_repr: Option<&str>) -> Option<String> {
+        let args_repr = args_repr?;
+        let prefix = "args=(";
+        let separator = ", K(";
+        if !args_repr.starts_with(prefix) || !args_repr.contains(separator) {
+            return None;
+        }
+        let effect_repr = &args_repr[prefix.len()..args_repr.find(separator)?];
+        effect_repr
+            .starts_with("Gather(")
+            .then(|| effect_repr.to_string())
+    }
+
+    fn next_visible_dispatch_after(
+        frame_stack: &[ActiveChainFrameState],
+        start_index: usize,
+    ) -> Option<&DispatchDisplayState> {
+        frame_stack.iter().skip(start_index).find_map(|frame| {
+            frame
+                .dispatch_display
+                .as_ref()
+                .filter(|dispatch| Self::is_visible_dispatch(dispatch))
+        })
+    }
+
+    fn synthetic_hidden_gather_effect_entry(
+        frame_stack: &[ActiveChainFrameState],
+        index: usize,
+    ) -> Option<ActiveChainEntry> {
+        let frame = frame_stack.get(index)?;
+        if frame.handler_kind.is_some() {
+            return None;
+        }
+
+        let mut gather_repr = None;
+        for next_frame in frame_stack.iter().skip(index + 1) {
+            if next_frame.handler_kind.is_none() {
+                break;
+            }
+            if let Some(effect_repr) =
+                Self::extract_hidden_gather_effect_repr(next_frame.args_repr.as_deref())
+            {
+                gather_repr = Some(effect_repr);
+            }
+        }
+        let effect_repr = gather_repr?;
+        let (handler_stack, result) = Self::next_visible_dispatch_after(frame_stack, index + 1)
+            .map(|dispatch| (dispatch.handler_stack.clone(), dispatch.result.clone()))
+            .unwrap_or_else(|| (Vec::new(), EffectResult::Active));
+
+        Some(ActiveChainEntry::EffectYield {
+            function_name: frame.function_name.clone(),
+            source_file: frame.source_file.clone(),
+            source_line: frame.source_line,
+            effect_repr,
+            handler_stack,
+            result,
+        })
+    }
+
     fn active_handler_trace_info(
         dispatch: &DispatchDisplayState,
     ) -> (String, HandlerKind, Option<String>, Option<u32>) {
@@ -2140,6 +2282,7 @@ mod tests {
             source_line: 12,
             args_repr: None,
             program_call: None,
+            auto_unwrap_programlike: false,
         };
 
         state.record_frame_entered(&metadata, None);

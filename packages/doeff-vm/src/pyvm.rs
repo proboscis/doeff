@@ -834,8 +834,7 @@ impl PyVM {
             )));
         }
 
-        let outside_seg_id = self.vm.instantiate_installed_handlers();
-        let seg = Segment::new(Marker::fresh(), outside_seg_id);
+        let seg = Segment::new(Marker::fresh(), None);
         let seg_id = self.vm.alloc_segment(seg);
         self.vm.current_segment = Some(seg_id);
         if self.vm.current_segment_mut().is_none() {
@@ -3686,10 +3685,9 @@ mod tests {
     fn test_g11_resume_with_consumed_continuation_is_error() {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
-            let mut continuation =
-                crate::continuation::Continuation::placeholder(crate::ids::ContId::from_raw(
-                    999_999,
-                ));
+            let mut continuation = crate::continuation::Continuation::placeholder(
+                crate::ids::ContId::from_raw(999_999),
+            );
             continuation.mark_consumed();
             let k = Bound::new(py, PyK::from_continuation(&continuation))
                 .unwrap()

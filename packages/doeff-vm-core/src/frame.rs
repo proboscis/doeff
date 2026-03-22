@@ -5,8 +5,11 @@ use std::sync::Arc;
 
 use crate::capture::HandlerKind;
 use crate::continuation::panic_on_started_continuation_clone_enabled;
+use crate::continuation::Continuation;
 use crate::do_ctrl::{DoCtrl, InterceptMode};
-use crate::ids::Marker;
+use crate::driver::PyException;
+use crate::effect::DispatchEffect;
+use crate::ids::{DispatchId, Marker, SegmentId};
 use crate::ir_stream::IRStreamRef;
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
@@ -107,6 +110,31 @@ impl InterceptorChainLink {
             types: self.types,
             mode: self.mode,
             metadata: self.metadata,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ProgramDispatch {
+    pub dispatch_id: DispatchId,
+    pub handler_segment_id: SegmentId,
+    pub prompt_segment_id: SegmentId,
+    pub effect: DispatchEffect,
+    pub origin: Continuation,
+    pub handler_continuation: Continuation,
+    pub original_exception: Option<PyException>,
+}
+
+impl Clone for ProgramDispatch {
+    fn clone(&self) -> Self {
+        Self {
+            dispatch_id: self.dispatch_id,
+            handler_segment_id: self.handler_segment_id,
+            prompt_segment_id: self.prompt_segment_id,
+            effect: self.effect.clone(),
+            origin: self.origin.clone_handle(),
+            handler_continuation: self.handler_continuation.clone_handle(),
+            original_exception: self.original_exception.clone(),
         }
     }
 }
@@ -314,6 +342,7 @@ pub enum Frame {
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
         handler_kind: Option<HandlerKind>,
+        dispatch: Option<ProgramDispatch>,
     },
     InterceptorApply(Box<InterceptorContinuation>),
     InterceptorEval(Box<InterceptorContinuation>),
@@ -362,10 +391,12 @@ impl Clone for Frame {
                 stream,
                 metadata,
                 handler_kind,
+                dispatch,
             } => Frame::Program {
                 stream: stream.clone(),
                 metadata: metadata.clone(),
                 handler_kind: *handler_kind,
+                dispatch: dispatch.clone(),
             },
             Frame::InterceptorApply(continuation) => {
                 Frame::InterceptorApply(Box::new((**continuation).clone()))
@@ -402,6 +433,7 @@ impl Frame {
             stream,
             metadata,
             handler_kind: None,
+            dispatch: None,
         }
     }
 
