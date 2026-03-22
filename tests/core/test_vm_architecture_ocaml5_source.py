@@ -139,79 +139,119 @@ def test_fiber_runtime_source_does_not_store_marker_field() -> None:
 
 DISPATCH_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "vm" / "dispatch.rs"
 DISPATCH_OBSERVER_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "dispatch_observer.rs"
+DISPATCH_STATE_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "dispatch_state.rs"
 
 
-@pytest.mark.xfail(reason="Phase 5: DispatchObserver must be eliminated — derive from stack", strict=False)
-def test_vm_source_does_not_have_dispatch_observer() -> None:
-    """DispatchObserver is a side-table tracking dispatch state outside the stack.
-
-    In OCaml 5, dispatch IS the topology change. There is no side-table.
-    All dispatch context should be derivable from the fiber chain:
-    - Walk chain, find handler fibers with active Program frames
-    - Program frame effect_repr tells which effect triggered it
-    - Error enrichment assembled on-demand from chain walk
-    """
-    source = _runtime_source(VM_RS)
-    assert "dispatch_observer:" not in source, (
-        "VM must not have a DispatchObserver. Dispatch context should be derived "
-        "from the fiber chain topology, not accumulated in a side-table."
-    )
+# NOTE ON TEST DESIGN: These tests check for architectural patterns, not just
+# field names. Renaming a field does NOT satisfy the test — the underlying
+# data structure (HashMap, HashSet, Vec) tracking the same concept must be gone.
 
 
-@pytest.mark.xfail(reason="Phase 5: dispatch_observer.rs must not exist", strict=False)
-def test_dispatch_observer_module_does_not_exist() -> None:
-    """The dispatch_observer module should not exist.
+@pytest.mark.xfail(reason="Phase 5: dispatch side-table module must be eliminated", strict=False)
+def test_no_dispatch_side_table_module_exists() -> None:
+    """No separate module should track dispatch state outside the fiber chain.
 
-    All dispatch tracking should be derivable from the stack structure.
+    In OCaml 5, dispatch IS the topology change. All dispatch context is
+    derivable from the fiber chain (walk chain, find handler fibers with
+    active Program frames, read effect_repr). No side-table module needed.
+
+    This test catches both dispatch_observer.rs and dispatch_state.rs (renamed).
     """
     assert not DISPATCH_OBSERVER_RS.exists(), (
-        "dispatch_observer.rs must not exist. Dispatch state should be derived "
-        "from the fiber chain, not tracked in a separate module."
+        "dispatch_observer.rs must not exist."
+    )
+    assert not DISPATCH_STATE_RS.exists(), (
+        "dispatch_state.rs must not exist (renamed dispatch_observer is still a side-table)."
     )
 
 
-@pytest.mark.xfail(reason="Phase 5: continuation_registry must be eliminated", strict=False)
-def test_vm_source_does_not_have_continuation_registry() -> None:
-    """continuation_registry is a HashMap tracking continuations by ContId.
+@pytest.mark.xfail(reason="Phase 5: VM must not have dispatch tracking HashMap", strict=False)
+def test_vm_source_does_not_have_dispatch_tracking_map() -> None:
+    """VM must not have any HashMap tracking dispatch state.
 
-    In OCaml 5, continuations are owned values (moved fibers). They don't
-    need a registry — ownership IS the tracking. A fiber is in the chain
-    or in a continuation, tracked by the Continuation value itself.
+    This catches: dispatch_observer, dispatch_state, DispatchObserver,
+    DispatchState, DispatchContext, or any HashMap<DispatchId, ...> on the VM.
+    Renaming the field does not satisfy this test.
     """
     source = _runtime_source(VM_RS)
-    assert "continuation_registry:" not in source, (
-        "VM must not have a continuation_registry. Continuation ownership "
-        "should be tracked by the Continuation value itself, not a HashMap."
-    )
+    # Check for any dispatch-tracking struct as a VM field
+    for pattern in [
+        "DispatchObserver",
+        "DispatchState",
+        "dispatch_observer:",
+        "dispatch_state:",
+        "HashMap<DispatchId",
+    ]:
+        assert pattern not in source, (
+            f"VM must not have dispatch tracking ({pattern}). "
+            "Dispatch context should be derived from the fiber chain topology."
+        )
 
 
-@pytest.mark.xfail(reason="Phase 5: consumed_cont_ids must move to Continuation.consumed", strict=False)
-def test_vm_source_does_not_have_consumed_cont_ids() -> None:
-    """consumed_cont_ids is a HashSet tracking one-shot enforcement.
+@pytest.mark.xfail(reason="Phase 5: no ContId→Continuation HashMap on VM", strict=False)
+def test_vm_source_does_not_have_continuation_map() -> None:
+    """VM must not have any HashMap mapping ContId to Continuation.
 
-    In OCaml 5, one-shot is a flag on the continuation object itself
-    (consumed: bool). Not a VM-level set.
+    In OCaml 5, continuations are owned values passed through the call chain.
+    No registry, no store, no lookup table. Ownership IS tracking.
+
+    This catches: continuation_registry, continuations, ContinuationStore,
+    or any HashMap<ContId, Continuation> under any name.
     """
     source = _runtime_source(VM_RS)
-    assert "consumed_cont_ids:" not in source, (
-        "VM must not track consumed continuations in a HashSet. "
-        "One-shot enforcement should be Continuation.consumed: bool."
-    )
+    for pattern in [
+        "HashMap<ContId, Continuation>",
+        "continuation_registry:",
+        "ContinuationStore",
+        "continuations:",
+    ]:
+        assert pattern not in source, (
+            f"VM must not have a continuation map ({pattern}). "
+            "Continuations are owned values, not registered in a HashMap."
+        )
 
 
-@pytest.mark.xfail(reason="Phase 5: installed_handlers/run_handlers should be on fiber chain", strict=False)
-def test_vm_source_does_not_have_handler_lists() -> None:
-    """installed_handlers and run_handlers are VM-level lists.
+@pytest.mark.xfail(reason="Phase 5: no HashSet tracking consumed continuations on VM", strict=False)
+def test_vm_source_does_not_have_consumed_tracking_set() -> None:
+    """VM must not have any HashSet tracking consumed continuation IDs.
 
-    In OCaml 5, handler visibility is determined by walking the fiber chain
-    and finding handler delimiters. No separate handler list needed.
+    One-shot enforcement must be ONLY on the Continuation object itself
+    (consumed: bool). No VM-level set under any name.
+
+    This catches: consumed_cont_ids, consumed_continuations, or any
+    HashSet<ContId> on the VM.
     """
     source = _runtime_source(VM_RS)
-    assert "installed_handlers:" not in source, (
-        "VM must not keep a separate installed_handlers list. "
-        "Handler visibility comes from walking the fiber chain."
-    )
-    assert "run_handlers:" not in source, (
-        "VM must not keep a separate run_handlers list. "
-        "Handler visibility comes from walking the fiber chain."
-    )
+    for pattern in [
+        "HashSet<ContId>",
+        "consumed_cont_ids:",
+        "consumed_continuations:",
+    ]:
+        assert pattern not in source, (
+            f"VM must not track consumed continuations ({pattern}). "
+            "One-shot is Continuation.consumed: bool, not a VM-level set."
+        )
+
+
+@pytest.mark.xfail(reason="Phase 5: no handler Vec lists on VM", strict=False)
+def test_vm_source_does_not_have_handler_storage() -> None:
+    """VM must not store handlers in Vec lists.
+
+    In OCaml 5, handler visibility comes from walking the fiber chain
+    and finding handler delimiters. No separate storage needed.
+
+    This catches: installed_handlers, run_handlers, HandlerStore,
+    handlers:, or any Vec<InstalledHandler>/Vec<KleisliRef> on VM.
+    """
+    source = _runtime_source(VM_RS)
+    for pattern in [
+        "installed_handlers:",
+        "run_handlers:",
+        "HandlerStore",
+        "Vec<InstalledHandler>",
+        "Vec<KleisliRef>",
+    ]:
+        assert pattern not in source, (
+            f"VM must not store handlers in lists ({pattern}). "
+            "Handler visibility comes from walking the fiber chain."
+        )
