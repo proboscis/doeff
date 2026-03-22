@@ -767,13 +767,13 @@ fn test_dispatch_origins_derive_from_live_program_topology() {
 
 #[test]
 fn test_consumed_continuation_stays_detectable_on_cloned_handles() {
-    let continuation = Continuation::with_id(ContId::fresh(), SegmentId::from_index(0), None, None);
+    let mut continuation =
+        Continuation::with_id(ContId::fresh(), SegmentId::from_index(0), None, None);
     let handle = continuation.clone_handle();
-    let mut owned = continuation.into_owned();
 
     assert!(!handle.consumed());
-    owned.mark_consumed();
+    continuation.mark_consumed();
 
-    assert!(owned.consumed());
+    assert!(continuation.consumed());
     assert!(handle.consumed());
 }

@@ -1072,7 +1072,7 @@ impl VM {
         k: Continuation,
         op_name: &str,
     ) -> Result<Continuation, VMError> {
-        if !k.is_started() || k.owns_fibers() {
+        if !k.is_started() {
             return Ok(k);
         }
         if self.continuation_is_consumed(&k) {
@@ -1082,7 +1082,7 @@ impl VM {
             .iter()
             .all(|fiber_id| self.segments.get(*fiber_id).is_some())
         {
-            return Ok(k.into_owned());
+            return Ok(k);
         }
         Err(VMError::internal(format!(
             "{op_name} continuation {} no longer owns live fibers",
@@ -1489,7 +1489,11 @@ impl VM {
                     .is_some()
             });
             reusable_origin
-                .map(|origin| origin.k_origin.clone_for_dispatch(Some(dispatch_id)))
+                .map(|origin| {
+                    let mut continuation = origin.k_origin.clone_handle();
+                    continuation.set_dispatch_id(Some(dispatch_id));
+                    continuation
+                })
                 .unwrap_or_else(|| self.capture_live_continuation(seg_id, Some(dispatch_id)))
         } else {
             self.capture_live_continuation(seg_id, Some(dispatch_id))
@@ -1497,7 +1501,9 @@ impl VM {
         k_user.set_resume_dispatch_id(resume_dispatch_id);
         k_user.set_dispatch_handler_hint(current_hint);
         if let Some(return_to) = fallback_return_to {
-            k_user.append_owned_fibers(return_to.clone_for_dispatch(Some(dispatch_id)));
+            let mut continuation = return_to.clone_handle();
+            continuation.set_dispatch_id(Some(dispatch_id));
+            k_user.append_owned_fibers(continuation);
         }
         if let Some(seg_id) = self.current_segment {
             self.clear_pending_error_context(seg_id);
@@ -1893,7 +1899,9 @@ impl VM {
                             program_dispatch.handler_continuation = if restoring_outer_dispatch {
                                 outer_handler_continuation.unwrap_or_else(|| k.clone_handle())
                             } else {
-                                k.clone_for_dispatch(Some(dispatch_id))
+                                let mut continuation = k.clone_handle();
+                                continuation.set_dispatch_id(Some(dispatch_id));
+                                continuation
                             };
                             Self::set_dispatch_frame_hint_on_program(
                                 program_dispatch,
