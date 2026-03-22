@@ -230,6 +230,12 @@ struct ContinuationStore {
     entries: HashMap<ContId, Continuation>,
 }
 
+#[derive(Default)]
+struct HandlerStore {
+    installed: Vec<InstalledHandler>,
+    running: Vec<KleisliRef>,
+}
+
 #[derive(Clone)]
 enum CallerChainEntry {
     Handler(HandlerChainEntry),
@@ -273,8 +279,7 @@ pub struct VM {
     pub segments: FiberArena,
     consumed_continuations: HashSet<ContId>,
     continuations: ContinuationStore,
-    installed_handlers: Vec<InstalledHandler>,
-    run_handlers: Vec<KleisliRef>,
+    handlers: HandlerStore,
     pub rust_store: RustStore,
     pub var_store: VarStore,
     pub env_store: HashMap<HashedPyKey, Value>,
@@ -301,8 +306,7 @@ impl VM {
             segments: FiberArena::new(),
             consumed_continuations: HashSet::new(),
             continuations: ContinuationStore::default(),
-            installed_handlers: Vec::new(),
-            run_handlers: Vec::new(),
+            handlers: HandlerStore::default(),
             rust_store: RustStore::new(),
             var_store: VarStore::default(),
             env_store: HashMap::new(),
@@ -345,7 +349,7 @@ impl VM {
         self.completed_segment = None;
         self.trace_state.clear();
         self.dispatch_observer.clear();
-        self.run_handlers.clear();
+        self.handlers.running.clear();
         self.fiber_runtime.clear();
         self.scope_ids.clear();
         self.scope_parents.clear();
@@ -364,11 +368,13 @@ impl VM {
             return;
         };
 
-        for handler in &self.run_handlers {
+        for handler in &self.handlers.running {
             handler.on_run_end(run_token);
         }
-        self.run_handlers.clear();
-        self.run_handlers.shrink_to_fit();
+        self.handlers.running.clear();
+        self.handlers.running.shrink_to_fit();
+        self.handlers.installed.clear();
+        self.handlers.installed.shrink_to_fit();
         self.continuations.entries.clear();
         self.continuations.entries.shrink_to_fit();
         self.consumed_continuations.clear();

@@ -687,7 +687,7 @@ impl VM {
     }
 
     pub fn instantiate_installed_handlers(&mut self) -> Option<SegmentId> {
-        let installed = self.installed_handlers.clone();
+        let installed = self.handlers.installed.clone();
         let mut outside_seg_id: Option<SegmentId> = None;
         for entry in installed.into_iter().rev() {
             let prompt_seg = Segment::new_prompt(
@@ -1359,21 +1359,25 @@ impl VM {
         handler: KleisliRef,
         _py_identity: Option<PyShared>,
     ) {
-        self.installed_handlers
+        self.handlers
+            .installed
             .retain(|entry| entry.marker != marker);
-        self.installed_handlers
+        self.handlers
+            .installed
             .push(InstalledHandler { marker, handler });
     }
 
     pub fn remove_handler(&mut self, marker: Marker) -> bool {
-        let before = self.installed_handlers.len();
-        self.installed_handlers
+        let before = self.handlers.installed.len();
+        self.handlers
+            .installed
             .retain(|entry| entry.marker != marker);
-        before != self.installed_handlers.len()
+        before != self.handlers.installed.len()
     }
 
     pub fn installed_handler_markers(&self) -> Vec<Marker> {
-        self.installed_handlers
+        self.handlers
+            .installed
             .iter()
             .map(|entry| entry.marker)
             .collect()
