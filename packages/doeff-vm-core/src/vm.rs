@@ -266,7 +266,7 @@ impl DebugConfig {
 
 pub struct VM {
     pub segments: FiberArena,
-    pub consumed_cont_ids: HashSet<ContId>,
+    consumed_continuations: HashSet<ContId>,
     installed_handlers: Vec<InstalledHandler>,
     run_handlers: Vec<KleisliRef>,
     pub rust_store: RustStore,
@@ -294,7 +294,7 @@ impl VM {
     pub fn new() -> Self {
         VM {
             segments: FiberArena::new(),
-            consumed_cont_ids: HashSet::new(),
+            consumed_continuations: HashSet::new(),
             installed_handlers: Vec::new(),
             run_handlers: Vec::new(),
             rust_store: RustStore::new(),
@@ -366,8 +366,8 @@ impl VM {
         self.run_handlers.shrink_to_fit();
         self.continuation_registry.clear();
         self.continuation_registry.shrink_to_fit();
-        self.consumed_cont_ids.clear();
-        self.consumed_cont_ids.shrink_to_fit();
+        self.consumed_continuations.clear();
+        self.consumed_continuations.shrink_to_fit();
         self.dispatch_observer.clear();
         self.dispatch_observer.shrink_to_fit();
         self.segments.clear();

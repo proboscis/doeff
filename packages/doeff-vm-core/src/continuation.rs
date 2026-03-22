@@ -1,6 +1,8 @@
 //! Continuation types for detaching and reattaching fibers.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
+use std::sync::Arc;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -55,6 +57,7 @@ pub struct Continuation {
     owns_fibers: bool,
     captured_caller: Option<SegmentId>,
     consumed: bool,
+    consumed_state: Arc<AtomicBool>,
     unstarted: Option<UnstartedContinuation>,
 }
 
@@ -85,13 +88,18 @@ impl Clone for Continuation {
             fibers: self.fibers.clone(),
             owns_fibers: self.owns_fibers,
             captured_caller: self.captured_caller,
-            consumed: self.consumed,
+            consumed: self.consumed(),
+            consumed_state: Arc::clone(&self.consumed_state),
             unstarted: self.unstarted.clone(),
         }
     }
 }
 
 impl Continuation {
+    fn new_consumed_state(consumed: bool) -> Arc<AtomicBool> {
+        Arc::new(AtomicBool::new(consumed))
+    }
+
     pub fn placeholder(cont_id: ContId) -> Self {
         memory_stats::register_continuation();
         Continuation {
@@ -103,6 +111,7 @@ impl Continuation {
             owns_fibers: false,
             captured_caller: None,
             consumed: false,
+            consumed_state: Self::new_consumed_state(false),
             unstarted: None,
         }
     }
@@ -123,6 +132,7 @@ impl Continuation {
             owns_fibers: true,
             captured_caller,
             consumed: false,
+            consumed_state: Self::new_consumed_state(false),
             unstarted: None,
         }
     }
@@ -183,6 +193,7 @@ impl Continuation {
             owns_fibers: true,
             captured_caller: None,
             consumed: false,
+            consumed_state: Self::new_consumed_state(false),
             unstarted: Some(UnstartedContinuation {
                 program: expr,
                 handlers,
@@ -224,6 +235,7 @@ impl Continuation {
             owns_fibers: true,
             captured_caller: None,
             consumed: false,
+            consumed_state: Self::new_consumed_state(false),
             unstarted: Some(UnstartedContinuation {
                 program: expr,
                 handlers,
@@ -256,7 +268,8 @@ impl Continuation {
             fibers: self.fibers.clone(),
             owns_fibers: false,
             captured_caller: self.captured_caller,
-            consumed: self.consumed,
+            consumed: self.consumed(),
+            consumed_state: Arc::clone(&self.consumed_state),
             unstarted: self.unstarted.clone(),
         }
     }
@@ -349,11 +362,12 @@ impl Continuation {
     }
 
     pub(crate) fn consumed(&self) -> bool {
-        self.consumed
+        self.consumed || self.consumed_state.load(Ordering::Relaxed)
     }
 
     pub(crate) fn mark_consumed(&mut self) {
         self.consumed = true;
+        self.consumed_state.store(true, Ordering::Relaxed);
     }
 
     pub fn program(&self) -> Option<&PyShared> {
@@ -399,7 +413,8 @@ impl Continuation {
             fibers: self.fibers.clone(),
             owns_fibers: true,
             captured_caller: self.captured_caller,
-            consumed: self.consumed,
+            consumed: self.consumed(),
+            consumed_state: Self::new_consumed_state(self.consumed()),
             unstarted: self.unstarted.clone(),
         }
     }

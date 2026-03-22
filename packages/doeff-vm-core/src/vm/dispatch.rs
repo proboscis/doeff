@@ -747,11 +747,18 @@ impl VM {
     }
 
     pub fn is_one_shot_consumed(&self, cont_id: ContId) -> bool {
-        self.consumed_cont_ids.contains(&cont_id)
+        self.consumed_continuations.contains(&cont_id)
+            || self
+                .continuation_registry
+                .get(&cont_id)
+                .is_some_and(Continuation::consumed)
     }
 
     pub fn mark_one_shot_consumed(&mut self, cont_id: ContId) {
-        self.consumed_cont_ids.insert(cont_id);
+        self.consumed_continuations.insert(cont_id);
+        if let Some(continuation) = self.continuation_registry.get_mut(&cont_id) {
+            continuation.mark_consumed();
+        }
         self.continuation_registry.remove(&cont_id);
     }
 
@@ -1086,7 +1093,6 @@ impl VM {
             first_type_filtered_skip = None;
             handler_count = 0;
         }
-
         let fallback_return_to = (selected.is_none())
             .then(|| self.return_to_continuation())
             .flatten();
