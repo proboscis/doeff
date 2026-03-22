@@ -286,13 +286,10 @@ impl DebugState {
                         Frame::Program { metadata, .. } if metadata.is_some() => "Program(meta)",
                         Frame::Program { .. } => "Program",
                         Frame::LexicalScope { .. } => "LexicalScope",
-                        Frame::InterceptorApply(_) => "InterceptorApply",
-                        Frame::InterceptorEval(_) => "InterceptorEval",
                         Frame::EvalReturn(_) => "EvalReturn",
                         Frame::MapReturn { .. } => "MapReturn",
                         Frame::FlatMapBindResult => "FlatMapBindResult",
                         Frame::FlatMapBindSource { .. } => "FlatMapBindSource",
-                        Frame::InterceptBodyReturn { .. } => "InterceptBodyReturn",
                     };
                     crate::vm_debug_log!("  frame[{}]: {}", i, frame_kind);
                 }

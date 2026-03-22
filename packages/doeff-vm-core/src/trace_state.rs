@@ -10,7 +10,7 @@ use crate::capture::{
 };
 use crate::continuation::Continuation;
 use crate::effect::{make_execution_context_object, PyExecutionContext};
-use crate::frame::{CallMetadata, Frame};
+use crate::frame::{CallMetadata, Frame, ProgramFrameSnapshot};
 use crate::ids::{DispatchId, SegmentId};
 use crate::ir_stream::{IRStreamRef, StreamLocation};
 use crate::step::PyException;
@@ -28,7 +28,7 @@ const MISSING_NONE_REPR: &str = "[MISSING] None";
 #[derive(Debug, Clone)]
 pub(crate) struct LiveDispatchSnapshot {
     pub(crate) dispatch_id: DispatchId,
-    pub(crate) frames: Vec<Frame>,
+    pub(crate) frames: Vec<ProgramFrameSnapshot>,
 }
 
 #[derive(Debug, Clone)]
@@ -611,33 +611,27 @@ impl TraceState {
         guard.debug_location()
     }
 
-    fn resume_location_from_frames(frames: &[Frame]) -> Option<(String, String, u32)> {
+    fn resume_location_from_frames(frames: &[ProgramFrameSnapshot]) -> Option<(String, String, u32)> {
         for frame in frames.iter().rev() {
-            if let Frame::Program {
-                stream,
-                metadata: Some(metadata),
-                ..
-            } = frame
-            {
-                if let Some(location) = Self::stream_debug_location(stream) {
-                    return Some((
-                        metadata.function_name.clone(),
-                        location.source_file,
-                        location.source_line,
-                    ));
-                }
+            let metadata = frame.metadata.as_ref()?;
+            if let Some(location) = Self::stream_debug_location(&frame.stream) {
                 return Some((
                     metadata.function_name.clone(),
-                    metadata.source_file.clone(),
-                    metadata.source_line,
+                    location.source_file,
+                    location.source_line,
                 ));
             }
+            return Some((
+                metadata.function_name.clone(),
+                metadata.source_file.clone(),
+                metadata.source_line,
+            ));
         }
         None
     }
 
     pub(crate) fn continuation_resume_location_from_frames(
-        frames: &[Frame],
+        frames: &[ProgramFrameSnapshot],
     ) -> Option<(String, String, u32)> {
         Self::resume_location_from_frames(frames)
     }
@@ -648,39 +642,35 @@ impl TraceState {
     }
 
     pub(crate) fn effect_site_from_frames(
-        frames: &[Frame],
+        frames: &[ProgramFrameSnapshot],
     ) -> Option<(FrameId, String, String, u32)> {
         let mut fallback: Option<(FrameId, String, String, u32)> = None;
 
         for frame in frames.iter().rev() {
-            if let Frame::Program {
-                stream,
-                metadata: Some(metadata),
-                ..
-            } = frame
-            {
-                let fallback_candidate = (
+            let Some(metadata) = frame.metadata.as_ref() else {
+                continue;
+            };
+            let fallback_candidate = (
+                metadata.frame_id as FrameId,
+                metadata.function_name.clone(),
+                metadata.source_file.clone(),
+                metadata.source_line,
+            );
+            let candidate = match Self::stream_debug_location(&frame.stream) {
+                Some(location) => (
                     metadata.frame_id as FrameId,
                     metadata.function_name.clone(),
-                    metadata.source_file.clone(),
-                    metadata.source_line,
-                );
-                let candidate = match Self::stream_debug_location(stream) {
-                    Some(location) => (
-                        metadata.frame_id as FrameId,
-                        metadata.function_name.clone(),
-                        location.source_file,
-                        location.source_line,
-                    ),
-                    None => fallback_candidate,
-                };
+                    location.source_file,
+                    location.source_line,
+                ),
+                None => fallback_candidate,
+            };
 
-                if fallback.is_none() {
-                    fallback = Some(candidate.clone());
-                }
-                if !Self::is_internal_source_file(&candidate.2) {
-                    return Some(candidate);
-                }
+            if fallback.is_none() {
+                fallback = Some(candidate.clone());
+            }
+            if !Self::is_internal_source_file(&candidate.2) {
+                return Some(candidate);
             }
         }
 
@@ -1357,16 +1347,15 @@ impl TraceState {
             .filter(|ctx| visible_dispatch_ids.contains(&ctx.dispatch_id))
         {
             for frame in &dispatch_ctx.frames {
-                let Frame::Program {
-                    stream,
-                    metadata: Some(metadata),
-                    handler_kind,
-                    ..
-                } = frame
-                else {
+                let Some(metadata) = frame.metadata.as_ref() else {
                     continue;
                 };
-                Self::upsert_frame_state_from_metadata(frame_stack, stream, metadata, handler_kind);
+                Self::upsert_frame_state_from_metadata(
+                    frame_stack,
+                    &frame.stream,
+                    metadata,
+                    &frame.handler_kind,
+                );
             }
         }
     }
@@ -1695,17 +1684,11 @@ impl TraceState {
                     .frames
                     .iter()
                     .filter_map(|frame| {
-                        let Frame::Program {
-                            stream,
-                            metadata: Some(metadata),
-                            handler_kind,
-                            ..
-                        } = frame
-                        else {
+                        let Some(metadata) = frame.metadata.as_ref() else {
                             return None;
                         };
 
-                        let line = Self::stream_debug_location(stream)
+                        let line = Self::stream_debug_location(&frame.stream)
                             .map(|location| location.source_line)
                             .unwrap_or(metadata.source_line);
                         Some(ActiveChainFrameState {
@@ -1716,7 +1699,7 @@ impl TraceState {
                             args_repr: metadata.args_repr.clone(),
                             sub_program_repr: Self::program_call_repr(metadata)
                                 .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
-                            handler_kind: *handler_kind,
+                            handler_kind: frame.handler_kind,
                             dispatch_display: None,
                             exited: false,
                             preserve_on_error: false,

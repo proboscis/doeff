@@ -358,8 +358,6 @@ impl VM {
                 self.mode = mode;
                 StepEvent::Continue
             }
-            Frame::InterceptorApply(cont) => self.step_interceptor_apply_frame(*cont, mode),
-            Frame::InterceptorEval(cont) => self.step_interceptor_eval_frame(*cont, mode),
             Frame::EvalReturn(continuation) => self.step_eval_return_frame(*continuation, mode),
             Frame::MapReturn {
                 mapper,
@@ -370,9 +368,6 @@ impl VM {
                 binder,
                 binder_meta,
             } => self.step_flat_map_bind_source_frame(binder, binder_meta, mode),
-            Frame::InterceptBodyReturn { marker } => {
-                self.step_intercept_body_return_frame(marker, mode)
-            }
         }
     }
 
@@ -537,6 +532,12 @@ impl VM {
                     unreachable!("tail-resume return frame received Return mode: {value:?}")
                 }
             };
+        }
+        if let EvalReturnContinuation::InterceptApplyResult { continuation } = continuation {
+            return self.step_interceptor_apply_frame(continuation, mode);
+        }
+        if let EvalReturnContinuation::InterceptEvalResult { continuation } = continuation {
+            return self.step_interceptor_eval_frame(continuation, mode);
         }
 
         if let EvalReturnContinuation::ResumeToContinuation { continuation } = continuation {
@@ -730,6 +731,8 @@ impl VM {
             EvalReturnContinuation::ResumeToContinuation { .. }
             | EvalReturnContinuation::ReturnToContinuation { .. }
             | EvalReturnContinuation::EvalInScopeReturn { .. }
+            | EvalReturnContinuation::InterceptApplyResult { .. }
+            | EvalReturnContinuation::InterceptEvalResult { .. }
             | EvalReturnContinuation::TailResumeReturn => {
                 unreachable!("return-to-continuation frames are handled before value dispatch")
             }
@@ -1023,9 +1026,8 @@ impl VM {
         metadata: Option<CallMetadata>,
         handler_kind: Option<HandlerKind>,
     ) -> StepEvent {
-        let chain = Arc::new(self.current_interceptor_chain());
         self.mode =
-            self.continue_interceptor_chain_mode(yielded, stream, metadata, handler_kind, chain, 0);
+            self.continue_interceptor_chain_mode(yielded, stream, metadata, handler_kind, None);
         StepEvent::Continue
     }
 
@@ -1192,16 +1194,16 @@ impl VM {
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
         handler_kind: Option<HandlerKind>,
-        chain: Arc<Vec<InterceptorChainLink>>,
-        start_idx: usize,
+        after_marker: Option<Marker>,
     ) -> Mode {
         let current = yielded;
-        let mut idx = start_idx;
+        let chain = self.current_interceptor_chain();
+        let start_idx = after_marker
+            .and_then(|marker| chain.iter().position(|link| link.marker == marker).map(|idx| idx + 1))
+            .unwrap_or(0);
 
-        while idx < chain.len() {
-            let link = &chain[idx];
+        for link in chain.iter().skip(start_idx) {
             let marker = link.marker;
-            idx += 1;
             if self.is_interceptor_skipped(marker) {
                 continue;
             }
@@ -1226,8 +1228,6 @@ impl VM {
                 stream,
                 metadata,
                 handler_kind,
-                chain,
-                idx,
             );
         }
 
@@ -1254,8 +1254,6 @@ impl VM {
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
         handler_kind: Option<HandlerKind>,
-        chain: Arc<Vec<InterceptorChainLink>>,
-        next_idx: usize,
     ) -> Mode {
         let interceptor_kleisli = entry.interceptor.clone();
         let guard_eval_depth = entry.types.is_some();
@@ -1281,8 +1279,6 @@ impl VM {
             emitter_stream: stream,
             emitter_metadata: metadata,
             emitter_handler_kind: handler_kind,
-            chain,
-            next_idx,
             interceptor_metadata: interceptor_meta,
             guard_eval_depth,
         };
@@ -1301,7 +1297,9 @@ impl VM {
                 "current_segment_mut() returned None while invoking interceptor",
             ));
         };
-        seg.push_frame(Frame::InterceptorApply(Box::new(continuation)));
+        seg.push_frame(Frame::EvalReturn(Box::new(
+            EvalReturnContinuation::InterceptApplyResult { continuation },
+        )));
 
         Mode::HandleYield(DoCtrl::Apply {
             f: Box::new(DoCtrl::Pure {
@@ -1327,8 +1325,6 @@ impl VM {
             emitter_stream,
             emitter_metadata,
             emitter_handler_kind,
-            chain,
-            next_idx,
             guard_eval_depth,
             ..
         } = continuation;
@@ -1359,8 +1355,7 @@ impl VM {
                 emitter_stream,
                 emitter_metadata,
                 emitter_handler_kind,
-                chain,
-                next_idx,
+                Some(marker),
             );
         }
 
@@ -1378,18 +1373,20 @@ impl VM {
                     "current_segment_mut() returned None while evaluating interceptor result",
                 ));
             };
-            seg.push_frame(Frame::InterceptorEval(Box::new(InterceptorContinuation {
-                marker,
-                original_yielded,
-                original_obj,
-                emitter_stream,
-                emitter_metadata,
-                emitter_handler_kind,
-                chain,
-                next_idx,
-                interceptor_metadata: None,
-                guard_eval_depth,
-            })));
+            seg.push_frame(Frame::EvalReturn(Box::new(
+                EvalReturnContinuation::InterceptEvalResult {
+                    continuation: InterceptorContinuation {
+                        marker,
+                        original_yielded,
+                        original_obj,
+                        emitter_stream,
+                        emitter_metadata,
+                        emitter_handler_kind,
+                        interceptor_metadata: None,
+                        guard_eval_depth,
+                    },
+                },
+            )));
 
             return Mode::HandleYield(DoCtrl::Eval {
                 expr: result_obj,
@@ -1415,8 +1412,6 @@ impl VM {
             emitter_stream,
             emitter_metadata,
             emitter_handler_kind,
-            chain,
-            next_idx,
             ..
         } = continuation;
         let transformed =
@@ -1433,8 +1428,7 @@ impl VM {
             emitter_stream,
             emitter_metadata,
             emitter_handler_kind,
-            chain,
-            next_idx,
+            Some(marker),
         )
     }
 
@@ -1921,13 +1915,10 @@ impl VM {
                 } => Some((stream.clone(), metadata.clone(), *handler_kind)),
                 Frame::LexicalScope { .. } => None,
                 Frame::Program { .. }
-                | Frame::InterceptorApply(_)
-                | Frame::InterceptorEval(_)
                 | Frame::EvalReturn(_)
                 | Frame::MapReturn { .. }
                 | Frame::FlatMapBindResult
-                | Frame::FlatMapBindSource { .. }
-                | Frame::InterceptBodyReturn { .. } => None,
+                | Frame::FlatMapBindSource { .. } => None,
             })
         {
             self.emit_frame_location(&stream, &metadata, handler_kind);
@@ -2090,12 +2081,6 @@ impl VM {
                         Frame::Program { metadata: None, .. } => {
                             // no metadata
                         }
-                        Frame::InterceptorApply(continuation)
-                        | Frame::InterceptorEval(continuation) => {
-                            if let Some(metadata) = continuation.emitter_metadata.as_ref() {
-                                stack.push(metadata.clone());
-                            }
-                        }
                         Frame::EvalReturn(continuation) => match continuation.as_ref() {
                             EvalReturnContinuation::ApplyResolveFunction { metadata, .. }
                             | EvalReturnContinuation::ApplyResolveArg { metadata, .. }
@@ -2104,6 +2089,12 @@ impl VM {
                             | EvalReturnContinuation::ExpandResolveArg { metadata, .. }
                             | EvalReturnContinuation::ExpandResolveKwarg { metadata, .. } => {
                                 stack.push(metadata.clone());
+                            }
+                            EvalReturnContinuation::InterceptApplyResult { continuation }
+                            | EvalReturnContinuation::InterceptEvalResult { continuation } => {
+                                if let Some(metadata) = continuation.emitter_metadata.as_ref() {
+                                    stack.push(metadata.clone());
+                                }
                             }
                             EvalReturnContinuation::ResumeToContinuation { .. } => {
                                 // no metadata
@@ -2124,9 +2115,6 @@ impl VM {
                         }
                         Frame::FlatMapBindSource { binder_meta, .. } => {
                             stack.push(binder_meta.clone());
-                        }
-                        Frame::InterceptBodyReturn { .. } => {
-                            // no metadata
                         }
                     }
                 }

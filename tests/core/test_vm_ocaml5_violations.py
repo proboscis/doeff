@@ -278,7 +278,6 @@ def test_v32_no_dispatch_state_module():
 # ============================================================================
 
 
-@pytest.mark.xfail(reason="V34: Interceptor frame variants", strict=False)
 def test_v34_no_interceptor_frames():
     """No interceptor-specific frame variants."""
     src = _src(FRAME_RS)

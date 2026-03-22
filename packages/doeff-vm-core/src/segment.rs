@@ -334,7 +334,9 @@ mod tests {
         let marker = Marker::fresh();
         let mut seg = Fiber::new(marker, None);
         seg.push_frame(Frame::FlatMapBindResult);
-        seg.push_frame(Frame::InterceptBodyReturn { marker });
+        seg.push_frame(Frame::EvalReturn(Box::new(
+            crate::frame::EvalReturnContinuation::TailResumeReturn,
+        )));
 
         assert_eq!(seg.frame_count(), 2);
 
@@ -342,7 +344,14 @@ mod tests {
         let f2 = seg.pop_frame().unwrap();
         let f1 = seg.pop_frame().unwrap();
 
-        assert!(matches!(f2, Frame::InterceptBodyReturn { .. }));
+        assert!(matches!(
+            f2,
+            Frame::EvalReturn(eval_return)
+                if matches!(
+                    eval_return.as_ref(),
+                    crate::frame::EvalReturnContinuation::TailResumeReturn
+                )
+        ));
         assert!(matches!(f1, Frame::FlatMapBindResult));
 
         assert!(!seg.has_frames());
