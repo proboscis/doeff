@@ -303,7 +303,9 @@ impl VM {
 
     fn active_dispatch_frame(&self, dispatch_id: DispatchId) -> Option<DispatchFrameView> {
         if let Some(view) = self.dispatch_frame_in_topology(self.current_segment, dispatch_id) {
-            if self.handler_dispatch_is_live(&view.dispatch.handler_continuation) {
+            if view.dispatch.handler_segment_id == view.seg_id
+                && self.handler_dispatch_is_live(&view.dispatch.handler_continuation)
+            {
                 return Some(view);
             }
         }
@@ -311,6 +313,7 @@ impl VM {
         self.segments.iter().find_map(|(seg_id, _)| {
             self.dispatch_view_in_segment(seg_id).filter(|view| {
                 view.dispatch.dispatch_id == dispatch_id
+                    && view.dispatch.handler_segment_id == view.seg_id
                     && self.handler_dispatch_is_live(&view.dispatch.handler_continuation)
             })
         })
@@ -332,11 +335,10 @@ impl VM {
             .and_then(|segment| segment.parent)
             .filter(|parent_id| {
                 self.segments.get(*parent_id).is_some_and(|segment| {
-                    matches!(
-                        &segment.kind,
-                        SegmentKind::PromptBoundary { handled_marker, .. }
-                            if *handled_marker == marker
-                    )
+                    segment
+                        .kind
+                        .prompt_boundary()
+                        .is_some_and(|boundary| boundary.handled_marker == marker)
                 })
             })
             .or_else(|| self.find_prompt_boundary_in_caller_chain(seg_id, marker))
@@ -540,7 +542,7 @@ impl VM {
                     })
             })
             .or_else(|| {
-                self.normalize_live_parent_hint(continuation.captured_caller())
+                self.continuation_parent_hint(continuation)
                     .and_then(|seg_id| {
                         self.dispatch_frame_in_topology(Some(seg_id), dispatch_id)
                     })
@@ -608,8 +610,10 @@ impl VM {
         &self,
         dispatch_id: DispatchId,
     ) -> Option<Marker> {
-        self.find_dispatch_frame(dispatch_id)
-            .and_then(|view| self.segments.get(view.seg_id).map(|seg| seg.marker()))
+        let view = self.find_dispatch_frame(dispatch_id)?;
+        self.segments
+            .get(view.dispatch.prompt_segment_id)
+            .and_then(|seg| seg.handled_marker())
     }
 
     pub(super) fn current_handler_dispatch(
@@ -617,8 +621,14 @@ impl VM {
     ) -> Option<(SegmentId, DispatchId, Continuation, Marker, SegmentId)> {
         let seg_id = self.current_segment?;
         let dispatch = self.dispatch_ref_in_segment(seg_id)?;
-        let marker = self.segments.get(seg_id)?.marker();
+        if dispatch.handler_segment_id != seg_id {
+            return None;
+        }
         let prompt_seg_id = dispatch.prompt_segment_id;
+        let marker = self
+            .segments
+            .get(prompt_seg_id)
+            .and_then(|seg| seg.handled_marker())?;
         self.handler_dispatch_is_live(&dispatch.handler_continuation)
             .then(|| {
                 (
@@ -660,8 +670,15 @@ impl VM {
                 cursor = self.segments.get(seg_id).and_then(|seg| seg.parent);
                 continue;
             };
-            let marker = self.segments.get(seg_id)?.marker();
+            if dispatch.handler_segment_id != seg_id {
+                cursor = self.segments.get(seg_id).and_then(|seg| seg.parent);
+                continue;
+            }
             let prompt_seg_id = dispatch.prompt_segment_id;
+            let marker = self
+                .segments
+                .get(prompt_seg_id)
+                .and_then(|seg| seg.handled_marker())?;
             if self.handler_dispatch_is_live(&dispatch.handler_continuation) {
                 return Some((
                     seg_id,
@@ -681,7 +698,10 @@ impl VM {
         dispatch_id: DispatchId,
     ) -> Option<(SegmentId, Continuation, Marker)> {
         let view = self.active_dispatch_frame(dispatch_id)?;
-        let marker = self.segments.get(view.seg_id)?.marker();
+        let marker = self
+            .segments
+            .get(view.dispatch.prompt_segment_id)
+            .and_then(|seg| seg.handled_marker())?;
         self.handler_dispatch_is_live(&view.dispatch.handler_continuation)
             .then(|| {
                 (
@@ -697,7 +717,10 @@ impl VM {
         dispatch_id: DispatchId,
     ) -> Option<(SegmentId, Continuation, Marker)> {
         let view = self.find_dispatch_frame(dispatch_id)?;
-        let marker = self.segments.get(view.seg_id)?.marker();
+        let marker = self
+            .segments
+            .get(view.dispatch.prompt_segment_id)
+            .and_then(|seg| seg.handled_marker())?;
         Some((
             view.seg_id,
             view.dispatch.handler_continuation.clone_handle(),
@@ -881,18 +904,22 @@ impl VM {
         self.continuation_chain_segment_id(scope)
     }
 
+    fn continuation_parent_hint(&self, continuation: &Continuation) -> Option<SegmentId> {
+        self.normalize_live_parent_hint(self.continuation_parent(continuation))
+    }
+
     fn root_delegate_parent_segment_id(&self, continuation: &Continuation) -> Option<SegmentId> {
         continuation
             .outermost_fiber_id()
             .filter(|seg_id| self.segments.get(*seg_id).is_some())
-            .or_else(|| self.normalize_live_parent_hint(continuation.captured_caller()))
+            .or_else(|| self.continuation_parent_hint(continuation))
     }
 
     fn root_live_delegate_parent_segment_id(
         &self,
         continuation: &Continuation,
     ) -> Option<SegmentId> {
-        self.normalize_live_parent_hint(continuation.captured_caller())
+        self.continuation_parent_hint(continuation)
             .or_else(|| {
                 continuation
                     .outermost_fiber_id()
@@ -904,8 +931,7 @@ impl VM {
         let mut cursor = Some(seg_id);
         while let Some(current_seg_id) = cursor {
             let seg = self.segments.get(current_seg_id)?;
-            if matches!(seg.kind, SegmentKind::InterceptorBoundary { .. }) && seg.frames.is_empty()
-            {
+            if seg.kind.is_intercept_boundary() && seg.frames.is_empty() {
                 cursor = seg.parent;
                 continue;
             }
@@ -918,14 +944,14 @@ impl VM {
         continuation
             .segment_id()
             .filter(|seg_id| self.segments.get(*seg_id).is_some())
-            .or_else(|| self.normalize_live_parent_hint(continuation.captured_caller()))
+            .or_else(|| self.continuation_parent_hint(continuation))
     }
 
     pub(super) fn continuation_handler_chain_start(
         &self,
         continuation: &Continuation,
     ) -> Option<SegmentId> {
-        self.normalize_live_parent_hint(continuation.captured_caller())
+        self.continuation_parent_hint(continuation)
             .or_else(|| self.continuation_chain_segment_id(continuation))
     }
 
@@ -1018,7 +1044,10 @@ impl VM {
                 )
             })
             .then_some(seg_id)
-            .filter(|_| self.is_user_defined_python_handler_marker(seg.marker()))
+            .filter(|seg_id| {
+                self.handler_marker_in_caller_chain(*seg_id)
+                    .is_some_and(|marker| self.is_user_defined_python_handler_marker(marker))
+            })
     }
 
     fn delegate_return_continuation(
@@ -1138,9 +1167,6 @@ impl VM {
         let captured_caller = self.segments.get(seg_id).and_then(|segment| segment.parent);
         let mut continuation = Continuation::from_fiber(seg_id, captured_caller, dispatch_id);
         self.annotate_live_continuation(&mut continuation, seg_id);
-        if let Some(segment) = self.segments.get_mut(seg_id) {
-            segment.parent = None;
-        }
         self.touch_segment_topology_subtree(seg_id);
         continuation
     }
@@ -1312,6 +1338,15 @@ impl VM {
             exclude_prompt,
             &restricted_excluded_prompts,
         );
+        if std::env::var_os("DOEFF_DEBUG_DISPATCH").is_some() {
+            eprintln!(
+                "start_dispatch seg={:?} exclude_prompt={:?} current_handler_dispatch={} entries={}",
+                seg_id,
+                exclude_prompt,
+                self.current_handler_dispatch().is_some(),
+                current_entries.len()
+            );
+        }
 
         let mut selected = if cacheable_current_chain {
             self.cached_current_chain_handler_resolution(
@@ -1386,20 +1421,13 @@ impl VM {
                     break;
                 };
                 let next = seg.parent;
-                let Some((handled_marker, handler, types)) = (match &seg.kind {
-                    SegmentKind::PromptBoundary {
-                        handled_marker,
-                        handler,
-                        types,
-                        ..
-                    } => Some((*handled_marker, handler.clone(), types.clone())),
-                    SegmentKind::Normal { .. }
-                    | SegmentKind::InterceptorBoundary { .. }
-                    | SegmentKind::MaskBoundary { .. } => None,
-                }) else {
+                let Some(boundary) = seg.kind.prompt_boundary() else {
                     cursor = next;
                     continue;
                 };
+                let handled_marker = boundary.handled_marker;
+                let handler = boundary.handler.clone();
+                let types = boundary.types.clone();
                 let restricted_excluded = restricted_excluded_prompts.contains(&cursor_id);
                 if Some(cursor_id) != exclude_prompt && !restricted_excluded {
                     let (name, kind, file, line) = Self::handler_trace_info(&handler);
@@ -1640,13 +1668,13 @@ impl VM {
             self.alloc_segment(prompt_seg);
             return true;
         };
-        let seg_marker = seg.marker();
-        seg.kind = SegmentKind::PromptBoundary {
-            marker: seg_marker,
-            handled_marker: marker,
-            handler: handler.clone(),
-            types: None,
-        };
+        let seg_marker = seg.boundary_marker().unwrap_or(marker);
+        seg.set_boundary(crate::segment::FiberBoundary::prompt(
+            seg_marker,
+            marker,
+            handler.clone(),
+            None,
+        ));
         true
     }
 
@@ -1750,7 +1778,7 @@ impl VM {
             let Some(segment) = self.segments.get(cursor) else {
                 return Some(current_seg_id);
             };
-            if matches!(segment.kind, SegmentKind::InterceptorBoundary { .. })
+            if segment.kind.is_intercept_boundary()
                 || self.interceptor_eval_depth(cursor) > 0
                 || !self.interceptor_skip_stack_is_empty(cursor)
                 || segment.frames.iter().any(|frame| {
@@ -1824,7 +1852,7 @@ impl VM {
             let Some(seg) = self.segments.get(seg_id) else {
                 return false;
             };
-            if matches!(seg.kind, SegmentKind::InterceptorBoundary { .. })
+            if seg.kind.is_intercept_boundary()
                 || self.interceptor_eval_depth(seg_id) > 0
                 || !self.interceptor_skip_stack_is_empty(seg_id)
                 || seg.frames.iter().any(|frame| {
@@ -1849,7 +1877,7 @@ impl VM {
             let Some(seg) = self.segments.get(seg_id) else {
                 return false;
             };
-            if matches!(seg.kind, SegmentKind::InterceptorBoundary { .. })
+            if seg.kind.is_intercept_boundary()
                 || self.interceptor_eval_depth(seg_id) > 0
                 || !self.interceptor_skip_stack_is_empty(seg_id)
                 || seg.frames.iter().any(|frame| {
@@ -1881,8 +1909,7 @@ impl VM {
             .normalize_live_parent_hint(caller)
             .filter(|caller_id| *caller_id != seg_id)
             .or_else(|| {
-                k.captured_caller()
-                    .and_then(|caller_id| self.normalize_live_parent_hint(Some(caller_id)))
+                self.continuation_parent_hint(k)
                     .filter(|caller_id| *caller_id != seg_id)
             });
         let existing_caller = self.segments.get(seg_id).and_then(|seg| seg.parent);
@@ -1994,7 +2021,7 @@ impl VM {
                 self.finish_dispatch_tracking(dispatch_id);
                 // Terminal error-context dispatches must detach from the active handler
                 // segment so normal completion does not re-pop the same DispatchOrigin.
-                let caller = k.captured_caller();
+                let caller = self.continuation_parent_hint(&k);
                 self.enter_or_reenter_continuation_segment_with_dispatch(&mut k, caller, None);
                 self.mode = Mode::Throw(enriched_exception);
                 return StepEvent::Continue;
@@ -2046,7 +2073,7 @@ impl VM {
                             if self.is_user_defined_python_handler_marker(marker) {
                                 if self.segment_is_tail_resume_return(handler_seg_id) {
                                     let anchor_seg_id = self.alloc_tail_resume_anchor(
-                                        k.captured_caller(),
+                                        self.continuation_parent_hint(&k),
                                         Some(dispatch_id),
                                     );
                                     return Some(anchor_seg_id);
@@ -2055,7 +2082,7 @@ impl VM {
                                     .capture_continuation(Some(dispatch_id))
                                     .expect("dispatch resume requires a live handler segment");
                                 let anchor_seg_id = self.alloc_resume_return_anchor(
-                                    k.captured_caller(),
+                                    self.continuation_parent_hint(&k),
                                     handler_return,
                                     Some(dispatch_id),
                                 );
@@ -2066,7 +2093,7 @@ impl VM {
                                     .capture_continuation(Some(dispatch_id))
                                     .expect("dispatch resume requires a live handler segment");
                                 let anchor_seg_id = self.alloc_resume_return_anchor(
-                                    k.captured_caller(),
+                                    self.continuation_parent_hint(&k),
                                     handler_return,
                                     Some(dispatch_id),
                                 );
@@ -2084,20 +2111,32 @@ impl VM {
                 let handler_seg_id = self.current_user_defined_python_handler_segment()?;
                 if self.segment_is_tail_resume_return(handler_seg_id) {
                     let anchor_seg_id =
-                        self.alloc_tail_resume_anchor(k.captured_caller(), Some(dispatch_id));
+                        self.alloc_tail_resume_anchor(
+                            self.continuation_parent_hint(&k),
+                            Some(dispatch_id),
+                        );
                     return Some(anchor_seg_id);
                 }
                 let handler_return = self
                     .capture_continuation(Some(dispatch_id))
                     .expect("dispatch resume requires a live handler segment");
                 let anchor_seg_id = self.alloc_resume_return_anchor(
-                    k.captured_caller(),
+                    self.continuation_parent_hint(&k),
                     handler_return,
                     Some(dispatch_id),
                 );
                 Some(anchor_seg_id)
             })
-            .or_else(|| k.captured_caller());
+            .or_else(|| self.continuation_parent_hint(&k));
+        if std::env::var_os("DOEFF_DEBUG_DISPATCH").is_some() {
+            eprintln!(
+                "dispatch_resume cont={} caller={:?} exact_origin={} current_dispatch={:?}",
+                k.cont_id.raw(),
+                caller,
+                exact_origin_target,
+                current_dispatch_id
+            );
+        }
         self.activate_continuation(ContinuationActivationKind::Resume, k, value, caller)
     }
 
@@ -2106,7 +2145,7 @@ impl VM {
             Ok(continuation) => continuation,
             Err(err) => return StepEvent::Error(err),
         };
-        let caller = k.captured_caller();
+        let caller = self.continuation_parent_hint(&k);
         self.activate_continuation(ContinuationActivationKind::Transfer, k, value, caller)
     }
 
@@ -2162,7 +2201,7 @@ impl VM {
         }
         let current_dispatch_id = self.current_dispatch_id();
         let caller = if terminal_dispatch_completion {
-            k.captured_caller()
+            self.continuation_parent_hint(&k)
         } else {
             k.dispatch_id()
                 .filter(|dispatch_id| current_dispatch_id == Some(*dispatch_id))
@@ -2171,7 +2210,7 @@ impl VM {
                         .filter(|(_, current_dispatch_id, ..)| *current_dispatch_id == dispatch_id)
                         .map(|(handler_seg_id, ..)| handler_seg_id)
                 })
-                .or_else(|| k.captured_caller())
+                .or_else(|| self.continuation_parent_hint(&k))
         };
         let dispatch_id = if self.exact_dispatch_origin_for_continuation(&k).is_some() {
             k.resume_dispatch_id()
@@ -2279,13 +2318,13 @@ impl VM {
         };
 
         let mut boundary_seg = Segment::new(interceptor_marker, Some(outside_seg_id));
-        boundary_seg.kind = SegmentKind::InterceptorBoundary {
-            marker: interceptor_marker,
+        boundary_seg.set_boundary(crate::segment::FiberBoundary::intercept(
+            interceptor_marker,
             interceptor,
             types,
             mode,
             metadata,
-        };
+        ));
         let boundary_seg_id = self.alloc_segment(boundary_seg);
         self.copy_interceptor_guard_state(Some(outside_seg_id), boundary_seg_id);
 
@@ -2328,21 +2367,19 @@ impl VM {
                 "Pass forwarding prompt segment not found",
             ));
         };
-        let (handler, types, prompt_caller) = match &prompt_seg.kind {
-            SegmentKind::PromptBoundary { handler, types, .. } => {
-                (handler.clone(), types.clone(), prompt_seg.parent)
-            }
-            SegmentKind::Normal { .. }
-            | SegmentKind::InterceptorBoundary { .. }
-            | SegmentKind::MaskBoundary { .. } => {
-                return Err(VMError::internal(
-                    "Pass forwarding requires current prompt boundary segment",
-                ))
-            }
+        let Some(boundary) = prompt_seg.kind.prompt_boundary() else {
+            return Err(VMError::internal(
+                "Pass forwarding requires current prompt boundary segment",
+            ));
         };
+        let handler = boundary.handler.clone();
+        let types = boundary.types.clone();
+        let prompt_caller = prompt_seg.parent;
         let mut wrapper_caller = prompt_caller;
         wrapper_caller = parent_k_user
-            .captured_caller()
+            .outermost_fiber_id()
+            .and_then(|fiber_id| self.segments.get(fiber_id))
+            .and_then(|segment| segment.parent)
             .and_then(|seg_id| self.normalize_live_parent_hint(Some(seg_id)))
             .or_else(|| {
                 parent_k_user
@@ -2433,20 +2470,12 @@ impl VM {
             idx
         } else {
             let Some(current_entry) = self.segments.get(current_prompt_seg_id).and_then(|seg| {
-                let SegmentKind::PromptBoundary {
-                    handled_marker,
-                    handler,
-                    types,
-                    ..
-                } = &seg.kind
-                else {
-                    return None;
-                };
+                let boundary = seg.kind.prompt_boundary()?;
                 Some(HandlerChainEntry {
-                    marker: *handled_marker,
+                    marker: boundary.handled_marker,
                     prompt_seg_id: current_prompt_seg_id,
-                    handler: handler.clone(),
-                    types: types.clone(),
+                    handler: boundary.handler.clone(),
+                    types: boundary.types.clone(),
                 })
             }) else {
                 return StepEvent::Error(VMError::internal(format!(
@@ -3044,7 +3073,7 @@ impl VM {
                 Ok(continuation) => continuation,
                 Err(err) => return StepEvent::Error(err),
             };
-            let caller = k.captured_caller();
+            let caller = self.continuation_parent_hint(&k);
             return self.activate_continuation(
                 ContinuationActivationKind::Resume,
                 k,
@@ -3053,7 +3082,7 @@ impl VM {
             );
         }
 
-        let caller = k.captured_caller();
+        let caller = self.continuation_parent_hint(&k);
         self.activate_continuation(ContinuationActivationKind::Resume, k, value, caller)
     }
 }

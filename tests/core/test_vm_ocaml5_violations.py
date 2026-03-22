@@ -59,7 +59,6 @@ def _all_fields(struct_body: str) -> list[str]:
 # ============================================================================
 
 
-@pytest.mark.xfail(reason="V1: FiberKind has 4 variants, target is Option<HandlerDelimiter>", strict=False)
 def test_v01_fiberkind_should_be_option_handler():
     """FiberKind should be Option<HandlerDelimiter>, not a 4-variant enum."""
     src = _src(SEGMENT_RS)

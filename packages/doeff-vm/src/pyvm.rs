@@ -594,10 +594,18 @@ impl PyVM {
         let mut other_frames = 0usize;
         for (_, segment) in self.vm.segments.iter() {
             match &segment.kind {
-                SegmentKind::Normal { .. } => normal_segments += 1,
-                SegmentKind::PromptBoundary { .. } => prompt_segments += 1,
-                SegmentKind::InterceptorBoundary { .. } => interceptor_segments += 1,
-                SegmentKind::MaskBoundary { .. } => mask_segments += 1,
+                SegmentKind::Normal => normal_segments += 1,
+                SegmentKind::Boundary(boundary) => {
+                    if boundary.prompt_boundary().is_some() {
+                        prompt_segments += 1;
+                    }
+                    if boundary.intercept_boundary().is_some() {
+                        interceptor_segments += 1;
+                    }
+                    if boundary.mask_boundary().is_some() {
+                        mask_segments += 1;
+                    }
+                }
             }
             if segment.frames.is_empty() {
                 empty_segments += 1;
@@ -3524,18 +3532,16 @@ mod tests {
                 .segments
                 .get(prompt_seg_id)
                 .expect("prompt segment missing");
-            match &prompt_seg.kind {
-                SegmentKind::PromptBoundary { handler, .. } => {
-                    let Some(identity) = handler.py_identity() else {
-                        panic!("G2 FAIL: rust sentinel identity was not preserved");
-                    };
-                    assert!(
-                        identity.bind(py).is(&sentinel.bind(py)),
-                        "G2 FAIL: preserved identity does not match original sentinel"
-                    );
-                }
-                _ => panic!("G2 FAIL: rust sentinel identity was not preserved"),
-            }
+            let Some(boundary) = prompt_seg.kind.prompt_boundary() else {
+                panic!("G2 FAIL: rust sentinel identity was not preserved");
+            };
+            let Some(identity) = boundary.handler.py_identity() else {
+                panic!("G2 FAIL: rust sentinel identity was not preserved");
+            };
+            assert!(
+                identity.bind(py).is(&sentinel.bind(py)),
+                "G2 FAIL: preserved identity does not match original sentinel"
+            );
         });
     }
 
