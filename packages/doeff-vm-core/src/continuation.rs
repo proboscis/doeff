@@ -80,37 +80,6 @@ pub(crate) fn panic_on_started_continuation_clone_enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var_os("DOEFF_PANIC_ON_STARTED_CONT_CLONE").is_some())
 }
 
-impl Clone for Continuation {
-    #[track_caller]
-    fn clone(&self) -> Self {
-        if self.is_started() && self.owns_fibers && panic_on_started_continuation_clone_enabled() {
-            panic!(
-                "started continuation clone detected for cont_id {} at {}\n{}",
-                self.cont_id.raw(),
-                std::panic::Location::caller(),
-                std::backtrace::Backtrace::force_capture()
-            );
-        }
-
-        let metadata = self.shared_metadata();
-        memory_stats::register_continuation();
-        let mut continuation = Continuation {
-            cont_id: self.cont_id,
-            dispatch_id: self.dispatch_id,
-            fibers: Arc::clone(&self.fibers),
-            owns_fibers: self.owns_fibers,
-            consumed: self.consumed(),
-            consumed_state: Arc::clone(&self.consumed_state),
-            metadata_state: Self::new_metadata_state(metadata.captured_caller),
-            unstarted: self.unstarted.clone(),
-        };
-        continuation.set_resume_dispatch_id(metadata.resume_dispatch_id);
-        continuation.set_dispatch_handler_hint(metadata.dispatch_handler_hint);
-        continuation.set_dispatch_frame_hint(metadata.dispatch_frame_hint);
-        continuation
-    }
-}
-
 impl Continuation {
     fn new_consumed_state(consumed: bool) -> Arc<AtomicBool> {
         Arc::new(AtomicBool::new(consumed))
@@ -288,7 +257,7 @@ impl Continuation {
             cont_id: self.cont_id,
             dispatch_id: self.dispatch_id,
             fibers: Arc::clone(&self.fibers),
-            owns_fibers: self.owns_fibers,
+            owns_fibers: false,
             consumed: self.consumed(),
             consumed_state: Arc::clone(&self.consumed_state),
             metadata_state: Arc::clone(&self.metadata_state),
@@ -715,7 +684,7 @@ mod tests {
         let cont = Continuation::capture(&seg, seg_id, None);
         assert_eq!(live_object_counts().live_continuations, baseline + 1);
 
-        let cont_clone = cont.clone();
+        let cont_clone = cont.clone_handle();
         assert_eq!(live_object_counts().live_continuations, baseline + 2);
 
         drop(cont_clone);

@@ -246,7 +246,7 @@ impl VM {
                 }
                 let caller = segment.parent;
                 let scope_parent = self.scope_parent(seg_id);
-                let throw_parent = self.throw_parent(seg_id).cloned();
+                let throw_parent = self.throw_parent(seg_id).map(Continuation::clone_handle);
                 let mode = std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit));
                 match mode {
                     Mode::Deliver(value) => {

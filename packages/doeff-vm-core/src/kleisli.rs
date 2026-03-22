@@ -739,7 +739,7 @@ impl Kleisli for RustKleisli {
         };
 
         let continuation = match &args[1] {
-            Value::Continuation(k) => k.clone(),
+            Value::Continuation(k) => k.clone_handle(),
             other => {
                 return Err(VMError::type_error(format!(
                     "RustKleisli arg[1] must be Continuation, got {other:?}"

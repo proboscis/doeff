@@ -2326,11 +2326,11 @@ impl VM {
         let eval_return = if self.continuation_chain_contains_return_to_continuation(parent_k_user)
         {
             EvalReturnContinuation::ReturnToContinuation {
-                continuation: parent_k_user.clone(),
+                continuation: parent_k_user.clone_handle(),
             }
         } else {
             EvalReturnContinuation::ResumeToContinuation {
-                continuation: parent_k_user.clone(),
+                continuation: parent_k_user.clone_handle(),
             }
         };
         pass_seg.push_frame(Frame::EvalReturn(Box::new(eval_return)));
@@ -2440,7 +2440,9 @@ impl VM {
                     ));
                 };
                 let parent_owned =
-                    match self.materialize_owned_continuation(parent_k_user.clone(), "Delegate") {
+                    match self
+                        .materialize_owned_continuation(parent_k_user.clone_handle(), "Delegate")
+                    {
                         Ok(continuation) => continuation,
                         Err(err) => return StepEvent::Error(err),
                     };

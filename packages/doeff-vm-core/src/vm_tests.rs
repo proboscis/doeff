@@ -486,7 +486,7 @@ fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
     install_pending_dispatch(&mut vm, handler_seg_id, dispatch_id, &continuation, None);
     vm.current_segment = Some(handler_seg_id);
 
-    let event = vm.handle_dispatch_resume(continuation.clone(), Value::Unit);
+    let event = vm.handle_dispatch_resume(continuation.clone_handle(), Value::Unit);
     assert!(matches!(event, StepEvent::Continue));
 
     let resumed_seg_id = vm

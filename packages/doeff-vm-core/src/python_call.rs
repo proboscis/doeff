@@ -33,7 +33,7 @@ pub enum PythonCall {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum PendingPython {
     EvalExpr {
         metadata: Option<CallMetadata>,
@@ -54,6 +54,42 @@ pub enum PendingPython {
         k: Continuation,
     },
     AsyncEscape,
+}
+
+impl Clone for PendingPython {
+    fn clone(&self) -> Self {
+        match self {
+            PendingPython::EvalExpr { metadata } => PendingPython::EvalExpr {
+                metadata: metadata.clone(),
+            },
+            PendingPython::CallFuncReturn => PendingPython::CallFuncReturn,
+            PendingPython::StepUserGenerator {
+                stream,
+                metadata,
+                handler_kind,
+                incoming_throw,
+            } => PendingPython::StepUserGenerator {
+                stream: stream.clone(),
+                metadata: metadata.clone(),
+                handler_kind: *handler_kind,
+                incoming_throw: incoming_throw.clone(),
+            },
+            PendingPython::ExpandReturn {
+                metadata,
+                handler_return,
+            } => PendingPython::ExpandReturn {
+                metadata: metadata.clone(),
+                handler_return: *handler_return,
+            },
+            PendingPython::RustProgramContinuation { marker, k } => {
+                PendingPython::RustProgramContinuation {
+                    marker: *marker,
+                    k: k.clone_handle(),
+                }
+            }
+            PendingPython::AsyncEscape => PendingPython::AsyncEscape,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
