@@ -329,7 +329,6 @@ def test_v40_no_segment_keyed_logs():
     assert "writer_logs_by_segment:" not in src
 
 
-@pytest.mark.xfail(reason="V41: bindings_by_segment on VarStore", strict=False)
 def test_v41_no_segment_keyed_bindings():
     """Bindings should be VarId-addressed ref cells."""
     src = _src(VAR_STORE_RS)
