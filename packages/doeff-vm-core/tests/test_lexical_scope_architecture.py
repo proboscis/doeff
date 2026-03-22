@@ -5,7 +5,7 @@ from pathlib import Path
 
 CORE_ROOT = Path(__file__).resolve().parents[1]
 SEGMENT_RS = CORE_ROOT / "src" / "segment.rs"
-RUST_STORE_RS = CORE_ROOT / "src" / "rust_store.rs"
+VAR_STORE_RS = CORE_ROOT / "src" / "var_store.rs"
 VM_DISPATCH_RS = CORE_ROOT / "src" / "vm" / "dispatch.rs"
 VM_HANDLER_RS = CORE_ROOT / "src" / "vm" / "handler.rs"
 SCHEDULER_RS = CORE_ROOT.parent / "doeff-core-effects" / "src" / "scheduler" / "mod.rs"
@@ -19,54 +19,55 @@ def _runtime_source(path: Path) -> str:
     return source
 
 
-def test_segment_tracks_scope_parent_and_scoped_storage() -> None:
+def test_fiber_uses_single_parent_chain_for_scope_and_handler_visibility() -> None:
     source = _runtime_source(SEGMENT_RS)
 
-    assert "pub scope_parent: Option<SegmentId>" in source, (
-        "Segment must separate lexical scope lookup from dynamic caller flow."
+    assert "pub parent: Option<FiberId>" in source, (
+        "Fiber must keep a single parent chain that serves both dynamic and lexical lookup."
     )
-    assert "pub variables: HashMap<VarId, Value>" in source, (
-        "Segment must own scoped variable storage for lexical bindings."
+    assert "scope_parent:" not in source, (
+        "Separate lexical scope chains must not exist; walk Fiber.parent instead."
     )
-    assert "pub scope_store" not in source, (
-        "ScopeStore must be removed from Segment once lexical bindings live on segments."
+    assert "variables:" not in source, (
+        "Lexical variable storage must not move onto Fiber fields."
+    )
+    assert "struct ScopeStore" not in source, (
+        "ScopeStore should not be defined in the segment module."
     )
 
 
-def test_rust_store_has_no_handler_specific_fields_left() -> None:
-    source = _runtime_source(RUST_STORE_RS)
+def test_var_store_replaces_deleted_rust_store_module() -> None:
+    source = _runtime_source(VAR_STORE_RS)
 
-    assert "pub state:" not in source, "RustStore.state must be removed."
-    assert "pub env:" not in source, "RustStore.env must be removed."
-    assert "pub log:" not in source, "RustStore.log must be removed."
+    assert "global_state:" in source, "VarStore must own the single handler state heap."
+    assert "root_scope_bindings:" in source, (
+        "VarStore must keep root lexical bindings for Ask/Local resolution."
+    )
 
 
-def test_spawn_reuses_live_scope_chain_without_scope_cloning() -> None:
+def test_spawn_reuses_live_fiber_chain_without_scope_cloning() -> None:
     dispatch_source = _runtime_source(VM_DISPATCH_RS)
 
     assert "clone_spawn_scope_chain" not in dispatch_source, (
-        "Shared-handler Spawn must not clone lexical ancestry into per-task handler copies."
+        "Spawn must not clone lexical ancestry into per-task copies."
     )
     assert "EvalReturnContinuation::ReturnToContinuation" in dispatch_source, (
-        "Spawned continuations need a return anchor so task completion goes back to the scheduler."
+        "Spawned continuations still need a return anchor into the live caller chain."
     )
-    assert "let mut return_anchor = Segment::new(Marker::fresh(), Some(current_seg_id));" in dispatch_source, (
-        "Spawn must allocate a return anchor that re-enters the live caller chain."
-    )
-    assert "body_seg.scope_parent = scope_outside;" in dispatch_source, (
-        "Spawn still needs lexical scope wiring for Local/Ask/Var inheritance."
+    assert "scope_parent" not in dispatch_source, (
+        "Spawn must not wire a separate lexical scope chain."
     )
 
 
-def test_handler_lookup_walks_dynamic_caller_chain_not_lexical_scope_chain() -> None:
+def test_handler_lookup_walks_parent_chain() -> None:
     handler_source = _runtime_source(VM_HANDLER_RS)
     dispatch_source = _runtime_source(VM_DISPATCH_RS)
 
-    assert "cursor = seg.caller;" in handler_source, (
-        "Handler lookup helpers must follow dynamic caller links for shared-handler Spawn."
+    assert "cursor = seg.parent;" in handler_source, (
+        "Handler lookup must walk the live Fiber.parent chain."
     )
-    assert "let next = seg.caller;" in dispatch_source, (
-        "Dispatch selection must scan the caller chain instead of lexical scope_parent ancestry."
+    assert "let next = seg.parent;" in dispatch_source, (
+        "Dispatch selection must scan the parent chain instead of separate scope links."
     )
 
 
@@ -79,5 +80,5 @@ def test_scheduler_spawn_path_no_longer_requests_get_handlers() -> None:
     spawn_block = source[start:end]
 
     assert "DoCtrl::GetHandlers" not in spawn_block, (
-        "Spawn inheritance must come from lexical scope, not GetHandlers replay."
+        "Spawn inheritance must come from the live fiber chain, not GetHandlers replay."
     )
