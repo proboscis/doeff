@@ -285,7 +285,6 @@ def test_v34_no_interceptor_frames():
     assert "InterceptorEval" not in src, "Frame must not have InterceptorEval variant"
 
 
-@pytest.mark.xfail(reason="V35: Arc<Vec<InterceptorChainLink>> snapshot on frame", strict=False)
 def test_v35_no_chain_snapshot_on_frame():
     """Frames must not hold snapshots of handler/interceptor chains."""
     src = _src(FRAME_RS)
