@@ -99,16 +99,15 @@ impl VM {
                             | EvalReturnContinuation::ExpandResolveFactory { .. }
                             | EvalReturnContinuation::ExpandResolveArg { .. }
                             | EvalReturnContinuation::ExpandResolveKwarg { .. }
+                            | EvalReturnContinuation::InterceptApplyResult { .. }
+                            | EvalReturnContinuation::InterceptEvalResult { .. }
                             | EvalReturnContinuation::TailResumeReturn => {}
                         },
                         Frame::LexicalScope { .. }
                         | Frame::Program { .. }
-                        | Frame::InterceptorApply(_)
-                        | Frame::InterceptorEval(_)
                         | Frame::MapReturn { .. }
                         | Frame::FlatMapBindResult
-                        | Frame::FlatMapBindSource { .. }
-                        | Frame::InterceptBodyReturn { .. } => {}
+                        | Frame::FlatMapBindSource { .. } => {}
                     }
                 }
             }

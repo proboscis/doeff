@@ -26,7 +26,7 @@ use crate::effect::{
 use crate::error::VMError;
 use crate::frame::{
     CallMetadata, EvalReturnContinuation, Frame, InterceptorChainLink, InterceptorContinuation,
-    ProgramDispatch,
+    ProgramDispatch, ProgramFrameSnapshot,
 };
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
@@ -532,7 +532,10 @@ impl VM {
             .map(|segment| segment.frames.as_slice())
     }
 
-    pub(crate) fn continuation_frame_stack(&self, continuation: &Continuation) -> Vec<Frame> {
+    pub(crate) fn continuation_frame_stack(
+        &self,
+        continuation: &Continuation,
+    ) -> Vec<ProgramFrameSnapshot> {
         continuation
             .fibers()
             .iter()
@@ -544,20 +547,17 @@ impl VM {
                         metadata,
                         handler_kind,
                         dispatch,
-                    } => Some(Frame::Program {
+                    } => Some(ProgramFrameSnapshot {
                         stream: stream.clone(),
                         metadata: metadata.clone(),
                         handler_kind: *handler_kind,
                         dispatch: dispatch.clone(),
                     }),
                     Frame::LexicalScope { .. } => None,
-                    Frame::InterceptorApply(_)
-                    | Frame::InterceptorEval(_)
-                    | Frame::EvalReturn(_)
+                    Frame::EvalReturn(_)
                     | Frame::MapReturn { .. }
                     | Frame::FlatMapBindResult
-                    | Frame::FlatMapBindSource { .. }
-                    | Frame::InterceptBodyReturn { .. } => None,
+                    | Frame::FlatMapBindSource { .. } => None,
                 })
             })
             .collect()
@@ -582,13 +582,10 @@ impl VM {
             } if self.trace_state.has_dispatch(dispatch.dispatch_id) => Some(dispatch),
             Frame::LexicalScope { .. } => None,
             Frame::Program { .. }
-            | Frame::InterceptorApply(_)
-            | Frame::InterceptorEval(_)
             | Frame::EvalReturn(_)
             | Frame::MapReturn { .. }
             | Frame::FlatMapBindResult
-            | Frame::FlatMapBindSource { .. }
-            | Frame::InterceptBodyReturn { .. } => None,
+            | Frame::FlatMapBindSource { .. } => None,
         })
     }
 
@@ -608,13 +605,10 @@ impl VM {
                 } if self.trace_state.has_dispatch(dispatch.dispatch_id) => Some(dispatch),
                 Frame::LexicalScope { .. } => None,
                 Frame::Program { .. }
-                | Frame::InterceptorApply(_)
-                | Frame::InterceptorEval(_)
                 | Frame::EvalReturn(_)
                 | Frame::MapReturn { .. }
                 | Frame::FlatMapBindResult
-                | Frame::FlatMapBindSource { .. }
-                | Frame::InterceptBodyReturn { .. } => None,
+                | Frame::FlatMapBindSource { .. } => None,
             })
     }
 
@@ -799,6 +793,8 @@ impl VM {
             | EvalReturnContinuation::ExpandResolveFactory { .. }
             | EvalReturnContinuation::ExpandResolveArg { .. }
             | EvalReturnContinuation::ExpandResolveKwarg { .. }
+            | EvalReturnContinuation::InterceptApplyResult { .. }
+            | EvalReturnContinuation::InterceptEvalResult { .. }
             | EvalReturnContinuation::TailResumeReturn => {}
         }
     }
@@ -1193,43 +1189,17 @@ impl VM {
                     } if metadata.auto_unwrap_programlike => return Some(metadata.clone()),
                     Frame::LexicalScope { .. } => {}
                     Frame::Program { .. } => {}
-                    Frame::InterceptorApply(continuation)
-                    | Frame::InterceptorEval(continuation) => {
+                    Frame::EvalReturn(continuation) => {
                         if let Some(metadata) = continuation
-                            .emitter_metadata
-                            .as_ref()
-                            .filter(|metadata| metadata.auto_unwrap_programlike)
-                        {
-                            return Some(metadata.clone());
-                        }
-                        if let Some(metadata) = continuation
-                            .interceptor_metadata
-                            .as_ref()
+                            .metadata()
                             .filter(|metadata| metadata.auto_unwrap_programlike)
                         {
                             return Some(metadata.clone());
                         }
                     }
-                    Frame::EvalReturn(continuation) => match continuation.as_ref() {
-                        EvalReturnContinuation::ApplyResolveFunction { metadata, .. }
-                        | EvalReturnContinuation::ApplyResolveArg { metadata, .. }
-                        | EvalReturnContinuation::ApplyResolveKwarg { metadata, .. }
-                        | EvalReturnContinuation::ExpandResolveFactory { metadata, .. }
-                        | EvalReturnContinuation::ExpandResolveArg { metadata, .. }
-                        | EvalReturnContinuation::ExpandResolveKwarg { metadata, .. }
-                            if metadata.auto_unwrap_programlike =>
-                        {
-                            return Some(metadata.clone());
-                        }
-                        EvalReturnContinuation::ResumeToContinuation { .. } => {}
-                        EvalReturnContinuation::ReturnToContinuation { .. } => {}
-                        EvalReturnContinuation::EvalInScopeReturn { .. } => {}
-                        _ => {}
-                    },
                     Frame::MapReturn { .. }
                     | Frame::FlatMapBindResult
-                    | Frame::FlatMapBindSource { .. }
-                    | Frame::InterceptBodyReturn { .. } => {}
+                    | Frame::FlatMapBindSource { .. } => {}
                 }
             }
             seg_id = seg.parent;

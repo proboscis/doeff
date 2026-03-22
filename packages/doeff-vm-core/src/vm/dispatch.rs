@@ -56,6 +56,8 @@ impl VM {
             | EvalReturnContinuation::ExpandResolveFactory { .. }
             | EvalReturnContinuation::ExpandResolveArg { .. }
             | EvalReturnContinuation::ExpandResolveKwarg { .. }
+            | EvalReturnContinuation::InterceptApplyResult { .. }
+            | EvalReturnContinuation::InterceptEvalResult { .. }
             | EvalReturnContinuation::TailResumeReturn => None,
         }
     }
@@ -588,6 +590,8 @@ impl VM {
                         | EvalReturnContinuation::ExpandResolveFactory { .. }
                         | EvalReturnContinuation::ExpandResolveArg { .. }
                         | EvalReturnContinuation::ExpandResolveKwarg { .. }
+                        | EvalReturnContinuation::InterceptApplyResult { .. }
+                        | EvalReturnContinuation::InterceptEvalResult { .. }
                         | EvalReturnContinuation::TailResumeReturn => false,
                     },
                     _ => false,
@@ -974,16 +978,15 @@ impl VM {
                     | EvalReturnContinuation::ExpandResolveFactory { .. }
                     | EvalReturnContinuation::ExpandResolveArg { .. }
                     | EvalReturnContinuation::ExpandResolveKwarg { .. }
+                    | EvalReturnContinuation::InterceptApplyResult { .. }
+                    | EvalReturnContinuation::InterceptEvalResult { .. }
                     | EvalReturnContinuation::TailResumeReturn => None,
                 },
                 Frame::LexicalScope { .. } => None,
                 Frame::Program { .. }
-                | Frame::InterceptorApply(_)
-                | Frame::InterceptorEval(_)
                 | Frame::MapReturn { .. }
                 | Frame::FlatMapBindResult
-                | Frame::FlatMapBindSource { .. }
-                | Frame::InterceptBodyReturn { .. } => None,
+                | Frame::FlatMapBindSource { .. } => None,
             }) {
                 return Some(continuation);
             }
@@ -1746,13 +1749,10 @@ impl VM {
         let Some(stream) = seg.frames.iter().rev().find_map(|frame| match frame {
             Frame::Program { stream, .. } => Some(stream.clone()),
             Frame::LexicalScope { .. } => None,
-            Frame::InterceptorApply(_)
-            | Frame::InterceptorEval(_)
-            | Frame::EvalReturn(_)
+            Frame::EvalReturn(_)
             | Frame::MapReturn { .. }
             | Frame::FlatMapBindResult
-            | Frame::FlatMapBindSource { .. }
-            | Frame::InterceptBodyReturn { .. } => None,
+            | Frame::FlatMapBindSource { .. } => None,
         }) else {
             return false;
         };
@@ -1784,9 +1784,12 @@ impl VM {
                 || segment.frames.iter().any(|frame| {
                     matches!(
                         frame,
-                        Frame::InterceptorApply(_)
-                            | Frame::InterceptorEval(_)
-                            | Frame::InterceptBodyReturn { .. }
+                        Frame::EvalReturn(eval_return)
+                            if matches!(
+                                eval_return.as_ref(),
+                                EvalReturnContinuation::InterceptApplyResult { .. }
+                                    | EvalReturnContinuation::InterceptEvalResult { .. }
+                            )
                     )
                 })
             {
@@ -1858,9 +1861,12 @@ impl VM {
                 || seg.frames.iter().any(|frame| {
                     matches!(
                         frame,
-                        Frame::InterceptorApply(_)
-                            | Frame::InterceptorEval(_)
-                            | Frame::InterceptBodyReturn { .. }
+                        Frame::EvalReturn(eval_return)
+                            if matches!(
+                                eval_return.as_ref(),
+                                EvalReturnContinuation::InterceptApplyResult { .. }
+                                    | EvalReturnContinuation::InterceptEvalResult { .. }
+                            )
                     )
                 })
             {
@@ -1883,9 +1889,12 @@ impl VM {
                 || seg.frames.iter().any(|frame| {
                     matches!(
                         frame,
-                        Frame::InterceptorApply(_)
-                            | Frame::InterceptorEval(_)
-                            | Frame::InterceptBodyReturn { .. }
+                        Frame::EvalReturn(eval_return)
+                            if matches!(
+                                eval_return.as_ref(),
+                                EvalReturnContinuation::InterceptApplyResult { .. }
+                                    | EvalReturnContinuation::InterceptEvalResult { .. }
+                            )
                     )
                 })
             {

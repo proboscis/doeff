@@ -11,13 +11,10 @@ impl VM {
                         ..
                     } => IRStreamRef::ptr_eq(snapshot_stream, stream),
                     Frame::LexicalScope { .. } => false,
-                    Frame::InterceptorApply(_)
-                    | Frame::InterceptorEval(_)
-                    | Frame::EvalReturn(_)
+                    Frame::EvalReturn(_)
                     | Frame::MapReturn { .. }
                     | Frame::FlatMapBindResult
-                    | Frame::FlatMapBindSource { .. }
-                    | Frame::InterceptBodyReturn { .. } => false,
+                    | Frame::FlatMapBindSource { .. } => false,
                 })
             })
         })
@@ -273,13 +270,10 @@ impl VM {
             .and_then(|frame| match frame {
                 Frame::Program { handler_kind, .. } => *handler_kind,
                 Frame::LexicalScope { .. } => None,
-                Frame::InterceptorApply(_)
-                | Frame::InterceptorEval(_)
-                | Frame::EvalReturn(_)
+                Frame::EvalReturn(_)
                 | Frame::MapReturn { .. }
                 | Frame::FlatMapBindResult
-                | Frame::FlatMapBindSource { .. }
-                | Frame::InterceptBodyReturn { .. } => None,
+                | Frame::FlatMapBindSource { .. } => None,
             })
     }
 
