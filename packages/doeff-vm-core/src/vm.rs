@@ -30,6 +30,7 @@ use crate::frame::{
 use crate::ids::{ContId, DispatchId, Marker, ScopeId, SegmentId};
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
 use crate::kleisli::{IdentityKleisli, KleisliRef};
+use crate::memory_stats::live_object_counts;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
@@ -226,11 +227,6 @@ struct DispatchOriginView {
 }
 
 #[derive(Default)]
-struct ContinuationStore {
-    entries: HashMap<ContId, Continuation>,
-}
-
-#[derive(Default)]
 struct HandlerStore {
     installed: Vec<InstalledHandler>,
     running: Vec<KleisliRef>,
@@ -277,7 +273,6 @@ impl DebugConfig {
 
 pub struct VM {
     pub segments: FiberArena,
-    continuations: ContinuationStore,
     handlers: HandlerStore,
     pub rust_store: RustStore,
     pub var_store: VarStore,
@@ -303,7 +298,6 @@ impl VM {
     pub fn new() -> Self {
         VM {
             segments: FiberArena::new(),
-            continuations: ContinuationStore::default(),
             handlers: HandlerStore::default(),
             rust_store: RustStore::new(),
             var_store: VarStore::default(),
@@ -373,8 +367,6 @@ impl VM {
         self.handlers.running.shrink_to_fit();
         self.handlers.installed.clear();
         self.handlers.installed.shrink_to_fit();
-        self.continuations.entries.clear();
-        self.continuations.entries.shrink_to_fit();
         self.dispatch_state.clear();
         self.dispatch_state.shrink_to_fit();
         self.segments.clear();
@@ -406,11 +398,10 @@ impl VM {
     }
 
     pub fn continuation_count(&self) -> usize {
-        self.continuations
-            .entries
-            .values()
-            .filter(|continuation| !continuation.consumed())
-            .count()
+        if self.active_run_token.is_none() {
+            return 0;
+        }
+        live_object_counts().live_continuations
     }
 
     pub fn dispatch_count(&self) -> usize {
@@ -728,9 +719,25 @@ impl VM {
     ) -> usize {
         let mut rewired = 0usize;
 
-        for continuation in self.continuations.entries.values_mut() {
-            rewired +=
-                Self::reparent_continuation_captured_caller(continuation, old_parent, new_parent);
+        let dispatch_ids = self
+            .dispatch_state
+            .iter()
+            .map(|(dispatch_id, _)| dispatch_id)
+            .collect::<Vec<_>>();
+        for dispatch_id in dispatch_ids {
+            let Some(dispatch) = self.dispatch_state.dispatch_mut(dispatch_id) else {
+                continue;
+            };
+            rewired += Self::reparent_continuation_captured_caller(
+                &mut dispatch.k_origin,
+                old_parent,
+                new_parent,
+            );
+            rewired += Self::reparent_continuation_captured_caller(
+                &mut dispatch.active_handler.continuation,
+                old_parent,
+                new_parent,
+            );
         }
 
         for (_, segment) in self.segments.iter_mut() {

@@ -661,6 +661,24 @@ impl VM {
             })
     }
 
+    fn current_user_defined_python_handler_segment(&self) -> Option<SegmentId> {
+        let seg_id = self.current_segment?;
+        let seg = self.segments.get(seg_id)?;
+        seg.frames
+            .iter()
+            .any(|frame| {
+                matches!(
+                    frame,
+                    Frame::Program {
+                        handler_kind: Some(HandlerKind::Python),
+                        ..
+                    }
+                )
+            })
+            .then_some(seg_id)
+            .filter(|_| self.is_user_defined_python_handler_marker(seg.marker()))
+    }
+
     fn delegate_return_continuation(
         &mut self,
         continuation: &Continuation,
@@ -747,32 +765,8 @@ impl VM {
         self.inherit_interceptor_guard_state(source_seg_id, child_seg_id);
     }
 
-    pub fn register_continuation(&mut self, k: Continuation) {
-        self.continuations.entries.insert(k.cont_id, k);
-    }
-
-    pub fn lookup_any_continuation(&self, cont_id: ContId) -> Option<&Continuation> {
-        self.continuations.entries.get(&cont_id)
-    }
-
-    pub fn lookup_continuation(&self, cont_id: ContId) -> Option<&Continuation> {
-        self.lookup_any_continuation(cont_id)
-            .filter(|continuation| !continuation.consumed())
-    }
-
     pub(super) fn continuation_is_consumed(&self, continuation: &Continuation) -> bool {
-        self.lookup_any_continuation(continuation.cont_id)
-            .is_some_and(Continuation::consumed)
-    }
-
-    pub fn take_continuation(&mut self, cont_id: ContId) -> Option<Continuation> {
-        match self.continuations.entries.remove(&cont_id) {
-            Some(continuation) if continuation.consumed() => {
-                self.continuations.entries.insert(cont_id, continuation);
-                None
-            }
-            other => other,
-        }
+        continuation.consumed()
     }
 
     fn materialize_owned_continuation(
@@ -786,21 +780,6 @@ impl VM {
         if self.continuation_is_consumed(&k) {
             return Err(VMError::one_shot_violation(k.cont_id));
         }
-        if let Some(continuation) = self.take_continuation(k.cont_id) {
-            if continuation.consumed() {
-                return Err(VMError::one_shot_violation(k.cont_id));
-            }
-            if continuation.owns_fibers() {
-                return Ok(continuation);
-            }
-            if continuation
-                .fibers()
-                .iter()
-                .all(|fiber_id| self.segments.get(*fiber_id).is_some())
-            {
-                return Ok(continuation.into_owned());
-            }
-        }
         if k.fibers()
             .iter()
             .all(|fiber_id| self.segments.get(*fiber_id).is_some())
@@ -808,7 +787,7 @@ impl VM {
             return Ok(k.into_owned());
         }
         Err(VMError::internal(format!(
-            "{op_name} continuation {} is not owned by the registry",
+            "{op_name} continuation {} no longer owns live fibers",
             k.cont_id.raw()
         )))
     }
@@ -1267,10 +1246,8 @@ impl VM {
         let handler_seg_id = self.alloc_segment(handler_seg);
         self.copy_interceptor_guard_state(Some(seg_id), handler_seg_id);
         self.set_scope_parent(handler_seg_id, Some(seg_id));
-        let handler_k = k_user.clone_handle();
-        let origin_k = handler_k.clone_handle();
-        let active_k = handler_k.clone_handle();
-        self.register_continuation(k_user);
+        let origin_k = k_user.clone_handle();
+        let active_k = k_user.clone_handle();
         self.dispatch_state.start_dispatch(
             dispatch_id,
             effect.clone(),
@@ -1285,7 +1262,7 @@ impl VM {
         );
         self.current_segment = Some(handler_seg_id);
 
-        let effect_frames = self.continuation_frame_stack(&handler_k);
+        let effect_frames = self.continuation_frame_stack(&k_user);
         let effect_site = TraceState::effect_site_from_frames(&effect_frames);
         self.trace_state.record_dispatch_started(
             dispatch_id,
@@ -1310,6 +1287,7 @@ impl VM {
             return Ok(self.handle_forward(ForwardKind::Pass, effect));
         }
 
+        let handler_k = k_user;
         let ir_node = Self::invoke_kleisli_handler_expr(handler, effect, handler_k)?;
         Ok(self.evaluate(ir_node))
     }
@@ -1739,7 +1717,6 @@ impl VM {
             ));
         }
         k.mark_consumed();
-        self.register_continuation(Continuation::consumed_placeholder(k.cont_id));
         let error_dispatch = self.error_dispatch_for_continuation(&k);
         self.record_continuation_activation(kind, &k, &value);
         if self.exact_dispatch_origin_for_continuation(&k).is_some() {
@@ -1850,6 +1827,27 @@ impl VM {
                         },
                     )
             })
+            .or_else(|| {
+                if !exact_origin_target {
+                    return None;
+                }
+                let dispatch_id = k.dispatch_id()?;
+                let handler_seg_id = self.current_user_defined_python_handler_segment()?;
+                if self.segment_is_tail_resume_return(handler_seg_id) {
+                    let anchor_seg_id =
+                        self.alloc_tail_resume_anchor(k.captured_caller(), Some(dispatch_id));
+                    return Some(anchor_seg_id);
+                }
+                let handler_return = self
+                    .capture_continuation(Some(dispatch_id))
+                    .expect("dispatch resume requires a live handler segment");
+                let anchor_seg_id = self.alloc_resume_return_anchor(
+                    k.captured_caller(),
+                    handler_return,
+                    Some(dispatch_id),
+                );
+                Some(anchor_seg_id)
+            })
             .or_else(|| k.captured_caller());
         self.activate_continuation(ContinuationActivationKind::Resume, k, value, caller)
     }
@@ -1888,7 +1886,6 @@ impl VM {
             .dispatch_id()
             .and_then(|dispatch_id| self.current_handler_identity_for_dispatch(dispatch_id));
         k.mark_consumed();
-        self.register_continuation(Continuation::consumed_placeholder(k.cont_id));
         let mut thrown_by_context_conversion_handler = self
             .current_active_handler_dispatch_id()
             .is_some_and(|dispatch_id| {
@@ -2224,27 +2221,11 @@ impl VM {
                         "Delegate called without current segment",
                     ));
                 };
-                let parent_owned = if parent_k_user.owns_fibers() {
-                    parent_k_user.clone()
-                } else {
-                    match self.take_continuation(parent_k_user.cont_id) {
-                        Some(continuation) => {
-                            self.register_continuation(continuation.clone_handle());
-                            continuation.into_owned()
-                        }
-                        None if self.continuation_is_consumed(&parent_k_user) => {
-                            return StepEvent::Error(VMError::one_shot_violation(
-                                parent_k_user.cont_id,
-                            ))
-                        }
-                        None => {
-                            return StepEvent::Error(VMError::internal(format!(
-                                "Delegate parent continuation {} missing from registry",
-                                parent_k_user.cont_id.raw()
-                            )))
-                        }
-                    }
-                };
+                let parent_owned =
+                    match self.materialize_owned_continuation(parent_k_user.clone(), "Delegate") {
+                        Ok(continuation) => continuation,
+                        Err(err) => return StepEvent::Error(err),
+                    };
                 k_new.append_owned_fibers(parent_owned);
                 k_new
             }
@@ -2309,12 +2290,10 @@ impl VM {
                 let handler_seg_id = self.alloc_segment(handler_seg);
                 self.copy_interceptor_guard_state(outer_caller, handler_seg_id);
                 self.set_scope_parent(handler_seg_id, Some(inner_seg_id));
-                let handler_k = next_k.clone_handle();
-                let observer_k = handler_k.clone_handle();
-                self.register_continuation(next_k);
+                let observer_k = next_k.clone_handle();
                 self.dispatch_state.update_forwarded_dispatch(
                     dispatch_id,
-                    self.continuation_pending_error_context(&handler_k).cloned(),
+                    self.continuation_pending_error_context(&next_k).cloned(),
                     None,
                     crate::dispatch_state::ActiveHandlerContext {
                         segment_id: handler_seg_id,
@@ -2324,6 +2303,7 @@ impl VM {
                     },
                 );
                 self.current_segment = Some(handler_seg_id);
+                let handler_k = next_k;
                 let ir_node =
                     match Self::invoke_kleisli_handler_expr(handler, effect.clone(), handler_k) {
                         Ok(node) => node,
@@ -2364,14 +2344,13 @@ impl VM {
             .is_some_and(|(_, kind, _, _)| kind == HandlerKind::Python);
         let continuation_is_live = continuation
             .as_ref()
-            .is_some_and(|continuation| self.lookup_continuation(continuation.cont_id).is_some());
+            .is_some_and(|continuation| !continuation.consumed());
         let is_user_defined_python_handler = handler_dispatch
             .as_ref()
             .is_some_and(|(_, _, marker)| self.is_user_defined_python_handler_marker(*marker));
         if is_python_handler && continuation_is_live {
             let mut continuation = continuation.clone().expect("checked above");
             continuation.mark_consumed();
-            self.register_continuation(Continuation::consumed_placeholder(continuation.cont_id));
             return self.throw_handler_protocol_error(format!(
                 "handler returned without consuming continuation {}; use Resume(k, v), Transfer(k, v), Discontinue(k, exn), or Pass()",
                 continuation.cont_id.raw(),
@@ -2647,9 +2626,6 @@ impl VM {
                 "GetContinuation: active handler continuation not found",
             ));
         };
-        if k.owns_fibers() {
-            self.register_continuation(k.clone());
-        }
         self.mode = Mode::Deliver(Value::Continuation(k));
         StepEvent::Continue
     }
@@ -2704,7 +2680,6 @@ impl VM {
             metadata,
             outside_scope.or(self.current_segment),
         );
-        self.register_continuation(k.clone());
         self.mode = Mode::Deliver(Value::Continuation(k));
         StepEvent::Continue
     }
@@ -2732,7 +2707,6 @@ impl VM {
             return StepEvent::Error(VMError::one_shot_violation(k.cont_id));
         }
         k.mark_consumed();
-        self.register_continuation(Continuation::consumed_placeholder(k.cont_id));
 
         let Some((program, handlers, handler_identities, start_metadata, outside_scope)) =
             k.into_unstarted_parts()

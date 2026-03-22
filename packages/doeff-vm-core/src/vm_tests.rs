@@ -429,24 +429,19 @@ fn test_dispatch_origin_scan_fails_fast_on_orphaned_segment_dispatch_index() {
 }
 
 #[test]
-fn test_consumed_continuation_stays_detectable_on_registry_entry() {
-    let mut vm = VM::new();
-    let seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
-    let continuation = Continuation::with_id(ContId::fresh(), seg_id, None, None);
-    let cont_id = continuation.cont_id;
+fn test_consumed_continuation_stays_detectable_on_cloned_handles() {
+    let continuation = Continuation::with_id(
+        ContId::fresh(),
+        SegmentId::from_index(0),
+        None,
+        None,
+    );
+    let handle = continuation.clone_handle();
+    let mut owned = continuation.into_owned();
 
-    vm.register_continuation(continuation);
-    assert_eq!(vm.continuation_count(), 1);
-
-    let mut owned = vm
-        .take_continuation(cont_id)
-        .expect("registered continuation must be removable");
+    assert!(!handle.consumed());
     owned.mark_consumed();
-    vm.register_continuation(owned.clone_handle());
 
-    assert!(vm
-        .lookup_any_continuation(cont_id)
-        .is_some_and(|k| k.consumed()));
-    assert!(vm.lookup_continuation(cont_id).is_none());
-    assert_eq!(vm.continuation_count(), 0);
+    assert!(owned.consumed());
+    assert!(handle.consumed());
 }
