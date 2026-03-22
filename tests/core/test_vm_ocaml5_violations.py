@@ -84,7 +84,6 @@ def test_v05_no_segment_type_aliases():
     assert "type SegmentKind = FiberKind" not in src, "Remove SegmentKind type alias"
 
 
-@pytest.mark.xfail(reason="V6: ScopeStore defined in segment module", strict=False)
 def test_v06_no_scope_store_in_segment():
     """ScopeStore should not be defined in the segment/fiber module."""
     src = _src(SEGMENT_RS)
@@ -112,14 +111,12 @@ def test_v08_no_handler_store_on_vm():
         assert pattern not in src, f"VM must not have handler storage ({pattern})"
 
 
-@pytest.mark.xfail(reason="V9: rust_store on VM", strict=False)
 def test_v09_no_rust_store_on_vm():
     """VM must not have a separate RustStore. One heap (VarStore) only."""
     src = _src(VM_RS)
     assert "rust_store:" not in src, "VM must not have rust_store — use VarStore only"
 
 
-@pytest.mark.xfail(reason="V10: env_store on VM", strict=False)
 def test_v10_no_env_store_on_vm():
     """VM must not have a separate env_store. One heap (VarStore) only."""
     src = _src(VM_RS)
@@ -143,7 +140,6 @@ def test_v14_no_dispatch_state_on_vm():
         assert pattern not in src, f"VM must not have dispatch side-table ({pattern})"
 
 
-@pytest.mark.xfail(reason="V15: fiber_runtime HashMap on VM", strict=False)
 def test_v15_no_fiber_runtime_sidetable():
     """VM must not have per-fiber runtime side-table. Fields belong on fiber or as registers."""
     src = _src(VM_RS)
@@ -152,14 +148,12 @@ def test_v15_no_fiber_runtime_sidetable():
     assert "HashMap<SegmentId, FiberRuntimeState>" not in src
 
 
-@pytest.mark.xfail(reason="V16: scope_ids HashMap on VM", strict=False)
 def test_v16_no_scope_ids_on_vm():
     """VM must not have scope_ids. Variables are VarId-addressed ref cells."""
     src = _src(VM_RS)
     assert "scope_ids:" not in src, "VM must not have scope_ids HashMap"
 
 
-@pytest.mark.xfail(reason="V17: dual parent chain (scope_parents)", strict=False)
 def test_v17_no_scope_parents():
     """VM must not have scope_parents. One parent chain only (fiber.parent)."""
     src = _src(VM_RS)
@@ -167,7 +161,6 @@ def test_v17_no_scope_parents():
         "VM must not have scope_parents — OCaml 5 has one parent chain"
 
 
-@pytest.mark.xfail(reason="V18: segment_parent_redirects (stale pointer map)", strict=False)
 def test_v18_no_parent_redirects():
     """VM must not have segment_parent_redirects. With move semantics, no stale pointers."""
     src = _src(VM_RS)
@@ -175,7 +168,6 @@ def test_v18_no_parent_redirects():
         "VM must not have redirect map — move semantics means no stale pointers"
 
 
-@pytest.mark.xfail(reason="V19: completed state/log snapshots", strict=False)
 def test_v19_no_completed_snapshots():
     """VM must not cache completed state/log snapshots."""
     src = _src(VM_RS)
@@ -183,7 +175,6 @@ def test_v19_no_completed_snapshots():
     assert "completed_log_entries_snapshot:" not in src
 
 
-@pytest.mark.xfail(reason="V21: throw_parent Continuation per fiber", strict=False)
 def test_v21_no_throw_parent():
     """No per-fiber throw_parent. Exceptions propagate by unwinding the chain."""
     src = _src(VM_RS)
