@@ -374,7 +374,7 @@ impl PyKleisli {
         value: &Value,
     ) -> Result<Bound<'py, PyAny>, VMError> {
         match value {
-            Value::Continuation(k) => Bound::new(py, PyK::from_cont_id(k.cont_id))
+            Value::Continuation(k) => Bound::new(py, PyK::from_continuation(k))
                 .map(|obj| obj.into_any())
                 .map_err(Self::map_pyerr),
             Value::Python(_)

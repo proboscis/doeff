@@ -216,24 +216,15 @@ fn strict_kleisli_ref_type_error(context: &str, obj: &Bound<'_, PyAny>) -> PyErr
     ))
 }
 
-fn lookup_continuation_for_control(
-    vm: &VM,
-    cont_id: crate::ids::ContId,
-    control_name: &str,
-) -> PyResult<doeff_vm_core::Continuation> {
-    if let Some(k) = vm.lookup_any_continuation(cont_id) {
-        if !k.consumed() {
-            return Ok(k.clone_handle());
-        }
+fn continuation_for_control(k_obj: &Bound<'_, PyK>) -> PyResult<doeff_vm_core::Continuation> {
+    let continuation = k_obj.borrow().continuation();
+    if continuation.consumed() {
         return Err(PyRuntimeError::new_err(format!(
             "one-shot violation: continuation {} already consumed",
-            cont_id.raw()
+            continuation.cont_id.raw()
         )));
     }
-    Err(PyRuntimeError::new_err(format!(
-        "{control_name} with unknown continuation id {}",
-        cont_id.raw()
-    )))
+    Ok(continuation)
 }
 
 fn is_effect_base_like(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
@@ -555,7 +546,7 @@ impl PyVM {
         dict.set_item("arena_segments", self.vm.segments.len())?;
         dict.set_item("arena_slots", self.vm.segments.slot_count())?;
         dict.set_item("arena_capacity", self.vm.segments.capacity())?;
-        dict.set_item("continuation_registry", self.vm.continuation_count())?;
+        dict.set_item("continuations_live", self.vm.continuation_count())?;
         dict.set_item("dispatch_count", self.vm.dispatch_count())?;
         dict.set_item("dispatch_capacity", self.vm.dispatch_capacity())?;
         dict.set_item(
@@ -1048,7 +1039,7 @@ impl PyVM {
     ) -> PyResult<Bound<'py, PyAny>> {
         match value {
             // Runtime callback arguments must receive the opaque K handle.
-            Value::Continuation(k) => Ok(Bound::new(py, PyK::from_cont_id(k.cont_id))?.into_any()),
+            Value::Continuation(k) => Ok(Bound::new(py, PyK::from_continuation(k))?.into_any()),
             Value::Python(_)
             | Value::Unit
             | Value::Int(_)
@@ -1164,7 +1155,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 continuation,
                 value,
             } => {
-                let k = Bound::new(py, PyK::from_cont_id(continuation.cont_id))
+                let k = Bound::new(py, PyK::from_continuation(continuation))
                     .map_err(|err| PyException::runtime_error(format!("{err}")))?
                     .into_any()
                     .unbind();
@@ -1189,7 +1180,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 continuation,
                 value,
             } => {
-                let k = Bound::new(py, PyK::from_cont_id(continuation.cont_id))
+                let k = Bound::new(py, PyK::from_continuation(continuation))
                     .map_err(|err| PyException::runtime_error(format!("{err}")))?
                     .into_any()
                     .unbind();
@@ -1214,7 +1205,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 continuation,
                 exception,
             } => {
-                let k = Bound::new(py, PyK::from_cont_id(continuation.cont_id))
+                let k = Bound::new(py, PyK::from_continuation(continuation))
                     .map_err(|err| PyException::runtime_error(format!("{err}")))?
                     .into_any()
                     .unbind();
@@ -1360,7 +1351,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 .unbind(),
             ),
             DoCtrl::GetTraceback { continuation } => {
-                let k = Bound::new(py, PyK::from_cont_id(continuation.cont_id))
+                let k = Bound::new(py, PyK::from_continuation(continuation))
                     .map_err(|err| PyException::runtime_error(format!("{err}")))?
                     .into_any()
                     .unbind();
@@ -1435,7 +1426,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 continuation,
                 value,
             } => {
-                let k = Bound::new(py, PyK::from_cont_id(continuation.cont_id))
+                let k = Bound::new(py, PyK::from_continuation(continuation))
                     .map_err(|err| PyException::runtime_error(format!("{err}")))?
                     .into_any()
                     .unbind();
@@ -1567,7 +1558,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 bindings,
                 ..
             } => {
-                let k = Bound::new(py, PyK::from_cont_id(scope.cont_id))
+                let k = Bound::new(py, PyK::from_continuation(scope))
                     .map_err(|err| PyException::runtime_error(format!("{err}")))?
                     .into_any()
                     .unbind();
@@ -1812,8 +1803,7 @@ pub(crate) fn classify_yielded_bound(
                         "Discontinue.continuation must be K (opaque continuation handle)",
                     )
                 })?;
-                let cont_id = k_pyobj.borrow().cont_id;
-                let k = lookup_continuation_for_control(vm, cont_id, "Discontinue")?;
+                let k = continuation_for_control(&k_pyobj)?;
                 let bound_exception = d.exception.bind(py);
                 if !bound_exception.is_instance_of::<PyBaseException>() {
                     return Err(PyTypeError::new_err(
@@ -1902,8 +1892,7 @@ pub(crate) fn classify_yielded_bound(
                         "Resume.continuation must be K (opaque continuation handle)",
                     )
                 })?;
-                let cont_id = k_pyobj.borrow().cont_id;
-                let k = lookup_continuation_for_control(vm, cont_id, "Resume")?;
+                let k = continuation_for_control(&k_pyobj)?;
                 Ok(DoCtrl::Resume {
                     continuation: k,
                     value: Value::from_pyobject(r.value.bind(py)),
@@ -1916,8 +1905,7 @@ pub(crate) fn classify_yielded_bound(
                         "Transfer.continuation must be K (opaque continuation handle)",
                     )
                 })?;
-                let cont_id = k_pyobj.borrow().cont_id;
-                let k = lookup_continuation_for_control(vm, cont_id, "Transfer")?;
+                let k = continuation_for_control(&k_pyobj)?;
                 Ok(DoCtrl::Transfer {
                     continuation: k,
                     value: Value::from_pyobject(t.value.bind(py)),
@@ -1950,8 +1938,7 @@ pub(crate) fn classify_yielded_bound(
                         "ResumeContinuation.continuation must be K (opaque continuation handle)",
                     )
                 })?;
-                let cont_id = k_pyobj.borrow().cont_id;
-                let k = lookup_continuation_for_control(vm, cont_id, "ResumeContinuation")?;
+                let k = continuation_for_control(&k_pyobj)?;
                 Ok(DoCtrl::ResumeContinuation {
                     continuation: k,
                     value: Value::from_pyobject(rc.value.bind(py)),
@@ -1995,8 +1982,7 @@ pub(crate) fn classify_yielded_bound(
                         "GetTraceback.continuation must be K (opaque continuation handle)",
                     )
                 })?;
-                let cont_id = k_pyobj.borrow().cont_id;
-                let k = lookup_continuation_for_control(vm, cont_id, "GetTraceback")?;
+                let k = continuation_for_control(&k_pyobj)?;
                 Ok(DoCtrl::GetTraceback { continuation: k })
             }
             DoExprTag::GetCallStack => Ok(DoCtrl::GetCallStack),
@@ -2014,8 +2000,7 @@ pub(crate) fn classify_yielded_bound(
                 let scope_obj = eval.scope.bind(py).cast::<PyK>().map_err(|_| {
                     PyTypeError::new_err("EvalInScope.scope must be K (opaque continuation handle)")
                 })?;
-                let cont_id = scope_obj.borrow().cont_id;
-                let scope = lookup_continuation_for_control(vm, cont_id, "EvalInScope")?;
+                let scope = continuation_for_control(&scope_obj)?;
                 Ok(DoCtrl::EvalInScope {
                     expr: PyShared::new(expr),
                     scope,
@@ -3698,10 +3683,15 @@ mod tests {
     }
 
     #[test]
-    fn test_g11_resume_with_unknown_continuation_is_error() {
+    fn test_g11_resume_with_consumed_continuation_is_error() {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
-            let k = Bound::new(py, PyK::from_cont_id(crate::ids::ContId::from_raw(999_999)))
+            let mut continuation =
+                crate::continuation::Continuation::placeholder(crate::ids::ContId::from_raw(
+                    999_999,
+                ));
+            continuation.mark_consumed();
+            let k = Bound::new(py, PyK::from_continuation(&continuation))
                 .unwrap()
                 .into_any()
                 .unbind();
@@ -3722,7 +3712,7 @@ mod tests {
             let result = pyvm.classify_yielded(py, &resume);
             assert!(
                 result.is_err(),
-                "G11 FAIL: stale continuation id must error, not fallback classification"
+                "G11 FAIL: consumed continuation must error, not fallback classification"
             );
         });
     }
@@ -3744,7 +3734,6 @@ mod tests {
     #[test]
     fn test_get_traceback_classifies_to_doctrl() {
         Python::attach(|py| {
-            let mut pyvm = PyVM { vm: VM::new() };
             let seg = crate::segment::Segment::new(crate::ids::Marker::fresh(), None);
             let continuation = crate::continuation::Continuation::capture(
                 &seg,
@@ -3752,9 +3741,11 @@ mod tests {
                 None,
             );
             let cont_id = continuation.cont_id;
-            pyvm.vm.register_continuation(continuation);
-
-            let k = Bound::new(py, PyK { cont_id }).unwrap().into_any().unbind();
+            let pyvm = PyVM { vm: VM::new() };
+            let k = Bound::new(py, PyK::from_continuation(&continuation))
+                .unwrap()
+                .into_any()
+                .unbind();
             let obj = Bound::new(py, PyGetTraceback::new(py, k).unwrap())
                 .unwrap()
                 .into_any();
@@ -4051,7 +4042,9 @@ mod tests {
             assert_eq!(base.tag, DoExprTag::GetHandlers as u8);
 
             // GetTraceback
-            let k = Bound::new(py, PyK::from_cont_id(crate::ids::ContId::from_raw(1)))
+            let continuation =
+                crate::continuation::Continuation::placeholder(crate::ids::ContId::from_raw(1));
+            let k = Bound::new(py, PyK::from_continuation(&continuation))
                 .unwrap()
                 .into_any()
                 .unbind();
@@ -4120,9 +4113,10 @@ mod tests {
                 crate::ids::SegmentId::from_index(0),
                 None,
             );
-            let cont_id = continuation.cont_id;
-            pyvm.vm.register_continuation(continuation);
-            let k = Bound::new(py, PyK { cont_id }).unwrap().into_any().unbind();
+            let k = Bound::new(py, PyK::from_continuation(&continuation))
+                .unwrap()
+                .into_any()
+                .unbind();
             let gt_obj = Bound::new(py, PyGetTraceback::new(py, k).unwrap())
                 .unwrap()
                 .into_any();

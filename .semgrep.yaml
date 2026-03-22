@@ -3137,16 +3137,28 @@ rules:
     message: |
       SPEC-VM-019 Rev 5: continuation ownership must flow through Continuation values,
       not a ContId registry. Do not reintroduce ContinuationStore, register/take/lookup
-      continuation helpers, or cont_id-only PyK handles. Resume/Transfer must carry the
-      Continuation handle directly through the call chain.
+      continuation helpers. Resume/Transfer must carry the Continuation handle
+      directly through the call chain.
     paths:
       include:
         - "**/packages/doeff-vm-core/src/vm.rs"
         - "**/packages/doeff-vm-core/src/vm/dispatch.rs"
+        - "**/packages/doeff-vm/src/pyvm.rs"
+    pattern-regex: '\bContinuationStore\b|\bfn\s+register_continuation\s*\(|\bfn\s+lookup_any_continuation\s*\(|\bfn\s+lookup_continuation\s*\(|\bfn\s+take_continuation\s*\(|(?:self|vm)\.register_continuation\s*\(|(?:self|vm)\.lookup_any_continuation\s*\(|(?:self|vm)\.lookup_continuation\s*\(|(?:self|vm)\.take_continuation\s*\('
+
+  - id: vm-ocaml5-no-contid-only-pyk
+    languages: [rust]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: PyK must hold a Continuation handle, not just a ContId.
+      Do not reconstruct continuations through PyK::from_cont_id or a cont_id-only
+      K wrapper once continuation_registry is removed.
+    paths:
+      include:
         - "**/packages/doeff-vm-core/src/continuation.rs"
         - "**/packages/doeff-vm-core/src/kleisli.rs"
         - "**/packages/doeff-vm/src/pyvm.rs"
-    pattern-regex: '\bContinuationStore\b|\bregister_continuation\s*\(|\blookup_any_continuation\s*\(|\blookup_continuation\s*\(|\btake_continuation\s*\(|\bfrom_cont_id\s*\(|\bpub\s+cont_id:\s*ContId\b'
+    pattern-regex: 'struct\s+PyK\s*\{(?:(?!\}).)*cont_id:\s*ContId\b|\bfrom_cont_id\s*\('
 
   # Persistent epoch is a reconciliation mechanism for stale Arc snapshots.
   # With move semantics, there are no stale snapshots — no reconciliation needed.

@@ -206,10 +206,16 @@ def test_dispatch_source_does_not_use_continuation_registry_helpers() -> None:
 def test_pyk_runtime_source_holds_continuation_values_not_ids() -> None:
     """PyK should carry an owned Continuation handle, not only a ContId."""
     source = _runtime_source(CONTINUATION_RS)
+    pyk_match = re.search(r"pub struct PyK \{(?P<body>.*?)\n\}", source, re.DOTALL)
+    assert pyk_match is not None, "PyK struct definition must exist in continuation.rs."
+    pyk_body = pyk_match.group("body")
 
-    assert "pub cont_id: ContId" not in source, (
+    assert "cont_id: ContId" not in pyk_body, (
         "PyK must not store only a ContId. It should carry a Continuation handle "
         "so Resume/Transfer can pass ownership directly."
+    )
+    assert "continuation: Continuation" in pyk_body, (
+        "PyK should hold a Continuation handle directly once continuation_registry is removed."
     )
     assert "from_cont_id" not in source, (
         "PyK::from_cont_id keeps continuation reconstruction dependent on a registry. "
