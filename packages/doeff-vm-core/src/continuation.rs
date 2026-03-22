@@ -46,7 +46,6 @@ struct UnstartedContinuation {
     handler_identities: Vec<Option<PyShared>>,
     metadata: Option<CallMetadata>,
     outside_scope: Option<SegmentId>,
-    start_return_to: Option<Box<Continuation>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -224,7 +223,6 @@ impl Continuation {
                 handler_identities: vec![None; handler_count],
                 metadata,
                 outside_scope,
-                start_return_to: None,
             }),
         }
     }
@@ -265,7 +263,6 @@ impl Continuation {
                 handler_identities,
                 metadata,
                 outside_scope,
-                start_return_to: None,
             }),
         }
     }
@@ -386,18 +383,6 @@ impl Continuation {
         self.shared_metadata().captured_caller
     }
 
-    pub fn set_captured_caller_hint(&mut self, captured_caller: Option<SegmentId>) {
-        self.set_captured_caller(captured_caller);
-    }
-
-    pub fn set_unstarted_start_return_to_hint(&mut self, continuation: Option<Continuation>) {
-        if let Some(unstarted) = self.unstarted.as_mut() {
-            unstarted.start_return_to = continuation.map(|continuation| {
-                Box::new(continuation.clone_handle())
-            });
-        }
-    }
-
     pub(crate) fn set_captured_caller(&mut self, captured_caller: Option<SegmentId>) {
         self.metadata_state
             .lock()
@@ -489,7 +474,6 @@ impl Continuation {
         Vec<Option<PyShared>>,
         Option<CallMetadata>,
         Option<SegmentId>,
-        Option<Continuation>,
     )> {
         self.unstarted.clone().map(
             |UnstartedContinuation {
@@ -498,7 +482,6 @@ impl Continuation {
                  handler_identities,
                  metadata,
                  outside_scope,
-                 start_return_to,
              }| {
                 (
                     program,
@@ -506,7 +489,6 @@ impl Continuation {
                     handler_identities,
                     metadata,
                     outside_scope,
-                    start_return_to.map(|continuation| continuation.as_ref().clone_handle()),
                 )
             },
         )
