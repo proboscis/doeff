@@ -116,6 +116,12 @@ impl Continuation {
         }
     }
 
+    pub(crate) fn consumed_placeholder(cont_id: ContId) -> Self {
+        let mut continuation = Self::placeholder(cont_id);
+        continuation.mark_consumed();
+        continuation
+    }
+
     fn new_captured(
         cont_id: ContId,
         fibers: Vec<FiberId>,

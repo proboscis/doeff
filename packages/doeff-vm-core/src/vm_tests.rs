@@ -431,3 +431,21 @@ fn test_dispatch_origin_scan_fails_fast_on_orphaned_segment_dispatch_index() {
 
     let _ = vm.dispatch_origins();
 }
+
+#[test]
+fn test_consumed_continuation_stays_detectable_without_live_registry_entry() {
+    let mut vm = VM::new();
+    let seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
+    let continuation = Continuation::with_id(ContId::fresh(), seg_id, None, None);
+    let cont_id = continuation.cont_id;
+
+    vm.register_continuation(continuation);
+    assert_eq!(vm.continuation_count(), 1);
+
+    vm.mark_one_shot_consumed(cont_id);
+
+    assert!(vm.is_one_shot_consumed(cont_id));
+    assert!(vm.lookup_continuation(cont_id).is_none());
+    assert!(vm.take_continuation(cont_id).is_none());
+    assert_eq!(vm.continuation_count(), 0);
+}

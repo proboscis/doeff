@@ -277,7 +277,6 @@ impl DebugConfig {
 
 pub struct VM {
     pub segments: FiberArena,
-    consumed_continuations: HashSet<ContId>,
     continuations: ContinuationStore,
     handlers: HandlerStore,
     pub rust_store: RustStore,
@@ -304,7 +303,6 @@ impl VM {
     pub fn new() -> Self {
         VM {
             segments: FiberArena::new(),
-            consumed_continuations: HashSet::new(),
             continuations: ContinuationStore::default(),
             handlers: HandlerStore::default(),
             rust_store: RustStore::new(),
@@ -377,8 +375,6 @@ impl VM {
         self.handlers.installed.shrink_to_fit();
         self.continuations.entries.clear();
         self.continuations.entries.shrink_to_fit();
-        self.consumed_continuations.clear();
-        self.consumed_continuations.shrink_to_fit();
         self.dispatch_state.clear();
         self.dispatch_state.shrink_to_fit();
         self.segments.clear();
@@ -410,7 +406,11 @@ impl VM {
     }
 
     pub fn continuation_count(&self) -> usize {
-        self.continuations.entries.len()
+        self.continuations
+            .entries
+            .values()
+            .filter(|continuation| !continuation.consumed())
+            .count()
     }
 
     pub fn dispatch_count(&self) -> usize {
