@@ -107,13 +107,25 @@ impl PyStore {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 struct FiberRuntimeState {
     pending_error_context: Option<PyException>,
     throw_parent: Option<Continuation>,
     interceptor_eval_depth: usize,
     interceptor_skip_stack: Vec<Marker>,
     pending_program_dispatch: Option<ProgramDispatch>,
+}
+
+impl Clone for FiberRuntimeState {
+    fn clone(&self) -> Self {
+        Self {
+            pending_error_context: self.pending_error_context.clone(),
+            throw_parent: self.throw_parent.as_ref().map(Continuation::clone_handle),
+            interceptor_eval_depth: self.interceptor_eval_depth,
+            interceptor_skip_stack: self.interceptor_skip_stack.clone(),
+            pending_program_dispatch: self.pending_program_dispatch.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -220,12 +232,22 @@ struct WithHandlerPlan {
     handler: KleisliRef,
 }
 
-#[derive(Clone)]
 struct DispatchOriginView {
     dispatch_id: DispatchId,
     effect: DispatchEffect,
     k_origin: Continuation,
     original_exception: Option<PyException>,
+}
+
+impl Clone for DispatchOriginView {
+    fn clone(&self) -> Self {
+        Self {
+            dispatch_id: self.dispatch_id,
+            effect: self.effect.clone(),
+            k_origin: self.k_origin.clone_handle(),
+            original_exception: self.original_exception.clone(),
+        }
+    }
 }
 
 #[derive(Clone)]

@@ -281,13 +281,25 @@ struct WokenTask {
     priority: u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct ReadyRootResume {
     continuation: Continuation,
     outcome: Result<Value, PyException>,
     waiting_task: Option<TaskId>,
     waiting_store: RustStore,
     restore_waiting_store: bool,
+}
+
+impl Clone for ReadyRootResume {
+    fn clone(&self) -> Self {
+        Self {
+            continuation: self.continuation.clone_handle(),
+            outcome: self.outcome.clone(),
+            waiting_task: self.waiting_task,
+            waiting_store: self.waiting_store.clone(),
+            restore_waiting_store: self.restore_waiting_store,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3180,7 +3192,7 @@ impl SchedulerProgram {
             (Some(current), Some(woken)) if woken.priority > current
         ) && !nested_preemptive_transfer_active;
         if should_preempt {
-            if let Err(error) = state.park_current_with_value(k_user.clone(), Value::Unit) {
+            if let Err(error) = state.park_current_with_value(k_user.clone_handle(), Value::Unit) {
                 return IRStreamStep::Throw(error);
             }
             drop(state);
@@ -3336,7 +3348,7 @@ impl IRStreamProgram for SchedulerProgram {
         match sched_effect {
             SchedulerEffect::Spawn { .. } => {
                 self.phase = SchedulerPhase::SpawnAwaitTraceback {
-                    k_user: k_user.clone(),
+                    k_user: k_user.clone_handle(),
                     effect,
                 };
                 IRStreamStep::Yield(DoCtrl::GetTraceback {
@@ -3757,7 +3769,9 @@ impl IRStreamProgram for SchedulerProgram {
                 let current_priority = state.current_task_priority();
                 let task_value = Value::Task(TaskHandle { id: task_id });
                 if matches!(current_priority, Some(current) if priority > current) {
-                    if let Err(error) = state.park_current_with_value(k_user.clone(), task_value) {
+                    if let Err(error) =
+                        state.park_current_with_value(k_user.clone_handle(), task_value)
+                    {
                         return IRStreamStep::Throw(error);
                     }
                     drop(state);
