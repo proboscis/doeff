@@ -3,15 +3,15 @@
 use std::sync::Arc;
 
 use crate::do_ctrl::InterceptMode;
+use crate::driver::PyException;
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
+use crate::frame::ProgramDispatch;
 use crate::ids::{FiberId, Marker};
 use crate::kleisli::KleisliRef;
 use crate::memory_stats;
-use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
-use crate::value::Value;
-use std::collections::HashMap;
+pub use crate::scope_store::ScopeStore;
 
 #[derive(Debug, Clone)]
 pub enum FiberKind {
@@ -38,17 +38,15 @@ pub enum FiberKind {
     },
 }
 
-/// Per-segment scope state used by Local/Ask resolution.
-#[derive(Debug, Clone, Default)]
-pub struct ScopeStore {
-    pub scope_bindings: Vec<Arc<HashMap<HashedPyKey, Value>>>,
-}
-
 #[derive(Debug)]
 pub struct Fiber {
     pub frames: Vec<Frame>,
     pub parent: Option<FiberId>,
     pub kind: FiberKind,
+    pub(crate) pending_error_context: Option<PyException>,
+    pub(crate) interceptor_eval_depth: usize,
+    pub(crate) interceptor_skip_stack: Vec<Marker>,
+    pub(crate) pending_program_dispatch: Option<ProgramDispatch>,
 }
 
 impl Fiber {
@@ -58,6 +56,10 @@ impl Fiber {
             frames: Vec::new(),
             parent,
             kind: FiberKind::Normal { marker },
+            pending_error_context: None,
+            interceptor_eval_depth: 0,
+            interceptor_skip_stack: Vec::new(),
+            pending_program_dispatch: None,
         }
     }
 
@@ -77,6 +79,10 @@ impl Fiber {
                 handler,
                 types: None,
             },
+            pending_error_context: None,
+            interceptor_eval_depth: 0,
+            interceptor_skip_stack: Vec::new(),
+            pending_program_dispatch: None,
         }
     }
 
@@ -97,6 +103,10 @@ impl Fiber {
                 handler,
                 types,
             },
+            pending_error_context: None,
+            interceptor_eval_depth: 0,
+            interceptor_skip_stack: Vec::new(),
+            pending_program_dispatch: None,
         }
     }
 
