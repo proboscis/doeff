@@ -24,7 +24,7 @@ use crate::effect::{
 use crate::error::VMError;
 use crate::handler::{IRStreamFactory, IRStreamProgram, IRStreamProgramRef};
 use crate::handlers::AwaitHandlerFactory;
-use crate::ids::{ContId, DispatchId, PromiseId, TaskId};
+use crate::ids::{ContId, DispatchId, PromiseId, SegmentId, TaskId};
 use crate::ir_stream::{IRStream, IRStreamStep, StreamLocation};
 use crate::kleisli::{DgfnKleisli, KleisliRef};
 use crate::py_shared::PyShared;
@@ -470,6 +470,26 @@ fn step_switches_into_task_body(step: &IRStreamStep) -> bool {
             | IRStreamStep::Yield(DoCtrl::Transfer { .. })
             | IRStreamStep::Yield(DoCtrl::TransferThrow { .. })
     )
+}
+
+fn handlers_match(left: &KleisliRef, right: &KleisliRef) -> bool {
+    Arc::ptr_eq(left, right)
+        || (left.handler_name() == right.handler_name()
+            && left.is_rust_builtin() == right.is_rust_builtin()
+            && left.is_sync_await_shim() == right.is_sync_await_shim())
+}
+
+fn shared_handler_suffix_len(current: &[KleisliRef], stored: &[KleisliRef]) -> usize {
+    let mut matched = 0;
+    while matched < current.len() && matched < stored.len() {
+        let current_index = current.len() - 1 - matched;
+        let stored_index = stored.len() - 1 - matched;
+        if !handlers_match(&current[current_index], &stored[stored_index]) {
+            break;
+        }
+        matched += 1;
+    }
+    matched
 }
 
 /// The scheduler's internal state.
@@ -2500,6 +2520,33 @@ impl SchedulerState {
             }
         }
     }
+
+    fn propagate_current_handlers_to_unstarted_tasks(
+        &mut self,
+        items: &[Waitable],
+        current_handlers: &[KleisliRef],
+    ) {
+        for item in items {
+            let Waitable::Task(task_id) = item else {
+                continue;
+            };
+            let Some(TaskState::Pending { cont, .. }) = self.tasks.get_mut(task_id) else {
+                continue;
+            };
+            if cont.is_started() {
+                continue;
+            }
+            let Some(stored_handlers) = cont.handlers() else {
+                continue;
+            };
+            let suffix_len = shared_handler_suffix_len(current_handlers, stored_handlers);
+            let prefix_len = current_handlers.len().saturating_sub(suffix_len);
+            if prefix_len == 0 {
+                continue;
+            }
+            cont.prepend_unstarted_handlers(current_handlers[..prefix_len].to_vec());
+        }
+    }
 }
 
 impl Drop for SchedulerState {
@@ -2549,6 +2596,10 @@ enum SchedulerPhase {
     },
     AwaitTransferWithDeadlock {
         deadlock_message: String,
+    },
+    GatherAwaitHandlers {
+        k_user: Continuation,
+        items: Vec<Waitable>,
     },
     AwaitWaitTransfer {
         owner: WaitOwner,
@@ -2600,6 +2651,7 @@ impl SchedulerProgram {
             SchedulerPhase::PreemptiveTransfer { .. } => "PreemptiveTransfer",
             SchedulerPhase::AwaitSimpleTransfer { .. } => "AwaitSimpleTransfer",
             SchedulerPhase::AwaitTransferWithDeadlock { .. } => "AwaitTransferWithDeadlock",
+            SchedulerPhase::GatherAwaitHandlers { .. } => "GatherAwaitHandlers",
             SchedulerPhase::AwaitWaitTransfer { .. } => "AwaitWaitTransfer",
             SchedulerPhase::AwaitPreemptiveTransfer { .. } => "AwaitPreemptiveTransfer",
             SchedulerPhase::AwaitDrivingTransfer { .. } => "AwaitDrivingTransfer",
@@ -2655,6 +2707,55 @@ impl SchedulerProgram {
                 "sync_await_handler".to_string(),
             )),
         );
+    }
+
+    fn gather_needs_handler_refresh(&self, items: &[Waitable]) -> bool {
+        let state = self.state.lock().expect("Scheduler lock poisoned");
+        items.iter().any(|item| {
+            matches!(
+                item,
+                Waitable::Task(task_id)
+                    if matches!(
+                        state.tasks.get(task_id),
+                        Some(TaskState::Pending { cont, .. }) if !cont.is_started()
+                    )
+            )
+        })
+    }
+
+    fn handle_gather_ready(
+        &mut self,
+        k_user: Continuation,
+        items: Vec<Waitable>,
+        store: &mut RustStore,
+    ) -> IRStreamStep {
+        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        let waiting_task = state.current_task;
+        let cont_id = k_user.cont_id;
+        if let Some(aggregate) = state.collect_all_result(&items) {
+            state.clear_waiters_for_owner(waiting_task, cont_id);
+            return match aggregate {
+                Ok(results) => resume_to_continuation(k_user, results),
+                Err(error) => throw_to_continuation(k_user, error),
+            };
+        }
+        let root_wait_continuation = if let Some(waiting_task) = waiting_task {
+            if let Err(error) = state.suspend_task_for_wait(waiting_task, k_user) {
+                return IRStreamStep::Throw(error);
+            }
+            None
+        } else {
+            Some(k_user)
+        };
+
+        state.wait_on_all(&items, cont_id, root_wait_continuation, store);
+        let owner = self.wait_owner(waiting_task, cont_id, state.active_driver_owner);
+        drop(state);
+        self.continue_wait_transfer(
+            owner,
+            "deadlock: Gather blocked with no runnable tasks".to_string(),
+            store,
+        )
     }
 
     fn try_transfer_ready_owner(
@@ -2910,33 +3011,11 @@ impl SchedulerProgram {
         items: Vec<Waitable>,
         store: &mut RustStore,
     ) -> IRStreamStep {
-        let mut state = self.state.lock().expect("Scheduler lock poisoned");
-        let waiting_task = state.current_task;
-        let cont_id = k_user.cont_id;
-        if let Some(aggregate) = state.collect_all_result(&items) {
-            state.clear_waiters_for_owner(waiting_task, cont_id);
-            return match aggregate {
-                Ok(results) => resume_to_continuation(k_user, results),
-                Err(error) => throw_to_continuation(k_user, error),
-            };
+        if self.gather_needs_handler_refresh(&items) {
+            self.phase = SchedulerPhase::GatherAwaitHandlers { k_user, items };
+            return IRStreamStep::Yield(DoCtrl::GetHandlers);
         }
-        let root_wait_continuation = if let Some(waiting_task) = waiting_task {
-            if let Err(error) = state.suspend_task_for_wait(waiting_task, k_user) {
-                return IRStreamStep::Throw(error);
-            }
-            None
-        } else {
-            Some(k_user)
-        };
-
-        state.wait_on_all(&items, cont_id, root_wait_continuation, store);
-        let owner = self.wait_owner(waiting_task, cont_id, state.active_driver_owner);
-        drop(state);
-        self.continue_wait_transfer(
-            owner,
-            "deadlock: Gather blocked with no runnable tasks".to_string(),
-            store,
-        )
+        self.handle_gather_ready(k_user, items, store)
     }
 
     fn handle_race(
@@ -3699,6 +3778,36 @@ impl IRStreamProgram for SchedulerProgram {
             SchedulerPhase::AwaitTransferWithDeadlock { deadlock_message } => {
                 self.continue_transfer_with_deadlock(deadlock_message, store)
             }
+            SchedulerPhase::GatherAwaitHandlers { k_user, items } => {
+                let handlers = match value {
+                    Value::Handlers(handlers) => handlers,
+                    Value::Python(_)
+                    | Value::Unit
+                    | Value::Int(_)
+                    | Value::String(_)
+                    | Value::Bool(_)
+                    | Value::None
+                    | Value::Continuation(_)
+                    | Value::Kleisli(_)
+                    | Value::Var(_)
+                    | Value::Task(_)
+                    | Value::Promise(_)
+                    | Value::ExternalPromise(_)
+                    | Value::CallStack(_)
+                    | Value::Trace(_)
+                    | Value::Traceback(_)
+                    | Value::ActiveChain(_)
+                    | Value::List(_) => {
+                        return IRStreamStep::Throw(PyException::type_error(
+                            "scheduler Gather expected GetHandlers result".to_string(),
+                        ));
+                    }
+                };
+                let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                state.propagate_current_handlers_to_unstarted_tasks(&items, &handlers);
+                drop(state);
+                self.handle_gather_ready(k_user, items, store)
+            }
             SchedulerPhase::AwaitWaitTransfer {
                 owner,
                 deadlock_message,
@@ -3747,6 +3856,7 @@ impl IRStreamProgram for SchedulerProgram {
             }
             SchedulerPhase::AwaitSimpleTransfer { .. }
             | SchedulerPhase::AwaitTransferWithDeadlock { .. }
+            | SchedulerPhase::GatherAwaitHandlers { .. }
             | SchedulerPhase::AwaitWaitTransfer { .. }
             | SchedulerPhase::AwaitPreemptiveTransfer { .. }
             | SchedulerPhase::AwaitDrivingTransfer { .. }

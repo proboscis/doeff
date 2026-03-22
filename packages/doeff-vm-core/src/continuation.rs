@@ -46,6 +46,7 @@ struct UnstartedContinuation {
     handler_identities: Vec<Option<PyShared>>,
     metadata: Option<CallMetadata>,
     outside_scope: Option<SegmentId>,
+    start_return_to: Option<Box<Continuation>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -223,6 +224,7 @@ impl Continuation {
                 handler_identities: vec![None; handler_count],
                 metadata,
                 outside_scope,
+                start_return_to: None,
             }),
         }
     }
@@ -263,6 +265,7 @@ impl Continuation {
                 handler_identities,
                 metadata,
                 outside_scope,
+                start_return_to: None,
             }),
         }
     }
@@ -383,6 +386,18 @@ impl Continuation {
         self.shared_metadata().captured_caller
     }
 
+    pub fn set_captured_caller_hint(&mut self, captured_caller: Option<SegmentId>) {
+        self.set_captured_caller(captured_caller);
+    }
+
+    pub fn set_unstarted_start_return_to_hint(&mut self, continuation: Option<Continuation>) {
+        if let Some(unstarted) = self.unstarted.as_mut() {
+            unstarted.start_return_to = continuation.map(|continuation| {
+                Box::new(continuation.clone_handle())
+            });
+        }
+    }
+
     pub(crate) fn set_captured_caller(&mut self, captured_caller: Option<SegmentId>) {
         self.metadata_state
             .lock()
@@ -407,6 +422,22 @@ impl Continuation {
         self.unstarted
             .as_ref()
             .map(|unstarted| unstarted.handlers.as_slice())
+    }
+
+    pub fn prepend_unstarted_handlers(&mut self, mut handlers: Vec<KleisliRef>) {
+        let Some(unstarted) = self.unstarted.as_mut() else {
+            return;
+        };
+        if handlers.is_empty() {
+            return;
+        }
+        let extra_count = handlers.len();
+        handlers.extend(unstarted.handlers.iter().cloned());
+        unstarted.handlers = handlers;
+
+        let mut handler_identities = vec![None; extra_count];
+        handler_identities.extend(unstarted.handler_identities.iter().cloned());
+        unstarted.handler_identities = handler_identities;
     }
 
     pub fn handler_identities(&self) -> Option<&[Option<PyShared>]> {
@@ -458,6 +489,7 @@ impl Continuation {
         Vec<Option<PyShared>>,
         Option<CallMetadata>,
         Option<SegmentId>,
+        Option<Continuation>,
     )> {
         self.unstarted.clone().map(
             |UnstartedContinuation {
@@ -466,6 +498,7 @@ impl Continuation {
                  handler_identities,
                  metadata,
                  outside_scope,
+                 start_return_to,
              }| {
                 (
                     program,
@@ -473,6 +506,7 @@ impl Continuation {
                     handler_identities,
                     metadata,
                     outside_scope,
+                    start_return_to.map(|continuation| continuation.as_ref().clone_handle()),
                 )
             },
         )
