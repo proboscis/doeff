@@ -616,13 +616,20 @@ impl PyVM {
                 match frame {
                     crate::frame::Frame::Program { .. } => program_frames += 1,
                     crate::frame::Frame::LexicalScope { .. } => other_frames += 1,
-                    crate::frame::Frame::InterceptorApply(_)
-                    | crate::frame::Frame::InterceptorEval(_) => interceptor_frames += 1,
-                    crate::frame::Frame::EvalReturn(_) => eval_return_frames += 1,
+                    crate::frame::Frame::EvalReturn(eval_return) => {
+                        if matches!(
+                            eval_return.as_ref(),
+                            crate::frame::EvalReturnContinuation::InterceptApplyResult { .. }
+                                | crate::frame::EvalReturnContinuation::InterceptEvalResult { .. }
+                        ) {
+                            interceptor_frames += 1;
+                        } else {
+                            eval_return_frames += 1;
+                        }
+                    }
                     crate::frame::Frame::MapReturn { .. }
                     | crate::frame::Frame::FlatMapBindResult
-                    | crate::frame::Frame::FlatMapBindSource { .. }
-                    | crate::frame::Frame::InterceptBodyReturn { .. } => other_frames += 1,
+                    | crate::frame::Frame::FlatMapBindSource { .. } => other_frames += 1,
                 }
             }
         }
