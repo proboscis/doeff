@@ -749,29 +749,30 @@ impl VM {
     pub fn is_one_shot_consumed(&self, cont_id: ContId) -> bool {
         self.consumed_continuations.contains(&cont_id)
             || self
-                .continuation_registry
+                .continuations
+                .entries
                 .get(&cont_id)
                 .is_some_and(Continuation::consumed)
     }
 
     pub fn mark_one_shot_consumed(&mut self, cont_id: ContId) {
         self.consumed_continuations.insert(cont_id);
-        if let Some(continuation) = self.continuation_registry.get_mut(&cont_id) {
+        if let Some(continuation) = self.continuations.entries.get_mut(&cont_id) {
             continuation.mark_consumed();
         }
-        self.continuation_registry.remove(&cont_id);
+        self.continuations.entries.remove(&cont_id);
     }
 
     pub fn register_continuation(&mut self, k: Continuation) {
-        self.continuation_registry.insert(k.cont_id, k);
+        self.continuations.entries.insert(k.cont_id, k);
     }
 
     pub fn lookup_continuation(&self, cont_id: ContId) -> Option<&Continuation> {
-        self.continuation_registry.get(&cont_id)
+        self.continuations.entries.get(&cont_id)
     }
 
     pub fn take_continuation(&mut self, cont_id: ContId) -> Option<Continuation> {
-        self.continuation_registry.remove(&cont_id)
+        self.continuations.entries.remove(&cont_id)
     }
 
     fn materialize_owned_continuation(
@@ -2357,7 +2358,8 @@ impl VM {
             .and_then(|(_, _, marker)| self.marker_handler_trace_info(*marker))
             .is_some_and(|(_, kind, _, _)| kind == HandlerKind::Python);
         let continuation_is_live = continuation.as_ref().is_some_and(|continuation| {
-            self.continuation_registry
+            self.continuations
+                .entries
                 .contains_key(&continuation.cont_id)
                 && !self.is_one_shot_consumed(continuation.cont_id)
         });

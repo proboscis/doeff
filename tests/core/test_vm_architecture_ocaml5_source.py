@@ -170,7 +170,6 @@ def test_dispatch_observer_module_does_not_exist() -> None:
     )
 
 
-@pytest.mark.xfail(reason="Phase 5: continuation_registry must be eliminated", strict=False)
 def test_vm_source_does_not_have_continuation_registry() -> None:
     """continuation_registry is a HashMap tracking continuations by ContId.
 
