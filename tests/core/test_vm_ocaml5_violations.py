@@ -250,7 +250,6 @@ def test_v30_no_dispatch_displays():
     assert "DispatchDisplayState" not in src
 
 
-@pytest.mark.xfail(reason="V31: frame_stack shadow copy", strict=False)
 def test_v31_no_shadow_frame_stack():
     """TraceState must not maintain a shadow frame stack. The fiber chain IS the stack."""
     src = _src(TRACE_STATE_RS)
