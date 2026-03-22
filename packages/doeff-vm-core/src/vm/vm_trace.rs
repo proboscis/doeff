@@ -494,7 +494,7 @@ impl VM {
     ) {
         let is_live_handler_throw = self.current_active_handler_dispatch_id() == Some(dispatch_id)
             || self.current_segment_is_active_handler_for_dispatch(dispatch_id);
-        if self.trace_state.dispatch_has_terminal_result(dispatch_id) && !is_live_handler_throw {
+        if self.dispatch_has_terminal_handler_action(dispatch_id) && !is_live_handler_throw {
             return;
         }
         let handler_identity = self
@@ -511,7 +511,7 @@ impl VM {
         let Some((handler_index, handler_name)) = handler_identity else {
             return;
         };
-        self.trace_state.record_handler_completed(
+        self.record_handler_completion(
             dispatch_id,
             &handler_name,
             handler_index,
@@ -532,7 +532,7 @@ impl VM {
             TraceState::continuation_resume_location_from_frames(&frames)
         {
             if transferred {
-                self.trace_state.record_transfer_target(
+                self.record_dispatch_transfer_target(
                     dispatch_id,
                     &resumed_function_name,
                     &source_file,

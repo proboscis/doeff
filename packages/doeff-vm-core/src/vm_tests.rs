@@ -134,6 +134,14 @@ fn install_pending_dispatch(
             prompt_segment_id: handler_seg_id,
             effect: crate::effect::make_get_execution_context_effect()
                 .expect("test dispatch effect should be constructible"),
+            trace: DispatchTrace {
+                effect_site: None,
+                handler_stack: Vec::new(),
+                transfer_target_repr: None,
+                result: EffectResult::Active,
+                resumed_once: false,
+                is_execution_context_effect: true,
+            },
             origin: origin.clone_handle(),
             handler_continuation: origin.clone_handle(),
             original_exception,
