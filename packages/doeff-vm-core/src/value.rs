@@ -10,9 +10,10 @@ use crate::capture::{
     HandlerStatus, TraceEntry, TraceHop,
 };
 use crate::frame::CallMetadata;
-use crate::ids::{PromiseId, ScopeId, TaskId, VarId};
+use crate::ids::{PromiseId, SegmentId, TaskId, VarId};
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
+use crate::{Continuation, PendingContinuation};
 
 #[pyclass(frozen, name = "TraceFrame", module = "doeff_vm.doeff_vm")]
 pub struct PyTraceFrame {
@@ -74,37 +75,37 @@ pub struct PyVar {
     #[pyo3(get)]
     pub raw: u64,
     #[pyo3(get)]
-    pub owner_scope: u64,
+    pub owner_segment: u32,
 }
 
 impl PyVar {
     pub fn from_var(var: VarId) -> Self {
         Self {
             raw: var.raw(),
-            owner_scope: var.owner_scope().raw(),
+            owner_segment: var.owner_segment().0,
         }
     }
 
     pub fn to_var_id(&self) -> VarId {
-        VarId::from_raw(self.raw, ScopeId::from_raw(self.owner_scope))
+        VarId::from_raw(self.raw, SegmentId::from_index(self.owner_segment as usize))
     }
 }
 
 #[pymethods]
 impl PyVar {
     #[new]
-    #[pyo3(signature = (raw, owner_scope))]
-    fn new(raw: u64, owner_scope: u64) -> Self {
-        Self { raw, owner_scope }
+    #[pyo3(signature = (raw, owner_segment))]
+    fn new(raw: u64, owner_segment: u32) -> Self {
+        Self { raw, owner_segment }
     }
 
     fn __repr__(&self) -> String {
         format!("Var({})", self.raw)
     }
 
-    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (u64, u64))> {
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (u64, u32))> {
         let cls = py.get_type::<Self>().into_any().unbind();
-        Ok((cls, (self.raw, self.owner_scope)))
+        Ok((cls, (self.raw, self.owner_segment)))
     }
 }
 
@@ -139,7 +140,8 @@ pub enum Value {
     String(String),
     Bool(bool),
     None,
-    Continuation(crate::continuation::Continuation),
+    Continuation(Continuation),
+    PendingContinuation(PendingContinuation),
     Handlers(Vec<KleisliRef>),
     Kleisli(KleisliRef),
     Var(VarId),
@@ -163,6 +165,7 @@ impl Clone for Value {
             Value::Bool(b) => Value::Bool(*b),
             Value::None => Value::None,
             Value::Continuation(k) => Value::Continuation(k.clone_handle()),
+            Value::PendingContinuation(k) => Value::PendingContinuation(k.clone()),
             Value::Handlers(handlers) => Value::Handlers(handlers.clone()),
             Value::Kleisli(kleisli) => Value::Kleisli(kleisli.clone()),
             Value::Var(var) => Value::Var(*var),
@@ -482,6 +485,7 @@ impl Value {
             Value::Bool(b) => Ok(PyBool::new(py, *b).to_owned().into_any()),
             Value::None => Ok(py.None().into_bound(py)),
             Value::Continuation(k) => k.to_pyobject(py),
+            Value::PendingContinuation(k) => k.to_pyobject(py),
             Value::Handlers(handlers) => {
                 let list = PyList::empty(py);
                 for h in handlers {
@@ -637,6 +641,7 @@ impl Value {
             | Value::Bool(_)
             | Value::None
             | Value::Continuation(_)
+            | Value::PendingContinuation(_)
             | Value::Handlers(_)
             | Value::Kleisli(_)
             | Value::Var(_)
@@ -661,6 +666,7 @@ impl Value {
             | Value::Bool(_)
             | Value::None
             | Value::Continuation(_)
+            | Value::PendingContinuation(_)
             | Value::Handlers(_)
             | Value::Kleisli(_)
             | Value::Var(_)
@@ -685,6 +691,7 @@ impl Value {
             | Value::String(_)
             | Value::None
             | Value::Continuation(_)
+            | Value::PendingContinuation(_)
             | Value::Handlers(_)
             | Value::Kleisli(_)
             | Value::Var(_)
@@ -710,6 +717,7 @@ impl Value {
             | Value::Bool(_)
             | Value::None
             | Value::Continuation(_)
+            | Value::PendingContinuation(_)
             | Value::Kleisli(_)
             | Value::Var(_)
             | Value::Task(_)

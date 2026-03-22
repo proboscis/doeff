@@ -74,7 +74,7 @@ pub use capture::{
     TraceFrame, TraceHop,
 };
 #[cfg(feature = "python_bridge")]
-pub use continuation::{Continuation, PyK};
+pub use continuation::{Continuation, OwnedControlContinuation, PendingContinuation, PyK};
 #[cfg(feature = "python_bridge")]
 pub use do_ctrl::{DoCtrl, DoExprTag, PyDoCtrlBase, PyDoExprBase};
 #[cfg(feature = "python_bridge")]

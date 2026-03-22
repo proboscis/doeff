@@ -17,10 +17,6 @@ pub struct Marker(pub u64);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct FiberId(pub u32);
 
-/// Stable lexical-scope identifier.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct ScopeId(pub u64);
-
 /// Unique identifier for continuations (one-shot tracking).
 ///
 /// Each captured continuation gets a unique ContId to enforce one-shot semantics.
@@ -53,12 +49,11 @@ pub struct PromiseId(pub u64);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct VarId {
     raw: u64,
-    owner_scope: ScopeId,
+    owner_segment: SegmentId,
 }
 
 // Global counters for ID generation
 static MARKER_COUNTER: AtomicU64 = AtomicU64::new(1);
-static SCOPE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 static VAR_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 static CONT_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 static DISPATCH_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -86,25 +81,11 @@ impl Marker {
     }
 }
 
-impl ScopeId {
-    pub fn fresh() -> Self {
-        ScopeId(SCOPE_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
-    }
-
-    pub fn raw(&self) -> u64 {
-        self.0
-    }
-
-    pub fn from_raw(value: u64) -> Self {
-        ScopeId(value)
-    }
-}
-
 impl VarId {
-    pub fn fresh(owner_scope: ScopeId) -> Self {
+    pub fn fresh(owner_segment: SegmentId) -> Self {
         VarId {
             raw: VAR_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
-            owner_scope,
+            owner_segment,
         }
     }
 
@@ -112,12 +93,12 @@ impl VarId {
         self.raw
     }
 
-    pub fn owner_scope(&self) -> ScopeId {
-        self.owner_scope
+    pub fn owner_segment(&self) -> SegmentId {
+        self.owner_segment
     }
 
-    pub fn from_raw(raw: u64, owner_scope: ScopeId) -> Self {
-        VarId { raw, owner_scope }
+    pub fn from_raw(raw: u64, owner_segment: SegmentId) -> Self {
+        VarId { raw, owner_segment }
     }
 }
 
@@ -222,17 +203,10 @@ mod tests {
     }
 
     #[test]
-    fn test_scope_id_fresh_is_unique() {
-        let s1 = ScopeId::fresh();
-        let s2 = ScopeId::fresh();
-        assert_ne!(s1, s2);
-    }
-
-    #[test]
-    fn test_var_id_preserves_owner_scope() {
-        let scope = ScopeId::fresh();
-        let var = VarId::fresh(scope);
-        assert_eq!(var.owner_scope(), scope);
+    fn test_var_id_preserves_owner_segment() {
+        let owner_segment = SegmentId::from_index(7);
+        let var = VarId::fresh(owner_segment);
+        assert_eq!(var.owner_segment(), owner_segment);
     }
 
     #[test]

@@ -43,8 +43,8 @@ def test_var_store_runtime_source_owns_handler_state_logs_and_bindings() -> None
     assert "writer_log: Vec<Value>" in source, (
         "VarStore must keep a single writer log instead of segment-keyed log maps."
     )
-    assert "HashMap<SegmentId, HashMap<HashedPyKey, Value>>" in source, (
-        "VarStore must continue to own named bindings for lexical scope."
+    assert "root_scope_bindings: HashMap<HashedPyKey, Value>" in source, (
+        "VarStore should keep only root lexical bindings once live scope layers move onto frames."
     )
 
 
