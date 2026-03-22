@@ -50,7 +50,7 @@ impl VM {
     pub(super) fn find_prompt_boundary_by_marker(
         &self,
         marker: Marker,
-    ) -> Option<(SegmentId, KleisliRef, Option<Vec<PyShared>>)> {
+    ) -> Option<(SegmentId, KleisliRef, Option<Arc<Vec<PyShared>>>)> {
         self.segments
             .iter()
             .find_map(|(seg_id, seg)| match &seg.kind {
@@ -186,16 +186,21 @@ impl VM {
     }
 
     pub(super) fn should_invoke_handler(
-        &self,
+        &mut self,
         entry: &HandlerChainEntry,
         effect_obj: &Py<PyAny>,
     ) -> Result<bool, PyException> {
-        self.should_invoke_handler_types(entry.types.as_ref(), effect_obj)
+        self.should_invoke_handler_types(
+            Self::handler_type_cache_key(&entry.handler),
+            entry.types.as_ref(),
+            effect_obj,
+        )
     }
 
     pub(super) fn should_invoke_handler_types(
-        &self,
-        types: Option<&Vec<PyShared>>,
+        &mut self,
+        handler_cache_key: usize,
+        types: Option<&Arc<Vec<PyShared>>>,
         effect_obj: &Py<PyAny>,
     ) -> Result<bool, PyException> {
         let Some(types) = types else {
@@ -205,11 +210,45 @@ impl VM {
             return Ok(false);
         }
 
-        Ok(Python::attach(|py| -> PyResult<bool> {
+        let (effect_type_ptr, cached_match) = Python::attach(|py| -> PyResult<(usize, bool)> {
             let effect = effect_obj.bind(py);
-            let type_tuple = PyTuple::new(py, types.iter().map(|ty| ty.clone_ref(py)))?;
-            effect.is_instance(&type_tuple)
-        })?)
+            let effect_type = effect.get_type();
+            let effect_type_ptr = effect_type.as_ptr() as usize;
+            if let Some(cached_match) = self
+                .handler_type_match_cache
+                .get(&(handler_cache_key, effect_type_ptr))
+                .copied()
+            {
+                return Ok((effect_type_ptr, cached_match));
+            }
+
+            let matches_type_ptr = |candidate_ptr| {
+                types
+                    .iter()
+                    .any(|ty| candidate_ptr == ty.bind(py).as_ptr())
+            };
+
+            if matches_type_ptr(effect_type.as_ptr()) {
+                return Ok((effect_type_ptr, true));
+            }
+
+            for mro_type in effect_type.mro().iter().skip(1) {
+                let mro_type = mro_type.cast::<pyo3::types::PyType>()?;
+                if matches_type_ptr(mro_type.as_ptr()) {
+                    return Ok((effect_type_ptr, true));
+                }
+            }
+
+            Ok((effect_type_ptr, false))
+        })?;
+
+        self.handler_type_match_cache
+            .insert((handler_cache_key, effect_type_ptr), cached_match);
+        Ok(cached_match)
+    }
+
+    pub(super) fn handler_type_cache_key(handler: &KleisliRef) -> usize {
+        Arc::as_ptr(handler) as *const () as usize
     }
 
     pub(super) fn handler_index_in_caller_chain(

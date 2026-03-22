@@ -1,6 +1,7 @@
 //! Core VM struct and step execution.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -203,7 +204,7 @@ struct HandlerChainEntry {
     marker: Marker,
     prompt_seg_id: SegmentId,
     handler: KleisliRef,
-    types: Option<Vec<PyShared>>,
+    types: Option<Arc<Vec<PyShared>>>,
 }
 
 #[derive(Clone)]
@@ -275,6 +276,8 @@ pub struct VM {
     fiber_runtime: HashMap<SegmentId, FiberRuntimeState>,
     scope_ids: HashMap<SegmentId, ScopeId>,
     scope_parents: HashMap<SegmentId, Option<SegmentId>>,
+    handler_type_match_cache: HashMap<(usize, usize), bool>,
+    shared_builtin_prompt_cache: RwLock<HashMap<SegmentId, SegmentId>>,
     segment_parent_redirects: HashMap<SegmentId, Option<SegmentId>>,
     completed_state_entries_snapshot: Option<HashMap<String, Value>>,
     completed_log_entries_snapshot: Option<Vec<Value>>,
@@ -298,6 +301,8 @@ impl VM {
             fiber_runtime: HashMap::new(),
             scope_ids: HashMap::new(),
             scope_parents: HashMap::new(),
+            handler_type_match_cache: HashMap::new(),
+            shared_builtin_prompt_cache: RwLock::new(HashMap::new()),
             segment_parent_redirects: HashMap::new(),
             completed_state_entries_snapshot: None,
             completed_log_entries_snapshot: None,
@@ -328,6 +333,11 @@ impl VM {
         self.fiber_runtime.clear();
         self.scope_ids.clear();
         self.scope_parents.clear();
+        self.handler_type_match_cache.clear();
+        self.shared_builtin_prompt_cache
+            .get_mut()
+            .expect("shared builtin prompt cache poisoned")
+            .clear();
         self.segment_parent_redirects.clear();
         self.completed_state_entries_snapshot = None;
         self.completed_log_entries_snapshot = None;
@@ -360,6 +370,16 @@ impl VM {
         self.scope_ids.clear();
         self.scope_ids.shrink_to_fit();
         self.scope_parents.clear();
+        self.handler_type_match_cache.clear();
+        self.handler_type_match_cache.shrink_to_fit();
+        self.shared_builtin_prompt_cache
+            .get_mut()
+            .expect("shared builtin prompt cache poisoned")
+            .clear();
+        self.shared_builtin_prompt_cache
+            .get_mut()
+            .expect("shared builtin prompt cache poisoned")
+            .shrink_to_fit();
         self.segment_parent_redirects.clear();
         self.scope_parents.shrink_to_fit();
     }
@@ -574,7 +594,7 @@ impl VM {
             Frame::Program {
                 dispatch: Some(dispatch),
                 ..
-            } => Some(dispatch),
+            } if self.trace_state.has_dispatch(dispatch.dispatch_id) => Some(dispatch),
             Frame::Program { .. }
             | Frame::InterceptorApply(_)
             | Frame::InterceptorEval(_)
@@ -599,7 +619,7 @@ impl VM {
                 Frame::Program {
                     dispatch: Some(dispatch),
                     ..
-                } => Some(dispatch),
+                } if self.trace_state.has_dispatch(dispatch.dispatch_id) => Some(dispatch),
                 Frame::Program { .. }
                 | Frame::InterceptorApply(_)
                 | Frame::InterceptorEval(_)
@@ -988,14 +1008,36 @@ impl VM {
     }
 
     fn shared_builtin_handler_prompt(&self, prompt_seg_id: SegmentId) -> SegmentId {
+        if let Some(canonical_seg_id) = self
+            .shared_builtin_prompt_cache
+            .read()
+            .expect("shared builtin prompt cache poisoned")
+            .get(&prompt_seg_id)
+            .copied()
+        {
+            return canonical_seg_id;
+        }
+
         let Some(seg) = self.segments.get(prompt_seg_id) else {
+            self.shared_builtin_prompt_cache
+                .write()
+                .expect("shared builtin prompt cache poisoned")
+                .insert(prompt_seg_id, prompt_seg_id);
             return prompt_seg_id;
         };
         let SegmentKind::PromptBoundary { handler, .. } = &seg.kind else {
+            self.shared_builtin_prompt_cache
+                .write()
+                .expect("shared builtin prompt cache poisoned")
+                .insert(prompt_seg_id, prompt_seg_id);
             return prompt_seg_id;
         };
         let handler_name = handler.handler_name();
         if !matches!(handler_name.as_str(), "StateHandler" | "WriterHandler") {
+            self.shared_builtin_prompt_cache
+                .write()
+                .expect("shared builtin prompt cache poisoned")
+                .insert(prompt_seg_id, prompt_seg_id);
             return prompt_seg_id;
         }
         // Spawn/CreateContinuation installs synthetic handler wrappers whose
@@ -1005,6 +1047,10 @@ impl VM {
         // redirect reads/writes/log appends to the first matching prompt in
         // that captured scope chain.
         if self.scope_parent(prompt_seg_id) == seg.parent {
+            self.shared_builtin_prompt_cache
+                .write()
+                .expect("shared builtin prompt cache poisoned")
+                .insert(prompt_seg_id, prompt_seg_id);
             return prompt_seg_id;
         }
 
@@ -1015,12 +1061,20 @@ impl VM {
             };
             if let SegmentKind::PromptBoundary { handler, .. } = &seg.kind {
                 if handler.handler_name() == handler_name {
+                    self.shared_builtin_prompt_cache
+                        .write()
+                        .expect("shared builtin prompt cache poisoned")
+                        .insert(prompt_seg_id, seg_id);
                     return seg_id;
                 }
             }
             cursor = self.scope_parent(seg_id);
         }
 
+        self.shared_builtin_prompt_cache
+            .write()
+            .expect("shared builtin prompt cache poisoned")
+            .insert(prompt_seg_id, prompt_seg_id);
         prompt_seg_id
     }
 

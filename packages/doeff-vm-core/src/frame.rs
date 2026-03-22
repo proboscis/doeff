@@ -9,7 +9,7 @@ use crate::continuation::Continuation;
 use crate::do_ctrl::{DoCtrl, InterceptMode};
 use crate::driver::PyException;
 use crate::effect::DispatchEffect;
-use crate::ids::{DispatchId, Marker};
+use crate::ids::{DispatchId, Marker, SegmentId};
 use crate::ir_stream::IRStreamRef;
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
@@ -117,6 +117,8 @@ impl InterceptorChainLink {
 #[derive(Debug, Clone)]
 pub struct ProgramDispatch {
     pub dispatch_id: DispatchId,
+    pub handler_segment_id: SegmentId,
+    pub prompt_segment_id: SegmentId,
     pub effect: DispatchEffect,
     pub origin: Continuation,
     pub handler_continuation: Continuation,
