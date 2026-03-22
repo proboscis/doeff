@@ -120,7 +120,6 @@ def test_v10_no_env_store_on_vm():
     assert "env_store:" not in src, "VM must not have env_store — use VarStore only"
 
 
-@pytest.mark.xfail(reason="V13: TraceState accumulated dispatch maps", strict=False)
 def test_v13_no_trace_state_dispatch_maps():
     """TraceState must not accumulate dispatch display maps. Derive from stack."""
     src = _src(TRACE_STATE_RS)
