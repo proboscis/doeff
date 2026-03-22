@@ -511,7 +511,7 @@ impl PyVM {
     }
 
     pub fn _continuation_count(&self) -> usize {
-        self.vm.continuation_registry.len()
+        self.vm.continuation_count()
     }
 
     pub fn memory_stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
@@ -555,7 +555,7 @@ impl PyVM {
         dict.set_item("arena_segments", self.vm.segments.len())?;
         dict.set_item("arena_slots", self.vm.segments.slot_count())?;
         dict.set_item("arena_capacity", self.vm.segments.capacity())?;
-        dict.set_item("continuation_registry", self.vm.continuation_registry.len())?;
+        dict.set_item("continuation_registry", self.vm.continuation_count())?;
         dict.set_item("dispatch_count", self.vm.dispatch_count())?;
         dict.set_item("dispatch_capacity", self.vm.dispatch_capacity())?;
         dict.set_item(
