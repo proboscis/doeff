@@ -16,8 +16,6 @@ from __future__ import annotations
 from pathlib import Path
 import re
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[2]
 SEGMENT_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "segment.rs"
 VM_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "vm.rs"
@@ -46,11 +44,6 @@ def _struct_body(source: str, name: str) -> str | None:
 def _pub_fields(struct_body: str) -> list[str]:
     """Extract public field names from a struct body."""
     return re.findall(r"^\s*pub\s+([a-z_]+):", struct_body, re.MULTILINE)
-
-
-def _all_fields(struct_body: str) -> list[str]:
-    """Extract all field names (pub and private) from a struct body."""
-    return re.findall(r"^\s*(?:pub(?:\(crate\))?\s+)?([a-z_]+):", struct_body, re.MULTILINE)
 
 
 # ============================================================================
