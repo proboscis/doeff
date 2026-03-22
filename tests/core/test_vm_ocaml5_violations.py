@@ -325,7 +325,6 @@ def test_v39_no_segment_keyed_state():
         "VarStore must use VarId-addressed ref cells, not segment-keyed maps"
 
 
-@pytest.mark.xfail(reason="V40: writer_logs_by_segment on VarStore", strict=False)
 def test_v40_no_segment_keyed_logs():
     """Writer logs should be VarId-addressed ref cells."""
     src = _src(VAR_STORE_RS)
