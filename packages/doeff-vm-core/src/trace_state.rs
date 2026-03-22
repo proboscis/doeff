@@ -538,7 +538,9 @@ impl TraceState {
     }
 
     fn cleanup_exited_dispatch_frames(&mut self, dispatch_id: DispatchId) {
-        let frame_id = self.dispatch_display(dispatch_id).and_then(|display| display.owner_frame_id);
+        let frame_id = self
+            .dispatch_display(dispatch_id)
+            .and_then(|display| display.owner_frame_id);
         let Some(frame_id) = frame_id else {
             return;
         };
@@ -548,10 +550,9 @@ impl TraceState {
         let should_remove = self.frame_stack.get(index).is_some_and(|frame| {
             frame.exited
                 && !frame.preserve_on_error
-                && frame
-                    .dispatch_display
-                    .as_ref()
-                    .is_some_and(|dispatch| dispatch.dispatch_id == dispatch_id && dispatch.cleanup_ready)
+                && frame.dispatch_display.as_ref().is_some_and(|dispatch| {
+                    dispatch.dispatch_id == dispatch_id && dispatch.cleanup_ready
+                })
         });
         if should_remove {
             self.remove_frame_at(index);
@@ -559,7 +560,9 @@ impl TraceState {
     }
 
     fn clear_dispatch_display_from_frames(&mut self, dispatch_id: DispatchId) {
-        let frame_id = self.dispatch_display(dispatch_id).and_then(|display| display.owner_frame_id);
+        let frame_id = self
+            .dispatch_display(dispatch_id)
+            .and_then(|display| display.owner_frame_id);
         if let Some(frame_id) = frame_id {
             if let Some(frame) = self.frame_mut_by_id(frame_id) {
                 if frame
@@ -574,7 +577,9 @@ impl TraceState {
     }
 
     fn mark_exited_dispatch_frames_preserved_on_error(&mut self, dispatch_id: DispatchId) {
-        let frame_id = self.dispatch_display(dispatch_id).and_then(|display| display.owner_frame_id);
+        let frame_id = self
+            .dispatch_display(dispatch_id)
+            .and_then(|display| display.owner_frame_id);
         if let Some(frame_id) = frame_id {
             if let Some(frame) = self.frame_mut_by_id(frame_id) {
                 if frame
@@ -1496,8 +1501,7 @@ impl TraceState {
             }
 
             if Self::should_skip_program_frame(frame_stack, index) {
-                if let Some(entry) =
-                    Self::synthetic_hidden_gather_effect_entry(frame_stack, index)
+                if let Some(entry) = Self::synthetic_hidden_gather_effect_entry(frame_stack, index)
                 {
                     active_chain.push(entry);
                 }
@@ -1885,7 +1889,9 @@ impl TraceState {
             return None;
         }
         let effect_repr = &args_repr[prefix.len()..args_repr.find(separator)?];
-        effect_repr.starts_with("Gather(").then(|| effect_repr.to_string())
+        effect_repr
+            .starts_with("Gather(")
+            .then(|| effect_repr.to_string())
     }
 
     fn next_visible_dispatch_after(
@@ -1893,7 +1899,8 @@ impl TraceState {
         start_index: usize,
     ) -> Option<&DispatchDisplayState> {
         frame_stack.iter().skip(start_index).find_map(|frame| {
-            frame.dispatch_display
+            frame
+                .dispatch_display
                 .as_ref()
                 .filter(|dispatch| Self::is_visible_dispatch(dispatch))
         })

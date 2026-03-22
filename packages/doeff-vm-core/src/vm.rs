@@ -1,9 +1,9 @@
 //! Core VM struct and step execution.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::RwLock;
 
 use pyo3::exceptions::{PyBaseException, PyException as PyStdException};
 use pyo3::prelude::*;
@@ -114,6 +114,12 @@ struct FiberRuntimeState {
     interceptor_eval_depth: usize,
     interceptor_skip_stack: Vec<Marker>,
     pending_program_dispatch: Option<ProgramDispatch>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CachedHandlerResolution {
+    prompt_seg_id: SegmentId,
+    segment_epoch: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -277,6 +283,9 @@ pub struct VM {
     scope_ids: HashMap<SegmentId, ScopeId>,
     scope_parents: HashMap<SegmentId, Option<SegmentId>>,
     handler_type_match_cache: HashMap<(usize, usize), bool>,
+    segment_handler_resolution_cache: HashMap<(SegmentId, usize), CachedHandlerResolution>,
+    segment_topology_epochs: HashMap<SegmentId, u64>,
+    next_segment_topology_epoch: u64,
     shared_builtin_prompt_cache: RwLock<HashMap<SegmentId, SegmentId>>,
     segment_parent_redirects: HashMap<SegmentId, Option<SegmentId>>,
     completed_state_entries_snapshot: Option<HashMap<String, Value>>,
@@ -302,6 +311,9 @@ impl VM {
             scope_ids: HashMap::new(),
             scope_parents: HashMap::new(),
             handler_type_match_cache: HashMap::new(),
+            segment_handler_resolution_cache: HashMap::new(),
+            segment_topology_epochs: HashMap::new(),
+            next_segment_topology_epoch: 1,
             shared_builtin_prompt_cache: RwLock::new(HashMap::new()),
             segment_parent_redirects: HashMap::new(),
             completed_state_entries_snapshot: None,
@@ -334,6 +346,9 @@ impl VM {
         self.scope_ids.clear();
         self.scope_parents.clear();
         self.handler_type_match_cache.clear();
+        self.segment_handler_resolution_cache.clear();
+        self.segment_topology_epochs.clear();
+        self.next_segment_topology_epoch = 1;
         self.shared_builtin_prompt_cache
             .get_mut()
             .expect("shared builtin prompt cache poisoned")
@@ -370,8 +385,14 @@ impl VM {
         self.scope_ids.clear();
         self.scope_ids.shrink_to_fit();
         self.scope_parents.clear();
+        self.scope_parents.shrink_to_fit();
         self.handler_type_match_cache.clear();
         self.handler_type_match_cache.shrink_to_fit();
+        self.segment_handler_resolution_cache.clear();
+        self.segment_handler_resolution_cache.shrink_to_fit();
+        self.segment_topology_epochs.clear();
+        self.segment_topology_epochs.shrink_to_fit();
+        self.next_segment_topology_epoch = 1;
         self.shared_builtin_prompt_cache
             .get_mut()
             .expect("shared builtin prompt cache poisoned")
@@ -381,7 +402,7 @@ impl VM {
             .expect("shared builtin prompt cache poisoned")
             .shrink_to_fit();
         self.segment_parent_redirects.clear();
-        self.scope_parents.shrink_to_fit();
+        self.segment_parent_redirects.shrink_to_fit();
     }
 
     pub fn enable_trace(&mut self, enabled: bool) {
@@ -504,6 +525,7 @@ impl VM {
         self.scope_ids.insert(seg_id, ScopeId::fresh());
         let parent = self.segments.get(seg_id).and_then(|segment| segment.parent);
         self.scope_parents.insert(seg_id, parent);
+        self.bump_segment_topology_epoch(seg_id);
         seg_id
     }
 
@@ -517,6 +539,7 @@ impl VM {
         self.fiber_runtime.remove(&id);
         self.scope_ids.remove(&id);
         self.scope_parents.remove(&id);
+        self.segment_topology_epochs.remove(&id);
     }
 
     pub fn current_segment_mut(&mut self) -> Option<&mut Segment> {
@@ -900,15 +923,68 @@ impl VM {
         None
     }
 
+    fn next_segment_topology_epoch(&mut self) -> u64 {
+        let epoch = self.next_segment_topology_epoch;
+        self.next_segment_topology_epoch += 1;
+        epoch
+    }
+
+    fn bump_segment_topology_epoch(&mut self, seg_id: SegmentId) {
+        let epoch = self.next_segment_topology_epoch();
+        self.segment_topology_epochs.insert(seg_id, epoch);
+    }
+
+    fn segment_topology_epoch(&self, seg_id: SegmentId) -> u64 {
+        self.segment_topology_epochs
+            .get(&seg_id)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    fn touch_segment_topology_subtree(&mut self, root_seg_id: SegmentId) {
+        self.touch_segment_topology_subtrees(std::iter::once(root_seg_id));
+    }
+
+    fn touch_segment_topology_subtrees<I>(&mut self, roots: I)
+    where
+        I: IntoIterator<Item = SegmentId>,
+    {
+        let roots = roots.into_iter().collect::<HashSet<_>>();
+        if roots.is_empty() {
+            return;
+        }
+
+        let epoch = self.next_segment_topology_epoch();
+        for (seg_id, _) in self.segments.iter() {
+            let mut cursor = Some(seg_id);
+            while let Some(current_id) = cursor {
+                if roots.contains(&current_id) {
+                    self.segment_topology_epochs.insert(seg_id, epoch);
+                    break;
+                }
+                cursor = self
+                    .segments
+                    .get(current_id)
+                    .and_then(|segment| segment.parent);
+            }
+        }
+    }
+
     pub fn reparent_children(
         &mut self,
         old_parent: SegmentId,
         new_parent: Option<SegmentId>,
         new_scope_parent: Option<SegmentId>,
     ) -> usize {
+        let affected_roots = self
+            .segments
+            .iter()
+            .filter_map(|(seg_id, segment)| (segment.parent == Some(old_parent)).then_some(seg_id))
+            .collect::<Vec<_>>();
         let mut rewired = self.segments.reparent_children(old_parent, new_parent);
         if rewired > 0 {
             self.segment_parent_redirects.insert(old_parent, new_parent);
+            self.touch_segment_topology_subtrees(affected_roots);
         }
         for scope_parent in self.scope_parents.values_mut() {
             if *scope_parent == Some(old_parent) {

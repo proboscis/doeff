@@ -169,6 +169,152 @@ impl VM {
         self.handlers_in_caller_chain(seg_id)
     }
 
+    pub(super) fn effect_type_cache_key(effect_obj: &Py<PyAny>) -> PyResult<usize> {
+        Python::attach(|py| Ok(effect_obj.bind(py).get_type().as_ptr() as usize))
+    }
+
+    pub(super) fn collect_dispatch_handler_entries(
+        &self,
+        start_seg_id: SegmentId,
+        exclude_prompt: Option<SegmentId>,
+        restricted_excluded_prompts: &HashSet<SegmentId>,
+    ) -> (Vec<HandlerChainEntry>, Vec<HandlerChainEntry>) {
+        let mut full_entries = Vec::new();
+        let mut current_entries = Vec::new();
+        let mut cursor = Some(start_seg_id);
+        while let Some(seg_id) = cursor {
+            let Some(seg) = self.segments.get(seg_id) else {
+                break;
+            };
+            cursor = seg.parent;
+            let SegmentKind::PromptBoundary {
+                handled_marker,
+                handler,
+                types,
+                ..
+            } = &seg.kind
+            else {
+                continue;
+            };
+
+            let entry = HandlerChainEntry {
+                marker: *handled_marker,
+                prompt_seg_id: seg_id,
+                handler: handler.clone(),
+                types: types.clone(),
+            };
+            full_entries.push(entry.clone());
+
+            let is_shared_spawn_writer = handler.handler_name() == "WriterHandler"
+                && self.shared_builtin_handler_prompt(seg_id) != seg_id;
+            let restricted_excluded = restricted_excluded_prompts.contains(&seg_id);
+            if Some(seg_id) != exclude_prompt && !restricted_excluded && !is_shared_spawn_writer {
+                current_entries.push(entry);
+            }
+        }
+        (full_entries, current_entries)
+    }
+
+    pub(super) fn first_matching_handler_in_entries(
+        &mut self,
+        entries: &[HandlerChainEntry],
+        effect: &DispatchEffect,
+        effect_obj: &Py<PyAny>,
+    ) -> Result<Option<(usize, Marker, SegmentId, KleisliRef)>, VMError> {
+        for (index, entry) in entries.iter().enumerate() {
+            if !entry.handler.can_handle(effect)? {
+                continue;
+            }
+            let should_invoke = self
+                .should_invoke_handler(entry, effect_obj)
+                .map_err(|err| {
+                    VMError::python_error(format!(
+                        "failed to evaluate WithHandler type filter: {err:?}"
+                    ))
+                })?;
+            if should_invoke {
+                return Ok(Some((
+                    index,
+                    entry.marker,
+                    entry.prompt_seg_id,
+                    entry.handler.clone(),
+                )));
+            }
+        }
+        Ok(None)
+    }
+
+    pub(super) fn cached_current_chain_handler_resolution(
+        &mut self,
+        seg_id: SegmentId,
+        effect_type_id: usize,
+        effect: &DispatchEffect,
+        effect_obj: &Py<PyAny>,
+        current_entries: &[HandlerChainEntry],
+    ) -> Result<Option<(usize, Marker, SegmentId, KleisliRef)>, VMError> {
+        let cache_key = (seg_id, effect_type_id);
+        let Some(cached) = self
+            .segment_handler_resolution_cache
+            .get(&cache_key)
+            .copied()
+        else {
+            return Ok(None);
+        };
+
+        if cached.segment_epoch != self.segment_topology_epoch(seg_id) {
+            self.segment_handler_resolution_cache.remove(&cache_key);
+            return Ok(None);
+        }
+
+        let Some((index, entry)) = current_entries
+            .iter()
+            .enumerate()
+            .find(|(_, entry)| entry.prompt_seg_id == cached.prompt_seg_id)
+        else {
+            self.segment_handler_resolution_cache.remove(&cache_key);
+            return Ok(None);
+        };
+
+        if !entry.handler.can_handle(effect)? {
+            self.segment_handler_resolution_cache.remove(&cache_key);
+            return Ok(None);
+        }
+
+        let should_invoke = self
+            .should_invoke_handler(entry, effect_obj)
+            .map_err(|err| {
+                VMError::python_error(format!(
+                    "failed to evaluate WithHandler type filter: {err:?}"
+                ))
+            })?;
+        if !should_invoke {
+            self.segment_handler_resolution_cache.remove(&cache_key);
+            return Ok(None);
+        }
+
+        Ok(Some((
+            index,
+            entry.marker,
+            entry.prompt_seg_id,
+            entry.handler.clone(),
+        )))
+    }
+
+    pub(super) fn cache_current_chain_handler_resolution(
+        &mut self,
+        seg_id: SegmentId,
+        effect_type_id: usize,
+        prompt_seg_id: SegmentId,
+    ) {
+        self.segment_handler_resolution_cache.insert(
+            (seg_id, effect_type_id),
+            CachedHandlerResolution {
+                prompt_seg_id,
+                segment_epoch: self.segment_topology_epoch(seg_id),
+            },
+        );
+    }
+
     pub(super) fn prepare_with_handler(
         handler: KleisliRef,
         current_segment: Option<SegmentId>,
@@ -222,11 +368,8 @@ impl VM {
                 return Ok((effect_type_ptr, cached_match));
             }
 
-            let matches_type_ptr = |candidate_ptr| {
-                types
-                    .iter()
-                    .any(|ty| candidate_ptr == ty.bind(py).as_ptr())
-            };
+            let matches_type_ptr =
+                |candidate_ptr| types.iter().any(|ty| candidate_ptr == ty.bind(py).as_ptr());
 
             if matches_type_ptr(effect_type.as_ptr()) {
                 return Ok((effect_type_ptr, true));

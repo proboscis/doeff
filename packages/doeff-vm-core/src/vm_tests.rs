@@ -1,4 +1,6 @@
 use super::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 #[derive(Debug)]
 struct TestHandler {
@@ -48,6 +50,44 @@ impl IRStream for ReturnStream {
 
 fn named_handler(name: &'static str) -> KleisliRef {
     std::sync::Arc::new(TestHandler { name }) as KleisliRef
+}
+
+#[derive(Debug)]
+struct CountingHandler {
+    name: &'static str,
+    can_handle: bool,
+    can_handle_calls: Arc<AtomicUsize>,
+}
+
+impl crate::kleisli::Kleisli for CountingHandler {
+    fn apply(&self, _py: Python<'_>, _args: Vec<Value>) -> Result<DoCtrl, VMError> {
+        unreachable!("counting handler apply should not run")
+    }
+
+    fn debug_info(&self) -> crate::kleisli::KleisliDebugInfo {
+        crate::kleisli::KleisliDebugInfo {
+            name: self.name.to_string(),
+            file: None,
+            line: None,
+        }
+    }
+
+    fn can_handle(&self, _effect: &DispatchEffect) -> Result<bool, VMError> {
+        self.can_handle_calls.fetch_add(1, Ordering::Relaxed);
+        Ok(self.can_handle)
+    }
+}
+
+fn counting_handler(
+    name: &'static str,
+    can_handle: bool,
+    can_handle_calls: Arc<AtomicUsize>,
+) -> KleisliRef {
+    Arc::new(CountingHandler {
+        name,
+        can_handle,
+        can_handle_calls,
+    }) as KleisliRef
 }
 
 fn return_stream(value: Value) -> IRStreamRef {
@@ -106,6 +146,143 @@ fn assert_int(value: Option<&Value>, expected: i64, context: &str) {
         matches!(value, Some(Value::Int(actual)) if *actual == expected),
         "{context}: expected Int({expected}), got {value:?}"
     );
+}
+
+fn execution_context_effect() -> DispatchEffect {
+    crate::effect::make_get_execution_context_effect()
+        .expect("test dispatch effect should be constructible")
+}
+
+fn effect_object(effect: &DispatchEffect) -> Py<PyAny> {
+    Python::attach(|py| {
+        dispatch_to_pyobject(py, effect)
+            .map(|obj| obj.unbind())
+            .expect("test effect must convert to Python")
+    })
+}
+
+#[test]
+fn test_handler_resolution_cache_skips_rechecking_inner_miss_for_same_segment() {
+    let mut vm = VM::new();
+    let skipped_calls = Arc::new(AtomicUsize::new(0));
+    let selected_calls = Arc::new(AtomicUsize::new(0));
+
+    let outer_prompt_id = alloc_prompt_boundary(
+        &mut vm,
+        None,
+        Marker::fresh(),
+        counting_handler("OuterSelected", true, selected_calls.clone()),
+    );
+    let inner_prompt_id = alloc_prompt_boundary(
+        &mut vm,
+        Some(outer_prompt_id),
+        Marker::fresh(),
+        counting_handler("InnerSkipped", false, skipped_calls.clone()),
+    );
+    let body_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(inner_prompt_id)));
+
+    let effect = execution_context_effect();
+    let effect_obj = effect_object(&effect);
+
+    let (_, current_entries) =
+        vm.collect_dispatch_handler_entries(body_seg_id, None, &HashSet::new());
+    let effect_type_id =
+        VM::effect_type_cache_key(&effect_obj).expect("effect type id should be available");
+
+    assert!(vm
+        .cached_current_chain_handler_resolution(
+            body_seg_id,
+            effect_type_id,
+            &effect,
+            &effect_obj,
+            &current_entries,
+        )
+        .expect("cache lookup should succeed")
+        .is_none());
+
+    let selected = vm
+        .first_matching_handler_in_entries(&current_entries, &effect, &effect_obj)
+        .expect("initial handler scan should succeed")
+        .expect("outer handler should match");
+    vm.cache_current_chain_handler_resolution(body_seg_id, effect_type_id, selected.2);
+
+    let cached = vm
+        .cached_current_chain_handler_resolution(
+            body_seg_id,
+            effect_type_id,
+            &effect,
+            &effect_obj,
+            &current_entries,
+        )
+        .expect("cached lookup should succeed")
+        .expect("cached selection should resolve");
+
+    assert_eq!(cached.2, outer_prompt_id);
+    assert_eq!(skipped_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(selected_calls.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn test_handler_resolution_cache_invalidates_when_segment_topology_changes() {
+    let mut vm = VM::new();
+    let outer_calls = Arc::new(AtomicUsize::new(0));
+    let inner_calls = Arc::new(AtomicUsize::new(0));
+
+    let outer_prompt_id = alloc_prompt_boundary(
+        &mut vm,
+        None,
+        Marker::fresh(),
+        counting_handler("OuterHandler", true, outer_calls.clone()),
+    );
+    let body_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(outer_prompt_id)));
+
+    let effect = execution_context_effect();
+    let effect_obj = effect_object(&effect);
+    let effect_type_id =
+        VM::effect_type_cache_key(&effect_obj).expect("effect type id should be available");
+
+    let (_, initial_entries) =
+        vm.collect_dispatch_handler_entries(body_seg_id, None, &HashSet::new());
+    let initial = vm
+        .first_matching_handler_in_entries(&initial_entries, &effect, &effect_obj)
+        .expect("initial handler scan should succeed")
+        .expect("outer handler should match");
+    vm.cache_current_chain_handler_resolution(body_seg_id, effect_type_id, initial.2);
+
+    let inner_prompt_id = alloc_prompt_boundary(
+        &mut vm,
+        Some(outer_prompt_id),
+        Marker::fresh(),
+        counting_handler("InnerHandler", true, inner_calls.clone()),
+    );
+    let body_seg = vm
+        .segments
+        .get_mut(body_seg_id)
+        .expect("body segment must exist for topology update");
+    body_seg.parent = Some(inner_prompt_id);
+    vm.touch_segment_topology_subtree(body_seg_id);
+
+    let (_, updated_entries) =
+        vm.collect_dispatch_handler_entries(body_seg_id, None, &HashSet::new());
+    assert!(vm
+        .cached_current_chain_handler_resolution(
+            body_seg_id,
+            effect_type_id,
+            &effect,
+            &effect_obj,
+            &updated_entries,
+        )
+        .expect("cache lookup after topology change should succeed")
+        .is_none());
+
+    let updated = vm
+        .first_matching_handler_in_entries(&updated_entries, &effect, &effect_obj)
+        .expect("updated handler scan should succeed")
+        .expect("new inner handler should match");
+
+    assert_eq!(updated.2, inner_prompt_id);
+    assert_eq!(outer_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(inner_calls.load(Ordering::Relaxed), 1);
 }
 
 #[test]
