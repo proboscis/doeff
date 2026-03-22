@@ -367,27 +367,22 @@ impl TraceState {
             cleanup_ready: false,
             resumed_once: false,
         };
-        let Some(frame_id) = effect_frame_id else {
-            // Internal effects such as execution-context enrichment can have no user-visible
-            // owning frame, so there is nowhere to attach frame-local display state.
-            return;
-        };
-
-        if let Some(frame) = self.frame_mut_by_id(frame_id) {
-            if is_execution_context_effect
-                && frame
-                    .dispatch_display
-                    .as_ref()
-                    .is_some_and(|existing| !existing.is_execution_context_effect)
-            {
-                return;
+        if let Some(frame_id) = effect_frame_id {
+            if let Some(frame) = self.frame_mut_by_id(frame_id) {
+                let attach_to_frame = !(is_execution_context_effect
+                    && frame
+                        .dispatch_display
+                        .as_ref()
+                        .is_some_and(|existing| !existing.is_execution_context_effect));
+                if attach_to_frame {
+                    if let Some(line) = effect_source_line {
+                        frame.source_line = line;
+                    }
+                    frame.dispatch_display = Some(dispatch_display.clone());
+                    frame.exited = false;
+                    frame.preserve_on_error = false;
+                }
             }
-            if let Some(line) = effect_source_line {
-                frame.source_line = line;
-            }
-            frame.dispatch_display = Some(dispatch_display.clone());
-            frame.exited = false;
-            frame.preserve_on_error = false;
         }
         self.dispatch_displays.insert(dispatch_id, dispatch_display);
     }

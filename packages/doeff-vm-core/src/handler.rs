@@ -10,7 +10,7 @@ use crate::effect::DispatchEffect;
 use crate::error::VMError;
 use crate::ir_stream::IRStreamStep;
 use crate::kleisli::{Kleisli, KleisliDebugInfo, RustKleisli};
-use crate::rust_store::RustStore;
+use crate::var_store::VarStore;
 use crate::segment::ScopeStore;
 use crate::step::PyException;
 use crate::value::Value;
@@ -23,19 +23,19 @@ pub trait IRStreamProgram: std::fmt::Debug + Send {
         py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
-        store: &mut RustStore,
+        store: &mut VarStore,
         scope: &mut ScopeStore,
     ) -> IRStreamStep;
     fn resume(
         &mut self,
         value: Value,
-        store: &mut RustStore,
+        store: &mut VarStore,
         scope: &mut ScopeStore,
     ) -> IRStreamStep;
     fn throw(
         &mut self,
         exc: PyException,
-        store: &mut RustStore,
+        store: &mut VarStore,
         scope: &mut ScopeStore,
     ) -> IRStreamStep;
 }

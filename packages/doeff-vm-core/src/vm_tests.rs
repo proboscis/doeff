@@ -30,7 +30,7 @@ impl IRStream for ReturnStream {
     fn resume(
         &mut self,
         _value: Value,
-        _store: &mut RustStore,
+        _store: &mut VarStore,
         _scope: &mut crate::segment::ScopeStore,
     ) -> IRStreamStep {
         self.next
@@ -41,7 +41,7 @@ impl IRStream for ReturnStream {
     fn throw(
         &mut self,
         exc: PyException,
-        _store: &mut RustStore,
+        _store: &mut VarStore,
         _scope: &mut crate::segment::ScopeStore,
     ) -> IRStreamStep {
         IRStreamStep::Throw(exc)
@@ -718,17 +718,17 @@ fn test_resume_unstarted_continuation_keeps_scope_parent_outside_handler_wrapper
         .expect("handler body must attach to a prompt segment");
 
     assert_eq!(
-        vm.scope_parent(prompt_seg_id),
+        vm.parent_segment(prompt_seg_id),
         Some(outside_scope_id),
         "spawn prompt must retain the captured lexical scope"
     );
     assert_eq!(
-        vm.scope_parent(handler_body_seg_id),
+        vm.parent_segment(handler_body_seg_id),
         Some(outside_scope_id),
         "spawn handler body must not become a scope_parent bridge"
     );
     assert_eq!(
-        vm.scope_parent(resumed_seg_id),
+        vm.parent_segment(resumed_seg_id),
         Some(outside_scope_id),
         "spawned task body must retain the captured lexical scope root"
     );
@@ -763,6 +763,96 @@ fn test_dispatch_origins_derive_from_live_program_topology() {
     assert_eq!(origins.len(), 1);
     assert_eq!(origins[0].dispatch_id, dispatch_id);
     assert_eq!(origins[0].k_origin.cont_id, continuation.cont_id);
+}
+
+#[test]
+fn test_visible_scope_store_in_handler_sees_captured_local_scope() {
+    let mut vm = VM::new();
+
+    let root_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
+    let prompt_seg_id = alloc_prompt_boundary(
+        &mut vm,
+        Some(root_id),
+        Marker::fresh(),
+        named_handler("ReaderHandler"),
+    );
+    let effect_site_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(prompt_seg_id)));
+    let key = crate::py_key::HashedPyKey::from_test_string("config");
+    let value = Value::Int(42);
+    vm.push_lexical_scope_frame(
+        effect_site_id,
+        std::collections::HashMap::from([(key.clone(), value.clone())]),
+    );
+
+    let dispatch_id = DispatchId::fresh();
+    let captured = {
+        let effect_site = vm
+            .segments
+            .get(effect_site_id)
+            .expect("effect-site segment must exist for continuation capture");
+        Continuation::capture(effect_site, effect_site_id, Some(dispatch_id))
+    };
+    vm.segments
+        .get_mut(effect_site_id)
+        .expect("captured effect-site segment must remain live")
+        .parent = None;
+
+    let handler_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(prompt_seg_id)));
+    install_pending_dispatch(&mut vm, handler_seg_id, dispatch_id, &captured, None);
+
+    let scope = vm.visible_scope_store(handler_seg_id);
+    let resolved = scope
+        .scope_bindings
+        .iter()
+        .rev()
+        .find_map(|layer| layer.get(&key))
+        .cloned();
+
+    assert!(
+        matches!(resolved, Some(Value::Int(42))),
+        "handler scope reconstruction must include captured lexical bindings, got {resolved:?}"
+    );
+}
+
+#[test]
+fn test_write_scoped_var_nonlocal_updates_owner_through_captured_scope_chain() {
+    let mut vm = VM::new();
+
+    let root_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
+    let owner_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(root_id)));
+    let child_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(owner_seg_id)));
+    let var = vm.alloc_scoped_var_in_segment(owner_seg_id, Value::Int(10));
+
+    let dispatch_id = DispatchId::fresh();
+    let captured = {
+        let child_seg = vm
+            .segments
+            .get(child_seg_id)
+            .expect("child segment must exist for continuation capture");
+        Continuation::capture(child_seg, child_seg_id, Some(dispatch_id))
+    };
+    vm.segments
+        .get_mut(child_seg_id)
+        .expect("captured child segment must remain live")
+        .parent = None;
+
+    let prompt_seg_id = alloc_prompt_boundary(
+        &mut vm,
+        Some(root_id),
+        Marker::fresh(),
+        named_handler("StateHandler"),
+    );
+    let handler_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(prompt_seg_id)));
+    install_pending_dispatch(&mut vm, handler_seg_id, dispatch_id, &captured, None);
+
+    assert!(
+        vm.write_scoped_var_nonlocal(handler_seg_id, var, Value::Int(20)),
+        "WriteVarNonlocal must find the owner segment through the captured continuation"
+    );
+    assert!(
+        matches!(vm.read_scoped_var_from(owner_seg_id, var), Some(Value::Int(20))),
+        "owner cell must reflect the nonlocal write"
+    );
 }
 
 #[test]

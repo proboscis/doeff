@@ -61,16 +61,18 @@ impl VM {
     }
 
     fn dispatch_view_in_segment(&self, seg_id: SegmentId) -> Option<DispatchFrameView> {
-        self.fiber_runtime(seg_id)
-            .and_then(|state| state.pending_program_dispatch.clone())
+        self.segments
+            .get(seg_id)
+            .and_then(|segment| segment.pending_program_dispatch.clone())
             .or_else(|| self.segment_program_dispatch(seg_id).cloned())
             .filter(|dispatch| self.trace_state.has_dispatch(dispatch.dispatch_id))
             .map(|dispatch| DispatchFrameView { seg_id, dispatch })
     }
 
     fn dispatch_ref_in_segment(&self, seg_id: SegmentId) -> Option<&ProgramDispatch> {
-        self.fiber_runtime(seg_id)
-            .and_then(|state| state.pending_program_dispatch.as_ref())
+        self.segments
+            .get(seg_id)
+            .and_then(|segment| segment.pending_program_dispatch.as_ref())
             .or_else(|| self.segment_program_dispatch(seg_id))
             .filter(|dispatch| self.trace_state.has_dispatch(dispatch.dispatch_id))
     }
@@ -300,7 +302,7 @@ impl VM {
     }
 
     fn active_dispatch_frame(&self, dispatch_id: DispatchId) -> Option<DispatchFrameView> {
-        if let Some(view) = self.dispatch_frame_in_parent_chain(self.current_segment, dispatch_id) {
+        if let Some(view) = self.dispatch_frame_in_topology(self.current_segment, dispatch_id) {
             if self.handler_dispatch_is_live(&view.dispatch.handler_continuation) {
                 return Some(view);
             }
@@ -315,7 +317,7 @@ impl VM {
     }
 
     fn find_dispatch_frame(&self, dispatch_id: DispatchId) -> Option<DispatchFrameView> {
-        self.dispatch_frame_in_parent_chain(self.current_segment, dispatch_id)
+        self.dispatch_frame_in_topology(self.current_segment, dispatch_id)
             .or_else(|| {
                 self.segments.iter().find_map(|(seg_id, _)| {
                     self.dispatch_view_in_segment(seg_id)
@@ -367,16 +369,16 @@ impl VM {
                     }
                 }
             }
-            if let Some(runtime) = self.fiber_runtime.get_mut(&seg_id) {
-                if runtime
+            if let Some(segment) = self.segments.get_mut(seg_id) {
+                if segment
                     .pending_program_dispatch
                     .as_ref()
                     .is_some_and(|program_dispatch| program_dispatch.dispatch_id == dispatch_id)
                 {
-                    if let Some(program_dispatch) = runtime.pending_program_dispatch.as_mut() {
+                    if let Some(program_dispatch) = segment.pending_program_dispatch.as_mut() {
                         Self::set_dispatch_frame_hint_on_program(program_dispatch, None);
                     }
-                    runtime.pending_program_dispatch = None;
+                    segment.pending_program_dispatch = None;
                 }
             }
         }
@@ -534,13 +536,13 @@ impl VM {
                     .segment_id()
                     .filter(|seg_id| self.segments.get(*seg_id).is_some())
                     .and_then(|seg_id| {
-                        self.dispatch_frame_in_parent_chain(Some(seg_id), dispatch_id)
+                        self.dispatch_frame_in_topology(Some(seg_id), dispatch_id)
                     })
             })
             .or_else(|| {
                 self.normalize_live_parent_hint(continuation.captured_caller())
                     .and_then(|seg_id| {
-                        self.dispatch_frame_in_parent_chain(Some(seg_id), dispatch_id)
+                        self.dispatch_frame_in_topology(Some(seg_id), dispatch_id)
                     })
             })
     }
@@ -629,6 +631,26 @@ impl VM {
             })
     }
 
+    pub(super) fn current_live_handler_dispatch(
+        &self,
+    ) -> Option<(SegmentId, DispatchId, Continuation, Marker, SegmentId)> {
+        self.current_handler_dispatch().or_else(|| {
+            let dispatch_id = self.current_segment_dispatch_id()?;
+            self.active_handler_dispatch_for(dispatch_id).and_then(
+                |(handler_seg_id, continuation, marker)| {
+                    let prompt_seg_id = self.handler_prompt_segment_id(handler_seg_id, marker)?;
+                    Some((
+                        handler_seg_id,
+                        dispatch_id,
+                        continuation,
+                        marker,
+                        prompt_seg_id,
+                    ))
+                },
+            )
+        })
+    }
+
     pub(super) fn nearest_handler_dispatch(
         &self,
     ) -> Option<(SegmentId, DispatchId, Continuation, Marker, SegmentId)> {
@@ -691,7 +713,6 @@ impl VM {
         let _ = seg;
         self.clear_pending_program_dispatch(seg_id);
         self.clear_pending_error_context(seg_id);
-        self.clear_throw_parent(seg_id);
     }
 
     fn continuation_chain_contains_eval_in_scope_return(
@@ -916,11 +937,11 @@ impl VM {
             };
             if let Some(continuation) = seg.frames.iter().rev().find_map(|frame| match frame {
                 Frame::EvalReturn(eval_return) => match eval_return.as_ref() {
-                    EvalReturnContinuation::ReturnToContinuation { continuation } => {
+                    EvalReturnContinuation::ReturnToContinuation { continuation }
+                    | EvalReturnContinuation::EvalInScopeReturn { continuation } => {
                         Some(continuation.clone_handle())
                     }
                     EvalReturnContinuation::ResumeToContinuation { .. }
-                    | EvalReturnContinuation::EvalInScopeReturn { .. }
                     | EvalReturnContinuation::ApplyResolveFunction { .. }
                     | EvalReturnContinuation::ApplyResolveArg { .. }
                     | EvalReturnContinuation::ApplyResolveKwarg { .. }
@@ -929,6 +950,7 @@ impl VM {
                     | EvalReturnContinuation::ExpandResolveKwarg { .. }
                     | EvalReturnContinuation::TailResumeReturn => None,
                 },
+                Frame::LexicalScope { .. } => None,
                 Frame::Program { .. }
                 | Frame::InterceptorApply(_)
                 | Frame::InterceptorEval(_)
@@ -1029,7 +1051,7 @@ impl VM {
     ) {
         if handler.handler_name() == "StateHandler" {
             self.var_store
-                .replace_handler_state(prompt_seg_id, self.rust_store.entries.clone());
+                .replace_handler_state(prompt_seg_id, self.var_store.global_state().clone());
         }
     }
 
@@ -1069,7 +1091,7 @@ impl VM {
 
     fn materialize_owned_continuation(
         &mut self,
-        k: Continuation,
+        mut k: Continuation,
         op_name: &str,
     ) -> Result<Continuation, VMError> {
         if !k.is_started() {
@@ -1084,13 +1106,21 @@ impl VM {
         {
             return Ok(k);
         }
+        k.retain_owned_fibers(|fiber_id| self.segments.get(fiber_id).is_some());
+        if k.is_started() {
+            return Ok(k);
+        }
         Err(VMError::internal(format!(
             "{op_name} continuation {} no longer owns live fibers",
             k.cont_id.raw()
         )))
     }
 
-    fn annotate_live_continuation(&self, continuation: &mut Continuation, seg_id: SegmentId) {
+    pub(super) fn annotate_live_continuation(
+        &self,
+        continuation: &mut Continuation,
+        seg_id: SegmentId,
+    ) {
         continuation.set_resume_dispatch_id(self.current_segment_dispatch_id_any());
         continuation.set_dispatch_handler_hint(self.handlers_in_caller_chain(seg_id).first().map(
             |entry| crate::continuation::DispatchHandlerHint {
@@ -1512,7 +1542,6 @@ impl VM {
         let handler_seg = Segment::new(handler_marker, Some(prompt_seg_id));
         let handler_seg_id = self.alloc_segment(handler_seg);
         self.copy_interceptor_guard_state(Some(seg_id), handler_seg_id);
-        self.set_scope_parent(handler_seg_id, Some(seg_id));
         k_user.set_dispatch_frame_hint(Some(handler_seg_id));
         let origin_k = k_user.clone_handle();
         let active_k = k_user.clone_handle();
@@ -1663,7 +1692,6 @@ impl VM {
         )));
         let anchor_seg_id = self.alloc_segment(anchor);
         self.copy_interceptor_guard_state(self.current_segment, anchor_seg_id);
-        self.set_scope_parent(anchor_seg_id, caller);
         let _ = dispatch_id;
         anchor_seg_id
     }
@@ -1679,7 +1707,6 @@ impl VM {
         )));
         let anchor_seg_id = self.alloc_segment(anchor);
         self.copy_interceptor_guard_state(self.current_segment, anchor_seg_id);
-        self.set_scope_parent(anchor_seg_id, caller);
         let _ = dispatch_id;
         anchor_seg_id
     }
@@ -1690,6 +1717,7 @@ impl VM {
         };
         let Some(stream) = seg.frames.iter().rev().find_map(|frame| match frame {
             Frame::Program { stream, .. } => Some(stream.clone()),
+            Frame::LexicalScope { .. } => None,
             Frame::InterceptorApply(_)
             | Frame::InterceptorEval(_)
             | Frame::EvalReturn(_)
@@ -1764,8 +1792,7 @@ impl VM {
 
         for seg_id in order.into_iter().rev() {
             let caller = self.segments.get(seg_id).and_then(|segment| segment.parent);
-            let scope_parent = self.scope_parent(seg_id);
-            self.reparent_children(seg_id, caller, scope_parent);
+            self.reparent_children(seg_id, caller);
             self.free_segment(seg_id);
         }
     }
@@ -1847,10 +1874,17 @@ impl VM {
         caller: Option<SegmentId>,
         dispatch_id: Option<DispatchId>,
     ) {
-        let caller = self.normalize_live_parent_hint(caller);
         let Some(seg_id) = k.segment_id() else {
             return;
         };
+        let caller = self
+            .normalize_live_parent_hint(caller)
+            .filter(|caller_id| *caller_id != seg_id)
+            .or_else(|| {
+                k.captured_caller()
+                    .and_then(|caller_id| self.normalize_live_parent_hint(Some(caller_id)))
+                    .filter(|caller_id| *caller_id != seg_id)
+            });
         let existing_caller = self.segments.get(seg_id).and_then(|seg| seg.parent);
         let caller = if self.chain_has_interceptor_context(existing_caller)
             && !self.chain_has_interceptor_context(caller)
@@ -1871,7 +1905,6 @@ impl VM {
             seg.parent = fiber_ids.get(index + 1).copied().or(caller);
         }
         for fiber_id in &fiber_ids {
-            self.clear_throw_parent(*fiber_id);
             // The original exception lives on the active DispatchOrigin.k_origin.
             // Reinstalling it onto resumed continuation segments makes unrelated
             // nested Perform() calls look like fresh GetExecutionContext dispatches.
@@ -2255,12 +2288,10 @@ impl VM {
         };
         let boundary_seg_id = self.alloc_segment(boundary_seg);
         self.copy_interceptor_guard_state(Some(outside_seg_id), boundary_seg_id);
-        self.set_scope_parent(boundary_seg_id, Some(outside_seg_id));
 
         let body_seg = Segment::new(interceptor_marker, Some(boundary_seg_id));
         let body_seg_id = self.alloc_segment(body_seg);
         self.copy_interceptor_guard_state(Some(outside_seg_id), body_seg_id);
-        self.set_scope_parent(body_seg_id, Some(outside_seg_id));
 
         self.current_segment = Some(body_seg_id);
         self.evaluate(program)
@@ -2343,13 +2374,9 @@ impl VM {
         };
         pass_seg.push_frame(Frame::EvalReturn(Box::new(eval_return)));
         let pass_cont_id = ContId::fresh();
-        pass_seg.parent = None;
+        pass_seg.parent = wrapper_caller;
         let pass_seg_id = self.alloc_segment(pass_seg);
         self.copy_interceptor_guard_state(Some(prompt_seg_id), pass_seg_id);
-        self.set_scope_parent(
-            pass_seg_id,
-            self.eval_in_scope_chain_start_segment(parent_k_user),
-        );
         let mut pass_cont = Continuation::with_id(
             pass_cont_id,
             pass_seg_id,
@@ -2514,10 +2541,9 @@ impl VM {
                     self.clear_forwarded_handler_segment(inner_seg_id);
                 }
 
-                let handler_seg = Segment::new(entry.marker, outer_caller);
+                let handler_seg = Segment::new(entry.marker, Some(entry.prompt_seg_id));
                 let handler_seg_id = self.alloc_segment(handler_seg);
                 self.copy_interceptor_guard_state(outer_caller, handler_seg_id);
-                self.set_scope_parent(handler_seg_id, Some(inner_seg_id));
                 next_k.set_dispatch_frame_hint(Some(handler_seg_id));
                 let observer_k = next_k.clone_handle();
                 let forwarded_exception = self.continuation_pending_error_context(&next_k).cloned();
@@ -2804,7 +2830,10 @@ impl VM {
     }
 
     fn caller_visible_handler_chain_start(&self) -> Result<SegmentId, VMError> {
-        if let Some((_, _, continuation, _, _)) = self.current_handler_dispatch() {
+        if let Some((seg_id, _, continuation, _, _)) = self.current_live_handler_dispatch() {
+            if Some(seg_id) == self.current_segment {
+                return Ok(seg_id);
+            }
             return self
                 .continuation_handler_chain_start(&continuation)
                 .or_else(|| {
@@ -2880,10 +2909,20 @@ impl VM {
         // visible chain from the running segment. During dispatch we keep the
         // existing Delegate-aware behavior so handler code sees the same
         // caller-visible stack as the effect site.
-        let entries = if self.current_handler_dispatch().is_some() {
-            let chain_start = match self.caller_visible_handler_chain_start() {
-                Ok(seg_id) => seg_id,
-                Err(err) => return StepEvent::Error(err),
+        let entries = if self.current_live_handler_dispatch().is_some() {
+            let chain_start = self
+                .current_dispatch_origin()
+                .and_then(|origin| self.continuation_handler_chain_start(&origin.k_origin))
+                .or_else(|| {
+                    self.current_live_handler_dispatch().and_then(|(_, _, continuation, _, _)| {
+                        self.continuation_handler_chain_start(&continuation)
+                    })
+                })
+                .or_else(|| self.current_segment);
+            let Some(chain_start) = chain_start else {
+                return StepEvent::Error(VMError::internal(
+                    "handler chain requested without current segment",
+                ));
             };
             self.handlers_in_caller_chain(chain_start)
         } else {
@@ -2916,22 +2955,90 @@ impl VM {
         metadata: Option<CallMetadata>,
         outside_scope: Option<SegmentId>,
     ) -> StepEvent {
-        let k = Continuation::create_unstarted_with_identities_and_metadata(
+        let k = PendingContinuation::create_with_metadata(
             program,
             handlers,
             handler_identities,
             metadata,
             outside_scope.or(self.current_segment),
         );
-        self.mode = Mode::Deliver(Value::Continuation(k));
+        self.mode = Mode::Deliver(Value::PendingContinuation(k));
         StepEvent::Continue
     }
 
     pub(super) fn handle_resume_continuation(
         &mut self,
-        mut k: Continuation,
+        k: OwnedControlContinuation,
         value: Value,
     ) -> StepEvent {
+        let OwnedControlContinuation::Started(mut k) = k else {
+            let OwnedControlContinuation::Pending(k_pending) = k else {
+                unreachable!("control continuation variant mismatch")
+            };
+            let (program, handlers, handler_identities, start_metadata, outside_scope) =
+                k_pending.into_parts();
+
+            let Some(current_seg_id) = self.current_segment else {
+                return StepEvent::Error(VMError::internal(
+                    "pending continuation resumed without current segment",
+                ));
+            };
+            let current_dispatch_id = self.current_segment_dispatch_id();
+
+            let mut caller_outside = Some(current_seg_id);
+            let scope_outside = outside_scope.or(Some(current_seg_id));
+            if outside_scope.is_some() {
+                let Some(_current_seg) = self.segments.get(current_seg_id) else {
+                    return StepEvent::Error(VMError::internal(
+                        "pending continuation current segment not found",
+                    ));
+                };
+                let mut return_anchor = Segment::new(Marker::fresh(), scope_outside);
+                return_anchor.push_frame(Frame::EvalReturn(Box::new(
+                    EvalReturnContinuation::ReturnToContinuation {
+                        continuation: self
+                            .capture_live_continuation(current_seg_id, current_dispatch_id),
+                    },
+                )));
+                let anchor_seg_id = self.alloc_segment(return_anchor);
+                self.copy_interceptor_guard_state(Some(current_seg_id), anchor_seg_id);
+                caller_outside = Some(anchor_seg_id);
+            }
+
+            let k_handler_count = handlers.len();
+            for idx in (0..k_handler_count).rev() {
+                let base_handler = handlers[idx].clone();
+                let handler = if let Some(Some(identity)) = handler_identities.get(idx) {
+                    Arc::new(IdentityKleisli::new(base_handler, identity.clone())) as KleisliRef
+                } else {
+                    base_handler
+                };
+                let handler_marker = Marker::fresh();
+                let prompt_seg = Segment::new_prompt(
+                    handler_marker,
+                    caller_outside,
+                    handler_marker,
+                    handler.clone(),
+                );
+                let prompt_seg_id = self.alloc_segment(prompt_seg);
+                self.copy_interceptor_guard_state(caller_outside, prompt_seg_id);
+                let body_seg = Segment::new(handler_marker, Some(prompt_seg_id));
+                let body_seg_id = self.alloc_segment(body_seg);
+                self.copy_interceptor_guard_state(caller_outside, body_seg_id);
+
+                caller_outside = Some(body_seg_id);
+            }
+
+            let body_seg = Segment::new(Marker::fresh(), caller_outside);
+            let body_seg_id = self.alloc_segment(body_seg);
+            self.copy_interceptor_guard_state(caller_outside, body_seg_id);
+            self.current_segment = Some(body_seg_id);
+            self.pending_python = Some(PendingPython::EvalExpr {
+                metadata: start_metadata,
+            });
+            return StepEvent::NeedsPython(PythonCall::EvalExpr { expr: program });
+        };
+
         if k.is_started() {
             k = match self.materialize_owned_continuation(k, "ResumeContinuation") {
                 Ok(continuation) => continuation,
@@ -2946,81 +3053,7 @@ impl VM {
             );
         }
 
-        if self.continuation_is_consumed(&k) {
-            return StepEvent::Error(VMError::one_shot_violation(k.cont_id));
-        }
-        k.mark_consumed();
-
-        let Some((program, handlers, handler_identities, start_metadata, outside_scope)) =
-            k.into_unstarted_parts()
-        else {
-            return StepEvent::Error(VMError::internal(
-                "unstarted continuation has no program payload",
-            ));
-        };
-
-        let Some(current_seg_id) = self.current_segment else {
-            return StepEvent::Error(VMError::internal(
-                "unstarted continuation resumed without current segment",
-            ));
-        };
-        let current_dispatch_id = self.current_segment_dispatch_id();
-
-        let mut caller_outside = Some(current_seg_id);
-        let scope_outside = outside_scope.or(Some(current_seg_id));
-        if outside_scope.is_some() {
-            let Some(_current_seg) = self.segments.get(current_seg_id) else {
-                return StepEvent::Error(VMError::internal(
-                    "unstarted continuation current segment not found",
-                ));
-            };
-            let mut return_anchor = Segment::new(Marker::fresh(), Some(current_seg_id));
-            return_anchor.push_frame(Frame::EvalReturn(Box::new(
-                EvalReturnContinuation::ReturnToContinuation {
-                    continuation: self
-                        .capture_live_continuation(current_seg_id, current_dispatch_id),
-                },
-            )));
-            let anchor_seg_id = self.alloc_segment(return_anchor);
-            self.copy_interceptor_guard_state(Some(current_seg_id), anchor_seg_id);
-            self.set_scope_parent(anchor_seg_id, scope_outside);
-            caller_outside = Some(anchor_seg_id);
-        }
-
-        let k_handler_count = handlers.len();
-        for idx in (0..k_handler_count).rev() {
-            let base_handler = handlers[idx].clone();
-            let handler = if let Some(Some(identity)) = handler_identities.get(idx) {
-                Arc::new(IdentityKleisli::new(base_handler, identity.clone())) as KleisliRef
-            } else {
-                base_handler
-            };
-            let handler_marker = Marker::fresh();
-            let prompt_seg = Segment::new_prompt(
-                handler_marker,
-                caller_outside,
-                handler_marker,
-                handler.clone(),
-            );
-            let prompt_seg_id = self.alloc_segment(prompt_seg);
-            self.copy_interceptor_guard_state(caller_outside, prompt_seg_id);
-            self.set_scope_parent(prompt_seg_id, scope_outside);
-            let body_seg = Segment::new(handler_marker, Some(prompt_seg_id));
-            let body_seg_id = self.alloc_segment(body_seg);
-            self.copy_interceptor_guard_state(caller_outside, body_seg_id);
-            self.set_scope_parent(body_seg_id, scope_outside);
-
-            caller_outside = Some(body_seg_id);
-        }
-
-        let body_seg = Segment::new(Marker::fresh(), caller_outside);
-        let body_seg_id = self.alloc_segment(body_seg);
-        self.copy_interceptor_guard_state(caller_outside, body_seg_id);
-        self.set_scope_parent(body_seg_id, scope_outside);
-        self.current_segment = Some(body_seg_id);
-        self.pending_python = Some(PendingPython::EvalExpr {
-            metadata: start_metadata,
-        });
-        StepEvent::NeedsPython(PythonCall::EvalExpr { expr: program })
+        let caller = k.captured_caller();
+        self.activate_continuation(ContinuationActivationKind::Resume, k, value, caller)
     }
 }

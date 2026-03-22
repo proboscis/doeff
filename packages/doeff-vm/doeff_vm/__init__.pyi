@@ -48,7 +48,7 @@ class TraceHop:
 
 class Var:
     raw: int
-    owner_scope: int
+    owner_segment: int
     def __repr__(self) -> str: ...
 
 class Ok(Generic[_T]):

@@ -10,6 +10,7 @@ impl VM {
                         stream: snapshot_stream,
                         ..
                     } => IRStreamRef::ptr_eq(snapshot_stream, stream),
+                    Frame::LexicalScope { .. } => false,
                     Frame::InterceptorApply(_)
                     | Frame::InterceptorEval(_)
                     | Frame::EvalReturn(_)
@@ -43,6 +44,7 @@ impl VM {
             Value::Bool(_) => "Bool",
             Value::None => "None",
             Value::Continuation(_) => "Continuation",
+            Value::PendingContinuation(_) => "PendingContinuation",
             Value::Handlers(_) => "Handlers",
             Value::Kleisli(_) => "Kleisli",
             Value::Var(_) => "Var",
@@ -257,7 +259,7 @@ impl VM {
     }
 
     pub(super) fn current_active_handler_dispatch_id(&self) -> Option<DispatchId> {
-        self.nearest_handler_dispatch()
+        self.current_live_handler_dispatch()
             .map(|(_, dispatch_id, _, _, _)| dispatch_id)
     }
 
@@ -270,6 +272,7 @@ impl VM {
             .last()
             .and_then(|frame| match frame {
                 Frame::Program { handler_kind, .. } => *handler_kind,
+                Frame::LexicalScope { .. } => None,
                 Frame::InterceptorApply(_)
                 | Frame::InterceptorEval(_)
                 | Frame::EvalReturn(_)
@@ -344,8 +347,9 @@ impl VM {
         if let Some((seg_id, current_dispatch_id, ..)) = self.current_handler_dispatch() {
             if current_dispatch_id == dispatch_id {
                 if let Some(dispatch) = self
-                    .fiber_runtime(seg_id)
-                    .and_then(|state| state.pending_program_dispatch.as_ref())
+                    .segments
+                    .get(seg_id)
+                    .and_then(|segment| segment.pending_program_dispatch.as_ref())
                     .or_else(|| self.segment_program_dispatch(seg_id))
                 {
                     return dispatch.original_exception.clone();
@@ -357,8 +361,9 @@ impl VM {
             .filter(|_| self.current_segment_dispatch_id() == Some(dispatch_id))
         {
             if let Some(dispatch) = self
-                .fiber_runtime(seg_id)
-                .and_then(|state| state.pending_program_dispatch.as_ref())
+                .segments
+                .get(seg_id)
+                .and_then(|segment| segment.pending_program_dispatch.as_ref())
                 .or_else(|| self.segment_program_dispatch(seg_id))
             {
                 return dispatch.original_exception.clone();

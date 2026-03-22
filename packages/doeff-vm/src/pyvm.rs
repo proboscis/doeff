@@ -33,8 +33,9 @@ use crate::vm::VM;
 use doeff_core_effects::scheduler::{set_run_external_wait_mode, ExternalWaitMode};
 use doeff_core_effects::sentinels::PyRustHandlerSentinel;
 use doeff_vm_core::{
-    install_vm_hooks, live_object_counts, DoExprTag, PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyK,
-    PyResultErr, PyResultOk, PyTraceFrame, PyTraceHop, PyVar, VmHooks,
+    install_vm_hooks, live_object_counts, DoExprTag, OwnedControlContinuation, PyDoCtrlBase,
+    PyDoExprBase, PyEffectBase, PyK, PyResultErr, PyResultOk, PyTraceFrame, PyTraceHop, PyVar,
+    VmHooks,
 };
 
 fn ensure_vm_core_hooks_installed() {
@@ -220,18 +221,24 @@ fn take_control_continuation(
     py: Python<'_>,
     continuation: &Py<PyAny>,
     context: &str,
-) -> PyResult<doeff_vm_core::Continuation> {
+) -> PyResult<OwnedControlContinuation> {
     let k_obj = continuation.bind(py).cast::<PyK>().map_err(|_| {
         PyTypeError::new_err(format!("{context}.continuation must be K (opaque continuation handle)"))
     })?;
-    let continuation = k_obj.borrow_mut().take_continuation();
-    if continuation.is_placeholder() || continuation.consumed() {
-        return Err(PyRuntimeError::new_err(format!(
-            "one-shot violation: continuation {} already consumed",
-            continuation.cont_id.raw()
-        )));
+    Ok(k_obj.borrow_mut().take_control_continuation())
+}
+
+fn take_started_continuation(
+    py: Python<'_>,
+    continuation: &Py<PyAny>,
+    context: &str,
+) -> PyResult<doeff_vm_core::Continuation> {
+    match take_control_continuation(py, continuation, context)? {
+        OwnedControlContinuation::Started(continuation) => Ok(continuation),
+        OwnedControlContinuation::Pending(_) => Err(PyTypeError::new_err(format!(
+            "{context}.continuation must be a started continuation"
+        ))),
     }
-    Ok(continuation)
 }
 
 fn borrow_control_continuation(
@@ -242,7 +249,11 @@ fn borrow_control_continuation(
     let k_obj = continuation.bind(py).cast::<PyK>().map_err(|_| {
         PyTypeError::new_err(format!("{context}.continuation must be K (opaque continuation handle)"))
     })?;
-    let continuation = k_obj.borrow().continuation();
+    let continuation = k_obj.borrow().continuation().ok_or_else(|| {
+        PyTypeError::new_err(format!(
+            "{context}.continuation must be a started continuation"
+        ))
+    })?;
     if continuation.is_placeholder() || continuation.consumed() {
         return Err(PyRuntimeError::new_err(format!(
             "one-shot violation: continuation {} already consumed",
@@ -250,6 +261,42 @@ fn borrow_control_continuation(
         )));
     }
     Ok(continuation)
+}
+
+fn pyk_from_started<'py>(
+    py: Python<'py>,
+    continuation: &doeff_vm_core::Continuation,
+) -> PyResult<Py<PyAny>> {
+    Ok(Bound::new(py, PyK::from_continuation(continuation.clone_handle()))?
+        .into_any()
+        .unbind())
+}
+
+fn pyk_from_control<'py>(
+    py: Python<'py>,
+    continuation: &OwnedControlContinuation,
+) -> PyResult<Py<PyAny>> {
+    match continuation {
+        OwnedControlContinuation::Started(continuation) => pyk_from_started(py, continuation),
+        OwnedControlContinuation::Pending(continuation) => Ok(Bound::new(
+            py,
+            PyK::from_pending(continuation.clone()),
+        )?
+        .into_any()
+        .unbind()),
+    }
+}
+
+fn validate_control_continuation(
+    continuation: &doeff_vm_core::Continuation,
+) -> PyResult<()> {
+    if continuation.is_placeholder() || continuation.consumed() {
+        return Err(PyRuntimeError::new_err(format!(
+            "one-shot violation: continuation {} already consumed",
+            continuation.cont_id.raw()
+        )));
+    }
+    Ok(())
 }
 
 fn is_effect_base_like(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
@@ -482,14 +529,17 @@ impl PyVM {
             }
             SyncDriverLoopOutcome::PythonException(exc) => (Err(exc), None),
         };
+        let raw_store = self.state_items_dict(py)?.unbind();
+        let log = self.log_items_list(py)?.into_any().unbind();
+        let trace = self.build_trace_list(py)?;
         self.vm.end_active_run_session();
 
         Ok(PyRunResult {
             result,
             traceback_data,
-            raw_store: self.state_items_dict(py)?.unbind(),
-            log: self.log_items_list(py)?.into_any().unbind(),
-            trace: self.build_trace_list(py)?,
+            raw_store,
+            log,
+            trace,
         })
     }
 
@@ -502,21 +552,21 @@ impl PyVM {
     }
 
     pub fn put_state(&mut self, key: String, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.vm.rust_store.put(key, Value::from_pyobject(value));
+        self.vm.var_store.put(key, Value::from_pyobject(value));
         Ok(())
     }
 
     pub fn put_env(&mut self, key: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let env_key = HashedPyKey::from_bound(key)?;
         self.vm
-            .env_store
-            .insert(env_key, Value::from_python_opaque(value));
+            .var_store
+            .insert_root_scope_binding(env_key, Value::from_python_opaque(value));
         Ok(())
     }
 
     pub fn env_items(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = pyo3::types::PyDict::new(py);
-        for (k, v) in &self.vm.env_store {
+        for (k, v) in self.vm.var_store.root_scope_bindings() {
             dict.set_item(k.to_pyobject(py), v.to_pyobject(py)?)?;
         }
         Ok(dict.into())
@@ -557,6 +607,7 @@ impl PyVM {
             for frame in &segment.frames {
                 match frame {
                     crate::frame::Frame::Program { .. } => program_frames += 1,
+                    crate::frame::Frame::LexicalScope { .. } => other_frames += 1,
                     crate::frame::Frame::InterceptorApply(_)
                     | crate::frame::Frame::InterceptorEval(_) => interceptor_frames += 1,
                     crate::frame::Frame::EvalReturn(_) => eval_return_frames += 1,
@@ -1063,7 +1114,11 @@ impl PyVM {
     ) -> PyResult<Bound<'py, PyAny>> {
         match value {
             // Runtime callback arguments must receive the opaque K handle.
-            Value::Continuation(k) => Ok(Bound::new(py, PyK::from_continuation(k))?.into_any()),
+            Value::Continuation(k) => Ok(Bound::new(py, PyK::from_continuation(k.clone_handle()))?
+                .into_any()),
+            Value::PendingContinuation(k) => {
+                Ok(Bound::new(py, PyK::from_pending(k.clone()))?.into_any())
+            }
             Value::Python(_)
             | Value::Unit
             | Value::Int(_)
@@ -1179,10 +1234,8 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 continuation,
                 value,
             } => {
-                let k = Bound::new(py, PyK::from_continuation(continuation))
-                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
-                    .into_any()
-                    .unbind();
+                let k = pyk_from_started(py, continuation)
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?;
                 Some(
                     Bound::new(
                         py,
@@ -1205,10 +1258,8 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 continuation,
                 value,
             } => {
-                let k = Bound::new(py, PyK::from_continuation(continuation))
-                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
-                    .into_any()
-                    .unbind();
+                let k = pyk_from_started(py, continuation)
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?;
                 Some(
                     Bound::new(
                         py,
@@ -1231,10 +1282,8 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 continuation,
                 exception,
             } => {
-                let k = Bound::new(py, PyK::from_continuation(continuation))
-                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
-                    .into_any()
-                    .unbind();
+                let k = pyk_from_started(py, continuation)
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?;
                 Some(
                     Bound::new(
                         py,
@@ -1378,10 +1427,8 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 .unbind(),
             ),
             DoCtrl::GetTraceback { continuation } => {
-                let k = Bound::new(py, PyK::from_continuation(continuation))
-                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
-                    .into_any()
-                    .unbind();
+                let k = pyk_from_started(py, continuation)
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?;
                 Some(
                     Bound::new(
                         py,
@@ -1456,10 +1503,8 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 continuation,
                 value,
             } => {
-                let k = Bound::new(py, PyK::from_continuation(continuation))
-                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
-                    .into_any()
-                    .unbind();
+                let k = pyk_from_control(py, continuation)
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?;
                 Some(
                     Bound::new(
                         py,
@@ -1470,7 +1515,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                             .add_subclass(PyResumeContinuation {
                                 continuation: k,
                                 value: value.to_pyobject(py)?.unbind(),
-                                owned_continuation: continuation.clone_handle(),
+                                owned_continuation: continuation.clone(),
                             }),
                     )
                     .map_err(|err| PyException::runtime_error(format!("{err}")))?
@@ -1589,10 +1634,8 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 bindings,
                 ..
             } => {
-                let k = Bound::new(py, PyK::from_continuation(scope))
-                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
-                    .into_any()
-                    .unbind();
+                let k = pyk_from_started(py, scope)
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?;
                 Some(
                     Bound::new(
                         py,
@@ -1829,6 +1872,7 @@ pub(crate) fn classify_yielded_bound(
             }
             DoExprTag::Discontinue => {
                 let d: PyRef<'_, PyDiscontinue> = obj.extract()?;
+                validate_control_continuation(&d.owned_continuation)?;
                 let bound_exception = d.exception.bind(py);
                 if !bound_exception.is_instance_of::<PyBaseException>() {
                     return Err(PyTypeError::new_err(
@@ -1912,6 +1956,7 @@ pub(crate) fn classify_yielded_bound(
             }
             DoExprTag::Resume => {
                 let r: PyRef<'_, PyResume> = obj.extract()?;
+                validate_control_continuation(&r.owned_continuation)?;
                 Ok(DoCtrl::Resume {
                     continuation: r.owned_continuation.clone_handle(),
                     value: Value::from_pyobject(r.value.bind(py)),
@@ -1919,6 +1964,7 @@ pub(crate) fn classify_yielded_bound(
             }
             DoExprTag::Transfer => {
                 let t: PyRef<'_, PyTransfer> = obj.extract()?;
+                validate_control_continuation(&t.owned_continuation)?;
                 Ok(DoCtrl::Transfer {
                     continuation: t.owned_continuation.clone_handle(),
                     value: Value::from_pyobject(t.value.bind(py)),
@@ -1947,7 +1993,7 @@ pub(crate) fn classify_yielded_bound(
             DoExprTag::ResumeContinuation => {
                 let rc: PyRef<'_, PyResumeContinuation> = obj.extract()?;
                 Ok(DoCtrl::ResumeContinuation {
-                    continuation: rc.owned_continuation.clone_handle(),
+                    continuation: rc.owned_continuation.clone(),
                     value: Value::from_pyobject(rc.value.bind(py)),
                 })
             }
@@ -2623,7 +2669,7 @@ impl PyDiscontinue {
         continuation: Py<PyAny>,
         exception: Option<Py<PyAny>>,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let owned_continuation = take_control_continuation(py, &continuation, "Discontinue")?;
+        let owned_continuation = take_started_continuation(py, &continuation, "Discontinue")?;
         let exception = match exception {
             Some(exception) => {
                 if !exception.bind(py).is_instance_of::<PyBaseException>() {
@@ -3033,7 +3079,7 @@ impl PyResume {
         continuation: Py<PyAny>,
         value: Py<PyAny>,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let owned_continuation = take_control_continuation(py, &continuation, "Resume")?;
+        let owned_continuation = take_started_continuation(py, &continuation, "Resume")?;
         Ok(PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
                 tag: DoExprTag::Resume as u8,
@@ -3097,7 +3143,7 @@ pub struct PyResumeContinuation {
     pub continuation: Py<PyAny>,
     #[pyo3(get)]
     pub value: Py<PyAny>,
-    owned_continuation: doeff_vm_core::Continuation,
+    owned_continuation: OwnedControlContinuation,
 }
 
 #[pymethods]
@@ -3130,7 +3176,7 @@ impl PyTransfer {
         continuation: Py<PyAny>,
         value: Py<PyAny>,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let owned_continuation = take_control_continuation(py, &continuation, "Transfer")?;
+        let owned_continuation = take_started_continuation(py, &continuation, "Transfer")?;
         Ok(PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
                 tag: DoExprTag::Transfer as u8,
@@ -4441,14 +4487,16 @@ fn run(
     if let Some(env_dict) = env {
         for (key, value) in env_dict.iter() {
             let k = HashedPyKey::from_bound(&key)?;
-            vm.vm.env_store.insert(k, Value::from_python_opaque(&value));
+            vm.vm
+                .var_store
+                .insert_root_scope_binding(k, Value::from_python_opaque(&value));
         }
     }
 
     if let Some(store_dict) = store {
         for (key, value) in store_dict.iter() {
             let k: String = key.extract()?;
-            vm.vm.rust_store.put(k, Value::from_pyobject(&value));
+            vm.vm.var_store.put(k, Value::from_pyobject(&value));
         }
     }
 
@@ -4476,14 +4524,16 @@ fn async_run<'py>(
     if let Some(env_dict) = env {
         for (key, value) in env_dict.iter() {
             let k = HashedPyKey::from_bound(&key)?;
-            vm.vm.env_store.insert(k, Value::from_python_opaque(&value));
+            vm.vm
+                .var_store
+                .insert_root_scope_binding(k, Value::from_python_opaque(&value));
         }
     }
 
     if let Some(store_dict) = store {
         for (key, value) in store_dict.iter() {
             let k: String = key.extract()?;
-            vm.vm.rust_store.put(k, Value::from_pyobject(&value));
+            vm.vm.var_store.put(k, Value::from_pyobject(&value));
         }
     }
 

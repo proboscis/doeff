@@ -208,7 +208,6 @@ def test_v26_no_arc_mutex_metadata():
         "Shared mutable metadata only needed when multiple copies exist"
 
 
-@pytest.mark.xfail(reason="V27: unstarted overloads Continuation type", strict=False)
 def test_v27_no_unstarted_on_continuation():
     """Continuation = detached fibers. Unstarted programs should be a separate type."""
     src = _src(CONTINUATION_RS)

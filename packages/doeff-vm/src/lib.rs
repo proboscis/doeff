@@ -89,7 +89,7 @@ pub use capture::{
     HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry, HandlerStatus, SpawnSite, TraceEntry,
     TraceFrame, TraceHop,
 };
-pub use continuation::Continuation;
+pub use continuation::{Continuation, OwnedControlContinuation, PendingContinuation};
 pub use do_ctrl::DoCtrl;
 pub use doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 pub use doeff_vm_core::DoExprTag;

@@ -13,19 +13,19 @@ use crate::py_shared::PyShared;
 use crate::python_call::PythonCall;
 use crate::segment::ScopeStore;
 use crate::value::Value;
-use crate::vm::RustStore;
+use crate::vm::VarStore;
 
 pub trait IRStream: fmt::Debug + Send {
     fn resume(
         &mut self,
         value: Value,
-        store: &mut RustStore,
+        store: &mut VarStore,
         scope: &mut ScopeStore,
     ) -> IRStreamStep;
     fn throw(
         &mut self,
         exc: PyException,
-        store: &mut RustStore,
+        store: &mut VarStore,
         scope: &mut ScopeStore,
     ) -> IRStreamStep;
     fn debug_location(&self) -> Option<StreamLocation> {
@@ -181,7 +181,7 @@ impl IRStream for PythonGeneratorStream {
     fn resume(
         &mut self,
         value: Value,
-        _store: &mut RustStore,
+        _store: &mut VarStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         if self.started {
@@ -195,7 +195,7 @@ impl IRStream for PythonGeneratorStream {
     fn throw(
         &mut self,
         exc: PyException,
-        _store: &mut RustStore,
+        _store: &mut VarStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         self.started = true;
@@ -246,7 +246,7 @@ mod tests {
 
             let mut stream =
                 PythonGeneratorStream::new(PyShared::new(generator), PyShared::new(get_frame));
-            let mut store = RustStore::new();
+            let mut store = VarStore::new();
             let mut scope = ScopeStore::default();
 
             let step1 = stream.resume(Value::Unit, &mut store, &mut scope);
@@ -289,7 +289,7 @@ mod tests {
 
             let mut stream =
                 PythonGeneratorStream::new(PyShared::new(generator), PyShared::new(get_frame));
-            let mut store = RustStore::new();
+            let mut store = VarStore::new();
             let mut scope = ScopeStore::default();
             let step = stream.throw(PyException::runtime_error("boom"), &mut store, &mut scope);
             assert!(matches!(
@@ -342,7 +342,7 @@ mod tests {
             fn resume(
                 &mut self,
                 _value: Value,
-                _store: &mut RustStore,
+                _store: &mut VarStore,
                 _scope: &mut ScopeStore,
             ) -> IRStreamStep {
                 IRStreamStep::Return(Value::Unit)
@@ -351,7 +351,7 @@ mod tests {
             fn throw(
                 &mut self,
                 exc: PyException,
-                _store: &mut RustStore,
+                _store: &mut VarStore,
                 _scope: &mut ScopeStore,
             ) -> IRStreamStep {
                 IRStreamStep::Throw(exc)

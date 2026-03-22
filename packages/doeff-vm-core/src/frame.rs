@@ -1,5 +1,6 @@
 //! Frame types for the continuation stack.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -9,11 +10,13 @@ use crate::continuation::Continuation;
 use crate::do_ctrl::{DoCtrl, InterceptMode};
 use crate::driver::PyException;
 use crate::effect::DispatchEffect;
-use crate::ids::{DispatchId, Marker, SegmentId};
+use crate::ids::{DispatchId, Marker, SegmentId, VarId};
 use crate::ir_stream::IRStreamRef;
 use crate::kleisli::KleisliRef;
+use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::segment::SegmentKind;
+use crate::value::Value;
 
 static NEXT_FRAME_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -344,6 +347,10 @@ pub enum Frame {
         handler_kind: Option<HandlerKind>,
         dispatch: Option<ProgramDispatch>,
     },
+    LexicalScope {
+        bindings: HashMap<HashedPyKey, Value>,
+        var_overrides: HashMap<VarId, Value>,
+    },
     InterceptorApply(Box<InterceptorContinuation>),
     InterceptorEval(Box<InterceptorContinuation>),
     EvalReturn(Box<EvalReturnContinuation>),
@@ -366,6 +373,7 @@ impl Frame {
         match self {
             Frame::EvalReturn(continuation) => continuation.contains_started_continuation(),
             Frame::Program { .. }
+            | Frame::LexicalScope { .. }
             | Frame::InterceptorApply(_)
             | Frame::InterceptorEval(_)
             | Frame::MapReturn { .. }
@@ -397,6 +405,13 @@ impl Clone for Frame {
                 metadata: metadata.clone(),
                 handler_kind: *handler_kind,
                 dispatch: dispatch.clone(),
+            },
+            Frame::LexicalScope {
+                bindings,
+                var_overrides,
+            } => Frame::LexicalScope {
+                bindings: bindings.clone(),
+                var_overrides: var_overrides.clone(),
             },
             Frame::InterceptorApply(continuation) => {
                 Frame::InterceptorApply(Box::new((**continuation).clone()))
@@ -456,7 +471,7 @@ impl Frame {
 mod tests {
     use super::*;
     use crate::ir_stream::{IRStream, IRStreamStep};
-    use crate::rust_store::RustStore;
+    use crate::var_store::VarStore;
     use crate::segment::ScopeStore;
     use crate::value::Value;
 
@@ -467,7 +482,7 @@ mod tests {
         fn resume(
             &mut self,
             _value: Value,
-            _store: &mut RustStore,
+            _store: &mut VarStore,
             _scope: &mut ScopeStore,
         ) -> IRStreamStep {
             IRStreamStep::Return(Value::Unit)
@@ -476,7 +491,7 @@ mod tests {
         fn throw(
             &mut self,
             exc: crate::driver::PyException,
-            _store: &mut RustStore,
+            _store: &mut VarStore,
             _scope: &mut ScopeStore,
         ) -> IRStreamStep {
             IRStreamStep::Throw(exc)
