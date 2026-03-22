@@ -940,6 +940,35 @@ fn pyobject_to_exception(py: Python<'_>, error_obj: &Bound<'_, PyAny>) -> PyExce
     PyException::new(exc_type, exc_value, Some(exc_tb))
 }
 
+fn wrap_spawned_program_for_scheduler(
+    program: Py<PyAny>,
+    task_id: TaskId,
+) -> Result<Py<PyAny>, PyException> {
+    Python::attach(|py| {
+        let module = py.import("doeff.handlers.spawn_handler").map_err(|err| {
+            PyException::runtime_error(format!(
+                "failed to import spawn_handler wrapper: {err:?}"
+            ))
+        })?;
+        let wrapper = module
+            .getattr("wrap_spawned_program_for_scheduler")
+            .map_err(|err| {
+                PyException::runtime_error(format!(
+                    "failed to load spawn wrapper helper: {err:?}"
+                ))
+            })?;
+        let wrapped = wrapper
+            .call1((program.bind(py), task_id.raw()))
+            .map_err(|err| {
+                PyException::runtime_error(format!(
+                    "failed to wrap spawned program for task {}: {err:?}",
+                    task_id.raw()
+                ))
+            })?;
+        Ok(wrapped.unbind())
+    })
+}
+
 fn task_cancelled_error() -> PyException {
     Python::attach(|py| {
         let message = "Task was cancelled";
@@ -2502,6 +2531,7 @@ enum SchedulerPhase {
         store_snapshot: Option<RustStore>,
         priority: u32,
         spawn_site: Option<SpawnSite>,
+        task_id: TaskId,
     },
     SpawnAwaitContinuation {
         k_user: Continuation,
@@ -2509,6 +2539,7 @@ enum SchedulerPhase {
         store_snapshot: Option<RustStore>,
         priority: u32,
         spawn_site: Option<SpawnSite>,
+        task_id: TaskId,
     },
     PreemptiveTransfer {
         k_user: Continuation,
@@ -3096,7 +3127,6 @@ impl SchedulerProgram {
         let outcome_for_fallback = outcome.clone();
 
         let mut owner_still_waiting = state.owner_is_waiting(owner);
-
         if state.current_task == Some(running_task) {
             state.current_task = None;
         }
@@ -3250,10 +3280,52 @@ impl IRStreamProgram for SchedulerProgram {
                 if let Err(error) = state.save_task_store(task, store) {
                     return IRStreamStep::Throw(error);
                 }
-                if let Err(error) = state.mark_task_done(task, result) {
-                    return IRStreamStep::Throw(error);
+                let mut task_already_done =
+                    matches!(state.tasks.get(&task), Some(TaskState::Done { .. }));
+                if let Some(error) = result.as_ref().err().cloned() {
+                    if let Some(wait_owner) = state.gather_wait_request_for_failed_task(task) {
+                        if !state.has_pending_gather_fail_fast(wait_owner) {
+                            if let Err(done_error) =
+                                state.mark_task_done(task, Err(error.clone()))
+                            {
+                                return IRStreamStep::Throw(done_error);
+                            }
+                            let _ = state.register_gather_fail_fast(wait_owner, error, task);
+                            state.wake_waiters(Waitable::Task(task));
+                            task_already_done = true;
+                        }
+                    }
                 }
-                state.wake_waiters(Waitable::Task(task));
+                if !task_already_done {
+                    if let Err(error) = state.mark_task_done(task, result) {
+                        return IRStreamStep::Throw(error);
+                    }
+                    state.wake_waiters(Waitable::Task(task));
+                }
+                if state.current_task == Some(task) {
+                    state.current_task = None;
+                }
+                if let Some(owner) = state.active_driver_owner {
+                    match Self::try_transfer_ready_owner(&mut state, owner, store) {
+                        Ok(Some(step)) => {
+                            state.active_driver_owner = None;
+                            self.phase = SchedulerPhase::Idle;
+                            return step;
+                        }
+                        Ok(None) => {}
+                        Err(error) => return IRStreamStep::Throw(error),
+                    }
+                    let outcome = state.transfer_next(store);
+                    let next_running_task = state.current_task;
+                    drop(state);
+                    return self.finish_owner_transfer(
+                        owner,
+                        next_running_task,
+                        outcome,
+                        |owner| SchedulerPhase::AwaitDrivingTransfer { owner },
+                        || IRStreamStep::Return(Value::Unit),
+                    );
+                }
                 drop(state);
                 self.continue_simple_transfer(k_user, store)
             }
@@ -3437,10 +3509,18 @@ impl IRStreamProgram for SchedulerProgram {
                     StoreMode::Shared => None,
                     StoreMode::Isolated { .. } => Some(store.clone()),
                 };
+                let task_id = {
+                    let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                    state.alloc_task_id()
+                };
 
                 if let Some(mut handlers) = handlers {
                     self.maybe_prepend_sync_await_handler(&mut handlers);
                     let outside_scope = k_user.segment_id();
+                    let program = match wrap_spawned_program_for_scheduler(program, task_id) {
+                        Ok(program) => program,
+                        Err(error) => return IRStreamStep::Throw(error),
+                    };
 
                     self.phase = SchedulerPhase::SpawnAwaitContinuation {
                         k_user,
@@ -3448,6 +3528,7 @@ impl IRStreamProgram for SchedulerProgram {
                         store_snapshot,
                         priority,
                         spawn_site: creation_site,
+                        task_id,
                     };
 
                     return IRStreamStep::Yield(DoCtrl::CreateContinuation {
@@ -3465,6 +3546,7 @@ impl IRStreamProgram for SchedulerProgram {
                     store_snapshot,
                     priority,
                     spawn_site: creation_site,
+                    task_id,
                 };
                 IRStreamStep::Yield(DoCtrl::GetHandlers)
             }
@@ -3476,6 +3558,7 @@ impl IRStreamProgram for SchedulerProgram {
                 store_snapshot,
                 priority,
                 spawn_site,
+                task_id,
             } => {
                 let mut handlers = match value {
                     Value::Handlers(handlers) => handlers,
@@ -3503,6 +3586,10 @@ impl IRStreamProgram for SchedulerProgram {
                 };
                 self.maybe_prepend_sync_await_handler(&mut handlers);
                 let outside_scope = k_user.segment_id();
+                let program = match wrap_spawned_program_for_scheduler(program, task_id) {
+                    Ok(program) => program,
+                    Err(error) => return IRStreamStep::Throw(error),
+                };
 
                 self.phase = SchedulerPhase::SpawnAwaitContinuation {
                     k_user,
@@ -3510,6 +3597,7 @@ impl IRStreamProgram for SchedulerProgram {
                     store_snapshot,
                     priority,
                     spawn_site,
+                    task_id,
                 };
 
                 IRStreamStep::Yield(DoCtrl::CreateContinuation {
@@ -3526,6 +3614,7 @@ impl IRStreamProgram for SchedulerProgram {
                 store_snapshot,
                 priority,
                 spawn_site,
+                task_id,
             } => {
                 // Value should be the continuation created by CreateContinuation
                 let cont = match value {
@@ -3570,7 +3659,6 @@ impl IRStreamProgram for SchedulerProgram {
                 };
 
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                let task_id = state.alloc_task_id();
                 let parent_task = state.current_task;
                 state.tasks.insert(
                     task_id,
