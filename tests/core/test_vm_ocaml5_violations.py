@@ -66,7 +66,6 @@ def test_v01_fiberkind_should_be_option_handler():
     assert "MaskBoundary" not in src, "FiberKind must not have MaskBoundary variant"
 
 
-@pytest.mark.xfail(reason="V2: Normal fibers carry markers", strict=False)
 def test_v02_normal_fiber_no_marker():
     """Normal (non-handler) fibers should not carry a Marker."""
     src = _src(SEGMENT_RS)
