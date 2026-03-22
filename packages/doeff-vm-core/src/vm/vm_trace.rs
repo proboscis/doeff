@@ -246,12 +246,10 @@ impl VM {
         &self,
         stream: &IRStreamRef,
     ) -> Option<DispatchId> {
-        self.dispatch_origins()
-            .into_iter()
-            .find_map(|origin| {
-                self.continuation_uses_stream(&origin.k_origin, stream)
-                    .then_some(origin.dispatch_id)
-            })
+        self.dispatch_origins().into_iter().find_map(|origin| {
+            self.continuation_uses_stream(&origin.k_origin, stream)
+                .then_some(origin.dispatch_id)
+        })
     }
 
     pub(super) fn handler_stream_throw_continuation(

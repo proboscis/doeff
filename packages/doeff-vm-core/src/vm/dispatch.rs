@@ -36,12 +36,9 @@ impl VM {
     }
 
     fn dispatch_view_in_segment(&self, seg_id: SegmentId) -> Option<DispatchFrameView> {
-        self.segment_program_dispatch(seg_id)
-            .cloned()
-            .or_else(|| {
-                self.fiber_runtime(seg_id)
-                    .and_then(|state| state.pending_program_dispatch.clone())
-            })
+        self.fiber_runtime(seg_id)
+            .and_then(|state| state.pending_program_dispatch.clone())
+            .or_else(|| self.segment_program_dispatch(seg_id).cloned())
             .map(|dispatch| DispatchFrameView { seg_id, dispatch })
     }
 
@@ -108,7 +105,10 @@ impl VM {
         }
     }
 
-    fn dispatch_frames_from_segment(&self, start_segment: Option<SegmentId>) -> Vec<DispatchFrameView> {
+    fn dispatch_frames_from_segment(
+        &self,
+        start_segment: Option<SegmentId>,
+    ) -> Vec<DispatchFrameView> {
         let mut views = Vec::new();
         self.collect_dispatches_from_segment_inner(
             start_segment,
@@ -176,7 +176,10 @@ impl VM {
         None
     }
 
-    fn first_dispatch_from_segment(&self, start_segment: Option<SegmentId>) -> Option<DispatchFrameView> {
+    fn first_dispatch_from_segment(
+        &self,
+        start_segment: Option<SegmentId>,
+    ) -> Option<DispatchFrameView> {
         self.first_dispatch_from_segment_inner(
             start_segment,
             &mut HashSet::new(),
@@ -507,6 +510,7 @@ impl VM {
         };
         seg.frames.clear();
         let _ = seg;
+        self.clear_pending_program_dispatch(seg_id);
         self.clear_pending_error_context(seg_id);
         self.clear_throw_parent(seg_id);
     }
@@ -1727,7 +1731,8 @@ impl VM {
                         .find_dispatch_frame(dispatch_id)
                         .map(|view| view.dispatch.handler_continuation);
                     if let Some(program_dispatch) = self.segment_program_dispatch_mut(seg_id) {
-                        if !restoring_outer_dispatch || program_dispatch.dispatch_id == dispatch_id {
+                        if !restoring_outer_dispatch || program_dispatch.dispatch_id == dispatch_id
+                        {
                             program_dispatch.dispatch_id = dispatch_id;
                             program_dispatch.handler_continuation = if restoring_outer_dispatch {
                                 outer_handler_continuation.unwrap_or_else(|| k.clone_handle())

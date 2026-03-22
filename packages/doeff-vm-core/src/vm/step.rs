@@ -334,12 +334,15 @@ impl VM {
                 stream,
                 metadata,
                 handler_kind,
-                ..
+                dispatch,
             } => {
                 let incoming_throw = match &mode {
                     Mode::Throw(exc) => Some(exc.clone()),
                     Mode::Deliver(_) | Mode::HandleYield(_) | Mode::Return(_) => None,
                 };
+                if let Some(program_dispatch) = dispatch {
+                    self.set_pending_program_dispatch(seg_id, program_dispatch);
+                }
                 let step = {
                     let Some(_segment) = self.segments.get_mut(seg_id) else {
                         return StepEvent::Error(VMError::invalid_segment("segment not found"));
@@ -1936,7 +1939,7 @@ impl VM {
         self.handle_resume_continuation(cont, Value::None)
     }
 
-    fn handle_yield_eval_in_scope(
+    pub(super) fn handle_yield_eval_in_scope(
         &mut self,
         expr: PyShared,
         scope: Continuation,
