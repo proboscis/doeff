@@ -767,28 +767,31 @@ impl VM {
         child_segment.interceptor_skip_stack = source_stack;
     }
 
-    fn reparent_continuation_captured_caller(
-        continuation: &mut Continuation,
-        old_parent: SegmentId,
-        new_parent: Option<SegmentId>,
-    ) -> usize {
-        if continuation.captured_caller() != Some(old_parent) {
-            return 0;
-        }
-        continuation.set_captured_caller(new_parent);
-        1
+    pub(crate) fn continuation_parent(&self, continuation: &Continuation) -> Option<SegmentId> {
+        continuation
+            .outermost_fiber_id()
+            .and_then(|fiber_id| self.segments.get(fiber_id))
+            .and_then(|segment| segment.parent)
     }
 
-    fn reparent_eval_return_captured_caller(
+    fn collect_continuation_parent(
+        continuation: &Continuation,
+        parents: &mut std::collections::HashSet<SegmentId>,
+    ) {
+        if let Some(fiber_id) = continuation.outermost_fiber_id() {
+            parents.insert(fiber_id);
+        }
+    }
+
+    fn collect_eval_return_captured_caller(
         eval_return: &mut EvalReturnContinuation,
-        old_parent: SegmentId,
-        new_parent: Option<SegmentId>,
-    ) -> usize {
+        parents: &mut std::collections::HashSet<SegmentId>,
+    ) {
         match eval_return {
             EvalReturnContinuation::ResumeToContinuation { continuation }
             | EvalReturnContinuation::ReturnToContinuation { continuation }
             | EvalReturnContinuation::EvalInScopeReturn { continuation } => {
-                Self::reparent_continuation_captured_caller(continuation, old_parent, new_parent)
+                Self::collect_continuation_parent(continuation, parents)
             }
             EvalReturnContinuation::ApplyResolveFunction { .. }
             | EvalReturnContinuation::ApplyResolveArg { .. }
@@ -796,7 +799,7 @@ impl VM {
             | EvalReturnContinuation::ExpandResolveFactory { .. }
             | EvalReturnContinuation::ExpandResolveArg { .. }
             | EvalReturnContinuation::ExpandResolveKwarg { .. }
-            | EvalReturnContinuation::TailResumeReturn => 0,
+            | EvalReturnContinuation::TailResumeReturn => {}
         }
     }
 
@@ -805,7 +808,7 @@ impl VM {
         old_parent: SegmentId,
         new_parent: Option<SegmentId>,
     ) -> usize {
-        let mut rewired = 0usize;
+        let mut parent_rewrites = std::collections::HashSet::new();
 
         for (_, segment) in self.segments.iter_mut() {
             for frame in &mut segment.frames {
@@ -814,30 +817,32 @@ impl VM {
                     ..
                 } = frame
                 {
-                    rewired += Self::reparent_continuation_captured_caller(
-                        &mut dispatch.origin,
-                        old_parent,
-                        new_parent,
-                    );
-                    rewired += Self::reparent_continuation_captured_caller(
-                        &mut dispatch.handler_continuation,
-                        old_parent,
-                        new_parent,
+                    Self::collect_continuation_parent(&dispatch.origin, &mut parent_rewrites);
+                    Self::collect_continuation_parent(
+                        &dispatch.handler_continuation,
+                        &mut parent_rewrites,
                     );
                 }
                 if let Frame::EvalReturn(eval_return) = frame {
-                    rewired += Self::reparent_eval_return_captured_caller(
-                        eval_return,
-                        old_parent,
-                        new_parent,
-                    );
+                    Self::collect_eval_return_captured_caller(eval_return, &mut parent_rewrites);
                 }
             }
         }
 
         if let Some(PendingPython::RustProgramContinuation { k, .. }) = self.pending_python.as_mut()
         {
-            rewired += Self::reparent_continuation_captured_caller(k, old_parent, new_parent);
+            Self::collect_continuation_parent(k, &mut parent_rewrites);
+        }
+
+        let mut rewired = 0usize;
+        for fiber_id in parent_rewrites {
+            let Some(segment) = self.segments.get_mut(fiber_id) else {
+                continue;
+            };
+            if segment.parent == Some(old_parent) {
+                segment.parent = new_parent;
+                rewired += 1;
+            }
         }
 
         rewired
@@ -959,10 +964,9 @@ impl VM {
     ) -> Option<Value> {
         let prompt_seg_id = self.shared_builtin_handler_prompt(prompt_seg_id);
         let state_handler_prompt = self.segments.get(prompt_seg_id).is_some_and(|seg| {
-            matches!(
-                &seg.kind,
-                SegmentKind::PromptBoundary { handler, .. } if handler.handler_name() == "StateHandler"
-            )
+            seg.kind
+                .prompt_boundary()
+                .is_some_and(|boundary| boundary.handler.handler_name() == "StateHandler")
         });
         if state_handler_prompt {
             return self
@@ -987,10 +991,9 @@ impl VM {
     ) -> bool {
         let prompt_seg_id = self.shared_builtin_handler_prompt(prompt_seg_id);
         let Some(sync_global_state) = self.segments.get(prompt_seg_id).map(|seg| {
-            matches!(
-                &seg.kind,
-                SegmentKind::PromptBoundary { handler, .. } if handler.handler_name() == "StateHandler"
-            )
+            seg.kind
+                .prompt_boundary()
+                .is_some_and(|boundary| boundary.handler.handler_name() == "StateHandler")
         }) else {
             return false;
         };
@@ -1028,14 +1031,14 @@ impl VM {
                 .insert(prompt_seg_id, prompt_seg_id);
             return prompt_seg_id;
         };
-        let SegmentKind::PromptBoundary { handler, .. } = &seg.kind else {
+        let Some(boundary) = seg.kind.prompt_boundary() else {
             self.shared_builtin_prompt_cache
                 .write()
                 .expect("shared builtin prompt cache poisoned")
                 .insert(prompt_seg_id, prompt_seg_id);
             return prompt_seg_id;
         };
-        let handler_name = handler.handler_name();
+        let handler_name = boundary.handler.handler_name();
         if !matches!(handler_name.as_str(), "StateHandler" | "WriterHandler") {
             self.shared_builtin_prompt_cache
                 .write()
@@ -1058,8 +1061,8 @@ impl VM {
             let Some(seg) = self.segments.get(seg_id) else {
                 break;
             };
-            if let SegmentKind::PromptBoundary { handler, .. } = &seg.kind {
-                if handler.handler_name() == handler_name {
+            if let Some(boundary) = seg.kind.prompt_boundary() {
+                if boundary.handler.handler_name() == handler_name {
                     self.shared_builtin_prompt_cache
                         .write()
                         .expect("shared builtin prompt cache poisoned")
@@ -1081,11 +1084,11 @@ impl VM {
         let Some(seg) = self.segments.get(seg_id) else {
             return seg_id;
         };
-        let SegmentKind::PromptBoundary { handler, .. } = &seg.kind else {
+        let Some(boundary) = seg.kind.prompt_boundary() else {
             return seg_id;
         };
         if matches!(
-            handler.handler_name().as_str(),
+            boundary.handler.handler_name().as_str(),
             "StateHandler" | "WriterHandler"
         ) {
             return self.shared_builtin_handler_prompt(seg_id);
@@ -1099,27 +1102,20 @@ impl VM {
     ) -> Option<(SegmentId, HashMap<String, Value>)> {
         let canonical_seg_id = self.canonical_output_segment_id(seg_id);
         let seg = self.segments.get(canonical_seg_id)?;
-        match &seg.kind {
-            SegmentKind::PromptBoundary { handler, .. }
-                if handler.handler_name() == "StateHandler" =>
-            {
+        match seg.kind.prompt_boundary() {
+            Some(boundary) if boundary.handler.handler_name() == "StateHandler" => {
                 let shared_state = self.var_store.global_state().clone();
                 Some((canonical_seg_id, shared_state))
             }
-            SegmentKind::PromptBoundary { .. }
-            | SegmentKind::Normal { .. }
-            | SegmentKind::InterceptorBoundary { .. }
-            | SegmentKind::MaskBoundary { .. } => None,
+            Some(_) | None => None,
         }
     }
 
     fn log_output_entries(&self, seg_id: SegmentId) -> Option<(SegmentId, Vec<Value>)> {
         let canonical_seg_id = self.canonical_output_segment_id(seg_id);
         let seg = self.segments.get(canonical_seg_id)?;
-        match &seg.kind {
-            SegmentKind::PromptBoundary { handler, .. }
-                if handler.handler_name() == "WriterHandler" =>
-            {
+        match seg.kind.prompt_boundary() {
+            Some(boundary) if boundary.handler.handler_name() == "WriterHandler" => {
                 let shared_logs = self
                     .var_store
                     .writer_log(canonical_seg_id)
@@ -1127,10 +1123,7 @@ impl VM {
                     .unwrap_or_default();
                 Some((canonical_seg_id, shared_logs))
             }
-            SegmentKind::PromptBoundary { .. }
-            | SegmentKind::Normal { .. }
-            | SegmentKind::InterceptorBoundary { .. }
-            | SegmentKind::MaskBoundary { .. } => None,
+            Some(_) | None => None,
         }
     }
 

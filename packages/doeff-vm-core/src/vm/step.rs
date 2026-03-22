@@ -239,7 +239,7 @@ impl VM {
             };
 
             if !segment.has_frames() {
-                if matches!(segment.kind, SegmentKind::InterceptorBoundary { .. }) {
+                if segment.kind.is_intercept_boundary() {
                     let caller = segment.parent;
                     let mode = std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit));
                     self.current_segment = caller;

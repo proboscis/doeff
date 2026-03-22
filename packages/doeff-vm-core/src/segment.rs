@@ -15,27 +15,149 @@ pub use crate::scope_store::ScopeStore;
 
 #[derive(Debug, Clone)]
 pub enum FiberKind {
-    Normal {
-        marker: Marker,
-    },
-    PromptBoundary {
+    Normal,
+    Boundary(FiberBoundary),
+}
+
+#[derive(Debug, Clone)]
+pub struct PromptBoundary {
+    pub handled_marker: Marker,
+    pub handler: KleisliRef,
+    pub types: Option<Arc<Vec<PyShared>>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct InterceptSpec {
+    pub interceptor: KleisliRef,
+    pub types: Option<Vec<PyShared>>,
+    pub mode: InterceptMode,
+    pub metadata: Option<CallMetadata>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MaskSpec {
+    pub masked_effects: Vec<PyShared>,
+    pub behind: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct FiberBoundary {
+    marker: Marker,
+    prompt: Option<PromptBoundary>,
+    intercept: Option<InterceptSpec>,
+    mask: Option<MaskSpec>,
+}
+
+impl FiberBoundary {
+    pub fn prompt(
         marker: Marker,
         handled_marker: Marker,
         handler: KleisliRef,
         types: Option<Arc<Vec<PyShared>>>,
-    },
-    InterceptorBoundary {
+    ) -> Self {
+        Self {
+            marker,
+            prompt: Some(PromptBoundary {
+                handled_marker,
+                handler,
+                types,
+            }),
+            intercept: None,
+            mask: None,
+        }
+    }
+
+    pub fn intercept(
         marker: Marker,
         interceptor: KleisliRef,
         types: Option<Vec<PyShared>>,
         mode: InterceptMode,
         metadata: Option<CallMetadata>,
-    },
-    MaskBoundary {
-        marker: Marker,
-        masked_effects: Vec<PyShared>,
-        behind: bool,
-    },
+    ) -> Self {
+        Self {
+            marker,
+            prompt: None,
+            intercept: Some(InterceptSpec {
+                interceptor,
+                types,
+                mode,
+                metadata,
+            }),
+            mask: None,
+        }
+    }
+
+    pub fn mask(marker: Marker, masked_effects: Vec<PyShared>, behind: bool) -> Self {
+        Self {
+            marker,
+            prompt: None,
+            intercept: None,
+            mask: Some(MaskSpec {
+                masked_effects,
+                behind,
+            }),
+        }
+    }
+
+    pub fn marker(&self) -> Marker {
+        self.marker
+    }
+
+    pub fn prompt_boundary(&self) -> Option<&PromptBoundary> {
+        self.prompt.as_ref()
+    }
+
+    pub fn intercept_boundary(&self) -> Option<&InterceptSpec> {
+        self.intercept.as_ref()
+    }
+
+    pub fn mask_boundary(&self) -> Option<&MaskSpec> {
+        self.mask.as_ref()
+    }
+}
+
+impl FiberKind {
+    pub fn boundary(&self) -> Option<&FiberBoundary> {
+        match self {
+            FiberKind::Normal => None,
+            FiberKind::Boundary(boundary) => Some(boundary),
+        }
+    }
+
+    pub fn boundary_mut(&mut self) -> Option<&mut FiberBoundary> {
+        match self {
+            FiberKind::Normal => None,
+            FiberKind::Boundary(boundary) => Some(boundary),
+        }
+    }
+
+    pub fn prompt_boundary(&self) -> Option<&PromptBoundary> {
+        self.boundary().and_then(FiberBoundary::prompt_boundary)
+    }
+
+    pub fn intercept_boundary(&self) -> Option<&InterceptSpec> {
+        self.boundary().and_then(FiberBoundary::intercept_boundary)
+    }
+
+    pub fn mask_boundary(&self) -> Option<&MaskSpec> {
+        self.boundary().and_then(FiberBoundary::mask_boundary)
+    }
+
+    pub fn boundary_marker(&self) -> Option<Marker> {
+        self.boundary().map(FiberBoundary::marker)
+    }
+
+    pub fn is_prompt_boundary(&self) -> bool {
+        self.prompt_boundary().is_some()
+    }
+
+    pub fn is_intercept_boundary(&self) -> bool {
+        self.intercept_boundary().is_some()
+    }
+
+    pub fn is_mask_boundary(&self) -> bool {
+        self.mask_boundary().is_some()
+    }
 }
 
 #[derive(Debug)]
@@ -50,12 +172,12 @@ pub struct Fiber {
 }
 
 impl Fiber {
-    pub fn new(marker: Marker, parent: Option<FiberId>) -> Self {
+    pub fn new(_marker: Marker, parent: Option<FiberId>) -> Self {
         memory_stats::register_segment();
         Fiber {
             frames: Vec::new(),
             parent,
-            kind: FiberKind::Normal { marker },
+            kind: FiberKind::Normal,
             pending_error_context: None,
             interceptor_eval_depth: 0,
             interceptor_skip_stack: Vec::new(),
@@ -73,12 +195,12 @@ impl Fiber {
         Fiber {
             frames: Vec::new(),
             parent,
-            kind: FiberKind::PromptBoundary {
+            kind: FiberKind::Boundary(FiberBoundary::prompt(
                 marker,
                 handled_marker,
                 handler,
-                types: None,
-            },
+                None,
+            )),
             pending_error_context: None,
             interceptor_eval_depth: 0,
             interceptor_skip_stack: Vec::new(),
@@ -97,17 +219,21 @@ impl Fiber {
         Fiber {
             frames: Vec::new(),
             parent,
-            kind: FiberKind::PromptBoundary {
+            kind: FiberKind::Boundary(FiberBoundary::prompt(
                 marker,
                 handled_marker,
                 handler,
                 types,
-            },
+            )),
             pending_error_context: None,
             interceptor_eval_depth: 0,
             interceptor_skip_stack: Vec::new(),
             pending_program_dispatch: None,
         }
+    }
+
+    pub fn set_boundary(&mut self, boundary: FiberBoundary) {
+        self.kind = FiberKind::Boundary(boundary);
     }
 
     pub fn push_frame(&mut self, frame: Frame) {
@@ -127,33 +253,22 @@ impl Fiber {
     }
 
     pub fn is_prompt_boundary(&self) -> bool {
-        matches!(self.kind, FiberKind::PromptBoundary { .. })
+        self.kind.is_prompt_boundary()
     }
 
     pub fn marker(&self) -> Marker {
-        match &self.kind {
-            FiberKind::Normal { marker }
-            | FiberKind::PromptBoundary { marker, .. }
-            | FiberKind::InterceptorBoundary { marker, .. }
-            | FiberKind::MaskBoundary { marker, .. } => *marker,
-        }
+        self.boundary_marker()
+            .expect("marker only exists on boundary fibers")
     }
 
     pub fn boundary_marker(&self) -> Option<Marker> {
-        match &self.kind {
-            FiberKind::PromptBoundary { marker, .. } => Some(*marker),
-            FiberKind::InterceptorBoundary { marker, .. } => Some(*marker),
-            FiberKind::Normal { .. } | FiberKind::MaskBoundary { .. } => None,
-        }
+        self.kind.boundary_marker()
     }
 
     pub fn handled_marker(&self) -> Option<Marker> {
-        match &self.kind {
-            FiberKind::PromptBoundary { handled_marker, .. } => Some(*handled_marker),
-            FiberKind::Normal { .. }
-            | FiberKind::InterceptorBoundary { .. }
-            | FiberKind::MaskBoundary { .. } => None,
-        }
+        self.kind
+            .prompt_boundary()
+            .map(|boundary| boundary.handled_marker)
     }
 }
 
@@ -200,7 +315,6 @@ mod tests {
         let seg = Fiber::new(marker, None);
         assert!(seg.parent.is_none());
         assert!(!seg.is_prompt_boundary());
-        assert_eq!(seg.marker(), marker);
         assert!(seg.boundary_marker().is_none());
         assert!(seg.handled_marker().is_none());
     }
@@ -211,7 +325,6 @@ mod tests {
         let handled = Marker::fresh();
         let seg = Fiber::new_prompt(marker, None, handled, std::sync::Arc::new(DummyKleisli));
         assert!(seg.is_prompt_boundary());
-        assert_eq!(seg.marker(), marker);
         assert_eq!(seg.boundary_marker(), Some(marker));
         assert_eq!(seg.handled_marker(), Some(handled));
     }
