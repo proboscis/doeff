@@ -6,7 +6,7 @@ use pyo3::exceptions::{PyRuntimeError, PyStopIteration};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
-use crate::continuation::Continuation;
+use crate::continuation::{Continuation, OwnedControlContinuation};
 use crate::driver::PyException;
 use crate::effect::DispatchEffect;
 use crate::frame::CallMetadata;
@@ -275,7 +275,7 @@ pub enum DoCtrl {
         outside_scope: Option<SegmentId>,
     },
     ResumeContinuation {
-        continuation: Continuation,
+        continuation: OwnedControlContinuation,
         value: Value,
     },
     PythonAsyncSyntaxEscape {
@@ -446,7 +446,7 @@ impl Clone for DoCtrl {
                 continuation,
                 value,
             } => DoCtrl::ResumeContinuation {
-                continuation: continuation.clone_handle(),
+                continuation: continuation.clone(),
                 value: value.clone(),
             },
             DoCtrl::PythonAsyncSyntaxEscape { action } => DoCtrl::PythonAsyncSyntaxEscape {

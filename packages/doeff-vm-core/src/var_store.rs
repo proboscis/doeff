@@ -10,8 +10,6 @@ pub struct VarStore {
     global_state: HashMap<String, Value>,
     root_scope_bindings: HashMap<HashedPyKey, Value>,
     writer_log: Vec<Value>,
-    bindings_by_segment: HashMap<SegmentId, HashMap<HashedPyKey, Value>>,
-    overrides_by_segment: HashMap<SegmentId, HashMap<VarId, Value>>,
 }
 
 impl VarStore {
@@ -24,15 +22,11 @@ impl VarStore {
         self.global_state.clear();
         self.root_scope_bindings.clear();
         self.writer_log.clear();
-        self.bindings_by_segment.clear();
-        self.overrides_by_segment.clear();
     }
 
     pub fn clear_run_local(&mut self) {
         self.cells.clear();
         self.writer_log.clear();
-        self.bindings_by_segment.clear();
-        self.overrides_by_segment.clear();
     }
 
     pub fn shrink_to_fit(&mut self) {
@@ -40,15 +34,11 @@ impl VarStore {
         self.global_state.shrink_to_fit();
         self.root_scope_bindings.shrink_to_fit();
         self.writer_log.shrink_to_fit();
-        self.bindings_by_segment.shrink_to_fit();
-        self.overrides_by_segment.shrink_to_fit();
     }
 
     pub fn shrink_run_local_to_fit(&mut self) {
         self.cells.shrink_to_fit();
         self.writer_log.shrink_to_fit();
-        self.bindings_by_segment.shrink_to_fit();
-        self.overrides_by_segment.shrink_to_fit();
     }
 
     pub fn get(&self, key: &str) -> Option<&Value> {
@@ -87,15 +77,9 @@ impl VarStore {
         self.root_scope_bindings.insert(key, value);
     }
 
-    pub fn init_segment(&mut self, seg_id: SegmentId) {
-        self.bindings_by_segment.entry(seg_id).or_default();
-        self.overrides_by_segment.entry(seg_id).or_default();
-    }
+    pub fn init_segment(&mut self) {}
 
-    pub fn remove_segment(&mut self, seg_id: SegmentId) {
-        self.bindings_by_segment.remove(&seg_id);
-        self.overrides_by_segment.remove(&seg_id);
-    }
+    pub fn remove_segment(&mut self) {}
 
     pub fn replace_handler_state(&mut self, _seg_id: SegmentId, state: HashMap<String, Value>) {
         self.global_state = state;
@@ -137,34 +121,4 @@ impl VarStore {
         self.writer_log.capacity()
     }
 
-    pub fn replace_scope_bindings(
-        &mut self,
-        seg_id: SegmentId,
-        bindings: HashMap<HashedPyKey, Value>,
-    ) {
-        self.bindings_by_segment.insert(seg_id, bindings);
-    }
-
-    pub fn scope_bindings(&self, seg_id: SegmentId) -> Option<&HashMap<HashedPyKey, Value>> {
-        self.bindings_by_segment.get(&seg_id)
-    }
-
-    pub fn replace_segment_var_overrides(
-        &mut self,
-        seg_id: SegmentId,
-        overrides: HashMap<VarId, Value>,
-    ) {
-        self.overrides_by_segment.insert(seg_id, overrides);
-    }
-
-    pub fn segment_var_overrides(&self, seg_id: SegmentId) -> Option<&HashMap<VarId, Value>> {
-        self.overrides_by_segment.get(&seg_id)
-    }
-
-    pub fn segment_var_overrides_mut(
-        &mut self,
-        seg_id: SegmentId,
-    ) -> Option<&mut HashMap<VarId, Value>> {
-        self.overrides_by_segment.get_mut(&seg_id)
-    }
 }

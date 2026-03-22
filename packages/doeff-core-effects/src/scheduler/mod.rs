@@ -12,7 +12,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
 use crate::capture::{SpawnSite, TraceHop};
-use crate::continuation::Continuation;
+use crate::continuation::{Continuation, OwnedControlContinuation};
 use crate::doeff_generator::DoeffGeneratorFn;
 use crate::effect::{
     dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python,
@@ -32,7 +32,7 @@ use crate::pyvm::{PyResultErr, PyResultOk, PyRustHandlerSentinel};
 use crate::segment::ScopeStore;
 use crate::step::{DoCtrl, PyException, PythonCall};
 use crate::value::{ExternalPromise, PromiseHandle, TaskHandle, Value};
-use crate::vm::RustStore;
+use crate::vm::VarStore;
 use doeff_vm_core::RustKleisli;
 
 pub const SCHEDULER_HANDLER_NAME: &str = "SchedulerHandler";
@@ -112,9 +112,9 @@ pub enum Waitable {
 /// Store isolation mode for spawned tasks.
 #[derive(Clone, Copy, Debug)]
 pub enum StoreMode {
-    /// Child shares the parent's RustStore (reads/writes visible immediately).
+    /// Child shares the parent's VarStore (reads/writes visible immediately).
     Shared,
-    /// Child gets a snapshot of RustStore. Merge policy controls what comes back.
+    /// Child gets a snapshot of VarStore. Merge policy controls what comes back.
     Isolated { merge: StoreMergePolicy },
 }
 
@@ -130,7 +130,7 @@ pub enum StoreMergePolicy {
 pub enum TaskStore {
     Shared,
     Isolated {
-        store: RustStore,
+        store: VarStore,
         merge: StoreMergePolicy,
     },
 }
@@ -139,7 +139,7 @@ pub enum TaskStore {
 #[derive(Debug)]
 pub enum TaskState {
     Pending {
-        cont: Continuation,
+        cont: OwnedControlContinuation,
         store: TaskStore,
         resume_outcome: Option<Result<Value, PyException>>,
         priority: u32,
@@ -207,7 +207,7 @@ struct WaitRequest {
     mode: WaitMode,
     remaining: usize,
     waiting_task: Option<TaskId>,
-    waiting_store: RustStore,
+    waiting_store: VarStore,
     restore_waiting_store: bool,
 }
 
@@ -286,7 +286,7 @@ struct ReadyRootResume {
     continuation: Continuation,
     outcome: Result<Value, PyException>,
     waiting_task: Option<TaskId>,
-    waiting_store: RustStore,
+    waiting_store: VarStore,
     restore_waiting_store: bool,
 }
 
@@ -366,17 +366,19 @@ impl ReadySet {
     }
 }
 
-fn transfer_to_continuation(k: Continuation, value: Value) -> IRStreamStep {
-    if k.is_started() {
-        return IRStreamStep::Yield(DoCtrl::Transfer {
-            continuation: k,
+fn transfer_to_continuation(k: OwnedControlContinuation, value: Value) -> IRStreamStep {
+    match k {
+        OwnedControlContinuation::Started(k) if k.is_started() => IRStreamStep::Yield(
+            DoCtrl::Transfer {
+                continuation: k,
+                value,
+            },
+        ),
+        other => IRStreamStep::Yield(DoCtrl::ResumeContinuation {
+            continuation: other,
             value,
-        });
+        }),
     }
-    IRStreamStep::Yield(DoCtrl::ResumeContinuation {
-        continuation: k,
-        value,
-    })
 }
 
 // CRITICAL SCHEDULER INVARIANT (SPEC-SCHED-001):
@@ -399,7 +401,7 @@ fn transfer_to_continuation(k: Continuation, value: Value) -> IRStreamStep {
 //
 // This helper intentionally delegates started continuations to Transfer via
 // transfer_to_continuation(). Do not change started-path behavior back to Resume.
-fn resume_to_continuation(cont: Continuation, result: Value) -> IRStreamStep {
+fn resume_to_continuation(cont: OwnedControlContinuation, result: Value) -> IRStreamStep {
     if cont.is_started() {
         return transfer_to_continuation(cont, result);
     }
@@ -409,14 +411,22 @@ fn resume_to_continuation(cont: Continuation, result: Value) -> IRStreamStep {
     })
 }
 
-fn throw_to_continuation(k: Continuation, error: PyException) -> IRStreamStep {
-    if k.is_started() {
-        return IRStreamStep::Yield(DoCtrl::TransferThrow {
-            continuation: k,
-            exception: error,
-        });
+fn throw_to_continuation(k: OwnedControlContinuation, error: PyException) -> IRStreamStep {
+    match k {
+        OwnedControlContinuation::Started(k) if k.is_started() => IRStreamStep::Yield(
+            DoCtrl::TransferThrow {
+                continuation: k,
+                exception: error,
+            },
+        ),
+        OwnedControlContinuation::Started(_) | OwnedControlContinuation::Pending(_) => {
+            IRStreamStep::Throw(error)
+        }
     }
-    IRStreamStep::Throw(error)
+}
+
+fn started(k: Continuation) -> OwnedControlContinuation {
+    OwnedControlContinuation::Started(k)
 }
 
 fn step_targets_cont_id(step: &IRStreamStep, cont_id: ContId) -> bool {
@@ -426,8 +436,9 @@ fn step_targets_cont_id(step: &IRStreamStep, cont_id: ContId) -> bool {
         | IRStreamStep::Yield(DoCtrl::Transfer { continuation, .. })
         | IRStreamStep::Yield(DoCtrl::Discontinue { continuation, .. })
         | IRStreamStep::Yield(DoCtrl::TransferThrow { continuation, .. })
-        | IRStreamStep::Yield(DoCtrl::ResumeContinuation { continuation, .. }) => {
-            continuation.cont_id == cont_id
+        => continuation.cont_id == cont_id,
+        IRStreamStep::Yield(DoCtrl::ResumeContinuation { continuation, .. }) => {
+            continuation.cont_id() == cont_id
         }
         IRStreamStep::Yield(
             DoCtrl::Pure { .. }
@@ -1394,7 +1405,7 @@ impl SchedulerState {
     fn finalize_task_cancellation(&mut self, task_id: TaskId) {
         let task_exists = self.tasks.contains_key(&task_id);
         let cont_id = match self.tasks.get(&task_id) {
-            Some(TaskState::Pending { cont, .. }) => Some(cont.cont_id),
+            Some(TaskState::Pending { cont, .. }) => Some(cont.cont_id()),
             Some(TaskState::Done { .. }) | None => None,
         };
         if let Some(cont_id) = cont_id {
@@ -1435,7 +1446,7 @@ impl SchedulerState {
 
         let (cont_id, priority, started) = match task_state {
             TaskState::Pending { cont, priority, .. } => {
-                (cont.cont_id, *priority, cont.is_started())
+                (cont.cont_id(), *priority, cont.is_started())
             }
             TaskState::Done { .. } => return false,
         };
@@ -1611,7 +1622,7 @@ impl SchedulerState {
     pub fn save_task_store(
         &mut self,
         task_id: TaskId,
-        store: &RustStore,
+        store: &VarStore,
     ) -> Result<(), PyException> {
         let state = self.tasks.get_mut(&task_id).ok_or_else(|| {
             scheduler_internal_error(format!("save_task_store: task {} not found", task_id.raw()))
@@ -1642,7 +1653,7 @@ impl SchedulerState {
     pub fn load_task_store(
         &self,
         task_id: TaskId,
-        store: &mut RustStore,
+        store: &mut VarStore,
     ) -> Result<(), PyException> {
         let state = self.tasks.get(&task_id).ok_or_else(|| {
             scheduler_internal_error(format!("load_task_store: task {} not found", task_id.raw()))
@@ -1702,7 +1713,7 @@ impl SchedulerState {
                 pending_log_merge_items,
                 ..
             } => {
-                *cont = continuation;
+                *cont = OwnedControlContinuation::Started(continuation);
                 *resume_outcome = None;
                 *pending_log_merge_items = None;
                 Ok(())
@@ -1745,7 +1756,7 @@ impl SchedulerState {
                     pending_log_merge_items,
                     ..
                 }) => {
-                    if cont.cont_id != waiter_id {
+                    if cont.cont_id() != waiter_id {
                         return None;
                     }
                     *resume_outcome = Some(outcome.clone());
@@ -1841,7 +1852,7 @@ impl SchedulerState {
                 pending_log_merge_items,
                 ..
             }) => {
-                *cont = continuation;
+                *cont = OwnedControlContinuation::Started(continuation);
                 *resume_outcome = Some(Ok(value));
                 *pending_log_merge_items = None;
                 *priority
@@ -1902,7 +1913,7 @@ impl SchedulerState {
                 ..
             }) = self.tasks.get_mut(&task_id)
             {
-                if cont.cont_id == cont_id {
+                if cont.cont_id() == cont_id {
                     *resume_outcome = None;
                     *pending_log_merge_items = None;
                 }
@@ -1915,7 +1926,7 @@ impl SchedulerState {
                 .filter(|task_id| {
                     matches!(
                         self.tasks.get(task_id),
-                        Some(TaskState::Pending { cont, .. }) if cont.cont_id == cont_id
+                        Some(TaskState::Pending { cont, .. }) if cont.cont_id() == cont_id
                     )
                 })
                 .collect();
@@ -2066,7 +2077,7 @@ impl SchedulerState {
                     pending_log_merge_items,
                     ..
                 }) => {
-                    if cont.cont_id != waiter_id {
+                    if cont.cont_id() != waiter_id {
                         return None;
                     }
                     *resume_outcome = Some(Err(fail_fast.error));
@@ -2136,7 +2147,7 @@ impl SchedulerState {
     fn take_task_continuation(
         &mut self,
         task_id: TaskId,
-    ) -> Result<(Continuation, Option<Result<Value, PyException>>), PyException> {
+    ) -> Result<(OwnedControlContinuation, Option<Result<Value, PyException>>), PyException> {
         match self.tasks.get_mut(&task_id) {
             Some(TaskState::Pending {
                 cont,
@@ -2144,8 +2155,11 @@ impl SchedulerState {
                 pending_log_merge_items,
                 ..
             }) => {
-                let cont_id = cont.cont_id;
-                let continuation = std::mem::replace(cont, Continuation::placeholder(cont_id));
+                let cont_id = cont.cont_id();
+                let continuation = std::mem::replace(
+                    cont,
+                    OwnedControlContinuation::Started(Continuation::placeholder(cont_id)),
+                );
                 if continuation.is_placeholder() {
                     return Err(scheduler_internal_error(format!(
                         "task {} has no parked continuation to resume",
@@ -2172,7 +2186,7 @@ impl SchedulerState {
         items: &[Waitable],
         cont_id: ContId,
         continuation: Option<Continuation>,
-        store: &RustStore,
+        store: &VarStore,
         mode: WaitMode,
     ) {
         let pending_items: Vec<_> = items
@@ -2227,7 +2241,7 @@ impl SchedulerState {
         items: &[Waitable],
         cont_id: ContId,
         continuation: Option<Continuation>,
-        store: &RustStore,
+        store: &VarStore,
     ) {
         self.register_waiter(items, cont_id, continuation, store, WaitMode::All);
     }
@@ -2237,7 +2251,7 @@ impl SchedulerState {
         items: &[Waitable],
         cont_id: ContId,
         continuation: Option<Continuation>,
-        store: &RustStore,
+        store: &VarStore,
     ) {
         self.register_waiter(items, cont_id, continuation, store, WaitMode::Any);
     }
@@ -2319,7 +2333,7 @@ impl SchedulerState {
     ///
     /// Per spec (SPEC-008 L1434-1447): saves the current task's store before
     /// switching and loads the new task's store after switching.
-    fn transfer_next(&mut self, store: &mut RustStore) -> TransferNextOutcome {
+    fn transfer_next(&mut self, store: &mut VarStore) -> TransferNextOutcome {
         loop {
             self.process_semaphore_drop_notifications();
 
@@ -2384,6 +2398,11 @@ impl SchedulerState {
                         match resume_outcome {
                             Some(Err(error)) => {
                                 if is_task_cancelled_exception(&error) {
+                                    let Some(task_k) = task_k.into_started() else {
+                                        return TransferNextOutcome::Step(IRStreamStep::Throw(
+                                            error,
+                                        ));
+                                    };
                                     return TransferNextOutcome::Step(IRStreamStep::Yield(
                                         DoCtrl::ResumeThrow {
                                             continuation: task_k,
@@ -2427,8 +2446,12 @@ impl SchedulerState {
                             self.current_task = None;
                         }
                         return TransferNextOutcome::Step(match ready_root.outcome {
-                            Ok(value) => resume_to_continuation(ready_root.continuation, value),
-                            Err(error) => throw_to_continuation(ready_root.continuation, error),
+                            Ok(value) => {
+                                resume_to_continuation(started(ready_root.continuation), value)
+                            }
+                            Err(error) => {
+                                throw_to_continuation(started(ready_root.continuation), error)
+                            }
                         });
                     }
                 }
@@ -2449,20 +2472,20 @@ impl SchedulerState {
         }
     }
 
-    pub fn transfer_next_or(&mut self, k: Continuation, store: &mut RustStore) -> IRStreamStep {
+    pub fn transfer_next_or(&mut self, k: Continuation, store: &mut VarStore) -> IRStreamStep {
         match self.transfer_next(store) {
             TransferNextOutcome::Step(step) => step,
             TransferNextOutcome::AwaitExternal => {
                 make_async_external_wait_step().unwrap_or_else(IRStreamStep::Throw)
             }
-            TransferNextOutcome::None => resume_to_continuation(k, Value::Unit),
+            TransferNextOutcome::None => resume_to_continuation(started(k), Value::Unit),
         }
     }
 
     fn transfer_ready_owner(
         &mut self,
         owner: WaitOwner,
-        store: &mut RustStore,
+        store: &mut VarStore,
     ) -> Result<Option<IRStreamStep>, PyException> {
         match owner {
             WaitOwner::Task { task_id, cont_id } => {
@@ -2471,7 +2494,7 @@ impl SchedulerState {
                 }
 
                 let task_cont_id = match self.tasks.get(&task_id) {
-                    Some(TaskState::Pending { cont, .. }) => cont.cont_id,
+                    Some(TaskState::Pending { cont, .. }) => cont.cont_id(),
                     _ => return Ok(None),
                 };
                 if task_cont_id != cont_id {
@@ -2490,10 +2513,14 @@ impl SchedulerState {
                 let step = match resume_outcome {
                     Some(Err(error)) => {
                         if is_task_cancelled_exception(&error) {
-                            IRStreamStep::Yield(DoCtrl::ResumeThrow {
-                                continuation: task_k,
-                                exception: error,
-                            })
+                            if let Some(task_k) = task_k.into_started() {
+                                IRStreamStep::Yield(DoCtrl::ResumeThrow {
+                                    continuation: task_k,
+                                    exception: error,
+                                })
+                            } else {
+                                IRStreamStep::Throw(error)
+                            }
                         } else {
                             throw_to_continuation(task_k, error)
                         }
@@ -2521,8 +2548,12 @@ impl SchedulerState {
                     self.current_task = None;
                 }
                 let step = match ready_root.outcome {
-                    Ok(value) => resume_to_continuation(ready_root.continuation, value),
-                    Err(error) => throw_to_continuation(ready_root.continuation, error),
+                    Ok(value) => {
+                        resume_to_continuation(started(ready_root.continuation), value)
+                    }
+                    Err(error) => {
+                        throw_to_continuation(started(ready_root.continuation), error)
+                    }
                 };
                 Ok(Some(step))
             }
@@ -2583,7 +2614,7 @@ enum SchedulerPhase {
         k_user: Continuation,
         program: Py<PyAny>,
         store_mode: StoreMode,
-        store_snapshot: Option<RustStore>,
+        store_snapshot: Option<VarStore>,
         priority: u32,
         spawn_site: Option<SpawnSite>,
         task_id: TaskId,
@@ -2591,7 +2622,7 @@ enum SchedulerPhase {
     SpawnAwaitContinuation {
         k_user: Continuation,
         store_mode: StoreMode,
-        store_snapshot: Option<RustStore>,
+        store_snapshot: Option<VarStore>,
         priority: u32,
         spawn_site: Option<SpawnSite>,
         task_id: TaskId,
@@ -2735,7 +2766,7 @@ impl SchedulerProgram {
         &mut self,
         k_user: Continuation,
         items: Vec<Waitable>,
-        store: &mut RustStore,
+        store: &mut VarStore,
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         let waiting_task = state.current_task;
@@ -2743,8 +2774,8 @@ impl SchedulerProgram {
         if let Some(aggregate) = state.collect_all_result(&items) {
             state.clear_waiters_for_owner(waiting_task, cont_id);
             return match aggregate {
-                Ok(results) => resume_to_continuation(k_user, results),
-                Err(error) => throw_to_continuation(k_user, error),
+                Ok(results) => resume_to_continuation(started(k_user), results),
+                Err(error) => throw_to_continuation(started(k_user), error),
             };
         }
         let root_wait_continuation = if let Some(waiting_task) = waiting_task {
@@ -2769,7 +2800,7 @@ impl SchedulerProgram {
     fn try_transfer_ready_owner(
         state: &mut SchedulerState,
         owner: WaitOwner,
-        store: &mut RustStore,
+        store: &mut VarStore,
     ) -> Result<Option<IRStreamStep>, PyException> {
         if state.owner_is_waiting(owner) {
             return Ok(None);
@@ -2828,7 +2859,7 @@ impl SchedulerProgram {
     fn continue_simple_transfer(
         &mut self,
         k_user: Continuation,
-        store: &mut RustStore,
+        store: &mut VarStore,
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         state.active_driver_owner = None;
@@ -2844,7 +2875,7 @@ impl SchedulerProgram {
             }
             TransferNextOutcome::None => {
                 self.phase = SchedulerPhase::Idle;
-                resume_to_continuation(k_user, Value::Unit)
+                resume_to_continuation(started(k_user), Value::Unit)
             }
         }
     }
@@ -2852,7 +2883,7 @@ impl SchedulerProgram {
     fn continue_transfer_with_deadlock(
         &mut self,
         deadlock_message: String,
-        store: &mut RustStore,
+        store: &mut VarStore,
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         state.active_driver_owner = None;
@@ -2877,7 +2908,7 @@ impl SchedulerProgram {
         &mut self,
         owner: WaitOwner,
         deadlock_message: String,
-        store: &mut RustStore,
+        store: &mut VarStore,
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         match Self::try_transfer_ready_owner(&mut state, owner, store) {
@@ -2908,7 +2939,7 @@ impl SchedulerProgram {
     fn continue_preemptive_transfer_step(
         &mut self,
         k_user: Continuation,
-        store: &mut RustStore,
+        store: &mut VarStore,
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         state.active_driver_owner = None;
@@ -2945,7 +2976,7 @@ impl SchedulerProgram {
             }
             TransferNextOutcome::None => {
                 self.phase = SchedulerPhase::Idle;
-                resume_to_continuation(k_user, Value::Unit)
+                resume_to_continuation(started(k_user), Value::Unit)
             }
         }
     }
@@ -2953,7 +2984,7 @@ impl SchedulerProgram {
     fn continue_driving_transfer(
         &mut self,
         owner: WaitOwner,
-        store: &mut RustStore,
+        store: &mut VarStore,
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         match Self::try_transfer_ready_owner(&mut state, owner, store) {
@@ -2981,7 +3012,7 @@ impl SchedulerProgram {
         &mut self,
         k_user: Continuation,
         item: Waitable,
-        store: &mut RustStore,
+        store: &mut VarStore,
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         let items = [item];
@@ -2990,8 +3021,8 @@ impl SchedulerProgram {
         if let Some(result) = state.collect_any_result(&items) {
             state.clear_waiters_for_owner(waiting_task, cont_id);
             return match result {
-                Ok(value) => resume_to_continuation(k_user, value),
-                Err(error) => throw_to_continuation(k_user, error),
+                Ok(value) => resume_to_continuation(started(k_user), value),
+                Err(error) => throw_to_continuation(started(k_user), error),
             };
         }
         let root_wait_continuation = if let Some(waiting_task) = waiting_task {
@@ -3017,7 +3048,7 @@ impl SchedulerProgram {
         &mut self,
         k_user: Continuation,
         items: Vec<Waitable>,
-        store: &mut RustStore,
+        store: &mut VarStore,
     ) -> IRStreamStep {
         if self.gather_needs_handler_refresh(&items) {
             self.phase = SchedulerPhase::GatherAwaitHandlers { k_user, items };
@@ -3030,7 +3061,7 @@ impl SchedulerProgram {
         &mut self,
         k_user: Continuation,
         items: Vec<Waitable>,
-        store: &mut RustStore,
+        store: &mut VarStore,
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         let waiting_task = state.current_task;
@@ -3038,8 +3069,8 @@ impl SchedulerProgram {
         if let Some(first) = state.collect_any_result(&items) {
             state.clear_waiters_for_owner(waiting_task, cont_id);
             return match first {
-                Ok(value) => resume_to_continuation(k_user, value),
-                Err(error) => throw_to_continuation(k_user, error),
+                Ok(value) => resume_to_continuation(started(k_user), value),
+                Err(error) => throw_to_continuation(started(k_user), error),
             };
         }
         let root_wait_continuation = if let Some(waiting_task) = waiting_task {
@@ -3142,7 +3173,7 @@ impl SchedulerProgram {
                 }
             }
 
-            resume_to_continuation(k_user, Value::Python(PyShared::new(context)))
+            resume_to_continuation(started(k_user), Value::Python(PyShared::new(context)))
         })
     }
 
@@ -3150,7 +3181,7 @@ impl SchedulerProgram {
         &mut self,
         outcome: Result<Value, PyException>,
         k_user: Continuation,
-        store: &mut RustStore,
+        store: &mut VarStore,
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         state.active_driver_owner = None;
@@ -3178,7 +3209,7 @@ impl SchedulerProgram {
         k_user: Continuation,
         promise: PromiseId,
         outcome: Result<Value, PyException>,
-        store: &mut RustStore,
+        store: &mut VarStore,
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         let current_priority = state.current_task_priority();
@@ -3198,7 +3229,7 @@ impl SchedulerProgram {
             drop(state);
             self.continue_preemptive_transfer_step(k_user, store)
         } else {
-            resume_to_continuation(k_user, Value::Unit)
+            resume_to_continuation(started(k_user), Value::Unit)
         }
     }
 
@@ -3207,7 +3238,7 @@ impl SchedulerProgram {
         outcome: Result<Value, PyException>,
         owner: WaitOwner,
         running_task: TaskId,
-        store: &mut RustStore,
+        store: &mut VarStore,
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         state.active_driver_owner = None;
@@ -3308,7 +3339,7 @@ impl IRStreamProgram for SchedulerProgram {
         _py: Python<'_>,
         effect: DispatchEffect,
         k_user: Continuation,
-        store: &mut RustStore,
+        store: &mut VarStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         {
@@ -3359,7 +3390,7 @@ impl IRStreamProgram for SchedulerProgram {
             SchedulerEffect::CancelTask { task } => {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
                 let _ = state.request_task_cancellation(task);
-                resume_to_continuation(k_user, Value::Unit)
+                resume_to_continuation(started(k_user), Value::Unit)
             }
 
             SchedulerEffect::TaskCompleted { task, result } => {
@@ -3426,7 +3457,7 @@ impl IRStreamProgram for SchedulerProgram {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
                 let pid = state.alloc_promise_id();
                 state.promises.insert(pid, PromiseState::Pending);
-                resume_to_continuation(k_user, Value::Promise(PromiseHandle { id: pid }))
+                resume_to_continuation(started(k_user), Value::Promise(PromiseHandle { id: pid }))
             }
 
             SchedulerEffect::CompletePromise { promise, value } => {
@@ -3446,7 +3477,7 @@ impl IRStreamProgram for SchedulerProgram {
                     Err(error) => return IRStreamStep::Throw(error),
                 };
                 resume_to_continuation(
-                    k_user,
+                    started(k_user),
                     Value::ExternalPromise(ExternalPromise {
                         id: pid,
                         completion_queue: Some(completion_queue),
@@ -3464,7 +3495,7 @@ impl IRStreamProgram for SchedulerProgram {
                     Ok(value) => value,
                     Err(error) => return IRStreamStep::Throw(error),
                 };
-                resume_to_continuation(k_user, semaphore_value)
+                resume_to_continuation(started(k_user), semaphore_value)
             }
 
             SchedulerEffect::AcquireSemaphore { semaphore_id } => {
@@ -3500,7 +3531,7 @@ impl IRStreamProgram for SchedulerProgram {
                             store,
                         )
                     }
-                    None => resume_to_continuation(k_user, Value::Unit),
+                    None => resume_to_continuation(started(k_user), Value::Unit),
                 }
             }
 
@@ -3509,7 +3540,7 @@ impl IRStreamProgram for SchedulerProgram {
                 if let Err(error) = state.release_semaphore(semaphore_id) {
                     return IRStreamStep::Throw(error);
                 }
-                resume_to_continuation(k_user, Value::Unit)
+                resume_to_continuation(started(k_user), Value::Unit)
             }
 
             SchedulerEffect::GetExecutionContext => self.handle_get_execution_context(k_user),
@@ -3519,7 +3550,7 @@ impl IRStreamProgram for SchedulerProgram {
     fn resume(
         &mut self,
         value: Value,
-        store: &mut RustStore,
+        store: &mut VarStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, SchedulerPhase::Idle) {
@@ -3533,6 +3564,7 @@ impl IRStreamProgram for SchedulerProgram {
                     | Value::Bool(_)
                     | Value::None
                     | Value::Continuation(_)
+                    | Value::PendingContinuation(_)
                     | Value::Handlers(_)
                     | Value::Kleisli(_)
                     | Value::Var(_)
@@ -3655,6 +3687,7 @@ impl IRStreamProgram for SchedulerProgram {
                     | Value::Bool(_)
                     | Value::None
                     | Value::Continuation(_)
+                    | Value::PendingContinuation(_)
                     | Value::Kleisli(_)
                     | Value::Var(_)
                     | Value::Task(_)
@@ -3704,7 +3737,8 @@ impl IRStreamProgram for SchedulerProgram {
             } => {
                 // Value should be the continuation created by CreateContinuation
                 let cont = match value {
-                    Value::Continuation(c) => c,
+                    Value::PendingContinuation(c) => OwnedControlContinuation::Pending(c),
+                    Value::Continuation(c) => OwnedControlContinuation::Started(c),
                     Value::Python(_)
                     | Value::Unit
                     | Value::Int(_)
@@ -3777,7 +3811,7 @@ impl IRStreamProgram for SchedulerProgram {
                     drop(state);
                     self.continue_preemptive_transfer_step(k_user, store)
                 } else {
-                    resume_to_continuation(k_user, task_value)
+                    resume_to_continuation(started(k_user), task_value)
                 }
             }
 
@@ -3797,6 +3831,7 @@ impl IRStreamProgram for SchedulerProgram {
                     | Value::Bool(_)
                     | Value::None
                     | Value::Continuation(_)
+                    | Value::PendingContinuation(_)
                     | Value::Kleisli(_)
                     | Value::Var(_)
                     | Value::Task(_)
@@ -3852,7 +3887,7 @@ impl IRStreamProgram for SchedulerProgram {
     fn throw(
         &mut self,
         exc: PyException,
-        store: &mut RustStore,
+        store: &mut VarStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, SchedulerPhase::Idle) {
@@ -3890,7 +3925,7 @@ impl IRStream for SchedulerProgram {
     fn resume(
         &mut self,
         value: Value,
-        store: &mut RustStore,
+        store: &mut VarStore,
         scope: &mut ScopeStore,
     ) -> IRStreamStep {
         <Self as IRStreamProgram>::resume(self, value, store, scope)
@@ -3899,7 +3934,7 @@ impl IRStream for SchedulerProgram {
     fn throw(
         &mut self,
         exc: PyException,
-        store: &mut RustStore,
+        store: &mut VarStore,
         scope: &mut ScopeStore,
     ) -> IRStreamStep {
         <Self as IRStreamProgram>::throw(self, exc, store, scope)
@@ -4264,7 +4299,7 @@ mod tests {
 
     #[test]
     fn test_transfer_next_or_routes_by_resume_outcome() {
-        let mut store = RustStore::new();
+        let mut store = VarStore::new();
         let mut _scope = ScopeStore::default();
 
         let mut fresh_state = SchedulerState::new();
@@ -4399,7 +4434,7 @@ mod tests {
         Python::attach(|py| {
             let state = Arc::new(Mutex::new(SchedulerState::new()));
             let mut program = SchedulerProgram::new(state);
-            let mut store = RustStore::new();
+            let mut store = VarStore::new();
             let mut _scope = ScopeStore::default();
             let k_user = make_test_continuation();
             let expected_scope = k_user.segment_id();
@@ -4491,7 +4526,7 @@ mod tests {
     fn test_spawn_higher_priority_yields_to_new_task() {
         let state = Arc::new(Mutex::new(SchedulerState::new()));
         let mut program = SchedulerProgram::new(state.clone());
-        let mut store = RustStore::new();
+        let mut store = VarStore::new();
         let mut _scope = ScopeStore::default();
 
         let caller_k = make_test_continuation();
@@ -4564,7 +4599,7 @@ mod tests {
         Python::attach(|py| {
             let state = Arc::new(Mutex::new(SchedulerState::new()));
             let mut program = SchedulerProgram::new(state.clone());
-            let mut store = RustStore::new();
+            let mut store = VarStore::new();
             let mut _scope = ScopeStore::default();
 
             let waiter_k = make_test_continuation();
@@ -4695,7 +4730,7 @@ mod tests {
     fn test_continue_driving_resumes_waiter_via_ready_queue_dequeue() {
         let state = Arc::new(Mutex::new(SchedulerState::new()));
         let mut program = SchedulerProgram::new(state.clone());
-        let mut store = RustStore::new();
+        let mut store = VarStore::new();
         let mut _scope = ScopeStore::default();
 
         let waiter_k = make_test_continuation();
@@ -4795,7 +4830,7 @@ mod tests {
         Python::attach(|py| {
             let state = Arc::new(Mutex::new(SchedulerState::new()));
             let mut program = SchedulerProgram::new(state.clone());
-            let mut store = RustStore::new();
+            let mut store = VarStore::new();
             let mut _scope = ScopeStore::default();
 
             let normal_k = make_test_continuation();
@@ -4890,7 +4925,7 @@ mod tests {
             let shared_state = Arc::new(Mutex::new(SchedulerState::new()));
             let mut driving_program = SchedulerProgram::new(shared_state.clone());
             let mut resolver_program = SchedulerProgram::new(shared_state.clone());
-            let mut store = RustStore::new();
+            let mut store = VarStore::new();
             let mut _scope = ScopeStore::default();
 
             let waiter_k = make_test_continuation();
@@ -5014,7 +5049,7 @@ mod tests {
         Python::attach(|py| {
             let state = Arc::new(Mutex::new(SchedulerState::new()));
             let mut program = SchedulerProgram::new(state.clone());
-            let mut store = RustStore::new();
+            let mut store = VarStore::new();
             let mut _scope = ScopeStore::default();
 
             let idle_k = make_test_continuation();
@@ -5162,7 +5197,7 @@ mod tests {
         Python::attach(|py| {
             let state = Arc::new(Mutex::new(SchedulerState::new()));
             let mut program = SchedulerProgram::new(state.clone());
-            let mut store = RustStore::new();
+            let mut store = VarStore::new();
             let mut _scope = ScopeStore::default();
 
             let waiter_k = make_test_continuation();
@@ -5259,7 +5294,7 @@ mod tests {
     fn test_spawn_same_priority_resumes_caller() {
         let state = Arc::new(Mutex::new(SchedulerState::new()));
         let mut program = SchedulerProgram::new(state.clone());
-        let mut store = RustStore::new();
+        let mut store = VarStore::new();
         let mut _scope = ScopeStore::default();
 
         let caller_k = make_test_continuation();
@@ -5314,7 +5349,7 @@ mod tests {
     fn test_spawn_lower_priority_resumes_caller() {
         let state = Arc::new(Mutex::new(SchedulerState::new()));
         let mut program = SchedulerProgram::new(state.clone());
-        let mut store = RustStore::new();
+        let mut store = VarStore::new();
         let mut _scope = ScopeStore::default();
 
         let caller_k = make_test_continuation();
@@ -5408,7 +5443,7 @@ mod tests {
     #[test]
     fn test_scheduler_task_switch_no_segment_growth() {
         let mut state = SchedulerState::new();
-        let mut store = RustStore::new();
+        let mut store = VarStore::new();
         let mut _scope = ScopeStore::default();
         let scheduler_k = make_test_continuation();
 
@@ -5465,7 +5500,7 @@ mod tests {
     #[test]
     fn test_scheduler_task_completion_routes_via_envelope() {
         let mut state = SchedulerState::new();
-        let mut store = RustStore::new();
+        let mut store = VarStore::new();
         let mut _scope = ScopeStore::default();
 
         let task_id = state.alloc_task_id();
@@ -5725,7 +5760,7 @@ mod tests {
         Python::attach(|py| {
             let state = Arc::new(Mutex::new(SchedulerState::new()));
             let mut program = SchedulerProgram::new(state.clone());
-            let mut store = RustStore::new();
+            let mut store = VarStore::new();
             let mut _scope = ScopeStore::default();
 
             let gather_owner_k = make_test_continuation();
@@ -6144,7 +6179,7 @@ mod tests {
         state.wait_on_all(
             &[Waitable::Task(t0), Waitable::Task(t1)],
             waiter,
-            &RustStore::new(),
+            &VarStore::new(),
         );
 
         // Only t1 should have a waiter (t0 is already done)
@@ -6214,7 +6249,7 @@ mod tests {
         state.wait_on_any(
             &[Waitable::Task(t0), Waitable::Task(t1)],
             waiter,
-            &RustStore::new(),
+            &VarStore::new(),
         );
 
         // Complete only t1
@@ -6237,7 +6272,7 @@ mod tests {
         let mut state = SchedulerState::new();
         let tid = state.alloc_task_id();
 
-        let mut store = RustStore::new();
+        let mut store = VarStore::new();
         let mut _scope = ScopeStore::default();
         store.put("key".to_string(), Value::Int(1));
 
@@ -6270,7 +6305,7 @@ mod tests {
             .expect("task store save should succeed for existing task");
 
         // Load back
-        let mut loaded_store = RustStore::new();
+        let mut loaded_store = VarStore::new();
         state
             .load_task_store(tid, &mut loaded_store)
             .expect("task store load should succeed for existing task");
@@ -6306,7 +6341,7 @@ mod tests {
                     continuation: k_user.clone(),
                     outcome: Ok(Value::List(vec![Value::Int(1), Value::Int(2)])),
                     waiting_task: None,
-                    waiting_store: RustStore::new(),
+                    waiting_store: VarStore::new(),
                 },
             );
 
@@ -6314,7 +6349,7 @@ mod tests {
         };
 
         let mut program = SchedulerProgram::new(state.clone());
-        let mut store = RustStore::new();
+        let mut store = VarStore::new();
         let mut _scope = ScopeStore::default();
         let step = program.handle_gather(
             k_user.clone(),
@@ -6334,7 +6369,7 @@ mod tests {
     #[test]
     fn test_promise_completion_makes_waiter_ready() {
         let mut state = SchedulerState::new();
-        let mut store = RustStore::new();
+        let mut store = VarStore::new();
         let mut _scope = ScopeStore::default();
 
         let waiting_task = state.alloc_task_id();
@@ -6391,7 +6426,7 @@ mod tests {
     #[test]
     fn test_top_level_waiter_ready_is_global_and_restores_waiting_store() {
         let mut state = SchedulerState::new();
-        let mut store = RustStore::new();
+        let mut store = VarStore::new();
         let mut _scope = ScopeStore::default();
         store.put("ephemeral".to_string(), Value::Int(1));
 
@@ -6399,7 +6434,7 @@ mod tests {
         let promise_id = state.alloc_promise_id();
         state.promises.insert(promise_id, PromiseState::Pending);
 
-        let mut waiting_store = RustStore::new();
+        let mut waiting_store = VarStore::new();
         waiting_store.put("saved".to_string(), Value::Int(123));
 
         // Root waiter: waiting_task is None, so store restoration must come
@@ -6442,7 +6477,7 @@ mod tests {
     #[test]
     fn test_top_level_waiter_on_shared_task_preserves_live_store() {
         let mut state = SchedulerState::new();
-        let mut store = RustStore::new();
+        let mut store = VarStore::new();
         store.put("counter".to_string(), Value::Int(0));
 
         let waiter_cont = make_test_continuation();
@@ -6502,7 +6537,7 @@ mod tests {
     #[test]
     fn test_owner_b_driving_does_not_block_owner_a_woken_task() {
         let mut state = SchedulerState::new();
-        let mut store = RustStore::new();
+        let mut store = VarStore::new();
         let mut _scope = ScopeStore::default();
 
         let owner_a_task = state.alloc_task_id();
@@ -6584,7 +6619,7 @@ mod tests {
     #[test]
     fn test_gather_multi_item_only_ready_when_all_done() {
         let mut state = SchedulerState::new();
-        let mut store = RustStore::new();
+        let mut store = VarStore::new();
         let mut _scope = ScopeStore::default();
 
         let waiting_task = state.alloc_task_id();
@@ -6657,7 +6692,7 @@ mod tests {
     #[test]
     fn test_race_ready_when_any_done() {
         let mut state = SchedulerState::new();
-        let mut store = RustStore::new();
+        let mut store = VarStore::new();
         let mut _scope = ScopeStore::default();
 
         let waiting_task = state.alloc_task_id();

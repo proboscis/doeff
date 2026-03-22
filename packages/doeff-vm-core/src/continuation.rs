@@ -1,8 +1,5 @@
 //! Continuation types for detaching and reattaching fibers.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::OnceLock;
 
 use pyo3::prelude::*;
@@ -18,48 +15,7 @@ use crate::segment::Segment;
 #[pyclass(name = "K")]
 pub struct PyK {
     continuation: Continuation,
-}
-
-impl PyK {
-    pub fn from_continuation(continuation: &Continuation) -> Self {
-        Self {
-            continuation: continuation.clone_handle(),
-        }
-    }
-
-    pub fn continuation(&self) -> Continuation {
-        self.continuation.clone_handle()
-    }
-
-    pub fn cont_id(&self) -> ContId {
-        self.continuation.cont_id
-    }
-
-    pub fn is_exhausted(&self) -> bool {
-        self.continuation.is_placeholder() || self.continuation.consumed()
-    }
-
-    pub fn take_continuation(&mut self) -> Continuation {
-        let mut placeholder = Continuation::placeholder(self.continuation.cont_id);
-        placeholder.mark_consumed();
-        std::mem::replace(&mut self.continuation, placeholder)
-    }
-}
-
-#[pymethods]
-impl PyK {
-    fn __repr__(&self) -> String {
-        format!("K({})", self.continuation.cont_id.raw())
-    }
-}
-
-#[derive(Debug, Clone)]
-struct UnstartedContinuation {
-    program: PyShared,
-    handlers: Vec<KleisliRef>,
-    handler_identities: Vec<Option<PyShared>>,
-    metadata: Option<CallMetadata>,
-    outside_scope: Option<SegmentId>,
+    pending: Option<PendingContinuation>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -68,28 +24,261 @@ pub(crate) struct DispatchHandlerHint {
     pub(crate) prompt_seg_id: SegmentId,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct ContinuationMetadata {
-    resume_dispatch_id: Option<DispatchId>,
-    dispatch_handler_hint: Option<DispatchHandlerHint>,
-    dispatch_frame_hint: Option<SegmentId>,
-    captured_caller: Option<SegmentId>,
+#[derive(Debug)]
+pub enum OwnedControlContinuation {
+    Started(Continuation),
+    Pending(PendingContinuation),
 }
 
-#[derive(Debug)]
-struct ContinuationSharedState {
-    consumed: AtomicBool,
-    metadata: Mutex<ContinuationMetadata>,
+impl Clone for OwnedControlContinuation {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Started(continuation) => Self::Started(continuation.clone_handle()),
+            Self::Pending(pending) => Self::Pending(pending.clone()),
+        }
+    }
+}
+
+impl OwnedControlContinuation {
+    pub fn cont_id(&self) -> ContId {
+        match self {
+            Self::Started(continuation) => continuation.cont_id,
+            Self::Pending(pending) => pending.cont_id,
+        }
+    }
+
+    pub fn is_started(&self) -> bool {
+        matches!(self, Self::Started(continuation) if continuation.is_started())
+    }
+
+    pub fn is_placeholder(&self) -> bool {
+        matches!(self, Self::Started(continuation) if continuation.is_placeholder())
+    }
+
+    pub fn into_started(self) -> Option<Continuation> {
+        match self {
+            Self::Started(continuation) => Some(continuation),
+            Self::Pending(_) => None,
+        }
+    }
+
+    pub fn as_started(&self) -> Option<&Continuation> {
+        match self {
+            Self::Started(continuation) => Some(continuation),
+            Self::Pending(_) => None,
+        }
+    }
+
+    pub fn as_started_mut(&mut self) -> Option<&mut Continuation> {
+        match self {
+            Self::Started(continuation) => Some(continuation),
+            Self::Pending(_) => None,
+        }
+    }
+
+    pub fn handlers(&self) -> Option<&[KleisliRef]> {
+        match self {
+            Self::Started(_) => None,
+            Self::Pending(pending) => Some(pending.handlers()),
+        }
+    }
+
+    pub fn prepend_unstarted_handlers(&mut self, handlers: Vec<KleisliRef>) {
+        if let Self::Pending(pending) = self {
+            pending.prepend_handlers(handlers);
+        }
+    }
+}
+
+impl PyK {
+    pub fn from_continuation(continuation: Continuation) -> Self {
+        Self {
+            continuation,
+            pending: None,
+        }
+    }
+
+    pub fn from_pending(pending: PendingContinuation) -> Self {
+        let continuation = Continuation::placeholder(pending.cont_id);
+        Self {
+            continuation,
+            pending: Some(pending),
+        }
+    }
+
+    pub fn continuation(&self) -> Option<Continuation> {
+        self.pending.is_none().then(|| self.continuation.clone_handle())
+    }
+
+    pub fn pending(&self) -> Option<PendingContinuation> {
+        self.pending.clone()
+    }
+
+    pub fn cont_id(&self) -> ContId {
+        self.pending
+            .as_ref()
+            .map(|pending| pending.cont_id)
+            .unwrap_or(self.continuation.cont_id)
+    }
+
+    pub fn is_exhausted(&self) -> bool {
+        self.pending.is_none()
+            && (self.continuation.is_placeholder() || self.continuation.consumed())
+    }
+
+    pub fn take_control_continuation(&mut self) -> OwnedControlContinuation {
+        if let Some(pending) = self.pending.take() {
+            return OwnedControlContinuation::Pending(pending);
+        }
+        let mut placeholder = Continuation::placeholder(self.continuation.cont_id);
+        placeholder.mark_consumed();
+        OwnedControlContinuation::Started(std::mem::replace(
+            &mut self.continuation,
+            placeholder,
+        ))
+    }
+
+    pub fn take_continuation(&mut self) -> Continuation {
+        match self.take_control_continuation() {
+            OwnedControlContinuation::Started(continuation) => continuation,
+            OwnedControlContinuation::Pending(pending) => {
+                let mut placeholder = Continuation::placeholder(pending.cont_id);
+                placeholder.mark_consumed();
+                placeholder
+            }
+        }
+    }
+}
+
+#[pymethods]
+impl PyK {
+    fn __repr__(&self) -> String {
+        format!("K({})", self.cont_id().raw())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingContinuation {
+    pub cont_id: ContId,
+    program: PyShared,
+    handlers: Vec<KleisliRef>,
+    handler_identities: Vec<Option<PyShared>>,
+    metadata: Option<CallMetadata>,
+    outside_scope: Option<SegmentId>,
+}
+
+impl PendingContinuation {
+    pub fn create(expr: PyShared, handlers: Vec<KleisliRef>) -> Self {
+        Self::create_with_metadata(expr, handlers, Vec::new(), None, None)
+    }
+
+    pub fn create_with_metadata(
+        expr: PyShared,
+        handlers: Vec<KleisliRef>,
+        handler_identities: Vec<Option<PyShared>>,
+        metadata: Option<CallMetadata>,
+        outside_scope: Option<SegmentId>,
+    ) -> Self {
+        memory_stats::register_continuation();
+        let normalized_identities = if handler_identities.is_empty() {
+            vec![None; handlers.len()]
+        } else {
+            handler_identities
+        };
+        Self {
+            cont_id: ContId::fresh(),
+            program: expr,
+            handlers,
+            handler_identities: normalized_identities,
+            metadata,
+            outside_scope,
+        }
+    }
+
+    pub fn program(&self) -> &PyShared {
+        &self.program
+    }
+
+    pub fn handlers(&self) -> &[KleisliRef] {
+        self.handlers.as_slice()
+    }
+
+    pub fn handler_identities(&self) -> &[Option<PyShared>] {
+        self.handler_identities.as_slice()
+    }
+
+    pub fn metadata(&self) -> Option<&CallMetadata> {
+        self.metadata.as_ref()
+    }
+
+    pub fn outside_scope(&self) -> Option<SegmentId> {
+        self.outside_scope
+    }
+
+    pub fn into_parts(
+        self,
+    ) -> (
+        PyShared,
+        Vec<KleisliRef>,
+        Vec<Option<PyShared>>,
+        Option<CallMetadata>,
+        Option<SegmentId>,
+    ) {
+        (
+            self.program.clone(),
+            self.handlers.clone(),
+            self.handler_identities.clone(),
+            self.metadata.clone(),
+            self.outside_scope,
+        )
+    }
+
+    pub fn prepend_handlers(&mut self, mut handlers: Vec<KleisliRef>) {
+        if handlers.is_empty() {
+            return;
+        }
+        let extra_count = handlers.len();
+        handlers.extend(self.handlers.iter().cloned());
+        self.handlers = handlers;
+
+        let mut handler_identities = vec![None; extra_count];
+        handler_identities.extend(self.handler_identities.iter().cloned());
+        self.handler_identities = handler_identities;
+    }
+
+    pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let dict = PyDict::new(py);
+        dict.set_item("cont_id", self.cont_id.raw())?;
+        dict.set_item("started", false)?;
+        dict.set_item("program", self.program.bind(py))?;
+        let handlers = PyList::empty(py);
+        for (idx, handler) in self.handlers.iter().enumerate() {
+            if let Some(Some(identity)) = self.handler_identities.get(idx) {
+                handlers.append(identity.bind(py))?;
+                continue;
+            }
+            if let Some(identity) = handler.py_identity() {
+                handlers.append(identity.bind(py))?;
+            } else {
+                handlers.append(py.None().into_bound(py))?;
+            }
+        }
+        dict.set_item("handlers", handlers)?;
+        Ok(dict.into_any())
+    }
+}
+
+impl Drop for PendingContinuation {
+    fn drop(&mut self) {
+        memory_stats::unregister_continuation();
+    }
 }
 
 #[derive(Debug)]
 pub struct Continuation {
     pub cont_id: ContId,
-    dispatch_id: Option<DispatchId>,
     fibers: Vec<FiberId>,
     consumed: bool,
-    shared: Arc<ContinuationSharedState>,
-    unstarted: Option<UnstartedContinuation>,
 }
 
 pub(crate) fn panic_on_started_continuation_clone_enabled() -> bool {
@@ -99,157 +288,47 @@ pub(crate) fn panic_on_started_continuation_clone_enabled() -> bool {
 }
 
 impl Continuation {
-    fn new_shared_state(
-        consumed: bool,
-        captured_caller: Option<SegmentId>,
-    ) -> Arc<ContinuationSharedState> {
-        Arc::new(ContinuationSharedState {
-            consumed: AtomicBool::new(consumed),
-            metadata: Mutex::new(ContinuationMetadata {
-                resume_dispatch_id: None,
-                dispatch_handler_hint: None,
-                dispatch_frame_hint: None,
-                captured_caller,
-            }),
-        })
-    }
-
-    fn shared_metadata(&self) -> ContinuationMetadata {
-        *self
-            .shared
-            .metadata
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
     pub fn placeholder(cont_id: ContId) -> Self {
         memory_stats::register_continuation();
-        Continuation {
+        Self {
             cont_id,
-            dispatch_id: None,
             fibers: Vec::new(),
             consumed: false,
-            shared: Self::new_shared_state(false, None),
-            unstarted: None,
         }
     }
 
-    fn new_captured(
-        cont_id: ContId,
-        fibers: Vec<FiberId>,
-        captured_caller: Option<SegmentId>,
-        dispatch_id: Option<DispatchId>,
-    ) -> Self {
+    fn new_captured(cont_id: ContId, fibers: Vec<FiberId>) -> Self {
         memory_stats::register_continuation();
-        Continuation {
+        Self {
             cont_id,
-            dispatch_id,
             fibers,
             consumed: false,
-            shared: Self::new_shared_state(false, captured_caller),
-            unstarted: None,
         }
     }
 
     pub(crate) fn from_fiber(
         fiber_id: FiberId,
-        captured_caller: Option<SegmentId>,
-        dispatch_id: Option<DispatchId>,
+        _captured_caller: Option<SegmentId>,
+        _dispatch_id: Option<crate::ids::DispatchId>,
     ) -> Self {
-        Self::new_captured(
-            ContId::fresh(),
-            vec![fiber_id],
-            captured_caller,
-            dispatch_id,
-        )
+        Self::new_captured(ContId::fresh(), vec![fiber_id])
     }
 
     pub fn capture(
-        segment: &Segment,
+        _segment: &Segment,
         segment_id: SegmentId,
-        dispatch_id: Option<DispatchId>,
+        _dispatch_id: Option<crate::ids::DispatchId>,
     ) -> Self {
-        Self::new_captured(
-            ContId::fresh(),
-            vec![segment_id],
-            segment.parent,
-            dispatch_id,
-        )
+        Self::new_captured(ContId::fresh(), vec![segment_id])
     }
 
     pub fn with_id(
         cont_id: ContId,
         fiber_id: FiberId,
-        captured_caller: Option<SegmentId>,
-        dispatch_id: Option<DispatchId>,
+        _captured_caller: Option<SegmentId>,
+        _dispatch_id: Option<crate::ids::DispatchId>,
     ) -> Self {
-        Self::new_captured(cont_id, vec![fiber_id], captured_caller, dispatch_id)
-    }
-
-    pub fn create_unstarted(expr: PyShared, handlers: Vec<KleisliRef>) -> Self {
-        Self::create_unstarted_with_metadata(expr, handlers, None, None)
-    }
-
-    pub fn create_unstarted_with_metadata(
-        expr: PyShared,
-        handlers: Vec<KleisliRef>,
-        metadata: Option<CallMetadata>,
-        outside_scope: Option<SegmentId>,
-    ) -> Self {
-        let handler_count = handlers.len();
-        memory_stats::register_continuation();
-        Continuation {
-            cont_id: ContId::fresh(),
-            dispatch_id: None,
-            fibers: Vec::new(),
-            consumed: false,
-            shared: Self::new_shared_state(false, None),
-            unstarted: Some(UnstartedContinuation {
-                program: expr,
-                handlers,
-                handler_identities: vec![None; handler_count],
-                metadata,
-                outside_scope,
-            }),
-        }
-    }
-
-    pub fn create_unstarted_with_identities(
-        expr: PyShared,
-        handlers: Vec<KleisliRef>,
-        handler_identities: Vec<Option<PyShared>>,
-    ) -> Self {
-        Self::create_unstarted_with_identities_and_metadata(
-            expr,
-            handlers,
-            handler_identities,
-            None,
-            None,
-        )
-    }
-
-    pub fn create_unstarted_with_identities_and_metadata(
-        expr: PyShared,
-        handlers: Vec<KleisliRef>,
-        handler_identities: Vec<Option<PyShared>>,
-        metadata: Option<CallMetadata>,
-        outside_scope: Option<SegmentId>,
-    ) -> Self {
-        memory_stats::register_continuation();
-        Continuation {
-            cont_id: ContId::fresh(),
-            dispatch_id: None,
-            fibers: Vec::new(),
-            consumed: false,
-            shared: Self::new_shared_state(false, None),
-            unstarted: Some(UnstartedContinuation {
-                program: expr,
-                handlers,
-                handler_identities,
-                metadata,
-                outside_scope,
-            }),
-        }
+        Self::new_captured(cont_id, vec![fiber_id])
     }
 
     pub fn is_started(&self) -> bool {
@@ -257,18 +336,15 @@ impl Continuation {
     }
 
     pub fn is_placeholder(&self) -> bool {
-        self.fibers.is_empty() && self.unstarted.is_none()
+        self.fibers.is_empty()
     }
 
     pub fn clone_handle(&self) -> Self {
         memory_stats::register_continuation();
-        Continuation {
+        Self {
             cont_id: self.cont_id,
-            dispatch_id: self.dispatch_id,
             fibers: self.fibers.clone(),
-            consumed: self.consumed(),
-            shared: Arc::clone(&self.shared),
-            unstarted: self.unstarted.clone(),
+            consumed: self.consumed,
         }
     }
 
@@ -286,202 +362,68 @@ impl Continuation {
 
     pub(crate) fn same_owned_fibers(&self, other: &Continuation) -> bool {
         self.fibers.as_slice() == other.fibers.as_slice()
-            && self.captured_caller() == other.captured_caller()
     }
 
     pub(crate) fn append_owned_fibers(&mut self, other: Continuation) {
-        debug_assert!(
-            self.unstarted.is_none(),
-            "cannot append fibers to unstarted continuation"
-        );
-        debug_assert!(
-            other.unstarted.is_none(),
-            "cannot append unstarted continuation fibers"
-        );
         if !other.fibers.is_empty() {
             self.fibers.extend(other.fibers.iter().copied());
         }
-        self.set_captured_caller(other.captured_caller().or(self.captured_caller()));
+    }
+
+    pub(crate) fn retain_owned_fibers(&mut self, mut keep: impl FnMut(FiberId) -> bool) {
+        self.fibers.retain(|fiber_id| keep(*fiber_id));
     }
 
     pub(crate) fn tail_owned_fibers(&self) -> Option<Self> {
-        if self.fibers.len() <= 1 {
-            return None;
-        }
-        let mut tail = Self::new_captured(
-            ContId::fresh(),
-            self.fibers[1..].to_vec(),
-            self.captured_caller(),
-            self.dispatch_id,
-        );
-        let metadata = self.shared_metadata();
-        tail.set_resume_dispatch_id(metadata.resume_dispatch_id);
-        tail.set_dispatch_handler_hint(metadata.dispatch_handler_hint);
-        Some(tail)
-    }
-
-    pub fn dispatch_id(&self) -> Option<DispatchId> {
-        self.dispatch_id
-    }
-
-    pub(crate) fn set_dispatch_id(&mut self, dispatch_id: Option<DispatchId>) {
-        self.dispatch_id = dispatch_id;
-    }
-
-    pub(crate) fn resume_dispatch_id(&self) -> Option<DispatchId> {
-        self.shared_metadata().resume_dispatch_id
-    }
-
-    pub(crate) fn set_resume_dispatch_id(&mut self, dispatch_id: Option<DispatchId>) {
-        self.shared
-            .metadata
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .resume_dispatch_id = dispatch_id;
-    }
-
-    pub(crate) fn dispatch_handler_hint(&self) -> Option<DispatchHandlerHint> {
-        self.shared_metadata().dispatch_handler_hint
-    }
-
-    pub(crate) fn set_dispatch_handler_hint(&mut self, hint: Option<DispatchHandlerHint>) {
-        self.shared
-            .metadata
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .dispatch_handler_hint = hint;
-    }
-
-    pub(crate) fn dispatch_frame_hint(&self) -> Option<SegmentId> {
-        self.shared_metadata().dispatch_frame_hint
-    }
-
-    pub(crate) fn set_dispatch_frame_hint(&mut self, hint: Option<SegmentId>) {
-        self.shared
-            .metadata
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .dispatch_frame_hint = hint;
-    }
-
-    pub fn captured_caller(&self) -> Option<SegmentId> {
-        self.shared_metadata().captured_caller
-    }
-
-    pub(crate) fn set_captured_caller(&mut self, captured_caller: Option<SegmentId>) {
-        self.shared
-            .metadata
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .captured_caller = captured_caller;
+        (self.fibers.len() > 1).then(|| {
+            Self::new_captured(ContId::fresh(), self.fibers[1..].to_vec())
+        })
     }
 
     pub fn consumed(&self) -> bool {
-        self.consumed || self.shared.consumed.load(Ordering::Relaxed)
+        self.consumed
     }
 
     pub(crate) fn mark_consumed(&mut self) {
         self.consumed = true;
-        self.shared.consumed.store(true, Ordering::Relaxed);
-    }
-
-    pub fn program(&self) -> Option<&PyShared> {
-        self.unstarted.as_ref().map(|unstarted| &unstarted.program)
-    }
-
-    pub fn handlers(&self) -> Option<&[KleisliRef]> {
-        self.unstarted
-            .as_ref()
-            .map(|unstarted| unstarted.handlers.as_slice())
-    }
-
-    pub fn prepend_unstarted_handlers(&mut self, mut handlers: Vec<KleisliRef>) {
-        let Some(unstarted) = self.unstarted.as_mut() else {
-            return;
-        };
-        if handlers.is_empty() {
-            return;
-        }
-        let extra_count = handlers.len();
-        handlers.extend(unstarted.handlers.iter().cloned());
-        unstarted.handlers = handlers;
-
-        let mut handler_identities = vec![None; extra_count];
-        handler_identities.extend(unstarted.handler_identities.iter().cloned());
-        unstarted.handler_identities = handler_identities;
-    }
-
-    pub fn handler_identities(&self) -> Option<&[Option<PyShared>]> {
-        self.unstarted
-            .as_ref()
-            .map(|unstarted| unstarted.handler_identities.as_slice())
-    }
-
-    pub fn metadata(&self) -> Option<&CallMetadata> {
-        self.unstarted
-            .as_ref()
-            .and_then(|unstarted| unstarted.metadata.as_ref())
-    }
-
-    pub fn outside_scope(&self) -> Option<SegmentId> {
-        self.unstarted
-            .as_ref()
-            .and_then(|unstarted| unstarted.outside_scope)
-    }
-
-    pub(crate) fn into_unstarted_parts(
-        self,
-    ) -> Option<(
-        PyShared,
-        Vec<KleisliRef>,
-        Vec<Option<PyShared>>,
-        Option<CallMetadata>,
-        Option<SegmentId>,
-    )> {
-        self.unstarted.clone().map(
-            |UnstartedContinuation {
-                 program,
-                 handlers,
-                 handler_identities,
-                 metadata,
-                 outside_scope,
-             }| {
-                (
-                    program,
-                    handlers,
-                    handler_identities,
-                    metadata,
-                    outside_scope,
-                )
-            },
-        )
     }
 
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let dict = PyDict::new(py);
         dict.set_item("cont_id", self.cont_id.raw())?;
         dict.set_item("started", self.is_started())?;
-        if let Some(program) = self.program() {
-            dict.set_item("program", program.bind(py))?;
-        }
-        if let Some(handlers) = self.handlers() {
-            let list = PyList::empty(py);
-            for (idx, handler) in handlers.iter().enumerate() {
-                if let Some(Some(identity)) = self.handler_identities().and_then(|ids| ids.get(idx))
-                {
-                    list.append(identity.bind(py))?;
-                    continue;
-                }
-                if let Some(identity) = handler.py_identity() {
-                    list.append(identity.bind(py))?;
-                } else {
-                    list.append(py.None().into_bound(py))?;
-                }
-            }
-            dict.set_item("handlers", list)?;
-        }
         Ok(dict.into_any())
     }
+
+    pub fn dispatch_id(&self) -> Option<DispatchId> {
+        None
+    }
+
+    pub(crate) fn set_dispatch_id(&mut self, _dispatch_id: Option<DispatchId>) {}
+
+    pub(crate) fn resume_dispatch_id(&self) -> Option<DispatchId> {
+        None
+    }
+
+    pub(crate) fn set_resume_dispatch_id(&mut self, _dispatch_id: Option<DispatchId>) {}
+
+    pub(crate) fn dispatch_handler_hint(&self) -> Option<DispatchHandlerHint> {
+        None
+    }
+
+    pub(crate) fn set_dispatch_handler_hint(&mut self, _hint: Option<DispatchHandlerHint>) {}
+
+    pub(crate) fn dispatch_frame_hint(&self) -> Option<SegmentId> {
+        None
+    }
+
+    pub(crate) fn set_dispatch_frame_hint(&mut self, _hint: Option<SegmentId>) {}
+
+    pub fn captured_caller(&self) -> Option<SegmentId> {
+        None
+    }
+
+    pub(crate) fn set_captured_caller(&mut self, _captured_caller: Option<SegmentId>) {}
 }
 
 impl Drop for Continuation {
@@ -493,34 +435,8 @@ impl Drop for Continuation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-
-    use crate::do_ctrl::DoCtrl;
-    use crate::error::VMError;
-    use crate::ids::{Marker, SegmentId};
-    use crate::kleisli::{Kleisli, KleisliDebugInfo};
+    use crate::ids::Marker;
     use crate::memory_stats::live_object_counts;
-
-    #[derive(Debug)]
-    struct DummyKleisli;
-
-    impl Kleisli for DummyKleisli {
-        fn apply(
-            &self,
-            _py: Python<'_>,
-            _args: Vec<crate::value::Value>,
-        ) -> Result<DoCtrl, VMError> {
-            unreachable!("test dummy should never be invoked")
-        }
-
-        fn debug_info(&self) -> KleisliDebugInfo {
-            KleisliDebugInfo {
-                name: "DummyKleisli".to_string(),
-                file: None,
-                line: None,
-            }
-        }
-    }
 
     fn make_test_segment() -> (Segment, SegmentId) {
         let seg = Segment::new(Marker::fresh(), None);
@@ -535,28 +451,16 @@ mod tests {
 
         assert_eq!(cont.segment_id(), Some(seg_id));
         assert_eq!(cont.fibers(), &[seg_id]);
-        assert_eq!(cont.captured_caller(), seg.parent);
         assert!(cont.is_started());
         assert!(!cont.consumed());
     }
 
     #[test]
-    fn test_continuation_unique_ids() {
-        let (seg, seg_id) = make_test_segment();
-        let c1 = Continuation::capture(&seg, seg_id, None);
-        let c2 = Continuation::capture(&seg, seg_id, None);
-        assert_ne!(c1.cont_id, c2.cont_id);
-    }
-
-    #[test]
-    fn test_unstarted_continuation_has_no_captured_fibers() {
+    fn test_pending_continuation_has_no_captured_fibers() {
         Python::attach(|py| {
             let baseline = live_object_counts().live_continuations;
-            let cont = Continuation::create_unstarted(PyShared::new(py.None()), Vec::new());
-            assert!(!cont.is_started());
-            assert!(cont.segment_id().is_none());
-            assert!(cont.fibers().is_empty());
-            assert!(cont.program().is_some());
+            let cont = PendingContinuation::create(PyShared::new(py.None()), Vec::new());
+            assert_eq!(cont.handlers().len(), 0);
             assert_eq!(live_object_counts().live_continuations, baseline + 1);
             drop(cont);
             assert_eq!(live_object_counts().live_continuations, baseline);
@@ -571,77 +475,5 @@ mod tests {
 
         assert_eq!(handle.cont_id, cont.cont_id);
         assert_eq!(handle.fibers(), &[seg_id]);
-    }
-
-    #[test]
-    fn test_clone_handle_shares_dispatch_frame_hint() {
-        let (seg, seg_id) = make_test_segment();
-        let mut cont = Continuation::capture(&seg, seg_id, None);
-        let mut handle = cont.clone_handle();
-        let hint = SegmentId::from_index(11);
-
-        handle.set_dispatch_frame_hint(Some(hint));
-
-        assert_eq!(cont.dispatch_frame_hint(), Some(hint));
-    }
-
-    #[test]
-    fn test_same_owned_fibers_compares_entire_fiber_chain() {
-        let cont = Continuation::with_id(
-            ContId::fresh(),
-            SegmentId::from_index(0),
-            Some(SegmentId::from_index(2)),
-            None,
-        );
-        let mut extended = Continuation::with_id(
-            ContId::fresh(),
-            SegmentId::from_index(0),
-            Some(SegmentId::from_index(2)),
-            None,
-        );
-        extended.append_owned_fibers(Continuation::with_id(
-            ContId::fresh(),
-            SegmentId::from_index(1),
-            Some(SegmentId::from_index(2)),
-            None,
-        ));
-
-        assert!(!cont.same_owned_fibers(&extended));
-        assert!(!extended.same_owned_fibers(&cont));
-    }
-
-    #[test]
-    fn test_create_unstarted_with_identities_keeps_handler_metadata() {
-        Python::attach(|py| {
-            let program = PyShared::new(py.None());
-            let handlers = vec![Arc::new(DummyKleisli) as KleisliRef];
-            let identities = vec![Some(PyShared::new(py.None()))];
-            let cont =
-                Continuation::create_unstarted_with_identities(program, handlers, identities);
-
-            assert!(cont.program().is_some());
-            assert_eq!(cont.handlers().map(|handlers| handlers.len()), Some(1));
-            assert_eq!(
-                cont.handler_identities().map(|identities| identities.len()),
-                Some(1)
-            );
-        });
-    }
-
-    #[test]
-    fn test_continuation_live_count_tracks_clone_lifetime() {
-        let baseline = live_object_counts().live_continuations;
-        let (seg, seg_id) = make_test_segment();
-        let cont = Continuation::capture(&seg, seg_id, None);
-        assert_eq!(live_object_counts().live_continuations, baseline + 1);
-
-        let cont_clone = cont.clone_handle();
-        assert_eq!(live_object_counts().live_continuations, baseline + 2);
-
-        drop(cont_clone);
-        assert_eq!(live_object_counts().live_continuations, baseline + 1);
-
-        drop(cont);
-        assert_eq!(live_object_counts().live_continuations, baseline);
     }
 }

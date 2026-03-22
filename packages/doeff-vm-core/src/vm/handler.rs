@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use super::*;
 
 impl VM {
@@ -29,17 +31,19 @@ impl VM {
         start_seg_id: SegmentId,
     ) -> crate::segment::ScopeStore {
         let mut layers = Vec::new();
-        let mut cursor = Some(start_seg_id);
-        while let Some(seg_id) = cursor {
-            if let Some(bindings) = self.scope_bindings(seg_id) {
+        let mut seen_segments = HashSet::new();
+        for seg_id in self.visible_lexical_segments(start_seg_id) {
+            if !seen_segments.insert(seg_id) {
+                continue;
+            }
+            if let Some(bindings) = self.segment_scope_bindings(seg_id) {
                 if !bindings.is_empty() {
                     layers.push(Arc::new(bindings.clone()));
                 }
             }
-            cursor = self.scope_parent(seg_id);
         }
-        if !self.env_store.is_empty() {
-            layers.push(Arc::new(self.env_store.clone()));
+        if !self.var_store.root_scope_bindings().is_empty() {
+            layers.push(Arc::new(self.var_store.root_scope_bindings().clone()));
         }
         layers.reverse();
         crate::segment::ScopeStore {

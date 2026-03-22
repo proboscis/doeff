@@ -285,6 +285,7 @@ impl DebugState {
                     let frame_kind = match frame {
                         Frame::Program { metadata, .. } if metadata.is_some() => "Program(meta)",
                         Frame::Program { .. } => "Program",
+                        Frame::LexicalScope { .. } => "LexicalScope",
                         Frame::InterceptorApply(_) => "InterceptorApply",
                         Frame::InterceptorEval(_) => "InterceptorEval",
                         Frame::EvalReturn(_) => "EvalReturn",

@@ -170,6 +170,7 @@ pub(crate) use FiberKind as SegmentKind;
 mod tests {
     use super::*;
     use crate::memory_stats::live_object_counts;
+    use crate::Value;
     use pyo3::Python;
 
     use crate::do_ctrl::DoCtrl;
