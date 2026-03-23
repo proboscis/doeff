@@ -26,7 +26,7 @@ use crate::effect::{
 };
 use crate::error::VMError;
 use crate::frame::{
-    CallMetadata, DispatchEffectSite, DispatchDisplay, EvalReturnContinuation, Frame,
+    CallMetadata, DispatchDisplay, DispatchEffectSite, EvalReturnContinuation, Frame,
     InterceptorChainLink, InterceptorContinuation, ProgramDispatch, ProgramFrameSnapshot,
 };
 use crate::ids::{ContId, Marker, SegmentId};

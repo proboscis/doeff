@@ -373,8 +373,10 @@ impl VM {
                     site,
                     GenErrorSite::RustProgramContinuation | GenErrorSite::StepUserGeneratorDirect
                 );
-        let in_get_execution_context_dispatch = current_origin_cont_id
-            .is_some_and(|origin_cont_id| self.is_execution_context_effect_for_dispatch(origin_cont_id));
+        let in_get_execution_context_dispatch =
+            current_origin_cont_id.is_some_and(|origin_cont_id| {
+                self.is_execution_context_effect_for_dispatch(origin_cont_id)
+            });
 
         if !site.allows_error_conversion() && !allow_handler_context_conversion {
             if let Some(original) = self.active_error_dispatch_original_exception() {
@@ -442,7 +444,8 @@ impl VM {
         origin_cont_id: ContId,
         exc: &PyException,
     ) {
-        let is_live_handler_throw = self.current_active_handler_dispatch_id() == Some(origin_cont_id)
+        let is_live_handler_throw = self.current_active_handler_dispatch_id()
+            == Some(origin_cont_id)
             || self.current_segment_is_active_handler_for_dispatch(origin_cont_id);
         if self.dispatch_has_terminal_handler_action(origin_cont_id) && !is_live_handler_throw {
             return;
@@ -557,52 +560,50 @@ impl VM {
                 )))
             }
         };
-        let context_entries = Python::attach(
-            |py| -> Result<Vec<Py<PyAny>>, VMError> {
-                let context_bound = context_obj.bind(py);
-                if !context_bound.is_instance_of::<PyExecutionContext>() {
-                    let got_type = context_bound
-                        .get_type()
-                        .name()
-                        .map(|name| name.to_string())
-                        .unwrap_or_else(|_| MISSING_UNKNOWN.to_string());
-                    return Err(VMError::python_error(format!(
-                        "GetExecutionContext handler must return ExecutionContext, got {got_type}"
-                    )));
-                }
-                let entries_obj = context_bound.getattr("entries").map_err(|err| {
-                    VMError::python_error(format!(
+        let context_entries = Python::attach(|py| -> Result<Vec<Py<PyAny>>, VMError> {
+            let context_bound = context_obj.bind(py);
+            if !context_bound.is_instance_of::<PyExecutionContext>() {
+                let got_type = context_bound
+                    .get_type()
+                    .name()
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(|_| MISSING_UNKNOWN.to_string());
+                return Err(VMError::python_error(format!(
+                    "GetExecutionContext handler must return ExecutionContext, got {got_type}"
+                )));
+            }
+            let entries_obj = context_bound.getattr("entries").map_err(|err| {
+                VMError::python_error(format!(
                     "GetExecutionContext handler returned invalid ExecutionContext.entries: {err}"
                 ))
-                })?;
-                let iter = entries_obj.try_iter().map_err(|err| {
+            })?;
+            let iter = entries_obj.try_iter().map_err(|err| {
                 VMError::python_error(format!(
                     "GetExecutionContext handler returned non-iterable ExecutionContext.entries: {err}"
                 ))
             })?;
-                let mut context_entries = Vec::new();
-                for entry_result in iter {
-                    let entry = entry_result.map_err(|err| {
+            let mut context_entries = Vec::new();
+            for entry_result in iter {
+                let entry = entry_result.map_err(|err| {
                     VMError::python_error(format!(
                         "failed to iterate ExecutionContext.entries while attaching active_chain: {err}"
                     ))
                 })?;
-                    // ExecutionContext.entries is user-extensible. We only inspect
-                    // scheduler-owned {"kind": "spawn_boundary"} markers here and
-                    // intentionally ignore malformed/non-mapping payloads.
-                    let Ok(kind) = entry.get_item("kind") else {
-                        context_entries.push(entry.unbind());
-                        continue;
-                    };
-                    let Ok(kind) = kind.extract::<&str>() else {
-                        context_entries.push(entry.unbind());
-                        continue;
-                    };
+                // ExecutionContext.entries is user-extensible. We only inspect
+                // scheduler-owned {"kind": "spawn_boundary"} markers here and
+                // intentionally ignore malformed/non-mapping payloads.
+                let Ok(kind) = entry.get_item("kind") else {
                     context_entries.push(entry.unbind());
-                }
-                Ok(context_entries)
-            },
-        )?;
+                    continue;
+                };
+                let Ok(kind) = kind.extract::<&str>() else {
+                    context_entries.push(entry.unbind());
+                    continue;
+                };
+                context_entries.push(entry.unbind());
+            }
+            Ok(context_entries)
+        })?;
 
         let mut active_chain = self.assemble_active_chain_for_dispatch(origin_cont_id, None);
         for entry in context_entries {
