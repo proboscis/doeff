@@ -143,8 +143,11 @@ fn install_pending_dispatch(
                 resumed_once: false,
                 is_execution_context_effect: true,
             },
-            origin: origin.clone_handle(),
-            handler_continuation: origin.clone_handle(),
+            origin_fiber_ids: origin.fibers().to_vec(),
+            origin_consumed: origin.consumed(),
+            handler_fiber_ids: origin.fibers().to_vec(),
+            handler_cont_id: origin.cont_id,
+            handler_consumed: origin.consumed(),
             original_exception,
         },
     );
