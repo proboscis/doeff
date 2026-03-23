@@ -62,7 +62,7 @@ pub enum PyException {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Mode {
     Deliver(Value),
     Throw(PyException),
