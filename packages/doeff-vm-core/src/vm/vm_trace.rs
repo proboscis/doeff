@@ -208,7 +208,10 @@ impl VM {
                 self.current_segment
                     .filter(|_| self.current_segment_dispatch_id() == Some(origin_cont_id))
                     .and_then(|seg_id| self.segment_program_dispatch(seg_id))
-                    .and_then(|dispatch| self.continuation_handler_chain_start(&dispatch.origin))
+                    .and_then(|dispatch| {
+                        let origin_k = dispatch.origin_as_continuation();
+                        self.continuation_handler_chain_start(&origin_k)
+                    })
             })
             .or_else(|| {
                 self.dispatch_origin_for_origin_cont_id(origin_cont_id)

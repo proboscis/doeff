@@ -325,6 +325,19 @@ impl Continuation {
         Self::new_captured(cont_id, vec![fiber_id])
     }
 
+    /// Create a continuation view from stored fiber IDs and consumed state.
+    /// This is NOT a shared handle — it has an independent consumed flag initialized
+    /// from the provided value. Used by ProgramDispatch to reconstruct continuations
+    /// from stored topology data without clone_handle().
+    pub(crate) fn from_ids(cont_id: ContId, fibers: Vec<FiberId>, consumed: bool) -> Self {
+        memory_stats::register_continuation();
+        Self {
+            cont_id,
+            fibers,
+            consumed: Arc::new(AtomicBool::new(consumed)),
+        }
+    }
+
     pub fn is_started(&self) -> bool {
         !self.fibers.is_empty()
     }
