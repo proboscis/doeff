@@ -10,9 +10,9 @@ impl VM {
             continuation: &Continuation,
             ordered: &mut Vec<SegmentId>,
             seen: &mut std::collections::HashSet<SegmentId>,
-            seen_continuations: &mut std::collections::HashSet<crate::ids::ContId>,
+            seen_continuations: &mut std::collections::HashSet<Vec<crate::ids::FiberId>>,
         ) {
-            if !seen_continuations.insert(continuation.cont_id) {
+            if !seen_continuations.insert(continuation.fibers_key()) {
                 return;
             }
             for seg_id in continuation.fibers() {
@@ -32,7 +32,7 @@ impl VM {
             start: Option<SegmentId>,
             ordered: &mut Vec<SegmentId>,
             seen: &mut std::collections::HashSet<SegmentId>,
-            seen_continuations: &mut std::collections::HashSet<crate::ids::ContId>,
+            seen_continuations: &mut std::collections::HashSet<Vec<crate::ids::FiberId>>,
         ) {
             let mut cursor = start;
             while let Some(seg_id) = cursor {

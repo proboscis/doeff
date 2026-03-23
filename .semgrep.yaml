@@ -3160,6 +3160,19 @@ rules:
         - "**/packages/doeff-vm/src/pyvm.rs"
     pattern-regex: 'struct\s+PyK\s*\{(?:(?!\}).)*cont_id:\s*ContId\b|\bfrom_cont_id\s*\('
 
+  - id: vm-ocaml5-no-cont-id-runtime
+    languages: [rust]
+    severity: ERROR
+    message: |
+      SPEC-VM-020 Phase 2: ContId and origin_cont_id are removed. Continuation identity
+      must derive from the captured fiber chain head (FiberId/SegmentId), and Python-facing
+      continuation wrappers must not expose cont_id fields.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/**/*.rs"
+        - "**/packages/doeff-vm/src/pyvm.rs"
+    pattern-regex: '\bContId\b|\borigin_cont_id\b|\bparent_origin_cont_id\b|\bcont_id\b'
+
   # Persistent epoch is a reconciliation mechanism for stale Arc snapshots.
   # With move semantics, there are no stale snapshots — no reconciliation needed.
   - id: vm-ocaml5-no-epoch-reconciliation

@@ -122,15 +122,15 @@ fn alloc_prompt_boundary(
 fn install_pending_dispatch(
     vm: &mut VM,
     handler_seg_id: SegmentId,
-    origin_cont_id: ContId,
+    origin_fiber_id: SegmentId,
     origin: &Continuation,
     original_exception: Option<PyException>,
 ) {
     vm.set_pending_program_dispatch(
         handler_seg_id,
         ProgramDispatch {
-            origin_cont_id,
-            parent_origin_cont_id: None,
+            origin_fiber_id,
+            parent_origin_fiber_id: None,
             handler_segment_id: handler_seg_id,
             prompt_segment_id: handler_seg_id,
             effect: crate::effect::make_get_execution_context_effect()
@@ -406,8 +406,10 @@ fn test_dispatch_resume_inserts_resume_anchor_above_captured_caller() {
         .segments
         .get(child_id)
         .expect("child segment must exist for continuation capture");
-    let origin_cont_id = ContId::fresh();
     let continuation = Continuation::capture(child_segment, child_id);
+    let origin_fiber_id = continuation
+        .segment_id()
+        .expect("captured continuation must expose its head fiber");
 
     let handler_marker = Marker::fresh();
     let prompt_seg_id = alloc_prompt_boundary(
@@ -423,7 +425,13 @@ fn test_dispatch_resume_inserts_resume_anchor_above_captured_caller() {
         Some(HandlerKind::RustBuiltin),
     );
     let handler_seg_id = vm.alloc_segment(handler_seg);
-    install_pending_dispatch(&mut vm, handler_seg_id, origin_cont_id, &continuation, None);
+    install_pending_dispatch(
+        &mut vm,
+        handler_seg_id,
+        origin_fiber_id,
+        &continuation,
+        None,
+    );
     vm.current_segment = Some(handler_seg_id);
 
     let event = vm.handle_dispatch_resume(continuation, Value::Unit);
@@ -474,8 +482,10 @@ fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
         .segments
         .get(effect_site_id)
         .expect("effect-site segment must exist for continuation capture");
-    let origin_cont_id = ContId::fresh();
     let continuation = Continuation::capture(effect_site_segment, effect_site_id);
+    let origin_fiber_id = continuation
+        .segment_id()
+        .expect("captured continuation must expose its head fiber");
 
     let handler_marker = Marker::fresh();
     let prompt_seg_id = alloc_prompt_boundary(
@@ -491,7 +501,13 @@ fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
         Some(HandlerKind::RustBuiltin),
     );
     let handler_seg_id = vm.alloc_segment(handler_seg);
-    install_pending_dispatch(&mut vm, handler_seg_id, origin_cont_id, &continuation, None);
+    install_pending_dispatch(
+        &mut vm,
+        handler_seg_id,
+        origin_fiber_id,
+        &continuation,
+        None,
+    );
     vm.current_segment = Some(handler_seg_id);
 
     let event = vm.handle_dispatch_resume(continuation.clone_handle(), Value::Unit);
@@ -752,8 +768,10 @@ fn test_dispatch_origins_derive_from_live_program_topology() {
         .segments
         .get(effect_site_id)
         .expect("effect-site segment must exist for continuation capture");
-    let origin_cont_id = ContId::fresh();
     let continuation = Continuation::capture(effect_site_segment, effect_site_id);
+    let origin_fiber_id = continuation
+        .segment_id()
+        .expect("captured continuation must expose its head fiber");
 
     let handler_marker = Marker::fresh();
     let prompt_seg_id = alloc_prompt_boundary(
@@ -763,13 +781,19 @@ fn test_dispatch_origins_derive_from_live_program_topology() {
         named_handler("TestHandler"),
     );
     let handler_seg_id = vm.alloc_segment(Segment::new(Some(prompt_seg_id)));
-    install_pending_dispatch(&mut vm, handler_seg_id, origin_cont_id, &continuation, None);
+    install_pending_dispatch(
+        &mut vm,
+        handler_seg_id,
+        origin_fiber_id,
+        &continuation,
+        None,
+    );
     vm.current_segment = Some(handler_seg_id);
 
     let origins = vm.dispatch_origins();
     assert_eq!(origins.len(), 1);
-    assert_eq!(origins[0].origin_cont_id, origin_cont_id);
-    assert_eq!(origins[0].k_origin.cont_id, continuation.cont_id);
+    assert_eq!(origins[0].origin_fiber_id, origin_fiber_id);
+    assert!(origins[0].k_origin.same_owned_fibers(&continuation));
 }
 
 #[test]
@@ -791,7 +815,6 @@ fn test_visible_scope_store_in_handler_sees_captured_local_scope() {
         std::collections::HashMap::from([(key.clone(), value.clone())]),
     );
 
-    let origin_cont_id = ContId::fresh();
     let captured = {
         let effect_site = vm
             .segments
@@ -799,13 +822,16 @@ fn test_visible_scope_store_in_handler_sees_captured_local_scope() {
             .expect("effect-site segment must exist for continuation capture");
         Continuation::capture(effect_site, effect_site_id)
     };
+    let origin_fiber_id = captured
+        .segment_id()
+        .expect("captured continuation must expose its head fiber");
     vm.segments
         .get_mut(effect_site_id)
         .expect("captured effect-site segment must remain live")
         .parent = None;
 
     let handler_seg_id = vm.alloc_segment(Segment::new(Some(prompt_seg_id)));
-    install_pending_dispatch(&mut vm, handler_seg_id, origin_cont_id, &captured, None);
+    install_pending_dispatch(&mut vm, handler_seg_id, origin_fiber_id, &captured, None);
 
     let scope = vm.visible_scope_store(handler_seg_id);
     let resolved = scope
@@ -830,7 +856,6 @@ fn test_write_scoped_var_nonlocal_updates_owner_through_captured_scope_chain() {
     let child_seg_id = vm.alloc_segment(Segment::new(Some(owner_seg_id)));
     let var = vm.alloc_scoped_var_in_segment(owner_seg_id, Value::Int(10));
 
-    let origin_cont_id = ContId::fresh();
     let captured = {
         let child_seg = vm
             .segments
@@ -838,6 +863,9 @@ fn test_write_scoped_var_nonlocal_updates_owner_through_captured_scope_chain() {
             .expect("child segment must exist for continuation capture");
         Continuation::capture(child_seg, child_seg_id)
     };
+    let origin_fiber_id = captured
+        .segment_id()
+        .expect("captured continuation must expose its head fiber");
     vm.segments
         .get_mut(child_seg_id)
         .expect("captured child segment must remain live")
@@ -850,7 +878,7 @@ fn test_write_scoped_var_nonlocal_updates_owner_through_captured_scope_chain() {
         named_handler("StateHandler"),
     );
     let handler_seg_id = vm.alloc_segment(Segment::new(Some(prompt_seg_id)));
-    install_pending_dispatch(&mut vm, handler_seg_id, origin_cont_id, &captured, None);
+    install_pending_dispatch(&mut vm, handler_seg_id, origin_fiber_id, &captured, None);
 
     assert!(
         vm.write_scoped_var_nonlocal(handler_seg_id, var, Value::Int(20)),
@@ -866,13 +894,13 @@ fn test_write_scoped_var_nonlocal_updates_owner_through_captured_scope_chain() {
 }
 
 #[test]
-fn test_consumed_continuation_stays_detectable_on_cloned_handles() {
-    let mut continuation = Continuation::with_id(ContId::fresh(), SegmentId::from_index(0), None);
+fn test_consumed_continuation_clone_keeps_its_original_snapshot_state() {
+    let mut continuation = Continuation::from_fiber(SegmentId::from_index(0), None);
     let handle = continuation.clone_handle();
 
     assert!(!handle.consumed());
     continuation.mark_consumed();
 
     assert!(continuation.consumed());
-    assert!(handle.consumed());
+    assert!(!handle.consumed());
 }

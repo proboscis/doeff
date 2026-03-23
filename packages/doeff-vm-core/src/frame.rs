@@ -8,7 +8,7 @@ use crate::continuation::Continuation;
 use crate::do_ctrl::{DoCtrl, InterceptMode};
 use crate::driver::PyException;
 use crate::effect::DispatchEffect;
-use crate::ids::{ContId, Marker, SegmentId, VarId};
+use crate::ids::{Marker, SegmentId, VarId};
 use crate::ir_stream::IRStreamRef;
 use crate::kleisli::KleisliRef;
 use crate::py_key::HashedPyKey;
@@ -150,8 +150,8 @@ impl Clone for DispatchDisplay {
 
 #[derive(Debug)]
 pub struct ProgramDispatch {
-    pub origin_cont_id: ContId,
-    pub parent_origin_cont_id: Option<ContId>,
+    pub origin_fiber_id: SegmentId,
+    pub parent_origin_fiber_id: Option<SegmentId>,
     pub handler_segment_id: SegmentId,
     pub prompt_segment_id: SegmentId,
     pub effect: DispatchEffect,
@@ -164,8 +164,8 @@ pub struct ProgramDispatch {
 impl Clone for ProgramDispatch {
     fn clone(&self) -> Self {
         Self {
-            origin_cont_id: self.origin_cont_id,
-            parent_origin_cont_id: self.parent_origin_cont_id,
+            origin_fiber_id: self.origin_fiber_id,
+            parent_origin_fiber_id: self.parent_origin_fiber_id,
             handler_segment_id: self.handler_segment_id,
             prompt_segment_id: self.prompt_segment_id,
             effect: self.effect.clone(),

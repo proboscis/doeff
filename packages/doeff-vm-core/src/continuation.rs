@@ -1,13 +1,13 @@
 //! Continuation types for detaching and reattaching fibers.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use crate::frame::CallMetadata;
-use crate::ids::{ContId, FiberId, SegmentId};
+use crate::ids::{FiberId, SegmentId};
 use crate::kleisli::KleisliRef;
 use crate::memory_stats;
 use crate::py_shared::PyShared;
@@ -35,10 +35,12 @@ impl Clone for OwnedControlContinuation {
 }
 
 impl OwnedControlContinuation {
-    pub fn cont_id(&self) -> ContId {
+    pub fn fiber_id(&self) -> SegmentId {
         match self {
-            Self::Started(continuation) => continuation.cont_id,
-            Self::Pending(pending) => pending.cont_id,
+            Self::Started(continuation) => continuation.fiber_id,
+            Self::Pending(pending) => pending
+                .head_fiber_id()
+                .unwrap_or_else(Continuation::placeholder_fiber_id),
         }
     }
 
@@ -83,6 +85,13 @@ impl OwnedControlContinuation {
             pending.prepend_handlers(handlers);
         }
     }
+
+    pub fn debug_label(&self) -> String {
+        match self {
+            Self::Started(continuation) => continuation.debug_label(),
+            Self::Pending(pending) => pending.debug_label(),
+        }
+    }
 }
 
 impl PyK {
@@ -94,9 +103,8 @@ impl PyK {
     }
 
     pub fn from_pending(pending: PendingContinuation) -> Self {
-        let continuation = Continuation::placeholder(pending.cont_id);
         Self {
-            continuation,
+            continuation: Continuation::placeholder(),
             pending: Some(pending),
         }
     }
@@ -111,13 +119,6 @@ impl PyK {
         self.pending.clone()
     }
 
-    pub fn cont_id(&self) -> ContId {
-        self.pending
-            .as_ref()
-            .map(|pending| pending.cont_id)
-            .unwrap_or(self.continuation.cont_id)
-    }
-
     pub fn is_exhausted(&self) -> bool {
         self.pending.is_none()
             && (self.continuation.is_placeholder() || self.continuation.consumed())
@@ -127,7 +128,7 @@ impl PyK {
         if let Some(pending) = self.pending.take() {
             return OwnedControlContinuation::Pending(pending);
         }
-        let mut placeholder = Continuation::placeholder(self.continuation.cont_id);
+        let mut placeholder = Continuation::placeholder();
         placeholder.mark_consumed();
         OwnedControlContinuation::Started(std::mem::replace(&mut self.continuation, placeholder))
     }
@@ -135,8 +136,8 @@ impl PyK {
     pub fn take_continuation(&mut self) -> Continuation {
         match self.take_control_continuation() {
             OwnedControlContinuation::Started(continuation) => continuation,
-            OwnedControlContinuation::Pending(pending) => {
-                let mut placeholder = Continuation::placeholder(pending.cont_id);
+            OwnedControlContinuation::Pending(_) => {
+                let mut placeholder = Continuation::placeholder();
                 placeholder.mark_consumed();
                 placeholder
             }
@@ -147,13 +148,17 @@ impl PyK {
 #[pymethods]
 impl PyK {
     fn __repr__(&self) -> String {
-        format!("K({})", self.cont_id().raw())
+        let label = self
+            .pending
+            .as_ref()
+            .map(PendingContinuation::debug_label)
+            .unwrap_or_else(|| self.continuation.debug_label());
+        format!("K({label})")
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct PendingContinuation {
-    pub cont_id: ContId,
     program: PyShared,
     handlers: Vec<KleisliRef>,
     handler_identities: Vec<Option<PyShared>>,
@@ -180,7 +185,6 @@ impl PendingContinuation {
             handler_identities
         };
         Self {
-            cont_id: ContId::fresh(),
             program: expr,
             handlers,
             handler_identities: normalized_identities,
@@ -207,6 +211,16 @@ impl PendingContinuation {
 
     pub fn outside_scope(&self) -> Option<SegmentId> {
         self.outside_scope
+    }
+
+    pub fn head_fiber_id(&self) -> Option<FiberId> {
+        self.outside_scope
+    }
+
+    pub fn debug_label(&self) -> String {
+        self.head_fiber_id()
+            .map(|fiber_id| format!("pending@{}", fiber_id.index()))
+            .unwrap_or_else(|| "pending".to_string())
     }
 
     pub fn into_parts(
@@ -251,8 +265,8 @@ impl PendingContinuation {
 
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let dict = PyDict::new(py);
-        dict.set_item("cont_id", self.cont_id.raw())?;
         dict.set_item("started", false)?;
+        dict.set_item("fiber_chain", self.debug_label())?;
         dict.set_item("program", self.program.bind(py))?;
         let handlers = PyList::empty(py);
         for (idx, handler) in self.handlers.iter().enumerate() {
@@ -279,50 +293,53 @@ impl Drop for PendingContinuation {
 
 #[derive(Debug)]
 pub struct Continuation {
-    pub cont_id: ContId,
+    pub fiber_id: SegmentId,
     fibers: Vec<FiberId>,
+    captured_caller: Option<SegmentId>,
     consumed: Arc<AtomicBool>,
 }
 
-pub(crate) fn panic_on_started_continuation_clone_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-
-    *ENABLED.get_or_init(|| std::env::var_os("DOEFF_PANIC_ON_STARTED_CONT_CLONE").is_some())
-}
-
 impl Continuation {
-    pub fn placeholder(cont_id: ContId) -> Self {
+    pub(crate) fn placeholder_fiber_id() -> SegmentId {
+        FiberId(u32::MAX)
+    }
+
+    pub fn placeholder() -> Self {
         memory_stats::register_continuation();
         Self {
-            cont_id,
+            fiber_id: Self::placeholder_fiber_id(),
             fibers: Vec::new(),
+            captured_caller: None,
             consumed: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    fn new_captured(cont_id: ContId, fibers: Vec<FiberId>) -> Self {
+    pub(crate) fn from_fibers_with_caller(
+        fibers: Vec<FiberId>,
+        captured_caller: Option<SegmentId>,
+    ) -> Self {
         memory_stats::register_continuation();
         Self {
-            cont_id,
+            fiber_id: fibers
+                .first()
+                .copied()
+                .unwrap_or_else(Self::placeholder_fiber_id),
             fibers,
+            captured_caller,
             consumed: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    pub(crate) fn from_fiber(fiber_id: FiberId, _captured_caller: Option<SegmentId>) -> Self {
-        Self::new_captured(ContId::fresh(), vec![fiber_id])
+    pub(crate) fn from_fibers(fibers: Vec<FiberId>) -> Self {
+        Self::from_fibers_with_caller(fibers, None)
     }
 
-    pub fn capture(_segment: &Segment, segment_id: SegmentId) -> Self {
-        Self::new_captured(ContId::fresh(), vec![segment_id])
+    pub(crate) fn from_fiber(fiber_id: FiberId, captured_caller: Option<SegmentId>) -> Self {
+        Self::from_fibers_with_caller(vec![fiber_id], captured_caller)
     }
 
-    pub fn with_id(
-        cont_id: ContId,
-        fiber_id: FiberId,
-        _captured_caller: Option<SegmentId>,
-    ) -> Self {
-        Self::new_captured(cont_id, vec![fiber_id])
+    pub fn capture(segment: &Segment, segment_id: SegmentId) -> Self {
+        Self::from_fiber(segment_id, segment.parent)
     }
 
     pub fn is_started(&self) -> bool {
@@ -336,41 +353,80 @@ impl Continuation {
     pub fn clone_handle(&self) -> Self {
         memory_stats::register_continuation();
         Self {
-            cont_id: self.cont_id,
+            fiber_id: self.fiber_id,
             fibers: self.fibers.clone(),
+            captured_caller: self.captured_caller,
             consumed: Arc::clone(&self.consumed),
         }
     }
 
+    pub fn fork_handle(&self) -> Self {
+        memory_stats::register_continuation();
+        Self {
+            fiber_id: self.fiber_id,
+            fibers: self.fibers.clone(),
+            captured_caller: self.captured_caller,
+            consumed: Arc::new(AtomicBool::new(self.consumed())),
+        }
+    }
+
     pub fn segment_id(&self) -> Option<SegmentId> {
-        self.fibers.first().copied()
+        self.is_started().then_some(self.fiber_id)
     }
 
     pub(crate) fn fibers(&self) -> &[FiberId] {
         self.fibers.as_slice()
     }
 
+    pub(crate) fn fibers_key(&self) -> Vec<FiberId> {
+        self.fibers.clone()
+    }
+
     pub(crate) fn outermost_fiber_id(&self) -> Option<FiberId> {
         self.fibers.last().copied()
+    }
+
+    pub(crate) fn captured_caller(&self) -> Option<SegmentId> {
+        self.captured_caller
+    }
+
+    pub(crate) fn set_captured_caller(&mut self, captured_caller: Option<SegmentId>) {
+        self.captured_caller = captured_caller;
     }
 
     pub(crate) fn same_owned_fibers(&self, other: &Continuation) -> bool {
         self.fibers.as_slice() == other.fibers.as_slice()
     }
 
+    pub(crate) fn same_handle(&self, other: &Continuation) -> bool {
+        Arc::ptr_eq(&self.consumed, &other.consumed)
+    }
+
     pub(crate) fn append_owned_fibers(&mut self, mut other: Continuation) {
         if !other.fibers.is_empty() {
+            if self.fibers.is_empty() {
+                self.fiber_id = other.fiber_id;
+            }
+            self.captured_caller = other.captured_caller;
             self.fibers.append(&mut other.fibers);
         }
     }
 
     pub(crate) fn retain_owned_fibers(&mut self, mut keep: impl FnMut(FiberId) -> bool) {
         self.fibers.retain(|fiber_id| keep(*fiber_id));
+        self.fiber_id = self
+            .fibers
+            .first()
+            .copied()
+            .unwrap_or_else(Self::placeholder_fiber_id);
+        if self.fibers.is_empty() {
+            self.captured_caller = None;
+        }
     }
 
     pub(crate) fn tail_owned_fibers(&self) -> Option<Self> {
         (self.fibers.len() > 1)
-            .then(|| Self::new_captured(ContId::fresh(), self.fibers[1..].to_vec()))
+            .then(|| Self::from_fibers_with_caller(self.fibers[1..].to_vec(), self.captured_caller))
     }
 
     pub fn consumed(&self) -> bool {
@@ -381,10 +437,25 @@ impl Continuation {
         self.consumed.store(true, Ordering::Relaxed);
     }
 
+    pub(crate) fn clear_consumed(&mut self) {
+        self.consumed.store(false, Ordering::Relaxed);
+    }
+
+    pub fn debug_label(&self) -> String {
+        if self.fibers.is_empty() {
+            return "pending".to_string();
+        }
+        self.fibers
+            .iter()
+            .map(|fiber_id| fiber_id.index().to_string())
+            .collect::<Vec<_>>()
+            .join(" -> ")
+    }
+
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let dict = PyDict::new(py);
-        dict.set_item("cont_id", self.cont_id.raw())?;
         dict.set_item("started", self.is_started())?;
+        dict.set_item("fiber_chain", self.debug_label())?;
         Ok(dict.into_any())
     }
 }
@@ -398,7 +469,6 @@ impl Drop for Continuation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ids::Marker;
     use crate::memory_stats::live_object_counts;
 
     fn make_test_segment() -> (Segment, SegmentId) {
@@ -431,12 +501,24 @@ mod tests {
     }
 
     #[test]
-    fn test_clone_handle_keeps_fiber_ids_and_cont_id() {
+    fn test_clone_handle_keeps_fiber_ids() {
         let (seg, seg_id) = make_test_segment();
         let cont = Continuation::capture(&seg, seg_id);
         let handle = cont.clone_handle();
 
-        assert_eq!(handle.cont_id, cont.cont_id);
         assert_eq!(handle.fibers(), &[seg_id]);
+        assert!(!handle.consumed());
+    }
+
+    #[test]
+    fn test_clone_handle_shares_consumed_state() {
+        let (seg, seg_id) = make_test_segment();
+        let mut cont = Continuation::capture(&seg, seg_id);
+        let handle = cont.clone_handle();
+
+        cont.mark_consumed();
+
+        assert!(handle.consumed());
+        assert!(cont.same_handle(&handle));
     }
 }

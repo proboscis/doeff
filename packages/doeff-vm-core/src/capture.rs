@@ -2,7 +2,7 @@
 
 use pyo3::prelude::*;
 
-use crate::ids::ContId;
+use crate::ids::SegmentId;
 
 /// Unique identifier for a program frame instance.
 pub type FrameId = u64;
@@ -173,7 +173,7 @@ pub enum TraceEntry {
         args_repr: Option<String>,
     },
     Dispatch {
-        dispatch_id: ContId,
+        dispatch_id: SegmentId,
         effect_repr: String,
         handler_name: String,
         handler_kind: HandlerKind,
@@ -185,7 +185,7 @@ pub enum TraceEntry {
         exception_repr: Option<String>,
     },
     ResumePoint {
-        dispatch_id: ContId,
+        dispatch_id: SegmentId,
         handler_name: String,
         resumed_function_name: String,
         source_file: String,

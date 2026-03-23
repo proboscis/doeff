@@ -23,7 +23,7 @@ use crate::effect::{
 use crate::error::VMError;
 use crate::handler::{IRStreamFactory, IRStreamProgram, IRStreamProgramRef};
 use crate::handlers::AwaitHandlerFactory;
-use crate::ids::{ContId, PromiseId, TaskId};
+use crate::ids::{PromiseId, SegmentId, TaskId};
 use crate::ir_stream::{IRStream, IRStreamStep, StreamLocation};
 use crate::kleisli::{DgfnKleisli, KleisliRef};
 use crate::py_shared::PyShared;
@@ -185,21 +185,26 @@ enum WaitMode {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum WaitOwner {
-    Task { task_id: TaskId, cont_id: ContId },
-    Root { cont_id: ContId },
+    Task {
+        task_id: TaskId,
+        fiber_id: SegmentId,
+    },
+    Root {
+        fiber_id: SegmentId,
+    },
 }
 
 impl WaitOwner {
-    fn cont_id(&self) -> ContId {
+    fn fiber_id(&self) -> SegmentId {
         match self {
-            WaitOwner::Task { cont_id, .. } | WaitOwner::Root { cont_id } => *cont_id,
+            WaitOwner::Task { fiber_id, .. } | WaitOwner::Root { fiber_id } => *fiber_id,
         }
     }
 }
 
 #[derive(Debug)]
 struct WaitRequest {
-    cont_id: ContId,
+    fiber_id: SegmentId,
     continuation: Option<Continuation>,
     items: Vec<Waitable>,
     mode: WaitMode,
@@ -214,10 +219,10 @@ impl WaitRequest {
         match self.waiting_task {
             Some(task_id) => WaitOwner::Task {
                 task_id,
-                cont_id: self.cont_id,
+                fiber_id: self.fiber_id,
             },
             None => WaitOwner::Root {
-                cont_id: self.cont_id,
+                fiber_id: self.fiber_id,
             },
         }
     }
@@ -291,7 +296,7 @@ struct ReadyRootResume {
 impl Clone for ReadyRootResume {
     fn clone(&self) -> Self {
         Self {
-            continuation: self.continuation.clone_handle(),
+            continuation: self.continuation.fork_handle(),
             outcome: self.outcome.clone(),
             waiting_task: self.waiting_task,
             waiting_store: self.waiting_store.clone(),
@@ -303,7 +308,7 @@ impl Clone for ReadyRootResume {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ReadyTarget {
     Task(TaskId),
-    Root(ContId),
+    Root(SegmentId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -317,11 +322,11 @@ impl Ord for ReadyEntry {
     fn cmp(&self, other: &Self) -> CmpOrdering {
         let self_target = match self.target {
             ReadyTarget::Task(task_id) => task_id.raw(),
-            ReadyTarget::Root(cont_id) => cont_id.raw(),
+            ReadyTarget::Root(fiber_id) => u64::from(fiber_id.raw()),
         };
         let other_target = match other.target {
             ReadyTarget::Task(task_id) => task_id.raw(),
-            ReadyTarget::Root(cont_id) => cont_id.raw(),
+            ReadyTarget::Root(fiber_id) => u64::from(fiber_id.raw()),
         };
         self.priority
             .cmp(&other.priority)
@@ -427,17 +432,17 @@ fn started(k: Continuation) -> OwnedControlContinuation {
     OwnedControlContinuation::Started(k)
 }
 
-fn step_targets_cont_id(step: &IRStreamStep, cont_id: ContId) -> bool {
+fn step_targets_fiber_id(step: &IRStreamStep, fiber_id: SegmentId) -> bool {
     match step {
         IRStreamStep::Yield(DoCtrl::Resume { continuation, .. })
         | IRStreamStep::Yield(DoCtrl::ResumeThrow { continuation, .. })
         | IRStreamStep::Yield(DoCtrl::Transfer { continuation, .. })
         | IRStreamStep::Yield(DoCtrl::Discontinue { continuation, .. })
         | IRStreamStep::Yield(DoCtrl::TransferThrow { continuation, .. }) => {
-            continuation.cont_id == cont_id
+            continuation.fiber_id == fiber_id
         }
         IRStreamStep::Yield(DoCtrl::ResumeContinuation { continuation, .. }) => {
-            continuation.cont_id() == cont_id
+            continuation.fiber_id() == fiber_id
         }
         IRStreamStep::Yield(
             DoCtrl::Pure { .. }
@@ -518,7 +523,7 @@ fn shared_handler_suffix_len(current: &[KleisliRef], stored: &[KleisliRef]) -> u
 pub struct SchedulerState {
     ready: ReadySet,
     ready_task_ids: HashSet<TaskId>,
-    ready_root_resumes: HashMap<ContId, ReadyRootResume>,
+    ready_root_resumes: HashMap<SegmentId, ReadyRootResume>,
     pub tasks: HashMap<TaskId, TaskState>,
     task_metadata: HashMap<TaskId, TaskMetadata>,
     pub promises: HashMap<PromiseId, PromiseState>,
@@ -1322,11 +1327,11 @@ impl SchedulerState {
         self.ready.push(entry);
     }
 
-    fn enqueue_ready_root(&mut self, cont_id: ContId) {
+    fn enqueue_ready_root(&mut self, fiber_id: SegmentId) {
         let entry = ReadyEntry {
             priority: PRIORITY_NORMAL,
             sequence: self.next_ready_sequence,
-            target: ReadyTarget::Root(cont_id),
+            target: ReadyTarget::Root(fiber_id),
         };
         self.next_ready_sequence += 1;
         self.ready.push(entry);
@@ -1403,12 +1408,12 @@ impl SchedulerState {
 
     fn finalize_task_cancellation(&mut self, task_id: TaskId) {
         let task_exists = self.tasks.contains_key(&task_id);
-        let cont_id = match self.tasks.get(&task_id) {
-            Some(TaskState::Pending { cont, .. }) => Some(cont.cont_id()),
+        let fiber_id = match self.tasks.get(&task_id) {
+            Some(TaskState::Pending { cont, .. }) => Some(cont.fiber_id()),
             Some(TaskState::Done { .. }) | None => None,
         };
-        if let Some(cont_id) = cont_id {
-            self.clear_waiters_for_owner(Some(task_id), cont_id);
+        if let Some(fiber_id) = fiber_id {
+            self.clear_waiters_for_owner(Some(task_id), fiber_id);
         }
 
         self.remove_ready_task(task_id);
@@ -1443,9 +1448,9 @@ impl SchedulerState {
             return false;
         }
 
-        let (cont_id, priority, started) = match task_state {
+        let (fiber_id, priority, started) = match task_state {
             TaskState::Pending { cont, priority, .. } => {
-                (cont.cont_id(), *priority, cont.is_started())
+                (cont.fiber_id(), *priority, cont.is_started())
             }
             TaskState::Done { .. } => return false,
         };
@@ -1454,7 +1459,7 @@ impl SchedulerState {
             return false;
         }
 
-        self.clear_waiters_for_owner(Some(task_id), cont_id);
+        self.clear_waiters_for_owner(Some(task_id), fiber_id);
         self.cancel_requested.remove(&task_id);
 
         let cancelled_waiters = self.remove_semaphore_waiters_for_task(task_id);
@@ -1733,7 +1738,7 @@ impl SchedulerState {
         let (waiter_id, waiting_task, mode, item_count, items) = {
             let waiter = self.wait_requests.get(&owner)?;
             (
-                waiter.cont_id,
+                waiter.fiber_id,
                 waiter.waiting_task,
                 waiter.mode,
                 waiter.items.len(),
@@ -1760,7 +1765,7 @@ impl SchedulerState {
                     pending_log_merge_items,
                     ..
                 }) => {
-                    if cont.cont_id() != waiter_id {
+                    if cont.fiber_id() != waiter_id {
                         return None;
                     }
                     *resume_outcome = Some(outcome.clone());
@@ -1811,7 +1816,7 @@ impl SchedulerState {
         }
 
         for owner in waiters_for_item {
-            let waiter_id = owner.cont_id();
+            let waiter_id = owner.fiber_id();
             let already_ready = match owner {
                 WaitOwner::Task { task_id, .. } => self.ready_task_ids.contains(&task_id),
                 WaitOwner::Root { .. } => self.ready_root_resumes.contains_key(&waiter_id),
@@ -1882,11 +1887,11 @@ impl SchedulerState {
     fn clear_waiters_for_owner(
         &mut self,
         waiting_task: Option<TaskId>,
-        cont_id: ContId,
+        fiber_id: SegmentId,
     ) -> Option<WaitRequest> {
         let owner = match waiting_task {
-            Some(task_id) => WaitOwner::Task { task_id, cont_id },
-            None => WaitOwner::Root { cont_id },
+            Some(task_id) => WaitOwner::Task { task_id, fiber_id },
+            None => WaitOwner::Root { fiber_id },
         };
         let removed_request = self.wait_requests.remove(&owner);
         self.pending_gather_fail_fast.remove(&owner);
@@ -1898,13 +1903,13 @@ impl SchedulerState {
         } else {
             self.waitables_by_owner.remove(&owner).unwrap_or_default()
         };
-        if let Some(ready_resume) = self.ready_root_resumes.get(&cont_id) {
+        if let Some(ready_resume) = self.ready_root_resumes.get(&fiber_id) {
             if ready_resume.waiting_task == waiting_task {
-                self.ready_root_resumes.remove(&cont_id);
+                self.ready_root_resumes.remove(&fiber_id);
             }
         }
         self.ready.retain(|entry| match entry.target {
-            ReadyTarget::Root(root_id) => root_id != cont_id,
+            ReadyTarget::Root(root_id) => root_id != fiber_id,
             ReadyTarget::Task(_) => true,
         });
 
@@ -1917,7 +1922,7 @@ impl SchedulerState {
                 ..
             }) = self.tasks.get_mut(&task_id)
             {
-                if cont.cont_id() == cont_id {
+                if cont.fiber_id() == fiber_id {
                     *resume_outcome = None;
                     *pending_log_merge_items = None;
                 }
@@ -1930,7 +1935,7 @@ impl SchedulerState {
                 .filter(|task_id| {
                     matches!(
                         self.tasks.get(task_id),
-                        Some(TaskState::Pending { cont, .. }) if cont.cont_id() == cont_id
+                        Some(TaskState::Pending { cont, .. }) if cont.fiber_id() == fiber_id
                     )
                 })
                 .collect();
@@ -2011,7 +2016,7 @@ impl SchedulerState {
                     WaitOwner::Task { task_id, .. } => Some(task_id),
                     WaitOwner::Root { .. } => None,
                 },
-                owner.cont_id(),
+                owner.fiber_id(),
             )
             .expect("fail-fast waiter must still be registered");
         let mut pending_cleanup_tasks = HashSet::new();
@@ -2069,7 +2074,7 @@ impl SchedulerState {
         }
 
         let waiter = fail_fast.waiter;
-        let waiter_id = waiter.cont_id;
+        let waiter_id = waiter.fiber_id;
         self.execution_context_task_override = Some(fail_fast.failed_task);
 
         if let Some(waiting_task) = waiter.waiting_task {
@@ -2081,7 +2086,7 @@ impl SchedulerState {
                     pending_log_merge_items,
                     ..
                 }) => {
-                    if cont.cont_id() != waiter_id {
+                    if cont.fiber_id() != waiter_id {
                         return None;
                     }
                     *resume_outcome = Some(Err(fail_fast.error));
@@ -2159,10 +2164,10 @@ impl SchedulerState {
                 pending_log_merge_items,
                 ..
             }) => {
-                let cont_id = cont.cont_id();
+                let fiber_id = cont.fiber_id();
                 let continuation = std::mem::replace(
                     cont,
-                    OwnedControlContinuation::Started(Continuation::placeholder(cont_id)),
+                    OwnedControlContinuation::Started(Continuation::placeholder()),
                 );
                 if continuation.is_placeholder() {
                     return Err(scheduler_internal_error(format!(
@@ -2188,7 +2193,7 @@ impl SchedulerState {
     fn register_waiter(
         &mut self,
         items: &[Waitable],
-        cont_id: ContId,
+        fiber_id: SegmentId,
         continuation: Option<Continuation>,
         store: &VarStore,
         mode: WaitMode,
@@ -2205,8 +2210,8 @@ impl SchedulerState {
             self.current_task.is_none() && self.root_wait_should_restore_store(items);
 
         let owner = match self.current_task {
-            Some(task_id) => WaitOwner::Task { task_id, cont_id },
-            None => WaitOwner::Root { cont_id },
+            Some(task_id) => WaitOwner::Task { task_id, fiber_id },
+            None => WaitOwner::Root { fiber_id },
         };
         self.active_wait_owners.insert(owner);
         assert!(
@@ -2221,7 +2226,7 @@ impl SchedulerState {
             WaitMode::Any => 1,
         };
         let waiter = WaitRequest {
-            cont_id,
+            fiber_id,
             continuation,
             items: items.to_vec(),
             mode,
@@ -2243,21 +2248,21 @@ impl SchedulerState {
     pub fn wait_on_all(
         &mut self,
         items: &[Waitable],
-        cont_id: ContId,
+        fiber_id: SegmentId,
         continuation: Option<Continuation>,
         store: &VarStore,
     ) {
-        self.register_waiter(items, cont_id, continuation, store, WaitMode::All);
+        self.register_waiter(items, fiber_id, continuation, store, WaitMode::All);
     }
 
     pub fn wait_on_any(
         &mut self,
         items: &[Waitable],
-        cont_id: ContId,
+        fiber_id: SegmentId,
         continuation: Option<Continuation>,
         store: &VarStore,
     ) {
-        self.register_waiter(items, cont_id, continuation, store, WaitMode::Any);
+        self.register_waiter(items, fiber_id, continuation, store, WaitMode::Any);
     }
 
     fn root_wait_should_restore_store(&self, items: &[Waitable]) -> bool {
@@ -2362,8 +2367,8 @@ impl SchedulerState {
                         selected_ready = Some(entry);
                         break;
                     }
-                    ReadyTarget::Root(cont_id) => {
-                        if !self.ready_root_resumes.contains_key(&cont_id) {
+                    ReadyTarget::Root(fiber_id) => {
+                        if !self.ready_root_resumes.contains_key(&fiber_id) {
                             continue;
                         }
                         selected_ready = Some(entry);
@@ -2430,13 +2435,13 @@ impl SchedulerState {
                             Value::Unit,
                         ));
                     }
-                    ReadyTarget::Root(cont_id) => {
-                        let Some(ready_root) = self.ready_root_resumes.remove(&cont_id) else {
+                    ReadyTarget::Root(fiber_id) => {
+                        let Some(ready_root) = self.ready_root_resumes.remove(&fiber_id) else {
                             continue;
                         };
                         self.clear_waiters_for_owner(
                             ready_root.waiting_task,
-                            ready_root.continuation.cont_id,
+                            ready_root.continuation.fiber_id,
                         );
                         if let Some(waiting_task) = ready_root.waiting_task {
                             if let Err(error) = self.load_task_store(waiting_task, store) {
@@ -2492,16 +2497,16 @@ impl SchedulerState {
         store: &mut VarStore,
     ) -> Result<Option<IRStreamStep>, PyException> {
         match owner {
-            WaitOwner::Task { task_id, cont_id } => {
+            WaitOwner::Task { task_id, fiber_id } => {
                 if !self.ready_task_ids.contains(&task_id) {
                     return Ok(None);
                 }
 
-                let task_cont_id = match self.tasks.get(&task_id) {
-                    Some(TaskState::Pending { cont, .. }) => cont.cont_id(),
+                let task_fiber_id = match self.tasks.get(&task_id) {
+                    Some(TaskState::Pending { cont, .. }) => cont.fiber_id(),
                     _ => return Ok(None),
                 };
-                if task_cont_id != cont_id {
+                if task_fiber_id != fiber_id {
                     return Ok(None);
                 }
                 let (task_k, resume_outcome) = self.take_task_continuation(task_id)?;
@@ -2534,13 +2539,13 @@ impl SchedulerState {
                 };
                 Ok(Some(step))
             }
-            WaitOwner::Root { cont_id } => {
-                let Some(ready_root) = self.ready_root_resumes.remove(&cont_id) else {
+            WaitOwner::Root { fiber_id } => {
+                let Some(ready_root) = self.ready_root_resumes.remove(&fiber_id) else {
                     return Ok(None);
                 };
                 self.clear_waiters_for_owner(
                     ready_root.waiting_task,
-                    ready_root.continuation.cont_id,
+                    ready_root.continuation.fiber_id,
                 );
                 if let Some(waiting_task) = ready_root.waiting_task {
                     self.load_task_store(waiting_task, store)?;
@@ -2705,7 +2710,7 @@ impl SchedulerProgram {
     fn wait_owner(
         &self,
         waiting_task: Option<TaskId>,
-        cont_id: ContId,
+        fiber_id: SegmentId,
         active_driver_owner: Option<WaitOwner>,
     ) -> WaitOwner {
         match (&self.phase, waiting_task) {
@@ -2720,8 +2725,8 @@ impl SchedulerProgram {
                 active_driver_owner.expect("guarded by is_some")
             }
             _ => match waiting_task {
-                Some(task_id) => WaitOwner::Task { task_id, cont_id },
-                None => WaitOwner::Root { cont_id },
+                Some(task_id) => WaitOwner::Task { task_id, fiber_id },
+                None => WaitOwner::Root { fiber_id },
             },
         }
     }
@@ -2770,9 +2775,9 @@ impl SchedulerProgram {
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         let waiting_task = state.current_task;
-        let cont_id = k_user.cont_id;
+        let fiber_id = k_user.fiber_id;
         if let Some(aggregate) = state.collect_all_result(&items) {
-            state.clear_waiters_for_owner(waiting_task, cont_id);
+            state.clear_waiters_for_owner(waiting_task, fiber_id);
             return match aggregate {
                 Ok(results) => resume_to_continuation(started(k_user), results),
                 Err(error) => throw_to_continuation(started(k_user), error),
@@ -2787,8 +2792,8 @@ impl SchedulerProgram {
             Some(k_user)
         };
 
-        state.wait_on_all(&items, cont_id, root_wait_continuation, store);
-        let owner = self.wait_owner(waiting_task, cont_id, state.active_driver_owner);
+        state.wait_on_all(&items, fiber_id, root_wait_continuation, store);
+        let owner = self.wait_owner(waiting_task, fiber_id, state.active_driver_owner);
         drop(state);
         self.continue_wait_transfer(
             owner,
@@ -2818,7 +2823,7 @@ impl SchedulerProgram {
     ) -> IRStreamStep {
         match outcome {
             TransferNextOutcome::Step(step) => {
-                let resumed_waiting_owner = step_targets_cont_id(&step, owner.cont_id());
+                let resumed_waiting_owner = step_targets_fiber_id(&step, owner.fiber_id());
                 let keep_driving = next_running_task.is_some()
                     && !resumed_waiting_owner
                     && step_switches_into_task_body(&step);
@@ -2956,7 +2961,7 @@ impl SchedulerProgram {
                     other => other,
                 };
                 let next_running_task = state.current_task;
-                let resumed_preempted_caller = step_targets_cont_id(&step, k_user.cont_id);
+                let resumed_preempted_caller = step_targets_fiber_id(&step, k_user.fiber_id);
                 let switched_into_task_body = step_switches_into_task_body(&step);
                 let keep_preemptive_transfer = next_running_task.is_some()
                     && switched_into_task_body
@@ -3017,9 +3022,9 @@ impl SchedulerProgram {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         let items = [item];
         let waiting_task = state.current_task;
-        let cont_id = k_user.cont_id;
+        let fiber_id = k_user.fiber_id;
         if let Some(result) = state.collect_any_result(&items) {
-            state.clear_waiters_for_owner(waiting_task, cont_id);
+            state.clear_waiters_for_owner(waiting_task, fiber_id);
             return match result {
                 Ok(value) => resume_to_continuation(started(k_user), value),
                 Err(error) => throw_to_continuation(started(k_user), error),
@@ -3034,8 +3039,8 @@ impl SchedulerProgram {
             Some(k_user)
         };
 
-        state.wait_on_any(&items, cont_id, root_wait_continuation, store);
-        let owner = self.wait_owner(waiting_task, cont_id, state.active_driver_owner);
+        state.wait_on_any(&items, fiber_id, root_wait_continuation, store);
+        let owner = self.wait_owner(waiting_task, fiber_id, state.active_driver_owner);
         drop(state);
         self.continue_wait_transfer(
             owner,
@@ -3065,9 +3070,9 @@ impl SchedulerProgram {
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         let waiting_task = state.current_task;
-        let cont_id = k_user.cont_id;
+        let fiber_id = k_user.fiber_id;
         if let Some(first) = state.collect_any_result(&items) {
-            state.clear_waiters_for_owner(waiting_task, cont_id);
+            state.clear_waiters_for_owner(waiting_task, fiber_id);
             return match first {
                 Ok(value) => resume_to_continuation(started(k_user), value),
                 Err(error) => throw_to_continuation(started(k_user), error),
@@ -3082,8 +3087,8 @@ impl SchedulerProgram {
             Some(k_user)
         };
 
-        state.wait_on_any(&items, cont_id, root_wait_continuation, store);
-        let owner = self.wait_owner(waiting_task, cont_id, state.active_driver_owner);
+        state.wait_on_any(&items, fiber_id, root_wait_continuation, store);
+        let owner = self.wait_owner(waiting_task, fiber_id, state.active_driver_owner);
         drop(state);
         self.continue_wait_transfer(
             owner,
@@ -3223,7 +3228,7 @@ impl SchedulerProgram {
             (Some(current), Some(woken)) if woken.priority > current
         ) && !nested_preemptive_transfer_active;
         if should_preempt {
-            if let Err(error) = state.park_current_with_value(k_user.clone_handle(), Value::Unit) {
+            if let Err(error) = state.park_current_with_value(k_user.fork_handle(), Value::Unit) {
                 return IRStreamStep::Throw(error);
             }
             drop(state);
@@ -3295,7 +3300,7 @@ impl SchedulerProgram {
         match state.transfer_next(store) {
             TransferNextOutcome::Step(step) => {
                 let next_running_task = state.current_task;
-                let resumed_waiting_owner = step_targets_cont_id(&step, owner.cont_id());
+                let resumed_waiting_owner = step_targets_fiber_id(&step, owner.fiber_id());
                 let keep_driving = next_running_task.is_some()
                     && !resumed_waiting_owner
                     && step_switches_into_task_body(&step);
@@ -3375,7 +3380,7 @@ impl IRStreamProgram for SchedulerProgram {
         match sched_effect {
             SchedulerEffect::Spawn { .. } => {
                 self.phase = SchedulerPhase::SpawnAwaitTraceback {
-                    k_user: k_user.clone_handle(),
+                    k_user: k_user.fork_handle(),
                     effect,
                 };
                 IRStreamStep::Yield(DoCtrl::GetTraceback {
@@ -3507,7 +3512,7 @@ impl IRStreamProgram for SchedulerProgram {
                         let mut state = self.state.lock().expect("Scheduler lock poisoned");
                         let items = [Waitable::Promise(promise_id)];
                         let waiting_task = state.current_task;
-                        let cont_id = k_user.cont_id;
+                        let fiber_id = k_user.fiber_id;
                         let root_wait_continuation = if let Some(waiting_task) = state.current_task
                         {
                             if let Err(error) = state.suspend_task_for_wait(waiting_task, k_user) {
@@ -3517,9 +3522,9 @@ impl IRStreamProgram for SchedulerProgram {
                         } else {
                             Some(k_user)
                         };
-                        state.wait_on_any(&items, cont_id, root_wait_continuation, store);
+                        state.wait_on_any(&items, fiber_id, root_wait_continuation, store);
                         let owner =
-                            self.wait_owner(waiting_task, cont_id, state.active_driver_owner);
+                            self.wait_owner(waiting_task, fiber_id, state.active_driver_owner);
                         drop(state);
                         self.continue_wait_transfer(
                             owner,
@@ -3799,7 +3804,7 @@ impl IRStreamProgram for SchedulerProgram {
                 let task_value = Value::Task(TaskHandle { id: task_id });
                 if matches!(current_priority, Some(current) if priority > current) {
                     if let Err(error) =
-                        state.park_current_with_value(k_user.clone_handle(), task_value)
+                        state.park_current_with_value(k_user.fork_handle(), task_value)
                     {
                         return IRStreamStep::Throw(error);
                     }
@@ -4197,7 +4202,7 @@ mod tests {
     #[test]
     fn test_transfer_to_continuation_started_emits_transfer() {
         let cont = make_test_continuation();
-        let cont_id = cont.cont_id;
+        let fiber_id = cont.fiber_id;
         let step = transfer_to_continuation(cont, Value::Int(123));
 
         match step {
@@ -4205,7 +4210,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, cont_id);
+                assert_eq!(continuation.fiber_id, fiber_id);
                 assert_eq!(value.as_int(), Some(123));
             }
             _ => panic!("started continuation must emit DoCtrl::Transfer"),
@@ -4215,7 +4220,7 @@ mod tests {
     #[test]
     fn test_transfer_to_continuation_unstarted_emits_resume_continuation() {
         let cont = make_unstarted_test_continuation();
-        let cont_id = cont.cont_id;
+        let fiber_id = cont.fiber_id;
         let step = transfer_to_continuation(cont, Value::Int(456));
 
         match step {
@@ -4223,7 +4228,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, cont_id);
+                assert_eq!(continuation.fiber_id, fiber_id);
                 assert_eq!(value.as_int(), Some(456));
             }
             _ => panic!("unstarted continuation must emit DoCtrl::ResumeContinuation"),
@@ -4311,7 +4316,7 @@ mod tests {
         assert!(matches!(
             fresh_step,
             IRStreamStep::Yield(DoCtrl::Transfer { continuation, .. })
-            if continuation.cont_id == fresh_cont.cont_id
+            if continuation.fiber_id == fresh_cont.fiber_id
         ));
 
         let mut woke_ok_state = SchedulerState::new();
@@ -4332,7 +4337,7 @@ mod tests {
         assert!(matches!(
             woke_ok_step,
             IRStreamStep::Yield(DoCtrl::Transfer { continuation, value })
-            if continuation.cont_id == woke_ok_cont.cont_id && value.as_int() == Some(7)
+            if continuation.fiber_id == woke_ok_cont.fiber_id && value.as_int() == Some(7)
         ));
 
         let mut woke_err_state = SchedulerState::new();
@@ -4353,7 +4358,7 @@ mod tests {
         assert!(matches!(
             woke_err_step,
             IRStreamStep::Yield(DoCtrl::TransferThrow { continuation, .. })
-            if continuation.cont_id == woke_err_cont.cont_id
+            if continuation.fiber_id == woke_err_cont.fiber_id
         ));
     }
 
@@ -4502,7 +4507,7 @@ mod tests {
                     continuation,
                     value,
                 }) => {
-                    assert_eq!(continuation.cont_id, k_user_id);
+                    assert_eq!(continuation.fiber_id, k_user_id);
                     assert!(matches!(value, Value::Task(_)));
                 }
                 _ => panic!("expected IRStream Yield(Resume|Transfer|ResumeContinuation)"),
@@ -4555,7 +4560,7 @@ mod tests {
             &mut _scope,
         );
         assert!(
-            step_targets_cont_id(&step, spawned_k.cont_id),
+            step_targets_fiber_id(&step, spawned_k.fiber_id),
             "higher-priority spawned task must run before caller, got {:?}",
             step
         );
@@ -4574,7 +4579,7 @@ mod tests {
         else {
             panic!("current task should remain pending after preemption");
         };
-        assert_eq!(cont.cont_id, caller_k.cont_id);
+        assert_eq!(cont.fiber_id, caller_k.fiber_id);
         assert!(
             matches!(resume_outcome, Some(Ok(Value::Task(_)))),
             "caller must be parked with spawned task handle"
@@ -4650,7 +4655,7 @@ mod tests {
                 &mut _scope,
             );
             assert!(
-                step_targets_cont_id(&step, waiter_k.cont_id),
+                step_targets_fiber_id(&step, waiter_k.fiber_id),
                 "higher-priority waiter must run first after promise completion, got {:?}",
                 step
             );
@@ -4665,7 +4670,7 @@ mod tests {
             else {
                 panic!("idle caller should remain pending after promise completion");
             };
-            assert_eq!(cont.cont_id, idle_k.cont_id);
+            assert_eq!(cont.fiber_id, idle_k.fiber_id);
             assert!(
                 matches!(resume_outcome, Some(Ok(Value::Unit))),
                 "idle caller should be parked with unit resume value"
@@ -4681,23 +4686,23 @@ mod tests {
     fn test_driving_phase_contains_wait_owner_identity_only() {
         let waiting_task = TaskId::from_raw(7);
         let running_task = TaskId::from_raw(9);
-        let waiting_cont_id = ContId::from_raw(11);
+        let waiting_fiber_id = SegmentId::from_raw(11);
 
         let phase = SchedulerPhase::Driving {
             owner: WaitOwner::Task {
                 task_id: waiting_task,
-                cont_id: waiting_cont_id,
+                fiber_id: waiting_fiber_id,
             },
             running_task,
         };
 
         match phase {
             SchedulerPhase::Driving {
-                owner: WaitOwner::Task { task_id, cont_id },
+                owner: WaitOwner::Task { task_id, fiber_id },
                 running_task: active_task,
             } => {
                 assert_eq!(task_id, waiting_task);
-                assert_eq!(cont_id, waiting_cont_id);
+                assert_eq!(fiber_id, waiting_fiber_id);
                 assert_eq!(active_task, running_task);
             }
             other => panic!("expected Driving phase, got {:?}", other),
@@ -4708,7 +4713,7 @@ mod tests {
             SchedulerPhase::Driving {
                 owner: WaitOwner::Task {
                     task_id: waiting_task,
-                    cont_id: waiting_cont_id,
+                    fiber_id: waiting_fiber_id,
                 },
                 running_task,
             }
@@ -4766,7 +4771,7 @@ mod tests {
         program.phase = SchedulerPhase::Driving {
             owner: WaitOwner::Task {
                 task_id: waiting_task,
-                cont_id: waiter_k.cont_id,
+                fiber_id: waiter_k.fiber_id,
             },
             running_task,
         };
@@ -4785,7 +4790,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, waiter_k.cont_id);
+                assert_eq!(continuation.fiber_id, waiter_k.fiber_id);
                 match value {
                     Value::List(values) => {
                         assert_eq!(values.len(), 1);
@@ -4880,19 +4885,19 @@ mod tests {
                 &mut _scope,
             );
             assert!(
-                step_targets_cont_id(&first_step, normal_k.cont_id),
+                step_targets_fiber_id(&first_step, normal_k.fiber_id),
                 "NORMAL waiter should preempt IDLE driver, got {:?}",
                 first_step
             );
             assert!(matches!(
                 &program.phase,
                 SchedulerPhase::PreemptiveTransfer { k_user }
-                if k_user.cont_id == idle_driver_k.cont_id
+                if k_user.fiber_id == idle_driver_k.fiber_id
             ));
 
             let second_step = IRStream::resume(&mut program, Value::Unit, &mut store, &mut _scope);
             assert!(
-                step_targets_cont_id(&second_step, idle_driver_k.cont_id),
+                step_targets_fiber_id(&second_step, idle_driver_k.fiber_id),
                 "IDLE driver should resume after NORMAL task hands control back, got {:?}",
                 second_step
             );
@@ -4966,7 +4971,7 @@ mod tests {
             driving_program.phase = SchedulerPhase::Driving {
                 owner: WaitOwner::Task {
                     task_id: waiting_task,
-                    cont_id: waiter_k.cont_id,
+                    fiber_id: waiter_k.fiber_id,
                 },
                 running_task,
             };
@@ -5010,13 +5015,13 @@ mod tests {
                 IRStream::resume(&mut driving_program, Value::Unit, &mut store, &mut _scope);
 
             let mut waiter_activation_count = 0;
-            if step_targets_cont_id(&resolver_step, waiter_k.cont_id) {
+            if step_targets_fiber_id(&resolver_step, waiter_k.fiber_id) {
                 waiter_activation_count += 1;
             }
-            if step_targets_cont_id(&dequeue_step, waiter_k.cont_id) {
+            if step_targets_fiber_id(&dequeue_step, waiter_k.fiber_id) {
                 waiter_activation_count += 1;
             }
-            if step_targets_cont_id(&stale_step, waiter_k.cont_id) {
+            if step_targets_fiber_id(&stale_step, waiter_k.fiber_id) {
                 waiter_activation_count += 1;
             }
 
@@ -5025,11 +5030,11 @@ mod tests {
                 "waiter continuation must be activated exactly once across scheduler instances"
             );
             assert!(
-                step_targets_cont_id(&dequeue_step, waiter_k.cont_id),
+                step_targets_fiber_id(&dequeue_step, waiter_k.fiber_id),
                 "single activation must happen via ready-queue dequeue"
             );
             assert!(
-                !step_targets_cont_id(&stale_step, waiter_k.cont_id),
+                !step_targets_fiber_id(&stale_step, waiter_k.fiber_id),
                 "stale Driving instance must not reactivate waiter continuation"
             );
         });
@@ -5133,14 +5138,14 @@ mod tests {
                 &mut _scope,
             );
             assert!(
-                step_targets_cont_id(&first_step, normal_k.cont_id),
+                step_targets_fiber_id(&first_step, normal_k.fiber_id),
                 "first promise completion should preempt IDLE and run NORMAL, got {:?}",
                 first_step
             );
             assert!(matches!(
                 &program.phase,
                 SchedulerPhase::PreemptiveTransfer { k_user, .. }
-                if k_user.cont_id == idle_k.cont_id
+                if k_user.fiber_id == idle_k.fiber_id
             ));
 
             let wake_high = make_complete_promise_effect(
@@ -5160,14 +5165,14 @@ mod tests {
                 &mut _scope,
             );
             assert!(
-                step_targets_cont_id(&second_step, normal_k.cont_id),
+                step_targets_fiber_id(&second_step, normal_k.fiber_id),
                 "nested preemption must be blocked while transfer is active, got {:?}",
                 second_step
             );
             assert!(matches!(
                 &program.phase,
                 SchedulerPhase::PreemptiveTransfer { k_user, .. }
-                if k_user.cont_id == idle_k.cont_id
+                if k_user.fiber_id == idle_k.fiber_id
             ));
 
             let guard = state.lock().expect("Scheduler lock poisoned");
@@ -5253,7 +5258,7 @@ mod tests {
                 matches!(
                     &step,
                     IRStreamStep::Yield(DoCtrl::ResumeThrow { continuation, .. })
-                    if continuation.cont_id == waiter_k.cont_id
+                    if continuation.fiber_id == waiter_k.fiber_id
                 ),
                 "higher-priority waiter should receive non-terminal throw transfer, got {:?}",
                 step
@@ -5269,7 +5274,7 @@ mod tests {
             else {
                 panic!("idle caller should remain pending after promise failure");
             };
-            assert_eq!(cont.cont_id, idle_k.cont_id);
+            assert_eq!(cont.fiber_id, idle_k.fiber_id);
             assert!(
                 matches!(resume_outcome, Some(Ok(Value::Unit))),
                 "idle caller should be parked with unit resume value"
@@ -5323,7 +5328,7 @@ mod tests {
             &mut _scope,
         );
         assert!(
-            step_targets_cont_id(&step, caller_k.cont_id),
+            step_targets_fiber_id(&step, caller_k.fiber_id),
             "same-priority spawn should resume caller immediately, got {:?}",
             step
         );
@@ -5378,7 +5383,7 @@ mod tests {
             &mut _scope,
         );
         assert!(
-            step_targets_cont_id(&step, caller_k.cont_id),
+            step_targets_fiber_id(&step, caller_k.fiber_id),
             "lower-priority spawn should resume caller immediately, got {:?}",
             step
         );
@@ -5466,16 +5471,16 @@ mod tests {
 
         for i in 0..128 {
             let (task, expected_cont) = if i % 2 == 0 {
-                (task0, cont0.cont_id)
+                (task0, cont0.fiber_id)
             } else {
-                (task1, cont1.cont_id)
+                (task1, cont1.fiber_id)
             };
             state.enqueue_ready_task(task, PRIORITY_NORMAL);
 
             let step = state.transfer_next_or(scheduler_k.clone(), &mut store);
             match step {
                 IRStreamStep::Yield(DoCtrl::Transfer { continuation, .. }) => {
-                    assert_eq!(continuation.cont_id, expected_cont);
+                    assert_eq!(continuation.fiber_id, expected_cont);
                 }
                 IRStreamStep::Yield(DoCtrl::Resume { .. }) => {
                     panic!("task switches must not emit DoCtrl::Resume")
@@ -5520,7 +5525,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, waiter.cont_id);
+                assert_eq!(continuation.fiber_id, waiter.fiber_id);
                 match value {
                     Value::List(values) => {
                         assert_eq!(values.len(), 1);
@@ -5812,7 +5817,7 @@ mod tests {
 
             program.phase = SchedulerPhase::Driving {
                 owner: WaitOwner::Root {
-                    cont_id: gather_owner_k.cont_id,
+                    fiber_id: gather_owner_k.fiber_id,
                 },
                 running_task: waiting_task,
             };
@@ -5830,16 +5835,16 @@ mod tests {
             );
 
             assert!(
-                step_targets_cont_id(&step, runnable_k.cont_id),
+                step_targets_fiber_id(&step, runnable_k.fiber_id),
                 "blocked acquire should transfer into another runnable task, got {:?}",
                 step
             );
             assert!(matches!(
                 &program.phase,
                 SchedulerPhase::Driving {
-                    owner: WaitOwner::Root { cont_id },
+                    owner: WaitOwner::Root { fiber_id },
                     running_task,
-                } if *cont_id == gather_owner_k.cont_id
+                } if *fiber_id == gather_owner_k.fiber_id
                     && *running_task == runnable_task
             ));
         });
@@ -6166,7 +6171,7 @@ mod tests {
         // Register a waiter on t1 (simulating what wait_on_all does
         // for the one remaining pending item)
         let waiter = make_test_continuation();
-        let waiter_id = waiter.cont_id;
+        let waiter_id = waiter.fiber_id;
         state.wait_on_all(
             &[Waitable::Task(t0), Waitable::Task(t1)],
             waiter,
@@ -6236,7 +6241,7 @@ mod tests {
 
         // Register race waiter on both
         let waiter = make_test_continuation();
-        let waiter_id = waiter.cont_id;
+        let waiter_id = waiter.fiber_id;
         state.wait_on_any(
             &[Waitable::Task(t0), Waitable::Task(t1)],
             waiter,
@@ -6327,7 +6332,7 @@ mod tests {
 
             let k_user = make_test_continuation();
             s.ready_root_resumes.insert(
-                k_user.cont_id,
+                k_user.fiber_id,
                 ReadyRootResume {
                     continuation: k_user.clone(),
                     outcome: Ok(Value::List(vec![Value::Int(1), Value::Int(2)])),
@@ -6348,11 +6353,11 @@ mod tests {
             &mut store,
         );
 
-        assert!(step_targets_cont_id(&step, k_user.cont_id));
+        assert!(step_targets_fiber_id(&step, k_user.fiber_id));
 
         let s = state.lock().unwrap();
         assert!(
-            !s.ready_root_resumes.contains_key(&k_user.cont_id),
+            !s.ready_root_resumes.contains_key(&k_user.fiber_id),
             "stale ready_root_resume for already-resumed continuation must be removed"
         );
     }
@@ -6407,7 +6412,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, waiter_cont.cont_id);
+                assert_eq!(continuation.fiber_id, waiter_cont.fiber_id);
                 assert_eq!(value.as_int(), Some(99));
             }
             other => panic!("expected waiter continuation to run, got {:?}", other),
@@ -6452,7 +6457,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, waiter_cont.cont_id);
+                assert_eq!(continuation.fiber_id, waiter_cont.fiber_id);
                 assert_eq!(value.as_int(), Some(7));
             }
             other => panic!(
@@ -6486,7 +6491,7 @@ mod tests {
 
         state.wait_on_all(
             &[Waitable::Task(task_id)],
-            waiter_cont.cont_id,
+            waiter_cont.fiber_id,
             Some(waiter_cont.clone()),
             &store,
         );
@@ -6513,7 +6518,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, waiter_cont.cont_id);
+                assert_eq!(continuation.fiber_id, waiter_cont.fiber_id);
                 assert_eq!(value.as_int(), Some(7));
             }
             other => panic!(
@@ -6597,7 +6602,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, owner_a_cont.cont_id);
+                assert_eq!(continuation.fiber_id, owner_a_cont.fiber_id);
                 assert_eq!(value.as_int(), Some(11));
             }
             other => panic!(
@@ -6646,7 +6651,7 @@ mod tests {
         let owner_after_first = make_test_continuation();
         let first_step = state.transfer_next_or(owner_after_first.clone(), &mut store);
         assert!(
-            step_targets_cont_id(&first_step, owner_after_first.cont_id),
+            step_targets_fiber_id(&first_step, owner_after_first.fiber_id),
             "waiter must not be ready after only first dependency completes"
         );
 
@@ -6666,7 +6671,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, waiter_cont.cont_id);
+                assert_eq!(continuation.fiber_id, waiter_cont.fiber_id);
                 match value {
                     Value::List(values) => {
                         assert_eq!(values.len(), 2);
@@ -6732,7 +6737,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, waiter_cont.cont_id);
+                assert_eq!(continuation.fiber_id, waiter_cont.fiber_id);
                 assert_eq!(value.as_int(), Some(7));
             }
             other => panic!("expected waiter continuation to run, got {:?}", other),
