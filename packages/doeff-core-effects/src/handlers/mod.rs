@@ -463,9 +463,7 @@ impl IRStreamProgram for AwaitHandlerProgram {
                     };
                     Self::yield_perform(create_external_promise_effect())
                 }
-                Ok(None) => IRStreamStep::Yield(DoCtrl::Pass {
-                    effect: dispatch_from_shared(obj),
-                }),
+                Ok(None) => IRStreamStep::Yield(DoCtrl::Pass),
                 Err(msg) => IRStreamStep::Throw(PyException::type_error(format!(
                     "failed to parse await effect: {msg}"
                 ))),
@@ -474,7 +472,7 @@ impl IRStreamProgram for AwaitHandlerProgram {
 
         #[cfg(test)]
         {
-            return IRStreamStep::Yield(DoCtrl::Pass { effect });
+            return IRStreamStep::Yield(DoCtrl::Pass);
         }
 
         #[cfg(not(test))]
@@ -705,15 +703,13 @@ impl IRStreamProgram for StateHandlerProgram {
                         })
                     }
                 },
-                Ok(None) => IRStreamStep::Yield(DoCtrl::Pass {
-                    effect: dispatch_from_shared(obj),
-                }),
+                Ok(None) => IRStreamStep::Yield(DoCtrl::Pass),
                 Err(msg) => IRStreamStep::Throw(PyException::type_error(format!(
                     "failed to parse state effect: {msg}"
                 ))),
             };
         }
-        IRStreamStep::Yield(DoCtrl::Pass { effect })
+        IRStreamStep::Yield(DoCtrl::Pass)
     }
 
     fn resume(
@@ -1150,19 +1146,15 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                     if let Some(value) = ask_from_scope_or_env(scope, &key) {
                         return self.handle_ask_value(key, k, value);
                     }
-                    IRStreamStep::Yield(DoCtrl::Delegate {
-                        effect: dispatch_from_shared(obj),
-                    })
+                    IRStreamStep::Yield(DoCtrl::Delegate)
                 }
-                Ok(None) => IRStreamStep::Yield(DoCtrl::Pass {
-                    effect: dispatch_from_shared(obj),
-                }),
+                Ok(None) => IRStreamStep::Yield(DoCtrl::Pass),
                 Err(msg) => IRStreamStep::Throw(PyException::type_error(format!(
                     "failed to parse lazy Ask effect: {msg}"
                 ))),
             };
         }
-        IRStreamStep::Yield(DoCtrl::Pass { effect })
+        IRStreamStep::Yield(DoCtrl::Pass)
     }
 
     fn resume(
@@ -1402,15 +1394,13 @@ impl IRStreamProgram for ReaderHandlerProgram {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_reader_python_effect(&obj) {
                 Ok(Some(key)) => self.handle_ask(key, k, scope),
-                Ok(None) => IRStreamStep::Yield(DoCtrl::Pass {
-                    effect: dispatch_from_shared(obj),
-                }),
+                Ok(None) => IRStreamStep::Yield(DoCtrl::Pass),
                 Err(msg) => IRStreamStep::Throw(PyException::type_error(format!(
                     "failed to parse reader effect: {msg}"
                 ))),
             };
         }
-        IRStreamStep::Yield(DoCtrl::Pass { effect })
+        IRStreamStep::Yield(DoCtrl::Pass)
     }
 
     fn resume(&mut self, value: Value, _: &mut VarStore, _scope: &mut ScopeStore) -> IRStreamStep {
@@ -1531,15 +1521,13 @@ impl IRStreamProgram for WriterHandlerProgram {
                     self.pending_return = false;
                     IRStreamStep::Yield(DoCtrl::AppendHandlerLog { message })
                 }
-                Ok(None) => IRStreamStep::Yield(DoCtrl::Pass {
-                    effect: dispatch_from_shared(obj),
-                }),
+                Ok(None) => IRStreamStep::Yield(DoCtrl::Pass),
                 Err(msg) => IRStreamStep::Throw(PyException::type_error(format!(
                     "failed to parse writer effect: {msg}"
                 ))),
             };
         }
-        IRStreamStep::Yield(DoCtrl::Pass { effect })
+        IRStreamStep::Yield(DoCtrl::Pass)
     }
 
     fn resume(&mut self, value: Value, _: &mut VarStore, _scope: &mut ScopeStore) -> IRStreamStep {
@@ -1701,9 +1689,7 @@ impl IRStreamProgram for ResultSafeHandlerProgram {
                         metadata: None,
                     })
                 }
-                Ok(None) => IRStreamStep::Yield(DoCtrl::Pass {
-                    effect: dispatch_from_shared(obj),
-                }),
+                Ok(None) => IRStreamStep::Yield(DoCtrl::Pass),
                 Err(msg) => IRStreamStep::Throw(PyException::type_error(format!(
                     "failed to parse ResultSafe effect: {msg}"
                 ))),
@@ -1712,7 +1698,7 @@ impl IRStreamProgram for ResultSafeHandlerProgram {
 
         #[cfg(test)]
         {
-            return IRStreamStep::Yield(DoCtrl::Pass { effect });
+            return IRStreamStep::Yield(DoCtrl::Pass);
         }
 
         #[cfg(not(test))]
@@ -1851,7 +1837,7 @@ impl IRStreamProgram for DoubleCallHandlerProgram {
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         let Some(obj) = dispatch_into_python(effect.clone()) else {
-            return IRStreamStep::Yield(DoCtrl::Pass { effect });
+            return IRStreamStep::Yield(DoCtrl::Pass);
         };
 
         match parse_state_python_effect(&obj) {
@@ -1866,7 +1852,7 @@ impl IRStreamProgram for DoubleCallHandlerProgram {
                     kwargs: vec![],
                 })
             }
-            Ok(Some(_)) | Ok(None) => IRStreamStep::Yield(DoCtrl::Pass { effect }),
+            Ok(Some(_)) | Ok(None) => IRStreamStep::Yield(DoCtrl::Pass),
             Err(msg) => IRStreamStep::Throw(PyException::type_error(format!(
                 "failed to parse DoubleCall effect: {msg}"
             ))),

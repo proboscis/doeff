@@ -234,6 +234,70 @@ impl VM {
         a.cont_id == b.cont_id || a.same_owned_fibers(b)
     }
 
+    fn prompt_forward_context(
+        &self,
+        prompt_seg_id: SegmentId,
+    ) -> Option<(DispatchEffect, Continuation)> {
+        let segment = self.segments.get(prompt_seg_id)?;
+        let effect = segment.pending_effect.as_ref()?.clone();
+        let continuation = segment.pending_continuation.as_ref()?.clone_handle();
+        Some((effect, continuation))
+    }
+
+    fn cloned_continuation_without_error_context(
+        &mut self,
+        continuation: &Continuation,
+    ) -> Continuation {
+        let cloned = continuation.clone_handle();
+        for fiber_id in cloned.fibers() {
+            self.clear_pending_error_context(*fiber_id);
+        }
+        cloned
+    }
+
+    fn set_prompt_forward_context(
+        &mut self,
+        prompt_seg_id: SegmentId,
+        effect: &DispatchEffect,
+        continuation: &Continuation,
+    ) {
+        let segment = self.segments.get_mut(prompt_seg_id).unwrap_or_else(|| {
+            panic!(
+                "set_prompt_forward_context: prompt segment {} not found",
+                prompt_seg_id.0
+            )
+        });
+        segment.pending_effect = Some(effect.clone());
+        segment.pending_continuation = Some(continuation.clone_handle());
+    }
+
+    fn clear_prompt_forward_context(&mut self, prompt_seg_id: SegmentId) {
+        let Some(segment) = self.segments.get_mut(prompt_seg_id) else {
+            return;
+        };
+        segment.pending_effect = None;
+        segment.pending_continuation = None;
+    }
+
+    fn clear_prompt_forward_context_pair(&mut self, prompt_seg_id: SegmentId) {
+        self.clear_prompt_forward_context(prompt_seg_id);
+        let canonical_prompt_seg_id = self.canonical_output_segment_id(prompt_seg_id);
+        if canonical_prompt_seg_id != prompt_seg_id {
+            self.clear_prompt_forward_context(canonical_prompt_seg_id);
+        }
+    }
+
+    fn clear_dispatch_forward_context(&mut self, dispatch: &ProgramDispatch) {
+        self.clear_prompt_forward_context_pair(dispatch.prompt_segment_id);
+        if let Some(prompt_seg_id) = self
+            .segments
+            .get(dispatch.handler_segment_id)
+            .and_then(|segment| segment.parent)
+        {
+            self.clear_prompt_forward_context_pair(prompt_seg_id);
+        }
+    }
+
     fn continuation_is_suffix(container: &Continuation, candidate: &Continuation) -> bool {
         let container_fibers = container.fibers();
         let candidate_fibers = candidate.fibers();
@@ -592,6 +656,7 @@ impl VM {
         });
 
         if let Some(dispatch) = dispatch {
+            self.clear_dispatch_forward_context(&dispatch);
             let seg_id = dispatch.handler_segment_id;
             if let Some(segment) = self.segments.get_mut(seg_id) {
                 for frame in &mut segment.frames {
@@ -760,7 +825,10 @@ impl VM {
     ) -> Option<DispatchFrameView> {
         self.dispatch_lookup_candidates().into_iter().find(|view| {
             Self::continuation_handle_matches(&view.dispatch.origin, continuation)
-                || Self::continuation_handle_matches(&view.dispatch.handler_continuation, continuation)
+                || Self::continuation_handle_matches(
+                    &view.dispatch.handler_continuation,
+                    continuation,
+                )
         })
     }
 
@@ -804,11 +872,9 @@ impl VM {
                 else {
                     continue;
                 };
-                let Some(child_depth) = self.continuation_origin_relation_depth(
-                    child_continuation,
-                    target,
-                    visited,
-                ) else {
+                let Some(child_depth) =
+                    self.continuation_origin_relation_depth(child_continuation, target, visited)
+                else {
                     continue;
                 };
                 let candidate_depth = child_depth + 1;
@@ -820,10 +886,7 @@ impl VM {
         best
     }
 
-    fn continuation_dispatch_view(
-        &self,
-        continuation: &Continuation,
-    ) -> Option<DispatchFrameView> {
+    fn continuation_dispatch_view(&self, continuation: &Continuation) -> Option<DispatchFrameView> {
         self.dispatch_view_for_continuation_exact(continuation)
             .or_else(|| self.dispatch_view_for_continuation_suffix(continuation))
             .or_else(|| {
@@ -1221,12 +1284,11 @@ impl VM {
         &self,
         continuation: &Continuation,
     ) -> Option<SegmentId> {
-        self.continuation_parent_hint(continuation)
-            .or_else(|| {
-                continuation
-                    .outermost_fiber_id()
-                    .filter(|seg_id| self.segments.get(*seg_id).is_some())
-            })
+        self.continuation_parent_hint(continuation).or_else(|| {
+            continuation
+                .outermost_fiber_id()
+                .filter(|seg_id| self.segments.get(*seg_id).is_some())
+        })
     }
 
     fn delegate_return_target_segment_id(&self, seg_id: SegmentId) -> Option<SegmentId> {
@@ -1567,20 +1629,31 @@ impl VM {
                 .as_ref()
                 .is_some_and(PyException::requires_safe_error_context_dispatch);
         let restricted_excluded_prompts: HashSet<SegmentId> = if restricted_error_context_dispatch {
-            self.current_segment_dispatch_id()
-                .and_then(|dispatch_id| {
-                    self.dispatch_origin_for_dispatch_id(dispatch_id)
-                        .map(|origin| {
-                            self.handlers_in_caller_chain(
-                                self.continuation_handler_chain_start(&origin.k_origin)
-                                    .expect("dispatch origin continuations must be captured"),
-                            )
-                            .into_iter()
-                            .map(|entry| entry.prompt_seg_id)
-                            .collect()
-                        })
-                })
-                .unwrap_or_default()
+            let dispatch_id = self.current_segment_dispatch_id().ok_or_else(|| {
+                VMError::internal(
+                    "restricted GetExecutionContext dispatch requires a current dispatch id",
+                )
+            })?;
+            let origin = self
+                .dispatch_origin_for_dispatch_id(dispatch_id)
+                .ok_or_else(|| {
+                    VMError::internal(format!(
+                        "restricted GetExecutionContext dispatch {} missing origin",
+                        dispatch_id.raw()
+                    ))
+                })?;
+            let start_seg_id = self
+                .continuation_handler_chain_start(&origin.k_origin)
+                .ok_or_else(|| {
+                    VMError::internal(format!(
+                        "restricted GetExecutionContext dispatch {} missing handler chain start",
+                        dispatch_id.raw()
+                    ))
+                })?;
+            self.handlers_in_caller_chain(start_seg_id)
+                .into_iter()
+                .map(|entry| entry.prompt_seg_id)
+                .collect()
         } else {
             HashSet::new()
         };
@@ -1842,6 +1915,10 @@ impl VM {
         let origin_k = k_user.clone_handle();
         let active_k = k_user.clone_handle();
         let canonical_prompt_seg_id = self.canonical_output_segment_id(prompt_seg_id);
+        self.set_prompt_forward_context(prompt_seg_id, &effect, &k_user);
+        if canonical_prompt_seg_id != prompt_seg_id {
+            self.set_prompt_forward_context(canonical_prompt_seg_id, &effect, &k_user);
+        }
         self.set_pending_program_dispatch(
             handler_seg_id,
             ProgramDispatch {
@@ -1885,9 +1962,8 @@ impl VM {
     }
 
     pub(super) fn dispatch_has_terminal_handler_action(&self, dispatch_id: DispatchId) -> bool {
-        self.dispatch_trace(dispatch_id).is_some_and(|trace| {
-            !matches!(trace.result, EffectResult::Active)
-        })
+        self.dispatch_trace(dispatch_id)
+            .is_some_and(|trace| !matches!(trace.result, EffectResult::Active))
     }
 
     pub(super) fn finalize_active_dispatches_as_threw(&mut self, exception: &PyException) {
@@ -2217,12 +2293,15 @@ impl VM {
                 || !exact_origin_before_bind.unwrap_or(false)
                 || resuming_user_defined_python_handler
             {
-                let outer_dispatch = self.find_dispatch_frame(dispatch_id).map(|view| view.dispatch);
+                let outer_dispatch = self
+                    .find_dispatch_frame(dispatch_id)
+                    .map(|view| view.dispatch);
                 let outer_handler_continuation = outer_dispatch
                     .as_ref()
                     .map(|dispatch| dispatch.handler_continuation.clone_handle());
-                let outer_parent_dispatch_id =
-                    outer_dispatch.as_ref().and_then(|dispatch| dispatch.parent_dispatch_id);
+                let outer_parent_dispatch_id = outer_dispatch
+                    .as_ref()
+                    .and_then(|dispatch| dispatch.parent_dispatch_id);
                 if let Some(program_dispatch) = self.segment_program_dispatch_mut(seg_id) {
                     if !restoring_outer_dispatch || program_dispatch.dispatch_id == dispatch_id {
                         program_dispatch.dispatch_id = dispatch_id;
@@ -2671,17 +2750,7 @@ impl VM {
         Ok(pass_cont)
     }
 
-    fn handle_forward(&mut self, kind: ForwardKind, effect: DispatchEffect) -> StepEvent {
-        let Some(dispatch_id) = self.current_dispatch_id() else {
-            return StepEvent::Error(VMError::internal(kind.outside_dispatch_error()));
-        };
-        let Some(origin) = self.dispatch_origin_for_dispatch_id(dispatch_id) else {
-            return StepEvent::Error(VMError::internal(format!(
-                "{}: dispatch {} not found",
-                kind.missing_handler_context(),
-                dispatch_id.raw()
-            )));
-        };
+    fn handle_forward(&mut self, kind: ForwardKind) -> StepEvent {
         let handler_dispatch = self.nearest_handler_dispatch().or_else(|| {
             self.current_segment_dispatch_id().and_then(|dispatch_id| {
                 self.active_handler_dispatch_for(dispatch_id).and_then(
@@ -2692,14 +2761,24 @@ impl VM {
                 )
             })
         });
-        let Some((inner_seg_id, _, parent_k_user, current_marker, current_prompt_seg_id)) =
+        let Some((inner_seg_id, dispatch_id, _dispatch_k, current_marker, current_prompt_seg_id)) =
             handler_dispatch
         else {
+            return StepEvent::Error(VMError::internal(kind.outside_dispatch_error()));
+        };
+        let Some(origin) = self.dispatch_origin_for_dispatch_id(dispatch_id) else {
             return StepEvent::Error(VMError::internal(format!(
-                "{}: active handler dispatch {} not found",
+                "{}: dispatch {} not found",
                 kind.missing_handler_context(),
                 dispatch_id.raw()
             )));
+        };
+        let (effect, parent_k_user) = match self.prompt_forward_context(current_prompt_seg_id) {
+            Some((effect, continuation)) if effect == origin.effect => (effect, continuation),
+            Some(_) | None => (
+                origin.effect.clone(),
+                self.cloned_continuation_without_error_context(&origin.k_origin),
+            ),
         };
         let handler_chain_start = match self.caller_visible_handler_chain_start() {
             Ok(seg_id) => seg_id,
@@ -2730,6 +2809,17 @@ impl VM {
             handler_chain.insert(0, current_entry);
             0
         };
+        let visible_additions = self.visible_ancestor_handler_additions(
+            dispatch_id,
+            current_prompt_seg_id,
+            &handler_chain[from_idx + 1..],
+        );
+        if !visible_additions.is_empty() {
+            let mut expanded = handler_chain[..from_idx + 1].to_vec();
+            expanded.extend(visible_additions);
+            expanded.extend_from_slice(&handler_chain[from_idx + 1..]);
+            handler_chain = expanded;
+        }
         let outer_caller = self
             .segments
             .get(current_prompt_seg_id)
@@ -2746,13 +2836,12 @@ impl VM {
                         "Delegate called without current segment",
                     ));
                 };
-                let parent_owned =
-                    match self
-                        .materialize_owned_continuation(parent_k_user.clone_handle(), "Delegate")
-                    {
-                        Ok(continuation) => continuation,
-                        Err(err) => return StepEvent::Error(err),
-                    };
+                let parent_owned = match self
+                    .materialize_owned_continuation(parent_k_user.clone_handle(), "Delegate")
+                {
+                    Ok(continuation) => continuation,
+                    Err(err) => return StepEvent::Error(err),
+                };
                 k_new.append_owned_fibers(parent_owned);
                 k_new
             }
@@ -2819,6 +2908,10 @@ impl VM {
                 let observer_k = next_k.clone_handle();
                 let forwarded_exception = self.continuation_pending_error_context(&next_k).cloned();
                 let canonical_prompt_seg_id = self.canonical_output_segment_id(entry.prompt_seg_id);
+                self.set_prompt_forward_context(entry.prompt_seg_id, &effect, &next_k);
+                if canonical_prompt_seg_id != entry.prompt_seg_id {
+                    self.set_prompt_forward_context(canonical_prompt_seg_id, &effect, &next_k);
+                }
                 self.set_pending_program_dispatch(
                     handler_seg_id,
                     ProgramDispatch {
@@ -2865,12 +2958,12 @@ impl VM {
         self.dispatch_fatal_error_event(VMError::delegate_no_outer_handler(effect))
     }
 
-    pub(super) fn handle_delegate(&mut self, effect: DispatchEffect) -> StepEvent {
-        self.handle_forward(ForwardKind::Delegate, effect)
+    pub(super) fn handle_delegate(&mut self) -> StepEvent {
+        self.handle_forward(ForwardKind::Delegate)
     }
 
-    pub(super) fn handle_pass(&mut self, effect: DispatchEffect) -> StepEvent {
-        self.handle_forward(ForwardKind::Pass, effect)
+    pub(super) fn handle_pass(&mut self) -> StepEvent {
+        self.handle_forward(ForwardKind::Pass)
     }
 
     pub(super) fn handle_handler_return(&mut self, mut value: Value) -> StepEvent {
@@ -2892,7 +2985,22 @@ impl VM {
         let is_user_defined_python_handler = handler_dispatch
             .as_ref()
             .is_some_and(|(_, _, marker)| self.is_user_defined_python_handler_marker(*marker));
-        if is_python_handler && continuation_is_live {
+        let dispatch_resumed_once = self
+            .dispatch_trace(dispatch_id)
+            .is_some_and(|trace| trace.resumed_once);
+        let handler_status_is_active = self
+            .current_handler_identity_for_dispatch(dispatch_id)
+            .and_then(|(handler_index, _)| {
+                self.dispatch_trace(dispatch_id)
+                    .and_then(|trace| trace.handler_stack.get(handler_index))
+                    .map(|entry| entry.status == HandlerStatus::Active)
+            })
+            .unwrap_or(!dispatch_resumed_once);
+        if is_python_handler
+            && continuation_is_live
+            && handler_status_is_active
+            && !dispatch_resumed_once
+        {
             let mut continuation = continuation.expect("checked above");
             continuation.mark_consumed();
             return self.throw_handler_protocol_error(format!(
@@ -3077,6 +3185,82 @@ impl VM {
         0
     }
 
+    fn overlap_prefix_len_with_base(
+        base_entries: &[HandlerChainEntry],
+        outer_entries: &[HandlerChainEntry],
+    ) -> Option<usize> {
+        if base_entries.is_empty() {
+            return None;
+        }
+
+        for prefix_len in 0..outer_entries.len() {
+            let overlap = &outer_entries[prefix_len..];
+            if overlap.is_empty() || overlap.len() > base_entries.len() {
+                continue;
+            }
+            if overlap
+                .iter()
+                .zip(base_entries.iter())
+                .all(|(outer, base)| Self::same_handler_entry(outer, base))
+            {
+                return Some(prefix_len);
+            }
+        }
+
+        None
+    }
+
+    fn visible_ancestor_handler_additions(
+        &self,
+        dispatch_id: DispatchId,
+        current_prompt_seg_id: SegmentId,
+        base_visible_entries: &[HandlerChainEntry],
+    ) -> Vec<HandlerChainEntry> {
+        let mut additions = Vec::new();
+        let mut seen_prompts = base_visible_entries
+            .iter()
+            .map(|entry| entry.prompt_seg_id)
+            .collect::<HashSet<_>>();
+        seen_prompts.insert(current_prompt_seg_id);
+
+        let mut cursor = self
+            .dispatch_origin_for_dispatch_id_anywhere(dispatch_id)
+            .and_then(|origin| origin.parent_dispatch_id);
+        let mut seen_dispatches = HashSet::new();
+        while let Some(id) = cursor {
+            if !seen_dispatches.insert(id) {
+                break;
+            }
+            let Some(origin) = self.dispatch_origin_for_dispatch_id_anywhere(id) else {
+                break;
+            };
+            if let Some(start_seg_id) = self.continuation_handler_chain_start(&origin.k_origin) {
+                let outer_entries = self.handlers_in_caller_chain(start_seg_id);
+                let Some(prefix_len) =
+                    Self::overlap_prefix_len_with_base(base_visible_entries, &outer_entries)
+                else {
+                    cursor = origin.parent_dispatch_id;
+                    continue;
+                };
+                if outer_entries[..prefix_len]
+                    .iter()
+                    .any(|entry| entry.prompt_seg_id == current_prompt_seg_id)
+                {
+                    cursor = origin.parent_dispatch_id;
+                    continue;
+                }
+                for entry in outer_entries[..prefix_len].iter() {
+                    if seen_prompts.insert(entry.prompt_seg_id) {
+                        additions.push(entry.clone());
+                    }
+                }
+            }
+            cursor = origin.parent_dispatch_id;
+        }
+
+        additions
+    }
+
     fn current_handler_chain_with_live_prefix(&self) -> Vec<HandlerChainEntry> {
         let base_entries = self.current_handler_chain();
         let Some(return_to) = self.return_to_continuation() else {
@@ -3198,9 +3382,10 @@ impl VM {
                 .current_dispatch_origin()
                 .and_then(|origin| self.continuation_handler_chain_start(&origin.k_origin))
                 .or_else(|| {
-                    self.current_live_handler_dispatch().and_then(|(_, _, continuation, _, _)| {
-                        self.continuation_handler_chain_start(&continuation)
-                    })
+                    self.current_live_handler_dispatch()
+                        .and_then(|(_, _, continuation, _, _)| {
+                            self.continuation_handler_chain_start(&continuation)
+                        })
                 })
                 .or_else(|| self.current_segment);
             let Some(chain_start) = chain_start else {
