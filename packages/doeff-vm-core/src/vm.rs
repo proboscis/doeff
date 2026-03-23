@@ -29,7 +29,7 @@ use crate::frame::{
     CallMetadata, DispatchDisplay, DispatchEffectSite, EvalReturnContinuation, Frame,
     InterceptorChainLink, InterceptorContinuation, ProgramDispatch, ProgramFrameSnapshot,
 };
-use crate::ids::{ContId, Marker, SegmentId};
+use crate::ids::{ContId, FiberId, Marker, SegmentId};
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
 use crate::kleisli::{notify_run_handlers_completed, IdentityKleisli, KleisliRef};
 use crate::memory_stats::live_object_counts;
@@ -211,24 +211,13 @@ struct WithHandlerPlan {
     handler: KleisliRef,
 }
 
+#[derive(Clone)]
 struct DispatchOriginView {
     origin_cont_id: ContId,
     parent_origin_cont_id: Option<ContId>,
     effect: DispatchEffect,
-    k_origin: Continuation,
+    origin_fiber_ids: Vec<FiberId>,
     original_exception: Option<PyException>,
-}
-
-impl Clone for DispatchOriginView {
-    fn clone(&self) -> Self {
-        Self {
-            origin_cont_id: self.origin_cont_id,
-            parent_origin_cont_id: self.parent_origin_cont_id,
-            effect: self.effect.clone(),
-            k_origin: self.k_origin.clone_handle(),
-            original_exception: self.original_exception.clone(),
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -564,6 +553,36 @@ impl VM {
             .collect()
     }
 
+    pub(crate) fn fiber_ids_frame_stack(
+        &self,
+        fiber_ids: &[FiberId],
+    ) -> Vec<ProgramFrameSnapshot> {
+        fiber_ids
+            .iter()
+            .filter_map(|fiber_id| self.segments.get(*fiber_id))
+            .flat_map(|segment| {
+                segment.frames.iter().filter_map(|frame| match frame {
+                    Frame::Program {
+                        stream,
+                        metadata,
+                        handler_kind,
+                        dispatch,
+                    } => Some(ProgramFrameSnapshot {
+                        stream: stream.clone(),
+                        metadata: metadata.clone(),
+                        handler_kind: *handler_kind,
+                        dispatch: dispatch.clone(),
+                    }),
+                    Frame::LexicalScope { .. } => None,
+                    Frame::EvalReturn(_)
+                    | Frame::MapReturn { .. }
+                    | Frame::FlatMapBindResult
+                    | Frame::FlatMapBindSource { .. } => None,
+                })
+            })
+            .collect()
+    }
+
     pub(crate) fn continuation_pending_error_context(
         &self,
         continuation: &Continuation,
@@ -810,11 +829,12 @@ impl VM {
                     ..
                 } = frame
                 {
-                    Self::collect_continuation_parent(&dispatch.origin, &mut parent_rewrites);
-                    Self::collect_continuation_parent(
-                        &dispatch.handler_continuation,
-                        &mut parent_rewrites,
-                    );
+                    if let Some(fiber_id) = dispatch.origin_fiber_ids.last() {
+                        parent_rewrites.insert(*fiber_id);
+                    }
+                    if let Some(fiber_id) = dispatch.handler_fiber_ids.last() {
+                        parent_rewrites.insert(*fiber_id);
+                    }
                 }
                 if let Frame::EvalReturn(eval_return) = frame {
                     Self::collect_eval_return_captured_caller(eval_return, &mut parent_rewrites);
