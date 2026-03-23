@@ -149,26 +149,36 @@ impl VM {
         &self,
         seg_id: SegmentId,
     ) -> Option<&HashMap<HashedPyKey, Value>> {
-        self.segments.get(seg_id)?.frames.iter().rev().find_map(|frame| {
-            if let Frame::LexicalScope { bindings, .. } = frame {
-                Some(bindings)
-            } else {
-                None
-            }
-        })
+        self.segments
+            .get(seg_id)?
+            .frames
+            .iter()
+            .rev()
+            .find_map(|frame| {
+                if let Frame::LexicalScope { bindings, .. } = frame {
+                    Some(bindings)
+                } else {
+                    None
+                }
+            })
     }
 
     pub(crate) fn segment_var_overrides(
         &self,
         seg_id: SegmentId,
     ) -> Option<&HashMap<VarId, Value>> {
-        self.segments.get(seg_id)?.frames.iter().rev().find_map(|frame| {
-            if let Frame::LexicalScope { var_overrides, .. } = frame {
-                Some(var_overrides)
-            } else {
-                None
-            }
-        })
+        self.segments
+            .get(seg_id)?
+            .frames
+            .iter()
+            .rev()
+            .find_map(|frame| {
+                if let Frame::LexicalScope { var_overrides, .. } = frame {
+                    Some(var_overrides)
+                } else {
+                    None
+                }
+            })
     }
 
     pub(crate) fn segment_var_overrides_mut(

@@ -23,7 +23,7 @@ use crate::effect::{
 use crate::error::VMError;
 use crate::handler::{IRStreamFactory, IRStreamProgram, IRStreamProgramRef};
 use crate::handlers::AwaitHandlerFactory;
-use crate::ids::{ContId, DispatchId, PromiseId, TaskId};
+use crate::ids::{ContId, PromiseId, TaskId};
 use crate::ir_stream::{IRStream, IRStreamStep, StreamLocation};
 use crate::kleisli::{DgfnKleisli, KleisliRef};
 use crate::py_shared::PyShared;
@@ -161,7 +161,6 @@ pub enum PromiseState {
 pub struct TaskMetadata {
     pub parent_task: Option<TaskId>,
     pub spawn_site: Option<SpawnSite>,
-    pub spawn_dispatch_id: Option<DispatchId>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -367,12 +366,12 @@ impl ReadySet {
 
 fn transfer_to_continuation(k: OwnedControlContinuation, value: Value) -> IRStreamStep {
     match k {
-        OwnedControlContinuation::Started(k) if k.is_started() => IRStreamStep::Yield(
-            DoCtrl::Transfer {
+        OwnedControlContinuation::Started(k) if k.is_started() => {
+            IRStreamStep::Yield(DoCtrl::Transfer {
                 continuation: k,
                 value,
-            },
-        ),
+            })
+        }
         other => IRStreamStep::Yield(DoCtrl::ResumeContinuation {
             continuation: other,
             value,
@@ -412,12 +411,12 @@ fn resume_to_continuation(cont: OwnedControlContinuation, result: Value) -> IRSt
 
 fn throw_to_continuation(k: OwnedControlContinuation, error: PyException) -> IRStreamStep {
     match k {
-        OwnedControlContinuation::Started(k) if k.is_started() => IRStreamStep::Yield(
-            DoCtrl::TransferThrow {
+        OwnedControlContinuation::Started(k) if k.is_started() => {
+            IRStreamStep::Yield(DoCtrl::TransferThrow {
                 continuation: k,
                 exception: error,
-            },
-        ),
+            })
+        }
         OwnedControlContinuation::Started(_) | OwnedControlContinuation::Pending(_) => {
             IRStreamStep::Throw(error)
         }
@@ -434,8 +433,9 @@ fn step_targets_cont_id(step: &IRStreamStep, cont_id: ContId) -> bool {
         | IRStreamStep::Yield(DoCtrl::ResumeThrow { continuation, .. })
         | IRStreamStep::Yield(DoCtrl::Transfer { continuation, .. })
         | IRStreamStep::Yield(DoCtrl::Discontinue { continuation, .. })
-        | IRStreamStep::Yield(DoCtrl::TransferThrow { continuation, .. })
-        => continuation.cont_id == cont_id,
+        | IRStreamStep::Yield(DoCtrl::TransferThrow { continuation, .. }) => {
+            continuation.cont_id == cont_id
+        }
         IRStreamStep::Yield(DoCtrl::ResumeContinuation { continuation, .. }) => {
             continuation.cont_id() == cont_id
         }
@@ -1642,10 +1642,15 @@ impl SchedulerState {
                 store: TaskStore::Shared,
                 ..
             } => Ok(()),
-            TaskState::Done { .. } => Err(scheduler_internal_error(format!(
-                "save_task_store: task {} is already done",
-                task_id.raw()
-            ))),
+            // TaskCompleted can finalize the task before the wrapper program
+            // fully unwinds. A second store save is then redundant, not fatal.
+            TaskState::Done { .. } => {
+                doeff_vm_core::vm_warn_log!(
+                    "save_task_store called after task {} already completed; ignoring redundant store save",
+                    task_id.raw()
+                );
+                Ok(())
+            }
         }
     }
 
@@ -2547,12 +2552,8 @@ impl SchedulerState {
                     self.current_task = None;
                 }
                 let step = match ready_root.outcome {
-                    Ok(value) => {
-                        resume_to_continuation(started(ready_root.continuation), value)
-                    }
-                    Err(error) => {
-                        throw_to_continuation(started(ready_root.continuation), error)
-                    }
+                    Ok(value) => resume_to_continuation(started(ready_root.continuation), value),
+                    Err(error) => throw_to_continuation(started(ready_root.continuation), error),
                 };
                 Ok(Some(step))
             }
@@ -3353,9 +3354,7 @@ impl IRStreamProgram for SchedulerProgram {
         let sched_effect = if let Some(obj) = dispatch_into_python(effect.clone()) {
             match parse_scheduler_python_effect(&obj, None) {
                 Ok(Some(se)) => se,
-                Ok(None) => {
-                    return IRStreamStep::Yield(DoCtrl::Delegate)
-                }
+                Ok(None) => return IRStreamStep::Yield(DoCtrl::Delegate),
                 Err(msg) => {
                     return IRStreamStep::Throw(PyException::type_error(format!(
                         "failed to parse scheduler effect: {msg}"
@@ -3792,7 +3791,6 @@ impl IRStreamProgram for SchedulerProgram {
                     TaskMetadata {
                         parent_task,
                         spawn_site,
-                        spawn_dispatch_id: None,
                     },
                 );
                 state.enqueue_ready_task(task_id, priority);
@@ -4036,7 +4034,7 @@ impl IRStreamFactory for SchedulerHandler {
 mod tests {
     use super::*;
     use crate::capture::TraceFrame;
-    use crate::effect::Effect;
+    use crate::effect::{dispatch_from_shared, Effect};
     use crate::ir_stream::{IRStream, IRStreamStep};
     use crate::pyvm::{DoExprTag, PyEffectBase};
     use doeff_vm_core::RustKleisli;
@@ -4050,7 +4048,7 @@ mod tests {
         let marker = Marker::fresh();
         let seg = Segment::new(marker, None);
         let seg_id = SegmentId::from_index(0);
-        Continuation::capture(&seg, seg_id, None)
+        Continuation::capture(&seg, seg_id)
     }
 
     fn make_unstarted_test_continuation() -> Continuation {
@@ -6275,7 +6273,7 @@ mod tests {
         let marker = Marker::fresh();
         let seg = Segment::new(marker, None);
         let seg_id = crate::ids::SegmentId::from_index(0);
-        let cont = Continuation::capture(&seg, seg_id, None);
+        let cont = Continuation::capture(&seg, seg_id);
 
         state.tasks.insert(
             tid,

@@ -122,20 +122,20 @@ fn alloc_prompt_boundary(
 fn install_pending_dispatch(
     vm: &mut VM,
     handler_seg_id: SegmentId,
-    dispatch_id: DispatchId,
+    origin_cont_id: ContId,
     origin: &Continuation,
     original_exception: Option<PyException>,
 ) {
     vm.set_pending_program_dispatch(
         handler_seg_id,
         ProgramDispatch {
-            dispatch_id,
-            parent_dispatch_id: None,
+            origin_cont_id,
+            parent_origin_cont_id: None,
             handler_segment_id: handler_seg_id,
             prompt_segment_id: handler_seg_id,
             effect: crate::effect::make_get_execution_context_effect()
                 .expect("test dispatch effect should be constructible"),
-            trace: DispatchTrace {
+            trace: DispatchDisplay {
                 effect_site: None,
                 handler_stack: Vec::new(),
                 transfer_target_repr: None,
@@ -362,7 +362,7 @@ fn test_resume_continuation_uses_captured_caller_instead_of_current_sibling_segm
         .segments
         .get(child_id)
         .expect("child segment must exist for continuation capture");
-    let continuation = Continuation::capture(child_segment, child_id, None);
+    let continuation = Continuation::capture(child_segment, child_id);
 
     vm.free_segment(child_id);
 
@@ -406,8 +406,8 @@ fn test_dispatch_resume_inserts_resume_anchor_above_captured_caller() {
         .segments
         .get(child_id)
         .expect("child segment must exist for continuation capture");
-    let dispatch_id = DispatchId::fresh();
-    let continuation = Continuation::capture(child_segment, child_id, Some(dispatch_id));
+    let origin_cont_id = ContId::fresh();
+    let continuation = Continuation::capture(child_segment, child_id);
 
     let handler_marker = Marker::fresh();
     let prompt_seg_id = alloc_prompt_boundary(
@@ -423,7 +423,7 @@ fn test_dispatch_resume_inserts_resume_anchor_above_captured_caller() {
         Some(HandlerKind::RustBuiltin),
     );
     let handler_seg_id = vm.alloc_segment(handler_seg);
-    install_pending_dispatch(&mut vm, handler_seg_id, dispatch_id, &continuation, None);
+    install_pending_dispatch(&mut vm, handler_seg_id, origin_cont_id, &continuation, None);
     vm.current_segment = Some(handler_seg_id);
 
     let event = vm.handle_dispatch_resume(continuation, Value::Unit);
@@ -474,9 +474,8 @@ fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
         .segments
         .get(effect_site_id)
         .expect("effect-site segment must exist for continuation capture");
-    let dispatch_id = DispatchId::fresh();
-    let continuation =
-        Continuation::capture(effect_site_segment, effect_site_id, Some(dispatch_id));
+    let origin_cont_id = ContId::fresh();
+    let continuation = Continuation::capture(effect_site_segment, effect_site_id);
 
     let handler_marker = Marker::fresh();
     let prompt_seg_id = alloc_prompt_boundary(
@@ -492,7 +491,7 @@ fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
         Some(HandlerKind::RustBuiltin),
     );
     let handler_seg_id = vm.alloc_segment(handler_seg);
-    install_pending_dispatch(&mut vm, handler_seg_id, dispatch_id, &continuation, None);
+    install_pending_dispatch(&mut vm, handler_seg_id, origin_cont_id, &continuation, None);
     vm.current_segment = Some(handler_seg_id);
 
     let event = vm.handle_dispatch_resume(continuation.clone_handle(), Value::Unit);
@@ -549,7 +548,7 @@ fn test_transfer_throw_uses_captured_caller_instead_of_reused_sibling_segment() 
         .segments
         .get(child_id)
         .expect("child segment must exist for continuation capture");
-    let continuation = Continuation::capture(child_segment, child_id, None);
+    let continuation = Continuation::capture(child_segment, child_id);
 
     vm.free_segment(child_id);
 
@@ -597,7 +596,7 @@ fn test_eval_in_scope_uses_scope_chain_for_dynamic_handler_lookup() {
         .segments
         .get(scope_seg_id)
         .expect("scope segment must exist for continuation capture");
-    let scope = Continuation::capture(scope_seg, scope_seg_id, None);
+    let scope = Continuation::capture(scope_seg, scope_seg_id);
 
     let current_seg_id = vm.alloc_segment(Segment::new(Some(scope_parent_id)));
     vm.current_segment = Some(current_seg_id);
@@ -753,9 +752,8 @@ fn test_dispatch_origins_derive_from_live_program_topology() {
         .segments
         .get(effect_site_id)
         .expect("effect-site segment must exist for continuation capture");
-    let dispatch_id = DispatchId::fresh();
-    let continuation =
-        Continuation::capture(effect_site_segment, effect_site_id, Some(dispatch_id));
+    let origin_cont_id = ContId::fresh();
+    let continuation = Continuation::capture(effect_site_segment, effect_site_id);
 
     let handler_marker = Marker::fresh();
     let prompt_seg_id = alloc_prompt_boundary(
@@ -765,12 +763,12 @@ fn test_dispatch_origins_derive_from_live_program_topology() {
         named_handler("TestHandler"),
     );
     let handler_seg_id = vm.alloc_segment(Segment::new(Some(prompt_seg_id)));
-    install_pending_dispatch(&mut vm, handler_seg_id, dispatch_id, &continuation, None);
+    install_pending_dispatch(&mut vm, handler_seg_id, origin_cont_id, &continuation, None);
     vm.current_segment = Some(handler_seg_id);
 
     let origins = vm.dispatch_origins();
     assert_eq!(origins.len(), 1);
-    assert_eq!(origins[0].dispatch_id, dispatch_id);
+    assert_eq!(origins[0].origin_cont_id, origin_cont_id);
     assert_eq!(origins[0].k_origin.cont_id, continuation.cont_id);
 }
 
@@ -793,13 +791,13 @@ fn test_visible_scope_store_in_handler_sees_captured_local_scope() {
         std::collections::HashMap::from([(key.clone(), value.clone())]),
     );
 
-    let dispatch_id = DispatchId::fresh();
+    let origin_cont_id = ContId::fresh();
     let captured = {
         let effect_site = vm
             .segments
             .get(effect_site_id)
             .expect("effect-site segment must exist for continuation capture");
-        Continuation::capture(effect_site, effect_site_id, Some(dispatch_id))
+        Continuation::capture(effect_site, effect_site_id)
     };
     vm.segments
         .get_mut(effect_site_id)
@@ -807,7 +805,7 @@ fn test_visible_scope_store_in_handler_sees_captured_local_scope() {
         .parent = None;
 
     let handler_seg_id = vm.alloc_segment(Segment::new(Some(prompt_seg_id)));
-    install_pending_dispatch(&mut vm, handler_seg_id, dispatch_id, &captured, None);
+    install_pending_dispatch(&mut vm, handler_seg_id, origin_cont_id, &captured, None);
 
     let scope = vm.visible_scope_store(handler_seg_id);
     let resolved = scope
@@ -832,13 +830,13 @@ fn test_write_scoped_var_nonlocal_updates_owner_through_captured_scope_chain() {
     let child_seg_id = vm.alloc_segment(Segment::new(Some(owner_seg_id)));
     let var = vm.alloc_scoped_var_in_segment(owner_seg_id, Value::Int(10));
 
-    let dispatch_id = DispatchId::fresh();
+    let origin_cont_id = ContId::fresh();
     let captured = {
         let child_seg = vm
             .segments
             .get(child_seg_id)
             .expect("child segment must exist for continuation capture");
-        Continuation::capture(child_seg, child_seg_id, Some(dispatch_id))
+        Continuation::capture(child_seg, child_seg_id)
     };
     vm.segments
         .get_mut(child_seg_id)
@@ -852,22 +850,24 @@ fn test_write_scoped_var_nonlocal_updates_owner_through_captured_scope_chain() {
         named_handler("StateHandler"),
     );
     let handler_seg_id = vm.alloc_segment(Segment::new(Some(prompt_seg_id)));
-    install_pending_dispatch(&mut vm, handler_seg_id, dispatch_id, &captured, None);
+    install_pending_dispatch(&mut vm, handler_seg_id, origin_cont_id, &captured, None);
 
     assert!(
         vm.write_scoped_var_nonlocal(handler_seg_id, var, Value::Int(20)),
         "WriteVarNonlocal must find the owner segment through the captured continuation"
     );
     assert!(
-        matches!(vm.read_scoped_var_from(owner_seg_id, var), Some(Value::Int(20))),
+        matches!(
+            vm.read_scoped_var_from(owner_seg_id, var),
+            Some(Value::Int(20))
+        ),
         "owner cell must reflect the nonlocal write"
     );
 }
 
 #[test]
 fn test_consumed_continuation_stays_detectable_on_cloned_handles() {
-    let mut continuation =
-        Continuation::with_id(ContId::fresh(), SegmentId::from_index(0), None, None);
+    let mut continuation = Continuation::with_id(ContId::fresh(), SegmentId::from_index(0), None);
     let handle = continuation.clone_handle();
 
     assert!(!handle.consumed());

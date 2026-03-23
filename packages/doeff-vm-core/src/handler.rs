@@ -10,10 +10,10 @@ use crate::effect::DispatchEffect;
 use crate::error::VMError;
 use crate::ir_stream::IRStreamStep;
 use crate::kleisli::{Kleisli, KleisliDebugInfo, RustKleisli};
-use crate::var_store::VarStore;
 use crate::segment::ScopeStore;
 use crate::step::PyException;
 use crate::value::Value;
+use crate::var_store::VarStore;
 
 /// A Rust handler program instance (generator-like).
 /// start/resume/throw mirror Python generator protocol but run in Rust.
