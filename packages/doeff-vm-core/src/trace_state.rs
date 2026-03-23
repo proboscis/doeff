@@ -9,7 +9,7 @@ use crate::capture::{
 };
 use crate::effect::{make_execution_context_object, PyExecutionContext};
 use crate::frame::{CallMetadata, DispatchDisplay, Frame, ProgramFrameSnapshot};
-use crate::ids::{ContId, SegmentId};
+use crate::ids::SegmentId;
 use crate::ir_stream::{IRStreamRef, StreamLocation};
 use crate::step::PyException;
 use crate::value::Value;
@@ -24,7 +24,7 @@ const MISSING_EXCEPTION_TYPE: &str = "[MISSING] Exception";
 
 #[derive(Debug, Clone)]
 pub(crate) struct LiveDispatchSnapshot {
-    pub(crate) origin_cont_id: ContId,
+    pub(crate) origin_fiber_id: SegmentId,
     pub(crate) effect_repr: String,
     pub(crate) dispatch_display: DispatchDisplay,
     pub(crate) frames: Vec<ProgramFrameSnapshot>,
@@ -43,7 +43,7 @@ struct ProgramFrameState {
 
 #[derive(Debug, Clone)]
 struct PreservedDispatchSnapshot {
-    origin_cont_id: ContId,
+    origin_fiber_id: SegmentId,
     effect_repr: String,
     dispatch_display: DispatchDisplay,
     frames: Vec<ProgramFrameSnapshot>,
@@ -64,10 +64,10 @@ impl TraceState {
         self.completed_dispatches.len()
     }
 
-    pub(crate) fn has_dispatch(&self, origin_cont_id: ContId) -> bool {
+    pub(crate) fn has_dispatch(&self, origin_fiber_id: SegmentId) -> bool {
         self.completed_dispatches
             .iter()
-            .any(|dispatch| dispatch.origin_cont_id == origin_cont_id)
+            .any(|dispatch| dispatch.origin_fiber_id == origin_fiber_id)
     }
 
     pub(crate) fn frame_stack_capacity(&self) -> usize {
@@ -78,10 +78,10 @@ impl TraceState {
         self.completed_dispatches.capacity()
     }
 
-    pub(crate) fn dispatch_has_terminal_result(&self, origin_cont_id: ContId) -> bool {
+    pub(crate) fn dispatch_has_terminal_result(&self, origin_fiber_id: SegmentId) -> bool {
         self.completed_dispatches
             .iter()
-            .find(|dispatch| dispatch.origin_cont_id == origin_cont_id)
+            .find(|dispatch| dispatch.origin_fiber_id == origin_fiber_id)
             .is_some_and(|dispatch| {
                 !matches!(dispatch.dispatch_display.result, EffectResult::Active)
             })
@@ -102,7 +102,7 @@ impl TraceState {
             return;
         };
         self.completed_dispatches.push(PreservedDispatchSnapshot {
-            origin_cont_id: preserved.origin_cont_id,
+            origin_fiber_id: preserved.origin_fiber_id,
             effect_repr: preserved.effect_repr,
             dispatch_display: preserved.dispatch_display,
             frames: preserved.frames,
@@ -616,7 +616,7 @@ impl TraceState {
             let (action, value_repr, exception_repr) =
                 Self::dispatch_trace_action_fields(&dispatch.dispatch_display.result);
             entries.push(TraceEntry::Dispatch {
-                dispatch_id: dispatch.origin_cont_id,
+                dispatch_id: dispatch.origin_fiber_id,
                 effect_repr: dispatch.effect_repr.clone(),
                 handler_name,
                 handler_kind,
@@ -761,7 +761,7 @@ impl TraceState {
         let mut dispatches = Vec::new();
 
         for dispatch in live_dispatches {
-            if !seen.insert(dispatch.origin_cont_id) {
+            if !seen.insert(dispatch.origin_fiber_id) {
                 continue;
             }
             let mut trace = dispatch.dispatch_display.clone();
@@ -769,7 +769,7 @@ impl TraceState {
                 Self::finalize_dispatch_as_threw(&mut trace, exception);
             }
             dispatches.push(PreservedDispatchSnapshot {
-                origin_cont_id: dispatch.origin_cont_id,
+                origin_fiber_id: dispatch.origin_fiber_id,
                 effect_repr: dispatch.effect_repr.clone(),
                 dispatch_display: trace,
                 frames: dispatch.frames.clone(),
@@ -777,12 +777,12 @@ impl TraceState {
         }
 
         for dispatch in &self.completed_dispatches {
-            if seen.insert(dispatch.origin_cont_id) {
+            if seen.insert(dispatch.origin_fiber_id) {
                 dispatches.push(dispatch.clone());
             }
         }
 
-        dispatches.sort_by_key(|dispatch| dispatch.origin_cont_id.raw());
+        dispatches.sort_by_key(|dispatch| dispatch.origin_fiber_id.index());
         dispatches
     }
 
@@ -824,7 +824,7 @@ impl TraceState {
 
         for (index, frame) in frames.iter().enumerate() {
             if let Some(dispatch) = Self::dispatch_for_frame(dispatches, frame.frame_id, false) {
-                represented.insert(dispatch.origin_cont_id);
+                represented.insert(dispatch.origin_fiber_id);
                 Self::push_effect_yield_entry(&mut active_chain, dispatch, Some(frame));
                 if !Self::has_visible_program_frame_for_handler(
                     frames,
@@ -882,7 +882,7 @@ impl TraceState {
 
         for dispatch in dispatches
             .iter()
-            .filter(|dispatch| !represented.contains(&dispatch.origin_cont_id))
+            .filter(|dispatch| !represented.contains(&dispatch.origin_fiber_id))
         {
             if !Self::dispatch_is_visible(&dispatch.dispatch_display) {
                 continue;

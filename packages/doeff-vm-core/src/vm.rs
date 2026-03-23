@@ -29,7 +29,7 @@ use crate::frame::{
     CallMetadata, DispatchDisplay, DispatchEffectSite, EvalReturnContinuation, Frame,
     InterceptorChainLink, InterceptorContinuation, ProgramDispatch, ProgramFrameSnapshot,
 };
-use crate::ids::{ContId, Marker, SegmentId};
+use crate::ids::{Marker, SegmentId};
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
 use crate::kleisli::{notify_run_handlers_completed, IdentityKleisli, KleisliRef};
 use crate::memory_stats::live_object_counts;
@@ -212,8 +212,8 @@ struct WithHandlerPlan {
 }
 
 struct DispatchOriginView {
-    origin_cont_id: ContId,
-    parent_origin_cont_id: Option<ContId>,
+    origin_fiber_id: SegmentId,
+    parent_origin_fiber_id: Option<SegmentId>,
     effect: DispatchEffect,
     k_origin: Continuation,
     original_exception: Option<PyException>,
@@ -222,8 +222,8 @@ struct DispatchOriginView {
 impl Clone for DispatchOriginView {
     fn clone(&self) -> Self {
         Self {
-            origin_cont_id: self.origin_cont_id,
-            parent_origin_cont_id: self.parent_origin_cont_id,
+            origin_fiber_id: self.origin_fiber_id,
+            parent_origin_fiber_id: self.parent_origin_fiber_id,
             effect: self.effect.clone(),
             k_origin: self.k_origin.clone_handle(),
             original_exception: self.original_exception.clone(),
@@ -402,13 +402,13 @@ impl VM {
                     ..
                 } = frame
                 {
-                    dispatch_ids.insert(dispatch.origin_cont_id);
+                    dispatch_ids.insert(dispatch.origin_fiber_id);
                 }
             }
         }
         for (_, segment) in self.segments.iter() {
             if let Some(dispatch) = &segment.pending_program_dispatch {
-                dispatch_ids.insert(dispatch.origin_cont_id);
+                dispatch_ids.insert(dispatch.origin_fiber_id);
             }
         }
         dispatch_ids.len()
@@ -760,29 +760,38 @@ impl VM {
 
     pub(crate) fn continuation_parent(&self, continuation: &Continuation) -> Option<SegmentId> {
         continuation
-            .outermost_fiber_id()
-            .and_then(|fiber_id| self.segments.get(fiber_id))
-            .and_then(|segment| segment.parent)
+            .captured_caller()
+            .filter(|seg_id| self.segments.get(*seg_id).is_some())
+            .or_else(|| {
+                continuation
+                    .outermost_fiber_id()
+                    .and_then(|fiber_id| self.segments.get(fiber_id))
+                    .and_then(|segment| segment.parent)
+            })
     }
 
-    fn collect_continuation_parent(
-        continuation: &Continuation,
-        parents: &mut std::collections::HashSet<SegmentId>,
-    ) {
-        if let Some(fiber_id) = continuation.outermost_fiber_id() {
-            parents.insert(fiber_id);
+    fn rewrite_continuation_captured_caller(
+        continuation: &mut Continuation,
+        old_parent: SegmentId,
+        new_parent: Option<SegmentId>,
+    ) -> bool {
+        if continuation.captured_caller() != Some(old_parent) {
+            return false;
         }
+        continuation.set_captured_caller(new_parent);
+        true
     }
 
-    fn collect_eval_return_captured_caller(
+    fn collect_eval_return_captured_caller_mut(
         eval_return: &mut EvalReturnContinuation,
-        parents: &mut std::collections::HashSet<SegmentId>,
-    ) {
+        old_parent: SegmentId,
+        new_parent: Option<SegmentId>,
+    ) -> bool {
         match eval_return {
             EvalReturnContinuation::ResumeToContinuation { continuation }
             | EvalReturnContinuation::ReturnToContinuation { continuation }
             | EvalReturnContinuation::EvalInScopeReturn { continuation } => {
-                Self::collect_continuation_parent(continuation, parents)
+                Self::rewrite_continuation_captured_caller(continuation, old_parent, new_parent)
             }
             EvalReturnContinuation::ApplyResolveFunction { .. }
             | EvalReturnContinuation::ApplyResolveArg { .. }
@@ -792,7 +801,7 @@ impl VM {
             | EvalReturnContinuation::ExpandResolveKwarg { .. }
             | EvalReturnContinuation::InterceptApplyResult { .. }
             | EvalReturnContinuation::InterceptEvalResult { .. }
-            | EvalReturnContinuation::TailResumeReturn => {}
+            | EvalReturnContinuation::TailResumeReturn => false,
         }
     }
 
@@ -801,41 +810,66 @@ impl VM {
         old_parent: SegmentId,
         new_parent: Option<SegmentId>,
     ) -> usize {
-        let mut parent_rewrites = std::collections::HashSet::new();
+        let mut rewired = 0usize;
 
         for (_, segment) in self.segments.iter_mut() {
+            if let Some(continuation) = segment.pending_continuation.as_mut() {
+                rewired += usize::from(Self::rewrite_continuation_captured_caller(
+                    continuation,
+                    old_parent,
+                    new_parent,
+                ));
+            }
+            if let Some(dispatch) = segment.pending_program_dispatch.as_mut() {
+                rewired += usize::from(Self::rewrite_continuation_captured_caller(
+                    &mut dispatch.origin,
+                    old_parent,
+                    new_parent,
+                ));
+                rewired += usize::from(Self::rewrite_continuation_captured_caller(
+                    &mut dispatch.handler_continuation,
+                    old_parent,
+                    new_parent,
+                ));
+            }
             for frame in &mut segment.frames {
-                if let Frame::Program {
-                    dispatch: Some(dispatch),
-                    ..
-                } = frame
-                {
-                    Self::collect_continuation_parent(&dispatch.origin, &mut parent_rewrites);
-                    Self::collect_continuation_parent(
-                        &dispatch.handler_continuation,
-                        &mut parent_rewrites,
-                    );
-                }
-                if let Frame::EvalReturn(eval_return) = frame {
-                    Self::collect_eval_return_captured_caller(eval_return, &mut parent_rewrites);
+                match frame {
+                    Frame::Program {
+                        dispatch: Some(dispatch),
+                        ..
+                    } => {
+                        rewired += usize::from(Self::rewrite_continuation_captured_caller(
+                            &mut dispatch.origin,
+                            old_parent,
+                            new_parent,
+                        ));
+                        rewired += usize::from(Self::rewrite_continuation_captured_caller(
+                            &mut dispatch.handler_continuation,
+                            old_parent,
+                            new_parent,
+                        ));
+                    }
+                    Frame::EvalReturn(eval_return) => {
+                        rewired += usize::from(Self::collect_eval_return_captured_caller_mut(
+                            eval_return.as_mut(),
+                            old_parent,
+                            new_parent,
+                        ));
+                    }
+                    Frame::LexicalScope { .. }
+                    | Frame::MapReturn { .. }
+                    | Frame::FlatMapBindResult
+                    | Frame::FlatMapBindSource { .. }
+                    | Frame::Program { dispatch: None, .. } => {}
                 }
             }
         }
 
         if let Some(PendingPython::RustProgramContinuation { k, .. }) = self.pending_python.as_mut()
         {
-            Self::collect_continuation_parent(k, &mut parent_rewrites);
-        }
-
-        let mut rewired = 0usize;
-        for fiber_id in parent_rewrites {
-            let Some(segment) = self.segments.get_mut(fiber_id) else {
-                continue;
-            };
-            if segment.parent == Some(old_parent) {
-                segment.parent = new_parent;
-                rewired += 1;
-            }
+            rewired += usize::from(Self::rewrite_continuation_captured_caller(
+                k, old_parent, new_parent,
+            ));
         }
 
         rewired

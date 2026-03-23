@@ -17,12 +17,6 @@ pub struct Marker(pub u64);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct FiberId(pub u32);
 
-/// Unique identifier for continuations (one-shot tracking).
-///
-/// Each captured continuation gets a unique ContId to enforce one-shot semantics.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct ContId(pub u64);
-
 /// Unique identifier for runnable continuations.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct RunnableId(pub u64);
@@ -49,7 +43,6 @@ pub struct VarId {
 // Global counters for ID generation
 static MARKER_COUNTER: AtomicU64 = AtomicU64::new(1);
 static VAR_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-static CONT_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 static RUNNABLE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 impl Marker {
@@ -95,22 +88,6 @@ impl VarId {
     }
 }
 
-impl ContId {
-    /// Create a fresh unique ContId.
-    pub fn fresh() -> Self {
-        ContId(CONT_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
-    }
-
-    /// Get the raw value.
-    pub fn raw(&self) -> u64 {
-        self.0
-    }
-
-    pub fn from_raw(value: u64) -> Self {
-        ContId(value)
-    }
-}
-
 impl RunnableId {
     /// Create a fresh unique RunnableId.
     pub fn fresh() -> Self {
@@ -130,6 +107,10 @@ impl FiberId {
 
     pub fn index(&self) -> usize {
         self.0 as usize
+    }
+
+    pub fn raw(&self) -> u32 {
+        self.0
     }
 }
 
@@ -168,13 +149,6 @@ mod tests {
         let m1 = Marker::fresh();
         let m2 = Marker::fresh();
         assert_ne!(m1, m2);
-    }
-
-    #[test]
-    fn test_cont_id_fresh_is_unique() {
-        let c1 = ContId::fresh();
-        let c2 = ContId::fresh();
-        assert_ne!(c1, c2);
     }
 
     #[test]

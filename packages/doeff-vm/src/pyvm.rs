@@ -261,7 +261,7 @@ fn borrow_control_continuation(
     if continuation.is_placeholder() || continuation.consumed() {
         return Err(PyRuntimeError::new_err(format!(
             "one-shot violation: continuation {} already consumed",
-            continuation.cont_id.raw()
+            continuation.debug_label()
         )));
     }
     Ok(continuation)
@@ -296,7 +296,7 @@ fn validate_control_continuation(continuation: &doeff_vm_core::Continuation) -> 
     if continuation.is_placeholder() || continuation.consumed() {
         return Err(PyRuntimeError::new_err(format!(
             "one-shot violation: continuation {} already consumed",
-            continuation.cont_id.raw()
+            continuation.debug_label()
         )));
     }
     Ok(())
@@ -1991,7 +1991,7 @@ pub(crate) fn classify_yielded_bound(
             }
             DoExprTag::Delegate => {
                 let _d: PyRef<'_, PyDelegate> = obj.extract()?;
-                if vm.current_origin_cont_id().is_none() {
+                if vm.current_origin_fiber_id().is_none() {
                     return Err(PyRuntimeError::new_err(
                         "Delegate called outside dispatch context",
                     ));
@@ -2000,7 +2000,7 @@ pub(crate) fn classify_yielded_bound(
             }
             DoExprTag::Pass => {
                 let _p: PyRef<'_, PyPass> = obj.extract()?;
-                if vm.current_origin_cont_id().is_none() {
+                if vm.current_origin_fiber_id().is_none() {
                     return Err(PyRuntimeError::new_err(
                         "Pass called outside dispatch context",
                     ));
@@ -3747,11 +3747,9 @@ mod tests {
     fn test_g11_resume_with_consumed_continuation_is_error() {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
-            let mut continuation = crate::continuation::Continuation::placeholder(
-                crate::ids::ContId::from_raw(999_999),
-            );
+            let mut continuation = crate::continuation::Continuation::placeholder();
             continuation.mark_consumed();
-            let k = Bound::new(py, PyK::from_continuation(&continuation))
+            let k = Bound::new(py, PyK::from_continuation(continuation.clone_handle()))
                 .unwrap()
                 .into_any()
                 .unbind();
@@ -3799,9 +3797,9 @@ mod tests {
                 &seg,
                 crate::ids::SegmentId::from_index(0),
             );
-            let cont_id = continuation.cont_id;
+            let seg_id = continuation.segment_id();
             let pyvm = PyVM { vm: VM::new() };
-            let k = Bound::new(py, PyK::from_continuation(&continuation))
+            let k = Bound::new(py, PyK::from_continuation(continuation.clone_handle()))
                 .unwrap()
                 .into_any()
                 .unbind();
@@ -3811,7 +3809,7 @@ mod tests {
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             match yielded {
                 DoCtrl::GetTraceback { continuation } => {
-                    assert_eq!(continuation.cont_id, cont_id);
+                    assert_eq!(continuation.segment_id(), seg_id);
                 }
                 _ => panic!("GetTraceback must classify to DoCtrl::GetTraceback"),
             }
@@ -4101,9 +4099,8 @@ mod tests {
             assert_eq!(base.tag, DoExprTag::GetHandlers as u8);
 
             // GetTraceback
-            let continuation =
-                crate::continuation::Continuation::placeholder(crate::ids::ContId::from_raw(1));
-            let k = Bound::new(py, PyK::from_continuation(&continuation))
+            let continuation = crate::continuation::Continuation::placeholder();
+            let k = Bound::new(py, PyK::from_continuation(continuation.clone_handle()))
                 .unwrap()
                 .into_any()
                 .unbind();
@@ -4171,7 +4168,7 @@ mod tests {
                 &seg,
                 crate::ids::SegmentId::from_index(0),
             );
-            let k = Bound::new(py, PyK::from_continuation(&continuation))
+            let k = Bound::new(py, PyK::from_continuation(continuation.clone_handle()))
                 .unwrap()
                 .into_any()
                 .unbind();

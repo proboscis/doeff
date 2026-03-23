@@ -2,13 +2,13 @@
 
 use crate::capture::{ActiveChainEntry, TraceEntry};
 use crate::effect::DispatchEffect;
-use crate::ids::{ContId, Marker};
+use crate::ids::Marker;
 use crate::step::PyException;
 
 #[derive(Debug, Clone)]
 pub enum VMError {
     OneShotViolation {
-        cont_id: ContId,
+        continuation: String,
     },
     UnhandledEffect {
         effect: DispatchEffect,
@@ -44,11 +44,11 @@ pub enum VMError {
 impl std::fmt::Display for VMError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            VMError::OneShotViolation { cont_id } => {
+            VMError::OneShotViolation { continuation } => {
                 write!(
                     f,
                     "one-shot violation: continuation {} already consumed",
-                    cont_id.raw()
+                    continuation
                 )
             }
             VMError::UnhandledEffect { effect } => {
@@ -75,8 +75,10 @@ impl std::fmt::Display for VMError {
 impl std::error::Error for VMError {}
 
 impl VMError {
-    pub fn one_shot_violation(cont_id: ContId) -> Self {
-        VMError::OneShotViolation { cont_id }
+    pub fn one_shot_violation(continuation: impl Into<String>) -> Self {
+        VMError::OneShotViolation {
+            continuation: continuation.into(),
+        }
     }
 
     pub fn unhandled_effect(effect: DispatchEffect) -> Self {
@@ -138,7 +140,7 @@ mod tests {
 
     #[test]
     fn test_error_display() {
-        let err = VMError::one_shot_violation(ContId::fresh());
+        let err = VMError::one_shot_violation("1 -> 2");
         assert!(err.to_string().contains("one-shot violation"));
 
         let err = VMError::python_error("test error");
