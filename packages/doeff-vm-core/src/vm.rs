@@ -810,11 +810,12 @@ impl VM {
                     ..
                 } = frame
                 {
-                    Self::collect_continuation_parent(&dispatch.origin, &mut parent_rewrites);
-                    Self::collect_continuation_parent(
-                        &dispatch.handler_continuation,
-                        &mut parent_rewrites,
-                    );
+                    if let Some(fiber_id) = dispatch.origin_fiber_ids.last() {
+                        parent_rewrites.insert(*fiber_id);
+                    }
+                    if let Some(fiber_id) = dispatch.handler_fiber_ids.last() {
+                        parent_rewrites.insert(*fiber_id);
+                    }
                 }
                 if let Frame::EvalReturn(eval_return) = frame {
                     Self::collect_eval_return_captured_caller(eval_return, &mut parent_rewrites);

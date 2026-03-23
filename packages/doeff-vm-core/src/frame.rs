@@ -8,7 +8,7 @@ use crate::continuation::Continuation;
 use crate::do_ctrl::{DoCtrl, InterceptMode};
 use crate::driver::PyException;
 use crate::effect::DispatchEffect;
-use crate::ids::{ContId, Marker, SegmentId, VarId};
+use crate::ids::{ContId, FiberId, Marker, SegmentId, VarId};
 use crate::ir_stream::IRStreamRef;
 use crate::kleisli::KleisliRef;
 use crate::py_key::HashedPyKey;
@@ -148,7 +148,7 @@ impl Clone for DispatchDisplay {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ProgramDispatch {
     pub origin_cont_id: ContId,
     pub parent_origin_cont_id: Option<ContId>,
@@ -156,24 +156,30 @@ pub struct ProgramDispatch {
     pub prompt_segment_id: SegmentId,
     pub effect: DispatchEffect,
     pub trace: DispatchDisplay,
-    pub origin: Continuation,
-    pub handler_continuation: Continuation,
+    /// Fiber IDs of the captured user continuation (replaces origin: Continuation).
+    pub origin_fiber_ids: Vec<FiberId>,
+    /// Fiber IDs of the handler's working continuation (replaces handler_continuation: Continuation).
+    pub handler_fiber_ids: Vec<FiberId>,
+    /// ContId of the handler's working continuation (for identity matching).
+    pub handler_cont_id: ContId,
+    /// Whether the origin continuation has been consumed (resumed/thrown to).
+    pub origin_consumed: bool,
+    /// Whether the handler continuation has been consumed.
+    pub handler_consumed: bool,
     pub original_exception: Option<PyException>,
 }
 
-impl Clone for ProgramDispatch {
-    fn clone(&self) -> Self {
-        Self {
-            origin_cont_id: self.origin_cont_id,
-            parent_origin_cont_id: self.parent_origin_cont_id,
-            handler_segment_id: self.handler_segment_id,
-            prompt_segment_id: self.prompt_segment_id,
-            effect: self.effect.clone(),
-            trace: self.trace.clone(),
-            origin: self.origin.clone_handle(),
-            handler_continuation: self.handler_continuation.clone_handle(),
-            original_exception: self.original_exception.clone(),
-        }
+impl ProgramDispatch {
+    /// Reconstruct a Continuation view from stored origin fiber IDs.
+    /// The returned continuation has an independent consumed flag initialized
+    /// from origin_consumed — it does NOT share state with the real continuation.
+    pub fn origin_as_continuation(&self) -> Continuation {
+        Continuation::from_ids(self.origin_cont_id, self.origin_fiber_ids.clone(), self.origin_consumed)
+    }
+
+    /// Reconstruct a Continuation view from stored handler fiber IDs.
+    pub fn handler_as_continuation(&self) -> Continuation {
+        Continuation::from_ids(self.handler_cont_id, self.handler_fiber_ids.clone(), self.handler_consumed)
     }
 }
 

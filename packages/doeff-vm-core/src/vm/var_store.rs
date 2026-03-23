@@ -45,16 +45,18 @@ impl VM {
                 }
                 ordered.push(seg_id);
                 if let Some(dispatch) = segment.pending_program_dispatch.as_ref() {
+                    let origin_k = dispatch.origin_as_continuation();
                     push_continuation_segments(
                         vm,
-                        &dispatch.origin,
+                        &origin_k,
                         ordered,
                         seen,
                         seen_continuations,
                     );
+                    let handler_k = dispatch.handler_as_continuation();
                     push_continuation_segments(
                         vm,
-                        &dispatch.handler_continuation,
+                        &handler_k,
                         ordered,
                         seen,
                         seen_continuations,
@@ -66,16 +68,18 @@ impl VM {
                             dispatch: Some(dispatch),
                             ..
                         } => {
+                            let origin_k = dispatch.origin_as_continuation();
                             push_continuation_segments(
                                 vm,
-                                &dispatch.origin,
+                                &origin_k,
                                 ordered,
                                 seen,
                                 seen_continuations,
                             );
+                            let handler_k = dispatch.handler_as_continuation();
                             push_continuation_segments(
                                 vm,
-                                &dispatch.handler_continuation,
+                                &handler_k,
                                 ordered,
                                 seen,
                                 seen_continuations,
