@@ -44,7 +44,7 @@ pub mod python_call;
 #[cfg(feature = "python_bridge")]
 pub mod result;
 #[cfg(feature = "python_bridge")]
-pub mod rust_store;
+pub mod scope_store;
 #[cfg(feature = "python_bridge")]
 pub mod segment;
 #[cfg(feature = "python_bridge")]
@@ -74,7 +74,7 @@ pub use capture::{
     TraceFrame, TraceHop,
 };
 #[cfg(feature = "python_bridge")]
-pub use continuation::{Continuation, PyK};
+pub use continuation::{Continuation, OwnedControlContinuation, PendingContinuation, PyK};
 #[cfg(feature = "python_bridge")]
 pub use do_ctrl::{DoCtrl, DoExprTag, PyDoCtrlBase, PyDoExprBase};
 #[cfg(feature = "python_bridge")]
@@ -95,7 +95,7 @@ pub use frame::Frame;
 pub use handler::{IRStreamFactory, IRStreamFactoryRef, IRStreamProgram, IRStreamProgramRef};
 #[cfg(feature = "python_bridge")]
 pub use ids::{
-    ContId, DispatchId, FiberId, Marker, PromiseId, RunnableId, ScopeId, SegmentId, TaskId, VarId,
+    ContId, DispatchId, FiberId, Marker, PromiseId, RunnableId, SegmentId, TaskId, VarId,
 };
 #[cfg(feature = "python_bridge")]
 pub use ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream, StreamLocation};
@@ -110,9 +110,9 @@ pub use python_call::{PendingPython, PyCallOutcome, PythonCall};
 #[cfg(feature = "python_bridge")]
 pub use result::{PyResultErr, PyResultOk};
 #[cfg(feature = "python_bridge")]
-pub use rust_store::RustStore;
+pub use scope_store::ScopeStore;
 #[cfg(feature = "python_bridge")]
-pub use segment::{Fiber, FiberKind, Segment, SegmentKind};
+pub use segment::{Fiber, FiberKind};
 #[cfg(feature = "python_bridge")]
 pub use step::PyException;
 #[cfg(feature = "python_bridge")]

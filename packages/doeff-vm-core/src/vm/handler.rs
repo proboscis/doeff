@@ -1,27 +1,18 @@
+use std::collections::HashSet;
+
 use super::*;
 
 impl VM {
-    pub(super) fn first_handler_hint_in_caller_chain(
-        &self,
-        start_seg_id: SegmentId,
-    ) -> Option<crate::continuation::DispatchHandlerHint> {
+    pub(super) fn handler_marker_in_caller_chain(&self, start_seg_id: SegmentId) -> Option<Marker> {
         let mut cursor = Some(start_seg_id);
         while let Some(seg_id) = cursor {
             let seg = self.segments.get(seg_id)?;
-            if let SegmentKind::PromptBoundary { handled_marker, .. } = &seg.kind {
-                return Some(crate::continuation::DispatchHandlerHint {
-                    marker: *handled_marker,
-                    prompt_seg_id: seg_id,
-                });
+            if let Some(boundary) = seg.kind.prompt_boundary() {
+                return Some(boundary.handled_marker);
             }
             cursor = seg.parent;
         }
         None
-    }
-
-    pub(super) fn handler_marker_in_caller_chain(&self, start_seg_id: SegmentId) -> Option<Marker> {
-        self.first_handler_hint_in_caller_chain(start_seg_id)
-            .map(|hint| hint.marker)
     }
 
     pub(super) fn visible_scope_store(
@@ -29,17 +20,19 @@ impl VM {
         start_seg_id: SegmentId,
     ) -> crate::segment::ScopeStore {
         let mut layers = Vec::new();
-        let mut cursor = Some(start_seg_id);
-        while let Some(seg_id) = cursor {
-            if let Some(bindings) = self.scope_bindings(seg_id) {
+        let mut seen_segments = HashSet::new();
+        for seg_id in self.visible_lexical_segments(start_seg_id) {
+            if !seen_segments.insert(seg_id) {
+                continue;
+            }
+            if let Some(bindings) = self.segment_scope_bindings(seg_id) {
                 if !bindings.is_empty() {
                     layers.push(Arc::new(bindings.clone()));
                 }
             }
-            cursor = self.scope_parent(seg_id);
         }
-        if !self.env_store.is_empty() {
-            layers.push(Arc::new(self.env_store.clone()));
+        if !self.var_store.root_scope_bindings().is_empty() {
+            layers.push(Arc::new(self.var_store.root_scope_bindings().clone()));
         }
         layers.reverse();
         crate::segment::ScopeStore {
@@ -53,17 +46,11 @@ impl VM {
     ) -> Option<(SegmentId, KleisliRef, Option<Arc<Vec<PyShared>>>)> {
         self.segments
             .iter()
-            .find_map(|(seg_id, seg)| match &seg.kind {
-                SegmentKind::PromptBoundary {
-                    handled_marker,
-                    handler,
-                    types,
-                    ..
-                } if *handled_marker == marker => Some((seg_id, handler.clone(), types.clone())),
-                SegmentKind::PromptBoundary { .. }
-                | SegmentKind::Normal { .. }
-                | SegmentKind::InterceptorBoundary { .. }
-                | SegmentKind::MaskBoundary { .. } => None,
+            .find_map(|(seg_id, seg)| {
+                let boundary = seg.kind.prompt_boundary()?;
+                (boundary.handled_marker == marker).then(|| {
+                    (seg_id, boundary.handler.clone(), boundary.types.clone())
+                })
             })
     }
 
@@ -77,18 +64,12 @@ impl VM {
             let Some(seg) = self.segments.get(seg_id) else {
                 break;
             };
-            if let SegmentKind::PromptBoundary {
-                handled_marker,
-                handler,
-                types,
-                ..
-            } = &seg.kind
-            {
+            if let Some(boundary) = seg.kind.prompt_boundary() {
                 chain.push(HandlerChainEntry {
-                    marker: *handled_marker,
+                    marker: boundary.handled_marker,
                     prompt_seg_id: seg_id,
-                    handler: handler.clone(),
-                    types: types.clone(),
+                    handler: boundary.handler.clone(),
+                    types: boundary.types.clone(),
                 });
             }
             cursor = seg.parent;
@@ -106,24 +87,15 @@ impl VM {
             let Some(seg) = self.segments.get(seg_id) else {
                 break;
             };
-            match &seg.kind {
-                SegmentKind::PromptBoundary {
-                    handled_marker,
-                    handler,
-                    types,
-                    ..
-                } => chain.push(CallerChainEntry::Handler(HandlerChainEntry {
-                    marker: *handled_marker,
+            if let Some(boundary) = seg.kind.prompt_boundary() {
+                chain.push(CallerChainEntry::Handler(HandlerChainEntry {
+                    marker: boundary.handled_marker,
                     prompt_seg_id: seg_id,
-                    handler: handler.clone(),
-                    types: types.clone(),
-                })),
-                SegmentKind::InterceptorBoundary { .. } => {
-                    let link = InterceptorChainLink::from_boundary(&seg.kind)
-                        .expect("InterceptorBoundary should always produce a chain link");
-                    chain.push(CallerChainEntry::Interceptor(link));
-                }
-                SegmentKind::Normal { .. } | SegmentKind::MaskBoundary { .. } => {}
+                    handler: boundary.handler.clone(),
+                    types: boundary.types.clone(),
+                }));
+            } else if let Some(link) = InterceptorChainLink::from_boundary(&seg.kind) {
+                chain.push(CallerChainEntry::Interceptor(link));
             }
             cursor = seg.parent;
         }
@@ -138,10 +110,12 @@ impl VM {
         let mut cursor = Some(start_seg_id);
         while let Some(seg_id) = cursor {
             let seg = self.segments.get(seg_id)?;
-            if let SegmentKind::PromptBoundary { handled_marker, .. } = &seg.kind {
-                if *handled_marker == marker {
-                    return Some(seg_id);
-                }
+            if seg
+                .kind
+                .prompt_boundary()
+                .is_some_and(|boundary| boundary.handled_marker == marker)
+            {
+                return Some(seg_id);
             }
             cursor = seg.parent;
         }
@@ -187,25 +161,19 @@ impl VM {
                 break;
             };
             cursor = seg.parent;
-            let SegmentKind::PromptBoundary {
-                handled_marker,
-                handler,
-                types,
-                ..
-            } = &seg.kind
-            else {
+            let Some(boundary) = seg.kind.prompt_boundary() else {
                 continue;
             };
 
             let entry = HandlerChainEntry {
-                marker: *handled_marker,
+                marker: boundary.handled_marker,
                 prompt_seg_id: seg_id,
-                handler: handler.clone(),
-                types: types.clone(),
+                handler: boundary.handler.clone(),
+                types: boundary.types.clone(),
             };
             full_entries.push(entry.clone());
 
-            let is_shared_spawn_writer = handler.handler_name() == "WriterHandler"
+            let is_shared_spawn_writer = boundary.handler.handler_name() == "WriterHandler"
                 && self.shared_builtin_handler_prompt(seg_id) != seg_id;
             let restricted_excluded = restricted_excluded_prompts.contains(&seg_id);
             if Some(seg_id) != exclude_prompt && !restricted_excluded && !is_shared_spawn_writer {
@@ -403,8 +371,8 @@ impl VM {
         let mut handler_index = 0usize;
         while let Some(seg_id) = cursor {
             let seg = self.segments.get(seg_id)?;
-            if let SegmentKind::PromptBoundary { handled_marker, .. } = &seg.kind {
-                if *handled_marker == marker {
+            if let Some(boundary) = seg.kind.prompt_boundary() {
+                if boundary.handled_marker == marker {
                     return Some(handler_index);
                 }
                 handler_index += 1;
@@ -422,14 +390,9 @@ impl VM {
         let mut cursor = Some(start_seg_id);
         while let Some(seg_id) = cursor {
             let seg = self.segments.get(seg_id)?;
-            if let SegmentKind::PromptBoundary {
-                handled_marker,
-                handler,
-                ..
-            } = &seg.kind
-            {
-                if *handled_marker == marker {
-                    return Some(Self::handler_trace_info(handler));
+            if let Some(boundary) = seg.kind.prompt_boundary() {
+                if boundary.handled_marker == marker {
+                    return Some(Self::handler_trace_info(&boundary.handler));
                 }
             }
             cursor = seg.parent;

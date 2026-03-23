@@ -285,13 +285,11 @@ impl DebugState {
                     let frame_kind = match frame {
                         Frame::Program { metadata, .. } if metadata.is_some() => "Program(meta)",
                         Frame::Program { .. } => "Program",
-                        Frame::InterceptorApply(_) => "InterceptorApply",
-                        Frame::InterceptorEval(_) => "InterceptorEval",
+                        Frame::LexicalScope { .. } => "LexicalScope",
                         Frame::EvalReturn(_) => "EvalReturn",
                         Frame::MapReturn { .. } => "MapReturn",
                         Frame::FlatMapBindResult => "FlatMapBindResult",
                         Frame::FlatMapBindSource { .. } => "FlatMapBindSource",
-                        Frame::InterceptBodyReturn { .. } => "InterceptBodyReturn",
                     };
                     crate::vm_debug_log!("  frame[{}]: {}", i, frame_kind);
                 }

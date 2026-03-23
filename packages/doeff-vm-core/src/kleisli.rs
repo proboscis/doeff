@@ -19,7 +19,7 @@ use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStrea
 use crate::py_shared::PyShared;
 use crate::segment::ScopeStore;
 use crate::value::Value;
-use crate::vm::RustStore;
+use crate::vm::VarStore;
 
 fn await_shim_attr_name(py: Python<'_>) -> PyResult<String> {
     py.import("doeff.handlers.await_handlers")
@@ -404,7 +404,10 @@ impl PyKleisli {
         value: &Value,
     ) -> Result<Bound<'py, PyAny>, VMError> {
         match value {
-            Value::Continuation(k) => Bound::new(py, PyK::from_continuation(k))
+            Value::Continuation(k) => Bound::new(py, PyK::from_continuation(k.clone_handle()))
+                .map(|obj| obj.into_any())
+                .map_err(Self::map_pyerr),
+            Value::PendingContinuation(k) => Bound::new(py, PyK::from_pending(k.clone()))
                 .map(|obj| obj.into_any())
                 .map_err(Self::map_pyerr),
             Value::Python(_)
@@ -677,7 +680,7 @@ impl IRStream for RustKleisliStream {
     fn resume(
         &mut self,
         value: Value,
-        store: &mut RustStore,
+        store: &mut VarStore,
         scope: &mut ScopeStore,
     ) -> IRStreamStep {
         if let (Some(effect), Some(continuation)) =
@@ -697,7 +700,7 @@ impl IRStream for RustKleisliStream {
     fn throw(
         &mut self,
         exc: crate::driver::PyException,
-        store: &mut RustStore,
+        store: &mut VarStore,
         scope: &mut ScopeStore,
     ) -> IRStreamStep {
         Python::attach(|_py| {
@@ -739,7 +742,7 @@ impl Kleisli for RustKleisli {
         };
 
         let continuation = match &args[1] {
-            Value::Continuation(k) => k.clone(),
+            Value::Continuation(k) => k.clone_handle(),
             other => {
                 return Err(VMError::type_error(format!(
                     "RustKleisli arg[1] must be Continuation, got {other:?}"

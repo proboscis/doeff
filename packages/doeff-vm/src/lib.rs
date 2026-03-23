@@ -57,14 +57,18 @@ pub mod pyvm;
 pub mod python_call {
     pub use doeff_vm_core::python_call::*;
 }
-pub mod rust_store {
-    pub use doeff_vm_core::rust_store::*;
+pub mod var_store {
+    pub use doeff_vm_core::var_store::*;
 }
 pub mod scheduler {
     pub use doeff_core_effects::scheduler::*;
 }
+pub mod scope_store {
+    pub use doeff_vm_core::scope_store::*;
+}
 pub mod segment {
     pub use doeff_vm_core::segment::*;
+    pub(crate) use doeff_vm_core::{Fiber as Segment, FiberKind as SegmentKind};
 }
 mod step {
     pub use doeff_vm_core::do_ctrl::DoCtrl;
@@ -75,7 +79,7 @@ pub mod value {
     pub use doeff_vm_core::value::*;
 }
 mod vm {
-    pub use doeff_vm_core::{DebugConfig, DebugLevel, RustStore, TraceEvent, VM};
+    pub use doeff_vm_core::{DebugConfig, DebugLevel, VarStore, TraceEvent, VM};
 }
 
 // Re-exports for convenience
@@ -85,7 +89,7 @@ pub use capture::{
     HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry, HandlerStatus, SpawnSite, TraceEntry,
     TraceFrame, TraceHop,
 };
-pub use continuation::Continuation;
+pub use continuation::{Continuation, OwnedControlContinuation, PendingContinuation};
 pub use do_ctrl::DoCtrl;
 pub use doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 pub use doeff_vm_core::DoExprTag;
@@ -95,15 +99,16 @@ pub use error::VMError;
 pub use frame::Frame;
 pub use handler::*;
 pub use ids::{
-    ContId, DispatchId, FiberId, Marker, PromiseId, RunnableId, ScopeId, SegmentId, TaskId, VarId,
+    ContId, DispatchId, FiberId, Marker, PromiseId, RunnableId, SegmentId, TaskId, VarId,
 };
 pub use ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream, StreamLocation};
 pub use kleisli::{Kleisli, KleisliDebugInfo, KleisliRef, PyKleisli, RustKleisli};
 pub use py_key::HashedPyKey;
 pub use python_call::{PendingPython, PyCallOutcome, PythonCall};
 pub use pyvm::PyVM;
-pub use rust_store::RustStore;
-pub use segment::{Fiber, FiberKind, Segment, SegmentKind};
+pub use scope_store::ScopeStore;
+pub use var_store::VarStore;
+pub use segment::{Fiber, FiberKind};
 pub use step::PyException;
 pub use value::{PyVar, Value};
 pub use vm::VM;
