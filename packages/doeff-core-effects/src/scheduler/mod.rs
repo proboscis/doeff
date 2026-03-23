@@ -15,11 +15,10 @@ use crate::capture::{SpawnSite, TraceHop};
 use crate::continuation::{Continuation, OwnedControlContinuation};
 use crate::doeff_generator::DoeffGeneratorFn;
 use crate::effect::{
-    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python,
-    make_execution_context_object, DispatchEffect, PyAcquireSemaphore, PyCancelEffect,
-    PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise,
-    PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySemaphore, PySpawn,
-    PyTaskCompleted, PyWait, TaskCancelledError,
+    dispatch_into_python, dispatch_ref_as_python, make_execution_context_object, DispatchEffect,
+    PyAcquireSemaphore, PyCancelEffect, PyCompletePromise, PyCreateExternalPromise,
+    PyCreatePromise, PyCreateSemaphore, PyFailPromise, PyGather, PyGetExecutionContext, PyRace,
+    PyReleaseSemaphore, PySemaphore, PySpawn, PyTaskCompleted, PyWait, TaskCancelledError,
 };
 use crate::error::VMError;
 use crate::handler::{IRStreamFactory, IRStreamProgram, IRStreamProgramRef};
@@ -447,8 +446,8 @@ fn step_targets_cont_id(step: &IRStreamStep, cont_id: ContId) -> bool {
             | DoCtrl::Perform { .. }
             | DoCtrl::WithHandler { .. }
             | DoCtrl::WithIntercept { .. }
-            | DoCtrl::Delegate { .. }
-            | DoCtrl::Pass { .. }
+            | DoCtrl::Delegate
+            | DoCtrl::Pass
             | DoCtrl::GetContinuation
             | DoCtrl::GetHandlers
             | DoCtrl::GetTraceback { .. }
@@ -480,7 +479,7 @@ fn step_is_terminal(step: &IRStreamStep) -> bool {
         step,
         IRStreamStep::Yield(DoCtrl::Transfer { .. })
             | IRStreamStep::Yield(DoCtrl::TransferThrow { .. })
-            | IRStreamStep::Yield(DoCtrl::Pass { .. })
+            | IRStreamStep::Yield(DoCtrl::Pass)
     )
 }
 
@@ -3355,9 +3354,7 @@ impl IRStreamProgram for SchedulerProgram {
             match parse_scheduler_python_effect(&obj, None) {
                 Ok(Some(se)) => se,
                 Ok(None) => {
-                    return IRStreamStep::Yield(DoCtrl::Delegate {
-                        effect: dispatch_from_shared(obj),
-                    })
+                    return IRStreamStep::Yield(DoCtrl::Delegate)
                 }
                 Err(msg) => {
                     return IRStreamStep::Throw(PyException::type_error(format!(
@@ -3368,7 +3365,7 @@ impl IRStreamProgram for SchedulerProgram {
         } else {
             #[cfg(test)]
             {
-                return IRStreamStep::Yield(DoCtrl::Delegate { effect });
+                return IRStreamStep::Yield(DoCtrl::Delegate);
             }
             #[cfg(not(test))]
             {
@@ -4247,9 +4244,7 @@ mod tests {
                 continuation: cont.clone(),
                 exception: PyException::runtime_error("boom".to_string()),
             }),
-            IRStreamStep::Yield(DoCtrl::Pass {
-                effect: dispatch(Effect::get("k")),
-            }),
+            IRStreamStep::Yield(DoCtrl::Pass),
         ];
         for step in terminal_steps {
             assert!(step_is_terminal(&step));
@@ -4258,9 +4253,7 @@ mod tests {
         Python::attach(|py| {
             let expr = PyShared::new(py.None());
             let non_terminal_steps = vec![
-                IRStreamStep::Yield(DoCtrl::Delegate {
-                    effect: dispatch(Effect::get("k")),
-                }),
+                IRStreamStep::Yield(DoCtrl::Delegate),
                 IRStreamStep::Yield(DoCtrl::Resume {
                     continuation: cont.clone(),
                     value: Value::Unit,

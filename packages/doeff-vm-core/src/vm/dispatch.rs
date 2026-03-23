@@ -261,11 +261,41 @@ impl VM {
         effect: &DispatchEffect,
         continuation: &Continuation,
     ) {
+        let segment = self.segments.get_mut(prompt_seg_id).unwrap_or_else(|| {
+            panic!(
+                "set_prompt_forward_context: prompt segment {} not found",
+                prompt_seg_id.0
+            )
+        });
+        segment.pending_effect = Some(effect.clone());
+        segment.pending_continuation = Some(continuation.clone_handle());
+    }
+
+    fn clear_prompt_forward_context(&mut self, prompt_seg_id: SegmentId) {
         let Some(segment) = self.segments.get_mut(prompt_seg_id) else {
             return;
         };
-        segment.pending_effect = Some(effect.clone());
-        segment.pending_continuation = Some(continuation.clone_handle());
+        segment.pending_effect = None;
+        segment.pending_continuation = None;
+    }
+
+    fn clear_prompt_forward_context_pair(&mut self, prompt_seg_id: SegmentId) {
+        self.clear_prompt_forward_context(prompt_seg_id);
+        let canonical_prompt_seg_id = self.canonical_output_segment_id(prompt_seg_id);
+        if canonical_prompt_seg_id != prompt_seg_id {
+            self.clear_prompt_forward_context(canonical_prompt_seg_id);
+        }
+    }
+
+    fn clear_dispatch_forward_context(&mut self, dispatch: &ProgramDispatch) {
+        self.clear_prompt_forward_context_pair(dispatch.prompt_segment_id);
+        if let Some(prompt_seg_id) = self
+            .segments
+            .get(dispatch.handler_segment_id)
+            .and_then(|segment| segment.parent)
+        {
+            self.clear_prompt_forward_context_pair(prompt_seg_id);
+        }
     }
 
     fn continuation_is_suffix(container: &Continuation, candidate: &Continuation) -> bool {
@@ -626,6 +656,7 @@ impl VM {
         });
 
         if let Some(dispatch) = dispatch {
+            self.clear_dispatch_forward_context(&dispatch);
             let seg_id = dispatch.handler_segment_id;
             if let Some(segment) = self.segments.get_mut(seg_id) {
                 for frame in &mut segment.frames {
@@ -1516,23 +1547,6 @@ impl VM {
         self.current_segment_dispatch_id()
     }
 
-    pub fn current_handler_forward_effect(&self) -> Option<DispatchEffect> {
-        let (_, dispatch_id, dispatch_k, _, prompt_seg_id) = self
-            .nearest_handler_dispatch()
-            .or_else(|| self.current_live_handler_dispatch())?;
-        let origin = self.dispatch_origin_for_dispatch_id(dispatch_id)?;
-        match self.prompt_forward_context(prompt_seg_id) {
-            Some((effect, _)) if effect == origin.effect => Some(effect),
-            Some(_) | None => {
-                if self.handler_dispatch_is_live(&dispatch_k) {
-                    Some(origin.effect)
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
     pub fn current_dispatch_id(&self) -> Option<DispatchId> {
         self.current_active_handler_dispatch_id()
             .or_else(|| self.current_segment_dispatch_id())
@@ -1615,21 +1629,31 @@ impl VM {
                 .as_ref()
                 .is_some_and(PyException::requires_safe_error_context_dispatch);
         let restricted_excluded_prompts: HashSet<SegmentId> = if restricted_error_context_dispatch {
-            self.current_segment_dispatch_id()
-                .and_then(|dispatch_id| {
-                    self.dispatch_origin_for_dispatch_id(dispatch_id)
-                        .map(|origin| {
-                            self.continuation_handler_chain_start(&origin.k_origin)
-                                .map(|start_seg_id| {
-                                    self.handlers_in_caller_chain(start_seg_id)
-                                        .into_iter()
-                                        .map(|entry| entry.prompt_seg_id)
-                                        .collect()
-                                })
-                                .unwrap_or_default()
-                        })
-                })
-                .unwrap_or_default()
+            let dispatch_id = self.current_segment_dispatch_id().ok_or_else(|| {
+                VMError::internal(
+                    "restricted GetExecutionContext dispatch requires a current dispatch id",
+                )
+            })?;
+            let origin = self
+                .dispatch_origin_for_dispatch_id(dispatch_id)
+                .ok_or_else(|| {
+                    VMError::internal(format!(
+                        "restricted GetExecutionContext dispatch {} missing origin",
+                        dispatch_id.raw()
+                    ))
+                })?;
+            let start_seg_id = self
+                .continuation_handler_chain_start(&origin.k_origin)
+                .ok_or_else(|| {
+                    VMError::internal(format!(
+                        "restricted GetExecutionContext dispatch {} missing handler chain start",
+                        dispatch_id.raw()
+                    ))
+                })?;
+            self.handlers_in_caller_chain(start_seg_id)
+                .into_iter()
+                .map(|entry| entry.prompt_seg_id)
+                .collect()
         } else {
             HashSet::new()
         };
@@ -2726,7 +2750,7 @@ impl VM {
         Ok(pass_cont)
     }
 
-    fn handle_forward(&mut self, kind: ForwardKind, _effect: DispatchEffect) -> StepEvent {
+    fn handle_forward(&mut self, kind: ForwardKind) -> StepEvent {
         let handler_dispatch = self.nearest_handler_dispatch().or_else(|| {
             self.current_segment_dispatch_id().and_then(|dispatch_id| {
                 self.active_handler_dispatch_for(dispatch_id).and_then(
@@ -2934,12 +2958,12 @@ impl VM {
         self.dispatch_fatal_error_event(VMError::delegate_no_outer_handler(effect))
     }
 
-    pub(super) fn handle_delegate(&mut self, effect: DispatchEffect) -> StepEvent {
-        self.handle_forward(ForwardKind::Delegate, effect)
+    pub(super) fn handle_delegate(&mut self) -> StepEvent {
+        self.handle_forward(ForwardKind::Delegate)
     }
 
-    pub(super) fn handle_pass(&mut self, effect: DispatchEffect) -> StepEvent {
-        self.handle_forward(ForwardKind::Pass, effect)
+    pub(super) fn handle_pass(&mut self) -> StepEvent {
+        self.handle_forward(ForwardKind::Pass)
     }
 
     pub(super) fn handle_handler_return(&mut self, mut value: Value) -> StepEvent {

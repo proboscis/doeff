@@ -1037,7 +1037,7 @@ impl VM {
             DoCtrl::Transfer { .. }
                 | DoCtrl::TransferThrow { .. }
                 | DoCtrl::Discontinue { .. }
-                | DoCtrl::Pass { .. }
+                | DoCtrl::Pass
         );
         if !is_terminal {
             if let Err(err) = self.push_program_frame(stream, metadata, handler_kind) {
@@ -1191,7 +1191,12 @@ impl VM {
         let current = yielded;
         let chain = self.current_interceptor_chain();
         let start_idx = after_marker
-            .and_then(|marker| chain.iter().position(|link| link.marker == marker).map(|idx| idx + 1))
+            .and_then(|marker| {
+                chain
+                    .iter()
+                    .position(|link| link.marker == marker)
+                    .map(|idx| idx + 1)
+            })
             .unwrap_or(0);
 
         for link in chain.iter().skip(start_idx) {
@@ -1474,8 +1479,8 @@ impl VM {
                 continuation,
                 exception,
             } => self.handle_yield_discontinue(continuation, exception),
-            DoCtrl::Delegate { effect } => self.handle_yield_delegate(effect),
-            DoCtrl::Pass { effect } => self.handle_yield_pass(effect),
+            DoCtrl::Delegate => self.handle_yield_delegate(),
+            DoCtrl::Pass => self.handle_yield_pass(),
             DoCtrl::GetContinuation => self.handle_yield_get_continuation(),
             DoCtrl::GetHandlers => self.handle_yield_get_handlers(),
             DoCtrl::GetTraceback { continuation } => self.handle_yield_get_traceback(continuation),
@@ -1614,12 +1619,12 @@ impl VM {
         self.handle_with_intercept(interceptor, body, types, mode, metadata)
     }
 
-    fn handle_yield_delegate(&mut self, effect: DispatchEffect) -> StepEvent {
-        self.handle_delegate(effect)
+    fn handle_yield_delegate(&mut self) -> StepEvent {
+        self.handle_delegate()
     }
 
-    fn handle_yield_pass(&mut self, effect: DispatchEffect) -> StepEvent {
-        self.handle_pass(effect)
+    fn handle_yield_pass(&mut self) -> StepEvent {
+        self.handle_pass()
     }
 
     fn handle_yield_get_continuation(&mut self) -> StepEvent {
@@ -2119,8 +2124,8 @@ impl VM {
                 | non_pure @ DoCtrl::WithHandler { .. }
                 | non_pure @ DoCtrl::WithIntercept { .. }
                 | non_pure @ DoCtrl::Discontinue { .. }
-                | non_pure @ DoCtrl::Delegate { .. }
-                | non_pure @ DoCtrl::Pass { .. }
+                | non_pure @ DoCtrl::Delegate
+                | non_pure @ DoCtrl::Pass
                 | non_pure @ DoCtrl::GetContinuation
                 | non_pure @ DoCtrl::GetHandlers
                 | non_pure @ DoCtrl::GetTraceback { .. }
@@ -2164,8 +2169,8 @@ impl VM {
                 | non_pure @ DoCtrl::WithHandler { .. }
                 | non_pure @ DoCtrl::WithIntercept { .. }
                 | non_pure @ DoCtrl::Discontinue { .. }
-                | non_pure @ DoCtrl::Delegate { .. }
-                | non_pure @ DoCtrl::Pass { .. }
+                | non_pure @ DoCtrl::Delegate
+                | non_pure @ DoCtrl::Pass
                 | non_pure @ DoCtrl::GetContinuation
                 | non_pure @ DoCtrl::GetHandlers
                 | non_pure @ DoCtrl::GetTraceback { .. }

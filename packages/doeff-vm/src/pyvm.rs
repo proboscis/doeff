@@ -1389,7 +1389,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                     .unbind(),
                 )
             }
-            DoCtrl::Delegate { .. } => Some(
+            DoCtrl::Delegate => Some(
                 Bound::new(
                     py,
                     PyClassInitializer::from(PyDoExprBase)
@@ -1402,7 +1402,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 .into_any()
                 .unbind(),
             ),
-            DoCtrl::Pass { .. } => Some(
+            DoCtrl::Pass => Some(
                 Bound::new(
                     py,
                     PyClassInitializer::from(PyDoExprBase)
@@ -1987,17 +1987,19 @@ pub(crate) fn classify_yielded_bound(
             }
             DoExprTag::Delegate => {
                 let _d: PyRef<'_, PyDelegate> = obj.extract()?;
-                let effect = vm.current_handler_forward_effect().ok_or_else(|| {
-                    PyRuntimeError::new_err("Delegate called outside dispatch context")
-                })?;
-                Ok(DoCtrl::Delegate { effect })
+                if vm.current_dispatch_id().is_none() {
+                    return Err(PyRuntimeError::new_err(
+                        "Delegate called outside dispatch context",
+                    ));
+                }
+                Ok(DoCtrl::Delegate)
             }
             DoExprTag::Pass => {
                 let _p: PyRef<'_, PyPass> = obj.extract()?;
-                let effect = vm.current_handler_forward_effect().ok_or_else(|| {
-                    PyRuntimeError::new_err("Pass called outside dispatch context")
-                })?;
-                Ok(DoCtrl::Pass { effect })
+                if vm.current_dispatch_id().is_none() {
+                    return Err(PyRuntimeError::new_err("Pass called outside dispatch context"));
+                }
+                Ok(DoCtrl::Pass)
             }
             DoExprTag::ResumeContinuation => {
                 let rc: PyRef<'_, PyResumeContinuation> = obj.extract()?;
