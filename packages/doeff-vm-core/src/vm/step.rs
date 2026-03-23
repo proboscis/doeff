@@ -933,7 +933,7 @@ impl VM {
                     return StepEvent::Error(err);
                 }
                 let (marker, k) = if let Some(origin_cont_id) = self.current_origin_cont_id() {
-                    let Some((_, k, marker)) = self
+                    let Some((_, handler_fiber_ids, marker)) = self
                         .active_handler_dispatch_for(origin_cont_id)
                         .or_else(|| self.handler_dispatch_for_any(origin_cont_id))
                     else {
@@ -941,7 +941,7 @@ impl VM {
                             "RustProgramContinuation: active handler dispatch not found",
                         ));
                     };
-                    (marker, k)
+                    (marker, Continuation::capture_from_fiber_ids(handler_fiber_ids))
                 } else {
                     let Some(seg_id) = self.current_segment else {
                         return StepEvent::Error(VMError::internal(
