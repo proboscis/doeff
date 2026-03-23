@@ -363,28 +363,28 @@ impl Clone for DoCtrl {
                 continuation,
                 value,
             } => DoCtrl::Resume {
-                continuation: continuation.clone_handle(),
+                continuation: Continuation::capture_from_fiber_ids(continuation.fibers().to_vec()),
                 value: value.clone(),
             },
             DoCtrl::Transfer {
                 continuation,
                 value,
             } => DoCtrl::Transfer {
-                continuation: continuation.clone_handle(),
+                continuation: Continuation::capture_from_fiber_ids(continuation.fibers().to_vec()),
                 value: value.clone(),
             },
             DoCtrl::TransferThrow {
                 continuation,
                 exception,
             } => DoCtrl::TransferThrow {
-                continuation: continuation.clone_handle(),
+                continuation: Continuation::capture_from_fiber_ids(continuation.fibers().to_vec()),
                 exception: exception.clone(),
             },
             DoCtrl::ResumeThrow {
                 continuation,
                 exception,
             } => DoCtrl::ResumeThrow {
-                continuation: continuation.clone_handle(),
+                continuation: Continuation::capture_from_fiber_ids(continuation.fibers().to_vec()),
                 exception: exception.clone(),
             },
             DoCtrl::WithHandler {
@@ -413,7 +413,7 @@ impl Clone for DoCtrl {
                 continuation,
                 exception,
             } => DoCtrl::Discontinue {
-                continuation: continuation.clone_handle(),
+                continuation: Continuation::capture_from_fiber_ids(continuation.fibers().to_vec()),
                 exception: exception.clone(),
             },
             DoCtrl::Delegate => DoCtrl::Delegate,
@@ -421,7 +421,7 @@ impl Clone for DoCtrl {
             DoCtrl::GetContinuation => DoCtrl::GetContinuation,
             DoCtrl::GetHandlers => DoCtrl::GetHandlers,
             DoCtrl::GetTraceback { continuation } => DoCtrl::GetTraceback {
-                continuation: continuation.clone_handle(),
+                continuation: Continuation::capture_from_fiber_ids(continuation.fibers().to_vec()),
             },
             DoCtrl::CreateContinuation {
                 expr,
@@ -481,7 +481,7 @@ impl Clone for DoCtrl {
                 metadata,
             } => DoCtrl::EvalInScope {
                 expr: expr.clone(),
-                scope: scope.clone_handle(),
+                scope: Continuation::capture_from_fiber_ids(scope.fibers().to_vec()),
                 bindings: bindings.clone(),
                 metadata: metadata.clone(),
             },

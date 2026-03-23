@@ -164,7 +164,7 @@ impl Clone for Value {
             Value::String(s) => Value::String(s.clone()),
             Value::Bool(b) => Value::Bool(*b),
             Value::None => Value::None,
-            Value::Continuation(k) => Value::Continuation(k.clone_handle()),
+            Value::Continuation(k) => Value::Continuation(Continuation::capture_from_fiber_ids(k.fibers().to_vec())),
             Value::PendingContinuation(k) => Value::PendingContinuation(k.clone()),
             Value::Handlers(handlers) => Value::Handlers(handlers.clone()),
             Value::Kleisli(kleisli) => Value::Kleisli(kleisli.clone()),

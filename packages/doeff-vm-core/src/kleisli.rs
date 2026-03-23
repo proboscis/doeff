@@ -404,7 +404,7 @@ impl PyKleisli {
         value: &Value,
     ) -> Result<Bound<'py, PyAny>, VMError> {
         match value {
-            Value::Continuation(k) => Bound::new(py, PyK::from_continuation(k.clone_handle()))
+            Value::Continuation(k) => Bound::new(py, PyK::from_continuation(Continuation::capture_from_fiber_ids(k.fibers().to_vec())))
                 .map(|obj| obj.into_any())
                 .map_err(Self::map_pyerr),
             Value::PendingContinuation(k) => Bound::new(py, PyK::from_pending(k.clone()))
@@ -742,7 +742,7 @@ impl Kleisli for RustKleisli {
         };
 
         let continuation = match &args[1] {
-            Value::Continuation(k) => k.clone_handle(),
+            Value::Continuation(k) => Continuation::capture_from_fiber_ids(k.fibers().to_vec()),
             other => {
                 return Err(VMError::type_error(format!(
                     "RustKleisli arg[1] must be Continuation, got {other:?}"

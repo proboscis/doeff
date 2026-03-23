@@ -84,7 +84,7 @@ impl Clone for PendingPython {
             PendingPython::RustProgramContinuation { marker, k } => {
                 PendingPython::RustProgramContinuation {
                     marker: *marker,
-                    k: k.clone_handle(),
+                    k: Continuation::capture_from_fiber_ids(k.fibers().to_vec()),
                 }
             }
             PendingPython::AsyncEscape => PendingPython::AsyncEscape,

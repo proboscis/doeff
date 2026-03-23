@@ -259,7 +259,7 @@ impl VM {
     ) -> Option<(DispatchEffect, Continuation)> {
         let segment = self.segments.get(prompt_seg_id)?;
         let effect = segment.pending_effect.as_ref()?.clone();
-        let continuation = segment.pending_continuation.as_ref()?.clone_handle();
+        let continuation = Continuation::capture_from_fiber_ids(segment.pending_continuation.as_ref()?.fibers().to_vec());
         Some((effect, continuation))
     }
 
@@ -267,11 +267,10 @@ impl VM {
         &mut self,
         continuation: &Continuation,
     ) -> Continuation {
-        let cloned = continuation.clone_handle();
-        for fiber_id in cloned.fibers() {
+        for fiber_id in continuation.fibers() {
             self.clear_pending_error_context(*fiber_id);
         }
-        cloned
+        Continuation::capture_from_fiber_ids(continuation.fibers().to_vec())
     }
 
     fn set_prompt_forward_context(
@@ -287,7 +286,7 @@ impl VM {
             )
         });
         segment.pending_effect = Some(effect.clone());
-        segment.pending_continuation = Some(continuation.clone_handle());
+        segment.pending_continuation = Some(Continuation::capture_from_fiber_ids(continuation.fibers().to_vec()));
     }
 
     fn clear_prompt_forward_context(&mut self, prompt_seg_id: SegmentId) {
@@ -1492,7 +1491,7 @@ impl VM {
                 Frame::EvalReturn(eval_return) => match eval_return.as_ref() {
                     EvalReturnContinuation::ReturnToContinuation { continuation }
                     | EvalReturnContinuation::EvalInScopeReturn { continuation } => {
-                        Some(continuation.clone_handle())
+                        Some(Continuation::capture_from_fiber_ids(continuation.fibers().to_vec()))
                     }
                     EvalReturnContinuation::ResumeToContinuation { .. }
                     | EvalReturnContinuation::ApplyResolveFunction { .. }
@@ -2060,7 +2059,7 @@ impl VM {
             self.capture_live_continuation(seg_id)
         };
         if let Some(return_to) = fallback_return_to {
-            k_user.append_owned_fibers(return_to.clone_handle());
+            k_user.append_owned_fibers(return_to);
         }
         if let Some(seg_id) = self.current_segment {
             self.clear_pending_error_context(seg_id);
@@ -2071,13 +2070,12 @@ impl VM {
         let handler_seg = Segment::new(Some(prompt_seg_id));
         let handler_seg_id = self.alloc_segment(handler_seg);
         self.copy_interceptor_guard_state(Some(seg_id), handler_seg_id);
-        let origin_k = k_user.clone_handle();
-        let active_k = k_user.clone_handle();
         let canonical_prompt_seg_id = self.canonical_output_segment_id(prompt_seg_id);
         self.set_prompt_forward_context(prompt_seg_id, &effect, &k_user);
         if canonical_prompt_seg_id != prompt_seg_id {
             self.set_prompt_forward_context(canonical_prompt_seg_id, &effect, &k_user);
         }
+        let k_fiber_ids = k_user.fibers().to_vec();
         self.set_pending_program_dispatch(
             handler_seg_id,
             ProgramDispatch {
@@ -2091,8 +2089,8 @@ impl VM {
                     effect_site.clone(),
                     &handler_chain_snapshot,
                 ),
-                origin_fiber_ids: origin_k.fibers().to_vec(),
-                handler_fiber_ids: active_k.fibers().to_vec(),
+                origin_fiber_ids: k_fiber_ids.clone(),
+                handler_fiber_ids: k_fiber_ids,
                 original_exception: original_exception.clone(),
             },
         );
@@ -2880,14 +2878,15 @@ impl VM {
             self.root_delegate_parent_segment_id(parent_k_user)
                 .or_else(|| self.continuation_chain_segment_id(parent_k_user))
         });
+        let parent_k_copy = Continuation::capture_from_fiber_ids(parent_k_user.fibers().to_vec());
         let eval_return = if self.continuation_chain_contains_return_to_continuation(parent_k_user)
         {
             EvalReturnContinuation::ReturnToContinuation {
-                continuation: parent_k_user.clone_handle(),
+                continuation: parent_k_copy,
             }
         } else {
             EvalReturnContinuation::ResumeToContinuation {
-                continuation: parent_k_user.clone_handle(),
+                continuation: parent_k_copy,
             }
         };
         pass_seg.push_frame(Frame::EvalReturn(Box::new(eval_return)));
@@ -2995,7 +2994,7 @@ impl VM {
                     ));
                 };
                 let parent_owned = match self
-                    .materialize_owned_continuation(parent_k_user.clone_handle(), "Delegate")
+                    .materialize_owned_continuation(Continuation::capture_from_fiber_ids(parent_k_user.fibers().to_vec()), "Delegate")
                 {
                     Ok(continuation) => continuation,
                     Err(err) => return StepEvent::Error(err),
@@ -3062,7 +3061,7 @@ impl VM {
                 let handler_seg = Segment::new(Some(entry.prompt_seg_id));
                 let handler_seg_id = self.alloc_segment(handler_seg);
                 self.copy_interceptor_guard_state(outer_caller, handler_seg_id);
-                let observer_k = next_k.clone_handle();
+                let next_k_fiber_ids = next_k.fibers().to_vec();
                 let forwarded_exception = self.continuation_pending_error_context(&next_k).cloned();
                 let canonical_prompt_seg_id = self.canonical_output_segment_id(entry.prompt_seg_id);
                 self.set_prompt_forward_context(entry.prompt_seg_id, &effect, &next_k);
@@ -3091,7 +3090,7 @@ impl VM {
                                 ),
                             }),
                         origin_fiber_ids: origin.origin_fiber_ids.clone(),
-                        handler_fiber_ids: observer_k.fibers().to_vec(),
+                        handler_fiber_ids: next_k_fiber_ids,
                         original_exception: forwarded_exception
                             .clone()
                             .or(origin.original_exception.clone()),
