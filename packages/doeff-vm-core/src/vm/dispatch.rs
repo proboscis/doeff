@@ -2671,39 +2671,41 @@ impl VM {
         Ok(pass_cont)
     }
 
-    fn handle_forward(&mut self, kind: ForwardKind, effect: DispatchEffect) -> StepEvent {
-        let Some(dispatch_id) = self.current_dispatch_id() else {
+    fn handle_forward(&mut self, kind: ForwardKind, _effect: DispatchEffect) -> StepEvent {
+        let Some(current_seg_id) = self.current_segment
+        else {
             return StepEvent::Error(VMError::internal(kind.outside_dispatch_error()));
         };
-        let Some(origin) = self.dispatch_origin_for_dispatch_id(dispatch_id) else {
-            return StepEvent::Error(VMError::internal(format!(
-                "{}: dispatch {} not found",
-                kind.missing_handler_context(),
-                dispatch_id.raw()
-            )));
+        let Some(current_dispatch) = self
+            .dispatch_view_in_segment(current_seg_id)
+            .map(|view| view.dispatch)
+        else {
+            return StepEvent::Error(VMError::internal(kind.outside_dispatch_error()));
         };
-        let handler_dispatch = self.nearest_handler_dispatch().or_else(|| {
-            self.current_segment_dispatch_id().and_then(|dispatch_id| {
-                self.active_handler_dispatch_for(dispatch_id).and_then(
-                    |(seg_id, continuation, marker)| {
-                        let prompt_seg_id = self.handler_prompt_segment_id(seg_id, marker)?;
-                        Some((seg_id, dispatch_id, continuation, marker, prompt_seg_id))
-                    },
-                )
-            })
-        });
-        let Some((inner_seg_id, _, parent_k_user, current_marker, current_prompt_seg_id)) =
-            handler_dispatch
+        let dispatch_id = current_dispatch.dispatch_id;
+        let inner_seg_id = current_dispatch.handler_segment_id;
+        let parent_k_user = current_dispatch.handler_continuation.clone_handle();
+        let current_prompt_seg_id = current_dispatch.prompt_segment_id;
+        let Some(current_marker) = self
+            .segments
+            .get(current_prompt_seg_id)
+            .and_then(|seg| seg.handled_marker())
         else {
             return StepEvent::Error(VMError::internal(format!(
-                "{}: active handler dispatch {} not found",
+                "{}: handler prompt {} missing marker",
                 kind.missing_handler_context(),
-                dispatch_id.raw()
+                current_prompt_seg_id.index()
             )));
         };
-        let handler_chain_start = match self.caller_visible_handler_chain_start() {
-            Ok(seg_id) => seg_id,
-            Err(err) => return StepEvent::Error(err),
+        let current_effect = current_dispatch.effect.clone();
+        let origin = Self::dispatch_origin_view_from_program(&current_dispatch);
+        let Some(handler_chain_start) = self
+            .continuation_handler_chain_start(&parent_k_user)
+            .or(Some(current_prompt_seg_id))
+        else {
+            return StepEvent::Error(VMError::internal(
+                "forwarded handler continuation must retain a caller chain start",
+            ));
         };
         let mut handler_chain = self.handlers_in_caller_chain(handler_chain_start);
         let from_idx = if let Some(idx) = handler_chain
@@ -2771,7 +2773,9 @@ impl VM {
         }
 
         let effect_obj =
-            match Python::attach(|py| dispatch_to_pyobject(py, &effect).map(|obj| obj.unbind())) {
+            match Python::attach(|py| {
+                dispatch_to_pyobject(py, &current_effect).map(|obj| obj.unbind())
+            }) {
                 Ok(obj) => obj,
                 Err(err) => {
                     return StepEvent::Error(VMError::python_error(format!(
@@ -2782,7 +2786,7 @@ impl VM {
 
         for entry in &visible_chain {
             let handler = entry.handler.clone();
-            let can_handle = match handler.can_handle(&effect) {
+            let can_handle = match handler.can_handle(&current_effect) {
                 Ok(value) => value,
                 Err(err) => return StepEvent::Error(err),
             };
@@ -2826,7 +2830,7 @@ impl VM {
                         parent_dispatch_id: origin.parent_dispatch_id,
                         handler_segment_id: handler_seg_id,
                         prompt_segment_id: canonical_prompt_seg_id,
-                        effect: effect.clone(),
+                        effect: current_effect.clone(),
                         trace: self
                             .dispatch_trace(dispatch_id)
                             .cloned()
@@ -2837,7 +2841,7 @@ impl VM {
                                 result: EffectResult::Active,
                                 resumed_once: false,
                                 is_execution_context_effect: Self::is_execution_context_effect(
-                                    &effect,
+                                    &current_effect,
                                 ),
                             }),
                         origin: origin.k_origin.clone_handle(),
@@ -2850,7 +2854,11 @@ impl VM {
                 self.current_segment = Some(handler_seg_id);
                 let handler_k = next_k;
                 let ir_node =
-                    match Self::invoke_kleisli_handler_expr(handler, effect.clone(), handler_k) {
+                    match Self::invoke_kleisli_handler_expr(
+                        handler,
+                        current_effect.clone(),
+                        handler_k,
+                    ) {
                         Ok(node) => node,
                         Err(err) => return StepEvent::Error(err),
                     };
@@ -2862,7 +2870,7 @@ impl VM {
             self.mode = Mode::Throw(original_exception);
             return StepEvent::Continue;
         }
-        self.dispatch_fatal_error_event(VMError::delegate_no_outer_handler(effect))
+        self.dispatch_fatal_error_event(VMError::delegate_no_outer_handler(current_effect))
     }
 
     pub(super) fn handle_delegate(&mut self, effect: DispatchEffect) -> StepEvent {
@@ -3111,26 +3119,6 @@ impl VM {
                     })
                     .and_then(|origin| self.continuation_handler_chain_start(&origin.k_origin))
             })
-    }
-
-    fn caller_visible_handler_chain_start(&self) -> Result<SegmentId, VMError> {
-        if let Some((seg_id, _, continuation, _, _)) = self.current_live_handler_dispatch() {
-            if Some(seg_id) == self.current_segment {
-                return Ok(seg_id);
-            }
-            return self
-                .continuation_handler_chain_start(&continuation)
-                .or_else(|| {
-                    self.current_dispatch_origin()
-                        .and_then(|origin| self.continuation_handler_chain_start(&origin.k_origin))
-                })
-                .ok_or_else(|| {
-                    VMError::internal("dispatch origin continuations must be captured")
-                });
-        }
-
-        self.current_segment
-            .ok_or_else(|| VMError::internal("handler chain requested without current segment"))
     }
 
     pub(super) fn handle_map(
