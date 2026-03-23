@@ -20,7 +20,7 @@ use crate::effect::{
 
 use crate::error::VMError;
 use crate::frame::CallMetadata;
-use crate::ids::{Marker, SegmentId};
+use crate::ids::SegmentId;
 use crate::ir_stream::{IRStream, IRStreamRef, PythonGeneratorStream};
 use crate::kleisli::{DgfnKleisli, IdentityKleisli, KleisliRef, PyKleisli};
 use crate::py_key::HashedPyKey;
@@ -223,7 +223,9 @@ fn take_control_continuation(
     context: &str,
 ) -> PyResult<OwnedControlContinuation> {
     let k_obj = continuation.bind(py).cast::<PyK>().map_err(|_| {
-        PyTypeError::new_err(format!("{context}.continuation must be K (opaque continuation handle)"))
+        PyTypeError::new_err(format!(
+            "{context}.continuation must be K (opaque continuation handle)"
+        ))
     })?;
     Ok(k_obj.borrow_mut().take_control_continuation())
 }
@@ -247,7 +249,9 @@ fn borrow_control_continuation(
     context: &str,
 ) -> PyResult<doeff_vm_core::Continuation> {
     let k_obj = continuation.bind(py).cast::<PyK>().map_err(|_| {
-        PyTypeError::new_err(format!("{context}.continuation must be K (opaque continuation handle)"))
+        PyTypeError::new_err(format!(
+            "{context}.continuation must be K (opaque continuation handle)"
+        ))
     })?;
     let continuation = k_obj.borrow().continuation().ok_or_else(|| {
         PyTypeError::new_err(format!(
@@ -267,9 +271,11 @@ fn pyk_from_started<'py>(
     py: Python<'py>,
     continuation: &doeff_vm_core::Continuation,
 ) -> PyResult<Py<PyAny>> {
-    Ok(Bound::new(py, PyK::from_continuation(continuation.clone_handle()))?
-        .into_any()
-        .unbind())
+    Ok(
+        Bound::new(py, PyK::from_continuation(continuation.clone_handle()))?
+            .into_any()
+            .unbind(),
+    )
 }
 
 fn pyk_from_control<'py>(
@@ -278,18 +284,15 @@ fn pyk_from_control<'py>(
 ) -> PyResult<Py<PyAny>> {
     match continuation {
         OwnedControlContinuation::Started(continuation) => pyk_from_started(py, continuation),
-        OwnedControlContinuation::Pending(continuation) => Ok(Bound::new(
-            py,
-            PyK::from_pending(continuation.clone()),
-        )?
-        .into_any()
-        .unbind()),
+        OwnedControlContinuation::Pending(continuation) => {
+            Ok(Bound::new(py, PyK::from_pending(continuation.clone()))?
+                .into_any()
+                .unbind())
+        }
     }
 }
 
-fn validate_control_continuation(
-    continuation: &doeff_vm_core::Continuation,
-) -> PyResult<()> {
+fn validate_control_continuation(continuation: &doeff_vm_core::Continuation) -> PyResult<()> {
     if continuation.is_placeholder() || continuation.consumed() {
         return Err(PyRuntimeError::new_err(format!(
             "one-shot violation: continuation {} already consumed",
@@ -1129,8 +1132,9 @@ impl PyVM {
     ) -> PyResult<Bound<'py, PyAny>> {
         match value {
             // Runtime callback arguments must receive the opaque K handle.
-            Value::Continuation(k) => Ok(Bound::new(py, PyK::from_continuation(k.clone_handle()))?
-                .into_any()),
+            Value::Continuation(k) => {
+                Ok(Bound::new(py, PyK::from_continuation(k.clone_handle()))?.into_any())
+            }
             Value::PendingContinuation(k) => {
                 Ok(Bound::new(py, PyK::from_pending(k.clone()))?.into_any())
             }
@@ -1987,7 +1991,7 @@ pub(crate) fn classify_yielded_bound(
             }
             DoExprTag::Delegate => {
                 let _d: PyRef<'_, PyDelegate> = obj.extract()?;
-                if vm.current_dispatch_id().is_none() {
+                if vm.current_origin_cont_id().is_none() {
                     return Err(PyRuntimeError::new_err(
                         "Delegate called outside dispatch context",
                     ));
@@ -1996,8 +2000,10 @@ pub(crate) fn classify_yielded_bound(
             }
             DoExprTag::Pass => {
                 let _p: PyRef<'_, PyPass> = obj.extract()?;
-                if vm.current_dispatch_id().is_none() {
-                    return Err(PyRuntimeError::new_err("Pass called outside dispatch context"));
+                if vm.current_origin_cont_id().is_none() {
+                    return Err(PyRuntimeError::new_err(
+                        "Pass called outside dispatch context",
+                    ));
                 }
                 Ok(DoCtrl::Pass)
             }
@@ -3792,7 +3798,6 @@ mod tests {
             let continuation = crate::continuation::Continuation::capture(
                 &seg,
                 crate::ids::SegmentId::from_index(0),
-                None,
             );
             let cont_id = continuation.cont_id;
             let pyvm = PyVM { vm: VM::new() };
@@ -4165,7 +4170,6 @@ mod tests {
             let continuation = crate::continuation::Continuation::capture(
                 &seg,
                 crate::ids::SegmentId::from_index(0),
-                None,
             );
             let k = Bound::new(py, PyK::from_continuation(&continuation))
                 .unwrap()
