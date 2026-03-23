@@ -3,8 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 import re
 
-import pytest
-
 
 ROOT = Path(__file__).resolve().parents[2]
 SEGMENT_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "segment.rs"
@@ -37,14 +35,14 @@ def test_fiber_runtime_source_does_not_store_handler_state_or_logs() -> None:
 def test_var_store_runtime_source_owns_handler_state_logs_and_bindings() -> None:
     source = _runtime_source(VAR_STORE_RS)
 
-    assert "HashMap<SegmentId, HashMap<String, Value>>" in source, (
-        "VarStore must own handler state entries after moving them off Fiber."
+    assert "global_state: HashMap<String, Value>" in source, (
+        "VarStore must keep a single handler-state heap instead of per-segment state maps."
     )
-    assert "HashMap<SegmentId, Vec<Value>>" in source, (
-        "VarStore must own writer log entries after moving them off Fiber."
+    assert "writer_log: Vec<Value>" in source, (
+        "VarStore must keep a single writer log instead of segment-keyed log maps."
     )
-    assert "HashMap<SegmentId, HashMap<HashedPyKey, Value>>" in source, (
-        "VarStore must continue to own named bindings for lexical scope."
+    assert "root_scope_bindings: HashMap<HashedPyKey, Value>" in source, (
+        "VarStore should keep only root lexical bindings once live scope layers move onto frames."
     )
 
 
@@ -73,11 +71,11 @@ def test_fiber_runtime_source_does_not_store_scope_id_or_epoch() -> None:
     )
 
 
-def test_vm_runtime_source_owns_scope_ids_without_epoch_reconciliation() -> None:
+def test_vm_runtime_source_does_not_own_scope_ids_or_epoch_tables() -> None:
     source = _runtime_source(VM_RS)
 
-    assert "HashMap<SegmentId, ScopeId>" in source, (
-        "VM must own the FiberId -> ScopeId mapping after removing scope_id from Fiber."
+    assert "scope_ids:" not in source, (
+        "VM must not own a FiberId -> ScopeId mapping. Scope identity comes from the fiber chain."
     )
     assert "scope_persistent_epochs" not in source, (
         "VM must not keep scope_persistent_epochs after removing persistent_epoch from Fiber."
@@ -101,12 +99,29 @@ def test_fiber_runtime_source_does_not_store_error_or_interceptor_runtime_state(
         )
 
 
-def test_vm_runtime_source_owns_fiber_runtime_side_table() -> None:
+def test_vm_runtime_source_does_not_own_fiber_runtime_side_table() -> None:
     source = _runtime_source(VM_RS)
 
-    assert "HashMap<SegmentId, FiberRuntimeState>" in source, (
-        "VM must own per-fiber runtime state after removing error/interceptor fields from Fiber."
+    assert "fiber_runtime:" not in source, (
+        "VM must not keep a per-fiber runtime HashMap. Runtime state belongs on Fiber."
     )
+    assert "HashMap<SegmentId, FiberRuntimeState>" not in source, (
+        "VM must not reintroduce FiberRuntimeState as a side-table."
+    )
+
+
+def test_fiber_runtime_source_keeps_execution_local_state_on_fiber() -> None:
+    source = _runtime_source(SEGMENT_RS)
+
+    for required in (
+        "pub(crate) pending_error_context:",
+        "pub(crate) interceptor_eval_depth:",
+        "pub(crate) interceptor_skip_stack:",
+        "pub(crate) pending_program_dispatch:",
+    ):
+        assert required in source, (
+            "Execution-local runtime state should live directly on Fiber once VM side-tables are gone."
+        )
 
 
 def test_fiber_runtime_source_has_only_frames_parent_and_kind_fields() -> None:

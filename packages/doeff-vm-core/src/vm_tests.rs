@@ -30,7 +30,7 @@ impl IRStream for ReturnStream {
     fn resume(
         &mut self,
         _value: Value,
-        _store: &mut RustStore,
+        _store: &mut VarStore,
         _scope: &mut crate::segment::ScopeStore,
     ) -> IRStreamStep {
         self.next
@@ -41,7 +41,7 @@ impl IRStream for ReturnStream {
     fn throw(
         &mut self,
         exc: PyException,
-        _store: &mut RustStore,
+        _store: &mut VarStore,
         _scope: &mut crate::segment::ScopeStore,
     ) -> IRStreamStep {
         IRStreamStep::Throw(exc)
@@ -130,10 +130,19 @@ fn install_pending_dispatch(
         handler_seg_id,
         ProgramDispatch {
             dispatch_id,
+            parent_dispatch_id: None,
             handler_segment_id: handler_seg_id,
             prompt_segment_id: handler_seg_id,
             effect: crate::effect::make_get_execution_context_effect()
                 .expect("test dispatch effect should be constructible"),
+            trace: DispatchTrace {
+                effect_site: None,
+                handler_stack: Vec::new(),
+                transfer_target_repr: None,
+                result: EffectResult::Active,
+                resumed_once: false,
+                is_execution_context_effect: true,
+            },
             origin: origin.clone_handle(),
             handler_continuation: origin.clone_handle(),
             original_exception,
@@ -179,7 +188,7 @@ fn test_handler_resolution_cache_skips_rechecking_inner_miss_for_same_segment() 
         Marker::fresh(),
         counting_handler("InnerSkipped", false, skipped_calls.clone()),
     );
-    let body_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(inner_prompt_id)));
+    let body_seg_id = vm.alloc_segment(Segment::new(Some(inner_prompt_id)));
 
     let effect = execution_context_effect();
     let effect_obj = effect_object(&effect);
@@ -234,7 +243,7 @@ fn test_handler_resolution_cache_invalidates_when_segment_topology_changes() {
         Marker::fresh(),
         counting_handler("OuterHandler", true, outer_calls.clone()),
     );
-    let body_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(outer_prompt_id)));
+    let body_seg_id = vm.alloc_segment(Segment::new(Some(outer_prompt_id)));
 
     let effect = execution_context_effect();
     let effect_obj = effect_object(&effect);
@@ -300,7 +309,7 @@ fn test_step_return_clears_current_segment_after_root_completion() {
         Marker::fresh(),
         named_handler("WriterHandler"),
     );
-    let mut seg = Segment::new(Marker::fresh(), Some(writer_prompt_id));
+    let mut seg = Segment::new(Some(writer_prompt_id));
     push_program_frame(&mut seg, Value::Int(42), None);
 
     let seg_id = vm.alloc_segment(seg);
@@ -347,8 +356,8 @@ fn test_receive_python_result_without_current_segment_returns_internal_error() {
 fn test_resume_continuation_uses_captured_caller_instead_of_current_sibling_segment() {
     let mut vm = VM::new();
 
-    let parent_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
-    let child_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(parent_id)));
+    let parent_id = vm.alloc_segment(Segment::new(None));
+    let child_id = vm.alloc_segment(Segment::new(Some(parent_id)));
     let child_segment = vm
         .segments
         .get(child_id)
@@ -357,7 +366,7 @@ fn test_resume_continuation_uses_captured_caller_instead_of_current_sibling_segm
 
     vm.free_segment(child_id);
 
-    let sibling_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(parent_id)));
+    let sibling_id = vm.alloc_segment(Segment::new(Some(parent_id)));
     assert_eq!(
         sibling_id, child_id,
         "freed child segment id should be reused by sibling allocation"
@@ -391,8 +400,8 @@ fn test_resume_continuation_uses_captured_caller_instead_of_current_sibling_segm
 fn test_dispatch_resume_inserts_resume_anchor_above_captured_caller() {
     let mut vm = VM::new();
 
-    let parent_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
-    let child_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(parent_id)));
+    let parent_id = vm.alloc_segment(Segment::new(None));
+    let child_id = vm.alloc_segment(Segment::new(Some(parent_id)));
     let child_segment = vm
         .segments
         .get(child_id)
@@ -407,7 +416,7 @@ fn test_dispatch_resume_inserts_resume_anchor_above_captured_caller() {
         handler_marker,
         named_handler("TestHandler"),
     );
-    let mut handler_seg = Segment::new(handler_marker, Some(prompt_seg_id));
+    let mut handler_seg = Segment::new(Some(prompt_seg_id));
     push_program_frame(
         &mut handler_seg,
         Value::Unit,
@@ -458,9 +467,9 @@ fn test_dispatch_resume_inserts_resume_anchor_above_captured_caller() {
 fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
     let mut vm = VM::new();
 
-    let root_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
-    let captured_caller_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(root_id)));
-    let effect_site_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(captured_caller_id)));
+    let root_id = vm.alloc_segment(Segment::new(None));
+    let captured_caller_id = vm.alloc_segment(Segment::new(Some(root_id)));
+    let effect_site_id = vm.alloc_segment(Segment::new(Some(captured_caller_id)));
     let effect_site_segment = vm
         .segments
         .get(effect_site_id)
@@ -476,7 +485,7 @@ fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
         handler_marker,
         named_handler("TestHandler"),
     );
-    let mut handler_seg = Segment::new(handler_marker, Some(prompt_seg_id));
+    let mut handler_seg = Segment::new(Some(prompt_seg_id));
     push_program_frame(
         &mut handler_seg,
         Value::Unit,
@@ -486,7 +495,7 @@ fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
     install_pending_dispatch(&mut vm, handler_seg_id, dispatch_id, &continuation, None);
     vm.current_segment = Some(handler_seg_id);
 
-    let event = vm.handle_dispatch_resume(continuation.clone(), Value::Unit);
+    let event = vm.handle_dispatch_resume(continuation.clone_handle(), Value::Unit);
     assert!(matches!(event, StepEvent::Continue));
 
     let resumed_seg_id = vm
@@ -534,8 +543,8 @@ fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
 fn test_transfer_throw_uses_captured_caller_instead_of_reused_sibling_segment() {
     let mut vm = VM::new();
 
-    let parent_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
-    let child_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(parent_id)));
+    let parent_id = vm.alloc_segment(Segment::new(None));
+    let child_id = vm.alloc_segment(Segment::new(Some(parent_id)));
     let child_segment = vm
         .segments
         .get(child_id)
@@ -544,7 +553,7 @@ fn test_transfer_throw_uses_captured_caller_instead_of_reused_sibling_segment() 
 
     vm.free_segment(child_id);
 
-    let sibling_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(parent_id)));
+    let sibling_id = vm.alloc_segment(Segment::new(Some(parent_id)));
     assert_eq!(
         sibling_id, child_id,
         "freed child segment id should be reused by sibling allocation"
@@ -582,15 +591,15 @@ fn test_transfer_throw_uses_captured_caller_instead_of_reused_sibling_segment() 
 fn test_eval_in_scope_uses_scope_chain_for_dynamic_handler_lookup() {
     let mut vm = VM::new();
 
-    let scope_parent_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
-    let scope_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(scope_parent_id)));
+    let scope_parent_id = vm.alloc_segment(Segment::new(None));
+    let scope_seg_id = vm.alloc_segment(Segment::new(Some(scope_parent_id)));
     let scope_seg = vm
         .segments
         .get(scope_seg_id)
         .expect("scope segment must exist for continuation capture");
     let scope = Continuation::capture(scope_seg, scope_seg_id, None);
 
-    let current_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(scope_parent_id)));
+    let current_seg_id = vm.alloc_segment(Segment::new(Some(scope_parent_id)));
     vm.current_segment = Some(current_seg_id);
 
     let expr = Python::attach(|py| PyShared::new(py.None()));
@@ -621,8 +630,8 @@ fn test_eval_in_scope_uses_scope_chain_for_dynamic_handler_lookup() {
 fn test_resume_unstarted_continuation_inserts_return_anchor_above_outside_scope() {
     let mut vm = VM::new();
 
-    let outside_scope_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
-    let scheduler_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(outside_scope_id)));
+    let outside_scope_id = vm.alloc_segment(Segment::new(None));
+    let scheduler_seg_id = vm.alloc_segment(Segment::new(Some(outside_scope_id)));
     vm.current_segment = Some(scheduler_seg_id);
 
     let expr = Python::attach(|py| PyShared::new(py.None()));
@@ -676,8 +685,8 @@ fn test_resume_unstarted_continuation_inserts_return_anchor_above_outside_scope(
 fn test_resume_unstarted_continuation_keeps_scope_parent_outside_handler_wrappers() {
     let mut vm = VM::new();
 
-    let outside_scope_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
-    let scheduler_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(outside_scope_id)));
+    let outside_scope_id = vm.alloc_segment(Segment::new(None));
+    let scheduler_seg_id = vm.alloc_segment(Segment::new(Some(outside_scope_id)));
     vm.current_segment = Some(scheduler_seg_id);
 
     let expr = Python::attach(|py| PyShared::new(py.None()));
@@ -718,17 +727,17 @@ fn test_resume_unstarted_continuation_keeps_scope_parent_outside_handler_wrapper
         .expect("handler body must attach to a prompt segment");
 
     assert_eq!(
-        vm.scope_parent(prompt_seg_id),
+        vm.parent_segment(prompt_seg_id),
         Some(outside_scope_id),
         "spawn prompt must retain the captured lexical scope"
     );
     assert_eq!(
-        vm.scope_parent(handler_body_seg_id),
+        vm.parent_segment(handler_body_seg_id),
         Some(outside_scope_id),
         "spawn handler body must not become a scope_parent bridge"
     );
     assert_eq!(
-        vm.scope_parent(resumed_seg_id),
+        vm.parent_segment(resumed_seg_id),
         Some(outside_scope_id),
         "spawned task body must retain the captured lexical scope root"
     );
@@ -738,8 +747,8 @@ fn test_resume_unstarted_continuation_keeps_scope_parent_outside_handler_wrapper
 fn test_dispatch_origins_derive_from_live_program_topology() {
     let mut vm = VM::new();
 
-    let root_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
-    let effect_site_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(root_id)));
+    let root_id = vm.alloc_segment(Segment::new(None));
+    let effect_site_id = vm.alloc_segment(Segment::new(Some(root_id)));
     let effect_site_segment = vm
         .segments
         .get(effect_site_id)
@@ -755,7 +764,7 @@ fn test_dispatch_origins_derive_from_live_program_topology() {
         handler_marker,
         named_handler("TestHandler"),
     );
-    let handler_seg_id = vm.alloc_segment(Segment::new(handler_marker, Some(prompt_seg_id)));
+    let handler_seg_id = vm.alloc_segment(Segment::new(Some(prompt_seg_id)));
     install_pending_dispatch(&mut vm, handler_seg_id, dispatch_id, &continuation, None);
     vm.current_segment = Some(handler_seg_id);
 
@@ -766,14 +775,104 @@ fn test_dispatch_origins_derive_from_live_program_topology() {
 }
 
 #[test]
+fn test_visible_scope_store_in_handler_sees_captured_local_scope() {
+    let mut vm = VM::new();
+
+    let root_id = vm.alloc_segment(Segment::new(None));
+    let prompt_seg_id = alloc_prompt_boundary(
+        &mut vm,
+        Some(root_id),
+        Marker::fresh(),
+        named_handler("ReaderHandler"),
+    );
+    let effect_site_id = vm.alloc_segment(Segment::new(Some(prompt_seg_id)));
+    let key = crate::py_key::HashedPyKey::from_test_string("config");
+    let value = Value::Int(42);
+    vm.push_lexical_scope_frame(
+        effect_site_id,
+        std::collections::HashMap::from([(key.clone(), value.clone())]),
+    );
+
+    let dispatch_id = DispatchId::fresh();
+    let captured = {
+        let effect_site = vm
+            .segments
+            .get(effect_site_id)
+            .expect("effect-site segment must exist for continuation capture");
+        Continuation::capture(effect_site, effect_site_id, Some(dispatch_id))
+    };
+    vm.segments
+        .get_mut(effect_site_id)
+        .expect("captured effect-site segment must remain live")
+        .parent = None;
+
+    let handler_seg_id = vm.alloc_segment(Segment::new(Some(prompt_seg_id)));
+    install_pending_dispatch(&mut vm, handler_seg_id, dispatch_id, &captured, None);
+
+    let scope = vm.visible_scope_store(handler_seg_id);
+    let resolved = scope
+        .scope_bindings
+        .iter()
+        .rev()
+        .find_map(|layer| layer.get(&key))
+        .cloned();
+
+    assert!(
+        matches!(resolved, Some(Value::Int(42))),
+        "handler scope reconstruction must include captured lexical bindings, got {resolved:?}"
+    );
+}
+
+#[test]
+fn test_write_scoped_var_nonlocal_updates_owner_through_captured_scope_chain() {
+    let mut vm = VM::new();
+
+    let root_id = vm.alloc_segment(Segment::new(None));
+    let owner_seg_id = vm.alloc_segment(Segment::new(Some(root_id)));
+    let child_seg_id = vm.alloc_segment(Segment::new(Some(owner_seg_id)));
+    let var = vm.alloc_scoped_var_in_segment(owner_seg_id, Value::Int(10));
+
+    let dispatch_id = DispatchId::fresh();
+    let captured = {
+        let child_seg = vm
+            .segments
+            .get(child_seg_id)
+            .expect("child segment must exist for continuation capture");
+        Continuation::capture(child_seg, child_seg_id, Some(dispatch_id))
+    };
+    vm.segments
+        .get_mut(child_seg_id)
+        .expect("captured child segment must remain live")
+        .parent = None;
+
+    let prompt_seg_id = alloc_prompt_boundary(
+        &mut vm,
+        Some(root_id),
+        Marker::fresh(),
+        named_handler("StateHandler"),
+    );
+    let handler_seg_id = vm.alloc_segment(Segment::new(Some(prompt_seg_id)));
+    install_pending_dispatch(&mut vm, handler_seg_id, dispatch_id, &captured, None);
+
+    assert!(
+        vm.write_scoped_var_nonlocal(handler_seg_id, var, Value::Int(20)),
+        "WriteVarNonlocal must find the owner segment through the captured continuation"
+    );
+    assert!(
+        matches!(vm.read_scoped_var_from(owner_seg_id, var), Some(Value::Int(20))),
+        "owner cell must reflect the nonlocal write"
+    );
+}
+
+#[test]
 fn test_consumed_continuation_stays_detectable_on_cloned_handles() {
-    let continuation = Continuation::with_id(ContId::fresh(), SegmentId::from_index(0), None, None);
+    let mut continuation =
+        Continuation::with_id(ContId::fresh(), SegmentId::from_index(0), None, None);
     let handle = continuation.clone_handle();
-    let mut owned = continuation.into_owned();
 
     assert!(!handle.consumed());
-    owned.mark_consumed();
+    continuation.mark_consumed();
 
-    assert!(owned.consumed());
+    assert!(continuation.consumed());
     assert!(handle.consumed());
 }

@@ -46,7 +46,7 @@ pub mod value {
     pub use doeff_vm_core::value::*;
 }
 pub mod vm {
-    pub use doeff_vm_core::{RustStore, VM};
+    pub use doeff_vm_core::{VarStore, VM};
 }
 pub mod pyvm {
     pub use crate::sentinels::PyRustHandlerSentinel;

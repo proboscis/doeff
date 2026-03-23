@@ -16,8 +16,6 @@ from __future__ import annotations
 from pathlib import Path
 import re
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[2]
 SEGMENT_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "segment.rs"
 VM_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "vm.rs"
@@ -48,18 +46,12 @@ def _pub_fields(struct_body: str) -> list[str]:
     return re.findall(r"^\s*pub\s+([a-z_]+):", struct_body, re.MULTILINE)
 
 
-def _all_fields(struct_body: str) -> list[str]:
-    """Extract all field names (pub and private) from a struct body."""
-    return re.findall(r"^\s*(?:pub(?:\(crate\))?\s+)?([a-z_]+):", struct_body, re.MULTILINE)
-
-
 # ============================================================================
 # FIBER VIOLATIONS (segment.rs)
 # Target: Fiber { frames, parent, kind } — 3 fields, kind = Option<Handler>
 # ============================================================================
 
 
-@pytest.mark.xfail(reason="V1: FiberKind has 4 variants, target is Option<HandlerDelimiter>", strict=False)
 def test_v01_fiberkind_should_be_option_handler():
     """FiberKind should be Option<HandlerDelimiter>, not a 4-variant enum."""
     src = _src(SEGMENT_RS)
@@ -67,7 +59,6 @@ def test_v01_fiberkind_should_be_option_handler():
     assert "MaskBoundary" not in src, "FiberKind must not have MaskBoundary variant"
 
 
-@pytest.mark.xfail(reason="V2: Normal fibers carry markers", strict=False)
 def test_v02_normal_fiber_no_marker():
     """Normal (non-handler) fibers should not carry a Marker."""
     src = _src(SEGMENT_RS)
@@ -76,7 +67,6 @@ def test_v02_normal_fiber_no_marker():
         "Normal fibers must not carry a marker field"
 
 
-@pytest.mark.xfail(reason="V5: Segment/SegmentKind type aliases still exported", strict=False)
 def test_v05_no_segment_type_aliases():
     """Old Segment/SegmentKind names should not be exported."""
     src = _src(SEGMENT_RS)
@@ -84,14 +74,12 @@ def test_v05_no_segment_type_aliases():
     assert "type SegmentKind = FiberKind" not in src, "Remove SegmentKind type alias"
 
 
-@pytest.mark.xfail(reason="V6: ScopeStore defined in segment module", strict=False)
 def test_v06_no_scope_store_in_segment():
     """ScopeStore should not be defined in the segment/fiber module."""
     src = _src(SEGMENT_RS)
     assert "struct ScopeStore" not in src, "ScopeStore does not belong in segment module"
 
 
-@pytest.mark.xfail(reason="V7: Fiber implements Clone", strict=False)
 def test_v07_fiber_not_clone():
     """Fiber must not implement Clone. Fibers are moved, never copied."""
     src = _src(SEGMENT_RS)
@@ -113,21 +101,18 @@ def test_v08_no_handler_store_on_vm():
         assert pattern not in src, f"VM must not have handler storage ({pattern})"
 
 
-@pytest.mark.xfail(reason="V9: rust_store on VM", strict=False)
 def test_v09_no_rust_store_on_vm():
     """VM must not have a separate RustStore. One heap (VarStore) only."""
     src = _src(VM_RS)
     assert "rust_store:" not in src, "VM must not have rust_store — use VarStore only"
 
 
-@pytest.mark.xfail(reason="V10: env_store on VM", strict=False)
 def test_v10_no_env_store_on_vm():
     """VM must not have a separate env_store. One heap (VarStore) only."""
     src = _src(VM_RS)
     assert "env_store:" not in src, "VM must not have env_store — use VarStore only"
 
 
-@pytest.mark.xfail(reason="V13: TraceState accumulated dispatch maps", strict=False)
 def test_v13_no_trace_state_dispatch_maps():
     """TraceState must not accumulate dispatch display maps. Derive from stack."""
     src = _src(TRACE_STATE_RS)
@@ -144,7 +129,6 @@ def test_v14_no_dispatch_state_on_vm():
         assert pattern not in src, f"VM must not have dispatch side-table ({pattern})"
 
 
-@pytest.mark.xfail(reason="V15: fiber_runtime HashMap on VM", strict=False)
 def test_v15_no_fiber_runtime_sidetable():
     """VM must not have per-fiber runtime side-table. Fields belong on fiber or as registers."""
     src = _src(VM_RS)
@@ -153,14 +137,12 @@ def test_v15_no_fiber_runtime_sidetable():
     assert "HashMap<SegmentId, FiberRuntimeState>" not in src
 
 
-@pytest.mark.xfail(reason="V16: scope_ids HashMap on VM", strict=False)
 def test_v16_no_scope_ids_on_vm():
     """VM must not have scope_ids. Variables are VarId-addressed ref cells."""
     src = _src(VM_RS)
     assert "scope_ids:" not in src, "VM must not have scope_ids HashMap"
 
 
-@pytest.mark.xfail(reason="V17: dual parent chain (scope_parents)", strict=False)
 def test_v17_no_scope_parents():
     """VM must not have scope_parents. One parent chain only (fiber.parent)."""
     src = _src(VM_RS)
@@ -168,7 +150,6 @@ def test_v17_no_scope_parents():
         "VM must not have scope_parents — OCaml 5 has one parent chain"
 
 
-@pytest.mark.xfail(reason="V18: segment_parent_redirects (stale pointer map)", strict=False)
 def test_v18_no_parent_redirects():
     """VM must not have segment_parent_redirects. With move semantics, no stale pointers."""
     src = _src(VM_RS)
@@ -176,7 +157,6 @@ def test_v18_no_parent_redirects():
         "VM must not have redirect map — move semantics means no stale pointers"
 
 
-@pytest.mark.xfail(reason="V19: completed state/log snapshots", strict=False)
 def test_v19_no_completed_snapshots():
     """VM must not cache completed state/log snapshots."""
     src = _src(VM_RS)
@@ -184,7 +164,6 @@ def test_v19_no_completed_snapshots():
     assert "completed_log_entries_snapshot:" not in src
 
 
-@pytest.mark.xfail(reason="V21: throw_parent Continuation per fiber", strict=False)
 def test_v21_no_throw_parent():
     """No per-fiber throw_parent. Exceptions propagate by unwinding the chain."""
     src = _src(VM_RS)
@@ -198,7 +177,6 @@ def test_v21_no_throw_parent():
 # ============================================================================
 
 
-@pytest.mark.xfail(reason="V24: owns_fibers bool (non-move ownership)", strict=False)
 def test_v24_no_owns_fibers():
     """Continuation must not have owns_fibers. With move semantics, one owner always."""
     src = _src(CONTINUATION_RS)
@@ -206,7 +184,6 @@ def test_v24_no_owns_fibers():
         "owns_fibers implies multiple copies can exist — violates move semantics"
 
 
-@pytest.mark.xfail(reason="V25: Arc<AtomicBool> shared consumed flag", strict=False)
 def test_v25_no_arc_consumed():
     """One-shot is consumed:bool on the single owner. No shared Arc needed."""
     src = _src(CONTINUATION_RS)
@@ -214,7 +191,6 @@ def test_v25_no_arc_consumed():
         "Arc<AtomicBool> consumed_state only needed when multiple copies exist"
 
 
-@pytest.mark.xfail(reason="V26: Arc<Mutex<ContinuationMetadata>>", strict=False)
 def test_v26_no_arc_mutex_metadata():
     """No shared mutable metadata. Continuation is owned, metadata is plain fields."""
     src = _src(CONTINUATION_RS)
@@ -222,7 +198,6 @@ def test_v26_no_arc_mutex_metadata():
         "Shared mutable metadata only needed when multiple copies exist"
 
 
-@pytest.mark.xfail(reason="V27: unstarted overloads Continuation type", strict=False)
 def test_v27_no_unstarted_on_continuation():
     """Continuation = detached fibers. Unstarted programs should be a separate type."""
     src = _src(CONTINUATION_RS)
@@ -232,7 +207,6 @@ def test_v27_no_unstarted_on_continuation():
         "Continuation should not hold unstarted programs — separate type"
 
 
-@pytest.mark.xfail(reason="V28: Continuation implements Clone", strict=False)
 def test_v28_continuation_not_clone():
     """Continuation must not implement Clone. Move-only type."""
     src = _src(CONTINUATION_RS)
@@ -240,7 +214,6 @@ def test_v28_continuation_not_clone():
         "Continuation must not impl Clone — move semantics means one owner"
 
 
-@pytest.mark.xfail(reason="V29: clone_for_dispatch creates dual ownership", strict=False)
 def test_v29_no_clone_for_dispatch():
     """No forking continuations. One set of fibers, one owner."""
     src = _src(CONTINUATION_RS)
@@ -248,7 +221,6 @@ def test_v29_no_clone_for_dispatch():
         "clone_for_dispatch creates two owners of the same fibers — violates move semantics"
 
 
-@pytest.mark.xfail(reason="V23: dispatch_id on Continuation", strict=False)
 def test_v23_no_dispatch_id_on_continuation():
     """Continuation should not link to dispatch side-tables."""
     src = _src(CONTINUATION_RS)
@@ -264,7 +236,6 @@ def test_v23_no_dispatch_id_on_continuation():
 # ============================================================================
 
 
-@pytest.mark.xfail(reason="V30: dispatch_displays accumulated HashMap", strict=False)
 def test_v30_no_dispatch_displays():
     """TraceState must not accumulate dispatch display state."""
     src = _src(TRACE_STATE_RS)
@@ -272,7 +243,6 @@ def test_v30_no_dispatch_displays():
     assert "DispatchDisplayState" not in src
 
 
-@pytest.mark.xfail(reason="V31: frame_stack shadow copy", strict=False)
 def test_v31_no_shadow_frame_stack():
     """TraceState must not maintain a shadow frame stack. The fiber chain IS the stack."""
     src = _src(TRACE_STATE_RS)
@@ -298,7 +268,6 @@ def test_v32_no_dispatch_state_module():
 # ============================================================================
 
 
-@pytest.mark.xfail(reason="V34: Interceptor frame variants", strict=False)
 def test_v34_no_interceptor_frames():
     """No interceptor-specific frame variants."""
     src = _src(FRAME_RS)
@@ -306,7 +275,6 @@ def test_v34_no_interceptor_frames():
     assert "InterceptorEval" not in src, "Frame must not have InterceptorEval variant"
 
 
-@pytest.mark.xfail(reason="V35: Arc<Vec<InterceptorChainLink>> snapshot on frame", strict=False)
 def test_v35_no_chain_snapshot_on_frame():
     """Frames must not hold snapshots of handler/interceptor chains."""
     src = _src(FRAME_RS)
@@ -314,14 +282,12 @@ def test_v35_no_chain_snapshot_on_frame():
         "Frames must not snapshot chain state — derive from topology"
 
 
-@pytest.mark.xfail(reason="V36: InterceptBodyReturn frame variant", strict=False)
 def test_v36_no_intercept_body_return_frame():
     """No interceptor-specific return frame."""
     src = _src(FRAME_RS)
     assert "InterceptBodyReturn" not in src
 
 
-@pytest.mark.xfail(reason="V38: Frame implements Clone", strict=False)
 def test_v38_frame_not_clone():
     """Frame must not implement Clone. Frames live on fibers which are moved."""
     src = _src(FRAME_RS)
@@ -334,7 +300,6 @@ def test_v38_frame_not_clone():
 # ============================================================================
 
 
-@pytest.mark.xfail(reason="V39: state_by_segment on VarStore", strict=False)
 def test_v39_no_segment_keyed_state():
     """VarStore state should be VarId-addressed, not segment-keyed."""
     src = _src(VAR_STORE_RS)
@@ -342,21 +307,18 @@ def test_v39_no_segment_keyed_state():
         "VarStore must use VarId-addressed ref cells, not segment-keyed maps"
 
 
-@pytest.mark.xfail(reason="V40: writer_logs_by_segment on VarStore", strict=False)
 def test_v40_no_segment_keyed_logs():
     """Writer logs should be VarId-addressed ref cells."""
     src = _src(VAR_STORE_RS)
     assert "writer_logs_by_segment:" not in src
 
 
-@pytest.mark.xfail(reason="V41: bindings_by_segment on VarStore", strict=False)
 def test_v41_no_segment_keyed_bindings():
     """Bindings should be VarId-addressed ref cells."""
     src = _src(VAR_STORE_RS)
     assert "bindings_by_segment:" not in src
 
 
-@pytest.mark.xfail(reason="V42: overrides_by_segment on VarStore", strict=False)
 def test_v42_no_segment_keyed_overrides():
     """No per-segment override layers. One heap, one value per VarId."""
     src = _src(VAR_STORE_RS)

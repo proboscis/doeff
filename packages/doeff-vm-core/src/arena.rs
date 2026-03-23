@@ -5,26 +5,14 @@ use crate::segment::Fiber;
 
 pub struct FiberArena {
     fibers: Vec<Option<Fiber>>,
-    free_list: Vec<usize>,
 }
 
 impl FiberArena {
     pub fn new() -> Self {
-        FiberArena {
-            fibers: Vec::new(),
-            free_list: Vec::new(),
-        }
+        FiberArena { fibers: Vec::new() }
     }
 
     pub fn alloc(&mut self, fiber: Fiber) -> FiberId {
-        if let Some(index) = self.free_list.pop() {
-            assert!(
-                self.fibers.get(index).is_some_and(|slot| slot.is_none()),
-                "reused arena slot must be vacant before allocation: index={index}"
-            );
-            self.fibers[index] = Some(fiber);
-            return FiberId::from_index(index);
-        }
         let id = FiberId::from_index(self.fibers.len());
         self.fibers.push(Some(fiber));
         id
@@ -32,9 +20,7 @@ impl FiberArena {
 
     pub fn free(&mut self, id: FiberId) {
         if let Some(slot) = self.fibers.get_mut(id.index()) {
-            if slot.take().is_some() {
-                self.free_list.push(id.index());
-            }
+            let _ = slot.take();
         }
     }
 
@@ -96,12 +82,10 @@ impl FiberArena {
 
     pub fn clear(&mut self) {
         self.fibers.clear();
-        self.free_list.clear();
     }
 
     pub fn shrink_to_fit(&mut self) {
         self.fibers.shrink_to_fit();
-        self.free_list.shrink_to_fit();
     }
 }
 
@@ -114,16 +98,15 @@ impl Default for FiberArena {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ids::Marker;
 
     #[test]
     fn test_arena_alloc_and_get() {
         let mut arena = FiberArena::new();
 
-        let seg1 = Fiber::new(Marker::fresh(), None);
+        let seg1 = Fiber::new(None);
         let id1 = arena.alloc(seg1);
 
-        let seg2 = Fiber::new(Marker::fresh(), None);
+        let seg2 = Fiber::new(None);
         let id2 = arena.alloc(seg2);
 
         assert_ne!(id1, id2);
@@ -133,10 +116,10 @@ mod tests {
     }
 
     #[test]
-    fn test_arena_free_releases_slot_and_reuses_id() {
+    fn test_arena_free_releases_slot_without_reusing_id() {
         let mut arena = FiberArena::new();
 
-        let seg1 = Fiber::new(Marker::fresh(), None);
+        let seg1 = Fiber::new(None);
         let id1 = arena.alloc(seg1);
 
         assert_eq!(arena.len(), 1);
@@ -145,10 +128,10 @@ mod tests {
         assert_eq!(arena.len(), 0);
         assert!(arena.get(id1).is_none());
 
-        let seg2 = Fiber::new(Marker::fresh(), None);
+        let seg2 = Fiber::new(None);
         let id2 = arena.alloc(seg2);
 
-        assert_eq!(id1, id2);
+        assert_ne!(id1, id2);
         assert_eq!(arena.len(), 1);
 
         assert!(arena.get(id2).is_some());
@@ -158,7 +141,7 @@ mod tests {
     fn test_arena_get_mut() {
         let mut arena = FiberArena::new();
 
-        let seg = Fiber::new(Marker::fresh(), None);
+        let seg = Fiber::new(None);
         let id = arena.alloc(seg);
 
         {
@@ -175,11 +158,11 @@ mod tests {
     fn test_reparent_children() {
         let mut arena = FiberArena::new();
 
-        let parent = arena.alloc(Fiber::new(Marker::fresh(), None));
-        let caller = arena.alloc(Fiber::new(Marker::fresh(), None));
-        let child_a = arena.alloc(Fiber::new(Marker::fresh(), Some(parent)));
-        let child_b = arena.alloc(Fiber::new(Marker::fresh(), Some(parent)));
-        let unrelated = arena.alloc(Fiber::new(Marker::fresh(), Some(caller)));
+        let parent = arena.alloc(Fiber::new(None));
+        let caller = arena.alloc(Fiber::new(None));
+        let child_a = arena.alloc(Fiber::new(Some(parent)));
+        let child_b = arena.alloc(Fiber::new(Some(parent)));
+        let unrelated = arena.alloc(Fiber::new(Some(caller)));
 
         let rewired = arena.reparent_children(parent, Some(caller));
         assert_eq!(rewired, 2);
