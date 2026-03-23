@@ -4,11 +4,10 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::capture::{EffectResult, FrameId, HandlerDispatchEntry, HandlerKind};
-use crate::continuation::Continuation;
 use crate::do_ctrl::{DoCtrl, InterceptMode};
 use crate::driver::PyException;
 use crate::effect::DispatchEffect;
-use crate::ids::{ContId, Marker, SegmentId, VarId};
+use crate::ids::{ContId, FiberId, Marker, SegmentId, VarId};
 use crate::ir_stream::IRStreamRef;
 use crate::kleisli::KleisliRef;
 use crate::py_key::HashedPyKey;
@@ -148,7 +147,7 @@ impl Clone for DispatchDisplay {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ProgramDispatch {
     pub origin_cont_id: ContId,
     pub parent_origin_cont_id: Option<ContId>,
@@ -156,25 +155,9 @@ pub struct ProgramDispatch {
     pub prompt_segment_id: SegmentId,
     pub effect: DispatchEffect,
     pub trace: DispatchDisplay,
-    pub origin: Continuation,
-    pub handler_continuation: Continuation,
+    pub origin_fiber_ids: Vec<FiberId>,
+    pub handler_fiber_ids: Vec<FiberId>,
     pub original_exception: Option<PyException>,
-}
-
-impl Clone for ProgramDispatch {
-    fn clone(&self) -> Self {
-        Self {
-            origin_cont_id: self.origin_cont_id,
-            parent_origin_cont_id: self.parent_origin_cont_id,
-            handler_segment_id: self.handler_segment_id,
-            prompt_segment_id: self.prompt_segment_id,
-            effect: self.effect.clone(),
-            trace: self.trace.clone(),
-            origin: self.origin.clone_handle(),
-            handler_continuation: self.handler_continuation.clone_handle(),
-            original_exception: self.original_exception.clone(),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
