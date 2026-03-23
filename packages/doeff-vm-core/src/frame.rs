@@ -329,9 +329,9 @@ impl Frame {
 mod tests {
     use super::*;
     use crate::ir_stream::{IRStream, IRStreamStep};
-    use crate::var_store::VarStore;
     use crate::segment::ScopeStore;
     use crate::value::Value;
+    use crate::var_store::VarStore;
 
     #[derive(Debug)]
     struct DummyStream;

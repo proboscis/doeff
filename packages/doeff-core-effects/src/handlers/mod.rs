@@ -1916,7 +1916,7 @@ mod tests {
         let marker = Marker::fresh();
         let seg = Segment::new(marker, None);
         let seg_id = crate::ids::SegmentId::from_index(0);
-        Continuation::capture(&seg, seg_id, None)
+        Continuation::capture(&seg, seg_id)
     }
 
     fn dispatch(effect: Effect) -> DispatchEffect {

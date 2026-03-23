@@ -85,10 +85,7 @@ impl VarStore {
         Some(&self.global_state)
     }
 
-    pub fn handler_state_mut(
-        &mut self,
-        _seg_id: SegmentId,
-    ) -> Option<&mut HashMap<String, Value>> {
+    pub fn handler_state_mut(&mut self, _seg_id: SegmentId) -> Option<&mut HashMap<String, Value>> {
         Some(&mut self.global_state)
     }
 
@@ -116,5 +113,4 @@ impl VarStore {
     pub fn writer_log_capacity(&self) -> usize {
         self.writer_log.capacity()
     }
-
 }
