@@ -4,9 +4,11 @@ use std::sync::Arc;
 
 use crate::do_ctrl::InterceptMode;
 use crate::driver::PyException;
+use crate::effect::DispatchEffect;
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
 use crate::frame::ProgramDispatch;
+use crate::continuation::Continuation;
 use crate::ids::{FiberId, Marker};
 use crate::kleisli::KleisliRef;
 use crate::memory_stats;
@@ -165,6 +167,8 @@ pub struct Fiber {
     pub frames: Vec<Frame>,
     pub parent: Option<FiberId>,
     pub kind: FiberKind,
+    pub(crate) pending_effect: Option<DispatchEffect>,
+    pub(crate) pending_continuation: Option<Continuation>,
     pub(crate) pending_error_context: Option<PyException>,
     pub(crate) interceptor_eval_depth: usize,
     pub(crate) interceptor_skip_stack: Vec<Marker>,
@@ -178,6 +182,8 @@ impl Fiber {
             frames: Vec::new(),
             parent,
             kind: FiberKind::Normal,
+            pending_effect: None,
+            pending_continuation: None,
             pending_error_context: None,
             interceptor_eval_depth: 0,
             interceptor_skip_stack: Vec::new(),
@@ -201,6 +207,8 @@ impl Fiber {
                 handler,
                 None,
             )),
+            pending_effect: None,
+            pending_continuation: None,
             pending_error_context: None,
             interceptor_eval_depth: 0,
             interceptor_skip_stack: Vec::new(),
@@ -225,6 +233,8 @@ impl Fiber {
                 handler,
                 types,
             )),
+            pending_effect: None,
+            pending_continuation: None,
             pending_error_context: None,
             interceptor_eval_depth: 0,
             interceptor_skip_stack: Vec::new(),
