@@ -2,13 +2,13 @@
 
 use std::sync::Arc;
 
+use crate::continuation::Continuation;
 use crate::do_ctrl::InterceptMode;
 use crate::driver::PyException;
 use crate::effect::DispatchEffect;
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
 use crate::frame::ProgramDispatch;
-use crate::continuation::Continuation;
 use crate::ids::{FiberId, Marker};
 use crate::kleisli::KleisliRef;
 use crate::memory_stats;
@@ -201,12 +201,7 @@ impl Fiber {
         Fiber {
             frames: Vec::new(),
             parent,
-            kind: FiberKind::Boundary(FiberBoundary::prompt(
-                marker,
-                handled_marker,
-                handler,
-                None,
-            )),
+            kind: FiberKind::Boundary(FiberBoundary::prompt(marker, handled_marker, handler, None)),
             pending_effect: None,
             pending_continuation: None,
             pending_error_context: None,
