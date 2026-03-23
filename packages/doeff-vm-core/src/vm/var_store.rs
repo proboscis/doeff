@@ -27,6 +27,26 @@ impl VM {
             );
         }
 
+        fn push_fiber_ids_segments(
+            vm: &VM,
+            fiber_ids: &[crate::ids::FiberId],
+            ordered: &mut Vec<SegmentId>,
+            seen: &mut std::collections::HashSet<SegmentId>,
+            seen_continuations: &mut std::collections::HashSet<crate::ids::ContId>,
+        ) {
+            for seg_id in fiber_ids {
+                push_segment_chain(vm, Some(*seg_id), ordered, seen, seen_continuations);
+            }
+            // parent from outermost fiber
+            if let Some(parent) = fiber_ids
+                .last()
+                .and_then(|fiber_id| vm.segments.get(*fiber_id))
+                .and_then(|segment| segment.parent)
+            {
+                push_segment_chain(vm, Some(parent), ordered, seen, seen_continuations);
+            }
+        }
+
         fn push_segment_chain(
             vm: &VM,
             start: Option<SegmentId>,
@@ -45,16 +65,16 @@ impl VM {
                 }
                 ordered.push(seg_id);
                 if let Some(dispatch) = segment.pending_program_dispatch.as_ref() {
-                    push_continuation_segments(
+                    push_fiber_ids_segments(
                         vm,
-                        &dispatch.origin,
+                        &dispatch.origin_fiber_ids,
                         ordered,
                         seen,
                         seen_continuations,
                     );
-                    push_continuation_segments(
+                    push_fiber_ids_segments(
                         vm,
-                        &dispatch.handler_continuation,
+                        &dispatch.handler_fiber_ids,
                         ordered,
                         seen,
                         seen_continuations,
@@ -66,16 +86,16 @@ impl VM {
                             dispatch: Some(dispatch),
                             ..
                         } => {
-                            push_continuation_segments(
+                            push_fiber_ids_segments(
                                 vm,
-                                &dispatch.origin,
+                                &dispatch.origin_fiber_ids,
                                 ordered,
                                 seen,
                                 seen_continuations,
                             );
-                            push_continuation_segments(
+                            push_fiber_ids_segments(
                                 vm,
-                                &dispatch.handler_continuation,
+                                &dispatch.handler_fiber_ids,
                                 ordered,
                                 seen,
                                 seen_continuations,
