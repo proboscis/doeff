@@ -257,12 +257,8 @@ pub enum DoCtrl {
         continuation: Continuation,
         exception: PyException,
     },
-    Delegate {
-        effect: DispatchEffect,
-    },
-    Pass {
-        effect: DispatchEffect,
-    },
+    Delegate,
+    Pass,
     GetContinuation,
     GetHandlers,
     GetTraceback {
@@ -420,12 +416,8 @@ impl Clone for DoCtrl {
                 continuation: continuation.clone_handle(),
                 exception: exception.clone(),
             },
-            DoCtrl::Delegate { effect } => DoCtrl::Delegate {
-                effect: effect.clone(),
-            },
-            DoCtrl::Pass { effect } => DoCtrl::Pass {
-                effect: effect.clone(),
-            },
+            DoCtrl::Delegate => DoCtrl::Delegate,
+            DoCtrl::Pass => DoCtrl::Pass,
             DoCtrl::GetContinuation => DoCtrl::GetContinuation,
             DoCtrl::GetHandlers => DoCtrl::GetHandlers,
             DoCtrl::GetTraceback { continuation } => DoCtrl::GetTraceback {

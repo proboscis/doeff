@@ -1,6 +1,7 @@
 //! Continuation types for detaching and reattaching fibers.
 
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -281,7 +282,7 @@ impl Drop for PendingContinuation {
 pub struct Continuation {
     pub cont_id: ContId,
     fibers: Vec<FiberId>,
-    consumed: bool,
+    consumed: Arc<AtomicBool>,
 }
 
 pub(crate) fn panic_on_started_continuation_clone_enabled() -> bool {
@@ -296,7 +297,7 @@ impl Continuation {
         Self {
             cont_id,
             fibers: Vec::new(),
-            consumed: false,
+            consumed: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -305,7 +306,7 @@ impl Continuation {
         Self {
             cont_id,
             fibers,
-            consumed: false,
+            consumed: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -347,7 +348,7 @@ impl Continuation {
         Self {
             cont_id: self.cont_id,
             fibers: self.fibers.clone(),
-            consumed: self.consumed,
+            consumed: Arc::clone(&self.consumed),
         }
     }
 
@@ -384,11 +385,11 @@ impl Continuation {
     }
 
     pub fn consumed(&self) -> bool {
-        self.consumed
+        self.consumed.load(Ordering::Relaxed)
     }
 
     pub(crate) fn mark_consumed(&mut self) {
-        self.consumed = true;
+        self.consumed.store(true, Ordering::Relaxed);
     }
 
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
