@@ -300,6 +300,10 @@ impl Continuation {
         }
     }
 
+    pub(crate) fn capture_from_fiber_ids(fiber_ids: Vec<FiberId>) -> Self {
+        Self::new_captured(ContId::fresh(), fiber_ids)
+    }
+
     fn new_captured(cont_id: ContId, fibers: Vec<FiberId>) -> Self {
         memory_stats::register_continuation();
         Self {

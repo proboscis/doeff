@@ -5,22 +5,33 @@ use crate::segment::Fiber;
 
 pub struct FiberArena {
     fibers: Vec<Option<Fiber>>,
+    free_list: Vec<usize>,
 }
 
 impl FiberArena {
     pub fn new() -> Self {
-        FiberArena { fibers: Vec::new() }
+        FiberArena {
+            fibers: Vec::new(),
+            free_list: Vec::new(),
+        }
     }
 
     pub fn alloc(&mut self, fiber: Fiber) -> FiberId {
-        let id = FiberId::from_index(self.fibers.len());
-        self.fibers.push(Some(fiber));
-        id
+        if let Some(idx) = self.free_list.pop() {
+            self.fibers[idx] = Some(fiber);
+            FiberId::from_index(idx)
+        } else {
+            let id = FiberId::from_index(self.fibers.len());
+            self.fibers.push(Some(fiber));
+            id
+        }
     }
 
     pub fn free(&mut self, id: FiberId) {
         if let Some(slot) = self.fibers.get_mut(id.index()) {
-            let _ = slot.take();
+            if slot.take().is_some() {
+                self.free_list.push(id.index());
+            }
         }
     }
 
@@ -82,10 +93,12 @@ impl FiberArena {
 
     pub fn clear(&mut self) {
         self.fibers.clear();
+        self.free_list.clear();
     }
 
     pub fn shrink_to_fit(&mut self) {
         self.fibers.shrink_to_fit();
+        self.free_list.shrink_to_fit();
     }
 }
 
@@ -116,7 +129,7 @@ mod tests {
     }
 
     #[test]
-    fn test_arena_free_releases_slot_without_reusing_id() {
+    fn test_arena_free_reuses_slot() {
         let mut arena = FiberArena::new();
 
         let seg1 = Fiber::new(None);
@@ -131,7 +144,7 @@ mod tests {
         let seg2 = Fiber::new(None);
         let id2 = arena.alloc(seg2);
 
-        assert_ne!(id1, id2);
+        assert_eq!(id1, id2, "freed slot should be reused");
         assert_eq!(arena.len(), 1);
 
         assert!(arena.get(id2).is_some());

@@ -201,18 +201,18 @@ impl VM {
         let (name, _, _, _) = self.marker_handler_trace_info(marker)?;
         let origin_seg_id = active_dispatch
             .as_ref()
-            .and_then(|(_, _, continuation, _, _)| {
-                self.continuation_handler_chain_start(continuation)
+            .and_then(|(_, _, handler_fiber_ids, _, _)| {
+                self.fiber_ids_handler_chain_start(handler_fiber_ids)
             })
             .or_else(|| {
                 self.current_segment
                     .filter(|_| self.current_segment_dispatch_id() == Some(origin_cont_id))
                     .and_then(|seg_id| self.segment_program_dispatch(seg_id))
-                    .and_then(|dispatch| self.continuation_handler_chain_start(&dispatch.origin))
+                    .and_then(|dispatch| self.fiber_ids_handler_chain_start(&dispatch.origin_fiber_ids))
             })
             .or_else(|| {
                 self.dispatch_origin_for_origin_cont_id(origin_cont_id)
-                    .and_then(|origin| self.continuation_handler_chain_start(&origin.k_origin))
+                    .and_then(|origin| self.fiber_ids_handler_chain_start(&origin.origin_fiber_ids))
             })
             .or_else(|| self.dispatch_origin_user_segment_id(origin_cont_id))?;
         let handler_idx = self.handler_index_in_caller_chain(origin_seg_id, marker)?;
@@ -257,8 +257,7 @@ impl VM {
         stream: &IRStreamRef,
     ) -> bool {
         self.dispatch_origin_for_origin_cont_id(origin_cont_id)
-            .map(|origin| origin.k_origin)
-            .is_some_and(|continuation| self.continuation_uses_stream(&continuation, stream))
+            .is_some_and(|origin| self.fiber_ids_use_stream(&origin.origin_fiber_ids, stream))
     }
 
     pub(super) fn user_continuation_dispatch_for_stream(
@@ -266,7 +265,7 @@ impl VM {
         stream: &IRStreamRef,
     ) -> Option<ContId> {
         self.dispatch_origins().into_iter().find_map(|origin| {
-            self.continuation_uses_stream(&origin.k_origin, stream)
+            self.fiber_ids_use_stream(&origin.origin_fiber_ids, stream)
                 .then_some(origin.origin_cont_id)
         })
     }
@@ -284,22 +283,29 @@ impl VM {
         if self.is_execution_context_effect_for_dispatch(origin_cont_id) {
             return None;
         }
-        let origin = self.dispatch_origin_for_origin_cont_id(origin_cont_id)?;
-        let continuation = if self.dispatch_uses_user_continuation_stream(origin_cont_id, stream) {
-            origin.k_origin
-        } else if let Some((_, active_handler_continuation, _)) =
+        let dispatch_view = self.find_dispatch_frame(origin_cont_id)?;
+        if !Self::dispatch_is_active(&dispatch_view.dispatch) {
+            return None;
+        }
+        let origin = Self::dispatch_origin_view_from_program(&dispatch_view.dispatch);
+        let fiber_ids = if self.dispatch_uses_user_continuation_stream(origin_cont_id, stream) {
+            origin.origin_fiber_ids.clone()
+        } else if let Some((_, active_handler_fiber_ids, _)) =
             self.active_handler_dispatch_for(origin_cont_id)
         {
-            if self.continuation_uses_stream(&active_handler_continuation, stream) {
-                active_handler_continuation
-                    .tail_owned_fibers()
-                    .unwrap_or(origin.k_origin)
+            if self.fiber_ids_use_stream(&active_handler_fiber_ids, stream) {
+                if active_handler_fiber_ids.len() > 1 {
+                    active_handler_fiber_ids[1..].to_vec()
+                } else {
+                    origin.origin_fiber_ids.clone()
+                }
             } else {
-                active_handler_continuation
+                active_handler_fiber_ids
             }
         } else {
-            origin.k_origin
+            origin.origin_fiber_ids.clone()
         };
+        let continuation = Continuation::capture_from_fiber_ids(fiber_ids);
         (!self.continuation_is_consumed(&continuation)).then_some(continuation)
     }
 
