@@ -313,7 +313,7 @@ impl Continuation {
     pub(crate) fn from_fiber(
         fiber_id: FiberId,
         _captured_caller: Option<SegmentId>,
-        _dispatch_id: Option<crate::ids::DispatchId>,
+        _dispatch_id: Option<crate::ids::ContId>,
     ) -> Self {
         Self::new_captured(ContId::fresh(), vec![fiber_id])
     }
@@ -321,7 +321,7 @@ impl Continuation {
     pub fn capture(
         _segment: &Segment,
         segment_id: SegmentId,
-        _dispatch_id: Option<crate::ids::DispatchId>,
+        _dispatch_id: Option<crate::ids::ContId>,
     ) -> Self {
         Self::new_captured(ContId::fresh(), vec![segment_id])
     }
@@ -330,7 +330,7 @@ impl Continuation {
         cont_id: ContId,
         fiber_id: FiberId,
         _captured_caller: Option<SegmentId>,
-        _dispatch_id: Option<crate::ids::DispatchId>,
+        _dispatch_id: Option<crate::ids::ContId>,
     ) -> Self {
         Self::new_captured(cont_id, vec![fiber_id])
     }
