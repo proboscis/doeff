@@ -956,7 +956,7 @@ impl VM {
                     (
                         self.handler_marker_in_caller_chain(seg_id)
                             .unwrap_or_else(Marker::fresh),
-                        self.capture_live_continuation(seg_id, self.current_segment_dispatch_id()),
+                        self.capture_live_continuation(seg_id),
                     )
                 };
                 self.pending_python = Some(PendingPython::RustProgramContinuation { marker, k });
@@ -1917,10 +1917,8 @@ impl VM {
         let Some(_current_seg) = self.segments.get(current_seg_id) else {
             return StepEvent::Error(VMError::internal("EvalInScope current segment not found"));
         };
-        let current_origin_cont_id = self.current_segment_dispatch_id();
         let captured_caller = self.parent_segment(current_seg_id);
-        let mut return_to =
-            Continuation::from_fiber(current_seg_id, captured_caller, current_origin_cont_id);
+        let return_to = Continuation::from_fiber(current_seg_id, captured_caller);
         let Some(scope_parent_seg_id) = self.eval_in_scope_chain_start_segment(&scope) else {
             return StepEvent::Error(VMError::internal(
                 "EvalInScope received scope from unknown segment",
@@ -2661,7 +2659,8 @@ impl VM {
                         && !self.dispatch_uses_user_continuation_stream(origin_cont_id, &stream)
                         && !propagated_throw
                     {
-                        if let Some(original) = self.original_exception_for_dispatch(origin_cont_id) {
+                        if let Some(original) = self.original_exception_for_dispatch(origin_cont_id)
+                        {
                             TraceState::set_exception_cause(&exception, &original);
                         }
                         self.emit_handler_threw_for_dispatch(origin_cont_id, &exception);
@@ -2699,16 +2698,18 @@ impl VM {
                     {
                         site = GenErrorSite::StepUserGeneratorConverted;
                     } else if self.current_segment_is_active_handler_for_dispatch(origin_cont_id) {
-                        if let Some(original) = self.original_exception_for_dispatch(origin_cont_id) {
+                        if let Some(original) = self.original_exception_for_dispatch(origin_cont_id)
+                        {
                             TraceState::set_exception_cause(&exception, &original);
                         }
                         self.emit_handler_threw_for_dispatch(origin_cont_id, &exception);
                     } else if effective_handler_kind.is_some()
-                        && self
-                            .current_segment_dispatch_id_any()
-                            .is_some_and(|current_origin_cont_id| current_origin_cont_id == origin_cont_id)
+                        && self.current_segment_dispatch_id_any().is_some_and(
+                            |current_origin_cont_id| current_origin_cont_id == origin_cont_id,
+                        )
                     {
-                        if let Some(original) = self.original_exception_for_dispatch(origin_cont_id) {
+                        if let Some(original) = self.original_exception_for_dispatch(origin_cont_id)
+                        {
                             TraceState::set_exception_cause(&exception, &original);
                         }
                         self.emit_handler_threw_for_dispatch(origin_cont_id, &exception);

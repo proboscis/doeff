@@ -677,7 +677,9 @@ impl VM {
                 if segment
                     .pending_program_dispatch
                     .as_ref()
-                    .is_some_and(|program_dispatch| program_dispatch.origin_cont_id == origin_cont_id)
+                    .is_some_and(|program_dispatch| {
+                        program_dispatch.origin_cont_id == origin_cont_id
+                    })
                 {
                     segment.pending_program_dispatch = None;
                 }
@@ -711,12 +713,7 @@ impl VM {
     fn dispatch_origin_in_segment_by<T>(
         &self,
         seg_id: SegmentId,
-        mut map: impl FnMut(
-            ContId,
-            &DispatchEffect,
-            &Continuation,
-            Option<&PyException>,
-        ) -> Option<T>,
+        mut map: impl FnMut(ContId, &DispatchEffect, &Continuation, Option<&PyException>) -> Option<T>,
     ) -> Option<T> {
         let dispatch_origin = self.dispatch_view_in_segment(seg_id)?;
         map(
@@ -775,13 +772,13 @@ impl VM {
         let mut depth = 0usize;
         while seen.insert(origin_cont_id) {
             depth += 1;
-            let next_dispatch_id = self
+            let next_origin_cont_id = self
                 .dispatch_origin_for_origin_cont_id(origin_cont_id)
                 .and_then(|origin| origin.parent_origin_cont_id);
-            let Some(next_dispatch_id) = next_dispatch_id else {
+            let Some(next_origin_cont_id) = next_origin_cont_id else {
                 break;
             };
-            origin_cont_id = next_dispatch_id;
+            origin_cont_id = next_origin_cont_id;
         }
         depth
     }
@@ -1437,7 +1434,7 @@ impl VM {
             }
         }
         self.segments.get(seg_id)?;
-        Some(self.capture_live_continuation(seg_id, origin_cont_id))
+        Some(self.capture_live_continuation(seg_id))
     }
 
     fn initialize_builtin_prompt_segment(
@@ -1512,23 +1509,16 @@ impl VM {
         )))
     }
 
-    pub(crate) fn capture_live_continuation(
-        &mut self,
-        seg_id: SegmentId,
-        origin_cont_id: Option<ContId>,
-    ) -> Continuation {
+    pub(crate) fn capture_live_continuation(&mut self, seg_id: SegmentId) -> Continuation {
         let captured_caller = self.segments.get(seg_id).and_then(|segment| segment.parent);
-        let continuation = Continuation::from_fiber(seg_id, captured_caller, origin_cont_id);
+        let continuation = Continuation::from_fiber(seg_id, captured_caller);
         self.touch_segment_topology_subtree(seg_id);
         continuation
     }
 
-    pub fn capture_continuation(
-        &mut self,
-        origin_cont_id: Option<ContId>,
-    ) -> Option<Continuation> {
+    pub fn capture_continuation(&mut self) -> Option<Continuation> {
         let seg_id = self.current_segment?;
-        Some(self.capture_live_continuation(seg_id, origin_cont_id))
+        Some(self.capture_live_continuation(seg_id))
     }
 
     pub(super) fn current_segment_dispatch_id(&self) -> Option<ContId> {
@@ -1902,9 +1892,9 @@ impl VM {
             });
             reusable_origin
                 .map(|origin| origin.k_origin.clone_handle())
-                .unwrap_or_else(|| self.capture_live_continuation(seg_id, Some(origin_cont_id)))
+                .unwrap_or_else(|| self.capture_live_continuation(seg_id))
         } else {
-            self.capture_live_continuation(seg_id, Some(origin_cont_id))
+            self.capture_live_continuation(seg_id)
         };
         if let Some(return_to) = fallback_return_to {
             k_user.append_owned_fibers(return_to.clone_handle());
@@ -2051,7 +2041,6 @@ impl VM {
         &mut self,
         caller: Option<SegmentId>,
         continuation: Continuation,
-        origin_cont_id: Option<ContId>,
     ) -> SegmentId {
         let mut anchor = Segment::new(caller);
         anchor.push_frame(Frame::EvalReturn(Box::new(
@@ -2059,22 +2048,16 @@ impl VM {
         )));
         let anchor_seg_id = self.alloc_segment(anchor);
         self.copy_interceptor_guard_state(self.current_segment, anchor_seg_id);
-        let _ = origin_cont_id;
         anchor_seg_id
     }
 
-    fn alloc_tail_resume_anchor(
-        &mut self,
-        caller: Option<SegmentId>,
-        origin_cont_id: Option<ContId>,
-    ) -> SegmentId {
+    fn alloc_tail_resume_anchor(&mut self, caller: Option<SegmentId>) -> SegmentId {
         let mut anchor = Segment::new(caller);
         anchor.push_frame(Frame::EvalReturn(Box::new(
             EvalReturnContinuation::TailResumeReturn,
         )));
         let anchor_seg_id = self.alloc_segment(anchor);
         self.copy_interceptor_guard_state(self.current_segment, anchor_seg_id);
-        let _ = origin_cont_id;
         anchor_seg_id
     }
 
@@ -2291,7 +2274,9 @@ impl VM {
                 .active_handler_marker_for_dispatch(origin_cont_id)
                 .or_else(|| {
                     self.current_handler_dispatch()
-                        .filter(|(_, current_origin_cont_id, ..)| *current_origin_cont_id == origin_cont_id)
+                        .filter(|(_, current_origin_cont_id, ..)| {
+                            *current_origin_cont_id == origin_cont_id
+                        })
                         .map(|(_, _, _, marker, _)| marker)
                 })
                 .is_some_and(|marker| self.is_user_defined_python_handler_marker(marker));
@@ -2309,7 +2294,9 @@ impl VM {
                     .as_ref()
                     .and_then(|dispatch| dispatch.parent_origin_cont_id);
                 if let Some(program_dispatch) = self.segment_program_dispatch_mut(seg_id) {
-                    if !restoring_outer_dispatch || program_dispatch.origin_cont_id == origin_cont_id {
+                    if !restoring_outer_dispatch
+                        || program_dispatch.origin_cont_id == origin_cont_id
+                    {
                         program_dispatch.origin_cont_id = origin_cont_id;
                         program_dispatch.parent_origin_cont_id = outer_parent_dispatch_id;
                         program_dispatch.handler_segment_id = seg_id;
@@ -2415,35 +2402,34 @@ impl VM {
             .filter(|origin_cont_id| current_origin_cont_id == Some(*origin_cont_id))
             .and_then(|origin_cont_id| {
                 self.current_handler_dispatch()
-                    .filter(|(_, current_origin_cont_id, ..)| *current_origin_cont_id == origin_cont_id)
+                    .filter(|(_, current_origin_cont_id, ..)| {
+                        *current_origin_cont_id == origin_cont_id
+                    })
                     .and_then(
                         |(handler_seg_id, _, _continuation, marker, _prompt_seg_id)| {
                             if self.is_user_defined_python_handler_marker(marker) {
                                 if self.segment_is_tail_resume_return(handler_seg_id) {
                                     let anchor_seg_id = self.alloc_tail_resume_anchor(
                                         self.continuation_parent_hint(&k),
-                                        Some(origin_cont_id),
                                     );
                                     return Some(anchor_seg_id);
                                 }
                                 let handler_return = self
-                                    .capture_continuation(Some(origin_cont_id))
+                                    .capture_continuation()
                                     .expect("dispatch resume requires a live handler segment");
                                 let anchor_seg_id = self.alloc_resume_return_anchor(
                                     self.continuation_parent_hint(&k),
                                     handler_return,
-                                    Some(origin_cont_id),
                                 );
                                 return Some(anchor_seg_id);
                             }
                             if exact_origin_target {
                                 let handler_return = self
-                                    .capture_continuation(Some(origin_cont_id))
+                                    .capture_continuation()
                                     .expect("dispatch resume requires a live handler segment");
                                 let anchor_seg_id = self.alloc_resume_return_anchor(
                                     self.continuation_parent_hint(&k),
                                     handler_return,
-                                    Some(origin_cont_id),
                                 );
                                 return Some(anchor_seg_id);
                             }
@@ -2455,23 +2441,18 @@ impl VM {
                 if !exact_origin_target {
                     return None;
                 }
-                let origin_cont_id = continuation_dispatch_id?;
+                continuation_dispatch_id?;
                 let handler_seg_id = self.current_user_defined_python_handler_segment()?;
                 if self.segment_is_tail_resume_return(handler_seg_id) {
-                    let anchor_seg_id = self.alloc_tail_resume_anchor(
-                        self.continuation_parent_hint(&k),
-                        Some(origin_cont_id),
-                    );
+                    let anchor_seg_id =
+                        self.alloc_tail_resume_anchor(self.continuation_parent_hint(&k));
                     return Some(anchor_seg_id);
                 }
                 let handler_return = self
-                    .capture_continuation(Some(origin_cont_id))
+                    .capture_continuation()
                     .expect("dispatch resume requires a live handler segment");
-                let anchor_seg_id = self.alloc_resume_return_anchor(
-                    self.continuation_parent_hint(&k),
-                    handler_return,
-                    Some(origin_cont_id),
-                );
+                let anchor_seg_id = self
+                    .alloc_resume_return_anchor(self.continuation_parent_hint(&k), handler_return);
                 Some(anchor_seg_id)
             })
             .or_else(|| self.continuation_parent_hint(&k));
@@ -2546,7 +2527,9 @@ impl VM {
                 .filter(|origin_cont_id| current_origin_cont_id == Some(*origin_cont_id))
                 .and_then(|origin_cont_id| {
                     self.current_handler_dispatch()
-                        .filter(|(_, current_origin_cont_id, ..)| *current_origin_cont_id == origin_cont_id)
+                        .filter(|(_, current_origin_cont_id, ..)| {
+                            *current_origin_cont_id == origin_cont_id
+                        })
                         .map(|(handler_seg_id, ..)| handler_seg_id)
                 })
                 .or_else(|| self.continuation_parent_hint(&k))
@@ -2557,12 +2540,13 @@ impl VM {
         } else {
             self.continuation_segment_dispatch_id(&k)
         };
-        let throws_during_execution_context_dispatch = origin_cont_id.is_some_and(|origin_cont_id| {
-            self.effect_for_dispatch(origin_cont_id)
-                .is_some_and(|effect| Self::is_execution_context_effect(&effect))
-        });
-        let original_exception =
-            origin_cont_id.and_then(|origin_cont_id| self.original_exception_for_dispatch(origin_cont_id));
+        let throws_during_execution_context_dispatch =
+            origin_cont_id.is_some_and(|origin_cont_id| {
+                self.effect_for_dispatch(origin_cont_id)
+                    .is_some_and(|effect| Self::is_execution_context_effect(&effect))
+            });
+        let original_exception = origin_cont_id
+            .and_then(|origin_cont_id| self.original_exception_for_dispatch(origin_cont_id));
         let enter_dispatch_id = if terminal_dispatch_completion && throws_into_dispatch_origin {
             if let Some(origin_cont_id) = origin_cont_id {
                 self.complete_dispatch_context(origin_cont_id);
@@ -2683,14 +2667,15 @@ impl VM {
         to_idx: usize,
     ) {
         match kind {
-            ForwardKind::Delegate => self.record_dispatch_delegated(origin_cont_id, from_idx, to_idx),
+            ForwardKind::Delegate => {
+                self.record_dispatch_delegated(origin_cont_id, from_idx, to_idx)
+            }
             ForwardKind::Pass => self.record_dispatch_passed(origin_cont_id, from_idx, to_idx),
         }
     }
 
     fn make_pass_continuation(
         &mut self,
-        origin_cont_id: ContId,
         prompt_seg_id: SegmentId,
         handler_marker: Marker,
         parent_k_user: &Continuation,
@@ -2747,28 +2732,29 @@ impl VM {
         pass_seg.parent = wrapper_caller;
         let pass_seg_id = self.alloc_segment(pass_seg);
         self.copy_interceptor_guard_state(Some(prompt_seg_id), pass_seg_id);
-        let pass_cont = Continuation::with_id(
-            pass_cont_id,
-            pass_seg_id,
-            captured_caller,
-            Some(origin_cont_id),
-        );
+        let pass_cont = Continuation::with_id(pass_cont_id, pass_seg_id, captured_caller);
         Ok(pass_cont)
     }
 
     fn handle_forward(&mut self, kind: ForwardKind) -> StepEvent {
         let handler_dispatch = self.nearest_handler_dispatch().or_else(|| {
-            self.current_segment_dispatch_id().and_then(|origin_cont_id| {
-                self.active_handler_dispatch_for(origin_cont_id).and_then(
-                    |(seg_id, continuation, marker)| {
-                        let prompt_seg_id = self.handler_prompt_segment_id(seg_id, marker)?;
-                        Some((seg_id, origin_cont_id, continuation, marker, prompt_seg_id))
-                    },
-                )
-            })
+            self.current_segment_dispatch_id()
+                .and_then(|origin_cont_id| {
+                    self.active_handler_dispatch_for(origin_cont_id).and_then(
+                        |(seg_id, continuation, marker)| {
+                            let prompt_seg_id = self.handler_prompt_segment_id(seg_id, marker)?;
+                            Some((seg_id, origin_cont_id, continuation, marker, prompt_seg_id))
+                        },
+                    )
+                })
         });
-        let Some((inner_seg_id, origin_cont_id, _dispatch_k, current_marker, current_prompt_seg_id)) =
-            handler_dispatch
+        let Some((
+            inner_seg_id,
+            origin_cont_id,
+            _dispatch_k,
+            current_marker,
+            current_prompt_seg_id,
+        )) = handler_dispatch
         else {
             return StepEvent::Error(VMError::internal(kind.outside_dispatch_error()));
         };
@@ -2835,9 +2821,9 @@ impl VM {
             .skip(from_idx + 1)
             .cloned()
             .collect::<Vec<_>>();
-        let mut next_k = match kind {
+        let next_k = match kind {
             ForwardKind::Delegate => {
-                let Some(mut k_new) = self.capture_continuation(Some(origin_cont_id)) else {
+                let Some(mut k_new) = self.capture_continuation() else {
                     return StepEvent::Error(VMError::internal(
                         "Delegate called without current segment",
                     ));
@@ -2852,7 +2838,6 @@ impl VM {
                 k_new
             }
             ForwardKind::Pass => match self.make_pass_continuation(
-                origin_cont_id,
                 current_prompt_seg_id,
                 current_marker,
                 &parent_k_user,
@@ -3073,8 +3058,8 @@ impl VM {
             }
         }
         if continuation_is_live {
-            if let Err(err) =
-                self.maybe_attach_active_chain_to_execution_context(Some(origin_cont_id), &mut value)
+            if let Err(err) = self
+                .maybe_attach_active_chain_to_execution_context(Some(origin_cont_id), &mut value)
             {
                 return StepEvent::Error(err);
             }
@@ -3462,8 +3447,6 @@ impl VM {
                     "pending continuation resumed without current segment",
                 ));
             };
-            let current_origin_cont_id = self.current_segment_dispatch_id();
-
             let mut caller_outside = Some(current_seg_id);
             let scope_outside = outside_scope.or(Some(current_seg_id));
             if outside_scope.is_some() {
@@ -3475,8 +3458,7 @@ impl VM {
                 let mut return_anchor = Segment::new(scope_outside);
                 return_anchor.push_frame(Frame::EvalReturn(Box::new(
                     EvalReturnContinuation::ReturnToContinuation {
-                        continuation: self
-                            .capture_live_continuation(current_seg_id, current_origin_cont_id),
+                        continuation: self.capture_live_continuation(current_seg_id),
                     },
                 )));
                 let anchor_seg_id = self.alloc_segment(return_anchor);

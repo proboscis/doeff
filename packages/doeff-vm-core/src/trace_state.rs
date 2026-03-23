@@ -82,7 +82,9 @@ impl TraceState {
         self.completed_dispatches
             .iter()
             .find(|dispatch| dispatch.origin_cont_id == origin_cont_id)
-            .is_some_and(|dispatch| !matches!(dispatch.dispatch_display.result, EffectResult::Active))
+            .is_some_and(|dispatch| {
+                !matches!(dispatch.dispatch_display.result, EffectResult::Active)
+            })
     }
 
     pub(crate) fn clear(&mut self) {
@@ -169,7 +171,9 @@ impl TraceState {
         guard.debug_location()
     }
 
-    fn resume_location_from_frames(frames: &[ProgramFrameSnapshot]) -> Option<(String, String, u32)> {
+    fn resume_location_from_frames(
+        frames: &[ProgramFrameSnapshot],
+    ) -> Option<(String, String, u32)> {
         for frame in frames.iter().rev() {
             let metadata = frame.metadata.as_ref()?;
             if let Some(location) = Self::stream_debug_location(&frame.stream) {
@@ -438,10 +442,7 @@ impl TraceState {
 
     fn exception_site(exception: &PyException) -> ActiveChainEntry {
         match exception {
-            PyException::Materialized {
-                exc_value,
-                ..
-            } => Python::attach(|py| {
+            PyException::Materialized { exc_value, .. } => Python::attach(|py| {
                 let exc_value_bound = exc_value.bind(py);
                 let exception_type = exc_value_bound
                     .get_type()
@@ -592,7 +593,10 @@ impl TraceState {
         }
         for dispatch in &dispatches {
             if !(Self::dispatch_is_visible(&dispatch.dispatch_display)
-                || matches!(dispatch.dispatch_display.result, EffectResult::Resumed { .. }))
+                || matches!(
+                    dispatch.dispatch_display.result,
+                    EffectResult::Resumed { .. }
+                ))
             {
                 continue;
             }
@@ -647,7 +651,9 @@ impl TraceState {
                 });
             }
         }
-        TraceHop { frames: trace_frames }
+        TraceHop {
+            frames: trace_frames,
+        }
     }
 
     fn exception_repr(exception: &PyException) -> String {
@@ -820,21 +826,30 @@ impl TraceState {
             if let Some(dispatch) = Self::dispatch_for_frame(dispatches, frame.frame_id, false) {
                 represented.insert(dispatch.origin_cont_id);
                 Self::push_effect_yield_entry(&mut active_chain, dispatch, Some(frame));
-                if !Self::has_visible_program_frame_for_handler(frames, index + 1, &dispatch.dispatch_display)
-                {
-                    if matches!(dispatch.dispatch_display.result, EffectResult::Transferred { .. }) {
+                if !Self::has_visible_program_frame_for_handler(
+                    frames,
+                    index + 1,
+                    &dispatch.dispatch_display,
+                ) {
+                    if matches!(
+                        dispatch.dispatch_display.result,
+                        EffectResult::Transferred { .. }
+                    ) {
                         pending_transferred_handler =
                             Self::synthetic_handler_program_entry(&dispatch.dispatch_display);
-                    } else if matches!(dispatch.dispatch_display.result, EffectResult::Threw { .. }) {
-                        if let Some(entry) = Self::synthetic_handler_program_entry(&dispatch.dispatch_display) {
+                    } else if matches!(dispatch.dispatch_display.result, EffectResult::Threw { .. })
+                    {
+                        if let Some(entry) =
+                            Self::synthetic_handler_program_entry(&dispatch.dispatch_display)
+                        {
                             active_chain.push(entry);
                         }
                         if !Self::has_visible_rust_builtin_program_frame(frames, index + 1)
                             && !Self::active_chain_has_rust_builtin_program_frame(&active_chain)
                         {
-                            if let Some(entry) =
-                                Self::synthetic_rust_builtin_handler_program_entry(&dispatch.dispatch_display)
-                            {
+                            if let Some(entry) = Self::synthetic_rust_builtin_handler_program_entry(
+                                &dispatch.dispatch_display,
+                            ) {
                                 active_chain.push(entry);
                             }
                         }
@@ -893,18 +908,25 @@ impl TraceState {
                     ));
                 }
             }
-            if matches!(dispatch.dispatch_display.result, EffectResult::Transferred { .. }) {
-                if let Some(entry) = Self::synthetic_handler_program_entry(&dispatch.dispatch_display) {
+            if matches!(
+                dispatch.dispatch_display.result,
+                EffectResult::Transferred { .. }
+            ) {
+                if let Some(entry) =
+                    Self::synthetic_handler_program_entry(&dispatch.dispatch_display)
+                {
                     active_chain.push(entry);
                 }
             } else if matches!(dispatch.dispatch_display.result, EffectResult::Threw { .. }) {
-                if let Some(entry) = Self::synthetic_handler_program_entry(&dispatch.dispatch_display) {
+                if let Some(entry) =
+                    Self::synthetic_handler_program_entry(&dispatch.dispatch_display)
+                {
                     active_chain.push(entry);
                 }
                 if !Self::active_chain_has_rust_builtin_program_frame(&active_chain) {
-                    if let Some(entry) =
-                        Self::synthetic_rust_builtin_handler_program_entry(&dispatch.dispatch_display)
-                    {
+                    if let Some(entry) = Self::synthetic_rust_builtin_handler_program_entry(
+                        &dispatch.dispatch_display,
+                    ) {
                         active_chain.push(entry);
                     }
                 }
@@ -980,8 +1002,7 @@ impl TraceState {
         start_index: usize,
         dispatch_display: &DispatchDisplay,
     ) -> bool {
-        let (handler_name, handler_kind, _, _) =
-            Self::active_handler_trace_info(dispatch_display);
+        let (handler_name, handler_kind, _, _) = Self::active_handler_trace_info(dispatch_display);
         frames.iter().skip(start_index).any(|frame| {
             frame.function_name == handler_name && frame.handler_kind == Some(handler_kind)
         })
@@ -1009,7 +1030,9 @@ impl TraceState {
         })
     }
 
-    fn synthetic_handler_program_entry(dispatch_display: &DispatchDisplay) -> Option<ActiveChainEntry> {
+    fn synthetic_handler_program_entry(
+        dispatch_display: &DispatchDisplay,
+    ) -> Option<ActiveChainEntry> {
         let (handler_name, handler_kind, source_file, source_line) =
             Self::active_handler_trace_info(dispatch_display);
         let source_file = source_file.unwrap_or_else(|| {
@@ -1101,7 +1124,10 @@ impl TraceState {
                 .is_some_and(|site| site.frame_id == frame_id)
                 && (Self::dispatch_is_visible(&dispatch.dispatch_display)
                     || (include_resumed
-                        && matches!(dispatch.dispatch_display.result, EffectResult::Resumed { .. })))
+                        && matches!(
+                            dispatch.dispatch_display.result,
+                            EffectResult::Resumed { .. }
+                        )))
         })
     }
 
@@ -1140,9 +1166,15 @@ impl TraceState {
             }
         }
         let effect_repr = gather_repr?;
-        let (handler_stack, result) = Self::next_visible_dispatch_after(frames, index + 1, dispatches)
-            .map(|dispatch| (dispatch.dispatch_display.handler_stack.clone(), dispatch.dispatch_display.result.clone()))
-            .unwrap_or_else(|| (Vec::new(), EffectResult::Active));
+        let (handler_stack, result) =
+            Self::next_visible_dispatch_after(frames, index + 1, dispatches)
+                .map(|dispatch| {
+                    (
+                        dispatch.dispatch_display.handler_stack.clone(),
+                        dispatch.dispatch_display.result.clone(),
+                    )
+                })
+                .unwrap_or_else(|| (Vec::new(), EffectResult::Active));
 
         Some(ActiveChainEntry::EffectYield {
             function_name: frame.function_name.clone(),
@@ -1154,7 +1186,9 @@ impl TraceState {
         })
     }
 
-    fn snapshot_frames_for_dispatch(dispatch: &PreservedDispatchSnapshot) -> Vec<ProgramFrameState> {
+    fn snapshot_frames_for_dispatch(
+        dispatch: &PreservedDispatchSnapshot,
+    ) -> Vec<ProgramFrameState> {
         dispatch
             .frames
             .iter()
