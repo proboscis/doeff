@@ -1,7 +1,7 @@
 //! Continuation types for detaching and reattaching fibers.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -28,7 +28,7 @@ pub enum OwnedControlContinuation {
 impl Clone for OwnedControlContinuation {
     fn clone(&self) -> Self {
         match self {
-            Self::Started(continuation) => Self::Started(continuation.clone_handle()),
+            Self::Started(continuation) => Self::Started(Continuation::capture_from_fiber_ids(continuation.fibers().to_vec())),
             Self::Pending(pending) => Self::Pending(pending.clone()),
         }
     }
@@ -104,7 +104,7 @@ impl PyK {
     pub fn continuation(&self) -> Option<Continuation> {
         self.pending
             .is_none()
-            .then(|| self.continuation.clone_handle())
+            .then(|| Continuation::capture_from_fiber_ids(self.continuation.fibers().to_vec()))
     }
 
     pub fn pending(&self) -> Option<PendingContinuation> {
@@ -284,12 +284,6 @@ pub struct Continuation {
     consumed: Arc<AtomicBool>,
 }
 
-pub(crate) fn panic_on_started_continuation_clone_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-
-    *ENABLED.get_or_init(|| std::env::var_os("DOEFF_PANIC_ON_STARTED_CONT_CLONE").is_some())
-}
-
 impl Continuation {
     pub fn placeholder(cont_id: ContId) -> Self {
         memory_stats::register_continuation();
@@ -335,15 +329,6 @@ impl Continuation {
 
     pub fn is_placeholder(&self) -> bool {
         self.fibers.is_empty()
-    }
-
-    pub fn clone_handle(&self) -> Self {
-        memory_stats::register_continuation();
-        Self {
-            cont_id: self.cont_id,
-            fibers: self.fibers.clone(),
-            consumed: Arc::clone(&self.consumed),
-        }
     }
 
     pub fn segment_id(&self) -> Option<SegmentId> {
@@ -435,12 +420,14 @@ mod tests {
     }
 
     #[test]
-    fn test_clone_handle_keeps_fiber_ids_and_cont_id() {
+    fn test_capture_from_fiber_ids_creates_independent_continuation() {
         let (seg, seg_id) = make_test_segment();
         let cont = Continuation::capture(&seg, seg_id);
-        let handle = cont.clone_handle();
+        let independent = Continuation::capture_from_fiber_ids(cont.fibers().to_vec());
 
-        assert_eq!(handle.cont_id, cont.cont_id);
-        assert_eq!(handle.fibers(), &[seg_id]);
+        // Independent continuation has its own cont_id and consumed flag
+        assert_ne!(independent.cont_id, cont.cont_id);
+        assert_eq!(independent.fibers(), &[seg_id]);
+        assert!(!independent.consumed());
     }
 }
