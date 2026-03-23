@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use super::*;
 use crate::ids::VarId;
 
@@ -237,7 +239,7 @@ impl VM {
             };
 
             if !segment.has_frames() {
-                if matches!(segment.kind, SegmentKind::InterceptorBoundary { .. }) {
+                if segment.kind.is_intercept_boundary() {
                     let caller = segment.parent;
                     let mode = std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit));
                     self.current_segment = caller;
@@ -245,8 +247,6 @@ impl VM {
                     return StepEvent::Continue;
                 }
                 let caller = segment.parent;
-                let scope_parent = self.scope_parent(seg_id);
-                let throw_parent = self.throw_parent(seg_id).cloned();
                 let mode = std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit));
                 match mode {
                     Mode::Deliver(value) => {
@@ -255,15 +255,8 @@ impl VM {
                         return StepEvent::Continue;
                     }
                     Mode::Throw(exc) => {
-                        if let Some(parent) =
-                            throw_parent.filter(|parent| !self.continuation_is_consumed(parent))
-                        {
-                            self.reparent_children(seg_id, caller, scope_parent);
-                            self.free_segment(seg_id);
-                            self.current_segment = caller;
-                            return self.handle_transfer_throw_non_terminal(parent, exc);
-                        } else if let Some(caller_id) = caller {
-                            self.reparent_children(seg_id, Some(caller_id), scope_parent);
+                        if let Some(caller_id) = caller {
+                            self.reparent_children(seg_id, Some(caller_id));
                             self.current_segment = Some(caller_id);
                             self.mode = Mode::Throw(exc);
                             self.free_segment(seg_id);
@@ -289,9 +282,6 @@ impl VM {
                                 exc
                             };
                             self.completed_segment = Some(seg_id);
-                            self.store_completed_outputs_from(seg_id);
-                            self.reparent_children(seg_id, None, scope_parent);
-                            self.free_segment(seg_id);
                             self.current_segment = None;
                             self.trace_state.cleanup_orphaned_threw_dispatch_displays();
                             return StepEvent::Error(VMError::uncaught_exception(
@@ -351,9 +341,9 @@ impl VM {
                     let mut guard = stream.lock().expect("IRStream lock poisoned");
                     match mode {
                         Mode::Deliver(value) => {
-                            guard.resume(value, &mut self.rust_store, &mut scope)
+                            guard.resume(value, &mut self.var_store, &mut scope)
                         }
-                        Mode::Throw(exc) => guard.throw(exc, &mut self.rust_store, &mut scope),
+                        Mode::Throw(exc) => guard.throw(exc, &mut self.var_store, &mut scope),
                         Mode::HandleYield(yielded) => {
                             unreachable!("Program frame resumed with HandleYield mode: {yielded:?}")
                         }
@@ -364,8 +354,10 @@ impl VM {
                 };
                 self.apply_stream_step(step, stream, metadata, handler_kind, incoming_throw)
             }
-            Frame::InterceptorApply(cont) => self.step_interceptor_apply_frame(*cont, mode),
-            Frame::InterceptorEval(cont) => self.step_interceptor_eval_frame(*cont, mode),
+            Frame::LexicalScope { .. } => {
+                self.mode = mode;
+                StepEvent::Continue
+            }
             Frame::EvalReturn(continuation) => self.step_eval_return_frame(*continuation, mode),
             Frame::MapReturn {
                 mapper,
@@ -376,9 +368,6 @@ impl VM {
                 binder,
                 binder_meta,
             } => self.step_flat_map_bind_source_frame(binder, binder_meta, mode),
-            Frame::InterceptBodyReturn { marker } => {
-                self.step_intercept_body_return_frame(marker, mode)
-            }
         }
     }
 
@@ -472,9 +461,6 @@ impl VM {
                 self.decrement_interceptor_eval_depth(seg_id);
             }
         }
-        if let Some(metadata) = continuation.interceptor_metadata.as_ref() {
-            self.emit_frame_exited(metadata);
-        }
         match mode {
             Mode::Deliver(value) => {
                 self.mode = self.handle_interceptor_apply_result(continuation, value);
@@ -544,6 +530,12 @@ impl VM {
                 }
             };
         }
+        if let EvalReturnContinuation::InterceptApplyResult { continuation } = continuation {
+            return self.step_interceptor_apply_frame(continuation, mode);
+        }
+        if let EvalReturnContinuation::InterceptEvalResult { continuation } = continuation {
+            return self.step_interceptor_eval_frame(continuation, mode);
+        }
 
         if let EvalReturnContinuation::ResumeToContinuation { continuation } = continuation {
             self.mode = match mode {
@@ -567,15 +559,34 @@ impl VM {
             return StepEvent::Continue;
         }
 
-        if let EvalReturnContinuation::ReturnToContinuation { continuation }
-        | EvalReturnContinuation::EvalInScopeReturn { continuation } = continuation
-        {
+        if let EvalReturnContinuation::ReturnToContinuation { continuation } = continuation {
             self.mode = match mode {
                 Mode::Deliver(value) => Mode::HandleYield(DoCtrl::Transfer {
                     continuation,
                     value,
                 }),
                 Mode::Throw(exception) => Mode::HandleYield(DoCtrl::ResumeThrow {
+                    continuation,
+                    exception,
+                }),
+                Mode::HandleYield(yielded) => {
+                    unreachable!(
+                        "EvalInScope return continuation received HandleYield mode: {yielded:?}"
+                    )
+                }
+                Mode::Return(value) => {
+                    unreachable!("EvalInScope return continuation received Return mode: {value:?}")
+                }
+            };
+            return StepEvent::Continue;
+        }
+        if let EvalReturnContinuation::EvalInScopeReturn { continuation } = continuation {
+            self.mode = match mode {
+                Mode::Deliver(value) => Mode::HandleYield(DoCtrl::Transfer {
+                    continuation,
+                    value,
+                }),
+                Mode::Throw(exception) => Mode::HandleYield(DoCtrl::TransferThrow {
                     continuation,
                     exception,
                 }),
@@ -717,6 +728,8 @@ impl VM {
             EvalReturnContinuation::ResumeToContinuation { .. }
             | EvalReturnContinuation::ReturnToContinuation { .. }
             | EvalReturnContinuation::EvalInScopeReturn { .. }
+            | EvalReturnContinuation::InterceptApplyResult { .. }
+            | EvalReturnContinuation::InterceptEvalResult { .. }
             | EvalReturnContinuation::TailResumeReturn => {
                 unreachable!("return-to-continuation frames are handled before value dispatch")
             }
@@ -849,9 +862,6 @@ impl VM {
                 if incoming_throw.is_some() {
                     self.trace_state.clear_preserved_error_frames();
                 }
-                if let Some(ref m) = metadata {
-                    self.emit_frame_exited(m);
-                }
                 if handler_kind.is_some() {
                     self.handle_handler_return(value)
                 } else {
@@ -870,22 +880,10 @@ impl VM {
                 if let Some(continuation) =
                     self.handler_stream_throw_continuation(&stream, handler_kind)
                 {
-                    self.mode = Mode::HandleYield(
-                        if self
-                            .exact_dispatch_origin_for_continuation(&continuation)
-                            .is_some()
-                        {
-                            DoCtrl::TransferThrow {
-                                continuation,
-                                exception: exc,
-                            }
-                        } else {
-                            DoCtrl::ResumeThrow {
-                                continuation,
-                                exception: exc,
-                            }
-                        },
-                    );
+                    self.mode = Mode::HandleYield(DoCtrl::TransferThrow {
+                        continuation,
+                        exception: exc,
+                    });
                     return StepEvent::Continue;
                 }
 
@@ -1022,9 +1020,8 @@ impl VM {
         metadata: Option<CallMetadata>,
         handler_kind: Option<HandlerKind>,
     ) -> StepEvent {
-        let chain = Arc::new(self.current_interceptor_chain());
         self.mode =
-            self.continue_interceptor_chain_mode(yielded, stream, metadata, handler_kind, chain, 0);
+            self.continue_interceptor_chain_mode(yielded, stream, metadata, handler_kind, None);
         StepEvent::Continue
     }
 
@@ -1046,8 +1043,6 @@ impl VM {
             if let Err(err) = self.push_program_frame(stream, metadata, handler_kind) {
                 return Mode::Throw(PyException::runtime_error(err.to_string()));
             }
-        } else if let Some(ref m) = metadata {
-            self.emit_frame_exited(m);
         }
         Mode::HandleYield(yielded)
     }
@@ -1191,16 +1186,16 @@ impl VM {
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
         handler_kind: Option<HandlerKind>,
-        chain: Arc<Vec<InterceptorChainLink>>,
-        start_idx: usize,
+        after_marker: Option<Marker>,
     ) -> Mode {
         let current = yielded;
-        let mut idx = start_idx;
+        let chain = self.current_interceptor_chain();
+        let start_idx = after_marker
+            .and_then(|marker| chain.iter().position(|link| link.marker == marker).map(|idx| idx + 1))
+            .unwrap_or(0);
 
-        while idx < chain.len() {
-            let link = &chain[idx];
+        for link in chain.iter().skip(start_idx) {
             let marker = link.marker;
-            idx += 1;
             if self.is_interceptor_skipped(marker) {
                 continue;
             }
@@ -1225,8 +1220,6 @@ impl VM {
                 stream,
                 metadata,
                 handler_kind,
-                chain,
-                idx,
             );
         }
 
@@ -1253,8 +1246,6 @@ impl VM {
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
         handler_kind: Option<HandlerKind>,
-        chain: Arc<Vec<InterceptorChainLink>>,
-        next_idx: usize,
     ) -> Mode {
         let interceptor_kleisli = entry.interceptor.clone();
         let guard_eval_depth = entry.types.is_some();
@@ -1270,9 +1261,6 @@ impl VM {
                 "current_segment_mut() returned None while invoking interceptor",
             ));
         }
-        if let Some(meta) = interceptor_meta.as_ref() {
-            self.emit_frame_entered(meta, None);
-        }
         let continuation = InterceptorContinuation {
             marker,
             original_yielded: yielded,
@@ -1280,8 +1268,6 @@ impl VM {
             emitter_stream: stream,
             emitter_metadata: metadata,
             emitter_handler_kind: handler_kind,
-            chain,
-            next_idx,
             interceptor_metadata: interceptor_meta,
             guard_eval_depth,
         };
@@ -1300,7 +1286,9 @@ impl VM {
                 "current_segment_mut() returned None while invoking interceptor",
             ));
         };
-        seg.push_frame(Frame::InterceptorApply(Box::new(continuation)));
+        seg.push_frame(Frame::EvalReturn(Box::new(
+            EvalReturnContinuation::InterceptApplyResult { continuation },
+        )));
 
         Mode::HandleYield(DoCtrl::Apply {
             f: Box::new(DoCtrl::Pure {
@@ -1326,8 +1314,6 @@ impl VM {
             emitter_stream,
             emitter_metadata,
             emitter_handler_kind,
-            chain,
-            next_idx,
             guard_eval_depth,
             ..
         } = continuation;
@@ -1358,8 +1344,7 @@ impl VM {
                 emitter_stream,
                 emitter_metadata,
                 emitter_handler_kind,
-                chain,
-                next_idx,
+                Some(marker),
             );
         }
 
@@ -1377,18 +1362,20 @@ impl VM {
                     "current_segment_mut() returned None while evaluating interceptor result",
                 ));
             };
-            seg.push_frame(Frame::InterceptorEval(Box::new(InterceptorContinuation {
-                marker,
-                original_yielded,
-                original_obj,
-                emitter_stream,
-                emitter_metadata,
-                emitter_handler_kind,
-                chain,
-                next_idx,
-                interceptor_metadata: None,
-                guard_eval_depth,
-            })));
+            seg.push_frame(Frame::EvalReturn(Box::new(
+                EvalReturnContinuation::InterceptEvalResult {
+                    continuation: InterceptorContinuation {
+                        marker,
+                        original_yielded,
+                        original_obj,
+                        emitter_stream,
+                        emitter_metadata,
+                        emitter_handler_kind,
+                        interceptor_metadata: None,
+                        guard_eval_depth,
+                    },
+                },
+            )));
 
             return Mode::HandleYield(DoCtrl::Eval {
                 expr: result_obj,
@@ -1414,8 +1401,6 @@ impl VM {
             emitter_stream,
             emitter_metadata,
             emitter_handler_kind,
-            chain,
-            next_idx,
             ..
         } = continuation;
         let transformed =
@@ -1432,8 +1417,7 @@ impl VM {
             emitter_stream,
             emitter_metadata,
             emitter_handler_kind,
-            chain,
-            next_idx,
+            Some(marker),
         )
     }
 
@@ -1667,7 +1651,7 @@ impl VM {
 
     fn handle_yield_resume_continuation(
         &mut self,
-        continuation: Continuation,
+        continuation: OwnedControlContinuation,
         value: Value,
     ) -> StepEvent {
         self.handle_resume_continuation(continuation, value)
@@ -1895,9 +1879,6 @@ impl VM {
         metadata: Option<CallMetadata>,
         handler_kind: Option<HandlerKind>,
     ) -> StepEvent {
-        if let Some(ref m) = metadata {
-            self.emit_frame_entered(m, handler_kind);
-        }
         if let Err(err) = self.push_program_frame(stream, metadata, handler_kind) {
             return StepEvent::Error(err);
         }
@@ -1906,36 +1887,13 @@ impl VM {
     }
 
     fn handle_yield_eval(&mut self, expr: PyShared, metadata: Option<CallMetadata>) -> StepEvent {
-        if let Some((stream, metadata, handler_kind)) = self
-            .current_seg()
-            .frames
-            .iter()
-            .rev()
-            .find_map(|frame| match frame {
-                Frame::Program {
-                    stream,
-                    metadata: Some(metadata),
-                    handler_kind,
-                    ..
-                } => Some((stream.clone(), metadata.clone(), *handler_kind)),
-                Frame::Program { .. }
-                | Frame::InterceptorApply(_)
-                | Frame::InterceptorEval(_)
-                | Frame::EvalReturn(_)
-                | Frame::MapReturn { .. }
-                | Frame::FlatMapBindResult
-                | Frame::FlatMapBindSource { .. }
-                | Frame::InterceptBodyReturn { .. } => None,
-            })
-        {
-            self.emit_frame_location(&stream, &metadata, handler_kind);
-        }
-        let cont = Continuation::create_unstarted_with_metadata(
+        let cont = OwnedControlContinuation::Pending(PendingContinuation::create_with_metadata(
             expr,
+            Vec::new(),
             Vec::new(),
             metadata,
             self.current_segment,
-        );
+        ));
         self.handle_resume_continuation(cont, Value::None)
     }
 
@@ -1955,20 +1913,19 @@ impl VM {
             return StepEvent::Error(VMError::internal("EvalInScope current segment not found"));
         };
         let current_dispatch_id = self.current_segment_dispatch_id();
-        let return_to = self.capture_live_continuation(current_seg_id, current_dispatch_id);
+        let captured_caller = self.parent_segment(current_seg_id);
+        let mut return_to =
+            Continuation::from_fiber(current_seg_id, captured_caller, current_dispatch_id);
         let Some(scope_parent_seg_id) = self.eval_in_scope_chain_start_segment(&scope) else {
             return StepEvent::Error(VMError::internal(
                 "EvalInScope received scope from unknown segment",
             ));
         };
-        let child_caller_seg_id = self
-            .continuation_handler_chain_start(&scope)
-            .unwrap_or(scope_parent_seg_id);
-
-        // EvalInScope is a lexical child scope. The scope parent continues to
-        // point at the captured lexical scope chain; the dynamic parent stays
-        // anchored at the captured scope entry segment.
-        let mut child_seg = Segment::new(Marker::fresh(), Some(child_caller_seg_id));
+        let mut child_seg = Segment::new(Some(scope_parent_seg_id));
+        child_seg.push_frame(Frame::LexicalScope {
+            bindings,
+            var_overrides: HashMap::new(),
+        });
         child_seg.push_frame(Frame::EvalReturn(Box::new(
             EvalReturnContinuation::EvalInScopeReturn {
                 continuation: return_to,
@@ -1976,8 +1933,6 @@ impl VM {
         )));
         let child_seg_id = self.alloc_segment(child_seg);
         self.inherit_interceptor_guard_state(Some(current_seg_id), child_seg_id);
-        self.set_scope_parent(child_seg_id, Some(scope_parent_seg_id));
-        self.replace_scope_bindings(child_seg_id, bindings);
 
         self.current_segment = Some(child_seg_id);
         self.pending_python = Some(PendingPython::EvalExpr { metadata });
@@ -2027,7 +1982,7 @@ impl VM {
         if !self.write_scoped_var_nonlocal(seg_id, var, value) {
             return StepEvent::Error(VMError::internal(format!(
                 "WriteVarNonlocal could not find owner scope {} for variable {}",
-                var.owner_scope().raw(),
+                var.owner_segment().index(),
                 var.raw()
             )));
         }
@@ -2036,12 +1991,12 @@ impl VM {
     }
 
     fn handle_yield_read_handler_state(&mut self, key: String, missing_is_none: bool) -> StepEvent {
-        let Some((_, _, _, _, prompt_seg_id)) = self.nearest_handler_dispatch() else {
-            return StepEvent::Error(VMError::internal(
-                "ReadHandlerState called outside handler dispatch",
-            ));
-        };
-        let Some(value) = self.read_handler_state_at(prompt_seg_id, &key, missing_is_none) else {
+        let Some(value) = self
+            .var_store
+            .get(&key)
+            .cloned()
+            .or_else(|| missing_is_none.then_some(Value::None))
+        else {
             self.set_contextual_throw(Self::missing_state_key_exception(&key));
             return StepEvent::Continue;
         };
@@ -2050,20 +2005,18 @@ impl VM {
     }
 
     fn handle_yield_write_handler_state(&mut self, key: String, value: Value) -> StepEvent {
-        let Some((_, _, _, _, prompt_seg_id)) = self.nearest_handler_dispatch() else {
-            return StepEvent::Error(VMError::internal(
-                "WriteHandlerState called outside handler dispatch",
-            ));
-        };
-        if !self.write_handler_state_at(prompt_seg_id, key, value) {
-            return StepEvent::Error(VMError::internal("handler state prompt segment not found"));
+        let key_for_shadow = key.clone();
+        let value_for_shadow = value.clone();
+        self.var_store.put(key, value);
+        if let Some((_, _, _, _, prompt_seg_id)) = self.current_live_handler_dispatch() {
+            let _ = self.write_handler_state_at(prompt_seg_id, key_for_shadow, value_for_shadow);
         }
         self.mode = Mode::Deliver(Value::Unit);
         StepEvent::Continue
     }
 
     fn handle_yield_append_handler_log(&mut self, message: Value) -> StepEvent {
-        let Some((_, _, _, _, prompt_seg_id)) = self.nearest_handler_dispatch() else {
+        let Some((_, _, _, _, prompt_seg_id)) = self.current_live_handler_dispatch() else {
             return StepEvent::Error(VMError::internal(
                 "AppendHandlerLog called outside handler dispatch",
             ));
@@ -2085,14 +2038,11 @@ impl VM {
                         Frame::Program {
                             metadata: Some(m), ..
                         } => stack.push(m.clone()),
+                        Frame::LexicalScope { .. } => {
+                            // lexical scope frames carry bindings, not call metadata
+                        }
                         Frame::Program { metadata: None, .. } => {
                             // no metadata
-                        }
-                        Frame::InterceptorApply(continuation)
-                        | Frame::InterceptorEval(continuation) => {
-                            if let Some(metadata) = continuation.emitter_metadata.as_ref() {
-                                stack.push(metadata.clone());
-                            }
                         }
                         Frame::EvalReturn(continuation) => match continuation.as_ref() {
                             EvalReturnContinuation::ApplyResolveFunction { metadata, .. }
@@ -2102,6 +2052,12 @@ impl VM {
                             | EvalReturnContinuation::ExpandResolveArg { metadata, .. }
                             | EvalReturnContinuation::ExpandResolveKwarg { metadata, .. } => {
                                 stack.push(metadata.clone());
+                            }
+                            EvalReturnContinuation::InterceptApplyResult { continuation }
+                            | EvalReturnContinuation::InterceptEvalResult { continuation } => {
+                                if let Some(metadata) = continuation.emitter_metadata.as_ref() {
+                                    stack.push(metadata.clone());
+                                }
                             }
                             EvalReturnContinuation::ResumeToContinuation { .. } => {
                                 // no metadata
@@ -2122,9 +2078,6 @@ impl VM {
                         }
                         Frame::FlatMapBindSource { binder_meta, .. } => {
                             stack.push(binder_meta.clone());
-                        }
-                        Frame::InterceptBodyReturn { .. } => {
-                            // no metadata
                         }
                     }
                 }
@@ -2256,8 +2209,6 @@ impl VM {
         };
 
         let caller = self.segments.get(seg_id).and_then(|s| s.parent);
-        let scope_parent = self.scope_parent(seg_id);
-
         match caller {
             Some(caller_id) => {
                 if self.segments.get(caller_id).is_none() {
@@ -2265,17 +2216,14 @@ impl VM {
                         "caller segment not found in step_return",
                     ));
                 }
-                self.reparent_children(seg_id, Some(caller_id), scope_parent);
+                self.reparent_children(seg_id, Some(caller_id));
                 self.current_segment = Some(caller_id);
                 self.free_segment(seg_id);
                 self.mode = Mode::Deliver(value);
                 StepEvent::Continue
             }
             None => {
-                self.reparent_children(seg_id, None, scope_parent);
                 self.completed_segment = Some(seg_id);
-                self.store_completed_outputs_from(seg_id);
-                self.free_segment(seg_id);
                 self.current_segment = None;
                 StepEvent::Done(value)
             }
@@ -2422,9 +2370,6 @@ impl VM {
                 }
             }
             PyCallOutcome::GenError(exception) => {
-                if let Some(ref m) = metadata {
-                    self.emit_frame_exited(m);
-                }
                 self.receive_expand_gen_error(handler_return, exception);
             }
             PyCallOutcome::GenYield(_) | PyCallOutcome::GenReturn(_) => {
@@ -2659,9 +2604,6 @@ impl VM {
                 if incoming_throw.is_some() {
                     self.trace_state.clear_preserved_error_frames();
                 }
-                if let Some(ref m) = metadata {
-                    self.emit_frame_exited(m);
-                }
                 if effective_handler_kind == Some(HandlerKind::Python)
                     && self.should_treat_python_handler_gen_return_as_handler_completion()
                 {
@@ -2723,22 +2665,10 @@ impl VM {
                 if let Some(continuation) =
                     self.handler_stream_throw_continuation(&stream, handler_kind)
                 {
-                    self.mode = Mode::HandleYield(
-                        if self
-                            .exact_dispatch_origin_for_continuation(&continuation)
-                            .is_some()
-                        {
-                            DoCtrl::TransferThrow {
-                                continuation,
-                                exception,
-                            }
-                        } else {
-                            DoCtrl::ResumeThrow {
-                                continuation,
-                                exception,
-                            }
-                        },
-                    );
+                    self.mode = Mode::HandleYield(DoCtrl::TransferThrow {
+                        continuation,
+                        exception,
+                    });
                     return;
                 }
 

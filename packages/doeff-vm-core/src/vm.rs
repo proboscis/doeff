@@ -12,9 +12,10 @@ use pyo3::types::{PyDict, PyModule, PyTuple};
 use crate::arena::FiberArena;
 use crate::bridge::{classify_yielded_for_vm, doctrl_tag, doctrl_to_pyexpr_for_vm};
 use crate::capture::{
-    ActiveChainEntry, HandlerAction, HandlerKind, HandlerSnapshotEntry, TraceEntry,
+    ActiveChainEntry, EffectResult, FrameId, HandlerAction, HandlerDispatchEntry, HandlerKind,
+    HandlerSnapshotEntry, HandlerStatus, TraceEntry,
 };
-use crate::continuation::Continuation;
+use crate::continuation::{Continuation, OwnedControlContinuation, PendingContinuation};
 use crate::debug_state::DebugState;
 use crate::do_ctrl::{DoCtrl, DoExprTag, InterceptMode, PyDoExprBase};
 use crate::doeff_generator::DoeffGenerator;
@@ -25,10 +26,10 @@ use crate::effect::{
 };
 use crate::error::VMError;
 use crate::frame::{
-    CallMetadata, EvalReturnContinuation, Frame, InterceptorChainLink, InterceptorContinuation,
-    ProgramDispatch,
+    CallMetadata, DispatchEffectSite, DispatchTrace, EvalReturnContinuation, Frame,
+    InterceptorChainLink, InterceptorContinuation, ProgramDispatch, ProgramFrameSnapshot,
 };
-use crate::ids::{ContId, DispatchId, Marker, ScopeId, SegmentId};
+use crate::ids::{ContId, DispatchId, Marker, SegmentId};
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
 use crate::kleisli::{notify_run_handlers_completed, IdentityKleisli, KleisliRef};
 use crate::memory_stats::live_object_counts;
@@ -38,9 +39,8 @@ use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
 use crate::segment::{Segment, SegmentKind};
 use crate::trace_state::{LiveDispatchSnapshot, TraceState};
 use crate::value::Value;
-use crate::var_store::VarStore;
 
-pub use crate::rust_store::RustStore;
+pub use crate::var_store::VarStore;
 
 static NEXT_RUN_TOKEN: AtomicU64 = AtomicU64::new(1);
 
@@ -105,15 +105,6 @@ impl PyStore {
             dict: PyDict::new(py).unbind(),
         }
     }
-}
-
-#[derive(Debug, Default, Clone)]
-struct FiberRuntimeState {
-    pending_error_context: Option<PyException>,
-    throw_parent: Option<Continuation>,
-    interceptor_eval_depth: usize,
-    interceptor_skip_stack: Vec<Marker>,
-    pending_program_dispatch: Option<ProgramDispatch>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -220,12 +211,24 @@ struct WithHandlerPlan {
     handler: KleisliRef,
 }
 
-#[derive(Clone)]
 struct DispatchOriginView {
     dispatch_id: DispatchId,
+    parent_dispatch_id: Option<DispatchId>,
     effect: DispatchEffect,
     k_origin: Continuation,
     original_exception: Option<PyException>,
+}
+
+impl Clone for DispatchOriginView {
+    fn clone(&self) -> Self {
+        Self {
+            dispatch_id: self.dispatch_id,
+            parent_dispatch_id: self.parent_dispatch_id,
+            effect: self.effect.clone(),
+            k_origin: self.k_origin.clone_handle(),
+            original_exception: self.original_exception.clone(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -269,9 +272,7 @@ impl DebugConfig {
 
 pub struct VM {
     pub segments: FiberArena,
-    pub rust_store: RustStore,
     pub var_store: VarStore,
-    pub env_store: HashMap<HashedPyKey, Value>,
     pub py_store: Option<PyStore>,
     pub mode: Mode,
     pub pending_python: Option<PendingPython>,
@@ -279,17 +280,11 @@ pub struct VM {
     pub completed_segment: Option<SegmentId>,
     pub(crate) debug: DebugState,
     pub(crate) trace_state: TraceState,
-    fiber_runtime: HashMap<SegmentId, FiberRuntimeState>,
-    scope_ids: HashMap<SegmentId, ScopeId>,
-    scope_parents: HashMap<SegmentId, Option<SegmentId>>,
     handler_type_match_cache: HashMap<(usize, usize), bool>,
     segment_handler_resolution_cache: HashMap<(SegmentId, usize), CachedHandlerResolution>,
     segment_topology_epochs: HashMap<SegmentId, u64>,
     next_segment_topology_epoch: u64,
     shared_builtin_prompt_cache: RwLock<HashMap<SegmentId, SegmentId>>,
-    segment_parent_redirects: HashMap<SegmentId, Option<SegmentId>>,
-    completed_state_entries_snapshot: Option<HashMap<String, Value>>,
-    completed_log_entries_snapshot: Option<Vec<Value>>,
     pub active_run_token: Option<u64>,
 }
 
@@ -297,9 +292,7 @@ impl VM {
     pub fn new() -> Self {
         VM {
             segments: FiberArena::new(),
-            rust_store: RustStore::new(),
-            var_store: VarStore::default(),
-            env_store: HashMap::new(),
+            var_store: VarStore::new(),
             py_store: None,
             mode: Mode::Deliver(Value::Unit),
             pending_python: None,
@@ -307,17 +300,11 @@ impl VM {
             completed_segment: None,
             debug: DebugState::new(DebugConfig::default()),
             trace_state: TraceState::default(),
-            fiber_runtime: HashMap::new(),
-            scope_ids: HashMap::new(),
-            scope_parents: HashMap::new(),
             handler_type_match_cache: HashMap::new(),
             segment_handler_resolution_cache: HashMap::new(),
             segment_topology_epochs: HashMap::new(),
             next_segment_topology_epoch: 1,
             shared_builtin_prompt_cache: RwLock::new(HashMap::new()),
-            segment_parent_redirects: HashMap::new(),
-            completed_state_entries_snapshot: None,
-            completed_log_entries_snapshot: None,
             active_run_token: None,
         }
     }
@@ -336,15 +323,12 @@ impl VM {
         let token = NEXT_RUN_TOKEN.fetch_add(1, Ordering::Relaxed);
         self.active_run_token = Some(token);
         self.segments.clear();
-        self.var_store.clear();
+        self.var_store.clear_run_local();
         self.mode = Mode::Deliver(Value::Unit);
         self.pending_python = None;
         self.current_segment = None;
         self.completed_segment = None;
         self.trace_state.clear();
-        self.fiber_runtime.clear();
-        self.scope_ids.clear();
-        self.scope_parents.clear();
         self.handler_type_match_cache.clear();
         self.segment_handler_resolution_cache.clear();
         self.segment_topology_epochs.clear();
@@ -353,9 +337,6 @@ impl VM {
             .get_mut()
             .expect("shared builtin prompt cache poisoned")
             .clear();
-        self.segment_parent_redirects.clear();
-        self.completed_state_entries_snapshot = None;
-        self.completed_log_entries_snapshot = None;
         token
     }
 
@@ -371,8 +352,8 @@ impl VM {
         notify_run_handlers_completed(run_token);
         self.segments.clear();
         self.segments.shrink_to_fit();
-        self.var_store.clear();
-        self.var_store.shrink_to_fit();
+        self.var_store.clear_run_local();
+        self.var_store.shrink_run_local_to_fit();
         self.mode = Mode::Deliver(Value::Unit);
         self.pending_python = None;
         self.current_segment = None;
@@ -380,12 +361,6 @@ impl VM {
         self.trace_state.clear();
         self.trace_state.shrink_to_fit();
         self.debug.shrink_to_fit();
-        self.fiber_runtime.clear();
-        self.fiber_runtime.shrink_to_fit();
-        self.scope_ids.clear();
-        self.scope_ids.shrink_to_fit();
-        self.scope_parents.clear();
-        self.scope_parents.shrink_to_fit();
         self.handler_type_match_cache.clear();
         self.handler_type_match_cache.shrink_to_fit();
         self.segment_handler_resolution_cache.clear();
@@ -401,8 +376,6 @@ impl VM {
             .get_mut()
             .expect("shared builtin prompt cache poisoned")
             .shrink_to_fit();
-        self.segment_parent_redirects.clear();
-        self.segment_parent_redirects.shrink_to_fit();
     }
 
     pub fn enable_trace(&mut self, enabled: bool) {
@@ -433,8 +406,8 @@ impl VM {
                 }
             }
         }
-        for state in self.fiber_runtime.values() {
-            if let Some(dispatch) = &state.pending_program_dispatch {
+        for (_, segment) in self.segments.iter() {
+            if let Some(dispatch) = &segment.pending_program_dispatch {
                 dispatch_ids.insert(dispatch.dispatch_id);
             }
         }
@@ -447,8 +420,9 @@ impl VM {
             .filter(|(seg_id, _)| {
                 self.segment_program_dispatch(*seg_id).is_some()
                     || self
-                        .fiber_runtime(*seg_id)
-                        .and_then(|state| state.pending_program_dispatch.as_ref())
+                        .segments
+                        .get(*seg_id)
+                        .and_then(|segment| segment.pending_program_dispatch.as_ref())
                         .is_some()
             })
             .count()
@@ -518,27 +492,15 @@ impl VM {
 
     pub fn alloc_segment(&mut self, segment: Segment) -> SegmentId {
         let seg_id = self.segments.alloc(segment);
-        self.segment_parent_redirects.remove(&seg_id);
-        self.var_store.init_segment(seg_id);
-        self.fiber_runtime
-            .insert(seg_id, FiberRuntimeState::default());
-        self.scope_ids.insert(seg_id, ScopeId::fresh());
-        let parent = self.segments.get(seg_id).and_then(|segment| segment.parent);
-        self.scope_parents.insert(seg_id, parent);
         self.bump_segment_topology_epoch(seg_id);
         seg_id
     }
 
     pub fn free_segment(&mut self, id: SegmentId) {
-        let Some(parent) = self.segments.get(id).map(|segment| segment.parent) else {
+        if self.segments.get(id).is_none() {
             return;
-        };
-        self.segment_parent_redirects.insert(id, parent);
+        }
         self.segments.free(id);
-        self.var_store.remove_segment(id);
-        self.fiber_runtime.remove(&id);
-        self.scope_ids.remove(&id);
-        self.scope_parents.remove(&id);
         self.segment_topology_epochs.remove(&id);
     }
 
@@ -571,7 +533,10 @@ impl VM {
             .map(|segment| segment.frames.as_slice())
     }
 
-    pub(crate) fn continuation_frame_stack(&self, continuation: &Continuation) -> Vec<Frame> {
+    pub(crate) fn continuation_frame_stack(
+        &self,
+        continuation: &Continuation,
+    ) -> Vec<ProgramFrameSnapshot> {
         continuation
             .fibers()
             .iter()
@@ -583,19 +548,17 @@ impl VM {
                         metadata,
                         handler_kind,
                         dispatch,
-                    } => Some(Frame::Program {
+                    } => Some(ProgramFrameSnapshot {
                         stream: stream.clone(),
                         metadata: metadata.clone(),
                         handler_kind: *handler_kind,
                         dispatch: dispatch.clone(),
                     }),
-                    Frame::InterceptorApply(_)
-                    | Frame::InterceptorEval(_)
-                    | Frame::EvalReturn(_)
+                    Frame::LexicalScope { .. } => None,
+                    Frame::EvalReturn(_)
                     | Frame::MapReturn { .. }
                     | Frame::FlatMapBindResult
-                    | Frame::FlatMapBindSource { .. }
-                    | Frame::InterceptBodyReturn { .. } => None,
+                    | Frame::FlatMapBindSource { .. } => None,
                 })
             })
             .collect()
@@ -607,8 +570,8 @@ impl VM {
     ) -> Option<&PyException> {
         continuation
             .segment_id()
-            .and_then(|seg_id| self.fiber_runtime.get(&seg_id))
-            .and_then(|state| state.pending_error_context.as_ref())
+            .and_then(|seg_id| self.segments.get(seg_id))
+            .and_then(|segment| segment.pending_error_context.as_ref())
     }
 
     pub(crate) fn segment_program_dispatch(&self, seg_id: SegmentId) -> Option<&ProgramDispatch> {
@@ -617,15 +580,13 @@ impl VM {
             Frame::Program {
                 dispatch: Some(dispatch),
                 ..
-            } if self.trace_state.has_dispatch(dispatch.dispatch_id) => Some(dispatch),
+            } => Some(dispatch),
+            Frame::LexicalScope { .. } => None,
             Frame::Program { .. }
-            | Frame::InterceptorApply(_)
-            | Frame::InterceptorEval(_)
             | Frame::EvalReturn(_)
             | Frame::MapReturn { .. }
             | Frame::FlatMapBindResult
-            | Frame::FlatMapBindSource { .. }
-            | Frame::InterceptBodyReturn { .. } => None,
+            | Frame::FlatMapBindSource { .. } => None,
         })
     }
 
@@ -642,41 +603,36 @@ impl VM {
                 Frame::Program {
                     dispatch: Some(dispatch),
                     ..
-                } if self.trace_state.has_dispatch(dispatch.dispatch_id) => Some(dispatch),
+                } => Some(dispatch),
+                Frame::LexicalScope { .. } => None,
                 Frame::Program { .. }
-                | Frame::InterceptorApply(_)
-                | Frame::InterceptorEval(_)
                 | Frame::EvalReturn(_)
                 | Frame::MapReturn { .. }
                 | Frame::FlatMapBindResult
-                | Frame::FlatMapBindSource { .. }
-                | Frame::InterceptBodyReturn { .. } => None,
+                | Frame::FlatMapBindSource { .. } => None,
             })
     }
 
     pub(crate) fn set_pending_program_dispatch(
         &mut self,
         seg_id: SegmentId,
-        mut dispatch: ProgramDispatch,
+        dispatch: ProgramDispatch,
     ) {
-        dispatch.origin.set_dispatch_frame_hint(Some(seg_id));
-        dispatch
-            .handler_continuation
-            .set_dispatch_frame_hint(Some(seg_id));
-        if let Some(runtime) = self.fiber_runtime_mut(seg_id) {
-            runtime.pending_program_dispatch = Some(dispatch);
+        if let Some(segment) = self.segments.get_mut(seg_id) {
+            segment.pending_program_dispatch = Some(dispatch);
         }
     }
 
     pub(crate) fn clear_pending_program_dispatch(&mut self, seg_id: SegmentId) {
-        if let Some(runtime) = self.fiber_runtime_mut(seg_id) {
-            runtime.pending_program_dispatch = None;
+        if let Some(segment) = self.segments.get_mut(seg_id) {
+            segment.pending_program_dispatch = None;
         }
     }
 
     fn take_pending_program_dispatch(&mut self, seg_id: SegmentId) -> Option<ProgramDispatch> {
-        self.fiber_runtime_mut(seg_id)
-            .and_then(|runtime| runtime.pending_program_dispatch.take())
+        self.segments
+            .get_mut(seg_id)
+            .and_then(|segment| segment.pending_program_dispatch.take())
     }
 
     pub(crate) fn push_program_frame(
@@ -707,95 +663,76 @@ impl VM {
         Ok(())
     }
 
-    pub fn scope_parent(&self, seg_id: SegmentId) -> Option<SegmentId> {
-        self.scope_parents.get(&seg_id).copied().flatten()
-    }
-
-    fn fiber_runtime(&self, seg_id: SegmentId) -> Option<&FiberRuntimeState> {
-        self.fiber_runtime.get(&seg_id)
-    }
-
-    fn fiber_runtime_mut(&mut self, seg_id: SegmentId) -> Option<&mut FiberRuntimeState> {
-        self.fiber_runtime.get_mut(&seg_id)
-    }
-
-    pub(crate) fn scope_id_for_segment(&self, seg_id: SegmentId) -> Option<ScopeId> {
-        self.scope_ids.get(&seg_id).copied()
+    pub fn parent_segment(&self, seg_id: SegmentId) -> Option<SegmentId> {
+        self.segments.get(seg_id).and_then(|segment| segment.parent)
     }
 
     pub(crate) fn clear_pending_error_context(&mut self, seg_id: SegmentId) {
-        if let Some(state) = self.fiber_runtime_mut(seg_id) {
-            state.pending_error_context = None;
+        if let Some(segment) = self.segments.get_mut(seg_id) {
+            segment.pending_error_context = None;
         }
     }
 
     pub(crate) fn set_pending_error_context(&mut self, seg_id: SegmentId, exception: PyException) {
-        if let Some(state) = self.fiber_runtime_mut(seg_id) {
-            state.pending_error_context = Some(exception);
+        if let Some(segment) = self.segments.get_mut(seg_id) {
+            segment.pending_error_context = Some(exception);
         }
     }
 
     pub(crate) fn pending_error_context(&self, seg_id: SegmentId) -> Option<&PyException> {
-        self.fiber_runtime(seg_id)
-            .and_then(|state| state.pending_error_context.as_ref())
-    }
-
-    pub(crate) fn throw_parent(&self, seg_id: SegmentId) -> Option<&Continuation> {
-        self.fiber_runtime(seg_id)
-            .and_then(|state| state.throw_parent.as_ref())
-    }
-
-    pub(crate) fn clear_throw_parent(&mut self, seg_id: SegmentId) {
-        if let Some(state) = self.fiber_runtime_mut(seg_id) {
-            state.throw_parent = None;
-        }
+        self.segments
+            .get(seg_id)
+            .and_then(|segment| segment.pending_error_context.as_ref())
     }
 
     pub(crate) fn interceptor_eval_depth(&self, seg_id: SegmentId) -> usize {
-        self.fiber_runtime(seg_id)
-            .map(|state| state.interceptor_eval_depth)
+        self.segments
+            .get(seg_id)
+            .map(|segment| segment.interceptor_eval_depth)
             .unwrap_or(0)
     }
 
     pub(crate) fn increment_interceptor_eval_depth(&mut self, seg_id: SegmentId) {
-        if let Some(state) = self.fiber_runtime_mut(seg_id) {
-            state.interceptor_eval_depth = state.interceptor_eval_depth.saturating_add(1);
+        if let Some(segment) = self.segments.get_mut(seg_id) {
+            segment.interceptor_eval_depth = segment.interceptor_eval_depth.saturating_add(1);
         }
     }
 
     pub(crate) fn decrement_interceptor_eval_depth(&mut self, seg_id: SegmentId) {
-        if let Some(state) = self.fiber_runtime_mut(seg_id) {
-            state.interceptor_eval_depth = state.interceptor_eval_depth.saturating_sub(1);
+        if let Some(segment) = self.segments.get_mut(seg_id) {
+            segment.interceptor_eval_depth = segment.interceptor_eval_depth.saturating_sub(1);
         }
     }
 
     pub(crate) fn is_interceptor_skipped_on(&self, seg_id: SegmentId, marker: Marker) -> bool {
-        self.fiber_runtime(seg_id)
-            .is_some_and(|state| state.interceptor_skip_stack.contains(&marker))
+        self.segments
+            .get(seg_id)
+            .is_some_and(|segment| segment.interceptor_skip_stack.contains(&marker))
     }
 
     pub(crate) fn push_interceptor_skip_on(&mut self, seg_id: SegmentId, marker: Marker) {
-        if let Some(state) = self.fiber_runtime_mut(seg_id) {
-            state.interceptor_skip_stack.push(marker);
+        if let Some(segment) = self.segments.get_mut(seg_id) {
+            segment.interceptor_skip_stack.push(marker);
         }
     }
 
     pub(crate) fn pop_interceptor_skip_on(&mut self, seg_id: SegmentId, marker: Marker) {
-        let Some(state) = self.fiber_runtime_mut(seg_id) else {
+        let Some(segment) = self.segments.get_mut(seg_id) else {
             return;
         };
-        if let Some(pos) = state
+        if let Some(pos) = segment
             .interceptor_skip_stack
             .iter()
             .rposition(|active| *active == marker)
         {
-            state.interceptor_skip_stack.remove(pos);
+            segment.interceptor_skip_stack.remove(pos);
         }
     }
 
     pub(crate) fn interceptor_skip_stack_is_empty(&self, seg_id: SegmentId) -> bool {
-        self.fiber_runtime(seg_id)
-            .map_or(true, |state| state.interceptor_skip_stack.is_empty())
+        self.segments
+            .get(seg_id)
+            .map_or(true, |segment| segment.interceptor_skip_stack.is_empty())
     }
 
     pub(crate) fn inherit_interceptor_guard_state(
@@ -806,42 +743,46 @@ impl VM {
         let Some(source_seg_id) = source_seg_id else {
             return;
         };
-        let Some(source_state) = self.fiber_runtime(source_seg_id).cloned() else {
+        let Some((source_depth, source_stack)) = self.segments.get(source_seg_id).map(|segment| {
+            (
+                segment.interceptor_eval_depth,
+                segment.interceptor_skip_stack.clone(),
+            )
+        }) else {
             return;
         };
-        let Some(child_state) = self.fiber_runtime_mut(child_seg_id) else {
+        let Some(child_segment) = self.segments.get_mut(child_seg_id) else {
             return;
         };
-        child_state.interceptor_eval_depth = source_state.interceptor_eval_depth;
-        child_state.interceptor_skip_stack = source_state.interceptor_skip_stack;
+        child_segment.interceptor_eval_depth = source_depth;
+        child_segment.interceptor_skip_stack = source_stack;
     }
 
-    pub fn set_scope_parent(&mut self, seg_id: SegmentId, scope_parent: Option<SegmentId>) {
-        self.scope_parents.insert(seg_id, scope_parent);
+    pub(crate) fn continuation_parent(&self, continuation: &Continuation) -> Option<SegmentId> {
+        continuation
+            .outermost_fiber_id()
+            .and_then(|fiber_id| self.segments.get(fiber_id))
+            .and_then(|segment| segment.parent)
     }
 
-    fn reparent_continuation_captured_caller(
-        continuation: &mut Continuation,
-        old_parent: SegmentId,
-        new_parent: Option<SegmentId>,
-    ) -> usize {
-        if continuation.captured_caller() != Some(old_parent) {
-            return 0;
+    fn collect_continuation_parent(
+        continuation: &Continuation,
+        parents: &mut std::collections::HashSet<SegmentId>,
+    ) {
+        if let Some(fiber_id) = continuation.outermost_fiber_id() {
+            parents.insert(fiber_id);
         }
-        continuation.set_captured_caller(new_parent);
-        1
     }
 
-    fn reparent_eval_return_captured_caller(
+    fn collect_eval_return_captured_caller(
         eval_return: &mut EvalReturnContinuation,
-        old_parent: SegmentId,
-        new_parent: Option<SegmentId>,
-    ) -> usize {
+        parents: &mut std::collections::HashSet<SegmentId>,
+    ) {
         match eval_return {
             EvalReturnContinuation::ResumeToContinuation { continuation }
             | EvalReturnContinuation::ReturnToContinuation { continuation }
             | EvalReturnContinuation::EvalInScopeReturn { continuation } => {
-                Self::reparent_continuation_captured_caller(continuation, old_parent, new_parent)
+                Self::collect_continuation_parent(continuation, parents)
             }
             EvalReturnContinuation::ApplyResolveFunction { .. }
             | EvalReturnContinuation::ApplyResolveArg { .. }
@@ -849,7 +790,9 @@ impl VM {
             | EvalReturnContinuation::ExpandResolveFactory { .. }
             | EvalReturnContinuation::ExpandResolveArg { .. }
             | EvalReturnContinuation::ExpandResolveKwarg { .. }
-            | EvalReturnContinuation::TailResumeReturn => 0,
+            | EvalReturnContinuation::InterceptApplyResult { .. }
+            | EvalReturnContinuation::InterceptEvalResult { .. }
+            | EvalReturnContinuation::TailResumeReturn => {}
         }
     }
 
@@ -858,7 +801,7 @@ impl VM {
         old_parent: SegmentId,
         new_parent: Option<SegmentId>,
     ) -> usize {
-        let mut rewired = 0usize;
+        let mut parent_rewrites = std::collections::HashSet::new();
 
         for (_, segment) in self.segments.iter_mut() {
             for frame in &mut segment.frames {
@@ -867,30 +810,32 @@ impl VM {
                     ..
                 } = frame
                 {
-                    rewired += Self::reparent_continuation_captured_caller(
-                        &mut dispatch.origin,
-                        old_parent,
-                        new_parent,
-                    );
-                    rewired += Self::reparent_continuation_captured_caller(
-                        &mut dispatch.handler_continuation,
-                        old_parent,
-                        new_parent,
+                    Self::collect_continuation_parent(&dispatch.origin, &mut parent_rewrites);
+                    Self::collect_continuation_parent(
+                        &dispatch.handler_continuation,
+                        &mut parent_rewrites,
                     );
                 }
                 if let Frame::EvalReturn(eval_return) = frame {
-                    rewired += Self::reparent_eval_return_captured_caller(
-                        eval_return,
-                        old_parent,
-                        new_parent,
-                    );
+                    Self::collect_eval_return_captured_caller(eval_return, &mut parent_rewrites);
                 }
             }
         }
 
         if let Some(PendingPython::RustProgramContinuation { k, .. }) = self.pending_python.as_mut()
         {
-            rewired += Self::reparent_continuation_captured_caller(k, old_parent, new_parent);
+            Self::collect_continuation_parent(k, &mut parent_rewrites);
+        }
+
+        let mut rewired = 0usize;
+        for fiber_id in parent_rewrites {
+            let Some(segment) = self.segments.get_mut(fiber_id) else {
+                continue;
+            };
+            if segment.parent == Some(old_parent) {
+                segment.parent = new_parent;
+                rewired += 1;
+            }
         }
 
         rewired
@@ -900,27 +845,7 @@ impl VM {
         &self,
         parent: Option<SegmentId>,
     ) -> Option<SegmentId> {
-        let mut cursor = parent;
-        let mut seen = HashSet::new();
-        while let Some(seg_id) = cursor {
-            if !seen.insert(seg_id) {
-                return None;
-            }
-            if let Some(next) = self
-                .segment_parent_redirects
-                .get(&seg_id)
-                .copied()
-                .flatten()
-            {
-                cursor = Some(next);
-                continue;
-            }
-            if self.segments.get(seg_id).is_some() {
-                return Some(seg_id);
-            }
-            cursor = None;
-        }
-        None
+        parent.filter(|seg_id| self.segments.get(*seg_id).is_some())
     }
 
     fn next_segment_topology_epoch(&mut self) -> u64 {
@@ -974,7 +899,6 @@ impl VM {
         &mut self,
         old_parent: SegmentId,
         new_parent: Option<SegmentId>,
-        new_scope_parent: Option<SegmentId>,
     ) -> usize {
         let affected_roots = self
             .segments
@@ -983,14 +907,7 @@ impl VM {
             .collect::<Vec<_>>();
         let mut rewired = self.segments.reparent_children(old_parent, new_parent);
         if rewired > 0 {
-            self.segment_parent_redirects.insert(old_parent, new_parent);
             self.touch_segment_topology_subtrees(affected_roots);
-        }
-        for scope_parent in self.scope_parents.values_mut() {
-            if *scope_parent == Some(old_parent) {
-                *scope_parent = new_scope_parent;
-                rewired += 1;
-            }
         }
         rewired += self.reparent_owned_continuation_callers(old_parent, new_parent);
         rewired
@@ -1032,16 +949,6 @@ impl VM {
         (state, logs)
     }
 
-    pub(crate) fn store_completed_outputs_from(&mut self, start_seg_id: SegmentId) {
-        let (state, logs) = self.collect_outputs_from_chain(start_seg_id);
-        if !state.is_empty() || self.completed_state_entries_snapshot.is_none() {
-            self.completed_state_entries_snapshot = Some(state);
-        }
-        if !logs.is_empty() || self.completed_log_entries_snapshot.is_none() {
-            self.completed_log_entries_snapshot = Some(logs);
-        }
-    }
-
     pub fn read_handler_state_at(
         &self,
         prompt_seg_id: SegmentId,
@@ -1049,10 +956,23 @@ impl VM {
         missing_is_none: bool,
     ) -> Option<Value> {
         let prompt_seg_id = self.shared_builtin_handler_prompt(prompt_seg_id);
+        let state_handler_prompt = self.segments.get(prompt_seg_id).is_some_and(|seg| {
+            seg.kind
+                .prompt_boundary()
+                .is_some_and(|boundary| boundary.handler.handler_name() == "StateHandler")
+        });
+        if state_handler_prompt {
+            return self
+                .var_store
+                .get(key)
+                .cloned()
+                .or_else(|| missing_is_none.then_some(Value::None));
+        }
         self.var_store
             .handler_state(prompt_seg_id)
             .and_then(|state| state.get(key))
             .cloned()
+            .or_else(|| self.var_store.get(key).cloned())
             .or_else(|| missing_is_none.then_some(Value::None))
     }
 
@@ -1063,11 +983,10 @@ impl VM {
         value: Value,
     ) -> bool {
         let prompt_seg_id = self.shared_builtin_handler_prompt(prompt_seg_id);
-        let Some(sync_rust_store) = self.segments.get(prompt_seg_id).map(|seg| {
-            matches!(
-                &seg.kind,
-                SegmentKind::PromptBoundary { handler, .. } if handler.handler_name() == "StateHandler"
-            )
+        let Some(sync_global_state) = self.segments.get(prompt_seg_id).map(|seg| {
+            seg.kind
+                .prompt_boundary()
+                .is_some_and(|boundary| boundary.handler.handler_name() == "StateHandler")
         }) else {
             return false;
         };
@@ -1076,8 +995,8 @@ impl VM {
             return false;
         };
         state.insert(key.clone(), value.clone());
-        if sync_rust_store {
-            self.rust_store.entries.insert(key, value);
+        if sync_global_state {
+            self.var_store.put(key, value);
         }
         true
     }
@@ -1105,14 +1024,14 @@ impl VM {
                 .insert(prompt_seg_id, prompt_seg_id);
             return prompt_seg_id;
         };
-        let SegmentKind::PromptBoundary { handler, .. } = &seg.kind else {
+        let Some(boundary) = seg.kind.prompt_boundary() else {
             self.shared_builtin_prompt_cache
                 .write()
                 .expect("shared builtin prompt cache poisoned")
                 .insert(prompt_seg_id, prompt_seg_id);
             return prompt_seg_id;
         };
-        let handler_name = handler.handler_name();
+        let handler_name = boundary.handler.handler_name();
         if !matches!(handler_name.as_str(), "StateHandler" | "WriterHandler") {
             self.shared_builtin_prompt_cache
                 .write()
@@ -1120,13 +1039,9 @@ impl VM {
                 .insert(prompt_seg_id, prompt_seg_id);
             return prompt_seg_id;
         }
-        // Spawn/CreateContinuation installs synthetic handler wrappers whose
-        // lexical scope (`scope_parent`) points at the captured parent chain
-        // instead of the wrapper's structural parent. Built-in State/Writer
-        // must share the outer live handler instance across spawned tasks, so
-        // redirect reads/writes/log appends to the first matching prompt in
-        // that captured scope chain.
-        if self.scope_parent(prompt_seg_id) == seg.parent {
+        // Spawn/CreateContinuation may install wrapper prompts that sit between
+        // the resumed task body and the original outer State/Writer handler.
+        if self.parent_segment(prompt_seg_id) == seg.parent {
             self.shared_builtin_prompt_cache
                 .write()
                 .expect("shared builtin prompt cache poisoned")
@@ -1134,13 +1049,13 @@ impl VM {
             return prompt_seg_id;
         }
 
-        let mut cursor = self.scope_parent(prompt_seg_id);
+        let mut cursor = self.parent_segment(prompt_seg_id);
         while let Some(seg_id) = cursor {
             let Some(seg) = self.segments.get(seg_id) else {
                 break;
             };
-            if let SegmentKind::PromptBoundary { handler, .. } = &seg.kind {
-                if handler.handler_name() == handler_name {
+            if let Some(boundary) = seg.kind.prompt_boundary() {
+                if boundary.handler.handler_name() == handler_name {
                     self.shared_builtin_prompt_cache
                         .write()
                         .expect("shared builtin prompt cache poisoned")
@@ -1148,7 +1063,7 @@ impl VM {
                     return seg_id;
                 }
             }
-            cursor = self.scope_parent(seg_id);
+            cursor = self.parent_segment(seg_id);
         }
 
         self.shared_builtin_prompt_cache
@@ -1162,11 +1077,11 @@ impl VM {
         let Some(seg) = self.segments.get(seg_id) else {
             return seg_id;
         };
-        let SegmentKind::PromptBoundary { handler, .. } = &seg.kind else {
+        let Some(boundary) = seg.kind.prompt_boundary() else {
             return seg_id;
         };
         if matches!(
-            handler.handler_name().as_str(),
+            boundary.handler.handler_name().as_str(),
             "StateHandler" | "WriterHandler"
         ) {
             return self.shared_builtin_handler_prompt(seg_id);
@@ -1180,31 +1095,20 @@ impl VM {
     ) -> Option<(SegmentId, HashMap<String, Value>)> {
         let canonical_seg_id = self.canonical_output_segment_id(seg_id);
         let seg = self.segments.get(canonical_seg_id)?;
-        match &seg.kind {
-            SegmentKind::PromptBoundary { handler, .. }
-                if handler.handler_name() == "StateHandler" =>
-            {
-                let shared_state = self
-                    .var_store
-                    .handler_state(canonical_seg_id)
-                    .cloned()
-                    .unwrap_or_default();
+        match seg.kind.prompt_boundary() {
+            Some(boundary) if boundary.handler.handler_name() == "StateHandler" => {
+                let shared_state = self.var_store.global_state().clone();
                 Some((canonical_seg_id, shared_state))
             }
-            SegmentKind::PromptBoundary { .. }
-            | SegmentKind::Normal { .. }
-            | SegmentKind::InterceptorBoundary { .. }
-            | SegmentKind::MaskBoundary { .. } => None,
+            Some(_) | None => None,
         }
     }
 
     fn log_output_entries(&self, seg_id: SegmentId) -> Option<(SegmentId, Vec<Value>)> {
         let canonical_seg_id = self.canonical_output_segment_id(seg_id);
         let seg = self.segments.get(canonical_seg_id)?;
-        match &seg.kind {
-            SegmentKind::PromptBoundary { handler, .. }
-                if handler.handler_name() == "WriterHandler" =>
-            {
+        match seg.kind.prompt_boundary() {
+            Some(boundary) if boundary.handler.handler_name() == "WriterHandler" => {
                 let shared_logs = self
                     .var_store
                     .writer_log(canonical_seg_id)
@@ -1212,23 +1116,11 @@ impl VM {
                     .unwrap_or_default();
                 Some((canonical_seg_id, shared_logs))
             }
-            SegmentKind::PromptBoundary { .. }
-            | SegmentKind::Normal { .. }
-            | SegmentKind::InterceptorBoundary { .. }
-            | SegmentKind::MaskBoundary { .. } => None,
+            Some(_) | None => None,
         }
     }
 
     pub fn final_state_entries(&self) -> HashMap<String, Value> {
-        if self.current_segment.is_none() {
-            if let Some(state) = &self.completed_state_entries_snapshot {
-                if state.is_empty() {
-                    return self.rust_store.entries.clone();
-                }
-                return state.clone();
-            }
-        }
-
         let mut chain = Vec::new();
         let mut cursor = self.completed_segment.or(self.current_segment);
         while let Some(seg_id) = cursor {
@@ -1251,18 +1143,12 @@ impl VM {
         }
 
         if state.is_empty() {
-            return self.rust_store.entries.clone();
+            return self.var_store.global_state().clone();
         }
         state
     }
 
     pub fn final_log_entries(&self) -> Vec<Value> {
-        if self.current_segment.is_none() {
-            if let Some(logs) = &self.completed_log_entries_snapshot {
-                return logs.clone();
-            }
-        }
-
         let mut chain = Vec::new();
         let mut cursor = self.completed_segment.or(self.current_segment);
         while let Some(seg_id) = cursor {
@@ -1298,44 +1184,19 @@ impl VM {
                         metadata: Some(metadata),
                         ..
                     } if metadata.auto_unwrap_programlike => return Some(metadata.clone()),
+                    Frame::LexicalScope { .. } => {}
                     Frame::Program { .. } => {}
-                    Frame::InterceptorApply(continuation)
-                    | Frame::InterceptorEval(continuation) => {
+                    Frame::EvalReturn(continuation) => {
                         if let Some(metadata) = continuation
-                            .emitter_metadata
-                            .as_ref()
-                            .filter(|metadata| metadata.auto_unwrap_programlike)
-                        {
-                            return Some(metadata.clone());
-                        }
-                        if let Some(metadata) = continuation
-                            .interceptor_metadata
-                            .as_ref()
+                            .metadata()
                             .filter(|metadata| metadata.auto_unwrap_programlike)
                         {
                             return Some(metadata.clone());
                         }
                     }
-                    Frame::EvalReturn(continuation) => match continuation.as_ref() {
-                        EvalReturnContinuation::ApplyResolveFunction { metadata, .. }
-                        | EvalReturnContinuation::ApplyResolveArg { metadata, .. }
-                        | EvalReturnContinuation::ApplyResolveKwarg { metadata, .. }
-                        | EvalReturnContinuation::ExpandResolveFactory { metadata, .. }
-                        | EvalReturnContinuation::ExpandResolveArg { metadata, .. }
-                        | EvalReturnContinuation::ExpandResolveKwarg { metadata, .. }
-                            if metadata.auto_unwrap_programlike =>
-                        {
-                            return Some(metadata.clone());
-                        }
-                        EvalReturnContinuation::ResumeToContinuation { .. } => {}
-                        EvalReturnContinuation::ReturnToContinuation { .. } => {}
-                        EvalReturnContinuation::EvalInScopeReturn { .. } => {}
-                        _ => {}
-                    },
                     Frame::MapReturn { .. }
                     | Frame::FlatMapBindResult
-                    | Frame::FlatMapBindSource { .. }
-                    | Frame::InterceptBodyReturn { .. } => {}
+                    | Frame::FlatMapBindSource { .. } => {}
                 }
             }
             seg_id = seg.parent;

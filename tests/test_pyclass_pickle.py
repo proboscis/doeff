@@ -111,13 +111,13 @@ class TestTraceHopPickle:
 
 class TestVarPickle:
     def test_pickle_roundtrip(self):
-        var = Var(raw=42, owner_scope=7)
+        var = Var(raw=42, owner_segment=7)
         restored = pickle.loads(pickle.dumps(var))
         assert restored.raw == 42
-        assert restored.owner_scope == 7
+        assert restored.owner_segment == 7
 
     def test_cloudpickle_roundtrip(self):
-        var = Var(raw=1, owner_scope=0)
+        var = Var(raw=1, owner_segment=0)
         restored = cloudpickle.loads(cloudpickle.dumps(var))
         assert restored.raw == 1
 
