@@ -1673,8 +1673,8 @@ impl VM {
     fn handle_yield_apply(
         &mut self,
         f: DoCtrl,
-        args: Vec<DoCtrl>,
-        kwargs: Vec<(String, DoCtrl)>,
+        mut args: Vec<DoCtrl>,
+        mut kwargs: Vec<(String, DoCtrl)>,
         metadata: CallMetadata,
     ) -> StepEvent {
         if !matches!(&f, DoCtrl::Pure { .. }) {
@@ -1688,7 +1688,7 @@ impl VM {
             );
         }
 
-        if let Some((arg_idx, expr)) = Self::first_non_pure_arg(&args) {
+        if let Some((arg_idx, expr)) = Self::take_first_non_pure_arg(&mut args) {
             return self.eval_then_reenter_call(
                 expr,
                 EvalReturnContinuation::ApplyResolveArg {
@@ -1701,7 +1701,7 @@ impl VM {
             );
         }
 
-        if let Some((kwargs_idx, expr)) = Self::first_non_pure_kwarg(&kwargs) {
+        if let Some((kwargs_idx, expr)) = Self::take_first_non_pure_kwarg(&mut kwargs) {
             return self.eval_then_reenter_call(
                 expr,
                 EvalReturnContinuation::ApplyResolveKwarg {
@@ -1765,8 +1765,8 @@ impl VM {
     fn handle_yield_expand(
         &mut self,
         factory: DoCtrl,
-        args: Vec<DoCtrl>,
-        kwargs: Vec<(String, DoCtrl)>,
+        mut args: Vec<DoCtrl>,
+        mut kwargs: Vec<(String, DoCtrl)>,
         metadata: CallMetadata,
     ) -> StepEvent {
         if !matches!(&factory, DoCtrl::Pure { .. }) {
@@ -1780,7 +1780,7 @@ impl VM {
             );
         }
 
-        if let Some((arg_idx, expr)) = Self::first_non_pure_arg(&args) {
+        if let Some((arg_idx, expr)) = Self::take_first_non_pure_arg(&mut args) {
             return self.eval_then_reenter_call(
                 expr,
                 EvalReturnContinuation::ExpandResolveArg {
@@ -1793,7 +1793,7 @@ impl VM {
             );
         }
 
-        if let Some((kwargs_idx, expr)) = Self::first_non_pure_kwarg(&kwargs) {
+        if let Some((kwargs_idx, expr)) = Self::take_first_non_pure_kwarg(&mut kwargs) {
             return self.eval_then_reenter_call(
                 expr,
                 EvalReturnContinuation::ExpandResolveKwarg {
@@ -2093,18 +2093,26 @@ impl VM {
         StepEvent::Continue
     }
 
-    fn first_non_pure_arg(args: &[DoCtrl]) -> Option<(usize, DoCtrl)> {
+    fn take_first_non_pure_arg(args: &mut [DoCtrl]) -> Option<(usize, DoCtrl)> {
         let arg_idx = args
             .iter()
             .position(|arg| !matches!(arg, DoCtrl::Pure { .. }))?;
-        Some((arg_idx, args[arg_idx].clone()))
+        let taken = std::mem::replace(
+            &mut args[arg_idx],
+            DoCtrl::Pure { value: Value::Unit },
+        );
+        Some((arg_idx, taken))
     }
 
-    fn first_non_pure_kwarg(kwargs: &[(String, DoCtrl)]) -> Option<(usize, DoCtrl)> {
+    fn take_first_non_pure_kwarg(kwargs: &mut [(String, DoCtrl)]) -> Option<(usize, DoCtrl)> {
         let kwargs_idx = kwargs
             .iter()
             .position(|(_, value)| !matches!(value, DoCtrl::Pure { .. }))?;
-        Some((kwargs_idx, kwargs[kwargs_idx].1.clone()))
+        let taken = std::mem::replace(
+            &mut kwargs[kwargs_idx].1,
+            DoCtrl::Pure { value: Value::Unit },
+        );
+        Some((kwargs_idx, taken))
     }
 
     fn collect_value_args(args: Vec<DoCtrl>) -> Vec<Value> {
