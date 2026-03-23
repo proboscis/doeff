@@ -498,7 +498,7 @@ fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
     install_pending_dispatch(&mut vm, handler_seg_id, prompt_seg_id, origin_cont_id, &continuation, None);
     vm.current_segment = Some(handler_seg_id);
 
-    let event = vm.handle_dispatch_resume(continuation.clone_handle(), Value::Unit);
+    let event = vm.handle_dispatch_resume(Continuation::capture_from_fiber_ids(continuation.fibers().to_vec()), Value::Unit);
     assert!(matches!(event, StepEvent::Continue));
 
     let resumed_seg_id = vm
@@ -861,13 +861,14 @@ fn test_write_scoped_var_nonlocal_updates_owner_through_captured_scope_chain() {
 }
 
 #[test]
-fn test_consumed_continuation_stays_detectable_on_cloned_handles() {
+fn test_independent_continuations_have_separate_consumed_flags() {
     let mut continuation = Continuation::with_id(ContId::fresh(), SegmentId::from_index(0), None);
-    let handle = continuation.clone_handle();
+    let independent = Continuation::capture_from_fiber_ids(continuation.fibers().to_vec());
 
-    assert!(!handle.consumed());
+    assert!(!independent.consumed());
     continuation.mark_consumed();
 
     assert!(continuation.consumed());
-    assert!(handle.consumed());
+    // Independent continuation has its own consumed flag
+    assert!(!independent.consumed());
 }
