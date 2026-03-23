@@ -23,7 +23,7 @@ use crate::effect::{
 use crate::error::VMError;
 use crate::handler::{IRStreamFactory, IRStreamProgram, IRStreamProgramRef};
 use crate::handlers::AwaitHandlerFactory;
-use crate::ids::{ContId, DispatchId, PromiseId, TaskId};
+use crate::ids::{ContId, PromiseId, TaskId};
 use crate::ir_stream::{IRStream, IRStreamStep, StreamLocation};
 use crate::kleisli::{DgfnKleisli, KleisliRef};
 use crate::py_shared::PyShared;
@@ -161,7 +161,6 @@ pub enum PromiseState {
 pub struct TaskMetadata {
     pub parent_task: Option<TaskId>,
     pub spawn_site: Option<SpawnSite>,
-    pub spawn_dispatch_id: Option<DispatchId>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1642,10 +1641,9 @@ impl SchedulerState {
                 store: TaskStore::Shared,
                 ..
             } => Ok(()),
-            TaskState::Done { .. } => Err(scheduler_internal_error(format!(
-                "save_task_store: task {} is already done",
-                task_id.raw()
-            ))),
+            // TaskCompleted can finalize the task before the wrapper program
+            // fully unwinds. A second store save is then redundant, not fatal.
+            TaskState::Done { .. } => Ok(()),
         }
     }
 
@@ -3792,7 +3790,6 @@ impl IRStreamProgram for SchedulerProgram {
                     TaskMetadata {
                         parent_task,
                         spawn_site,
-                        spawn_dispatch_id: None,
                     },
                 );
                 state.enqueue_ready_task(task_id, priority);

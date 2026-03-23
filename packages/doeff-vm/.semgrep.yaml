@@ -260,6 +260,29 @@ rules:
       invariants: ["R13-I"]
 
   # ---------------------------------------------------------------------------
+  # SPEC-VM-020 Phase 1b: no DispatchId runtime identity tracking
+  # ---------------------------------------------------------------------------
+
+  - id: doeff-vm-no-dispatch-id-runtime
+    pattern-regex: '\bDispatchId\b'
+    message: |
+      SPEC-VM-020 Phase 1b: DispatchId must not appear in the Rust VM runtime.
+      OCaml 5 has no dispatch identity. The live fiber chain is the dispatch state,
+      so runtime code must derive context structurally instead of tracking DispatchId.
+
+      Ref: issue vm-ocaml5-phase1b-eliminate-dispatch-id
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm-core/src/**/*.rs"
+        - "**/doeff-vm/src/**/*.rs"
+        - "**/doeff-core-effects/src/**/*.rs"
+    metadata:
+      category: spec-enforcement
+      spec: SPEC-VM-020
+
+  # ---------------------------------------------------------------------------
   # SPEC-VM-013 ENFORCEMENT
   # ---------------------------------------------------------------------------
 

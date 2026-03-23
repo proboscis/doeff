@@ -1987,7 +1987,7 @@ pub(crate) fn classify_yielded_bound(
             }
             DoExprTag::Delegate => {
                 let _d: PyRef<'_, PyDelegate> = obj.extract()?;
-                if vm.current_dispatch_id().is_none() {
+                if vm.current_origin_cont_id().is_none() {
                     return Err(PyRuntimeError::new_err(
                         "Delegate called outside dispatch context",
                     ));
@@ -1996,7 +1996,7 @@ pub(crate) fn classify_yielded_bound(
             }
             DoExprTag::Pass => {
                 let _p: PyRef<'_, PyPass> = obj.extract()?;
-                if vm.current_dispatch_id().is_none() {
+                if vm.current_origin_cont_id().is_none() {
                     return Err(PyRuntimeError::new_err("Pass called outside dispatch context"));
                 }
                 Ok(DoCtrl::Pass)
