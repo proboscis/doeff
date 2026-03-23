@@ -23,12 +23,6 @@ pub struct FiberId(pub u32);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct ContId(pub u64);
 
-/// Unique identifier for dispatches.
-///
-/// Tracks the lifecycle of an effect dispatch through handler chain.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct DispatchId(pub u64);
-
 /// Unique identifier for runnable continuations.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct RunnableId(pub u64);
@@ -56,7 +50,6 @@ pub struct VarId {
 static MARKER_COUNTER: AtomicU64 = AtomicU64::new(1);
 static VAR_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 static CONT_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-static DISPATCH_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 static RUNNABLE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 impl Marker {
@@ -115,18 +108,6 @@ impl ContId {
 
     pub fn from_raw(value: u64) -> Self {
         ContId(value)
-    }
-}
-
-impl DispatchId {
-    /// Create a fresh unique DispatchId.
-    pub fn fresh() -> Self {
-        DispatchId(DISPATCH_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
-    }
-
-    /// Get the raw value.
-    pub fn raw(&self) -> u64 {
-        self.0
     }
 }
 

@@ -44,14 +44,11 @@ impl VM {
         &self,
         marker: Marker,
     ) -> Option<(SegmentId, KleisliRef, Option<Arc<Vec<PyShared>>>)> {
-        self.segments
-            .iter()
-            .find_map(|(seg_id, seg)| {
-                let boundary = seg.kind.prompt_boundary()?;
-                (boundary.handled_marker == marker).then(|| {
-                    (seg_id, boundary.handler.clone(), boundary.types.clone())
-                })
-            })
+        self.segments.iter().find_map(|(seg_id, seg)| {
+            let boundary = seg.kind.prompt_boundary()?;
+            (boundary.handled_marker == marker)
+                .then(|| (seg_id, boundary.handler.clone(), boundary.types.clone()))
+        })
     }
 
     pub(super) fn handlers_in_caller_chain(

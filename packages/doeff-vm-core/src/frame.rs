@@ -8,7 +8,7 @@ use crate::continuation::Continuation;
 use crate::do_ctrl::{DoCtrl, InterceptMode};
 use crate::driver::PyException;
 use crate::effect::DispatchEffect;
-use crate::ids::{DispatchId, Marker, SegmentId, VarId};
+use crate::ids::{ContId, Marker, SegmentId, VarId};
 use crate::ir_stream::IRStreamRef;
 use crate::kleisli::KleisliRef;
 use crate::py_key::HashedPyKey;
@@ -126,7 +126,7 @@ impl Clone for DispatchEffectSite {
 }
 
 #[derive(Debug)]
-pub struct DispatchTrace {
+pub struct DispatchDisplay {
     pub effect_site: Option<DispatchEffectSite>,
     pub handler_stack: Vec<HandlerDispatchEntry>,
     pub transfer_target_repr: Option<String>,
@@ -135,7 +135,7 @@ pub struct DispatchTrace {
     pub is_execution_context_effect: bool,
 }
 
-impl Clone for DispatchTrace {
+impl Clone for DispatchDisplay {
     fn clone(&self) -> Self {
         Self {
             effect_site: self.effect_site.clone(),
@@ -150,12 +150,12 @@ impl Clone for DispatchTrace {
 
 #[derive(Debug)]
 pub struct ProgramDispatch {
-    pub dispatch_id: DispatchId,
-    pub parent_dispatch_id: Option<DispatchId>,
+    pub origin_cont_id: ContId,
+    pub parent_origin_cont_id: Option<ContId>,
     pub handler_segment_id: SegmentId,
     pub prompt_segment_id: SegmentId,
     pub effect: DispatchEffect,
-    pub trace: DispatchTrace,
+    pub trace: DispatchDisplay,
     pub origin: Continuation,
     pub handler_continuation: Continuation,
     pub original_exception: Option<PyException>,
@@ -164,8 +164,8 @@ pub struct ProgramDispatch {
 impl Clone for ProgramDispatch {
     fn clone(&self) -> Self {
         Self {
-            dispatch_id: self.dispatch_id,
-            parent_dispatch_id: self.parent_dispatch_id,
+            origin_cont_id: self.origin_cont_id,
+            parent_origin_cont_id: self.parent_origin_cont_id,
             handler_segment_id: self.handler_segment_id,
             prompt_segment_id: self.prompt_segment_id,
             effect: self.effect.clone(),
@@ -329,9 +329,9 @@ impl Frame {
 mod tests {
     use super::*;
     use crate::ir_stream::{IRStream, IRStreamStep};
-    use crate::var_store::VarStore;
     use crate::segment::ScopeStore;
     use crate::value::Value;
+    use crate::var_store::VarStore;
 
     #[derive(Debug)]
     struct DummyStream;

@@ -102,7 +102,9 @@ impl PyK {
     }
 
     pub fn continuation(&self) -> Option<Continuation> {
-        self.pending.is_none().then(|| self.continuation.clone_handle())
+        self.pending
+            .is_none()
+            .then(|| self.continuation.clone_handle())
     }
 
     pub fn pending(&self) -> Option<PendingContinuation> {
@@ -127,10 +129,7 @@ impl PyK {
         }
         let mut placeholder = Continuation::placeholder(self.continuation.cont_id);
         placeholder.mark_consumed();
-        OwnedControlContinuation::Started(std::mem::replace(
-            &mut self.continuation,
-            placeholder,
-        ))
+        OwnedControlContinuation::Started(std::mem::replace(&mut self.continuation, placeholder))
     }
 
     pub fn take_continuation(&mut self) -> Continuation {
@@ -310,19 +309,11 @@ impl Continuation {
         }
     }
 
-    pub(crate) fn from_fiber(
-        fiber_id: FiberId,
-        _captured_caller: Option<SegmentId>,
-        _dispatch_id: Option<crate::ids::DispatchId>,
-    ) -> Self {
+    pub(crate) fn from_fiber(fiber_id: FiberId, _captured_caller: Option<SegmentId>) -> Self {
         Self::new_captured(ContId::fresh(), vec![fiber_id])
     }
 
-    pub fn capture(
-        _segment: &Segment,
-        segment_id: SegmentId,
-        _dispatch_id: Option<crate::ids::DispatchId>,
-    ) -> Self {
+    pub fn capture(_segment: &Segment, segment_id: SegmentId) -> Self {
         Self::new_captured(ContId::fresh(), vec![segment_id])
     }
 
@@ -330,7 +321,6 @@ impl Continuation {
         cont_id: ContId,
         fiber_id: FiberId,
         _captured_caller: Option<SegmentId>,
-        _dispatch_id: Option<crate::ids::DispatchId>,
     ) -> Self {
         Self::new_captured(cont_id, vec![fiber_id])
     }
@@ -379,9 +369,8 @@ impl Continuation {
     }
 
     pub(crate) fn tail_owned_fibers(&self) -> Option<Self> {
-        (self.fibers.len() > 1).then(|| {
-            Self::new_captured(ContId::fresh(), self.fibers[1..].to_vec())
-        })
+        (self.fibers.len() > 1)
+            .then(|| Self::new_captured(ContId::fresh(), self.fibers[1..].to_vec()))
     }
 
     pub fn consumed(&self) -> bool {
@@ -398,7 +387,6 @@ impl Continuation {
         dict.set_item("started", self.is_started())?;
         Ok(dict.into_any())
     }
-
 }
 
 impl Drop for Continuation {
@@ -422,7 +410,7 @@ mod tests {
     #[test]
     fn test_continuation_capture_records_existing_fiber_id() {
         let (seg, seg_id) = make_test_segment();
-        let cont = Continuation::capture(&seg, seg_id, None);
+        let cont = Continuation::capture(&seg, seg_id);
 
         assert_eq!(cont.segment_id(), Some(seg_id));
         assert_eq!(cont.fibers(), &[seg_id]);
@@ -445,7 +433,7 @@ mod tests {
     #[test]
     fn test_clone_handle_keeps_fiber_ids_and_cont_id() {
         let (seg, seg_id) = make_test_segment();
-        let cont = Continuation::capture(&seg, seg_id, None);
+        let cont = Continuation::capture(&seg, seg_id);
         let handle = cont.clone_handle();
 
         assert_eq!(handle.cont_id, cont.cont_id);

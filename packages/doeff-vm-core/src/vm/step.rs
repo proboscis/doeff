@@ -516,8 +516,8 @@ impl VM {
             return match mode {
                 Mode::Deliver(value) => self.handle_tail_resume_return(value),
                 Mode::Throw(exception) => {
-                    if let Some(dispatch_id) = self.current_dispatch_id() {
-                        self.finish_dispatch_tracking(dispatch_id);
+                    if let Some(origin_cont_id) = self.current_origin_cont_id() {
+                        self.complete_dispatch_context(origin_cont_id);
                     }
                     self.mode = Mode::Throw(exception);
                     StepEvent::Continue
@@ -853,14 +853,14 @@ impl VM {
         match step {
             IRStreamStep::Yield(yielded) => {
                 if incoming_throw.is_some() {
-                    self.trace_state.clear_preserved_error_frames();
+                    self.trace_state.clear_error_frames();
                 }
                 self.propagate_auto_unwrap_program_context_to_yielded(metadata.as_ref(), &yielded);
                 self.handle_stream_yield(yielded, stream, metadata, handler_kind)
             }
             IRStreamStep::Return(value) => {
                 if incoming_throw.is_some() {
-                    self.trace_state.clear_preserved_error_frames();
+                    self.trace_state.clear_error_frames();
                 }
                 if handler_kind.is_some() {
                     self.handle_handler_return(value)
@@ -890,10 +890,10 @@ impl VM {
                 if let Some(original) = self.active_error_dispatch_original_exception() {
                     TraceState::set_exception_cause(&exc, &original);
                 }
-                let dispatch_id = self.current_active_handler_dispatch_id().or_else(|| {
-                    let dispatch_id = self.current_segment_dispatch_id_any()?;
-                    if self.current_segment_is_active_handler_for_dispatch(dispatch_id) {
-                        Some(dispatch_id)
+                let origin_cont_id = self.current_active_handler_dispatch_id().or_else(|| {
+                    let origin_cont_id = self.current_segment_dispatch_id_any()?;
+                    if self.current_segment_is_active_handler_for_dispatch(origin_cont_id) {
+                        Some(origin_cont_id)
                     } else {
                         None
                     }
@@ -901,8 +901,8 @@ impl VM {
                 let propagated_throw = incoming_throw
                     .as_ref()
                     .is_some_and(|original| Self::same_exception(original, &exc));
-                if let Some(dispatch_id) = dispatch_id.filter(|_| !propagated_throw) {
-                    self.emit_handler_threw_for_dispatch(dispatch_id, &exc);
+                if let Some(origin_cont_id) = origin_cont_id.filter(|_| !propagated_throw) {
+                    self.emit_handler_threw_for_dispatch(origin_cont_id, &exc);
                 }
                 self.set_contextual_throw(exc);
                 StepEvent::Continue
@@ -932,10 +932,10 @@ impl VM {
                 if let Err(err) = self.push_program_frame(stream, metadata, handler_kind) {
                     return StepEvent::Error(err);
                 }
-                let (marker, k) = if let Some(dispatch_id) = self.current_dispatch_id() {
+                let (marker, k) = if let Some(origin_cont_id) = self.current_origin_cont_id() {
                     let Some((_, k, marker)) = self
-                        .active_handler_dispatch_for(dispatch_id)
-                        .or_else(|| self.handler_dispatch_for_any(dispatch_id))
+                        .active_handler_dispatch_for(origin_cont_id)
+                        .or_else(|| self.handler_dispatch_for_any(origin_cont_id))
                     else {
                         return StepEvent::Error(VMError::internal(
                             "RustProgramContinuation: active handler dispatch not found",
@@ -956,7 +956,7 @@ impl VM {
                     (
                         self.handler_marker_in_caller_chain(seg_id)
                             .unwrap_or_else(Marker::fresh),
-                        self.capture_live_continuation(seg_id, self.current_segment_dispatch_id()),
+                        self.capture_live_continuation(seg_id),
                     )
                 };
                 self.pending_python = Some(PendingPython::RustProgramContinuation { marker, k });
@@ -1836,7 +1836,7 @@ impl VM {
                     Ok(doctrl) => {
                         if let DoCtrl::IRStream { stream, metadata } = doctrl {
                             let has_active_dispatch = self
-                                .current_dispatch_id()
+                                .current_origin_cont_id()
                                 .or_else(|| self.current_active_handler_dispatch_id())
                                 .is_some();
                             if has_active_dispatch {
@@ -1917,10 +1917,8 @@ impl VM {
         let Some(_current_seg) = self.segments.get(current_seg_id) else {
             return StepEvent::Error(VMError::internal("EvalInScope current segment not found"));
         };
-        let current_dispatch_id = self.current_segment_dispatch_id();
         let captured_caller = self.parent_segment(current_seg_id);
-        let mut return_to =
-            Continuation::from_fiber(current_seg_id, captured_caller, current_dispatch_id);
+        let return_to = Continuation::from_fiber(current_seg_id, captured_caller);
         let Some(scope_parent_seg_id) = self.eval_in_scope_chain_start_segment(&scope) else {
             return StepEvent::Error(VMError::internal(
                 "EvalInScope received scope from unknown segment",
@@ -2390,7 +2388,7 @@ impl VM {
                 {
                     Ok((stream, metadata)) => {
                         let Some(_dispatch_id) = self
-                            .current_dispatch_id()
+                            .current_origin_cont_id()
                             .or_else(|| self.current_active_handler_dispatch_id())
                         else {
                             self.set_contextual_internal_throw(PyException::runtime_error(
@@ -2560,19 +2558,19 @@ impl VM {
             return;
         }
         if handler_return {
-            let dispatch_id = self.current_active_handler_dispatch_id().or_else(|| {
-                let dispatch_id = self.current_segment_dispatch_id_any()?;
-                if self.current_segment_is_active_handler_for_dispatch(dispatch_id) {
-                    Some(dispatch_id)
+            let origin_cont_id = self.current_active_handler_dispatch_id().or_else(|| {
+                let origin_cont_id = self.current_segment_dispatch_id_any()?;
+                if self.current_segment_is_active_handler_for_dispatch(origin_cont_id) {
+                    Some(origin_cont_id)
                 } else {
                     None
                 }
             });
-            if let Some(dispatch_id) = dispatch_id {
-                if let Some(original) = self.original_exception_for_dispatch(dispatch_id) {
+            if let Some(origin_cont_id) = origin_cont_id {
+                if let Some(original) = self.original_exception_for_dispatch(origin_cont_id) {
                     TraceState::set_exception_cause(&exception, &original);
                 }
-                self.emit_handler_threw_for_dispatch(dispatch_id, &exception);
+                self.emit_handler_threw_for_dispatch(origin_cont_id, &exception);
             }
             self.mode =
                 self.mode_after_generror(GenErrorSite::ExpandReturnHandler, exception, false);
@@ -2597,7 +2595,7 @@ impl VM {
         match outcome {
             PyCallOutcome::GenYield(yielded) => {
                 if incoming_throw.is_some() {
-                    self.trace_state.clear_preserved_error_frames();
+                    self.trace_state.clear_error_frames();
                 }
                 if self.current_segment.is_none() {
                     return;
@@ -2607,7 +2605,7 @@ impl VM {
             }
             PyCallOutcome::GenReturn(value) => {
                 if incoming_throw.is_some() {
-                    self.trace_state.clear_preserved_error_frames();
+                    self.trace_state.clear_error_frames();
                 }
                 if effective_handler_kind == Some(HandlerKind::Python)
                     && self.should_treat_python_handler_gen_return_as_handler_completion()
@@ -2635,22 +2633,22 @@ impl VM {
                         .as_ref()
                         .is_some_and(|original| Self::same_exception(original, &exception));
                     if !propagated_throw {
-                        if let Some(dispatch_id) = self
+                        if let Some(origin_cont_id) = self
                             .current_active_handler_dispatch_id()
                             .or_else(|| self.current_segment_dispatch_id_any())
                         {
                             if let Some(original) =
-                                self.original_exception_for_dispatch(dispatch_id)
+                                self.original_exception_for_dispatch(origin_cont_id)
                             {
                                 TraceState::set_exception_cause(&exception, &original);
                             }
-                            self.emit_handler_threw_for_dispatch(dispatch_id, &exception);
+                            self.emit_handler_threw_for_dispatch(origin_cont_id, &exception);
                         }
                     }
                     self.mode = Mode::Throw(exception);
                     return;
                 }
-                if let Some(dispatch_id) = self
+                if let Some(origin_cont_id) = self
                     .current_active_handler_dispatch_id()
                     .or_else(|| self.current_segment_dispatch_id_any())
                 {
@@ -2658,13 +2656,14 @@ impl VM {
                         .as_ref()
                         .is_some_and(|original| Self::same_exception(original, &exception));
                     if effective_handler_kind.is_some()
-                        && !self.dispatch_uses_user_continuation_stream(dispatch_id, &stream)
+                        && !self.dispatch_uses_user_continuation_stream(origin_cont_id, &stream)
                         && !propagated_throw
                     {
-                        if let Some(original) = self.original_exception_for_dispatch(dispatch_id) {
+                        if let Some(original) = self.original_exception_for_dispatch(origin_cont_id)
+                        {
                             TraceState::set_exception_cause(&exception, &original);
                         }
-                        self.emit_handler_threw_for_dispatch(dispatch_id, &exception);
+                        self.emit_handler_threw_for_dispatch(origin_cont_id, &exception);
                     }
                 }
                 if let Some(continuation) =
@@ -2680,38 +2679,40 @@ impl VM {
                 let mut site = GenErrorSite::StepUserGeneratorDirect;
                 let active_dispatch_id = self.current_active_handler_dispatch_id();
                 let fallback_active_handler_dispatch = || {
-                    let dispatch_id = self.current_segment_dispatch_id_any()?;
-                    if self.current_segment_is_active_handler_for_dispatch(dispatch_id) {
-                        Some(dispatch_id)
+                    let origin_cont_id = self.current_segment_dispatch_id_any()?;
+                    if self.current_segment_is_active_handler_for_dispatch(origin_cont_id) {
+                        Some(origin_cont_id)
                     } else {
                         None
                     }
                 };
-                if let Some(dispatch_id) = active_dispatch_id
+                if let Some(origin_cont_id) = active_dispatch_id
                     .or_else(|| self.current_segment_dispatch_id())
                     .or_else(fallback_active_handler_dispatch)
                 {
                     let propagated_throw = incoming_throw
                         .as_ref()
                         .is_some_and(|original| Self::same_exception(original, &exception));
-                    if self.dispatch_uses_user_continuation_stream(dispatch_id, &stream)
+                    if self.dispatch_uses_user_continuation_stream(origin_cont_id, &stream)
                         || propagated_throw
                     {
                         site = GenErrorSite::StepUserGeneratorConverted;
-                    } else if self.current_segment_is_active_handler_for_dispatch(dispatch_id) {
-                        if let Some(original) = self.original_exception_for_dispatch(dispatch_id) {
+                    } else if self.current_segment_is_active_handler_for_dispatch(origin_cont_id) {
+                        if let Some(original) = self.original_exception_for_dispatch(origin_cont_id)
+                        {
                             TraceState::set_exception_cause(&exception, &original);
                         }
-                        self.emit_handler_threw_for_dispatch(dispatch_id, &exception);
+                        self.emit_handler_threw_for_dispatch(origin_cont_id, &exception);
                     } else if effective_handler_kind.is_some()
-                        && self
-                            .current_segment_dispatch_id_any()
-                            .is_some_and(|current_dispatch_id| current_dispatch_id == dispatch_id)
+                        && self.current_segment_dispatch_id_any().is_some_and(
+                            |current_origin_cont_id| current_origin_cont_id == origin_cont_id,
+                        )
                     {
-                        if let Some(original) = self.original_exception_for_dispatch(dispatch_id) {
+                        if let Some(original) = self.original_exception_for_dispatch(origin_cont_id)
+                        {
                             TraceState::set_exception_cause(&exception, &original);
                         }
-                        self.emit_handler_threw_for_dispatch(dispatch_id, &exception);
+                        self.emit_handler_threw_for_dispatch(origin_cont_id, &exception);
                     }
                 }
                 if effective_handler_kind.is_none() {

@@ -94,9 +94,7 @@ pub use frame::Frame;
 #[cfg(feature = "python_bridge")]
 pub use handler::{IRStreamFactory, IRStreamFactoryRef, IRStreamProgram, IRStreamProgramRef};
 #[cfg(feature = "python_bridge")]
-pub use ids::{
-    ContId, DispatchId, FiberId, Marker, PromiseId, RunnableId, SegmentId, TaskId, VarId,
-};
+pub use ids::{ContId, FiberId, Marker, PromiseId, RunnableId, SegmentId, TaskId, VarId};
 #[cfg(feature = "python_bridge")]
 pub use ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream, StreamLocation};
 #[cfg(feature = "python_bridge")]

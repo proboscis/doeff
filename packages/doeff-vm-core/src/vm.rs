@@ -26,10 +26,10 @@ use crate::effect::{
 };
 use crate::error::VMError;
 use crate::frame::{
-    CallMetadata, DispatchEffectSite, DispatchTrace, EvalReturnContinuation, Frame,
+    CallMetadata, DispatchDisplay, DispatchEffectSite, EvalReturnContinuation, Frame,
     InterceptorChainLink, InterceptorContinuation, ProgramDispatch, ProgramFrameSnapshot,
 };
-use crate::ids::{ContId, DispatchId, Marker, SegmentId};
+use crate::ids::{ContId, Marker, SegmentId};
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
 use crate::kleisli::{notify_run_handlers_completed, IdentityKleisli, KleisliRef};
 use crate::memory_stats::live_object_counts;
@@ -212,8 +212,8 @@ struct WithHandlerPlan {
 }
 
 struct DispatchOriginView {
-    dispatch_id: DispatchId,
-    parent_dispatch_id: Option<DispatchId>,
+    origin_cont_id: ContId,
+    parent_origin_cont_id: Option<ContId>,
     effect: DispatchEffect,
     k_origin: Continuation,
     original_exception: Option<PyException>,
@@ -222,8 +222,8 @@ struct DispatchOriginView {
 impl Clone for DispatchOriginView {
     fn clone(&self) -> Self {
         Self {
-            dispatch_id: self.dispatch_id,
-            parent_dispatch_id: self.parent_dispatch_id,
+            origin_cont_id: self.origin_cont_id,
+            parent_origin_cont_id: self.parent_origin_cont_id,
             effect: self.effect.clone(),
             k_origin: self.k_origin.clone_handle(),
             original_exception: self.original_exception.clone(),
@@ -402,13 +402,13 @@ impl VM {
                     ..
                 } = frame
                 {
-                    dispatch_ids.insert(dispatch.dispatch_id);
+                    dispatch_ids.insert(dispatch.origin_cont_id);
                 }
             }
         }
         for (_, segment) in self.segments.iter() {
             if let Some(dispatch) = &segment.pending_program_dispatch {
-                dispatch_ids.insert(dispatch.dispatch_id);
+                dispatch_ids.insert(dispatch.origin_cont_id);
             }
         }
         dispatch_ids.len()
