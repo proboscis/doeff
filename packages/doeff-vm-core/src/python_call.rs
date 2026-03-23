@@ -10,7 +10,7 @@ use crate::ir_stream::IRStreamRef;
 use crate::py_shared::PyShared;
 use crate::value::Value;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum PythonCall {
     EvalExpr {
         expr: PyShared,
@@ -56,43 +56,9 @@ pub enum PendingPython {
     AsyncEscape,
 }
 
-impl Clone for PendingPython {
-    fn clone(&self) -> Self {
-        match self {
-            PendingPython::EvalExpr { metadata } => PendingPython::EvalExpr {
-                metadata: metadata.clone(),
-            },
-            PendingPython::CallFuncReturn => PendingPython::CallFuncReturn,
-            PendingPython::StepUserGenerator {
-                stream,
-                metadata,
-                handler_kind,
-                incoming_throw,
-            } => PendingPython::StepUserGenerator {
-                stream: stream.clone(),
-                metadata: metadata.clone(),
-                handler_kind: *handler_kind,
-                incoming_throw: incoming_throw.clone(),
-            },
-            PendingPython::ExpandReturn {
-                metadata,
-                handler_return,
-            } => PendingPython::ExpandReturn {
-                metadata: metadata.clone(),
-                handler_return: *handler_return,
-            },
-            PendingPython::RustProgramContinuation { marker, k } => {
-                PendingPython::RustProgramContinuation {
-                    marker: *marker,
-                    k: Continuation::capture_from_fiber_ids(k.fibers().to_vec()),
-                }
-            }
-            PendingPython::AsyncEscape => PendingPython::AsyncEscape,
-        }
-    }
-}
+// PendingPython is intentionally NOT Clone — RustProgramContinuation holds a Continuation (SPEC-VM-021).
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum PyCallOutcome {
     Value(Value),
     GenYield(DoCtrl),

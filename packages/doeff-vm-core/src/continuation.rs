@@ -25,14 +25,7 @@ pub enum OwnedControlContinuation {
     Pending(PendingContinuation),
 }
 
-impl Clone for OwnedControlContinuation {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Started(continuation) => Self::Started(Continuation::capture_from_fiber_ids(continuation.fibers().to_vec())),
-            Self::Pending(pending) => Self::Pending(pending.clone()),
-        }
-    }
-}
+// OwnedControlContinuation is intentionally NOT Clone — Continuation must flow by move (SPEC-VM-021).
 
 impl OwnedControlContinuation {
     pub fn cont_id(&self) -> ContId {
@@ -101,10 +94,8 @@ impl PyK {
         }
     }
 
-    pub fn continuation(&self) -> Option<Continuation> {
-        self.pending
-            .is_none()
-            .then(|| Continuation::capture_from_fiber_ids(self.continuation.fibers().to_vec()))
+    pub fn continuation_ref(&self) -> Option<&Continuation> {
+        self.pending.is_none().then_some(&self.continuation)
     }
 
     pub fn pending(&self) -> Option<PendingContinuation> {
