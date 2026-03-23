@@ -794,7 +794,10 @@ impl VM {
     ) -> Option<DispatchFrameView> {
         self.dispatch_lookup_candidates().into_iter().find(|view| {
             Self::continuation_handle_matches(&view.dispatch.origin, continuation)
-                || Self::continuation_handle_matches(&view.dispatch.handler_continuation, continuation)
+                || Self::continuation_handle_matches(
+                    &view.dispatch.handler_continuation,
+                    continuation,
+                )
         })
     }
 
@@ -838,11 +841,9 @@ impl VM {
                 else {
                     continue;
                 };
-                let Some(child_depth) = self.continuation_origin_relation_depth(
-                    child_continuation,
-                    target,
-                    visited,
-                ) else {
+                let Some(child_depth) =
+                    self.continuation_origin_relation_depth(child_continuation, target, visited)
+                else {
                     continue;
                 };
                 let candidate_depth = child_depth + 1;
@@ -854,10 +855,7 @@ impl VM {
         best
     }
 
-    fn continuation_dispatch_view(
-        &self,
-        continuation: &Continuation,
-    ) -> Option<DispatchFrameView> {
+    fn continuation_dispatch_view(&self, continuation: &Continuation) -> Option<DispatchFrameView> {
         self.dispatch_view_for_continuation_exact(continuation)
             .or_else(|| self.dispatch_view_for_continuation_suffix(continuation))
             .or_else(|| {
@@ -1255,12 +1253,11 @@ impl VM {
         &self,
         continuation: &Continuation,
     ) -> Option<SegmentId> {
-        self.continuation_parent_hint(continuation)
-            .or_else(|| {
-                continuation
-                    .outermost_fiber_id()
-                    .filter(|seg_id| self.segments.get(*seg_id).is_some())
-            })
+        self.continuation_parent_hint(continuation).or_else(|| {
+            continuation
+                .outermost_fiber_id()
+                .filter(|seg_id| self.segments.get(*seg_id).is_some())
+        })
     }
 
     fn delegate_return_target_segment_id(&self, seg_id: SegmentId) -> Option<SegmentId> {
@@ -1941,9 +1938,8 @@ impl VM {
     }
 
     pub(super) fn dispatch_has_terminal_handler_action(&self, dispatch_id: DispatchId) -> bool {
-        self.dispatch_trace(dispatch_id).is_some_and(|trace| {
-            !matches!(trace.result, EffectResult::Active)
-        })
+        self.dispatch_trace(dispatch_id)
+            .is_some_and(|trace| !matches!(trace.result, EffectResult::Active))
     }
 
     pub(super) fn finalize_active_dispatches_as_threw(&mut self, exception: &PyException) {
@@ -2273,12 +2269,15 @@ impl VM {
                 || !exact_origin_before_bind.unwrap_or(false)
                 || resuming_user_defined_python_handler
             {
-                let outer_dispatch = self.find_dispatch_frame(dispatch_id).map(|view| view.dispatch);
+                let outer_dispatch = self
+                    .find_dispatch_frame(dispatch_id)
+                    .map(|view| view.dispatch);
                 let outer_handler_continuation = outer_dispatch
                     .as_ref()
                     .map(|dispatch| dispatch.handler_continuation.clone_handle());
-                let outer_parent_dispatch_id =
-                    outer_dispatch.as_ref().and_then(|dispatch| dispatch.parent_dispatch_id);
+                let outer_parent_dispatch_id = outer_dispatch
+                    .as_ref()
+                    .and_then(|dispatch| dispatch.parent_dispatch_id);
                 if let Some(program_dispatch) = self.segment_program_dispatch_mut(seg_id) {
                     if !restoring_outer_dispatch || program_dispatch.dispatch_id == dispatch_id {
                         program_dispatch.dispatch_id = dispatch_id;
@@ -2813,12 +2812,12 @@ impl VM {
                         "Delegate called without current segment",
                     ));
                 };
-                let parent_owned =
-                    match self.materialize_owned_continuation(parent_k_user.clone_handle(), "Delegate")
-                    {
-                        Ok(continuation) => continuation,
-                        Err(err) => return StepEvent::Error(err),
-                    };
+                let parent_owned = match self
+                    .materialize_owned_continuation(parent_k_user.clone_handle(), "Delegate")
+                {
+                    Ok(continuation) => continuation,
+                    Err(err) => return StepEvent::Error(err),
+                };
                 k_new.append_owned_fibers(parent_owned);
                 k_new
             }
@@ -2962,7 +2961,22 @@ impl VM {
         let is_user_defined_python_handler = handler_dispatch
             .as_ref()
             .is_some_and(|(_, _, marker)| self.is_user_defined_python_handler_marker(*marker));
-        if is_python_handler && continuation_is_live {
+        let dispatch_resumed_once = self
+            .dispatch_trace(dispatch_id)
+            .is_some_and(|trace| trace.resumed_once);
+        let handler_status_is_active = self
+            .current_handler_identity_for_dispatch(dispatch_id)
+            .and_then(|(handler_index, _)| {
+                self.dispatch_trace(dispatch_id)
+                    .and_then(|trace| trace.handler_stack.get(handler_index))
+                    .map(|entry| entry.status == HandlerStatus::Active)
+            })
+            .unwrap_or(!dispatch_resumed_once);
+        if is_python_handler
+            && continuation_is_live
+            && handler_status_is_active
+            && !dispatch_resumed_once
+        {
             let mut continuation = continuation.expect("checked above");
             continuation.mark_consumed();
             return self.throw_handler_protocol_error(format!(
@@ -3344,9 +3358,10 @@ impl VM {
                 .current_dispatch_origin()
                 .and_then(|origin| self.continuation_handler_chain_start(&origin.k_origin))
                 .or_else(|| {
-                    self.current_live_handler_dispatch().and_then(|(_, _, continuation, _, _)| {
-                        self.continuation_handler_chain_start(&continuation)
-                    })
+                    self.current_live_handler_dispatch()
+                        .and_then(|(_, _, continuation, _, _)| {
+                            self.continuation_handler_chain_start(&continuation)
+                        })
                 })
                 .or_else(|| self.current_segment);
             let Some(chain_start) = chain_start else {
