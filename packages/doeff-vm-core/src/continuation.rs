@@ -285,10 +285,6 @@ impl Continuation {
         }
     }
 
-    pub(crate) fn capture_from_fiber_ids(fiber_ids: Vec<FiberId>) -> Self {
-        Self::new_captured(ContId::fresh(), fiber_ids)
-    }
-
     fn new_captured(cont_id: ContId, fibers: Vec<FiberId>) -> Self {
         memory_stats::register_continuation();
         Self {
@@ -298,7 +294,7 @@ impl Continuation {
         }
     }
 
-    pub(crate) fn from_fiber(fiber_id: FiberId, _captured_caller: Option<SegmentId>) -> Self {
+    pub fn from_fiber(fiber_id: FiberId, _captured_caller: Option<SegmentId>) -> Self {
         Self::new_captured(ContId::fresh(), vec![fiber_id])
     }
 
@@ -326,7 +322,7 @@ impl Continuation {
         self.fibers.first().copied()
     }
 
-    pub(crate) fn fibers(&self) -> &[FiberId] {
+    pub fn fibers(&self) -> &[FiberId] {
         self.fibers.as_slice()
     }
 
@@ -411,10 +407,10 @@ mod tests {
     }
 
     #[test]
-    fn test_capture_from_fiber_ids_creates_independent_continuation() {
+    fn test_from_fiber_creates_independent_continuation() {
         let (seg, seg_id) = make_test_segment();
         let cont = Continuation::capture(&seg, seg_id);
-        let independent = Continuation::capture_from_fiber_ids(cont.fibers().to_vec());
+        let independent = Continuation::from_fiber(cont.fibers()[0], None);
 
         // Independent continuation has its own cont_id and consumed flag
         assert_ne!(independent.cont_id, cont.cont_id);

@@ -537,7 +537,8 @@ impl VM {
             return self.step_interceptor_eval_frame(continuation, mode);
         }
 
-        if let EvalReturnContinuation::ResumeToContinuation { continuation } = continuation {
+        if let EvalReturnContinuation::ResumeToContinuation { fiber_ids } = continuation {
+            let continuation = self.capture_live_continuation(fiber_ids[0]);
             self.mode = match mode {
                 Mode::Deliver(value) => Mode::HandleYield(DoCtrl::Resume {
                     continuation,
@@ -559,7 +560,8 @@ impl VM {
             return StepEvent::Continue;
         }
 
-        if let EvalReturnContinuation::ReturnToContinuation { continuation } = continuation {
+        if let EvalReturnContinuation::ReturnToContinuation { fiber_ids } = continuation {
+            let continuation = self.capture_live_continuation(fiber_ids[0]);
             self.mode = match mode {
                 Mode::Deliver(value) => Mode::HandleYield(DoCtrl::Transfer {
                     continuation,
@@ -580,7 +582,8 @@ impl VM {
             };
             return StepEvent::Continue;
         }
-        if let EvalReturnContinuation::EvalInScopeReturn { continuation } = continuation {
+        if let EvalReturnContinuation::EvalInScopeReturn { fiber_ids } = continuation {
+            let continuation = self.capture_live_continuation(fiber_ids[0]);
             self.mode = match mode {
                 Mode::Deliver(value) => Mode::HandleYield(DoCtrl::Transfer {
                     continuation,
@@ -941,7 +944,7 @@ impl VM {
                             "RustProgramContinuation: active handler dispatch not found",
                         ));
                     };
-                    (marker, Continuation::capture_from_fiber_ids(handler_fiber_ids))
+                    (marker, self.capture_live_continuation(handler_fiber_ids[0]))
                 } else {
                     let Some(seg_id) = self.current_segment else {
                         return StepEvent::Error(VMError::internal(
@@ -1931,7 +1934,7 @@ impl VM {
         });
         child_seg.push_frame(Frame::EvalReturn(Box::new(
             EvalReturnContinuation::EvalInScopeReturn {
-                continuation: return_to,
+                fiber_ids: return_to.fibers().to_vec(),
             },
         )));
         let child_seg_id = self.alloc_segment(child_seg);
