@@ -147,18 +147,9 @@ impl Clone for DispatchDisplay {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ProgramDispatch {
-    pub origin_dispatch_id: FiberId,
-    pub parent_dispatch_id: Option<FiberId>,
-    pub handler_segment_id: SegmentId,
-    pub prompt_segment_id: SegmentId,
-    pub effect: DispatchEffect,
-    pub trace: DispatchDisplay,
-    pub origin_fiber_ids: Vec<FiberId>,
-    pub handler_fiber_ids: Vec<FiberId>,
-    pub original_exception: Option<PyException>,
-}
+// ProgramDispatch removed — OCaml 5 has no dispatch state.
+// The handler closure receives (effect, k) as arguments.
+// No persistent dispatch tracking.
 
 #[derive(Debug, Clone)]
 pub struct ProgramFrameSnapshot {
