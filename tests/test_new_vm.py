@@ -5,7 +5,7 @@ Raw generators are NOT accepted by the VM — use @do or DoExpr wrappers.
 """
 
 import pytest
-from doeff_vm import PyVM, K
+from doeff_vm import PyVM, K, Callable
 
 
 @pytest.fixture
@@ -45,6 +45,32 @@ class Transfer:
     def __init__(self, k, value):
         self.continuation = k
         self.value = value
+
+
+class Expand:
+    """DoExpr: evaluate inner expr to Stream, then run it."""
+    tag = 17
+    def __init__(self, expr):
+        self.expr = expr
+
+
+class Apply:
+    """DoExpr: call f(args)."""
+    tag = 16
+    def __init__(self, f, args):
+        self.f = f
+        self.args = args
+
+
+def program(gen_fn, *args):
+    """Create a DoExpr that runs a generator function.
+
+    This is the minimal equivalent of @do — wraps a generator factory
+    as Expand(Apply(Callable(factory), args)).
+
+    The factory must be explicitly wrapped as Callable — no auto-detection.
+    """
+    return Expand(Apply(Pure(Callable(gen_fn)), [Pure(a) for a in args]))
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +121,7 @@ class TestEffectHandlers:
             result = yield Perform(Ask())
             return result
 
-        assert vm.run_with_handler(handler, body()) == 100
+        assert vm.run_with_handler(handler, program(body)) == 100
 
     def test_perform_resume_body_transforms(self, vm):
         """Body transforms the resumed value."""
@@ -110,7 +136,7 @@ class TestEffectHandlers:
             x = yield Perform(Get())
             return x * 2
 
-        assert vm.run_with_handler(handler, body()) == 20
+        assert vm.run_with_handler(handler, program(body)) == 20
 
     def test_perform_transfer(self, vm):
         """Handler transfers (tail position)."""
@@ -124,7 +150,7 @@ class TestEffectHandlers:
             result = yield Perform(Get())
             return result
 
-        assert vm.run_with_handler(handler, body()) == 77
+        assert vm.run_with_handler(handler, program(body)) == 77
 
     def test_multiple_performs(self, vm):
         """Body performs twice, handler handles both."""
@@ -144,7 +170,7 @@ class TestEffectHandlers:
             b = yield Perform(Get())
             return a + b
 
-        result = vm.run_with_handler(handler, body())
+        result = vm.run_with_handler(handler, program(body))
         assert result == 30  # 10 + 20
 
     def test_handler_receives_effect_object(self, vm):
@@ -165,7 +191,7 @@ class TestEffectHandlers:
             result = yield Perform(Add(3, 4))
             return result
 
-        assert vm.run_with_handler(handler, body()) == 7
+        assert vm.run_with_handler(handler, program(body)) == 7
 
     def test_handler_return_value_flows_through(self, vm):
         """After Resume, body's return value flows back to handler."""
@@ -184,7 +210,7 @@ class TestEffectHandlers:
             x = yield Perform(Get())
             return x + 1
 
-        result = vm.run_with_handler(handler, body())
+        result = vm.run_with_handler(handler, program(body))
         assert result == 43
         assert handler_saw == 43
 
@@ -207,7 +233,7 @@ class TestNestedHandlers:
             result = yield Perform(Get())
             return result
 
-        assert vm.run_with_handler(inner, body()) == 42
+        assert vm.run_with_handler(inner, program(body)) == 42
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +247,7 @@ class TestErrors:
             yield Perform(None)
 
         with pytest.raises(RuntimeError):
-            vm.run_with_handler(lambda e, k: None, body())
+            vm.run_with_handler(lambda e, k: None, program(body))
 
     def test_no_handler_error(self, vm):
         """Performing without a handler raises an error."""

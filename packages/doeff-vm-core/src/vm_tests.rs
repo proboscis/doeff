@@ -117,6 +117,14 @@ mod tests {
         vm
     }
 
+    /// Helper: wrap a stream as a DoCtrl body for WithHandler.
+    fn expand_stream(stream: impl IRStream + 'static) -> Box<DoCtrl> {
+        let stream_ref = IRStreamRef::new(Box::new(stream));
+        Box::new(DoCtrl::Expand {
+            expr: Box::new(DoCtrl::Pure { value: Value::Stream(stream_ref) }),
+        })
+    }
+
     // -----------------------------------------------------------------------
     // Test 1: Pure → Done
     // -----------------------------------------------------------------------
@@ -511,22 +519,11 @@ mod tests {
             }
         }
 
-        // The root program: WithHandler(handler, body)
-        let handler = Value::Callable(Arc::new(TestHandler) as CallableRef);
-        let body_stream = IRStreamRef::new(Box::new(BodyStream { state: 0 }));
-        let body = Value::Stream(body_stream);
-
-        let root_stream = ScriptStream::new(
-            vec![DoCtrl::WithHandler { handler, body }],
-            Value::Unit, // won't reach — WithHandler runs body first
-        );
-
-        // We need a smarter root that captures the result
         #[derive(Debug)]
         struct RootStream {
             yielded_with_handler: bool,
             handler: Option<Value>,
-            body: Option<Value>,
+            body: Option<Box<DoCtrl>>,
         }
 
         impl IRStream for RootStream {
@@ -538,24 +535,18 @@ mod tests {
                         body: self.body.take().unwrap(),
                     })
                 } else {
-                    // Got the result of the handled computation
                     StreamStep::Done(value)
                 }
             }
-
             fn throw(&mut self, error: Value) -> StreamStep {
                 StreamStep::Error(error)
             }
         }
 
-        let handler2 = Value::Callable(Arc::new(TestHandler) as CallableRef);
-        let body_stream2 = IRStreamRef::new(Box::new(BodyStream { state: 0 }));
-        let body2 = Value::Stream(body_stream2);
-
         let root = RootStream {
             yielded_with_handler: false,
-            handler: Some(handler2),
-            body: Some(body2),
+            handler: Some(Value::Callable(Arc::new(TestHandler) as CallableRef)),
+            body: Some(expand_stream(BodyStream { state: 0 })),
         };
 
         let mut vm = setup_vm_with_stream(root);
@@ -624,7 +615,7 @@ mod tests {
         }
 
         #[derive(Debug)]
-        struct Root { done: bool, handler: Option<Value>, body: Option<Value> }
+        struct Root { done: bool, handler: Option<Value>, body: Option<Box<DoCtrl>> }
 
         impl IRStream for Root {
             fn resume(&mut self, value: Value) -> StreamStep {
@@ -644,7 +635,7 @@ mod tests {
         let mut vm = setup_vm_with_stream(Root {
             done: false,
             handler: Some(Value::Callable(Arc::new(TransferHandler) as CallableRef)),
-            body: Some(Value::Stream(IRStreamRef::new(Box::new(BodyStream { state: 0 })))),
+            body: Some(expand_stream(BodyStream { state: 0 })),
         });
 
         let result = run_to_completion(&mut vm);
@@ -722,7 +713,7 @@ mod tests {
         }
 
         #[derive(Debug)]
-        struct Root { done: bool, handler: Option<Value>, body: Option<Value> }
+        struct Root { done: bool, handler: Option<Value>, body: Option<Box<DoCtrl>> }
 
         impl IRStream for Root {
             fn resume(&mut self, value: Value) -> StreamStep {
@@ -743,7 +734,7 @@ mod tests {
         let mut vm = setup_vm_with_stream(Root {
             done: false,
             handler: Some(Value::Callable(Arc::new(CountHandler) as CallableRef)),
-            body: Some(Value::Stream(IRStreamRef::new(Box::new(BodyStream { state: 0, first: 0 })))),
+            body: Some(expand_stream(BodyStream { state: 0, first: 0 })),
         });
 
         let result = run_to_completion(&mut vm);
@@ -820,7 +811,7 @@ mod tests {
         // Body performs → inner handles → returns 42
 
         #[derive(Debug)]
-        struct InnerRoot { done: bool, inner_handler: Option<Value>, body: Option<Value> }
+        struct InnerRoot { done: bool, inner_handler: Option<Value>, body: Option<Box<DoCtrl>> }
 
         impl IRStream for InnerRoot {
             fn resume(&mut self, value: Value) -> StreamStep {
@@ -838,7 +829,7 @@ mod tests {
         }
 
         #[derive(Debug)]
-        struct OuterRoot { done: bool, outer_handler: Option<Value>, inner: Option<Value> }
+        struct OuterRoot { done: bool, outer_handler: Option<Value>, inner: Option<Box<DoCtrl>> }
 
         impl IRStream for OuterRoot {
             fn resume(&mut self, value: Value) -> StreamStep {
@@ -858,13 +849,13 @@ mod tests {
         let inner_stream = IRStreamRef::new(Box::new(InnerRoot {
             done: false,
             inner_handler: Some(make_handler(42)),
-            body: Some(Value::Stream(IRStreamRef::new(Box::new(BodyStream { state: 0 })))),
+            body: Some(expand_stream(BodyStream { state: 0 })),
         }));
 
         let mut vm = setup_vm_with_stream(OuterRoot {
             done: false,
             outer_handler: Some(make_handler(999)),
-            inner: Some(Value::Stream(inner_stream)),
+            inner: Some(Box::new(DoCtrl::Expand { expr: Box::new(DoCtrl::Pure { value: Value::Stream(inner_stream) }) })),
         });
 
         let result = run_to_completion(&mut vm);
@@ -966,7 +957,7 @@ mod tests {
         // Body performs → inner passes → outer handles → 777
 
         #[derive(Debug)]
-        struct WrapStream { done: bool, h: Option<Value>, b: Option<Value> }
+        struct WrapStream { done: bool, h: Option<Value>, b: Option<Box<DoCtrl>> }
 
         impl IRStream for WrapStream {
             fn resume(&mut self, value: Value) -> StreamStep {
@@ -984,13 +975,13 @@ mod tests {
         let inner_stream = IRStreamRef::new(Box::new(WrapStream {
             done: false,
             h: Some(Value::Callable(Arc::new(PassHandler) as CallableRef)),
-            b: Some(Value::Stream(IRStreamRef::new(Box::new(BodyStream { state: 0 })))),
+            b: Some(expand_stream(BodyStream { state: 0 })),
         }));
 
         let mut vm = setup_vm_with_stream(WrapStream {
             done: false,
             h: Some(make_resume_handler(777)),
-            b: Some(Value::Stream(inner_stream)),
+            b: Some(Box::new(DoCtrl::Expand { expr: Box::new(DoCtrl::Pure { value: Value::Stream(inner_stream) }) })),
         });
 
         let result = run_to_completion(&mut vm);

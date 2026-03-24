@@ -15,6 +15,51 @@ use doeff_vm_core::ir_stream::{IRStream, StreamStep};
 use doeff_vm_core::py_shared::PyShared;
 use doeff_vm_core::value::Value;
 
+/// Wraps a Python callable as a VM Callable.
+/// Exported to Python as `Callable` — users must explicitly wrap.
+#[pyclass(name = "Callable")]
+#[derive(Debug)]
+pub struct PythonCallable {
+    pub callable: Py<PyAny>,
+}
+
+#[pymethods]
+impl PythonCallable {
+    #[new]
+    pub fn new(callable: Py<PyAny>) -> Self {
+        Self { callable }
+    }
+}
+
+impl doeff_vm_core::value::Callable for PythonCallable {
+    fn call(&self, args: Vec<Value>) -> Result<Value, doeff_vm_core::VMError> {
+        Python::attach(|py| {
+            let py_args: Vec<Py<PyAny>> = args
+                .into_iter()
+                .map(|v| value_to_python(py, v).unbind())
+                .collect();
+            let py_tuple = pyo3::types::PyTuple::new(py, &py_args)
+                .map_err(|e| doeff_vm_core::VMError::python_error(format!("{e}")))?;
+
+            match self.callable.call(py, py_tuple, None) {
+                Ok(result) => {
+                    let bound = result.bind(py);
+                    if bound.hasattr("send").unwrap_or(false)
+                        && bound.hasattr("throw").unwrap_or(false)
+                    {
+                        let stream = PythonGeneratorStream::new(PyShared::new(result.clone_ref(py)));
+                        let stream_ref = doeff_vm_core::ir_stream::IRStreamRef::new(Box::new(stream));
+                        Ok(Value::Stream(stream_ref))
+                    } else {
+                        Ok(python_to_value(py, bound))
+                    }
+                }
+                Err(err) => Err(doeff_vm_core::VMError::python_error(format!("{err}"))),
+            }
+        })
+    }
+}
+
 /// A Python generator wrapped as an IRStream.
 ///
 /// The generator yields Python objects that are classified into DoCtrl instructions.
@@ -185,6 +230,33 @@ fn classify_tagged_to_doctrl(py: Python<'_>, obj: &Bound<'_, PyAny>, tag: u8) ->
                 .map(|(effect, k)| DoCtrl::Delegate { effect, k })
                 .ok()
         }
+        16 => {
+            // Apply { f, args }
+            let f_obj = obj.getattr("f").ok()?;
+            let f_doctrl = classify_python_object(py, &f_obj).ok()?;
+
+            let args_list = obj.getattr("args").ok()?;
+            let mut args = Vec::new();
+            if let Ok(seq) = args_list.downcast::<pyo3::types::PyList>() {
+                for item in seq.iter() {
+                    if let Ok(doctrl) = classify_python_object(py, &item) {
+                        args.push(doctrl);
+                    }
+                }
+            }
+            Some(DoCtrl::Apply {
+                f: Box::new(f_doctrl),
+                args,
+            })
+        }
+        17 => {
+            // Expand { expr }
+            let expr_obj = obj.getattr("expr").ok()?;
+            let expr_doctrl = classify_python_object(py, &expr_obj).ok()?;
+            Some(DoCtrl::Expand {
+                expr: Box::new(expr_doctrl),
+            })
+        }
         22 => {
             // Discontinue (= TransferThrow)
             extract_continuation_and_exception(py, obj)
@@ -263,20 +335,29 @@ fn extract_continuation_and_exception(
 // ---------------------------------------------------------------------------
 
 /// Convert a Python object to a VM Value.
-pub fn python_to_value(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Value {
-    if obj.is_none() {
-        return Value::None;
+///
+/// NO auto-conversion. Everything is Value::Opaque unless it's an explicit
+/// VM type (PythonCallable → Value::Callable, PyK → Value::Continuation).
+/// The Python side is responsible for explicit conversion.
+pub fn python_to_value(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> Value {
+    // PythonCallable pyclass → Value::Callable
+    if let Ok(pc) = obj.downcast::<PythonCallable>() {
+        let inner = pc.borrow().callable.clone_ref(_py);
+        let callable = PythonCallable::new(inner);
+        return Value::Callable(
+            std::sync::Arc::new(callable) as doeff_vm_core::value::CallableRef
+        );
     }
-    if let Ok(i) = obj.extract::<i64>() {
-        return Value::Int(i);
+    // PyK → Value::Continuation
+    if let Ok(k) = obj.downcast::<doeff_vm_core::continuation::PyK>() {
+        let mut k_borrowed = k.borrow_mut();
+        if let Some(owned) = k_borrowed.take() {
+            if let doeff_vm_core::OwnedControlContinuation::Started(continuation) = owned {
+                return Value::Continuation(continuation);
+            }
+        }
     }
-    if let Ok(b) = obj.extract::<bool>() {
-        return Value::Bool(b);
-    }
-    if let Ok(s) = obj.extract::<String>() {
-        return Value::String(s);
-    }
-    // Default: opaque Python object
+    // Everything else: opaque Python object
     Value::Opaque(PyShared::new(obj.clone().unbind()))
 }
 
