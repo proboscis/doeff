@@ -8,5 +8,6 @@ PyVM = _ext.PyVM
 K = _ext.K
 Callable = _ext.Callable
 EffectBase = _ext.EffectBase
+IRStream = _ext.IRStream
 Ok = _ext.Ok
 Err = _ext.Err

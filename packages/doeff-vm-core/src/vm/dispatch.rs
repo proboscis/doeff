@@ -63,40 +63,31 @@ impl VM {
             StepResult::Error(crate::error::VMError::internal("perform: no current fiber"))
         })?;
 
-
-
-        // If the current fiber is itself a prompt boundary (handler performing an effect),
-        // start the search from its parent to find an OUTER handler.
-        let search_start = if self.segments.get(current).map_or(false, |s| s.is_prompt_boundary()) {
-            self.segments.get(current).and_then(|s| s.parent).ok_or_else(|| {
-                StepResult::Error(crate::error::VMError::internal(
-                    "perform: handler boundary has no parent"
-                ))
-            })?
-        } else {
-            current
-        };
-
-        // Walk up parent chain to find a handler boundary that handles this effect
+        // Walk up parent chain to find a handler boundary.
+        // No skip-self needed — handler code runs on the parent fiber (above
+        // the boundary), so performs from handler code naturally find outer handlers.
         let (handler_fiber_id, handler_parent) = self
-            .find_handler_for_effect(search_start, effect)
+            .find_handler_for_effect(current, effect)
             .ok_or_else(|| {
                 StepResult::Error(crate::error::VMError::internal(format!(
                     "perform: no handler found for effect"
                 )))
             })?;
 
-        // Find the tail of the chain to detach (the fiber just before the handler boundary)
-        let last_fiber = self.find_fiber_before(current, handler_fiber_id)
-            .unwrap_or(current);
-
-        // Detach: cut the link from the chain to the handler
-        if let Some(seg) = self.segments.get_mut(last_fiber) {
+        // OCaml 5: continuation includes everything from body up to AND INCLUDING
+        // the handler boundary. This way continue_k links boundary.parent = caller,
+        // restoring the correct chain topology.
+        // Detach: cut boundary from its parent
+        let boundary_parent = self.segments.get(handler_fiber_id).and_then(|s| s.parent);
+        if let Some(seg) = self.segments.get_mut(handler_fiber_id) {
             seg.parent = None;
         }
 
-        // Create continuation from the detached chain
-        let continuation = Continuation::new(current, last_fiber);
+        // Create continuation: head = current (body), last = boundary
+        let continuation = Continuation::new(current, handler_fiber_id);
+
+        // handler_parent is boundary's former parent
+        let handler_parent = boundary_parent;
 
         // Switch to the handler's parent
         self.current_segment = handler_parent;

@@ -151,6 +151,7 @@ pub fn register_pyvm(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add_class::<doeff_vm_core::continuation::PyK>()?;
     m.add_class::<crate::python_generator_stream::PythonCallable>()?;
     m.add_class::<crate::python_generator_stream::PyEffectBase>()?;
+    m.add_class::<crate::python_generator_stream::PyIRStream>()?;
     m.add_class::<crate::result::PyResultOk>()?;
     m.add_class::<crate::result::PyResultErr>()?;
     Ok(())

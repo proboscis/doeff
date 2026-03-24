@@ -84,6 +84,14 @@ class GetTraceback:
 
 
 def program(gen_fn, *args):
-    """Wrap a generator function as Expand(Apply(Pure(Callable(fn)), args))."""
-    from doeff_vm import Callable as VmCallable
-    return Expand(Apply(Pure(VmCallable(gen_fn)), [Pure(a) for a in args]))
+    """Wrap a generator function as Expand(Apply(Callable(factory), args)).
+
+    The factory calls gen_fn and wraps the generator as IRStream explicitly.
+    """
+    from doeff_vm import Callable as VmCallable, IRStream
+
+    def factory(*inner_args):
+        gen = gen_fn(*inner_args)
+        return IRStream(gen)
+
+    return Expand(Apply(Pure(VmCallable(factory)), [Pure(a) for a in args]))
