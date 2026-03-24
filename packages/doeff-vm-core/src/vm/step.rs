@@ -245,7 +245,7 @@ impl VM {
             }
 
             DoCtrl::WithHandler { handler, body } => {
-                self.eval_with_handler(handler, body)
+                self.eval_with_handler(handler, *body)
             }
 
             DoCtrl::Pass { effect, k } => {
@@ -462,20 +462,21 @@ impl VM {
         }
     }
 
-    /// Evaluate WithHandler: install handler boundary, create body fiber, execute body.
+    /// Evaluate WithHandler: install handler boundary, create body fiber, evaluate body DoExpr.
     ///
     /// OCaml 5 model:
     ///   boundary_fiber = alloc(parent = current)
     ///   boundary_fiber.handler = handler
     ///   body_fiber = alloc(parent = boundary_fiber)
     ///   current = body_fiber
-    ///   execute body on body_fiber
-    fn eval_with_handler(&mut self, handler: Value, body: Value) -> StepResult {
+    ///   evaluate body DoExpr on body_fiber
+    fn eval_with_handler(&mut self, handler: Value, body: DoCtrl) -> StepResult {
         let handler_callable = match handler {
             Value::Callable(c) => c,
-            _ => {
-                self.mode = Mode::Raise(Value::String("WithHandler: handler is not callable".into()));
-                return StepResult::Continue;
+            other => {
+                return StepResult::Error(VMError::type_error(format!(
+                    "WithHandler: handler must be Callable, got {:?}", other
+                )));
             }
         };
 
@@ -488,38 +489,14 @@ impl VM {
             None,
         );
         let boundary_fid = self.match_with(handler_obj);
-        // current_segment is now boundary_fid
 
         // 2. Create a SEPARATE body fiber whose parent is the boundary
         let body_fiber = Fiber::new(Some(boundary_fid));
         let body_fid = self.alloc_segment(body_fiber);
 
-        // 3. Push body stream on the body fiber
-        let stream = match body {
-            Value::Stream(s) => s,
-            Value::Callable(callable) => {
-                match callable.call(vec![]) {
-                    Ok(Value::Stream(s)) => s,
-                    Ok(other) => {
-                        self.mode = Mode::Send(other);
-                        return StepResult::Continue;
-                    }
-                    Err(err) => return StepResult::Error(err),
-                }
-            }
-            _ => {
-                self.mode = Mode::Raise(Value::String("WithHandler: body must be Stream or Callable".into()));
-                return StepResult::Continue;
-            }
-        };
-
-        if let Some(body_seg) = self.segments.get_mut(body_fid) {
-            body_seg.push_frame(Frame::program(stream, None));
-        }
-
-        // 4. Switch to body fiber
+        // 3. Switch to body fiber and evaluate body DoExpr
         self.current_segment = Some(body_fid);
-        self.mode = Mode::Send(Value::Unit);
+        self.mode = Mode::Eval(body);
         StepResult::Continue
     }
 

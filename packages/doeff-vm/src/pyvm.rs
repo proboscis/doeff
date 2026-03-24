@@ -1,10 +1,7 @@
 //! PyVM — Python entry point for running programs on the VM.
-//!
-//! Provides the `run()` function that Python calls to execute a doeff program.
 
 use pyo3::prelude::*;
 
-use doeff_vm_core::continuation::PyK;
 use doeff_vm_core::do_ctrl::DoCtrl;
 use doeff_vm_core::driver::{Mode, StepResult};
 use doeff_vm_core::frame::Frame;
@@ -14,7 +11,9 @@ use doeff_vm_core::segment::Fiber;
 use doeff_vm_core::value::{CallableRef, Value};
 use doeff_vm_core::VM;
 
-use crate::python_generator_stream::{python_to_value, value_to_python, PythonGeneratorStream};
+use crate::python_generator_stream::{
+    classify_python_object, python_to_value, value_to_python, PythonCallable, PythonGeneratorStream,
+};
 
 /// The Python-visible VM wrapper.
 #[pyclass(name = "PyVM")]
@@ -30,66 +29,53 @@ impl PyVM {
     }
 
     /// Run a DoExpr program to completion.
-    ///
-    /// `program` is a Python DoExpr object (has `tag` attribute) — the AST node
-    /// produced by `@do` functions, `Expand(...)`, `Pure(...)`, etc.
-    /// Also accepts raw generators (auto-wrapped as Expand(Stream)).
+    /// `program` must be a DoExpr (Python object with `tag` attribute).
     fn run(&mut self, py: Python<'_>, program: Py<PyAny>) -> PyResult<Py<PyAny>> {
-        self.vm.begin_run_session();
-
-        // Classify the program DoExpr into a DoCtrl
         let doctrl = classify_program(py, &program)?;
-
-        // Create a root fiber and set initial mode to evaluate the DoCtrl
-        let root_fiber = Fiber::new(None);
-        let root_fid = self.vm.alloc_segment(root_fiber);
-        self.vm.current_segment = Some(root_fid);
-        self.vm.mode = Mode::Eval(doctrl);
-
-        let result = self.step_loop(py)?;
-        self.vm.end_active_run_session();
-
-        Ok(value_to_python(py, result).unbind())
+        self.run_doctrl(py, doctrl)
     }
 
-    /// Run a program with a handler.
+    /// Run a DoExpr program under a handler.
+    /// `handler`: Python callable (effect, k) → generator of DoExpr
+    /// `program`: DoExpr (body to execute under handler)
     fn run_with_handler(
         &mut self,
         py: Python<'_>,
         handler: Py<PyAny>,
         program: Py<PyAny>,
     ) -> PyResult<Py<PyAny>> {
-        self.vm.begin_run_session();
+        let body_doctrl = classify_program(py, &program)?;
 
         let handler_callable = PythonCallable::new(handler.clone_ref(py));
         let handler_value = Value::Callable(std::sync::Arc::new(handler_callable) as CallableRef);
 
-        let body_stream = PythonGeneratorStream::new(PyShared::new(program));
-        let body_ref = IRStreamRef::new(Box::new(body_stream));
-        let body_value = Value::Stream(body_ref);
-
-        let root_stream = WithHandlerRootStream {
-            handler: Some(handler_value),
-            body: Some(body_value),
-            done: false,
+        let with_handler = DoCtrl::WithHandler {
+            handler: handler_value,
+            body: Box::new(body_doctrl),
         };
-        let root_ref = IRStreamRef::new(Box::new(root_stream));
 
-        let mut root_fiber = Fiber::new(None);
-        root_fiber.push_frame(Frame::program(root_ref, None));
-        let root_fid = self.vm.alloc_segment(root_fiber);
-        self.vm.current_segment = Some(root_fid);
-        self.vm.mode = Mode::Send(Value::Unit);
-
-        let result = self.step_loop(py)?;
-        self.vm.end_active_run_session();
-
-        Ok(value_to_python(py, result).unbind())
+        self.run_doctrl(py, with_handler)
     }
 }
 
 impl PyVM {
-    fn step_loop(&mut self, _py: Python<'_>) -> PyResult<Value> {
+    /// Run a DoCtrl to completion.
+    fn run_doctrl(&mut self, py: Python<'_>, doctrl: DoCtrl) -> PyResult<Py<PyAny>> {
+        self.vm.begin_run_session();
+
+        // Create root fiber
+        let root_fiber = Fiber::new(None);
+        let root_fid = self.vm.alloc_segment(root_fiber);
+        self.vm.current_segment = Some(root_fid);
+        self.vm.mode = Mode::Eval(doctrl);
+
+        let result = self.step_loop()?;
+        self.vm.end_active_run_session();
+
+        Ok(value_to_python(py, result).unbind())
+    }
+
+    fn step_loop(&mut self) -> PyResult<Value> {
         for _ in 0..100_000 {
             match self.vm.step() {
                 StepResult::Continue => continue,
@@ -123,70 +109,31 @@ impl PyVM {
 }
 
 // ---------------------------------------------------------------------------
-// PythonCallable — wraps a Python callable as a Callable trait
+// classify_program
 // ---------------------------------------------------------------------------
 
+fn classify_program(py: Python<'_>, program: &Py<PyAny>) -> PyResult<DoCtrl> {
+    classify_python_object(py, program.bind(py))
+        .map_err(|msg| pyo3::exceptions::PyTypeError::new_err(msg))
+}
+
+// PythonCallable lives in python_generator_stream.rs
+
+// ---------------------------------------------------------------------------
+// DoctrlStream — wraps a DoCtrl as a single-instruction IRStream
+// ---------------------------------------------------------------------------
+
+/// An IRStream that yields a single DoCtrl instruction, then returns the result.
 #[derive(Debug)]
-struct PythonCallable {
-    callable: Py<PyAny>,
+struct DoctrlStream {
+    doctrl: Option<DoCtrl>,
 }
 
-impl PythonCallable {
-    fn new(callable: Py<PyAny>) -> Self {
-        Self { callable }
-    }
-}
-
-impl doeff_vm_core::value::Callable for PythonCallable {
-    fn call(&self, args: Vec<Value>) -> Result<Value, doeff_vm_core::VMError> {
-        Python::attach(|py| {
-            let py_args: Vec<Py<PyAny>> = args
-                .into_iter()
-                .map(|v| value_to_python(py, v).unbind())
-                .collect();
-            let py_tuple = pyo3::types::PyTuple::new(py, &py_args)
-                .map_err(|e| doeff_vm_core::VMError::python_error(format!("{e}")))?;
-
-            match self.callable.call(py, py_tuple, None) {
-                Ok(result) => {
-                    let bound = result.bind(py);
-                    if bound.hasattr("send").unwrap_or(false)
-                        && bound.hasattr("throw").unwrap_or(false)
-                    {
-                        let stream = PythonGeneratorStream::new(PyShared::new(result.clone_ref(py)));
-                        let stream_ref = IRStreamRef::new(Box::new(stream));
-                        Ok(Value::Stream(stream_ref))
-                    } else {
-                        Ok(python_to_value(py, bound))
-                    }
-                }
-                Err(err) => Err(doeff_vm_core::VMError::python_error(format!("{err}"))),
-            }
-        })
-    }
-}
-
-// ---------------------------------------------------------------------------
-// WithHandlerRootStream
-// ---------------------------------------------------------------------------
-
-#[derive(Debug)]
-struct WithHandlerRootStream {
-    handler: Option<Value>,
-    body: Option<Value>,
-    done: bool,
-}
-
-impl doeff_vm_core::ir_stream::IRStream for WithHandlerRootStream {
+impl doeff_vm_core::ir_stream::IRStream for DoctrlStream {
     fn resume(&mut self, value: Value) -> doeff_vm_core::ir_stream::StreamStep {
-        if !self.done {
-            self.done = true;
-            doeff_vm_core::ir_stream::StreamStep::Instruction(DoCtrl::WithHandler {
-                handler: self.handler.take().unwrap(),
-                body: self.body.take().unwrap(),
-            })
-        } else {
-            doeff_vm_core::ir_stream::StreamStep::Done(value)
+        match self.doctrl.take() {
+            Some(doctrl) => doeff_vm_core::ir_stream::StreamStep::Instruction(doctrl),
+            None => doeff_vm_core::ir_stream::StreamStep::Done(value),
         }
     }
 
@@ -196,22 +143,12 @@ impl doeff_vm_core::ir_stream::IRStream for WithHandlerRootStream {
 }
 
 // ---------------------------------------------------------------------------
-// classify_program — convert a Python DoExpr into a DoCtrl
-// ---------------------------------------------------------------------------
-
-/// Classify a top-level Python DoExpr into a DoCtrl.
-fn classify_program(py: Python<'_>, program: &Py<PyAny>) -> PyResult<DoCtrl> {
-    use crate::python_generator_stream::classify_python_object;
-    classify_python_object(py, program.bind(py))
-        .map_err(|msg| pyo3::exceptions::PyTypeError::new_err(msg))
-}
-
-// ---------------------------------------------------------------------------
 // Module registration
 // ---------------------------------------------------------------------------
 
 pub fn register_pyvm(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add_class::<PyVM>()?;
-    m.add_class::<PyK>()?;
+    m.add_class::<doeff_vm_core::continuation::PyK>()?;
+    m.add_class::<crate::python_generator_stream::PythonCallable>()?;
     Ok(())
 }
