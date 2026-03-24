@@ -283,17 +283,13 @@ impl StepEvent {
 mod tests {
     use super::*;
 
-    use crate::trace_state::TraceState;
-
     #[test]
     fn handler_protocol_metadata_survives_materialization() {
         let exception = PyException::handler_protocol_error(
             "handler returned without consuming continuation 1",
         );
-        let enriched = TraceState::ensure_execution_context(exception);
 
-        assert!(enriched.is_handler_protocol_exception());
-        assert!(enriched.is_synthetic_vm_error());
-        assert!(TraceState::has_execution_context(&enriched));
+        assert!(exception.is_handler_protocol_exception());
+        assert!(exception.is_synthetic_vm_error());
     }
 }

@@ -50,8 +50,6 @@ pub mod segment;
 #[cfg(feature = "python_bridge")]
 mod step;
 #[cfg(feature = "python_bridge")]
-mod trace_state;
-#[cfg(feature = "python_bridge")]
 pub mod value;
 #[cfg(feature = "python_bridge")]
 pub mod var_store;

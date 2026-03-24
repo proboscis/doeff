@@ -37,7 +37,6 @@ use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
 use crate::segment::{Segment, SegmentKind};
-use crate::trace_state::{LiveDispatchSnapshot, TraceState};
 use crate::value::Value;
 
 pub use crate::var_store::VarStore;
@@ -54,9 +53,6 @@ mod dispatch_impl;
 
 #[path = "vm/step.rs"]
 mod step_impl;
-
-#[path = "vm/vm_trace.rs"]
-mod vm_trace_impl;
 
 #[path = "vm/var_store.rs"]
 mod var_store_impl;
@@ -268,7 +264,6 @@ pub struct VM {
     pub current_segment: Option<SegmentId>,
     pub completed_segment: Option<SegmentId>,
     pub(crate) debug: DebugState,
-    pub(crate) trace_state: TraceState,
     handler_type_match_cache: HashMap<(usize, usize), bool>,
     segment_handler_resolution_cache: HashMap<(SegmentId, usize), CachedHandlerResolution>,
     segment_topology_epochs: HashMap<SegmentId, u64>,
@@ -288,7 +283,6 @@ impl VM {
             current_segment: None,
             completed_segment: None,
             debug: DebugState::new(DebugConfig::default()),
-            trace_state: TraceState::default(),
             handler_type_match_cache: HashMap::new(),
             segment_handler_resolution_cache: HashMap::new(),
             segment_topology_epochs: HashMap::new(),
@@ -317,7 +311,6 @@ impl VM {
         self.pending_python = None;
         self.current_segment = None;
         self.completed_segment = None;
-        self.trace_state.clear();
         self.handler_type_match_cache.clear();
         self.segment_handler_resolution_cache.clear();
         self.segment_topology_epochs.clear();
@@ -347,8 +340,6 @@ impl VM {
         self.pending_python = None;
         self.current_segment = None;
         self.completed_segment = None;
-        self.trace_state.clear();
-        self.trace_state.shrink_to_fit();
         self.debug.shrink_to_fit();
         self.handler_type_match_cache.clear();
         self.handler_type_match_cache.shrink_to_fit();
@@ -426,19 +417,19 @@ impl VM {
     }
 
     pub fn trace_frame_stack_count(&self) -> usize {
-        self.trace_state.frame_stack_len()
+        0
     }
 
     pub fn trace_dispatch_display_count(&self) -> usize {
-        self.trace_state.dispatch_display_count()
+        0
     }
 
     pub fn trace_frame_stack_capacity(&self) -> usize {
-        self.trace_state.frame_stack_capacity()
+        0
     }
 
     pub fn trace_dispatch_display_capacity(&self) -> usize {
-        self.trace_state.dispatch_display_capacity()
+        0
     }
 
     pub fn scope_state_count(&self) -> usize {
@@ -1263,6 +1254,485 @@ impl VM {
         self.segments
             .get_mut(seg_id)
             .expect("current segment not found in arena")
+    }
+}
+
+// Stub methods previously in vm_trace.rs — trace functionality removed.
+impl VM {
+    pub(super) fn value_repr(value: &Value) -> Option<String> {
+        DebugState::value_repr(value)
+    }
+
+    pub(super) fn exception_repr(exception: &PyException) -> Option<String> {
+        DebugState::exception_repr(exception)
+    }
+
+    fn value_variant_name(value: &Value) -> &'static str {
+        match value {
+            Value::Python(_) => "Python",
+            Value::Unit => "Unit",
+            Value::Int(_) => "Int",
+            Value::String(_) => "String",
+            Value::Bool(_) => "Bool",
+            Value::None => "None",
+            Value::Continuation(_) => "Continuation",
+            Value::PendingContinuation(_) => "PendingContinuation",
+            Value::Handlers(_) => "Handlers",
+            Value::Kleisli(_) => "Kleisli",
+            Value::Var(_) => "Var",
+            Value::Task(_) => "Task",
+            Value::Promise(_) => "Promise",
+            Value::ExternalPromise(_) => "ExternalPromise",
+            Value::CallStack(_) => "CallStack",
+            Value::Trace(_) => "Trace",
+            Value::Traceback(_) => "Traceback",
+            Value::ActiveChain(_) => "ActiveChain",
+            Value::List(_) => "List",
+        }
+    }
+
+    pub(super) fn effect_repr(effect: &DispatchEffect) -> String {
+        DebugState::effect_repr(effect)
+    }
+
+    pub(super) fn is_execution_context_effect(effect: &DispatchEffect) -> bool {
+        let Some(obj) = dispatch_ref_as_python(effect) else {
+            return false;
+        };
+        Python::attach(|py| {
+            obj.bind(py)
+                .extract::<PyRef<'_, PyGetExecutionContext>>()
+                .is_ok()
+        })
+    }
+
+    pub(super) fn dispatch_supports_error_context_conversion(
+        &self,
+        origin_dispatch_id: FiberId,
+    ) -> bool {
+        let marker = self
+            .current_handler_dispatch()
+            .filter(|(_, current_origin_dispatch_id, ..)| {
+                *current_origin_dispatch_id == origin_dispatch_id
+            })
+            .map(|(_, _, _, marker, _)| marker)
+            .or_else(|| self.active_handler_marker_for_dispatch(origin_dispatch_id));
+        let Some(marker) = marker else {
+            return false;
+        };
+        self.find_prompt_boundary_by_marker(marker)
+            .is_some_and(|(_, handler, _)| handler.supports_error_context_conversion())
+    }
+
+    fn is_execution_context_effect_for_dispatch(&self, origin_dispatch_id: FiberId) -> bool {
+        self.effect_for_dispatch(origin_dispatch_id)
+            .is_some_and(|effect| Self::is_execution_context_effect(&effect))
+    }
+
+    pub(super) fn collect_traceback(&self, _continuation: &Continuation) -> Vec<crate::capture::TraceHop> {
+        Vec::new()
+    }
+
+    pub(super) fn handler_trace_info(
+        handler: &KleisliRef,
+    ) -> (String, HandlerKind, Option<String>, Option<u32>) {
+        let info = handler.debug_info();
+        let kind = if handler.is_rust_builtin() {
+            HandlerKind::RustBuiltin
+        } else {
+            HandlerKind::Python
+        };
+        (info.name, kind, info.file, info.line)
+    }
+
+    pub(super) fn invoke_kleisli_handler_expr(
+        kleisli: KleisliRef,
+        effect: DispatchEffect,
+        continuation: Continuation,
+    ) -> Result<DoCtrl, VMError> {
+        let effect_obj = Python::attach(|py| dispatch_to_pyobject(py, &effect).map(|v| v.unbind()))
+            .map_err(|err| {
+                VMError::python_error(format!(
+                    "failed to convert dispatch effect to Python object: {err}"
+                ))
+            })?;
+        let debug = kleisli.debug_info();
+        let metadata = CallMetadata::new(
+            debug.name,
+            debug.file.unwrap_or_else(|| "<unknown>".to_string()),
+            debug.line.unwrap_or(0),
+            None,
+            None,
+            false,
+        );
+
+        Ok(DoCtrl::Expand {
+            factory: Box::new(DoCtrl::Pure {
+                value: Value::Kleisli(kleisli),
+            }),
+            args: vec![
+                DoCtrl::Pure {
+                    value: Value::Python(PyShared::new(effect_obj)),
+                },
+                DoCtrl::Pure {
+                    value: Value::Continuation(continuation),
+                },
+            ],
+            kwargs: vec![],
+            metadata,
+        })
+    }
+
+    pub(super) fn marker_handler_trace_info(
+        &self,
+        marker: Marker,
+    ) -> Option<(String, HandlerKind, Option<String>, Option<u32>)> {
+        if let Some(seg_id) = self.current_segment {
+            if let Some(info) = self.handler_trace_info_for_marker_in_caller_chain(seg_id, marker) {
+                return Some(info);
+            }
+        }
+        self.find_prompt_boundary_by_marker(marker)
+            .map(|(_seg_id, handler, _types)| Self::handler_trace_info(&handler))
+    }
+
+    pub(super) fn current_handler_identity_for_dispatch(
+        &self,
+        origin_dispatch_id: FiberId,
+    ) -> Option<(usize, String)> {
+        let active_dispatch = self
+            .current_handler_dispatch()
+            .filter(|(_, current_origin_dispatch_id, ..)| {
+                *current_origin_dispatch_id == origin_dispatch_id
+            });
+        let marker = active_dispatch
+            .as_ref()
+            .map(|(_, _, _, marker, _)| *marker)
+            .or_else(|| self.active_handler_marker_for_dispatch(origin_dispatch_id))
+            .or_else(|| {
+                self.current_segment
+                    .filter(|_| self.current_segment_dispatch_id() == Some(origin_dispatch_id))
+                    .and_then(|seg_id| self.handler_marker_in_caller_chain(seg_id))
+            })?;
+        let (name, _, _, _) = self.marker_handler_trace_info(marker)?;
+        let origin_seg_id = active_dispatch
+            .as_ref()
+            .and_then(|(_, _, handler_fiber_ids, _, _)| {
+                self.fiber_ids_handler_chain_start(handler_fiber_ids)
+            })
+            .or_else(|| {
+                self.current_segment
+                    .filter(|_| self.current_segment_dispatch_id() == Some(origin_dispatch_id))
+                    .and_then(|seg_id| self.segment_program_dispatch(seg_id))
+                    .and_then(|dispatch| {
+                        self.fiber_ids_handler_chain_start(&dispatch.origin_fiber_ids)
+                    })
+            })
+            .or_else(|| {
+                self.dispatch_origin_for_origin_dispatch_id(origin_dispatch_id)
+                    .and_then(|origin| self.fiber_ids_handler_chain_start(&origin.origin_fiber_ids))
+            })
+            .or_else(|| self.dispatch_origin_user_segment_id(origin_dispatch_id))?;
+        let handler_idx = self.handler_index_in_caller_chain(origin_seg_id, marker)?;
+        Some((handler_idx, name))
+    }
+
+    pub(super) fn current_segment_is_active_handler_for_dispatch(
+        &self,
+        origin_dispatch_id: FiberId,
+    ) -> bool {
+        self.current_handler_dispatch()
+            .is_some_and(|(seg_id, current_origin_dispatch_id, _, _, _)| {
+                Some(seg_id) == self.current_segment
+                    && current_origin_dispatch_id == origin_dispatch_id
+            })
+    }
+
+    pub(super) fn current_active_handler_dispatch_id(&self) -> Option<FiberId> {
+        self.current_live_handler_dispatch()
+            .map(|(_, origin_dispatch_id, _, _, _)| origin_dispatch_id)
+    }
+
+    pub(super) fn current_program_frame_handler_kind(&self) -> Option<HandlerKind> {
+        self.current_seg()
+            .frames
+            .last()
+            .and_then(|frame| match frame {
+                Frame::Program { handler_kind, .. } => *handler_kind,
+                Frame::LexicalScope { .. } => None,
+                Frame::EvalReturn(_)
+                | Frame::MapReturn { .. }
+                | Frame::FlatMapBindResult
+                | Frame::FlatMapBindSource { .. } => None,
+            })
+    }
+
+    pub(super) fn dispatch_uses_user_continuation_stream(
+        &self,
+        origin_dispatch_id: FiberId,
+        stream: &IRStreamRef,
+    ) -> bool {
+        self.dispatch_origin_for_origin_dispatch_id(origin_dispatch_id)
+            .is_some_and(|origin| self.fiber_ids_use_stream(&origin.origin_fiber_ids, stream))
+    }
+
+    pub(super) fn user_continuation_dispatch_for_stream(
+        &self,
+        stream: &IRStreamRef,
+    ) -> Option<FiberId> {
+        self.dispatch_origins().into_iter().find_map(|origin| {
+            self.fiber_ids_use_stream(&origin.origin_fiber_ids, stream)
+                .then_some(origin.origin_dispatch_id)
+        })
+    }
+
+    pub(super) fn handler_stream_throw_continuation(
+        &self,
+        stream: &IRStreamRef,
+        handler_kind: Option<HandlerKind>,
+    ) -> Option<Continuation> {
+        handler_kind?;
+
+        let origin_dispatch_id = self
+            .current_active_handler_dispatch_id()
+            .or_else(|| self.current_segment_dispatch_id_any())?;
+        if self.is_execution_context_effect_for_dispatch(origin_dispatch_id) {
+            return None;
+        }
+        let dispatch_view = self.find_dispatch_frame(origin_dispatch_id)?;
+        if !Self::dispatch_is_active(&dispatch_view.dispatch) {
+            return None;
+        }
+        let origin = Self::dispatch_origin_view_from_program(&dispatch_view.dispatch);
+        let fiber_ids = if self.dispatch_uses_user_continuation_stream(origin_dispatch_id, stream) {
+            origin.origin_fiber_ids.clone()
+        } else if let Some((_, active_handler_fiber_ids, _)) =
+            self.active_handler_dispatch_for(origin_dispatch_id)
+        {
+            if self.fiber_ids_use_stream(&active_handler_fiber_ids, stream) {
+                if active_handler_fiber_ids.len() > 1 {
+                    active_handler_fiber_ids[1..].to_vec()
+                } else {
+                    origin.origin_fiber_ids.clone()
+                }
+            } else {
+                active_handler_fiber_ids
+            }
+        } else {
+            origin.origin_fiber_ids.clone()
+        };
+        self.fiber_ids_dispatch_is_live(&fiber_ids).then(|| {
+            let captured_caller = self.segments.get(fiber_ids[0]).and_then(|s| s.parent);
+            Continuation::from_fiber(fiber_ids[0], captured_caller)
+        })
+    }
+
+    pub(super) fn active_error_dispatch_original_exception(&self) -> Option<PyException> {
+        self.current_dispatch_origin()
+            .and_then(|origin| origin.original_exception)
+    }
+
+    pub(super) fn original_exception_for_dispatch(
+        &self,
+        origin_dispatch_id: FiberId,
+    ) -> Option<PyException> {
+        if let Some((seg_id, current_origin_dispatch_id, ..)) = self.current_handler_dispatch() {
+            if current_origin_dispatch_id == origin_dispatch_id {
+                if let Some(dispatch) = self
+                    .segments
+                    .get(seg_id)
+                    .and_then(|segment| segment.pending_program_dispatch.as_ref())
+                    .or_else(|| self.segment_program_dispatch(seg_id))
+                {
+                    return dispatch.original_exception.clone();
+                }
+            }
+        }
+        if let Some(seg_id) = self
+            .current_segment
+            .filter(|_| self.current_segment_dispatch_id() == Some(origin_dispatch_id))
+        {
+            if let Some(dispatch) = self
+                .segments
+                .get(seg_id)
+                .and_then(|segment| segment.pending_program_dispatch.as_ref())
+                .or_else(|| self.segment_program_dispatch(seg_id))
+            {
+                return dispatch.original_exception.clone();
+            }
+        }
+        self.dispatch_origin_for_origin_dispatch_id(origin_dispatch_id)
+            .and_then(|origin| origin.original_exception)
+    }
+
+    fn is_base_exception_not_exception(exception: &PyException) -> bool {
+        let PyException::Materialized { exc_value, .. } = exception else {
+            return false;
+        };
+        Python::attach(|py| {
+            let bound = exc_value.bind(py);
+            bound.is_instance_of::<PyBaseException>() && !bound.is_instance_of::<PyStdException>()
+        })
+    }
+
+    pub(super) fn mode_after_generror(
+        &mut self,
+        _site: GenErrorSite,
+        exception: PyException,
+        _conversion_hint: bool,
+    ) -> Mode {
+        // Trace functionality removed — no longer dispatch GetExecutionContext.
+        Mode::Throw(exception)
+    }
+
+    pub(super) fn emit_frame_exited_due_to_error(
+        &mut self,
+        _stream: Option<&IRStreamRef>,
+        _metadata: &CallMetadata,
+        _handler_kind: Option<HandlerKind>,
+        _exception: &PyException,
+    ) {
+        // Trace functionality removed — no-op.
+    }
+
+    pub(super) fn emit_handler_threw_for_dispatch(
+        &mut self,
+        origin_dispatch_id: FiberId,
+        exc: &PyException,
+    ) {
+        let handler_identity = self
+            .current_handler_identity_for_dispatch(origin_dispatch_id)
+            .or_else(|| {
+                let seg_id = self.current_segment?;
+                if self.current_segment_dispatch_id() != Some(origin_dispatch_id) {
+                    return None;
+                }
+                let marker = self.handler_marker_in_caller_chain(seg_id)?;
+                let (handler_name, _, _, _) = self.marker_handler_trace_info(marker)?;
+                Some((0, handler_name))
+            });
+        let Some((handler_index, handler_name)) = handler_identity else {
+            return;
+        };
+        self.record_handler_completion(
+            origin_dispatch_id,
+            &handler_name,
+            handler_index,
+            &HandlerAction::Threw {
+                exception_repr: Self::exception_repr(exc),
+            },
+        );
+    }
+
+    pub(super) fn emit_resume_event(
+        &mut self,
+        _origin_dispatch_id: FiberId,
+        _continuation: &Continuation,
+        _transferred: bool,
+    ) {
+        // Trace functionality removed — no-op.
+    }
+
+    pub(super) fn emit_resume_event_for_fiber_ids(
+        &mut self,
+        _origin_dispatch_id: FiberId,
+        _fiber_ids: &[FiberId],
+        _transferred: bool,
+    ) {
+        // Trace functionality removed — no-op.
+    }
+
+    pub fn assemble_traceback_entries(&mut self, _exception: &PyException) -> Vec<TraceEntry> {
+        Vec::new()
+    }
+
+    pub fn assemble_active_chain(
+        &mut self,
+        _exception: Option<&PyException>,
+    ) -> Vec<ActiveChainEntry> {
+        Vec::new()
+    }
+
+    pub(crate) fn assemble_active_chain_for_dispatch(
+        &mut self,
+        _origin_dispatch_id: FiberId,
+        _exception: Option<&PyException>,
+    ) -> Vec<ActiveChainEntry> {
+        Vec::new()
+    }
+
+    pub(super) fn maybe_attach_active_chain_to_execution_context(
+        &mut self,
+        origin_dispatch_id: Option<FiberId>,
+        value: &mut Value,
+    ) -> Result<(), VMError> {
+        let Some(origin_dispatch_id) = origin_dispatch_id else {
+            return Ok(());
+        };
+        let Some(origin) = self.dispatch_origin_for_origin_dispatch_id(origin_dispatch_id) else {
+            return Ok(());
+        };
+        if !(Self::is_execution_context_effect(&origin.effect) && origin.original_exception.is_none()) {
+            return Ok(());
+        }
+        // Validate that the value is an ExecutionContext.
+        match value {
+            Value::Python(obj) => {
+                Python::attach(|py| {
+                    let context_bound = obj.bind(py);
+                    if !context_bound.is_instance_of::<PyExecutionContext>() {
+                        let got_type = context_bound
+                            .get_type()
+                            .name()
+                            .map(|name| name.to_string())
+                            .unwrap_or_else(|_| MISSING_UNKNOWN.to_string());
+                        return Err(VMError::python_error(format!(
+                            "GetExecutionContext handler must return ExecutionContext, got {got_type}"
+                        )));
+                    }
+                    Ok(())
+                })?;
+            }
+            other => {
+                return Err(VMError::python_error(format!(
+                    "GetExecutionContext handler must return ExecutionContext, got {}",
+                    Self::value_variant_name(other)
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn record_trace_entry(&mut self) {
+        let dispatch_depth = self.dispatch_depth();
+        let debug = &mut self.debug;
+        if self.current_segment.is_none() {
+            return;
+        }
+        debug.record_trace_entry(&self.mode, &self.pending_python, dispatch_depth);
+    }
+
+    pub(super) fn record_trace_exit(&mut self, result: &StepEvent) {
+        let dispatch_depth = self.dispatch_depth();
+        let debug = &mut self.debug;
+        if self.current_segment.is_none() {
+            return;
+        }
+        debug.record_trace_exit(&self.mode, &self.pending_python, dispatch_depth, result);
+    }
+
+    pub(super) fn debug_step_entry(&self) {
+        self.debug.debug_step_entry(
+            &self.mode,
+            self.current_segment,
+            &self.segments,
+            self.dispatch_depth(),
+            &self.pending_python,
+        );
+    }
+
+    pub(super) fn debug_step_exit(&self, result: &StepEvent) {
+        self.debug.debug_step_exit(result);
     }
 }
 
