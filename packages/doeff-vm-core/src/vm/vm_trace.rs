@@ -270,11 +270,13 @@ impl VM {
         })
     }
 
-    pub(super) fn handler_stream_throw_continuation(
+    /// Returns the FiberId for a handler stream throw target.
+    /// Callers create the Continuation via capture_live_continuation (requires &mut self).
+    pub(super) fn handler_stream_throw_fiber_id(
         &self,
         stream: &IRStreamRef,
         handler_kind: Option<HandlerKind>,
-    ) -> Option<Continuation> {
+    ) -> Option<FiberId> {
         handler_kind?;
 
         let origin_dispatch_id = self
@@ -306,10 +308,7 @@ impl VM {
             origin.origin_fiber_ids.clone()
         };
         self.fiber_ids_dispatch_is_live(&fiber_ids)
-            .then(|| {
-                let captured_caller = self.segments.get(fiber_ids[0]).and_then(|s| s.parent);
-                Continuation::from_fiber(fiber_ids[0], captured_caller)
-            })
+            .then(|| fiber_ids[0])
     }
 
     pub(super) fn active_error_dispatch_original_exception(&self) -> Option<PyException> {

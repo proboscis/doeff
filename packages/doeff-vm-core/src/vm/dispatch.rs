@@ -1409,12 +1409,17 @@ impl VM {
 
     pub(super) fn eval_in_scope_chain_start_segment(
         &self,
-        scope: &Continuation,
+        scope_fiber: FiberId,
     ) -> Option<SegmentId> {
-        // Lexical scope must anchor to the immediate captured scope
-        // continuation. Dynamic handler/interceptor visibility is handled
-        // separately via `child.parent`.
-        self.continuation_chain_segment_id(scope)
+        // Lexical scope must anchor to the immediate captured scope fiber.
+        // Dynamic handler/interceptor visibility is handled separately via `child.parent`.
+        Some(scope_fiber).filter(|seg_id| self.segments.get(*seg_id).is_some()).or_else(|| {
+            // Fall back to parent hint if the fiber itself is not found
+            self.segments
+                .get(scope_fiber)
+                .and_then(|s| s.parent)
+                .and_then(|p| self.normalize_live_parent_hint(Some(p)))
+        })
     }
 
     fn continuation_parent_hint(&self, continuation: &Continuation) -> Option<SegmentId> {
@@ -1467,7 +1472,9 @@ impl VM {
             .or_else(|| self.continuation_chain_segment_id(continuation))
     }
 
-    fn return_to_continuation(&self) -> Option<Continuation> {
+    /// Returns the FiberId of the return-to target found in the current frame chain.
+    /// Does NOT create a Continuation — callers use the FiberId directly for topology queries.
+    fn return_to_fiber_id(&self) -> Option<FiberId> {
         let mut cursor = self.current_segment;
         while let Some(seg_id) = cursor {
             let Some(seg) = self.segments.get(seg_id) else {
@@ -1477,7 +1484,7 @@ impl VM {
                 Frame::EvalReturn(eval_return) => match eval_return.as_ref() {
                     EvalReturnContinuation::ReturnToContinuation { fiber_ids }
                     | EvalReturnContinuation::EvalInScopeReturn { fiber_ids } => {
-                        Some(fiber_ids.clone())
+                        Some(fiber_ids)
                     }
                     EvalReturnContinuation::ResumeToContinuation { .. }
                     | EvalReturnContinuation::ApplyResolveFunction { .. }
@@ -1496,12 +1503,60 @@ impl VM {
                 | Frame::FlatMapBindResult
                 | Frame::FlatMapBindSource { .. } => None,
             }) {
-                let captured_caller = self.segments.get(fiber_ids[0]).and_then(|s| s.parent);
-                return Some(Continuation::from_fiber(fiber_ids[0], captured_caller));
+                return fiber_ids.first().copied();
             }
             cursor = seg.parent;
         }
         None
+    }
+
+    /// Dispatch view lookup for a single fiber ID (used for return-to queries).
+    fn dispatch_view_for_single_fiber(&self, fiber_id: FiberId) -> Option<DispatchFrameView> {
+        let single = [fiber_id];
+        self.dispatch_lookup_candidates()
+            .into_iter()
+            .find(|view| {
+                Self::fiber_ids_match_slice(&view.dispatch.origin_fiber_ids, &single)
+                    || Self::fiber_ids_match_slice(&view.dispatch.handler_fiber_ids, &single)
+            })
+            .or_else(|| {
+                self.dispatch_lookup_candidates()
+                    .into_iter()
+                    .filter(|view| {
+                        let h = &view.dispatch.handler_fiber_ids;
+                        !h.is_empty() && *h.last().unwrap() == fiber_id
+                    })
+                    .min_by_key(|view| view.dispatch.handler_fiber_ids.len())
+            })
+    }
+
+    fn fiber_ids_match_slice(stored: &[FiberId], target: &[FiberId]) -> bool {
+        !stored.is_empty() && stored == target
+    }
+
+    /// Handler chain start for a single return-to fiber.
+    fn handler_chain_start_for_return_to_fiber(&self, fiber_id: FiberId) -> Option<SegmentId> {
+        // Equivalent to live_handler_chain_start_for_return_to + continuation_handler_chain_start
+        // for a single-fiber case.
+        let parent_hint = self
+            .segments
+            .get(fiber_id)
+            .and_then(|s| s.parent)
+            .and_then(|p| self.normalize_live_parent_hint(Some(p)));
+        let chain_seg = Some(fiber_id)
+            .filter(|seg_id| self.segments.get(*seg_id).is_some())
+            .or(parent_hint);
+        let handler_chain_start = parent_hint.or(chain_seg);
+
+        // Also check via dispatch origin (mirrors live_handler_chain_start_for_return_to)
+        handler_chain_start.or_else(|| {
+            self.dispatch_view_for_single_fiber(fiber_id)
+                .and_then(|view| view.dispatch.parent_dispatch_id)
+                .and_then(|origin_dispatch_id| {
+                    self.dispatch_origin_for_origin_dispatch_id_anywhere(origin_dispatch_id)
+                })
+                .and_then(|origin| self.fiber_ids_handler_chain_start(&origin.origin_fiber_ids))
+        })
     }
 
     fn is_internal_doeff_handler_source_file(source_file: &str) -> bool {
@@ -1651,9 +1706,11 @@ impl VM {
         self.dispatch_ref_in_segment(seg_id)
             .map(|dispatch| dispatch.origin_dispatch_id)
             .or_else(|| {
-                self.return_to_continuation().and_then(|continuation| {
-                    self.continuation_parent_dispatch_id(&continuation)
-                        .or_else(|| self.continuation_dispatch_id(&continuation))
+                self.return_to_fiber_id().and_then(|fiber_id| {
+                    let view = self.dispatch_view_for_single_fiber(fiber_id)?;
+                    view.dispatch
+                        .parent_dispatch_id
+                        .or(Some(view.dispatch.origin_dispatch_id))
                 })
             })
             .or_else(|| {
@@ -1844,11 +1901,8 @@ impl VM {
         {
             full_current_entries
                 .get_or_insert_with(|| self.full_handler_entries_for_segment(seg_id));
-            self.return_to_continuation()
-                .and_then(|continuation| {
-                    self.live_handler_chain_start_for_return_to(&continuation)
-                        .or_else(|| self.continuation_handler_chain_start(&continuation))
-                })
+            self.return_to_fiber_id()
+                .and_then(|fid| self.handler_chain_start_for_return_to_fiber(fid))
                 .map(|outer_start| self.handlers_in_caller_chain(outer_start))
                 .unwrap_or_default()
         } else {
@@ -1876,15 +1930,13 @@ impl VM {
             selected_from_current_chain = false;
             handler_count = 0;
         }
-        let fallback_return_to = (selected.is_none())
-            .then(|| self.return_to_continuation())
+        let fallback_return_to_fiber = (selected.is_none())
+            .then(|| self.return_to_fiber_id())
             .flatten();
 
         if selected.is_none() {
-            let mut cursor = fallback_return_to.as_ref().and_then(|continuation| {
-                self.live_handler_chain_start_for_return_to(continuation)
-                    .or_else(|| self.continuation_handler_chain_start(continuation))
-            });
+            let mut cursor = fallback_return_to_fiber
+                .and_then(|fid| self.handler_chain_start_for_return_to_fiber(fid));
             while let Some(cursor_id) = cursor {
                 let Some(seg) = self.segments.get(cursor_id) else {
                     break;
@@ -1937,7 +1989,7 @@ impl VM {
             }
         }
 
-        if cacheable_current_chain && selected_from_current_chain && fallback_return_to.is_none() {
+        if cacheable_current_chain && selected_from_current_chain && fallback_return_to_fiber.is_none() {
             if let Some((_, _, prompt_seg_id, _)) = selected.as_ref() {
                 self.cache_current_chain_handler_resolution(seg_id, effect_type_id, *prompt_seg_id);
             }
@@ -2020,7 +2072,8 @@ impl VM {
         } else {
             self.capture_live_continuation(seg_id)
         };
-        if let Some(return_to) = fallback_return_to {
+        if let Some(return_to_fid) = fallback_return_to_fiber {
+            let return_to = self.capture_live_continuation(return_to_fid);
             k_user.append_owned_fibers(return_to);
         }
         if let Some(seg_id) = self.current_segment {
@@ -3390,12 +3443,10 @@ impl VM {
 
     fn current_handler_chain_with_live_prefix(&self) -> Vec<HandlerChainEntry> {
         let base_entries = self.current_handler_chain();
-        let Some(return_to) = self.return_to_continuation() else {
+        let Some(return_to_fid) = self.return_to_fiber_id() else {
             return base_entries;
         };
-        let Some(outer_start) = self
-            .live_handler_chain_start_for_return_to(&return_to)
-            .or_else(|| self.continuation_handler_chain_start(&return_to))
+        let Some(outer_start) = self.handler_chain_start_for_return_to_fiber(return_to_fid)
         else {
             return base_entries;
         };

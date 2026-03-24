@@ -1648,11 +1648,12 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
             ),
             DoCtrl::EvalInScope {
                 expr,
-                scope,
+                scope_fiber,
                 bindings,
                 ..
             } => {
-                let k = pyk_from_started(py, scope)
+                let scope_cont = Continuation::from_fiber(*scope_fiber, None);
+                let k = pyk_from_started(py, &scope_cont)
                     .map_err(|err| PyException::runtime_error(format!("{err}")))?;
                 Some(
                     Bound::new(
@@ -2066,9 +2067,12 @@ pub(crate) fn classify_yielded_bound(
                 let eval: PyRef<'_, PyEvalInScope> = obj.extract()?;
                 let expr = eval.expr.clone_ref(py);
                 let scope = borrow_control_continuation(py, &eval.scope, "EvalInScope.scope")?;
+                let scope_fiber = scope.segment_id().ok_or_else(|| {
+                    PyRuntimeError::new_err("EvalInScope.scope must have a fiber identity")
+                })?;
                 Ok(DoCtrl::EvalInScope {
                     expr: PyShared::new(expr),
-                    scope,
+                    scope_fiber,
                     bindings: scope_bindings_from_pyany(eval.bindings.bind(py).as_any())?,
                     metadata: None,
                 })
