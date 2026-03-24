@@ -11,11 +11,16 @@
 
 use std::sync::Arc;
 
-use crate::do_ctrl::InterceptMode;
+/// Intercept mode (extension — not in OCaml 5 core).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterceptMode {
+    Include,
+    Exclude,
+}
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
 use crate::ids::{FiberId, Marker};
-use crate::kleisli::KleisliRef;
+use crate::value::CallableRef;
 use crate::memory_stats;
 use crate::py_shared::PyShared;
 pub use crate::scope_store::ScopeStore;
@@ -38,13 +43,13 @@ pub struct Handler {
 #[derive(Debug, Clone)]
 pub struct PromptBoundary {
     pub handled_marker: Marker,
-    pub handler: KleisliRef,
+    pub handler: CallableRef,
     pub types: Option<Arc<Vec<PyShared>>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct InterceptSpec {
-    pub interceptor: KleisliRef,
+    pub interceptor: CallableRef,
     pub types: Option<Vec<PyShared>>,
     pub mode: InterceptMode,
     pub metadata: Option<CallMetadata>,
@@ -60,7 +65,7 @@ impl Handler {
     pub fn prompt(
         marker: Marker,
         handled_marker: Marker,
-        handler: KleisliRef,
+        handler: CallableRef,
         types: Option<Arc<Vec<PyShared>>>,
     ) -> Self {
         Self {
@@ -77,7 +82,7 @@ impl Handler {
 
     pub fn intercept(
         marker: Marker,
-        interceptor: KleisliRef,
+        interceptor: CallableRef,
         types: Option<Vec<PyShared>>,
         mode: InterceptMode,
         metadata: Option<CallMetadata>,
@@ -192,7 +197,7 @@ impl Fiber {
     }
 
     /// Get the prompt boundary handler.
-    pub fn prompt_handler(&self) -> Option<&KleisliRef> {
+    pub fn prompt_handler(&self) -> Option<&CallableRef> {
         self.handler.as_ref()
             .and_then(|h| h.prompt_boundary())
             .map(|p| &p.handler)

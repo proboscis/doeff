@@ -3,14 +3,13 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::do_ctrl::{DoCtrl, InterceptMode};
-use crate::driver::PyException;
+use crate::do_ctrl::DoCtrl;
 use crate::ids::{FiberId, Marker, SegmentId, VarId};
 use crate::ir_stream::IRStreamRef;
-use crate::kleisli::KleisliRef;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
-use crate::value::Value;
+use crate::segment::InterceptMode;
+use crate::value::{CallableRef, Value};
 
 static NEXT_FRAME_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -66,7 +65,7 @@ impl CallMetadata {
 #[derive(Debug, Clone)]
 pub struct InterceptorChainLink {
     pub marker: Marker,
-    pub interceptor: KleisliRef,
+    pub interceptor: CallableRef,
     pub types: Option<Vec<PyShared>>,
     pub mode: InterceptMode,
     pub metadata: Option<CallMetadata>,
@@ -219,31 +218,19 @@ impl Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir_stream::{IRStream, IRStreamStep};
-    use crate::segment::ScopeStore;
+    use crate::ir_stream::IRStream;
     use crate::value::Value;
-    use crate::var_store::VarStore;
 
     #[derive(Debug)]
     struct DummyStream;
 
     impl IRStream for DummyStream {
-        fn resume(
-            &mut self,
-            _value: Value,
-            _store: &mut VarStore,
-            _scope: &mut ScopeStore,
-        ) -> IRStreamStep {
-            IRStreamStep::Return(Value::Unit)
+        fn resume(&mut self, _value: Value) -> crate::ir_stream::StreamStep {
+            crate::ir_stream::StreamStep::Done(Value::Unit)
         }
 
-        fn throw(
-            &mut self,
-            exc: crate::driver::PyException,
-            _store: &mut VarStore,
-            _scope: &mut ScopeStore,
-        ) -> IRStreamStep {
-            IRStreamStep::Throw(exc)
+        fn throw(&mut self, error: Value) -> crate::ir_stream::StreamStep {
+            crate::ir_stream::StreamStep::Error(error)
         }
     }
 
