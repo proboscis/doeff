@@ -8,11 +8,7 @@ pub mod arena;
 #[cfg(feature = "python_bridge")]
 pub mod bridge;
 #[cfg(feature = "python_bridge")]
-pub mod capture;
-#[cfg(feature = "python_bridge")]
 pub mod continuation;
-#[cfg(feature = "python_bridge")]
-mod debug_state;
 #[cfg(feature = "python_bridge")]
 pub mod dispatch;
 #[cfg(feature = "python_bridge")]
@@ -65,12 +61,7 @@ pub use bridge::{
     classify_yielded_for_vm, doctrl_tag, doctrl_to_pyexpr_for_vm, install_vm_hooks, is_doexpr_like,
     is_effect_base_like, VmHooks,
 };
-#[cfg(feature = "python_bridge")]
-pub use capture::{
-    ActiveChainEntry, DelegationEntry, DispatchAction, EffectResult, FrameId, HandlerAction,
-    HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry, HandlerStatus, SpawnSite, TraceEntry,
-    TraceFrame, TraceHop,
-};
+// capture module removed — trace types will be rebuilt as extension
 #[cfg(feature = "python_bridge")]
 pub use continuation::{Continuation, OwnedControlContinuation, PendingContinuation, PyK};
 #[cfg(feature = "python_bridge")]
