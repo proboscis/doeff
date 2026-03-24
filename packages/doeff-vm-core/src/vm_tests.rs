@@ -874,4 +874,130 @@ mod tests {
             Err(err) => panic!("expected Ok, got error: {:?}", err),
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Test 11: Pass — inner handler passes to outer handler
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_pass_to_outer_handler() {
+        use crate::continuation::Continuation;
+
+        // Handler that passes everything
+        #[derive(Debug)]
+        struct PassHandler;
+
+        impl Callable for PassHandler {
+            fn call(&self, args: Vec<Value>) -> Result<Value, VMError> {
+                let effect = args.first().cloned().unwrap_or(Value::Unit);
+                let k = match args.into_iter().nth(1) {
+                    Some(Value::Continuation(k)) => k,
+                    _ => return Err(VMError::internal("expected k")),
+                };
+
+                #[derive(Debug)]
+                struct S { effect: Option<Value>, k: Option<Continuation> }
+
+                impl IRStream for S {
+                    fn resume(&mut self, _value: Value) -> StreamStep {
+                        let effect = self.effect.take().unwrap();
+                        let k = self.k.take().unwrap();
+                        StreamStep::Instruction(DoCtrl::Pass { effect, k })
+                    }
+                    fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
+                }
+
+                Ok(Value::Stream(IRStreamRef::new(Box::new(S {
+                    effect: Some(effect),
+                    k: Some(k),
+                }))))
+            }
+        }
+
+        // Handler that resumes with a value
+        fn make_resume_handler(reply: i64) -> Value {
+            #[derive(Debug)]
+            struct H { reply: i64 }
+
+            impl Callable for H {
+                fn call(&self, args: Vec<Value>) -> Result<Value, VMError> {
+                    let k = match args.into_iter().nth(1) {
+                        Some(Value::Continuation(k)) => k,
+                        _ => return Err(VMError::internal("expected k")),
+                    };
+                    let reply = self.reply;
+
+                    #[derive(Debug)]
+                    struct S { k: Option<Continuation>, reply: i64 }
+
+                    impl IRStream for S {
+                        fn resume(&mut self, value: Value) -> StreamStep {
+                            match self.k.take() {
+                                Some(k) => StreamStep::Instruction(DoCtrl::Resume { k, value: Value::Int(self.reply) }),
+                                None => StreamStep::Done(value),
+                            }
+                        }
+                        fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
+                    }
+
+                    Ok(Value::Stream(IRStreamRef::new(Box::new(S { k: Some(k), reply }))))
+                }
+            }
+
+            Value::Callable(Arc::new(H { reply }) as CallableRef)
+        }
+
+        // Body: performs once, returns the value
+        #[derive(Debug)]
+        struct BodyStream { state: u8 }
+
+        impl IRStream for BodyStream {
+            fn resume(&mut self, value: Value) -> StreamStep {
+                match self.state {
+                    0 => { self.state = 1; StreamStep::Instruction(DoCtrl::Perform { effect: Value::String("ask".into()) }) }
+                    1 => StreamStep::Done(value),
+                    _ => StreamStep::Error(Value::String("bad".into())),
+                }
+            }
+            fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
+        }
+
+        // WithHandler(outer=777, WithHandler(inner=Pass, body))
+        // Body performs → inner passes → outer handles → 777
+
+        #[derive(Debug)]
+        struct WrapStream { done: bool, h: Option<Value>, b: Option<Value> }
+
+        impl IRStream for WrapStream {
+            fn resume(&mut self, value: Value) -> StreamStep {
+                if !self.done {
+                    self.done = true;
+                    StreamStep::Instruction(DoCtrl::WithHandler {
+                        handler: self.h.take().unwrap(),
+                        body: self.b.take().unwrap(),
+                    })
+                } else { StreamStep::Done(value) }
+            }
+            fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
+        }
+
+        let inner_stream = IRStreamRef::new(Box::new(WrapStream {
+            done: false,
+            h: Some(Value::Callable(Arc::new(PassHandler) as CallableRef)),
+            b: Some(Value::Stream(IRStreamRef::new(Box::new(BodyStream { state: 0 })))),
+        }));
+
+        let mut vm = setup_vm_with_stream(WrapStream {
+            done: false,
+            h: Some(make_resume_handler(777)),
+            b: Some(Value::Stream(inner_stream)),
+        });
+
+        let result = run_to_completion(&mut vm);
+        match result {
+            Ok(Value::Int(777)) => {} // inner passed, outer handled with 777
+            Ok(other) => panic!("expected Int(777), got {:?}", other),
+            Err(err) => panic!("expected Ok, got error: {:?}", err),
+        }
+    }
 }
