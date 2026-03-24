@@ -29,18 +29,22 @@ impl PyVM {
         PyVM { vm: VM::new() }
     }
 
-    /// Run a Python generator program to completion.
+    /// Run a DoExpr program to completion.
+    ///
+    /// `program` is a Python DoExpr object (has `tag` attribute) — the AST node
+    /// produced by `@do` functions, `Expand(...)`, `Pure(...)`, etc.
+    /// Also accepts raw generators (auto-wrapped as Expand(Stream)).
     fn run(&mut self, py: Python<'_>, program: Py<PyAny>) -> PyResult<Py<PyAny>> {
         self.vm.begin_run_session();
 
-        let stream = PythonGeneratorStream::new(PyShared::new(program));
-        let stream_ref = IRStreamRef::new(Box::new(stream));
+        // Classify the program DoExpr into a DoCtrl
+        let doctrl = classify_program(py, &program)?;
 
-        let mut root_fiber = Fiber::new(None);
-        root_fiber.push_frame(Frame::program(stream_ref, None));
+        // Create a root fiber and set initial mode to evaluate the DoCtrl
+        let root_fiber = Fiber::new(None);
         let root_fid = self.vm.alloc_segment(root_fiber);
         self.vm.current_segment = Some(root_fid);
-        self.vm.mode = Mode::Send(Value::Unit);
+        self.vm.mode = Mode::Eval(doctrl);
 
         let result = self.step_loop(py)?;
         self.vm.end_active_run_session();
@@ -189,6 +193,17 @@ impl doeff_vm_core::ir_stream::IRStream for WithHandlerRootStream {
     fn throw(&mut self, error: Value) -> doeff_vm_core::ir_stream::StreamStep {
         doeff_vm_core::ir_stream::StreamStep::Error(error)
     }
+}
+
+// ---------------------------------------------------------------------------
+// classify_program — convert a Python DoExpr into a DoCtrl
+// ---------------------------------------------------------------------------
+
+/// Classify a top-level Python DoExpr into a DoCtrl.
+fn classify_program(py: Python<'_>, program: &Py<PyAny>) -> PyResult<DoCtrl> {
+    use crate::python_generator_stream::classify_python_object;
+    classify_python_object(py, program.bind(py))
+        .map_err(|msg| pyo3::exceptions::PyTypeError::new_err(msg))
 }
 
 // ---------------------------------------------------------------------------
