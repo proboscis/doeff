@@ -1,6 +1,6 @@
 //! Python bridge call protocol.
 
-use crate::kleisli::HandlerKind;
+// HandlerKind removed — OCaml 5 has no handler kind distinction
 use crate::continuation::Continuation;
 use crate::do_ctrl::DoCtrl;
 use crate::driver::PyException;
@@ -42,7 +42,6 @@ pub enum PendingPython {
     StepUserGenerator {
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
-        handler_kind: Option<HandlerKind>,
         incoming_throw: Option<PyException>,
     },
     ExpandReturn {

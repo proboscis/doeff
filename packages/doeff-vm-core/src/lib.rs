@@ -87,7 +87,7 @@ pub use ids::{FiberId, Marker, PromiseId, RunnableId, SegmentId, TaskId, VarId};
 #[cfg(feature = "python_bridge")]
 pub use ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream, StreamLocation};
 #[cfg(feature = "python_bridge")]
-pub use kleisli::{HandlerKind, Kleisli, KleisliDebugInfo, KleisliRef, PyKleisli, RustKleisli};
+pub use kleisli::{Kleisli, KleisliDebugInfo, KleisliRef, PyKleisli, RustKleisli};
 #[cfg(feature = "python_bridge")]
 pub use memory_stats::{live_object_counts, VmLiveObjectCounts};
 #[cfg(feature = "python_bridge")]
