@@ -1,149 +1,53 @@
+//! Variable store and scope visibility — walks parent pointers.
+
 use std::collections::HashMap;
 
-use super::*;
-use crate::ids::VarId;
+use crate::frame::{EvalReturnContinuation, Frame};
+use crate::ids::{FiberId, SegmentId, VarId};
+use crate::py_key::HashedPyKey;
+use crate::value::Value;
+use crate::vm::VM;
 
 impl VM {
+    /// Walk parent pointers to collect all visible segments for scope resolution.
+    /// In OCaml 5 terms: walk the fiber chain to find lexical scope.
     pub(crate) fn visible_lexical_segments(&self, start_seg_id: SegmentId) -> Vec<SegmentId> {
-        fn push_continuation_segments(
-            vm: &VM,
-            continuation: &Continuation,
-            ordered: &mut Vec<SegmentId>,
-            seen: &mut std::collections::HashSet<SegmentId>,
-            seen_continuations: &mut std::collections::HashSet<crate::ids::FiberId>,
-        ) {
-            if !seen_continuations.insert(continuation.identity().unwrap_or(crate::ids::FiberId::from_index(usize::MAX))) {
-                return;
+        let mut ordered = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut cursor = Some(start_seg_id);
+        while let Some(seg_id) = cursor {
+            let Some(segment) = self.segments.get(seg_id) else {
+                break;
+            };
+            if !seen.insert(seg_id) {
+                break;
             }
-            for seg_id in continuation.fibers() {
-                push_segment_chain(vm, Some(*seg_id), ordered, seen, seen_continuations);
-            }
-            push_segment_chain(
-                vm,
-                vm.continuation_parent(continuation),
-                ordered,
-                seen,
-                seen_continuations,
-            );
-        }
+            ordered.push(seg_id);
 
-        fn push_fiber_ids_segments(
-            vm: &VM,
-            fiber_ids: &[crate::ids::FiberId],
-            ordered: &mut Vec<SegmentId>,
-            seen: &mut std::collections::HashSet<SegmentId>,
-            seen_continuations: &mut std::collections::HashSet<crate::ids::FiberId>,
-        ) {
-            for seg_id in fiber_ids {
-                push_segment_chain(vm, Some(*seg_id), ordered, seen, seen_continuations);
-            }
-            // parent from outermost fiber
-            if let Some(parent) = fiber_ids
-                .last()
-                .and_then(|fiber_id| vm.segments.get(*fiber_id))
-                .and_then(|segment| segment.parent)
-            {
-                push_segment_chain(vm, Some(parent), ordered, seen, seen_continuations);
-            }
-        }
-
-        fn push_segment_chain(
-            vm: &VM,
-            start: Option<SegmentId>,
-            ordered: &mut Vec<SegmentId>,
-            seen: &mut std::collections::HashSet<SegmentId>,
-            seen_continuations: &mut std::collections::HashSet<crate::ids::FiberId>,
-        ) {
-            let mut cursor = start;
-            while let Some(seg_id) = cursor {
-                let Some(segment) = vm.segments.get(seg_id) else {
-                    break;
-                };
-                cursor = segment.parent;
-                if !seen.insert(seg_id) {
-                    continue;
-                }
-                ordered.push(seg_id);
-                if let Some(dispatch) = segment.pending_program_dispatch.as_ref() {
-                    push_fiber_ids_segments(
-                        vm,
-                        &dispatch.origin_fiber_ids,
-                        ordered,
-                        seen,
-                        seen_continuations,
-                    );
-                    push_fiber_ids_segments(
-                        vm,
-                        &dispatch.handler_fiber_ids,
-                        ordered,
-                        seen,
-                        seen_continuations,
-                    );
-                }
-                for frame in segment.frames.iter().rev() {
-                    match frame {
-                        Frame::Program {
-                            dispatch: Some(dispatch),
-                            ..
-                        } => {
-                            push_fiber_ids_segments(
-                                vm,
-                                &dispatch.origin_fiber_ids,
-                                ordered,
-                                seen,
-                                seen_continuations,
-                            );
-                            push_fiber_ids_segments(
-                                vm,
-                                &dispatch.handler_fiber_ids,
-                                ordered,
-                                seen,
-                                seen_continuations,
-                            );
-                        }
-                        Frame::EvalReturn(eval_return) => match eval_return.as_ref() {
-                            EvalReturnContinuation::ResumeToContinuation { fiber_ids }
-                            | EvalReturnContinuation::ReturnToContinuation { fiber_ids }
-                            | EvalReturnContinuation::EvalInScopeReturn { fiber_ids } => {
-                                push_fiber_ids_segments(
-                                    vm,
-                                    fiber_ids,
-                                    ordered,
-                                    seen,
-                                    seen_continuations,
-                                );
+            // Also include fibers referenced by EvalReturn frames
+            for frame in segment.frames.iter().rev() {
+                if let Frame::EvalReturn(eval_return) = frame {
+                    match eval_return.as_ref() {
+                        EvalReturnContinuation::ResumeToContinuation { head_fiber }
+                        | EvalReturnContinuation::ReturnToContinuation { head_fiber }
+                        | EvalReturnContinuation::EvalInScopeReturn { head_fiber } => {
+                            // Walk the chain from head_fiber
+                            let mut chain_cursor = Some(*head_fiber);
+                            while let Some(fid) = chain_cursor {
+                                if !seen.insert(fid) {
+                                    break;
+                                }
+                                ordered.push(fid);
+                                chain_cursor = self.segments.get(fid).and_then(|s| s.parent);
                             }
-                            EvalReturnContinuation::ApplyResolveFunction { .. }
-                            | EvalReturnContinuation::ApplyResolveArg { .. }
-                            | EvalReturnContinuation::ApplyResolveKwarg { .. }
-                            | EvalReturnContinuation::ExpandResolveFactory { .. }
-                            | EvalReturnContinuation::ExpandResolveArg { .. }
-                            | EvalReturnContinuation::ExpandResolveKwarg { .. }
-                            | EvalReturnContinuation::InterceptApplyResult { .. }
-                            | EvalReturnContinuation::InterceptEvalResult { .. }
-                            | EvalReturnContinuation::TailResumeReturn => {}
-                        },
-                        Frame::LexicalScope { .. }
-                        | Frame::Program { .. }
-                        | Frame::MapReturn { .. }
-                        | Frame::FlatMapBindResult
-                        | Frame::FlatMapBindSource { .. } => {}
+                        }
+                        _ => {}
                     }
                 }
             }
+
+            cursor = segment.parent;
         }
-
-        let mut ordered = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        let mut seen_continuations = std::collections::HashSet::new();
-        push_segment_chain(
-            self,
-            Some(start_seg_id),
-            &mut ordered,
-            &mut seen,
-            &mut seen_continuations,
-        );
-
         ordered
     }
 
