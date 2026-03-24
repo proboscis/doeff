@@ -1,6 +1,6 @@
 //! Python bridge call protocol.
 
-use crate::capture::HandlerKind;
+use crate::kleisli::HandlerKind;
 use crate::continuation::Continuation;
 use crate::do_ctrl::DoCtrl;
 use crate::driver::PyException;

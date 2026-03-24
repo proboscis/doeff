@@ -87,7 +87,7 @@ pub use ids::{FiberId, Marker, PromiseId, RunnableId, SegmentId, TaskId, VarId};
 #[cfg(feature = "python_bridge")]
 pub use ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream, StreamLocation};
 #[cfg(feature = "python_bridge")]
-pub use kleisli::{Kleisli, KleisliDebugInfo, KleisliRef, PyKleisli, RustKleisli};
+pub use kleisli::{HandlerKind, Kleisli, KleisliDebugInfo, KleisliRef, PyKleisli, RustKleisli};
 #[cfg(feature = "python_bridge")]
 pub use memory_stats::{live_object_counts, VmLiveObjectCounts};
 #[cfg(feature = "python_bridge")]
@@ -99,12 +99,12 @@ pub use result::{PyResultErr, PyResultOk};
 #[cfg(feature = "python_bridge")]
 pub use scope_store::ScopeStore;
 #[cfg(feature = "python_bridge")]
-pub use segment::{Fiber, FiberKind};
+pub use segment::Fiber;
 #[cfg(feature = "python_bridge")]
 pub use step::PyException;
 #[cfg(feature = "python_bridge")]
-pub use value::{PyTraceFrame, PyTraceHop, PyVar, Value};
+pub use value::Value;
 #[cfg(feature = "python_bridge")]
 pub use var_store::VarStore;
 #[cfg(feature = "python_bridge")]
-pub use vm::{DebugConfig, DebugLevel, TraceEvent, VM};
+pub use vm::VM;
