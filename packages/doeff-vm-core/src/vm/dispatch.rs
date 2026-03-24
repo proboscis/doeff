@@ -2448,7 +2448,6 @@ impl VM {
                 k.cont_id.raw()
             ));
         }
-        k.mark_consumed();
         let error_dispatch = self.error_dispatch_for_continuation(&k);
         self.record_continuation_activation(kind, &k, &value);
         if let Err(err) = self.maybe_attach_active_chain_to_execution_context(
@@ -2478,6 +2477,7 @@ impl VM {
                 // segment so normal completion does not re-pop the same DispatchOrigin.
                 let caller = self.continuation_parent_hint(&k);
                 self.enter_or_reenter_continuation_segment_with_dispatch(&mut k, caller, None);
+                k.mark_consumed();
                 self.mode = Mode::Throw(enriched_exception);
                 return StepEvent::Continue;
             }
@@ -2506,6 +2506,7 @@ impl VM {
             }
         }
         self.enter_or_reenter_continuation_segment_with_dispatch(&mut k, caller, origin_cont_id);
+        k.mark_consumed();
         self.mode = Mode::Deliver(value);
         StepEvent::Continue
     }
@@ -2615,7 +2616,6 @@ impl VM {
         let exact_dispatch_target = exact_dispatch_id == continuation_dispatch_id;
         let handler_identity = continuation_dispatch_id
             .and_then(|origin_cont_id| self.current_handler_identity_for_dispatch(origin_cont_id));
-        k.mark_consumed();
         let mut thrown_by_context_conversion_handler = self
             .current_active_handler_dispatch_id()
             .is_some_and(|origin_cont_id| {
@@ -2676,6 +2676,7 @@ impl VM {
             origin_cont_id
         };
         self.enter_or_reenter_continuation_segment_with_dispatch(&mut k, caller, enter_dispatch_id);
+        k.mark_consumed();
         self.mode = if terminal_dispatch_completion {
             if throws_into_dispatch_origin {
                 Mode::Throw(exception)
