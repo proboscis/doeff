@@ -56,9 +56,9 @@ pub enum DoCtrl {
 
     /// Install a handler and execute body.
     /// handler: Value::Callable — called with (effect, k) on perform.
-    /// body: Value::Stream or Value::Callable — the computation to run under the handler.
+    /// body: DoExpr — evaluated under the handler.
     /// OCaml 5: `match_with body handler`
-    WithHandler { handler: Value, body: Value },
+    WithHandler { handler: Value, body: Box<DoCtrl> },
 
     /// Current handler doesn't handle this effect. Re-perform at outer handler.
     /// Handler passes back the effect and continuation it received.
