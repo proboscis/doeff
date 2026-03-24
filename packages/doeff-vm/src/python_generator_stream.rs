@@ -329,6 +329,20 @@ fn classify_tagged_to_doctrl(py: Python<'_>, obj: &Bound<'_, PyAny>, tag: u8) ->
                 expr: Box::new(expr_doctrl),
             })
         }
+        20 => {
+            // WithHandler { handler, body }
+            let handler_obj = obj.getattr("handler").ok()?;
+            let handler_callable = PythonCallable::new(handler_obj.unbind());
+            let handler_value = Value::Callable(
+                std::sync::Arc::new(handler_callable) as doeff_vm_core::value::CallableRef
+            );
+            let body_obj = obj.getattr("body").ok()?;
+            let body_doctrl = classify_python_object(py, &body_obj).ok()?;
+            Some(DoCtrl::WithHandler {
+                handler: handler_value,
+                body: Box::new(body_doctrl),
+            })
+        }
         22 => {
             // Discontinue (= TransferThrow)
             extract_continuation_and_exception(py, obj)

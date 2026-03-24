@@ -68,6 +68,14 @@ class Pass:
         self.continuation = k
 
 
+class WithHandler:
+    """Install handler and run body under it. tag=20"""
+    tag = 20
+    def __init__(self, handler: Any, body: Any) -> None:
+        self.handler = handler
+        self.body = body
+
+
 class GetTraceback:
     """Query traceback from a continuation without consuming it. tag=23"""
     tag = 23
