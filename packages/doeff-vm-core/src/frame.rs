@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::capture::{EffectResult, FrameId, HandlerDispatchEntry, HandlerKind};
 use crate::do_ctrl::{DoCtrl, InterceptMode};
 use crate::driver::PyException;
 use crate::effect::DispatchEffect;
@@ -12,7 +11,6 @@ use crate::ir_stream::IRStreamRef;
 use crate::kleisli::KleisliRef;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
-use crate::segment::{FiberBoundary, SegmentKind};
 use crate::value::Value;
 
 static NEXT_FRAME_ID: AtomicU64 = AtomicU64::new(1);
