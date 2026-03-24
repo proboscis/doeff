@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use crate::frame::CallMetadata;
-use crate::ids::{ContId, FiberId, SegmentId};
+use crate::ids::{fresh_pending_cont_id, FiberId, SegmentId};
 use crate::kleisli::KleisliRef;
 use crate::memory_stats;
 use crate::py_shared::PyShared;
@@ -27,23 +27,11 @@ pub enum OwnedControlContinuation {
 impl OwnedControlContinuation {
     /// Returns the identity of this control continuation.
     /// For started continuations, this is fibers[0].
-    /// For pending continuations, this is the ContId (no fibers yet).
+    /// For pending continuations, this is None (no fibers yet).
     pub fn identity(&self) -> Option<FiberId> {
         match self {
             Self::Started(continuation) => continuation.identity(),
             Self::Pending(_) => None,
-        }
-    }
-
-    /// Returns a ContId for scheduler/tracking use.
-    /// For started continuations: derived from fibers[0].
-    /// For pending continuations: the stored ContId.
-    pub fn cont_id(&self) -> ContId {
-        match self {
-            Self::Started(continuation) => ContId::from_raw(
-                continuation.identity().map(|f| f.index() as u64).unwrap_or(0),
-            ),
-            Self::Pending(pending) => pending.cont_id,
         }
     }
 
@@ -115,10 +103,10 @@ impl PyK {
     }
 
     /// Returns a display-friendly identity for this PyK.
-    /// Uses FiberId index for started continuations, ContId raw for pending.
+    /// Uses FiberId index for started continuations, pending_id for pending.
     pub fn display_id(&self) -> u64 {
         if let Some(pending) = &self.pending {
-            return pending.cont_id.raw();
+            return pending.pending_id;
         }
         self.continuation
             .identity()
@@ -161,7 +149,7 @@ impl PyK {
 
 #[derive(Debug, Clone)]
 pub struct PendingContinuation {
-    pub cont_id: ContId,
+    pub pending_id: u64,
     program: PyShared,
     handlers: Vec<KleisliRef>,
     handler_identities: Vec<Option<PyShared>>,
@@ -188,7 +176,7 @@ impl PendingContinuation {
             handler_identities
         };
         Self {
-            cont_id: ContId::fresh(),
+            pending_id: fresh_pending_cont_id(),
             program: expr,
             handlers,
             handler_identities: normalized_identities,
@@ -259,7 +247,7 @@ impl PendingContinuation {
 
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let dict = PyDict::new(py);
-        dict.set_item("cont_id", self.cont_id.raw())?;
+        dict.set_item("cont_id", self.pending_id)?;
         dict.set_item("started", false)?;
         dict.set_item("program", self.program.bind(py))?;
         let handlers = PyList::empty(py);
@@ -316,7 +304,7 @@ impl Continuation {
     }
 
     /// Returns the first FiberId as a natural unique identity for this continuation.
-    /// Used as dispatch identity (replaces ContId per SPEC-VM-021 Step 6).
+    /// Used as dispatch identity (SPEC-VM-021).
     pub fn identity(&self) -> Option<FiberId> {
         self.fibers.as_ref().and_then(|f| f.first().copied())
     }
@@ -366,12 +354,6 @@ impl Continuation {
             .as_ref()
             .filter(|f| f.len() > 1)
             .map(|f| Self::new_captured(f[1..].to_vec()))
-    }
-
-    /// Returns a ContId derived from fibers[0] for scheduler/tracking compatibility.
-    /// Continuation no longer stores ContId; this derives one from the natural fiber identity.
-    pub fn derived_cont_id(&self) -> ContId {
-        ContId::from_raw(self.identity().map(|f| f.index() as u64).unwrap_or(0))
     }
 
     pub fn consumed(&self) -> bool {
