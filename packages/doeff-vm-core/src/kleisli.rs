@@ -1,5 +1,12 @@
 //! Kleisli arrow types for IR-level callables (SPEC-VM-017).
 
+/// Handler implementation kind — Python generator vs Rust builtin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandlerKind {
+    Python,
+    RustBuiltin,
+}
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
