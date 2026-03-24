@@ -70,6 +70,13 @@ pub enum DoCtrl {
     /// OCaml 5: reperform with handler appended to continuation chain.
     Delegate { effect: Value, k: Continuation },
 
+    // --- Query ---
+
+    /// Walk the fiber chain from a starting fiber, collect source locations.
+    /// Returns Value::List of traceback frames.
+    /// Non-consuming — does not take ownership of the continuation.
+    GetTraceback { from: crate::ids::FiberId },
+
     // --- Heap (OCaml ref cells) ---
 
     /// Allocate a mutable ref cell with initial value.

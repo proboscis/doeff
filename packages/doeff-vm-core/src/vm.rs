@@ -66,4 +66,38 @@ impl VM {
     pub fn parent_segment(&self, seg_id: SegmentId) -> Option<SegmentId> {
         self.segments.get(seg_id).and_then(|s| s.parent)
     }
+
+    /// Collect a traceback from a fiber, walking the parent chain.
+    ///
+    /// For each fiber, queries each Program frame's stream for live source location.
+    /// Returns frames from innermost (current fiber, topmost frame) to outermost (root).
+    pub fn collect_traceback(&self, start: SegmentId) -> Vec<crate::ir_stream::StreamSourceLocation> {
+        let mut frames = Vec::new();
+        let mut current = Some(start);
+
+        while let Some(seg_id) = current {
+            let Some(seg) = self.segments.get(seg_id) else { break };
+
+            // Walk frames top-to-bottom (innermost first)
+            for frame in seg.frames.iter().rev() {
+                if let crate::frame::Frame::Program { stream, .. } = frame {
+                    if let Some(loc) = stream.source_location() {
+                        frames.push(loc);
+                    }
+                }
+            }
+
+            current = seg.parent;
+        }
+
+        frames
+    }
+
+    /// Collect traceback from the current segment.
+    pub fn collect_current_traceback(&self) -> Vec<crate::ir_stream::StreamSourceLocation> {
+        match self.current_segment {
+            Some(seg_id) => self.collect_traceback(seg_id),
+            None => Vec::new(),
+        }
+    }
 }

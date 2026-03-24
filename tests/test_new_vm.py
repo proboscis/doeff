@@ -5,7 +5,7 @@ Raw generators are NOT accepted by the VM — use @do or DoExpr wrappers.
 """
 
 import pytest
-from doeff_vm import PyVM, K, Callable
+from doeff_vm import PyVM, K, Callable, EffectBase
 
 
 @pytest.fixture
@@ -214,6 +214,27 @@ class TestEffectHandlers:
         assert result == 43
         assert handler_saw == 43
 
+    def test_implicit_perform_effect_base(self, vm):
+        """Yielding an EffectBase directly is treated as Perform(effect)."""
+        class Ask(EffectBase):
+            def __init__(self, key):
+                super().__init__()
+                self.key = key
+
+        def handler(effect, k):
+            if isinstance(effect, Ask):
+                result = yield Resume(k, f"value_for_{effect.key}")
+            else:
+                result = yield Resume(k, None)
+            return result
+
+        def body():
+            # No Perform() wrapper — EffectBase is implicitly Perform'd
+            result = yield Ask("config")
+            return result
+
+        assert vm.run_with_handler(handler, program(body)) == "value_for_config"
+
 
 # ---------------------------------------------------------------------------
 # Nested handlers
@@ -265,3 +286,81 @@ class TestErrors:
         # but with a handler that doesn't exist... or no handler at all.
         # For now, just test that the error is raised properly.
         pass  # TODO: once Pass is tested from Python
+
+
+# ---------------------------------------------------------------------------
+# Traceback
+# ---------------------------------------------------------------------------
+
+class GetTraceback:
+    """DoExpr: query traceback from continuation. tag=23"""
+    tag = 23
+    def __init__(self, k):
+        self.continuation = k
+
+
+class TestTraceback:
+    def test_get_traceback_from_handler(self, vm):
+        """Handler can query traceback from continuation without consuming it."""
+        class Ask(EffectBase):
+            def __init__(self, key):
+                super().__init__()
+                self.key = key
+
+        captured_traceback = None
+
+        def handler(effect, k):
+            nonlocal captured_traceback
+            # Query traceback — does NOT consume k
+            captured_traceback = yield GetTraceback(k)
+            # k is still alive — resume it
+            result = yield Resume(k, "answer")
+            return result
+
+        def inner():
+            return (yield Ask("question"))
+
+        def outer():
+            return (yield program(inner))
+
+        result = vm.run_with_handler(handler, program(outer))
+        assert result == "answer"
+        assert captured_traceback is not None
+        assert isinstance(captured_traceback, list)
+        # Should have at least one frame (inner's generator)
+        assert len(captured_traceback) >= 1
+        # Each frame is [func_name, source_file, source_line]
+        frame = captured_traceback[0]
+        assert "inner" in frame[0]  # func_name (may include qualname prefix)
+        assert isinstance(frame[2], int)  # source_line
+
+    def test_traceback_shows_call_chain(self, vm):
+        """Traceback includes frames from nested generators."""
+        class Ask(EffectBase):
+            def __init__(self):
+                super().__init__()
+
+        captured_traceback = None
+
+        def handler(effect, k):
+            nonlocal captured_traceback
+            captured_traceback = yield GetTraceback(k)
+            result = yield Resume(k, 42)
+            return result
+
+        def leaf():
+            return (yield Ask())
+
+        def middle():
+            return (yield program(leaf))
+
+        def root():
+            return (yield program(middle))
+
+        result = vm.run_with_handler(handler, program(root))
+        assert result == 42
+        # Should see: leaf, middle, root (innermost first)
+        func_names = [f[0] for f in captured_traceback]
+        assert any("leaf" in n for n in func_names)
+        assert any("middle" in n for n in func_names)
+        assert any("root" in n for n in func_names)

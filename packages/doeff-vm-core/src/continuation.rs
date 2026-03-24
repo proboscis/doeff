@@ -216,6 +216,15 @@ impl PyK {
     pub fn is_exhausted(&self) -> bool {
         self.continuation.is_none()
     }
+
+    /// Peek at the head FiberId without consuming.
+    /// Used by GetTraceback to walk the chain without taking ownership.
+    pub fn peek_head(&self) -> Option<FiberId> {
+        match &self.continuation {
+            Some(OwnedControlContinuation::Started(k)) => k.head(),
+            _ => None,
+        }
+    }
 }
 
 #[pymethods]
