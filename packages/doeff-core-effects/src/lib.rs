@@ -1,6 +1,6 @@
 pub mod effects;
 pub mod handlers;
-pub mod scheduler;
+// scheduler removed — will be rewritten as thin handler
 pub mod sentinels;
 
 pub mod continuation {
