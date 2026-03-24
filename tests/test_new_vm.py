@@ -6,6 +6,7 @@ Raw generators are NOT accepted by the VM — use @do or DoExpr wrappers.
 
 import pytest
 from doeff_vm import PyVM, K, Callable, EffectBase
+from doeff import Pass, do, run as doeff_run, WithHandler
 
 
 @pytest.fixture
@@ -364,3 +365,177 @@ class TestTraceback:
         assert any("leaf" in n for n in func_names)
         assert any("middle" in n for n in func_names)
         assert any("root" in n for n in func_names)
+
+
+# ---------------------------------------------------------------------------
+# @do decorator
+# ---------------------------------------------------------------------------
+
+class TestDo:
+    def test_do_generator(self):
+        """@do wraps a generator function into a DoExpr factory."""
+        @do
+        def my_prog():
+            return 42
+
+        result = doeff_run(my_prog())
+        assert result == 42
+
+    def test_do_with_args(self):
+        """@do function receives arguments."""
+        @do
+        def add(a, b):
+            return a + b
+
+        assert doeff_run(add(3, 4)) == 7
+
+    def test_do_with_effect(self):
+        """@do function can yield effects."""
+        class Ask(EffectBase):
+            def __init__(self, key):
+                super().__init__()
+                self.key = key
+
+        def handler(effect, k):
+            result = yield Resume(k, 99)
+            return result
+
+        @do
+        def body():
+            x = yield Ask("val")
+            return x
+
+        result = doeff_run(WithHandler(handler, body()))
+        assert result == 99
+
+
+# ---------------------------------------------------------------------------
+# run()
+# ---------------------------------------------------------------------------
+
+class TestRun:
+    def test_run_pure(self):
+        assert doeff_run(Pure(42)) == 42
+
+    def test_run_program(self):
+        @do
+        def p():
+            return "hello"
+
+        assert doeff_run(p()) == "hello"
+
+
+# ---------------------------------------------------------------------------
+# WithHandler DoExpr
+# ---------------------------------------------------------------------------
+
+class TestWithHandler:
+    def test_single_handler(self):
+        """WithHandler as DoExpr works with run()."""
+        class Get(EffectBase):
+            def __init__(self):
+                super().__init__()
+
+        def handler(effect, k):
+            result = yield Resume(k, 42)
+            return result
+
+        @do
+        def body():
+            return (yield Get())
+
+        assert doeff_run(WithHandler(handler, body())) == 42
+
+    def test_nested_pass_to_outer(self):
+        """Inner handler passes, outer handler handles."""
+        class Ask(EffectBase):
+            def __init__(self, key):
+                super().__init__()
+                self.key = key
+
+        def inner(effect, k):
+            yield Pass(effect, k)
+
+        def outer(effect, k):
+            result = yield Resume(k, f"outer:{effect.key}")
+            return result
+
+        @do
+        def body():
+            return (yield Ask("x"))
+
+        result = doeff_run(WithHandler(outer, WithHandler(inner, body())))
+        assert result == "outer:x"
+
+    @pytest.mark.xfail(reason="Pass topology: inner handler lost after outer resumes")
+    def test_nested_pass_then_inner_handles(self):
+        """After Pass+Resume, inner handler still works for next effect."""
+        class Log(EffectBase):
+            def __init__(self, msg):
+                super().__init__()
+                self.msg = msg
+
+        class Ask(EffectBase):
+            def __init__(self, key):
+                super().__init__()
+                self.key = key
+
+        def ask_handler(effect, k):
+            if isinstance(effect, Ask):
+                result = yield Resume(k, f"val:{effect.key}")
+                return result
+            yield Pass(effect, k)
+
+        def log_handler(effect, k):
+            result = yield Resume(k, None)
+            return result
+
+        @do
+        def body():
+            yield Log("hello")  # passes through ask_handler → log_handler
+            x = yield Ask("key")  # should be handled by ask_handler
+            return x
+
+        prog = WithHandler(log_handler, WithHandler(ask_handler, body()))
+        result = doeff_run(prog)
+        assert result == "val:key"
+
+    @pytest.mark.xfail(reason="Pass topology: inner handler lost after outer resumes")
+    def test_nested_mixed_effects(self):
+        """Different handlers handle different effects with Pass."""
+        class Ask(EffectBase):
+            def __init__(self, key):
+                super().__init__()
+                self.key = key
+
+        class Log(EffectBase):
+            def __init__(self, msg):
+                super().__init__()
+                self.msg = msg
+
+        logged = []
+
+        def log_handler(effect, k):
+            if isinstance(effect, Log):
+                logged.append(effect.msg)
+                result = yield Resume(k, None)
+                return result
+            yield Pass(effect, k)
+
+        def ask_handler(effect, k):
+            if isinstance(effect, Ask):
+                result = yield Resume(k, f"val:{effect.key}")
+                return result
+            yield Pass(effect, k)
+
+        @do
+        def body():
+            yield Log("starting")
+            x = yield Ask("key")
+            yield Log(f"got {x}")
+            return x
+
+        prog = WithHandler(log_handler, WithHandler(ask_handler, body()))
+        result = doeff_run(prog)
+        assert result == "val:key"
+        assert logged == ["starting", "got val:key"]

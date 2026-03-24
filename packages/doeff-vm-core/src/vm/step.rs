@@ -430,8 +430,13 @@ impl VM {
     }
 
     /// Evaluate Pass: inner handler doesn't handle, forward to outer handler.
-    /// Pop the inner handler's stream, walk to the outer boundary, call its handler.
-    fn eval_pass(&mut self, effect: Value, k: Continuation) -> StepResult {
+    ///
+    /// OCaml 5 semantics (reperform):
+    /// 1. Append everything from k.last → inner_boundary → ... → (fiber before outer_boundary)
+    ///    to the continuation chain
+    /// 2. Detach at outer boundary
+    /// 3. Call outer handler with extended k
+    fn eval_pass(&mut self, effect: Value, mut k: Continuation) -> StepResult {
         // Current segment is the inner handler's boundary fiber
         let inner_boundary = match self.current_segment {
             Some(id) => id,
@@ -443,15 +448,36 @@ impl VM {
             seg.frames.pop();
         }
 
-        // Walk from inner boundary's parent to find the outer handler
-        let start = self.segments.get(inner_boundary).and_then(|s| s.parent);
-        let outer_handler = start.and_then(|start_id| {
+        // Find outer handler starting from inner boundary's parent
+        let inner_parent = self.segments.get(inner_boundary).and_then(|s| s.parent);
+        let outer_handler = inner_parent.and_then(|start_id| {
             self.find_handler_for_effect(start_id, &effect)
         });
 
-        let Some((outer_handler_fid, _outer_parent)) = outer_handler else {
+        let Some((outer_handler_fid, outer_parent)) = outer_handler else {
             return StepResult::Error(VMError::internal("Pass: no outer handler found"));
         };
+
+        // Extend k: link k.last → inner_boundary → ... → (fiber before outer boundary)
+        // This preserves all intermediate fibers in the continuation.
+        if let Some(last) = k.last_fiber() {
+            if let Some(seg) = self.segments.get_mut(last) {
+                seg.parent = Some(inner_boundary);
+            }
+        }
+
+        // Find the fiber just before outer boundary in the chain from inner_boundary
+        let new_last = self.find_fiber_before(inner_boundary, outer_handler_fid)
+            .unwrap_or(inner_boundary);
+
+        // Detach new_last from outer boundary
+        if let Some(seg) = self.segments.get_mut(new_last) {
+            seg.parent = None;
+        }
+        k.last_fiber = Some(new_last);
+
+        // Switch to outer handler's parent
+        self.current_segment = outer_parent;
 
         // Get outer handler's callable
         let outer_callable = self.segments.get(outer_handler_fid)
@@ -461,7 +487,7 @@ impl VM {
             return StepResult::Error(VMError::internal("Pass: outer handler has no callable"));
         };
 
-        // Call outer handler with (effect, k)
+        // Call outer handler with (effect, k) — k now includes inner boundary + intermediates
         match outer_callable.call(vec![effect, Value::Continuation(k)]) {
             Ok(Value::Stream(stream)) => {
                 // Push outer handler stream on the outer boundary fiber
