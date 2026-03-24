@@ -33,9 +33,9 @@ use crate::vm::VM;
 use doeff_core_effects::scheduler::{set_run_external_wait_mode, ExternalWaitMode};
 use doeff_core_effects::sentinels::PyRustHandlerSentinel;
 use doeff_vm_core::{
-    install_vm_hooks, live_object_counts, DoExprTag, OwnedControlContinuation, PyDoCtrlBase,
-    PyDoExprBase, PyEffectBase, PyK, PyResultErr, PyResultOk, PyTraceFrame, PyTraceHop, PyVar,
-    VmHooks,
+    install_vm_hooks, live_object_counts, Continuation, DoExprTag, OwnedControlContinuation,
+    PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyK, PyResultErr, PyResultOk, PyTraceFrame,
+    PyTraceHop, PyVar, VmHooks,
 };
 
 fn ensure_vm_core_hooks_installed() {
@@ -253,18 +253,18 @@ fn borrow_control_continuation(
             "{context}.continuation must be K (opaque continuation handle)"
         ))
     })?;
-    let continuation = k_obj.borrow().continuation().ok_or_else(|| {
-        PyTypeError::new_err(format!(
-            "{context}.continuation must be a started continuation"
-        ))
-    })?;
-    if continuation.is_placeholder() || continuation.consumed() {
+    let mut pyk = k_obj.borrow_mut();
+    if pyk.is_exhausted() {
         return Err(PyRuntimeError::new_err(format!(
-            "one-shot violation: continuation {} already consumed",
-            continuation.cont_id.raw()
+            "one-shot violation: continuation already consumed"
         )));
     }
-    Ok(continuation)
+    if pyk.continuation_ref().is_none() {
+        return Err(PyTypeError::new_err(format!(
+            "{context}.continuation must be a started continuation"
+        )));
+    }
+    Ok(pyk.take_continuation())
 }
 
 fn pyk_from_started<'py>(
@@ -272,7 +272,7 @@ fn pyk_from_started<'py>(
     continuation: &doeff_vm_core::Continuation,
 ) -> PyResult<Py<PyAny>> {
     Ok(
-        Bound::new(py, PyK::from_continuation(continuation.clone_handle()))?
+        Bound::new(py, PyK::from_continuation(Continuation::from_fiber(continuation.fibers()[0], None)))?
             .into_any()
             .unbind(),
     )
@@ -1133,7 +1133,7 @@ impl PyVM {
         match value {
             // Runtime callback arguments must receive the opaque K handle.
             Value::Continuation(k) => {
-                Ok(Bound::new(py, PyK::from_continuation(k.clone_handle()))?.into_any())
+                Ok(Bound::new(py, PyK::from_continuation(Continuation::from_fiber(k.fibers()[0], None)))?.into_any())
             }
             Value::PendingContinuation(k) => {
                 Ok(Bound::new(py, PyK::from_pending(k.clone()))?.into_any())
@@ -1265,7 +1265,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                             .add_subclass(PyResume {
                                 continuation: k,
                                 value: value.to_pyobject(py)?.unbind(),
-                                owned_continuation: continuation.clone_handle(),
+                                owned_continuation: Continuation::from_fiber(continuation.fibers()[0], None),
                             }),
                     )
                     .map_err(|err| PyException::runtime_error(format!("{err}")))?
@@ -1289,7 +1289,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                             .add_subclass(PyTransfer {
                                 continuation: k,
                                 value: value.to_pyobject(py)?.unbind(),
-                                owned_continuation: continuation.clone_handle(),
+                                owned_continuation: Continuation::from_fiber(continuation.fibers()[0], None),
                             }),
                     )
                     .map_err(|err| PyException::runtime_error(format!("{err}")))?
@@ -1313,7 +1313,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                             .add_subclass(PyDiscontinue {
                                 continuation: k,
                                 exception: exception.value_clone_ref(py),
-                                owned_continuation: continuation.clone_handle(),
+                                owned_continuation: Continuation::from_fiber(continuation.fibers()[0], None),
                             }),
                     )
                     .map_err(|err| PyException::runtime_error(format!("{err}")))?
@@ -1457,7 +1457,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                             })
                             .add_subclass(PyGetTraceback {
                                 continuation: k,
-                                continuation_handle: continuation.clone_handle(),
+                                continuation_handle: Continuation::from_fiber(continuation.fibers()[0], None),
                             }),
                     )
                     .map_err(|err| PyException::runtime_error(format!("{err}")))?
@@ -1534,7 +1534,6 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                             .add_subclass(PyResumeContinuation {
                                 continuation: k,
                                 value: value.to_pyobject(py)?.unbind(),
-                                owned_continuation: continuation.clone(),
                             }),
                     )
                     .map_err(|err| PyException::runtime_error(format!("{err}")))?
@@ -1899,7 +1898,7 @@ pub(crate) fn classify_yielded_bound(
                     ));
                 }
                 Ok(DoCtrl::Discontinue {
-                    continuation: d.owned_continuation.clone_handle(),
+                    continuation: Continuation::from_fiber(d.owned_continuation.fibers()[0], None),
                     exception: pyerr_to_exception(py, PyErr::from_value(bound_exception.clone()))?,
                 })
             }
@@ -1977,7 +1976,7 @@ pub(crate) fn classify_yielded_bound(
                 let r: PyRef<'_, PyResume> = obj.extract()?;
                 validate_control_continuation(&r.owned_continuation)?;
                 Ok(DoCtrl::Resume {
-                    continuation: r.owned_continuation.clone_handle(),
+                    continuation: Continuation::from_fiber(r.owned_continuation.fibers()[0], None),
                     value: Value::from_pyobject(r.value.bind(py)),
                 })
             }
@@ -1985,7 +1984,7 @@ pub(crate) fn classify_yielded_bound(
                 let t: PyRef<'_, PyTransfer> = obj.extract()?;
                 validate_control_continuation(&t.owned_continuation)?;
                 Ok(DoCtrl::Transfer {
-                    continuation: t.owned_continuation.clone_handle(),
+                    continuation: Continuation::from_fiber(t.owned_continuation.fibers()[0], None),
                     value: Value::from_pyobject(t.value.bind(py)),
                 })
             }
@@ -2009,8 +2008,11 @@ pub(crate) fn classify_yielded_bound(
             }
             DoExprTag::ResumeContinuation => {
                 let rc: PyRef<'_, PyResumeContinuation> = obj.extract()?;
+                let continuation = take_control_continuation(
+                    py, &rc.continuation, "ResumeContinuation",
+                )?;
                 Ok(DoCtrl::ResumeContinuation {
-                    continuation: rc.owned_continuation.clone(),
+                    continuation,
                     value: Value::from_pyobject(rc.value.bind(py)),
                 })
             }
@@ -2048,7 +2050,7 @@ pub(crate) fn classify_yielded_bound(
             DoExprTag::GetTraceback => {
                 let gt: PyRef<'_, PyGetTraceback> = obj.extract()?;
                 Ok(DoCtrl::GetTraceback {
-                    continuation: gt.continuation_handle.clone_handle(),
+                    continuation: Continuation::from_fiber(gt.continuation_handle.fibers()[0], None),
                 })
             }
             DoExprTag::GetCallStack => Ok(DoCtrl::GetCallStack),
@@ -3160,7 +3162,6 @@ pub struct PyResumeContinuation {
     pub continuation: Py<PyAny>,
     #[pyo3(get)]
     pub value: Py<PyAny>,
-    owned_continuation: OwnedControlContinuation,
 }
 
 #[pymethods]
@@ -3171,8 +3172,10 @@ impl PyResumeContinuation {
         continuation: Py<PyAny>,
         value: Py<PyAny>,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let owned_continuation =
-            take_control_continuation(py, &continuation, "ResumeContinuation")?;
+        // Validate the continuation is a valid PyK
+        continuation.bind(py).cast::<PyK>().map_err(|_| {
+            PyTypeError::new_err("ResumeContinuation: continuation must be K")
+        })?;
         Ok(PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
                 tag: DoExprTag::ResumeContinuation as u8,
@@ -3180,7 +3183,6 @@ impl PyResumeContinuation {
             .add_subclass(PyResumeContinuation {
                 continuation,
                 value,
-                owned_continuation,
             }))
     }
 }

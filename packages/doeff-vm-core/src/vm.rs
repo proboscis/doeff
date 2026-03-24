@@ -798,10 +798,12 @@ impl VM {
         parents: &mut std::collections::HashSet<SegmentId>,
     ) {
         match eval_return {
-            EvalReturnContinuation::ResumeToContinuation { continuation }
-            | EvalReturnContinuation::ReturnToContinuation { continuation }
-            | EvalReturnContinuation::EvalInScopeReturn { continuation } => {
-                Self::collect_continuation_parent(continuation, parents)
+            EvalReturnContinuation::ResumeToContinuation { fiber_ids }
+            | EvalReturnContinuation::ReturnToContinuation { fiber_ids }
+            | EvalReturnContinuation::EvalInScopeReturn { fiber_ids } => {
+                if let Some(&outermost) = fiber_ids.last() {
+                    parents.insert(outermost);
+                }
             }
             EvalReturnContinuation::ApplyResolveFunction { .. }
             | EvalReturnContinuation::ApplyResolveArg { .. }
