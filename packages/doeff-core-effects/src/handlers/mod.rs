@@ -1963,7 +1963,7 @@ mod tests {
         let mut scope = ScopeStore::default();
         let mut program = AwaitHandlerProgram::new();
         let continuation = make_test_continuation();
-        let continuation_id = continuation.cont_id;
+        let continuation_id = continuation.derived_cont_id();
         program.phase = AwaitPhase::AwaitResult { continuation };
 
         let location = IRStream::debug_location(&program).expect("await debug location");
@@ -1976,7 +1976,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, continuation_id);
+                assert_eq!(continuation.derived_cont_id(), continuation_id);
                 assert_eq!(value.as_int(), Some(12));
             }
             _ => panic!("expected IRStream Yield(Resume)"),
@@ -1994,7 +1994,7 @@ mod tests {
 
         let mut program = StateHandlerProgram::new();
         let continuation = make_test_continuation();
-        let continuation_id = continuation.cont_id;
+        let continuation_id = continuation.derived_cont_id();
         program.pending_key = Some("count".to_string());
         program.pending_k = Some(continuation);
         program.pending_old_value = Some(Value::Int(5));
@@ -2009,7 +2009,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, continuation_id);
+                assert_eq!(continuation.derived_cont_id(), continuation_id);
                 assert_eq!(value.as_int(), Some(5));
             }
             _ => panic!("expected IRStream Yield(Resume)"),
@@ -2132,7 +2132,7 @@ mod tests {
         let mut scope = ScopeStore::default();
         let mut program = LazyAskHandlerProgram::new(Arc::new(Mutex::new(LazyAskState::default())));
         let continuation = make_test_continuation();
-        let continuation_id = continuation.cont_id;
+        let continuation_id = continuation.derived_cont_id();
         program.phase = LazyAskPhase::AwaitRelease {
             continuation,
             outcome: Ok(Value::Int(44)),
@@ -2148,7 +2148,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, continuation_id);
+                assert_eq!(continuation.derived_cont_id(), continuation_id);
                 assert_eq!(value.as_int(), Some(44));
             }
             _ => panic!("expected IRStream Yield(Resume)"),
