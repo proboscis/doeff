@@ -401,32 +401,16 @@ impl PyKleisli {
 
     fn runtime_arg_to_pyobject<'py>(
         py: Python<'py>,
-        value: &Value,
+        value: Value,
     ) -> Result<Bound<'py, PyAny>, VMError> {
         match value {
-            Value::Continuation(k) => Bound::new(py, PyK::from_continuation(Continuation::capture_from_fiber_ids(k.fibers().to_vec())))
+            Value::Continuation(k) => Bound::new(py, PyK::from_continuation(k))
                 .map(|obj| obj.into_any())
                 .map_err(Self::map_pyerr),
-            Value::PendingContinuation(k) => Bound::new(py, PyK::from_pending(k.clone()))
+            Value::PendingContinuation(k) => Bound::new(py, PyK::from_pending(k))
                 .map(|obj| obj.into_any())
                 .map_err(Self::map_pyerr),
-            Value::Python(_)
-            | Value::Unit
-            | Value::Int(_)
-            | Value::String(_)
-            | Value::Bool(_)
-            | Value::None
-            | Value::Handlers(_)
-            | Value::Kleisli(_)
-            | Value::Var(_)
-            | Value::Task(_)
-            | Value::Promise(_)
-            | Value::ExternalPromise(_)
-            | Value::CallStack(_)
-            | Value::Trace(_)
-            | Value::Traceback(_)
-            | Value::ActiveChain(_)
-            | Value::List(_) => value.to_pyobject(py).map_err(Self::map_pyerr),
+            other => other.to_pyobject(py).map_err(Self::map_pyerr),
         }
     }
 }
@@ -434,7 +418,7 @@ impl PyKleisli {
 impl Kleisli for PyKleisli {
     fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError> {
         let arg_values: Vec<Bound<'_, PyAny>> = args
-            .iter()
+            .into_iter()
             .map(|value| Self::runtime_arg_to_pyobject(py, value))
             .collect::<Result<Vec<_>, VMError>>()?;
         let arg_tuple = PyTuple::new(py, &arg_values).map_err(Self::map_pyerr)?;
@@ -608,7 +592,7 @@ impl PyCallableKleisli {
 impl Kleisli for PyCallableKleisli {
     fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError> {
         let arg_values: Vec<Bound<'_, PyAny>> = args
-            .iter()
+            .into_iter()
             .map(|value| PyKleisli::runtime_arg_to_pyobject(py, value))
             .collect::<Result<Vec<_>, VMError>>()?;
         let arg_tuple = PyTuple::new(py, &arg_values).map_err(PyKleisli::map_pyerr)?;
@@ -732,8 +716,12 @@ impl Kleisli for RustKleisli {
             )));
         }
 
-        let effect = match &args[0] {
-            Value::Python(obj) => dispatch_from_shared(obj.clone()),
+        let mut args_iter = args.into_iter();
+        let arg0 = args_iter.next().unwrap();
+        let arg1 = args_iter.next().unwrap();
+
+        let effect = match arg0 {
+            Value::Python(obj) => dispatch_from_shared(obj),
             other => {
                 return Err(VMError::type_error(format!(
                     "RustKleisli arg[0] must be Python effect, got {other:?}"
@@ -741,8 +729,8 @@ impl Kleisli for RustKleisli {
             }
         };
 
-        let continuation = match &args[1] {
-            Value::Continuation(k) => Continuation::capture_from_fiber_ids(k.fibers().to_vec()),
+        let continuation = match arg1 {
+            Value::Continuation(k) => k,
             other => {
                 return Err(VMError::type_error(format!(
                     "RustKleisli arg[1] must be Continuation, got {other:?}"

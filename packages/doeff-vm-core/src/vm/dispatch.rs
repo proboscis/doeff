@@ -234,6 +234,10 @@ impl VM {
         !self.continuation_is_consumed(continuation)
     }
 
+    pub(super) fn fiber_ids_dispatch_is_live(&self, fiber_ids: &[FiberId]) -> bool {
+        !fiber_ids.is_empty() && fiber_ids.iter().any(|fid| self.segments.get(*fid).is_some())
+    }
+
     pub(super) fn dispatch_is_active(dispatch: &ProgramDispatch) -> bool {
         matches!(dispatch.trace.result, EffectResult::Active)
     }
@@ -259,18 +263,15 @@ impl VM {
     ) -> Option<(DispatchEffect, Continuation)> {
         let segment = self.segments.get(prompt_seg_id)?;
         let effect = segment.pending_effect.as_ref()?.clone();
-        let continuation = Continuation::capture_from_fiber_ids(segment.pending_continuation.as_ref()?.fibers().to_vec());
+        let fiber_ids = segment.pending_continuation_fibers.as_ref()?.clone();
+        let continuation = Continuation::capture_from_fiber_ids(fiber_ids);
         Some((effect, continuation))
     }
 
-    fn cloned_continuation_without_error_context(
-        &mut self,
-        continuation: &Continuation,
-    ) -> Continuation {
-        for fiber_id in continuation.fibers() {
+    fn clear_error_context_for_fiber_ids(&mut self, fiber_ids: &[FiberId]) {
+        for fiber_id in fiber_ids {
             self.clear_pending_error_context(*fiber_id);
         }
-        Continuation::capture_from_fiber_ids(continuation.fibers().to_vec())
     }
 
     fn set_prompt_forward_context(
@@ -286,7 +287,7 @@ impl VM {
             )
         });
         segment.pending_effect = Some(effect.clone());
-        segment.pending_continuation = Some(Continuation::capture_from_fiber_ids(continuation.fibers().to_vec()));
+        segment.pending_continuation_fibers = Some(continuation.fibers().to_vec());
     }
 
     fn clear_prompt_forward_context(&mut self, prompt_seg_id: SegmentId) {
@@ -294,7 +295,7 @@ impl VM {
             return;
         };
         segment.pending_effect = None;
-        segment.pending_continuation = None;
+        segment.pending_continuation_fibers = None;
     }
 
     fn clear_prompt_forward_context_pair(&mut self, prompt_seg_id: SegmentId) {
@@ -1354,9 +1355,8 @@ impl VM {
             if let Some((active_seg_id, handler_fiber_ids, _)) =
                 self.handler_dispatch_for_any(origin_cont_id)
             {
-                let continuation = Continuation::capture_from_fiber_ids(handler_fiber_ids);
-                if active_seg_id == seg_id && self.handler_dispatch_is_live(&continuation) {
-                    return Some(continuation);
+                if active_seg_id == seg_id && self.fiber_ids_dispatch_is_live(&handler_fiber_ids) {
+                    return Some(Continuation::capture_from_fiber_ids(handler_fiber_ids));
                 }
             }
         }
@@ -1589,9 +1589,8 @@ impl VM {
             if let Some((active_seg_id, handler_fiber_ids, _)) =
                 self.handler_dispatch_for_any(origin_cont_id)
             {
-                let continuation = Continuation::capture_from_fiber_ids(handler_fiber_ids);
-                if active_seg_id == seg_id && self.handler_dispatch_is_live(&continuation) {
-                    return Some(continuation);
+                if active_seg_id == seg_id && self.fiber_ids_dispatch_is_live(&handler_fiber_ids) {
+                    return Some(Continuation::capture_from_fiber_ids(handler_fiber_ids));
                 }
             }
         }
@@ -2929,13 +2928,13 @@ impl VM {
         };
         let (effect, parent_k_user) = match self.prompt_forward_context(current_prompt_seg_id) {
             Some((effect, continuation)) if effect == origin.effect => (effect, continuation),
-            Some(_) | None => (
-                origin.effect.clone(),
-                {
-                    let k = Continuation::capture_from_fiber_ids(origin.origin_fiber_ids.clone());
-                    self.cloned_continuation_without_error_context(&k)
-                },
-            ),
+            Some(_) | None => {
+                self.clear_error_context_for_fiber_ids(&origin.origin_fiber_ids);
+                (
+                    origin.effect.clone(),
+                    Continuation::capture_from_fiber_ids(origin.origin_fiber_ids.clone()),
+                )
+            }
         };
         let handler_chain_start = match self.caller_visible_handler_chain_start() {
             Ok(seg_id) => seg_id,
@@ -3203,8 +3202,7 @@ impl VM {
                         .as_ref()
                         .filter(|fids| fids.len() <= 1)
                         .and_then(|fids| {
-                            let continuation = Continuation::capture_from_fiber_ids(fids.clone());
-                            self.delegate_return_continuation(&continuation)
+                            self.delegate_return_continuation_from_fiber_ids(fids)
                         })
                 });
             if let Some(target) = target {
@@ -3236,7 +3234,6 @@ impl VM {
             self.current_handler_identity_for_dispatch(origin_cont_id),
             handler_fiber_ids.as_ref(),
         ) {
-            let continuation = Continuation::capture_from_fiber_ids(handler_fiber_ids.clone());
             let value_repr = Self::value_repr(&value);
             self.record_handler_completion(
                 origin_cont_id,
@@ -3246,7 +3243,7 @@ impl VM {
                     value_repr: value_repr.clone(),
                 },
             );
-            self.emit_resume_event(origin_cont_id, &continuation, false);
+            self.emit_resume_event_for_fiber_ids(origin_cont_id, handler_fiber_ids, false);
         }
         if let Some(original) = original_exception {
             let active_chain = self
