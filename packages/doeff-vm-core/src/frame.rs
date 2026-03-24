@@ -221,14 +221,14 @@ pub enum EvalReturnContinuation {
         metadata: CallMetadata,
     },
     ResumeToContinuation {
-        continuation: crate::continuation::Continuation,
+        fiber_ids: Vec<FiberId>,
     },
     TailResumeReturn,
     ReturnToContinuation {
-        continuation: crate::continuation::Continuation,
+        fiber_ids: Vec<FiberId>,
     },
     EvalInScopeReturn {
-        continuation: crate::continuation::Continuation,
+        fiber_ids: Vec<FiberId>,
     },
     InterceptApplyResult {
         continuation: InterceptorContinuation,

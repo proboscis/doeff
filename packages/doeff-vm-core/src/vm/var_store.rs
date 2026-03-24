@@ -102,12 +102,12 @@ impl VM {
                             );
                         }
                         Frame::EvalReturn(eval_return) => match eval_return.as_ref() {
-                            EvalReturnContinuation::ResumeToContinuation { continuation }
-                            | EvalReturnContinuation::ReturnToContinuation { continuation }
-                            | EvalReturnContinuation::EvalInScopeReturn { continuation } => {
-                                push_continuation_segments(
+                            EvalReturnContinuation::ResumeToContinuation { fiber_ids }
+                            | EvalReturnContinuation::ReturnToContinuation { fiber_ids }
+                            | EvalReturnContinuation::EvalInScopeReturn { fiber_ids } => {
+                                push_fiber_ids_segments(
                                     vm,
-                                    continuation,
+                                    fiber_ids,
                                     ordered,
                                     seen,
                                     seen_continuations,
