@@ -324,7 +324,7 @@ impl VM {
             Value::Stream(stream) => {
                 if let Some(seg_id) = self.current_segment {
                     if let Some(seg) = self.segments.get_mut(seg_id) {
-                        seg.push_frame(Frame::Program { stream, metadata: None });
+                        seg.push_frame(Frame::program(stream, None));
                         self.mode = Mode::Send(Value::Unit);
                         return StepResult::Continue;
                     }
@@ -386,9 +386,11 @@ impl VM {
 
     /// Evaluate Perform: find handler, detach chain, call handler.
     ///
-    /// After perform_effect: current_segment = handler's parent (root).
-    /// We push the handler stream on the BOUNDARY fiber so that when
-    /// Resume re-links body.parent → boundary, the chain is correct.
+    /// After perform_effect: current_segment = handler's parent.
+    ///
+    /// OCaml 5 semantics: handler is called, returns a DoExpr (or stream)
+    /// which is evaluated on the parent fiber. No manual stream pushing —
+    /// handler result is evaluated as a normal program.
     fn eval_perform(&mut self, effect: Value) -> StepResult {
         // 1. Use dispatch to find handler and detach chain
         let result = match self.perform_effect(&effect) {
@@ -407,22 +409,11 @@ impl VM {
             return StepResult::Error(VMError::internal("perform: handler has no callable"));
         };
 
-        // 3. Call handler(effect, k) → should return Value::Stream
-        match handler_callable.call(vec![effect, Value::Continuation(k)]) {
-            Ok(Value::Stream(stream)) => {
-                // Push handler stream on the BOUNDARY fiber (not root)
-                // This way, when Resume links body.parent → boundary,
-                // the next perform from body can find the handler.
-                if let Some(seg) = self.segments.get_mut(handler_fiber_id) {
-                    seg.push_frame(Frame::program(stream, None));
-                }
-                // Switch to boundary fiber to run the handler stream
-                self.current_segment = Some(handler_fiber_id);
-                self.mode = Mode::Send(Value::Unit);
-                StepResult::Continue
-            }
-            Ok(other) => {
-                self.mode = Mode::Send(other);
+        // 3. Call handler(effect, k) → must return a DoExpr.
+        //    Classify and evaluate. current_segment is handler's parent.
+        match handler_callable.call_handler(vec![effect, Value::Continuation(k)]) {
+            Ok(doctrl) => {
+                self.mode = Mode::Eval(doctrl);
                 StepResult::Continue
             }
             Err(err) => StepResult::Error(err),
@@ -432,76 +423,69 @@ impl VM {
     /// Evaluate Pass: inner handler doesn't handle, forward to outer handler.
     ///
     /// OCaml 5 semantics (reperform):
-    /// 1. Append everything from k.last → inner_boundary → ... → (fiber before outer_boundary)
-    ///    to the continuation chain
-    /// 2. Detach at outer boundary
-    /// 3. Call outer handler with extended k
-    fn eval_pass(&mut self, effect: Value, mut k: Continuation) -> StepResult {
-        // Current segment is the inner handler's boundary fiber
-        let inner_boundary = match self.current_segment {
-            Some(id) => id,
-            None => return StepResult::Error(VMError::internal("Pass: no current segment")),
-        };
-
-
-
-        // Pop handler stream from inner boundary
-        if let Some(seg) = self.segments.get_mut(inner_boundary) {
-            seg.frames.pop();
-        }
-
-        // Find outer handler starting from inner boundary's parent
-        let inner_parent = self.segments.get(inner_boundary).and_then(|s| s.parent);
-        let outer_handler = inner_parent.and_then(|start_id| {
-            self.find_handler_for_effect(start_id, &effect)
-        });
-
-        let Some((outer_handler_fid, outer_parent)) = outer_handler else {
-            return StepResult::Error(VMError::internal("Pass: no outer handler found"));
-        };
-
-        // Extend k: link k.last → inner_boundary → ... → (fiber before outer boundary)
-        // This preserves all intermediate fibers in the continuation.
-        if let Some(last) = k.last_fiber() {
-            if let Some(seg) = self.segments.get_mut(last) {
-                seg.parent = Some(inner_boundary);
+    /// k already includes the inner boundary (perform captures boundary in k).
+    /// Handler runs on the parent. We just need to do a new perform from the
+    /// parent to find the outer handler.
+    fn eval_pass(&mut self, effect: Value, k: Continuation) -> StepResult {
+        // Handler code runs on the parent fiber. The handler stream frame
+        // yielded Pass — it's done. Pop it before extending k, otherwise
+        // the dead frame gets hit again when the continuation is resumed.
+        if let Some(seg_id) = self.current_segment {
+            if let Some(seg) = self.segments.get_mut(seg_id) {
+                seg.frames.pop();
             }
         }
+        // k already includes body → ... → inner_boundary (because perform
+        // includes boundary in continuation). Re-perform from current
+        // position to find the outer handler.
+        self.eval_perform_with_k(effect, k)
+    }
 
-        // Find the fiber just before outer boundary in the chain from inner_boundary
-        let new_last = self.find_fiber_before(inner_boundary, outer_handler_fid)
-            .unwrap_or(inner_boundary);
+    /// Perform an effect with an existing continuation (used by Pass).
+    /// Walks from current_segment to find the next handler, then calls it.
+    fn eval_perform_with_k(&mut self, effect: Value, k: Continuation) -> StepResult {
+        let current = match self.current_segment {
+            Some(id) => id,
+            None => return StepResult::Error(VMError::internal("perform_with_k: no current segment")),
+        };
 
-        // Detach new_last from outer boundary
-        if let Some(seg) = self.segments.get_mut(new_last) {
+        // Find handler walking up from current
+        let (handler_fiber_id, handler_parent) = match self.find_handler_for_effect(current, &effect) {
+            Some(result) => result,
+            None => return StepResult::Error(VMError::internal("Pass: no outer handler found")),
+        };
+
+        // Extend k: include fibers from current up to (and including) the outer boundary
+        // Detach outer boundary from its parent
+        let boundary_parent = self.segments.get(handler_fiber_id).and_then(|s| s.parent);
+        if let Some(seg) = self.segments.get_mut(handler_fiber_id) {
             seg.parent = None;
         }
-        k.last_fiber = Some(new_last);
+
+        // Link k.last → current (extend the continuation with the intermediate chain)
+        let mut k = k;
+        if let Some(last) = k.last_fiber() {
+            if let Some(seg) = self.segments.get_mut(last) {
+                seg.parent = Some(current);
+            }
+        }
+        k.last_fiber = Some(handler_fiber_id);
 
         // Switch to outer handler's parent
-        self.current_segment = outer_parent;
+        self.current_segment = boundary_parent;
 
-        // Get outer handler's callable
-        let outer_callable = self.segments.get(outer_handler_fid)
+        // Get handler callable
+        let handler_callable = self.segments.get(handler_fiber_id)
             .and_then(|seg| seg.prompt_handler().cloned());
 
-        let Some(outer_callable) = outer_callable else {
+        let Some(handler_callable) = handler_callable else {
             return StepResult::Error(VMError::internal("Pass: outer handler has no callable"));
         };
 
-        // Call outer handler with (effect, k) — k now includes inner boundary + intermediates
-        match outer_callable.call(vec![effect, Value::Continuation(k)]) {
-            Ok(Value::Stream(stream)) => {
-                // Push outer handler stream on the outer boundary fiber
-                if let Some(seg) = self.segments.get_mut(outer_handler_fid) {
-                    seg.push_frame(Frame::program(stream, None));
-                }
-                self.current_segment = Some(outer_handler_fid);
-                self.mode = Mode::Send(Value::Unit);
-                StepResult::Continue
-            }
-            Ok(other) => {
-                self.mode = Mode::Send(other);
+        // Call handler — must return DoExpr
+        match handler_callable.call_handler(vec![effect, Value::Continuation(k)]) {
+            Ok(doctrl) => {
+                self.mode = Mode::Eval(doctrl);
                 StepResult::Continue
             }
             Err(err) => StepResult::Error(err),

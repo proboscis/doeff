@@ -456,37 +456,16 @@ mod tests {
         struct TestHandler;
 
         impl Callable for TestHandler {
-            fn call(&self, args: Vec<Value>) -> Result<Value, VMError> {
-                // args = [effect, continuation]
-                // Return a stream that yields Resume(k, 100)
+            fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
+                Err(VMError::internal("TestHandler: use call_handler"))
+            }
+            fn call_handler(&self, args: Vec<Value>) -> Result<DoCtrl, VMError> {
                 let k = match args.into_iter().nth(1) {
                     Some(Value::Continuation(k)) => k,
                     _ => return Err(VMError::internal("handler: expected continuation")),
                 };
-
-                #[derive(Debug)]
-                struct ResumeStream {
-                    k: Option<Continuation>,
-                }
-
-                impl IRStream for ResumeStream {
-                    fn resume(&mut self, value: Value) -> StreamStep {
-                        match self.k.take() {
-                            Some(k) => StreamStep::Instruction(DoCtrl::Resume {
-                                k,
-                                value: Value::Int(100),
-                            }),
-                            None => StreamStep::Done(value), // pass through body's return value
-                        }
-                    }
-
-                    fn throw(&mut self, error: Value) -> StreamStep {
-                        StreamStep::Error(error)
-                    }
-                }
-
-                let stream = IRStreamRef::new(Box::new(ResumeStream { k: Some(k) }));
-                Ok(Value::Stream(stream))
+                // Return Resume DoCtrl — body gets 100, returns it
+                Ok(DoCtrl::Resume { k, value: Value::Int(100) })
             }
         }
 
@@ -571,31 +550,15 @@ mod tests {
         struct TransferHandler;
 
         impl Callable for TransferHandler {
-            fn call(&self, args: Vec<Value>) -> Result<Value, VMError> {
+            fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
+                Err(VMError::internal("TransferHandler: use call_handler"))
+            }
+            fn call_handler(&self, args: Vec<Value>) -> Result<DoCtrl, VMError> {
                 let k = match args.into_iter().nth(1) {
                     Some(Value::Continuation(k)) => k,
                     _ => return Err(VMError::internal("handler: expected continuation")),
                 };
-
-                #[derive(Debug)]
-                struct TransferStream { k: Option<Continuation> }
-
-                impl IRStream for TransferStream {
-                    fn resume(&mut self, _value: Value) -> StreamStep {
-                        match self.k.take() {
-                            Some(k) => StreamStep::Instruction(DoCtrl::Transfer {
-                                k,
-                                value: Value::Int(200),
-                            }),
-                            None => unreachable!("Transfer is tail — handler shouldn't be resumed"),
-                        }
-                    }
-                    fn throw(&mut self, error: Value) -> StreamStep {
-                        StreamStep::Error(error)
-                    }
-                }
-
-                Ok(Value::Stream(IRStreamRef::new(Box::new(TransferStream { k: Some(k) }))))
+                Ok(DoCtrl::Transfer { k, value: Value::Int(200) })
             }
         }
 
@@ -659,30 +622,19 @@ mod tests {
         struct CountHandler;
 
         impl Callable for CountHandler {
-            fn call(&self, args: Vec<Value>) -> Result<Value, VMError> {
+            fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
+                Err(VMError::internal("CountHandler: use call_handler"))
+            }
+            fn call_handler(&self, args: Vec<Value>) -> Result<DoCtrl, VMError> {
                 let k = match args.into_iter().nth(1) {
                     Some(Value::Continuation(k)) => k,
                     _ => return Err(VMError::internal("expected k")),
                 };
 
                 static COUNTER: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(10);
-
                 let val = COUNTER.fetch_add(10, std::sync::atomic::Ordering::Relaxed);
 
-                #[derive(Debug)]
-                struct S { k: Option<Continuation>, val: i64 }
-
-                impl IRStream for S {
-                    fn resume(&mut self, value: Value) -> StreamStep {
-                        match self.k.take() {
-                            Some(k) => StreamStep::Instruction(DoCtrl::Resume { k, value: Value::Int(self.val) }),
-                            None => StreamStep::Done(value),
-                        }
-                    }
-                    fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
-                }
-
-                Ok(Value::Stream(IRStreamRef::new(Box::new(S { k: Some(k), val }))))
+                Ok(DoCtrl::Resume { k, value: Value::Int(val) })
             }
         }
 
@@ -763,27 +715,15 @@ mod tests {
             struct H { reply: i64 }
 
             impl Callable for H {
-                fn call(&self, args: Vec<Value>) -> Result<Value, VMError> {
+                fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
+                    Err(VMError::internal("H: use call_handler"))
+                }
+                fn call_handler(&self, args: Vec<Value>) -> Result<DoCtrl, VMError> {
                     let k = match args.into_iter().nth(1) {
                         Some(Value::Continuation(k)) => k,
                         _ => return Err(VMError::internal("expected k")),
                     };
-                    let reply = self.reply;
-
-                    #[derive(Debug)]
-                    struct S { k: Option<Continuation>, reply: i64 }
-
-                    impl IRStream for S {
-                        fn resume(&mut self, value: Value) -> StreamStep {
-                            match self.k.take() {
-                                Some(k) => StreamStep::Instruction(DoCtrl::Resume { k, value: Value::Int(self.reply) }),
-                                None => StreamStep::Done(value),
-                            }
-                        }
-                        fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
-                    }
-
-                    Ok(Value::Stream(IRStreamRef::new(Box::new(S { k: Some(k), reply }))))
+                    Ok(DoCtrl::Resume { k, value: Value::Int(self.reply) })
                 }
             }
 
@@ -879,29 +819,16 @@ mod tests {
         struct PassHandler;
 
         impl Callable for PassHandler {
-            fn call(&self, args: Vec<Value>) -> Result<Value, VMError> {
+            fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
+                Err(VMError::internal("PassHandler: use call_handler"))
+            }
+            fn call_handler(&self, args: Vec<Value>) -> Result<DoCtrl, VMError> {
                 let effect = args.first().cloned().unwrap_or(Value::Unit);
                 let k = match args.into_iter().nth(1) {
                     Some(Value::Continuation(k)) => k,
                     _ => return Err(VMError::internal("expected k")),
                 };
-
-                #[derive(Debug)]
-                struct S { effect: Option<Value>, k: Option<Continuation> }
-
-                impl IRStream for S {
-                    fn resume(&mut self, _value: Value) -> StreamStep {
-                        let effect = self.effect.take().unwrap();
-                        let k = self.k.take().unwrap();
-                        StreamStep::Instruction(DoCtrl::Pass { effect, k })
-                    }
-                    fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
-                }
-
-                Ok(Value::Stream(IRStreamRef::new(Box::new(S {
-                    effect: Some(effect),
-                    k: Some(k),
-                }))))
+                Ok(DoCtrl::Pass { effect, k })
             }
         }
 
@@ -911,27 +838,15 @@ mod tests {
             struct H { reply: i64 }
 
             impl Callable for H {
-                fn call(&self, args: Vec<Value>) -> Result<Value, VMError> {
+                fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
+                    Err(VMError::internal("H: use call_handler"))
+                }
+                fn call_handler(&self, args: Vec<Value>) -> Result<DoCtrl, VMError> {
                     let k = match args.into_iter().nth(1) {
                         Some(Value::Continuation(k)) => k,
                         _ => return Err(VMError::internal("expected k")),
                     };
-                    let reply = self.reply;
-
-                    #[derive(Debug)]
-                    struct S { k: Option<Continuation>, reply: i64 }
-
-                    impl IRStream for S {
-                        fn resume(&mut self, value: Value) -> StreamStep {
-                            match self.k.take() {
-                                Some(k) => StreamStep::Instruction(DoCtrl::Resume { k, value: Value::Int(self.reply) }),
-                                None => StreamStep::Done(value),
-                            }
-                        }
-                        fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
-                    }
-
-                    Ok(Value::Stream(IRStreamRef::new(Box::new(S { k: Some(k), reply }))))
+                    Ok(DoCtrl::Resume { k, value: Value::Int(self.reply) })
                 }
             }
 
@@ -1005,44 +920,20 @@ mod tests {
         struct InnerHandler;
 
         impl Callable for InnerHandler {
-            fn call(&self, args: Vec<Value>) -> Result<Value, VMError> {
+            fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
+                Err(VMError::internal("InnerHandler: use call_handler"))
+            }
+            fn call_handler(&self, args: Vec<Value>) -> Result<DoCtrl, VMError> {
                 let effect = args.first().cloned().unwrap_or(Value::Unit);
                 let k = match args.into_iter().nth(1) {
                     Some(Value::Continuation(k)) => k,
                     _ => return Err(VMError::internal("expected k")),
                 };
-
-                let is_ask = matches!(&effect, Value::String(s) if s == "ask");
-
-                #[derive(Debug)]
-                struct S { effect: Option<Value>, k: Option<Continuation>, is_ask: bool }
-
-                impl IRStream for S {
-                    fn resume(&mut self, value: Value) -> StreamStep {
-                        match self.k.take() {
-                            Some(k) => {
-                                if self.is_ask {
-                                    // Handle: resume with 999
-                                    StreamStep::Instruction(DoCtrl::Resume { k, value: Value::Int(999) })
-                                } else {
-                                    // Pass to outer
-                                    StreamStep::Instruction(DoCtrl::Pass {
-                                        effect: self.effect.take().unwrap(),
-                                        k,
-                                    })
-                                }
-                            }
-                            None => StreamStep::Done(value), // return Resume's result
-                        }
-                    }
-                    fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
+                if matches!(&effect, Value::String(s) if s == "ask") {
+                    Ok(DoCtrl::Resume { k, value: Value::Int(999) })
+                } else {
+                    Ok(DoCtrl::Pass { effect, k })
                 }
-
-                Ok(Value::Stream(IRStreamRef::new(Box::new(S {
-                    effect: Some(effect),
-                    k: Some(k),
-                    is_ask,
-                }))))
             }
         }
 
@@ -1052,26 +943,15 @@ mod tests {
             struct H;
 
             impl Callable for H {
-                fn call(&self, args: Vec<Value>) -> Result<Value, VMError> {
+                fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
+                    Err(VMError::internal("H: use call_handler"))
+                }
+                fn call_handler(&self, args: Vec<Value>) -> Result<DoCtrl, VMError> {
                     let k = match args.into_iter().nth(1) {
                         Some(Value::Continuation(k)) => k,
                         _ => return Err(VMError::internal("expected k")),
                     };
-
-                    #[derive(Debug)]
-                    struct S { k: Option<Continuation> }
-
-                    impl IRStream for S {
-                        fn resume(&mut self, value: Value) -> StreamStep {
-                            match self.k.take() {
-                                Some(k) => StreamStep::Instruction(DoCtrl::Resume { k, value: Value::Int(0) }),
-                                None => StreamStep::Done(value),
-                            }
-                        }
-                        fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
-                    }
-
-                    Ok(Value::Stream(IRStreamRef::new(Box::new(S { k: Some(k) }))))
+                    Ok(DoCtrl::Resume { k, value: Value::Int(0) })
                 }
             }
 

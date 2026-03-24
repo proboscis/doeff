@@ -61,19 +61,49 @@ impl doeff_vm_core::value::Callable for PythonCallable {
             match self.callable.call(py, py_tuple, None) {
                 Ok(result) => {
                     let bound = result.bind(py);
-                    if bound.hasattr("send").unwrap_or(false)
-                        && bound.hasattr("throw").unwrap_or(false)
-                    {
-                        let stream = PythonGeneratorStream::new(PyShared::new(result.clone_ref(py)));
-                        let stream_ref = doeff_vm_core::ir_stream::IRStreamRef::new(Box::new(stream));
-                        Ok(Value::Stream(stream_ref))
-                    } else {
-                        Ok(python_to_value(py, bound))
-                    }
+                    Ok(python_to_value(py, bound))
                 }
                 Err(err) => Err(doeff_vm_core::VMError::python_error(format!("{err}"))),
             }
         })
+    }
+
+    fn call_handler(&self, args: Vec<Value>) -> Result<doeff_vm_core::do_ctrl::DoCtrl, doeff_vm_core::VMError> {
+        Python::attach(|py| {
+            let py_args: Vec<Py<PyAny>> = args
+                .into_iter()
+                .map(|v| value_to_python(py, v).unbind())
+                .collect();
+            let py_tuple = pyo3::types::PyTuple::new(py, &py_args)
+                .map_err(|e| doeff_vm_core::VMError::python_error(format!("{e}")))?;
+
+            match self.callable.call(py, py_tuple, None) {
+                Ok(result) => {
+                    let bound = result.bind(py);
+                    classify_python_object(py, &bound)
+                        .map_err(|msg| doeff_vm_core::VMError::type_error(format!(
+                            "handler must return DoExpr: {}", msg
+                        )))
+                }
+                Err(err) => Err(doeff_vm_core::VMError::python_error(format!("{err}"))),
+            }
+        })
+    }
+}
+
+/// Python-visible wrapper: creates a PythonGeneratorStream from a generator.
+/// Recognized by python_to_value → Value::Stream.
+#[pyclass(name = "IRStream")]
+#[derive(Debug)]
+pub struct PyIRStream {
+    pub generator: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyIRStream {
+    #[new]
+    pub fn new(generator: Py<PyAny>) -> Self {
+        Self { generator }
     }
 }
 
@@ -451,6 +481,13 @@ pub fn python_to_value(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> Value {
                 return Value::Continuation(continuation);
             }
         }
+    }
+    // PyIRStream → Value::Stream
+    if let Ok(s) = obj.downcast::<PyIRStream>() {
+        let gen = s.borrow().generator.clone_ref(_py);
+        let stream = PythonGeneratorStream::new(PyShared::new(gen));
+        let stream_ref = doeff_vm_core::ir_stream::IRStreamRef::new(Box::new(stream));
+        return Value::Stream(stream_ref);
     }
     // Everything else: opaque Python object
     Value::Opaque(PyShared::new(obj.clone().unbind()))

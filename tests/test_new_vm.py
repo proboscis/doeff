@@ -5,8 +5,9 @@ Raw generators are NOT accepted by the VM — use @do or DoExpr wrappers.
 """
 
 import pytest
-from doeff_vm import PyVM, K, Callable, EffectBase
+from doeff_vm import PyVM, K, Callable, EffectBase, IRStream
 from doeff import Pass, do, run as doeff_run, WithHandler
+from doeff.program import program
 
 
 @pytest.fixture
@@ -63,15 +64,7 @@ class Apply:
         self.args = args
 
 
-def program(gen_fn, *args):
-    """Create a DoExpr that runs a generator function.
-
-    This is the minimal equivalent of @do — wraps a generator factory
-    as Expand(Apply(Callable(factory), args)).
-
-    The factory must be explicitly wrapped as Callable — no auto-detection.
-    """
-    return Expand(Apply(Pure(Callable(gen_fn)), [Pure(a) for a in args]))
+# program() imported from doeff.program — wraps generator function with IRStream explicitly
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +107,7 @@ class TestEffectHandlers:
         class Ask:
             pass
 
+        @do
         def handler(effect, k):
             result = yield Resume(k, 100)
             return result
@@ -129,6 +123,7 @@ class TestEffectHandlers:
         class Get:
             pass
 
+        @do
         def handler(effect, k):
             result = yield Resume(k, 10)
             return result
@@ -144,6 +139,7 @@ class TestEffectHandlers:
         class Get:
             pass
 
+        @do
         def handler(effect, k):
             yield Transfer(k, 77)
 
@@ -160,6 +156,7 @@ class TestEffectHandlers:
 
         call_count = 0
 
+        @do
         def handler(effect, k):
             nonlocal call_count
             call_count += 1
@@ -181,6 +178,7 @@ class TestEffectHandlers:
                 self.x = x
                 self.y = y
 
+        @do
         def handler(effect, k):
             if isinstance(effect, Add):
                 result = yield Resume(k, effect.x + effect.y)
@@ -199,12 +197,12 @@ class TestEffectHandlers:
         class Get:
             pass
 
-        handler_saw = None
+        handler_saw = [None]
 
+        @do
         def handler(effect, k):
-            nonlocal handler_saw
             result = yield Resume(k, 42)
-            handler_saw = result
+            handler_saw[0] = result
             return result
 
         def body():
@@ -213,7 +211,7 @@ class TestEffectHandlers:
 
         result = vm.run_with_handler(handler, program(body))
         assert result == 43
-        assert handler_saw == 43
+        assert handler_saw[0] == 43
 
     def test_implicit_perform_effect_base(self, vm):
         """Yielding an EffectBase directly is treated as Perform(effect)."""
@@ -222,6 +220,7 @@ class TestEffectHandlers:
                 super().__init__()
                 self.key = key
 
+        @do
         def handler(effect, k):
             if isinstance(effect, Ask):
                 result = yield Resume(k, f"value_for_{effect.key}")
@@ -230,7 +229,6 @@ class TestEffectHandlers:
             return result
 
         def body():
-            # No Perform() wrapper — EffectBase is implicitly Perform'd
             result = yield Ask("config")
             return result
 
@@ -247,6 +245,7 @@ class TestNestedHandlers:
         class Get:
             pass
 
+        @do
         def inner(effect, k):
             result = yield Resume(k, 42)
             return result
@@ -269,7 +268,7 @@ class TestErrors:
             yield Perform(None)
 
         with pytest.raises(RuntimeError):
-            vm.run_with_handler(lambda e, k: None, program(body))
+            vm.run_with_handler(lambda e, k: Pure(None), program(body))
 
     def test_no_handler_error(self, vm):
         """Performing without a handler raises an error."""
@@ -308,13 +307,11 @@ class TestTraceback:
                 super().__init__()
                 self.key = key
 
-        captured_traceback = None
+        captured_traceback = [None]
 
+        @do
         def handler(effect, k):
-            nonlocal captured_traceback
-            # Query traceback — does NOT consume k
-            captured_traceback = yield GetTraceback(k)
-            # k is still alive — resume it
+            captured_traceback[0] = yield GetTraceback(k)
             result = yield Resume(k, "answer")
             return result
 
@@ -326,12 +323,12 @@ class TestTraceback:
 
         result = vm.run_with_handler(handler, program(outer))
         assert result == "answer"
-        assert captured_traceback is not None
-        assert isinstance(captured_traceback, list)
+        assert captured_traceback[0] is not None
+        assert isinstance(captured_traceback[0], list)
         # Should have at least one frame (inner's generator)
-        assert len(captured_traceback) >= 1
+        assert len(captured_traceback[0]) >= 1
         # Each frame is [func_name, source_file, source_line]
-        frame = captured_traceback[0]
+        frame = captured_traceback[0][0]
         assert "inner" in frame[0]  # func_name (may include qualname prefix)
         assert isinstance(frame[2], int)  # source_line
 
@@ -341,13 +338,15 @@ class TestTraceback:
             def __init__(self):
                 super().__init__()
 
-        captured_traceback = None
+        captured_traceback = [None]
 
         def handler(effect, k):
-            nonlocal captured_traceback
-            captured_traceback = yield GetTraceback(k)
-            result = yield Resume(k, 42)
-            return result
+            @do
+            def handle():
+                captured_traceback[0] = yield GetTraceback(k)
+                result = yield Resume(k, 42)
+                return result
+            return handle()
 
         def leaf():
             return (yield Ask())
@@ -361,7 +360,7 @@ class TestTraceback:
         result = vm.run_with_handler(handler, program(root))
         assert result == 42
         # Should see: leaf, middle, root (innermost first)
-        func_names = [f[0] for f in captured_traceback]
+        func_names = [f[0] for f in captured_traceback[0]]
         assert any("leaf" in n for n in func_names)
         assert any("middle" in n for n in func_names)
         assert any("root" in n for n in func_names)
@@ -396,6 +395,7 @@ class TestDo:
                 super().__init__()
                 self.key = key
 
+        @do
         def handler(effect, k):
             result = yield Resume(k, 99)
             return result
@@ -436,6 +436,7 @@ class TestWithHandler:
             def __init__(self):
                 super().__init__()
 
+        @do
         def handler(effect, k):
             result = yield Resume(k, 42)
             return result
@@ -453,9 +454,11 @@ class TestWithHandler:
                 super().__init__()
                 self.key = key
 
+        @do
         def inner(effect, k):
             yield Pass(effect, k)
 
+        @do
         def outer(effect, k):
             result = yield Resume(k, f"outer:{effect.key}")
             return result
@@ -479,20 +482,22 @@ class TestWithHandler:
                 super().__init__()
                 self.key = key
 
+        @do
         def ask_handler(effect, k):
             if isinstance(effect, Ask):
                 result = yield Resume(k, f"val:{effect.key}")
                 return result
             yield Pass(effect, k)
 
+        @do
         def log_handler(effect, k):
             result = yield Resume(k, None)
             return result
 
         @do
         def body():
-            yield Log("hello")  # passes through ask_handler → log_handler
-            x = yield Ask("key")  # should be handled by ask_handler
+            yield Log("hello")
+            x = yield Ask("key")
             return x
 
         prog = WithHandler(log_handler, WithHandler(ask_handler, body()))
@@ -513,6 +518,7 @@ class TestWithHandler:
 
         logged = []
 
+        @do
         def log_handler(effect, k):
             if isinstance(effect, Log):
                 logged.append(effect.msg)
@@ -520,6 +526,7 @@ class TestWithHandler:
                 return result
             yield Pass(effect, k)
 
+        @do
         def ask_handler(effect, k):
             if isinstance(effect, Ask):
                 result = yield Resume(k, f"val:{effect.key}")
