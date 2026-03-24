@@ -207,14 +207,7 @@ struct WithHandlerPlan {
     handler: KleisliRef,
 }
 
-#[derive(Clone)]
-struct DispatchOriginView {
-    origin_dispatch_id: FiberId,
-    parent_dispatch_id: Option<FiberId>,
-    effect: DispatchEffect,
-    origin_fiber_ids: Vec<FiberId>,
-    original_exception: Option<PyException>,
-}
+// DispatchOriginView removed — dispatch has no persistent state in OCaml 5
 
 #[derive(Clone)]
 enum CallerChainEntry {
