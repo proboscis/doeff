@@ -305,8 +305,8 @@ impl VM {
         } else {
             origin.origin_fiber_ids.clone()
         };
-        let continuation = Continuation::capture_from_fiber_ids(fiber_ids);
-        (!self.continuation_is_consumed(&continuation)).then_some(continuation)
+        self.fiber_ids_dispatch_is_live(&fiber_ids)
+            .then(|| Continuation::capture_from_fiber_ids(fiber_ids))
     }
 
     pub(super) fn active_error_dispatch_original_exception(&self) -> Option<PyException> {
@@ -486,7 +486,16 @@ impl VM {
         continuation: &Continuation,
         transferred: bool,
     ) {
-        let frames = self.continuation_frame_stack(continuation);
+        self.emit_resume_event_for_fiber_ids(origin_cont_id, continuation.fibers(), transferred);
+    }
+
+    pub(super) fn emit_resume_event_for_fiber_ids(
+        &mut self,
+        origin_cont_id: ContId,
+        fiber_ids: &[FiberId],
+        transferred: bool,
+    ) {
+        let frames = self.fiber_ids_frame_stack(fiber_ids);
         if let Some((resumed_function_name, source_file, source_line)) =
             TraceState::continuation_resume_location_from_frames(&frames)
         {
