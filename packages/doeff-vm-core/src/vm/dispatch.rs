@@ -10,8 +10,9 @@
 //! No dispatch ID. No accumulated trace state. No ProgramDispatch.
 
 use crate::continuation::Continuation;
-use crate::driver::{Mode, PyException, StepEvent};
+use crate::driver::{Mode, StepResult};
 use crate::effect::DispatchEffect;
+use crate::error::VMError;
 use crate::ids::{FiberId, Marker, SegmentId};
 use crate::segment::{Fiber, Handler};
 use crate::value::Value;
@@ -32,7 +33,7 @@ impl VM {
     pub fn match_with(&mut self, handler: Handler) -> FiberId {
         let parent = self.current_segment;
         let fiber = Fiber::new_boundary(parent, handler);
-        let fiber_id = self.segments.alloc_segment(fiber);
+        let fiber_id = self.segments.alloc(fiber);
         self.current_segment = Some(fiber_id);
         fiber_id
     }
@@ -57,16 +58,16 @@ impl VM {
     pub fn perform_effect(
         &mut self,
         effect: &DispatchEffect,
-    ) -> Result<PerformResult, StepEvent> {
+    ) -> Result<PerformResult, StepResult> {
         let current = self.current_segment.ok_or_else(|| {
-            StepEvent::Error(crate::error::VMError::internal("perform: no current fiber"))
+            StepResult::Error(crate::error::VMError::internal("perform: no current fiber"))
         })?;
 
         // Walk up parent chain to find a handler boundary that handles this effect
         let (handler_fiber_id, handler_parent) = self
             .find_handler_for_effect(current, effect)
             .ok_or_else(|| {
-                StepEvent::Error(crate::error::VMError::internal(format!(
+                StepResult::Error(crate::error::VMError::internal(format!(
                     "perform: no handler found for effect"
                 )))
             })?;
@@ -108,9 +109,9 @@ impl VM {
         &mut self,
         k: &mut Continuation,
         value: Value,
-    ) -> Result<(), StepEvent> {
+    ) -> Result<(), StepResult> {
         let (head, last) = k.take().ok_or_else(|| {
-            StepEvent::Error(crate::error::VMError::internal(
+            StepResult::Error(crate::error::VMError::internal(
                 "continue: continuation already consumed (one-shot violation)",
             ))
         })?;
@@ -123,7 +124,7 @@ impl VM {
 
         // Switch to the head of the resumed chain
         self.current_segment = Some(head);
-        self.mode = Mode::Deliver(value);
+        self.mode = Mode::Send(value);
 
         Ok(())
     }
@@ -147,9 +148,9 @@ impl VM {
         &mut self,
         k: &mut Continuation,
         effect: &DispatchEffect,
-    ) -> Result<PerformResult, StepEvent> {
+    ) -> Result<PerformResult, StepResult> {
         let current = self.current_segment.ok_or_else(|| {
-            StepEvent::Error(crate::error::VMError::internal("reperform: no current fiber"))
+            StepResult::Error(crate::error::VMError::internal("reperform: no current fiber"))
         })?;
 
         // Append current fiber to the continuation chain
@@ -173,7 +174,7 @@ impl VM {
         let (handler_fiber_id, handler_parent) = current_parent
             .and_then(|p| self.find_handler_for_effect(p, effect))
             .ok_or_else(|| {
-                StepEvent::Error(crate::error::VMError::internal(
+                StepResult::Error(crate::error::VMError::internal(
                     "reperform: no outer handler found",
                 ))
             })?;
@@ -200,10 +201,10 @@ impl VM {
     ///   current_stack = parent
     ///   free(old)
     ///   hval(return_value)
-    pub fn fiber_return(&mut self, value: Value) -> StepEvent {
+    pub fn fiber_return(&mut self, value: Value) -> StepResult {
         let current = match self.current_segment {
             Some(id) => id,
-            None => return StepEvent::Error(crate::error::VMError::internal(
+            None => return StepResult::Error(crate::error::VMError::internal(
                 "fiber_return: no current fiber",
             )),
         };
@@ -217,8 +218,8 @@ impl VM {
         self.segments.free_segment(current);
 
         // Deliver return value to parent
-        self.mode = Mode::Deliver(value);
-        StepEvent::Continue
+        self.mode = Mode::Send(value);
+        StepResult::Continue
     }
 
     // -----------------------------------------------------------------------

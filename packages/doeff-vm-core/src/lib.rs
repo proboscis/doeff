@@ -1,4 +1,4 @@
-//! doeff-vm-core: generic VM machinery and handler protocol.
+//! doeff-vm-core: language-agnostic effect handler VM.
 
 pub mod handle;
 pub mod py_shared;
@@ -44,66 +44,36 @@ pub mod scope_store;
 #[cfg(feature = "python_bridge")]
 pub mod segment;
 #[cfg(feature = "python_bridge")]
-mod step;
-#[cfg(feature = "python_bridge")]
 pub mod value;
 #[cfg(feature = "python_bridge")]
 pub mod var_store;
 #[cfg(feature = "python_bridge")]
 mod vm;
-#[cfg(feature = "python_bridge")]
-mod vm_logging;
+
+// --- Re-exports ---
 
 #[cfg(feature = "python_bridge")]
 pub use arena::FiberArena;
 #[cfg(feature = "python_bridge")]
-pub use bridge::{
-    classify_yielded_for_vm, doctrl_tag, doctrl_to_pyexpr_for_vm, install_vm_hooks, is_doexpr_like,
-    is_effect_base_like, VmHooks,
-};
-// capture module removed — trace types will be rebuilt as extension
-#[cfg(feature = "python_bridge")]
 pub use continuation::{Continuation, OwnedControlContinuation, PendingContinuation, PyK};
 #[cfg(feature = "python_bridge")]
-pub use do_ctrl::{DoCtrl, DoExprTag, PyDoCtrlBase, PyDoExprBase};
+pub use do_ctrl::DoCtrl;
 #[cfg(feature = "python_bridge")]
-pub use doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
+pub use driver::{Mode, StepResult};
 #[cfg(feature = "python_bridge")]
-pub use driver::{Mode, StepEvent};
-#[cfg(feature = "python_bridge")]
-pub use effect::{
-    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, dispatch_to_pyobject,
-    make_execution_context_object, make_get_execution_context_effect, DispatchEffect, Effect,
-    PyEffectBase, PyExecutionContext, PyGetExecutionContext,
-};
+pub use effect::DispatchEffect;
 #[cfg(feature = "python_bridge")]
 pub use error::VMError;
 #[cfg(feature = "python_bridge")]
 pub use frame::Frame;
 #[cfg(feature = "python_bridge")]
-pub use handler::{IRStreamFactory, IRStreamFactoryRef, IRStreamProgram, IRStreamProgramRef};
+pub use ids::{FiberId, Marker, SegmentId, VarId};
 #[cfg(feature = "python_bridge")]
-pub use ids::{FiberId, Marker, PromiseId, RunnableId, SegmentId, TaskId, VarId};
-#[cfg(feature = "python_bridge")]
-pub use ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream, StreamLocation};
-#[cfg(feature = "python_bridge")]
-pub use kleisli::{Kleisli, KleisliDebugInfo, KleisliRef, PyKleisli, RustKleisli};
-#[cfg(feature = "python_bridge")]
-pub use memory_stats::{live_object_counts, VmLiveObjectCounts};
-#[cfg(feature = "python_bridge")]
-pub use py_key::HashedPyKey;
-#[cfg(feature = "python_bridge")]
-pub use python_call::{PendingPython, PyCallOutcome, PythonCall};
-#[cfg(feature = "python_bridge")]
-pub use result::{PyResultErr, PyResultOk};
-#[cfg(feature = "python_bridge")]
-pub use scope_store::ScopeStore;
+pub use ir_stream::{IRStream, IRStreamRef, StreamStep};
 #[cfg(feature = "python_bridge")]
 pub use segment::Fiber;
 #[cfg(feature = "python_bridge")]
-pub use step::PyException;
-#[cfg(feature = "python_bridge")]
-pub use value::Value;
+pub use value::{Callable, CallableRef, Value};
 #[cfg(feature = "python_bridge")]
 pub use var_store::VarStore;
 #[cfg(feature = "python_bridge")]

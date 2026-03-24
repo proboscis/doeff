@@ -30,7 +30,7 @@ pub struct Continuation {
     /// `take()` enforces one-shot: Some first time, None after.
     head: Option<FiberId>,
     /// Tail of the chain (last fiber). For O(1) append in reperform.
-    last_fiber: Option<FiberId>,
+    pub(crate) last_fiber: Option<FiberId>,
 }
 
 impl Continuation {
