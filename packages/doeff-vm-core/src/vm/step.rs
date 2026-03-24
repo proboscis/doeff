@@ -39,25 +39,7 @@ impl VM {
         exception: PyException,
         active_chain: Vec<ActiveChainEntry>,
     ) -> PyException {
-        let empty_context = Python::attach(|py| crate::effect::make_execution_context_object(py));
-        let context_value = match empty_context {
-            Ok(context) => Value::Python(PyShared::new(context)),
-            Err(err) => {
-                crate::vm_warn_log!(
-                    "failed to create ExecutionContext while finalizing uncaught exception: {err}"
-                );
-                return exception;
-            }
-        };
-
-        match TraceState::enrich_original_exception_with_context(
-            exception,
-            context_value,
-            active_chain,
-        ) {
-            Ok(exception) => exception,
-            Err(effect_err) => effect_err,
-        }
+        exception
     }
 
     fn should_treat_python_handler_gen_return_as_handler_completion(&self) -> bool {
@@ -283,7 +265,7 @@ impl VM {
                             };
                             self.completed_segment = Some(seg_id);
                             self.current_segment = None;
-                            self.trace_state.cleanup_orphaned_threw_dispatch_displays();
+
                             return StepEvent::Error(VMError::uncaught_exception(
                                 exc,
                                 trace,
@@ -856,14 +838,14 @@ impl VM {
         match step {
             IRStreamStep::Yield(yielded) => {
                 if incoming_throw.is_some() {
-                    self.trace_state.clear_error_frames();
+
                 }
                 self.propagate_auto_unwrap_program_context_to_yielded(metadata.as_ref(), &yielded);
                 self.handle_stream_yield(yielded, stream, metadata, handler_kind)
             }
             IRStreamStep::Return(value) => {
                 if incoming_throw.is_some() {
-                    self.trace_state.clear_error_frames();
+
                 }
                 if handler_kind.is_some() {
                     self.handle_handler_return(value)
@@ -891,7 +873,7 @@ impl VM {
                 }
 
                 if let Some(original) = self.active_error_dispatch_original_exception() {
-                    TraceState::set_exception_cause(&exc, &original);
+
                 }
                 let origin_cont_id = self.current_active_handler_dispatch_id().or_else(|| {
                     let origin_cont_id = self.current_segment_dispatch_id_any()?;
@@ -2579,7 +2561,7 @@ impl VM {
             });
             if let Some(origin_cont_id) = origin_cont_id {
                 if let Some(original) = self.original_exception_for_dispatch(origin_cont_id) {
-                    TraceState::set_exception_cause(&exception, &original);
+
                 }
                 self.emit_handler_threw_for_dispatch(origin_cont_id, &exception);
             }
@@ -2606,7 +2588,7 @@ impl VM {
         match outcome {
             PyCallOutcome::GenYield(yielded) => {
                 if incoming_throw.is_some() {
-                    self.trace_state.clear_error_frames();
+
                 }
                 if self.current_segment.is_none() {
                     return;
@@ -2616,7 +2598,7 @@ impl VM {
             }
             PyCallOutcome::GenReturn(value) => {
                 if incoming_throw.is_some() {
-                    self.trace_state.clear_error_frames();
+
                 }
                 if effective_handler_kind == Some(HandlerKind::Python)
                     && self.should_treat_python_handler_gen_return_as_handler_completion()
@@ -2651,7 +2633,7 @@ impl VM {
                             if let Some(original) =
                                 self.original_exception_for_dispatch(origin_cont_id)
                             {
-                                TraceState::set_exception_cause(&exception, &original);
+            
                             }
                             self.emit_handler_threw_for_dispatch(origin_cont_id, &exception);
                         }
@@ -2672,7 +2654,7 @@ impl VM {
                     {
                         if let Some(original) = self.original_exception_for_dispatch(origin_cont_id)
                         {
-                            TraceState::set_exception_cause(&exception, &original);
+        
                         }
                         self.emit_handler_threw_for_dispatch(origin_cont_id, &exception);
                     }
@@ -2711,7 +2693,7 @@ impl VM {
                     } else if self.current_segment_is_active_handler_for_dispatch(origin_cont_id) {
                         if let Some(original) = self.original_exception_for_dispatch(origin_cont_id)
                         {
-                            TraceState::set_exception_cause(&exception, &original);
+        
                         }
                         self.emit_handler_threw_for_dispatch(origin_cont_id, &exception);
                     } else if effective_handler_kind.is_some()
@@ -2721,7 +2703,7 @@ impl VM {
                     {
                         if let Some(original) = self.original_exception_for_dispatch(origin_cont_id)
                         {
-                            TraceState::set_exception_cause(&exception, &original);
+        
                         }
                         self.emit_handler_threw_for_dispatch(origin_cont_id, &exception);
                     }
