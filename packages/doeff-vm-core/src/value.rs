@@ -16,7 +16,14 @@ use crate::py_shared::PyShared;
 /// Python callables and Rust handlers both implement this.
 /// The VM doesn't know which — it just calls.
 pub trait Callable: Send + Sync + std::fmt::Debug {
+    /// Call with args, return a Value. Used by Apply.
     fn call(&self, args: Vec<Value>) -> Result<Value, VMError>;
+
+    /// Call as effect handler: returns a DoCtrl to evaluate.
+    /// The handler callable MUST return a DoExpr. Anything else is an error.
+    fn call_handler(&self, args: Vec<Value>) -> Result<crate::do_ctrl::DoCtrl, VMError> {
+        Err(VMError::type_error("callable does not support call_handler"))
+    }
 }
 
 pub type CallableRef = Arc<dyn Callable>;

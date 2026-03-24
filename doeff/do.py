@@ -13,24 +13,26 @@ The @do decorator — converts a generator function into a program factory.
 import inspect
 from functools import wraps
 
-from doeff.program import program
+from doeff.program import Expand, Apply, Pure
 
 
 def do(fn):
     """Wrap a generator function so calling it returns a DoExpr tree."""
+    from doeff_vm import Callable, IRStream
+
     @wraps(fn)
     def factory(*args):
         result = fn(*args)
         if inspect.isgenerator(result):
-            return result
+            return IRStream(result)
         # Non-generator @do function — wrap return value as a trivial generator
         def value_gen():
             if False:
-                yield  # make it a generator
+                yield
             return result
-        return value_gen()
+        return IRStream(value_gen())
 
     @wraps(fn)
     def wrapper(*args):
-        return program(factory, *args)
+        return Expand(Apply(Pure(Callable(factory)), [Pure(a) for a in args]))
     return wrapper
