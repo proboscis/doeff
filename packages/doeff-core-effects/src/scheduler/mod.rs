@@ -23,7 +23,7 @@ use crate::effect::{
 use crate::error::VMError;
 use crate::handler::{IRStreamFactory, IRStreamProgram, IRStreamProgramRef};
 use crate::handlers::AwaitHandlerFactory;
-use crate::ids::{ContId, PromiseId, TaskId};
+use crate::ids::{ContId, FiberId, PromiseId, TaskId};
 use crate::ir_stream::{IRStream, IRStreamStep, StreamLocation};
 use crate::kleisli::{DgfnKleisli, KleisliRef};
 use crate::py_shared::PyShared;
@@ -279,25 +279,13 @@ struct WokenTask {
     priority: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ReadyRootResume {
-    continuation: Continuation,
+    fiber_ids: Vec<FiberId>,
     outcome: Result<Value, PyException>,
     waiting_task: Option<TaskId>,
     waiting_store: VarStore,
     restore_waiting_store: bool,
-}
-
-impl Clone for ReadyRootResume {
-    fn clone(&self) -> Self {
-        Self {
-            continuation: self.continuation.clone_handle(),
-            outcome: self.outcome.clone(),
-            waiting_task: self.waiting_task,
-            waiting_store: self.waiting_store.clone(),
-            restore_waiting_store: self.restore_waiting_store,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1780,9 +1768,11 @@ impl SchedulerState {
         self.ready_root_resumes.insert(
             waiter_id,
             ReadyRootResume {
-                continuation: waiter
+                fiber_ids: waiter
                     .continuation
-                    .expect("root waiter must own a continuation"),
+                    .expect("root waiter must own a continuation")
+                    .fibers()
+                    .to_vec(),
                 outcome,
                 waiting_task: None,
                 waiting_store: waiter.waiting_store,
@@ -2097,9 +2087,11 @@ impl SchedulerState {
         self.ready_root_resumes.insert(
             waiter_id,
             ReadyRootResume {
-                continuation: waiter
+                fiber_ids: waiter
                     .continuation
-                    .expect("root fail-fast waiter must own a continuation"),
+                    .expect("root fail-fast waiter must own a continuation")
+                    .fibers()
+                    .to_vec(),
                 outcome: Err(fail_fast.error),
                 waiting_task: None,
                 waiting_store: waiter.waiting_store,
@@ -2436,7 +2428,7 @@ impl SchedulerState {
                         };
                         self.clear_waiters_for_owner(
                             ready_root.waiting_task,
-                            ready_root.continuation.cont_id,
+                            cont_id,
                         );
                         if let Some(waiting_task) = ready_root.waiting_task {
                             if let Err(error) = self.load_task_store(waiting_task, store) {
@@ -2449,12 +2441,13 @@ impl SchedulerState {
                         } else {
                             self.current_task = None;
                         }
+                        let continuation = Continuation::from_fiber(ready_root.fiber_ids[0], None);
                         return TransferNextOutcome::Step(match ready_root.outcome {
                             Ok(value) => {
-                                resume_to_continuation(started(ready_root.continuation), value)
+                                resume_to_continuation(started(continuation), value)
                             }
                             Err(error) => {
-                                throw_to_continuation(started(ready_root.continuation), error)
+                                throw_to_continuation(started(continuation), error)
                             }
                         });
                     }
@@ -2540,7 +2533,7 @@ impl SchedulerState {
                 };
                 self.clear_waiters_for_owner(
                     ready_root.waiting_task,
-                    ready_root.continuation.cont_id,
+                    cont_id,
                 );
                 if let Some(waiting_task) = ready_root.waiting_task {
                     self.load_task_store(waiting_task, store)?;
@@ -2551,9 +2544,10 @@ impl SchedulerState {
                 } else {
                     self.current_task = None;
                 }
+                let continuation = Continuation::from_fiber(ready_root.fiber_ids[0], None);
                 let step = match ready_root.outcome {
-                    Ok(value) => resume_to_continuation(started(ready_root.continuation), value),
-                    Err(error) => throw_to_continuation(started(ready_root.continuation), error),
+                    Ok(value) => resume_to_continuation(started(continuation), value),
+                    Err(error) => throw_to_continuation(started(continuation), error),
                 };
                 Ok(Some(step))
             }
@@ -2607,7 +2601,7 @@ impl Drop for SchedulerState {
 enum SchedulerPhase {
     Idle,
     SpawnAwaitTraceback {
-        k_user: Continuation,
+        k_fiber_ids: Vec<FiberId>,
         effect: DispatchEffect,
     },
     SpawnAwaitHandlers {
@@ -3223,11 +3217,12 @@ impl SchedulerProgram {
             (Some(current), Some(woken)) if woken.priority > current
         ) && !nested_preemptive_transfer_active;
         if should_preempt {
-            if let Err(error) = state.park_current_with_value(k_user.clone_handle(), Value::Unit) {
+            let transfer_k = Continuation::from_fiber(k_user.fibers()[0], None);
+            if let Err(error) = state.park_current_with_value(k_user, Value::Unit) {
                 return IRStreamStep::Throw(error);
             }
             drop(state);
-            self.continue_preemptive_transfer_step(k_user, store)
+            self.continue_preemptive_transfer_step(transfer_k, store)
         } else {
             resume_to_continuation(started(k_user), Value::Unit)
         }
@@ -3375,7 +3370,7 @@ impl IRStreamProgram for SchedulerProgram {
         match sched_effect {
             SchedulerEffect::Spawn { .. } => {
                 self.phase = SchedulerPhase::SpawnAwaitTraceback {
-                    k_user: k_user.clone_handle(),
+                    k_fiber_ids: k_user.fibers().to_vec(),
                     effect,
                 };
                 IRStreamStep::Yield(DoCtrl::GetTraceback {
@@ -3550,7 +3545,8 @@ impl IRStreamProgram for SchedulerProgram {
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, SchedulerPhase::Idle) {
-            SchedulerPhase::SpawnAwaitTraceback { k_user, effect } => {
+            SchedulerPhase::SpawnAwaitTraceback { k_fiber_ids, effect } => {
+                let k_user = Continuation::from_fiber(k_fiber_ids[0], None);
                 let traceback = match value {
                     Value::Traceback(hops) => hops,
                     Value::Python(_)
@@ -3798,13 +3794,14 @@ impl IRStreamProgram for SchedulerProgram {
                 let current_priority = state.current_task_priority();
                 let task_value = Value::Task(TaskHandle { id: task_id });
                 if matches!(current_priority, Some(current) if priority > current) {
+                    let transfer_k = Continuation::from_fiber(k_user.fibers()[0], None);
                     if let Err(error) =
-                        state.park_current_with_value(k_user.clone_handle(), task_value)
+                        state.park_current_with_value(k_user, task_value)
                     {
                         return IRStreamStep::Throw(error);
                     }
                     drop(state);
-                    self.continue_preemptive_transfer_step(k_user, store)
+                    self.continue_preemptive_transfer_step(transfer_k, store)
                 } else {
                     resume_to_continuation(started(k_user), task_value)
                 }
@@ -4438,7 +4435,7 @@ mod tests {
             .into_any();
 
             program.phase = SchedulerPhase::SpawnAwaitTraceback {
-                k_user,
+                k_fiber_ids: k_user.fibers().to_vec(),
                 effect: dispatch_from_shared(PyShared::new(spawn_effect)),
             };
 
@@ -6329,10 +6326,11 @@ mod tests {
             s.ready_root_resumes.insert(
                 k_user.cont_id,
                 ReadyRootResume {
-                    continuation: k_user.clone(),
+                    fiber_ids: k_user.fibers().to_vec(),
                     outcome: Ok(Value::List(vec![Value::Int(1), Value::Int(2)])),
                     waiting_task: None,
                     waiting_store: VarStore::new(),
+                    restore_waiting_store: false,
                 },
             );
 
@@ -6342,17 +6340,18 @@ mod tests {
         let mut program = SchedulerProgram::new(state.clone());
         let mut store = VarStore::new();
         let mut _scope = ScopeStore::default();
+        let k_cont_id = k_user.cont_id;
         let step = program.handle_gather(
-            k_user.clone(),
+            k_user,
             vec![Waitable::Task(t0), Waitable::Task(t1)],
             &mut store,
         );
 
-        assert!(step_targets_cont_id(&step, k_user.cont_id));
+        assert!(step_targets_cont_id(&step, k_cont_id));
 
         let s = state.lock().unwrap();
         assert!(
-            !s.ready_root_resumes.contains_key(&k_user.cont_id),
+            !s.ready_root_resumes.contains_key(&k_cont_id),
             "stale ready_root_resume for already-resumed continuation must be removed"
         );
     }

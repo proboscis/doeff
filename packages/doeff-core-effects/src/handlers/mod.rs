@@ -12,6 +12,7 @@ use pyo3::types::PyDict;
 
 use crate::continuation::Continuation;
 use crate::do_ctrl::DoCtrl;
+use crate::ids::FiberId;
 use crate::effect::{
     dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect,
     PyAcquireSemaphore, PyAsk, PyCreateExternalPromise, PyCreateSemaphore, PyGet, PyLocal,
@@ -903,7 +904,7 @@ impl IRStreamFactory for LazyAskHandlerFactory {
 enum LazyAskPhase {
     Idle,
     AwaitLocalEval {
-        continuation: Continuation,
+        fiber_ids: Vec<FiberId>,
         cache_snapshot: HashMap<HashedPyKey, LazyCacheEntry>,
         semaphore_snapshot: HashMap<HashedPyKey, LazySemaphoreEntry>,
     },
@@ -916,7 +917,7 @@ enum LazyAskPhase {
     },
     AwaitEval {
         key: HashedPyKey,
-        continuation: Continuation,
+        fiber_ids: Vec<FiberId>,
         source_id: usize,
         semaphore: Value,
     },
@@ -1120,15 +1121,15 @@ impl IRStreamProgram for LazyAskHandlerProgram {
             match parse_local_python_effect(&obj) {
                 Ok(Some(local_effect)) => {
                     let (cache_snapshot, semaphore_snapshot) = self.snapshot_lazy_state();
-                    let eval_scope = k.clone_handle();
+                    let fiber_ids = k.fibers().to_vec();
                     self.phase = LazyAskPhase::AwaitLocalEval {
-                        continuation: k,
+                        fiber_ids,
                         cache_snapshot,
                         semaphore_snapshot,
                     };
                     return IRStreamStep::Yield(DoCtrl::EvalInScope {
                         expr: local_effect.sub_program,
-                        scope: eval_scope,
+                        scope: k,
                         bindings: local_effect.overrides,
                         metadata: None,
                     });
@@ -1165,11 +1166,12 @@ impl IRStreamProgram for LazyAskHandlerProgram {
     ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, LazyAskPhase::Idle) {
             LazyAskPhase::AwaitLocalEval {
-                continuation,
+                fiber_ids,
                 cache_snapshot,
                 semaphore_snapshot,
             } => {
                 self.exit_local_scope(cache_snapshot, semaphore_snapshot);
+                let continuation = Continuation::from_fiber(fiber_ids[0], None);
                 IRStreamStep::Yield(DoCtrl::Resume {
                     continuation,
                     value,
@@ -1216,27 +1218,28 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                     return self.begin_release_phase(continuation, Ok(cached), semaphore);
                 }
 
-                let eval_scope = continuation.clone_handle();
+                let fiber_ids = continuation.fibers().to_vec();
                 self.phase = LazyAskPhase::AwaitEval {
                     key,
-                    continuation,
+                    fiber_ids,
                     source_id,
                     semaphore,
                 };
                 IRStreamStep::Yield(DoCtrl::EvalInScope {
                     expr,
-                    scope: eval_scope,
+                    scope: continuation,
                     bindings: HashMap::new(),
                     metadata: None,
                 })
             }
             LazyAskPhase::AwaitEval {
                 key,
-                continuation,
+                fiber_ids,
                 source_id,
                 semaphore,
             } => {
                 self.lazy_cache_put(key, source_id, value.clone());
+                let continuation = Continuation::from_fiber(fiber_ids[0], None);
                 self.begin_release_phase(continuation, Ok(value), semaphore)
             }
             LazyAskPhase::AwaitRelease {
@@ -1261,21 +1264,25 @@ impl IRStreamProgram for LazyAskHandlerProgram {
     ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, LazyAskPhase::Idle) {
             LazyAskPhase::AwaitLocalEval {
-                continuation,
+                fiber_ids,
                 cache_snapshot,
                 semaphore_snapshot,
             } => {
                 self.exit_local_scope(cache_snapshot, semaphore_snapshot);
+                let continuation = Continuation::from_fiber(fiber_ids[0], None);
                 Self::transfer_throw(continuation, exc)
             }
             LazyAskPhase::AwaitAcquire { continuation, .. } => {
                 Self::transfer_throw(continuation, exc)
             }
             LazyAskPhase::AwaitEval {
-                continuation,
+                fiber_ids,
                 semaphore,
                 ..
-            } => self.begin_release_phase(continuation, Err(exc), semaphore),
+            } => {
+                let continuation = Continuation::from_fiber(fiber_ids[0], None);
+                self.begin_release_phase(continuation, Err(exc), semaphore)
+            }
             LazyAskPhase::AwaitRelease { continuation, .. } => {
                 Self::transfer_throw(continuation, exc)
             }
@@ -1625,7 +1632,7 @@ impl IRStreamFactory for ResultSafeHandlerFactory {
 #[derive(Debug)]
 enum ResultSafePhase {
     Idle,
-    AwaitEval { continuation: Continuation },
+    AwaitEval { fiber_ids: Vec<FiberId> },
 }
 
 #[derive(Debug)]
@@ -1680,11 +1687,11 @@ impl IRStreamProgram for ResultSafeHandlerProgram {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_result_safe_python_effect(&obj) {
                 Ok(Some(sub_program)) => {
-                    let eval_scope = k.clone_handle();
-                    self.phase = ResultSafePhase::AwaitEval { continuation: k };
+                    let fiber_ids = k.fibers().to_vec();
+                    self.phase = ResultSafePhase::AwaitEval { fiber_ids };
                     IRStreamStep::Yield(DoCtrl::EvalInScope {
                         expr: sub_program,
-                        scope: eval_scope,
+                        scope: k,
                         bindings: HashMap::new(),
                         metadata: None,
                     })
@@ -1712,7 +1719,10 @@ impl IRStreamProgram for ResultSafeHandlerProgram {
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, ResultSafePhase::Idle) {
-            ResultSafePhase::AwaitEval { continuation } => self.finish_ok(continuation, value),
+            ResultSafePhase::AwaitEval { fiber_ids } => {
+                let continuation = Continuation::from_fiber(fiber_ids[0], None);
+                self.finish_ok(continuation, value)
+            }
             ResultSafePhase::Idle => IRStreamStep::Return(value),
         }
     }
@@ -1724,7 +1734,10 @@ impl IRStreamProgram for ResultSafeHandlerProgram {
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, ResultSafePhase::Idle) {
-            ResultSafePhase::AwaitEval { continuation } => self.finish_err(continuation, exc),
+            ResultSafePhase::AwaitEval { fiber_ids } => {
+                let continuation = Continuation::from_fiber(fiber_ids[0], None);
+                self.finish_err(continuation, exc)
+            }
             ResultSafePhase::Idle => IRStreamStep::Throw(exc),
         }
     }

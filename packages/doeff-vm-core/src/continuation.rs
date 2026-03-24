@@ -294,7 +294,7 @@ impl Continuation {
         }
     }
 
-    pub(crate) fn from_fiber(fiber_id: FiberId, _captured_caller: Option<SegmentId>) -> Self {
+    pub fn from_fiber(fiber_id: FiberId, _captured_caller: Option<SegmentId>) -> Self {
         Self::new_captured(ContId::fresh(), vec![fiber_id])
     }
 
@@ -322,7 +322,7 @@ impl Continuation {
         self.fibers.first().copied()
     }
 
-    pub(crate) fn fibers(&self) -> &[FiberId] {
+    pub fn fibers(&self) -> &[FiberId] {
         self.fibers.as_slice()
     }
 
