@@ -36,26 +36,6 @@ impl PyVM {
     }
 
     /// Run a DoExpr program under a handler.
-    /// `handler`: Python callable (effect, k) → generator of DoExpr
-    /// `program`: DoExpr (body to execute under handler)
-    fn run_with_handler(
-        &mut self,
-        py: Python<'_>,
-        handler: Py<PyAny>,
-        program: Py<PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        let body_doctrl = classify_program(py, &program)?;
-
-        let handler_callable = PythonCallable::new(handler.clone_ref(py));
-        let handler_value = Value::Callable(std::sync::Arc::new(handler_callable) as CallableRef);
-
-        let with_handler = DoCtrl::WithHandler {
-            handler: handler_value,
-            body: Box::new(body_doctrl),
-        };
-
-        self.run_doctrl(py, with_handler)
-    }
 }
 
 impl PyVM {
