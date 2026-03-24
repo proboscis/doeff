@@ -212,14 +212,14 @@ pub enum EvalReturnContinuation {
         metadata: CallMetadata,
     },
     ResumeToContinuation {
-        fiber_ids: Vec<FiberId>,
+        head_fiber: FiberId,
     },
     TailResumeReturn,
     ReturnToContinuation {
-        fiber_ids: Vec<FiberId>,
+        head_fiber: FiberId,
     },
     EvalInScopeReturn {
-        fiber_ids: Vec<FiberId>,
+        head_fiber: FiberId,
     },
     InterceptApplyResult {
         continuation: InterceptorContinuation,

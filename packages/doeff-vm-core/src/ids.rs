@@ -46,7 +46,7 @@ pub struct VarId {
 // Global counters for ID generation
 static MARKER_COUNTER: AtomicU64 = AtomicU64::new(1);
 static VAR_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-static CONT_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+// CONT_ID_COUNTER removed
 static RUNNABLE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 impl Marker {
@@ -92,21 +92,7 @@ impl VarId {
     }
 }
 
-impl ContId {
-    /// Create a fresh unique ContId.
-    pub fn fresh() -> Self {
-        ContId(CONT_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
-    }
-
-    /// Get the raw value.
-    pub fn raw(&self) -> u64 {
-        self.0
-    }
-
-    pub fn from_raw(value: u64) -> Self {
-        ContId(value)
-    }
-}
+// ContId impl removed
 
 impl RunnableId {
     /// Create a fresh unique RunnableId.
@@ -165,13 +151,6 @@ mod tests {
         let m1 = Marker::fresh();
         let m2 = Marker::fresh();
         assert_ne!(m1, m2);
-    }
-
-    #[test]
-    fn test_cont_id_fresh_is_unique() {
-        let c1 = ContId::fresh();
-        let c2 = ContId::fresh();
-        assert_ne!(c1, c2);
     }
 
     #[test]
