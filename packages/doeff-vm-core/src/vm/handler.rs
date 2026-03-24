@@ -2,12 +2,10 @@
 
 use std::sync::Arc;
 
-use pyo3::prelude::*;
-
-use crate::effect::{dispatch_ref_as_python, DispatchEffect};
+use crate::effect::DispatchEffect;
 use crate::error::VMError;
 use crate::ids::{FiberId, Marker, SegmentId};
-use crate::kleisli::KleisliRef;
+use crate::value::CallableRef;
 use crate::py_shared::PyShared;
 use crate::vm::VM;
 
@@ -16,7 +14,7 @@ use crate::vm::VM;
 pub(crate) struct HandlerChainEntry {
     pub marker: Marker,
     pub prompt_seg_id: SegmentId,
-    pub handler: KleisliRef,
+    pub handler: CallableRef,
     pub types: Option<Arc<Vec<PyShared>>>,
 }
 
@@ -85,7 +83,7 @@ impl VM {
     pub(super) fn find_prompt_boundary_by_marker(
         &self,
         marker: Marker,
-    ) -> Option<(SegmentId, KleisliRef, Option<Arc<Vec<PyShared>>>)> {
+    ) -> Option<(SegmentId, CallableRef, Option<Arc<Vec<PyShared>>>)> {
         self.segments.iter().find_map(|(seg_id, seg)| {
             let handler = seg.handler.as_ref()?;
             let prompt = handler.prompt_boundary()?;
@@ -94,20 +92,7 @@ impl VM {
         })
     }
 
-    /// Check if two effects have the same Python type.
-    pub(super) fn same_effect_python_type(a: &DispatchEffect, b: &DispatchEffect) -> bool {
-        let Some(a_obj) = dispatch_ref_as_python(a) else {
-            return false;
-        };
-        let Some(b_obj) = dispatch_ref_as_python(b) else {
-            return false;
-        };
-        Python::attach(|py| {
-            let a_ty = a_obj.bind(py).get_type();
-            let b_ty = b_obj.bind(py).get_type();
-            a_ty.as_ptr() == b_ty.as_ptr()
-        })
-    }
+    // same_effect_python_type removed — Python-specific, belongs in bridge layer
 
     /// Get the current handler chain from current_segment.
     pub(super) fn current_handler_chain(&self) -> Vec<HandlerChainEntry> {

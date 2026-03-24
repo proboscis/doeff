@@ -2,7 +2,7 @@
 
 use crate::effect::DispatchEffect;
 use crate::ids::{FiberId, Marker};
-use crate::step::PyException;
+use crate::value::Value;
 
 #[derive(Debug, Clone)]
 pub enum VMError {
@@ -34,7 +34,7 @@ pub enum VMError {
         message: String,
     },
     UncaughtException {
-        exception: PyException,
+        exception: Value,
     },
 }
 
@@ -96,7 +96,7 @@ impl VMError {
         VMError::TypeError { message: message.into() }
     }
 
-    pub fn uncaught_exception(exception: PyException) -> Self {
+    pub fn uncaught_exception(exception: Value) -> Self {
         VMError::UncaughtException { exception }
     }
 }
