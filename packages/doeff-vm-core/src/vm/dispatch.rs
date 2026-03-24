@@ -63,6 +63,8 @@ impl VM {
             StepResult::Error(crate::error::VMError::internal("perform: no current fiber"))
         })?;
 
+
+
         // If the current fiber is itself a prompt boundary (handler performing an effect),
         // start the search from its parent to find an OUTER handler.
         let search_start = if self.segments.get(current).map_or(false, |s| s.is_prompt_boundary()) {
@@ -261,7 +263,6 @@ impl VM {
         while let Some(fid) = cursor {
             let seg = self.segments.get(fid)?;
             if seg.is_prompt_boundary() {
-                // TODO: check if this handler's types match the effect
                 let parent = seg.parent;
                 return Some((fid, parent));
             }
