@@ -422,7 +422,7 @@ fn step_targets_cont_id(step: &IRStreamStep, cont_id: ContId) -> bool {
         | IRStreamStep::Yield(DoCtrl::Transfer { continuation, .. })
         | IRStreamStep::Yield(DoCtrl::Discontinue { continuation, .. })
         | IRStreamStep::Yield(DoCtrl::TransferThrow { continuation, .. }) => {
-            continuation.cont_id == cont_id
+            continuation.derived_cont_id() == cont_id
         }
         IRStreamStep::Yield(DoCtrl::ResumeContinuation { continuation, .. }) => {
             continuation.cont_id() == cont_id
@@ -2151,10 +2151,9 @@ impl SchedulerState {
                 pending_log_merge_items,
                 ..
             }) => {
-                let cont_id = cont.cont_id();
                 let continuation = std::mem::replace(
                     cont,
-                    OwnedControlContinuation::Started(Continuation::placeholder(cont_id)),
+                    OwnedControlContinuation::Started(Continuation::placeholder()),
                 );
                 if continuation.is_placeholder() {
                     return Err(scheduler_internal_error(format!(
@@ -2764,7 +2763,7 @@ impl SchedulerProgram {
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         let waiting_task = state.current_task;
-        let cont_id = k_user.cont_id;
+        let cont_id = k_user.derived_cont_id();
         if let Some(aggregate) = state.collect_all_result(&items) {
             state.clear_waiters_for_owner(waiting_task, cont_id);
             return match aggregate {
@@ -2950,7 +2949,7 @@ impl SchedulerProgram {
                     other => other,
                 };
                 let next_running_task = state.current_task;
-                let resumed_preempted_caller = step_targets_cont_id(&step, k_user.cont_id);
+                let resumed_preempted_caller = step_targets_cont_id(&step, k_user.derived_cont_id());
                 let switched_into_task_body = step_switches_into_task_body(&step);
                 let keep_preemptive_transfer = next_running_task.is_some()
                     && switched_into_task_body
@@ -3011,7 +3010,7 @@ impl SchedulerProgram {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         let items = [item];
         let waiting_task = state.current_task;
-        let cont_id = k_user.cont_id;
+        let cont_id = k_user.derived_cont_id();
         if let Some(result) = state.collect_any_result(&items) {
             state.clear_waiters_for_owner(waiting_task, cont_id);
             return match result {
@@ -3059,7 +3058,7 @@ impl SchedulerProgram {
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         let waiting_task = state.current_task;
-        let cont_id = k_user.cont_id;
+        let cont_id = k_user.derived_cont_id();
         if let Some(first) = state.collect_any_result(&items) {
             state.clear_waiters_for_owner(waiting_task, cont_id);
             return match first {
@@ -3502,7 +3501,7 @@ impl IRStreamProgram for SchedulerProgram {
                         let mut state = self.state.lock().expect("Scheduler lock poisoned");
                         let items = [Waitable::Promise(promise_id)];
                         let waiting_task = state.current_task;
-                        let cont_id = k_user.cont_id;
+                        let cont_id = k_user.derived_cont_id();
                         let root_wait_continuation = if let Some(waiting_task) = state.current_task
                         {
                             if let Err(error) = state.suspend_task_for_wait(waiting_task, k_user) {
@@ -4194,7 +4193,7 @@ mod tests {
     #[test]
     fn test_transfer_to_continuation_started_emits_transfer() {
         let cont = make_test_continuation();
-        let cont_id = cont.cont_id;
+        let cont_id = cont.derived_cont_id();
         let step = transfer_to_continuation(cont, Value::Int(123));
 
         match step {
@@ -4202,7 +4201,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, cont_id);
+                assert_eq!(continuation.derived_cont_id(), cont_id);
                 assert_eq!(value.as_int(), Some(123));
             }
             _ => panic!("started continuation must emit DoCtrl::Transfer"),
@@ -4212,7 +4211,7 @@ mod tests {
     #[test]
     fn test_transfer_to_continuation_unstarted_emits_resume_continuation() {
         let cont = make_unstarted_test_continuation();
-        let cont_id = cont.cont_id;
+        let cont_id = cont.derived_cont_id();
         let step = transfer_to_continuation(cont, Value::Int(456));
 
         match step {
@@ -4220,7 +4219,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, cont_id);
+                assert_eq!(continuation.cont_id(), cont_id);
                 assert_eq!(value.as_int(), Some(456));
             }
             _ => panic!("unstarted continuation must emit DoCtrl::ResumeContinuation"),
@@ -4308,7 +4307,7 @@ mod tests {
         assert!(matches!(
             fresh_step,
             IRStreamStep::Yield(DoCtrl::Transfer { continuation, .. })
-            if continuation.cont_id == fresh_cont.cont_id
+            if continuation.derived_cont_id() == fresh_cont.derived_cont_id()
         ));
 
         let mut woke_ok_state = SchedulerState::new();
@@ -4329,7 +4328,7 @@ mod tests {
         assert!(matches!(
             woke_ok_step,
             IRStreamStep::Yield(DoCtrl::Transfer { continuation, value })
-            if continuation.cont_id == woke_ok_cont.cont_id && value.as_int() == Some(7)
+            if continuation.derived_cont_id() == woke_ok_cont.derived_cont_id() && value.as_int() == Some(7)
         ));
 
         let mut woke_err_state = SchedulerState::new();
@@ -4350,7 +4349,7 @@ mod tests {
         assert!(matches!(
             woke_err_step,
             IRStreamStep::Yield(DoCtrl::TransferThrow { continuation, .. })
-            if continuation.cont_id == woke_err_cont.cont_id
+            if continuation.derived_cont_id() == woke_err_cont.derived_cont_id()
         ));
     }
 
@@ -4499,7 +4498,7 @@ mod tests {
                     continuation,
                     value,
                 }) => {
-                    assert_eq!(continuation.cont_id, k_user_id);
+                    assert_eq!(continuation.derived_cont_id(), k_user_id);
                     assert!(matches!(value, Value::Task(_)));
                 }
                 _ => panic!("expected IRStream Yield(Resume|Transfer|ResumeContinuation)"),
@@ -4552,7 +4551,7 @@ mod tests {
             &mut _scope,
         );
         assert!(
-            step_targets_cont_id(&step, spawned_k.cont_id),
+            step_targets_cont_id(&step, spawned_k.derived_cont_id()),
             "higher-priority spawned task must run before caller, got {:?}",
             step
         );
@@ -4571,7 +4570,7 @@ mod tests {
         else {
             panic!("current task should remain pending after preemption");
         };
-        assert_eq!(cont.cont_id, caller_k.cont_id);
+        assert_eq!(cont.cont_id(), caller_k.derived_cont_id());
         assert!(
             matches!(resume_outcome, Some(Ok(Value::Task(_)))),
             "caller must be parked with spawned task handle"
@@ -4647,7 +4646,7 @@ mod tests {
                 &mut _scope,
             );
             assert!(
-                step_targets_cont_id(&step, waiter_k.cont_id),
+                step_targets_cont_id(&step, waiter_k.derived_cont_id()),
                 "higher-priority waiter must run first after promise completion, got {:?}",
                 step
             );
@@ -4662,7 +4661,7 @@ mod tests {
             else {
                 panic!("idle caller should remain pending after promise completion");
             };
-            assert_eq!(cont.cont_id, idle_k.cont_id);
+            assert_eq!(cont.cont_id(), idle_k.derived_cont_id());
             assert!(
                 matches!(resume_outcome, Some(Ok(Value::Unit))),
                 "idle caller should be parked with unit resume value"
@@ -4763,7 +4762,7 @@ mod tests {
         program.phase = SchedulerPhase::Driving {
             owner: WaitOwner::Task {
                 task_id: waiting_task,
-                cont_id: waiter_k.cont_id,
+                cont_id: waiter_k.derived_cont_id(),
             },
             running_task,
         };
@@ -4782,7 +4781,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, waiter_k.cont_id);
+                assert_eq!(continuation.derived_cont_id(), waiter_k.derived_cont_id());
                 match value {
                     Value::List(values) => {
                         assert_eq!(values.len(), 1);
@@ -4877,19 +4876,19 @@ mod tests {
                 &mut _scope,
             );
             assert!(
-                step_targets_cont_id(&first_step, normal_k.cont_id),
+                step_targets_cont_id(&first_step, normal_k.derived_cont_id()),
                 "NORMAL waiter should preempt IDLE driver, got {:?}",
                 first_step
             );
             assert!(matches!(
                 &program.phase,
                 SchedulerPhase::PreemptiveTransfer { k_user }
-                if k_user.cont_id == idle_driver_k.cont_id
+                if k_user.derived_cont_id() == idle_driver_k.derived_cont_id()
             ));
 
             let second_step = IRStream::resume(&mut program, Value::Unit, &mut store, &mut _scope);
             assert!(
-                step_targets_cont_id(&second_step, idle_driver_k.cont_id),
+                step_targets_cont_id(&second_step, idle_driver_k.derived_cont_id()),
                 "IDLE driver should resume after NORMAL task hands control back, got {:?}",
                 second_step
             );
@@ -4963,7 +4962,7 @@ mod tests {
             driving_program.phase = SchedulerPhase::Driving {
                 owner: WaitOwner::Task {
                     task_id: waiting_task,
-                    cont_id: waiter_k.cont_id,
+                    cont_id: waiter_k.derived_cont_id(),
                 },
                 running_task,
             };
@@ -5007,13 +5006,13 @@ mod tests {
                 IRStream::resume(&mut driving_program, Value::Unit, &mut store, &mut _scope);
 
             let mut waiter_activation_count = 0;
-            if step_targets_cont_id(&resolver_step, waiter_k.cont_id) {
+            if step_targets_cont_id(&resolver_step, waiter_k.derived_cont_id()) {
                 waiter_activation_count += 1;
             }
-            if step_targets_cont_id(&dequeue_step, waiter_k.cont_id) {
+            if step_targets_cont_id(&dequeue_step, waiter_k.derived_cont_id()) {
                 waiter_activation_count += 1;
             }
-            if step_targets_cont_id(&stale_step, waiter_k.cont_id) {
+            if step_targets_cont_id(&stale_step, waiter_k.derived_cont_id()) {
                 waiter_activation_count += 1;
             }
 
@@ -5022,11 +5021,11 @@ mod tests {
                 "waiter continuation must be activated exactly once across scheduler instances"
             );
             assert!(
-                step_targets_cont_id(&dequeue_step, waiter_k.cont_id),
+                step_targets_cont_id(&dequeue_step, waiter_k.derived_cont_id()),
                 "single activation must happen via ready-queue dequeue"
             );
             assert!(
-                !step_targets_cont_id(&stale_step, waiter_k.cont_id),
+                !step_targets_cont_id(&stale_step, waiter_k.derived_cont_id()),
                 "stale Driving instance must not reactivate waiter continuation"
             );
         });
@@ -5130,14 +5129,14 @@ mod tests {
                 &mut _scope,
             );
             assert!(
-                step_targets_cont_id(&first_step, normal_k.cont_id),
+                step_targets_cont_id(&first_step, normal_k.derived_cont_id()),
                 "first promise completion should preempt IDLE and run NORMAL, got {:?}",
                 first_step
             );
             assert!(matches!(
                 &program.phase,
                 SchedulerPhase::PreemptiveTransfer { k_user, .. }
-                if k_user.cont_id == idle_k.cont_id
+                if k_user.derived_cont_id() == idle_k.derived_cont_id()
             ));
 
             let wake_high = make_complete_promise_effect(
@@ -5157,14 +5156,14 @@ mod tests {
                 &mut _scope,
             );
             assert!(
-                step_targets_cont_id(&second_step, normal_k.cont_id),
+                step_targets_cont_id(&second_step, normal_k.derived_cont_id()),
                 "nested preemption must be blocked while transfer is active, got {:?}",
                 second_step
             );
             assert!(matches!(
                 &program.phase,
                 SchedulerPhase::PreemptiveTransfer { k_user, .. }
-                if k_user.cont_id == idle_k.cont_id
+                if k_user.derived_cont_id() == idle_k.derived_cont_id()
             ));
 
             let guard = state.lock().expect("Scheduler lock poisoned");
@@ -5250,7 +5249,7 @@ mod tests {
                 matches!(
                     &step,
                     IRStreamStep::Yield(DoCtrl::ResumeThrow { continuation, .. })
-                    if continuation.cont_id == waiter_k.cont_id
+                    if continuation.derived_cont_id() == waiter_k.derived_cont_id()
                 ),
                 "higher-priority waiter should receive non-terminal throw transfer, got {:?}",
                 step
@@ -5266,7 +5265,7 @@ mod tests {
             else {
                 panic!("idle caller should remain pending after promise failure");
             };
-            assert_eq!(cont.cont_id, idle_k.cont_id);
+            assert_eq!(cont.cont_id(), idle_k.derived_cont_id());
             assert!(
                 matches!(resume_outcome, Some(Ok(Value::Unit))),
                 "idle caller should be parked with unit resume value"
@@ -5320,7 +5319,7 @@ mod tests {
             &mut _scope,
         );
         assert!(
-            step_targets_cont_id(&step, caller_k.cont_id),
+            step_targets_cont_id(&step, caller_k.derived_cont_id()),
             "same-priority spawn should resume caller immediately, got {:?}",
             step
         );
@@ -5375,7 +5374,7 @@ mod tests {
             &mut _scope,
         );
         assert!(
-            step_targets_cont_id(&step, caller_k.cont_id),
+            step_targets_cont_id(&step, caller_k.derived_cont_id()),
             "lower-priority spawn should resume caller immediately, got {:?}",
             step
         );
@@ -5463,16 +5462,16 @@ mod tests {
 
         for i in 0..128 {
             let (task, expected_cont) = if i % 2 == 0 {
-                (task0, cont0.cont_id)
+                (task0, cont0.derived_cont_id())
             } else {
-                (task1, cont1.cont_id)
+                (task1, cont1.derived_cont_id())
             };
             state.enqueue_ready_task(task, PRIORITY_NORMAL);
 
             let step = state.transfer_next_or(scheduler_k.clone(), &mut store);
             match step {
                 IRStreamStep::Yield(DoCtrl::Transfer { continuation, .. }) => {
-                    assert_eq!(continuation.cont_id, expected_cont);
+                    assert_eq!(continuation.derived_cont_id(), expected_cont);
                 }
                 IRStreamStep::Yield(DoCtrl::Resume { .. }) => {
                     panic!("task switches must not emit DoCtrl::Resume")
@@ -5517,7 +5516,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, waiter.cont_id);
+                assert_eq!(continuation.derived_cont_id(), waiter.derived_cont_id());
                 match value {
                     Value::List(values) => {
                         assert_eq!(values.len(), 1);
@@ -5809,7 +5808,7 @@ mod tests {
 
             program.phase = SchedulerPhase::Driving {
                 owner: WaitOwner::Root {
-                    cont_id: gather_owner_k.cont_id,
+                    cont_id: gather_owner_k.derived_cont_id(),
                 },
                 running_task: waiting_task,
             };
@@ -5827,7 +5826,7 @@ mod tests {
             );
 
             assert!(
-                step_targets_cont_id(&step, runnable_k.cont_id),
+                step_targets_cont_id(&step, runnable_k.derived_cont_id()),
                 "blocked acquire should transfer into another runnable task, got {:?}",
                 step
             );
@@ -5836,7 +5835,7 @@ mod tests {
                 SchedulerPhase::Driving {
                     owner: WaitOwner::Root { cont_id },
                     running_task,
-                } if *cont_id == gather_owner_k.cont_id
+                } if *cont_id == gather_owner_k.derived_cont_id()
                     && *running_task == runnable_task
             ));
         });
@@ -6163,7 +6162,7 @@ mod tests {
         // Register a waiter on t1 (simulating what wait_on_all does
         // for the one remaining pending item)
         let waiter = make_test_continuation();
-        let waiter_id = waiter.cont_id;
+        let waiter_id = waiter.derived_cont_id();
         state.wait_on_all(
             &[Waitable::Task(t0), Waitable::Task(t1)],
             waiter,
@@ -6233,7 +6232,7 @@ mod tests {
 
         // Register race waiter on both
         let waiter = make_test_continuation();
-        let waiter_id = waiter.cont_id;
+        let waiter_id = waiter.derived_cont_id();
         state.wait_on_any(
             &[Waitable::Task(t0), Waitable::Task(t1)],
             waiter,
@@ -6324,7 +6323,7 @@ mod tests {
 
             let k_user = make_test_continuation();
             s.ready_root_resumes.insert(
-                k_user.cont_id,
+                k_user.derived_cont_id(),
                 ReadyRootResume {
                     fiber_ids: k_user.fibers().to_vec(),
                     outcome: Ok(Value::List(vec![Value::Int(1), Value::Int(2)])),
@@ -6340,7 +6339,7 @@ mod tests {
         let mut program = SchedulerProgram::new(state.clone());
         let mut store = VarStore::new();
         let mut _scope = ScopeStore::default();
-        let k_cont_id = k_user.cont_id;
+        let k_cont_id = k_user.derived_cont_id();
         let step = program.handle_gather(
             k_user,
             vec![Waitable::Task(t0), Waitable::Task(t1)],
@@ -6406,7 +6405,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, waiter_cont.cont_id);
+                assert_eq!(continuation.derived_cont_id(), waiter_cont.derived_cont_id());
                 assert_eq!(value.as_int(), Some(99));
             }
             other => panic!("expected waiter continuation to run, got {:?}", other),
@@ -6451,7 +6450,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, waiter_cont.cont_id);
+                assert_eq!(continuation.derived_cont_id(), waiter_cont.derived_cont_id());
                 assert_eq!(value.as_int(), Some(7));
             }
             other => panic!(
@@ -6485,7 +6484,7 @@ mod tests {
 
         state.wait_on_all(
             &[Waitable::Task(task_id)],
-            waiter_cont.cont_id,
+            waiter_cont.derived_cont_id(),
             Some(waiter_cont.clone()),
             &store,
         );
@@ -6512,7 +6511,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, waiter_cont.cont_id);
+                assert_eq!(continuation.derived_cont_id(), waiter_cont.derived_cont_id());
                 assert_eq!(value.as_int(), Some(7));
             }
             other => panic!(
@@ -6596,7 +6595,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, owner_a_cont.cont_id);
+                assert_eq!(continuation.derived_cont_id(), owner_a_cont.derived_cont_id());
                 assert_eq!(value.as_int(), Some(11));
             }
             other => panic!(
@@ -6645,7 +6644,7 @@ mod tests {
         let owner_after_first = make_test_continuation();
         let first_step = state.transfer_next_or(owner_after_first.clone(), &mut store);
         assert!(
-            step_targets_cont_id(&first_step, owner_after_first.cont_id),
+            step_targets_cont_id(&first_step, owner_after_first.derived_cont_id()),
             "waiter must not be ready after only first dependency completes"
         );
 
@@ -6665,7 +6664,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, waiter_cont.cont_id);
+                assert_eq!(continuation.derived_cont_id(), waiter_cont.derived_cont_id());
                 match value {
                     Value::List(values) => {
                         assert_eq!(values.len(), 2);
@@ -6731,7 +6730,7 @@ mod tests {
                 continuation,
                 value,
             }) => {
-                assert_eq!(continuation.cont_id, waiter_cont.cont_id);
+                assert_eq!(continuation.derived_cont_id(), waiter_cont.derived_cont_id());
                 assert_eq!(value.as_int(), Some(7));
             }
             other => panic!("expected waiter continuation to run, got {:?}", other),
