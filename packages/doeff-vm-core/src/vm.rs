@@ -48,7 +48,8 @@ const MISSING_UNKNOWN: &str = "[MISSING] <unknown>";
 #[path = "vm/handler.rs"]
 mod handler_impl;
 
-// dispatch_impl removed — will be rewritten as OCaml 5 five-operation model
+#[path = "vm/dispatch.rs"]
+mod dispatch_impl;
 
 #[path = "vm/step.rs"]
 mod step_impl;
@@ -254,21 +255,22 @@ impl DebugConfig {
     }
 }
 
+/// VM — 5 registers (OCaml 5 alignment).
+///
+/// Matches OCaml 5's domain_state:
+///   arena          = fiber pool
+///   current_fiber  = current_stack (the running fiber)
+///   heap           = VarStore (mutable ref cells, OCaml heap equivalent)
+///   mode           = Deliver | Throw | HandleYield | Return
+///   pending_python = GIL boundary (doeff-specific)
+///
+/// NO caches, NO trace_state, NO completed_segment, NO debug state on VM.
 pub struct VM {
     pub segments: FiberArena,
     pub var_store: VarStore,
-    pub py_store: Option<PyStore>,
     pub mode: Mode,
     pub pending_python: Option<PendingPython>,
     pub current_segment: Option<SegmentId>,
-    pub completed_segment: Option<SegmentId>,
-    pub(crate) debug: DebugState,
-    handler_type_match_cache: HashMap<(usize, usize), bool>,
-    segment_handler_resolution_cache: HashMap<(SegmentId, usize), CachedHandlerResolution>,
-    segment_topology_epochs: HashMap<SegmentId, u64>,
-    next_segment_topology_epoch: u64,
-    shared_builtin_prompt_cache: RwLock<HashMap<SegmentId, SegmentId>>,
-    pub active_run_token: Option<u64>,
 }
 
 impl VM {
@@ -276,18 +278,9 @@ impl VM {
         VM {
             segments: FiberArena::new(),
             var_store: VarStore::new(),
-            py_store: None,
             mode: Mode::Deliver(Value::Unit),
             pending_python: None,
             current_segment: None,
-            completed_segment: None,
-            debug: DebugState::new(DebugConfig::default()),
-            handler_type_match_cache: HashMap::new(),
-            segment_handler_resolution_cache: HashMap::new(),
-            segment_topology_epochs: HashMap::new(),
-            next_segment_topology_epoch: 1,
-            shared_builtin_prompt_cache: RwLock::new(HashMap::new()),
-            active_run_token: None,
         }
     }
 
