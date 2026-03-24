@@ -653,17 +653,6 @@ impl VM {
                     .map(|view| view.dispatch)
             });
 
-        let preserved = dispatch.as_ref().and_then(|dispatch| {
-            matches!(dispatch.trace.result, EffectResult::Threw { .. }).then(|| {
-                LiveDispatchSnapshot {
-                    origin_dispatch_id: dispatch.origin_dispatch_id,
-                    effect_repr: Self::effect_repr(&dispatch.effect),
-                    dispatch_display: dispatch.trace.clone(),
-                    frames: self.fiber_ids_frame_stack(&dispatch.origin_fiber_ids),
-                }
-            })
-        });
-
         if let Some(dispatch) = dispatch {
             self.clear_dispatch_forward_context(&dispatch);
             let seg_id = dispatch.handler_segment_id;
@@ -690,7 +679,6 @@ impl VM {
                 }
             }
         }
-        self.trace_state.remember_completed_dispatch(preserved);
     }
 
     fn dispatch_origin_view(&self, origin_dispatch_id: FiberId) -> Option<DispatchOriginView> {
@@ -786,33 +774,6 @@ impl VM {
             origin_dispatch_id = next_origin_dispatch_id;
         }
         depth
-    }
-
-    pub(super) fn live_dispatch_snapshots(&self) -> Vec<LiveDispatchSnapshot> {
-        self.live_dispatch_snapshots_from_segment(self.current_segment)
-    }
-
-    pub(super) fn live_dispatch_snapshots_from_segment(
-        &self,
-        start_segment: Option<SegmentId>,
-    ) -> Vec<LiveDispatchSnapshot> {
-        self.dispatch_frames_from_segment(start_segment)
-            .into_iter()
-            .map(|view| {
-                let handler_fiber_ids = self
-                    .active_handler_dispatch_for(view.dispatch.origin_dispatch_id)
-                    .map(|(_, fiber_ids, _)| fiber_ids);
-                let fiber_ids = handler_fiber_ids
-                    .as_deref()
-                    .unwrap_or(&view.dispatch.origin_fiber_ids);
-                LiveDispatchSnapshot {
-                    origin_dispatch_id: view.dispatch.origin_dispatch_id,
-                    effect_repr: Self::effect_repr(&view.dispatch.effect),
-                    dispatch_display: view.dispatch.trace.clone(),
-                    frames: self.fiber_ids_frame_stack(fiber_ids),
-                }
-            })
-            .collect()
     }
 
     pub(super) fn current_dispatch_origin(&self) -> Option<DispatchOriginView> {
@@ -1945,11 +1906,7 @@ impl VM {
 
         if handler_count == 0 {
             if let Some(original) = original_exception.clone() {
-                let exception = if restricted_error_context_dispatch {
-                    TraceState::ensure_execution_context(original)
-                } else {
-                    original
-                };
+                let exception = original;
                 self.mode = Mode::Throw(exception);
                 return Ok(StepEvent::Continue);
             }
@@ -2028,7 +1985,7 @@ impl VM {
         }
 
         let effect_frames = self.continuation_frame_stack(&k_user);
-        let effect_site = TraceState::effect_site_from_frames(&effect_frames);
+        let effect_site: Option<(FrameId, String, String, u32)> = None;
         let handler_seg = Segment::new(Some(prompt_seg_id));
         let handler_seg_id = self.alloc_segment(handler_seg);
         self.copy_interceptor_guard_state(Some(seg_id), handler_seg_id);
@@ -2463,26 +2420,13 @@ impl VM {
 
         if let Some((origin_dispatch_id, original_exception, terminal)) = error_dispatch {
             if terminal {
-                let active_chain = self
-                    .assemble_active_chain(Some(&original_exception))
-                    .into_iter()
-                    .filter(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
-                    .collect();
-                let enriched_exception = match TraceState::enrich_original_exception_with_context(
-                    original_exception,
-                    value,
-                    active_chain,
-                ) {
-                    Ok(exception) => exception,
-                    Err(effect_err) => effect_err,
-                };
                 self.complete_dispatch_context(origin_dispatch_id);
                 // Terminal error-context dispatches must detach from the active handler
                 // segment so normal completion does not re-pop the same DispatchOrigin.
                 let caller = self.continuation_parent_hint(&k);
                 self.enter_or_reenter_continuation_segment_with_dispatch(&mut k, caller, None);
                 k.mark_consumed();
-                self.mode = Mode::Throw(enriched_exception);
+                self.mode = Mode::Throw(original_exception);
                 return StepEvent::Continue;
             }
         }
@@ -2685,9 +2629,6 @@ impl VM {
             if throws_into_dispatch_origin {
                 Mode::Throw(exception)
             } else if throws_during_execution_context_dispatch {
-                if let Some(original) = original_exception {
-                    TraceState::set_exception_cause(&exception, &original);
-                }
                 Mode::Throw(exception)
             } else {
                 self.mode_after_generror(
@@ -3212,20 +3153,8 @@ impl VM {
             self.emit_resume_event_for_fiber_ids(origin_dispatch_id, handler_fiber_ids, false);
         }
         if let Some(original) = original_exception {
-            let active_chain = self
-                .assemble_active_chain(Some(&original))
-                .into_iter()
-                .filter(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
-                .collect();
             self.complete_dispatch_context(origin_dispatch_id);
-            self.mode = match TraceState::enrich_original_exception_with_context(
-                original,
-                value,
-                active_chain,
-            ) {
-                Ok(exception) => Mode::Throw(exception),
-                Err(effect_err) => Mode::Throw(effect_err),
-            };
+            self.mode = Mode::Throw(original);
             return StepEvent::Continue;
         }
         self.complete_dispatch_context(origin_dispatch_id);
@@ -3252,20 +3181,8 @@ impl VM {
         }
 
         if let Some(original) = self.original_exception_for_dispatch(origin_dispatch_id) {
-            let active_chain = self
-                .assemble_active_chain(Some(&original))
-                .into_iter()
-                .filter(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
-                .collect();
             self.complete_dispatch_context(origin_dispatch_id);
-            self.mode = match TraceState::enrich_original_exception_with_context(
-                original,
-                value,
-                active_chain,
-            ) {
-                Ok(exception) => Mode::Throw(exception),
-                Err(effect_err) => Mode::Throw(effect_err),
-            };
+            self.mode = Mode::Throw(original);
             return StepEvent::Continue;
         }
 
