@@ -29,7 +29,7 @@ use crate::frame::{
     CallMetadata, DispatchDisplay, DispatchEffectSite, EvalReturnContinuation, Frame,
     InterceptorChainLink, InterceptorContinuation, ProgramDispatch, ProgramFrameSnapshot,
 };
-use crate::ids::{ContId, FiberId, Marker, SegmentId};
+use crate::ids::{FiberId, Marker, SegmentId};
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
 use crate::kleisli::{notify_run_handlers_completed, IdentityKleisli, KleisliRef};
 use crate::memory_stats::live_object_counts;
@@ -213,8 +213,8 @@ struct WithHandlerPlan {
 
 #[derive(Clone)]
 struct DispatchOriginView {
-    origin_cont_id: ContId,
-    parent_origin_cont_id: Option<ContId>,
+    origin_dispatch_id: FiberId,
+    parent_dispatch_id: Option<FiberId>,
     effect: DispatchEffect,
     origin_fiber_ids: Vec<FiberId>,
     original_exception: Option<PyException>,
@@ -391,13 +391,13 @@ impl VM {
                     ..
                 } = frame
                 {
-                    dispatch_ids.insert(dispatch.origin_cont_id);
+                    dispatch_ids.insert(dispatch.origin_dispatch_id);
                 }
             }
         }
         for (_, segment) in self.segments.iter() {
             if let Some(dispatch) = &segment.pending_program_dispatch {
-                dispatch_ids.insert(dispatch.origin_cont_id);
+                dispatch_ids.insert(dispatch.origin_dispatch_id);
             }
         }
         dispatch_ids.len()

@@ -277,7 +277,7 @@ impl Value {
                     }
                     let cls = mod_.getattr("TraceDispatch")?;
                     let obj = cls.call1((
-                        dispatch_id.raw(),
+                        dispatch_id.index(),
                         effect_repr.as_str(),
                         handler_name.as_str(),
                         Self::handler_kind_to_str(handler_kind),
@@ -292,7 +292,7 @@ impl Value {
                 } else {
                     let dict = PyDict::new(py);
                     dict.set_item("kind", "dispatch")?;
-                    dict.set_item("dispatch_id", dispatch_id.raw())?;
+                    dict.set_item("dispatch_id", dispatch_id.index())?;
                     dict.set_item("effect_repr", effect_repr)?;
                     dict.set_item("handler_name", handler_name)?;
                     dict.set_item("handler_kind", Self::handler_kind_to_str(handler_kind))?;
@@ -328,7 +328,7 @@ impl Value {
                 if let Some(mod_) = &trace_mod {
                     let cls = mod_.getattr("TraceResumePoint")?;
                     let obj = cls.call1((
-                        dispatch_id.raw(),
+                        dispatch_id.index(),
                         handler_name.as_str(),
                         resumed_function_name.as_str(),
                         source_file.as_str(),
@@ -339,7 +339,7 @@ impl Value {
                 } else {
                     let dict = PyDict::new(py);
                     dict.set_item("kind", "resume_point")?;
-                    dict.set_item("dispatch_id", dispatch_id.raw())?;
+                    dict.set_item("dispatch_id", dispatch_id.index())?;
                     dict.set_item("handler_name", handler_name)?;
                     dict.set_item("resumed_function_name", resumed_function_name)?;
                     dict.set_item("source_file", source_file)?;
