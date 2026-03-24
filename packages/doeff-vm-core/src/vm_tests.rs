@@ -434,4 +434,136 @@ mod tests {
         let result = run_to_completion(&mut vm);
         assert!(result.is_err());
     }
+
+    // -----------------------------------------------------------------------
+    // Test 7: WithHandler + Perform + Resume (full effect handler cycle)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_with_handler_perform_resume() {
+        use crate::continuation::Continuation;
+
+        // The handler: receives (effect, k), resumes k with 100
+        #[derive(Debug)]
+        struct TestHandler;
+
+        impl Callable for TestHandler {
+            fn call(&self, args: Vec<Value>) -> Result<Value, VMError> {
+                // args = [effect, continuation]
+                // Return a stream that yields Resume(k, 100)
+                let k = match args.into_iter().nth(1) {
+                    Some(Value::Continuation(k)) => k,
+                    _ => return Err(VMError::internal("handler: expected continuation")),
+                };
+
+                #[derive(Debug)]
+                struct ResumeStream {
+                    k: Option<Continuation>,
+                }
+
+                impl IRStream for ResumeStream {
+                    fn resume(&mut self, value: Value) -> StreamStep {
+                        match self.k.take() {
+                            Some(k) => StreamStep::Instruction(DoCtrl::Resume {
+                                k,
+                                value: Value::Int(100),
+                            }),
+                            None => StreamStep::Done(value), // pass through body's return value
+                        }
+                    }
+
+                    fn throw(&mut self, error: Value) -> StreamStep {
+                        StreamStep::Error(error)
+                    }
+                }
+
+                let stream = IRStreamRef::new(Box::new(ResumeStream { k: Some(k) }));
+                Ok(Value::Stream(stream))
+            }
+        }
+
+        // The body: performs an effect, returns whatever it gets back
+        #[derive(Debug)]
+        struct BodyStream {
+            state: u8,
+        }
+
+        impl IRStream for BodyStream {
+            fn resume(&mut self, value: Value) -> StreamStep {
+                match self.state {
+                    0 => {
+                        // First resume — perform an effect
+                        self.state = 1;
+                        StreamStep::Instruction(DoCtrl::Perform {
+                            effect: Value::String("get_value".into()),
+                        })
+                    }
+                    1 => {
+                        // Got the resume value from handler — return it
+                        StreamStep::Done(value)
+                    }
+                    _ => StreamStep::Error(Value::String("bad state".into())),
+                }
+            }
+
+            fn throw(&mut self, error: Value) -> StreamStep {
+                StreamStep::Error(error)
+            }
+        }
+
+        // The root program: WithHandler(handler, body)
+        let handler = Value::Callable(Arc::new(TestHandler) as CallableRef);
+        let body_stream = IRStreamRef::new(Box::new(BodyStream { state: 0 }));
+        let body = Value::Stream(body_stream);
+
+        let root_stream = ScriptStream::new(
+            vec![DoCtrl::WithHandler { handler, body }],
+            Value::Unit, // won't reach — WithHandler runs body first
+        );
+
+        // We need a smarter root that captures the result
+        #[derive(Debug)]
+        struct RootStream {
+            yielded_with_handler: bool,
+            handler: Option<Value>,
+            body: Option<Value>,
+        }
+
+        impl IRStream for RootStream {
+            fn resume(&mut self, value: Value) -> StreamStep {
+                if !self.yielded_with_handler {
+                    self.yielded_with_handler = true;
+                    StreamStep::Instruction(DoCtrl::WithHandler {
+                        handler: self.handler.take().unwrap(),
+                        body: self.body.take().unwrap(),
+                    })
+                } else {
+                    // Got the result of the handled computation
+                    StreamStep::Done(value)
+                }
+            }
+
+            fn throw(&mut self, error: Value) -> StreamStep {
+                StreamStep::Error(error)
+            }
+        }
+
+        let handler2 = Value::Callable(Arc::new(TestHandler) as CallableRef);
+        let body_stream2 = IRStreamRef::new(Box::new(BodyStream { state: 0 }));
+        let body2 = Value::Stream(body_stream2);
+
+        let root = RootStream {
+            yielded_with_handler: false,
+            handler: Some(handler2),
+            body: Some(body2),
+        };
+
+        let mut vm = setup_vm_with_stream(root);
+        let result = run_to_completion(&mut vm);
+        match result {
+            Ok(Value::Int(100)) => {} // correct: body performed, handler resumed with 100
+            Ok(other) => panic!("expected Int(100), got {:?}", other),
+            Err(err) => panic!("expected Ok, got error: {:?}", err),
+        }
+    }
 }

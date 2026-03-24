@@ -13,6 +13,7 @@ use crate::do_ctrl::DoCtrl;
 use crate::driver::{ExternalCall, Mode, StepResult};
 use crate::error::VMError;
 use crate::frame::{EvalReturnContinuation, Frame};
+use crate::segment::Fiber;
 use crate::ids::VarId;
 use crate::ir_stream::StreamStep;
 use crate::value::Value;
@@ -357,15 +358,104 @@ impl VM {
 
     /// Evaluate Perform: find handler, detach chain, call handler.
     fn eval_perform(&mut self, effect: Value) -> StepResult {
-        // TODO: convert Value to DispatchEffect and use dispatch operations
-        self.mode = Mode::Raise(Value::String("Perform: not yet connected to dispatch".into()));
-        StepResult::Continue
+        // 1. Use dispatch to find handler and detach chain
+        let result = match self.perform_effect(&effect) {
+            Ok(result) => result,
+            Err(step_result) => return step_result,
+        };
+
+        let handler_fiber_id = result.handler_fiber_id;
+        let k = result.continuation;
+
+        // 2. Get the handler callable from the handler boundary fiber
+        let handler_callable = self.segments.get(handler_fiber_id)
+            .and_then(|seg| seg.prompt_handler().cloned());
+
+        let Some(handler_callable) = handler_callable else {
+            return StepResult::Error(VMError::internal("perform: handler has no callable"));
+        };
+
+        // 3. Call handler(effect, k) → should return Value::Stream
+        //    Then push that stream as a frame on the current fiber (handler's parent)
+        match handler_callable.call(vec![effect, Value::Continuation(k)]) {
+            Ok(Value::Stream(stream)) => {
+                // Push handler stream as frame on current fiber
+                if let Some(seg_id) = self.current_segment {
+                    if let Some(seg) = self.segments.get_mut(seg_id) {
+                        seg.push_frame(Frame::program(stream, None));
+                        self.mode = Mode::Send(Value::Unit);
+                        return StepResult::Continue;
+                    }
+                }
+                StepResult::Error(VMError::internal("perform: no current segment after detach"))
+            }
+            Ok(other) => {
+                // Handler returned a non-stream value — deliver it directly
+                self.mode = Mode::Send(other);
+                StepResult::Continue
+            }
+            Err(err) => StepResult::Error(err),
+        }
     }
 
-    /// Evaluate WithHandler: install handler, execute body.
+    /// Evaluate WithHandler: install handler boundary, create body fiber, execute body.
+    ///
+    /// OCaml 5 model:
+    ///   boundary_fiber = alloc(parent = current)
+    ///   boundary_fiber.handler = handler
+    ///   body_fiber = alloc(parent = boundary_fiber)
+    ///   current = body_fiber
+    ///   execute body on body_fiber
     fn eval_with_handler(&mut self, handler: Value, body: Value) -> StepResult {
-        // TODO: create Handler, call match_with, push body as frame
-        self.mode = Mode::Raise(Value::String("WithHandler: not yet connected to dispatch".into()));
+        let handler_callable = match handler {
+            Value::Callable(c) => c,
+            _ => {
+                self.mode = Mode::Raise(Value::String("WithHandler: handler is not callable".into()));
+                return StepResult::Continue;
+            }
+        };
+
+        // 1. Create boundary fiber with handler
+        let marker = crate::ids::Marker::fresh();
+        let handler_obj = crate::segment::Handler::prompt(
+            marker,
+            marker,
+            handler_callable,
+            None,
+        );
+        let boundary_fid = self.match_with(handler_obj);
+        // current_segment is now boundary_fid
+
+        // 2. Create a SEPARATE body fiber whose parent is the boundary
+        let body_fiber = Fiber::new(Some(boundary_fid));
+        let body_fid = self.alloc_segment(body_fiber);
+
+        // 3. Push body stream on the body fiber
+        let stream = match body {
+            Value::Stream(s) => s,
+            Value::Callable(callable) => {
+                match callable.call(vec![]) {
+                    Ok(Value::Stream(s)) => s,
+                    Ok(other) => {
+                        self.mode = Mode::Send(other);
+                        return StepResult::Continue;
+                    }
+                    Err(err) => return StepResult::Error(err),
+                }
+            }
+            _ => {
+                self.mode = Mode::Raise(Value::String("WithHandler: body must be Stream or Callable".into()));
+                return StepResult::Continue;
+            }
+        };
+
+        if let Some(body_seg) = self.segments.get_mut(body_fid) {
+            body_seg.push_frame(Frame::program(stream, None));
+        }
+
+        // 4. Switch to body fiber
+        self.current_segment = Some(body_fid);
+        self.mode = Mode::Send(Value::Unit);
         StepResult::Continue
     }
 
