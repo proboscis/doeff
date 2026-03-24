@@ -1,13 +1,18 @@
 """
 Cooperative scheduler — envelope-based, per-yield preemption.
 
-The scheduler is an effect handler that manages tasks. Each task's program
-is wrapped in an envelope that inserts SchedulerYield after every step
-and catches completion/failure.
+The scheduler is an effect handler that manages tasks. Each spawned task's
+program is wrapped in an envelope generator that:
+1. Forwards the task's yields to the VM
+2. Inserts SchedulerYield after each step (preemption point)
+3. Catches completion/failure → emits TaskCompleted
+
+The scheduler handler handles: Spawn, SchedulerYield, TaskCompleted,
+Wait, Gather. Everything else is passed to outer handlers.
 
 Usage:
     from doeff import do, run, WithHandler
-    from doeff.scheduler import scheduler, Spawn, Gather
+    from doeff.scheduler import scheduled, Spawn, Gather, Wait
 
     @do
     def main():
@@ -16,11 +21,12 @@ Usage:
         results = yield Gather(t1, t2)
         return results
 
-    run(WithHandler(scheduler(), main()))
+    run(scheduled(main()))
 """
 
-from doeff_vm import Callable, EffectBase, Ok, Err
-from doeff.program import Expand, Apply, Pure, Resume, Transfer, Pass, Perform
+from doeff_vm import EffectBase, Ok, Err
+from doeff.do import do
+from doeff.program import Resume, Transfer, Pass, Perform, WithHandler
 
 
 # ---------------------------------------------------------------------------
@@ -79,54 +85,49 @@ class Task:
 
 
 # ---------------------------------------------------------------------------
-# Envelope — wraps a task program to insert SchedulerYield after each step
+# Envelope
 # ---------------------------------------------------------------------------
 
 
-def _envelope(gen, task_id):
-    """Wrap a generator to insert SchedulerYield between each step.
+def _envelope(task_id):
+    """Create an envelope generator factory for a task.
 
-    Catches both success (StopIteration) and failure (Exception),
-    yielding TaskCompleted with Ok/Err result.
+    The envelope wraps the task's program: forwards yields, inserts
+    SchedulerYield after each step, catches completion/failure.
+
+    Returns a @do function that takes the task program as argument.
     """
-    result = None
-    try:
-        while True:
-            do_expr = gen.send(result)
-            result = yield do_expr
-            _ = yield Perform(SchedulerYield(task_id))
-    except StopIteration as e:
-        yield Perform(TaskCompleted(task_id, result=Ok(e.value)))
-    except Exception as e:
-        yield Perform(TaskCompleted(task_id, result=Err(e)))
+    @do
+    def run_enveloped(program):
+        result = None
+        try:
+            # Start the program — yield it to the VM, get first DoExpr
+            result = yield program
+        except Exception as e:
+            yield Perform(TaskCompleted(task_id, result=Err(e)))
+            return
+        yield Perform(TaskCompleted(task_id, result=Ok(result)))
+
+    return run_enveloped
 
 
 # ---------------------------------------------------------------------------
-# Task state
+# Scheduler state
 # ---------------------------------------------------------------------------
-
-
-_PENDING = "pending"
-_RUNNING = "running"
-_SUSPENDED = "suspended"
-_BLOCKED = "blocked"
-_COMPLETED = "completed"
-_FAILED = "failed"
 
 
 class _SchedulerState:
     def __init__(self):
         self.next_task_id = 0
-        self.tasks = {}        # task_id → { status, cont, result, ... }
-        self.ready_queue = []  # task_ids ready to run
-        self.waiters = {}      # task_id → list of (waiter_k, waiter_info)
-        self.current_task = None
+        self.tasks = {}        # task_id → dict
+        self.ready_queue = []  # task_ids
+        self.waiters = {}      # task_id → list of waiter info
 
     def alloc_task(self, program):
         tid = self.next_task_id
         self.next_task_id += 1
         self.tasks[tid] = {
-            "status": _PENDING,
+            "status": "pending",
             "program": program,
             "cont": None,
             "result": None,
@@ -134,145 +135,125 @@ class _SchedulerState:
         self.ready_queue.append(tid)
         return tid
 
-    def complete_task(self, task_id, result):
-        task = self.tasks[task_id]
-        if isinstance(result, Ok.__class__) or (hasattr(result, 'is_ok') and result.is_ok()):
-            task["status"] = _COMPLETED
-        else:
-            task["status"] = _FAILED
-        task["result"] = result
-        task["cont"] = None
-
-    def suspend_task(self, task_id, cont):
-        task = self.tasks[task_id]
-        task["status"] = _SUSPENDED
-        task["cont"] = cont
-
-    def block_task(self, task_id):
-        task = self.tasks[task_id]
-        task["status"] = _BLOCKED
-
     def next_ready(self):
         while self.ready_queue:
             tid = self.ready_queue.pop(0)
             task = self.tasks.get(tid)
-            if task and task["status"] in (_PENDING, _SUSPENDED):
+            if task and task["status"] in ("pending", "suspended"):
                 return tid
         return None
 
 
 # ---------------------------------------------------------------------------
-# Scheduler handler factory
+# Scheduler handler
 # ---------------------------------------------------------------------------
 
 
-def scheduler():
-    """Create a scheduler handler.
+def scheduled(body_program):
+    """Wrap a program with the scheduler handler.
 
-    Returns a generator function suitable for WithHandler.
+    Returns a DoExpr: WithHandler(scheduler_handler, body_program)
     """
     state = _SchedulerState()
 
-    def _handler(effect, k):
+    @do
+    def handler(effect, k):
         if isinstance(effect, Spawn):
-            # Create task, wrap in envelope
             tid = state.alloc_task(effect.program)
-            # Return Task handle to spawner immediately
             result = yield Resume(k, Task(tid))
             return result
 
         elif isinstance(effect, SchedulerYield):
             tid = effect.task_id
-            # Save current task's continuation
-            state.suspend_task(tid, k)
+            # Save continuation
+            task = state.tasks[tid]
+            task["status"] = "suspended"
+            task["cont"] = k
             state.ready_queue.append(tid)
-            # Switch to next ready task
-            yield from _switch_to_next(state)
+            # Switch to next
+            return (yield _switch_to_next(state))
 
         elif isinstance(effect, TaskCompleted):
             tid = effect.task_id
-            state.complete_task(tid, effect.result)
-            # Wake any waiters
-            _wake_waiters(state, tid)
-            # Switch to next ready task
-            yield from _switch_to_next(state)
-
-        elif isinstance(effect, Gather):
-            # Check if all tasks are done
-            all_done = all(
-                state.tasks[t.task_id]["status"] in (_COMPLETED, _FAILED)
-                for t in effect.tasks
-            )
-            if all_done:
-                results = _collect_results(state, effect.tasks)
-                result = yield Resume(k, results)
-                return result
+            task = state.tasks[tid]
+            result = effect.result
+            if hasattr(result, 'is_ok') and result.is_ok():
+                task["status"] = "completed"
+                task["result"] = result.value
             else:
-                # Block: register waiter for each incomplete task
-                state.current_task = None
-                for t in effect.tasks:
-                    tid = t.task_id
-                    if state.tasks[tid]["status"] not in (_COMPLETED, _FAILED):
-                        if tid not in state.waiters:
-                            state.waiters[tid] = []
-                        state.waiters[tid].append(("gather", k, effect.tasks))
-                yield from _switch_to_next(state)
+                task["status"] = "failed"
+                task["result"] = result
+            # Wake waiters
+            _wake_waiters(state, tid)
+            # Switch to next
+            return (yield _switch_to_next(state))
 
         elif isinstance(effect, Wait):
             tid = effect.task.task_id
             task = state.tasks[tid]
-            if task["status"] in (_COMPLETED, _FAILED):
-                result = yield Resume(k, _extract_result(task["result"]))
+            if task["status"] == "completed":
+                result = yield Resume(k, task["result"])
+                return result
+            elif task["status"] == "failed":
+                # TODO: propagate error
+                result = yield Resume(k, None)
                 return result
             else:
-                # Block: register waiter
+                # Block
                 if tid not in state.waiters:
                     state.waiters[tid] = []
                 state.waiters[tid].append(("wait", k))
-                yield from _switch_to_next(state)
+                return (yield _switch_to_next(state))
+
+        elif isinstance(effect, Gather):
+            all_done = all(
+                state.tasks[t.task_id]["status"] in ("completed", "failed")
+                for t in effect.tasks
+            )
+            if all_done:
+                results = [state.tasks[t.task_id]["result"] for t in effect.tasks]
+                result = yield Resume(k, results)
+                return result
+            else:
+                for t in effect.tasks:
+                    tid = t.task_id
+                    if state.tasks[tid]["status"] not in ("completed", "failed"):
+                        if tid not in state.waiters:
+                            state.waiters[tid] = []
+                        state.waiters[tid].append(("gather", k, effect.tasks))
+                        break
+                return (yield _switch_to_next(state))
 
         else:
-            # Not a scheduler effect — pass to outer handlers
             yield Pass(effect, k)
 
-    return _handler
+    return WithHandler(handler, body_program)
 
 
 def _switch_to_next(state):
-    """Pick next ready task and Transfer to it."""
+    """Pick next ready task and return DoExpr to run it."""
     tid = state.next_ready()
     if tid is None:
-        # No more tasks — scheduler is done
-        return
+        # No more tasks — return Unit
+        from doeff.program import Pure
+        return Pure(None)
 
     task = state.tasks[tid]
-    state.current_task = tid
 
-    if task["status"] == _PENDING:
-        # Start the task: wrap program in envelope
-        # The envelope must run UNDER the scheduler handler (via Perform),
-        # not inside the handler's generator. So we yield the envelope
-        # as a Perform(TaskRun) that the scheduler will handle by evaluating it.
-        task["status"] = _RUNNING
-        program = task["program"]
+    if task["status"] == "pending":
+        task["status"] = "running"
+        # Wrap program in envelope and start it
+        envelope = _envelope(tid)
+        return envelope(task["program"])
 
-        def make_envelope():
-            def task_gen():
-                return (yield program)
-            return _envelope(task_gen(), tid)
-
-        # Yield the enveloped task as a sub-program.
-        # This evaluates within the current handler scope, so SchedulerYield
-        # effects from the envelope will dispatch to the scheduler handler.
-        enveloped = Expand(Apply(Pure(Callable(make_envelope)), []))
-        yield enveloped
-
-    elif task["status"] == _SUSPENDED:
-        # Resume suspended task
-        task["status"] = _RUNNING
+    elif task["status"] == "suspended":
+        task["status"] = "running"
         cont = task["cont"]
         task["cont"] = None
-        yield Transfer(cont, None)
+        return Transfer(cont, None)
+
+    from doeff.program import Pure
+    return Pure(None)
 
 
 def _wake_waiters(state, completed_tid):
@@ -282,46 +263,40 @@ def _wake_waiters(state, completed_tid):
         if waiter[0] == "wait":
             _, waiter_k = waiter
             task = state.tasks[completed_tid]
-            result = _extract_result(task["result"])
-            # Re-add waiter to ready queue with its continuation
-            # We'll resume it when it gets scheduled
-            # For simplicity, resume immediately into ready queue
-            state.ready_queue.append(("wake", waiter_k, result))
+            # Re-queue the waiter with its continuation
+            # Create a synthetic "ready" entry
+            wake_tid = state.next_task_id
+            state.next_task_id += 1
+            state.tasks[wake_tid] = {
+                "status": "suspended",
+                "cont": waiter_k,
+                "program": None,
+                "result": None,
+            }
+            state.ready_queue.append(wake_tid)
 
         elif waiter[0] == "gather":
             _, waiter_k, gather_tasks = waiter
-            # Check if ALL tasks in the gather are now done
             all_done = all(
-                state.tasks[t.task_id]["status"] in (_COMPLETED, _FAILED)
+                state.tasks[t.task_id]["status"] in ("completed", "failed")
                 for t in gather_tasks
             )
             if all_done:
-                results = _collect_results(state, gather_tasks)
-                state.ready_queue.append(("wake", waiter_k, results))
+                wake_tid = state.next_task_id
+                state.next_task_id += 1
+                state.tasks[wake_tid] = {
+                    "status": "suspended",
+                    "cont": waiter_k,
+                    "program": None,
+                    "result": None,
+                }
+                state.ready_queue.append(wake_tid)
             else:
-                # Not all done yet — re-register for remaining tasks
+                # Not all done — re-register
                 for t in gather_tasks:
                     tid = t.task_id
-                    if state.tasks[tid]["status"] not in (_COMPLETED, _FAILED):
+                    if state.tasks[tid]["status"] not in ("completed", "failed"):
                         if tid not in state.waiters:
                             state.waiters[tid] = []
                         state.waiters[tid].append(("gather", waiter_k, gather_tasks))
-                        break  # Only register once
-
-
-def _collect_results(state, tasks):
-    """Collect results from completed tasks in order."""
-    results = []
-    for t in tasks:
-        task = state.tasks[t.task_id]
-        results.append(_extract_result(task["result"]))
-    return results
-
-
-def _extract_result(result):
-    """Extract value from Ok or raise from Err."""
-    if hasattr(result, 'is_ok') and result.is_ok():
-        return result.value
-    elif hasattr(result, 'is_err') and result.is_err():
-        raise result.error
-    return result
+                        break
