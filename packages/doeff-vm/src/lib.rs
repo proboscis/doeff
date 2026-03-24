@@ -10,7 +10,7 @@
 use pyo3::prelude::*;
 
 pub mod python_generator_stream;
-// pub mod pyvm; // TODO: rewrite for new architecture
+pub mod pyvm;
 
 // Re-export VM core types
 pub use doeff_vm_core::{
@@ -20,3 +20,9 @@ pub use doeff_vm_core::{
 pub use doeff_vm_core::value::{Callable, CallableRef};
 pub use doeff_vm_core::segment::Fiber;
 pub use doeff_vm_core::continuation::{OwnedControlContinuation, PendingContinuation, PyK};
+
+#[pymodule]
+fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    pyvm::register_pyvm(m)?;
+    Ok(())
+}
