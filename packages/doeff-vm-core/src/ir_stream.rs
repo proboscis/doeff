@@ -15,6 +15,14 @@ use crate::driver::ExternalCall;
 use crate::memory_stats;
 use crate::value::Value;
 
+/// Live source location from a stream (for traceback).
+#[derive(Debug, Clone)]
+pub struct StreamSourceLocation {
+    pub func_name: String,
+    pub source_file: String,
+    pub source_line: u32,
+}
+
 /// A stream of DoCtrl instructions.
 ///
 /// Language-agnostic interface. The VM steps through this.
@@ -25,6 +33,12 @@ pub trait IRStream: fmt::Debug + Send {
     /// Signal an error to the stream, get back the next step.
     /// The error is a Value (opaque to the VM).
     fn throw(&mut self, error: Value) -> StreamStep;
+
+    /// Live source location — read from the generator's current state.
+    /// Returns None for streams that don't carry source info (e.g. Rust-only streams).
+    fn source_location(&self) -> Option<StreamSourceLocation> {
+        None
+    }
 }
 
 /// What a stream produces when stepped.
@@ -90,5 +104,14 @@ impl IRStreamRef {
             .lock()
             .expect("IRStream lock poisoned")
             .throw(error)
+    }
+
+    /// Live source location from the underlying stream.
+    pub fn source_location(&self) -> Option<StreamSourceLocation> {
+        self.inner
+            .stream
+            .lock()
+            .expect("IRStream lock poisoned")
+            .source_location()
     }
 }

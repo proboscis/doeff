@@ -63,7 +63,7 @@ pub use frame::Frame;
 #[cfg(feature = "python_bridge")]
 pub use ids::{FiberId, Marker, SegmentId, VarId};
 #[cfg(feature = "python_bridge")]
-pub use ir_stream::{IRStream, IRStreamRef, StreamStep};
+pub use ir_stream::{IRStream, IRStreamRef, StreamSourceLocation, StreamStep};
 #[cfg(feature = "python_bridge")]
 pub use segment::Fiber;
 #[cfg(feature = "python_bridge")]
