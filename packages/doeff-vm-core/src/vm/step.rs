@@ -248,16 +248,16 @@ impl VM {
                 self.eval_with_handler(handler, body)
             }
 
-            DoCtrl::Pass => {
-                // TODO: reperform at outer handler
-                self.mode = Mode::Raise(Value::String("Pass: not yet implemented".into()));
-                StepResult::Continue
+            DoCtrl::Pass { effect, k } => {
+                // Inner handler doesn't handle — forward (effect, k) to outer handler.
+                // Pop handler stream, walk up to find next handler boundary.
+                self.eval_pass(effect, k)
             }
 
-            DoCtrl::Delegate => {
-                // TODO: delegate to outer handler
-                self.mode = Mode::Raise(Value::String("Delegate: not yet implemented".into()));
-                StepResult::Continue
+            DoCtrl::Delegate { effect, k } => {
+                // Same as Pass for now.
+                // TODO: append current handler fiber to k before forwarding.
+                self.eval_pass(effect, k)
             }
 
             DoCtrl::AllocVar { initial } => {
@@ -400,6 +400,57 @@ impl VM {
                 }
                 // Switch to boundary fiber to run the handler stream
                 self.current_segment = Some(handler_fiber_id);
+                self.mode = Mode::Send(Value::Unit);
+                StepResult::Continue
+            }
+            Ok(other) => {
+                self.mode = Mode::Send(other);
+                StepResult::Continue
+            }
+            Err(err) => StepResult::Error(err),
+        }
+    }
+
+    /// Evaluate Pass: inner handler doesn't handle, forward to outer handler.
+    /// Pop the inner handler's stream, walk to the outer boundary, call its handler.
+    fn eval_pass(&mut self, effect: Value, k: Continuation) -> StepResult {
+        // Current segment is the inner handler's boundary fiber
+        let inner_boundary = match self.current_segment {
+            Some(id) => id,
+            None => return StepResult::Error(VMError::internal("Pass: no current segment")),
+        };
+
+        // Pop handler stream from inner boundary
+        if let Some(seg) = self.segments.get_mut(inner_boundary) {
+            seg.frames.pop();
+        }
+
+        // Walk from inner boundary's parent to find the outer handler
+        let start = self.segments.get(inner_boundary).and_then(|s| s.parent);
+        let outer_handler = start.and_then(|start_id| {
+            self.find_handler_for_effect(start_id, &effect)
+        });
+
+        let Some((outer_handler_fid, _outer_parent)) = outer_handler else {
+            return StepResult::Error(VMError::internal("Pass: no outer handler found"));
+        };
+
+        // Get outer handler's callable
+        let outer_callable = self.segments.get(outer_handler_fid)
+            .and_then(|seg| seg.prompt_handler().cloned());
+
+        let Some(outer_callable) = outer_callable else {
+            return StepResult::Error(VMError::internal("Pass: outer handler has no callable"));
+        };
+
+        // Call outer handler with (effect, k)
+        match outer_callable.call(vec![effect, Value::Continuation(k)]) {
+            Ok(Value::Stream(stream)) => {
+                // Push outer handler stream on the outer boundary fiber
+                if let Some(seg) = self.segments.get_mut(outer_handler_fid) {
+                    seg.push_frame(Frame::program(stream, None));
+                }
+                self.current_segment = Some(outer_handler_fid);
                 self.mode = Mode::Send(Value::Unit);
                 StepResult::Continue
             }

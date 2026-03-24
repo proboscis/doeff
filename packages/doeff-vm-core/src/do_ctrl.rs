@@ -61,12 +61,14 @@ pub enum DoCtrl {
     WithHandler { handler: Value, body: Value },
 
     /// Current handler doesn't handle this effect. Re-perform at outer handler.
+    /// Handler passes back the effect and continuation it received.
     /// OCaml 5: reperform (handler returns None for this effect).
-    Pass,
+    Pass { effect: Value, k: Continuation },
 
     /// Forward effect to outer handler (handler explicitly delegates).
+    /// Same as Pass but handler fiber is appended to the continuation chain.
     /// OCaml 5: reperform with handler appended to continuation chain.
-    Delegate,
+    Delegate { effect: Value, k: Continuation },
 
     // --- Heap (OCaml ref cells) ---
 
