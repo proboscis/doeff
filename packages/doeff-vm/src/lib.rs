@@ -1,112 +1,22 @@
-//! doeff-vm: cdylib glue for VM core + core effects.
+//! doeff-vm: Python bridge for the language-agnostic VM.
+//!
+//! This crate connects Python (via PyO3) to doeff-vm-core.
+//! It provides:
+//!   - PythonGeneratorStream: Python generator → IRStream adapter
+//!   - classify_yielded: Python object → DoCtrl conversion
+//!   - Value ↔ Python conversion
+//!   - run() entry point
 
-pub mod arena {
-    pub use doeff_vm_core::arena::*;
-}
-pub mod capture {
-    pub use doeff_vm_core::capture::*;
-}
-pub mod continuation {
-    pub use doeff_vm_core::continuation::*;
-}
-pub mod dispatch {
-    pub use doeff_vm_core::dispatch::*;
-}
-pub mod do_ctrl {
-    pub use doeff_vm_core::do_ctrl::*;
-}
-pub mod doeff_generator {
-    pub use doeff_vm_core::doeff_generator::*;
-}
-pub mod driver {
-    pub use doeff_vm_core::driver::*;
-}
-pub mod effect {
-    pub use doeff_core_effects::effects::*;
-    pub use doeff_vm_core::effect::{
-        make_execution_context_object, make_get_execution_context_effect, PyExecutionContext,
-        PyGetExecutionContext,
-    };
-}
-pub mod error {
-    pub use doeff_vm_core::error::*;
-}
-pub mod frame {
-    pub use doeff_vm_core::frame::*;
-}
-mod handler {
-    pub use doeff_core_effects::handlers::*;
-    pub use doeff_vm_core::handler::*;
-}
-pub mod ids {
-    pub use doeff_vm_core::ids::*;
-}
-pub mod ir_stream {
-    pub use doeff_vm_core::ir_stream::*;
-}
-pub mod kleisli {
-    pub use doeff_vm_core::kleisli::*;
-}
-pub mod py_key {
-    pub use doeff_vm_core::py_key::*;
-}
-pub mod py_shared {
-    pub use doeff_vm_core::py_shared::*;
-}
-pub mod pyvm;
-pub mod python_call {
-    pub use doeff_vm_core::python_call::*;
-}
-pub mod var_store {
-    pub use doeff_vm_core::var_store::*;
-}
-pub mod scheduler {
-    pub use doeff_core_effects::scheduler::*;
-}
-pub mod scope_store {
-    pub use doeff_vm_core::scope_store::*;
-}
-pub mod segment {
-    pub use doeff_vm_core::segment::*;
-    pub(crate) use doeff_vm_core::{Fiber as Segment, FiberKind as SegmentKind};
-}
-mod step {
-    pub use doeff_vm_core::do_ctrl::DoCtrl;
-    pub use doeff_vm_core::driver::{Mode, PyException, StepEvent};
-    pub use doeff_vm_core::python_call::{PendingPython, PyCallOutcome, PythonCall};
-}
-pub mod value {
-    pub use doeff_vm_core::value::*;
-}
-mod vm {
-    pub use doeff_vm_core::{DebugConfig, DebugLevel, TraceEvent, VarStore, VM};
-}
+use pyo3::prelude::*;
 
-// Re-exports for convenience
-pub use arena::FiberArena;
-pub use capture::{
-    ActiveChainEntry, DelegationEntry, DispatchAction, EffectResult, FrameId, HandlerAction,
-    HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry, HandlerStatus, SpawnSite, TraceEntry,
-    TraceFrame, TraceHop,
+pub mod python_generator_stream;
+// pub mod pyvm; // TODO: rewrite for new architecture
+
+// Re-export VM core types
+pub use doeff_vm_core::{
+    Continuation, DoCtrl, FiberId, Frame, IRStream, IRStreamRef, Marker, Mode, SegmentId,
+    StepResult, StreamStep, Value, VarId, VarStore, VMError, VM,
 };
-pub use continuation::{Continuation, OwnedControlContinuation, PendingContinuation};
-pub use do_ctrl::DoCtrl;
-pub use doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
-pub use doeff_vm_core::DoExprTag;
-pub use driver::{Mode, StepEvent};
-pub use effect::*;
-pub use error::VMError;
-pub use frame::Frame;
-pub use handler::*;
-pub use ids::{ContId, FiberId, Marker, PromiseId, RunnableId, SegmentId, TaskId, VarId};
-pub use ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream, StreamLocation};
-pub use kleisli::{Kleisli, KleisliDebugInfo, KleisliRef, PyKleisli, RustKleisli};
-pub use py_key::HashedPyKey;
-pub use python_call::{PendingPython, PyCallOutcome, PythonCall};
-pub use pyvm::PyVM;
-pub use scope_store::ScopeStore;
-pub use segment::{Fiber, FiberKind};
-pub use step::PyException;
-pub use value::{PyVar, Value};
-pub use var_store::VarStore;
-pub use vm::VM;
+pub use doeff_vm_core::value::{Callable, CallableRef};
+pub use doeff_vm_core::segment::Fiber;
+pub use doeff_vm_core::continuation::{OwnedControlContinuation, PendingContinuation, PyK};
