@@ -206,8 +206,12 @@ impl VM {
             }
 
             DoCtrl::Transfer { mut k, value } => {
-                // Same as Resume but handler is done (tail position)
-                // TODO: mark handler as done
+                // Tail position — pop handler frame before resuming
+                if let Some(seg_id) = self.current_segment {
+                    if let Some(seg) = self.segments.get_mut(seg_id) {
+                        seg.frames.pop(); // remove handler stream frame
+                    }
+                }
                 match self.continue_k(&mut k, value) {
                     Ok(()) => StepResult::Continue,
                     Err(event) => event,
@@ -225,6 +229,12 @@ impl VM {
             }
 
             DoCtrl::TransferThrow { mut k, exception } => {
+                // Tail position — pop handler frame before resuming
+                if let Some(seg_id) = self.current_segment {
+                    if let Some(seg) = self.segments.get_mut(seg_id) {
+                        seg.frames.pop();
+                    }
+                }
                 match self.continue_k(&mut k, Value::Unit) {
                     Ok(()) => {
                         self.mode = Mode::Raise(exception);
@@ -357,6 +367,10 @@ impl VM {
     }
 
     /// Evaluate Perform: find handler, detach chain, call handler.
+    ///
+    /// After perform_effect: current_segment = handler's parent (root).
+    /// We push the handler stream on the BOUNDARY fiber so that when
+    /// Resume re-links body.parent → boundary, the chain is correct.
     fn eval_perform(&mut self, effect: Value) -> StepResult {
         // 1. Use dispatch to find handler and detach chain
         let result = match self.perform_effect(&effect) {
@@ -376,21 +390,20 @@ impl VM {
         };
 
         // 3. Call handler(effect, k) → should return Value::Stream
-        //    Then push that stream as a frame on the current fiber (handler's parent)
         match handler_callable.call(vec![effect, Value::Continuation(k)]) {
             Ok(Value::Stream(stream)) => {
-                // Push handler stream as frame on current fiber
-                if let Some(seg_id) = self.current_segment {
-                    if let Some(seg) = self.segments.get_mut(seg_id) {
-                        seg.push_frame(Frame::program(stream, None));
-                        self.mode = Mode::Send(Value::Unit);
-                        return StepResult::Continue;
-                    }
+                // Push handler stream on the BOUNDARY fiber (not root)
+                // This way, when Resume links body.parent → boundary,
+                // the next perform from body can find the handler.
+                if let Some(seg) = self.segments.get_mut(handler_fiber_id) {
+                    seg.push_frame(Frame::program(stream, None));
                 }
-                StepResult::Error(VMError::internal("perform: no current segment after detach"))
+                // Switch to boundary fiber to run the handler stream
+                self.current_segment = Some(handler_fiber_id);
+                self.mode = Mode::Send(Value::Unit);
+                StepResult::Continue
             }
             Ok(other) => {
-                // Handler returned a non-stream value — deliver it directly
                 self.mode = Mode::Send(other);
                 StepResult::Continue
             }

@@ -566,4 +566,312 @@ mod tests {
             Err(err) => panic!("expected Ok, got error: {:?}", err),
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Test 8: Transfer (tail position — handler done after resume)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_with_handler_perform_transfer() {
+        use crate::continuation::Continuation;
+
+        // Handler: receives (effect, k), transfers k with 200 (tail position)
+        #[derive(Debug)]
+        struct TransferHandler;
+
+        impl Callable for TransferHandler {
+            fn call(&self, args: Vec<Value>) -> Result<Value, VMError> {
+                let k = match args.into_iter().nth(1) {
+                    Some(Value::Continuation(k)) => k,
+                    _ => return Err(VMError::internal("handler: expected continuation")),
+                };
+
+                #[derive(Debug)]
+                struct TransferStream { k: Option<Continuation> }
+
+                impl IRStream for TransferStream {
+                    fn resume(&mut self, _value: Value) -> StreamStep {
+                        match self.k.take() {
+                            Some(k) => StreamStep::Instruction(DoCtrl::Transfer {
+                                k,
+                                value: Value::Int(200),
+                            }),
+                            None => unreachable!("Transfer is tail — handler shouldn't be resumed"),
+                        }
+                    }
+                    fn throw(&mut self, error: Value) -> StreamStep {
+                        StreamStep::Error(error)
+                    }
+                }
+
+                Ok(Value::Stream(IRStreamRef::new(Box::new(TransferStream { k: Some(k) }))))
+            }
+        }
+
+        // Body: performs, returns what it gets
+        #[derive(Debug)]
+        struct BodyStream { state: u8 }
+
+        impl IRStream for BodyStream {
+            fn resume(&mut self, value: Value) -> StreamStep {
+                match self.state {
+                    0 => { self.state = 1; StreamStep::Instruction(DoCtrl::Perform { effect: Value::String("get".into()) }) }
+                    1 => StreamStep::Done(value),
+                    _ => StreamStep::Error(Value::String("bad".into())),
+                }
+            }
+            fn throw(&mut self, error: Value) -> StreamStep { StreamStep::Error(error) }
+        }
+
+        #[derive(Debug)]
+        struct Root { done: bool, handler: Option<Value>, body: Option<Value> }
+
+        impl IRStream for Root {
+            fn resume(&mut self, value: Value) -> StreamStep {
+                if !self.done {
+                    self.done = true;
+                    StreamStep::Instruction(DoCtrl::WithHandler {
+                        handler: self.handler.take().unwrap(),
+                        body: self.body.take().unwrap(),
+                    })
+                } else {
+                    StreamStep::Done(value)
+                }
+            }
+            fn throw(&mut self, error: Value) -> StreamStep { StreamStep::Error(error) }
+        }
+
+        let mut vm = setup_vm_with_stream(Root {
+            done: false,
+            handler: Some(Value::Callable(Arc::new(TransferHandler) as CallableRef)),
+            body: Some(Value::Stream(IRStreamRef::new(Box::new(BodyStream { state: 0 })))),
+        });
+
+        let result = run_to_completion(&mut vm);
+        match result {
+            Ok(Value::Int(200)) => {}
+            Ok(other) => panic!("expected Int(200), got {:?}", other),
+            Err(err) => panic!("expected Ok, got error: {:?}", err),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 9: Multiple performs — handler handles two effects
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_handler_handles_multiple_performs() {
+        use crate::continuation::Continuation;
+
+        // Handler: resumes with incrementing values (10, 20)
+        #[derive(Debug)]
+        struct CountHandler;
+
+        impl Callable for CountHandler {
+            fn call(&self, args: Vec<Value>) -> Result<Value, VMError> {
+                let k = match args.into_iter().nth(1) {
+                    Some(Value::Continuation(k)) => k,
+                    _ => return Err(VMError::internal("expected k")),
+                };
+
+                static COUNTER: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(10);
+
+                let val = COUNTER.fetch_add(10, std::sync::atomic::Ordering::Relaxed);
+
+                #[derive(Debug)]
+                struct S { k: Option<Continuation>, val: i64 }
+
+                impl IRStream for S {
+                    fn resume(&mut self, value: Value) -> StreamStep {
+                        match self.k.take() {
+                            Some(k) => StreamStep::Instruction(DoCtrl::Resume { k, value: Value::Int(self.val) }),
+                            None => StreamStep::Done(value),
+                        }
+                    }
+                    fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
+                }
+
+                Ok(Value::Stream(IRStreamRef::new(Box::new(S { k: Some(k), val }))))
+            }
+        }
+
+        // Body: performs twice, adds the results
+        #[derive(Debug)]
+        struct BodyStream { state: u8, first: i64 }
+
+        impl IRStream for BodyStream {
+            fn resume(&mut self, value: Value) -> StreamStep {
+                match self.state {
+                    0 => { self.state = 1; StreamStep::Instruction(DoCtrl::Perform { effect: Value::String("a".into()) }) }
+                    1 => {
+                        if let Value::Int(v) = value { self.first = v; }
+                        self.state = 2;
+                        StreamStep::Instruction(DoCtrl::Perform { effect: Value::String("b".into()) })
+                    }
+                    2 => {
+                        if let Value::Int(v) = value {
+                            StreamStep::Done(Value::Int(self.first + v))
+                        } else {
+                            StreamStep::Error(Value::String("expected int".into()))
+                        }
+                    }
+                    _ => StreamStep::Error(Value::String("bad".into())),
+                }
+            }
+            fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
+        }
+
+        #[derive(Debug)]
+        struct Root { done: bool, handler: Option<Value>, body: Option<Value> }
+
+        impl IRStream for Root {
+            fn resume(&mut self, value: Value) -> StreamStep {
+                if !self.done {
+                    self.done = true;
+                    StreamStep::Instruction(DoCtrl::WithHandler {
+                        handler: self.handler.take().unwrap(),
+                        body: self.body.take().unwrap(),
+                    })
+                } else {
+                    StreamStep::Done(value)
+                }
+            }
+            fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
+        }
+
+        // Reset counter for this test
+        let mut vm = setup_vm_with_stream(Root {
+            done: false,
+            handler: Some(Value::Callable(Arc::new(CountHandler) as CallableRef)),
+            body: Some(Value::Stream(IRStreamRef::new(Box::new(BodyStream { state: 0, first: 0 })))),
+        });
+
+        let result = run_to_completion(&mut vm);
+        match result {
+            Ok(Value::Int(sum)) => {
+                // Counter starts at 10, increments by 10 each call
+                // First perform: 10, second: 20, sum = 30
+                assert_eq!(sum, 30, "expected 10 + 20 = 30, got {}", sum);
+            }
+            Ok(other) => panic!("expected Int, got {:?}", other),
+            Err(err) => panic!("expected Ok, got error: {:?}", err),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 10: Nested handlers — inner handles, outer untouched
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_nested_handlers_inner_handles() {
+        use crate::continuation::Continuation;
+
+        // Both handlers resume with different values
+        fn make_handler(reply: i64) -> Value {
+            #[derive(Debug)]
+            struct H { reply: i64 }
+
+            impl Callable for H {
+                fn call(&self, args: Vec<Value>) -> Result<Value, VMError> {
+                    let k = match args.into_iter().nth(1) {
+                        Some(Value::Continuation(k)) => k,
+                        _ => return Err(VMError::internal("expected k")),
+                    };
+                    let reply = self.reply;
+
+                    #[derive(Debug)]
+                    struct S { k: Option<Continuation>, reply: i64 }
+
+                    impl IRStream for S {
+                        fn resume(&mut self, value: Value) -> StreamStep {
+                            match self.k.take() {
+                                Some(k) => StreamStep::Instruction(DoCtrl::Resume { k, value: Value::Int(self.reply) }),
+                                None => StreamStep::Done(value),
+                            }
+                        }
+                        fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
+                    }
+
+                    Ok(Value::Stream(IRStreamRef::new(Box::new(S { k: Some(k), reply }))))
+                }
+            }
+
+            Value::Callable(Arc::new(H { reply }) as CallableRef)
+        }
+
+        // Body: performs once, returns the value
+        #[derive(Debug)]
+        struct BodyStream { state: u8 }
+
+        impl IRStream for BodyStream {
+            fn resume(&mut self, value: Value) -> StreamStep {
+                match self.state {
+                    0 => { self.state = 1; StreamStep::Instruction(DoCtrl::Perform { effect: Value::String("ask".into()) }) }
+                    1 => StreamStep::Done(value),
+                    _ => StreamStep::Error(Value::String("bad".into())),
+                }
+            }
+            fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
+        }
+
+        // Structure:
+        //   WithHandler(outer=999,
+        //     WithHandler(inner=42, body))
+        // Body performs → inner handles → returns 42
+
+        #[derive(Debug)]
+        struct InnerRoot { done: bool, inner_handler: Option<Value>, body: Option<Value> }
+
+        impl IRStream for InnerRoot {
+            fn resume(&mut self, value: Value) -> StreamStep {
+                if !self.done {
+                    self.done = true;
+                    StreamStep::Instruction(DoCtrl::WithHandler {
+                        handler: self.inner_handler.take().unwrap(),
+                        body: self.body.take().unwrap(),
+                    })
+                } else {
+                    StreamStep::Done(value)
+                }
+            }
+            fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
+        }
+
+        #[derive(Debug)]
+        struct OuterRoot { done: bool, outer_handler: Option<Value>, inner: Option<Value> }
+
+        impl IRStream for OuterRoot {
+            fn resume(&mut self, value: Value) -> StreamStep {
+                if !self.done {
+                    self.done = true;
+                    StreamStep::Instruction(DoCtrl::WithHandler {
+                        handler: self.outer_handler.take().unwrap(),
+                        body: self.inner.take().unwrap(),
+                    })
+                } else {
+                    StreamStep::Done(value)
+                }
+            }
+            fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
+        }
+
+        let inner_stream = IRStreamRef::new(Box::new(InnerRoot {
+            done: false,
+            inner_handler: Some(make_handler(42)),
+            body: Some(Value::Stream(IRStreamRef::new(Box::new(BodyStream { state: 0 })))),
+        }));
+
+        let mut vm = setup_vm_with_stream(OuterRoot {
+            done: false,
+            outer_handler: Some(make_handler(999)),
+            inner: Some(Value::Stream(inner_stream)),
+        });
+
+        let result = run_to_completion(&mut vm);
+        match result {
+            Ok(Value::Int(42)) => {} // inner handler handled it, not outer
+            Ok(other) => panic!("expected Int(42), got {:?}", other),
+            Err(err) => panic!("expected Ok, got error: {:?}", err),
+        }
+    }
 }
