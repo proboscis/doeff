@@ -48,8 +48,7 @@ const MISSING_UNKNOWN: &str = "[MISSING] <unknown>";
 #[path = "vm/handler.rs"]
 mod handler_impl;
 
-#[path = "vm/dispatch.rs"]
-mod dispatch_impl;
+// dispatch_impl removed — will be rewritten as OCaml 5 five-operation model
 
 #[path = "vm/step.rs"]
 mod step_impl;
