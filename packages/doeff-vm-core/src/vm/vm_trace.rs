@@ -306,7 +306,10 @@ impl VM {
             origin.origin_fiber_ids.clone()
         };
         self.fiber_ids_dispatch_is_live(&fiber_ids)
-            .then(|| Continuation::capture_from_fiber_ids(fiber_ids))
+            .then(|| {
+                let captured_caller = self.segments.get(fiber_ids[0]).and_then(|s| s.parent);
+                Continuation::from_fiber(fiber_ids[0], captured_caller)
+            })
     }
 
     pub(super) fn active_error_dispatch_original_exception(&self) -> Option<PyException> {
