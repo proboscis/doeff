@@ -40,6 +40,9 @@ pub mod value;
 pub mod var_store;
 #[cfg(feature = "python_bridge")]
 mod vm;
+#[cfg(feature = "python_bridge")]
+#[cfg(test)]
+mod vm_tests;
 
 // --- Re-exports ---
 
