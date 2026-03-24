@@ -516,7 +516,7 @@ impl VM {
             return match mode {
                 Mode::Deliver(value) => self.handle_tail_resume_return(value),
                 Mode::Throw(exception) => {
-                    if let Some(origin_cont_id) = self.current_origin_cont_id() {
+                    if let Some(origin_cont_id) = self.current_origin_dispatch_id() {
                         self.complete_dispatch_context(origin_cont_id);
                     }
                     self.mode = Mode::Throw(exception);
@@ -935,7 +935,7 @@ impl VM {
                 if let Err(err) = self.push_program_frame(stream, metadata, handler_kind) {
                     return StepEvent::Error(err);
                 }
-                let (marker, k) = if let Some(origin_cont_id) = self.current_origin_cont_id() {
+                let (marker, k) = if let Some(origin_cont_id) = self.current_origin_dispatch_id() {
                     let Some((_, handler_fiber_ids, marker)) = self
                         .active_handler_dispatch_for(origin_cont_id)
                         .or_else(|| self.handler_dispatch_for_any(origin_cont_id))
@@ -1839,7 +1839,7 @@ impl VM {
                     Ok(doctrl) => {
                         if let DoCtrl::IRStream { stream, metadata } = doctrl {
                             let has_active_dispatch = self
-                                .current_origin_cont_id()
+                                .current_origin_dispatch_id()
                                 .or_else(|| self.current_active_handler_dispatch_id())
                                 .is_some();
                             if has_active_dispatch {
@@ -2399,7 +2399,7 @@ impl VM {
                 {
                     Ok((stream, metadata)) => {
                         let Some(_dispatch_id) = self
-                            .current_origin_cont_id()
+                            .current_origin_dispatch_id()
                             .or_else(|| self.current_active_handler_dispatch_id())
                         else {
                             self.set_contextual_internal_throw(PyException::runtime_error(
@@ -2716,7 +2716,7 @@ impl VM {
                         self.emit_handler_threw_for_dispatch(origin_cont_id, &exception);
                     } else if effective_handler_kind.is_some()
                         && self.current_segment_dispatch_id_any().is_some_and(
-                            |current_origin_cont_id| current_origin_cont_id == origin_cont_id,
+                            |current_origin_dispatch_id| current_origin_dispatch_id == origin_cont_id,
                         )
                     {
                         if let Some(original) = self.original_exception_for_dispatch(origin_cont_id)
