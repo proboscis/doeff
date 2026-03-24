@@ -7,7 +7,7 @@ use crate::capture::{EffectResult, FrameId, HandlerDispatchEntry, HandlerKind};
 use crate::do_ctrl::{DoCtrl, InterceptMode};
 use crate::driver::PyException;
 use crate::effect::DispatchEffect;
-use crate::ids::{ContId, FiberId, Marker, SegmentId, VarId};
+use crate::ids::{FiberId, Marker, SegmentId, VarId};
 use crate::ir_stream::IRStreamRef;
 use crate::kleisli::KleisliRef;
 use crate::py_key::HashedPyKey;
@@ -149,8 +149,8 @@ impl Clone for DispatchDisplay {
 
 #[derive(Debug, Clone)]
 pub struct ProgramDispatch {
-    pub origin_cont_id: ContId,
-    pub parent_origin_cont_id: Option<ContId>,
+    pub origin_dispatch_id: FiberId,
+    pub parent_dispatch_id: Option<FiberId>,
     pub handler_segment_id: SegmentId,
     pub prompt_segment_id: SegmentId,
     pub effect: DispatchEffect,

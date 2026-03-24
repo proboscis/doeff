@@ -25,9 +25,24 @@ pub enum OwnedControlContinuation {
 // OwnedControlContinuation is intentionally NOT Clone — Continuation must flow by move (SPEC-VM-021).
 
 impl OwnedControlContinuation {
+    /// Returns the identity of this control continuation.
+    /// For started continuations, this is fibers[0].
+    /// For pending continuations, this is the ContId (no fibers yet).
+    pub fn identity(&self) -> Option<FiberId> {
+        match self {
+            Self::Started(continuation) => continuation.identity(),
+            Self::Pending(_) => None,
+        }
+    }
+
+    /// Returns a ContId for scheduler/tracking use.
+    /// For started continuations: derived from fibers[0].
+    /// For pending continuations: the stored ContId.
     pub fn cont_id(&self) -> ContId {
         match self {
-            Self::Started(continuation) => continuation.cont_id,
+            Self::Started(continuation) => ContId::from_raw(
+                continuation.identity().map(|f| f.index() as u64).unwrap_or(0),
+            ),
             Self::Pending(pending) => pending.cont_id,
         }
     }
@@ -84,7 +99,7 @@ impl PyK {
     }
 
     pub fn from_pending(pending: PendingContinuation) -> Self {
-        let continuation = Continuation::placeholder(pending.cont_id);
+        let continuation = Continuation::placeholder();
         Self {
             continuation,
             pending: Some(pending),
@@ -99,11 +114,16 @@ impl PyK {
         self.pending.clone()
     }
 
-    pub fn cont_id(&self) -> ContId {
-        self.pending
-            .as_ref()
-            .map(|pending| pending.cont_id)
-            .unwrap_or(self.continuation.cont_id)
+    /// Returns a display-friendly identity for this PyK.
+    /// Uses FiberId index for started continuations, ContId raw for pending.
+    pub fn display_id(&self) -> u64 {
+        if let Some(pending) = &self.pending {
+            return pending.cont_id.raw();
+        }
+        self.continuation
+            .identity()
+            .map(|fid| fid.index() as u64)
+            .unwrap_or(0)
     }
 
     pub fn is_exhausted(&self) -> bool {
@@ -115,7 +135,7 @@ impl PyK {
         if let Some(pending) = self.pending.take() {
             return OwnedControlContinuation::Pending(pending);
         }
-        let mut placeholder = Continuation::placeholder(self.continuation.cont_id);
+        let mut placeholder = Continuation::placeholder();
         placeholder.mark_consumed();
         OwnedControlContinuation::Started(std::mem::replace(&mut self.continuation, placeholder))
     }
@@ -123,8 +143,8 @@ impl PyK {
     pub fn take_continuation(&mut self) -> Continuation {
         match self.take_control_continuation() {
             OwnedControlContinuation::Started(continuation) => continuation,
-            OwnedControlContinuation::Pending(pending) => {
-                let mut placeholder = Continuation::placeholder(pending.cont_id);
+            OwnedControlContinuation::Pending(_pending) => {
+                let mut placeholder = Continuation::placeholder();
                 placeholder.mark_consumed();
                 placeholder
             }
@@ -135,7 +155,7 @@ impl PyK {
 #[pymethods]
 impl PyK {
     fn __repr__(&self) -> String {
-        format!("K({})", self.cont_id().raw())
+        format!("K({})", self.display_id())
     }
 }
 
@@ -267,43 +287,38 @@ impl Drop for PendingContinuation {
 
 #[derive(Debug)]
 pub struct Continuation {
-    pub cont_id: ContId,
     fibers: Option<Vec<FiberId>>,
 }
 
 // Continuation is intentionally NOT Clone — one-shot semantics enforced by Option::take (SPEC-VM-021).
 
 impl Continuation {
-    pub fn placeholder(cont_id: ContId) -> Self {
+    pub fn placeholder() -> Self {
         memory_stats::register_continuation();
         Self {
-            cont_id,
             fibers: Some(Vec::new()),
         }
     }
 
-    fn new_captured(cont_id: ContId, fibers: Vec<FiberId>) -> Self {
+    fn new_captured(fibers: Vec<FiberId>) -> Self {
         memory_stats::register_continuation();
         Self {
-            cont_id,
             fibers: Some(fibers),
         }
     }
 
     pub fn from_fiber(fiber_id: FiberId, _captured_caller: Option<SegmentId>) -> Self {
-        Self::new_captured(ContId::fresh(), vec![fiber_id])
+        Self::new_captured(vec![fiber_id])
     }
 
     pub fn capture(_segment: &Segment, segment_id: SegmentId) -> Self {
-        Self::new_captured(ContId::fresh(), vec![segment_id])
+        Self::new_captured(vec![segment_id])
     }
 
-    pub fn with_id(
-        cont_id: ContId,
-        fiber_id: FiberId,
-        _captured_caller: Option<SegmentId>,
-    ) -> Self {
-        Self::new_captured(cont_id, vec![fiber_id])
+    /// Returns the first FiberId as a natural unique identity for this continuation.
+    /// Used as dispatch identity (replaces ContId per SPEC-VM-021 Step 6).
+    pub fn identity(&self) -> Option<FiberId> {
+        self.fibers.as_ref().and_then(|f| f.first().copied())
     }
 
     pub fn is_started(&self) -> bool {
@@ -350,7 +365,13 @@ impl Continuation {
         self.fibers
             .as_ref()
             .filter(|f| f.len() > 1)
-            .map(|f| Self::new_captured(ContId::fresh(), f[1..].to_vec()))
+            .map(|f| Self::new_captured(f[1..].to_vec()))
+    }
+
+    /// Returns a ContId derived from fibers[0] for scheduler/tracking compatibility.
+    /// Continuation no longer stores ContId; this derives one from the natural fiber identity.
+    pub fn derived_cont_id(&self) -> ContId {
+        ContId::from_raw(self.identity().map(|f| f.index() as u64).unwrap_or(0))
     }
 
     pub fn consumed(&self) -> bool {
@@ -363,7 +384,8 @@ impl Continuation {
 
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let dict = PyDict::new(py);
-        dict.set_item("cont_id", self.cont_id.raw())?;
+        let id = self.identity().map(|f| f.index() as u64).unwrap_or(0);
+        dict.set_item("identity", id)?;
         dict.set_item("started", self.is_started())?;
         Ok(dict.into_any())
     }
@@ -378,7 +400,6 @@ impl Drop for Continuation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ids::Marker;
     use crate::memory_stats::live_object_counts;
 
     fn make_test_segment() -> (Segment, SegmentId) {
@@ -416,8 +437,8 @@ mod tests {
         let cont = Continuation::capture(&seg, seg_id);
         let independent = Continuation::from_fiber(cont.fibers()[0], None);
 
-        // Independent continuation has its own cont_id and consumed flag
-        assert_ne!(independent.cont_id, cont.cont_id);
+        // Independent continuation has same fiber identity but separate ownership
+        assert_eq!(independent.identity(), cont.identity());
         assert_eq!(independent.fibers(), &[seg_id]);
         assert!(!independent.consumed());
     }
