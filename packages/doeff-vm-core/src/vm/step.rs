@@ -175,16 +175,20 @@ impl VM {
 
             DoCtrl::Expand { expr } => {
                 // Evaluate inner, expect Value::Stream, push as frame
-                // TODO: need staged evaluation — for now handle Pure case
                 match *expr {
                     DoCtrl::Pure { value } => {
                         self.push_stream_value(value)
                     }
                     other => {
-                        // Need to evaluate first, then expand result
-                        // Push an ExpandReturn frame and evaluate
+                        // Push ExpandReturn frame so we intercept the result
+                        if let Some(seg_id) = self.current_segment {
+                            if let Some(seg) = self.segments.get_mut(seg_id) {
+                                seg.push_frame(Frame::EvalReturn(Box::new(
+                                    EvalReturnContinuation::ExpandReturn,
+                                )));
+                            }
+                        }
                         self.mode = Mode::Eval(other);
-                        // TODO: push frame to remember we need to expand the result
                         StepResult::Continue
                     }
                 }
@@ -293,6 +297,20 @@ impl VM {
                 }
                 StepResult::Continue
             }
+
+            DoCtrl::GetTraceback { from } => {
+                let locations = self.collect_traceback(from);
+                let frames: Vec<Value> = locations
+                    .into_iter()
+                    .map(|loc| Value::List(vec![
+                        Value::String(loc.func_name),
+                        Value::String(loc.source_file),
+                        Value::Int(loc.source_line as i64),
+                    ]))
+                    .collect();
+                self.mode = Mode::Send(Value::List(frames));
+                StepResult::Continue
+            }
         }
     }
 
@@ -314,9 +332,9 @@ impl VM {
                 StepResult::Error(VMError::internal("push_stream: no current segment"))
             }
             other => {
-                // Not a stream — just deliver the value
-                self.mode = Mode::Send(other);
-                StepResult::Continue
+                StepResult::Error(VMError::type_error(format!(
+                    "Expand: expected Value::Stream, got {:?}", other
+                )))
             }
         }
     }
@@ -527,6 +545,9 @@ impl VM {
             EvalReturnContinuation::TailResumeReturn => {
                 self.mode = Mode::Send(value);
                 StepResult::Continue
+            }
+            EvalReturnContinuation::ExpandReturn => {
+                self.push_stream_value(value)
             }
             _ => {
                 // Other EvalReturn variants — TODO

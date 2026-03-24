@@ -15,6 +15,23 @@ use doeff_vm_core::ir_stream::{IRStream, StreamStep};
 use doeff_vm_core::py_shared::PyShared;
 use doeff_vm_core::value::Value;
 
+/// Base class for Python effects. Subclass this in Python to define effects.
+/// The Rust side uses `is_instance_of::<PyEffectBase>()` for classification.
+///
+/// Yielding an EffectBase from a generator is implicitly treated as Perform(effect).
+#[pyclass(name = "EffectBase", subclass)]
+#[derive(Debug)]
+pub struct PyEffectBase;
+
+#[pymethods]
+impl PyEffectBase {
+    #[new]
+    #[pyo3(signature = (*_args, **_kwargs))]
+    fn new(_args: &Bound<'_, pyo3::types::PyTuple>, _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
+        Self
+    }
+}
+
 /// Wraps a Python callable as a VM Callable.
 /// Exported to Python as `Callable` — users must explicitly wrap.
 #[pyclass(name = "Callable")]
@@ -132,14 +149,26 @@ impl PythonGeneratorStream {
     }
 
     /// Classify a yielded Python object into a DoCtrl instruction.
-    /// The yielded object MUST be a DoExpr (has `tag`). Anything else is an error.
+    ///
+    /// If the object is a DoExpr (has `tag`), classify normally.
+    /// If the object is an EffectBase (has `__doeff_effect_base__`), treat as Perform(effect).
+    /// Anything else is an error.
     fn classify_yielded(&self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> StreamStep {
         match classify_python_object(py, obj) {
             Ok(doctrl) => StreamStep::Instruction(doctrl),
-            Err(msg) => StreamStep::Error(Value::String(format!(
-                "generator yielded non-DoExpr: {}. Use @do decorator or yield a DoExpr.",
-                msg
-            ))),
+            Err(_) => {
+                // EffectBase without tag → implicit Perform
+                if obj.is_instance_of::<PyEffectBase>() {
+                    StreamStep::Instruction(DoCtrl::Perform {
+                        effect: Value::Opaque(PyShared::new(obj.clone().unbind())),
+                    })
+                } else {
+                    StreamStep::Error(Value::String(format!(
+                        "generator yielded non-DoExpr: {:?}. Use @do decorator or yield a DoExpr/EffectBase.",
+                        obj.get_type()
+                    )))
+                }
+            }
         }
     }
 }
@@ -162,6 +191,49 @@ impl IRStream for PythonGeneratorStream {
         Python::attach(|py| {
             let py_error = value_to_python(py, error);
             self.throw_to_generator(&py_error)
+        })
+    }
+
+    fn source_location(&self) -> Option<doeff_vm_core::ir_stream::StreamSourceLocation> {
+        if self.exhausted {
+            return None;
+        }
+        Python::attach(|py| {
+            let gen = self.generator.bind(py);
+
+            // func_name and source_file from gi_code (stable)
+            let code = gen.getattr("gi_code").ok()?;
+            let func_name = code
+                .getattr("co_qualname")
+                .or_else(|_| code.getattr("co_name"))
+                .ok()?
+                .extract::<String>()
+                .ok()?;
+            let source_file = code
+                .getattr("co_filename")
+                .ok()?
+                .extract::<String>()
+                .ok()?;
+
+            // source_line from gi_frame.f_lineno (live — current yield site)
+            let source_line = gen
+                .getattr("gi_frame")
+                .ok()
+                .and_then(|frame| frame.getattr("f_lineno").ok())
+                .and_then(|lineno| lineno.extract::<u32>().ok())
+                .unwrap_or_else(|| {
+                    // Fallback to definition line
+                    code.getattr("co_firstlineno")
+                        .ok()
+                        .and_then(|l| l.extract::<u32>().ok())
+                        .unwrap_or(0)
+                });
+
+            Some(doeff_vm_core::ir_stream::StreamSourceLocation {
+                func_name,
+                source_file,
+                source_line,
+            })
         })
     }
 }
@@ -262,6 +334,15 @@ fn classify_tagged_to_doctrl(py: Python<'_>, obj: &Bound<'_, PyAny>, tag: u8) ->
             extract_continuation_and_exception(py, obj)
                 .map(|(k, exc)| DoCtrl::TransferThrow { k, exception: exc })
                 .ok()
+        }
+        23 => {
+            // GetTraceback { from: FiberId }
+            // The Python side passes a K object; we peek at its head fiber without consuming.
+            let k_obj = obj.getattr("continuation").ok()?;
+            let k_ref = k_obj.downcast::<doeff_vm_core::continuation::PyK>().ok()?;
+            let k_borrowed = k_ref.borrow();
+            let head = k_borrowed.peek_head()?;
+            Some(DoCtrl::GetTraceback { from: head })
         }
         _ => None,
     }

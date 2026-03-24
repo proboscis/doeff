@@ -11,6 +11,7 @@ use pyo3::prelude::*;
 
 pub mod python_generator_stream;
 pub mod pyvm;
+pub mod result;
 
 // Re-export VM core types
 pub use doeff_vm_core::{

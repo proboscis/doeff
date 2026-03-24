@@ -152,6 +152,8 @@ pub enum EvalReturnContinuation {
     InterceptEvalResult {
         continuation: InterceptorContinuation,
     },
+    /// Expand: inner expr evaluated, result must be Value::Stream → push as frame.
+    ExpandReturn,
 }
 
 impl EvalReturnContinuation {
@@ -170,7 +172,8 @@ impl EvalReturnContinuation {
             EvalReturnContinuation::ResumeToContinuation { .. }
             | EvalReturnContinuation::TailResumeReturn
             | EvalReturnContinuation::ReturnToContinuation { .. }
-            | EvalReturnContinuation::EvalInScopeReturn { .. } => None,
+            | EvalReturnContinuation::EvalInScopeReturn { .. }
+            | EvalReturnContinuation::ExpandReturn => None,
         }
     }
 }
