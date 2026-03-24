@@ -467,7 +467,6 @@ class TestWithHandler:
         result = doeff_run(WithHandler(outer, WithHandler(inner, body())))
         assert result == "outer:x"
 
-    @pytest.mark.xfail(reason="Pass topology: inner handler lost after outer resumes")
     def test_nested_pass_then_inner_handles(self):
         """After Pass+Resume, inner handler still works for next effect."""
         class Log(EffectBase):
@@ -500,7 +499,6 @@ class TestWithHandler:
         result = doeff_run(prog)
         assert result == "val:key"
 
-    @pytest.mark.xfail(reason="Pass topology: inner handler lost after outer resumes")
     def test_nested_mixed_effects(self):
         """Different handlers handle different effects with Pass."""
         class Ask(EffectBase):
