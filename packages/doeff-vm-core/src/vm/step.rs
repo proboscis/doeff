@@ -443,6 +443,8 @@ impl VM {
             None => return StepResult::Error(VMError::internal("Pass: no current segment")),
         };
 
+
+
         // Pop handler stream from inner boundary
         if let Some(seg) = self.segments.get_mut(inner_boundary) {
             seg.frames.pop();
