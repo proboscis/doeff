@@ -240,7 +240,7 @@ impl VM {
     /// Find a handler boundary that handles the given effect,
     /// walking up from `start` through parent pointers.
     /// Returns (handler_fiber_id, handler_parent).
-    fn find_handler_for_effect(
+    pub(crate) fn find_handler_for_effect(
         &self,
         start: FiberId,
         _effect: &DispatchEffect,
