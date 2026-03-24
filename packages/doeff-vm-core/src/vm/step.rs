@@ -880,9 +880,10 @@ impl VM {
                     self.mode = Mode::Throw(exc);
                     return StepEvent::Continue;
                 }
-                if let Some(continuation) =
-                    self.handler_stream_throw_continuation(&stream, handler_kind)
+                if let Some(throw_fiber_id) =
+                    self.handler_stream_throw_fiber_id(&stream, handler_kind)
                 {
+                    let continuation = self.capture_live_continuation(throw_fiber_id);
                     self.mode = Mode::HandleYield(DoCtrl::TransferThrow {
                         continuation,
                         exception: exc,
@@ -1527,10 +1528,10 @@ impl VM {
             DoCtrl::Eval { expr, metadata } => self.handle_yield_eval(expr, metadata),
             DoCtrl::EvalInScope {
                 expr,
-                scope,
+                scope_fiber,
                 bindings,
                 metadata,
-            } => self.handle_yield_eval_in_scope(expr, scope, bindings, metadata),
+            } => self.handle_yield_eval_in_scope(expr, scope_fiber, bindings, metadata),
             DoCtrl::AllocVar { initial } => self.handle_yield_alloc_var(initial),
             DoCtrl::ReadVar { var } => self.handle_yield_read_var(var),
             DoCtrl::WriteVar { var, value } => self.handle_yield_write_var(var, value),
@@ -1908,7 +1909,7 @@ impl VM {
     pub(super) fn handle_yield_eval_in_scope(
         &mut self,
         expr: PyShared,
-        scope: Continuation,
+        scope_fiber: FiberId,
         bindings: HashMap<HashedPyKey, Value>,
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
@@ -1920,9 +1921,7 @@ impl VM {
         let Some(_current_seg) = self.segments.get(current_seg_id) else {
             return StepEvent::Error(VMError::internal("EvalInScope current segment not found"));
         };
-        let captured_caller = self.parent_segment(current_seg_id);
-        let return_to = Continuation::from_fiber(current_seg_id, captured_caller);
-        let Some(scope_parent_seg_id) = self.eval_in_scope_chain_start_segment(&scope) else {
+        let Some(scope_parent_seg_id) = self.eval_in_scope_chain_start_segment(scope_fiber) else {
             return StepEvent::Error(VMError::internal(
                 "EvalInScope received scope from unknown segment",
             ));
@@ -1934,7 +1933,7 @@ impl VM {
         });
         child_seg.push_frame(Frame::EvalReturn(Box::new(
             EvalReturnContinuation::EvalInScopeReturn {
-                fiber_ids: return_to.fibers().to_vec(),
+                fiber_ids: vec![current_seg_id],
             },
         )));
         let child_seg_id = self.alloc_segment(child_seg);
@@ -2677,9 +2676,10 @@ impl VM {
                         self.emit_handler_threw_for_dispatch(origin_cont_id, &exception);
                     }
                 }
-                if let Some(continuation) =
-                    self.handler_stream_throw_continuation(&stream, handler_kind)
+                if let Some(throw_fiber_id) =
+                    self.handler_stream_throw_fiber_id(&stream, handler_kind)
                 {
+                    let continuation = self.capture_live_continuation(throw_fiber_id);
                     self.mode = Mode::HandleYield(DoCtrl::TransferThrow {
                         continuation,
                         exception,

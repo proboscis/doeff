@@ -10,7 +10,7 @@ use crate::continuation::{Continuation, OwnedControlContinuation};
 use crate::driver::PyException;
 use crate::effect::DispatchEffect;
 use crate::frame::CallMetadata;
-use crate::ids::{SegmentId, VarId};
+use crate::ids::{FiberId, SegmentId, VarId};
 use crate::ir_stream::IRStreamRef;
 use crate::kleisli::KleisliRef;
 use crate::py_key::HashedPyKey;
@@ -299,7 +299,7 @@ pub enum DoCtrl {
     },
     EvalInScope {
         expr: PyShared,
-        scope: Continuation,
+        scope_fiber: FiberId,
         bindings: HashMap<HashedPyKey, Value>,
         metadata: Option<CallMetadata>,
     },

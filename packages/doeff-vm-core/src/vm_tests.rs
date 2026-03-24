@@ -592,17 +592,11 @@ fn test_eval_in_scope_uses_scope_chain_for_dynamic_handler_lookup() {
 
     let scope_parent_id = vm.alloc_segment(Segment::new(None));
     let scope_seg_id = vm.alloc_segment(Segment::new(Some(scope_parent_id)));
-    let scope_seg = vm
-        .segments
-        .get(scope_seg_id)
-        .expect("scope segment must exist for continuation capture");
-    let scope = Continuation::capture(scope_seg, scope_seg_id);
-
     let current_seg_id = vm.alloc_segment(Segment::new(Some(scope_parent_id)));
     vm.current_segment = Some(current_seg_id);
 
     let expr = Python::attach(|py| PyShared::new(py.None()));
-    let event = vm.handle_yield_eval_in_scope(expr, scope, std::collections::HashMap::new(), None);
+    let event = vm.handle_yield_eval_in_scope(expr, scope_seg_id, std::collections::HashMap::new(), None);
     assert!(matches!(event, StepEvent::NeedsPython(_)));
 
     let child_seg_id = vm
