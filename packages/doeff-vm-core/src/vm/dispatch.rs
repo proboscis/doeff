@@ -63,9 +63,21 @@ impl VM {
             StepResult::Error(crate::error::VMError::internal("perform: no current fiber"))
         })?;
 
+        // If the current fiber is itself a prompt boundary (handler performing an effect),
+        // start the search from its parent to find an OUTER handler.
+        let search_start = if self.segments.get(current).map_or(false, |s| s.is_prompt_boundary()) {
+            self.segments.get(current).and_then(|s| s.parent).ok_or_else(|| {
+                StepResult::Error(crate::error::VMError::internal(
+                    "perform: handler boundary has no parent"
+                ))
+            })?
+        } else {
+            current
+        };
+
         // Walk up parent chain to find a handler boundary that handles this effect
         let (handler_fiber_id, handler_parent) = self
-            .find_handler_for_effect(current, effect)
+            .find_handler_for_effect(search_start, effect)
             .ok_or_else(|| {
                 StepResult::Error(crate::error::VMError::internal(format!(
                     "perform: no handler found for effect"
@@ -260,7 +272,7 @@ impl VM {
 
     /// Find the fiber just before `target` in the chain starting from `start`.
     /// Returns None if start == target (single fiber).
-    fn find_fiber_before(
+    pub(crate) fn find_fiber_before(
         &self,
         start: FiberId,
         target: FiberId,
