@@ -53,7 +53,7 @@ impl PythonGeneratorStream {
                 Err(err) => {
                     self.exhausted = true;
                     StreamStep::Error(Value::Opaque(PyShared::new(
-                        err.value(py).clone().unbind(),
+                        err.value(py).clone().into_any().unbind(),
                     )))
                 }
             }
@@ -79,7 +79,7 @@ impl PythonGeneratorStream {
                 Err(err) => {
                     self.exhausted = true;
                     StreamStep::Error(Value::Opaque(PyShared::new(
-                        err.value(py).clone().unbind(),
+                        err.value(py).clone().into_any().unbind(),
                     )))
                 }
             }
@@ -188,7 +188,7 @@ impl PythonGeneratorStream {
         obj: &Bound<'_, PyAny>,
     ) -> Result<(doeff_vm_core::Continuation, Value), Value> {
         let k_obj = obj.getattr("continuation")
-            .map_err(|e| Value::Opaque(PyShared::new(e.value(py).clone().unbind())))?;
+            .map_err(|e| Value::Opaque(PyShared::new(e.value(py).clone().into_any().unbind())))?;
 
         let k_ref = k_obj.downcast::<doeff_vm_core::continuation::PyK>()
             .map_err(|_| Value::String("expected K for continuation".into()))?;
@@ -219,7 +219,7 @@ impl PythonGeneratorStream {
             .unwrap_or(Value::Unit);
 
         let k_obj = obj.getattr("continuation")
-            .map_err(|e| Value::Opaque(PyShared::new(e.value(py).clone().unbind())))?;
+            .map_err(|e| Value::Opaque(PyShared::new(e.value(py).clone().into_any().unbind())))?;
 
         let k_ref = k_obj.downcast::<doeff_vm_core::continuation::PyK>()
             .map_err(|_| Value::String("expected K for continuation".into()))?;
@@ -242,7 +242,7 @@ impl PythonGeneratorStream {
         obj: &Bound<'_, PyAny>,
     ) -> Result<(doeff_vm_core::Continuation, Value), Value> {
         let k_obj = obj.getattr("continuation")
-            .map_err(|e| Value::Opaque(PyShared::new(e.value(py).clone().unbind())))?;
+            .map_err(|e| Value::Opaque(PyShared::new(e.value(py).clone().into_any().unbind())))?;
 
         let k_ref = k_obj.downcast::<doeff_vm_core::continuation::PyK>()
             .map_err(|_| Value::String("expected K for continuation".into()))?;
@@ -314,7 +314,7 @@ pub fn value_to_python(py: Python<'_>, value: Value) -> Bound<'_, PyAny> {
         Value::Unit => py.None().into_bound(py),
         Value::None => py.None().into_bound(py),
         Value::Int(i) => i.into_pyobject(py).unwrap().into_any(),
-        Value::Bool(b) => b.into_pyobject(py).unwrap().into_any(),
+        Value::Bool(b) => b.into_pyobject(py).unwrap().to_owned().into_any(),
         Value::String(s) => PyString::new(py, &s).into_any(),
         Value::Opaque(obj) => obj.bind(py).clone(),
         Value::Continuation(k) => {
