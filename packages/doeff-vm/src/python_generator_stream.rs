@@ -87,180 +87,15 @@ impl PythonGeneratorStream {
     }
 
     /// Classify a yielded Python object into a DoCtrl instruction.
-    ///
-    /// The classification is based on the object's type/tag:
-    ///   - Has 'tag' attribute → DoCtrl-like (Resume, Transfer, Perform, etc.)
-    ///   - Is a generator → DoCtrl::Expand (run it)
-    ///   - Otherwise → DoCtrl::Perform (treat as effect)
+    /// The yielded object MUST be a DoExpr (has `tag`). Anything else is an error.
     fn classify_yielded(&self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> StreamStep {
-        // Check if it has a 'tag' attribute (DoCtrl-like)
-        if let Ok(tag_attr) = obj.getattr("tag") {
-            if let Ok(tag) = tag_attr.extract::<u8>() {
-                return self.classify_tagged(py, obj, tag);
-            }
+        match classify_python_object(py, obj) {
+            Ok(doctrl) => StreamStep::Instruction(doctrl),
+            Err(msg) => StreamStep::Error(Value::String(format!(
+                "generator yielded non-DoExpr: {}. Use @do decorator or yield a DoExpr.",
+                msg
+            ))),
         }
-
-        // Check if it's a generator (has send/throw)
-        if obj.hasattr("send").unwrap_or(false) && obj.hasattr("throw").unwrap_or(false) {
-            // It's a generator — wrap as stream and expand
-            let stream = PythonGeneratorStream::new(PyShared::new(obj.clone().unbind()));
-            let stream_ref = doeff_vm_core::ir_stream::IRStreamRef::new(Box::new(stream));
-            return StreamStep::Instruction(DoCtrl::Expand {
-                expr: Box::new(DoCtrl::Pure {
-                    value: Value::Stream(stream_ref),
-                }),
-            });
-        }
-
-        // Default: treat as effect (Perform)
-        StreamStep::Instruction(DoCtrl::Perform {
-            effect: Value::Opaque(PyShared::new(obj.clone().unbind())),
-        })
-    }
-
-    /// Classify a tagged (DoCtrl-like) Python object.
-    fn classify_tagged(&self, py: Python<'_>, obj: &Bound<'_, PyAny>, tag: u8) -> StreamStep {
-        // Tags match the old DoExprTag values for compatibility
-        let doctrl = match tag {
-            0 => {
-                // Pure
-                let value = obj.getattr("value").ok()
-                    .map(|v| python_to_value(py, &v))
-                    .unwrap_or(Value::Unit);
-                DoCtrl::Pure { value }
-            }
-            5 => {
-                // Perform
-                let effect = obj.getattr("effect").ok()
-                    .map(|e| Value::Opaque(PyShared::new(e.unbind())))
-                    .unwrap_or(Value::Unit);
-                DoCtrl::Perform { effect }
-            }
-            6 => {
-                // Resume
-                match self.extract_continuation_and_value(py, obj) {
-                    Ok((k, v)) => DoCtrl::Resume { k, value: v },
-                    Err(e) => return StreamStep::Error(e),
-                }
-            }
-            7 => {
-                // Transfer
-                match self.extract_continuation_and_value(py, obj) {
-                    Ok((k, v)) => DoCtrl::Transfer { k, value: v },
-                    Err(e) => return StreamStep::Error(e),
-                }
-            }
-            19 => {
-                // Pass
-                match self.extract_effect_and_continuation(py, obj) {
-                    Ok((effect, k)) => DoCtrl::Pass { effect, k },
-                    Err(e) => return StreamStep::Error(e),
-                }
-            }
-            8 => {
-                // Delegate
-                match self.extract_effect_and_continuation(py, obj) {
-                    Ok((effect, k)) => DoCtrl::Delegate { effect, k },
-                    Err(e) => return StreamStep::Error(e),
-                }
-            }
-            22 => {
-                // Discontinue (= TransferThrow)
-                match self.extract_continuation_and_exception(py, obj) {
-                    Ok((k, exc)) => DoCtrl::TransferThrow { k, exception: exc },
-                    Err(e) => return StreamStep::Error(e),
-                }
-            }
-            _ => {
-                // Unknown tag — treat as effect
-                DoCtrl::Perform {
-                    effect: Value::Opaque(PyShared::new(obj.clone().unbind())),
-                }
-            }
-        };
-
-        StreamStep::Instruction(doctrl)
-    }
-
-    fn extract_continuation_and_value(
-        &self,
-        py: Python<'_>,
-        obj: &Bound<'_, PyAny>,
-    ) -> Result<(doeff_vm_core::Continuation, Value), Value> {
-        let k_obj = obj.getattr("continuation")
-            .map_err(|e| Value::Opaque(PyShared::new(e.value(py).clone().into_any().unbind())))?;
-
-        let k_ref = k_obj.downcast::<doeff_vm_core::continuation::PyK>()
-            .map_err(|_| Value::String("expected K for continuation".into()))?;
-
-        let mut k_borrowed = k_ref.borrow_mut();
-        let k = k_borrowed.take()
-            .ok_or_else(|| Value::String("continuation already consumed".into()))?;
-
-        let continuation = match k {
-            doeff_vm_core::OwnedControlContinuation::Started(k) => k,
-            _ => return Err(Value::String("expected started continuation".into())),
-        };
-
-        let value = obj.getattr("value").ok()
-            .map(|v| python_to_value(py, &v))
-            .unwrap_or(Value::Unit);
-
-        Ok((continuation, value))
-    }
-
-    fn extract_effect_and_continuation(
-        &self,
-        py: Python<'_>,
-        obj: &Bound<'_, PyAny>,
-    ) -> Result<(Value, doeff_vm_core::Continuation), Value> {
-        let effect = obj.getattr("effect").ok()
-            .map(|e| Value::Opaque(PyShared::new(e.unbind())))
-            .unwrap_or(Value::Unit);
-
-        let k_obj = obj.getattr("continuation")
-            .map_err(|e| Value::Opaque(PyShared::new(e.value(py).clone().into_any().unbind())))?;
-
-        let k_ref = k_obj.downcast::<doeff_vm_core::continuation::PyK>()
-            .map_err(|_| Value::String("expected K for continuation".into()))?;
-
-        let mut k_borrowed = k_ref.borrow_mut();
-        let k = k_borrowed.take()
-            .ok_or_else(|| Value::String("continuation already consumed".into()))?;
-
-        let continuation = match k {
-            doeff_vm_core::OwnedControlContinuation::Started(k) => k,
-            _ => return Err(Value::String("expected started continuation".into())),
-        };
-
-        Ok((effect, continuation))
-    }
-
-    fn extract_continuation_and_exception(
-        &self,
-        py: Python<'_>,
-        obj: &Bound<'_, PyAny>,
-    ) -> Result<(doeff_vm_core::Continuation, Value), Value> {
-        let k_obj = obj.getattr("continuation")
-            .map_err(|e| Value::Opaque(PyShared::new(e.value(py).clone().into_any().unbind())))?;
-
-        let k_ref = k_obj.downcast::<doeff_vm_core::continuation::PyK>()
-            .map_err(|_| Value::String("expected K for continuation".into()))?;
-
-        let mut k_borrowed = k_ref.borrow_mut();
-        let k = k_borrowed.take()
-            .ok_or_else(|| Value::String("continuation already consumed".into()))?;
-
-        let continuation = match k {
-            doeff_vm_core::OwnedControlContinuation::Started(k) => k,
-            _ => return Err(Value::String("expected started continuation".into())),
-        };
-
-        let exception = obj.getattr("exception").ok()
-            .map(|e| Value::Opaque(PyShared::new(e.unbind())))
-            .unwrap_or(Value::String("unknown exception".into()));
-
-        Ok((continuation, exception))
     }
 }
 
@@ -284,6 +119,143 @@ impl IRStream for PythonGeneratorStream {
             self.throw_to_generator(&py_error)
         })
     }
+}
+
+// ---------------------------------------------------------------------------
+// classify_python_object — top-level classification for run()
+// ---------------------------------------------------------------------------
+
+/// Classify a Python DoExpr object into a DoCtrl.
+/// Used by PyVM.run() to convert the top-level program into an instruction.
+///
+/// The object MUST have a `tag` attribute. Raw generators and untagged objects
+/// are errors — the Python @do layer is responsible for wrapping them.
+pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<DoCtrl, String> {
+    // Must have a tag attribute
+    let tag = obj.getattr("tag")
+        .map_err(|_| format!("DoExpr expected (must have 'tag' attribute), got: {:?}", obj.get_type()))?
+        .extract::<u8>()
+        .map_err(|_| "DoExpr tag must be u8".to_string())?;
+
+    classify_tagged_to_doctrl(py, obj, tag)
+        .ok_or_else(|| format!("unknown DoExpr tag: {}", tag))
+}
+
+/// Classify a tagged Python object into a DoCtrl (without StreamStep wrapper).
+fn classify_tagged_to_doctrl(py: Python<'_>, obj: &Bound<'_, PyAny>, tag: u8) -> Option<DoCtrl> {
+    match tag {
+        0 => {
+            // Pure
+            let value = obj.getattr("value").ok()
+                .map(|v| python_to_value(py, &v))
+                .unwrap_or(Value::Unit);
+            Some(DoCtrl::Pure { value })
+        }
+        5 | 128 => {
+            // Perform / Effect
+            let effect = if let Ok(e) = obj.getattr("effect") {
+                Value::Opaque(PyShared::new(e.unbind()))
+            } else {
+                // The object itself is the effect
+                Value::Opaque(PyShared::new(obj.clone().unbind()))
+            };
+            Some(DoCtrl::Perform { effect })
+        }
+        6 => {
+            // Resume
+            extract_continuation_and_value(py, obj)
+                .map(|(k, v)| DoCtrl::Resume { k, value: v })
+                .ok()
+        }
+        7 => {
+            // Transfer
+            extract_continuation_and_value(py, obj)
+                .map(|(k, v)| DoCtrl::Transfer { k, value: v })
+                .ok()
+        }
+        19 => {
+            // Pass
+            extract_effect_and_continuation(py, obj)
+                .map(|(effect, k)| DoCtrl::Pass { effect, k })
+                .ok()
+        }
+        8 => {
+            // Delegate
+            extract_effect_and_continuation(py, obj)
+                .map(|(effect, k)| DoCtrl::Delegate { effect, k })
+                .ok()
+        }
+        22 => {
+            // Discontinue (= TransferThrow)
+            extract_continuation_and_exception(py, obj)
+                .map(|(k, exc)| DoCtrl::TransferThrow { k, exception: exc })
+                .ok()
+        }
+        _ => None,
+    }
+}
+
+fn extract_continuation_and_value(
+    py: Python<'_>,
+    obj: &Bound<'_, PyAny>,
+) -> Result<(doeff_vm_core::Continuation, Value), Value> {
+    let k_obj = obj.getattr("continuation")
+        .map_err(|e| Value::Opaque(PyShared::new(e.value(py).clone().into_any().unbind())))?;
+    let k_ref = k_obj.downcast::<doeff_vm_core::continuation::PyK>()
+        .map_err(|_| Value::String("expected K".into()))?;
+    let mut k_borrowed = k_ref.borrow_mut();
+    let k = k_borrowed.take()
+        .ok_or_else(|| Value::String("continuation consumed".into()))?;
+    let continuation = match k {
+        doeff_vm_core::OwnedControlContinuation::Started(k) => k,
+        _ => return Err(Value::String("expected started continuation".into())),
+    };
+    let value = obj.getattr("value").ok()
+        .map(|v| python_to_value(py, &v))
+        .unwrap_or(Value::Unit);
+    Ok((continuation, value))
+}
+
+fn extract_effect_and_continuation(
+    py: Python<'_>,
+    obj: &Bound<'_, PyAny>,
+) -> Result<(Value, doeff_vm_core::Continuation), Value> {
+    let effect = obj.getattr("effect").ok()
+        .map(|e| Value::Opaque(PyShared::new(e.unbind())))
+        .unwrap_or(Value::Unit);
+    let k_obj = obj.getattr("continuation")
+        .map_err(|e| Value::Opaque(PyShared::new(e.value(py).clone().into_any().unbind())))?;
+    let k_ref = k_obj.downcast::<doeff_vm_core::continuation::PyK>()
+        .map_err(|_| Value::String("expected K".into()))?;
+    let mut k_borrowed = k_ref.borrow_mut();
+    let k = k_borrowed.take()
+        .ok_or_else(|| Value::String("continuation consumed".into()))?;
+    let continuation = match k {
+        doeff_vm_core::OwnedControlContinuation::Started(k) => k,
+        _ => return Err(Value::String("expected started continuation".into())),
+    };
+    Ok((effect, continuation))
+}
+
+fn extract_continuation_and_exception(
+    py: Python<'_>,
+    obj: &Bound<'_, PyAny>,
+) -> Result<(doeff_vm_core::Continuation, Value), Value> {
+    let k_obj = obj.getattr("continuation")
+        .map_err(|e| Value::Opaque(PyShared::new(e.value(py).clone().into_any().unbind())))?;
+    let k_ref = k_obj.downcast::<doeff_vm_core::continuation::PyK>()
+        .map_err(|_| Value::String("expected K".into()))?;
+    let mut k_borrowed = k_ref.borrow_mut();
+    let k = k_borrowed.take()
+        .ok_or_else(|| Value::String("continuation consumed".into()))?;
+    let continuation = match k {
+        doeff_vm_core::OwnedControlContinuation::Started(k) => k,
+        _ => return Err(Value::String("expected started continuation".into())),
+    };
+    let exception = obj.getattr("exception").ok()
+        .map(|e| Value::Opaque(PyShared::new(e.unbind())))
+        .unwrap_or(Value::String("unknown exception".into()));
+    Ok((continuation, exception))
 }
 
 // ---------------------------------------------------------------------------
