@@ -1,8 +1,5 @@
 //! Continuation types for detaching and reattaching fibers.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
@@ -271,17 +268,17 @@ impl Drop for PendingContinuation {
 #[derive(Debug)]
 pub struct Continuation {
     pub cont_id: ContId,
-    fibers: Vec<FiberId>,
-    consumed: Arc<AtomicBool>,
+    fibers: Option<Vec<FiberId>>,
 }
+
+// Continuation is intentionally NOT Clone — one-shot semantics enforced by Option::take (SPEC-VM-021).
 
 impl Continuation {
     pub fn placeholder(cont_id: ContId) -> Self {
         memory_stats::register_continuation();
         Self {
             cont_id,
-            fibers: Vec::new(),
-            consumed: Arc::new(AtomicBool::new(false)),
+            fibers: Some(Vec::new()),
         }
     }
 
@@ -289,8 +286,7 @@ impl Continuation {
         memory_stats::register_continuation();
         Self {
             cont_id,
-            fibers,
-            consumed: Arc::new(AtomicBool::new(false)),
+            fibers: Some(fibers),
         }
     }
 
@@ -311,50 +307,58 @@ impl Continuation {
     }
 
     pub fn is_started(&self) -> bool {
-        !self.fibers.is_empty()
+        self.fibers.as_ref().is_some_and(|f| !f.is_empty())
     }
 
     pub fn is_placeholder(&self) -> bool {
-        self.fibers.is_empty()
+        matches!(&self.fibers, Some(f) if f.is_empty())
     }
 
     pub fn segment_id(&self) -> Option<SegmentId> {
-        self.fibers.first().copied()
+        self.fibers.as_ref().and_then(|f| f.first().copied())
     }
 
     pub fn fibers(&self) -> &[FiberId] {
-        self.fibers.as_slice()
+        self.fibers.as_deref().unwrap_or(&[])
     }
 
     pub(crate) fn outermost_fiber_id(&self) -> Option<FiberId> {
-        self.fibers.last().copied()
+        self.fibers.as_ref().and_then(|f| f.last().copied())
     }
 
     pub(crate) fn same_owned_fibers(&self, other: &Continuation) -> bool {
-        self.fibers.as_slice() == other.fibers.as_slice()
+        self.fibers() == other.fibers()
     }
 
     pub(crate) fn append_owned_fibers(&mut self, mut other: Continuation) {
-        if !other.fibers.is_empty() {
-            self.fibers.append(&mut other.fibers);
+        if let (Some(ref mut self_fibers), Some(ref mut other_fibers)) =
+            (&mut self.fibers, &mut other.fibers)
+        {
+            if !other_fibers.is_empty() {
+                self_fibers.append(other_fibers);
+            }
         }
     }
 
     pub(crate) fn retain_owned_fibers(&mut self, mut keep: impl FnMut(FiberId) -> bool) {
-        self.fibers.retain(|fiber_id| keep(*fiber_id));
+        if let Some(ref mut fibers) = self.fibers {
+            fibers.retain(|fiber_id| keep(*fiber_id));
+        }
     }
 
     pub(crate) fn tail_owned_fibers(&self) -> Option<Self> {
-        (self.fibers.len() > 1)
-            .then(|| Self::new_captured(ContId::fresh(), self.fibers[1..].to_vec()))
+        self.fibers
+            .as_ref()
+            .filter(|f| f.len() > 1)
+            .map(|f| Self::new_captured(ContId::fresh(), f[1..].to_vec()))
     }
 
     pub fn consumed(&self) -> bool {
-        self.consumed.load(Ordering::Relaxed)
+        self.fibers.is_none()
     }
 
     pub(crate) fn mark_consumed(&mut self) {
-        self.consumed.store(true, Ordering::Relaxed);
+        self.fibers.take();
     }
 
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {

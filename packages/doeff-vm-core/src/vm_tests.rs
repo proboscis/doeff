@@ -861,14 +861,15 @@ fn test_write_scoped_var_nonlocal_updates_owner_through_captured_scope_chain() {
 }
 
 #[test]
-fn test_independent_continuations_have_separate_consumed_flags() {
+fn test_independent_continuations_have_separate_consumed_state() {
     let mut continuation = Continuation::with_id(ContId::fresh(), SegmentId::from_index(0), None);
     let independent = Continuation::from_fiber(continuation.fibers()[0], None);
 
     assert!(!independent.consumed());
+    assert!(!continuation.consumed());
     continuation.mark_consumed();
 
     assert!(continuation.consumed());
-    // Independent continuation has its own consumed flag
+    // Independent continuation is unaffected — no shared state
     assert!(!independent.consumed());
 }
