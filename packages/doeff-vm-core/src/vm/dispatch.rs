@@ -215,7 +215,7 @@ impl VM {
         self.current_segment = parent;
 
         // Free the completed fiber
-        self.segments.free_segment(current);
+        self.segments.free(current);
 
         // Deliver return value to parent
         self.mode = Mode::Send(value);

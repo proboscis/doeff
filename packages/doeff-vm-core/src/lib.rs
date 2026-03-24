@@ -1,4 +1,9 @@
 //! doeff-vm-core: language-agnostic effect handler VM.
+//!
+//! This crate contains ONLY the VM step machine and data types.
+//! No Python. No pyo3. Language-agnostic.
+//!
+//! Python bridge lives in doeff-vm crate.
 
 pub mod handle;
 pub mod py_shared;
@@ -6,15 +11,9 @@ pub mod py_shared;
 #[cfg(feature = "python_bridge")]
 pub mod arena;
 #[cfg(feature = "python_bridge")]
-pub mod bridge;
-#[cfg(feature = "python_bridge")]
 pub mod continuation;
 #[cfg(feature = "python_bridge")]
-pub mod dispatch;
-#[cfg(feature = "python_bridge")]
 pub mod do_ctrl;
-#[cfg(feature = "python_bridge")]
-pub mod doeff_generator;
 #[cfg(feature = "python_bridge")]
 pub mod driver;
 #[cfg(feature = "python_bridge")]
@@ -24,21 +23,13 @@ pub mod error;
 #[cfg(feature = "python_bridge")]
 pub mod frame;
 #[cfg(feature = "python_bridge")]
-pub mod handler;
-#[cfg(feature = "python_bridge")]
 pub mod ids;
 #[cfg(feature = "python_bridge")]
 pub mod ir_stream;
 #[cfg(feature = "python_bridge")]
-pub mod kleisli;
-#[cfg(feature = "python_bridge")]
 pub mod memory_stats;
 #[cfg(feature = "python_bridge")]
 pub mod py_key;
-#[cfg(feature = "python_bridge")]
-pub mod python_call;
-#[cfg(feature = "python_bridge")]
-pub mod result;
 #[cfg(feature = "python_bridge")]
 pub mod scope_store;
 #[cfg(feature = "python_bridge")]

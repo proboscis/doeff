@@ -119,13 +119,13 @@ impl Drop for Continuation {
 #[derive(Debug, Clone)]
 pub struct PendingContinuation {
     pub program: PyShared,
-    pub handlers: Vec<(crate::kleisli::KleisliRef, Vec<PyShared>)>,
+    pub handlers: Vec<(crate::value::CallableRef, Vec<PyShared>)>,
     pub handler_identities: Vec<Option<String>>,
     pub outside_scope: Option<FiberId>,
 }
 
 impl PendingContinuation {
-    pub fn create(program: PyShared, handlers: Vec<(crate::kleisli::KleisliRef, Vec<PyShared>)>) -> Self {
+    pub fn create(program: PyShared, handlers: Vec<(crate::value::CallableRef, Vec<PyShared>)>) -> Self {
         memory_stats::register_continuation();
         Self {
             program,
@@ -137,7 +137,7 @@ impl PendingContinuation {
 
     pub fn create_with_metadata(
         program: PyShared,
-        handlers: Vec<(crate::kleisli::KleisliRef, Vec<PyShared>)>,
+        handlers: Vec<(crate::value::CallableRef, Vec<PyShared>)>,
         handler_identities: Vec<Option<String>>,
         outside_scope: Option<FiberId>,
     ) -> Self {
