@@ -17,11 +17,8 @@ pub struct Marker(pub u64);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct FiberId(pub u32);
 
-/// Unique identifier for continuations (one-shot tracking).
-///
-/// Each captured continuation gets a unique ContId to enforce one-shot semantics.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct ContId(pub u64);
+// ContId removed — OCaml 5 has no continuation identity.
+// Continuation identity = head FiberId.
 
 /// Unique identifier for runnable continuations.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
