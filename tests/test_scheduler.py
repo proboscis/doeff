@@ -1,7 +1,7 @@
 """Tests for the cooperative scheduler."""
 
 from doeff import do, run as doeff_run, EffectBase, Resume, Pass
-from doeff.scheduler import scheduled, Spawn, Gather, Wait, Task
+from doeff_core_effects.scheduler import scheduled, Spawn, Gather, Wait, Task
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +82,7 @@ class TestGather:
 class TestPriority:
     def test_high_priority_runs_first(self):
         """Higher priority task runs before lower priority."""
-        from doeff.scheduler import PRIORITY_HIGH, PRIORITY_IDLE
+        from doeff_core_effects.scheduler import PRIORITY_HIGH, PRIORITY_IDLE
 
         order = []
 
@@ -293,7 +293,7 @@ class TestConcurrency:
 class TestPromise:
     def test_create_and_complete_promise(self):
         """Internal promise: create, complete, wait."""
-        from doeff.scheduler import CreatePromise, CompletePromise
+        from doeff_core_effects.scheduler import CreatePromise, CompletePromise
 
         @do
         def body():
@@ -305,7 +305,7 @@ class TestPromise:
 
     def test_promise_across_tasks(self):
         """One task creates promise, another waits, first completes."""
-        from doeff.scheduler import CreatePromise, CompletePromise
+        from doeff_core_effects.scheduler import CreatePromise, CompletePromise
 
         @do
         def body():
@@ -330,7 +330,7 @@ class TestPromise:
 class TestExternalPromise:
     def test_external_promise_complete(self):
         """ExternalPromise: complete from outside, task gets value."""
-        from doeff.scheduler import CreateExternalPromise
+        from doeff_core_effects.scheduler import CreateExternalPromise
 
         @do
         def body():
@@ -344,7 +344,7 @@ class TestExternalPromise:
 
     def test_external_promise_with_spawned_task(self):
         """Spawned task waits on external promise, main completes it."""
-        from doeff.scheduler import CreateExternalPromise
+        from doeff_core_effects.scheduler import CreateExternalPromise
 
         @do
         def body():
@@ -365,7 +365,7 @@ class TestExternalPromise:
         """100 tasks each sleeping 0.1s in threads. Must finish in <2s, not 10s."""
         import threading
         import time
-        from doeff.scheduler import CreateExternalPromise
+        from doeff_core_effects.scheduler import CreateExternalPromise
 
         @do
         def sleep_task(i):
@@ -400,7 +400,7 @@ class TestExternalPromise:
 class TestCancel:
     def test_cancel_blocked_task(self):
         """Cancel a task that's blocked waiting on a promise."""
-        from doeff.scheduler import Cancel, TaskCancelledError, CreateExternalPromise
+        from doeff_core_effects.scheduler import Cancel, TaskCancelledError, CreateExternalPromise
 
         @do
         def body():
@@ -422,7 +422,7 @@ class TestCancel:
 
     def test_cancel_does_not_affect_completed(self):
         """Cancelling an already-completed task is a no-op."""
-        from doeff.scheduler import Cancel
+        from doeff_core_effects.scheduler import Cancel
 
         @do
         def fast():
@@ -507,7 +507,7 @@ class TestErrorPropagation:
 class TestSemaphore:
     def test_binary_semaphore_mutual_exclusion(self):
         """Binary semaphore (permits=1) ensures mutual exclusion."""
-        from doeff.scheduler import CreateSemaphore, AcquireSemaphore, ReleaseSemaphore
+        from doeff_core_effects.scheduler import CreateSemaphore, AcquireSemaphore, ReleaseSemaphore
 
         log = []
 
@@ -535,7 +535,7 @@ class TestSemaphore:
 
     def test_counting_semaphore(self):
         """Counting semaphore allows N concurrent accessors."""
-        from doeff.scheduler import CreateSemaphore, AcquireSemaphore, ReleaseSemaphore
+        from doeff_core_effects.scheduler import CreateSemaphore, AcquireSemaphore, ReleaseSemaphore
 
         @do
         def worker(sem, i):
@@ -557,7 +557,7 @@ class TestSemaphore:
 
     def test_release_too_many_raises(self):
         """Releasing more than max permits raises error."""
-        from doeff.scheduler import CreateSemaphore, ReleaseSemaphore
+        from doeff_core_effects.scheduler import CreateSemaphore, ReleaseSemaphore
 
         @do
         def body():
