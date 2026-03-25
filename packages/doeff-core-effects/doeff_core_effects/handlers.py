@@ -72,8 +72,8 @@ def writer():
 
     @do
     def handler(effect, k):
-        if isinstance(effect, Tell):
-            log.append(effect.message)
+        if isinstance(effect, WriterTellEffect):
+            log.append(effect.msg)
             result = yield Resume(k, None)
             return result
         yield Pass(effect, k)

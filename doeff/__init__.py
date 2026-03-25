@@ -9,6 +9,7 @@ from doeff.program import (
     Apply,
     Expand,
     GetExecutionContext,
+    GetHandlers,
     GetTraceback,
     Pass,
     Perform,
@@ -22,47 +23,19 @@ from doeff.program import (
 from doeff.run import run
 from doeff_vm import Callable, EffectBase, Err, K, Ok, PyVM
 
-# ---------------------------------------------------------------------------
-# Compat layer — re-export core-effects symbols for legacy code
-# ---------------------------------------------------------------------------
-from typing import Generator, Any, TypeVar as _TypeVar
-
-_T = _TypeVar("_T")
-EffectGenerator = Generator[Any, Any, _T]  # type alias for @do return type
-
-from doeff_core_effects import (
-    Ask, Get, Put, Tell, Try, Slog, WriterTellEffect,
-    Local, Listen, Await, slog,
-)
-from doeff_core_effects.scheduler import Spawn, Wait, Gather, Race, Cancel
-from doeff_core_effects.cache import cache
-
 Effect = EffectBase
-WithIntercept = WithObserve
-Program = object  # type: ignore
-
-def ask(key: str):
-    """Compat: ask("key") → Ask("key") as a Program-like placeholder."""
-    return Ask(key)
-
-def default_handlers():
-    """Compat: return core handler list."""
-    from doeff_core_effects.handlers import (
-        reader, state, writer, try_handler, slog_handler,
-        local_handler, listen_handler, await_handler,
-    )
-    return [reader, state, writer, try_handler, slog_handler,
-            local_handler, listen_handler, await_handler]
 
 __version__ = "0.2.1"
 
 __all__ = [
     "Apply",
     "Callable",
+    "Effect",
     "EffectBase",
     "Err",
     "Expand",
     "GetExecutionContext",
+    "GetHandlers",
     "GetTraceback",
     "K",
     "Ok",
