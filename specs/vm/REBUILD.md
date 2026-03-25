@@ -4,16 +4,15 @@ Branch: `rebuild/drop-stale-trace`
 
 ## Architecture (done)
 
-- VM: 5 registers (segments, var_store, mode, pending_external, current_segment)
+- VM: 5 registers, OCaml 5 aligned
 - Fiber: 3 fields (frames, parent, handler)
-- Continuation: head + last_fiber, one-shot via take()
-- 5 OCaml 5 operations: match_with, perform, continue_k, reperform, fiber_return
-- Parent pointers as source of truth
-- No ContId, no clone, no copy machine
+- Continuation: head + last_fiber, one-shot, boundary included
+- Handler code runs on parent fiber (OCaml 5 semantics)
+- Handler returns DoExpr (call_handler → DoCtrl)
+- No auto-detection of generators in Callable.call()
+- IRStream pyclass for explicit generator→stream conversion
 
 ## DoExpr Nodes (done)
-
-Pure Python classes with `tag` attribute. No Rust base classes.
 
 | Tag | Name | Description |
 |-----|------|-------------|
@@ -26,43 +25,44 @@ Pure Python classes with `tag` attribute. No Rust base classes.
 | 17 | Expand | Eval inner to Stream, push as frame |
 | 19 | Pass | Forward effect to outer handler |
 | 20 | WithHandler | Install handler, run body |
-| 22 | (TransferThrow) | Rust-only, not exposed to Python |
+| 21 | ResumeThrow | Throw into continuation (non-tail) |
+| 22 | TransferThrow | Throw into continuation (tail) |
 | 23 | GetTraceback | Non-consuming traceback query |
+| 24 | WithObserve | Synchronous effect observation |
+| 25 | GetExecutionContext | Current execution context (stub) |
 
-## Rust Exports (done)
+## Packages
 
-`doeff_vm` exports: `PyVM`, `K`, `Callable`, `EffectBase`, `Ok`, `Err`
+```
+doeff/                           ← 4 files: core framework
+  __init__.py, do.py, program.py, run.py
 
-## Python API (done)
+packages/doeff-vm-core/         ← Rust VM core (language-agnostic)
+packages/doeff-vm/              ← Rust-Python bridge
+packages/doeff-core-effects/    ← Python: reference impl
+  doeff_core_effects/
+    effects.py                  ← Ask, Get, Put, Tell, Try, Slog/WriterTellEffect,
+                                   Local, Listen, Await, CacheGet/Put/Delete/Exists
+    handlers.py                 ← reader, state, writer, try_handler, slog_handler,
+                                   local_handler, listen_handler, await_handler
+    scheduler.py                ← Spawn, Wait, Gather, Race, Cancel, Promise,
+                                   ExternalPromise, Semaphore, Priority
+    cache.py                    ← @cache decorator, cache_key, presets
+    cache_effects.py            ← CacheGet/Put/Delete/Exists effects
+    cache_handlers.py           ← cache_handler, memo_rewriters, content_address
+    cache_policy.py             ← CachePolicy, CacheLifecycle, CacheStorage
+    storage/                    ← DurableStorage, InMemoryStorage, SQLiteStorage
+```
 
-`doeff` exports: DoExpr nodes + Rust exports + `program()` helper
+## Remaining
 
-## Traceback (done)
-
-- `IRStream::source_location()` — live func_name, source_file, source_line
-- `PythonGeneratorStream` reads gi_code + gi_frame.f_lineno
-- `VM::collect_traceback(fiber_id)` — walks parent chain
-- `GetTraceback(k)` DoExpr — handler queries without consuming k
-
-## Done (this session)
-
-- [x] `@do` decorator — wraps generator fn, returns DoExpr tree
-- [x] `run(doexpr)` — takes a single DoExpr, creates PyVM, runs it
-- [x] `WithHandler` DoExpr (tag=20) + classify
-- [x] Nested WithHandler works for single Pass
-- [x] Perform from handler finds outer handler (skip-self fix)
-
-## In Progress
-
-- [ ] Pass topology bug: after outer handler resumes, inner handler boundary lost for subsequent effects (2 xfail tests)
-- [ ] Core effects (Ask, Get, Put, Tell) as EffectBase subclasses
-- [ ] Handler implementations for core effects
-- [ ] Error traceback rendering (format per SPEC-TRACE-001)
-- [ ] Dead code cleanup (old doeff/*.py, old Rust files)
+- [ ] GetExecutionContext — proper impl (currently stub returning basic traceback)
+- [ ] ProgramCallStackEffect — for slog source attribution
+- [ ] Traceback rendering — SPEC-TRACE-001 format
+- [ ] daemon=True on Spawn — TBD
+- [ ] Old test cleanup — tests/core/, tests/cli/ reference dead API
+- [ ] Store isolation — per-task state snapshots
 
 ## Tests
 
-- 25 Rust VM core tests
-- 26 Python bridge tests (test_new_vm.py) — 25 pass, 2 xfail (Pass topology)
-- 13 architecture violation tests
-- Total: 38 passing, 2 xfailed
+93 passing (26 Rust + 67 Python)
