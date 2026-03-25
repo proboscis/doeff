@@ -448,3 +448,74 @@ class TestErrorPropagation:
             return (yield Gather(t1, t2, t3))
 
         assert doeff_run(scheduled(body())) == [1, 2, 3]
+
+
+# ---------------------------------------------------------------------------
+# Semaphore
+# ---------------------------------------------------------------------------
+
+class TestSemaphore:
+    def test_binary_semaphore_mutual_exclusion(self):
+        """Binary semaphore (permits=1) ensures mutual exclusion."""
+        from doeff.scheduler import CreateSemaphore, AcquireSemaphore, ReleaseSemaphore
+
+        log = []
+
+        @do
+        def critical_section(sem, name):
+            yield AcquireSemaphore(sem)
+            log.append(f"{name}_enter")
+            log.append(f"{name}_exit")
+            yield ReleaseSemaphore(sem)
+            return name
+
+        @do
+        def body():
+            sem = yield CreateSemaphore(1)
+            t1 = yield Spawn(critical_section(sem, "A"))
+            t2 = yield Spawn(critical_section(sem, "B"))
+            return (yield Gather(t1, t2))
+
+        result = doeff_run(scheduled(body()))
+        assert result == ["A", "B"]
+        # Mutual exclusion: no interleaving of enter/exit
+        # Either [A_enter, A_exit, B_enter, B_exit] or [B_enter, B_exit, A_enter, A_exit]
+        assert (log == ["A_enter", "A_exit", "B_enter", "B_exit"] or
+                log == ["B_enter", "B_exit", "A_enter", "A_exit"])
+
+    def test_counting_semaphore(self):
+        """Counting semaphore allows N concurrent accessors."""
+        from doeff.scheduler import CreateSemaphore, AcquireSemaphore, ReleaseSemaphore
+
+        @do
+        def worker(sem, i):
+            yield AcquireSemaphore(sem)
+            result = i * 10
+            yield ReleaseSemaphore(sem)
+            return result
+
+        @do
+        def body():
+            sem = yield CreateSemaphore(3)  # allow 3 concurrent
+            tasks = []
+            for i in range(10):
+                tasks.append((yield Spawn(worker(sem, i))))
+            return (yield Gather(*tasks))
+
+        result = doeff_run(scheduled(body()))
+        assert result == [i * 10 for i in range(10)]
+
+    def test_release_too_many_raises(self):
+        """Releasing more than max permits raises error."""
+        from doeff.scheduler import CreateSemaphore, ReleaseSemaphore
+
+        @do
+        def body():
+            sem = yield CreateSemaphore(1)
+            try:
+                yield ReleaseSemaphore(sem)  # no acquire — over-release
+                return "should not reach"
+            except RuntimeError as e:
+                return str(e)
+
+        assert "too many" in doeff_run(scheduled(body()))
