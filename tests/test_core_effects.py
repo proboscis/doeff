@@ -175,6 +175,76 @@ class TestSlog:
         assert sh.log[1] == {"msg": "event", "user": "alice", "action": "login"}
 
 
+class TestAwait:
+    def test_await_coroutine(self):
+        """Await bridges async coroutines into doeff."""
+        import asyncio
+        from doeff_core_effects import Await, await_handler
+        from doeff_core_effects.scheduler import scheduled
+
+        async def async_add(a, b):
+            await asyncio.sleep(0.01)
+            return a + b
+
+        @do
+        def body():
+            result = yield Await(async_add(3, 4))
+            return result
+
+        result = doeff_run(scheduled(WithHandler(await_handler(), body())))
+        assert result == 7
+
+    def test_await_multiple(self):
+        """Multiple Awaits in sequence."""
+        import asyncio
+        from doeff_core_effects import Await, await_handler
+        from doeff_core_effects.scheduler import scheduled
+
+        async def fetch(x):
+            await asyncio.sleep(0.01)
+            return x * 10
+
+        @do
+        def body():
+            a = yield Await(fetch(1))
+            b = yield Await(fetch(2))
+            return a + b
+
+        result = doeff_run(scheduled(WithHandler(await_handler(), body())))
+        assert result == 30
+
+    def test_await_concurrent_with_spawn(self):
+        """Await works with spawned tasks."""
+        import asyncio
+        from doeff_core_effects import Await, await_handler
+        from doeff_core_effects.scheduler import scheduled, Spawn, Gather
+
+        async def fetch(x):
+            await asyncio.sleep(0.05)
+            return x
+
+        ah = await_handler()
+
+        @do
+        def task(x):
+            return (yield Await(fetch(x)))
+
+        @do
+        def body():
+            # Each spawned task wraps with await_handler so Await effects
+            # reach it (spawned tasks get their own handler scope)
+            t1 = yield Spawn(WithHandler(ah, task(10)))
+            t2 = yield Spawn(WithHandler(ah, task(20)))
+            return (yield Gather(t1, t2))
+
+        import time
+        start = time.time()
+        result = doeff_run(scheduled(body()))
+        elapsed = time.time() - start
+        assert result == [10, 20]
+        assert elapsed < 0.5, f"took {elapsed:.1f}s — not concurrent!"
+
+
 class TestGetExecutionContext:
     def test_get_execution_context(self):
         from doeff import GetExecutionContext
