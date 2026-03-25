@@ -7,7 +7,6 @@ Backed by a Rust VM with OCaml 5-aligned effect handler architecture.
 from doeff.do import do
 from doeff.program import (
     Apply,
-    Delegate,
     Expand,
     GetExecutionContext,
     GetTraceback,
@@ -31,7 +30,6 @@ __version__ = "0.2.1"
 __all__ = [
     "Apply",
     "Callable",
-    "Delegate",
     "EffectBase",
     "Err",
     "Expand",
