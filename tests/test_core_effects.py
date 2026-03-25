@@ -22,7 +22,7 @@ class TestReader:
         def body():
             return (yield Ask("missing"))
 
-        with pytest.raises(RuntimeError):
+        with pytest.raises(KeyError, match="missing"):
             doeff_run(WithHandler(reader(env={}), body()))
 
     def test_ask_multiple_keys(self):
