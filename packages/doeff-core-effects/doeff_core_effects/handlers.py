@@ -96,7 +96,7 @@ def try_handler(effect, k):
     """
     if isinstance(effect, Try):
         from doeff_vm import Ok, Err
-        from doeff.program import WithHandler as WH
+        from doeff.program import Perform, WithHandler as WH
         from doeff.handler_utils import get_inner_handlers
 
         inner_hs = yield get_inner_handlers(k)
@@ -104,8 +104,14 @@ def try_handler(effect, k):
         @do
         def attempt():
             prog = effect.program
+            # Wrap raw EffectBase in Perform so the VM can classify it
+            if not hasattr(prog, 'tag'):
+                prog = Perform(prog)
+            # Reinstall inner handlers + try_handler itself so nested
+            # Try effects and inner-handler effects are reachable.
             for h in inner_hs:
                 prog = WH(h, prog)
+            prog = WH(try_handler, prog)
             try:
                 value = yield prog
                 return Ok(value)
