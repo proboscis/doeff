@@ -30,10 +30,16 @@ from doeff.program import Pure, Resume, Transfer, Pass, Perform, WithHandler
 # Effects
 # ---------------------------------------------------------------------------
 
+PRIORITY_IDLE = 0
+PRIORITY_NORMAL = 10
+PRIORITY_HIGH = 20
+
+
 class Spawn(EffectBase):
-    def __init__(self, program):
+    def __init__(self, program, priority=PRIORITY_NORMAL):
         super().__init__()
         self.program = program
+        self.priority = priority
 
 
 class TaskCompleted(EffectBase):
@@ -184,14 +190,16 @@ class ExternalPromise:
 def scheduled(body_program):
     """Wrap a program with the scheduler. Returns a DoExpr."""
     import queue as queue_mod
+    import heapq
 
     # --- State ---
     next_id = [0]
-    tasks = {}           # tid → {status, result, program}
+    insertion_seq = [0]  # tie-breaker for priority queue (FIFO within same priority)
+    tasks = {}           # tid → {status, result, program, priority}
     promises = {}        # pid → {status, result}
     semaphores = {}      # sid → {permits, max_permits, waiters: deque of k}
     waiters = {}         # waitable_key → [(type, k, ...)]
-    ready = []           # [(type, ...)]
+    ready = []           # heapq: (-priority, seq, entry)
     cancel_requested = set()  # task ids pending cancellation
     external_queue = queue_mod.Queue()  # thread-safe, blocking get()
 
@@ -216,9 +224,22 @@ def scheduled(body_program):
             return promises[wid]["status"], promises[wid].get("result")
         return "unknown", None
 
-    def alloc_task(program):
+    def enqueue(entry, priority=PRIORITY_NORMAL):
+        """Add entry to priority queue. Higher priority = served first."""
+        seq = insertion_seq[0]
+        insertion_seq[0] += 1
+        heapq.heappush(ready, (-priority, seq, entry))
+
+    def dequeue():
+        """Pop highest-priority entry. Returns None if empty."""
+        if ready:
+            _, _, entry = heapq.heappop(ready)
+            return entry
+        return None
+
+    def alloc_task(program, priority=PRIORITY_NORMAL):
         tid = fresh_id()
-        tasks[tid] = {"status": "pending", "result": None, "program": program}
+        tasks[tid] = {"status": "pending", "result": None, "program": program, "priority": priority}
         return tid
 
     def alloc_promise():
@@ -241,7 +262,7 @@ def scheduled(body_program):
         while True:
             drain()
             while ready:
-                entry = ready.pop(0)
+                entry = dequeue()
                 if entry[0] == "new":
                     _, tid = entry
                     if tasks[tid]["status"] == "cancelled":
@@ -270,11 +291,11 @@ def scheduled(body_program):
         For failed/cancelled, uses ("raise", k, error) so handler can throw."""
         status, result = waitable_status(key)
         if status == "completed":
-            ready.append(("resume", waiter_k, result))
+            enqueue(("resume", waiter_k, result))
         elif status == "failed":
-            ready.append(("raise", waiter_k, result))
+            enqueue(("raise", waiter_k, result))
         elif status == "cancelled":
-            ready.append(("raise", waiter_k, TaskCancelledError()))
+            enqueue(("raise", waiter_k, TaskCancelledError()))
 
     def wake_waiters(completed_key):
         ws = waiters.pop(completed_key, [])
@@ -293,24 +314,24 @@ def scheduled(body_program):
                     for t in gather_waitables:
                         s, r = waitable_status(waitable_key(t))
                         if s == "failed":
-                            ready.append(("raise", waiter_k, r))
+                            enqueue(("raise", waiter_k, r))
                             break
                         if s == "cancelled":
-                            ready.append(("raise", waiter_k, TaskCancelledError()))
+                            enqueue(("raise", waiter_k, TaskCancelledError()))
                             break
                     else:
                         # All completed successfully
                         results = [waitable_status(waitable_key(t))[1] for t in gather_waitables]
-                        ready.append(("resume", waiter_k, results))
+                        enqueue(("resume", waiter_k, results))
                 else:
                     # Fail-fast: check if any already failed/cancelled
                     for t in gather_waitables:
                         s, r = waitable_status(waitable_key(t))
                         if s == "failed":
-                            ready.append(("raise", waiter_k, r))
+                            enqueue(("raise", waiter_k, r))
                             return
                         if s == "cancelled":
-                            ready.append(("raise", waiter_k, TaskCancelledError()))
+                            enqueue(("raise", waiter_k, TaskCancelledError()))
                             return
                     # Re-register for next incomplete
                     for t in gather_waitables:
@@ -335,9 +356,9 @@ def scheduled(body_program):
     def handler(effect, k):
         drain()
         if isinstance(effect, Spawn):
-            tid = alloc_task(effect.program)
-            ready.append(("new", tid))
-            ready.append(("resume", k, Task(tid)))
+            tid = alloc_task(effect.program, effect.priority)
+            enqueue(("new", tid), effect.priority)
+            enqueue(("resume", k, Task(tid)))  # spawner resumes at normal priority
             return (yield pick_next())
 
         elif isinstance(effect, TaskCompleted):
@@ -479,7 +500,7 @@ def scheduled(body_program):
             if sem["waiters"]:
                 # Transfer permit directly to first waiter
                 waiter_k = sem["waiters"].popleft()
-                ready.append(("resume", waiter_k, None))
+                enqueue(("resume", waiter_k, None))
             else:
                 if sem["permits"] >= sem["max_permits"]:
                     from doeff.program import ResumeThrow
