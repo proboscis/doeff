@@ -16,6 +16,7 @@ from doeff_core_effects.cache_effects import (
     CachePutEffect,
     CacheGet,
     CachePut,
+    CacheExists,
 )
 from doeff_core_effects.effects import Try
 from doeff_core_effects.storage import DurableStorage, InMemoryStorage, SQLiteStorage
@@ -137,13 +138,60 @@ def sqlite_cache_handler(db_path: str | Path):
     return cache_handler(SQLiteStorage(db_path))
 
 
-# TODO: make_memo_rewriter and memo_rewriters need Delegate support
-# which is not fully implemented yet. Stubbed for now.
+def make_memo_rewriter(
+    effect_type: type,
+    key_fn: MemoKeyFn = content_address,
+):
+    """Create a handler that memoizes effects of the given type through cache.
+
+    On cache hit: Resume with cached value (outer handler not called).
+    On cache miss: re-perform effect → outer handler handles it → store result in cache.
+    """
+
+    @do
+    def handler(effect, k):
+        if not isinstance(effect, effect_type):
+            yield Pass(effect, k)
+            return
+
+        key = key_fn(effect)
+
+        # Check cache
+        if (yield CacheExists(key)):
+            try:
+                cached = yield CacheGet(key)
+                result = yield Resume(k, cached)
+                return result
+            except KeyError:
+                pass  # cache miss — fall through
+
+        # Cache miss — "delegate" by re-performing the effect.
+        # Handler runs on parent fiber, so yield effect → outer handler.
+        delegated = yield effect
+
+        # Store in cache
+        yield CachePut(key, delegated)
+
+        # Resume body with result
+        result = yield Resume(k, delegated)
+        return result
+
+    return handler
+
+
+def memo_rewriters(
+    *effect_types: type,
+    key_fn: MemoKeyFn = content_address,
+) -> list:
+    """Create memo rewriter handlers for each provided effect type."""
+    return [make_memo_rewriter(et, key_fn=key_fn) for et in effect_types]
 
 
 __all__ = [
     "cache_handler",
     "content_address",
     "in_memory_cache_handler",
+    "make_memo_rewriter",
+    "memo_rewriters",
     "sqlite_cache_handler",
 ]
