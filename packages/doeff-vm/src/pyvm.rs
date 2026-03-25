@@ -54,13 +54,35 @@ impl PyVM {
         Ok(value_to_python(py, result).unbind())
     }
 
+    /// Convert a VMError to a Python exception.
+    /// For UncaughtException with a Python error inside, re-raise the original.
+    fn convert_vm_error(&self, err: doeff_vm_core::VMError) -> pyo3::PyErr {
+        match err {
+            doeff_vm_core::VMError::UncaughtException { exception } => {
+                Python::attach(|py| {
+                    let py_obj = value_to_python(py, exception);
+                    // If it's a Python exception, re-raise it directly
+                    if py_obj.is_instance_of::<pyo3::exceptions::PyBaseException>() {
+                        pyo3::PyErr::from_value(py_obj.unbind().into_bound(py))
+                    } else {
+                        // Wrap non-exception value in RuntimeError
+                        pyo3::exceptions::PyRuntimeError::new_err(
+                            format!("uncaught exception: {:?}", py_obj)
+                        )
+                    }
+                })
+            }
+            other => pyo3::exceptions::PyRuntimeError::new_err(format!("{}", other)),
+        }
+    }
+
     fn step_loop(&mut self) -> PyResult<Value> {
         for _ in 0..100_000 {
             match self.vm.step() {
                 StepResult::Continue => continue,
                 StepResult::Done(value) => return Ok(value),
                 StepResult::Error(err) => {
-                    return Err(pyo3::exceptions::PyRuntimeError::new_err(format!("{}", err)));
+                    return Err(self.convert_vm_error(err));
                 }
                 StepResult::External(call) => {
                     match call.callable {
