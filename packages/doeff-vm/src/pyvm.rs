@@ -56,23 +56,73 @@ impl PyVM {
 
     /// Convert a VMError to a Python exception.
     /// For UncaughtException with a Python error inside, re-raise the original.
-    fn convert_vm_error(&self, err: doeff_vm_core::VMError) -> pyo3::PyErr {
+    /// For unhandled/no-matching handler errors, include the effect type name
+    /// and attach __doeff_traceback__ from the VM's last_error_context.
+    fn convert_vm_error(&mut self, err: doeff_vm_core::VMError) -> pyo3::PyErr {
         match err {
             doeff_vm_core::VMError::UncaughtException { exception } => {
                 Python::attach(|py| {
                     let py_obj = value_to_python(py, exception);
-                    // If it's a Python exception, re-raise it directly
                     if py_obj.is_instance_of::<pyo3::exceptions::PyBaseException>() {
                         pyo3::PyErr::from_value(py_obj.unbind().into_bound(py))
                     } else {
-                        // Wrap non-exception value in RuntimeError
                         pyo3::exceptions::PyRuntimeError::new_err(
                             format!("uncaught exception: {:?}", py_obj)
                         )
                     }
                 })
             }
+            doeff_vm_core::VMError::UnhandledEffect { effect } => {
+                self.make_effect_error("unhandled effect", &effect)
+            }
+            doeff_vm_core::VMError::NoMatchingHandler { effect } => {
+                self.make_effect_error("no handler found for effect", &effect)
+            }
+            doeff_vm_core::VMError::DelegateNoOuterHandler { effect } => {
+                self.make_effect_error("Pass: no outer handler", &effect)
+            }
             other => pyo3::exceptions::PyRuntimeError::new_err(format!("{}", other)),
+        }
+    }
+
+    /// Create a RuntimeError for an unhandled effect, with __doeff_traceback__ attached.
+    fn make_effect_error(&mut self, label: &str, effect: &Value) -> pyo3::PyErr {
+        let ctx = self.vm.last_error_context.take();
+        Python::attach(|py| {
+            let desc = Self::describe_effect(py, effect);
+            let msg = format!("{}: {}", label, desc);
+            let err = pyo3::exceptions::PyRuntimeError::new_err(msg);
+            // Attach doeff traceback if captured
+            if let Some(frames) = ctx {
+                let py_frames: Vec<_> = frames.into_iter()
+                    .map(|v| value_to_python(py, v))
+                    .collect();
+                let tb_list = pyo3::types::PyList::new(py, &py_frames).unwrap();
+                let exc_val = err.value(py);
+                let _ = exc_val.setattr("__doeff_traceback__", tb_list);
+            }
+            err
+        })
+    }
+
+    /// Get a human-readable description of an effect value (type name + repr).
+    fn describe_effect(py: Python<'_>, effect: &Value) -> String {
+        match effect {
+            Value::Opaque(shared) => {
+                let obj = shared.inner().bind(py);
+                let type_name = obj.get_type().qualname()
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|_| "<unknown>".to_string());
+                let repr = obj.repr()
+                    .map(|r| r.to_string())
+                    .unwrap_or_else(|_| type_name.clone());
+                if repr == type_name {
+                    type_name
+                } else {
+                    format!("{} ({})", type_name, repr)
+                }
+            }
+            other => format!("{:?}", other),
         }
     }
 

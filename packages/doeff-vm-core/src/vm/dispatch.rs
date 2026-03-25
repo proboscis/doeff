@@ -69,9 +69,9 @@ impl VM {
         let (handler_fiber_id, handler_parent) = self
             .find_handler_for_effect(current, effect)
             .ok_or_else(|| {
-                StepResult::Error(crate::error::VMError::internal(format!(
-                    "perform: no handler found for effect"
-                )))
+                // Capture execution context before erroring so traceback is available
+                self.last_error_context = Some(self.collect_rich_execution_context());
+                StepResult::Error(crate::error::VMError::unhandled_effect(effect.clone()))
             })?;
 
         // OCaml 5: continuation includes everything from body up to AND INCLUDING
