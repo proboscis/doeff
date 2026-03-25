@@ -26,6 +26,26 @@ from doeff.do import do
 from doeff.program import Pure, Resume, Transfer, Pass, Perform, WithHandler, GetHandlers
 
 
+def _enrich_exception_traceback(exc):
+    """Extract doeff-relevant frames from Python's __traceback__ and
+    attach as __doeff_traceback__ on the exception."""
+    import traceback as tb_mod
+    tb = exc.__traceback__
+    if tb is None:
+        return
+    frames = []
+    for frame_summary in tb_mod.extract_tb(tb):
+        fn = frame_summary.filename
+        name = frame_summary.name
+        # Skip doeff VM/framework internals
+        if any(p in fn for p in ('/doeff_vm/', '/doeff/do.py', '/doeff/run.py',
+                                  '/doeff_core_effects/')):
+            continue
+        frames.append([frame_summary.name, frame_summary.filename, frame_summary.lineno])
+    if frames:
+        exc.__doeff_traceback__ = frames
+
+
 # ---------------------------------------------------------------------------
 # Effects
 # ---------------------------------------------------------------------------
@@ -258,6 +278,11 @@ def scheduled(body_program):
                 result = yield prog
                 yield Perform(TaskCompleted(tid, Ok(result)))
             except Exception as e:
+                # Enrich exception with doeff traceback from Python's __traceback__.
+                try:
+                    _enrich_exception_traceback(e)
+                except Exception:
+                    pass  # traceback enrichment failed — don't mask the original error
                 yield Perform(TaskCompleted(tid, Err(e)))
         return wrapped()
 
