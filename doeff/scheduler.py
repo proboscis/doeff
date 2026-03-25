@@ -55,11 +55,88 @@ class Wait(EffectBase):
         self.task = task
 
 
+class Race(EffectBase):
+    def __init__(self, *tasks):
+        super().__init__()
+        self.tasks = tasks
+
+
+class CreatePromise(EffectBase):
+    def __init__(self):
+        super().__init__()
+
+
+class CompletePromise(EffectBase):
+    def __init__(self, promise, value):
+        super().__init__()
+        self.promise = promise
+        self.value = value
+
+
+class FailPromise(EffectBase):
+    def __init__(self, promise, error):
+        super().__init__()
+        self.promise = promise
+        self.error = error
+
+
+class CreateExternalPromise(EffectBase):
+    def __init__(self):
+        super().__init__()
+
+
+# ---------------------------------------------------------------------------
+# Handles
+# ---------------------------------------------------------------------------
+
 class Task:
     def __init__(self, task_id):
         self.task_id = task_id
     def __repr__(self):
         return f"Task({self.task_id})"
+
+
+class Future:
+    """Read-side handle for a promise."""
+    def __init__(self, promise_id):
+        self.promise_id = promise_id
+    def __repr__(self):
+        return f"Future({self.promise_id})"
+
+
+class Promise:
+    """Write-side handle for an internal promise."""
+    def __init__(self, promise_id):
+        self.promise_id = promise_id
+
+    @property
+    def future(self):
+        return Future(self.promise_id)
+
+    def __repr__(self):
+        return f"Promise({self.promise_id})"
+
+
+class ExternalPromise:
+    """Write-side handle for an external promise. Thread-safe complete/fail."""
+    def __init__(self, promise_id, queue):
+        self.promise_id = promise_id
+        self._queue = queue
+
+    @property
+    def future(self):
+        return Future(self.promise_id)
+
+    def complete(self, value):
+        """Complete the promise with a value. Thread-safe."""
+        self._queue.append(("complete", self.promise_id, value))
+
+    def fail(self, error):
+        """Fail the promise with an error. Thread-safe."""
+        self._queue.append(("fail", self.promise_id, error))
+
+    def __repr__(self):
+        return f"ExternalPromise({self.promise_id})"
 
 
 # ---------------------------------------------------------------------------
@@ -68,22 +145,48 @@ class Task:
 
 def scheduled(body_program):
     """Wrap a program with the scheduler. Returns a DoExpr."""
+    from collections import deque
 
-    state = {
-        "next_id": 0,
-        "tasks": {},       # tid → {status, result, cont, program}
-        "waiters": {},     # tid → [(type, k, ...)]
-        "ready": [],       # [(type, tid, cont, value)]
-    }
+    # --- State ---
+    next_id = [0]
+    tasks = {}           # tid → {status, result, program}
+    promises = {}        # pid → {status, result}
+    waiters = {}         # waitable_key → [(type, k, ...)]
+    ready = []           # [(type, ...)]
+    external_queue = deque()  # thread-safe completion queue
 
-    def alloc(program):
-        tid = state["next_id"]
-        state["next_id"] += 1
-        state["tasks"][tid] = {"status": "pending", "result": None, "program": program}
+    def fresh_id():
+        i = next_id[0]
+        next_id[0] += 1
+        return i
+
+    def waitable_key(obj):
+        """Convert Task or Future to a dict key."""
+        if isinstance(obj, Task):
+            return ("task", obj.task_id)
+        elif isinstance(obj, Future):
+            return ("promise", obj.promise_id)
+        raise TypeError(f"expected Task or Future, got {type(obj).__name__}")
+
+    def waitable_status(key):
+        kind, wid = key
+        if kind == "task":
+            return tasks[wid]["status"], tasks[wid].get("result")
+        elif kind == "promise":
+            return promises[wid]["status"], promises[wid].get("result")
+        return "unknown", None
+
+    def alloc_task(program):
+        tid = fresh_id()
+        tasks[tid] = {"status": "pending", "result": None, "program": program}
         return tid
 
+    def alloc_promise():
+        pid = fresh_id()
+        promises[pid] = {"status": "pending", "result": None}
+        return pid
+
     def wrap_task(tid, prog):
-        """Wrap a task body to catch completion."""
         @do
         def wrapped():
             try:
@@ -93,101 +196,154 @@ def scheduled(body_program):
                 yield Perform(TaskCompleted(tid, Err(e)))
         return wrapped()
 
+    def drain_external():
+        """Drain external completion queue into promise state."""
+        while external_queue:
+            action, pid, value = external_queue.popleft()
+            if pid not in promises or promises[pid]["status"] != "pending":
+                continue
+            if action == "complete":
+                promises[pid]["status"] = "completed"
+                promises[pid]["result"] = value
+            elif action == "fail":
+                promises[pid]["status"] = "failed"
+                promises[pid]["result"] = value
+            wake_waiters(("promise", pid))
+
     def pick_next():
-        """Return DoExpr to run next ready task, or Pure(None) if empty."""
-        while state["ready"]:
-            entry = state["ready"].pop(0)
+        drain_external()
+        while ready:
+            entry = ready.pop(0)
             if entry[0] == "new":
                 _, tid = entry
-                task = state["tasks"][tid]
-                task["status"] = "running"
-                return WithHandler(handler, wrap_task(tid, task["program"]))
+                tasks[tid]["status"] = "running"
+                return WithHandler(handler, wrap_task(tid, tasks[tid]["program"]))
             elif entry[0] == "resume":
                 _, cont, value = entry
                 return Transfer(cont, value)
         return Pure(None)
 
-    def wake_waiters(completed_tid):
-        waiters = state["waiters"].pop(completed_tid, [])
-        for w in waiters:
+    def wake_waiters(completed_key):
+        ws = waiters.pop(completed_key, [])
+        for w in ws:
             if w[0] == "wait":
                 _, waiter_k = w
-                task = state["tasks"][completed_tid]
-                state["ready"].append(("resume", waiter_k, task["result"]))
+                status, result = waitable_status(completed_key)
+                ready.append(("resume", waiter_k, result))
             elif w[0] == "gather":
-                _, waiter_k, gather_tasks = w
+                _, waiter_k, gather_waitables = w
                 all_done = all(
-                    state["tasks"][t.task_id]["status"] in ("completed", "failed")
-                    for t in gather_tasks
+                    waitable_status(waitable_key(t))[0] in ("completed", "failed")
+                    for t in gather_waitables
                 )
                 if all_done:
-                    results = [state["tasks"][t.task_id]["result"] for t in gather_tasks]
-                    state["ready"].append(("resume", waiter_k, results))
+                    results = [waitable_status(waitable_key(t))[1] for t in gather_waitables]
+                    ready.append(("resume", waiter_k, results))
                 else:
-                    # Re-register for remaining
-                    for t in gather_tasks:
-                        tid = t.task_id
-                        if state["tasks"][tid]["status"] not in ("completed", "failed"):
-                            if tid not in state["waiters"]:
-                                state["waiters"][tid] = []
-                            state["waiters"][tid].append(("gather", waiter_k, gather_tasks))
+                    # Re-register for next incomplete
+                    for t in gather_waitables:
+                        wk = waitable_key(t)
+                        if waitable_status(wk)[0] not in ("completed", "failed"):
+                            waiters.setdefault(wk, []).append(("gather", waiter_k, gather_waitables))
                             break
+            elif w[0] == "race":
+                _, waiter_k, race_waitables = w
+                # First completed wins
+                status, result = waitable_status(completed_key)
+                if status == "completed":
+                    ready.append(("resume", waiter_k, result))
+                elif status == "failed":
+                    ready.append(("resume", waiter_k, result))  # TODO: raise
 
     @do
     def handler(effect, k):
         if isinstance(effect, Spawn):
-            tid = alloc(effect.program)
-            # Queue: new task first, then resume spawner with handle
-            state["ready"].append(("new", tid))
-            state["ready"].append(("resume", k, Task(tid)))
-            # Start next (the new task)
+            tid = alloc_task(effect.program)
+            ready.append(("new", tid))
+            ready.append(("resume", k, Task(tid)))
             return (yield pick_next())
 
         elif isinstance(effect, TaskCompleted):
             tid = effect.task_id
-            task = state["tasks"][tid]
             r = effect.result
             if hasattr(r, 'is_ok') and r.is_ok():
-                task["status"] = "completed"
-                task["result"] = r.value
+                tasks[tid]["status"] = "completed"
+                tasks[tid]["result"] = r.value
             else:
-                task["status"] = "failed"
-                task["result"] = r.error if hasattr(r, 'error') else r
-            wake_waiters(tid)
+                tasks[tid]["status"] = "failed"
+                tasks[tid]["result"] = r.error if hasattr(r, 'error') else r
+            wake_waiters(("task", tid))
             return (yield pick_next())
 
         elif isinstance(effect, Wait):
-            tid = effect.task.task_id
-            task = state["tasks"][tid]
-            if task["status"] == "completed":
-                result = yield Resume(k, task["result"])
-                return result
-            elif task["status"] == "failed":
-                raise task["result"]
+            wk = waitable_key(effect.task)
+            status, result = waitable_status(wk)
+            if status == "completed":
+                r = yield Resume(k, result)
+                return r
+            elif status == "failed":
+                raise result
             else:
-                if tid not in state["waiters"]:
-                    state["waiters"][tid] = []
-                state["waiters"][tid].append(("wait", k))
+                waiters.setdefault(wk, []).append(("wait", k))
                 return (yield pick_next())
 
         elif isinstance(effect, Gather):
-            all_done = all(
-                state["tasks"][t.task_id]["status"] in ("completed", "failed")
-                for t in effect.tasks
-            )
+            wks = [waitable_key(t) for t in effect.tasks]
+            all_done = all(waitable_status(wk)[0] in ("completed", "failed") for wk in wks)
             if all_done:
-                results = [state["tasks"][t.task_id]["result"] for t in effect.tasks]
-                result = yield Resume(k, results)
-                return result
+                results = [waitable_status(wk)[1] for wk in wks]
+                r = yield Resume(k, results)
+                return r
             else:
-                for t in effect.tasks:
-                    tid = t.task_id
-                    if state["tasks"][tid]["status"] not in ("completed", "failed"):
-                        if tid not in state["waiters"]:
-                            state["waiters"][tid] = []
-                        state["waiters"][tid].append(("gather", k, effect.tasks))
+                for i, wk in enumerate(wks):
+                    if waitable_status(wk)[0] not in ("completed", "failed"):
+                        waiters.setdefault(wk, []).append(("gather", k, effect.tasks))
                         break
                 return (yield pick_next())
+
+        elif isinstance(effect, Race):
+            for t in effect.tasks:
+                wk = waitable_key(t)
+                status, result = waitable_status(wk)
+                if status == "completed":
+                    r = yield Resume(k, result)
+                    return r
+                elif status == "failed":
+                    raise result
+            # All pending — block on all
+            for t in effect.tasks:
+                wk = waitable_key(t)
+                if waitable_status(wk)[0] == "pending":
+                    waiters.setdefault(wk, []).append(("race", k, effect.tasks))
+                    break
+            return (yield pick_next())
+
+        elif isinstance(effect, CreatePromise):
+            pid = alloc_promise()
+            r = yield Resume(k, Promise(pid))
+            return r
+
+        elif isinstance(effect, CompletePromise):
+            pid = effect.promise.promise_id
+            promises[pid]["status"] = "completed"
+            promises[pid]["result"] = effect.value
+            wake_waiters(("promise", pid))
+            r = yield Resume(k, None)
+            return r
+
+        elif isinstance(effect, FailPromise):
+            pid = effect.promise.promise_id
+            promises[pid]["status"] = "failed"
+            promises[pid]["result"] = effect.error
+            wake_waiters(("promise", pid))
+            r = yield Resume(k, None)
+            return r
+
+        elif isinstance(effect, CreateExternalPromise):
+            pid = alloc_promise()
+            ep = ExternalPromise(pid, external_queue)
+            r = yield Resume(k, ep)
+            return r
 
         else:
             yield Pass(effect, k)

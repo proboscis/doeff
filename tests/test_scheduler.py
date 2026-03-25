@@ -234,3 +234,79 @@ class TestConcurrency:
 
         result = doeff_run(scheduled(body()))
         assert result == sum(i * i for i in range(50))
+
+
+# ---------------------------------------------------------------------------
+# Promise
+# ---------------------------------------------------------------------------
+
+class TestPromise:
+    def test_create_and_complete_promise(self):
+        """Internal promise: create, complete, wait."""
+        from doeff.scheduler import CreatePromise, CompletePromise
+
+        @do
+        def body():
+            p = yield CreatePromise()
+            yield CompletePromise(p, 42)
+            return (yield Wait(p.future))
+
+        assert doeff_run(scheduled(body())) == 42
+
+    def test_promise_across_tasks(self):
+        """One task creates promise, another waits, first completes."""
+        from doeff.scheduler import CreatePromise, CompletePromise
+
+        @do
+        def body():
+            p = yield CreatePromise()
+            # Spawn a task that waits on the promise
+            @do
+            def waiter():
+                return (yield Wait(p.future))
+            tw = yield Spawn(waiter())
+            # Complete the promise
+            yield CompletePromise(p, 99)
+            # Wait for the waiter to finish
+            return (yield Wait(tw))
+
+        assert doeff_run(scheduled(body())) == 99
+
+
+# ---------------------------------------------------------------------------
+# ExternalPromise
+# ---------------------------------------------------------------------------
+
+class TestExternalPromise:
+    def test_external_promise_complete(self):
+        """ExternalPromise: complete from outside, task gets value."""
+        from doeff.scheduler import CreateExternalPromise
+
+        @do
+        def body():
+            ep = yield CreateExternalPromise()
+            # Simulate external completion (would normally come from another thread)
+            ep.complete(77)
+            # Wait for it
+            return (yield Wait(ep.future))
+
+        assert doeff_run(scheduled(body())) == 77
+
+    def test_external_promise_with_spawned_task(self):
+        """Spawned task waits on external promise, main completes it."""
+        from doeff.scheduler import CreateExternalPromise
+
+        @do
+        def body():
+            ep = yield CreateExternalPromise()
+
+            @do
+            def waiter():
+                return (yield Wait(ep.future))
+
+            tw = yield Spawn(waiter())
+            # Complete externally
+            ep.complete("external_value")
+            return (yield Wait(tw))
+
+        assert doeff_run(scheduled(body())) == "external_value"
