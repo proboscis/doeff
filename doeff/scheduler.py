@@ -55,6 +55,18 @@ class Wait(EffectBase):
         self.task = task
 
 
+class Cancel(EffectBase):
+    """Cancel a task cooperatively."""
+    def __init__(self, task):
+        super().__init__()
+        self.task = task
+
+
+class TaskCancelledError(Exception):
+    """Raised when waiting on a cancelled task."""
+    pass
+
+
 class Race(EffectBase):
     def __init__(self, *tasks):
         super().__init__()
@@ -153,6 +165,7 @@ def scheduled(body_program):
     promises = {}        # pid → {status, result}
     waiters = {}         # waitable_key → [(type, k, ...)]
     ready = []           # [(type, ...)]
+    cancel_requested = set()  # task ids pending cancellation
     external_queue = queue_mod.Queue()  # thread-safe, blocking get()
 
     def fresh_id():
@@ -197,17 +210,23 @@ def scheduled(body_program):
         return wrapped()
 
     def pick_next():
+        from doeff.program import ResumeThrow
         while True:
             drain()
             while ready:
                 entry = ready.pop(0)
                 if entry[0] == "new":
                     _, tid = entry
+                    if tasks[tid]["status"] == "cancelled":
+                        continue  # skip cancelled tasks
                     tasks[tid]["status"] = "running"
                     return WithHandler(handler, wrap_task(tid, tasks[tid]["program"]))
                 elif entry[0] == "resume":
                     _, cont, value = entry
                     return Transfer(cont, value)
+                elif entry[0] == "raise":
+                    _, cont, error = entry
+                    return ResumeThrow(cont, error)
             if not waiters:
                 return Pure(None)
             # All tasks blocked — block for one external completion
@@ -217,37 +236,64 @@ def scheduled(body_program):
                 promises[pid]["result"] = value
                 wake_waiters(("promise", pid))
 
+    TERMINAL = ("completed", "failed", "cancelled")
+
+    def resume_with_waitable_result(waiter_k, key):
+        """Add a ready entry that resumes waiter with the waitable's result.
+        For failed/cancelled, uses ("raise", k, error) so handler can throw."""
+        status, result = waitable_status(key)
+        if status == "completed":
+            ready.append(("resume", waiter_k, result))
+        elif status == "failed":
+            ready.append(("raise", waiter_k, result))
+        elif status == "cancelled":
+            ready.append(("raise", waiter_k, TaskCancelledError()))
+
     def wake_waiters(completed_key):
         ws = waiters.pop(completed_key, [])
         for w in ws:
             if w[0] == "wait":
                 _, waiter_k = w
-                status, result = waitable_status(completed_key)
-                ready.append(("resume", waiter_k, result))
+                resume_with_waitable_result(waiter_k, completed_key)
             elif w[0] == "gather":
                 _, waiter_k, gather_waitables = w
                 all_done = all(
-                    waitable_status(waitable_key(t))[0] in ("completed", "failed")
+                    waitable_status(waitable_key(t))[0] in TERMINAL
                     for t in gather_waitables
                 )
                 if all_done:
-                    results = [waitable_status(waitable_key(t))[1] for t in gather_waitables]
-                    ready.append(("resume", waiter_k, results))
+                    # Fail-fast: check for first error
+                    for t in gather_waitables:
+                        s, r = waitable_status(waitable_key(t))
+                        if s == "failed":
+                            ready.append(("raise", waiter_k, r))
+                            break
+                        if s == "cancelled":
+                            ready.append(("raise", waiter_k, TaskCancelledError()))
+                            break
+                    else:
+                        # All completed successfully
+                        results = [waitable_status(waitable_key(t))[1] for t in gather_waitables]
+                        ready.append(("resume", waiter_k, results))
                 else:
+                    # Fail-fast: check if any already failed/cancelled
+                    for t in gather_waitables:
+                        s, r = waitable_status(waitable_key(t))
+                        if s == "failed":
+                            ready.append(("raise", waiter_k, r))
+                            return
+                        if s == "cancelled":
+                            ready.append(("raise", waiter_k, TaskCancelledError()))
+                            return
                     # Re-register for next incomplete
                     for t in gather_waitables:
                         wk = waitable_key(t)
-                        if waitable_status(wk)[0] not in ("completed", "failed"):
+                        if waitable_status(wk)[0] not in TERMINAL:
                             waiters.setdefault(wk, []).append(("gather", waiter_k, gather_waitables))
                             break
             elif w[0] == "race":
-                _, waiter_k, race_waitables = w
-                # First completed wins
-                status, result = waitable_status(completed_key)
-                if status == "completed":
-                    ready.append(("resume", waiter_k, result))
-                elif status == "failed":
-                    ready.append(("resume", waiter_k, result))  # TODO: raise
+                _, waiter_k, _race_waitables = w
+                resume_with_waitable_result(waiter_k, completed_key)
 
     def drain():
         """Drain all pending external completions into promise state."""
@@ -286,21 +332,34 @@ def scheduled(body_program):
                 r = yield Resume(k, result)
                 return r
             elif status == "failed":
-                raise result
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, result))
+            elif status == "cancelled":
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, TaskCancelledError()))
             else:
                 waiters.setdefault(wk, []).append(("wait", k))
                 return (yield pick_next())
 
         elif isinstance(effect, Gather):
             wks = [waitable_key(t) for t in effect.tasks]
-            all_done = all(waitable_status(wk)[0] in ("completed", "failed") for wk in wks)
+            # Fail-fast: check for first error/cancelled
+            for wk in wks:
+                s, r = waitable_status(wk)
+                if s == "failed":
+                    from doeff.program import ResumeThrow
+                    return (yield ResumeThrow(k, r))
+                if s == "cancelled":
+                    from doeff.program import ResumeThrow
+                    return (yield ResumeThrow(k, TaskCancelledError()))
+            all_done = all(waitable_status(wk)[0] in TERMINAL for wk in wks)
             if all_done:
                 results = [waitable_status(wk)[1] for wk in wks]
                 r = yield Resume(k, results)
                 return r
             else:
-                for i, wk in enumerate(wks):
-                    if waitable_status(wk)[0] not in ("completed", "failed"):
+                for wk in wks:
+                    if waitable_status(wk)[0] not in TERMINAL:
                         waiters.setdefault(wk, []).append(("gather", k, effect.tasks))
                         break
                 return (yield pick_next())
@@ -312,15 +371,27 @@ def scheduled(body_program):
                 if status == "completed":
                     r = yield Resume(k, result)
                     return r
-                elif status == "failed":
-                    raise result
-            # All pending — block on all
+                elif status in ("failed", "cancelled"):
+                    from doeff.program import ResumeThrow
+                    err = result if status == "failed" else TaskCancelledError()
+                    return (yield ResumeThrow(k, err))
+            # All pending
             for t in effect.tasks:
                 wk = waitable_key(t)
-                if waitable_status(wk)[0] == "pending":
+                if waitable_status(wk)[0] not in TERMINAL:
                     waiters.setdefault(wk, []).append(("race", k, effect.tasks))
                     break
             return (yield pick_next())
+
+        elif isinstance(effect, Cancel):
+            tid = effect.task.task_id
+            task = tasks.get(tid)
+            if task and task["status"] in ("pending", "running", "suspended"):
+                task["status"] = "cancelled"
+                task["result"] = TaskCancelledError()
+                wake_waiters(("task", tid))
+            r = yield Resume(k, None)
+            return r
 
         elif isinstance(effect, CreatePromise):
             pid = alloc_promise()

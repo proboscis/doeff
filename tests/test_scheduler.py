@@ -341,3 +341,110 @@ class TestExternalPromise:
 
         assert results == list(range(100))
         assert elapsed < 2.0, f"took {elapsed:.1f}s — not concurrent!"
+
+
+# ---------------------------------------------------------------------------
+# Cancel
+# ---------------------------------------------------------------------------
+
+class TestCancel:
+    def test_cancel_blocked_task(self):
+        """Cancel a task that's blocked waiting on a promise."""
+        from doeff.scheduler import Cancel, TaskCancelledError, CreateExternalPromise
+
+        @do
+        def body():
+            ep = yield CreateExternalPromise()
+
+            @do
+            def blocked_task():
+                return (yield Wait(ep.future))  # blocks forever
+
+            t = yield Spawn(blocked_task())
+            yield Cancel(t)
+            try:
+                yield Wait(t)
+                return "should not reach"
+            except TaskCancelledError:
+                return "cancelled"
+
+        assert doeff_run(scheduled(body())) == "cancelled"
+
+    def test_cancel_does_not_affect_completed(self):
+        """Cancelling an already-completed task is a no-op."""
+        from doeff.scheduler import Cancel
+
+        @do
+        def fast():
+            return 99
+
+        @do
+        def body():
+            t = yield Spawn(fast())
+            r = yield Wait(t)
+            yield Cancel(t)  # no-op
+            return r
+
+        assert doeff_run(scheduled(body())) == 99
+
+
+# ---------------------------------------------------------------------------
+# Error propagation
+# ---------------------------------------------------------------------------
+
+class TestErrorPropagation:
+    def test_wait_raises_on_failed_task(self):
+        """Wait on a failed task raises the error."""
+        @do
+        def failing():
+            raise ValueError("boom")
+            yield  # make it a generator
+
+        @do
+        def body():
+            t = yield Spawn(failing())
+            try:
+                yield Wait(t)
+                return "should not reach"
+            except ValueError as e:
+                return str(e)
+
+        assert doeff_run(scheduled(body())) == "boom"
+
+    def test_gather_fail_fast(self):
+        """Gather raises on first failed task."""
+        @do
+        def good():
+            return 1
+
+        @do
+        def bad():
+            raise RuntimeError("fail")
+            yield
+
+        @do
+        def body():
+            t1 = yield Spawn(good())
+            t2 = yield Spawn(bad())
+            try:
+                yield Gather(t1, t2)
+                return "should not reach"
+            except RuntimeError as e:
+                return str(e)
+
+        assert doeff_run(scheduled(body())) == "fail"
+
+    def test_gather_all_succeed(self):
+        """Gather with no failures returns all results."""
+        @do
+        def make(x):
+            return x
+
+        @do
+        def body():
+            t1 = yield Spawn(make(1))
+            t2 = yield Spawn(make(2))
+            t3 = yield Spawn(make(3))
+            return (yield Gather(t1, t2, t3))
+
+        assert doeff_run(scheduled(body())) == [1, 2, 3]
