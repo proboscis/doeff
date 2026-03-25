@@ -26,16 +26,25 @@ from doeff.do import do
 from doeff.program import Pure, Resume, Transfer, Pass, Perform, WithHandler, GetHandlers
 
 
-def _enrich_exception_traceback(exc, vm_ctx=None):
-    """Build doeff traceback from Python __traceback__ + VM handler context.
+def _enrich_exception_traceback(exc, task_meta=None):
+    """Build doeff traceback from Python __traceback__ + task metadata.
 
-    Python __traceback__ has user code frames (with correct line numbers).
-    VM context has handler boundaries and handler chain info.
-    Combined: rich doeff traceback with user frames + handler context.
+    Python __traceback__ has user frames (correct line numbers).
+    task_meta has inner_handlers (captured at spawn time via GetHandlers).
     """
     import traceback as tb_mod
 
     entries = []
+
+    # Handler chain from task metadata (captured at spawn time)
+    inner_handlers = (task_meta or {}).get("inner_handlers", [])
+    handler_names = []
+    for h in inner_handlers:
+        name = getattr(h, "__qualname__", None) or getattr(h, "__name__", None) or str(h)
+        # Clean closure names
+        if ".<locals>." in name:
+            name = name.split(".<locals>.")[0]
+        handler_names.append(name)
 
     # Extract user frames from Python __traceback__
     tb = exc.__traceback__
@@ -48,13 +57,9 @@ def _enrich_exception_traceback(exc, vm_ctx=None):
                 continue
             entries.append(["frame", fs.name, fs.filename, fs.lineno])
 
-    # Add handler context from VM fiber walk
-    if vm_ctx:
-        for entry in vm_ctx:
-            if isinstance(entry, (list, tuple)) and len(entry) >= 2:
-                kind = entry[0]
-                if kind == "handler":
-                    entries.append(list(entry))
+    # Add handler chain (all handlers in scope for this task)
+    if handler_names:
+        entries.append(["handler", "task_handlers", handler_names])
 
     if entries:
         exc.__doeff_traceback__ = entries
@@ -292,20 +297,11 @@ def scheduled(body_program):
                 result = yield prog
                 yield Perform(TaskCompleted(tid, Ok(result)))
             except Exception as e:
-                # Enrich exception with doeff traceback.
-                # Use Python __traceback__ for user frames (still live at except time)
-                # and GetExecutionContext for handler chain context.
-                from doeff.program import GetExecutionContext as _GetExecCtx
                 try:
-                    # Get handler chain from VM
-                    vm_ctx = yield _GetExecCtx()
-                    # Combine: Python traceback frames + VM handler context
-                    _enrich_exception_traceback(e, vm_ctx)
+                    task_meta = tasks.get(tid, {})
+                    _enrich_exception_traceback(e, task_meta)
                 except Exception:
-                    try:
-                        _enrich_exception_traceback(e, [])
-                    except Exception:
-                        pass
+                    pass
                 yield Perform(TaskCompleted(tid, Err(e)))
         return wrapped()
 
