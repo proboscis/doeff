@@ -47,3 +47,30 @@ class Tell(EffectBase):
 
     def __repr__(self):
         return f"Tell({self.message!r})"
+
+
+class Try(EffectBase):
+    """Wrap a program to catch errors as Ok/Err results.
+
+    yield Try(some_program) → Ok(value) or Err(error)
+    """
+    def __init__(self, program):
+        super().__init__()
+        self.program = program
+
+    def __repr__(self):
+        return f"Try({self.program!r})"
+
+
+class Slog(EffectBase):
+    """Structured log effect: msg + kwargs."""
+    def __init__(self, msg, **kwargs):
+        super().__init__()
+        self.msg = msg
+        self.kwargs = kwargs
+
+    def __repr__(self):
+        kw = ", ".join(f"{k}={v!r}" for k, v in self.kwargs.items())
+        if kw:
+            return f"Slog({self.msg!r}, {kw})"
+        return f"Slog({self.msg!r})"

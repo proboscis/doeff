@@ -109,6 +109,11 @@ class GetTraceback:
         self.continuation = k
 
 
+class GetExecutionContext:
+    """Get current execution context (traceback from current position). tag=25"""
+    tag = 25
+
+
 def program(gen_fn, *args):
     """Wrap a generator function as Expand(Apply(Callable(factory), args)).
 
