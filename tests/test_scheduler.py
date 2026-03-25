@@ -79,6 +79,56 @@ class TestGather:
 # Stress + Concurrency
 # ---------------------------------------------------------------------------
 
+class TestPriority:
+    def test_high_priority_runs_first(self):
+        """Higher priority task runs before lower priority."""
+        from doeff.scheduler import PRIORITY_HIGH, PRIORITY_IDLE
+
+        order = []
+
+        @do
+        def task_low():
+            order.append("low")
+            return "low"
+
+        @do
+        def task_high():
+            order.append("high")
+            return "high"
+
+        @do
+        def body():
+            # Spawn low first, then high
+            t_low = yield Spawn(task_low(), priority=PRIORITY_IDLE)
+            t_high = yield Spawn(task_high(), priority=PRIORITY_HIGH)
+            return (yield Gather(t_low, t_high))
+
+        result = doeff_run(scheduled(body()))
+        assert result == ["low", "high"]
+        # High priority should have run first
+        assert order[0] == "high"
+
+    def test_same_priority_fifo(self):
+        """Same priority tasks run in FIFO order."""
+        order = []
+
+        @do
+        def task(name):
+            order.append(name)
+            return name
+
+        @do
+        def body():
+            t1 = yield Spawn(task("first"))
+            t2 = yield Spawn(task("second"))
+            t3 = yield Spawn(task("third"))
+            return (yield Gather(t1, t2, t3))
+
+        result = doeff_run(scheduled(body()))
+        assert result == ["first", "second", "third"]
+        assert order == ["first", "second", "third"]
+
+
 class TestStress:
     def test_100_tasks(self):
         """Spawn and gather 100 tasks."""
