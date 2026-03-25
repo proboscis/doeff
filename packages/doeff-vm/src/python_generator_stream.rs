@@ -386,13 +386,13 @@ fn classify_tagged_to_doctrl(py: Python<'_>, obj: &Bound<'_, PyAny>, tag: u8) ->
                 .ok()
         }
         24 => {
-            // WithIntercept { interceptor, body }
-            let interceptor_obj = obj.getattr("interceptor").ok()?;
-            let interceptor_value = python_to_value(py, &interceptor_obj);
+            // WithObserve { observer, body }
+            let observer_obj = obj.getattr("observer").ok()?;
+            let observer_value = python_to_value(py, &observer_obj);
             let body_obj = obj.getattr("body").ok()?;
             let body_doctrl = classify_python_object(py, &body_obj).ok()?;
-            Some(DoCtrl::WithIntercept {
-                interceptor: interceptor_value,
+            Some(DoCtrl::WithObserve {
+                observer: observer_value,
                 body: Box::new(body_doctrl),
             })
         }

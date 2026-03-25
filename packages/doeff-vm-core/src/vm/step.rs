@@ -264,8 +264,8 @@ impl VM {
                 self.eval_pass(effect, k)
             }
 
-            DoCtrl::WithIntercept { interceptor, body } => {
-                self.eval_with_intercept(interceptor, *body)
+            DoCtrl::WithObserve { observer, body } => {
+                self.eval_with_observe(observer, *body)
             }
 
             DoCtrl::AllocVar { initial } => {
@@ -396,24 +396,15 @@ impl VM {
     /// which is evaluated on the parent fiber. No manual stream pushing —
     /// handler result is evaluated as a normal program.
     fn eval_perform(&mut self, effect: Value) -> StepResult {
-        self.eval_perform_with_skip(effect, None)
-    }
-
-    fn eval_perform_with_skip(&mut self, effect: Value, skip_intercept: Option<FiberId>) -> StepResult {
         let current = match self.current_segment {
             Some(id) => id,
             None => return StepResult::Error(VMError::internal("perform: no current segment")),
         };
 
-        // 1. Check for interceptor first (skip the one we already invoked)
-        let boundary = self.find_next_boundary(current, &effect);
-        if let Some((boundary_fid, _boundary_parent, true)) = boundary {
-            if skip_intercept != Some(boundary_fid) {
-                return self.eval_intercept(effect, boundary_fid);
-            }
-        }
+        // 1. Call ALL observers in the chain (synchronous, return value ignored)
+        self.call_all_observers(current, &effect);
 
-        // 2. No (new) interceptor — proceed to handler
+        // 2. Proceed to handler
         let result = match self.perform_effect(&effect) {
             Ok(result) => result,
             Err(step_result) => return step_result,
@@ -440,34 +431,28 @@ impl VM {
         }
     }
 
-    /// Evaluate an interceptor: call interceptor(effect) → effect.
-    /// Always returns an effect. Passthrough = return the same effect.
-    /// The transformed effect is then performed normally (full perform from body).
-    /// The interceptor is skipped by temporarily removing it during perform.
-    fn eval_intercept(&mut self, effect: Value, intercept_fid: FiberId) -> StepResult {
-        let interceptor = self.segments.get(intercept_fid)
-            .and_then(|seg| seg.intercept_handler().cloned());
-
-        let Some(interceptor) = interceptor else {
-            return StepResult::Error(VMError::internal("intercept: no interceptor callable"));
-        };
-
-        let new_effect = match interceptor.call(vec![effect]) {
-            Ok(value) => value,
-            Err(err) => return StepResult::Error(err),
-        };
-
-        // Re-perform with new effect, skipping this interceptor
-        self.eval_perform_with_skip(new_effect, Some(intercept_fid))
+    /// Walk the entire chain and call all observers synchronously.
+    fn call_all_observers(&self, start: FiberId, effect: &Value) {
+        let mut cursor = Some(start);
+        while let Some(fid) = cursor {
+            let Some(seg) = self.segments.get(fid) else { break };
+            if seg.is_intercept_boundary() {
+                if let Some(observer) = seg.intercept_handler().cloned() {
+                    let _ = observer.call(vec![effect.clone()]);
+                }
+            }
+            cursor = seg.parent;
+        }
     }
 
-    /// Evaluate WithIntercept: install interceptor boundary, create body fiber, evaluate body.
-    fn eval_with_intercept(&mut self, interceptor: Value, body: DoCtrl) -> StepResult {
-        let interceptor_callable = match interceptor {
+
+    /// Evaluate WithObserve: install observer boundary, create body fiber, evaluate body.
+    fn eval_with_observe(&mut self, observer: Value, body: DoCtrl) -> StepResult {
+        let interceptor_callable = match observer {
             Value::Callable(c) => c,
             other => {
                 return StepResult::Error(VMError::type_error(format!(
-                    "WithIntercept: interceptor must be Callable, got {:?}", other
+                    "WithObserve: observer must be Callable, got {:?}", other
                 )));
             }
         };

@@ -70,11 +70,11 @@ pub enum DoCtrl {
     /// OCaml 5: reperform with handler appended to continuation chain.
     Delegate { effect: Value, k: Continuation },
 
-    /// Install an interceptor and execute body.
-    /// interceptor: Value::Callable — called with (effect) on perform.
-    /// Returns None for passthrough, or a DoExpr to evaluate.
-    /// body: DoExpr — evaluated under the interceptor.
-    WithIntercept { interceptor: Value, body: Box<DoCtrl> },
+    /// Install an observer and execute body.
+    /// observer: Value::Callable — called synchronously with (effect) on every perform.
+    /// Return value ignored. Original effect always proceeds.
+    /// body: DoExpr — evaluated under the observer.
+    WithObserve { observer: Value, body: Box<DoCtrl> },
 
     // --- Query ---
 
