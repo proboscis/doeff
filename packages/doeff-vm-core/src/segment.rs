@@ -202,6 +202,18 @@ impl Fiber {
             .and_then(|h| h.prompt_boundary())
             .map(|p| &p.handler)
     }
+
+    /// Is this an intercept boundary?
+    pub fn is_intercept_boundary(&self) -> bool {
+        self.handler.as_ref().and_then(|h| h.intercept_boundary()).is_some()
+    }
+
+    /// Get the interceptor callable.
+    pub fn intercept_handler(&self) -> Option<&CallableRef> {
+        self.handler.as_ref()
+            .and_then(|h| h.intercept_boundary())
+            .map(|i| &i.interceptor)
+    }
 }
 
 impl Drop for Fiber {

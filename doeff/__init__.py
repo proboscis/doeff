@@ -16,6 +16,7 @@ from doeff.program import (
     Resume,
     Transfer,
     WithHandler,
+    WithIntercept,
     program,
 )
 from doeff.run import run
@@ -40,6 +41,7 @@ __all__ = [
     "Resume",
     "Transfer",
     "WithHandler",
+    "WithIntercept",
     "do",
     "program",
     "run",

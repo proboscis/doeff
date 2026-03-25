@@ -92,6 +92,14 @@ class WithHandler:
         self.body = body
 
 
+class WithIntercept:
+    """Install interceptor and run body under it. tag=24"""
+    tag = 24
+    def __init__(self, interceptor: Any, body: Any) -> None:
+        self.interceptor = interceptor
+        self.body = body
+
+
 class GetTraceback:
     """Query traceback from a continuation without consuming it. tag=23"""
     tag = 23
