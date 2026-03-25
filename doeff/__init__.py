@@ -4,6 +4,9 @@ doeff - Algebraic Effects for Python.
 Backed by a Rust VM with OCaml 5-aligned effect handler architecture.
 """
 
+from collections.abc import Generator
+from typing import Any, Callable, ParamSpec, TypeVar
+
 from doeff.do import do
 from doeff.program import (
     Apply,
@@ -59,7 +62,7 @@ class _Removed:
         raise RuntimeError(f"{self._name} was removed: {self._reason}")
 
 Delegate = _Removed("Delegate", "use 'yield effect' to re-perform in handler body")
-EffectGenerator = _Removed("EffectGenerator", "use @do instead")
+EffectGenerator = Generator  # Generator[Any, Any, T] — return type for @do function bodies
 WithIntercept = _Removed("WithIntercept", "use WithObserve")
 KleisliProgram = _Removed("KleisliProgram", "use @do instead")
 MissingEnvKeyError = KeyError
