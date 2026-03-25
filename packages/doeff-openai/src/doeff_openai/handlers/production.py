@@ -12,7 +12,6 @@ from doeff_llm.effects import (
 )
 
 from doeff import Pass, Resume, do
-from doeff.effects.base import Effect
 from doeff_openai.chat import chat_completion
 from doeff_openai.effects import (
     ChatCompletion,
@@ -95,7 +94,7 @@ def _handle_structured_output(effect: LLMStructuredQuery, k):
 
 
 @do
-def openai_production_handler(effect: Effect, k: Any):
+def openai_production_handler(effect: Any, k: Any):
     """Single protocol handler suitable for ``WithHandler`` usage."""
     if isinstance(effect, LLMStreamingChat | StreamingChatCompletion):
         if _is_openai_model(effect.model):
@@ -111,7 +110,7 @@ def openai_production_handler(effect: Effect, k: Any):
         effect.model
     ):
         return (yield _handle_structured_output(effect, k))
-    yield Pass()
+    yield Pass(effect, k)
 
 
 def production_handlers() -> ProtocolHandler:

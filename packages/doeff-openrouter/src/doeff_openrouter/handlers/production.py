@@ -12,7 +12,6 @@ from doeff_llm.effects import (
 )
 
 from doeff import Pass, Resume, do
-from doeff.effects.base import Effect
 from doeff_openrouter.chat import chat_completion
 from doeff_openrouter.effects import (
     RouterChat,
@@ -77,7 +76,7 @@ def _handle_structured_output(effect: LLMStructuredQuery, k):
 
 
 @do
-def openrouter_production_handler(effect: Effect, k: Any):
+def openrouter_production_handler(effect: Any, k: Any):
     """Single protocol handler suitable for ``WithHandler`` usage."""
     if isinstance(effect, LLMStreamingChat | RouterStreamingChat):
         return (yield _handle_streaming_chat(effect, k))
@@ -88,9 +87,9 @@ def openrouter_production_handler(effect: Effect, k: Any):
     if isinstance(effect, LLMStructuredQuery | RouterStructuredOutput):
         return (yield _handle_structured_output(effect, k))
     if isinstance(effect, LLMEmbedding):
-        yield Pass()
+        yield Pass(effect, k)
         return
-    yield Pass()
+    yield Pass(effect, k)
 
 
 def production_handlers() -> ProtocolHandler:

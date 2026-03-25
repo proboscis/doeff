@@ -6,11 +6,12 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
-from conftest import SIM_TIME_EPOCH, sim_time
+from conftest import SIM_TIME_EPOCH, run_with_handlers, sim_time
 from doeff_events import Publish, WaitForEvent, event_handler
 from doeff_time import Delay, GetTime, ScheduleAt, WaitUntil, sim_time_handler
 
-from doeff import Gather, Spawn, Wait, WithHandler, default_handlers, do, run
+from doeff import WithHandler, do
+from doeff_core_effects.scheduler import Gather, Spawn, Wait
 
 
 def _run_sim(
@@ -18,9 +19,8 @@ def _run_sim(
     *,
     start_time: datetime = SIM_TIME_EPOCH,
 ):
-    return run(
+    return run_with_handlers(
         WithHandler(sim_time_handler(start_time=start_time), program),
-        handlers=default_handlers(),
     )
 
 
@@ -29,12 +29,13 @@ def _run_sim_events(
     *,
     start_time: datetime = SIM_TIME_EPOCH,
 ):
-    return run(
-        WithHandler(
-            sim_time_handler(start_time=start_time),
-            WithHandler(event_handler(), program),
+    return run_with_handlers(
+        WithHandler(event_handler(),
+            WithHandler(
+                sim_time_handler(start_time=start_time),
+                program,
+            ),
         ),
-        handlers=default_handlers(),
     )
 
 
@@ -116,7 +117,7 @@ def test_spawned_service_publishes_events_received_by_main() -> None:
         return received
 
     result = _run_sim_events(main(), start_time=sim_time(0.0))
-    assert result.value == [
+    assert result == [
         (0.1, sim_time(1.0)),
         (-0.2, sim_time(2.0)),
         (0.3, sim_time(3.0)),
@@ -137,7 +138,7 @@ def test_virtual_time_advances_across_multiple_spawned_tasks() -> None:
         return results, (yield GetTime())
 
     result = _run_sim(program(), start_time=sim_time(0.0))
-    assert result.value == (
+    assert result == (
         [("early", sim_time(5.0)), ("late", sim_time(10.0))],
         sim_time(10.0),
     )
@@ -190,7 +191,7 @@ def test_news_signal_trade_pipeline_with_spawn_and_events() -> None:
         return trades
 
     result = _run_sim_events(backtest(), start_time=sim_time(0.0))
-    assert result.value == [
+    assert result == [
         (1.0, sim_time(1.0)),
         (-2.0, sim_time(2.0)),
         (3.0, sim_time(3.0)),
@@ -217,7 +218,7 @@ def test_main_program_returns_while_daemons_still_running() -> None:
         return ready
 
     result = _run_sim_events_with_watchdog(main, start_time=sim_time(0.0))
-    assert result.value == ReadyEvent(value="done")
+    assert result == ReadyEvent(value="done")
 
 
 def test_schedule_at_composes_with_event_handler() -> None:
@@ -236,6 +237,6 @@ def test_schedule_at_composes_with_event_handler() -> None:
         return (yield Wait(listener))
 
     result = _run_sim_events(program(), start_time=sim_time(1_000.0))
-    event, observed_time = result.value
+    event, observed_time = result
     assert event == ScheduledEvent(name="market_open")
     assert observed_time == sim_time(1_060.0)
