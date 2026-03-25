@@ -18,7 +18,7 @@ def run_with_lazy(program, env=None):
     """
     if env is None:
         env = {}
-    body = WithHandler(try_handler(), program)
+    body = WithHandler(try_handler, program)
     body = WithHandler(lazy_ask(env=env), body)
     body = scheduled(body)
     return run(body)
