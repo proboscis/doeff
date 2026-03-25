@@ -373,8 +373,14 @@ fn classify_tagged_to_doctrl(py: Python<'_>, obj: &Bound<'_, PyAny>, tag: u8) ->
                 body: Box::new(body_doctrl),
             })
         }
+        21 => {
+            // ResumeThrow
+            extract_continuation_and_exception(py, obj)
+                .map(|(k, exc)| DoCtrl::ResumeThrow { k, exception: exc })
+                .ok()
+        }
         22 => {
-            // Discontinue (= TransferThrow)
+            // TransferThrow
             extract_continuation_and_exception(py, obj)
                 .map(|(k, exc)| DoCtrl::TransferThrow { k, exception: exc })
                 .ok()

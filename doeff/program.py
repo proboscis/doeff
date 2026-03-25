@@ -60,6 +60,22 @@ class Expand:
         self.expr = expr
 
 
+class ResumeThrow:
+    """Throw exception into continuation (non-tail). tag=21"""
+    tag = 21
+    def __init__(self, k: Any, exception: Any) -> None:
+        self.continuation = k
+        self.exception = exception
+
+
+class TransferThrow:
+    """Throw exception into continuation (tail). tag=22"""
+    tag = 22
+    def __init__(self, k: Any, exception: Any) -> None:
+        self.continuation = k
+        self.exception = exception
+
+
 class Pass:
     """Inner handler doesn't handle, forward to outer. tag=19"""
     tag = 19
