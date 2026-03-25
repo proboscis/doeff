@@ -92,11 +92,13 @@ class WithHandler:
         self.body = body
 
 
-class WithIntercept:
-    """Install interceptor and run body under it. tag=24"""
+class WithObserve:
+    """Install observer and run body under it. tag=24
+    Observer is called synchronously on every effect. Return value ignored.
+    """
     tag = 24
-    def __init__(self, interceptor: Any, body: Any) -> None:
-        self.interceptor = interceptor
+    def __init__(self, observer: Any, body: Any) -> None:
+        self.observer = observer
         self.body = body
 
 

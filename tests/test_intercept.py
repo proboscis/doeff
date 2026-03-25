@@ -1,44 +1,22 @@
-"""Tests for WithIntercept — effect interception."""
+"""Tests for WithObserve — effect observation."""
 
-from doeff import do, run as doeff_run, WithHandler, WithIntercept, Perform
+from doeff import do, run as doeff_run, WithHandler, WithObserve
 from doeff_vm import EffectBase, Callable
 from doeff.program import Resume, Pass
 
 
-class TestIntercept:
-    def test_passthrough(self):
-        """Interceptor returns same effect → passes through to handler."""
+class TestObserve:
+    def test_observer_sees_effects(self):
+        """Observer is called on every effect."""
         class Ask(EffectBase):
             def __init__(self, key):
                 super().__init__()
                 self.key = key
 
-        def interceptor(effect):
-            return effect  # passthrough
+        seen = []
 
-        @do
-        def handler(effect, k):
-            result = yield Resume(k, f"handled:{effect.key}")
-            return result
-
-        @do
-        def body():
-            return (yield Ask("x"))
-
-        result = doeff_run(WithHandler(handler, WithIntercept(Callable(interceptor), body())))
-        assert result == "handled:x"
-
-    def test_substitute_effect(self):
-        """Interceptor returns different effect → substituted."""
-        class Ask(EffectBase):
-            def __init__(self, key):
-                super().__init__()
-                self.key = key
-
-        def interceptor(effect):
-            if isinstance(effect, Ask) and effect.key == "secret":
-                return Ask("public")
-            return effect
+        def observer(effect):
+            seen.append(f"seen:{effect.key}")
 
         @do
         def handler(effect, k):
@@ -47,15 +25,38 @@ class TestIntercept:
 
         @do
         def body():
-            return (yield Ask("secret"))
+            x = yield Ask("a")
+            y = yield Ask("b")
+            return (x, y)
 
-        result = doeff_run(WithHandler(handler, WithIntercept(Callable(interceptor), body())))
-        assert result == "val:public"
+        result = doeff_run(WithHandler(handler, WithObserve(Callable(observer), body())))
+        assert result == ("val:a", "val:b")
+        assert seen == ["seen:a", "seen:b"]
 
-    import pytest
-    @pytest.mark.xfail(reason="Multiple effects with interceptor — topology issue after Resume")
-    def test_intercept_multiple_effects(self):
-        """Interceptor transforms some effects, passes others."""
+    def test_observer_does_not_modify_effect(self):
+        """Observer return value is ignored — original effect proceeds."""
+        class Ask(EffectBase):
+            def __init__(self, key):
+                super().__init__()
+                self.key = key
+
+        def observer(effect):
+            return "this is ignored"
+
+        @do
+        def handler(effect, k):
+            result = yield Resume(k, effect.key)
+            return result
+
+        @do
+        def body():
+            return (yield Ask("original"))
+
+        result = doeff_run(WithHandler(handler, WithObserve(Callable(observer), body())))
+        assert result == "original"
+
+    def test_observer_with_multiple_effect_types(self):
+        """Observer sees all effect types."""
         class Ask(EffectBase):
             def __init__(self, key):
                 super().__init__()
@@ -66,66 +67,86 @@ class TestIntercept:
                 super().__init__()
                 self.msg = msg
 
-        logged = []
+        seen = []
 
-        def interceptor(effect):
-            if isinstance(effect, Ask) and effect.key == "override":
-                return Ask("replaced")
-            return effect  # passthrough for Log and other Ask
+        def observer(effect):
+            seen.append(type(effect).__name__)
 
         @do
         def handler(effect, k):
-            if isinstance(effect, Log):
-                logged.append(effect.msg)
-                result = yield Resume(k, None)
-                return result
-            if isinstance(effect, Ask):
-                result = yield Resume(k, f"val:{effect.key}")
-                return result
-            yield Pass(effect, k)
+            result = yield Resume(k, None)
+            return result
 
         @do
         def body():
-            yield Log("start")
-            x = yield Ask("override")
-            y = yield Ask("normal")
-            yield Log(f"got {x} and {y}")
-            return (x, y)
+            yield Log("hello")
+            yield Ask("key")
+            yield Log("world")
+            return "done"
 
-        result = doeff_run(WithHandler(handler, WithIntercept(Callable(interceptor), body())))
-        assert result == ("val:replaced", "val:normal")
-        assert logged == ["start", "got val:replaced and val:normal"]
+        result = doeff_run(WithHandler(handler, WithObserve(Callable(observer), body())))
+        assert result == "done"
+        assert seen == ["Log", "Ask", "Log"]
 
-    def test_nested_intercepts(self):
-        """Multiple interceptors compose — inner runs first."""
+    def test_nested_observers(self):
+        """Multiple observers all see effects."""
         class Ask(EffectBase):
             def __init__(self, key):
                 super().__init__()
                 self.key = key
 
-        def add_prefix(effect):
-            if isinstance(effect, Ask):
-                return Ask(f"pre:{effect.key}")
-            return effect
+        log_inner = []
+        log_outer = []
 
-        def add_suffix(effect):
-            if isinstance(effect, Ask):
-                return Ask(f"{effect.key}:suf")
-            return effect
+        def inner_obs(effect):
+            log_inner.append("inner")
+
+        def outer_obs(effect):
+            log_outer.append("outer")
 
         @do
         def handler(effect, k):
-            result = yield Resume(k, effect.key)
+            result = yield Resume(k, 42)
             return result
 
         @do
         def body():
             return (yield Ask("x"))
 
-        # Inner (add_prefix) runs first, then outer (add_suffix)
         result = doeff_run(
             WithHandler(handler,
-                WithIntercept(Callable(add_suffix),
-                    WithIntercept(Callable(add_prefix), body())))
+                WithObserve(Callable(outer_obs),
+                    WithObserve(Callable(inner_obs), body())))
         )
-        assert result == "pre:x:suf"
+        assert result == 42
+        assert log_inner == ["inner"]
+        assert log_outer == ["outer"]
+
+    def test_observer_at_outer_position(self):
+        """Observer outside handler still sees effects handled by inner handler."""
+        class Ask(EffectBase):
+            def __init__(self, key):
+                super().__init__()
+                self.key = key
+
+        seen = []
+
+        def observer(effect):
+            seen.append(f"observed:{effect.key}")
+
+        @do
+        def handler(effect, k):
+            result = yield Resume(k, "handled")
+            return result
+
+        @do
+        def body():
+            return (yield Ask("x"))
+
+        # Observer is OUTSIDE handler — should still see the effect
+        result = doeff_run(
+            WithObserve(Callable(observer),
+                WithHandler(handler, body()))
+        )
+        assert result == "handled"
+        assert seen == ["observed:x"]
