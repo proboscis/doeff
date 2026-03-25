@@ -3,17 +3,13 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::capture::{EffectResult, FrameId, HandlerDispatchEntry, HandlerKind};
-use crate::do_ctrl::{DoCtrl, InterceptMode};
-use crate::driver::PyException;
-use crate::effect::DispatchEffect;
+use crate::do_ctrl::DoCtrl;
 use crate::ids::{FiberId, Marker, SegmentId, VarId};
 use crate::ir_stream::IRStreamRef;
-use crate::kleisli::KleisliRef;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
-use crate::segment::{FiberBoundary, SegmentKind};
-use crate::value::Value;
+use crate::segment::InterceptMode;
+use crate::value::{CallableRef, Value};
 
 static NEXT_FRAME_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -21,10 +17,7 @@ pub fn fresh_frame_id() -> u64 {
     NEXT_FRAME_ID.fetch_add(1, Ordering::Relaxed)
 }
 
-/// Metadata about a program call for call stack reconstruction. [SPEC-008 R9-D]
-///
-/// Extracted by the driver (with GIL) during classify_yielded or by
-/// Rust handler streams that emit call primitives. Stored on Program frames.
+/// Metadata about a program call for call stack reconstruction.
 #[derive(Debug, Clone)]
 pub struct CallMetadata {
     pub frame_id: u64,
@@ -57,10 +50,6 @@ impl CallMetadata {
     }
 
     pub fn anonymous() -> Self {
-        // Restriction (VM-PROTO-005 / C7):
-        // This helper is only for tests and VM-internal synthetic calls where
-        // metadata is carried through another typed channel. User-facing runtime
-        // paths must provide explicit callback metadata.
         Self::new(
             "<anonymous>".to_string(),
             "<unknown>".to_string(),
@@ -72,102 +61,30 @@ impl CallMetadata {
     }
 }
 
+/// Link in the interceptor chain (extension, not OCaml 5 core).
 #[derive(Debug, Clone)]
 pub struct InterceptorChainLink {
     pub marker: Marker,
-    pub interceptor: KleisliRef,
+    pub interceptor: CallableRef,
     pub types: Option<Vec<PyShared>>,
     pub mode: InterceptMode,
     pub metadata: Option<CallMetadata>,
 }
 
 impl InterceptorChainLink {
-    pub fn from_boundary(boundary: &SegmentKind) -> Option<Self> {
-        let boundary = boundary.boundary()?;
-        let intercept = boundary.intercept_boundary()?;
+    pub fn from_handler(handler: &crate::segment::Handler) -> Option<Self> {
+        let intercept = handler.intercept_boundary()?;
         Some(Self {
-            marker: boundary.marker(),
+            marker: handler.marker(),
             interceptor: intercept.interceptor.clone(),
             types: intercept.types.clone(),
             mode: intercept.mode,
             metadata: intercept.metadata.clone(),
         })
     }
-
-    pub fn into_boundary(self) -> SegmentKind {
-        SegmentKind::Boundary(FiberBoundary::intercept(
-            self.marker,
-            self.interceptor,
-            self.types,
-            self.mode,
-            self.metadata,
-        ))
-    }
 }
 
-#[derive(Debug)]
-pub struct DispatchEffectSite {
-    pub frame_id: FrameId,
-    pub function_name: String,
-    pub source_file: String,
-    pub source_line: u32,
-}
-
-impl Clone for DispatchEffectSite {
-    fn clone(&self) -> Self {
-        Self {
-            frame_id: self.frame_id,
-            function_name: self.function_name.clone(),
-            source_file: self.source_file.clone(),
-            source_line: self.source_line,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct DispatchDisplay {
-    pub effect_site: Option<DispatchEffectSite>,
-    pub handler_stack: Vec<HandlerDispatchEntry>,
-    pub transfer_target_repr: Option<String>,
-    pub result: EffectResult,
-    pub resumed_once: bool,
-    pub is_execution_context_effect: bool,
-}
-
-impl Clone for DispatchDisplay {
-    fn clone(&self) -> Self {
-        Self {
-            effect_site: self.effect_site.clone(),
-            handler_stack: self.handler_stack.clone(),
-            transfer_target_repr: self.transfer_target_repr.clone(),
-            result: self.result.clone(),
-            resumed_once: self.resumed_once,
-            is_execution_context_effect: self.is_execution_context_effect,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ProgramDispatch {
-    pub origin_dispatch_id: FiberId,
-    pub parent_dispatch_id: Option<FiberId>,
-    pub handler_segment_id: SegmentId,
-    pub prompt_segment_id: SegmentId,
-    pub effect: DispatchEffect,
-    pub trace: DispatchDisplay,
-    pub origin_fiber_ids: Vec<FiberId>,
-    pub handler_fiber_ids: Vec<FiberId>,
-    pub original_exception: Option<PyException>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ProgramFrameSnapshot {
-    pub stream: IRStreamRef,
-    pub metadata: Option<CallMetadata>,
-    pub handler_kind: Option<HandlerKind>,
-    pub dispatch: Option<ProgramDispatch>,
-}
-
+/// Continuation state for interceptor frames.
 #[derive(Debug)]
 pub struct InterceptorContinuation {
     pub marker: Marker,
@@ -175,7 +92,6 @@ pub struct InterceptorContinuation {
     pub original_obj: PyShared,
     pub emitter_stream: IRStreamRef,
     pub emitter_metadata: Option<CallMetadata>,
-    pub emitter_handler_kind: Option<HandlerKind>,
     pub interceptor_metadata: Option<CallMetadata>,
     pub guard_eval_depth: bool,
 }
@@ -221,14 +137,14 @@ pub enum EvalReturnContinuation {
         metadata: CallMetadata,
     },
     ResumeToContinuation {
-        fiber_ids: Vec<FiberId>,
+        head_fiber: FiberId,
     },
     TailResumeReturn,
     ReturnToContinuation {
-        fiber_ids: Vec<FiberId>,
+        head_fiber: FiberId,
     },
     EvalInScopeReturn {
-        fiber_ids: Vec<FiberId>,
+        head_fiber: FiberId,
     },
     InterceptApplyResult {
         continuation: InterceptorContinuation,
@@ -236,6 +152,8 @@ pub enum EvalReturnContinuation {
     InterceptEvalResult {
         continuation: InterceptorContinuation,
     },
+    /// Expand: inner expr evaluated, result must be Value::Stream → push as frame.
+    ExpandReturn,
 }
 
 impl EvalReturnContinuation {
@@ -254,18 +172,21 @@ impl EvalReturnContinuation {
             EvalReturnContinuation::ResumeToContinuation { .. }
             | EvalReturnContinuation::TailResumeReturn
             | EvalReturnContinuation::ReturnToContinuation { .. }
-            | EvalReturnContinuation::EvalInScopeReturn { .. } => None,
+            | EvalReturnContinuation::EvalInScopeReturn { .. }
+            | EvalReturnContinuation::ExpandReturn => None,
         }
     }
 }
 
+/// Frame on the fiber's stack.
+///
+/// NO handler_kind or dispatch fields — those are OCaml 5 violations.
+/// Handler info is on the Fiber.handler, not on frames.
 #[derive(Debug)]
 pub enum Frame {
     Program {
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
-        handler_kind: Option<HandlerKind>,
-        dispatch: Option<ProgramDispatch>,
     },
     LexicalScope {
         bindings: HashMap<HashedPyKey, Value>,
@@ -285,12 +206,7 @@ pub enum Frame {
 
 impl Frame {
     pub fn program(stream: IRStreamRef, metadata: Option<CallMetadata>) -> Self {
-        Frame::Program {
-            stream,
-            metadata,
-            handler_kind: None,
-            dispatch: None,
-        }
+        Frame::Program { stream, metadata }
     }
 
     pub fn is_program(&self) -> bool {
@@ -298,44 +214,26 @@ impl Frame {
     }
 
     pub fn has_metadata(&self) -> bool {
-        matches!(
-            self,
-            Frame::Program {
-                metadata: Some(_),
-                ..
-            }
-        )
+        matches!(self, Frame::Program { metadata: Some(_), .. })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir_stream::{IRStream, IRStreamStep};
-    use crate::segment::ScopeStore;
+    use crate::ir_stream::IRStream;
     use crate::value::Value;
-    use crate::var_store::VarStore;
 
     #[derive(Debug)]
     struct DummyStream;
 
     impl IRStream for DummyStream {
-        fn resume(
-            &mut self,
-            _value: Value,
-            _store: &mut VarStore,
-            _scope: &mut ScopeStore,
-        ) -> IRStreamStep {
-            IRStreamStep::Return(Value::Unit)
+        fn resume(&mut self, _value: Value) -> crate::ir_stream::StreamStep {
+            crate::ir_stream::StreamStep::Done(Value::Unit)
         }
 
-        fn throw(
-            &mut self,
-            exc: crate::driver::PyException,
-            _store: &mut VarStore,
-            _scope: &mut ScopeStore,
-        ) -> IRStreamStep {
-            IRStreamStep::Throw(exc)
+        fn throw(&mut self, error: Value) -> crate::ir_stream::StreamStep {
+            crate::ir_stream::StreamStep::Error(error)
         }
     }
 
@@ -344,17 +242,5 @@ mod tests {
         let stream = IRStreamRef::new(Box::new(DummyStream) as Box<dyn IRStream>);
         let frame = Frame::program(stream, None);
         assert!(frame.is_program());
-    }
-
-    #[test]
-    fn test_vm_proto_program_frame_uses_ast_stream_ref() {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/frame.rs"));
-        let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
-        assert!(
-            runtime_src.contains("Program {")
-                && runtime_src.contains("stream: IRStreamRef")
-                && !runtime_src.contains("PythonGenerator"),
-            "VM-PROTO-001: Frame::Program must carry IRStreamRef and replace PythonGenerator"
-        );
     }
 }
