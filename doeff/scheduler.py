@@ -128,12 +128,12 @@ class ExternalPromise:
         return Future(self.promise_id)
 
     def complete(self, value):
-        """Complete the promise with a value. Thread-safe."""
-        self._queue.append(("complete", self.promise_id, value))
+        """Complete the promise with a value. Thread-safe, wakes scheduler via Queue."""
+        self._queue.put(("complete", self.promise_id, value))
 
     def fail(self, error):
-        """Fail the promise with an error. Thread-safe."""
-        self._queue.append(("fail", self.promise_id, error))
+        """Fail the promise with an error. Thread-safe, wakes scheduler via Queue."""
+        self._queue.put(("fail", self.promise_id, error))
 
     def __repr__(self):
         return f"ExternalPromise({self.promise_id})"
@@ -145,7 +145,7 @@ class ExternalPromise:
 
 def scheduled(body_program):
     """Wrap a program with the scheduler. Returns a DoExpr."""
-    from collections import deque
+    import queue as queue_mod
 
     # --- State ---
     next_id = [0]
@@ -153,7 +153,7 @@ def scheduled(body_program):
     promises = {}        # pid → {status, result}
     waiters = {}         # waitable_key → [(type, k, ...)]
     ready = []           # [(type, ...)]
-    external_queue = deque()  # thread-safe completion queue
+    external_queue = queue_mod.Queue()  # thread-safe, blocking get()
 
     def fresh_id():
         i = next_id[0]
@@ -196,12 +196,13 @@ def scheduled(body_program):
                 yield Perform(TaskCompleted(tid, Err(e)))
         return wrapped()
 
-    def drain_external():
-        """Drain external completion queue into promise state."""
-        while external_queue:
-            action, pid, value = external_queue.popleft()
-            if pid not in promises or promises[pid]["status"] != "pending":
-                continue
+    def process_external(block=False):
+        """Process one item from external queue. Returns True if processed."""
+        try:
+            action, pid, value = external_queue.get(block=block)
+        except queue_mod.Empty:
+            return False
+        if pid in promises and promises[pid]["status"] == "pending":
             if action == "complete":
                 promises[pid]["status"] = "completed"
                 promises[pid]["result"] = value
@@ -209,11 +210,14 @@ def scheduled(body_program):
                 promises[pid]["status"] = "failed"
                 promises[pid]["result"] = value
             wake_waiters(("promise", pid))
+        return True
 
     def pick_next():
-        import time
         while True:
-            drain_external()
+            # Drain all pending external completions
+            while process_external():
+                pass
+            # Process ready queue
             while ready:
                 entry = ready.pop(0)
                 if entry[0] == "new":
@@ -223,12 +227,10 @@ def scheduled(body_program):
                 elif entry[0] == "resume":
                     _, cont, value = entry
                     return Transfer(cont, value)
-            # Nothing ready. If there are waiters, external completions may arrive.
-            if waiters or external_queue:
-                time.sleep(0.001)  # yield CPU, wait for external completions
-                continue
-            # No waiters, no external — truly done
-            return Pure(None)
+            if not waiters:
+                return Pure(None)
+            # All tasks blocked — block on Queue.get()
+            process_external(block=True)
 
     def wake_waiters(completed_key):
         ws = waiters.pop(completed_key, [])
