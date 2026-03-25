@@ -399,6 +399,12 @@ impl VM {
                         self.mode = Mode::Send(result);
                         StepResult::Continue
                     }
+                    Err(VMError::UncaughtException { exception }) => {
+                        // Python exception from callable — propagate through
+                        // generator stack so try/except blocks can catch it.
+                        self.mode = Mode::Raise(exception);
+                        StepResult::Continue
+                    }
                     Err(err) => StepResult::Error(err),
                 }
             }

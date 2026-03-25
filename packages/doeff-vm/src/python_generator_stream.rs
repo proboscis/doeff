@@ -63,7 +63,9 @@ impl doeff_vm_core::value::Callable for PythonCallable {
                     let bound = result.bind(py);
                     Ok(python_to_value(py, bound))
                 }
-                Err(err) => Err(doeff_vm_core::VMError::python_error(format!("{err}"))),
+                Err(err) => Err(doeff_vm_core::VMError::uncaught_exception(
+                    Value::Opaque(PyShared::new(err.value(py).clone().into_any().unbind()))
+                )),
             }
         })
     }
@@ -89,7 +91,9 @@ impl doeff_vm_core::value::Callable for PythonCallable {
                             "handler must return DoExpr: {}", msg
                         )))
                 }
-                Err(err) => Err(doeff_vm_core::VMError::python_error(format!("{err}"))),
+                Err(err) => Err(doeff_vm_core::VMError::uncaught_exception(
+                    Value::Opaque(PyShared::new(err.value(py).clone().into_any().unbind()))
+                )),
             }
         })
     }
