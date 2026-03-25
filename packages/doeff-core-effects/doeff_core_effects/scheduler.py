@@ -23,7 +23,7 @@ Usage:
 
 from doeff_vm import EffectBase, Ok, Err
 from doeff.do import do
-from doeff.program import Pure, Resume, Transfer, Pass, Perform, WithHandler
+from doeff.program import Pure, Resume, Transfer, Pass, Perform, WithHandler, GetHandlers
 
 
 # ---------------------------------------------------------------------------
@@ -237,9 +237,13 @@ def scheduled(body_program):
             return entry
         return None
 
-    def alloc_task(program, priority=PRIORITY_NORMAL):
+    def alloc_task(program, priority=PRIORITY_NORMAL, inner_handlers=None):
         tid = fresh_id()
-        tasks[tid] = {"status": "pending", "result": None, "program": program, "priority": priority}
+        tasks[tid] = {
+            "status": "pending", "result": None,
+            "program": program, "priority": priority,
+            "inner_handlers": inner_handlers or [],
+        }
         return tid
 
     def alloc_promise():
@@ -268,7 +272,11 @@ def scheduled(body_program):
                     if tasks[tid]["status"] == "cancelled":
                         continue  # skip cancelled tasks
                     tasks[tid]["status"] = "running"
-                    return WithHandler(handler, wrap_task(tid, tasks[tid]["program"]))
+                    prog = tasks[tid]["program"]
+                    # Re-wrap task with inner handlers captured at spawn site
+                    for h in tasks[tid]["inner_handlers"]:
+                        prog = WithHandler(h, prog)
+                    return WithHandler(handler, wrap_task(tid, prog))
                 elif entry[0] == "resume":
                     _, cont, value = entry
                     return Transfer(cont, value)
@@ -356,7 +364,11 @@ def scheduled(body_program):
     def handler(effect, k):
         drain()
         if isinstance(effect, Spawn):
-            tid = alloc_task(effect.program, effect.priority)
+            # Capture inner handlers from continuation (between yield site and scheduler).
+            # The last entry is the scheduler handler itself — drop it.
+            all_handlers = yield GetHandlers(k)
+            inner_handlers = all_handlers[:-1] if all_handlers else []
+            tid = alloc_task(effect.program, effect.priority, inner_handlers=inner_handlers)
             enqueue(("new", tid), effect.priority)
             enqueue(("resume", k, Task(tid)))  # spawner resumes at normal priority
             return (yield pick_next())
@@ -451,16 +463,18 @@ def scheduled(body_program):
             promises[pid]["status"] = "completed"
             promises[pid]["result"] = effect.value
             wake_waiters(("promise", pid))
-            r = yield Resume(k, None)
-            return r
+            # Re-queue completer rather than resuming immediately,
+            # so higher-priority woken tasks run first.
+            enqueue(("resume", k, None))
+            return (yield pick_next())
 
         elif isinstance(effect, FailPromise):
             pid = effect.promise.promise_id
             promises[pid]["status"] = "failed"
             promises[pid]["result"] = effect.error
             wake_waiters(("promise", pid))
-            r = yield Resume(k, None)
-            return r
+            enqueue(("resume", k, None))
+            return (yield pick_next())
 
         elif isinstance(effect, CreateExternalPromise):
             pid = alloc_promise()
