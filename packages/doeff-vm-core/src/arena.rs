@@ -164,7 +164,7 @@ mod tests {
         }
 
         let seg_ref = arena.get(id).unwrap();
-        assert_eq!(seg_ref.frame_count(), 1);
+        assert_eq!(seg_ref.frames.len(), 1);
     }
 
     #[test]
