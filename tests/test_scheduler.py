@@ -310,3 +310,34 @@ class TestExternalPromise:
             return (yield Wait(tw))
 
         assert doeff_run(scheduled(body())) == "external_value"
+
+    def test_100_threads_concurrent(self):
+        """100 tasks each sleeping 0.1s in threads. Must finish in <2s, not 10s."""
+        import threading
+        import time
+        from doeff.scheduler import CreateExternalPromise
+
+        @do
+        def sleep_task(i):
+            ep = yield CreateExternalPromise()
+
+            def worker():
+                time.sleep(0.1)
+                ep.complete(i)
+
+            threading.Thread(target=worker, daemon=True).start()
+            return (yield Wait(ep.future))
+
+        @do
+        def body():
+            tasks = []
+            for i in range(100):
+                tasks.append((yield Spawn(sleep_task(i))))
+            return (yield Gather(*tasks))
+
+        start = time.time()
+        results = doeff_run(scheduled(body()))
+        elapsed = time.time() - start
+
+        assert results == list(range(100))
+        assert elapsed < 2.0, f"took {elapsed:.1f}s — not concurrent!"
