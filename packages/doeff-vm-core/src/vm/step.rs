@@ -534,31 +534,14 @@ impl VM {
         let (handler_fiber_id, handler_parent) = match self.find_handler_for_effect(current, &effect) {
             Some(result) => result,
             None => {
-                // Collect context from the continuation's fiber chain (user code)
-                // rather than current_segment (which is the handler's context).
-                let mut ctx = Vec::new();
-                if let Some(head) = k.head() {
-                    // Walk continuation fibers for user frames
-                    let mut cursor = Some(head);
-                    while let Some(fid) = cursor {
-                        let Some(seg) = self.segments.get(fid) else { break };
-                        for frame in seg.frames.iter().rev() {
-                            if let crate::frame::Frame::Program { stream, .. } = frame {
-                                if let Some(loc) = stream.source_location() {
-                                    ctx.push(Value::List(vec![
-                                        Value::String("frame".to_string()),
-                                        Value::String(loc.func_name),
-                                        Value::String(loc.source_file),
-                                        Value::Int(loc.source_line as i64),
-                                    ]));
-                                }
-                            }
-                        }
-                        cursor = seg.parent;
-                    }
-                }
-                ctx.reverse(); // outermost-first
-                // Also include current handler context frames
+                // Collect rich context from continuation's fiber chain (user code
+                // + handler boundaries) since current_segment is the handler's context.
+                let mut ctx = if let Some(head) = k.head() {
+                    self.collect_rich_context_from(head)
+                } else {
+                    Vec::new()
+                };
+                // Also include handler context above the Pass site
                 let handler_ctx = self.collect_rich_execution_context();
                 ctx.extend(handler_ctx);
                 self.last_error_context = Some(ctx);
