@@ -15,7 +15,6 @@ class CallFrame(TypedDict, total=False):
     source_line: int
     args_repr: str | None
     program_call: object | None
-    auto_unwrap_programlike: bool
 
 class DoExpr(_ProgramBase[_T], Generic[_T]):
     def __init__(self, *_args: Any, **_kwargs: Any) -> None: ...
