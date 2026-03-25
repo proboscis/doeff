@@ -85,18 +85,33 @@ def writer():
 def try_handler():
     """Try handler: catches errors from Try(program) and returns Ok/Err.
 
+    Captures inner handlers (between body and try_handler) via GetHandlers
+    and reinstalls them around the Try program, so effects from the program
+    can reach handlers at any position in the chain.
+
     Usage:
         result = yield Try(some_program)  # Ok(value) or Err(error)
     """
     from doeff_vm import Ok, Err
+    from doeff.program import GetHandlers, WithHandler as WH
 
     @do
     def handler(effect, k):
         if isinstance(effect, Try):
+            # Capture inner handlers from the continuation so effects
+            # from the Try program can reach them. Drop the last entry —
+            # it's the try_handler itself (same pattern as scheduler).
+            all_hs = yield GetHandlers(k)
+            inner_hs = all_hs[:-1] if all_hs else []
+
             @do
             def attempt():
+                prog = effect.program
+                # Reinstall inner handlers around the program
+                for h in inner_hs:
+                    prog = WH(h, prog)
                 try:
-                    value = yield effect.program
+                    value = yield prog
                     return Ok(value)
                 except Exception as e:
                     return Err(e)
