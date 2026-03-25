@@ -105,7 +105,7 @@ impl VM {
 
     fn step_raise(&mut self, error: Value) -> StepResult {
         let Some(seg_id) = self.current_segment else {
-            return StepResult::Error(VMError::internal(format!("uncaught error: {:?}", error)));
+            return StepResult::Error(VMError::uncaught_exception(error));
         };
         let Some(seg) = self.segments.get_mut(seg_id) else {
             return StepResult::Error(VMError::internal("raise: segment not found"));
@@ -120,7 +120,7 @@ impl VM {
                     self.mode = Mode::Raise(error);
                     StepResult::Continue
                 } else {
-                    StepResult::Error(VMError::internal(format!("uncaught error: {:?}", error)))
+                    StepResult::Error(VMError::uncaught_exception(error))
                 }
             }
             Some(Frame::Program { .. }) => {
