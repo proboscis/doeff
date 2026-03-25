@@ -245,10 +245,32 @@ impl VM {
     /// Find a handler boundary that handles the given effect,
     /// walking up from `start` through parent pointers.
     /// Returns (handler_fiber_id, handler_parent).
-    pub(crate) fn find_handler_for_effect(
+    /// Find the first boundary (interceptor or handler) walking up from start.
+    /// Returns (fiber_id, parent, is_interceptor).
+    pub(crate) fn find_next_boundary(
         &self,
         start: FiberId,
         _effect: &DispatchEffect,
+    ) -> Option<(FiberId, Option<FiberId>, bool)> {
+        let mut cursor = Some(start);
+        while let Some(fid) = cursor {
+            let seg = self.segments.get(fid)?;
+            if seg.is_intercept_boundary() {
+                return Some((fid, seg.parent, true));
+            }
+            if seg.is_prompt_boundary() {
+                return Some((fid, seg.parent, false));
+            }
+            cursor = seg.parent;
+        }
+        None
+    }
+
+    /// Find the first prompt (handler) boundary, skipping interceptors.
+    pub(crate) fn find_handler_for_effect(
+        &self,
+        start: FiberId,
+        effect: &DispatchEffect,
     ) -> Option<(FiberId, Option<FiberId>)> {
         let mut cursor = Some(start);
         while let Some(fid) = cursor {
