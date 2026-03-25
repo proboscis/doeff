@@ -92,6 +92,24 @@ class FailPromise(EffectBase):
         self.error = error
 
 
+class CreateSemaphore(EffectBase):
+    def __init__(self, permits=1):
+        super().__init__()
+        self.permits = permits
+
+
+class AcquireSemaphore(EffectBase):
+    def __init__(self, semaphore):
+        super().__init__()
+        self.semaphore = semaphore
+
+
+class ReleaseSemaphore(EffectBase):
+    def __init__(self, semaphore):
+        super().__init__()
+        self.semaphore = semaphore
+
+
 class CreateExternalPromise(EffectBase):
     def __init__(self):
         super().__init__()
@@ -129,6 +147,14 @@ class Promise:
         return f"Promise({self.promise_id})"
 
 
+class Semaphore:
+    """Opaque semaphore handle."""
+    def __init__(self, sem_id):
+        self.sem_id = sem_id
+    def __repr__(self):
+        return f"Semaphore({self.sem_id})"
+
+
 class ExternalPromise:
     """Write-side handle for an external promise. Thread-safe complete/fail."""
     def __init__(self, promise_id, queue):
@@ -163,6 +189,7 @@ def scheduled(body_program):
     next_id = [0]
     tasks = {}           # tid → {status, result, program}
     promises = {}        # pid → {status, result}
+    semaphores = {}      # sid → {permits, max_permits, waiters: deque of k}
     waiters = {}         # waitable_key → [(type, k, ...)]
     ready = []           # [(type, ...)]
     cancel_requested = set()  # task ids pending cancellation
@@ -418,6 +445,47 @@ def scheduled(body_program):
             pid = alloc_promise()
             ep = ExternalPromise(pid, external_queue)
             r = yield Resume(k, ep)
+            return r
+
+        elif isinstance(effect, CreateSemaphore):
+            if effect.permits < 1:
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, ValueError("permits must be >= 1")))
+            sid = fresh_id()
+            from collections import deque as deque_type
+            semaphores[sid] = {
+                "permits": effect.permits,
+                "max_permits": effect.permits,
+                "waiters": deque_type(),
+            }
+            r = yield Resume(k, Semaphore(sid))
+            return r
+
+        elif isinstance(effect, AcquireSemaphore):
+            sid = effect.semaphore.sem_id
+            sem = semaphores[sid]
+            if sem["permits"] > 0:
+                sem["permits"] -= 1
+                r = yield Resume(k, None)
+                return r
+            else:
+                # Park — FIFO queue
+                sem["waiters"].append(k)
+                return (yield pick_next())
+
+        elif isinstance(effect, ReleaseSemaphore):
+            sid = effect.semaphore.sem_id
+            sem = semaphores[sid]
+            if sem["waiters"]:
+                # Transfer permit directly to first waiter
+                waiter_k = sem["waiters"].popleft()
+                ready.append(("resume", waiter_k, None))
+            else:
+                if sem["permits"] >= sem["max_permits"]:
+                    from doeff.program import ResumeThrow
+                    return (yield ResumeThrow(k, RuntimeError("semaphore released too many times")))
+                sem["permits"] += 1
+            r = yield Resume(k, None)
             return r
 
         else:
