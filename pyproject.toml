@@ -21,20 +21,15 @@ classifiers = [
 ]
 
 dependencies = [
-    "frozendict>=2.4.0",
-    "loguru>=0.7.0",
-    "exceptiongroup>=1.2.0; python_version < '3.11'",
-    "doeff-indexer>=0.1.2",
     "doeff-vm>=0.1.0",
-    "cloudpickle>=3.0.0",
-    "openai>=1.50",
+    "doeff-core-effects>=0.1.0",
 ]
 
 [project.optional-dependencies]
 viz = ["phart>=1.1.4"]
 
-[project.scripts]
-doeff = "doeff.__main__:main"
+# [project.scripts]
+# doeff = "doeff.__main__:main"  # CLI removed during rebuild
 
 [project.urls]
 Homepage = "https://github.com/proboscis/doeff"
@@ -57,6 +52,7 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 doeff-indexer = { workspace = true }
+doeff-core-effects = { workspace = true }
 doeff-flow = { workspace = true }
 doeff-agents = { workspace = true }
 doeff-agentic = { workspace = true }
