@@ -23,6 +23,9 @@ from doeff.program import (
 from doeff.run import run
 from doeff_vm import Callable, EffectBase, Err, K, Ok, PyVM
 
+# Deprecated alias — prefer DoExpr node types directly
+Program = object  # type: ignore — any DoExpr node is a "Program"
+
 __version__ = "0.2.1"
 
 __all__ = [
