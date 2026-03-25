@@ -14,7 +14,7 @@ use crate::driver::{ExternalCall, Mode, StepResult};
 use crate::error::VMError;
 use crate::frame::{EvalReturnContinuation, Frame};
 use crate::segment::Fiber;
-use crate::ids::VarId;
+use crate::ids::{FiberId, VarId};
 use crate::ir_stream::StreamStep;
 use crate::value::Value;
 use crate::vm::VM;
@@ -264,6 +264,10 @@ impl VM {
                 self.eval_pass(effect, k)
             }
 
+            DoCtrl::WithIntercept { interceptor, body } => {
+                self.eval_with_intercept(interceptor, *body)
+            }
+
             DoCtrl::AllocVar { initial } => {
                 if let Some(seg_id) = self.current_segment {
                     let var = self.alloc_scoped_var_in_segment(seg_id, initial);
@@ -392,7 +396,24 @@ impl VM {
     /// which is evaluated on the parent fiber. No manual stream pushing —
     /// handler result is evaluated as a normal program.
     fn eval_perform(&mut self, effect: Value) -> StepResult {
-        // 1. Use dispatch to find handler and detach chain
+        self.eval_perform_with_skip(effect, None)
+    }
+
+    fn eval_perform_with_skip(&mut self, effect: Value, skip_intercept: Option<FiberId>) -> StepResult {
+        let current = match self.current_segment {
+            Some(id) => id,
+            None => return StepResult::Error(VMError::internal("perform: no current segment")),
+        };
+
+        // 1. Check for interceptor first (skip the one we already invoked)
+        let boundary = self.find_next_boundary(current, &effect);
+        if let Some((boundary_fid, _boundary_parent, true)) = boundary {
+            if skip_intercept != Some(boundary_fid) {
+                return self.eval_intercept(effect, boundary_fid);
+            }
+        }
+
+        // 2. No (new) interceptor — proceed to handler
         let result = match self.perform_effect(&effect) {
             Ok(result) => result,
             Err(step_result) => return step_result,
@@ -401,7 +422,7 @@ impl VM {
         let handler_fiber_id = result.handler_fiber_id;
         let k = result.continuation;
 
-        // 2. Get the handler callable from the handler boundary fiber
+        // 3. Get the handler callable from the handler boundary fiber
         let handler_callable = self.segments.get(handler_fiber_id)
             .and_then(|seg| seg.prompt_handler().cloned());
 
@@ -409,8 +430,7 @@ impl VM {
             return StepResult::Error(VMError::internal("perform: handler has no callable"));
         };
 
-        // 3. Call handler(effect, k) → must return a DoExpr.
-        //    Classify and evaluate. current_segment is handler's parent.
+        // 4. Call handler(effect, k) → must return a DoExpr.
         match handler_callable.call_handler(vec![effect, Value::Continuation(k)]) {
             Ok(doctrl) => {
                 self.mode = Mode::Eval(doctrl);
@@ -418,6 +438,56 @@ impl VM {
             }
             Err(err) => StepResult::Error(err),
         }
+    }
+
+    /// Evaluate an interceptor: call interceptor(effect) → effect.
+    /// Always returns an effect. Passthrough = return the same effect.
+    /// The transformed effect is then performed normally (full perform from body).
+    /// The interceptor is skipped by temporarily removing it during perform.
+    fn eval_intercept(&mut self, effect: Value, intercept_fid: FiberId) -> StepResult {
+        let interceptor = self.segments.get(intercept_fid)
+            .and_then(|seg| seg.intercept_handler().cloned());
+
+        let Some(interceptor) = interceptor else {
+            return StepResult::Error(VMError::internal("intercept: no interceptor callable"));
+        };
+
+        let new_effect = match interceptor.call(vec![effect]) {
+            Ok(value) => value,
+            Err(err) => return StepResult::Error(err),
+        };
+
+        // Re-perform with new effect, skipping this interceptor
+        self.eval_perform_with_skip(new_effect, Some(intercept_fid))
+    }
+
+    /// Evaluate WithIntercept: install interceptor boundary, create body fiber, evaluate body.
+    fn eval_with_intercept(&mut self, interceptor: Value, body: DoCtrl) -> StepResult {
+        let interceptor_callable = match interceptor {
+            Value::Callable(c) => c,
+            other => {
+                return StepResult::Error(VMError::type_error(format!(
+                    "WithIntercept: interceptor must be Callable, got {:?}", other
+                )));
+            }
+        };
+
+        let marker = crate::ids::Marker::fresh();
+        let handler = crate::segment::Handler::intercept(
+            marker,
+            interceptor_callable,
+            None,
+            crate::segment::InterceptMode::Include,
+            None,
+        );
+        let boundary_fid = self.match_with(handler);
+
+        let body_fiber = Fiber::new(Some(boundary_fid));
+        let body_fid = self.alloc_segment(body_fiber);
+
+        self.current_segment = Some(body_fid);
+        self.mode = Mode::Eval(body);
+        StepResult::Continue
     }
 
     /// Evaluate Pass: inner handler doesn't handle, forward to outer handler.

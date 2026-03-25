@@ -70,6 +70,12 @@ pub enum DoCtrl {
     /// OCaml 5: reperform with handler appended to continuation chain.
     Delegate { effect: Value, k: Continuation },
 
+    /// Install an interceptor and execute body.
+    /// interceptor: Value::Callable — called with (effect) on perform.
+    /// Returns None for passthrough, or a DoExpr to evaluate.
+    /// body: DoExpr — evaluated under the interceptor.
+    WithIntercept { interceptor: Value, body: Box<DoCtrl> },
+
     // --- Query ---
 
     /// Walk the fiber chain from a starting fiber, collect source locations.
