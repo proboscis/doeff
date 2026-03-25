@@ -139,7 +139,7 @@ impl PyVM {
     }
 
     fn step_loop(&mut self) -> PyResult<Value> {
-        for _ in 0..100_000 {
+        loop {
             match self.vm.step() {
                 StepResult::Continue => continue,
                 StepResult::Done(value) => return Ok(value),
@@ -172,7 +172,6 @@ impl PyVM {
                 }
             }
         }
-        Err(pyo3::exceptions::PyRuntimeError::new_err("step limit exceeded"))
     }
 }
 
