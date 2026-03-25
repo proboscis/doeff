@@ -5,8 +5,9 @@ from dataclasses import dataclass
 from doeff_events.effects import Publish, WaitForEvent
 from doeff_events.handlers import event_handler
 
-from doeff import Spawn, Wait, WithHandler, default_handlers, do, run
-from doeff.effects import Await
+from doeff import WithHandler, do, run
+from doeff_core_effects.scheduler import Spawn, Wait, scheduled
+from doeff_core_effects import Await
 
 
 @dataclass(frozen=True)
