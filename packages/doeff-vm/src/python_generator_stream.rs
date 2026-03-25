@@ -133,6 +133,8 @@ impl PyIRStream {
 pub struct PythonGeneratorStream {
     generator: PyShared,
     exhausted: bool,
+    /// Last known source location, preserved after generator exhaustion.
+    last_location: Option<doeff_vm_core::ir_stream::StreamSourceLocation>,
 }
 
 impl PythonGeneratorStream {
@@ -140,7 +142,48 @@ impl PythonGeneratorStream {
         Self {
             generator,
             exhausted: false,
+            last_location: None,
         }
+    }
+
+    /// Extract source location from exception's __traceback__ + generator's gi_code.
+    /// Called just before marking exhausted, to preserve the error site location.
+    fn location_from_exception(
+        py: Python<'_>,
+        generator: &PyShared,
+        err: &pyo3::PyErr,
+    ) -> Option<doeff_vm_core::ir_stream::StreamSourceLocation> {
+        let gen = generator.bind(py);
+        let code = gen.getattr("gi_code").ok()?;
+        let func_name = code
+            .getattr("co_qualname")
+            .or_else(|_| code.getattr("co_name"))
+            .ok()?
+            .extract::<String>()
+            .ok()?;
+        let source_file = code
+            .getattr("co_filename")
+            .ok()?
+            .extract::<String>()
+            .ok()?;
+
+        // Get line number from the exception's traceback (most accurate for raise site)
+        let source_line = err
+            .traceback(py)
+            .and_then(|tb| tb.getattr("tb_lineno").ok())
+            .and_then(|l| l.extract::<u32>().ok())
+            .unwrap_or_else(|| {
+                code.getattr("co_firstlineno")
+                    .ok()
+                    .and_then(|l| l.extract::<u32>().ok())
+                    .unwrap_or(0)
+            });
+
+        Some(doeff_vm_core::ir_stream::StreamSourceLocation {
+            func_name,
+            source_file,
+            source_line,
+        })
     }
 
     /// Call generator.send(value) and classify the result.
@@ -151,7 +194,6 @@ impl PythonGeneratorStream {
                 Ok(yielded) => self.classify_yielded(py, &yielded),
                 Err(err) if err.is_instance_of::<PyStopIteration>(py) => {
                     self.exhausted = true;
-                    // Extract return value from StopIteration
                     let return_value = err
                         .value(py)
                         .getattr("value")
@@ -161,6 +203,7 @@ impl PythonGeneratorStream {
                     StreamStep::Done(return_value)
                 }
                 Err(err) => {
+                    self.last_location = Self::location_from_exception(py, &self.generator, &err);
                     self.exhausted = true;
                     StreamStep::Error(Value::Opaque(PyShared::new(
                         err.value(py).clone().into_any().unbind(),
@@ -187,6 +230,7 @@ impl PythonGeneratorStream {
                     StreamStep::Done(return_value)
                 }
                 Err(err) => {
+                    self.last_location = Self::location_from_exception(py, &self.generator, &err);
                     self.exhausted = true;
                     StreamStep::Error(Value::Opaque(PyShared::new(
                         err.value(py).clone().into_any().unbind(),
@@ -244,7 +288,8 @@ impl IRStream for PythonGeneratorStream {
 
     fn source_location(&self) -> Option<doeff_vm_core::ir_stream::StreamSourceLocation> {
         if self.exhausted {
-            return None;
+            // Generator done — return last known location (captured before exhaustion)
+            return self.last_location.clone();
         }
         Python::attach(|py| {
             let gen = self.generator.bind(py);
