@@ -4,6 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
     "doeff",
+    "frozendict>=2.4.0",
 ]
 
 [tool.uv.sources]
