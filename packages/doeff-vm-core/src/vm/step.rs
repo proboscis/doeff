@@ -534,17 +534,17 @@ impl VM {
         let (handler_fiber_id, handler_parent) = match self.find_handler_for_effect(current, &effect) {
             Some(result) => result,
             None => {
-                // Collect rich context from continuation's fiber chain (user code
-                // + handler boundaries) since current_segment is the handler's context.
-                let mut ctx = if let Some(head) = k.head() {
-                    self.collect_rich_context_from(head)
-                } else {
-                    Vec::new()
-                };
-                // Also include handler context above the Pass site
-                let handler_ctx = self.collect_rich_execution_context();
-                ctx.extend(handler_ctx);
-                self.last_error_context = Some(ctx);
+                // Reconnect continuation to current chain so the full
+                // fiber walk (user code + handlers) is continuous.
+                if let (Some(last), Some(cur)) = (k.last_fiber(), self.current_segment) {
+                    if let Some(seg) = self.segments.get_mut(last) {
+                        seg.parent = Some(cur);
+                    }
+                }
+                let start = k.head().or(self.current_segment);
+                self.last_error_context = Some(
+                    start.map(|s| self.collect_rich_context_from(s)).unwrap_or_default()
+                );
                 return StepResult::Error(VMError::no_matching_handler(effect));
             }
         };
