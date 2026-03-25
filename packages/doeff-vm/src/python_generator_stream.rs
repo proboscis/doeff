@@ -68,6 +68,10 @@ impl doeff_vm_core::value::Callable for PythonCallable {
         })
     }
 
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn call_handler(&self, args: Vec<Value>) -> Result<doeff_vm_core::do_ctrl::DoCtrl, doeff_vm_core::VMError> {
         Python::attach(|py| {
             let py_args: Vec<Py<PyAny>> = args
@@ -409,6 +413,15 @@ fn classify_tagged_to_doctrl(py: Python<'_>, obj: &Bound<'_, PyAny>, tag: u8) ->
             // GetExecutionContext
             Some(DoCtrl::GetExecutionContext)
         }
+        26 => {
+            // GetHandlers { from: FiberId }
+            // The Python side passes a K object; we peek at its head fiber without consuming.
+            let k_obj = obj.getattr("continuation").ok()?;
+            let k_ref = k_obj.downcast::<doeff_vm_core::continuation::PyK>().ok()?;
+            let k_borrowed = k_ref.borrow();
+            let head = k_borrowed.peek_head()?;
+            Some(DoCtrl::GetHandlers { from: head })
+        }
         _ => None,
     }
 }
@@ -529,7 +542,13 @@ pub fn value_to_python(py: Python<'_>, value: Value) -> Bound<'_, PyAny> {
                 .into_any()
         }
         Value::Var(var) => format!("Var({:?})", var).into_pyobject(py).unwrap().into_any(),
-        Value::Callable(_) => "<callable>".into_pyobject(py).unwrap().into_any(),
+        Value::Callable(c) => {
+            if let Some(pc) = c.as_any().downcast_ref::<PythonCallable>() {
+                pc.callable.bind(py).clone().into_any()
+            } else {
+                "<callable>".into_pyobject(py).unwrap().into_any()
+            }
+        }
         Value::Stream(_) => "<stream>".into_pyobject(py).unwrap().into_any(),
         Value::List(items) => {
             let py_items: Vec<_> = items.into_iter()
