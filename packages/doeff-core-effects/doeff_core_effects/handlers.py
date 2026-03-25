@@ -12,7 +12,10 @@ Use with WithHandler:
 from doeff import do
 from doeff.program import Resume, Pass
 
-from doeff_core_effects.effects import Ask, Get, Put, Tell, Try, Slog
+from doeff_core_effects.effects import (
+    Ask, Get, Put, Tell, Try, Slog, WriterTellEffect,
+    Local, Listen, Await,
+)
 
 
 def reader(env=None):
@@ -122,6 +125,92 @@ def slog_handler():
         yield Pass(effect, k)
 
     handler.log = log
+    return handler
+
+
+def local_handler():
+    """Local handler: handles Local(env, program) by nesting reader with merged env."""
+    from doeff.program import WithHandler
+
+    @do
+    def handler(effect, k):
+        if isinstance(effect, Local):
+            # Get current env from enclosing reader, merge with local overrides
+            # Run program under new reader with merged env
+            inner_result = yield WithHandler(reader(env=effect.env), effect.program)
+            result = yield Resume(k, inner_result)
+            return result
+        yield Pass(effect, k)
+
+    return handler
+
+
+def listen_handler():
+    """Listen handler: collects effects of specified types during program execution."""
+
+    @do
+    def handler(effect, k):
+        if isinstance(effect, Listen):
+            collected = []
+            types_to_collect = effect.types or (WriterTellEffect,)
+
+            @do
+            def observer_handler(inner_effect, inner_k):
+                if isinstance(inner_effect, tuple(types_to_collect)):
+                    collected.append(inner_effect)
+                yield Pass(inner_effect, inner_k)
+
+            from doeff.program import WithHandler
+            inner_result = yield WithHandler(observer_handler, effect.program)
+            result = yield Resume(k, (inner_result, collected))
+            return result
+        yield Pass(effect, k)
+
+    return handler
+
+
+def await_handler():
+    """Await handler: runs async coroutines via a background thread with asyncio.
+
+    Uses ExternalPromise to bridge async into the scheduler.
+    Requires scheduler to be installed.
+    """
+    from doeff_core_effects.scheduler import CreateExternalPromise, Wait
+    import asyncio
+    import threading
+
+    # Shared event loop running in a background thread
+    _loop = [None]
+    _lock = threading.Lock()
+
+    def _get_loop():
+        with _lock:
+            if _loop[0] is None or _loop[0].is_closed():
+                loop = asyncio.new_event_loop()
+                t = threading.Thread(target=loop.run_forever, daemon=True)
+                t.start()
+                _loop[0] = loop
+            return _loop[0]
+
+    @do
+    def handler(effect, k):
+        if isinstance(effect, Await):
+            ep = yield CreateExternalPromise()
+            loop = _get_loop()
+
+            async def run_coro():
+                try:
+                    result = await effect.coroutine
+                    ep.complete(result)
+                except Exception as e:
+                    ep.fail(e)
+
+            asyncio.run_coroutine_threadsafe(run_coro(), loop)
+            value = yield Wait(ep.future)
+            result = yield Resume(k, value)
+            return result
+        yield Pass(effect, k)
+
     return handler
 
 
