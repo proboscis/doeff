@@ -35,7 +35,6 @@ impl PyVM {
         self.run_doctrl(py, doctrl)
     }
 
-    /// Run a DoExpr program under a handler.
 }
 
 impl PyVM {
