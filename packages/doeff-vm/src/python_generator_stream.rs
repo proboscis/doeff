@@ -282,7 +282,20 @@ impl IRStream for PythonGeneratorStream {
         }
         Python::attach(|py| {
             let py_error = value_to_python(py, error);
-            self.throw_to_generator(&py_error)
+            // gen.throw() requires a BaseException. If the value isn't one
+            // (e.g., a string from a VM internal error), wrap it in RuntimeError.
+            if py_error.is_instance_of::<pyo3::exceptions::PyBaseException>() {
+                self.throw_to_generator(&py_error)
+            } else {
+                let msg = py_error.repr()
+                    .map(|r| r.to_string())
+                    .unwrap_or_else(|_| format!("{:?}", py_error));
+                let exc = pyo3::exceptions::PyRuntimeError::new_err(
+                    format!("VM error (non-exception value in Raise): {}", msg)
+                );
+                let exc_val = exc.value(py);
+                self.throw_to_generator(exc_val)
+            }
         })
     }
 
