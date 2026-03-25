@@ -22,7 +22,8 @@ from doeff.program import (
 )
 from doeff.program import ResumeThrow, TransferThrow
 from doeff.run import run
-from doeff_vm import Callable, EffectBase, Err, K, Ok, PyVM
+from doeff.result import Ok, Err, Some, Nothing, Maybe  # noqa: F811
+from doeff_vm import Callable, EffectBase, K, PyVM
 
 Effect = EffectBase
 
@@ -67,9 +68,7 @@ AllocVar = _Removed("AllocVar", "use var_store directly")
 Discontinued = _Removed("Discontinued", "concept removed")
 Discontinue = _Removed("Discontinue", "concept removed")
 graph_snapshot = _Removed("graph_snapshot", "concept removed")
-NOTHING = _Removed("NOTHING", "concept removed")
-Maybe = _Removed("Maybe", "use Ok/Err instead")
-Some = _Removed("Some", "use Ok/Err instead")
+# NOTHING — use Nothing (lowercase singleton) instead
 ReadVar = _Removed("ReadVar", "use var_store directly")
 CacheGet = _Removed("CacheGet", "cache effects removed")
 CacheExists = _Removed("CacheExists", "cache effects removed")
