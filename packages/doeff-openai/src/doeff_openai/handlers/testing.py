@@ -14,7 +14,6 @@ from doeff_llm.effects import (
 )
 
 from doeff import Pass, Resume, do
-from doeff.effects.base import Effect
 from doeff_openai.effects import (
     ChatCompletion,
     Embedding,
@@ -363,7 +362,7 @@ def _handle_structured_output(
 
 @do
 def openai_mock_handler(
-    effect: Effect,
+    effect: Any,
     k: Any,
     *,
     config: MockOpenAIConfig | None = None,
@@ -403,7 +402,7 @@ def openai_mock_handler(
                 effect, k, config=resolved_config, state=resolved_state
             )
         )
-    yield Pass()
+    yield Pass(effect, k)
 
 
 def mock_handlers(
@@ -416,7 +415,7 @@ def mock_handlers(
     resolved_state = state or MockOpenAIState()
 
     @do
-    def handler(effect: Effect, k: Any):
+    def handler(effect: Any, k: Any):
         return (
             yield openai_mock_handler(
                 effect,

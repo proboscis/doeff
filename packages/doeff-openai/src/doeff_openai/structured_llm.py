@@ -5,23 +5,22 @@ through Effects, supporting Pydantic models, GPT-5 thinking modes, and
 comprehensive cost/token tracking.
 """
 
+from __future__ import annotations
+
 import asyncio
 import base64
 import io
 import json
 import time
-from typing import Any
+from typing import Any, Generator
 
 import PIL.Image
 from pydantic import BaseModel
 
-from doeff import (
-    Await,
-    EffectGenerator,
-    Tell,
-    Try,
-    do,
-)
+from doeff import do
+from doeff_core_effects import Await, Tell, Try
+
+EffectGenerator = Generator
 from doeff_openai.client import (
     get_openai_client,
     track_api_call,

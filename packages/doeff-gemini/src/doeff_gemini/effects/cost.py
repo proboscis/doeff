@@ -3,7 +3,7 @@
 
 from dataclasses import dataclass
 
-from doeff.effects.base import EffectBase
+from doeff import EffectBase
 
 from doeff_gemini.types import GeminiCallResult
 

@@ -1,24 +1,19 @@
 """Virtual-clock simulation handler for doeff-time effects."""
 
 
-import heapq
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from doeff import (
-    PRIORITY_IDLE,
+from doeff import Pass, Resume, Transfer, do
+from doeff_core_effects import WriterTellEffect
+from doeff_core_effects.scheduler import (
     CompletePromise,
     CreatePromise,
-    Effect,
-    Pass,
-    Resume,
+    PRIORITY_IDLE,
     Spawn,
-    Transfer,
     Wait,
-    do,
 )
-from doeff.effects.writer import WriterTellEffect
 from doeff_time._internals import SimClock, TimeQueue
 from doeff_time.effects import (
     DelayEffect,
@@ -46,12 +41,10 @@ class SimTimeRuntime:
         self._time_queue = TimeQueue()
         self._driver_running = False
         self._log_formatter = log_formatter
-        self._schedule_sequence = 0
-        self._scheduled_programs: list[tuple[datetime, int, Any]] = []
         self._forwarding_tell = False
 
         @do
-        def _protocol_handler(effect: Effect, k: Any):
+        def _protocol_handler(effect: Any, k: Any):
             return (yield self.handle(effect, k))
 
         self._handler: ProtocolHandler = _protocol_handler
@@ -84,15 +77,9 @@ class SimTimeRuntime:
         yield Wait(promise.future)
 
     @do
-    def _run_due_scheduled_programs(self):
-        while self._scheduled_programs and self._scheduled_programs[0][0] <= self._clock.current_time:
-            _time, _sequence, program = heapq.heappop(self._scheduled_programs)
-            yield program
-
-    @do
     def _handle_tell(self, effect: WriterTellEffect, k: Any):
         assert self._log_formatter is not None
-        formatted = self._log_formatter(self._clock.current_time, effect.message)
+        formatted = self._log_formatter(self._clock.current_time, effect.msg)
         self._forwarding_tell = True
         try:
             result = yield WriterTellEffect(formatted)
@@ -104,14 +91,14 @@ class SimTimeRuntime:
     def _handle_delay(self, effect: DelayEffect, k: Any):
         target_time = self._clock.current_time + timedelta(seconds=effect.seconds)
         _ = yield self._wait_for_time(target_time)
-        _ = yield self._run_due_scheduled_programs()
+
         return (yield Resume(k, None))
 
     @do
     def _handle_wait_until(self, effect: WaitUntilEffect, k: Any):
         target_time = max(self._clock.current_time, effect.target)
         _ = yield self._wait_for_time(target_time)
-        _ = yield self._run_due_scheduled_programs()
+
         return (yield Resume(k, None))
 
     @do
@@ -120,23 +107,24 @@ class SimTimeRuntime:
 
     @do
     def _handle_schedule_at(self, effect: ScheduleAtEffect, k: Any):
-        self._schedule_sequence += 1
-        heapq.heappush(
-            self._scheduled_programs,
-            (effect.time, self._schedule_sequence, effect.program),
-        )
-        return (yield Resume(k, None))
+        @do
+        def deferred():
+            _ = yield self._wait_for_time(effect.time)
+            yield effect.program
+
+        task = yield Spawn(deferred())
+        return (yield Resume(k, task))
 
     @do
     def _handle_set_time(self, effect: SetTimeEffect, k: Any):
         self._clock.set_time(effect.time)
         if not self._time_queue.empty():
             _ = yield self._ensure_clock_driver()
-        _ = yield self._run_due_scheduled_programs()
+
         return (yield Resume(k, None))
 
     @do
-    def handle(self, effect: Effect, k: Any):
+    def handle(self, effect: Any, k: Any):
         if (
             isinstance(effect, WriterTellEffect)
             and self._log_formatter is not None
@@ -153,7 +141,7 @@ class SimTimeRuntime:
             return (yield self._handle_schedule_at(effect, k))
         if isinstance(effect, SetTimeEffect):
             return (yield self._handle_set_time(effect, k))
-        yield Pass()
+        yield Pass(effect, k)
 
 
 def sim_time_handler(

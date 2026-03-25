@@ -4,25 +4,20 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from conftest import SIM_TIME_EPOCH, sim_seconds, sim_time
+from conftest import SIM_TIME_EPOCH, listen, run_with_handlers, sim_seconds, sim_time
 from doeff_events import Publish, WaitForEvent, event_handler
 from doeff_time import Delay, GetTime, ScheduleAt, SetTime, WaitUntil, sim_time_handler
 
 from doeff import (
     Effect,
-    Gather,
-    Listen,
     Pass,
-    Spawn,
-    Tell,
-    Wait,
     WithHandler,
-    default_handlers,
     do,
-    run,
 )
-from doeff.effects.gather import GatherEffect
-from doeff.effects.spawn import PRIORITY_HIGH, SpawnEffect
+from doeff_core_effects import Listen, Tell
+from doeff_core_effects.scheduler import Gather, PRIORITY_HIGH, Spawn, Wait
+from doeff_core_effects.scheduler import Spawn as SpawnEffect
+from doeff_core_effects.scheduler import Gather as GatherEffect
 
 
 def _run_with_sim(
@@ -31,12 +26,11 @@ def _run_with_sim(
     start_time: datetime = SIM_TIME_EPOCH,
     log_formatter: Callable[[datetime, Any], str] | None = None,
 ):
-    return run(
+    return run_with_handlers(
         WithHandler(
             sim_time_handler(start_time=start_time, log_formatter=log_formatter),
             program,
         ),
-        handlers=default_handlers(),
     )
 
 
@@ -46,12 +40,13 @@ def _run_with_sim_and_events(
     start_time: datetime = SIM_TIME_EPOCH,
     log_formatter: Callable[[datetime, Any], str] | None = None,
 ):
-    return run(
-        WithHandler(
-            sim_time_handler(start_time=start_time, log_formatter=log_formatter),
-            WithHandler(event_handler(), program),
+    return run_with_handlers(
+        WithHandler(event_handler(),
+            WithHandler(
+                sim_time_handler(start_time=start_time, log_formatter=log_formatter),
+                program,
+            ),
         ),
-        handlers=default_handlers(),
     )
 
 
@@ -67,14 +62,13 @@ def _run_with_probe(
         nonlocal seen
         if isinstance(effect, effect_type):
             seen += 1
-        yield Pass()
+        yield Pass(effect, k)
 
-    result = run(
+    result = run_with_handlers(
         WithHandler(
             probe,
             WithHandler(sim_time_handler(start_time=sim_time(0.0)), program),
         ),
-        handlers=default_handlers(),
     )
     return seen, result
 
@@ -93,7 +87,7 @@ def test_delay_advances_virtual_clock() -> None:
         return before, after
 
     result = _run_with_sim(_program(), start_time=sim_time(100.0))
-    assert result.value == (sim_time(100.0), sim_time(105.0))
+    assert result == (sim_time(100.0), sim_time(105.0))
 
 
 def test_wait_until_advances_virtual_clock() -> None:
@@ -105,13 +99,13 @@ def test_wait_until_advances_virtual_clock() -> None:
         return before, after
 
     result = _run_with_sim(_program(), start_time=sim_time(10.0))
-    assert result.value == (sim_time(10.0), sim_time(14.0))
+    assert result == (sim_time(10.0), sim_time(14.0))
 
 
 def test_get_time_returns_virtual_clock() -> None:
     start = datetime(2024, 1, 2, tzinfo=timezone.utc)
     result = _run_with_sim(_read_time(), start_time=start)
-    assert result.value == start
+    assert result == start
 
 
 def test_set_time_jumps_clock() -> None:
@@ -121,7 +115,7 @@ def test_set_time_jumps_clock() -> None:
         return (yield GetTime())
 
     result = _run_with_sim(_program(), start_time=sim_time(0.0))
-    assert result.value == sim_time(42.0)
+    assert result == sim_time(42.0)
 
 
 def test_clock_never_advances_while_normal_tasks_runnable() -> None:
@@ -138,7 +132,7 @@ def test_clock_never_advances_while_normal_tasks_runnable() -> None:
         return immediate_values, now
 
     result = _run_with_sim(_program(), start_time=sim_time(0.0))
-    assert result.value == ([sim_time(0.0), sim_time(0.0)], sim_time(0.0))
+    assert result == ([sim_time(0.0), sim_time(0.0)], sim_time(0.0))
 
 
 def test_concurrent_delays_resolve_in_time_order() -> None:
@@ -151,7 +145,7 @@ def test_concurrent_delays_resolve_in_time_order() -> None:
         return first, second
 
     result = _run_with_sim(_program(), start_time=sim_time(0.0))
-    assert result.value == (sim_time(1.0), sim_time(3.0))
+    assert result == (sim_time(1.0), sim_time(3.0))
 
 
 def test_clock_driver_only_runs_at_idle_priority() -> None:
@@ -168,7 +162,7 @@ def test_clock_driver_only_runs_at_idle_priority() -> None:
         return worker_time, now
 
     result = _run_with_sim(_program(), start_time=sim_time(0.0))
-    assert result.value == (sim_time(0.0), sim_time(1.0))
+    assert result == (sim_time(0.0), sim_time(1.0))
 
 
 def test_sim_time_preemption_preserves_each_task_wake_time() -> None:
@@ -189,13 +183,12 @@ def test_sim_time_preemption_preserves_each_task_wake_time() -> None:
         final_time = yield GetTime()
         return wake_times, final_time
 
-    result = _run_with_sim(Listen(_program()), start_time=sim_time(10.0))
-    listen_result = result.value
-    wake_times, final_time = listen_result.value
+    inner_result, collected = _run_with_sim(listen(_program()), start_time=sim_time(10.0))
+    wake_times, final_time = inner_result
 
     assert wake_times == [sim_time(11.0), sim_time(13.0), sim_time(12.0)]
     assert final_time == sim_time(13.0)
-    assert list(listen_result.log) == [
+    assert [e.msg for e in collected] == [
         ("t1", sim_time(10.0), sim_time(11.0)),
         ("t3", sim_time(10.0), sim_time(12.0)),
         ("t2", sim_time(10.0), sim_time(13.0)),
@@ -215,7 +208,7 @@ def test_multiple_tasks_delay_simultaneously() -> None:
         return first, second, now
 
     result = _run_with_sim(_program(), start_time=sim_time(0.0))
-    assert result.value == (sim_time(1.0), sim_time(1.0), sim_time(1.0))
+    assert result == (sim_time(1.0), sim_time(1.0), sim_time(1.0))
 
 
 def test_delegates_spawn_to_core_scheduler() -> None:
@@ -229,7 +222,7 @@ def test_delegates_spawn_to_core_scheduler() -> None:
         return (yield Wait(task))
 
     seen, result = _run_with_probe(_program(), effect_type=SpawnEffect)
-    assert result.value == "child-ok"
+    assert result == "child-ok"
     assert seen >= 1
 
 
@@ -243,8 +236,8 @@ def test_delegates_wait_to_core_scheduler() -> None:
         task = yield Spawn(_child())
         return (yield Wait(task))
 
-    seen, result = _run_with_probe(_program(), effect_type=GatherEffect)
-    assert result.value == "wait-ok"
+    seen, result = _run_with_probe(_program(), effect_type=Wait)
+    assert result == "wait-ok"
     assert seen >= 1
 
 
@@ -260,7 +253,7 @@ def test_delegates_gather_to_core_scheduler() -> None:
         return (yield Gather(t1, t2))
 
     seen, result = _run_with_probe(_program(), effect_type=GatherEffect)
-    assert result.value == [1, 2]
+    assert result == [1, 2]
     assert seen >= 1
 
 
@@ -277,7 +270,7 @@ def test_spawn_runs_immediately_not_lazy() -> None:
         return (yield Wait(listener_task))
 
     result = _run_with_sim_and_events(_program(), start_time=sim_time(0.0))
-    assert result.value == "ready"
+    assert result == "ready"
 
 
 def test_schedule_at_fires_when_clock_passes_target() -> None:
@@ -288,10 +281,12 @@ def test_schedule_at_fires_when_clock_passes_target() -> None:
         yield Delay(5.0)
         return (yield GetTime())
 
-    result = _run_with_sim(Listen(_program()), start_time=sim_time(10.0))
-    listen_result = result.value
-    assert listen_result.value == sim_time(15.0)
-    assert list(listen_result.log) == ["scheduled"]
+    # listen outside sim_time so it sees Tell from ScheduleAt's Spawn'd task
+    inner_result, collected = run_with_handlers(
+        listen(WithHandler(sim_time_handler(start_time=sim_time(10.0)), _program())),
+    )
+    assert inner_result == sim_time(15.0)
+    assert [e.msg for e in collected] == ["scheduled"]
 
 
 def test_schedule_at_past_time_fires_immediately() -> None:
@@ -302,10 +297,11 @@ def test_schedule_at_past_time_fires_immediately() -> None:
         yield Delay(0.0)
         return (yield GetTime())
 
-    result = _run_with_sim(Listen(_program()), start_time=sim_time(0.0))
-    listen_result = result.value
-    assert listen_result.value == sim_time(10.0)
-    assert list(listen_result.log) == ["past"]
+    inner_result, collected = run_with_handlers(
+        listen(WithHandler(sim_time_handler(start_time=sim_time(0.0)), _program())),
+    )
+    assert inner_result == sim_time(10.0)
+    assert [e.msg for e in collected] == ["past"]
 
 
 @dataclass(frozen=True)
@@ -328,7 +324,7 @@ def test_composes_with_event_handler() -> None:
         return (yield Wait(listener_task))
 
     result = _run_with_sim_and_events(_program(), start_time=sim_time(1_704_067_200.0))
-    event = result.value
+    event = result
     assert isinstance(event, MarketOpen)
     assert event.time == sim_time(1_704_067_201.0)
 
@@ -346,7 +342,7 @@ def test_spawn_wait_for_event_publish_interleaving() -> None:
         return (yield Wait(listener_task))
 
     result = _run_with_sim_and_events(_program(), start_time=sim_time(0.0))
-    assert result.value == "tick"
+    assert result == "tick"
 
 
 def test_log_formatter_stamps_tell_messages() -> None:
@@ -357,8 +353,9 @@ def test_log_formatter_stamps_tell_messages() -> None:
         yield Tell("world")
         return "ok"
 
-    result = run(
-        Listen(
+    # listen must be OUTSIDE sim_time to see reformatted Tell messages
+    inner_result, collected = run_with_handlers(
+        listen(
             WithHandler(
                 sim_time_handler(
                     start_time=sim_time(7.5),
@@ -367,9 +364,7 @@ def test_log_formatter_stamps_tell_messages() -> None:
                 _program(),
             )
         ),
-        handlers=default_handlers(),
     )
-    listen_result = result.value
 
-    assert listen_result.value == "ok"
-    assert list(listen_result.log) == ["[sim:7.5] hello", "[sim:9.5] world"]
+    assert inner_result == "ok"
+    assert [e.msg for e in collected] == ["[sim:7.5] hello", "[sim:9.5] world"]

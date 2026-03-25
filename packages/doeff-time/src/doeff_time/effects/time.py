@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from doeff.effects.base import Effect, EffectBase
+from doeff import EffectBase
 from doeff_time._internals.validation import ensure_aware_datetime
 
 
@@ -88,23 +88,23 @@ def set_time(time: datetime) -> SetTimeEffect:
     return SetTimeEffect(time=time)
 
 
-def Delay(seconds: float) -> Effect:  # noqa: N802
+def Delay(seconds: float) -> EffectBase:  # noqa: N802
     return DelayEffect(seconds=seconds)
 
 
-def WaitUntil(target: datetime) -> Effect:  # noqa: N802
+def WaitUntil(target: datetime) -> EffectBase:  # noqa: N802
     return WaitUntilEffect(target=target)
 
 
-def GetTime() -> Effect:  # noqa: N802
+def GetTime() -> EffectBase:  # noqa: N802
     return GetTimeEffect()
 
 
-def ScheduleAt(time: datetime, program: Any) -> Effect:  # noqa: N802
+def ScheduleAt(time: datetime, program: Any) -> EffectBase:  # noqa: N802
     return ScheduleAtEffect(time=time, program=program)
 
 
-def SetTime(time: datetime) -> Effect:  # noqa: N802
+def SetTime(time: datetime) -> EffectBase:  # noqa: N802
     return SetTimeEffect(time=time)
 
 

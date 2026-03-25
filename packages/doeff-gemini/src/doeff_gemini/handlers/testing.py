@@ -18,7 +18,6 @@ from doeff_llm.effects import (
 from PIL import Image as PILImage
 
 from doeff import Pass, Resume, do
-from doeff.effects.base import Effect
 from doeff_gemini.effects import (
     GeminiChat,
     GeminiEmbedding,
@@ -28,7 +27,7 @@ from doeff_gemini.effects import (
 )
 from doeff_gemini.handlers.production import _is_gemini_model
 
-ProtocolHandler = Callable[[Effect, Any], Any]
+ProtocolHandler = Callable[[Any, Any], Any]
 
 
 def _default_value_for_annotation(annotation: Any, field_name: str) -> Any:  # noqa: PLR0911
@@ -189,39 +188,39 @@ def mock_handlers(
     )
 
     @do
-    def handler(effect: Effect, k: Any):
+    def handler(effect: Any, k: Any):
         if isinstance(effect, LLMStreamingChat | GeminiStreamingChat):
             if not _is_gemini_model(effect.model):
-                yield Pass()
+                yield Pass(effect, k)
                 return
             return (yield Resume(k, active_handler.handle_chat(effect)))
         if isinstance(effect, LLMChat | GeminiChat):
             if not _is_gemini_model(effect.model):
-                yield Pass()
+                yield Pass(effect, k)
                 return
             return (yield Resume(k, active_handler.handle_chat(effect)))
         if isinstance(effect, LLMStructuredQuery | GeminiStructuredOutput):
             if not _is_gemini_model(effect.model):
-                yield Pass()
+                yield Pass(effect, k)
                 return
             return (yield Resume(k, active_handler.handle_structured(effect)))
         if isinstance(effect, LLMEmbedding | GeminiEmbedding):
             if not _is_gemini_model(effect.model):
-                yield Pass()
+                yield Pass(effect, k)
                 return
             return (yield Resume(k, active_handler.handle_embedding(effect)))
         if isinstance(effect, ImageGenerate):
             return (yield Resume(k, active_handler.handle_image_generate(effect)))
         if isinstance(effect, ImageEdit | GeminiImageEdit):
             return (yield Resume(k, active_handler.handle_image_edit(effect)))
-        yield Pass()
+        yield Pass(effect, k)
 
     return handler
 
 
 @do
 def gemini_mock_handler(
-    effect: Effect,
+    effect: Any,
     k: Any,
     *,
     handler: MockGeminiHandler | None = None,
@@ -252,7 +251,7 @@ def gemini_mock_handler(
         return (yield Resume(k, active_handler.handle_structured(effect)))
     if isinstance(effect, LLMEmbedding | GeminiEmbedding) and _is_gemini_model(effect.model):
         return (yield Resume(k, active_handler.handle_embedding(effect)))
-    yield Pass()
+    yield Pass(effect, k)
 
 
 __all__ = [
