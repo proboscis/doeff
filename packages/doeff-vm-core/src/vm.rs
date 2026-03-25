@@ -107,52 +107,36 @@ impl VM {
         }
     }
 
-    /// Collect rich execution context — program frames + handler boundaries.
+    /// Collect rich execution context — program frames + handler chain.
     ///
-    /// Walks fiber chain from current_segment upward. For each fiber:
-    /// - Program frames: [kind="frame", func_name, source_file, source_line]
-    /// - Handler boundaries: [kind="handler", handler_name, handler_names_in_scope...]
-    ///
-    /// Returns innermost-first (current fiber first, root last).
+    /// Walks fiber chain from current_segment upward.
+    /// Returns outermost-first (root first, current frame last).
+    /// Ends with a single handler entry listing all handlers in scope.
     pub fn collect_rich_execution_context(&self) -> Vec<Value> {
         let Some(seg_id) = self.current_segment else {
             return Vec::new();
         };
 
-        let mut entries = Vec::new();
+        // Collect program frames (innermost-first from walk)
+        let mut frames = Vec::new();
+        let mut first_boundary: Option<crate::ids::SegmentId> = None;
         let mut cursor = Some(seg_id);
 
         while let Some(fid) = cursor {
             let Some(seg) = self.segments.get(fid) else { break };
 
-            // If this fiber is a handler boundary, emit handler entry
-            if let Some(handler) = &seg.handler {
-                if let Some(prompt) = handler.prompt_boundary() {
-                    let handler_name = prompt.handler.name()
-                        .unwrap_or_else(|| "<handler>".to_string());
-
-                    // Collect all handler names in scope from this point
-                    let handler_chain = self.handlers_in_caller_chain(fid);
-                    let mut handler_names = Vec::new();
-                    for entry in &handler_chain {
-                        handler_names.push(Value::String(
-                            entry.handler.name().unwrap_or_else(|| "<handler>".to_string())
-                        ));
-                    }
-
-                    entries.push(Value::List(vec![
-                        Value::String("handler".to_string()),
-                        Value::String(handler_name),
-                        Value::List(handler_names),
-                    ]));
+            // Record first handler boundary we encounter (innermost = full chain)
+            if first_boundary.is_none() {
+                if seg.handler.as_ref().and_then(|h| h.prompt_boundary()).is_some() {
+                    first_boundary = Some(fid);
                 }
             }
 
-            // Walk frames top-to-bottom (innermost first)
+            // Collect program frames (innermost first)
             for frame in seg.frames.iter().rev() {
                 if let crate::frame::Frame::Program { stream, .. } = frame {
                     if let Some(loc) = stream.source_location() {
-                        entries.push(Value::List(vec![
+                        frames.push(Value::List(vec![
                             Value::String("frame".to_string()),
                             Value::String(loc.func_name),
                             Value::String(loc.source_file),
@@ -165,6 +149,27 @@ impl VM {
             cursor = seg.parent;
         }
 
-        entries
+        // Reverse to outermost-first
+        frames.reverse();
+
+        // Append single handler chain entry (all handlers in scope from innermost boundary)
+        if let Some(boundary_id) = first_boundary {
+            let handler_chain = self.handlers_in_caller_chain(boundary_id);
+            let handler_names: Vec<Value> = handler_chain
+                .into_iter()
+                .map(|entry| Value::String(
+                    entry.handler.name().unwrap_or_else(|| "<handler>".to_string())
+                ))
+                .collect();
+            if !handler_names.is_empty() {
+                frames.push(Value::List(vec![
+                    Value::String("handler".to_string()),
+                    Value::String("chain".to_string()),
+                    Value::List(handler_names),
+                ]));
+            }
+        }
+
+        frames
     }
 }
