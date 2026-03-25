@@ -425,7 +425,14 @@ def scheduled(body_program):
                 tasks[tid]["result"] = r.value
             else:
                 tasks[tid]["status"] = "failed"
-                tasks[tid]["result"] = r.error if hasattr(r, 'error') else r
+                error = r.error if hasattr(r, 'error') else r
+                # Add spawn boundary to traceback
+                if isinstance(error, BaseException) and hasattr(error, '__doeff_traceback__'):
+                    error.__doeff_traceback__.insert(0, {
+                        "kind": "spawn_boundary",
+                        "task_id": tid,
+                    })
+                tasks[tid]["result"] = error
             wake_waiters(("task", tid))
             return (yield pick_next())
 
