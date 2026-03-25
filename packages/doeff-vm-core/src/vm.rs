@@ -116,23 +116,24 @@ impl VM {
         let Some(seg_id) = self.current_segment else {
             return Vec::new();
         };
+        self.collect_rich_context_from(seg_id)
+    }
 
-        // Collect program frames (innermost-first from walk)
+    /// Collect rich execution context starting from an arbitrary segment.
+    pub fn collect_rich_context_from(&self, start: SegmentId) -> Vec<Value> {
         let mut frames = Vec::new();
         let mut first_boundary: Option<crate::ids::SegmentId> = None;
-        let mut cursor = Some(seg_id);
+        let mut cursor = Some(start);
 
         while let Some(fid) = cursor {
             let Some(seg) = self.segments.get(fid) else { break };
 
-            // Record first handler boundary we encounter (innermost = full chain)
             if first_boundary.is_none() {
                 if seg.handler.as_ref().and_then(|h| h.prompt_boundary()).is_some() {
                     first_boundary = Some(fid);
                 }
             }
 
-            // Collect program frames (innermost first)
             for frame in seg.frames.iter().rev() {
                 if let crate::frame::Frame::Program { stream, .. } = frame {
                     if let Some(loc) = stream.source_location() {
@@ -149,10 +150,8 @@ impl VM {
             cursor = seg.parent;
         }
 
-        // Reverse to outermost-first
         frames.reverse();
 
-        // Append single handler chain entry (all handlers in scope from innermost boundary)
         if let Some(boundary_id) = first_boundary {
             let handler_chain = self.handlers_in_caller_chain(boundary_id);
             let handler_names: Vec<Value> = handler_chain
