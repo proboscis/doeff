@@ -1,29 +1,40 @@
 """Provider-agnostic chat effects."""
 
-
-from dataclasses import dataclass
 from typing import Any
 
 from doeff import EffectBase
 
 
-@dataclass(frozen=True, kw_only=True)
 class LLMChat(EffectBase):
     """Request a provider-agnostic chat completion."""
 
-    messages: list[dict[str, Any]]
-    model: str
-    temperature: float = 0.7
-    max_tokens: int | None = None
-    stream: bool = False
-    tools: list[dict[str, Any]] | None = None
+    def __init__(
+        self, *,
+        messages: list[dict[str, Any]],
+        model: str,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+        stream: bool = False,
+        tools: list[dict[str, Any]] | None = None,
+    ):
+        super().__init__()
+        self.messages = messages
+        self.model = model
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.stream = stream
+        self.tools = tools
+
+    def __repr__(self):
+        return f"LLMChat(model={self.model!r}, messages=[{len(self.messages)} msgs])"
 
 
-@dataclass(frozen=True, kw_only=True)
 class LLMStreamingChat(LLMChat):
     """Request a provider-agnostic streaming chat completion."""
 
-    stream: bool = True
+    def __init__(self, **kwargs):
+        kwargs["stream"] = True
+        super().__init__(**kwargs)
 
 
 __all__ = [

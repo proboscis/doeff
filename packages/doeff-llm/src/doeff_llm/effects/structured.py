@@ -1,22 +1,32 @@
 """Provider-agnostic structured-output effects."""
 
-
-from dataclasses import dataclass, field
 from typing import Any
 
 from doeff import EffectBase
 
 
-@dataclass(frozen=True, kw_only=True)
 class LLMStructuredQuery(EffectBase):
     """Request provider-agnostic structured output."""
 
-    messages: list[dict[str, Any]]
-    response_format: type[Any]
-    model: str
-    temperature: float = 0.7
-    max_tokens: int | None = None
-    extra: dict[str, Any] = field(default_factory=dict)
+    def __init__(
+        self, *,
+        messages: list[dict[str, Any]],
+        response_format: type[Any],
+        model: str,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+        extra: dict[str, Any] | None = None,
+    ):
+        super().__init__()
+        self.messages = messages
+        self.response_format = response_format
+        self.model = model
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.extra = extra or {}
+
+    def __repr__(self):
+        return f"LLMStructuredQuery(model={self.model!r}, format={self.response_format.__name__})"
 
 
 __all__ = [

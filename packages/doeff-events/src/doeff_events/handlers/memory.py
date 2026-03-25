@@ -1,20 +1,14 @@
 """In-memory publish/subscribe handler."""
 
-
 from typing import Any
 
-from doeff import Effect, Pass, Resume, do
-from doeff.effects import CompletePromise, CreatePromise, Promise, Wait
+from doeff import Pass, Resume, do
+from doeff_core_effects.scheduler import CreatePromise, CompletePromise, Wait
 from doeff_events.effects import PublishEffect, WaitForEventEffect
 
-ListenerMap = dict[type[Any], list[Promise[Any]]]
 
-
-def _matching_promises(
-    listeners: ListenerMap,
-    event: Any,
-) -> dict[int, Promise[Any]]:
-    matched: dict[int, Promise[Any]] = {}
+def _matching_promises(listeners, event):
+    matched = {}
     for event_type, queued in listeners.items():
         if not isinstance(event, event_type):
             continue
@@ -23,15 +17,11 @@ def _matching_promises(
     return matched
 
 
-def _remove_promises(
-    listeners: ListenerMap,
-    promise_ids: set[int],
-) -> None:
+def _remove_promises(listeners, promise_ids):
     if not promise_ids:
         return
-
     for event_type, queued in list(listeners.items()):
-        remaining = [promise for promise in queued if id(promise) not in promise_ids]
+        remaining = [p for p in queued if id(p) not in promise_ids]
         if remaining:
             listeners[event_type] = remaining
         else:
@@ -42,38 +32,33 @@ def event_handler():
     """Create a stateful in-memory pub/sub handler.
 
     WaitForEvent creates a Promise and blocks via Wait(promise.future).
-    Publish resolves promises for listeners whose registered type matches
-    via isinstance(event, registered_type).
+    Publish resolves promises for listeners whose registered type matches.
     """
-
-    listeners: ListenerMap = {}
+    listeners: dict[type, list] = {}
 
     @do
-    def handler(effect: Effect, k: Any):
+    def handler(effect, k):
         if isinstance(effect, WaitForEventEffect):
             promise = yield CreatePromise()
-
             for event_type in effect.event_types:
                 listeners.setdefault(event_type, []).append(promise)
-
             try:
                 event = yield Wait(promise.future)
             finally:
                 _remove_promises(listeners, {id(promise)})
-
-            return (yield Resume(k, event))
+            result = yield Resume(k, event)
+            return result
 
         if isinstance(effect, PublishEffect):
             event = effect.event
             matched = _matching_promises(listeners, event)
             _remove_promises(listeners, set(matched))
-
             for promise in matched.values():
                 yield CompletePromise(promise, event)
+            result = yield Resume(k, None)
+            return result
 
-            return (yield Resume(k, None))
-
-        yield Pass()
+        yield Pass(effect, k)
 
     return handler
 
