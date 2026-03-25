@@ -223,19 +223,35 @@ def await_handler():
     return handler
 
 
-def lazy_ask():
-    """Lazy Ask handler — caching + lazy evaluation layer per SPEC-EFF-001.
+def lazy_ask(env=None):
+    """Lazy Ask handler — replaces reader per SPEC-EFF-001.
 
-    Intercepts Ask and Local. Re-performs Ask to an outer reader for raw
-    env values. If the value is a Program (Expand node from @do), evaluates
-    it lazily with caching. Concurrent asks coordinate via per-key semaphore.
+    Handles Ask, Local, and lazy program evaluation. Takes env directly —
+    no separate reader handler needed.
 
-    Local creates a scoped handler with isolated cache for override-dependent
-    entries. Non-dependent entries stay in the shared cache.
+    Ask resolution order:
+    1. Local overrides (from active Local scopes)
+    2. Base env (passed to lazy_ask())
+    3. KeyError if not found
 
-    Requires reader (for env values) and scheduler (for semaphores) as
-    outer handlers. Works at any position inside both.
+    If the resolved value is a Program (Expand node from @do), it is
+    evaluated lazily with caching. Concurrent asks for the same key
+    coordinate via per-key semaphore.
+
+    Local creates a new handler scope with merged env/overrides and an
+    isolated scope cache for override-dependent entries.
+
+    Cache isolation:
+    - shared_cache: entries whose deps don't intersect any active override keys.
+      Shared across all scopes and spawned tasks.
+    - scope_cache: per-Local entries whose deps intersect override keys.
+      Isolated per Local scope; tasks spawned inside the same scope share it.
+
+    Requires scheduler (for semaphores) to be installed as an outer handler.
     """
+    if env is None:
+        env = {}
+
     from doeff.program import Expand, Perform, ResumeThrow, WithHandler as WH
     from doeff_core_effects.scheduler import (
         CreateSemaphore, AcquireSemaphore, ReleaseSemaphore,
@@ -246,15 +262,8 @@ def lazy_ask():
     eval_stack = []         # stack of dep-tracking sets for nested evals
     sems = {}               # key → Semaphore handle
 
-    def _make_handler(override_keys=frozenset(), local_env=None):
-        """Create a handler with optional Local overrides and isolated scope cache.
-
-        Args:
-            override_keys: keys overridden by active Local scopes.
-            local_env: dict of Local override values (only for overridden keys).
-        """
-        if local_env is None:
-            local_env = {}
+    def _make_handler(effective_env, override_keys=frozenset()):
+        """Create a handler with the given effective env (base + overrides)."""
         scope_cache = {}    # key → value (override-dependent, isolated per scope)
         scope_deps = {}     # key → frozenset of dep keys
 
@@ -284,14 +293,13 @@ def lazy_ask():
                 if eval_stack:
                     eval_stack[-1].add(effect.key)
 
-                # Check Local overrides first, then re-perform to reader
-                if effect.key in local_env:
-                    raw = local_env[effect.key]
+                # Resolve from effective env (overrides + base)
+                if effect.key in effective_env:
+                    raw = effective_env[effect.key]
                 else:
-                    try:
-                        raw = yield effect  # re-perform to reader
-                    except Exception as e:
-                        return (yield ResumeThrow(k, e))
+                    return (yield ResumeThrow(
+                        k, KeyError(f"Ask: key not found: {effect.key!r}")
+                    ))
 
                 # Plain value — resume directly
                 if not isinstance(raw, Expand):
@@ -320,7 +328,7 @@ def lazy_ask():
                     return (yield Resume(k, cached_val))
 
                 # Evaluate the program under this handler so effects
-                # flow through lazy_ask and see current overrides.
+                # flow through lazy_ask and see the current env.
                 eval_stack.append(set())
                 error = None
                 value = None
@@ -341,10 +349,10 @@ def lazy_ask():
                 return (yield Resume(k, value))
 
             elif isinstance(effect, Local):
-                # Merge Local overrides with current scope's overrides
-                merged_local = {**local_env, **effect.env}
-                merged_keys = override_keys | frozenset(effect.env.keys())
-                inner_handler = _make_handler(merged_keys, merged_local)
+                # Create a new handler with merged env and fresh scope cache
+                merged = {**effective_env, **effect.env}
+                merged_overrides = override_keys | frozenset(effect.env.keys())
+                inner_handler = _make_handler(merged, merged_overrides)
 
                 prog = effect.program
                 if not hasattr(prog, 'tag'):
@@ -365,6 +373,6 @@ def lazy_ask():
 
         return handler
 
-    return _make_handler()
+    return _make_handler(dict(env))
 
 
