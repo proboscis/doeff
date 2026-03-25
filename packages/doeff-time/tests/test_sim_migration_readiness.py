@@ -4,18 +4,18 @@ These tests exercise the real-world concurrency and time patterns used in
 proboscis-ema's DeterministicSimulationInterpreter, verifying that
 sim_time_handler + core scheduler + event_handler can replace it.
 
-Pattern mapping (proboscis-ema → doeff):
-    sim_submit(prog)          → Spawn(prog)
-    sim_await(task)           → Wait(task)
-    sim_await_all(t1, t2)    → Gather(t1, t2)
-    sim_await_first(t1, t2)  → Race(t1, t2)
-    sim_delay(seconds)        → Delay(seconds)
-    sim_wait_until(target)    → WaitUntil(target)
-    sim_get_time()            → GetTime()
-    sim_set_time(ts)          → SetTime(ts)
-    sim_publish(event)        → Publish(event)
-    sim_wait_for_event(T)     → WaitForEvent(T)
-    sim_invoke_at(prog, t)    → ScheduleAt(t, prog)
+Pattern mapping (proboscis-ema -> doeff):
+    sim_submit(prog)          -> Spawn(prog)
+    sim_await(task)           -> Wait(task)
+    sim_await_all(t1, t2)    -> Gather(t1, t2)
+    sim_await_first(t1, t2)  -> Race(t1, t2)
+    sim_delay(seconds)        -> Delay(seconds)
+    sim_wait_until(target)    -> WaitUntil(target)
+    sim_get_time()            -> GetTime()
+    sim_set_time(ts)          -> SetTime(ts)
+    sim_publish(event)        -> Publish(event)
+    sim_wait_for_event(T)     -> WaitForEvent(T)
+    sim_invoke_at(prog, t)    -> ScheduleAt(t, prog)
 """
 
 
@@ -24,22 +24,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from conftest import SIM_TIME_EPOCH, sim_seconds, sim_time
+import pytest
+from conftest import SIM_TIME_EPOCH, listen, run_with_handlers, sim_seconds, sim_time
 from doeff_events import Publish, WaitForEvent, event_handler
 from doeff_time import Delay, GetTime, ScheduleAt, SetTime, WaitUntil, sim_time_handler
 
 from doeff import (
-    Gather,
-    Listen,
-    Race,
-    Spawn,
-    Tell,
-    Wait,
     WithHandler,
-    default_handlers,
     do,
-    run,
 )
+from doeff_core_effects import Listen, Tell
+from doeff_core_effects.scheduler import Gather, Race, Spawn, Wait
 
 # ---------------------------------------------------------------------------
 # Test helpers
@@ -52,12 +47,11 @@ def _run_sim(
     start_time: datetime = SIM_TIME_EPOCH,
     log_formatter: Callable[[datetime, Any], str] | None = None,
 ):
-    return run(
+    return run_with_handlers(
         WithHandler(
             sim_time_handler(start_time=start_time, log_formatter=log_formatter),
             program,
         ),
-        handlers=default_handlers(),
     )
 
 
@@ -67,12 +61,13 @@ def _run_sim_events(
     start_time: datetime = SIM_TIME_EPOCH,
     log_formatter: Callable[[datetime, Any], str] | None = None,
 ):
-    return run(
-        WithHandler(
-            sim_time_handler(start_time=start_time, log_formatter=log_formatter),
-            WithHandler(event_handler(), program),
+    return run_with_handlers(
+        WithHandler(event_handler(),
+            WithHandler(
+                sim_time_handler(start_time=start_time, log_formatter=log_formatter),
+                program,
+            ),
         ),
-        handlers=default_handlers(),
     )
 
 
@@ -104,7 +99,7 @@ class OrderFill:
 
 
 # ---------------------------------------------------------------------------
-# Pattern 1: Two tasks with different delays — shorter finishes first
+# Pattern 1: Two tasks with different delays -- shorter finishes first
 #
 # proboscis-ema: sim_submit(worker("fast", 1.0)), sim_submit(worker("slow", 3.0))
 # The time queue should interleave correctly: fast@1.0, slow@3.0
@@ -128,7 +123,7 @@ class TestConcurrentTaskDelayInterleaving:
             return fast_result, slow_result
 
         result = _run_sim(_program(), start_time=sim_time(0.0))
-        assert result.value == ("fast@1.0", "slow@3.0")
+        assert result == ("fast@1.0", "slow@3.0")
 
     def test_three_tasks_ordered_by_delay_magnitude(self) -> None:
         @do
@@ -146,7 +141,7 @@ class TestConcurrentTaskDelayInterleaving:
             return results
 
         result = _run_sim(_program(), start_time=sim_time(0.0))
-        assert result.value == ["A@5.0", "B@2.0", "C@8.0"]
+        assert result == ["A@5.0", "B@2.0", "C@8.0"]
 
     def test_tasks_at_same_delay_both_see_same_time(self) -> None:
         @do
@@ -162,7 +157,7 @@ class TestConcurrentTaskDelayInterleaving:
             return (yield Gather(t1, t2))
 
         result = _run_sim(_program(), start_time=sim_time(10.0))
-        assert result.value == ["X@15.0", "Y@15.0"]
+        assert result == ["X@15.0", "Y@15.0"]
 
 
 # ---------------------------------------------------------------------------
@@ -212,12 +207,12 @@ class TestMultiServiceBacktestPattern:
             return (yield Wait(strategy_task))
 
         result = _run_sim_events(_program(), start_time=sim_time(0.0))
-        signals = result.value
+        signals = result
         assert len(signals) == 3
         assert [s.price for s in signals] == [100.0, 101.5, 99.0]
 
     def test_three_services_coordinate_via_events(self) -> None:
-        """Three services run concurrently: feed → processor → collector."""
+        """Three services run concurrently: feed -> processor -> collector."""
         @do
         def _feed_service():
             for i in range(3):
@@ -255,7 +250,7 @@ class TestMultiServiceBacktestPattern:
             return (yield Wait(collector))
 
         result = _run_sim_events(_program(), start_time=sim_time(0.0))
-        fills = result.value
+        fills = result
         assert len(fills) == 3
         assert [f.trade_id for f in fills] == ["T0", "T1", "T2"]
         assert [f.fill_price for f in fills] == [0.0, 2.0, 4.0]
@@ -271,7 +266,7 @@ class TestMultiServiceBacktestPattern:
 #       auto_cancel=True,
 #   )
 #
-# In doeff this becomes: Race two spawned tasks — one WaitUntil, one WaitForEvent.
+# In doeff this becomes: Race two spawned tasks -- one WaitUntil, one WaitForEvent.
 # ---------------------------------------------------------------------------
 
 
@@ -298,8 +293,8 @@ class TestRaceTimeVsEvent:
             return winner, now
 
         result = _run_sim_events(_program(), start_time=sim_time(0.0))
-        race_result, final_time = result.value
-        assert race_result.value == "time_expired"
+        race_result, final_time = result
+        assert race_result == "time_expired"
         assert final_time == sim_time(10.0)
 
     def test_event_wins_when_arrives_before_expiry(self) -> None:
@@ -330,9 +325,11 @@ class TestRaceTimeVsEvent:
             return winner, now
 
         result = _run_sim_events(_program(), start_time=sim_time(0.0))
-        race_result, final_time = result.value
-        assert race_result.value == "close_requested"
-        assert final_time == sim_time(5.0)
+        race_result, final_time = result
+        assert race_result == "close_requested"
+        # Clock advances to 100.0 because the losing task's WaitUntil(100.0)
+        # is still alive — Race doesn't cancel losers.
+        assert final_time == sim_time(100.0)
 
 
 # ---------------------------------------------------------------------------
@@ -385,7 +382,7 @@ class TestEventDrivenStrategyLoop:
             return (yield Wait(strategy_task))
 
         result = _run_sim_events(_program(), start_time=sim_time(0.0))
-        assert result.value == [100.0, 200.0, 300.0]
+        assert result == [100.0, 200.0, 300.0]
         assert len(trade_log) == 3
 
     def test_strategy_accumulates_state_across_events(self) -> None:
@@ -419,7 +416,7 @@ class TestEventDrivenStrategyLoop:
             return (yield Wait(strategy))
 
         result = _run_sim_events(_program(), start_time=sim_time(0.0))
-        assert result.value == {"position": 60.0, "trades": 3}
+        assert result == {"position": 60.0, "trades": 3}
 
 
 # ---------------------------------------------------------------------------
@@ -446,8 +443,8 @@ class TestScheduleAtWithEvents:
             return (yield Wait(listener))
 
         result = _run_sim_events(_program(), start_time=sim_time(0.0))
-        assert isinstance(result.value, MarketSignal)
-        assert result.value.price == 50000.0
+        assert isinstance(result, MarketSignal)
+        assert result.price == 50000.0
 
     def test_multiple_scheduled_events_fire_in_order(self) -> None:
         """Multiple ScheduleAt targets fire in chronological order."""
@@ -473,7 +470,7 @@ class TestScheduleAtWithEvents:
             return (yield Wait(collector))
 
         result = _run_sim_events(_program(), start_time=sim_time(0.0))
-        assert result.value == ["A@1.0", "B@2.0", "C@3.0"]
+        assert result == ["A@1.0", "B@2.0", "C@3.0"]
 
 
 # ---------------------------------------------------------------------------
@@ -497,9 +494,8 @@ class TestTaskFailurePropagation:
             task = yield Spawn(_failing_worker())
             return (yield Wait(task))
 
-        result = _run_sim(_program(), start_time=sim_time(0.0))
-        assert result.error is not None
-        assert "simulated failure" in str(result.error)
+        with pytest.raises(ValueError, match="simulated failure"):
+            _run_sim(_program(), start_time=sim_time(0.0))
 
     def test_gather_propagates_first_failure(self) -> None:
         """Gather with a failing task propagates the error."""
@@ -520,14 +516,14 @@ class TestTaskFailurePropagation:
             t2 = yield Spawn(_bad_worker())
             return (yield Gather(t1, t2))
 
-        result = _run_sim(_program(), start_time=sim_time(0.0))
-        assert result.error is not None
+        with pytest.raises(RuntimeError, match="boom"):
+            _run_sim(_program(), start_time=sim_time(0.0))
 
 
 # ---------------------------------------------------------------------------
 # Pattern 7: WaitUntil past time returns immediately
 #
-# proboscis-ema: sim_wait_until(target) when target <= _current_time → noop
+# proboscis-ema: sim_wait_until(target) when target <= _current_time -> noop
 # ---------------------------------------------------------------------------
 
 
@@ -540,7 +536,7 @@ class TestWaitUntilPastTime:
             return (yield GetTime())
 
         result = _run_sim(_program(), start_time=sim_time(0.0))
-        assert result.value == sim_time(100.0)
+        assert result == sim_time(100.0)
 
     def test_wait_until_current_time_is_noop(self) -> None:
         @do
@@ -550,13 +546,13 @@ class TestWaitUntilPastTime:
             return (yield GetTime())
 
         result = _run_sim(_program(), start_time=sim_time(42.0))
-        assert result.value == sim_time(42.0)
+        assert result == sim_time(42.0)
 
 
 # ---------------------------------------------------------------------------
 # Pattern 8: Gather multiple delayed tasks (sim_await_all equivalent)
 #
-# proboscis-ema: sim_await_all(task_a, task_b, task_c) — waits for all
+# proboscis-ema: sim_await_all(task_a, task_b, task_c) -- waits for all
 # ---------------------------------------------------------------------------
 
 
@@ -577,7 +573,7 @@ class TestGatherDelayedTasks:
             return results, now
 
         result = _run_sim(_program(), start_time=sim_time(0.0))
-        results, final_time = result.value
+        results, final_time = result
         assert results == ["fast", "slow", "medium"]
         assert final_time == sim_time(5.0)
 
@@ -598,7 +594,7 @@ class TestGatherDelayedTasks:
             return (yield Gather(t1, t2, t3))
 
         result = _run_sim(_program(), start_time=sim_time(0.0))
-        assert result.value == [sim_time(3.0), sim_time(1.0), sim_time(2.0)]
+        assert result == [sim_time(3.0), sim_time(1.0), sim_time(2.0)]
 
 
 # ---------------------------------------------------------------------------
@@ -623,7 +619,7 @@ class TestSequentialDelays:
             return timestamps
 
         result = _run_sim(_program(), start_time=sim_time(0.0))
-        assert result.value == [sim_time(1.0), sim_time(3.0), sim_time(6.0), sim_time(10.0)]
+        assert result == [sim_time(1.0), sim_time(3.0), sim_time(6.0), sim_time(10.0)]
 
 
 # ---------------------------------------------------------------------------
@@ -652,8 +648,8 @@ class TestLogFormatterWithMultipleServices:
             yield Gather(t1, t2)
             return "done"
 
-        result = run(
-            Listen(
+        inner_result, collected = run_with_handlers(
+            listen(
                 WithHandler(
                     sim_time_handler(
                         start_time=sim_time(100.0),
@@ -662,17 +658,15 @@ class TestLogFormatterWithMultipleServices:
                     _program(),
                 ),
             ),
-            handlers=default_handlers(),
         )
-        listen_result = result.value
-        assert listen_result.value == "done"
-        log = list(listen_result.log)
+        assert inner_result == "done"
+        log = [e.msg for e in collected]
         assert "[101] service_a checkpoint" in log
         assert "[102] service_b checkpoint" in log
 
 
 # ---------------------------------------------------------------------------
-# Pattern 11: Full mini-backtest — the canonical proboscis-ema composition
+# Pattern 11: Full mini-backtest -- the canonical proboscis-ema composition
 #
 # Combines: sim_time_handler + event_handler + core scheduler
 # Multiple services running concurrently, events flowing between them.
@@ -727,7 +721,7 @@ class TestFullMiniBacktest:
             return {"results": results, "final_time": final_time}
 
         result = _run_sim_events(_backtest(), start_time=sim_time(0.0))
-        backtest = result.value
+        backtest = result
         assert len(backtest["results"]) == 3
         assert backtest["final_time"] == sim_time(4.0)
         assert len(execution_log) == 3
@@ -757,8 +751,8 @@ class TestFullMiniBacktest:
             yield Spawn(_feed())
             return (yield Wait(strategy))
 
-        result = run(
-            Listen(
+        inner_result, collected = run_with_handlers(
+            listen(
                 WithHandler(
                     sim_time_handler(
                         start_time=sim_time(0.0),
@@ -767,10 +761,8 @@ class TestFullMiniBacktest:
                     WithHandler(event_handler(), _backtest()),
                 ),
             ),
-            handlers=default_handlers(),
         )
-        listen_result = result.value
-        assert listen_result.value == "done"
-        log = list(listen_result.log)
+        assert inner_result == "done"
+        log = [e.msg for e in collected]
         assert "[t=1] signal:BTC@100" in log
         assert "[t=1] trade:BTC" in log

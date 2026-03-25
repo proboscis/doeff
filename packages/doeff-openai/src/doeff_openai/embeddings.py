@@ -1,19 +1,18 @@
 """Embedding operations with comprehensive observability."""
 
+from __future__ import annotations
+
 import asyncio
 import time
-from typing import Any, Literal
+from typing import Any, Generator, Literal
 
 from openai.types import CreateEmbeddingResponse
 
-from doeff import (
-    Await,
-    EffectGenerator,
-    Gather,
-    Tell,
-    Try,
-    do,
-)
+from doeff import do
+from doeff_core_effects import Await, Tell, Try
+from doeff_core_effects.scheduler import Gather
+
+EffectGenerator = Generator
 from doeff_openai.client import get_openai_client, track_api_call
 from doeff_openai.costs import (
     count_embedding_tokens,

@@ -1,20 +1,19 @@
 """Chat completion operations with comprehensive observability."""
 
+from __future__ import annotations
+
 import asyncio
 import time
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Generator
 
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
 
-from doeff import (
-    Await,
-    EffectGenerator,
-    Tell,
-    Try,
-    do,
-)
+from doeff import do
+from doeff_core_effects import Await, Tell, Try
+
+EffectGenerator = Generator
 from doeff_openai.client import get_openai_client, track_api_call
 from doeff_openai.costs import (
     calculate_cost,

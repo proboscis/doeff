@@ -1,12 +1,12 @@
 """Min-heap queue of time-ordered promises."""
-
+from __future__ import annotations
 
 import heapq
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from doeff.effects.spawn import Promise
+from doeff_core_effects.scheduler import Promise
 
 from .validation import ensure_aware_datetime
 

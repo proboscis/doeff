@@ -3,11 +3,11 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from doeff_time._internals import TimeQueue
 
-from doeff.effects.spawn import Promise
+from doeff_core_effects.scheduler import Promise
 
 
-def _promise(promise_id: int) -> Promise[None]:
-    return Promise(_promise_handle={"type": "Promise", "promise_id": promise_id})
+def _promise(promise_id: int) -> Promise:
+    return Promise(promise_id)
 
 
 def test_time_queue_orders_entries_by_datetime() -> None:

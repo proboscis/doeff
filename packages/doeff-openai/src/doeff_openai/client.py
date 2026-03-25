@@ -1,24 +1,21 @@
 """Main OpenAI client using doeff effects for observability."""
 
+from __future__ import annotations
+
 import copy
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Generator
 
 from openai import AsyncOpenAI, OpenAI
 from openai.types import CreateEmbeddingResponse
 from openai.types.chat import ChatCompletion
 
-from doeff import (
-    Ask,
-    EffectGenerator,
-    Get,
-    Put,
-    Tell,
-    Try,
-    do,
-)
+from doeff import do
+from doeff_core_effects import Ask, Get, Put, Tell, Try
+
+EffectGenerator = Generator
 from doeff_openai.costs import calculate_cost
 from doeff_openai.types import APICallMetadata, TokenUsage
 

@@ -18,9 +18,9 @@ from doeff_llm.effects import (
 )
 from PIL import Image
 
-from doeff import Await, EffectGenerator, Pass, Resume, Try
-from doeff.do import do
-from doeff.effects.base import Effect, EffectBase
+from doeff import EffectBase, Pass, Resume, do
+from doeff_core_effects import Await, Try
+from typing import Generator
 from doeff_gemini.client import get_gemini_client, track_api_call
 from doeff_gemini.costs import calculate_known_model_cost
 from doeff_gemini.effects import (
@@ -156,7 +156,7 @@ def _messages_to_prompt_and_parts(
 
 
 @do
-def _chat_impl(effect: LLMChat) -> EffectGenerator[str]:
+def _chat_impl(effect: LLMChat) -> Generator[Any, Any, str]:
     prompt, content_parts = _messages_to_prompt_and_parts(effect.messages)
     max_output_tokens = effect.max_tokens if effect.max_tokens is not None else 2048
     return (
@@ -172,7 +172,7 @@ def _chat_impl(effect: LLMChat) -> EffectGenerator[str]:
 
 
 @do
-def _streaming_chat_impl(effect: LLMStreamingChat | LLMChat) -> EffectGenerator[str]:
+def _streaming_chat_impl(effect: LLMStreamingChat | LLMChat) -> Generator[Any, Any, str]:
     prompt, content_parts = _messages_to_prompt_and_parts(effect.messages)
     max_output_tokens = effect.max_tokens if effect.max_tokens is not None else 2048
     return (
@@ -188,7 +188,7 @@ def _streaming_chat_impl(effect: LLMStreamingChat | LLMChat) -> EffectGenerator[
 
 
 @do
-def _structured_impl(effect: LLMStructuredQuery) -> EffectGenerator[Any]:
+def _structured_impl(effect: LLMStructuredQuery) -> Generator[Any, Any, Any]:
     prompt, content_parts = _messages_to_prompt_and_parts(effect.messages)
     max_output_tokens = effect.max_tokens if effect.max_tokens is not None else 2048
     extra = getattr(effect, "extra", None) or {}
@@ -230,7 +230,7 @@ def _gemini_to_unified(result: Any, *, model: str, prompt: str) -> ImageResult:
 
 
 @do
-def _image_generate_impl(effect: ImageGenerate) -> EffectGenerator[ImageResult]:
+def _image_generate_impl(effect: ImageGenerate) -> Generator[Any, Any, ImageResult]:
     result = yield edit_image__gemini(
         prompt=_prompt_for_generate(effect),
         model=effect.model,
@@ -244,7 +244,7 @@ def _image_generate_impl(effect: ImageGenerate) -> EffectGenerator[ImageResult]:
 
 
 @do
-def _image_edit_impl(effect: ImageEdit) -> EffectGenerator[ImageResult]:
+def _image_edit_impl(effect: ImageEdit) -> Generator[Any, Any, ImageResult]:
     overrides = dict(effect.generation_config or {})
     if effect.strength != 0.8:
         overrides.setdefault("image_strength", effect.strength)
@@ -302,7 +302,7 @@ def _extract_embedding_vectors(response: Any) -> list[list[float]]:  # noqa: PLR
 
 
 @do
-def _embedding_impl(effect: LLMEmbedding) -> EffectGenerator[list[float] | list[list[float]]]:
+def _embedding_impl(effect: LLMEmbedding) -> Generator[Any, Any, list[float] | list[list[float]]]:
     client = yield get_gemini_client()
     async_client = client.async_client
     start_time = time.time()
@@ -322,7 +322,7 @@ def _embedding_impl(effect: LLMEmbedding) -> EffectGenerator[list[float] | list[
     }
 
     @do
-    def api_call_with_tracking() -> EffectGenerator[Any]:
+    def api_call_with_tracking() -> Generator[Any, Any, Any]:
         response = yield Await(
             async_client.models.embed_content(
                 model=effect.model,
@@ -363,59 +363,59 @@ def _embedding_impl(effect: LLMEmbedding) -> EffectGenerator[list[float] | list[
 
 
 @do
-def gemini_image_handler(effect: Effect, k: Any):
+def gemini_image_handler(effect: Any, k: Any):
     """Protocol handler with model routing for unified image effects."""
     if isinstance(effect, GeminiImageEdit):
         if not _is_gemini_image_model(effect.model):
-            yield Pass()
+            yield Pass(effect, k)
             return
         value = yield _image_edit_impl(effect)
         return (yield Resume(k, value))
 
     if isinstance(effect, ImageGenerate):
         if not _is_gemini_image_model(effect.model):
-            yield Pass()
+            yield Pass(effect, k)
             return
         value = yield _image_generate_impl(effect)
         return (yield Resume(k, value))
 
     if isinstance(effect, ImageEdit):
         if not _is_gemini_image_model(effect.model):
-            yield Pass()
+            yield Pass(effect, k)
             return
         value = yield _image_edit_impl(effect)
         return (yield Resume(k, value))
 
-    yield Pass()
+    yield Pass(effect, k)
 
 
 @do
-def default_gemini_cost_handler(effect: Effect, k: Any):
+def default_gemini_cost_handler(effect: Any, k: Any):
     """Default cost handler backed by built-in pricing for known Gemini models."""
     if isinstance(effect, GeminiCalculateCost):
         estimate = calculate_known_model_cost(effect.call_result)
         if estimate is not None:
             return (yield Resume(k, estimate))
-        yield Pass()
+        yield Pass(effect, k)
         return
     if isinstance(effect, EffectBase):
-        yield Pass()
+        yield Pass(effect, k)
         return
-    yield Pass()
+    yield Pass(effect, k)
 
 
 def production_handlers(
     *,
-    chat_impl: Callable[[LLMChat], EffectGenerator[str]] | None = None,
-    streaming_chat_impl: Callable[[LLMStreamingChat | LLMChat], EffectGenerator[str]] | None = None,
-    structured_impl: Callable[[LLMStructuredQuery], EffectGenerator[Any]] | None = None,
+    chat_impl: Callable[[LLMChat], Generator[str]] | None = None,
+    streaming_chat_impl: Callable[[LLMStreamingChat | LLMChat], Generator[str]] | None = None,
+    structured_impl: Callable[[LLMStructuredQuery], Generator[Any]] | None = None,
     embedding_impl: Callable[
         [LLMEmbedding],
-        EffectGenerator[list[float] | list[list[float]]],
+        Generator[list[float] | list[list[float]]],
     ]
     | None = None,
-    image_generate_impl: Callable[[ImageGenerate], EffectGenerator[ImageResult]] | None = None,
-    image_edit_impl: Callable[[ImageEdit], EffectGenerator[ImageResult]] | None = None,
+    image_generate_impl: Callable[[ImageGenerate], Generator[ImageResult]] | None = None,
+    image_edit_impl: Callable[[ImageEdit], Generator[ImageResult]] | None = None,
     cost_handler: ProtocolHandler | None = default_gemini_cost_handler,
 ) -> ProtocolHandler:
     """Build a protocol handler backed by real Gemini API integrations."""
@@ -429,21 +429,21 @@ def production_handlers(
     active_cost_handler = cost_handler
 
     @do
-    def handler(effect: Effect, k: Any):
+    def handler(effect: Any, k: Any):
         if isinstance(effect, GeminiCalculateCost):
             if active_cost_handler is None:
-                yield Pass()
+                yield Pass(effect, k)
                 return
             return (yield active_cost_handler(effect, k))
         if isinstance(effect, LLMStreamingChat | GeminiStreamingChat):
             if not _is_gemini_model(effect.model):
-                yield Pass()
+                yield Pass(effect, k)
                 return
             value = yield active_streaming_chat_impl(effect)
             return (yield Resume(k, value))
         if isinstance(effect, LLMChat | GeminiChat):
             if not _is_gemini_model(effect.model):
-                yield Pass()
+                yield Pass(effect, k)
                 return
             if effect.stream:
                 value = yield active_streaming_chat_impl(effect)
@@ -452,35 +452,35 @@ def production_handlers(
             return (yield Resume(k, value))
         if isinstance(effect, LLMStructuredQuery | GeminiStructuredOutput):
             if not _is_gemini_model(effect.model):
-                yield Pass()
+                yield Pass(effect, k)
                 return
             value = yield active_structured_impl(effect)
             return (yield Resume(k, value))
         if isinstance(effect, LLMEmbedding | GeminiEmbedding):
             if not _is_gemini_model(effect.model):
-                yield Pass()
+                yield Pass(effect, k)
                 return
             value = yield active_embedding_impl(effect)
             return (yield Resume(k, value))
         if isinstance(effect, ImageGenerate):
             if not _is_gemini_image_model(effect.model):
-                yield Pass()
+                yield Pass(effect, k)
                 return
             value = yield active_image_generate_impl(effect)
             return (yield Resume(k, value))
         if isinstance(effect, ImageEdit | GeminiImageEdit):
             if not _is_gemini_image_model(effect.model):
-                yield Pass()
+                yield Pass(effect, k)
                 return
             value = yield active_image_edit_impl(effect)
             return (yield Resume(k, value))
-        yield Pass()
+        yield Pass(effect, k)
 
     return handler
 
 
 @do
-def gemini_production_handler(effect: Effect, k: Any):
+def gemini_production_handler(effect: Any, k: Any):
     """Single protocol handler suitable for ``WithHandler`` usage."""
     if isinstance(effect, GeminiCalculateCost):
         return (yield default_gemini_cost_handler(effect, k))
@@ -503,7 +503,7 @@ def gemini_production_handler(effect: Effect, k: Any):
     elif isinstance(effect, LLMEmbedding | GeminiEmbedding) and _is_gemini_model(effect.model):
         value = yield _embedding_impl(effect)
         return (yield Resume(k, value))
-    yield Pass()
+    yield Pass(effect, k)
 
 
 __all__ = [
