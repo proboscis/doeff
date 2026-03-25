@@ -1,17 +1,18 @@
 """Provider-agnostic embedding effects."""
 
-
-from dataclasses import dataclass
-
 from doeff import EffectBase
 
 
-@dataclass(frozen=True, kw_only=True)
 class LLMEmbedding(EffectBase):
     """Request provider-agnostic embeddings."""
 
-    input: str | list[str]
-    model: str
+    def __init__(self, *, input: str | list[str], model: str):
+        super().__init__()
+        self.input = input
+        self.model = model
+
+    def __repr__(self):
+        return f"LLMEmbedding(model={self.model!r})"
 
 
 __all__ = [
