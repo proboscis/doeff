@@ -7,8 +7,10 @@ This package provides:
 - Scheduler: Spawn, Wait, Gather, Race, Cancel, Promise, ExternalPromise, Semaphore
 """
 
-from doeff_core_effects.effects import Ask, Get, Put, Tell
-from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects.effects import (
+    Ask, Get, Put, Tell, Try, Slog,
+)
+from doeff_core_effects.handlers import reader, state, writer, try_handler, slog_handler
 from doeff_core_effects.scheduler import (
     Cancel,
     CreateExternalPromise,

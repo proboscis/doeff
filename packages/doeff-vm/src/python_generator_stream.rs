@@ -405,6 +405,10 @@ fn classify_tagged_to_doctrl(py: Python<'_>, obj: &Bound<'_, PyAny>, tag: u8) ->
             let head = k_borrowed.peek_head()?;
             Some(DoCtrl::GetTraceback { from: head })
         }
+        25 => {
+            // GetExecutionContext
+            Some(DoCtrl::GetExecutionContext)
+        }
         _ => None,
     }
 }
