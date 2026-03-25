@@ -12,55 +12,63 @@ from typing import Any, Literal, Protocol, TypeVar
 
 import pytest
 
-from doeff import Program, async_run, default_async_handlers, default_handlers, run
+from doeff import WithHandler, do, run
+from doeff_core_effects.handlers import (
+    reader, state, writer, try_handler, slog_handler,
+    local_handler, listen_handler, await_handler, lazy_ask,
+)
+from doeff_core_effects.scheduler import scheduled
 
 T = TypeVar("T")
 
-RunnerMode = Literal["sync", "async"]
+RunnerMode = Literal["sync"]
 
 _MEM_GUARD_TRIGGER_LOCK = threading.Lock()
 _MEM_GUARD_TRIGGER: dict[str, str | None] = {"message": None}
 
 
+def default_handlers(env=None):
+    """Build the standard handler chain for tests.
+
+    Returns a list of handler instances (outer to inner).
+    Includes scheduler + lazy_ask for full effect support.
+    """
+    return [
+        reader(env=env), state(), writer(), try_handler(), slog_handler(),
+        local_handler(), listen_handler(), await_handler(), lazy_ask(),
+    ]
+
+
 class Interpreter(Protocol):
     def run(
         self,
-        program: Program[T],
+        program: Any,
         env: dict[Any, Any] | None = None,
         store: dict[str, Any] | None = None,
     ) -> Any: ...
 
 
 class RuntimeAdapter:
-    """Adapter for rust-vm run/async_run with test interpreter protocol."""
+    """Adapter for rust-vm run with test interpreter protocol."""
 
     interpreter_type = "rust-vm"
 
-    def __init__(self, mode: RunnerMode = "async") -> None:
+    def __init__(self, mode: RunnerMode = "sync") -> None:
         self.mode = mode
 
     def run(
         self,
-        program: Program[T],
+        program: Any,
         env: dict[Any, Any] | None = None,
         store: dict[str, Any] | None = None,
     ) -> Any:
-        return run(program, handlers=default_handlers(), env=env, store=store)
-
-    async def run_async(
-        self,
-        program: Program[T],
-        env: dict[Any, Any] | None = None,
-        state: dict[str, Any] | None = None,
-    ) -> Any:
-        """Run program with either run or async_run based on mode.
-
-        This allows tests to be parameterized over both runner types while
-        keeping the same async test interface.
-        """
-        if self.mode == "sync":
-            return run(program, handlers=default_handlers(), env=env, store=state)
-        return await async_run(program, handlers=default_async_handlers(), env=env, store=state)
+        handlers = default_handlers(env=env)
+        wrapped = program
+        for h in reversed(handlers):
+            wrapped = WithHandler(h, wrapped)
+        # Wrap with scheduler (outermost effect handler)
+        wrapped = scheduled(wrapped)
+        return run(wrapped)
 
 
 def _read_process_table() -> tuple[dict[int, list[int]], dict[int, int]]:
@@ -257,14 +265,5 @@ def pytest_terminal_summary(
 
 @pytest.fixture
 def interpreter() -> Interpreter:
-    """Default interpreter using async path when available."""
-    return RuntimeAdapter(mode="async")
-
-
-@pytest.fixture(params=["sync", "async"])
-def parameterized_interpreter(request: pytest.FixtureRequest) -> RuntimeAdapter:
-    """Parameterized interpreter that tests both run and async_run.
-
-    Use this fixture to ensure effects work correctly with both runners.
-    """
-    return RuntimeAdapter(mode=request.param)
+    """Default interpreter."""
+    return RuntimeAdapter(mode="sync")
