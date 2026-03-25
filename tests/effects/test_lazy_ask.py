@@ -295,6 +295,55 @@ class TestLazyAskLocal:
         assert call_count[0] == 1
 
 
+class TestLazyAskScopeIsolation:
+    def test_concurrent_local_isolated_cache(self):
+        """Three tasks with different Local overrides: override-dependent entries
+        are isolated per scope, non-dependent entries shared (evaluated once)."""
+        logger_count = [0]
+        service_count = [0]
+
+        @do
+        def make_logger():
+            logger_count[0] += 1
+            if False:
+                yield
+            return "Logger()"
+
+        @do
+        def make_service():
+            service_count[0] += 1
+            db = yield Ask("db_url")
+            logger = yield Ask("logger")
+            return f"Svc({db},{logger})"
+
+        @do
+        def worker(db):
+            return (yield Local({"db_url": db}, Ask("service")))
+
+        @do
+        def program():
+            t1 = yield Spawn(worker("db1"))
+            t2 = yield Spawn(worker("db2"))
+            t3 = yield Spawn(worker("db3"))
+            return (yield Gather(t1, t2, t3))
+
+        result = run_with_lazy(
+            program(),
+            env={
+                "db_url": "prod",
+                "service": make_service(),
+                "logger": make_logger(),
+            },
+        )
+        assert result == [
+            "Svc(db1,Logger())",
+            "Svc(db2,Logger())",
+            "Svc(db3,Logger())",
+        ]
+        assert logger_count[0] == 1, "logger should be evaluated once (shared cache)"
+        assert service_count[0] == 3, "service should be evaluated per scope"
+
+
 class TestLazyAskErrorHandling:
     def test_lazy_failure_propagates(self):
         @do
