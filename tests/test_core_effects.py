@@ -1,9 +1,8 @@
 """Tests for core effects — Ask, Get, Put, Tell."""
 
-from doeff import do, run as doeff_run, WithHandler
-from doeff.program import WithHandler
-from doeff_core_effects.effects import Ask, Get, Put, Tell
-from doeff_core_effects.handlers import reader, state, writer
+from doeff import do, run as doeff_run, WithHandler, Pure
+from doeff_core_effects.effects import Ask, Get, Put, Tell, Try, Slog
+from doeff_core_effects.handlers import reader, state, writer, try_handler, slog_handler
 
 
 class TestReader:
@@ -114,3 +113,76 @@ class TestComposed:
         )
         assert doeff_run(prog) is True
         assert w.log == ["hello Bob"]
+
+
+class TestTry:
+    def test_try_success(self):
+        @do
+        def body():
+            result = yield Try(Pure(42))
+            return result
+
+        from doeff_vm import Ok
+        result = doeff_run(WithHandler(try_handler(), body()))
+        assert isinstance(result, Ok.__class__) or (hasattr(result, 'is_ok') and result.is_ok())
+        assert result.value == 42
+
+    def test_try_failure(self):
+        @do
+        def failing():
+            raise ValueError("boom")
+            yield
+
+        @do
+        def body():
+            result = yield Try(failing())
+            return result
+
+        from doeff_vm import Err
+        result = doeff_run(WithHandler(try_handler(), body()))
+        assert hasattr(result, 'is_err') and result.is_err()
+        assert isinstance(result.error, ValueError)
+
+    def test_try_does_not_propagate(self):
+        """Try catches errors — they don't propagate."""
+        @do
+        def failing():
+            raise RuntimeError("should be caught")
+            yield
+
+        @do
+        def body():
+            result = yield Try(failing())
+            return "safe"
+
+        assert doeff_run(WithHandler(try_handler(), body())) == "safe"
+
+
+class TestSlog:
+    def test_slog_basic(self):
+        sh = slog_handler()
+
+        @do
+        def body():
+            yield Slog("hello")
+            yield Slog("event", user="alice", action="login")
+            return "done"
+
+        result = doeff_run(WithHandler(sh, body()))
+        assert result == "done"
+        assert len(sh.log) == 2
+        assert sh.log[0] == {"msg": "hello"}
+        assert sh.log[1] == {"msg": "event", "user": "alice", "action": "login"}
+
+
+class TestGetExecutionContext:
+    def test_get_execution_context(self):
+        from doeff import GetExecutionContext
+
+        @do
+        def body():
+            ctx = yield GetExecutionContext()
+            return ctx
+
+        result = doeff_run(body())
+        assert isinstance(result, list)

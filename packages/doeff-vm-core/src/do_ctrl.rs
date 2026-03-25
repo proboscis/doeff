@@ -83,6 +83,10 @@ pub enum DoCtrl {
     /// Non-consuming — does not take ownership of the continuation.
     GetTraceback { from: crate::ids::FiberId },
 
+    /// Get the current execution context (traceback from current segment).
+    /// Returns Value::List of traceback frames from current position.
+    GetExecutionContext,
+
     // --- Heap (OCaml ref cells) ---
 
     /// Allocate a mutable ref cell with initial value.

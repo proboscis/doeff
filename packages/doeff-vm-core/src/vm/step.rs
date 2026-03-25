@@ -315,6 +315,20 @@ impl VM {
                 self.mode = Mode::Send(Value::List(frames));
                 StepResult::Continue
             }
+
+            DoCtrl::GetExecutionContext => {
+                let locations = self.collect_current_traceback();
+                let frames: Vec<Value> = locations
+                    .into_iter()
+                    .map(|loc| Value::List(vec![
+                        Value::String(loc.func_name),
+                        Value::String(loc.source_file),
+                        Value::Int(loc.source_line as i64),
+                    ]))
+                    .collect();
+                self.mode = Mode::Send(Value::List(frames));
+                StepResult::Continue
+            }
         }
     }
 
