@@ -258,10 +258,10 @@ impl VM {
                 self.eval_pass(effect, k)
             }
 
-            DoCtrl::Delegate { effect, k } => {
-                // Same as Pass for now.
-                // TODO: append current handler fiber to k before forwarding.
-                self.eval_pass(effect, k)
+            DoCtrl::Delegate { .. } => {
+                StepResult::Error(VMError::type_error(
+                    "Delegate is removed. Use 'yield effect' from handler @do body to re-perform.".to_string()
+                ))
             }
 
             DoCtrl::WithObserve { observer, body } => {

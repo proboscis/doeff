@@ -37,14 +37,6 @@ class Transfer:
         self.value = value
 
 
-class Delegate:
-    """Delegate effect to outer handler. tag=8"""
-    tag = 8
-    def __init__(self, effect: Any, k: Any) -> None:
-        self.effect = effect
-        self.continuation = k
-
-
 class Apply:
     """Call f(args). tag=16"""
     tag = 16
