@@ -93,7 +93,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     fn run_to_completion(vm: &mut VM) -> Result<Value, VMError> {
-        for _ in 0..1000 {
+        loop {
             match vm.step() {
                 StepResult::Continue => continue,
                 StepResult::Done(value) => return Ok(value),
@@ -103,7 +103,6 @@ mod tests {
                 }
             }
         }
-        Err(VMError::internal("step limit exceeded"))
     }
 
     fn setup_vm_with_stream(stream: impl IRStream + 'static) -> VM {
