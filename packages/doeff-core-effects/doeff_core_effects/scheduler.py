@@ -62,7 +62,9 @@ def _enrich_exception_traceback(exc, task_meta=None):
         entries.append(["handler", "task_handlers", handler_names])
 
     if entries:
-        exc.__doeff_traceback__ = entries
+        # Prepend to existing traceback (nested spawns accumulate)
+        existing = getattr(exc, '__doeff_traceback__', None) or []
+        exc.__doeff_traceback__ = entries + existing
 
 
 # ---------------------------------------------------------------------------
@@ -412,7 +414,18 @@ def scheduled(body_program):
             # The last entry is the scheduler handler itself — drop it.
             all_handlers = yield GetHandlers(k)
             inner_handlers = all_handlers[:-1] if all_handlers else []
+
+            # Capture spawn site from continuation's traceback
+            from doeff.program import GetTraceback
+            spawn_frames = yield GetTraceback(k)
+            spawn_site = None
+            if spawn_frames:
+                f = spawn_frames[0]  # innermost = yield Spawn(...) site
+                if isinstance(f, (list, tuple)) and len(f) >= 3:
+                    spawn_site = f"{f[0]}  {f[1]}:{f[2]}"
+
             tid = alloc_task(effect.program, effect.priority, inner_handlers=inner_handlers)
+            tasks[tid]["spawn_site"] = spawn_site
             enqueue(("new", tid), effect.priority)
             enqueue(("resume", k, Task(tid)))  # spawner resumes at normal priority
             return (yield pick_next())
@@ -431,6 +444,7 @@ def scheduled(body_program):
                     error.__doeff_traceback__.insert(0, {
                         "kind": "spawn_boundary",
                         "task_id": tid,
+                        "spawn_site": tasks[tid].get("spawn_site", ""),
                     })
                 tasks[tid]["result"] = error
             wake_waiters(("task", tid))
