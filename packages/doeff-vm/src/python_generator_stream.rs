@@ -70,6 +70,16 @@ impl doeff_vm_core::value::Callable for PythonCallable {
         })
     }
 
+    fn name(&self) -> Option<String> {
+        Python::attach(|py| {
+            let obj = self.callable.bind(py);
+            obj.getattr("__qualname__")
+                .or_else(|_| obj.getattr("__name__"))
+                .ok()
+                .and_then(|n| n.extract::<String>().ok())
+        })
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

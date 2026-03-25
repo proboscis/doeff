@@ -100,4 +100,65 @@ impl VM {
             None => Vec::new(),
         }
     }
+
+    /// Collect rich execution context — program frames + handler boundaries.
+    ///
+    /// Walks fiber chain from current_segment upward. For each fiber:
+    /// - Program frames: [kind="frame", func_name, source_file, source_line]
+    /// - Handler boundaries: [kind="handler", handler_name, handler_names_in_scope...]
+    ///
+    /// Returns innermost-first (current fiber first, root last).
+    pub fn collect_rich_execution_context(&self) -> Vec<Value> {
+        let Some(seg_id) = self.current_segment else {
+            return Vec::new();
+        };
+
+        let mut entries = Vec::new();
+        let mut cursor = Some(seg_id);
+
+        while let Some(fid) = cursor {
+            let Some(seg) = self.segments.get(fid) else { break };
+
+            // If this fiber is a handler boundary, emit handler entry
+            if let Some(handler) = &seg.handler {
+                if let Some(prompt) = handler.prompt_boundary() {
+                    let handler_name = prompt.handler.name()
+                        .unwrap_or_else(|| "<handler>".to_string());
+
+                    // Collect all handler names in scope from this point
+                    let handler_chain = self.handlers_in_caller_chain(fid);
+                    let mut handler_names = Vec::new();
+                    for entry in &handler_chain {
+                        handler_names.push(Value::String(
+                            entry.handler.name().unwrap_or_else(|| "<handler>".to_string())
+                        ));
+                    }
+
+                    entries.push(Value::List(vec![
+                        Value::String("handler".to_string()),
+                        Value::String(handler_name),
+                        Value::List(handler_names),
+                    ]));
+                }
+            }
+
+            // Walk frames top-to-bottom (innermost first)
+            for frame in seg.frames.iter().rev() {
+                if let crate::frame::Frame::Program { stream, .. } = frame {
+                    if let Some(loc) = stream.source_location() {
+                        entries.push(Value::List(vec![
+                            Value::String("frame".to_string()),
+                            Value::String(loc.func_name),
+                            Value::String(loc.source_file),
+                            Value::Int(loc.source_line as i64),
+                        ]));
+                    }
+                }
+            }
+
+            cursor = seg.parent;
+        }
+
+        entries
+    }
 }
