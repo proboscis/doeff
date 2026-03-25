@@ -317,15 +317,7 @@ impl VM {
             }
 
             DoCtrl::GetExecutionContext => {
-                let locations = self.collect_current_traceback();
-                let frames: Vec<Value> = locations
-                    .into_iter()
-                    .map(|loc| Value::List(vec![
-                        Value::String(loc.func_name),
-                        Value::String(loc.source_file),
-                        Value::Int(loc.source_line as i64),
-                    ]))
-                    .collect();
+                let frames = self.collect_rich_execution_context();
                 self.mode = Mode::Send(Value::List(frames));
                 StepResult::Continue
             }

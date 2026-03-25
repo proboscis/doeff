@@ -25,6 +25,11 @@ pub trait Callable: Send + Sync + std::fmt::Debug + 'static {
         Err(VMError::type_error("callable does not support call_handler"))
     }
 
+    /// Human-readable name for tracebacks (e.g., handler name).
+    fn name(&self) -> Option<String> {
+        None
+    }
+
     /// Downcast support for bridge layer (e.g., extracting PythonCallable).
     fn as_any(&self) -> &dyn std::any::Any;
 }

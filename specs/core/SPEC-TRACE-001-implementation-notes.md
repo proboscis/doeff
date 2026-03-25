@@ -1,92 +1,73 @@
 # SPEC-TRACE-001: Implementation Notes
 
-These notes document the current traceback assembly architecture in this repository.
+These notes document the traceback architecture in this repository.
 
 ---
 
-## Active-chain storage model
+## Fiber chain walk model
 
-Traceback state is stored on `VM` as `trace_state: TraceState` (`packages/doeff-vm-core/src/vm.rs`).
-`TraceState` directly owns the frame-based traceback state in
-`packages/doeff-vm-core/src/trace_state.rs` with:
+All traceback data is obtained by walking the live fiber/segment chain on-demand.
+No persistent TraceState, no frame snapshots, no dispatch recording.
 
-- `frame_stack`
-- per-frame `dispatch_display`
-
-State is reset per run by `VM::begin_run_session()` via `trace_state.clear()`.
+The fiber chain IS the state. `GetExecutionContext` (DoCtrl tag 25) walks
+`current_segment` upward via parent pointers and collects structured data.
 
 ---
 
-## Mutation path
+## Data sources
 
-VM execution mutates `TraceState` directly through `record_*` helpers:
+### Program frames
 
-1. Frame entry/exit updates `frame_stack`
-2. Dispatch start installs `dispatch_display` on the owning frame snapshot
-3. Delegate/pass/completion/transfer updates mutate the stored dispatch state in place
+Each `Frame::Program { stream, .. }` has an `IRStream` with `source_location()`:
+- `func_name` from `gi_code.co_qualname`
+- `source_file` from `gi_code.co_filename`
+- `source_line` from `gi_frame.f_lineno` (live yield site, not decorator line)
 
-There is no transient `CaptureEvent` replay queue in the runtime path.
+### Handler boundaries
 
----
+Each fiber with `handler: Some(Handler)` where `handler.prompt` is set:
+- Handler callable from `prompt.handler` (CallableRef)
+- Handler name from `Callable::name()` (reads `__qualname__` via Python bridge)
 
-## Assembly entrypoints
+### Handler chain at each point
 
-### `assemble_active_chain`
+`VM::handlers_in_caller_chain(seg_id)` collects all prompt handlers walking
+up from a given segment. Returns handler name + segment ID for each.
 
-`VM::assemble_active_chain(exception)` delegates to
-`TraceState::assemble_active_chain(...)`, which:
+### Source line content
 
-1. Clones `frame_stack`
-2. Merges live frame/line data from current segments and visible dispatch snapshots
-3. Finalizes unresolved visible dispatches as `Threw` when exception context exists
-4. Builds `ActiveChainEntry` rows from frame snapshots plus per-frame `dispatch_display`
-5. Deduplicates adjacent identical rows
-6. Injects context entries and `ExceptionSite`
-
-### `assemble_traceback_entries`
-
-`VM::assemble_traceback_entries(exception)` returns `TraceEntry` rows for chained/sectioned
-rendering using the same incremental state model.
+Python-level rendering reads source lines via `linecache.getline()` to show
+`yield Put("processed", 1)` etc.
 
 ---
 
-## `GetExecutionContext` integration
+## Collection points
 
-`GetExecutionContext` dispatches are marked `is_execution_context_effect` and excluded from visible
-active-chain output.
+### On error (scheduler)
 
-When a handler returns `ExecutionContext`, VM calls
-`maybe_attach_active_chain_to_execution_context(...)`:
+Scheduler's `wrap_task` catches exceptions and enriches with `__doeff_traceback__`
+extracted from Python's `__traceback__`.
 
-1. Assemble `active_chain` snapshot (`assemble_active_chain(None)`)
-2. Append current `ExecutionContext.entries` as `ContextEntry`
-3. Set `ExecutionContext.active_chain` to the serialized tuple snapshot
+### On error (run fallback)
 
-During error enrichment, merged entries are attached to the original exception as
-`doeff_execution_context`; `assemble_active_chain(Some(exception))` injects those entries back
-into output.
+`doeff.run.run()` catches exceptions and enriches as fallback for non-scheduled programs.
+
+### On demand
+
+User code can yield `GetExecutionContext()` to get the active chain.
 
 ---
 
-## Transfer and spawn notes
+## Spawn boundaries
 
-### Transfer
-
-- Transfer destination text is stored on the frame's `dispatch_display`
-- Terminal handler completion reads that field to produce `EffectResult::Transferred { target_repr, ... }`
-- Pre-transfer chain visibility comes from incremental frame/dispatch state, not log backtracking
-
-### Spawn boundaries
-
-Scheduler propagates spawn metadata (`task_id`, `parent_task`, `spawn_site`) via execution-context
-entries (dict payload with `kind == "spawn_boundary"`). Python coercion promotes these to
-`SpawnBoundary` active-chain entries (`doeff/trace.py`).
+Scheduler stores spawn metadata per task. On error propagation through Wait/Gather,
+spawn boundary info is added to `__doeff_traceback__`.
 
 ---
 
 ## Invariants
 
-- No persisted event-log field in traceback assembly path
-- No legacy full-log assembler function in VM core traceback path
-- Traceback assembly is on-demand from `TraceState` frame snapshots plus live dispatch snapshots
-- Python `format_default()` is render-only and does not reconstruct VM state
+- No persistent TraceState or frame_stack on VM
+- No dispatch recording or event logging
+- Traceback assembly is on-demand from live fiber chain
+- Python `format_default()` is render-only

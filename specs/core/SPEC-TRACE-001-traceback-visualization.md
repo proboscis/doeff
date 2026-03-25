@@ -26,49 +26,24 @@ This spec defines the **default error traceback format** for doeff — what user
 
 ---
 
-## Current VM Architecture
+## VM Architecture
 
-### Runtime State (`TraceState`)
+### On-Demand Fiber Chain Walk
 
-The VM stores traceback capture state in `VM.trace_state: TraceState`. `TraceState` tracks:
+All traceback data is obtained by walking the live fiber/segment chain. No persistent
+`TraceState` is needed — the fiber chain IS the state.
 
-- `frame_stack`: active `Program` frame snapshots (`function_name`, `source_file`, `source_line`,
-  args, etc.), with optional per-frame `dispatch_display`
+At any point during execution, `GetExecutionContext` walks `current_segment` upward via
+parent pointers and collects:
 
-There is no persisted event-log field on `VM` for traceback assembly. State is reset per run via
-`VM::begin_run_session()` -> `trace_state.clear()`.
+1. **Program frames**: source location from each `Program` frame's `stream.source_location()`
+   (func_name, source_file, source_line from live `gi_frame.f_lineno`)
+2. **Handler boundaries**: handler name from `fiber.handler.prompt.handler.name()`,
+   handler source location from the handler callable
+3. **Handler chain at each frame**: `handlers_in_caller_chain()` from that fiber's position
 
-### Direct Mutation Path
-
-VM mutates `TraceState` directly at the control-flow site:
-
-1. Frame entry/exit records update `frame_stack`
-2. Dispatch start attaches `dispatch_display` to the owning frame snapshot
-3. Handler completion/transfer/delegation updates mutate the stored dispatch state in place
-
-### `assemble_active_chain()` Algorithm
-
-`VM::assemble_active_chain()` delegates to `TraceState::assemble_active_chain(...)`, which:
-
-1. Clones the current `frame_stack`
-2. Merges live line/stack data from current segments and visible dispatch snapshots
-3. If an exception is present, finalizes unresolved visible dispatches as `EffectResult::Threw`
-4. Builds ordered `ActiveChainEntry` values (`ProgramYield`, `EffectYield`, `ContextEntry`, `ExceptionSite`)
-5. Deduplicates adjacent identical entries
-6. Injects execution-context entries and exception-site metadata
-
-### `GetExecutionContext` Integration
-
-`GetExecutionContext` dispatches are marked `is_execution_context_effect` and hidden from visible
-trace entries. When a handler resumes with `ExecutionContext`, VM calls
-`maybe_attach_active_chain_to_execution_context(...)`:
-
-1. Assemble active chain snapshot (`assemble_active_chain(None)`)
-2. Append existing `ExecutionContext.entries` as `ContextEntry`
-3. Store the tuple on `ExecutionContext.active_chain`
-
-During error enrichment, merged `ExecutionContext.entries` are attached to the original exception
-(`doeff_execution_context`), and later injected back into the rendered active chain.
+No frame snapshots, no dispatch recording, no event logs. The fiber chain is the
+source of truth and is walked on-demand.
 
 ---
 
@@ -709,47 +684,16 @@ def error_wrapper(effect, k):
 
 ## Data Requirements from VM
 
-To render this format, the following data is needed per frame:
+All data is obtained by walking the live fiber/segment chain. No TraceState needed.
 
-### Incremental active-chain state
+### Fiber chain walk
 
-`TraceState` stores the live `frame_stack`, and each frame may carry a
-`dispatch_display` snapshot for the currently active effect on that frame. Together they contain:
+`GetExecutionContext` walks `current_segment` upward via parent pointers:
 
-- Active frame snapshots (`frame_stack`)
-- Per-frame dispatch snapshots (`dispatch_display`) including `effect_repr`, handler stack,
-  transfer target, and result
-
-This state is the source of truth for active-chain rendering.
-
-### Live frame supplement
-
-Before rendering, `assemble_active_chain()` merges live runtime state into a clone of
-`frame_stack`:
-
-- Segment caller chain (`SegmentArena` + `current_segment`) for active program frames
-- Visible dispatch continuation snapshots (`dispatch_stack`) as fallback when frame stack is empty
-- Live stream debug locations for accurate yield-site line numbers
-
-### Effect dispatch snapshot fields
-
-For the most recent effect yielded by each active generator:
-
-- `effect_repr` — human-readable repr of the effect
-- `handler_stack` — ordered handler list with status (`active`/`pending`/`passed`/`delegated`/`resumed`/`transferred`/`returned`/`threw`)
-- `result` — `EffectResult::{Active, Resumed, Threw, Transferred}`
-- `function_name` / `source_file` / `source_line` for effect-site rendering
-
-Dispatch start also carries optional effect-site metadata, but active-chain rendering is driven by
-the frame-local dispatch snapshot fields above.
-
-### Transfer chain reconstruction
-
-When Transfer severs the live caller chain (`caller: None`):
-
-- transfer handling stores destination text on the frame's `dispatch_display`
-- Terminal handler completion sets `EffectResult::Transferred { target_repr, ... }`
-- Pre-transfer frames come from incremental frame/dispatch snapshots kept in `frame_stack`
+- **Program frames**: `stream.source_location()` → func_name, source_file, source_line
+- **Handler boundaries**: `fiber.handler.prompt.handler.name()` → handler identity
+- **Handler chain**: `handlers_in_caller_chain(seg_id)` → all handlers in scope at each point
+- **Source line content**: `linecache.getline(file, line)` at Python level for `yield ...` display
 
 ### Spawn chain
 
