@@ -104,6 +104,11 @@ impl VM {
     // -------------------------------------------------------------------
 
     fn step_raise(&mut self, error: Value) -> StepResult {
+        // Capture execution context on first error (before unwinding destroys it).
+        if self.last_error_context.is_none() {
+            self.last_error_context = Some(self.collect_rich_execution_context());
+        }
+
         let Some(seg_id) = self.current_segment else {
             return StepResult::Error(VMError::uncaught_exception(error));
         };
@@ -317,7 +322,10 @@ impl VM {
             }
 
             DoCtrl::GetExecutionContext => {
-                let frames = self.collect_rich_execution_context();
+                // Return error-site context if available (captured before unwinding),
+                // otherwise current live context.
+                let frames = self.last_error_context.take()
+                    .unwrap_or_else(|| self.collect_rich_execution_context());
                 self.mode = Mode::Send(Value::List(frames));
                 StepResult::Continue
             }

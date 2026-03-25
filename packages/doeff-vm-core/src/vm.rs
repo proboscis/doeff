@@ -28,6 +28,10 @@ pub struct VM {
     pub mode: Mode,
     pub pending_external: Option<crate::driver::ExternalCall>,
     pub current_segment: Option<SegmentId>,
+    /// Execution context captured at the first error point (before unwinding).
+    /// GetExecutionContext returns this if set, giving the error-site context
+    /// rather than the post-unwind context.
+    pub last_error_context: Option<Vec<Value>>,
 }
 
 impl VM {
@@ -38,6 +42,7 @@ impl VM {
             mode: Mode::Send(Value::Unit),
             pending_external: None,
             current_segment: None,
+            last_error_context: None,
         }
     }
 
@@ -47,6 +52,7 @@ impl VM {
         self.mode = Mode::Send(Value::Unit);
         self.pending_external = None;
         self.current_segment = None;
+        self.last_error_context = None;
     }
 
     pub fn end_active_run_session(&mut self) {

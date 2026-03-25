@@ -26,43 +26,31 @@ from doeff.do import do
 from doeff.program import Pure, Resume, Transfer, Pass, Perform, WithHandler, GetHandlers
 
 
-def _enrich_exception_traceback(exc, task_meta=None):
-    """Build doeff traceback from Python __traceback__ + task metadata.
+def _enrich_exception_traceback(exc, task_meta=None, vm_ctx=None):
+    """Build doeff traceback from VM execution context + task metadata.
 
-    Python __traceback__ has user frames (correct line numbers).
-    task_meta has inner_handlers (captured at spawn time via GetHandlers).
+    vm_ctx: from GetExecutionContext — fiber chain at error site (before unwinding).
+            Contains ["frame", ...] and ["handler", ...] entries from the live fiber chain.
+    task_meta: scheduler task metadata with inner_handlers.
     """
-    import traceback as tb_mod
-
     entries = []
 
-    # Handler chain from task metadata (captured at spawn time)
-    inner_handlers = (task_meta or {}).get("inner_handlers", [])
-    handler_names = []
-    for h in inner_handlers:
-        name = getattr(h, "__qualname__", None) or getattr(h, "__name__", None) or str(h)
-        # Clean closure names
-        if ".<locals>." in name:
-            name = name.split(".<locals>.")[0]
-        handler_names.append(name)
-
-    # Extract user frames from Python __traceback__
-    tb = exc.__traceback__
-    if tb is not None:
-        for fs in tb_mod.extract_tb(tb):
-            fn = fs.filename
-            # Skip doeff VM/framework internals
-            if any(p in fn for p in ('/doeff_vm/', '/doeff/do.py', '/doeff/run.py',
-                                      '/doeff_core_effects/')):
-                continue
-            entries.append(["frame", fs.name, fs.filename, fs.lineno])
-
-    # Add handler chain (all handlers in scope for this task)
-    if handler_names:
-        entries.append(["handler", "task_handlers", handler_names])
+    if vm_ctx:
+        # Use VM fiber chain context (captured at error site)
+        entries.extend(vm_ctx)
+    else:
+        # Fallback: extract from Python __traceback__
+        import traceback as tb_mod
+        tb = exc.__traceback__
+        if tb is not None:
+            for fs in tb_mod.extract_tb(tb):
+                fn = fs.filename
+                if any(p in fn for p in ('/doeff_vm/', '/doeff/do.py', '/doeff/run.py',
+                                          '/doeff_core_effects/')):
+                    continue
+                entries.append(["frame", fs.name, fs.filename, fs.lineno])
 
     if entries:
-        # Prepend to existing traceback (nested spawns accumulate)
         existing = getattr(exc, '__doeff_traceback__', None) or []
         exc.__doeff_traceback__ = entries + existing
 
@@ -299,9 +287,13 @@ def scheduled(body_program):
                 result = yield prog
                 yield Perform(TaskCompleted(tid, Ok(result)))
             except Exception as e:
+                from doeff.program import GetExecutionContext as _GetExecCtx
                 try:
+                    # GetExecutionContext returns the error-site context
+                    # (captured by VM before unwinding), not the except-site.
+                    ctx = yield _GetExecCtx()
                     task_meta = tasks.get(tid, {})
-                    _enrich_exception_traceback(e, task_meta)
+                    _enrich_exception_traceback(e, task_meta, ctx)
                 except Exception:
                     pass
                 yield Perform(TaskCompleted(tid, Err(e)))
