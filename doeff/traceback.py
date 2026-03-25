@@ -45,10 +45,10 @@ def format_default(exception):
         elif kind == "handler" and len(entry) >= 3:
             handler_chain = entry[2] if len(entry) > 2 else []
             if isinstance(handler_chain, (list, tuple)) and handler_chain:
-                chain_display = _format_handler_chain(handler_chain)
-                if chain_display != last_handler_chain:
-                    lines.append(f"\n    handlers: {chain_display}")
-                    last_handler_chain = chain_display
+                rendered = _render_handler_chain(handler_chain)
+                if rendered != last_handler_chain:
+                    lines.append(rendered)
+                    last_handler_chain = rendered
         elif len(entry) >= 3 and isinstance(entry[2], (int, float)):
             # Legacy [func_name, source_file, source_line]
             lines.append(_render_frame(entry[0], entry[1], int(entry[2])))
@@ -71,24 +71,33 @@ def _render_frame(func_name, source_file, source_line):
     return result
 
 
-def _format_handler_chain(handler_chain):
-    """Format handler chain names, cleaning up internal prefixes."""
+def _clean_handler_names(handler_chain):
+    """Clean handler names, removing closure prefixes, deduplicating."""
     names = []
     for name in handler_chain:
         name = str(name)
-        # Clean up closure-style names
         if ".<locals>." in name:
-            # "scheduled.<locals>.handler" → "scheduler"
-            # "reader.<locals>.handler" → "reader"
-            parts = name.split(".<locals>.")
-            name = parts[0]
+            name = name.split(".<locals>.")[0]
         names.append(name)
-    # Deduplicate consecutive identical names
     deduped = []
     for n in names:
         if not deduped or deduped[-1] != n:
             deduped.append(n)
-    return ", ".join(deduped)
+    return deduped
+
+
+def _render_handler_chain(handler_chain):
+    """Render handler chain with status markers per SPEC-TRACE-001.
+
+    At error time, all handlers let the error propagate through (↗ passed).
+    """
+    names = _clean_handler_names(handler_chain)
+    if not names:
+        return ""
+    lines = ["\n    handlers:"]
+    for name in names:
+        lines.append(f"\n      {name} ↗")
+    return "".join(lines)
 
 
 def _render_dict_entry(entry):
