@@ -99,6 +99,7 @@ def content_address(effect: object) -> str:
 
 def cache_handler(storage: DurableStorage):
     """Interpret CacheGet/CachePut/CacheExists against a pluggable storage backend."""
+    from doeff_core_effects.effects import WriterTellEffect as Slog
 
     @do
     def handler(effect, k):
@@ -109,18 +110,23 @@ def cache_handler(storage: DurableStorage):
         key = _storage_key(effect.key)
 
         if isinstance(effect, CacheExistsEffect):
-            result = yield Resume(k, storage.exists(key))
+            exists = storage.exists(key)
+            yield Slog(f"[cache] exists? key={key[:16]}… → {exists}")
+            result = yield Resume(k, exists)
             return result
 
         if isinstance(effect, CacheGetEffect):
             value = storage.get(key)
             if value is None and not storage.exists(key):
+                yield Slog(f"[cache] GET miss key={key[:16]}…")
                 from doeff.program import ResumeThrow
                 return (yield ResumeThrow(k, KeyError(effect.key)))
+            yield Slog(f"[cache] GET hit key={key[:16]}…")
             result = yield Resume(k, value)
             return result
 
         # CachePutEffect
+        yield Slog(f"[cache] PUT key={key[:16]}… value_type={type(effect.value).__name__}")
         _persist_value(storage, key, original_key=effect.key, value=effect.value)
         result = yield Resume(k, None)
         return result
@@ -147,6 +153,7 @@ def make_memo_rewriter(
     On cache hit: Resume with cached value (outer handler not called).
     On cache miss: re-perform effect → outer handler handles it → store result in cache.
     """
+    from doeff_core_effects.effects import WriterTellEffect as Slog
 
     @do
     def handler(effect, k):
@@ -155,22 +162,25 @@ def make_memo_rewriter(
             return
 
         key = key_fn(effect)
+        yield Slog(f"[memo] checking {effect_type.__name__} key={key[:16]}…")
 
         # Check cache
         if (yield CacheExists(key)):
             try:
                 cached = yield CacheGet(key)
+                yield Slog(f"[memo] HIT {effect_type.__name__} key={key[:16]}…")
                 result = yield Resume(k, cached)
                 return result
             except KeyError:
                 pass  # cache miss — fall through
 
         # Cache miss — "delegate" by re-performing the effect.
-        # Handler runs on parent fiber, so yield effect → outer handler.
+        yield Slog(f"[memo] MISS {effect_type.__name__} key={key[:16]}… → delegating")
         delegated = yield effect
 
         # Store in cache
         yield CachePut(key, delegated)
+        yield Slog(f"[memo] STORED {effect_type.__name__} key={key[:16]}…")
 
         # Resume body with result
         result = yield Resume(k, delegated)
