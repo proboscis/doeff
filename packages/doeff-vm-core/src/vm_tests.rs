@@ -247,6 +247,7 @@ mod tests {
         struct AddOne;
 
         impl Callable for AddOne {
+            fn as_any(&self) -> &dyn std::any::Any { self }
             fn call(&self, args: Vec<Value>) -> Result<Value, VMError> {
                 match args.first() {
                     Some(Value::Int(n)) => Ok(Value::Int(n + 1)),
@@ -456,6 +457,7 @@ mod tests {
         struct TestHandler;
 
         impl Callable for TestHandler {
+            fn as_any(&self) -> &dyn std::any::Any { self }
             fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
                 Err(VMError::internal("TestHandler: use call_handler"))
             }
@@ -550,6 +552,7 @@ mod tests {
         struct TransferHandler;
 
         impl Callable for TransferHandler {
+            fn as_any(&self) -> &dyn std::any::Any { self }
             fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
                 Err(VMError::internal("TransferHandler: use call_handler"))
             }
@@ -622,6 +625,7 @@ mod tests {
         struct CountHandler;
 
         impl Callable for CountHandler {
+            fn as_any(&self) -> &dyn std::any::Any { self }
             fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
                 Err(VMError::internal("CountHandler: use call_handler"))
             }
@@ -819,6 +823,7 @@ mod tests {
         struct PassHandler;
 
         impl Callable for PassHandler {
+            fn as_any(&self) -> &dyn std::any::Any { self }
             fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
                 Err(VMError::internal("PassHandler: use call_handler"))
             }
@@ -920,6 +925,7 @@ mod tests {
         struct InnerHandler;
 
         impl Callable for InnerHandler {
+            fn as_any(&self) -> &dyn std::any::Any { self }
             fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
                 Err(VMError::internal("InnerHandler: use call_handler"))
             }
