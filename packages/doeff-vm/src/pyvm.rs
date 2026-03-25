@@ -61,8 +61,20 @@ impl PyVM {
     fn convert_vm_error(&mut self, err: doeff_vm_core::VMError) -> pyo3::PyErr {
         match err {
             doeff_vm_core::VMError::UncaughtException { exception } => {
+                let ctx = self.vm.last_error_context.take();
                 Python::attach(|py| {
                     let py_obj = value_to_python(py, exception);
+                    // Attach VM-captured traceback to the exception
+                    if let Some(frames) = ctx {
+                        if !frames.is_empty() {
+                            let py_frames: Vec<_> = frames.into_iter()
+                                .map(|v| value_to_python(py, v))
+                                .collect();
+                            if let Ok(tb_list) = pyo3::types::PyList::new(py, &py_frames) {
+                                let _ = py_obj.setattr("__doeff_traceback__", tb_list);
+                            }
+                        }
+                    }
                     if py_obj.is_instance_of::<pyo3::exceptions::PyBaseException>() {
                         pyo3::PyErr::from_value(py_obj.unbind().into_bound(py))
                     } else {
@@ -132,6 +144,11 @@ impl PyVM {
                 StepResult::Continue => continue,
                 StepResult::Done(value) => return Ok(value),
                 StepResult::Error(err) => {
+                    // Ensure context is captured for ALL error paths
+                    if self.vm.last_error_context.is_none() {
+                        self.vm.last_error_context =
+                            Some(self.vm.collect_rich_execution_context());
+                    }
                     return Err(self.convert_vm_error(err));
                 }
                 StepResult::External(call) => {
