@@ -20,12 +20,9 @@ def do(fn):
     """Wrap a generator function so calling it returns a DoExpr tree."""
     from doeff_vm import Callable, IRStream
 
-    @wraps(fn)
-    def factory(*args):
-        result = fn(*args)
+    def _make_stream(result):
         if inspect.isgenerator(result):
             return IRStream(result)
-        # Non-generator @do function — wrap return value as a trivial generator
         def value_gen():
             if False:
                 yield
@@ -33,6 +30,8 @@ def do(fn):
         return IRStream(value_gen())
 
     @wraps(fn)
-    def wrapper(*args):
-        return Expand(Apply(Pure(Callable(factory)), [Pure(a) for a in args]))
+    def wrapper(*args, **kwargs):
+        def thunk():
+            return _make_stream(fn(*args, **kwargs))
+        return Expand(Apply(Pure(Callable(thunk)), []))
     return wrapper

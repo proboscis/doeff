@@ -39,14 +39,9 @@ class Put(EffectBase):
         return f"Put({self.key!r}, {self.value!r})"
 
 
-class Tell(EffectBase):
-    """Writer effect: append a message to the log."""
-    def __init__(self, message):
-        super().__init__()
-        self.message = message
-
-    def __repr__(self):
-        return f"Tell({self.message!r})"
+def Tell(message):
+    """Convenience: Tell(message) → WriterTellEffect(message)."""
+    return WriterTellEffect(message)
 
 
 class Local(EffectBase):
