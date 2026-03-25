@@ -85,8 +85,8 @@ def default_handlers(**kwargs):
     )
     env = kwargs.get("env")
     return [
-        reader(env=env), state(), writer(), try_handler(), slog_handler(),
-        local_handler(), listen_handler(), await_handler(), lazy_ask(),
+        reader(env=env), state(), writer(), try_handler, slog_handler(),
+        local_handler, listen_handler, await_handler(), lazy_ask(),
     ]
 
 def async_run(*args, **kwargs):

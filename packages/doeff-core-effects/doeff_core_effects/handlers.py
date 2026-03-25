@@ -82,7 +82,8 @@ def writer():
     return handler
 
 
-def try_handler():
+@do
+def try_handler(effect, k):
     """Try handler: catches errors from Try(program) and returns Ok/Err.
 
     Captures inner handlers (between body and try_handler) via GetHandlers
@@ -90,35 +91,29 @@ def try_handler():
     can reach handlers at any position in the chain.
 
     Usage:
+        WithHandler(try_handler, body)
         result = yield Try(some_program)  # Ok(value) or Err(error)
     """
-    from doeff_vm import Ok, Err
-    from doeff.program import WithHandler as WH
-    from doeff.handler_utils import get_inner_handlers
+    if isinstance(effect, Try):
+        from doeff_vm import Ok, Err
+        from doeff.program import WithHandler as WH
+        from doeff.handler_utils import get_inner_handlers
 
-    @do
-    def handler(effect, k):
-        if isinstance(effect, Try):
-            # Capture inner handlers so effects from the Try program
-            # can reach handlers at any position in the chain.
-            inner_hs = yield get_inner_handlers(k)
+        inner_hs = yield get_inner_handlers(k)
 
-            @do
-            def attempt():
-                prog = effect.program
-                # Reinstall inner handlers around the program
-                for h in inner_hs:
-                    prog = WH(h, prog)
-                try:
-                    value = yield prog
-                    return Ok(value)
-                except Exception as e:
-                    return Err(e)
-            result = yield Resume(k, (yield attempt()))
-            return result
-        yield Pass(effect, k)
-
-    return handler
+        @do
+        def attempt():
+            prog = effect.program
+            for h in inner_hs:
+                prog = WH(h, prog)
+            try:
+                value = yield prog
+                return Ok(value)
+            except Exception as e:
+                return Err(e)
+        result = yield Resume(k, (yield attempt()))
+        return result
+    yield Pass(effect, k)
 
 
 def slog_handler():
@@ -142,54 +137,53 @@ def slog_handler():
     return handler
 
 
-def local_handler():
+@do
+def local_handler(effect, k):
     """Local handler: scoped env override with pass-on-miss semantics.
 
     Installs a scope reader that handles Ask for overridden keys only,
     passing non-overridden keys through to outer handlers (reader, lazy_ask).
+
+    Usage:
+        WithHandler(local_handler, body)
     """
-    from doeff.program import WithHandler as WH
+    if isinstance(effect, Local):
+        from doeff.program import WithHandler as WH
+        overrides = effect.env
 
-    @do
-    def handler(effect, k):
-        if isinstance(effect, Local):
-            overrides = effect.env
+        @do
+        def scope_reader(inner_effect, inner_k):
+            if isinstance(inner_effect, Ask) and inner_effect.key in overrides:
+                return (yield Resume(inner_k, overrides[inner_effect.key]))
+            yield Pass(inner_effect, inner_k)
 
-            @do
-            def scope_reader(inner_effect, inner_k):
-                if isinstance(inner_effect, Ask) and inner_effect.key in overrides:
-                    return (yield Resume(inner_k, overrides[inner_effect.key]))
-                yield Pass(inner_effect, inner_k)
-
-            inner_result = yield WH(scope_reader, effect.program)
-            return (yield Resume(k, inner_result))
-        yield Pass(effect, k)
-
-    return handler
+        inner_result = yield WH(scope_reader, effect.program)
+        return (yield Resume(k, inner_result))
+    yield Pass(effect, k)
 
 
-def listen_handler():
-    """Listen handler: collects effects of specified types during program execution."""
+@do
+def listen_handler(effect, k):
+    """Listen handler: collects effects of specified types during program execution.
 
-    @do
-    def handler(effect, k):
-        if isinstance(effect, Listen):
-            collected = []
-            types_to_collect = effect.types or (WriterTellEffect,)
+    Usage:
+        WithHandler(listen_handler, body)
+    """
+    if isinstance(effect, Listen):
+        from doeff.program import WithHandler as WH
+        collected = []
+        types_to_collect = effect.types or (WriterTellEffect,)
 
-            @do
-            def observer_handler(inner_effect, inner_k):
-                if isinstance(inner_effect, tuple(types_to_collect)):
-                    collected.append(inner_effect)
-                yield Pass(inner_effect, inner_k)
+        @do
+        def observer_handler(inner_effect, inner_k):
+            if isinstance(inner_effect, tuple(types_to_collect)):
+                collected.append(inner_effect)
+            yield Pass(inner_effect, inner_k)
 
-            from doeff.program import WithHandler
-            inner_result = yield WithHandler(observer_handler, effect.program)
-            result = yield Resume(k, (inner_result, collected))
-            return result
-        yield Pass(effect, k)
-
-    return handler
+        inner_result = yield WH(observer_handler, effect.program)
+        result = yield Resume(k, (inner_result, collected))
+        return result
+    yield Pass(effect, k)
 
 
 def await_handler():

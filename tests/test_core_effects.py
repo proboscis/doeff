@@ -123,7 +123,7 @@ class TestTry:
             return result
 
         from doeff_vm import Ok
-        result = doeff_run(WithHandler(try_handler(), body()))
+        result = doeff_run(WithHandler(try_handler, body()))
         assert isinstance(result, Ok.__class__) or (hasattr(result, 'is_ok') and result.is_ok())
         assert result.value == 42
 
@@ -139,7 +139,7 @@ class TestTry:
             return result
 
         from doeff_vm import Err
-        result = doeff_run(WithHandler(try_handler(), body()))
+        result = doeff_run(WithHandler(try_handler, body()))
         assert hasattr(result, 'is_err') and result.is_err()
         assert isinstance(result.error, ValueError)
 
@@ -155,7 +155,7 @@ class TestTry:
             result = yield Try(failing())
             return "safe"
 
-        assert doeff_run(WithHandler(try_handler(), body())) == "safe"
+        assert doeff_run(WithHandler(try_handler, body())) == "safe"
 
 
 class TestSlog:
