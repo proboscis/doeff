@@ -198,6 +198,7 @@ def scheduled(body_program):
 
     def pick_next():
         while True:
+            drain()
             while ready:
                 entry = ready.pop(0)
                 if entry[0] == "new":
@@ -209,7 +210,7 @@ def scheduled(body_program):
                     return Transfer(cont, value)
             if not waiters:
                 return Pure(None)
-            # All tasks blocked — wait for external completion
+            # All tasks blocked — block for one external completion
             action, pid, value = external_queue.get()
             if pid in promises and promises[pid]["status"] == "pending":
                 promises[pid]["status"] = "completed" if action == "complete" else "failed"
@@ -248,8 +249,18 @@ def scheduled(body_program):
                 elif status == "failed":
                     ready.append(("resume", waiter_k, result))  # TODO: raise
 
+    def drain():
+        """Drain all pending external completions into promise state."""
+        while not external_queue.empty():
+            action, pid, value = external_queue.get()
+            if pid in promises and promises[pid]["status"] == "pending":
+                promises[pid]["status"] = "completed" if action == "complete" else "failed"
+                promises[pid]["result"] = value
+                wake_waiters(("promise", pid))
+
     @do
     def handler(effect, k):
+        drain()
         if isinstance(effect, Spawn):
             tid = alloc_task(effect.program)
             ready.append(("new", tid))
