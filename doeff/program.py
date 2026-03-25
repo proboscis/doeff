@@ -106,6 +106,18 @@ class GetExecutionContext:
     tag = 25
 
 
+class GetHandlers:
+    """Extract handler callables from a continuation's fiber chain. tag=26
+
+    Returns a list of handler callables (innermost first) from the
+    continuation's boundary fibers. Used by the scheduler to re-wrap
+    spawned tasks with the same handler chain.
+    """
+    tag = 26
+    def __init__(self, k: Any) -> None:
+        self.continuation = k
+
+
 def program(gen_fn, *args):
     """Wrap a generator function as Expand(Apply(Callable(factory), args)).
 
