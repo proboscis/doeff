@@ -273,7 +273,7 @@ impl VM {
                     let var = self.alloc_scoped_var_in_segment(seg_id, initial);
                     self.mode = Mode::Send(Value::Var(var));
                 } else {
-                    self.mode = Mode::Raise(Value::String("AllocVar: no current segment".into()));
+                    return StepResult::Error(VMError::internal("AllocVar: no current segment"));
                 }
                 StepResult::Continue
             }
@@ -282,12 +282,12 @@ impl VM {
                 if let Some(seg_id) = self.current_segment {
                     match self.read_scoped_var_from(seg_id, var) {
                         Some(value) => self.mode = Mode::Send(value),
-                        None => self.mode = Mode::Raise(Value::String(
+                        None => return StepResult::Error(VMError::internal(
                             format!("ReadVar: variable {:?} not found", var)
                         )),
                     }
                 } else {
-                    self.mode = Mode::Raise(Value::String("ReadVar: no current segment".into()));
+                    return StepResult::Error(VMError::internal("ReadVar: no current segment"));
                 }
                 StepResult::Continue
             }
@@ -297,7 +297,7 @@ impl VM {
                     self.write_scoped_var_in_current_segment(seg_id, var, value.clone());
                     self.mode = Mode::Send(value);
                 } else {
-                    self.mode = Mode::Raise(Value::String("WriteVar: no current segment".into()));
+                    return StepResult::Error(VMError::internal("WriteVar: no current segment"));
                 }
                 StepResult::Continue
             }
@@ -327,6 +327,17 @@ impl VM {
                     ]))
                     .collect();
                 self.mode = Mode::Send(Value::List(frames));
+                StepResult::Continue
+            }
+
+            DoCtrl::GetHandlers { from } => {
+                // Walk the fiber chain from `from` upward, collecting handler callables.
+                let entries = self.handlers_in_caller_chain(from);
+                let handlers: Vec<Value> = entries
+                    .into_iter()
+                    .map(|entry| Value::Callable(entry.handler))
+                    .collect();
+                self.mode = Mode::Send(Value::List(handlers));
                 StepResult::Continue
             }
         }
@@ -363,11 +374,9 @@ impl VM {
         let f_value = match f {
             DoCtrl::Pure { value } => value,
             _ => {
-                // TODO: staged evaluation with EvalReturn frames
-                self.mode = Mode::Raise(Value::String(
-                    "Apply: non-pure f not yet implemented".into()
+                return StepResult::Error(VMError::internal(
+                    "Apply: non-pure f not yet implemented"
                 ));
-                return StepResult::Continue;
             }
         };
 
@@ -376,11 +385,9 @@ impl VM {
             match arg {
                 DoCtrl::Pure { value } => arg_values.push(value),
                 _ => {
-                    // TODO: staged arg evaluation
-                    self.mode = Mode::Raise(Value::String(
-                        "Apply: non-pure arg not yet implemented".into()
+                    return StepResult::Error(VMError::internal(
+                        "Apply: non-pure arg not yet implemented"
                     ));
-                    return StepResult::Continue;
                 }
             }
         }
@@ -396,8 +403,7 @@ impl VM {
                 }
             }
             _ => {
-                self.mode = Mode::Raise(Value::String("Apply: f is not callable".into()));
-                StepResult::Continue
+                return StepResult::Error(VMError::internal("Apply: f is not callable"));
             }
         }
     }

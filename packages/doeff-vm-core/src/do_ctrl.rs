@@ -87,6 +87,12 @@ pub enum DoCtrl {
     /// Returns Value::List of traceback frames from current position.
     GetExecutionContext,
 
+    /// Extract handler callables from a continuation's fiber chain.
+    /// Walks head→...→last_fiber collecting prompt boundary handlers.
+    /// Returns Value::List of handler callables (innermost first).
+    /// Non-consuming — does not take ownership of the continuation.
+    GetHandlers { from: crate::ids::FiberId },
+
     // --- Heap (OCaml ref cells) ---
 
     /// Allocate a mutable ref cell with initial value.
