@@ -196,28 +196,8 @@ def scheduled(body_program):
                 yield Perform(TaskCompleted(tid, Err(e)))
         return wrapped()
 
-    def process_external(block=False):
-        """Process one item from external queue. Returns True if processed."""
-        try:
-            action, pid, value = external_queue.get(block=block)
-        except queue_mod.Empty:
-            return False
-        if pid in promises and promises[pid]["status"] == "pending":
-            if action == "complete":
-                promises[pid]["status"] = "completed"
-                promises[pid]["result"] = value
-            elif action == "fail":
-                promises[pid]["status"] = "failed"
-                promises[pid]["result"] = value
-            wake_waiters(("promise", pid))
-        return True
-
     def pick_next():
         while True:
-            # Drain all pending external completions
-            while process_external():
-                pass
-            # Process ready queue
             while ready:
                 entry = ready.pop(0)
                 if entry[0] == "new":
@@ -229,8 +209,12 @@ def scheduled(body_program):
                     return Transfer(cont, value)
             if not waiters:
                 return Pure(None)
-            # All tasks blocked — block on Queue.get()
-            process_external(block=True)
+            # All tasks blocked — wait for external completion
+            action, pid, value = external_queue.get()
+            if pid in promises and promises[pid]["status"] == "pending":
+                promises[pid]["status"] = "completed" if action == "complete" else "failed"
+                promises[pid]["result"] = value
+                wake_waiters(("promise", pid))
 
     def wake_waiters(completed_key):
         ws = waiters.pop(completed_key, [])
