@@ -4,24 +4,23 @@ from doeff import do, run
 from doeff.program import WithHandler
 
 from doeff_core_effects.effects import Ask, Local, Try
-from doeff_core_effects.handlers import reader, lazy_ask, try_handler
+from doeff_core_effects.handlers import lazy_ask, try_handler
 from doeff_core_effects.scheduler import scheduled, Spawn, Gather, Wait
 
 
 def run_with_lazy(program, env=None):
-    """Compose reader + scheduler + lazy_ask + try_handler and run.
+    """Compose scheduler + lazy_ask + try_handler and run.
 
     Handler stack (outer to inner):
-        reader(env) → scheduler → lazy_ask → try_handler → body
+        scheduler → lazy_ask(env) → try_handler → body
 
-    lazy_ask is a caching/lazy-eval layer. reader provides env values.
+    lazy_ask replaces reader — handles Ask directly from env.
     """
     if env is None:
         env = {}
     body = WithHandler(try_handler(), program)
-    body = WithHandler(lazy_ask(), body)
+    body = WithHandler(lazy_ask(env=env), body)
     body = scheduled(body)
-    body = WithHandler(reader(env=env), body)
     return run(body)
 
 
