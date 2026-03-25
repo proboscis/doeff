@@ -211,17 +211,24 @@ def scheduled(body_program):
             wake_waiters(("promise", pid))
 
     def pick_next():
-        drain_external()
-        while ready:
-            entry = ready.pop(0)
-            if entry[0] == "new":
-                _, tid = entry
-                tasks[tid]["status"] = "running"
-                return WithHandler(handler, wrap_task(tid, tasks[tid]["program"]))
-            elif entry[0] == "resume":
-                _, cont, value = entry
-                return Transfer(cont, value)
-        return Pure(None)
+        import time
+        while True:
+            drain_external()
+            while ready:
+                entry = ready.pop(0)
+                if entry[0] == "new":
+                    _, tid = entry
+                    tasks[tid]["status"] = "running"
+                    return WithHandler(handler, wrap_task(tid, tasks[tid]["program"]))
+                elif entry[0] == "resume":
+                    _, cont, value = entry
+                    return Transfer(cont, value)
+            # Nothing ready. If there are waiters, external completions may arrive.
+            if waiters or external_queue:
+                time.sleep(0.001)  # yield CPU, wait for external completions
+                continue
+            # No waiters, no external — truly done
+            return Pure(None)
 
     def wake_waiters(completed_key):
         ws = waiters.pop(completed_key, [])
