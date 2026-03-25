@@ -213,14 +213,15 @@ class TestAwait:
         result = doeff_run(scheduled(WithHandler(await_handler(), body())))
         assert result == 30
 
-    def test_await_concurrent_with_spawn(self):
-        """Await works with spawned tasks."""
+    def test_await_100_concurrent_tasks(self):
+        """100 spawned tasks each awaiting 100ms sleep — must finish in <2s."""
         import asyncio
+        import time
         from doeff_core_effects import Await, await_handler
         from doeff_core_effects.scheduler import scheduled, Spawn, Gather
 
         async def fetch(x):
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.1)
             return x
 
         ah = await_handler()
@@ -231,18 +232,17 @@ class TestAwait:
 
         @do
         def body():
-            # Each spawned task wraps with await_handler so Await effects
-            # reach it (spawned tasks get their own handler scope)
-            t1 = yield Spawn(WithHandler(ah, task(10)))
-            t2 = yield Spawn(WithHandler(ah, task(20)))
-            return (yield Gather(t1, t2))
+            tasks = []
+            for i in range(100):
+                tasks.append((yield Spawn(WithHandler(ah, task(i)))))
+            return (yield Gather(*tasks))
 
-        import time
         start = time.time()
         result = doeff_run(scheduled(body()))
         elapsed = time.time() - start
-        assert result == [10, 20]
-        assert elapsed < 0.5, f"took {elapsed:.1f}s — not concurrent!"
+        assert result == list(range(100))
+        # 100 tasks × 0.1s sleep = should be ~0.1s if concurrent, not 10s
+        assert elapsed < 2.0, f"took {elapsed:.1f}s — not concurrent!"
 
 
 class TestGetExecutionContext:
