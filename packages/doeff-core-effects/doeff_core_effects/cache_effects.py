@@ -1,62 +1,62 @@
 """Cache effects for memoization."""
 
-
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Any
 
-from ..cache_policy import (
+from doeff_core_effects.cache_policy import (
     CacheLifecycle,
     CachePolicy,
     CacheStorage,
     ensure_cache_policy,
 )
-from .base import Effect, EffectBase
+from doeff_vm import EffectBase
 
 
-@dataclass(frozen=True)
 class CacheGetEffect(EffectBase):
-    """Requests the cached value for the key and yields the stored payload."""
+    """Requests the cached value for the key."""
+    def __init__(self, key):
+        super().__init__()
+        self.key = key
 
-    key: Any
+    def __repr__(self):
+        return f"CacheGet({self.key!r})"
 
 
-@dataclass(frozen=True)
 class CachePutEffect(EffectBase):
-    """Persists the value under the key and completes after the cache is updated."""
+    """Persists the value under the key."""
+    def __init__(self, key, value, policy):
+        super().__init__()
+        if not isinstance(policy, CachePolicy):
+            raise TypeError(f"policy must be CachePolicy, got {type(policy).__name__}")
+        self.key = key
+        self.value = value
+        self.policy = policy
 
-    key: Any
-    value: Any
-    policy: CachePolicy
-
-    def __post_init__(self):
-        if not isinstance(self.policy, CachePolicy):
-            raise TypeError(
-                "policy must be CachePolicy, got "
-                f"{type(self.policy).__name__}"
-            )
-        try:
-            import cloudpickle as serializer
-        except ModuleNotFoundError:  # pragma: no cover - defensive fallback
-            import pickle as serializer
-
-        serializer.dumps(self.key)
-        # so this, is always running fine!
+    def __repr__(self):
+        return f"CachePut({self.key!r}, ...)"
 
 
-@dataclass(frozen=True)
 class CacheDeleteEffect(EffectBase):
-    """Deletes the value under the key and returns True if deleted, False otherwise."""
+    """Deletes the value under the key."""
+    def __init__(self, key):
+        super().__init__()
+        self.key = key
 
-    key: Any
+    def __repr__(self):
+        return f"CacheDelete({self.key!r})"
 
 
-@dataclass(frozen=True)
 class CacheExistsEffect(EffectBase):
-    """Checks if a key exists in the cache and returns True or False."""
+    """Checks if a key exists in the cache."""
+    def __init__(self, key):
+        super().__init__()
+        self.key = key
 
-    key: Any
+    def __repr__(self):
+        return f"CacheExists({self.key!r})"
 
+
+# Convenience constructors (lowercase)
 
 def cache_get(key: Any) -> CacheGetEffect:
     return CacheGetEffect(key=key)
@@ -82,30 +82,6 @@ def cache_put(
     return CachePutEffect(key=key, value=value, policy=cache_policy)
 
 
-def CacheGet(key: Any) -> Effect:
-    return CacheGetEffect(key=key)
-
-
-def CachePut(
-    key: Any,
-    value: Any,
-    ttl: float | None = None,
-    *,
-    lifecycle: CacheLifecycle | str | None = None,
-    storage: CacheStorage | str | None = None,
-    metadata: Mapping[str, Any] | None = None,
-    policy: CachePolicy | Mapping[str, Any] | None = None,
-) -> Effect:
-    cache_policy = ensure_cache_policy(
-        ttl=ttl,
-        lifecycle=lifecycle,
-        storage=storage,
-        metadata=metadata,
-        policy=policy,
-    )
-    return CachePutEffect(key=key, value=value, policy=cache_policy)
-
-
 def cache_delete(key: Any) -> CacheDeleteEffect:
     return CacheDeleteEffect(key=key)
 
@@ -114,12 +90,11 @@ def cache_exists(key: Any) -> CacheExistsEffect:
     return CacheExistsEffect(key=key)
 
 
-def CacheDelete(key: Any) -> Effect:
-    return CacheDeleteEffect(key=key)
-
-
-def CacheExists(key: Any) -> Effect:
-    return CacheExistsEffect(key=key)
+# Capitalized aliases
+CacheGet = cache_get
+CachePut = cache_put
+CacheDelete = cache_delete
+CacheExists = cache_exists
 
 
 __all__ = [
