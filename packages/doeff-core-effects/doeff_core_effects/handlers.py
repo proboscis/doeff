@@ -93,16 +93,15 @@ def try_handler():
         result = yield Try(some_program)  # Ok(value) or Err(error)
     """
     from doeff_vm import Ok, Err
-    from doeff.program import GetHandlers, WithHandler as WH
+    from doeff.program import WithHandler as WH
+    from doeff.handler_utils import get_inner_handlers
 
     @do
     def handler(effect, k):
         if isinstance(effect, Try):
-            # Capture inner handlers from the continuation so effects
-            # from the Try program can reach them. Drop the last entry —
-            # it's the try_handler itself (same pattern as scheduler).
-            all_hs = yield GetHandlers(k)
-            inner_hs = all_hs[:-1] if all_hs else []
+            # Capture inner handlers so effects from the Try program
+            # can reach handlers at any position in the chain.
+            inner_hs = yield get_inner_handlers(k)
 
             @do
             def attempt():

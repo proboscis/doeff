@@ -23,7 +23,8 @@ Usage:
 
 from doeff_vm import EffectBase, Ok, Err
 from doeff.do import do
-from doeff.program import Pure, Resume, Transfer, Pass, Perform, WithHandler, GetHandlers
+from doeff.program import Pure, Resume, Transfer, Pass, Perform, WithHandler
+from doeff.handler_utils import get_inner_handlers
 
 
 def _enrich_exception_traceback(exc, task_meta=None, vm_ctx=None):
@@ -403,9 +404,7 @@ def scheduled(body_program):
         drain()
         if isinstance(effect, Spawn):
             # Capture inner handlers from continuation (between yield site and scheduler).
-            # The last entry is the scheduler handler itself — drop it.
-            all_handlers = yield GetHandlers(k)
-            inner_handlers = all_handlers[:-1] if all_handlers else []
+            inner_handlers = yield get_inner_handlers(k)
 
             # Capture spawn site from continuation's traceback
             from doeff.program import GetTraceback
