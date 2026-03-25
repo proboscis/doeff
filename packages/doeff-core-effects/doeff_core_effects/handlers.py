@@ -230,11 +230,17 @@ def lazy_ask():
     - Ask: if env value is a Program (Expand node from @do), evaluates lazily
       with caching. Concurrent asks for the same key coordinate via per-key
       semaphore (at most one evaluation; waiters receive cached result).
-    - Local: manages env overlay and cache invalidation. Cache entries whose
-      evaluation depended on overridden keys are evicted at scope boundaries.
+    - Local: creates a new handler scope with merged overrides and an isolated
+      scope cache for override-dependent entries.
+
+    Cache isolation:
+    - shared_cache: entries whose deps don't intersect any active override keys.
+      Shared across all scopes and spawned tasks.
+    - scope_cache: per-Local entries whose deps intersect override keys.
+      Isolated per Local scope; tasks spawned inside the same scope share it.
 
     Dependency tracking is transitive: if service depends on db_url, and db_url
-    is overridden by Local, service's cache is evicted too.
+    is overridden by Local, service uses the scope cache.
 
     Requires reader (for base env lookup) and scheduler (for semaphores).
     Install as the innermost handler (last in handler list).
@@ -244,135 +250,124 @@ def lazy_ask():
         CreateSemaphore, AcquireSemaphore, ReleaseSemaphore,
     )
 
-    cache = {}            # key → resolved value
-    cache_deps = {}       # key → frozenset of all dep keys (transitive)
-    eval_stack = []       # stack of dep-tracking sets for nested evaluations
-    sems = {}             # key → Semaphore handle
-    local_overrides = {}  # merged env overrides from active Local scopes
+    shared_cache = {}       # key → value (override-independent entries)
+    shared_deps = {}        # key → frozenset of dep keys
+    eval_stack = []         # stack of dep-tracking sets for nested evals
+    sems = {}               # key → Semaphore handle
 
-    @do
-    def handler(effect, k):
-        if isinstance(effect, Ask):
-            # Track as dependency if inside a lazy evaluation
-            if eval_stack:
-                eval_stack[-1].add(effect.key)
+    def _make_handler(overrides=None):
+        if overrides is None:
+            overrides = {}
+        override_keys = frozenset(overrides.keys())
+        scope_cache = {}    # key → value (override-dependent, isolated per scope)
+        scope_deps = {}     # key → frozenset of dep keys
 
-            # Check Local overrides first, then fall back to reader
-            if effect.key in local_overrides:
-                raw = local_overrides[effect.key]
+        def _cache_lookup(key):
+            """Check scope cache, then shared cache (validated against overrides)."""
+            if key in scope_cache:
+                return scope_cache[key], scope_deps.get(key, frozenset())
+            if key in shared_cache:
+                deps = shared_deps.get(key, frozenset())
+                if not (deps & override_keys):
+                    return shared_cache[key], deps
+            return None, None
+
+        def _cache_store(key, value, deps):
+            """Store in scope or shared cache based on override dependency."""
+            if deps & override_keys:
+                scope_cache[key] = value
+                scope_deps[key] = deps
             else:
-                try:
-                    raw = yield effect  # re-perform to reader
-                except Exception as e:
-                    # Reader threw (e.g. missing key) — forward to continuation
-                    return (yield ResumeThrow(k, e))
+                shared_cache[key] = value
+                shared_deps[key] = deps
 
-            # Plain value — resume directly
-            if not isinstance(raw, Expand):
-                return (yield Resume(k, raw))
-
-            # Cache hit — propagate deps to parent and resume
-            if effect.key in cache:
+        @do
+        def handler(effect, k):
+            if isinstance(effect, Ask):
+                # Track as dependency if inside a lazy evaluation
                 if eval_stack:
-                    eval_stack[-1].update(cache_deps.get(effect.key, frozenset()))
-                return (yield Resume(k, cache[effect.key]))
+                    eval_stack[-1].add(effect.key)
 
-            # Create per-key semaphore on first lazy access
-            if effect.key not in sems:
-                sem = yield CreateSemaphore(1)
-                sems[effect.key] = sem
-
-            yield AcquireSemaphore(sems[effect.key])
-
-            # Double-check cache after acquiring (another task may have filled it)
-            if effect.key in cache:
-                yield ReleaseSemaphore(sems[effect.key])
-                if eval_stack:
-                    eval_stack[-1].update(cache_deps.get(effect.key, frozenset()))
-                return (yield Resume(k, cache[effect.key]))
-
-            # Evaluate the program under this handler so effects (like
-            # Ask for dependencies) flow through lazy_ask and see
-            # local_overrides. Same closure → shared cache/overrides/deps.
-            eval_stack.append(set())
-            error = None
-            value = None
-            try:
-                value = yield WH(handler, raw)
-            except Exception as e:
-                error = e
-
-            deps = eval_stack.pop() if eval_stack else set()
-            yield ReleaseSemaphore(sems[effect.key])
-
-            if error is not None:
-                return (yield ResumeThrow(k, error))
-
-            cache[effect.key] = value
-            cache_deps[effect.key] = frozenset(deps)
-            # Propagate deps to parent evaluation (transitive tracking)
-            if eval_stack:
-                eval_stack[-1].update(deps)
-            return (yield Resume(k, value))
-
-        elif isinstance(effect, Local):
-            override_keys = set(effect.env.keys())
-
-            # Save current Local overrides for these keys
-            saved_overrides = {}
-            for ok in override_keys:
-                if ok in local_overrides:
-                    saved_overrides[ok] = local_overrides[ok]
-
-            # Apply new overrides
-            local_overrides.update(effect.env)
-
-            # Save and evict cache entries that depend on overridden keys
-            saved_cache = {}
-            for ck in list(cache):
-                deps = cache_deps.get(ck, frozenset())
-                if ck in override_keys or deps & override_keys:
-                    saved_cache[ck] = (cache.pop(ck), cache_deps.pop(ck, frozenset()))
-
-            # Evaluate inner program under this handler so effects flow
-            # through lazy_ask (same closure → shared cache/overrides/deps).
-            # Wrap raw EffectBase in Perform so the VM can classify the body.
-            prog = effect.program
-            if not hasattr(prog, 'tag'):
-                prog = Perform(prog)
-            error = None
-            inner_result = None
-            try:
-                inner_result = yield WH(handler, prog)
-            except Exception as e:
-                error = e
-
-            # Restore overrides
-            for ok in override_keys:
-                if ok in saved_overrides:
-                    local_overrides[ok] = saved_overrides[ok]
+                # Check Local overrides first, then fall back to reader
+                if effect.key in overrides:
+                    raw = overrides[effect.key]
                 else:
-                    local_overrides.pop(ok, None)
+                    try:
+                        raw = yield effect  # re-perform to reader
+                    except Exception as e:
+                        return (yield ResumeThrow(k, e))
 
-            # Evict entries created inside Local that depend on overrides
-            for ck in list(cache):
-                if ck not in saved_cache:
-                    deps = cache_deps.get(ck, frozenset())
-                    if deps & override_keys:
-                        cache.pop(ck)
-                        cache_deps.pop(ck, None)
+                # Plain value — resume directly
+                if not isinstance(raw, Expand):
+                    return (yield Resume(k, raw))
 
-            # Restore pre-Local cache entries
-            for ck, (cv, cd) in saved_cache.items():
-                cache[ck] = cv
-                cache_deps[ck] = cd
+                # Cache lookup (scope then shared)
+                cached_val, cached_dep = _cache_lookup(effect.key)
+                if cached_val is not None:
+                    if eval_stack:
+                        eval_stack[-1].update(cached_dep)
+                    return (yield Resume(k, cached_val))
 
-            if error is not None:
-                return (yield ResumeThrow(k, error))
-            return (yield Resume(k, inner_result))
+                # Create per-key semaphore on first lazy access
+                if effect.key not in sems:
+                    sem = yield CreateSemaphore(1)
+                    sems[effect.key] = sem
 
-        yield Pass(effect, k)
+                yield AcquireSemaphore(sems[effect.key])
 
-    return handler
+                # Double-check after acquiring
+                cached_val, cached_dep = _cache_lookup(effect.key)
+                if cached_val is not None:
+                    yield ReleaseSemaphore(sems[effect.key])
+                    if eval_stack:
+                        eval_stack[-1].update(cached_dep)
+                    return (yield Resume(k, cached_val))
+
+                # Evaluate the program under this handler so effects
+                # flow through lazy_ask and see current overrides.
+                eval_stack.append(set())
+                error = None
+                value = None
+                try:
+                    value = yield WH(handler, raw)
+                except Exception as e:
+                    error = e
+
+                deps = frozenset(eval_stack.pop() if eval_stack else set())
+                yield ReleaseSemaphore(sems[effect.key])
+
+                if error is not None:
+                    return (yield ResumeThrow(k, error))
+
+                _cache_store(effect.key, value, deps)
+                if eval_stack:
+                    eval_stack[-1].update(deps)
+                return (yield Resume(k, value))
+
+            elif isinstance(effect, Local):
+                # Create a new handler with merged overrides and fresh scope cache
+                merged = {**overrides, **effect.env}
+                inner_handler = _make_handler(merged)
+
+                prog = effect.program
+                if not hasattr(prog, 'tag'):
+                    prog = Perform(prog)
+
+                error = None
+                inner_result = None
+                try:
+                    inner_result = yield WH(inner_handler, prog)
+                except Exception as e:
+                    error = e
+
+                if error is not None:
+                    return (yield ResumeThrow(k, error))
+                return (yield Resume(k, inner_result))
+
+            yield Pass(effect, k)
+
+        return handler
+
+    return _make_handler()
 
 
