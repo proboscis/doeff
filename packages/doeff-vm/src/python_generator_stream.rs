@@ -259,25 +259,12 @@ impl PythonGeneratorStream {
 
     /// Classify a yielded Python object into a DoCtrl instruction.
     ///
-    /// If the object is a DoExpr (has `tag`), classify normally.
-    /// If the object is an EffectBase (has `__doeff_effect_base__`), treat as Perform(effect).
-    /// Anything else is an error.
+    /// classify_python_object handles all cases:
+    /// DoExpr (has tag), EffectBase (implicit Perform), or error.
     fn classify_yielded(&self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> StreamStep {
         match classify_python_object(py, obj) {
             Ok(doctrl) => StreamStep::Instruction(doctrl),
-            Err(_) => {
-                // EffectBase without tag → implicit Perform
-                if obj.is_instance_of::<PyEffectBase>() {
-                    StreamStep::Instruction(DoCtrl::Perform {
-                        effect: Value::Opaque(PyShared::new(obj.clone().unbind())),
-                    })
-                } else {
-                    StreamStep::Error(Value::String(format!(
-                        "generator yielded non-DoExpr: {:?}. Use @do decorator or yield a DoExpr/EffectBase.",
-                        obj.get_type()
-                    )))
-                }
-            }
+            Err(msg) => StreamStep::Error(Value::String(msg)),
         }
     }
 }
@@ -365,103 +352,117 @@ impl IRStream for PythonGeneratorStream {
 // classify_python_object — top-level classification for run()
 // ---------------------------------------------------------------------------
 
-/// Classify a Python DoExpr object into a DoCtrl.
-/// Used by PyVM.run() to convert the top-level program into an instruction.
+/// Classify a Python object into a DoCtrl.
 ///
-/// The object MUST have a `tag` attribute. Raw generators and untagged objects
-/// are errors — the Python @do layer is responsible for wrapping them.
+/// Handles three cases:
+/// 1. DoExpr with `tag` attribute → classify by tag
+/// 2. EffectBase (no tag) → implicit Perform(effect)
+/// 3. Anything else → error with descriptive message
 pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<DoCtrl, String> {
-    // Must have a tag attribute
-    let tag = obj.getattr("tag")
-        .map_err(|_| format!("DoExpr expected (must have 'tag' attribute), got: {:?}", obj.get_type()))?
-        .extract::<u8>()
-        .map_err(|_| "DoExpr tag must be u8".to_string())?;
-
-    classify_tagged_to_doctrl(py, obj, tag)
-        .ok_or_else(|| format!("unknown DoExpr tag: {}", tag))
+    // Try tag-based classification first
+    if let Ok(tag_attr) = obj.getattr("tag") {
+        if let Ok(tag) = tag_attr.extract::<u8>() {
+            return classify_tagged_to_doctrl(py, obj, tag);
+        }
+    }
+    // EffectBase without tag → implicit Perform
+    if obj.is_instance_of::<PyEffectBase>() {
+        return Ok(DoCtrl::Perform {
+            effect: Value::Opaque(PyShared::new(obj.clone().unbind())),
+        });
+    }
+    Err(format!(
+        "expected DoExpr or EffectBase, got: {:?}",
+        obj.get_type()
+    ))
 }
 
-/// Classify a tagged Python object into a DoCtrl (without StreamStep wrapper).
-fn classify_tagged_to_doctrl(py: Python<'_>, obj: &Bound<'_, PyAny>, tag: u8) -> Option<DoCtrl> {
+/// Classify a tagged Python object into a DoCtrl.
+/// Returns Err with descriptive message on failure — never silently drops.
+fn classify_tagged_to_doctrl(py: Python<'_>, obj: &Bound<'_, PyAny>, tag: u8) -> Result<DoCtrl, String> {
     match tag {
         0 => {
             // Pure
             let value = obj.getattr("value").ok()
                 .map(|v| python_to_value(py, &v))
                 .unwrap_or(Value::Unit);
-            Some(DoCtrl::Pure { value })
+            Ok(DoCtrl::Pure { value })
         }
         5 | 128 => {
             // Perform / Effect
             let effect = if let Ok(e) = obj.getattr("effect") {
                 Value::Opaque(PyShared::new(e.unbind()))
             } else {
-                // The object itself is the effect
                 Value::Opaque(PyShared::new(obj.clone().unbind()))
             };
-            Some(DoCtrl::Perform { effect })
+            Ok(DoCtrl::Perform { effect })
         }
         6 => {
             // Resume
             extract_continuation_and_value(py, obj)
                 .map(|(k, v)| DoCtrl::Resume { k, value: v })
-                .ok()
+                .map_err(|_| "Resume: failed to extract continuation/value".to_string())
         }
         7 => {
             // Transfer
             extract_continuation_and_value(py, obj)
                 .map(|(k, v)| DoCtrl::Transfer { k, value: v })
-                .ok()
+                .map_err(|_| "Transfer: failed to extract continuation/value".to_string())
         }
         19 => {
             // Pass
             extract_effect_and_continuation(py, obj)
                 .map(|(effect, k)| DoCtrl::Pass { effect, k })
-                .ok()
+                .map_err(|_| "Pass: failed to extract effect/continuation".to_string())
         }
         8 => {
             // Delegate
             extract_effect_and_continuation(py, obj)
                 .map(|(effect, k)| DoCtrl::Delegate { effect, k })
-                .ok()
+                .map_err(|_| "Delegate: failed to extract effect/continuation".to_string())
         }
         16 => {
             // Apply { f, args }
-            let f_obj = obj.getattr("f").ok()?;
-            let f_doctrl = classify_python_object(py, &f_obj).ok()?;
+            let f_obj = obj.getattr("f")
+                .map_err(|_| "Apply: missing 'f' attribute".to_string())?;
+            let f_doctrl = classify_python_object(py, &f_obj)?;
 
-            let args_list = obj.getattr("args").ok()?;
+            let args_list = obj.getattr("args")
+                .map_err(|_| "Apply: missing 'args' attribute".to_string())?;
             let mut args = Vec::new();
             if let Ok(seq) = args_list.downcast::<pyo3::types::PyList>() {
-                for item in seq.iter() {
-                    if let Ok(doctrl) = classify_python_object(py, &item) {
-                        args.push(doctrl);
-                    }
+                for (i, item) in seq.iter().enumerate() {
+                    args.push(classify_python_object(py, &item)
+                        .map_err(|e| format!("Apply: arg[{}]: {}", i, e))?);
                 }
             }
-            Some(DoCtrl::Apply {
+            Ok(DoCtrl::Apply {
                 f: Box::new(f_doctrl),
                 args,
             })
         }
         17 => {
             // Expand { expr }
-            let expr_obj = obj.getattr("expr").ok()?;
-            let expr_doctrl = classify_python_object(py, &expr_obj).ok()?;
-            Some(DoCtrl::Expand {
+            let expr_obj = obj.getattr("expr")
+                .map_err(|_| "Expand: missing 'expr' attribute".to_string())?;
+            let expr_doctrl = classify_python_object(py, &expr_obj)?;
+            Ok(DoCtrl::Expand {
                 expr: Box::new(expr_doctrl),
             })
         }
         20 => {
             // WithHandler { handler, body }
-            let handler_obj = obj.getattr("handler").ok()?;
+            let handler_obj = obj.getattr("handler")
+                .map_err(|_| "WithHandler: missing 'handler' attribute".to_string())?;
             let handler_callable = PythonCallable::new(handler_obj.unbind());
             let handler_value = Value::Callable(
                 std::sync::Arc::new(handler_callable) as doeff_vm_core::value::CallableRef
             );
-            let body_obj = obj.getattr("body").ok()?;
-            let body_doctrl = classify_python_object(py, &body_obj).ok()?;
-            Some(DoCtrl::WithHandler {
+            let body_obj = obj.getattr("body")
+                .map_err(|_| "WithHandler: missing 'body' attribute".to_string())?;
+            let body_doctrl = classify_python_object(py, &body_obj)
+                .map_err(|e| format!("WithHandler body: {}", e))?;
+            Ok(DoCtrl::WithHandler {
                 handler: handler_value,
                 body: Box::new(body_doctrl),
             })
@@ -470,48 +471,55 @@ fn classify_tagged_to_doctrl(py: Python<'_>, obj: &Bound<'_, PyAny>, tag: u8) ->
             // ResumeThrow
             extract_continuation_and_exception(py, obj)
                 .map(|(k, exc)| DoCtrl::ResumeThrow { k, exception: exc })
-                .ok()
+                .map_err(|_| "ResumeThrow: failed to extract continuation/exception".to_string())
         }
         22 => {
             // TransferThrow
             extract_continuation_and_exception(py, obj)
                 .map(|(k, exc)| DoCtrl::TransferThrow { k, exception: exc })
-                .ok()
+                .map_err(|_| "TransferThrow: failed to extract continuation/exception".to_string())
         }
         24 => {
             // WithObserve { observer, body }
-            let observer_obj = obj.getattr("observer").ok()?;
+            let observer_obj = obj.getattr("observer")
+                .map_err(|_| "WithObserve: missing 'observer' attribute".to_string())?;
             let observer_value = python_to_value(py, &observer_obj);
-            let body_obj = obj.getattr("body").ok()?;
-            let body_doctrl = classify_python_object(py, &body_obj).ok()?;
-            Some(DoCtrl::WithObserve {
+            let body_obj = obj.getattr("body")
+                .map_err(|_| "WithObserve: missing 'body' attribute".to_string())?;
+            let body_doctrl = classify_python_object(py, &body_obj)
+                .map_err(|e| format!("WithObserve body: {}", e))?;
+            Ok(DoCtrl::WithObserve {
                 observer: observer_value,
                 body: Box::new(body_doctrl),
             })
         }
         23 => {
             // GetTraceback { from: FiberId }
-            // The Python side passes a K object; we peek at its head fiber without consuming.
-            let k_obj = obj.getattr("continuation").ok()?;
-            let k_ref = k_obj.downcast::<doeff_vm_core::continuation::PyK>().ok()?;
+            let k_obj = obj.getattr("continuation")
+                .map_err(|_| "GetTraceback: missing 'continuation' attribute".to_string())?;
+            let k_ref = k_obj.downcast::<doeff_vm_core::continuation::PyK>()
+                .map_err(|_| "GetTraceback: continuation must be K".to_string())?;
             let k_borrowed = k_ref.borrow();
-            let head = k_borrowed.peek_head()?;
-            Some(DoCtrl::GetTraceback { from: head })
+            let head = k_borrowed.peek_head()
+                .ok_or_else(|| "GetTraceback: continuation has no head fiber".to_string())?;
+            Ok(DoCtrl::GetTraceback { from: head })
         }
         25 => {
             // GetExecutionContext
-            Some(DoCtrl::GetExecutionContext)
+            Ok(DoCtrl::GetExecutionContext)
         }
         26 => {
             // GetHandlers { from: FiberId }
-            // The Python side passes a K object; we peek at its head fiber without consuming.
-            let k_obj = obj.getattr("continuation").ok()?;
-            let k_ref = k_obj.downcast::<doeff_vm_core::continuation::PyK>().ok()?;
+            let k_obj = obj.getattr("continuation")
+                .map_err(|_| "GetHandlers: missing 'continuation' attribute".to_string())?;
+            let k_ref = k_obj.downcast::<doeff_vm_core::continuation::PyK>()
+                .map_err(|_| "GetHandlers: continuation must be K".to_string())?;
             let k_borrowed = k_ref.borrow();
-            let head = k_borrowed.peek_head()?;
-            Some(DoCtrl::GetHandlers { from: head })
+            let head = k_borrowed.peek_head()
+                .ok_or_else(|| "GetHandlers: continuation has no head fiber".to_string())?;
+            Ok(DoCtrl::GetHandlers { from: head })
         }
-        _ => None,
+        _ => Err(format!("unknown DoExpr tag: {}", tag)),
     }
 }
 
