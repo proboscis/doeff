@@ -66,6 +66,7 @@ doeff-openai = { workspace = true }
 doeff-openrouter = { workspace = true }
 doeff-time = { workspace = true }
 doeff-events = { workspace = true }
+doeff-hy = { workspace = true }
 
 [tool.pytest.ini_options]
 timeout = 60
