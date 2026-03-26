@@ -62,6 +62,15 @@ def _normalize_for_hash(value: object) -> object:
         return {"__bytes__": value.hex()}
     elif isinstance(value, type):
         return f"{value.__module__}.{value.__qualname__}"
+    elif hasattr(value, "__dict__") and not isinstance(value, type):
+        # Generic object with __dict__ (e.g. EffectBase subclasses)
+        return {
+            "__type__": f"{type(value).__module__}.{type(value).__qualname__}",
+            **{
+                k: _normalize_for_hash(v)
+                for k, v in sorted(value.__dict__.items())
+            },
+        }
     return value
 
 
