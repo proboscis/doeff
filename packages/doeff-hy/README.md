@@ -5,7 +5,7 @@ Standard Hy macros for doeff effect composition.
 ## Usage
 
 ```hy
-(require doeff-hy.macros [defk deff <- defprogram do-list do-list-try do-try-list do-dict-try do-try])
+(require doeff-hy.macros [do! defk deff <- defprogram do-list do-list-try do-try-list do-dict-try do-try])
 (import doeff [do :as _doeff_do])  ; required by defk/defprogram
 (import doeff_core_effects [Ask Try slog])
 
@@ -22,6 +22,7 @@ Standard Hy macros for doeff effect composition.
 
 | Macro | Purpose |
 |-------|---------|
+| `do!` | Monadic do block — inline effect sequencing with optional `:pre/:post` |
 | `<-` | Perform effect, bind result |
 | `defk` | Define kleisli function (`@do` + contracts + bang) |
 | `deff` | Define function with `:pre/:post` contracts |
