@@ -9,6 +9,7 @@
 
 use pyo3::prelude::*;
 
+pub mod do_expr;
 pub mod python_generator_stream;
 pub mod pyvm;
 pub mod result;
