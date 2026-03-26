@@ -19,7 +19,7 @@ use doeff_vm_core::value::Value;
 /// The Rust side uses `is_instance_of::<PyEffectBase>()` for classification.
 ///
 /// Yielding an EffectBase from a generator is implicitly treated as Perform(effect).
-#[pyclass(name = "EffectBase", subclass)]
+#[pyclass(name = "EffectBase", subclass, dict, module = "doeff_vm.doeff_vm")]
 #[derive(Debug)]
 pub struct PyEffectBase;
 
@@ -29,6 +29,23 @@ impl PyEffectBase {
     #[pyo3(signature = (*_args, **_kwargs))]
     fn new(_args: &Bound<'_, pyo3::types::PyTuple>, _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
         Self
+    }
+
+    /// Pickle support: return (copyreg.__newobj__, (cls,), __dict__).
+    /// copyreg.__newobj__(cls) calls cls.__new__(cls), then pickle sets
+    /// obj.__dict__.update(state) for the third element.
+    fn __reduce_ex__(slf: &Bound<'_, Self>, _protocol: i32) -> PyResult<Py<PyAny>> {
+        let py = slf.py();
+        let copyreg = py.import("copyreg")?;
+        let newobj = copyreg.getattr("__newobj__")?;
+        let cls = slf.get_type();
+        let args = pyo3::types::PyTuple::new(py, &[cls.as_any()])?;
+        let state = slf.getattr("__dict__")?;
+        Ok(pyo3::types::PyTuple::new(py, &[
+            newobj.as_any(),
+            args.as_any(),
+            &state,
+        ])?.into_any().unbind())
     }
 }
 
