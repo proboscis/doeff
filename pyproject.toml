@@ -28,8 +28,8 @@ dependencies = [
 [project.optional-dependencies]
 viz = ["phart>=1.1.4"]
 
-# [project.scripts]
-# doeff = "doeff.__main__:main"  # CLI removed during rebuild
+[project.scripts]
+doeff = "doeff.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/proboscis/doeff"
