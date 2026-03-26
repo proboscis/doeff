@@ -221,5 +221,20 @@ pub fn register_pyvm(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add_class::<crate::python_generator_stream::PyIRStream>()?;
     m.add_class::<crate::result::PyResultOk>()?;
     m.add_class::<crate::result::PyResultErr>()?;
+    // DoExpr pyclasses
+    m.add_class::<crate::do_expr::PyPure>()?;
+    m.add_class::<crate::do_expr::PyPerform>()?;
+    m.add_class::<crate::do_expr::PyResume>()?;
+    m.add_class::<crate::do_expr::PyTransfer>()?;
+    m.add_class::<crate::do_expr::PyApply>()?;
+    m.add_class::<crate::do_expr::PyExpand>()?;
+    m.add_class::<crate::do_expr::PyPass>()?;
+    m.add_class::<crate::do_expr::PyWithHandler>()?;
+    m.add_class::<crate::do_expr::PyResumeThrow>()?;
+    m.add_class::<crate::do_expr::PyTransferThrow>()?;
+    m.add_class::<crate::do_expr::PyWithObserve>()?;
+    m.add_class::<crate::do_expr::PyGetTraceback>()?;
+    m.add_class::<crate::do_expr::PyGetExecutionContext>()?;
+    m.add_class::<crate::do_expr::PyGetHandlers>()?;
     Ok(())
 }
