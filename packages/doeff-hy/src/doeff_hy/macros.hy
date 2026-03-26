@@ -1,7 +1,7 @@
 ;;; doeff-hy standard macros — effect composition for doeff.
 ;;;
 ;;; Usage:
-;;;   (require doeff-hy.macros [defk deff <- ! defprogram
+;;;   (require doeff-hy.macros [do defk deff <- ! defprogram
 ;;;                             do-list do-list-try do-try-list do-dict-try do-try])
 ;;;   (import doeff [do :as _doeff-do])
 ;;;
@@ -35,12 +35,35 @@
   (if post-checks
       (let [post-asserts (lfor check post-checks
                            `(assert ~check ~(+ "post-condition failed: " (str check))))
-            body-block (if (= (len real-body) 1)
-                           (get real-body 0)
-                           `(do ~@real-body))]
+            init-forms (cut real-body 0 -1)
+            last-form (get real-body -1)]
         `(defn ~decorators ~name ~params
            ~@pre-code
-           (setv _contract_result ~body-block)
+           ~@init-forms
+           (setv _contract_result ~last-form)
+           (let [% _contract_result]
+             ~@post-asserts)
+           _contract_result))
+      `(defn ~decorators ~name ~params
+         ~@pre-code
+         ~@real-body)))
+
+(defn _build-kleisli-with-contracts [decorators name params pre-checks post-checks real-body]
+  "Build a defn form with pre/post contracts, generator-safe for kleisli functions.
+   Unlike _build-fn-with-contracts, this emits body forms sequentially and captures
+   only the last form as the result — (do ...) wrapping would break yield-based
+   effect bindings (<-)."
+  (setv pre-code (lfor check pre-checks
+                   `(assert ~check ~(+ "pre-condition failed: " (str check)))))
+  (if post-checks
+      (let [post-asserts (lfor check post-checks
+                           `(assert ~check ~(+ "post-condition failed: " (str check))))
+            init-forms (cut real-body 0 -1)
+            last-form (get real-body -1)]
+        `(defn ~decorators ~name ~params
+           ~@pre-code
+           ~@init-forms
+           (setv _contract_result ~last-form)
            (let [% _contract_result]
              ~@post-asserts)
            _contract_result))
@@ -100,7 +123,58 @@
         (let [#(inner-bindings rewritten) (_expand-bangs form)]
           (.extend expanded-forms inner-bindings)
           (.append expanded-forms rewritten))))
-  (_build-fn-with-contracts ['_doeff_do] name params pre-checks post-checks expanded-forms))
+  (_build-kleisli-with-contracts ['_doeff_do] name params pre-checks post-checks expanded-forms))
+
+
+;; ---------------------------------------------------------------------------
+;; do — monadic do block (inline effect sequencing)
+;; ---------------------------------------------------------------------------
+
+(defmacro do [#* forms]
+  "Monadic do block — sequence effect bindings and return the final expression.
+   Use inside a defk body or anywhere a generator context is active.
+
+   (do
+     (<- x (some-effect))
+     (<- y (another-effect x))
+     (+ x y))
+
+   Supports :pre/:post contracts (Clojure-style):
+
+   (do
+     {:pre [(isinstance url str)]
+      :post [(isinstance % dict)]}
+     (<- resp (http-get url))
+     (.json resp))
+
+   Without any <- bindings, sequences plain forms (replaces built-in do)."
+  (if (any (map _is-bind forms))
+      ;; Monadic: has <- bindings
+      (let [#(pre-checks post-checks real-forms) (_extract-contracts forms)
+            #(bindings body-expr) (_parse-do-body real-forms)
+            pre-code (lfor check pre-checks
+                       `(assert ~check ~(+ "pre-condition failed: " (str check))))
+            expanded (lfor bind bindings
+                       (let [#(name expr) (_bind-parts bind)]
+                         (if (is name None)
+                             `(yield ~expr)
+                             `(setv ~name (yield ~expr)))))]
+        (if post-checks
+            (let [post-asserts (lfor check post-checks
+                                 `(assert ~check ~(+ "post-condition failed: " (str check))))]
+              `(let []
+                 ~@pre-code
+                 ~@expanded
+                 (setv _contract_result ~body-expr)
+                 (let [% _contract_result]
+                   ~@post-asserts)
+                 _contract_result))
+            `(let []
+               ~@pre-code
+               ~@expanded
+               ~body-expr)))
+      ;; Plain sequencing: no <- bindings, act as built-in do
+      `(let [] ~@forms)))
 
 
 ;; ---------------------------------------------------------------------------
@@ -118,7 +192,7 @@
     (= (len args) 3) (let [nm (get args 0)
                            tp (get args 1)
                            expr (get args 2)]
-                       `(do
+                       `(let []
                           (setv ~nm (yield ~expr))
                           (assert (isinstance ~nm ~tp)
                                   ~(+ "expected " (str tp) ", got " (str nm)))))))
@@ -155,10 +229,13 @@
   (get expr 1))
 
 (defn _bind-parts [form]
-  "Extract (name, expr) from (<- name expr). For (<- expr), returns (None, expr)."
-  (if (= (len form) 2)
-      #(None (get form 1))
-      #((get form 1) (get form 2))))
+  "Extract (name, expr) from (<- name expr) or (<- name Type expr).
+   For (<- expr), returns (None, expr).
+   For (<- name Type expr), the Type is ignored here (handled by <- macro)."
+  (cond
+    (= (len form) 2) #(None (get form 1))
+    (= (len form) 3) #((get form 1) (get form 2))
+    (= (len form) 4) #((get form 1) (get form 3))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -177,9 +254,11 @@
               `(for [~name ~items]
                  ~(_gen-do-list rest body-expr)))
             (if (is name None)
-                `(do (yield ~expr)
+                `(let []
+                     (yield ~expr)
                      ~(_gen-do-list rest body-expr))
-                `(do (setv ~name (yield ~expr))
+                `(let []
+                     (setv ~name (yield ~expr))
                      ~(_gen-do-list rest body-expr)))))))
 
 (defn _gen-do-list-try [bindings body-expr]
@@ -203,9 +282,11 @@
                    (.append _acc (_Err _e)))))
           True
             (if (is name None)
-                `(do (yield ~expr)
+                `(let []
+                     (yield ~expr)
                      ~(_gen-do-list-try rest body-expr))
-                `(do (setv ~name (yield ~expr))
+                `(let []
+                     (setv ~name (yield ~expr))
                      ~(_gen-do-list-try rest body-expr)))))))
 
 (defn _gen-do-try-list [bindings body-expr]
@@ -222,13 +303,16 @@
                  ~(_gen-do-try-list rest body-expr)))
           (_is-try expr)
             (let [program (_try-arg expr)]
-              `(do (setv ~name (yield ~program))
+              `(let []
+                   (setv ~name (yield ~program))
                    ~(_gen-do-try-list rest body-expr)))
           True
             (if (is name None)
-                `(do (yield ~expr)
+                `(let []
+                     (yield ~expr)
                      ~(_gen-do-try-list rest body-expr))
-                `(do (setv ~name (yield ~expr))
+                `(let []
+                     (setv ~name (yield ~expr))
                      ~(_gen-do-try-list rest body-expr)))))))
 
 (defn _gen-do-dict-try [bindings body-expr]
@@ -251,9 +335,11 @@
                  (except [_e Exception] None)))
           True
             (if (is name None)
-                `(do (yield ~expr)
+                `(let []
+                     (yield ~expr)
                      ~(_gen-do-dict-try rest body-expr))
-                `(do (setv ~name (yield ~expr))
+                `(let []
+                     (setv ~name (yield ~expr))
                      ~(_gen-do-dict-try rest body-expr)))))))
 
 
@@ -288,7 +374,7 @@
      (<- y (some-effect x))
      [x y])"
   (setv #(bindings body-expr) (_parse-do-body forms))
-  `(do
+  `(let []
      (setv _acc [])
      ~(_gen-do-list bindings body-expr)
      _acc))
@@ -309,7 +395,7 @@
   (setv #(bindings body-expr) (_parse-do-body forms))
   (setv _Ok (hy.models.Symbol "_Ok")
         _Err (hy.models.Symbol "_Err"))
-  `(do
+  `(let []
      (import doeff [Ok :as ~_Ok Err :as ~_Err])
      (setv _acc [])
      ~(_gen-do-list-try bindings body-expr)
@@ -331,10 +417,10 @@
   (setv #(bindings body-expr) (_parse-do-body forms))
   (setv _Ok (hy.models.Symbol "_Ok")
         _Err (hy.models.Symbol "_Err"))
-  `(do
+  `(let []
      (import doeff [Ok :as ~_Ok Err :as ~_Err])
      (try
-       (do
+       (let []
          (setv _acc [])
          ~(_gen-do-try-list bindings body-expr)
          (_Ok _acc))
@@ -355,7 +441,7 @@
      (<- frame (Try (fetch-price symbol)))
      [symbol frame])"
   (setv #(bindings body-expr) (_parse-do-body forms))
-  `(do
+  `(let []
      (setv _acc {})
      ~(_gen-do-dict-try bindings body-expr)
      _acc))
@@ -375,10 +461,10 @@
   (setv #(bindings body-expr) (_parse-do-body forms))
   (setv _Ok (hy.models.Symbol "_Ok")
         _Err (hy.models.Symbol "_Err"))
-  `(do
+  `(let []
      (import doeff [Ok :as ~_Ok Err :as ~_Err])
      (try
-       (do
+       (let []
          ~@(lfor bind bindings
              (let [#(name expr) (_bind-parts bind)]
                (if (_is-try expr)
@@ -492,7 +578,7 @@
           (.extend expanded-forms inner-bindings)
           (.append expanded-forms rewritten))))
   (setv factory-name (hy.models.Symbol (+ "_" (str name) "_factory")))
-  `(do
+  `(let []
      (defk ~factory-name []
        ~@expanded-forms)
      (setv ~name (~factory-name))))
