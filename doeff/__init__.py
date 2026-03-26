@@ -80,24 +80,8 @@ presets = _Removed("presets", "presets module removed")
 rust_vm = _Removed("rust_vm", "use PyVM directly")
 race = Race  # lowercase alias
 
-def default_handlers(**kwargs):
-    """Compat: return default handler list for WithHandler composition."""
-    from doeff_core_effects.handlers import (
-        reader, state, writer, try_handler, slog_handler,
-        local_handler, listen_handler, await_handler, lazy_ask,
-    )
-    env = kwargs.get("env")
-    return [
-        reader(env=env), state(), writer(), try_handler, slog_handler(),
-        local_handler, listen_handler, await_handler(), lazy_ask(),
-    ]
-
-def async_run(*args, **kwargs):
-    """Compat stub: async_run removed, use run() with scheduled()."""
-    raise RuntimeError("async_run was removed — use run() with scheduled()")
-
-def default_async_handlers(**kwargs):
-    """Compat stub: returns same as default_handlers."""
-    return default_handlers(**kwargs)
+default_handlers = _Removed("default_handlers", "compose handlers explicitly with WithHandler")
+async_run = _Removed("async_run", "use run() with scheduled()")
+default_async_handlers = _Removed("default_async_handlers", "compose handlers explicitly with WithHandler")
 
 __version__ = "0.2.1"
