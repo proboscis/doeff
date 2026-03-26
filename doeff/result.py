@@ -79,7 +79,7 @@ class _NothingType:
         return False
 
     def __reduce__(self):
-        return (_get_nothing,)
+        return (_get_nothing, ())
 
 
 Nothing = _NothingType()
