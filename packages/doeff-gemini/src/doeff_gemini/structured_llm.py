@@ -26,16 +26,14 @@ except ImportError:  # pragma: no cover - Python 3.10 fallback
 from doeff import (
     Ask,
     Await,
-    CacheGet,
-    CacheLifecycle,
-    CachePut,
-    CacheStorage,
     EffectGenerator,
     Tell,
     Try,
     do,
     slog,
 )
+from doeff_core_effects.cache_effects import CacheGet, CachePut
+from doeff_core_effects.cache_policy import CacheLifecycle, CacheStorage
 
 from .client import get_gemini_client, track_api_call
 from .types import GeminiImageEditResult
