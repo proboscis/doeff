@@ -156,19 +156,24 @@ class StandardEnvMerger:
             with profile(f"Load {len(env_sources)} env sources", indent=2):
                 loaded_envs = [self.symbol_loader.load_symbol(path) for path in env_sources]
 
+            from doeff.program import Pure
+
+            def _is_program(v):
+                return isinstance(v, (Expand, Pure))
+
             @do
             def merge():
                 merged: dict = {}
                 for env_source in loaded_envs:
-                    if isinstance(env_source, Expand):
-                        # It's a Program — evaluate it
+                    if _is_program(env_source):
+                        # It's a Program (Expand or Pure) — evaluate it
                         if merged:
                             env_dict = yield Local(dict(merged), env_source)
                         else:
                             env_dict = yield env_source
                     elif callable(env_source):
                         result = env_source()
-                        if isinstance(result, Expand):
+                        if _is_program(result):
                             env_dict = yield result
                         else:
                             env_dict = result
