@@ -141,45 +141,33 @@ class StandardEnvMerger:
         self.symbol_loader = symbol_loader or StandardSymbolLoader()
 
     def merge_envs(self, env_sources: list[str]) -> Any:
-        """Merge environment sources left-to-right. Later overrides earlier."""
+        """Merge environment sources left-to-right. Later overrides earlier.
+
+        Each source must be a Program[dict] or a plain dict.
+        Programs are yielded monadically — no Local needed.
+        """
         with profile("Merge environments", indent=1):
-            from doeff import do
-            from doeff_core_effects.effects import Local
-            from doeff.program import Expand
+            from doeff import Program, do
+            from doeff.program import Pure
 
             if not env_sources:
-                @do
-                def empty_env():
-                    return {}
-                return empty_env()
+                return Pure({})
 
             with profile(f"Load {len(env_sources)} env sources", indent=2):
                 loaded_envs = [self.symbol_loader.load_symbol(path) for path in env_sources]
-
-            from doeff.program import Pure
-
-            def _is_program(v):
-                return isinstance(v, (Expand, Pure))
 
             @do
             def merge():
                 merged: dict = {}
                 for env_source in loaded_envs:
-                    if _is_program(env_source):
-                        # It's a Program (Expand or Pure) — evaluate it
-                        if merged:
-                            env_dict = yield Local(dict(merged), env_source)
-                        else:
-                            env_dict = yield env_source
-                    elif callable(env_source):
-                        result = env_source()
-                        if _is_program(result):
-                            env_dict = yield result
-                        else:
-                            env_dict = result
-                    else:
+                    if isinstance(env_source, Program):
+                        env_dict = yield env_source
+                    elif isinstance(env_source, dict):
                         env_dict = env_source
-
+                    else:
+                        raise TypeError(
+                            f"env source must be Program[dict] or dict, got {type(env_source).__name__}"
+                        )
                     if isinstance(env_dict, dict):
                         merged.update(env_dict)
                 return merged
