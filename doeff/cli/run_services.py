@@ -1,11 +1,32 @@
 """Run services — symbol resolution, interpreter discovery, program execution."""
 
 import importlib
+import importlib.util
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from doeff.cli.profiling import profile
+
+
+def _load_doeff_config_env() -> str | None:
+    """Load __default_env__ from ~/.doeff.py if it exists.
+
+    Returns an importable symbol path, or None.
+    """
+    doeff_config_file = Path.home() / ".doeff.py"
+    if not doeff_config_file.exists():
+        return None
+    spec = importlib.util.spec_from_file_location("_doeff_config", doeff_config_file)
+    if not (spec and spec.loader):
+        return None
+    config_module = importlib.util.module_from_spec(spec)
+    sys.modules["_doeff_config"] = config_module
+    spec.loader.exec_module(config_module)
+    if hasattr(config_module, "__default_env__"):
+        return "_doeff_config.__default_env__"
+    return None
 
 
 def import_symbol(full_path: str) -> Any:
@@ -138,25 +159,26 @@ def execute(resolved: ResolvedRunContext) -> Any:
             transform_fn = import_symbol(tp)
             program = transform_fn(program)
 
-    # Merge envs and wrap with Local if any
-    if resolved.env_paths:
+    # Build env Program[dict] from ~/.doeff.py + discovered/explicit envs
+    env_sources = list(resolved.env_paths)
+    with profile("Load ~/.doeff.py"):
+        config_env_path = _load_doeff_config_env()
+        if config_env_path:
+            env_sources.insert(0, config_env_path)  # base, overridden by project envs
+
+    env_program = None
+    if env_sources:
         with profile("Merge envs"):
             from doeff.cli.discovery import StandardEnvMerger
             merger = StandardEnvMerger()
-            env_program = merger.merge_envs(resolved.env_paths)
+            env_program = merger.merge_envs(env_sources)
 
-            from doeff import do
-            from doeff_core_effects.effects import Local
-
-            @do
-            def with_env():
-                env_dict = yield env_program
-                result = yield Local(env_dict, program)
-                return result
-
-            program = with_env()
-
-    # Run through interpreter
+    # Run through interpreter — pass env as Program[dict] if available
     with profile("Run interpreter"):
         interpreter = import_symbol(resolved.interpreter_path)
+        if env_program is not None:
+            import inspect
+            sig = inspect.signature(interpreter)
+            if "env" in sig.parameters:
+                return interpreter(program, env=env_program)
         return interpreter(program)

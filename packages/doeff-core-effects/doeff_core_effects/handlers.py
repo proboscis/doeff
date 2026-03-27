@@ -147,12 +147,22 @@ def local_handler(effect, k):
     Installs a scope reader that handles Ask for overridden keys only,
     passing non-overridden keys through to outer handlers (reader, lazy_ask).
 
+    OCaml 5 semantics: the inner program must run with the same handler
+    chain that was in scope when Local was performed. We capture inner
+    handlers from the continuation (like the scheduler does for Spawn)
+    and reinstall them around the inner program.
+
     Usage:
         WithHandler(local_handler, body)
     """
     if isinstance(effect, Local):
         from doeff.program import WithHandler as WH
+        from doeff.handler_utils import get_inner_handlers
         overrides = effect.env
+
+        # Capture inner handlers from continuation (between Local site
+        # and this handler) so the inner program sees the same chain.
+        inner_handlers = yield get_inner_handlers(k)
 
         @do
         def scope_reader(inner_effect, inner_k):
@@ -160,7 +170,15 @@ def local_handler(effect, k):
                 return (yield Resume(inner_k, overrides[inner_effect.key]))
             yield Pass(inner_effect, inner_k)
 
-        inner_result = yield WH(scope_reader, effect.program)
+        # Reinstall inner handlers + local_handler itself (for nested Locals),
+        # then scope_reader innermost
+        prog = effect.program
+        for h in inner_handlers:
+            prog = WH(h, prog)
+        prog = WH(local_handler, prog)
+        prog = WH(scope_reader, prog)
+
+        inner_result = yield prog
         return (yield Resume(k, inner_result))
     yield Pass(effect, k)
 
@@ -169,13 +187,19 @@ def local_handler(effect, k):
 def listen_handler(effect, k):
     """Listen handler: collects effects of specified types during program execution.
 
+    OCaml 5 semantics: reinstall inner handlers so the inner program
+    sees the same handler chain as when Listen was performed.
+
     Usage:
         WithHandler(listen_handler, body)
     """
     if isinstance(effect, Listen):
         from doeff.program import WithHandler as WH
+        from doeff.handler_utils import get_inner_handlers
         collected = []
         types_to_collect = effect.types or (WriterTellEffect,)
+
+        inner_handlers = yield get_inner_handlers(k)
 
         @do
         def observer_handler(inner_effect, inner_k):
@@ -183,7 +207,12 @@ def listen_handler(effect, k):
                 collected.append(inner_effect)
             yield Pass(inner_effect, inner_k)
 
-        inner_result = yield WH(observer_handler, effect.program)
+        prog = effect.program
+        for h in inner_handlers:
+            prog = WH(h, prog)
+        prog = WH(observer_handler, prog)
+
+        inner_result = yield prog
         result = yield Resume(k, (inner_result, collected))
         return result
     yield Pass(effect, k)
