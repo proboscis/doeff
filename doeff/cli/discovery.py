@@ -141,13 +141,8 @@ class StandardEnvMerger:
         self.symbol_loader = symbol_loader or StandardSymbolLoader()
 
     def merge_envs(self, env_sources: list[str]) -> Any:
-        """Merge environment sources left-to-right. Later overrides earlier.
-
-        Each source must be a Program[dict] or a plain dict.
-        Programs are yielded monadically — no Local needed.
-        """
+        """Merge environment sources left-to-right. Later overrides earlier."""
         with profile("Merge environments", indent=1):
-            from doeff import Program, do
             from doeff.program import Pure
 
             if not env_sources:
@@ -156,20 +151,5 @@ class StandardEnvMerger:
             with profile(f"Load {len(env_sources)} env sources", indent=2):
                 loaded_envs = [self.symbol_loader.load_symbol(path) for path in env_sources]
 
-            @do
-            def merge():
-                merged: dict = {}
-                for env_source in loaded_envs:
-                    if isinstance(env_source, Program):
-                        env_dict = yield env_source
-                    elif isinstance(env_source, dict):
-                        env_dict = env_source
-                    else:
-                        raise TypeError(
-                            f"env source must be Program[dict] or dict, got {type(env_source).__name__}"
-                        )
-                    if isinstance(env_dict, dict):
-                        merged.update(env_dict)
-                return merged
-
-            return merge()
+            from doeff import merge_dicts
+            return merge_dicts(*loaded_envs)
