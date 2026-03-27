@@ -65,6 +65,7 @@ class RunContext:
     program_instance: Any | None
     interpreter_path: str | None
     env_paths: list[str] = field(default_factory=list)
+    set_vars: dict[str, Any] = field(default_factory=dict)
     apply_path: str | None = None
     transformer_paths: list[str] = field(default_factory=list)
     output_format: str = "text"
@@ -76,6 +77,7 @@ class ResolvedRunContext:
     program_instance: Any
     interpreter_path: str
     env_paths: list[str]
+    set_vars: dict[str, str]
     apply_path: str | None
     transformer_paths: list[str]
     output_format: str
@@ -118,6 +120,7 @@ def resolve_context(ctx: RunContext) -> ResolvedRunContext:
         program_instance=program,
         interpreter_path=interpreter_path,
         env_paths=env_paths,
+        set_vars=ctx.set_vars,
         apply_path=ctx.apply_path,
         transformer_paths=ctx.transformer_paths,
         output_format=ctx.output_format,
@@ -172,6 +175,24 @@ def execute(resolved: ResolvedRunContext) -> Any:
             from doeff.cli.discovery import StandardEnvMerger
             merger = StandardEnvMerger()
             env_program = merger.merge_envs(env_sources)
+
+    # Apply --set KEY=VALUE overrides (highest priority)
+    if resolved.set_vars:
+        from doeff import Program, do
+
+        set_dict = dict(resolved.set_vars)
+        if env_program is not None:
+            base = env_program
+
+            @do
+            def with_overrides():
+                merged = yield base
+                merged.update(set_dict)
+                return merged
+
+            env_program = with_overrides()
+        else:
+            env_program = Program.pure(set_dict)
 
     # Run through interpreter — pass env as Program[dict] if available
     with profile("Run interpreter"):

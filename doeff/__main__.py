@@ -4,6 +4,7 @@ Usage:
     doeff run --program myapp.module.program
     doeff run --program myapp.program --interpreter myapp.interpreter
     doeff run --program myapp.program --env myapp.env
+    doeff run --program myapp.program --set name=Alice --set count=10
     doeff run -c 'from doeff import Ask; yield Ask("key")'
     doeff run --program myapp.program --apply myapp.transforms.wrap
     doeff run --program myapp.program -- script.py
@@ -32,11 +33,38 @@ class RunArgs(argparse.Namespace):
     code: str | None
     interpreter: str | None
     envs: list[str] | None
+    set_vars: list[str] | None
     apply: str | None
     transform: list[str] | None
     format: str
     no_runbox: bool
     script: str | None
+
+
+def _parse_set_vars(set_vars: list[str] | None) -> dict[str, Any]:
+    """Parse --set KEY=VALUE args into a dict.
+
+    If VALUE is wrapped in braces like ``{myapp.module.symbol}``, the symbol
+    is imported and the resolved object is used as the value.  Otherwise the
+    raw string is kept.
+    """
+    if not set_vars:
+        return {}
+    result: dict[str, Any] = {}
+    for item in set_vars:
+        if "=" not in item:
+            raise ValueError(f"Invalid --set format: {item!r} (expected KEY=VALUE)")
+        key, value = item.split("=", 1)
+        if not key:
+            raise ValueError(f"Invalid --set format: {item!r} (empty key)")
+        if value.startswith("{") and value.endswith("}"):
+            symbol_path = value[1:-1]
+            if not symbol_path:
+                raise ValueError(f"Invalid --set format: {item!r} (empty import path)")
+            result[key] = import_symbol(symbol_path)
+        else:
+            result[key] = value
+    return result
 
 
 def _render_output(resolved: Any, value: Any, fmt: str) -> None:
@@ -116,6 +144,7 @@ def handle_run_code(args: RunArgs) -> int:
         program_instance=program,
         interpreter_path=args.interpreter,
         env_paths=args.envs or [],
+        set_vars=_parse_set_vars(args.set_vars),
         apply_path=args.apply,
         transformer_paths=args.transform or [],
         output_format=args.format,
@@ -141,6 +170,7 @@ def handle_run(args: RunArgs) -> int:
         program_instance=None,
         interpreter_path=args.interpreter,
         env_paths=args.envs or [],
+        set_vars=_parse_set_vars(args.set_vars),
         apply_path=args.apply,
         transformer_paths=args.transform or [],
         output_format=args.format,
@@ -187,6 +217,10 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--env", action="append", dest="envs",
         help="Environment dict or Program[dict] (can repeat)",
+    )
+    run_parser.add_argument(
+        "--set", action="append", dest="set_vars", metavar="KEY=VALUE",
+        help="Set an env key-value pair (can repeat). Use {path} to import a symbol, e.g. --set model={myapp.gpt4}",
     )
     run_parser.add_argument("--apply", help="Function T -> Program[U] to apply before execution")
     run_parser.add_argument(

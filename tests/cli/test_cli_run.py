@@ -377,6 +377,78 @@ print(f"sync_handlers_preset present: {has_preset}")
     assert "sync_handlers_preset present: False" in result.stdout
 
 
+def test_doeff_run_set_env_value() -> None:
+    """Test --set KEY=VALUE injects values into the env dict."""
+    result = run_cli(
+        "--program",
+        "tests.cli_assets.ask_program",
+        "--interpreter",
+        "tests.cli_assets.runresult_interpreter",
+        "--set",
+        "value=42",
+        "--format",
+        "json",
+    )
+    assert result.returncode == 0, result.stderr
+    payload = parse_json(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["result"] == "42"
+
+
+def test_doeff_run_set_overrides_env() -> None:
+    """Test --set overrides values from --env."""
+    result = run_cli(
+        "--program",
+        "tests.cli_assets.ask_program",
+        "--interpreter",
+        "tests.cli_assets.runresult_interpreter",
+        "--env",
+        "tests.cli_assets.sample_env",
+        "--set",
+        "value=99",
+        "--format",
+        "json",
+    )
+    assert result.returncode == 0, result.stderr
+    payload = parse_json(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["result"] == "99"
+
+
+def test_doeff_run_set_multiple_values() -> None:
+    """Test multiple --set flags."""
+    result = run_cli(
+        "-c",
+        "from doeff import Ask; v1 = yield Ask('a'); v2 = yield Ask('b'); return f'{v1}-{v2}'",
+        "--interpreter",
+        "tests.cli_assets.runresult_interpreter",
+        "--set",
+        "a=hello",
+        "--set",
+        "b=world",
+        "--format",
+        "json",
+    )
+    assert result.returncode == 0, result.stderr
+    payload = parse_json(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["result"] == "hello-world"
+
+
+def test_doeff_run_set_invalid_format() -> None:
+    """Test --set with invalid format (no =) produces error."""
+    result = run_cli(
+        "--program",
+        "tests.cli_assets.sample_program",
+        "--interpreter",
+        "tests.cli_assets.sync_interpreter",
+        "--set",
+        "invalid",
+    )
+    assert result.returncode == 1
+    assert "KEY=VALUE" in result.stderr
+
+
 def test_doeff_run_with_script_auto_discovery() -> None:
     """Test that auto-discovered interpreter and environments are loaded in script execution."""
     script = """

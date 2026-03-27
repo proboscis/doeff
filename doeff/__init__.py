@@ -93,6 +93,24 @@ Program = DoExpr
 ProgramBase = DoExpr
 AskEffect = Ask
 
+
+@do
+def merge_dicts(*sources) -> Generator:
+    """Monadically merge multiple Program[dict] or plain dicts left-to-right.
+
+    Usage: merge_dicts(Pure({"a": 1}), Pure({"b": 2})) → Program[{"a": 1, "b": 2}]
+    """
+    merged: dict = {}
+    for source in sources:
+        if isinstance(source, DoExpr):
+            d = yield source
+        elif isinstance(source, dict):
+            d = source
+        else:
+            raise TypeError(f"merge_dicts: expected Program[dict] or dict, got {type(source).__name__}")
+        merged.update(d)
+    return merged
+
 # Removed concepts — raise clear error on use
 class _Removed:
     def __init__(self, name, reason):
