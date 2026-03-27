@@ -64,9 +64,33 @@ from doeff_core_effects.scheduler import (  # noqa: E402
     PRIORITY_IDLE, PRIORITY_NORMAL, PRIORITY_HIGH,
 )
 
-# Type aliases
-Program = Expand  # @do functions return Expand nodes
-ProgramBase = Expand
+# DoExpr — virtual base type for all program nodes.
+# Enables isinstance(x, DoExpr) to check if a value is any program node.
+_DOEXPR_TYPES = (
+    Pure, Perform, Resume, Transfer, Apply, Expand, Pass,
+    WithHandler, WithObserveRaw, ResumeThrow, TransferThrow,
+    GetTraceback, GetExecutionContext, GetHandlers,
+)
+
+
+class _DoExprMeta(type):
+    def __instancecheck__(cls, instance):
+        return isinstance(instance, _DOEXPR_TYPES)
+
+    def __subclasscheck__(cls, subclass):
+        return issubclass(subclass, _DOEXPR_TYPES)
+
+
+class DoExpr(metaclass=_DoExprMeta):
+    """Virtual base type for all doeff program nodes.
+
+    isinstance(x, DoExpr) returns True for any program node
+    (Pure, Expand, WithHandler, etc.).
+    """
+
+
+Program = DoExpr
+ProgramBase = DoExpr
 AskEffect = Ask
 
 # Removed concepts — raise clear error on use
