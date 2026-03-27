@@ -20,9 +20,27 @@ from doeff.program import (
     Resume,
     Transfer,
     WithHandler,
-    WithObserve,
+    WithObserve as WithObserveRaw,
     program,
 )
+from doeff_vm import Callable as _VmCallable
+
+
+def WithObserve(observer, body):
+    """Install observer and run body under it.
+
+    Accepts a plain Python callable as observer — automatically wraps it
+    with doeff_vm.Callable so the Rust VM can invoke it.
+
+    Use WithObserveRaw if you need the underlying pyclass directly.
+    """
+    if not callable(observer):
+        raise TypeError(
+            f"WithObserve: observer must be callable, got {type(observer).__name__}"
+        )
+    if not isinstance(observer, _VmCallable):
+        observer = _VmCallable(observer)
+    return WithObserveRaw(observer, body)
 from doeff.program import ResumeThrow, TransferThrow
 from doeff.run import run
 from doeff.result import Ok, Err, Some, Nothing, Maybe  # noqa: F811
