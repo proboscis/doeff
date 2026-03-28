@@ -4,7 +4,7 @@
 
 .PHONY: help install sync lint lint-ruff lint-pyright lint-semgrep lint-semgrep-docs lint-doeff lint-packages \
         test test-unit test-e2e test-packages test-all test-spec-audit-sa002 format check pre-commit-install clean \
-        install-opencode-spec-gap-tdd
+        bench-python bench-vm install-opencode-spec-gap-tdd
 
 # Default target
 help:
@@ -32,6 +32,10 @@ help:
 	@echo "  make test-packages     Run tests in all subpackages"
 	@echo "  make test-all          Run ALL tests (core + packages)"
 	@echo "  make test-spec-audit-sa002 Run SA-002 pytest + semgrep checks"
+	@echo ""
+	@echo "Benchmarks:"
+	@echo "  make bench-python      Run public Python benchmark runner"
+	@echo "  make bench-vm          Run criterion benchmark for doeff-vm"
 	@echo ""
 	@echo "Formatting:"
 	@echo "  make format            Format code with ruff"
@@ -160,6 +164,23 @@ test-spec-audit-sa002:
 		echo "Warning: semgrep not installed. Install with: uv tool install semgrep"; \
 		exit 1; \
 	fi
+
+BENCH_VM_BASE_PYTHON := $(shell uv run python -c "import sys; print(sys._base_executable)")
+BENCH_VM_PYTHON_HOME := $(shell uv run python -c "import sys; print(sys.base_prefix)")
+BENCH_VM_SITE_PACKAGES := $(shell uv run python -c "import site; print(site.getsitepackages()[0])")
+BENCH_PYTHON_ARGS ?=
+BENCH_VM_ARGS ?=
+
+bench-python:
+	uv run python benchmarks/benchmark_runner.py $(BENCH_PYTHON_ARGS)
+
+bench-vm:
+	cd packages/doeff-vm && env \
+		PYO3_PYTHON=$(BENCH_VM_BASE_PYTHON) \
+		PYTHONHOME=$(BENCH_VM_PYTHON_HOME) \
+		DOEFF_BENCH_SITE_PACKAGES=$(BENCH_VM_SITE_PACKAGES) \
+		LD_LIBRARY_PATH=$(BENCH_VM_PYTHON_HOME)/lib \
+		cargo bench --bench pyvm_baseline -- $(BENCH_VM_ARGS)
 
 # =============================================================================
 # Formatting
