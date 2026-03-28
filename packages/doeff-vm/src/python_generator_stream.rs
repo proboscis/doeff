@@ -63,6 +63,11 @@ impl PythonCallable {
     pub fn new(callable: Py<PyAny>) -> Self {
         Self { callable }
     }
+
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyAny>,))> {
+        let cls = py.get_type::<Self>().into_any().unbind();
+        Ok((cls, (self.callable.clone_ref(py),)))
+    }
 }
 
 impl doeff_vm_core::value::Callable for PythonCallable {
