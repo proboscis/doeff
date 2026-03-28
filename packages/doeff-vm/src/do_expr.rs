@@ -24,6 +24,11 @@ impl PyPure {
         let v = self.value.bind(py).repr()?;
         Ok(format!("Pure({})", v))
     }
+
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyAny>,))> {
+        let cls = py.get_type::<Self>().into_any().unbind();
+        Ok((cls, (self.value.clone_ref(py),)))
+    }
 }
 
 /// Perform(effect) — perform an effect (trigger handler lookup).
@@ -43,6 +48,11 @@ impl PyPerform {
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
         let e = self.effect.bind(py).repr()?;
         Ok(format!("Perform({})", e))
+    }
+
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyAny>,))> {
+        let cls = py.get_type::<Self>().into_any().unbind();
+        Ok((cls, (self.effect.clone_ref(py),)))
     }
 }
 
@@ -107,6 +117,11 @@ impl PyApply {
     fn __repr__(&self) -> &'static str {
         "Apply(f, args)"
     }
+
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyAny>, Py<PyAny>))> {
+        let cls = py.get_type::<Self>().into_any().unbind();
+        Ok((cls, (self.f.clone_ref(py), self.args.clone_ref(py))))
+    }
 }
 
 /// Expand(expr) — evaluate inner expr to Stream, then run it.
@@ -125,6 +140,11 @@ impl PyExpand {
 
     fn __repr__(&self) -> &'static str {
         "Expand(...)"
+    }
+
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyAny>,))> {
+        let cls = py.get_type::<Self>().into_any().unbind();
+        Ok((cls, (self.expr.clone_ref(py),)))
     }
 }
 
@@ -167,6 +187,11 @@ impl PyWithHandler {
 
     fn __repr__(&self) -> &'static str {
         "WithHandler(handler, body)"
+    }
+
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyAny>, Py<PyAny>))> {
+        let cls = py.get_type::<Self>().into_any().unbind();
+        Ok((cls, (self.handler.clone_ref(py), self.body.clone_ref(py))))
     }
 }
 
@@ -231,6 +256,11 @@ impl PyWithObserve {
     fn __repr__(&self) -> &'static str {
         "WithObserve(observer, body)"
     }
+
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyAny>, Py<PyAny>))> {
+        let cls = py.get_type::<Self>().into_any().unbind();
+        Ok((cls, (self.observer.clone_ref(py), self.body.clone_ref(py))))
+    }
 }
 
 /// GetTraceback(k) — query traceback from continuation without consuming it.
@@ -265,6 +295,11 @@ impl PyGetExecutionContext {
 
     fn __repr__(&self) -> &'static str {
         "GetExecutionContext()"
+    }
+
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, ())> {
+        let cls = py.get_type::<Self>().into_any().unbind();
+        Ok((cls, ()))
     }
 }
 
