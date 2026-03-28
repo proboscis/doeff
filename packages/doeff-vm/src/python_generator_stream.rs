@@ -51,7 +51,7 @@ impl PyEffectBase {
 
 /// Wraps a Python callable as a VM Callable.
 /// Exported to Python as `Callable` — users must explicitly wrap.
-#[pyclass(name = "Callable")]
+#[pyclass(name = "Callable", module = "doeff_vm.doeff_vm")]
 #[derive(Debug)]
 pub struct PythonCallable {
     pub callable: Py<PyAny>,
