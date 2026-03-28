@@ -133,7 +133,7 @@ impl doeff_vm_core::value::Callable for PythonCallable {
 
 /// Python-visible wrapper: creates a PythonGeneratorStream from a generator.
 /// Recognized by python_to_value → Value::Stream.
-#[pyclass(name = "IRStream")]
+#[pyclass(name = "IRStream", module = "doeff_vm.doeff_vm")]
 #[derive(Debug)]
 pub struct PyIRStream {
     pub generator: Py<PyAny>,
@@ -145,6 +145,7 @@ impl PyIRStream {
     pub fn new(generator: Py<PyAny>) -> Self {
         Self { generator }
     }
+
 }
 
 /// A Python generator wrapped as an IRStream.
