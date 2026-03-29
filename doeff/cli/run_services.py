@@ -131,14 +131,14 @@ def default_interpreter(program: Any) -> Any:
     """Default interpreter: run with standard handlers + scheduler."""
     from doeff import run, WithHandler
     from doeff_core_effects.handlers import (
-        reader, state, writer, try_handler, slog_handler,
-        local_handler, listen_handler, await_handler,
+        lazy_ask, state, writer, try_handler, slog_handler,
+        listen_handler, await_handler,
     )
     from doeff_core_effects.scheduler import scheduled
 
     handlers = [
-        reader(), state(), writer(), try_handler, slog_handler(),
-        local_handler, listen_handler, await_handler(),
+        lazy_ask(), state(), writer(), try_handler, slog_handler(),
+        listen_handler, await_handler(),
     ]
     wrapped = program
     for h in reversed(handlers):
