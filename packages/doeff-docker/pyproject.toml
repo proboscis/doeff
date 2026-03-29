@@ -1,0 +1,28 @@
+[project]
+name = "doeff-docker"
+version = "0.1.0"
+description = "Dockerfile as doeff Program: effects and handlers for Docker image composition"
+requires-python = ">=3.12"
+dependencies = [
+    "doeff",
+    "doeff-vm",
+    "doeff-hy",
+    "doeff-core-effects",
+    "hy>=1.0.0",
+]
+
+[tool.uv.sources]
+doeff = { workspace = true }
+doeff-vm = { workspace = true }
+doeff-hy = { workspace = true }
+doeff-core-effects = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/doeff_docker"]
+
+[tool.ruff]
+line-length = 100
