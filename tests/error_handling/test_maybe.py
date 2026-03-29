@@ -2,7 +2,7 @@
 
 import pytest
 
-from doeff import NOTHING, Err, Maybe, Ok, Some
+from doeff import Nothing, Err, Maybe, Ok, Some
 
 
 def test_maybe_from_optional_and_truthiness():
@@ -12,7 +12,7 @@ def test_maybe_from_optional_and_truthiness():
     assert isinstance(some, Some)
     assert some.unwrap() == 42
 
-    assert nothing is NOTHING
+    assert nothing is Nothing
     assert not nothing
     assert some
 
@@ -28,8 +28,8 @@ def test_maybe_map_and_flat_map():
     assert isinstance(chained, Some)
     assert chained.unwrap() == 6
 
-    assert Maybe.from_optional(None).map(lambda x: x) is NOTHING
-    assert Maybe.from_optional(None).flat_map(lambda x: Maybe.from_optional(x)) is NOTHING
+    assert Maybe.from_optional(None).map(lambda x: x) is Nothing
+    assert Maybe.from_optional(None).flat_map(lambda x: Maybe.from_optional(x)) is Nothing
 
     with pytest.raises(TypeError):
         base.flat_map(lambda x: x + 1)  # type: ignore[arg-type]
@@ -62,7 +62,7 @@ def test_maybe_to_optional_conversion():
 
 
 def test_maybe_or_operator_prefers_first_some():
-    assert (NOTHING | Some(0)).unwrap() == 0
-    assert (Some(0) | NOTHING).unwrap() == 0
+    assert (Nothing | Some(0)).unwrap() == 0
+    assert (Some(0) | Nothing).unwrap() == 0
     assert (Some(1) | Some(0)).unwrap() == 1
-    assert (NOTHING | NOTHING) is NOTHING
+    assert (Nothing | Nothing) is Nothing

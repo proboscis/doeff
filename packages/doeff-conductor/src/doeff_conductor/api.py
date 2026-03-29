@@ -125,7 +125,7 @@ class ConductorAPI:
 
             # Execute the workflow
             from doeff import Effect, Pass, default_handlers, do, run
-            from doeff.rust_vm import RunResult as VmRunResult
+            from doeff_vm import RunResult as VmRunResult
 
             # Build kwargs
             kwargs = params or {}

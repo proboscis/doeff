@@ -39,9 +39,9 @@ from doeff import (
     do,
     run,
 )
-from doeff.effects import Await
-from doeff.effects._program_types import ProgramLike
-from doeff.types import EffectGenerator
+from doeff import Await
+# REMOVED: from doeff.effects._program_types import ProgramLike
+from doeff import EffectGenerator
 
 
 class _Lookup(EffectBase):
@@ -463,8 +463,8 @@ class TestLayer5WithHandlerResume:
         assert result.value == [i * 10 for i in range(high_task_count)]
 
     def test_real_cache_handler_high_concurrency_sync(self) -> None:
-        from doeff.effects.cache import CacheGet, CachePut
-        from doeff.handlers.cache_handlers import in_memory_cache_handler
+        from doeff_core_effects.cache import CacheGet, CachePut
+        from doeff_core_effects.cache import in_memory_cache_handler
 
         high_task_count = 85
         high_concurrency = 40
@@ -512,8 +512,8 @@ class TestLayer5WithHandlerResume:
 
         All wrapped in: WithIntercept(interceptor, WithHandler(cache_handler, throttled_gather(...)))
         """
-        from doeff.effects.cache import CacheGet, CachePut
-        from doeff.handlers.cache_handlers import in_memory_cache_handler
+        from doeff_core_effects.cache import CacheGet, CachePut
+        from doeff_core_effects.cache import in_memory_cache_handler
 
         high_task_count = 85
         high_concurrency = 40
@@ -565,8 +565,8 @@ class TestLayer5WithHandlerResume:
         then result = yield llm(text=..., response_format=...)
         """
         from doeff import Ask, Local
-        from doeff.effects.cache import CacheGet, CachePut
-        from doeff.handlers.cache_handlers import in_memory_cache_handler
+        from doeff_core_effects.cache import CacheGet, CachePut
+        from doeff_core_effects.cache import in_memory_cache_handler
 
         high_task_count = 85
         high_concurrency = 40
@@ -629,7 +629,7 @@ class TestLayer5WithHandlerResume:
 
         from doeff import Ask, Local
         from doeff.cache import cache
-        from doeff.handlers.cache_handlers import sqlite_cache_handler
+        from doeff_core_effects.cache import sqlite_cache_handler
 
         high_task_count = 85
         high_concurrency = 40
@@ -673,8 +673,8 @@ class TestLayer5WithHandlerResume:
         """Minimal test: nested KleisliProgram with Try(sub_program) where sub_program yields Await.
         This isolates whether Try wrapping an Await-containing program triggers the bug."""
         from doeff import Ask, Local
-        from doeff.effects.cache import CacheGet, CachePut
-        from doeff.handlers.cache_handlers import in_memory_cache_handler
+        from doeff_core_effects.cache import CacheGet, CachePut
+        from doeff_core_effects.cache import in_memory_cache_handler
 
         high_task_count = 85
         high_concurrency = 40
@@ -731,9 +731,9 @@ class TestLayer5WithHandlerResume:
     def test_get_execution_context_in_nested_kleisli_high_concurrency_sync(self) -> None:
         """Test if GetExecutionContext in nested KleisliProgram triggers the bug."""
         from doeff import Ask, Local
-        from doeff.effects.cache import CacheGet, CachePut
-        from doeff.effects.execution_context import GetExecutionContext
-        from doeff.handlers.cache_handlers import in_memory_cache_handler
+        from doeff_core_effects.cache import CacheGet, CachePut
+        from doeff_vm import GetExecutionContext
+        from doeff_core_effects.cache import in_memory_cache_handler
 
         high_task_count = 85
         high_concurrency = 40
@@ -793,7 +793,7 @@ class TestLayer5WithHandlerResume:
 
     def test_minimal_get_execution_context_semaphore_bug(self) -> None:
         """Minimal reproduction: GetExecutionContext + Await in spawned task with Finally+Semaphore."""
-        from doeff.effects.execution_context import GetExecutionContext
+        from doeff_vm import GetExecutionContext
 
         high_task_count = 85
         high_concurrency = 40
@@ -814,7 +814,7 @@ class TestLayer5WithHandlerResume:
         """Same as sqlite test but with in_memory_cache_handler to isolate I/O vs @cache logic."""
         from doeff import Ask, Local
         from doeff.cache import cache
-        from doeff.handlers.cache_handlers import in_memory_cache_handler
+        from doeff_core_effects.cache import in_memory_cache_handler
 
         high_task_count = 85
         high_concurrency = 40

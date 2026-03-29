@@ -13,7 +13,7 @@ import time
 import pytest
 
 from doeff import Program, do
-from doeff.effects import (
+from doeff import (
     Ask,
     Await,
     Gather,

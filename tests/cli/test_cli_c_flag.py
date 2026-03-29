@@ -178,7 +178,7 @@ x * y
 class TestCFlagWithEnv:
     def test_with_env(self) -> None:
         code = """
-from doeff.effects import Ask
+from doeff import Ask
 value = yield Ask("my_key")
 value
 """

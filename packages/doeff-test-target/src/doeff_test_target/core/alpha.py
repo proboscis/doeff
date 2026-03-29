@@ -1,5 +1,5 @@
 from doeff import do
-from doeff.effects import ask
+from doeff import Ask
 
 
 def helper_alpha():
@@ -8,5 +8,5 @@ def helper_alpha():
 
 @do
 def alpha():
-    yield ask("alpha")
+    yield Ask("alpha")
     return "alpha"

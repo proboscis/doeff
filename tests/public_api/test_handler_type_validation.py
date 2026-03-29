@@ -138,7 +138,7 @@ def test_withhandler_accepts_rust_handler() -> None:
 
 def test_withhandler_public_import_matches_rust_vm_type_extraction() -> None:
     from doeff import WithHandler as doeff_withhandler
-    from doeff.rust_vm import WithHandler as rust_vm_withhandler
+    from doeff_vm import WithHandler as rust_vm_withhandler
 
     @do
     def typed_handler(_effect: Ping, _k):

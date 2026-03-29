@@ -29,7 +29,7 @@ from doeff import (
     default_handlers,
     do,
 )
-from doeff.effects.base import Effect
+from doeff_core_effects.effects import EffectBase as Effect
 
 
 class RecordingSeedreamClient(SeedreamClient):

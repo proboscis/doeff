@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import pytest
 
+import pytest
+
 from doeff import Program
-from doeff.effects.spawn import Spawn, SpawnEffect, spawn
+from doeff_core_effects.scheduler import Spawn
+# REMOVED: from doeff_core_effects.scheduler import spawn
 
 
 def test_futureawaiteffect_alias_removed() -> None:
@@ -13,7 +16,7 @@ def test_futureawaiteffect_alias_removed() -> None:
 
 
 def test_gather_futures_alias_removed() -> None:
-    from doeff.effects.gather import GatherEffect
+    from doeff_core_effects.scheduler import Gather
 
     effect = GatherEffect(items=(1, 2))
     with pytest.raises(AttributeError):
@@ -21,7 +24,7 @@ def test_gather_futures_alias_removed() -> None:
 
 
 def test_spawn_deprecated_methods_removed() -> None:
-    from doeff.effects.spawn import Promise, Task
+    from doeff_core_effects.scheduler import Promise, Task
 
     assert not hasattr(Promise, "complete")
     assert not hasattr(Promise, "fail")

@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from doeff import Program, do
-from doeff.effects import Put
-from doeff.rust_vm import default_handlers, run
+from doeff import Program, default_handlers, do, run
+from doeff import Put
 
 
 def test_run_result_traceback_data_is_none_on_success() -> None:

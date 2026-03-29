@@ -29,8 +29,8 @@ from doeff import (  # noqa: E402
     do,
     run,
 )
-from doeff.effects import StateGetEffect, StatePutEffect  # noqa: E402
-from doeff.effects.base import Effect  # noqa: E402
+from doeff import Get as StateGetEffect, Put as StatePutEffect  # noqa: E402
+from doeff_core_effects.effects import EffectBase as Effect  # noqa: E402
 
 
 @dataclass

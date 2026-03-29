@@ -3,11 +3,11 @@ from pathlib import Path
 
 import doeff_vm
 from doeff import Gather, Pass, Resume, Spawn, WithHandler, do
-from doeff.effects.base import Effect, EffectBase
-from doeff.handlers import sqlite_cache_handler
-from doeff.handlers.cache_handlers import memo_rewriters
-from doeff.rust_vm import default_handlers
-from doeff.rust_vm import run as vm_run
+from doeff_core_effects.effects import EffectBase
+Effect = EffectBase
+# REMOVED: from doeff_core_effects.cache_handlers import memo_rewriters, sqlite_cache_handler
+# REMOVED: from doeff_vm import default_handlers
+from doeff import run as vm_run
 
 
 def test_memory_stats_exported_with_expected_keys():

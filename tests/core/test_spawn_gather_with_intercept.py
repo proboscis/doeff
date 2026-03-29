@@ -43,7 +43,7 @@ from doeff import (
     run,
     slog,
 )
-from doeff.effects.base import Effect, EffectBase
+from doeff_core_effects.effects import EffectBase, EffectBase
 
 
 # --- Custom effect (simulates HistoricalPriceEffect) ---

@@ -26,7 +26,7 @@ from doeff import (
     do,
     run,
 )
-from doeff.effects import Await
+from doeff import Await
 
 DEADLOCK_TIMEOUT_SECONDS = 5
 

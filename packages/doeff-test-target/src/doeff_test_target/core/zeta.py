@@ -1,5 +1,5 @@
 from doeff import do
-from doeff.effects import ask
+from doeff import Ask
 
 
 def helper_zeta():
@@ -8,5 +8,5 @@ def helper_zeta():
 
 @do
 def zeta():
-    yield ask("zeta")
+    yield Ask("zeta")
     return "zeta"

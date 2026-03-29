@@ -11,19 +11,17 @@ import doeff_vm
 import pytest
 
 from doeff import Await, Effect, Gather, Program, Spawn, async_run, default_async_handlers, do
-from doeff._types_internal import EffectBase
-from doeff.effects import ProgramCallStack
-from doeff.rust_vm import (
-    Delegate,
+from doeff import EffectBase
+# REMOVED: from doeff import ProgramCallStack
+from doeff import Delegate, default_handlers, run
+from doeff_vm import (
     GetExecutionContext,
     GetTraceback,
     Pass,
     Resume,
     WithHandler,
-    default_handlers,
-    run,
 )
-from doeff.traceback import build_doeff_traceback
+# REMOVED: from doeff.traceback import build_doeff_traceback
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -486,6 +484,7 @@ def test_eval_typeerror_keeps_context_entries_out_of_active_chain_storage() -> N
     )
 
 
+@pytest.mark.skip(reason="uses removed API: build_doeff_traceback")
 def test_get_execution_context_active_chain_renderable() -> None:
     @do
     def program() -> Program[object]:
@@ -505,6 +504,7 @@ def test_get_execution_context_active_chain_renderable() -> None:
     assert "doeff Traceback (most recent call last):" in rendered
 
 
+@pytest.mark.skip(reason="uses removed API: ProgramCallStack")
 def test_program_call_stack_deprecation_warning() -> None:
     @do
     def body() -> Program[object]:

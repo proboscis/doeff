@@ -16,7 +16,7 @@ import doeff_vm
 import pytest
 
 from doeff import Effect, EffectBase, EffectGenerator, default_handlers, do, run
-from doeff.rust_vm import WithHandler
+from doeff_vm import WithHandler
 
 
 @dataclass(frozen=True)

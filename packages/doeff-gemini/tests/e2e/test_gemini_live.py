@@ -34,7 +34,7 @@ from doeff import (  # noqa: E402
     default_handlers,
     do,
 )
-from doeff.effects.base import Effect  # noqa: E402
+from doeff_core_effects.effects import EffectBase as Effect  # noqa: E402
 
 
 class FunFact(BaseModel):

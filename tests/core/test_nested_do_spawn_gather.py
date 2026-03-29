@@ -34,8 +34,8 @@ from doeff import (
     run,
     slog,
 )
-from doeff.effects.base import Effect, EffectBase
-from doeff.effects._program_types import ProgramLike
+from doeff_core_effects.effects import EffectBase, EffectBase
+# REMOVED: from doeff.effects._program_types import ProgramLike
 
 
 # --- Custom effect + handler ---

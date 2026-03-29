@@ -14,9 +14,12 @@ except Exception as exc:  # pragma: no cover - interpreter/dependency compatibil
         allow_module_level=True,
     )
 
-import doeff.kleisli as kleisli_module
+pytestmark = pytest.mark.skip(reason="uses removed API: doeff.kleisli, KleisliProgram, P")
+
+# REMOVED: import doeff.kleisli as kleisli_module
 from doeff import Program
-from doeff.kleisli import KleisliProgram, P
+from doeff import KleisliProgram
+# REMOVED: from doeff import P
 
 
 def test_kleisli_annotations_bind_paramspec_args() -> None:

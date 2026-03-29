@@ -4,8 +4,7 @@ import pytest
 from dataclasses import dataclass
 
 from doeff import Ask, Program, ProgramBase, do
-from doeff.rust_vm import default_handlers, run
-from doeff.types import EffectBase
+from doeff import EffectBase, default_handlers, run
 
 
 def test_kpc_is_not_thunk_but_is_composable() -> None:
