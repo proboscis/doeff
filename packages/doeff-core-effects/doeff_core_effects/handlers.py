@@ -34,7 +34,7 @@ def reader(env=None):
                 result = yield Resume(k, env[effect.key])
                 return result
             from doeff.program import ResumeThrow
-            return (yield ResumeThrow(k, KeyError(f"Ask: key not found: {effect.key!r}")))
+            return (yield ResumeThrow(k, KeyError(_missing_key_message(effect.key))))
         yield Pass(effect, k)
 
     return handler
@@ -263,6 +263,22 @@ def await_handler():
     return handler
 
 
+def _missing_key_message(key):
+    """Build an actionable error message for a missing Ask key."""
+    return (
+        f"Ask: key not found: {key!r}\n"
+        f"\n"
+        f"To provide this key, use one of:\n"
+        f"  uv run doeff run --set {key}=VALUE ...          # inline key-value\n"
+        f"  uv run doeff run --env myapp.module.env ...     # merge an env dict/Program[dict]\n"
+        f"  uv run doeff run --interpreter myapp.interp ... # custom interpreter with env baked in\n"
+        f"  uv run doeff run -c '...' --set {key}=VALUE     # with inline code (heredoc supported)\n"
+        f"\n"
+        f"Use {{import.path}} in --set to import a symbol: --set {key}={{myapp.impl}}\n"
+        f"See: uv run doeff run --help"
+    )
+
+
 def lazy_ask(env=None):
     """Lazy Ask handler — replaces reader per SPEC-EFF-001.
 
@@ -338,7 +354,7 @@ def lazy_ask(env=None):
                     raw = effective_env[effect.key]
                 else:
                     return (yield ResumeThrow(
-                        k, KeyError(f"Ask: key not found: {effect.key!r}")
+                        k, KeyError(_missing_key_message(effect.key))
                     ))
 
                 # Plain value — resume directly
