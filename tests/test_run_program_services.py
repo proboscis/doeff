@@ -20,7 +20,7 @@ def test_run_program_uses_shared_services_for_string_inputs(
     tmp_path: Path, monkeypatch
 ) -> None:
     import doeff
-    from doeff.rust_vm import run as vm_run
+    from doeff_vm import run as vm_run
     from doeff.run import run_program
 
     pkg_dir = tmp_path / "sample_run_pkg"
@@ -29,7 +29,7 @@ def test_run_program_uses_shared_services_for_string_inputs(
     (pkg_dir / "app.py").write_text(
         """
 from doeff import Ask, Program, do
-from doeff.rust_vm import default_handlers, run as vm_run
+from doeff_vm import default_handlers, run as vm_run
 
 
 @do
@@ -88,7 +88,7 @@ def test_run_program_quiet_default_env_behavior_uses_shared_loader(
     tmp_path: Path, monkeypatch, caplog
 ) -> None:
     import doeff
-    from doeff.rust_vm import run as vm_run
+    from doeff_vm import run as vm_run
     from doeff.run import run_program
 
     monkeypatch.setenv("HOME", str(tmp_path))

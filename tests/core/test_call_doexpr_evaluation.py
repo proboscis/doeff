@@ -3,7 +3,7 @@ from __future__ import annotations
 import doeff_vm
 
 from doeff import Apply, Ask, Effect, Get, KleisliProgram, Program, Pure, default_handlers, do, run
-from doeff.program import ProgramBase
+from doeff import ProgramBase
 
 
 def _meta(fn):

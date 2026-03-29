@@ -5,8 +5,8 @@ from collections.abc import Callable, Mapping, MutableSequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from doeff import Effect, Pass, Resume, do
-from doeff.effects import ask, tell
+from doeff import EffectBase as Effect, Pass, Resume, do
+from doeff import Ask, Tell
 from doeff_test_target.effects import ReadFixtureValue, RecordFixtureEvent
 
 ProtocolHandler = Callable[[Any, Any], Any]
@@ -23,12 +23,12 @@ class ProductionFixtureRuntime:
         if effect.key in self.fallback_env:
             return (yield Resume(k, self.fallback_env[effect.key]))
 
-        value = yield ask(effect.key)
+        value = yield Ask(effect.key)
         return (yield Resume(k, value))
 
     def handle_record_event(self, effect: RecordFixtureEvent, k):
         self.recorded_events.append(effect.message)
-        yield tell(effect.message)
+        yield Tell(effect.message)
         return (yield Resume(k, None))
 
 

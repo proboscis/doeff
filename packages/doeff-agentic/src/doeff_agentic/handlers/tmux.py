@@ -34,7 +34,8 @@ from pathlib import Path
 from typing import Any
 
 from doeff import Effect, Pass, Resume, do
-from doeff.do import make_doeff_generator
+# REMOVED: make_doeff_generator no longer exists in doeff.do
+# from doeff.do import make_doeff_generator
 
 from ..effects import (
     AgenticAbortSession,

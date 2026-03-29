@@ -3,7 +3,7 @@
 import inspect
 
 from doeff import graph_snapshot
-from doeff._vendor import WGraph, WNode, WStep
+# REMOVED: from doeff._vendor import WGraph, WNode, WStep
 
 
 def test_build_graph_snapshot_does_not_use_hasattr() -> None:

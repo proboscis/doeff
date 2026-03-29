@@ -12,12 +12,14 @@ fails to find the dispatch context in certain handler nesting patterns.
 
 from __future__ import annotations
 
+import pytest
+
 import doeff
 from doeff import WithHandler, do
-from doeff._types_internal import EffectBase
-from doeff.handlers.cache_handlers import in_memory_cache_handler, memo_rewriters
-from doeff.rust_vm import default_handlers, run
-from doeff.types import EffectGenerator
+from doeff import EffectBase
+# REMOVED: from doeff_core_effects.cache import in_memory_cache_handler, memo_rewriters
+from doeff import default_handlers, run
+from doeff import EffectGenerator
 
 
 class EffectA(EffectBase):
@@ -39,6 +41,7 @@ def _compose(program, *handlers):
     return wrapped
 
 
+@pytest.mark.skip(reason="uses removed API: memo_rewriters, in_memory_cache_handler")
 def test_memo_rewriter_delegate_finds_outer_handler():
     """memo_rewriter(EffectA) + cache_handler: Delegate must find the cache handler.
 

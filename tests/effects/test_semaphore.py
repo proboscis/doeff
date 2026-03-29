@@ -17,7 +17,7 @@ from doeff import (
     do,
     run,
 )
-from doeff.effects import TaskCancelledError
+from doeff_core_effects.scheduler import TaskCancelledError
 
 def test_semaphore_public_handle_has_no_runtime_cleanup_surface() -> None:
     import doeff_vm

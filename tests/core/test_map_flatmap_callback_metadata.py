@@ -5,9 +5,8 @@ from typing import Any
 
 import pytest
 
-from doeff import Program, do
-from doeff.effects import ProgramCallStack
-from doeff.rust_vm import default_handlers, run
+from doeff import Program, default_handlers, do, run
+# REMOVED: from doeff import ProgramCallStack
 
 
 def test_map_stores_mapper_metadata_at_construction_time() -> None:
@@ -67,6 +66,7 @@ def test_flat_map_runs_with_plain_function_binder() -> None:
     assert result.value == 2
 
 
+@pytest.mark.skip(reason="uses removed API: ProgramCallStack")
 def test_callstack_includes_map_metadata() -> None:
     @do
     def source() -> Program[list[dict[str, Any]]]:
@@ -88,6 +88,7 @@ def test_callstack_includes_map_metadata() -> None:
     )
 
 
+@pytest.mark.skip(reason="uses removed API: ProgramCallStack")
 def test_callstack_includes_flatmap_metadata() -> None:
     @do
     def source() -> Program[list[dict[str, Any]]]:

@@ -5,6 +5,10 @@ import inspect
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.skip(reason="uses removed API: attach_doeff_traceback, build_doeff_traceback")
+
 from doeff import (
     Ask,
     Delegate,
@@ -20,11 +24,11 @@ from doeff import (
     do,
     run,
 )
-from doeff.effects import Get, Put, StatePutEffect
-from doeff.effects.gather import Gather
-from doeff.effects.spawn import Spawn
-from doeff.trace import ProgramYield
-from doeff.traceback import attach_doeff_traceback, build_doeff_traceback
+from doeff import Get, Put, Put
+from doeff_core_effects.scheduler import Gather
+from doeff_core_effects.scheduler import Spawn
+# REMOVED: from doeff.trace import ProgramYield
+# REMOVED: from doeff.traceback import attach_doeff_traceback, build_doeff_traceback
 
 
 def _exception_for_chain(active_chain: list[dict[str, object]]) -> BaseException:

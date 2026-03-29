@@ -48,7 +48,7 @@ genai_types = google_genai.types
 from pydantic import BaseModel
 
 from doeff import EffectGenerator, async_run, default_handlers, do
-from doeff.effects.cache import CacheGetEffect, CachePutEffect
+from doeff_core_effects.cache import CacheGetEffect, CachePut
 
 structured_llm_module = importlib.import_module("doeff_gemini.structured_llm")
 

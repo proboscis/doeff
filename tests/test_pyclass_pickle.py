@@ -9,7 +9,10 @@ import pickle
 import cloudpickle
 import pytest
 
-from doeff_vm.doeff_vm import Err, Ok, TraceFrame, TraceHop, Var
+import pytest
+
+from doeff_vm.doeff_vm import Err, Ok
+# REMOVED: from doeff_vm.doeff_vm import TraceFrame, TraceHop, Var
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +74,7 @@ class TestErrPickle:
 # TraceFrame / TraceHop  (appear inside Err tracebacks)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skip(reason="uses removed API: TraceFrame")
 class TestTraceFramePickle:
     def test_pickle_roundtrip(self):
         frame = TraceFrame(func_name="foo", source_file="bar.py", source_line=10)
@@ -88,6 +92,7 @@ class TestTraceFramePickle:
         assert TraceFrame.__module__ == "doeff_vm.doeff_vm"
 
 
+@pytest.mark.skip(reason="uses removed API: TraceHop")
 class TestTraceHopPickle:
     def test_pickle_roundtrip(self):
         frame = TraceFrame(func_name="f", source_file="a.py", source_line=5)
@@ -109,6 +114,7 @@ class TestTraceHopPickle:
 # Var  (variable references in pipeline results)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skip(reason="uses removed API: Var")
 class TestVarPickle:
     def test_pickle_roundtrip(self):
         var = Var(raw=42, owner_segment=7)

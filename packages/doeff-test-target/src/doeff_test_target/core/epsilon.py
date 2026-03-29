@@ -1,5 +1,5 @@
 from doeff import do
-from doeff.effects import ask
+from doeff import Ask
 
 
 def helper_epsilon():
@@ -8,5 +8,5 @@ def helper_epsilon():
 
 @do
 def epsilon():
-    yield ask("epsilon")
+    yield Ask("epsilon")
     return "epsilon"

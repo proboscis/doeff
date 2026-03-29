@@ -29,8 +29,8 @@ from doeff import (
     do,
     run,
 )
-from doeff.effects import slog
-from doeff.rust_vm import WithHandler, WithIntercept
+from doeff import slog
+from doeff_vm import WithHandler, WithObserve
 
 
 # -- Effects -----------------------------------------------------------------

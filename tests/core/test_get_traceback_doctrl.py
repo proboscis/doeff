@@ -2,16 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from doeff import Effect, Program, do
-from doeff._types_internal import EffectBase
-from doeff.rust_vm import (
-    Delegate,
+import pytest
+
+from doeff import Delegate, Effect, Program, default_handlers, do, run
+from doeff import EffectBase
+from doeff_vm import (
     GetTraceback,
     Pass,
     Resume,
     WithHandler,
-    default_handlers,
-    run,
 )
 
 

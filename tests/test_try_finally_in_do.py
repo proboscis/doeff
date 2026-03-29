@@ -25,7 +25,7 @@ from doeff import (
     do,
     run,
 )
-from doeff.types import EffectBase, EffectGenerator
+from doeff import EffectBase, EffectGenerator
 
 
 @dataclass(frozen=True, kw_only=True)

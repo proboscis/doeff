@@ -17,7 +17,8 @@ from doeff import (
     do,
     run,
 )
-from doeff.handlers import lazy_ask, reader, scheduler, state
+from doeff_core_effects.handlers import lazy_ask, reader, state
+from doeff_core_effects.scheduler import scheduled as scheduler
 
 ROOT = Path(__file__).resolve().parents[2]
 

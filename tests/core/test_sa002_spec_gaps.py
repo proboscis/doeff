@@ -84,7 +84,7 @@ def test_SA_002_G04_runresult_protocol_has_required_members() -> None:
 
 def test_SA_002_G05_default_handlers_and_presets_contract() -> None:
     from doeff import presets
-    from doeff.rust_vm import default_handlers
+    from doeff_vm import default_handlers
 
     handlers = default_handlers()
     names = [str(getattr(h, "name", repr(h))).lower() for h in handlers]

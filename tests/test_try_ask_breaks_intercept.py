@@ -36,7 +36,7 @@ from doeff import (
     do,
     run,
 )
-from doeff.effects import slog
+from doeff import slog
 
 
 @do

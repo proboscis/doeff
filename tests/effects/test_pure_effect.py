@@ -2,9 +2,8 @@
 
 import pytest
 
-from doeff import do
-from doeff.effects.pure import Pure, PureEffect
-from doeff.program import Program
+from doeff import Program, do
+from doeff_vm import Pure
 
 
 @pytest.mark.asyncio
@@ -68,7 +67,7 @@ async def test_pure_factory_function(parameterized_interpreter):
 
 @pytest.mark.asyncio
 async def test_pure_effect_in_composition(parameterized_interpreter):
-    from doeff.effects import Ask
+    from doeff import Ask
 
     @do
     def composed_program() -> Program[str]:

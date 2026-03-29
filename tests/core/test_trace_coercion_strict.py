@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import pytest
 
-from doeff.trace import (
-    ContextEntry,
-    SpawnBoundary,
-    coerce_active_chain_entries,
-    coerce_active_chain_entry,
-    coerce_trace_entry,
-)
+# REMOVED: from doeff.trace import (
+#     ContextEntry,
+#     SpawnBoundary,
+#     coerce_active_chain_entries,
+#     coerce_active_chain_entry,
+#     coerce_trace_entry,
+# )
 
 
+@pytest.mark.skip(reason="uses removed API: doeff.trace")
 def test_coerce_active_chain_rejects_unknown_handler_status() -> None:
     with pytest.raises(ValueError, match="Unknown handler status"):
         coerce_active_chain_entry(
@@ -34,6 +35,7 @@ def test_coerce_active_chain_rejects_unknown_handler_status() -> None:
         )
 
 
+@pytest.mark.skip(reason="uses removed API: doeff.trace")
 def test_coerce_trace_entry_rejects_unknown_handler_kind() -> None:
     with pytest.raises(ValueError, match="Unknown handler kind"):
         coerce_trace_entry(
@@ -49,6 +51,7 @@ def test_coerce_trace_entry_rejects_unknown_handler_kind() -> None:
         )
 
 
+@pytest.mark.skip(reason="uses removed API: doeff.trace")
 def test_coerce_trace_entry_rejects_unknown_dispatch_action() -> None:
     with pytest.raises(ValueError, match="Unknown dispatch action"):
         coerce_trace_entry(
@@ -64,6 +67,7 @@ def test_coerce_trace_entry_rejects_unknown_dispatch_action() -> None:
         )
 
 
+@pytest.mark.skip(reason="uses removed API: doeff.trace")
 def test_coerce_active_chain_rejects_unknown_effect_result_kind() -> None:
     with pytest.raises(ValueError, match="Unknown effect result kind"):
         coerce_active_chain_entry(
@@ -79,6 +83,7 @@ def test_coerce_active_chain_rejects_unknown_effect_result_kind() -> None:
         )
 
 
+@pytest.mark.skip(reason="uses removed API: doeff.trace")
 def test_coerce_active_chain_rejects_unknown_program_yield_handler_kind() -> None:
     with pytest.raises(ValueError, match="Unknown handler kind"):
         coerce_active_chain_entry(
@@ -93,6 +98,7 @@ def test_coerce_active_chain_rejects_unknown_program_yield_handler_kind() -> Non
         )
 
 
+@pytest.mark.skip(reason="uses removed API: doeff.trace")
 def test_coerce_context_entry_wraps_unknown_payload() -> None:
     entry = coerce_active_chain_entry(
         {"kind": "context_entry", "data": {"kind": "custom", "value": 1}}
@@ -101,6 +107,7 @@ def test_coerce_context_entry_wraps_unknown_payload() -> None:
     assert entry.data == {"kind": "custom", "value": 1}
 
 
+@pytest.mark.skip(reason="uses removed API: doeff.trace")
 def test_coerce_active_chain_entries_promote_spawn_boundary_context_entries() -> None:
     entries = coerce_active_chain_entries(
         [

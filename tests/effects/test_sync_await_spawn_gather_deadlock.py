@@ -32,7 +32,7 @@ from doeff import (
     do,
     run,
 )
-from doeff.effects import Await
+from doeff import Await
 
 TIMEOUT_SECONDS = 10
 

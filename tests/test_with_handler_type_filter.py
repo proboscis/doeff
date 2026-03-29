@@ -6,7 +6,7 @@ import pytest
 
 from doeff import Effect, EffectBase, async_run, do, run
 from doeff import rust_vm
-from doeff.rust_vm import WithHandler
+from doeff_vm import WithHandler
 
 
 @dataclass(frozen=True)

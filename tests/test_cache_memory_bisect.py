@@ -20,10 +20,10 @@ from doeff import (
     run,
     slog,
 )
-from doeff.effects import Await
-from doeff.effects.execution_context import GetExecutionContext
-from doeff.effects.result import Try
-from doeff.types import FrozenDict
+from doeff import Await
+from doeff_vm import GetExecutionContext
+from doeff import Try
+from doeff_core_effects.cache import FrozenDict
 
 TIMEOUT_SECONDS = 60
 

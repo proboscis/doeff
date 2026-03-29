@@ -41,7 +41,7 @@ from doeff import (
     do,
     slog,
 )
-from doeff.effects import CacheGetEffect, CachePutEffect
+from doeff import CacheGetEffect, CachePut
 from doeff.storage import SQLiteStorage
 
 # =============================================================================

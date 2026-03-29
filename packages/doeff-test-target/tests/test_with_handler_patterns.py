@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 from doeff import AskEffect, Effect, Pass, Resume, WithHandler, default_handlers, do, run
-from doeff.effects import ask
+from doeff import Ask
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -24,14 +24,14 @@ def _test_target_pipeline():
 
 @do
 def _nested_ask_program():
-    outer_value = yield ask("outer")
-    inner_value = yield ask("inner")
+    outer_value = yield Ask("outer")
+    inner_value = yield Ask("inner")
     return outer_value, inner_value
 
 
 @do
 def _single_ask_program(key: str):
-    return (yield ask(key))
+    return (yield Ask(key))
 
 
 def test_withhandler_basic_effect_pipeline_with_mock_handler():
