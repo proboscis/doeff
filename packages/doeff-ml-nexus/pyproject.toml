@@ -1,0 +1,37 @@
+[project]
+name = "doeff-ml-nexus"
+version = "0.1.0"
+description = "doeff + Hy: declarative Program[T]->T environment creation for remote ML execution"
+requires-python = ">=3.12"
+dependencies = [
+    "doeff",
+    "doeff-vm",
+    "doeff-hy",
+    "doeff-docker",
+    "hy>=1.0.0",
+    "cloudpickle>=3.0",
+]
+
+[tool.uv.sources]
+doeff = { workspace = true }
+doeff-vm = { workspace = true }
+doeff-hy = { workspace = true }
+doeff-docker = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/doeff_ml_nexus"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.ruff]
+line-length = 100
