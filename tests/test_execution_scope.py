@@ -16,7 +16,7 @@ from doeff import (
     do,
     run,
 )
-from doeff.effects.base import EffectBase
+from doeff_core_effects.effects import EffectBase
 
 
 def _with_handlers(program: Any, *handlers: Any) -> Any:

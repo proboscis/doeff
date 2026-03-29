@@ -5,8 +5,7 @@ from typing import Any
 import doeff_vm
 import pytest
 
-from doeff import Delegate, Effect, EffectBase, WithHandler, do
-from doeff.rust_vm import default_handlers, run
+from doeff import Delegate, Effect, EffectBase, WithHandler, default_handlers, do, run
 
 
 class _ProbeEffect(EffectBase):

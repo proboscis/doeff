@@ -13,7 +13,7 @@ from doeff_image.types import ImageResult
 from PIL import Image as PILImage
 
 from doeff import Delegate, Resume, do
-from doeff.effects.base import Effect
+from doeff_core_effects.effects import EffectBase as Effect
 from doeff_seedream.effects import SeedreamGenerate, SeedreamStructuredOutput
 from doeff_seedream.types import SeedreamImage, SeedreamImageEditResult
 

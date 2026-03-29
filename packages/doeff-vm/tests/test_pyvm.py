@@ -4,7 +4,7 @@ import doeff_vm
 import pytest
 
 from doeff import Effect, Program, do
-from doeff.effects import Ask, Get, Modify, Pure, Put, Tell
+from doeff import Ask, Get, Modify, Pure, Put, Tell
 
 
 def _with_handlers(program, *handlers):
@@ -1507,10 +1507,10 @@ class TestR9ClassifyYieldedCompleteness:
         # contains explicit classify_yielded arms for all scheduler effects.
         # We import from the test to verify the effect classes exist and have
         # the expected type names that classify_yielded should match.
-        from doeff.effects.gather import GatherEffect
+        from doeff_core_effects.scheduler import Gather
         from doeff.effects.promise import CompletePromiseEffect, FailPromiseEffect
         from doeff.effects.race import RaceEffect
-        from doeff.effects.spawn import SpawnEffect
+        from doeff_core_effects.scheduler import Spawn
 
         # Verify the type names that classify_yielded needs to match
         assert SpawnEffect.__name__ == "SpawnEffect"
@@ -1537,7 +1537,7 @@ class TestR9ClassifyYieldedCompleteness:
                 "-c",
                 """
 from doeff import do, Program
-from doeff.effects.gather import GatherEffect
+from doeff_core_effects.scheduler import Gather
 from doeff_vm import PyVM
 
 vm = PyVM()
@@ -1569,10 +1569,10 @@ print("OK" if result.is_err() else "WRONG_OK")
         so scheduler effect classes must not expose program-only conversion
         methods such as ``to_generator``.
         """
-        from doeff.effects.gather import GatherEffect
+        from doeff_core_effects.scheduler import Gather
         from doeff.effects.promise import CompletePromiseEffect, FailPromiseEffect
         from doeff.effects.race import RaceEffect
-        from doeff.effects.spawn import SpawnEffect
+        from doeff_core_effects.scheduler import Spawn
 
         for cls in [
             GatherEffect,
@@ -1712,7 +1712,7 @@ def test_tag_on_effect_base():
     """R13-I: EffectBase subclasses have Effect tag."""
     from doeff_vm import TAG_EFFECT
 
-    from doeff.effects import Get, Put
+    from doeff import Get, Put
 
     get = Get("key")
     assert get.tag == TAG_EFFECT
@@ -1893,7 +1893,7 @@ def test_scheduler_spawn_creates_task():
     """ISSUE-VM-003: SpawnEffect should create a task via the scheduler handler."""
     from doeff_vm import PyVM
 
-    from doeff.effects.spawn import SpawnEffect
+    from doeff_core_effects.scheduler import Spawn
 
     vm = PyVM()
 
@@ -1923,7 +1923,7 @@ def test_scheduler_gather_recognized_by_handler():
     """
     from doeff_vm import PyVM
 
-    from doeff.effects.gather import GatherEffect
+    from doeff_core_effects.scheduler import Gather
 
     vm = PyVM()
 

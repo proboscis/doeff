@@ -12,10 +12,10 @@ from doeff import (
     do,
     run,
 )
-from doeff.effects import TaskCancelledError
-from doeff.effects.spawn import Task
-from doeff.program import Program
-from doeff.types import EffectBase
+from doeff_core_effects.scheduler import TaskCancelledError
+from doeff_core_effects.scheduler import Task
+from doeff import Program
+from doeff import EffectBase
 
 
 def test_cancel_yields_effect() -> None:

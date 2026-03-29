@@ -7,8 +7,7 @@ from __future__ import annotations
 
 import doeff_vm
 
-from doeff import Ask, Get, WithHandler, do
-from doeff.rust_vm import default_handlers, run
+from doeff import Ask, Get, WithHandler, default_handlers, do, run
 
 
 def test_probe_withhandler_accepts_rust_handler_sentinel() -> None:

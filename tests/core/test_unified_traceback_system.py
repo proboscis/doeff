@@ -6,12 +6,13 @@ from dataclasses import dataclass
 import doeff_vm
 import pytest
 
-from doeff import Effect, Program, do
-from doeff._types_internal import EffectBase
-from doeff.effects import ProgramCallStack, Put
-from doeff.rust_vm import Delegate, Pass, Resume, WithHandler, default_handlers, run
-from doeff.trace import TraceDispatch
-from doeff.traceback import attach_doeff_traceback, get_attached_doeff_traceback
+from doeff import Delegate, Effect, Program, default_handlers, do, run
+from doeff import EffectBase
+# REMOVED: from doeff import ProgramCallStack
+from doeff import Put
+from doeff_vm import Pass, Resume, WithHandler
+# REMOVED: from doeff.trace import TraceDispatch
+# REMOVED: from doeff.traceback import attach_doeff_traceback, get_attached_doeff_traceback
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -24,6 +25,7 @@ class Explode(EffectBase):
     pass
 
 
+@pytest.mark.skip(reason="uses removed API: ProgramCallStack")
 def test_program_callstack_still_works_with_deprecation_warning() -> None:
     @do
     def body() -> Program[object]:
@@ -39,6 +41,7 @@ def test_program_callstack_still_works_with_deprecation_warning() -> None:
     assert isinstance(result.value, (tuple, list))
 
 
+@pytest.mark.skip(reason="uses removed API: attach_doeff_traceback")
 def test_exceptions_attach_doeff_traceback_and_rendering() -> None:
     @do
     def body() -> Program[int]:
@@ -73,6 +76,7 @@ def test_exceptions_attach_doeff_traceback_and_rendering() -> None:
     assert "RunResult status: err" in result.display(verbose=True)
 
 
+@pytest.mark.skip(reason="uses removed API: attach_doeff_traceback")
 def test_attach_doeff_traceback_preserves_existing_active_chain_entries() -> None:
     error = ValueError("boom")
     error.doeff_execution_context = type(
@@ -127,6 +131,7 @@ def test_attach_doeff_traceback_preserves_existing_active_chain_entries() -> Non
     assert "ExceptionSite" in active_chain_types
 
 
+@pytest.mark.skip(reason="uses removed API: attach_doeff_traceback")
 def test_raw_vm_run_attaches_doeff_traceback_to_direct_exception() -> None:
     vm = doeff_vm.PyVM()
 
@@ -174,6 +179,7 @@ def test_delegation_chain_routes_to_outer_handler() -> None:
     assert result.value == 7
 
 
+@pytest.mark.skip(reason="uses removed API: TraceDispatch")
 def test_handler_sources_and_exception_repr_for_thrown_handler_excludes_completed_dispatches() -> None:
     @do
     def crashing_handler(effect: Effect, _k):

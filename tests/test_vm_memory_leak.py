@@ -25,8 +25,8 @@ import pytest
 import doeff_vm
 
 from doeff import do, run, default_handlers
-from doeff.effects.base import EffectBase
-from doeff.rust_vm import WithHandler
+from doeff_core_effects.effects import EffectBase
+from doeff_vm import WithHandler
 
 
 # ---------------------------------------------------------------------------

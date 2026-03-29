@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import doeff_vm
 
+import pytest
+
+pytestmark = pytest.mark.skip(reason="uses removed API: WriteVar, AllocVar, ReadVar")
+
 from doeff import (
     AllocVar,
     Effect,
@@ -13,13 +17,13 @@ from doeff import (
     Tell,
     WithHandler,
     WithIntercept,
-    WriteVar,
-    WriteVarNonlocal,
+    # REMOVED: WriteVar,
+    # REMOVED: WriteVarNonlocal,
     default_handlers,
     do,
     run,
 )
-from doeff.types import EffectGenerator
+from doeff import EffectGenerator
 
 
 @do

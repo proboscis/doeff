@@ -146,7 +146,7 @@ class TestHandlerImmutabilityContract:
 
 class TestNoHandlerSwapContract:
     def test_no_normalize_async_handlers_function(self) -> None:
-        import doeff.rust_vm as rust_vm
+        import doeff_vm as rust_vm
 
         assert not hasattr(rust_vm, "_normalize_async_handlers"), (
             "_normalize_async_handlers still exists in rust_vm.py. "
@@ -154,7 +154,7 @@ class TestNoHandlerSwapContract:
         )
 
     def test_no_needs_threaded_async_driver_function(self) -> None:
-        import doeff.rust_vm as rust_vm
+        import doeff_vm as rust_vm
 
         assert not hasattr(rust_vm, "_needs_threaded_async_driver"), (
             "_needs_threaded_async_driver still exists in rust_vm.py. "
@@ -162,7 +162,7 @@ class TestNoHandlerSwapContract:
         )
 
     def test_no_run_async_call_in_thread_function(self) -> None:
-        import doeff.rust_vm as rust_vm
+        import doeff_vm as rust_vm
 
         assert not hasattr(rust_vm, "_run_async_call_in_thread"), (
             "_run_async_call_in_thread still exists in rust_vm.py. "

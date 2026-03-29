@@ -43,10 +43,10 @@ from doeff import (
     async_run,
     default_async_handlers,
     default_handlers,
+    Tell,
     do,
     run,
     slog,
-    tell,
 )
 
 HandlerFn = Callable[[Any, Any], Any]
@@ -113,7 +113,7 @@ class TestLogDisplayHandlers:
 
         @do
         def workflow():
-            yield tell("simple message")
+            yield Tell("simple message")
             return "done"
 
         result = _run_with_handler(workflow(), log_display_handlers())

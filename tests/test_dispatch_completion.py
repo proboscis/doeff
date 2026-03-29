@@ -5,7 +5,7 @@ from typing import Any
 
 from doeff import (
     CacheGet,
-    CachePut,
+    # REMOVED: CachePut,
     Delegate,
     Effect,
     EffectGenerator,
@@ -20,9 +20,9 @@ from doeff import (
     do,
     run,
 )
-from doeff.effects.base import EffectBase
-from doeff.effects.cache import CacheGetEffect, CachePutEffect
-from doeff.rust_vm import GetExecutionContext
+from doeff_core_effects.effects import EffectBase
+from doeff_core_effects.cache import CacheGetEffect, CachePut
+from doeff_vm import GetExecutionContext
 
 
 def _with_handlers(program: Any, *handlers: Any) -> Any:

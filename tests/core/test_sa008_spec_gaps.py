@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from doeff import run
-from doeff._types_internal import EffectBase
+from doeff import EffectBase
 
 
 ROOT = Path(__file__).resolve().parents[2]

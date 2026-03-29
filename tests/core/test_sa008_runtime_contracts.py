@@ -9,9 +9,8 @@ import asyncio
 
 import pytest
 
-from doeff import Await, Gather, Spawn, async_run, do
-from doeff.effects.state import Get, Modify, Put
-from doeff.rust_vm import default_async_handlers, default_handlers, run
+from doeff import Await, Gather, Modify, Spawn, async_run, default_async_handlers, default_handlers, do, run
+from doeff_core_effects.effects import Get, Put
 
 
 def test_sa008_run_store_seed_and_put_get_roundtrip() -> None:

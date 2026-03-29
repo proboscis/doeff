@@ -29,8 +29,8 @@ from doeff import (
     do,
     run,
 )
-from doeff.effects._program_types import ProgramLike
-from doeff.effects.base import Effect, EffectBase
+# REMOVED: from doeff.effects._program_types import ProgramLike
+from doeff_core_effects.effects import EffectBase, EffectBase
 
 
 @dataclass(frozen=True)

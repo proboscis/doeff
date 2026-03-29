@@ -23,7 +23,7 @@ from doeff_notify.handlers import (
 from doeff_notify.types import Channel, NotificationResult, Urgency
 
 from doeff import Effect, Pass, Resume, WithHandler, default_handlers, do, run
-from doeff.effects import WriterTellEffect
+from doeff import WriterTellEffect
 
 
 def _is_ok(run_result: Any) -> bool:

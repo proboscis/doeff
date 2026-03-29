@@ -29,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from doeff.rust_vm import RunResult as VmRunResult
+from doeff_vm import RunResult as VmRunResult
 
 
 def get_default_trace_dir() -> Path:
