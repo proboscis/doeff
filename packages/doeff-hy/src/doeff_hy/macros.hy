@@ -127,6 +127,24 @@
 
 
 ;; ---------------------------------------------------------------------------
+;; fnk — anonymous kleisli (lambda that returns DoExpr)
+;; ---------------------------------------------------------------------------
+
+(defmacro fnk [params #* body]
+  "Anonymous kleisli function. Like fn but returns a DoExpr.
+   Can perform effects with <- inside.
+   Requires (import doeff [do :as _doeff-do]) in the calling module.
+
+   (fnk [x] (* x 2))
+
+   With effects:
+   (fnk [acc x]
+     (<- enriched (enrich x))
+     (+ acc enriched))"
+  `(fn [~@params] ((_doeff_do (fn [] (do ~@body))))))
+
+
+;; ---------------------------------------------------------------------------
 ;; do! — monadic do block (inline effect sequencing)
 ;; ---------------------------------------------------------------------------
 
@@ -463,6 +481,69 @@
          (_Ok ~body-expr))
        (except [_e Exception]
          (_Err _e)))))
+
+
+;; ---------------------------------------------------------------------------
+;; traverse — applicative traverse as effect (CPS-converted Iterate)
+;; ---------------------------------------------------------------------------
+
+(defn _gen-traverse-body [bindings body-expr]
+  "Generate the CPS-converted body for traverse.
+   Finds Iterate bindings and nests Traverse effects.
+   Non-Iterate bindings become yield expressions inside the inner defk."
+  (if (not bindings)
+      body-expr
+      (let [bind (get bindings 0)
+            rest (cut bindings 1 None)
+            #(name expr) (_bind-parts bind)]
+        (if (_is-iterate expr)
+            ;; CPS: wrap rest + body into a defk, emit Traverse effect
+            ;; NOTE: does NOT yield — the outer <- / defk handles yield
+            (let [items (_iterate-arg expr)
+                  ;; Extract optional :label from (Iterate items :label "name")
+                  label (if (>= (len expr) 4) (get expr 3) None)
+                  inner-body (_gen-traverse-body rest body-expr)
+                  param (if (is name None)
+                            (hy.models.Symbol "_unused")
+                            name)]
+              (if (is-not label None)
+                  `(_doeff_traverse_Traverse
+                     (fn [~param] ((_doeff_do (fn [] (do ~inner-body)))))
+                     ~items
+                     :label ~label)
+                  `(_doeff_traverse_Traverse
+                     (fn [~param] ((_doeff_do (fn [] (do ~inner-body)))))
+                     ~items)))
+            ;; Non-Iterate: regular bind
+            (let [inner (_gen-traverse-body rest body-expr)]
+              (if (is name None)
+                  `(do (yield ~expr) ~inner)
+                  `(do (setv ~name (yield ~expr)) ~inner)))))))
+
+(defmacro traverse [#* forms]
+  "Applicative traverse — batch processing with handler-injected strategy.
+   Replaces do-list/do-list-try/do-try-list/do-dict-try.
+
+   Iterate bindings are CPS-converted into Traverse effects.
+   The handler decides execution order (sequential/parallel)
+   and failure strategy (fail-fast/run-all).
+
+   (traverse
+     (<- x (Iterate items))
+     (<- y (some-effect x))
+     [x y])
+
+   With label for per-stage history:
+   (traverse
+     (<- x (Iterate items :label \"extract\"))
+     (<- y (extract x))
+     y)
+
+   Requires:
+     (import doeff [do :as _doeff-do])
+     (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])"
+  (setv #(bindings body-expr) (_parse-do-body forms))
+  (_gen-traverse-body bindings body-expr))
 
 
 ;; ---------------------------------------------------------------------------
