@@ -4,7 +4,24 @@
 **Date:** 2026-04-01  
 **Context:** doeff-traverse package design
 
-## Problem
+## Fundamental Insight
+
+doeff-traverse solves a fundamental limitation of algebraic effects with single-shot continuations: **multi-shot computation patterns**.
+
+A single-shot continuation can only be resumed once. But many useful patterns require applying the same computation to multiple inputs:
+
+- **List traversal** — apply f to each of N items (need N "copies" of the continuation)
+- **Retry** — re-run the same body on failure (need fresh copy each attempt)
+- **Backtracking** — try alternative branches (need to re-enter from a choice point)
+- **Nondeterminism** — explore all possibilities (need unbounded copies)
+
+All of these are "multi-shot" patterns that a single-shot VM cannot express directly.
+
+**The solution: CPS macro expansion constructs Free Monad nodes where the continuation is a function (thunk), not a captured VM continuation.** Calling the thunk creates a fresh generator each time, bypassing single-shot. The handler (Free Monad interpreter) can call it as many times as needed.
+
+List traversal is the most common instance of this pattern. doeff-traverse is the first application, but the same CPS + thunk technique generalizes to retry, backtracking, and any computation that requires "re-entering" a body multiple times.
+
+## Practical Problem
 
 Batch LLM pipelines require three concerns that are currently hard-coded at call sites:
 
