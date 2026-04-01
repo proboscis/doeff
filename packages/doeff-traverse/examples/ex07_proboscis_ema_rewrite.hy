@@ -16,7 +16,7 @@
 ;;;
 ;;; This example uses mock effects for demonstration.
 
-(require doeff-hy.macros [defk <- traverse fnk])
+(require doeff-hy.macros [defk <- traverse fold])
 (import doeff [do :as _doeff-do])
 (import doeff [run EffectBase])
 (import doeff.program [WithHandler Resume Pass])
@@ -25,7 +25,7 @@
 (import doeff_core_effects.scheduler [scheduled])
 
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
-(import doeff_traverse.effects [Fail Reduce Zip Inspect])
+(import doeff_traverse.effects [Fail Reduce :as _doeff_traverse_Reduce Zip Inspect])
 (import doeff_traverse.handlers [sequential parallel fail-handler :as fail_handler])
 (import doeff_traverse.helpers [try-call :as try_call])
 
@@ -110,9 +110,9 @@
   ;; Stage 4: zip signals with prices (failure union)
   (<- paired (Zip signals prices))
 
-  ;; Stage 5: count successes via fold (Reduce only sees valid items)
+  ;; Stage 5: count successes via fold (only valid items are folded)
   (<- success-count
-    (Reduce (fnk [acc _] (+ acc 1)) 0 paired))
+    (fold paired :init 0 (+ acc 1)))
   ;; Total - success = failed
   (setv fail-count (- (len events) success-count))
 
