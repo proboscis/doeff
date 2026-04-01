@@ -547,6 +547,48 @@
 
 
 ;; ---------------------------------------------------------------------------
+;; fold — catamorphic reduction over a collection
+;; ---------------------------------------------------------------------------
+
+(defmacro fold [collection #* args]
+  "Fold over a collection with implicit `acc` and `it` bindings.
+
+   (fold collection :init 0 (+ acc it))
+
+   `acc` is the accumulator (starts at :init value).
+   `it` is the current item.
+   Body is a kleisli expression (can use <- for effects).
+
+   Expands to: (Reduce (fnk [acc it] body) init collection)
+
+   Requires:
+     (import doeff [do :as _doeff-do])
+     (import doeff_traverse.effects [Reduce :as _doeff_traverse_Reduce])"
+  ;; Parse args: find :init value, rest is body
+  (setv init None
+        body-forms [])
+  (setv i 0)
+  (while (< i (len args))
+    (setv arg (get args i))
+    (if (and (isinstance arg hy.models.Keyword)
+             (= (str arg) ":init"))
+        (do
+          (setv init (get args (+ i 1)))
+          (+= i 2))
+        (do
+          (.append body-forms arg)
+          (+= i 1))))
+  (when (is init None)
+    (raise (SyntaxError "fold requires :init value")))
+  (when (not body-forms)
+    (raise (SyntaxError "fold requires a body expression")))
+  `(_doeff_traverse_Reduce
+     (fn [acc it] ((_doeff_do (fn [] (do ~@body-forms)))))
+     ~init
+     ~collection))
+
+
+;; ---------------------------------------------------------------------------
 ;; Internal: ! (bang) inline bind expansion
 ;; ---------------------------------------------------------------------------
 
