@@ -18,7 +18,7 @@
 ;; <-:   bind (yield + assign) inside defk
 ;; traverse: macro that CPS-converts Iterate into Traverse effect
 ;; fnk:  anonymous kleisli (lambda returning DoExpr, can perform effects)
-(require doeff-hy.macros [defk <- traverse fnk])
+(require doeff-hy.macros [defk <- traverse fnk fold])
 (import doeff [do :as _doeff-do])
 (import doeff [run])
 (import doeff.program [WithHandler Resume Pass])
@@ -31,7 +31,7 @@
 ;; Fail: low-level failure effect. Handler decides what to do.
 ;; Reduce: fold over opaque collection. f is kleisli: (acc, item) -> DoExpr[acc]
 ;; Inspect: extract per-item value + history for post-hoc analysis
-(import doeff_traverse.effects [Fail Reduce Inspect])
+(import doeff_traverse.effects [Fail Reduce :as _doeff_traverse_Reduce Inspect])
 ;; sequential: Traverse handler — runs items one by one, isolates per-item failure
 ;; fail_handler: converts unhandled Fail into Python exception
 (import doeff_traverse.handlers [sequential fail-handler :as fail_handler])
@@ -91,11 +91,11 @@
       result))
 
   ;; Stage 2: compute mean via fold
-  ;; Reduce folds (acc, item) -> acc over valid items only
-  ;; fnk: anonymous kleisli — accumulates (total, count) tuple
+  ;; fold: implicit `acc` (accumulator) and `it` (current item)
+  ;; Accumulates (total, count) tuple, only valid items are folded
   (<- #(total count)
-    (Reduce (fnk [acc x] #((+ (get acc 0) x) (+ (get acc 1) 1)))
-            #(0 0) features))
+    (fold features :init #(0 0)
+      #((+ (get acc 0) it) (+ (get acc 1) 1))))
   (setv mean (if (> count 0) (/ total count) 0))
 
   ;; Stage 3: normalize each feature using mean
