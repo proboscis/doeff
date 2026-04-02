@@ -290,9 +290,9 @@ def lazy_ask(env=None):
     2. Base env (passed to lazy_ask())
     3. KeyError if not found
 
-    If the resolved value is a Program (Expand node from @do), it is
-    evaluated lazily with caching. Concurrent asks for the same key
-    coordinate via per-key semaphore.
+    If the resolved value is a Program (any DoExpr node — Expand, Perform,
+    Pure, etc.), it is evaluated lazily with caching. Concurrent asks for
+    the same key coordinate via per-key semaphore.
 
     Local creates a new handler scope with merged env/overrides and an
     isolated scope cache for override-dependent entries.
@@ -309,6 +309,7 @@ def lazy_ask(env=None):
         env = {}
 
     from doeff.program import Expand, ResumeThrow, WithHandler as WH
+    from doeff import Program
     from doeff_core_effects.scheduler import (
         CreateSemaphore, AcquireSemaphore, ReleaseSemaphore,
     )
@@ -358,7 +359,7 @@ def lazy_ask(env=None):
                     ))
 
                 # Plain value — resume directly
-                if not isinstance(raw, Expand):
+                if not isinstance(raw, Program):
                     return (yield Resume(k, raw))
 
                 # Cache lookup (scope then shared)
