@@ -120,3 +120,57 @@ class Inspect(EffectBase):
 
     def __repr__(self):
         return "Inspect(...)"
+
+
+class Skip(EffectBase):
+    """Internal: guard (mzero) for comprehension When clauses.
+
+    Emitted by the for/do macro when a When predicate is falsy.
+    Caught by the Traverse handler — marks the item as skipped.
+    Not intended for direct use.
+    """
+
+    def __repr__(self):
+        return "Skip()"
+
+
+class SortBy(EffectBase):
+    """Sort a Collection by a key function.
+
+    key is a plain function: item_value -> comparable.
+    reverse=True for descending order.
+
+    Args:
+        key: function, value -> comparable
+        collection: a Collection or iterable
+        reverse: sort descending (default False)
+    """
+
+    def __init__(self, key, collection, reverse=False):
+        super().__init__()
+        self.key = key
+        self.collection = collection
+        self.reverse = reverse
+
+    def __repr__(self):
+        return f"SortBy({self.key!r}, ..., reverse={self.reverse})"
+
+
+class Take(EffectBase):
+    """Take the first n items from a Collection.
+
+    Only valid (non-failed/non-skipped) items are counted.
+    Failed items are carried forward unchanged.
+
+    Args:
+        n: number of items to take
+        collection: a Collection or iterable
+    """
+
+    def __init__(self, n, collection):
+        super().__init__()
+        self.n = n
+        self.collection = collection
+
+    def __repr__(self):
+        return f"Take({self.n}, ...)"

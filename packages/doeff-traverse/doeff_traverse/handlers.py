@@ -8,7 +8,10 @@ normalize_to_none(): Fail handler — resumes with None at fail site.
 from doeff import do
 from doeff.program import Resume, Pass, ResumeThrow
 
-from doeff_traverse.effects import Fail, Traverse, Reduce, Zip, Inspect
+from doeff_traverse.effects import Fail, Traverse, Reduce, Zip, Inspect, Skip, SortBy, Take
+
+# Sentinel for Skip — traverse handler checks identity
+_SKIPPED = object()
 from doeff_traverse.collection import Collection, ItemResult, HistoryEntry
 
 
@@ -30,6 +33,9 @@ def sequential():
 
     @do
     def handler(effect, k):
+        if isinstance(effect, Skip):
+            return _SKIPPED
+
         if isinstance(effect, Traverse):
             inner_hs = yield get_inner_handlers(k)
             results = []
@@ -65,11 +71,19 @@ def sequential():
 
                 result = yield attempt()
                 if isinstance(result, Ok):
-                    results.append(ItemResult(
-                        index=item.index,
-                        value=result.value,
-                        history=item.history + [HistoryEntry(stage=effect.label, event="ok")],
-                    ))
+                    if result.value is _SKIPPED:
+                        results.append(ItemResult(
+                            index=item.index,
+                            value=item.value,
+                            failed=True,
+                            history=item.history + [HistoryEntry(stage=effect.label, event="skipped")],
+                        ))
+                    else:
+                        results.append(ItemResult(
+                            index=item.index,
+                            value=result.value,
+                            history=item.history + [HistoryEntry(stage=effect.label, event="ok")],
+                        ))
                 elif isinstance(result, Err):
                     results.append(ItemResult(
                         index=item.index,
@@ -122,6 +136,35 @@ def sequential():
             col = Collection.from_iterable(effect.collection)
             return (yield Resume(k, col.all_items))
 
+        if isinstance(effect, SortBy):
+            col = Collection.from_iterable(effect.collection)
+            valid = list(col.valid_items)
+            failed = list(col.failed_items)
+            valid.sort(key=lambda item: effect.key(item.value), reverse=effect.reverse)
+            # Build new items with fresh indices (don't mutate originals)
+            results = [
+                ItemResult(index=i, value=item.value, failed=item.failed, history=list(item.history))
+                for i, item in enumerate(valid + failed)
+            ]
+            return (yield Resume(k, Collection(results)))
+
+        if isinstance(effect, Take):
+            col = Collection.from_iterable(effect.collection)
+            taken = []
+            count = 0
+            for item in col.all_items:
+                if item.failed:
+                    taken.append(item)
+                elif count < effect.n:
+                    taken.append(item)
+                    count += 1
+            # Build new items with fresh indices
+            results = [
+                ItemResult(index=i, value=item.value, failed=item.failed, history=list(item.history))
+                for i, item in enumerate(taken)
+            ]
+            return (yield Resume(k, Collection(results)))
+
         yield Pass(effect, k)
 
     return handler
@@ -146,6 +189,9 @@ def parallel(concurrency=10):
 
     @do
     def handler(effect, k):
+        if isinstance(effect, Skip):
+            return _SKIPPED
+
         if isinstance(effect, Traverse):
             inner_hs = yield get_inner_handlers(k)
 
@@ -199,11 +245,19 @@ def parallel(concurrency=10):
             results = list(carry_forward)
             for item, result in task_results:
                 if isinstance(result, Ok):
-                    results.append(ItemResult(
-                        index=item.index,
-                        value=result.value,
-                        history=item.history + [HistoryEntry(stage=effect.label, event="ok")],
-                    ))
+                    if result.value is _SKIPPED:
+                        results.append(ItemResult(
+                            index=item.index,
+                            value=item.value,
+                            failed=True,
+                            history=item.history + [HistoryEntry(stage=effect.label, event="skipped")],
+                        ))
+                    else:
+                        results.append(ItemResult(
+                            index=item.index,
+                            value=result.value,
+                            history=item.history + [HistoryEntry(stage=effect.label, event="ok")],
+                        ))
                 elif isinstance(result, Err):
                     results.append(ItemResult(
                         index=item.index,
@@ -254,6 +308,33 @@ def parallel(concurrency=10):
         if isinstance(effect, Inspect):
             col = Collection.from_iterable(effect.collection)
             return (yield Resume(k, col.all_items))
+
+        if isinstance(effect, SortBy):
+            col = Collection.from_iterable(effect.collection)
+            valid = list(col.valid_items)
+            failed = list(col.failed_items)
+            valid.sort(key=lambda item: effect.key(item.value), reverse=effect.reverse)
+            results = [
+                ItemResult(index=i, value=item.value, failed=item.failed, history=list(item.history))
+                for i, item in enumerate(valid + failed)
+            ]
+            return (yield Resume(k, Collection(results)))
+
+        if isinstance(effect, Take):
+            col = Collection.from_iterable(effect.collection)
+            taken = []
+            count = 0
+            for item in col.all_items:
+                if item.failed:
+                    taken.append(item)
+                elif count < effect.n:
+                    taken.append(item)
+                    count += 1
+            results = [
+                ItemResult(index=i, value=item.value, failed=item.failed, history=list(item.history))
+                for i, item in enumerate(taken)
+            ]
+            return (yield Resume(k, Collection(results)))
 
         yield Pass(effect, k)
 
