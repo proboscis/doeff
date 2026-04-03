@@ -2,7 +2,8 @@
 ;;;
 ;;; Usage:
 ;;;   (require doeff-hy.macros [do! defk deff <- ! defprogram
-;;;                             do-list do-list-try do-try-list do-dict-try do-try])
+;;;                             do-list do-list-try do-try-list do-dict-try do-try
+;;;                             traverse for/do fold])
 ;;;   (import doeff [do :as _doeff-do])
 ;;;
 ;;; Core effects are imported from doeff_core_effects:
@@ -221,10 +222,16 @@
        (= (str (get form 0)) "<-")))
 
 (defn _is-iterate [expr]
-  "Check if expr is (Iterate ...)."
+  "Check if expr is (Iterate ...) or (From ...)."
   (and (isinstance expr hy.models.Expression)
        (> (len expr) 0)
-       (= (str (get expr 0)) "Iterate")))
+       (in (str (get expr 0)) #{"Iterate" "From"})))
+
+(defn _is-when [form]
+  "Check if form is (When ...)."
+  (and (isinstance form hy.models.Expression)
+       (> (len form) 0)
+       (= (str (get form 0)) "When")))
 
 (defn _is-try [expr]
   "Check if expr is (Try ...)."
@@ -352,13 +359,14 @@
 
 (defn _parse-do-body [forms]
   "Split forms into (bindings, body-expr).
-   All (<- ...) forms are bindings. Last non-binding form is body."
+   All (<- ...) and (When ...) forms are bindings. Last non-binding form is body."
   (setv bindings []
         body-expr None)
   (for [form forms]
-    (if (_is-bind form)
-        (.append bindings form)
-        (setv body-expr form)))
+    (cond
+      (_is-bind form) (.append bindings form)
+      (_is-when form) (.append bindings form)
+      True (setv body-expr form)))
   (when (is body-expr None)
     (raise (SyntaxError "do-* block must have a body expression")))
   #(bindings body-expr))
@@ -488,60 +496,102 @@
 ;; ---------------------------------------------------------------------------
 
 (defn _gen-traverse-body [bindings body-expr]
-  "Generate the CPS-converted body for traverse.
-   Finds Iterate bindings and nests Traverse effects.
+  "Generate the CPS-converted body for traverse/for-do.
+   Finds Iterate/From bindings and nests Traverse effects.
+   Recognizes (When pred) as a guard — emits Skip when falsy.
    Non-Iterate bindings become yield expressions inside the inner defk."
   (if (not bindings)
       body-expr
       (let [bind (get bindings 0)
-            rest (cut bindings 1 None)
-            #(name expr) (_bind-parts bind)]
-        (if (_is-iterate expr)
-            ;; CPS: wrap rest + body into a defk, emit Traverse effect
-            ;; NOTE: does NOT yield — the outer <- / defk handles yield
-            (let [items (_iterate-arg expr)
-                  ;; Extract optional :label from (Iterate items :label "name")
-                  label (if (>= (len expr) 4) (get expr 3) None)
-                  inner-body (_gen-traverse-body rest body-expr)
-                  param (if (is name None)
-                            (hy.models.Symbol "_unused")
-                            name)]
-              (if (is-not label None)
-                  `(_doeff_traverse_Traverse
-                     (fn [~param] ((_doeff_do (fn [] (do ~inner-body)))))
-                     ~items
-                     :label ~label)
-                  `(_doeff_traverse_Traverse
-                     (fn [~param] ((_doeff_do (fn [] (do ~inner-body)))))
-                     ~items)))
-            ;; Non-Iterate: regular bind
-            (let [inner (_gen-traverse-body rest body-expr)]
-              (if (is name None)
-                  `(do (yield ~expr) ~inner)
-                  `(do (setv ~name (yield ~expr)) ~inner)))))))
+            rest (cut bindings 1 None)]
+        ;; Check if this binding is a (When ...) guard
+        (if (_is-when bind)
+            (let [pred-expr (get bind 1)
+                  ;; Expand bangs: (When (! (validate x))) →
+                  ;; [(<- _bang_N (validate x))] + rewritten-pred = _bang_N
+                  #(bang-bindings rewritten-pred) (_expand-bangs pred-expr)]
+              (if bang-bindings
+                  ;; Splice bang binds before rewritten When, recurse
+                  (let [new-when (hy.models.Expression
+                                   [(hy.models.Symbol "When") rewritten-pred])
+                        new-bindings (+ (list bang-bindings) [new-when] (list rest))]
+                    (_gen-traverse-body new-bindings body-expr))
+                  ;; No bangs — emit guard directly
+                  (let [inner (_gen-traverse-body rest body-expr)]
+                    `(do
+                       (when (not ~rewritten-pred)
+                         (yield (_doeff_traverse_Skip)))
+                       ~inner))))
+            ;; Regular binding
+            (let [#(name expr) (_bind-parts bind)]
+              (if (_is-iterate expr)
+                  ;; CPS: wrap rest + body into a defk, emit Traverse effect
+                  ;; NOTE: does NOT yield — the outer <- / defk handles yield
+                  (let [items (_iterate-arg expr)
+                        ;; Extract optional :label from (Iterate items :label "name")
+                        label (if (>= (len expr) 4) (get expr 3) None)
+                        inner-body (_gen-traverse-body rest body-expr)
+                        param (if (is name None)
+                                  (hy.models.Symbol "_unused")
+                                  name)]
+                    (if (is-not label None)
+                        `(_doeff_traverse_Traverse
+                           (fn [~param] ((_doeff_do (fn [] (do ~inner-body)))))
+                           ~items
+                           :label ~label)
+                        `(_doeff_traverse_Traverse
+                           (fn [~param] ((_doeff_do (fn [] (do ~inner-body)))))
+                           ~items)))
+                  ;; Non-Iterate: regular bind
+                  (let [inner (_gen-traverse-body rest body-expr)]
+                    (if (is name None)
+                        `(do (yield ~expr) ~inner)
+                        `(do (setv ~name (yield ~expr)) ~inner)))))))))
 
 (defmacro traverse [#* forms]
   "Applicative traverse — batch processing with handler-injected strategy.
-   Replaces do-list/do-list-try/do-try-list/do-dict-try.
+   Alias for for/do. Prefer for/do with From in new code.
 
-   Iterate bindings are CPS-converted into Traverse effects.
-   The handler decides execution order (sequential/parallel)
-   and failure strategy (fail-fast/run-all).
-
-   (traverse
-     (<- x (Iterate items))
-     (<- y (some-effect x))
-     [x y])
-
-   With label for per-stage history:
    (traverse
      (<- x (Iterate items :label \"extract\"))
-     (<- y (extract x))
-     y)
+     (<- y (some-effect x))
+     [x y])
 
    Requires:
      (import doeff [do :as _doeff-do])
      (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])"
+  (setv #(bindings body-expr) (_parse-do-body forms))
+  (_gen-traverse-body bindings body-expr))
+
+
+(defmacro for/do [#* forms]
+  "Collection comprehension — From/When/bind with handler-injected strategy.
+
+   From: generator bind (like SQL FROM / Haskell <- on list)
+   When: guard (like SQL WHERE / Haskell guard)
+   <-:  effect bind (kleisli)
+   Last expression: yield value (like SQL SELECT / Haskell return)
+
+   (for/do
+     (<- item (From items :label \"extract\"))
+     (<- ok (validate item))
+     (When ok)
+     (<- result (process item))
+     result)
+
+   Multiple generators (nested):
+   (for/do
+     (<- item (From items :label \"outer\"))
+     (When (active? item))
+     (<- sub (From (children item) :label \"inner\"))
+     (When (valid? sub))
+     (<- result (process item sub))
+     result)
+
+   Requires:
+     (import doeff [do :as _doeff-do])
+     (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
+     (import doeff_traverse [Skip :as _doeff_traverse_Skip])"
   (setv #(bindings body-expr) (_parse-do-body forms))
   (_gen-traverse-body bindings body-expr))
 
@@ -614,13 +664,25 @@
        (isinstance (get form 0) hy.models.Symbol)
        (= (str (get form 0)) "let")))
 
+(defn _is-comprehension [form]
+  "Check if form is (for/do ...), (traverse ...), or (fold ...) — these have
+   their own scope and handle bangs internally."
+  (and (isinstance form hy.models.Expression)
+       (> (len form) 0)
+       (isinstance (get form 0) hy.models.Symbol)
+       (in (str (get form 0)) #{"for/do" "traverse" "fold"})))
+
 (defn _expand-bangs [form]
   "Walk an expression, extracting all (! expr) into (<- tmp expr) bindings.
    Returns #(bindings rewritten-form).
 
    let forms are handled specially: bang bindings from within a let body
    are kept inside the let (not hoisted out), so that let-bound variables
-   remain in scope."
+   remain in scope.
+
+   Comprehension forms (for/do, traverse, fold) are opaque — bangs inside
+   them are NOT hoisted, because those macros introduce their own scope
+   (From bindings) and will expand bangs themselves."
   (setv bindings [])
 
   (defn walk [node]
@@ -643,6 +705,10 @@
             (.append new-body rewritten))
           (hy.models.Expression
             [(get node 0) let-bindings #* new-body]))
+
+      ;; Don't walk into comprehension forms — they have their own scope
+      (_is-comprehension node)
+        node
 
       (isinstance node hy.models.Expression)
         (hy.models.Expression (lfor child node (walk child)))

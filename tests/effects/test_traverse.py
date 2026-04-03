@@ -1,4 +1,4 @@
-"""Tests for doeff-traverse: Fail, Traverse, Reduce, Zip, Inspect."""
+"""Tests for doeff-traverse: Fail, Traverse, Reduce, Zip, Inspect, Skip, SortBy, Take."""
 
 from doeff import do, run
 from doeff.program import WithHandler
@@ -6,7 +6,7 @@ from doeff.program import WithHandler
 from doeff_core_effects.handlers import try_handler
 from doeff_core_effects.scheduler import scheduled
 
-from doeff_traverse.effects import Fail, Traverse, Reduce, Zip, Inspect
+from doeff_traverse.effects import Fail, Traverse, Reduce, Zip, Inspect, Skip, SortBy, Take
 from doeff_traverse.handlers import sequential, normalize_to_none, fail_handler
 from doeff_traverse.helpers import try_call
 from doeff_traverse.collection import Collection
@@ -386,6 +386,229 @@ class TestComposition:
         # squares: [1, 4, 9, 16], mean: 7.5
         # centered: [1-7.5, 4-7.5, 9-7.5, 16-7.5] = [-6.5, -3.5, 1.5, 8.5]
         assert col.valid_values == [-6.5, -3.5, 1.5, 8.5]
+
+
+# ---------------------------------------------------------------------------
+# Skip (When guard)
+# ---------------------------------------------------------------------------
+
+class TestSkip:
+    def test_skip_filters_items(self):
+        """Skip inside Traverse marks items as failed with 'skipped' event."""
+        @do
+        def process(x):
+            if x % 2 == 0:
+                yield Skip()
+            if False:
+                yield
+            return x * 10
+
+        @do
+        def program():
+            return (yield Traverse(process, [1, 2, 3, 4, 5], label="filter"))
+
+        col = run_with(program())
+        assert col.valid_values == [10, 30, 50]
+        assert len(col.failed_items) == 2
+        # Check history events
+        for item in col.failed_items:
+            assert item.history[-1].event == "skipped"
+
+    def test_skip_with_chained_traverse(self):
+        """Skipped items are carried forward and skipped in subsequent Traverse."""
+        @do
+        def filter_even(x):
+            if x % 2 == 0:
+                yield Skip()
+            if False:
+                yield
+            return x
+
+        @do
+        def double(x):
+            if False:
+                yield
+            return x * 2
+
+        @do
+        def program():
+            filtered = yield Traverse(filter_even, [1, 2, 3, 4, 5])
+            doubled = yield Traverse(double, filtered)
+            return doubled
+
+        col = run_with(program())
+        assert col.valid_values == [2, 6, 10]
+        assert len(col.failed_items) == 2
+
+    def test_skip_does_not_interact_with_fail_handler(self):
+        """Skip is not caught by Fail handlers — normalize_to_none doesn't affect it."""
+        @do
+        def process(x):
+            if x == 2:
+                yield Skip()
+            if False:
+                yield
+            return x * 10
+
+        @do
+        def program():
+            return (yield Traverse(process, [1, 2, 3]))
+
+        col = run_with(program(), handlers=[normalize_to_none])
+        assert col.valid_values == [10, 30]
+        assert len(col.failed_items) == 1
+        assert col.failed_items[0].history[-1].event == "skipped"
+
+    def test_skip_preserves_original_value(self):
+        """Skipped items retain their original value (not transformed)."""
+        @do
+        def process(x):
+            if x > 3:
+                yield Skip()
+            if False:
+                yield
+            return x * 100
+
+        @do
+        def program():
+            return (yield Traverse(process, [1, 2, 3, 4, 5]))
+
+        col = run_with(program())
+        assert col.valid_values == [100, 200, 300]
+        skipped_values = [item.value for item in col.failed_items]
+        assert sorted(skipped_values) == [4, 5]
+
+
+# ---------------------------------------------------------------------------
+# SortBy
+# ---------------------------------------------------------------------------
+
+class TestSortBy:
+    def test_sort_ascending(self):
+        """SortBy sorts valid items by key."""
+        @do
+        def program():
+            col = yield Traverse(lambda x: _pure(x), [3, 1, 4, 1, 5])
+            return (yield SortBy(lambda x: x, col))
+
+        col = run_with(program())
+        assert col.valid_values == [1, 1, 3, 4, 5]
+
+    def test_sort_descending(self):
+        """SortBy with reverse=True sorts descending."""
+        @do
+        def program():
+            col = yield Traverse(lambda x: _pure(x), [3, 1, 4, 1, 5])
+            return (yield SortBy(lambda x: x, col, reverse=True))
+
+        col = run_with(program())
+        assert col.valid_values == [5, 4, 3, 1, 1]
+
+    def test_sort_with_failed_items(self):
+        """SortBy keeps failed items, sorts only valid."""
+        @do
+        def process(x):
+            if x == 2:
+                raise ValueError("bad")
+            if False:
+                yield
+            return x
+
+        @do
+        def program():
+            col = yield Traverse(process, [3, 2, 1])
+            return (yield SortBy(lambda x: x, col))
+
+        col = run_with(program())
+        assert col.valid_values == [1, 3]
+        assert len(col.failed_items) == 1
+
+    def test_sort_by_key(self):
+        """SortBy with a key function."""
+        @do
+        def program():
+            col = yield Traverse(lambda x: _pure(x), ["banana", "apple", "cherry"])
+            return (yield SortBy(len, col))
+
+        col = run_with(program())
+        assert col.valid_values == ["apple", "banana", "cherry"]
+
+
+# ---------------------------------------------------------------------------
+# Take
+# ---------------------------------------------------------------------------
+
+class TestTake:
+    def test_take_n(self):
+        """Take returns first n valid items."""
+        @do
+        def program():
+            col = yield Traverse(lambda x: _pure(x), [10, 20, 30, 40, 50])
+            return (yield Take(3, col))
+
+        col = run_with(program())
+        assert col.valid_values == [10, 20, 30]
+        assert len(col) == 3
+
+    def test_take_more_than_available(self):
+        """Take with n > len returns all items."""
+        @do
+        def program():
+            col = yield Traverse(lambda x: _pure(x), [1, 2])
+            return (yield Take(10, col))
+
+        col = run_with(program())
+        assert col.valid_values == [1, 2]
+
+    def test_take_with_failed_items(self):
+        """Take counts only valid items; failed are carried forward."""
+        @do
+        def process(x):
+            if x == 2:
+                raise ValueError("bad")
+            if False:
+                yield
+            return x
+
+        @do
+        def program():
+            col = yield Traverse(process, [1, 2, 3, 4, 5])
+            return (yield Take(2, col))
+
+        col = run_with(program())
+        # Takes 2 valid items (1, 3) + carries forward 1 failed (2)
+        assert col.valid_values == [1, 3]
+        assert len(col.failed_items) == 1
+
+    def test_take_zero(self):
+        """Take(0) returns only failed items."""
+        @do
+        def process(x):
+            if x == 2:
+                raise ValueError("bad")
+            if False:
+                yield
+            return x
+
+        @do
+        def program():
+            col = yield Traverse(process, [1, 2, 3])
+            return (yield Take(0, col))
+
+        col = run_with(program())
+        assert col.valid_values == []
+        assert len(col.failed_items) == 1
+
+    def test_sort_then_take(self):
+        """SortBy + Take composes: top-N pattern."""
+        @do
+        def program():
+            col = yield Traverse(lambda x: _pure(x), [5, 3, 8, 1, 9, 2])
+            sorted_col = yield SortBy(lambda x: x, col, reverse=True)
+            return (yield Take(3, sorted_col))
+
+        col = run_with(program())
+        assert col.valid_values == [9, 8, 5]
 
 
 # ---------------------------------------------------------------------------
