@@ -72,17 +72,6 @@ impl VM {
                         self.mode = Mode::Eval(doctrl);
                         StepResult::Continue
                     }
-                    StreamStep::TailInstruction(doctrl) => {
-                        // Tail call — pop stream frame, then evaluate.
-                        // Transfer/TransferThrow already pop the top frame,
-                        // so skip the pop here to avoid double-popping.
-                        match &doctrl {
-                            DoCtrl::Transfer { .. } | DoCtrl::TransferThrow { .. } => {}
-                            _ => { seg.frames.pop(); }
-                        }
-                        self.mode = Mode::Eval(doctrl);
-                        StepResult::Continue
-                    }
                     StreamStep::Done(value) => {
                         seg.frames.pop();
                         self.mode = Mode::Send(value);
@@ -158,14 +147,6 @@ impl VM {
                 };
                 match stream.throw(error) {
                     StreamStep::Instruction(doctrl) => {
-                        self.mode = Mode::Eval(doctrl);
-                        StepResult::Continue
-                    }
-                    StreamStep::TailInstruction(doctrl) => {
-                        match &doctrl {
-                            DoCtrl::Transfer { .. } | DoCtrl::TransferThrow { .. } => {}
-                            _ => { seg.frames.pop(); }
-                        }
                         self.mode = Mode::Eval(doctrl);
                         StepResult::Continue
                     }
@@ -370,6 +351,25 @@ impl VM {
                     .map(|entry| Value::Callable(entry.handler))
                     .collect();
                 self.mode = Mode::Send(Value::List(handlers));
+                StepResult::Continue
+            }
+
+            DoCtrl::TailEval { expr } => {
+                // Pop the current stream frame (tail-call semantics),
+                // then evaluate the inner expression.
+                // Transfer/TransferThrow already pop the top frame themselves,
+                // so skip the pop for those to avoid double-popping.
+                match expr.as_ref() {
+                    DoCtrl::Transfer { .. } | DoCtrl::TransferThrow { .. } => {}
+                    _ => {
+                        if let Some(seg_id) = self.current_segment {
+                            if let Some(seg) = self.segments.get_mut(seg_id) {
+                                seg.frames.pop();
+                            }
+                        }
+                    }
+                }
+                self.mode = Mode::Eval(*expr);
                 StepResult::Continue
             }
         }

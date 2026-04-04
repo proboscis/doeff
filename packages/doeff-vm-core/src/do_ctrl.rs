@@ -93,6 +93,11 @@ pub enum DoCtrl {
     /// Non-consuming — does not take ownership of the continuation.
     GetHandlers { from: crate::ids::FiberId },
 
+    /// Tail-call: pop the current stream frame, then evaluate `expr`.
+    /// Used by handler generators that yield an instruction they don't
+    /// need a return value from (e.g., scheduler's `yield TailEval(pick_next())`).
+    TailEval { expr: Box<DoCtrl> },
+
     // --- Heap (OCaml ref cells) ---
 
     /// Allocate a mutable ref cell with initial value.
