@@ -267,16 +267,7 @@ impl PythonGeneratorStream {
     ///
     /// classify_python_object handles all cases:
     /// DoExpr (has tag), EffectBase (implicit Perform), or error.
-    /// TailEval(expr) → TailInstruction (pop frame before evaluating).
     fn classify_yielded(&self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> StreamStep {
-        // Check for TailEval wrapper first
-        if let Ok(te) = obj.downcast::<crate::do_expr::PyTailEval>() {
-            let inner = te.get().expr.bind(py);
-            match classify_python_object(py, &inner) {
-                Ok(doctrl) => return StreamStep::TailInstruction(doctrl),
-                Err(msg) => return StreamStep::Error(Value::String(msg)),
-            }
-        }
         match classify_python_object(py, obj) {
             Ok(doctrl) => StreamStep::Instruction(doctrl),
             Err(msg) => StreamStep::Error(Value::String(msg)),
@@ -485,6 +476,11 @@ pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<
     if let Ok(gh) = obj.downcast::<PyGetHandlers>() {
         let head = peek_head(py, &gh.get().continuation, "GetHandlers")?;
         return Ok(DoCtrl::GetHandlers { from: head });
+    }
+    if let Ok(te) = obj.downcast::<crate::do_expr::PyTailEval>() {
+        let inner = te.get().expr.bind(py);
+        let inner_doctrl = classify_python_object(py, &inner)?;
+        return Ok(DoCtrl::TailEval { expr: Box::new(inner_doctrl) });
     }
 
     // --- EffectBase (no tag) → implicit Perform ---
