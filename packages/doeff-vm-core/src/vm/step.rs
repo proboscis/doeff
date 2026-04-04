@@ -72,6 +72,17 @@ impl VM {
                         self.mode = Mode::Eval(doctrl);
                         StepResult::Continue
                     }
+                    StreamStep::TailInstruction(doctrl) => {
+                        // Tail call — pop stream frame, then evaluate.
+                        // Transfer/TransferThrow already pop the top frame,
+                        // so skip the pop here to avoid double-popping.
+                        match &doctrl {
+                            DoCtrl::Transfer { .. } | DoCtrl::TransferThrow { .. } => {}
+                            _ => { seg.frames.pop(); }
+                        }
+                        self.mode = Mode::Eval(doctrl);
+                        StepResult::Continue
+                    }
                     StreamStep::Done(value) => {
                         seg.frames.pop();
                         self.mode = Mode::Send(value);
@@ -147,6 +158,14 @@ impl VM {
                 };
                 match stream.throw(error) {
                     StreamStep::Instruction(doctrl) => {
+                        self.mode = Mode::Eval(doctrl);
+                        StepResult::Continue
+                    }
+                    StreamStep::TailInstruction(doctrl) => {
+                        match &doctrl {
+                            DoCtrl::Transfer { .. } | DoCtrl::TransferThrow { .. } => {}
+                            _ => { seg.frames.pop(); }
+                        }
                         self.mode = Mode::Eval(doctrl);
                         StepResult::Continue
                     }
