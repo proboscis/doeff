@@ -65,6 +65,23 @@ impl VM {
         self.current_segment = None;
     }
 
+    /// Free fibers from continuations that were dropped without being consumed.
+    ///
+    /// When a handler drops a continuation (e.g., scheduler ignoring
+    /// TaskCompleted's k), the fiber chain stays orphaned in the arena.
+    /// This walks each orphaned chain from head→last following parent
+    /// pointers, freeing every fiber.
+    pub fn reclaim_orphaned_fibers(&mut self) {
+        let orphans = crate::continuation::drain_orphan_fibers();
+        for head in orphans {
+            let mut cursor = Some(head);
+            while let Some(fid) = cursor {
+                cursor = self.segments.get(fid).and_then(|s| s.parent);
+                self.segments.free(fid);
+            }
+        }
+    }
+
     pub fn alloc_segment(&mut self, fiber: Fiber) -> FiberId {
         self.segments.alloc(fiber)
     }

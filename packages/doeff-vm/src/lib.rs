@@ -26,5 +26,13 @@ pub use doeff_vm_core::continuation::{OwnedControlContinuation, PendingContinuat
 #[pymodule]
 fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     pyvm::register_pyvm(m)?;
+
+    /// Return (live_segments, live_continuations, live_ir_streams).
+    #[pyfn(m)]
+    fn vm_live_counts() -> (usize, usize, usize) {
+        let c = doeff_vm_core::memory_stats::live_object_counts();
+        (c.live_segments, c.live_continuations, c.live_ir_streams)
+    }
+
     Ok(())
 }

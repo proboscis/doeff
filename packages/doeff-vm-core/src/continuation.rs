@@ -7,6 +7,13 @@
 //! Parent pointers in the arena are the source of truth for chain structure.
 //! Continuation just holds two pointers into the arena.
 //! One-shot via head.take() — destructive read, like OCaml 5's atomic_swap.
+//!
+//! Orphan reclamation: when a continuation is dropped without being consumed
+//! (e.g., scheduler drops TaskCompleted's k), its fiber IDs are pushed to a
+//! thread-local queue. The VM drains this queue each step, walking and freeing
+//! the orphaned fiber chains from the arena.
+
+use std::cell::RefCell;
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -14,6 +21,24 @@ use pyo3::types::PyDict;
 use crate::ids::FiberId;
 use crate::memory_stats;
 use crate::py_shared::PyShared;
+
+// ---------------------------------------------------------------------------
+// Orphan fiber reclamation
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    /// Fiber chain heads from continuations dropped without being consumed.
+    /// The VM drains this each step to free the orphaned fibers from the arena.
+    static ORPHAN_FIBERS: RefCell<Vec<FiberId>> = RefCell::new(Vec::new());
+}
+
+/// Drain all orphaned fiber head IDs. Called by the VM at each step.
+pub fn drain_orphan_fibers() -> Vec<FiberId> {
+    ORPHAN_FIBERS.with(|cell| {
+        let mut v = cell.borrow_mut();
+        std::mem::take(&mut *v)
+    })
+}
 
 // ---------------------------------------------------------------------------
 // Continuation — the detached fiber chain
@@ -107,6 +132,13 @@ impl Continuation {
 impl Drop for Continuation {
     fn drop(&mut self) {
         memory_stats::unregister_continuation();
+        // If the continuation was never consumed, its fibers are orphaned
+        // in the arena. Record the head so the VM can free the chain.
+        if let Some(head) = self.head.take() {
+            ORPHAN_FIBERS.with(|cell| {
+                cell.borrow_mut().push(head);
+            });
+        }
     }
 }
 

@@ -35,6 +35,16 @@ impl PyVM {
         self.run_doctrl(py, doctrl)
     }
 
+    /// Return arena diagnostics: (live_fibers, slot_count, free_list_len, var_cells).
+    fn arena_stats(&self) -> (usize, usize, usize, usize) {
+        (
+            self.vm.segments.len(),
+            self.vm.segments.slot_count(),
+            self.vm.segments.capacity(),
+            self.vm.var_store.cells.len(),
+        )
+    }
+
 }
 
 impl PyVM {

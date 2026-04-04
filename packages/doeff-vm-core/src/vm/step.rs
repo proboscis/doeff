@@ -22,6 +22,9 @@ use crate::vm::VM;
 impl VM {
     /// Execute one step.
     pub fn step(&mut self) -> StepResult {
+        // Reclaim fibers from continuations dropped since the last step.
+        self.reclaim_orphaned_fibers();
+
         let mode = std::mem::replace(&mut self.mode, Mode::Send(Value::Unit));
         match mode {
             Mode::Eval(doctrl) => self.step_eval(doctrl),
@@ -38,22 +41,28 @@ impl VM {
         let Some(seg_id) = self.current_segment else {
             return StepResult::Done(value);
         };
+
+        // Fast path: fiber completed (no frames) — free it and move to parent.
+        // Checked before the mutable borrow so we can call free() without
+        // conflicting with the borrow used in the frame-processing match below.
+        if self.segments.get(seg_id).map_or(false, |s| s.frames.is_empty()) {
+            let parent = self.segments.get(seg_id).and_then(|s| s.parent);
+            self.segments.free(seg_id);
+            self.current_segment = parent;
+            if parent.is_some() {
+                self.mode = Mode::Send(value);
+                return StepResult::Continue;
+            } else {
+                return StepResult::Done(value);
+            }
+        }
+
         let Some(seg) = self.segments.get_mut(seg_id) else {
             return StepResult::Error(VMError::internal("send: segment not found"));
         };
 
         match seg.frames.last() {
-            None => {
-                // No frames — fiber complete, go to parent
-                let parent = seg.parent;
-                self.current_segment = parent;
-                if parent.is_some() {
-                    self.mode = Mode::Send(value);
-                    StepResult::Continue
-                } else {
-                    StepResult::Done(value)
-                }
-            }
+            None => unreachable!(), // handled by fast path above
             Some(Frame::Program { .. }) => {
                 let Frame::Program { stream, .. } = seg.frames.last().unwrap() else {
                     unreachable!()
@@ -112,22 +121,26 @@ impl VM {
         let Some(seg_id) = self.current_segment else {
             return StepResult::Error(VMError::uncaught_exception(error));
         };
+
+        // Fast path: fiber completed (no frames) — free it and propagate to parent.
+        if self.segments.get(seg_id).map_or(false, |s| s.frames.is_empty()) {
+            let parent = self.segments.get(seg_id).and_then(|s| s.parent);
+            self.segments.free(seg_id);
+            self.current_segment = parent;
+            if parent.is_some() {
+                self.mode = Mode::Raise(error);
+                return StepResult::Continue;
+            } else {
+                return StepResult::Error(VMError::uncaught_exception(error));
+            }
+        }
+
         let Some(seg) = self.segments.get_mut(seg_id) else {
             return StepResult::Error(VMError::internal("raise: segment not found"));
         };
 
         match seg.frames.last() {
-            None => {
-                // No frames — propagate to parent
-                let parent = seg.parent;
-                self.current_segment = parent;
-                if parent.is_some() {
-                    self.mode = Mode::Raise(error);
-                    StepResult::Continue
-                } else {
-                    StepResult::Error(VMError::uncaught_exception(error))
-                }
-            }
+            None => unreachable!(), // handled by fast path above
             Some(Frame::Program { .. }) => {
                 let Frame::Program { stream, .. } = seg.frames.last().unwrap() else {
                     unreachable!()
