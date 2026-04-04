@@ -21,7 +21,7 @@ Usage:
     run(scheduled(main()))
 """
 
-from doeff_vm import EffectBase, Ok, Err
+from doeff_vm import EffectBase, Ok, Err, TailEval
 from doeff.do import do
 from doeff.program import Pure, Resume, Transfer, Pass, Perform, WithHandler
 from doeff.handler_utils import get_inner_handlers
@@ -433,7 +433,7 @@ def scheduled(body_program):
             tasks[tid]["spawn_site"] = spawn_site
             enqueue(("new", tid), effect.priority)
             enqueue(("resume", k, Task(tid)))  # spawner resumes at normal priority
-            return (yield pick_next())
+            yield TailEval(pick_next())
 
         elif isinstance(effect, TaskCompleted):
             tid = effect.task_id
@@ -454,7 +454,7 @@ def scheduled(body_program):
                 tasks[tid]["result"] = error
             wake_waiters(("task", tid))
             _release_task_refs(tid)
-            return (yield pick_next())
+            yield TailEval(pick_next())
 
         elif isinstance(effect, Wait):
             wk = waitable_key(effect.task)
@@ -470,7 +470,7 @@ def scheduled(body_program):
                 return (yield ResumeThrow(k, TaskCancelledError()))
             else:
                 waiters.setdefault(wk, []).append(("wait", k))
-                return (yield pick_next())
+                yield TailEval(pick_next())
 
         elif isinstance(effect, Gather):
             wks = [waitable_key(t) for t in effect.tasks]
@@ -493,7 +493,7 @@ def scheduled(body_program):
                     if waitable_status(wk)[0] not in TERMINAL:
                         waiters.setdefault(wk, []).append(("gather", k, effect.tasks))
                         break
-                return (yield pick_next())
+                yield TailEval(pick_next())
 
         elif isinstance(effect, Race):
             for t in effect.tasks:
@@ -512,7 +512,7 @@ def scheduled(body_program):
                 if waitable_status(wk)[0] not in TERMINAL:
                     waiters.setdefault(wk, []).append(("race", k, effect.tasks))
                     break
-            return (yield pick_next())
+            yield TailEval(pick_next())
 
         elif isinstance(effect, Cancel):
             tid = effect.task.task_id
@@ -538,7 +538,7 @@ def scheduled(body_program):
             # Re-queue completer rather than resuming immediately,
             # so higher-priority woken tasks run first.
             enqueue(("resume", k, None))
-            return (yield pick_next())
+            yield TailEval(pick_next())
 
         elif isinstance(effect, FailPromise):
             pid = effect.promise.promise_id
@@ -546,7 +546,7 @@ def scheduled(body_program):
             promises[pid]["result"] = effect.error
             wake_waiters(("promise", pid))
             enqueue(("resume", k, None))
-            return (yield pick_next())
+            yield TailEval(pick_next())
 
         elif isinstance(effect, CreateExternalPromise):
             pid = alloc_promise()
@@ -578,7 +578,7 @@ def scheduled(body_program):
             else:
                 # Park — FIFO queue
                 sem["waiters"].append(k)
-                return (yield pick_next())
+                yield TailEval(pick_next())
 
         elif isinstance(effect, ReleaseSemaphore):
             sid = effect.semaphore.sem_id

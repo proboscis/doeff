@@ -46,6 +46,9 @@ pub trait IRStream: fmt::Debug + Send {
 pub enum StreamStep {
     /// Next instruction to evaluate.
     Instruction(DoCtrl),
+    /// Next instruction to evaluate, popping the stream frame first (tail call).
+    /// Used when the stream knows control will never return to it.
+    TailInstruction(DoCtrl),
     /// Stream completed with a value.
     Done(Value),
     /// Stream encountered an error it couldn't handle.
