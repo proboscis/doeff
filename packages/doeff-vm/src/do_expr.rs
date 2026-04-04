@@ -321,3 +321,25 @@ impl PyGetHandlers {
         "GetHandlers(k)"
     }
 }
+
+/// TailEval(expr) — evaluate a DoExpr in tail position (pop the current
+/// handler stream frame before evaluating). Used by the scheduler to avoid
+/// orphaned stream frames that accumulate memory.
+#[pyclass(name = "TailEval", frozen, module = "doeff_vm.doeff_vm")]
+pub struct PyTailEval {
+    #[pyo3(get)]
+    pub expr: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyTailEval {
+    #[new]
+    fn new(expr: Py<PyAny>) -> Self {
+        Self { expr }
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let e = self.expr.bind(py).repr()?;
+        Ok(format!("TailEval({})", e))
+    }
+}
