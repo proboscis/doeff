@@ -27,3 +27,5 @@ WithObserve = _ext.WithObserve
 GetTraceback = _ext.GetTraceback
 GetExecutionContext = _ext.GetExecutionContext
 GetHandlers = _ext.GetHandlers
+
+vm_live_counts = _ext.vm_live_counts
