@@ -311,9 +311,9 @@ def scheduled(body_program):
                     if tasks[tid]["status"] == "cancelled":
                         continue  # skip cancelled tasks
                     tasks[tid]["status"] = "running"
-                    prog = tasks[tid]["program"]
+                    prog = tasks[tid].pop("program")
                     # Re-wrap task with inner handlers captured at spawn site
-                    for h in tasks[tid]["inner_handlers"]:
+                    for h in tasks[tid].pop("inner_handlers", []):
                         prog = WithHandler(h, prog)
                     return WithHandler(handler, wrap_task(tid, prog))
                 elif entry[0] == "resume":
@@ -332,6 +332,20 @@ def scheduled(body_program):
                 wake_waiters(("promise", pid))
 
     TERMINAL = ("completed", "failed", "cancelled")
+
+    def _release_task_refs(tid):
+        """Drop heavy references from a terminal task.
+
+        Keeps status/result (needed by Wait/Gather) but releases the
+        program, inner_handlers, and spawn_site closures that pin large
+        Python object graphs into memory.
+        """
+        t = tasks.get(tid)
+        if t is None:
+            return
+        t.pop("program", None)
+        t.pop("inner_handlers", None)
+        t.pop("spawn_site", None)
 
     def resume_with_waitable_result(waiter_k, key):
         """Add a ready entry that resumes waiter with the waitable's result.
@@ -439,6 +453,7 @@ def scheduled(body_program):
                     })
                 tasks[tid]["result"] = error
             wake_waiters(("task", tid))
+            _release_task_refs(tid)
             return (yield pick_next())
 
         elif isinstance(effect, Wait):
@@ -506,6 +521,7 @@ def scheduled(body_program):
                 task["status"] = "cancelled"
                 task["result"] = TaskCancelledError()
                 wake_waiters(("task", tid))
+                _release_task_refs(tid)
             r = yield Resume(k, None)
             return r
 
