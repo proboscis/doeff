@@ -28,35 +28,31 @@ from typing import Any, Protocol, runtime_checkable
 @runtime_checkable
 class DurableStorage(Protocol):
     """
-    Protocol for durable storage backends.
+    Protocol for effectful durable storage backends.
+
+    All methods return Program[T] — the cache handler yields them.
+    This makes storage I/O composable with doeff's effect system:
+    - Local storage (SQLite, memory): return Pure(value)
+    - Network storage (Redis): return Await(asyncio.to_thread(...))
 
     Implementations must be thread-safe for concurrent access.
     Values are opaque - the storage layer handles serialization.
-
-    Methods:
-        get: Retrieve value by key. Returns None if not found.
-        put: Store value with key. Overwrites if exists.
-        delete: Delete key. Returns True if key existed.
-        exists: Check if key exists.
-        keys: Iterate over all keys.
-        items: Iterate over all (key, value) pairs.
-        clear: Delete all entries.
     """
 
-    def get(self, key: str) -> Any | None:
-        """Get value by key. Returns None if not found."""
+    def get(self, key: str) -> Any:
+        """Get value by key. Returns Program[Any | None]."""
         ...
 
-    def put(self, key: str, value: Any) -> None:
-        """Store value with key. Overwrites if exists."""
+    def put(self, key: str, value: Any) -> Any:
+        """Store value with key. Returns Program[None]."""
         ...
 
-    def delete(self, key: str) -> bool:
-        """Delete key. Returns True if key existed."""
+    def delete(self, key: str) -> Any:
+        """Delete key. Returns Program[bool]."""
         ...
 
-    def exists(self, key: str) -> bool:
-        """Check if key exists."""
+    def exists(self, key: str) -> Any:
+        """Check if key exists. Returns Program[bool]."""
         ...
 
     def keys(self) -> Iterable[str]:
@@ -80,4 +76,5 @@ __all__ = [
     "DurableStorage",
     "InMemoryStorage",
     "SQLiteStorage",
+    "is_program",
 ]
