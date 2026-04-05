@@ -6,6 +6,7 @@ Thread-safe via connection-per-thread pattern.
 """
 
 
+import asyncio
 import pickle
 import sqlite3
 import threading
@@ -13,6 +14,8 @@ import time
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
+
+from doeff_core_effects.effects import Await
 
 
 class SQLiteStorage:
@@ -75,16 +78,14 @@ class SQLiteStorage:
         )
         conn.commit()
 
-    def get(self, key: str) -> Any | None:
-        """Get value by key. Returns None if not found."""
+    def _sync_get(self, key: str) -> Any | None:
         cursor = self._get_conn().execute(
             "SELECT value FROM cache WHERE key = ?", (key,)
         )
         row = cursor.fetchone()
         return pickle.loads(row[0]) if row else None
 
-    def put(self, key: str, value: Any) -> None:
-        """Store value with key. Overwrites if exists."""
+    def _sync_put(self, key: str, value: Any) -> None:
         now = time.time()
         blob = pickle.dumps(value)
         self._get_conn().execute(
@@ -97,20 +98,34 @@ class SQLiteStorage:
         )
         self._get_conn().commit()
 
-    def delete(self, key: str) -> bool:
-        """Delete key. Returns True if key existed."""
+    def _sync_delete(self, key: str) -> bool:
         cursor = self._get_conn().execute(
             "DELETE FROM cache WHERE key = ?", (key,)
         )
         self._get_conn().commit()
         return cursor.rowcount > 0
 
-    def exists(self, key: str) -> bool:
-        """Check if key exists."""
+    def _sync_exists(self, key: str) -> bool:
         cursor = self._get_conn().execute(
             "SELECT 1 FROM cache WHERE key = ? LIMIT 1", (key,)
         )
         return cursor.fetchone() is not None
+
+    def get(self, key: str):
+        """Get value by key. Returns Program[Any | None] via Await."""
+        return Await(asyncio.to_thread(self._sync_get, key))
+
+    def put(self, key: str, value: Any):
+        """Store value with key. Returns Program[None] via Await."""
+        return Await(asyncio.to_thread(self._sync_put, key, value))
+
+    def delete(self, key: str):
+        """Delete key. Returns Program[bool] via Await."""
+        return Await(asyncio.to_thread(self._sync_delete, key))
+
+    def exists(self, key: str):
+        """Check if key exists. Returns Program[bool] via Await."""
+        return Await(asyncio.to_thread(self._sync_exists, key))
 
     def keys(self) -> Iterable[str]:
         """Return list of all keys."""

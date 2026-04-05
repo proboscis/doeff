@@ -107,8 +107,11 @@ def content_address(effect: object) -> str:
 
 
 def cache_handler(storage: DurableStorage):
-    """Interpret CacheGet/CachePut/CacheExists against a pluggable storage backend."""
-    from doeff_core_effects.effects import WriterTellEffect as Slog
+    """Interpret CacheGet/CachePut/CacheExists against a pluggable storage backend.
+
+    Storage methods return Programs (DoExpr). The handler yields them to get values.
+    This makes the handler transparent to sync (Pure) and async (Await) storage alike.
+    """
 
     @do
     def handler(effect, k):
@@ -119,24 +122,22 @@ def cache_handler(storage: DurableStorage):
         key = _storage_key(effect.key)
 
         if isinstance(effect, CacheExistsEffect):
-            exists = storage.exists(key)
-            yield Slog(f"[cache] exists? key={key[:16]}… → {exists}")
+            exists = yield storage.exists(key)
             result = yield Resume(k, exists)
             return result
 
         if isinstance(effect, CacheGetEffect):
-            value = storage.get(key)
-            if value is None and not storage.exists(key):
-                yield Slog(f"[cache] GET miss key={key[:16]}…")
-                from doeff.program import ResumeThrow
-                return (yield ResumeThrow(k, KeyError(effect.key)))
-            yield Slog(f"[cache] GET hit key={key[:16]}…")
+            value = yield storage.get(key)
+            if value is None:
+                exists = yield storage.exists(key)
+                if not exists:
+                    from doeff.program import ResumeThrow
+                    return (yield ResumeThrow(k, KeyError(effect.key)))
             result = yield Resume(k, value)
             return result
 
         # CachePutEffect
-        yield Slog(f"[cache] PUT key={key[:16]}… value_type={type(effect.value).__name__}")
-        _persist_value(storage, key, original_key=effect.key, value=effect.value)
+        yield storage.put(key, effect.value)
         result = yield Resume(k, None)
         return result
 
