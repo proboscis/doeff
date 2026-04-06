@@ -726,12 +726,12 @@ defk {name}: {{:post [...]}} is required.
        (when (and (= mode "require") (not is-program))
          (raise (TypeError msg)))
        False)
-     (setv ~name ((fn []
+     (setv ~name ((_doeff_do (fn []
        ~@expanded
        (setv _contract_result ~body-expr)
        (let [% _contract_result]
          ~@post-asserts)
-       (return _contract_result))))))
+       (return _contract_result)))))))
 
 (defmacro defp [name #* body]
   "Define a Program[T] constant. Errors if the return value is itself a Program.
