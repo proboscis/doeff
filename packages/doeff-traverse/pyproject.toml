@@ -7,6 +7,12 @@ dependencies = [
     "doeff-core-effects",
 ]
 
+[dependency-groups]
+test = [
+    "doeff-time",
+]
+
 [tool.uv.sources]
 doeff = { workspace = true }
 doeff-core-effects = { workspace = true }
+doeff-time = { workspace = true }
