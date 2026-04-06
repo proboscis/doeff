@@ -683,7 +683,7 @@ defk {name}: {{:post [...]}} is required.
             [(hy.models.Symbol "not")
              (hy.models.Expression
                [(hy.models.Symbol "_doeff_check_program_return") (hy.models.Symbol "%")
-                (hy.models.String guard-msg) (hy.models.Keyword "reject")])])]
+                (hy.models.String guard-msg) (hy.models.String "reject")])])]
           (list post-checks))))
     (= program-return-mode "require")
       (do
@@ -693,12 +693,29 @@ defk {name}: {{:post [...]}} is required.
             [(hy.models.Symbol "not")
              (hy.models.Expression
                [(hy.models.Symbol "_doeff_check_program_return") (hy.models.Symbol "%")
-                (hy.models.String guard-msg) (hy.models.Keyword "require")])])]
+                (hy.models.String guard-msg) (hy.models.String "require")])])]
           (list post-checks)))))
-  ;; Rebuild the contract dict + body for do! (no :pre — already rejected above)
-  (setv contract-dict (hy.models.Dict))
-  (.append contract-dict (hy.models.Keyword "post"))
-  (.append contract-dict (hy.models.List post-checks))
+  ;; Inline do! expansion: bang-expand, parse, emit generator with contracts
+  (setv expanded-forms [])
+  (for [form real-body]
+    (if (_is-bind form)
+        (let [#(nm expr) (_bind-parts form)
+              #(inner-bindings rewritten) (_expand-bangs expr)]
+          (.extend expanded-forms inner-bindings)
+          (if (is nm None)
+              (.append expanded-forms `(<- ~rewritten))
+              (.append expanded-forms `(<- ~nm ~rewritten))))
+        (let [#(inner-bindings rewritten) (_expand-bangs form)]
+          (.extend expanded-forms inner-bindings)
+          (.append expanded-forms rewritten))))
+  (setv #(bindings body-expr) (_parse-do-body expanded-forms macro-name))
+  (setv expanded (lfor bind bindings
+                   (let [#(bname expr) (_bind-parts bind)]
+                     (if (is bname None)
+                         `(yield ~expr)
+                         `(setv ~bname (yield ~expr))))))
+  (setv post-asserts (lfor check post-checks
+                       (_expand-check check name "post-condition")))
   `(do
      (import inspect)
      (defn _doeff_check_program_return [v msg mode]
@@ -709,7 +726,12 @@ defk {name}: {{:post [...]}} is required.
        (when (and (= mode "require") (not is-program))
          (raise (TypeError msg)))
        False)
-     (setv ~name (do! ~contract-dict ~@real-body))))
+     (setv ~name ((fn []
+       ~@expanded
+       (setv _contract_result ~body-expr)
+       (let [% _contract_result]
+         ~@post-asserts)
+       (return _contract_result))))))
 
 (defmacro defp [name #* body]
   "Define a Program[T] constant. Errors if the return value is itself a Program.
