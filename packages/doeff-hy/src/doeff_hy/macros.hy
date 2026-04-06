@@ -1,17 +1,19 @@
 ;;; doeff-hy standard macros — effect composition for doeff.
 ;;;
 ;;; Usage:
-;;;   (require doeff-hy.macros [do! defk deff <- ! defprogram
-;;;                             do-list do-list-try do-try-list do-dict-try do-try
-;;;                             traverse for/do fold])
+;;;   (require doeff-hy.macros [do! defk deff fnk <- ! defp defpp defprogram
+;;;                             traverse for/do])
 ;;;   (import doeff [do :as _doeff-do])
 ;;;
 ;;; Core effects are imported from doeff_core_effects:
 ;;;   (import doeff_core_effects [Ask Try slog])
 ;;;
 ;;; Contract rules:
-;;;   - defk / deff: {:pre [...]} is REQUIRED
-;;;   - defprogram:  {:post [...]} is REQUIRED
+;;;   - deff:        {:pre [...]} and {:post [...]} are REQUIRED
+;;;   - defk:        {:pre [...]} and {:post [...]} are REQUIRED
+;;;   - defp/defpp:  {:post [...]} is REQUIRED, :pre not allowed
+;;;   - fnk:         no contracts (anonymous)
+;;;   - do!:         :pre/:post optional, supports (: name Type) shorthand
 ;;;   - (: name Type) in :pre/:post expands to (isinstance name Type)
 ;;;   - Arbitrary expressions can be mixed with (: ...) in the same list
 
@@ -68,30 +70,8 @@
       `(assert ~check ~(+ (str fn-name) ": " phase " failed: " (str check)))))
 
 (defn _build-fn-with-contracts [decorators name params pre-checks post-checks real-body]
-  "Build a defn form with pre/post assertion wrappers."
-  (setv pre-code (lfor check (or pre-checks [])
-                   (_expand-check check name "pre-condition")))
-  (if post-checks
-      (let [post-asserts (lfor check post-checks
-                           (_expand-check check name "post-condition"))
-            init-forms (cut real-body 0 -1)
-            last-form (get real-body -1)]
-        `(defn ~decorators ~name ~params
-           ~@pre-code
-           ~@init-forms
-           (setv _contract_result ~last-form)
-           (let [% _contract_result]
-             ~@post-asserts)
-           _contract_result))
-      `(defn ~decorators ~name ~params
-         ~@pre-code
-         ~@real-body)))
-
-(defn _build-kleisli-with-contracts [decorators name params pre-checks post-checks real-body]
-  "Build a defn form with pre/post contracts, generator-safe for kleisli functions.
-   Unlike _build-fn-with-contracts, this emits body forms sequentially and captures
-   only the last form as the result — (do ...) wrapping would break yield-based
-   effect bindings (<-)."
+  "Build a defn form with pre/post assertion wrappers.
+   Works for both plain functions (deff) and generator/kleisli functions (defk)."
   (setv pre-code (lfor check (or pre-checks [])
                    (_expand-check check name "pre-condition")))
   (if post-checks
@@ -123,8 +103,7 @@
       :post [(: % list)]}
      (list (range x)))
 
-   :pre  — assertions checked at function entry (REQUIRED)
-   :post — assertions checked on return value (% binds to result)
+   :pre and :post are REQUIRED.
    (: name Type) is shorthand for (isinstance name Type).
    Arbitrary validation expressions are also allowed in the same list."
   (setv #(pre-checks post-checks real-body) (_extract-contracts body))
@@ -137,11 +116,25 @@ deff {name}: {{:pre [...]}} is required.
     (deff {name} [x y]
       {{:pre [(: x int) (: y str)]          ;; type checks
              (> x 0)]                        ;; arbitrary validation
-       :post [(: % list)]}}                  ;; optional return type
+       :post [(: % list)]}}                  ;; return type
       (list (range x)))
 
   (: name Type) expands to (isinstance name Type).
-  :post is optional. % binds to return value in :post checks.
+  % binds to return value in :post checks.
+" :name name))))
+  (when (is post-checks None)
+    (raise (SyntaxError (.format "
+deff {name}: {{:post [...]}} is required.
+
+  Correct usage:
+
+    (deff {name} [x y]
+      {{:pre [(: x int) (: y str)]
+       :post [(: % list)]}}                  ;; return type
+      (list (range x)))
+
+  (: name Type) expands to (isinstance name Type).
+  % binds to return value in :post checks.
 " :name name))))
   (_build-fn-with-contracts [] name params pre-checks post-checks real-body))
 
@@ -161,12 +154,13 @@ deff {name}: {{:pre [...]}} is required.
      (<- result (some-effect))
      (return result))
 
-   :pre is REQUIRED. (: name Type) is shorthand for (isinstance name Type).
+   :pre and :post are REQUIRED. (: name Type) is shorthand for (isinstance name Type).
    Arbitrary validation expressions are also allowed in the same list.
 
    With bang:
    (defk my-fn [x y]
-     {:pre [(: x int) (: y int)]}
+     {:pre [(: x int) (: y int)]
+      :post [(: % int)]}
      (k1 (! (k2 x)) (! (k3 y))))"
   (setv #(pre-checks post-checks real-body) (_extract-contracts body))
   (when (is pre-checks None)
@@ -178,12 +172,27 @@ defk {name}: {{:pre [...]}} is required.
     (defk {name} [x y]
       {{:pre [(: x Asset) (: y str)]        ;; type checks
              (> (len y) 0)]                  ;; arbitrary validation
-       :post [(: % Result)]}}               ;; optional return type
+       :post [(: % Result)]}}               ;; return type
       (<- result (some-effect x))
       result)
 
   (: name Type) expands to (isinstance name Type).
-  :post is optional. % binds to return value in :post checks.
+  % binds to return value in :post checks.
+" :name name))))
+  (when (is post-checks None)
+    (raise (SyntaxError (.format "
+defk {name}: {{:post [...]}} is required.
+
+  Correct usage:
+
+    (defk {name} [x y]
+      {{:pre [(: x Asset) (: y str)]
+       :post [(: % Result)]}}               ;; return type
+      (<- result (some-effect x))
+      result)
+
+  (: name Type) expands to (isinstance name Type).
+  % binds to return value in :post checks.
 " :name name))))
   ;; Expand bangs in the real body
   (setv expanded-forms [])
@@ -198,7 +207,7 @@ defk {name}: {{:pre [...]}} is required.
         (let [#(inner-bindings rewritten) (_expand-bangs form)]
           (.extend expanded-forms inner-bindings)
           (.append expanded-forms rewritten))))
-  (_build-kleisli-with-contracts ['_doeff_do] name params pre-checks post-checks expanded-forms))
+  (_build-fn-with-contracts ['_doeff_do] name params pre-checks post-checks expanded-forms))
 
 
 ;; ---------------------------------------------------------------------------
@@ -207,7 +216,7 @@ defk {name}: {{:pre [...]}} is required.
 
 (defmacro fnk [params #* body]
   "Anonymous kleisli function. Like fn but returns a DoExpr.
-   Can perform effects with <- inside.
+   Supports <- (effect bind) and ! (bang) inline bind.
    Requires (import doeff [do :as _doeff-do]) in the calling module.
 
    (fnk [x] (* x 2))
@@ -215,34 +224,70 @@ defk {name}: {{:pre [...]}} is required.
    With effects:
    (fnk [acc x]
      (<- enriched (enrich x))
-     (+ acc enriched))"
-  `(fn [~@params] ((_doeff_do (fn [] (do ~@body))))))
+     (+ acc enriched))
+
+   With bang:
+   (fnk [x y] (+ (! (k1 x)) (! (k2 y))))"
+  ;; Expand bangs in the body (same logic as defk)
+  (setv expanded-forms [])
+  (for [form body]
+    (if (_is-bind form)
+        (let [#(nm expr) (_bind-parts form)
+              #(inner-bindings rewritten) (_expand-bangs expr)]
+          (.extend expanded-forms inner-bindings)
+          (if (is nm None)
+              (.append expanded-forms `(<- ~rewritten))
+              (.append expanded-forms `(<- ~nm ~rewritten))))
+        (let [#(inner-bindings rewritten) (_expand-bangs form)]
+          (.extend expanded-forms inner-bindings)
+          (.append expanded-forms rewritten))))
+  `(fn [~@params] ((_doeff_do (fn [] (do ~@expanded-forms))))))
 
 
 ;; ---------------------------------------------------------------------------
-;; do! — monadic do block (inline effect sequencing)
+;; do! — effectful let (returns a Program)
 ;; ---------------------------------------------------------------------------
 
 (defmacro do! [#* forms]
-  "Monadic do block — sequence effect bindings and return the final expression.
-   Use inside a defk body or anywhere a generator context is active.
+  "Effectful let — returns a Program (generator) that sequences effect bindings.
 
    (do!
      (<- x (some-effect))
      (<- y (another-effect x))
      (+ x y))
 
-   Supports :pre/:post contracts (Clojure-style):
+   Returns a Program object. Caller decides how to use it:
+     (<- result (do! ...))   ; yield it inside a defk/deff
+     (setv p (do! ...))      ; store as a Program value
+
+   Supports ! (bang) inline bind:
+     (do! (f (! (g x)) (! (h y))))
+   expands (! expr) into (<- _tmp expr) bindings.
+
+   Supports :pre/:post contracts with (: name Type) shorthand:
 
    (do!
-     {:pre [(isinstance url str)]
-      :post [(isinstance % dict)]}
+     {:pre [(: url str)]
+      :post [(: % dict)]}
      (<- resp (http-get url))
      (.json resp))"
   (setv #(pre-checks post-checks real-forms) (_extract-contracts forms))
-  (setv #(bindings body-expr) (_parse-do-body real-forms))
-  (setv pre-code (lfor check pre-checks
-                   `(assert ~check ~(+ "pre-condition failed: " (str check))))
+  ;; Expand bangs in each form (same logic as defk)
+  (setv expanded-forms [])
+  (for [form real-forms]
+    (if (_is-bind form)
+        (let [#(nm expr) (_bind-parts form)
+              #(inner-bindings rewritten) (_expand-bangs expr)]
+          (.extend expanded-forms inner-bindings)
+          (if (is nm None)
+              (.append expanded-forms `(<- ~rewritten))
+              (.append expanded-forms `(<- ~nm ~rewritten))))
+        (let [#(inner-bindings rewritten) (_expand-bangs form)]
+          (.extend expanded-forms inner-bindings)
+          (.append expanded-forms rewritten))))
+  (setv #(bindings body-expr) (_parse-do-body expanded-forms))
+  (setv pre-code (lfor check (or pre-checks [])
+                   (_expand-check check "do!" "pre-condition"))
         expanded (lfor bind bindings
                    (let [#(name expr) (_bind-parts bind)]
                      (if (is name None)
@@ -250,18 +295,18 @@ defk {name}: {{:pre [...]}} is required.
                          `(setv ~name (yield ~expr))))))
   (if post-checks
       (let [post-asserts (lfor check post-checks
-                           `(assert ~check ~(+ "post-condition failed: " (str check))))]
-        `(do
+                           (_expand-check check "do!" "post-condition"))]
+        `((fn []
            ~@pre-code
            ~@expanded
            (setv _contract_result ~body-expr)
            (let [% _contract_result]
              ~@post-asserts)
-           _contract_result))
-      `(do
+           (return _contract_result))))
+      `((fn []
          ~@pre-code
          ~@expanded
-         ~body-expr)))
+         (return ~body-expr)))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -307,18 +352,8 @@ defk {name}: {{:pre [...]}} is required.
        (> (len form) 0)
        (= (str (get form 0)) "When")))
 
-(defn _is-try [expr]
-  "Check if expr is (Try ...)."
-  (and (isinstance expr hy.models.Expression)
-       (> (len expr) 0)
-       (= (str (get expr 0)) "Try")))
-
 (defn _iterate-arg [expr]
   "Extract the items arg from (Iterate items)."
-  (get expr 1))
-
-(defn _try-arg [expr]
-  "Extract the program arg from (Try program)."
   (get expr 1))
 
 (defn _bind-parts [form]
@@ -332,103 +367,7 @@ defk {name}: {{:pre [...]}} is required.
 
 
 ;; ---------------------------------------------------------------------------
-;; Internal: code generation for do-* blocks
-;; ---------------------------------------------------------------------------
-
-(defn _gen-do-list [bindings body-expr]
-  "Generate code for do-list: list[T]."
-  (if (not bindings)
-      `(.append _acc ~body-expr)
-      (let [bind (get bindings 0)
-            rest (cut bindings 1 None)
-            #(name expr) (_bind-parts bind)]
-        (if (_is-iterate expr)
-            (let [items (_iterate-arg expr)]
-              `(for [~name ~items]
-                 ~(_gen-do-list rest body-expr)))
-            (if (is name None)
-                `(do (yield ~expr)
-                     ~(_gen-do-list rest body-expr))
-                `(do (setv ~name (yield ~expr))
-                     ~(_gen-do-list rest body-expr)))))))
-
-(defn _gen-do-list-try [bindings body-expr]
-  "Generate code for do-list-try: list[Result[T]]."
-  (if (not bindings)
-      `(.append _acc (_Ok ~body-expr))
-      (let [bind (get bindings 0)
-            rest (cut bindings 1 None)
-            #(name expr) (_bind-parts bind)]
-        (cond
-          (_is-iterate expr)
-            (let [items (_iterate-arg expr)]
-              `(for [~name ~items]
-                 ~(_gen-do-list-try rest body-expr)))
-          (_is-try expr)
-            (let [program (_try-arg expr)]
-              `(try
-                 (setv ~name (yield ~program))
-                 ~(_gen-do-list-try rest body-expr)
-                 (except [_e Exception]
-                   (.append _acc (_Err _e)))))
-          True
-            (if (is name None)
-                `(do (yield ~expr)
-                     ~(_gen-do-list-try rest body-expr))
-                `(do (setv ~name (yield ~expr))
-                     ~(_gen-do-list-try rest body-expr)))))))
-
-(defn _gen-do-try-list [bindings body-expr]
-  "Generate code for do-try-list: Result[list[T]]."
-  (if (not bindings)
-      `(.append _acc ~body-expr)
-      (let [bind (get bindings 0)
-            rest (cut bindings 1 None)
-            #(name expr) (_bind-parts bind)]
-        (cond
-          (_is-iterate expr)
-            (let [items (_iterate-arg expr)]
-              `(for [~name ~items]
-                 ~(_gen-do-try-list rest body-expr)))
-          (_is-try expr)
-            (let [program (_try-arg expr)]
-              `(do (setv ~name (yield ~program))
-                   ~(_gen-do-try-list rest body-expr)))
-          True
-            (if (is name None)
-                `(do (yield ~expr)
-                     ~(_gen-do-try-list rest body-expr))
-                `(do (setv ~name (yield ~expr))
-                     ~(_gen-do-try-list rest body-expr)))))))
-
-(defn _gen-do-dict-try [bindings body-expr]
-  "Generate code for do-dict-try: dict[K,V] (skip errors)."
-  (if (not bindings)
-      `(setv (get _acc (get ~body-expr 0)) (get ~body-expr 1))
-      (let [bind (get bindings 0)
-            rest (cut bindings 1 None)
-            #(name expr) (_bind-parts bind)]
-        (cond
-          (_is-iterate expr)
-            (let [items (_iterate-arg expr)]
-              `(for [~name ~items]
-                 ~(_gen-do-dict-try rest body-expr)))
-          (_is-try expr)
-            (let [program (_try-arg expr)]
-              `(try
-                 (setv ~name (yield ~program))
-                 ~(_gen-do-dict-try rest body-expr)
-                 (except [_e Exception] None)))
-          True
-            (if (is name None)
-                `(do (yield ~expr)
-                     ~(_gen-do-dict-try rest body-expr))
-                `(do (setv ~name (yield ~expr))
-                     ~(_gen-do-dict-try rest body-expr)))))))
-
-
-;; ---------------------------------------------------------------------------
-;; Internal: parse do-* body
+;; Internal: parse do body
 ;; ---------------------------------------------------------------------------
 
 (defn _parse-do-body [forms]
@@ -442,127 +381,8 @@ defk {name}: {{:pre [...]}} is required.
       (_is-when form) (.append bindings form)
       True (setv body-expr form)))
   (when (is body-expr None)
-    (raise (SyntaxError "do-* block must have a body expression")))
+    (raise (SyntaxError "do block must have a body expression")))
   #(bindings body-expr))
-
-
-;; ---------------------------------------------------------------------------
-;; do-list — list[T]
-;; ---------------------------------------------------------------------------
-
-(defmacro do-list [#* forms]
-  "Monadic do block returning list[T].
-   Iterate → for loop. Other <- → yield.
-
-   (do-list
-     (<- x (Iterate items))
-     (<- y (some-effect x))
-     [x y])"
-  (setv #(bindings body-expr) (_parse-do-body forms))
-  `(do
-     (setv _acc [])
-     ~(_gen-do-list bindings body-expr)
-     _acc))
-
-
-;; ---------------------------------------------------------------------------
-;; do-list-try — list[Result[T]]
-;; ---------------------------------------------------------------------------
-
-(defmacro do-list-try [#* forms]
-  "Monadic do block returning list[Result[T]].
-   Iterate → for loop. Try → per-element error handling.
-
-   (do-list-try
-     (<- event (Iterate events))
-     (<- batch (Try (rank event)))
-     [event batch])"
-  (setv #(bindings body-expr) (_parse-do-body forms))
-  (setv _Ok (hy.models.Symbol "_Ok")
-        _Err (hy.models.Symbol "_Err"))
-  `(do
-     (import doeff [Ok :as ~_Ok Err :as ~_Err])
-     (setv _acc [])
-     ~(_gen-do-list-try bindings body-expr)
-     _acc))
-
-
-;; ---------------------------------------------------------------------------
-;; do-try-list — Result[list[T]]
-;; ---------------------------------------------------------------------------
-
-(defmacro do-try-list [#* forms]
-  "Monadic do block returning Result[list[T]].
-   Any error aborts entire list.
-
-   (do-try-list
-     (<- event (Iterate events))
-     (<- batch (Try (rank event)))
-     [event batch])"
-  (setv #(bindings body-expr) (_parse-do-body forms))
-  (setv _Ok (hy.models.Symbol "_Ok")
-        _Err (hy.models.Symbol "_Err"))
-  `(do
-     (import doeff [Ok :as ~_Ok Err :as ~_Err])
-     (try
-       (do
-         (setv _acc [])
-         ~(_gen-do-try-list bindings body-expr)
-         (_Ok _acc))
-       (except [_e Exception]
-         (_Err _e)))))
-
-
-;; ---------------------------------------------------------------------------
-;; do-dict-try — dict[K,V] (skip errors)
-;; ---------------------------------------------------------------------------
-
-(defmacro do-dict-try [#* forms]
-  "Monadic do block returning dict[K,V], skipping errors.
-   Body must be [key value].
-
-   (do-dict-try
-     (<- symbol (Iterate universe))
-     (<- frame (Try (fetch-price symbol)))
-     [symbol frame])"
-  (setv #(bindings body-expr) (_parse-do-body forms))
-  `(do
-     (setv _acc {})
-     ~(_gen-do-dict-try bindings body-expr)
-     _acc))
-
-
-;; ---------------------------------------------------------------------------
-;; do-try — Result[T]
-;; ---------------------------------------------------------------------------
-
-(defmacro do-try [#* forms]
-  "Monadic do block returning Result[T].
-
-   (do-try
-     (<- x (Try (validate input)))
-     (<- y (process x))
-     y)"
-  (setv #(bindings body-expr) (_parse-do-body forms))
-  (setv _Ok (hy.models.Symbol "_Ok")
-        _Err (hy.models.Symbol "_Err"))
-  `(do
-     (import doeff [Ok :as ~_Ok Err :as ~_Err])
-     (try
-       (do
-         ~@(lfor bind bindings
-             (let [#(name expr) (_bind-parts bind)]
-               (if (_is-try expr)
-                   (let [program (_try-arg expr)]
-                     (if (is name None)
-                         `(yield ~program)
-                         `(setv ~name (yield ~program))))
-                   (if (is name None)
-                       `(yield ~expr)
-                       `(setv ~name (yield ~expr))))))
-         (_Ok ~body-expr))
-       (except [_e Exception]
-         (_Err _e)))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -671,48 +491,6 @@ defk {name}: {{:pre [...]}} is required.
 
 
 ;; ---------------------------------------------------------------------------
-;; fold — catamorphic reduction over a collection
-;; ---------------------------------------------------------------------------
-
-(defmacro fold [collection #* args]
-  "Fold over a collection with implicit `acc` and `it` bindings.
-
-   (fold collection :init 0 (+ acc it))
-
-   `acc` is the accumulator (starts at :init value).
-   `it` is the current item.
-   Body is a kleisli expression (can use <- for effects).
-
-   Expands to: (Reduce (fnk [acc it] body) init collection)
-
-   Requires:
-     (import doeff [do :as _doeff-do])
-     (import doeff_traverse.effects [Reduce :as _doeff_traverse_Reduce])"
-  ;; Parse args: find :init value, rest is body
-  (setv init None
-        body-forms [])
-  (setv i 0)
-  (while (< i (len args))
-    (setv arg (get args i))
-    (if (and (isinstance arg hy.models.Keyword)
-             (= (str arg) ":init"))
-        (do
-          (setv init (get args (+ i 1)))
-          (+= i 2))
-        (do
-          (.append body-forms arg)
-          (+= i 1))))
-  (when (is init None)
-    (raise (SyntaxError "fold requires :init value")))
-  (when (not body-forms)
-    (raise (SyntaxError "fold requires a body expression")))
-  `(_doeff_traverse_Reduce
-     (fn [acc it] ((_doeff_do (fn [] (do ~@body-forms)))))
-     ~init
-     ~collection))
-
-
-;; ---------------------------------------------------------------------------
 ;; Internal: ! (bang) inline bind expansion
 ;; ---------------------------------------------------------------------------
 
@@ -739,12 +517,12 @@ defk {name}: {{:pre [...]}} is required.
        (= (str (get form 0)) "let")))
 
 (defn _is-comprehension [form]
-  "Check if form is (for/do ...), (traverse ...), or (fold ...) — these have
+  "Check if form is (for/do ...) or (traverse ...) — these have
    their own scope and handle bangs internally."
   (and (isinstance form hy.models.Expression)
        (> (len form) 0)
        (isinstance (get form 0) hy.models.Symbol)
-       (in (str (get form 0)) #{"for/do" "traverse" "fold"})))
+       (in (str (get form 0)) #{"for/do" "traverse"})))
 
 (defn _expand-bangs [form]
   "Walk an expression, extracting all (! expr) into (<- tmp expr) bindings.
@@ -754,7 +532,7 @@ defk {name}: {{:pre [...]}} is required.
    are kept inside the let (not hoisted out), so that let-bound variables
    remain in scope.
 
-   Comprehension forms (for/do, traverse, fold) are opaque — bangs inside
+   Comprehension forms (for/do, traverse) are opaque — bangs inside
    them are NOT hoisted, because those macros introduce their own scope
    (From bindings) and will expand bangs themselves."
   (setv bindings [])
@@ -797,61 +575,157 @@ defk {name}: {{:pre [...]}} is required.
 
 
 ;; ---------------------------------------------------------------------------
-;; defprogram — define a Program constant with implicit do context
+;; defp / defpp — define a Program constant with implicit do context
 ;; ---------------------------------------------------------------------------
 
-(defmacro defprogram [name #* body]
-  "Define a Program constant with :post contract (REQUIRED).
-   Body is an implicit do-block where ! (bang) inline bind and <- are available.
-
-   (defprogram my-pipeline
-     {:post [(: % ExportResult)]}
-     (<- data (load-data :path \"data.csv\"))
-     (<- result (process data))
-     (export result))
-
-   :post is REQUIRED — declares what type the program produces.
-   (: name Type) is shorthand for (isinstance name Type).
-   % binds to the return value in :post checks."
-  ;; Extract contracts before bang expansion
-  (setv #(pre-checks post-checks real-body) (_extract-contracts body))
-  (when (is post-checks None)
-    (raise (SyntaxError (.format "
-defprogram {name}: {{:post [...]}} is required.
+(defn _defp-post-required-msg [macro-name name]
+  (.format "
+{macro} {name}: {{:post [...]}} is required.
 
   Correct usage:
 
-    (defprogram {name}
+    ({macro} {name}
       {{:post [(: % ExportResult)]}}         ;; return type check
       (<- data (load-data :path \"data.csv\"))
       (<- result (process data))
       (export result))
 
-    ;; With multiple checks:
-    (defprogram {name}
-      {{:post [(: % list)                    ;; type check
-              (> (len %) 0)]}}               ;; arbitrary validation
-      (<- items (fetch-all))
-      items)
-
   (: name Type) expands to (isinstance name Type).
   % binds to the program's return value in :post checks.
-" :name name))))
-  ;; Bang-expand the real body
-  (setv expanded-forms [])
-  (for [form real-body]
-    (if (_is-bind form)
-        (let [#(nm expr) (_bind-parts form)
-              #(inner-bindings rewritten) (_expand-bangs expr)]
-          (.extend expanded-forms inner-bindings)
-          (if (is nm None)
-              (.append expanded-forms `(<- ~rewritten))
-              (.append expanded-forms `(<- ~nm ~rewritten))))
-        (let [#(inner-bindings rewritten) (_expand-bangs form)]
-          (.extend expanded-forms inner-bindings)
-          (.append expanded-forms rewritten))))
-  ;; Build factory with post-contract (no :pre needed — no params)
-  (setv factory-name (hy.models.Symbol (+ "_" (str name) "_factory")))
+" :macro macro-name :name name))
+
+(defn _defp-program-return-msg [name]
+  (.format "
+{name}: return value is a Program (generator), but defp defines Program[T].
+
+  The last expression in your defp body returned a Program instead of a plain
+  value. This usually means you forgot to bind it with (<- ...):
+
+    ;; WRONG — returns Program, not the value:
+    (defp {name}
+      {{:post [(: % str)]}}
+      (some-effect))              ;; ← this is a Program, not a str
+
+    ;; CORRECT — bind the Program to get the value:
+    (defp {name}
+      {{:post [(: % str)]}}
+      (<- result (some-effect))   ;; ← binds the effect result
+      result)                     ;; ← returns the plain value
+
+  If you intentionally want Program[Program[T]], use defpp instead:
+
+    (defpp {name}
+      {{:post [...]}}
+      ...)
+" :name name))
+
+(defn _defpp-not-program-return-msg [name]
+  (.format "
+{name}: return value is NOT a Program, but defpp defines Program[Program[T]].
+
+  defpp requires the last expression to return a Program (generator).
+  If you don't need Program[Program[T]], use defp instead:
+
+    ;; WRONG — returns a plain value from defpp:
+    (defpp {name}
+      {{:post [(: % str)]}}
+      (<- result (some-effect))
+      result)                       ;; ← plain value, not a Program
+
+    ;; CORRECT — return a Program from defpp:
+    (defpp {name}
+      {{:post [(inspect.isgenerator %)]}}
+      (<- config (load-config))
+      (build-pipeline config))      ;; ← returns a Program
+
+    ;; Or just use defp if you want Program[T]:
+    (defp {name}
+      {{:post [(: % str)]}}
+      (<- result (some-effect))
+      result)
+" :name name))
+
+(defn _build-defp [macro-name name body * [program-return-mode "reject"]]
+  "Shared implementation for defp/defpp/defprogram.
+   program-return-mode: 'reject' (defp) | 'require' (defpp)"
+  (setv #(pre-checks post-checks real-body) (_extract-contracts body))
+  (when (is-not pre-checks None)
+    (raise (SyntaxError (.format "
+{macro} {name}: :pre is not allowed — {macro} has no parameters.
+
+  Remove {{:pre [...]}} and keep only {{:post [...]}}:
+
+    ({macro} {name}
+      {{:post [(: % ExportResult)]}}
+      ...)
+" :macro macro-name :name name))))
+  (when (is post-checks None)
+    (raise (SyntaxError (_defp-post-required-msg macro-name name))))
+  ;; Inject Program-return guard into :post
+  (cond
+    (= program-return-mode "reject")
+      (do
+        (setv guard-msg (_defp-program-return-msg (str name)))
+        (setv post-checks (+ [
+          (hy.models.Expression
+            [(hy.models.Symbol "not")
+             (hy.models.Expression
+               [(hy.models.Symbol "_doeff_check_program_return") (hy.models.Symbol "%")
+                (hy.models.String guard-msg) (hy.models.Keyword "reject")])])]
+          (list post-checks))))
+    (= program-return-mode "require")
+      (do
+        (setv guard-msg (_defpp-not-program-return-msg (str name)))
+        (setv post-checks (+ [
+          (hy.models.Expression
+            [(hy.models.Symbol "not")
+             (hy.models.Expression
+               [(hy.models.Symbol "_doeff_check_program_return") (hy.models.Symbol "%")
+                (hy.models.String guard-msg) (hy.models.Keyword "require")])])]
+          (list post-checks)))))
+  ;; Rebuild the contract dict + body for do! (no :pre — already rejected above)
+  (setv contract-dict (hy.models.Dict))
+  (.append contract-dict (hy.models.Keyword "post"))
+  (.append contract-dict (hy.models.List post-checks))
   `(do
-     ~(_build-kleisli-with-contracts ['_doeff_do] factory-name [] [] post-checks expanded-forms)
-     (setv ~name (~factory-name))))
+     (import inspect)
+     (defn _doeff_check_program_return [v msg mode]
+       "Check Program return value. Raises TypeError on violation. Returns False (for assert)."
+       (setv is-program (inspect.isgenerator v))
+       (when (and (= mode "reject") is-program)
+         (raise (TypeError msg)))
+       (when (and (= mode "require") (not is-program))
+         (raise (TypeError msg)))
+       False)
+     (setv ~name (do! ~contract-dict ~@real-body))))
+
+(defmacro defp [name #* body]
+  "Define a Program[T] constant. Errors if the return value is itself a Program.
+   :post is REQUIRED. Use defpp if Program[Program[T]] is intended.
+
+   (defp my-pipeline
+     {:post [(: % ExportResult)]}
+     (<- data (load-data))
+     (<- result (process data))
+     result)"
+  (_build-defp "defp" name body))
+
+(defmacro defpp [name #* body]
+  "Define a Program[Program[T]] constant. Errors if return is NOT a Program.
+   :post is REQUIRED.
+
+   (defpp my-meta-program
+     {:post [(inspect.isgenerator %)]}
+     (<- config (load-config))
+     (build-pipeline config))"
+  (_build-defp "defpp" name body :program-return-mode "require"))
+
+(defmacro defprogram [name #* body]
+  "DEPRECATED: use defp (or defpp for Program[Program[T]])."
+  (import warnings)
+  (warnings.warn
+    (.format "defprogram is deprecated. Use defp (or defpp for Program[Program[T]]).\n  Replace: (defprogram {name} ...) → (defp {name} ...)"
+             :name name)
+    DeprecationWarning
+    :stacklevel 2)
+  (_build-defp "defprogram" name body))
