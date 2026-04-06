@@ -8,6 +8,12 @@
 ;;;
 ;;; Core effects are imported from doeff_core_effects:
 ;;;   (import doeff_core_effects [Ask Try slog])
+;;;
+;;; Contract rules:
+;;;   - defk / deff: {:pre [...]} is REQUIRED
+;;;   - defprogram:  {:post [...]} is REQUIRED
+;;;   - (: name Type) in :pre/:post expands to (isinstance name Type)
+;;;   - Arbitrary expressions can be mixed with (: ...) in the same list
 
 ;; ---------------------------------------------------------------------------
 ;; Internal: contract extraction
@@ -29,13 +35,34 @@
         (setv post-checks (list v)))))
   #(pre-checks post-checks real-body))
 
+(defn _is-type-check [form]
+  "Check if form is (: name Type) — type contract shorthand.
+   In Hy, bare : is read as Keyword(''), not Symbol(':')."
+  (and (isinstance form hy.models.Expression)
+       (>= (len form) 3)
+       (isinstance (get form 0) hy.models.Keyword)
+       (= (str (get form 0)) ":")))
+
+(defn _expand-check [check fn-name phase]
+  "Expand a single contract check into an assert form.
+   (: x T) → isinstance assert with clear type error message.
+   Other  → generic condition assert."
+  (if (_is-type-check check)
+      (let [target (get check 1)
+            tp (get check 2)
+            target-label (if (= (str target) "%") "return value" (str target))]
+        `(assert (isinstance ~target ~tp)
+                 (+ ~(+ (str fn-name) ": " phase " type error: `" target-label "` expected " (str tp) ", got ")
+                    (. (type ~target) __name__))))
+      `(assert ~check ~(+ (str fn-name) ": " phase " failed: " (str check)))))
+
 (defn _build-fn-with-contracts [decorators name params pre-checks post-checks real-body]
   "Build a defn form with pre/post assertion wrappers."
   (setv pre-code (lfor check pre-checks
-                   `(assert ~check ~(+ "pre-condition failed: " (str check)))))
+                   (_expand-check check name "pre-condition")))
   (if post-checks
       (let [post-asserts (lfor check post-checks
-                           `(assert ~check ~(+ "post-condition failed: " (str check))))
+                           (_expand-check check name "post-condition"))
             init-forms (cut real-body 0 -1)
             last-form (get real-body -1)]
         `(defn ~decorators ~name ~params
@@ -55,10 +82,10 @@
    only the last form as the result — (do ...) wrapping would break yield-based
    effect bindings (<-)."
   (setv pre-code (lfor check pre-checks
-                   `(assert ~check ~(+ "pre-condition failed: " (str check)))))
+                   (_expand-check check name "pre-condition")))
   (if post-checks
       (let [post-asserts (lfor check post-checks
-                           `(assert ~check ~(+ "post-condition failed: " (str check))))
+                           (_expand-check check name "post-condition"))
             init-forms (cut real-body 0 -1)
             last-form (get real-body -1)]
         `(defn ~decorators ~name ~params
@@ -78,17 +105,33 @@
 ;; ---------------------------------------------------------------------------
 
 (defmacro deff [name params #* body]
-  "Define a function with optional :pre/:post contracts.
+  "Define a function with :pre/:post contracts.
 
    (deff my-fn [x y]
-     {:pre [(isinstance x int) (isinstance y str)]
-      :post [(isinstance % list)]}
+     {:pre [(: x int) (: y str)]
+      :post [(: % list)]}
      (list (range x)))
 
-   :pre  — assertions checked at function entry
+   :pre  — assertions checked at function entry (REQUIRED)
    :post — assertions checked on return value (% binds to result)
-   Both are optional."
+   (: name Type) is shorthand for (isinstance name Type).
+   Arbitrary validation expressions are also allowed in the same list."
   (setv #(pre-checks post-checks real-body) (_extract-contracts body))
+  (when (not pre-checks)
+    (raise (SyntaxError (.format "
+deff {name}: {{:pre [...]}} is required.
+
+  Correct usage:
+
+    (deff {name} [x y]
+      {{:pre [(: x int) (: y str)]          ;; type checks
+             (> x 0)]                        ;; arbitrary validation
+       :post [(: % list)]}}                  ;; optional return type
+      (list (range x)))
+
+  (: name Type) expands to (isinstance name Type).
+  :post is optional. % binds to return value in :post checks.
+" :name name))))
   (_build-fn-with-contracts [] name params pre-checks post-checks real-body))
 
 
@@ -97,20 +140,40 @@
 ;; ---------------------------------------------------------------------------
 
 (defmacro defk [name params #* body]
-  "Define a kleisli function (@do decorator) with optional :pre/:post contracts.
+  "Define a kleisli function (@do decorator) with :pre/:post contracts.
    Supports ! (bang) inline bind: (! expr) is expanded to (<- _tmp expr).
    Requires (import doeff [do :as _doeff-do]) in the calling module.
 
    (defk my-fn [x y]
-     {:pre [(isinstance x Asset)]
-      :post [(isinstance % SegmentSelection)]}
+     {:pre [(: x Asset)]
+      :post [(: % SegmentSelection)]}
      (<- result (some-effect))
      (return result))
 
+   :pre is REQUIRED. (: name Type) is shorthand for (isinstance name Type).
+   Arbitrary validation expressions are also allowed in the same list.
+
    With bang:
    (defk my-fn [x y]
+     {:pre [(: x int) (: y int)]}
      (k1 (! (k2 x)) (! (k3 y))))"
   (setv #(pre-checks post-checks real-body) (_extract-contracts body))
+  (when (not pre-checks)
+    (raise (SyntaxError (.format "
+defk {name}: {{:pre [...]}} is required.
+
+  Correct usage:
+
+    (defk {name} [x y]
+      {{:pre [(: x Asset) (: y str)]        ;; type checks
+             (> (len y) 0)]                  ;; arbitrary validation
+       :post [(: % Result)]}}               ;; optional return type
+      (<- result (some-effect x))
+      result)
+
+  (: name Type) expands to (isinstance name Type).
+  :post is optional. % binds to return value in :post checks.
+" :name name))))
   ;; Expand bangs in the real body
   (setv expanded-forms [])
   (for [form real-body]
@@ -727,20 +790,45 @@
 ;; ---------------------------------------------------------------------------
 
 (defmacro defprogram [name #* body]
-  "Define a Program constant. Body is an implicit do-block where
-   ! (bang) inline bind and <- are available.
+  "Define a Program constant with :post contract (REQUIRED).
+   Body is an implicit do-block where ! (bang) inline bind and <- are available.
 
    (defprogram my-pipeline
-     (process (! (load-data :path \"data.csv\"))))
-
-   Multi-form bodies with <- also work:
-
-   (defprogram my-pipeline
+     {:post [(: % ExportResult)]}
      (<- data (load-data :path \"data.csv\"))
      (<- result (process data))
-     (export result))"
+     (export result))
+
+   :post is REQUIRED — declares what type the program produces.
+   (: name Type) is shorthand for (isinstance name Type).
+   % binds to the return value in :post checks."
+  ;; Extract contracts before bang expansion
+  (setv #(pre-checks post-checks real-body) (_extract-contracts body))
+  (when (not post-checks)
+    (raise (SyntaxError (.format "
+defprogram {name}: {{:post [...]}} is required.
+
+  Correct usage:
+
+    (defprogram {name}
+      {{:post [(: % ExportResult)]}}         ;; return type check
+      (<- data (load-data :path \"data.csv\"))
+      (<- result (process data))
+      (export result))
+
+    ;; With multiple checks:
+    (defprogram {name}
+      {{:post [(: % list)                    ;; type check
+              (> (len %) 0)]}}               ;; arbitrary validation
+      (<- items (fetch-all))
+      items)
+
+  (: name Type) expands to (isinstance name Type).
+  % binds to the program's return value in :post checks.
+" :name name))))
+  ;; Bang-expand the real body
   (setv expanded-forms [])
-  (for [form body]
+  (for [form real-body]
     (if (_is-bind form)
         (let [#(nm expr) (_bind-parts form)
               #(inner-bindings rewritten) (_expand-bangs expr)]
@@ -751,8 +839,8 @@
         (let [#(inner-bindings rewritten) (_expand-bangs form)]
           (.extend expanded-forms inner-bindings)
           (.append expanded-forms rewritten))))
+  ;; Build factory with post-contract (no :pre needed — no params)
   (setv factory-name (hy.models.Symbol (+ "_" (str name) "_factory")))
   `(do
-     (defk ~factory-name []
-       ~@expanded-forms)
+     ~(_build-kleisli-with-contracts ['_doeff_do] factory-name [] [] post-checks expanded-forms)
      (setv ~name (~factory-name))))
