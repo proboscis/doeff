@@ -21,13 +21,24 @@
 
 (defn _extract-contracts [body]
   "Parse optional {:pre [...] :post [...]} from front of body forms.
-   Returns #(pre-checks post-checks real-body)."
-  (setv pre-checks []
-        post-checks []
+   Skips leading docstring if present.
+   Returns #(pre-checks post-checks real-body).
+   pre-checks/post-checks are None if not specified, [] if specified but empty."
+  (setv pre-checks None
+        post-checks None
         real-body body)
-  (when (and (> (len body) 0) (isinstance (get body 0) hy.models.Dict))
-    (setv contract (get body 0)
-          real-body (cut body 1 None))
+  ;; Find the contract dict — may be body[0] or body[1] (after docstring)
+  (setv contract-idx None)
+  (for [#(i form) (enumerate body)]
+    (when (isinstance form hy.models.Dict)
+      (setv contract-idx i)
+      (break))
+    ;; Skip string literals (docstrings) at the start
+    (when (not (isinstance form hy.models.String))
+      (break)))
+  (when (is-not contract-idx None)
+    (setv contract (get body contract-idx)
+          real-body (+ (cut body 0 contract-idx) (cut body (+ contract-idx 1) None)))
     (for [#(k v) (zip (cut contract None None 2) (cut contract 1 None 2))]
       (when (= (str k) ":pre")
         (setv pre-checks (list v)))
@@ -58,7 +69,7 @@
 
 (defn _build-fn-with-contracts [decorators name params pre-checks post-checks real-body]
   "Build a defn form with pre/post assertion wrappers."
-  (setv pre-code (lfor check pre-checks
+  (setv pre-code (lfor check (or pre-checks [])
                    (_expand-check check name "pre-condition")))
   (if post-checks
       (let [post-asserts (lfor check post-checks
@@ -81,7 +92,7 @@
    Unlike _build-fn-with-contracts, this emits body forms sequentially and captures
    only the last form as the result — (do ...) wrapping would break yield-based
    effect bindings (<-)."
-  (setv pre-code (lfor check pre-checks
+  (setv pre-code (lfor check (or pre-checks [])
                    (_expand-check check name "pre-condition")))
   (if post-checks
       (let [post-asserts (lfor check post-checks
@@ -117,7 +128,7 @@
    (: name Type) is shorthand for (isinstance name Type).
    Arbitrary validation expressions are also allowed in the same list."
   (setv #(pre-checks post-checks real-body) (_extract-contracts body))
-  (when (not pre-checks)
+  (when (is pre-checks None)
     (raise (SyntaxError (.format "
 deff {name}: {{:pre [...]}} is required.
 
@@ -158,7 +169,7 @@ deff {name}: {{:pre [...]}} is required.
      {:pre [(: x int) (: y int)]}
      (k1 (! (k2 x)) (! (k3 y))))"
   (setv #(pre-checks post-checks real-body) (_extract-contracts body))
-  (when (not pre-checks)
+  (when (is pre-checks None)
     (raise (SyntaxError (.format "
 defk {name}: {{:pre [...]}} is required.
 
@@ -804,7 +815,7 @@ defk {name}: {{:pre [...]}} is required.
    % binds to the return value in :post checks."
   ;; Extract contracts before bang expansion
   (setv #(pre-checks post-checks real-body) (_extract-contracts body))
-  (when (not post-checks)
+  (when (is post-checks None)
     (raise (SyntaxError (.format "
 defprogram {name}: {{:post [...]}} is required.
 

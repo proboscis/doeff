@@ -308,7 +308,7 @@ def build_api_parameters(
 
         # Add GPT-5 thinking mode parameters
         if reasoning_effort:
-            valid_efforts = ["minimal", "low", "medium", "high"]
+            valid_efforts = ["none", "minimal", "low", "medium", "high", "xhigh"]
             if reasoning_effort not in valid_efforts:
                 yield Tell(
                     f"Invalid reasoning_effort '{reasoning_effort}'. Valid options: {valid_efforts}"
@@ -316,13 +316,15 @@ def build_api_parameters(
             else:
                 api_params["reasoning_effort"] = reasoning_effort
                 effort_descriptions = {
+                    "none": "No reasoning (gpt-5.4 default).",
                     "minimal": "Minimal reasoning for fast response.",
                     "low": "Light reasoning for moderate complexity.",
                     "medium": "Balanced reasoning for most cases.",
                     "high": "Deep reasoning for complex problems.",
+                    "xhigh": "Maximum reasoning, highest cost.",
                 }
                 yield Tell(
-                    f"Using reasoning_effort='{reasoning_effort}': {effort_descriptions[reasoning_effort]}"
+                    f"Using reasoning_effort='{reasoning_effort}': {effort_descriptions.get(reasoning_effort, '')}"
                 )
 
         if verbosity:

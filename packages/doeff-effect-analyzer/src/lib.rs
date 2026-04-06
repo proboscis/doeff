@@ -6,8 +6,12 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+pub mod dot_output;
 pub mod effect_registry;
+pub mod html_output;
 pub mod function_summary;
+pub mod hy_analyzer;
+pub mod hy_reader;
 #[cfg(feature = "python")]
 pub mod python_api;
 pub mod resolver;
