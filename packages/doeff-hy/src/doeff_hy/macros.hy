@@ -285,7 +285,7 @@ defk {name}: {{:post [...]}} is required.
         (let [#(inner-bindings rewritten) (_expand-bangs form)]
           (.extend expanded-forms inner-bindings)
           (.append expanded-forms rewritten))))
-  (setv #(bindings body-expr) (_parse-do-body expanded-forms))
+  (setv #(bindings body-expr) (_parse-do-body expanded-forms "do!"))
   (setv pre-code (lfor check (or pre-checks [])
                    (_expand-check check "do!" "pre-condition"))
         expanded (lfor bind bindings
@@ -370,7 +370,7 @@ defk {name}: {{:post [...]}} is required.
 ;; Internal: parse do body
 ;; ---------------------------------------------------------------------------
 
-(defn _parse-do-body [forms]
+(defn _parse-do-body [forms [macro-name "do"]]
   "Split forms into (bindings, body-expr).
    All (<- ...) and (When ...) forms are bindings. Last non-binding form is body."
   (setv bindings []
@@ -381,7 +381,19 @@ defk {name}: {{:post [...]}} is required.
       (_is-when form) (.append bindings form)
       True (setv body-expr form)))
   (when (is body-expr None)
-    (raise (SyntaxError "do block must have a body expression")))
+    (raise (SyntaxError (.format "
+{macro}: missing body expression — only bindings found.
+
+  The last form must be a non-binding expression (the return value):
+
+    ({macro}
+      (<- x (some-effect))     ;; ← binding
+      (<- y (other-effect x))  ;; ← binding
+      (+ x y))                 ;; ← body expression (required)
+
+  Every (<- ...) and (When ...) is a binding. You need at least one
+  plain expression at the end as the result.
+" :macro macro-name))))
   #(bindings body-expr))
 
 
@@ -454,7 +466,7 @@ defk {name}: {{:post [...]}} is required.
    Requires:
      (import doeff [do :as _doeff-do])
      (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])"
-  (setv #(bindings body-expr) (_parse-do-body forms))
+  (setv #(bindings body-expr) (_parse-do-body forms "traverse"))
   (_gen-traverse-body bindings body-expr))
 
 
@@ -486,7 +498,7 @@ defk {name}: {{:post [...]}} is required.
      (import doeff [do :as _doeff-do])
      (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
      (import doeff_traverse [Skip :as _doeff_traverse_Skip])"
-  (setv #(bindings body-expr) (_parse-do-body forms))
+  (setv #(bindings body-expr) (_parse-do-body forms "for/do"))
   (_gen-traverse-body bindings body-expr))
 
 
