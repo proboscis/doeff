@@ -36,4 +36,9 @@ def silent_runresult_interpreter(program: Program[int]):
     return run(program, handlers=default_handlers(), print_doeff_trace=False)
 
 
+def ctx_interpreter(program, *, env=None, ctx=None):
+    """Interpreter that returns the DoeffRunContext for testing."""
+    return ctx
+
+
 sample_env: Program[dict] = Program.pure({"value": 5})

@@ -144,4 +144,6 @@ default_handlers = _Removed("default_handlers", "compose handlers explicitly wit
 async_run = _Removed("async_run", "use run() with scheduled()")
 default_async_handlers = _Removed("default_async_handlers", "compose handlers explicitly with WithHandler")
 
+from doeff.cli.run_services import DoeffRunContext
+
 __version__ = "0.2.1"
