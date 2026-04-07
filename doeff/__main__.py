@@ -34,7 +34,7 @@ class RunArgs(argparse.Namespace):
     interpreter: str | None
     envs: list[str] | None
     set_vars: list[str] | None
-    apply: str | None
+    apply: list[str] | None
     transform: list[str] | None
     format: str
     no_runbox: bool
@@ -145,7 +145,7 @@ def handle_run_code(args: RunArgs) -> int:
         interpreter_path=args.interpreter,
         env_paths=args.envs or [],
         set_vars=_parse_set_vars(args.set_vars),
-        apply_path=args.apply,
+        apply_paths=args.apply or [],
         transformer_paths=args.transform or [],
         output_format=args.format,
     )
@@ -171,7 +171,7 @@ def handle_run(args: RunArgs) -> int:
         interpreter_path=args.interpreter,
         env_paths=args.envs or [],
         set_vars=_parse_set_vars(args.set_vars),
-        apply_path=args.apply,
+        apply_paths=args.apply or [],
         transformer_paths=args.transform or [],
         output_format=args.format,
     )
@@ -222,7 +222,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--set", action="append", dest="set_vars", metavar="KEY=VALUE",
         help="Set an env key-value pair (can repeat). Use {path} to import a symbol, e.g. --set model={myapp.gpt4}",
     )
-    run_parser.add_argument("--apply", help="Function T -> Program[U] to apply before execution")
+    run_parser.add_argument(
+        "--apply", action="append",
+        help="Kleisli arrow T -> Program[U] to apply before execution (can repeat)",
+    )
     run_parser.add_argument(
         "--transform", action="append",
         help="Program -> Program transformer (can repeat)",

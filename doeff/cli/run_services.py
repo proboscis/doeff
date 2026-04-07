@@ -66,7 +66,7 @@ class RunContext:
     interpreter_path: str | None
     env_paths: list[str] = field(default_factory=list)
     set_vars: dict[str, Any] = field(default_factory=dict)
-    apply_path: str | None = None
+    apply_paths: list[str] = field(default_factory=list)
     transformer_paths: list[str] = field(default_factory=list)
     output_format: str = "text"
 
@@ -78,9 +78,25 @@ class ResolvedRunContext:
     interpreter_path: str
     env_paths: list[str]
     set_vars: dict[str, str]
-    apply_path: str | None
+    apply_paths: list[str]
     transformer_paths: list[str]
     output_format: str
+
+
+@dataclass(frozen=True)
+class DoeffRunContext:
+    """CLI invocation context passed to interpreters for remote execution support.
+
+    Interpreters that need to reconstruct the original ``doeff run`` command
+    (e.g. for k3s Jobs, Docker, SSH) can accept this as ``ctx=``.
+    """
+
+    program_ref: str
+    interpreter_ref: str
+    env_refs: list[str]
+    set_overrides: dict[str, str]
+    apply_refs: list[str]
+    transform_refs: list[str]
 
 
 def resolve_context(ctx: RunContext) -> ResolvedRunContext:
@@ -121,7 +137,7 @@ def resolve_context(ctx: RunContext) -> ResolvedRunContext:
         interpreter_path=interpreter_path,
         env_paths=env_paths,
         set_vars=ctx.set_vars,
-        apply_path=ctx.apply_path,
+        apply_paths=ctx.apply_paths,
         transformer_paths=ctx.transformer_paths,
         output_format=ctx.output_format,
     )
@@ -150,10 +166,10 @@ def execute(resolved: ResolvedRunContext) -> Any:
     """Execute a resolved run context and return the final value."""
     program = resolved.program_instance
 
-    # Apply --apply (T -> Program[U])
-    if resolved.apply_path:
-        with profile("Apply transform"):
-            apply_fn = import_symbol(resolved.apply_path)
+    # Apply --apply (T -> Program[U]), chained left-to-right
+    for ap in resolved.apply_paths:
+        with profile(f"Apply: {ap}"):
+            apply_fn = import_symbol(ap)
             program = apply_fn(program)
 
     # Apply --transform (Program -> Program)
@@ -194,12 +210,26 @@ def execute(resolved: ResolvedRunContext) -> Any:
         else:
             env_program = Program.pure(set_dict)
 
-    # Run through interpreter — pass env as Program[dict] if available
+    # Build CLI context for interpreters that support remote execution
+    run_ctx = None
+    if resolved.program_path:
+        run_ctx = DoeffRunContext(
+            program_ref=resolved.program_path,
+            interpreter_ref=resolved.interpreter_path,
+            env_refs=list(resolved.env_paths),
+            set_overrides=dict(resolved.set_vars),
+            apply_refs=list(resolved.apply_paths),
+            transform_refs=list(resolved.transformer_paths),
+        )
+
+    # Run through interpreter — pass env/ctx as keyword args if supported
     with profile("Run interpreter"):
         interpreter = import_symbol(resolved.interpreter_path)
-        if env_program is not None:
-            import inspect
-            sig = inspect.signature(interpreter)
-            if "env" in sig.parameters:
-                return interpreter(program, env=env_program)
-        return interpreter(program)
+        import inspect
+        sig = inspect.signature(interpreter)
+        kwargs: dict[str, Any] = {}
+        if env_program is not None and "env" in sig.parameters:
+            kwargs["env"] = env_program
+        if run_ctx is not None and "ctx" in sig.parameters:
+            kwargs["ctx"] = run_ctx
+        return interpreter(program, **kwargs)

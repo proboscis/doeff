@@ -3,6 +3,7 @@
 from tests.cli.cli_assets import (
     add_three,
     ask_program,
+    ctx_interpreter,
     double_program,
     runresult_interpreter,
     sample_env,
@@ -13,6 +14,7 @@ from tests.cli.cli_assets import (
 __all__ = [
     "add_three",
     "ask_program",
+    "ctx_interpreter",
     "double_program",
     "runresult_interpreter",
     "sample_env",
