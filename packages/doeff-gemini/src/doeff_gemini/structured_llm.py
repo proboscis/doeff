@@ -1052,7 +1052,7 @@ def structured_llm__gemini(
     if safe_retry_result.is_err():
         exc = safe_retry_result.error
         yield slog(
-            event="gemini.retry_exhausted",
+            msg="gemini.retry_exhausted",
             level="ERROR",
             model=model,
             operation="generate_content",
@@ -1257,7 +1257,7 @@ def edit_image__gemini(
     if safe_retry_result.is_err():
         exc = safe_retry_result.error
         yield slog(
-            event="gemini.retry_exhausted",
+            msg="gemini.retry_exhausted",
             level="ERROR",
             model=model,
             operation="generate_content",
