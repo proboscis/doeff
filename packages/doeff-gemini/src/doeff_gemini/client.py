@@ -474,6 +474,7 @@ def track_api_call(
         yield slog(msg=log_line)
 
     yield slog(
+        msg="gemini_cost",
         handler="gemini_cost",
         model=model,
         operation=operation,
