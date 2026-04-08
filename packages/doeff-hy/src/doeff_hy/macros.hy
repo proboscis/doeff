@@ -2,7 +2,7 @@
 ;;;
 ;;; Usage:
 ;;;   (require doeff-hy.macros [do! defk deff fnk <- ! defp defpp defprogram
-;;;                             traverse for/do])
+;;;                             defpipeline traverse for/do])
 ;;;   (import doeff [do :as _doeff-do])
 ;;;
 ;;; Core effects are imported from doeff_core_effects:
@@ -773,3 +773,105 @@ defk {name}: {{:post [...]}} is required.
     DeprecationWarning
     :stacklevel 2)
   (_build-defp "defprogram" name body))
+
+
+;; ---------------------------------------------------------------------------
+;; defpipeline — named-stage pipeline composition
+;; ---------------------------------------------------------------------------
+
+(defn _replace-stage-refs [expr stage-map]
+  "Walk an expression and replace stage-name symbols with (! p-pipeline-stage)."
+  (cond
+    (and (isinstance expr hy.models.Symbol)
+         (in (str expr) stage-map))
+      (hy.models.Expression
+        [(hy.models.Symbol "!") (get stage-map (str expr))])
+    (isinstance expr hy.models.Expression)
+      (hy.models.Expression (lfor child expr (_replace-stage-refs child stage-map)))
+    (isinstance expr hy.models.List)
+      (hy.models.List (lfor child expr (_replace-stage-refs child stage-map)))
+    (isinstance expr hy.models.FComponent)
+      (hy.models.FComponent (lfor child expr (_replace-stage-refs child stage-map)))
+    True expr))
+
+(defmacro defpipeline [pipeline-name #* body]
+  "Define a pipeline as named stages. Each stage becomes a clickable defp.
+
+   (defpipeline daily-cllm
+     [ohlc]   (fetch-ohlc :ticker \"7203.T\" :day day)
+     [news]   (fetch-news :day day)
+     [data]   (merge-data ohlc news)
+     [signal] (compute-signal data :model \"gpt-5\")
+     [result] (execute-and-report signal))
+
+   Expands to:
+     (defp p-daily-cllm-ohlc   {:post []} (fetch-ohlc ...))
+     (defp p-daily-cllm-news   {:post []} (fetch-news ...))
+     (defp p-daily-cllm-data   {:post []} (merge-data (! p-daily-cllm-ohlc) (! p-daily-cllm-news)))
+     (defp p-daily-cllm-signal {:post []} (compute-signal (! p-daily-cllm-data) ...))
+     (defp p-daily-cllm        {:post []} (execute-and-report (! p-daily-cllm-signal)))
+
+   Stage names in expressions are auto-replaced with (! p-...) references.
+   The last stage is also aliased as p-{pipeline-name}.
+   Each stage is independently runnable via IDE click."
+  ;; Parse body: skip optional docstring, then [name] expr pairs
+  (setv forms (list body))
+  (setv docstring None)
+  (when (and forms (isinstance (get forms 0) hy.models.String))
+    (setv docstring (get forms 0))
+    (setv forms (list (cut forms 1 None))))
+  ;; Parse [name] expr pairs
+  (setv stages [])
+  (setv i 0)
+  (while (< i (len forms))
+    (setv name-form (get forms i))
+    (when (not (isinstance name-form hy.models.List))
+      (raise (SyntaxError (.format "
+defpipeline {pipeline}: expected [stage-name], got {got}.
+
+  Each stage must be a [name] expr pair:
+
+    (defpipeline {pipeline}
+      [fetch]  (fetch-data :day day)
+      [signal] (compute-signal fetch)
+      [result] (export signal))
+" :pipeline pipeline-name :got (repr name-form)))))
+    (when (= (len name-form) 0)
+      (raise (SyntaxError (.format "
+defpipeline {pipeline}: empty stage name [].
+" :pipeline pipeline-name))))
+    (when (>= (+ i 1) (len forms))
+      (raise (SyntaxError (.format "
+defpipeline {pipeline}: stage [{stage}] has no expression.
+" :pipeline pipeline-name :stage (get name-form 0)))))
+    (setv expr (get forms (+ i 1)))
+    (.append stages #((get name-form 0) expr))
+    (+= i 2))
+  (when (= (len stages) 0)
+    (raise (SyntaxError (.format "
+defpipeline {pipeline}: no stages defined.
+" :pipeline pipeline-name))))
+  ;; Build stage-name → defp-name mapping
+  (setv prefix (str pipeline-name))
+  (setv stage-map {})
+  (for [#(sname _) stages]
+    (setv (get stage-map (str sname))
+      (hy.models.Symbol (+ "p-" prefix "-" (str sname)))))
+  ;; Generate defp for each stage
+  ;; Each stage expr is wrapped as: (<- _stage expr) _stage
+  ;; This ensures both effect constructors and kleisli calls are properly yielded.
+  (setv result-forms [])
+  (for [#(sname expr) stages]
+    (setv defp-name (get stage-map (str sname)))
+    (setv resolved-expr (_replace-stage-refs expr stage-map))
+    (setv stage-var (hy.models.Symbol (+ "_stage_" (str sname))))
+    (.append result-forms
+      `(defp ~defp-name {:post []}
+         (<- ~stage-var ~resolved-expr)
+         ~stage-var)))
+  ;; Last stage also defines p-{pipeline-name}
+  (setv #(last-sname _) (get stages -1))
+  (setv last-defp (get stage-map (str last-sname)))
+  (setv pipeline-defp (hy.models.Symbol (+ "p-" prefix)))
+  (.append result-forms `(setv ~pipeline-defp ~last-defp))
+  `(do ~@result-forms))
