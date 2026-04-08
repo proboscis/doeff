@@ -207,7 +207,12 @@ defk {name}: {{:post [...]}} is required.
         (let [#(inner-bindings rewritten) (_expand-bangs form)]
           (.extend expanded-forms inner-bindings)
           (.append expanded-forms rewritten))))
-  (_build-fn-with-contracts ['_doeff_do] name params pre-checks post-checks expanded-forms))
+  (setv fn-form (_build-fn-with-contracts ['_doeff_do] name params pre-checks post-checks expanded-forms))
+  `(do
+     ~fn-form
+     (setv (. ~name __doeff_body__) '~real-body)
+     (setv (. ~name __doeff_args__) '~params)
+     (setv (. ~name __doeff_name__) ~(str name))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -731,7 +736,12 @@ defk {name}: {{:post [...]}} is required.
        (setv _contract_result ~body-expr)
        (let [% _contract_result]
          ~@post-asserts)
-       (return _contract_result)))))))
+       (return _contract_result)))))
+     ;; Preserve S-expr body in module-level registry (generators don't support setattr)
+     (when (not (in "__doeff_program_registry__" (globals)))
+       (setv (get (globals) "__doeff_program_registry__") {}))
+     (setv (get __doeff_program_registry__ ~(str name))
+       {"body" '~real-body "name" ~(str name)})))
 
 (defmacro defp [name #* body]
   "Define a Program[T] constant. Errors if the return value is itself a Program.
