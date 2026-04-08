@@ -52,6 +52,12 @@
   "Get the head symbol of a call expression."
   (get form 0))
 
+(defn _bind-var [form]
+  "Get the variable name from a bind form. None for (<- expr)."
+  (cond
+    (= (len form) 2) None
+    (>= (len form) 3) (get form 1)))
+
 (defn _bind-expr [form]
   "Get the expression part of a bind form.
    (<- name expr) → expr.  (<- expr) → expr."
@@ -284,3 +290,78 @@
     (print (+ prefix "  (cycle)")))
   (for [#(cname child) (sorted (.items (get tree "children")))]
     (print-effect-tree child :indent (+ indent 1))))
+
+
+;; ---------------------------------------------------------------------------
+;; Stage extraction — partial pipeline reuse
+;; ---------------------------------------------------------------------------
+
+(defn list-stages [fn-obj]
+  "List available stage names (bind variable names) from a defk/defp body.
+   Returns a list of strings."
+  (setv body (body-of fn-obj))
+  (when (is body None) (return []))
+  (setv stages [])
+  (defn _scan [forms]
+    (for [form forms]
+      (cond
+        ;; Direct bind: (<- name expr)
+        (and (_is-bind form) (_bind-var form))
+          (.append stages (str (_bind-var form)))
+        ;; Recurse into blocks
+        (and (isinstance form hy.models.Expression)
+             (> (len form) 0)
+             (isinstance (get form 0) hy.models.Symbol)
+             (in (str (get form 0)) #{"do" "when" "if" "cond" "let"
+                                       "try" "except"}))
+          (_scan (cut form 1 None)))))
+  (_scan body)
+  stages)
+
+(defn _truncate-body-at [body stage-name]
+  "Truncate a body at the bind for stage-name.
+   Returns forms up to and including that bind, plus the var as return value."
+  (setv result [])
+  (for [form body]
+    (.append result form)
+    (when (and (_is-bind form)
+               (_bind-var form)
+               (= (str (_bind-var form)) stage-name))
+      ;; Add the variable as return expression
+      (.append result (_bind-var form))
+      (return result)))
+  ;; stage-name not found at top level — try nested blocks
+  None)
+
+(defn stage-of [fn-obj stage-name]
+  "Return a Program that runs fn-obj up to the named stage.
+   The stage-name must match a (<- name ...) bind variable in the body.
+   Compiles the truncated body via hy.eval."
+  (setv body (body-of fn-obj))
+  (when (is body None)
+    (raise (ValueError (+ "No S-expr body on " (repr fn-obj)))))
+  (setv truncated (_truncate-body-at (list body) stage-name))
+  (when (is truncated None)
+    (setv available (list-stages fn-obj))
+    (raise (ValueError (+ "Stage '" stage-name "' not found. Available: "
+                          (str available)))))
+  ;; Compile: need the same imports as the original module
+  (import hy)
+  (setv args (or (args-of fn-obj) []))
+  (setv mod-name (getattr fn-obj "__module__" "__main__"))
+  ;; Build a self-contained compilation unit
+  (setv compile-form
+    `(do
+       (require doeff-hy.macros [defk <-])
+       (import doeff [do :as _doeff-do])
+       ;; Re-import everything from the original module
+       (import ~(hy.models.Symbol mod-name) *)
+       (defk _staged ~args
+         {:pre [] :post []}
+         ~@truncated)
+       (_staged ~@(lfor a args a))))
+  ;; Evaluate in a fresh namespace with the original module's globals
+  (import sys)
+  (setv mod (.get sys.modules mod-name))
+  (setv ns (dict (vars mod) :if mod :else {}))
+  (hy.eval compile-form :module mod))
