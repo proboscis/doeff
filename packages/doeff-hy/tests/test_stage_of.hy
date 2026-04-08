@@ -66,7 +66,8 @@
 (print "=== list-stages (full-pipeline) ===")
 (setv stages (list-stages full-pipeline))
 (print stages)
-(assert (= stages ["ohlc" "news" "data" "signal" "report"]))
+(setv stage-names (lfor s stages (get s "name")))
+(assert (= stage-names ["ohlc" "news" "data" "signal" "report"]))
 (print "PASS")
 
 
