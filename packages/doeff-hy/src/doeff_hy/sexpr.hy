@@ -92,17 +92,55 @@
     (return fn-obj.__globals__))
   {})
 
+(defn _is-effect-class [obj]
+  "Check if obj is an EffectBase subclass."
+  (and (isinstance obj type)
+       (do (import doeff [EffectBase])
+           (issubclass obj EffectBase))))
+
+(defn _is-effect-factory [obj]
+  "Check if obj is a callable that produces EffectBase instances.
+   Uses multiple heuristics:
+   1. Nullary call succeeds and returns EffectBase
+   2. Return annotation is or names an EffectBase subclass
+   3. Return annotation string contains 'Effect'"
+  (when (not (callable obj)) (return False))
+  (import doeff [EffectBase])
+  ;; 1. Try calling with no args
+  (try
+    (return (isinstance (obj) EffectBase))
+    (except [TypeError] None)  ;; missing args — try other strategies
+    (except [Exception] None))
+  ;; 2. Check return annotation
+  (try
+    (do
+      (import inspect)
+      (setv hints (inspect.get-annotations obj))
+      (setv ret (.get hints "return"))
+      (when ret
+        ;; Direct type check
+        (when (and (isinstance ret type) (issubclass ret EffectBase))
+          (return True))
+        ;; String annotation containing "Effect"
+        (when (and (isinstance ret str) (in "Effect" ret))
+          (return True))))
+    (except [Exception] None))
+  ;; 3. Module-based heuristic for known doeff effect modules
+  (setv mod (getattr obj "__module__" ""))
+  (when (any (lfor prefix ["doeff_core_effects" "doeff_time" "doeff_llm"]
+               (.startswith mod prefix)))
+    (return True))
+  False)
+
 (defn classify-call [symbol module-globals]
   "Classify what a symbol resolves to.
-   Returns :kleisli, :effect, :python-fn, or :unknown."
+   Returns :kleisli, :effect, :effect-factory, :python-fn, or :unknown."
   (setv obj (_resolve symbol module-globals))
   (cond
     (is obj None) :unknown
     (hasattr obj "__doeff_body__") :kleisli
-    (and (isinstance obj type)
-         (do
-           (import doeff [EffectBase])
-           (issubclass obj EffectBase))) :effect
+    (_is-effect-class obj) :effect
+    (_is-effect-factory obj) :effect-factory
     True :python-fn))
 
 
@@ -111,18 +149,32 @@
 ;; ---------------------------------------------------------------------------
 
 (defn _walk-calls [sexpr]
-  "Yield all call expressions found in an S-expr body (shallow — one level of forms)."
+  "Recursively collect all call expressions from an S-expr body.
+   Walks into nested blocks: do, when, if, cond, let, etc."
   (setv results [])
-  (for [form sexpr]
+
+  (defn _collect [form]
+    (when (not (isinstance form hy.models.Sequence)) (return))
+    (when (not (isinstance form hy.models.Expression)) (return))
+    (when (= (len form) 0) (return))
     (cond
-      ;; (<- name (call ...)) → extract the call
+      ;; (<- name (call ...)) → extract the call, don't recurse into it
       (_is-bind form)
         (let [expr (_bind-expr form)]
           (when (and expr (_is-call expr))
             (.append results expr)))
-      ;; (call ...) at top level
+      ;; (do ...) / (when ...) / (let [...] ...) → recurse into children
+      (and (isinstance (get form 0) hy.models.Symbol)
+           (in (str (get form 0)) #{"do" "when" "if" "cond" "let" "setv"
+                                     "for" "return" "try" "except"}))
+        (for [child (cut form 1 None)]
+          (_collect child))
+      ;; (call ...) at any level
       (_is-call form)
         (.append results form)))
+
+  (for [form sexpr]
+    (_collect form))
   results)
 
 
@@ -154,7 +206,7 @@
     (setv sym (_call-head call))
     (setv kind (classify-call sym g))
     (cond
-      (= kind :effect)
+      (or (= kind :effect) (= kind :effect-factory))
         (.add effects (str sym))
       (= kind :kleisli)
         (let [callee (_resolve sym g)]
@@ -188,7 +240,7 @@
     (setv sym (_call-head call))
     (setv kind (classify-call sym g))
     (cond
-      (= kind :effect)
+      (or (= kind :effect) (= kind :effect-factory))
         (.add direct-effects (str sym))
       (= kind :kleisli)
         (let [callee (_resolve sym g)]
