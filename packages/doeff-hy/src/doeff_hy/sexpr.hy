@@ -345,23 +345,24 @@
     (setv available (list-stages fn-obj))
     (raise (ValueError (+ "Stage '" stage-name "' not found. Available: "
                           (str available)))))
-  ;; Compile: need the same imports as the original module
-  (import hy)
+  ;; Compile: evaluate in the original module's context
+  (import hy sys)
   (setv args (or (args-of fn-obj) []))
   (setv mod-name (getattr fn-obj "__module__" "__main__"))
-  ;; Build a self-contained compilation unit
+  (setv mod (.get sys.modules mod-name))
+  ;; Ensure macros are available in the module
+  (when mod
+    (hy.macros.require "doeff_hy.macros" mod
+      :assignments [["defk" "defk"] ["<-" "<-"]]))
+  ;; Build compilation form — no imports needed since we eval in the module
+  ;; Returns the defk function (not called) so caller can pass args later,
+  ;; or calls it immediately if no args (defp-style zero-arg program).
   (setv compile-form
     `(do
-       (require doeff-hy.macros [defk <-])
-       (import doeff [do :as _doeff-do])
-       ;; Re-import everything from the original module
-       (import ~(hy.models.Symbol mod-name) *)
        (defk _staged ~args
          {:pre [] :post []}
          ~@truncated)
-       (_staged ~@(lfor a args a))))
-  ;; Evaluate in a fresh namespace with the original module's globals
-  (import sys)
-  (setv mod (.get sys.modules mod-name))
-  (setv ns (dict (vars mod) :if mod :else {}))
+       ~(if args
+          '_staged                          ;; return function — caller provides args
+          '(_staged))))                     ;; call immediately — zero-arg program
   (hy.eval compile-form :module mod))
