@@ -297,17 +297,22 @@
 ;; ---------------------------------------------------------------------------
 
 (defn list-stages [fn-obj]
-  "List available stage names (bind variable names) from a defk/defp body.
-   Returns a list of strings."
+  "List available stages from a defk/defp body.
+   Returns a list of dicts: [{\"name\" str \"index\" int} ...].
+   Duplicate names are included with distinct indices."
   (setv body (body-of fn-obj))
   (when (is body None) (return []))
   (setv stages [])
+  (setv idx 0)
   (defn _scan [forms]
+    (nonlocal idx)
     (for [form forms]
       (cond
         ;; Direct bind: (<- name expr)
         (and (_is-bind form) (_bind-var form))
-          (.append stages (str (_bind-var form)))
+          (do
+            (.append stages {"name" (str (_bind-var form)) "index" idx})
+            (+= idx 1))
         ;; Recurse into blocks
         (and (isinstance form hy.models.Expression)
              (> (len form) 0)
@@ -318,33 +323,48 @@
   (_scan body)
   stages)
 
-(defn _truncate-body-at [body stage-name]
-  "Truncate a body at the bind for stage-name.
+(defn _truncate-body-at [body stage-ref]
+  "Truncate a body at a stage.
+   stage-ref: string (name — matches LAST occurrence) or int (bind index).
    Returns forms up to and including that bind, plus the var as return value."
-  (setv result [])
-  (for [form body]
-    (.append result form)
-    (when (and (_is-bind form)
-               (_bind-var form)
-               (= (str (_bind-var form)) stage-name))
-      ;; Add the variable as return expression
-      (.append result (_bind-var form))
-      (return result)))
-  ;; stage-name not found at top level — try nested blocks
-  None)
+  ;; Collect all top-level binds with positions
+  (setv binds [])
+  (for [#(i form) (enumerate body)]
+    (when (and (_is-bind form) (_bind-var form))
+      (.append binds {"pos" i "name" (str (_bind-var form)) "var" (_bind-var form)})))
+  ;; Find target bind
+  (setv target None)
+  (cond
+    (isinstance stage-ref int)
+      ;; By index
+      (when (< stage-ref (len binds))
+        (setv target (get binds stage-ref)))
+    (isinstance stage-ref str)
+      ;; By name — match LAST occurrence (most complete version)
+      (for [b (reversed binds)]
+        (when (= (get b "name") stage-ref)
+          (setv target b)
+          (break))))
+  (when (is target None)
+    (return None))
+  ;; Truncate: all forms up to and including the target bind position
+  (setv result (list (cut body 0 (+ (get target "pos") 1))))
+  (.append result (get target "var"))
+  result)
 
-(defn stage-of [fn-obj stage-name]
-  "Return a Program that runs fn-obj up to the named stage.
-   The stage-name must match a (<- name ...) bind variable in the body.
-   Compiles the truncated body via hy.eval."
+(defn stage-of [fn-obj stage-ref]
+  "Return a Program that runs fn-obj up to the named/indexed stage.
+   stage-ref: string (bind variable name — last occurrence) or int (bind index).
+   For defk with args, returns a function. For zero-arg, returns a Program."
   (setv body (body-of fn-obj))
   (when (is body None)
     (raise (ValueError (+ "No S-expr body on " (repr fn-obj)))))
-  (setv truncated (_truncate-body-at (list body) stage-name))
+  (setv truncated (_truncate-body-at (list body) stage-ref))
   (when (is truncated None)
     (setv available (list-stages fn-obj))
-    (raise (ValueError (+ "Stage '" stage-name "' not found. Available: "
-                          (str available)))))
+    (setv avail-str (.join ", " (lfor s available
+                                  (+ (get s "name") "[" (str (get s "index")) "]"))))
+    (raise (ValueError (+ "Stage '" (str stage-ref) "' not found. Available: " avail-str))))
   ;; Compile: evaluate in the original module's context
   (import hy sys)
   (setv args (or (args-of fn-obj) []))
@@ -354,15 +374,13 @@
   (when mod
     (hy.macros.require "doeff_hy.macros" mod
       :assignments [["defk" "defk"] ["<-" "<-"]]))
-  ;; Build compilation form — no imports needed since we eval in the module
-  ;; Returns the defk function (not called) so caller can pass args later,
-  ;; or calls it immediately if no args (defp-style zero-arg program).
+  ;; Build compilation form
   (setv compile-form
     `(do
        (defk _staged ~args
          {:pre [] :post []}
          ~@truncated)
        ~(if args
-          '_staged                          ;; return function — caller provides args
-          '(_staged))))                     ;; call immediately — zero-arg program
+          '_staged
+          '(_staged))))
   (hy.eval compile-form :module mod))
