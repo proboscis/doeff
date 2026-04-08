@@ -99,42 +99,33 @@
            (issubclass obj EffectBase))))
 
 (defn _is-effect-factory [obj]
-  "Check if obj is a callable that produces EffectBase instances.
-   Uses multiple heuristics:
-   1. Nullary call succeeds and returns EffectBase
-   2. Return annotation is or names an EffectBase subclass
-   3. Return annotation string contains 'Effect'"
+  "Check if obj is a function that produces EffectBase instances.
+   Safe checks only — no calling the function:
+   1. Explicit __doeff_effect__ marker
+   2. Return annotation is an EffectBase subclass (type, not string)"
   (when (not (callable obj)) (return False))
-  (import doeff [EffectBase])
-  ;; 1. Try calling with no args
-  (try
-    (return (isinstance (obj) EffectBase))
-    (except [TypeError] None)  ;; missing args — try other strategies
-    (except [Exception] None))
-  ;; 2. Check return annotation
+  ;; 1. Explicit marker (preferred — set by decorator or manually)
+  (when (getattr obj "__doeff_effect__" False) (return True))
+  ;; 2. Return annotation is EffectBase subclass
   (try
     (do
+      (import doeff [EffectBase])
       (import inspect)
       (setv hints (inspect.get-annotations obj))
       (setv ret (.get hints "return"))
-      (when ret
-        ;; Direct type check
-        (when (and (isinstance ret type) (issubclass ret EffectBase))
-          (return True))
-        ;; String annotation containing "Effect"
-        (when (and (isinstance ret str) (in "Effect" ret))
-          (return True))))
+      (when (and ret (isinstance ret type) (issubclass ret EffectBase))
+        (return True)))
     (except [Exception] None))
-  ;; 3. Module-based heuristic for known doeff effect modules
-  (setv mod (getattr obj "__module__" ""))
-  (when (any (lfor prefix ["doeff_core_effects" "doeff_time" "doeff_llm"]
-               (.startswith mod prefix)))
-    (return True))
   False)
 
-(defn classify-call [symbol module-globals]
+(defn classify-call [symbol module-globals * [extra-effects None]]
   "Classify what a symbol resolves to.
-   Returns :kleisli, :effect, :effect-factory, :python-fn, or :unknown."
+   Returns :kleisli, :effect, :effect-factory, :python-fn, or :unknown.
+
+   extra-effects: set of symbol name strings to treat as effects regardless
+   of introspection. Specify at call site for factories without markers."
+  (when (and extra-effects (in (str symbol) extra-effects))
+    (return :effect))
   (setv obj (_resolve symbol module-globals))
   (cond
     (is obj None) :unknown
@@ -182,10 +173,14 @@
 ;; Effect collection — call graph walk
 ;; ---------------------------------------------------------------------------
 
-(defn collect-effects [fn-obj * [visited None]]
+(defn collect-effects [fn-obj * [visited None] [extra-effects None]]
   "Recursively collect all effect types used by a defk function.
    Walks the call graph — each function analyzed in its own module context.
-   Returns a set of effect class names (strings)."
+   Returns a set of effect class names (strings).
+
+   extra-effects: set of symbol name strings to treat as effects regardless
+   of introspection. Use for effect factories that lack markers/annotations.
+   Example: (collect-effects my-pipeline :extra-effects #{\"slog\" \"WaitUntil\"})"
   (when (is visited None)
     (setv visited (set)))
   (setv fn-id (id fn-obj))
@@ -204,13 +199,14 @@
   (setv effects (set))
   (for [call (_walk-calls body)]
     (setv sym (_call-head call))
-    (setv kind (classify-call sym g))
+    (setv kind (classify-call sym g :extra-effects extra-effects))
     (cond
       (or (= kind :effect) (= kind :effect-factory))
         (.add effects (str sym))
       (= kind :kleisli)
         (let [callee (_resolve sym g)]
-          (.update effects (collect-effects callee :visited visited)))))
+          (.update effects (collect-effects callee :visited visited
+                                                   :extra-effects extra-effects)))))
   effects)
 
 
@@ -218,9 +214,11 @@
 ;; Effect tree — structured view
 ;; ---------------------------------------------------------------------------
 
-(defn effect-tree [fn-obj * [visited None]]
+(defn effect-tree [fn-obj * [visited None] [extra-effects None]]
   "Build a dependency tree showing effects at each call level.
-   Returns {:name str :effects set :children {name → subtree}}."
+   Returns {\"name\" str \"effects\" set \"children\" {name → subtree}}.
+
+   extra-effects: set of symbol name strings to treat as effects."
   (when (is visited None)
     (setv visited (set)))
   (setv fn-id (id fn-obj))
@@ -238,14 +236,15 @@
 
   (for [call (_walk-calls body)]
     (setv sym (_call-head call))
-    (setv kind (classify-call sym g))
+    (setv kind (classify-call sym g :extra-effects extra-effects))
     (cond
       (or (= kind :effect) (= kind :effect-factory))
         (.add direct-effects (str sym))
       (= kind :kleisli)
         (let [callee (_resolve sym g)]
           (setv (get children (str sym))
-                (effect-tree callee :visited visited)))))
+                (effect-tree callee :visited visited
+                                    :extra-effects extra-effects)))))
 
   {"name" (or (name-of fn-obj) "?")
    "effects" direct-effects
@@ -256,11 +255,12 @@
 ;; Handler coverage verification
 ;; ---------------------------------------------------------------------------
 
-(defn assert-handlers [fn-obj handled-effects]
+(defn assert-handlers [fn-obj handled-effects * [extra-effects None]]
   "Assert all effects used by fn-obj (recursively) have handlers.
    handled-effects: set of effect class name strings.
+   extra-effects: passed to collect-effects for factory detection.
    Raises AssertionError if unhandled effects exist."
-  (setv used (collect-effects fn-obj))
+  (setv used (collect-effects fn-obj :extra-effects extra-effects))
   (setv unhandled (- used (set (lfor e handled-effects (str e)))))
   (when unhandled
     (raise (AssertionError
