@@ -58,6 +58,22 @@
     (= (len form) 2) None
     (>= (len form) 3) (get form 1)))
 
+(defn _bind-var-name [form]
+  "Get a human-readable stage name from a bind variable.
+   Handles: Symbol → str, Tuple → 'a,b,c', None → None.
+   Returns None for discard binds (_ or unnamed)."
+  (setv var (_bind-var form))
+  (when (is var None) (return None))
+  (cond
+    (isinstance var hy.models.Symbol)
+      (let [name (str var)]
+        (if (= name "_") None name))
+    (isinstance var hy.models.Tuple)
+      (.join "," (lfor v var (str v)))
+    (isinstance var hy.models.List)
+      (.join "," (lfor v var (str v)))
+    True (str var)))
+
 (defn _bind-expr [form]
   "Get the expression part of a bind form.
    (<- name expr) → expr.  (<- expr) → expr."
@@ -309,9 +325,9 @@
     (for [form forms]
       (cond
         ;; Direct bind: (<- name expr)
-        (and (_is-bind form) (_bind-var form))
+        (and (_is-bind form) (_bind-var-name form))
           (do
-            (.append stages {"name" (str (_bind-var form)) "index" idx})
+            (.append stages {"name" (_bind-var-name form) "index" idx})
             (+= idx 1))
         ;; Recurse into blocks
         (and (isinstance form hy.models.Expression)
@@ -346,8 +362,8 @@
   (setv result [])
   (setv idx 0)
   (for [form body]
-    (when (and (_is-bind form) (_bind-var form))
-      (setv vname (str (_bind-var form)))
+    (when (and (_is-bind form) (_bind-var-name form))
+      (setv vname (_bind-var-name form))
       (setv path (if prefix (+ prefix "." vname) vname))
       (.append result {"path" path "index" idx "needs-args" has-args "name" vname})
       ;; Check if the bind expr calls a defk → recurse
@@ -377,8 +393,8 @@
   ;; Collect all top-level binds with positions
   (setv binds [])
   (for [#(i form) (enumerate body)]
-    (when (and (_is-bind form) (_bind-var form))
-      (.append binds {"pos" i "name" (str (_bind-var form)) "var" (_bind-var form)})))
+    (when (and (_is-bind form) (_bind-var-name form))
+      (.append binds {"pos" i "name" (_bind-var-name form) "var" (_bind-var form)})))
   ;; Find target bind
   (setv target None)
   (cond
