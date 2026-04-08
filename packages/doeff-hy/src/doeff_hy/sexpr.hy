@@ -323,6 +323,53 @@
   (_scan body)
   stages)
 
+(defn list-all-stages [fn-obj * [prefix ""] [_visited None]]
+  "Recursively list all stages including sub-stages from defk calls.
+   Returns a flat list of dicts:
+     [{\"path\" \"data\" \"index\" 0 \"needs-args\" False}
+      {\"path\" \"data.prices\" \"index\" [0 0] \"needs-args\" False}
+      ...]
+   For defk with args, top-level needs-args is True.
+   Sub-stages of a call inherit the parent's binding context."
+  (when (is _visited None)
+    (setv _visited (set)))
+  (setv fn-id (id fn-obj))
+  (when (in fn-id _visited)
+    (return []))
+  (.add _visited fn-id)
+
+  (setv body (body-of fn-obj))
+  (when (is body None) (return []))
+  (setv g (_get-module-globals fn-obj))
+  (setv has-args (and (args-of fn-obj) (> (len (args-of fn-obj)) 0)))
+
+  (setv result [])
+  (setv idx 0)
+  (for [form body]
+    (when (and (_is-bind form) (_bind-var form))
+      (setv vname (str (_bind-var form)))
+      (setv path (if prefix (+ prefix "." vname) vname))
+      (.append result {"path" path "index" idx "needs-args" has-args "name" vname})
+      ;; Check if the bind expr calls a defk → recurse
+      (setv expr (_bind-expr form))
+      (when (and expr (_is-call expr) g)
+        (setv callee-sym (_call-head expr))
+        (setv kind (classify-call callee-sym g))
+        (when (= kind :kleisli)
+          (setv callee (_resolve callee-sym g))
+          (when callee
+            (.extend result (list-all-stages callee :prefix path :_visited _visited)))))
+      (+= idx 1)))
+  result)
+
+(defn print-all-stages [fn-obj]
+  "Pretty-print all available stages."
+  (setv stages (list-all-stages fn-obj))
+  (for [s stages]
+    (setv indent (* "  " (.count (get s "path") ".")))
+    (setv args-mark (if (get s "needs-args") " (needs args)" ""))
+    (print (+ indent (get s "path") args-mark))))
+
 (defn _truncate-body-at [body stage-ref]
   "Truncate a body at a stage.
    stage-ref: string (name — matches LAST occurrence) or int (bind index).
