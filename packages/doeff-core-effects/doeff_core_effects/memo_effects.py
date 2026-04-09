@@ -29,13 +29,14 @@ class MemoGetEffect(EffectBase):
 
 class MemoPutEffect(EffectBase):
     """Persists a memoized value under the key."""
-    def __init__(self, key, value, policy):
+    def __init__(self, key, value, policy, source_effect=None):
         super().__init__()
         if not isinstance(policy, MemoPolicy):
             raise TypeError(f"policy must be MemoPolicy, got {type(policy).__name__}")
         self.key = key
         self.value = value
         self.policy = policy
+        self.source_effect = source_effect  # original effect for traceability
 
     def __repr__(self):
         return f"MemoPut({self.key!r}, ..., cost={self.policy.recompute_cost.value})"
@@ -80,6 +81,7 @@ def MemoPut(
     lifecycle: Lifecycle | str | None = None,
     metadata: Mapping[str, Any] | None = None,
     policy: MemoPolicy | Mapping[str, Any] | None = None,
+    source_effect: Any | None = None,
 ) -> MemoPutEffect:
     memo_policy = ensure_memo_policy(
         recompute_cost=recompute_cost,
@@ -88,7 +90,7 @@ def MemoPut(
         metadata=metadata,
         policy=policy,
     )
-    return MemoPutEffect(key=key, value=value, policy=memo_policy)
+    return MemoPutEffect(key=key, value=value, policy=memo_policy, source_effect=source_effect)
 
 
 def MemoDelete(key: Any, *, recompute_cost: RecomputeCost | str = RecomputeCost.CHEAP) -> MemoDeleteEffect:
