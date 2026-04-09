@@ -737,11 +737,10 @@ defk {name}: {{:post [...]}} is required.
        (let [% _contract_result]
          ~@post-asserts)
        (return _contract_result)))))
-     ;; Preserve S-expr body in module-level registry (generators don't support setattr)
-     (when (not (in "__doeff_program_registry__" (globals)))
-       (setv (get (globals) "__doeff_program_registry__") {}))
-     (setv (get __doeff_program_registry__ ~(str name))
-       {"body" '~real-body "name" ~(str name)})))
+     ;; Preserve S-expr body directly on Program value (DoExpr has __dict__ via pyclass(dict))
+     (setv (. ~name __doeff_body__) '~real-body)
+     (setv (. ~name __doeff_name__) ~(str name))
+     (setv (. ~name __doeff_module__) __name__)))
 
 (defmacro defp [name #* body]
   "Define a Program[T] constant. Errors if the return value is itself a Program.

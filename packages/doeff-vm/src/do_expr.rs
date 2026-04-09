@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 use doeff_vm_core::continuation::PyK;
 
 /// Pure(value) — return a value immediately.
-#[pyclass(name = "Pure", frozen, module = "doeff_vm.doeff_vm")]
+#[pyclass(name = "Pure", frozen, dict, module = "doeff_vm.doeff_vm")]
 pub struct PyPure {
     #[pyo3(get)]
     pub value: Py<PyAny>,
@@ -32,7 +32,7 @@ impl PyPure {
 }
 
 /// Perform(effect) — perform an effect (trigger handler lookup).
-#[pyclass(name = "Perform", frozen, module = "doeff_vm.doeff_vm")]
+#[pyclass(name = "Perform", frozen, dict, module = "doeff_vm.doeff_vm")]
 pub struct PyPerform {
     #[pyo3(get)]
     pub effect: Py<PyAny>,
@@ -57,7 +57,7 @@ impl PyPerform {
 }
 
 /// Resume(k, value) — resume continuation with value (non-tail, handler stays alive).
-#[pyclass(name = "Resume", frozen, module = "doeff_vm.doeff_vm")]
+#[pyclass(name = "Resume", frozen, dict, module = "doeff_vm.doeff_vm")]
 pub struct PyResume {
     #[pyo3(get)]
     pub continuation: Py<PyK>,
@@ -78,7 +78,7 @@ impl PyResume {
 }
 
 /// Transfer(k, value) — resume continuation with value (tail, handler done).
-#[pyclass(name = "Transfer", frozen, module = "doeff_vm.doeff_vm")]
+#[pyclass(name = "Transfer", frozen, dict, module = "doeff_vm.doeff_vm")]
 pub struct PyTransfer {
     #[pyo3(get)]
     pub continuation: Py<PyK>,
@@ -99,7 +99,7 @@ impl PyTransfer {
 }
 
 /// Apply(f, args) — call f(args).
-#[pyclass(name = "Apply", frozen, module = "doeff_vm.doeff_vm")]
+#[pyclass(name = "Apply", frozen, dict, module = "doeff_vm.doeff_vm")]
 pub struct PyApply {
     #[pyo3(get)]
     pub f: Py<PyAny>,
@@ -125,7 +125,7 @@ impl PyApply {
 }
 
 /// Expand(expr) — evaluate inner expr to Stream, then run it.
-#[pyclass(name = "Expand", frozen, module = "doeff_vm.doeff_vm")]
+#[pyclass(name = "Expand", frozen, dict, module = "doeff_vm.doeff_vm")]
 pub struct PyExpand {
     #[pyo3(get)]
     pub expr: Py<PyAny>,
@@ -149,7 +149,7 @@ impl PyExpand {
 }
 
 /// Pass(effect, k) — handler doesn't handle, forward to outer.
-#[pyclass(name = "Pass", frozen, module = "doeff_vm.doeff_vm")]
+#[pyclass(name = "Pass", frozen, dict, module = "doeff_vm.doeff_vm")]
 pub struct PyPass {
     #[pyo3(get)]
     pub effect: Py<PyAny>,
@@ -170,7 +170,7 @@ impl PyPass {
 }
 
 /// WithHandler(handler, body) — install handler and run body under it.
-#[pyclass(name = "WithHandler", frozen, module = "doeff_vm.doeff_vm")]
+#[pyclass(name = "WithHandler", frozen, dict, module = "doeff_vm.doeff_vm")]
 pub struct PyWithHandler {
     #[pyo3(get)]
     pub handler: Py<PyAny>,
@@ -196,7 +196,7 @@ impl PyWithHandler {
 }
 
 /// ResumeThrow(k, exception) — throw exception into continuation (non-tail).
-#[pyclass(name = "ResumeThrow", frozen, module = "doeff_vm.doeff_vm")]
+#[pyclass(name = "ResumeThrow", frozen, dict, module = "doeff_vm.doeff_vm")]
 pub struct PyResumeThrow {
     #[pyo3(get)]
     pub continuation: Py<PyK>,
@@ -217,7 +217,7 @@ impl PyResumeThrow {
 }
 
 /// TransferThrow(k, exception) — throw exception into continuation (tail).
-#[pyclass(name = "TransferThrow", frozen, module = "doeff_vm.doeff_vm")]
+#[pyclass(name = "TransferThrow", frozen, dict, module = "doeff_vm.doeff_vm")]
 pub struct PyTransferThrow {
     #[pyo3(get)]
     pub continuation: Py<PyK>,
@@ -238,7 +238,7 @@ impl PyTransferThrow {
 }
 
 /// WithObserve(observer, body) — install observer and run body under it.
-#[pyclass(name = "WithObserve", frozen, module = "doeff_vm.doeff_vm")]
+#[pyclass(name = "WithObserve", frozen, dict, module = "doeff_vm.doeff_vm")]
 pub struct PyWithObserve {
     #[pyo3(get)]
     pub observer: Py<PyAny>,
@@ -264,7 +264,7 @@ impl PyWithObserve {
 }
 
 /// GetTraceback(k) — query traceback from continuation without consuming it.
-#[pyclass(name = "GetTraceback", frozen, module = "doeff_vm.doeff_vm")]
+#[pyclass(name = "GetTraceback", frozen, dict, module = "doeff_vm.doeff_vm")]
 pub struct PyGetTraceback {
     #[pyo3(get)]
     pub continuation: Py<PyK>,
@@ -283,7 +283,7 @@ impl PyGetTraceback {
 }
 
 /// GetExecutionContext() — get current execution context.
-#[pyclass(name = "GetExecutionContext", frozen, module = "doeff_vm.doeff_vm")]
+#[pyclass(name = "GetExecutionContext", frozen, dict, module = "doeff_vm.doeff_vm")]
 pub struct PyGetExecutionContext;
 
 #[pymethods]
@@ -304,7 +304,7 @@ impl PyGetExecutionContext {
 }
 
 /// GetHandlers(k) — extract handler callables from continuation's fiber chain.
-#[pyclass(name = "GetHandlers", frozen, module = "doeff_vm.doeff_vm")]
+#[pyclass(name = "GetHandlers", frozen, dict, module = "doeff_vm.doeff_vm")]
 pub struct PyGetHandlers {
     #[pyo3(get)]
     pub continuation: Py<PyK>,
@@ -325,7 +325,7 @@ impl PyGetHandlers {
 /// TailEval(expr) — evaluate a DoExpr in tail position (pop the current
 /// handler stream frame before evaluating). Used by the scheduler to avoid
 /// orphaned stream frames that accumulate memory.
-#[pyclass(name = "TailEval", frozen, module = "doeff_vm.doeff_vm")]
+#[pyclass(name = "TailEval", frozen, dict, module = "doeff_vm.doeff_vm")]
 pub struct PyTailEval {
     #[pyo3(get)]
     pub expr: Py<PyAny>,

@@ -97,8 +97,12 @@
   "Get the globals dict of the module where fn-obj was defined.
    Prefers __module__ + importlib over __globals__ because defk-generated
    inner functions may have a different __globals__ than the defining module."
-  ;; First try __module__ via importlib (most reliable for defk)
-  (setv mod-name (getattr fn-obj "__module__" None))
+  ;; Prefer __doeff_module__ (set by defp/defprogram on Program values),
+  ;; then __module__ (set on defk functions by Python).
+  ;; Note: DoExpr classes have __module__="doeff_vm.doeff_vm" from pyclass,
+  ;; which leaks to instances via class lookup — so __doeff_module__ must come first.
+  (setv mod-name (or (getattr fn-obj "__doeff_module__" None)
+                     (getattr fn-obj "__module__" None)))
   (when mod-name
     (import importlib sys)
     ;; Try sys.modules first (already imported, has current state)
@@ -155,6 +159,40 @@
     (_is-effect-class obj) :effect
     (_is-effect-factory obj) :effect-factory
     True :python-fn))
+
+
+(defn _effect-label [call-expr]
+  "Build a human-readable label for an effect call.
+   Extracts literal positional args and keyword args from the S-expr.
+   E.g. (Ask \"key\") → 'Ask(\"key\")', (FetchOhlc :ticker \"7203.T\") → 'FetchOhlc(ticker=\"7203.T\")'."
+  (setv head (str (get call-expr 0)))
+  (setv args [])
+  (setv i 1)
+  (while (< i (len call-expr))
+    (setv item (get call-expr i))
+    (cond
+      ;; Keyword arg: :key value
+      (isinstance item hy.models.Keyword)
+        (do
+          (when (< (+ i 1) (len call-expr))
+            (setv val (get call-expr (+ i 1)))
+            (when (isinstance val #(hy.models.String hy.models.Integer hy.models.Float))
+              (.append args (+ (str item.name) "=" (repr (str val)) )))
+            (+= i 2))
+          (when (>= (+ i 1) (len call-expr))
+            (+= i 1)))
+      ;; Positional literal
+      (isinstance item hy.models.String)
+        (do (.append args (repr (str item)))
+            (+= i 1))
+      (isinstance item #(hy.models.Integer hy.models.Float))
+        (do (.append args (str item))
+            (+= i 1))
+      ;; Symbol or complex expr — skip
+      True (+= i 1)))
+  (if args
+    (+ head "(" (.join ", " args) ")")
+    head))
 
 
 ;; ---------------------------------------------------------------------------
@@ -261,7 +299,7 @@
     (setv kind (classify-call sym g :extra-effects extra-effects))
     (cond
       (or (= kind :effect) (= kind :effect-factory))
-        (.add direct-effects (str sym))
+        (.add direct-effects (_effect-label call))
       (= kind :kleisli)
         (let [callee (_resolve sym g)]
           (setv (get children (str sym))
@@ -447,3 +485,64 @@
           '_staged
           '(_staged))))
   (hy.eval compile-form :module mod))
+
+
+;; ---------------------------------------------------------------------------
+;; Pre-flight analysis — call from interpreter before run()
+;; ---------------------------------------------------------------------------
+
+(defn _collect-ask-keys [tree]
+  "Recursively collect all Ask key strings from an effect tree."
+  (setv keys (set))
+  (for [label (get tree "effects")]
+    (when (.startswith label "Ask(")
+      ;; Extract key from Ask('some.key') or Ask("some.key")
+      (setv inner (cut label 4 -1))  ; strip Ask( and )
+      (setv key (.strip inner "\"'"))
+      (.add keys key)))
+  (for [child (.values (get tree "children"))]
+    (.update keys (_collect-ask-keys child)))
+  keys)
+
+
+(defn show-program-analysis [program * [env None]]
+  "Best-effort static analysis of a Program or defk function.
+   Prints effect tree and stage listing. Warns if no S-expr body available.
+   If env (dict) is provided, checks that all Ask keys are present."
+  (import warnings)
+  (setv body (body-of program))
+  (when (is body None)
+    (setv name (repr program))
+    (warnings.warn f"No S-expr body on {name} — static analysis unavailable" :stacklevel 2)
+    (return))
+  (import sys)
+  (setv pname (or (name-of program) "?"))
+  (print f"=== {pname} ===" :flush True)
+  (print "Effects:" :flush True)
+  (setv tree (effect-tree program))
+  (print-effect-tree tree :indent 1)
+  (print "Stages:")
+  (setv stages (list-all-stages program))
+  (if stages
+    (for [s stages]
+      (setv indent (+ "  " (* "  " (.count (get s "path") "."))))
+      (setv args-mark (if (get s "needs-args") " (needs args)" ""))
+      (print (+ indent (get s "path") args-mark)))
+    (print "  (none)"))
+  ;; Env key check
+  (setv ask-keys (_collect-ask-keys tree))
+  (when ask-keys
+    (if (is env None)
+      (do
+        (print "Ask keys:")
+        (for [k (sorted ask-keys)]
+          (print f"  {k}")))
+      (do
+        (setv missing (sorted (- ask-keys (set (.keys env)))))
+        (when missing
+          (print "MISSING env keys:")
+          (for [k missing]
+            (print f"  !! {k}"))
+          (.flush sys.stdout)
+          (warnings.warn f"Missing env keys: {missing}" :stacklevel 2)))))
+  (.flush sys.stdout))
