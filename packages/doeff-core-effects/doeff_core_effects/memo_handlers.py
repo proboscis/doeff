@@ -262,7 +262,7 @@ def make_memo_rewriter(
         yield Slog(f"[memo] MISS {effect_type.__name__} key={key[:16]}... -> delegating")
         delegated = yield effect
 
-        yield MemoPut(key, delegated, policy=MemoPolicy(recompute_cost=recompute_cost))
+        yield MemoPut(key, delegated, policy=MemoPolicy(recompute_cost=recompute_cost), source_effect=effect)
         yield Slog(f"[memo] STORED {effect_type.__name__} key={key[:16]}...")
 
         result = yield Resume(k, delegated)
