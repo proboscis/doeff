@@ -341,6 +341,161 @@ def parallel(concurrency=10):
     return handler
 
 
+def parallel_fail_fast(concurrency=10):
+    """Parallel handler that aborts on first failure.
+
+    Same interface as parallel(), but does NOT wrap items in Try.
+    If any spawned task raises, Gather propagates the exception immediately
+    and remaining tasks are cancelled.
+
+    Use this instead of parallel() when silent failure collection is unacceptable.
+    Swap in the interpreter: (parallel :concurrency 40) → (parallel-fail-fast :concurrency 40)
+    """
+    from doeff.program import WithHandler as WH
+    from doeff.handler_utils import get_inner_handlers
+    from doeff_core_effects.scheduler import Spawn, Gather
+    from doeff_core_effects.scheduler import (
+        CreateSemaphore, AcquireSemaphore, ReleaseSemaphore,
+    )
+
+    @do
+    def handler(effect, k):
+        if isinstance(effect, Skip):
+            return _SKIPPED
+
+        if isinstance(effect, Traverse):
+            inner_hs = yield get_inner_handlers(k)
+
+            if isinstance(effect.items, Collection):
+                all_items = effect.items.all_items
+            else:
+                all_items = [
+                    ItemResult(index=i, value=v)
+                    for i, v in enumerate(effect.items)
+                ]
+
+            carry_forward = [item for item in all_items if item.failed]
+            active_items = [item for item in all_items if not item.failed]
+
+            # If there are already-failed items, fail fast immediately
+            if carry_forward:
+                first_fail = carry_forward[0]
+                cause = first_fail.value if first_fail.value else "previous stage failed"
+                raise RuntimeError(f"parallel_fail_fast: item {first_fail.index} already failed: {cause}")
+
+            if not active_items:
+                return (yield Resume(k, Collection([])))
+
+            sem = yield CreateSemaphore(concurrency)
+
+            tasks = []
+            for item in active_items:
+                @do
+                def run_item(item=item):
+                    yield AcquireSemaphore(sem)
+                    prog = effect.f(item.value)
+                    for h in inner_hs:
+                        prog = WH(h, prog)
+                    prog = WH(handler, prog)
+                    # NO Try wrapper — exceptions propagate to Gather
+                    result = yield prog
+                    yield ReleaseSemaphore(sem)
+                    return (item, result)
+
+                task = yield Spawn(run_item())
+                tasks.append(task)
+
+            # Gather — if any task raised, the exception propagates here
+            task_results = yield Gather(*tasks)
+
+            results = []
+            for item, value in task_results:
+                if value is _SKIPPED:
+                    results.append(ItemResult(
+                        index=item.index,
+                        value=item.value,
+                        failed=True,
+                        history=item.history + [HistoryEntry(stage=effect.label, event="skipped")],
+                    ))
+                else:
+                    results.append(ItemResult(
+                        index=item.index,
+                        value=value,
+                        history=item.history + [HistoryEntry(stage=effect.label, event="ok")],
+                    ))
+            results.sort(key=lambda r: r.index)
+            return (yield Resume(k, Collection(results)))
+
+        # Reduce/Zip/Inspect/SortBy/Take — delegate to sequential behavior
+        if isinstance(effect, Reduce):
+            inner_hs = yield get_inner_handlers(k)
+            if isinstance(effect.collection, Collection):
+                values_iter = (item.value for item in effect.collection.valid_items)
+            else:
+                values_iter = effect.collection
+            acc = effect.init
+            for value in values_iter:
+                prog = effect.f(acc, value)
+                for h in inner_hs:
+                    prog = WH(h, prog)
+                prog = WH(handler, prog)
+                acc = yield prog
+            return (yield Resume(k, acc))
+
+        if isinstance(effect, Zip):
+            a = Collection.from_iterable(effect.a)
+            b = Collection.from_iterable(effect.b)
+            results = []
+            for item_a, item_b in zip(a.all_items, b.all_items):
+                failed = item_a.failed or item_b.failed
+                if failed:
+                    cause = item_a.value if item_a.failed else item_b.value
+                    raise RuntimeError(f"parallel_fail_fast: zip item failed: {cause}")
+                results.append(ItemResult(
+                    index=item_a.index,
+                    value=(item_a.value, item_b.value),
+                    history=item_a.history + item_b.history,
+                ))
+            return (yield Resume(k, Collection(results)))
+
+        if isinstance(effect, Inspect):
+            col = Collection.from_iterable(effect.collection)
+            return (yield Resume(k, col.all_items))
+
+        if isinstance(effect, SortBy):
+            col = Collection.from_iterable(effect.collection)
+            valid = list(col.valid_items)
+            failed = list(col.failed_items)
+            if failed:
+                raise RuntimeError(f"parallel_fail_fast: {len(failed)} items failed before sort")
+            valid.sort(key=lambda item: effect.key(item.value), reverse=effect.reverse)
+            results = [
+                ItemResult(index=i, value=item.value, failed=item.failed, history=list(item.history))
+                for i, item in enumerate(valid)
+            ]
+            return (yield Resume(k, Collection(results)))
+
+        if isinstance(effect, Take):
+            col = Collection.from_iterable(effect.collection)
+            taken = []
+            count = 0
+            for item in col.all_items:
+                if item.failed:
+                    raise RuntimeError(f"parallel_fail_fast: item {item.index} failed before take")
+                if count < effect.n:
+                    taken.append(item)
+                    count += 1
+            results = [
+                ItemResult(index=i, value=item.value, failed=item.failed, history=list(item.history))
+                for i, item in enumerate(taken)
+            ]
+            return (yield Resume(k, Collection(results)))
+
+        yield Pass(effect, k)
+
+    return handler
+
+
 @do
 def fail_handler(effect, k):
     """Default Fail handler: raises the cause as an exception.

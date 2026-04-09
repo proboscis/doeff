@@ -15,6 +15,7 @@ from doeff_traverse.helpers import try_call
 from doeff_traverse.handlers import (
     sequential,
     parallel,
+    parallel_fail_fast,
     fail_handler,
     normalize_to_none,
 )
