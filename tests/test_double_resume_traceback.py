@@ -61,12 +61,12 @@ class TestDoubleResume:
         with pytest.raises(RuntimeError, match="continuation already consumed"):
             _run(program_single_ping())
 
-    def test_error_message_includes_first_resume_label(self):
-        """Error must identify who first consumed the continuation.
+    def test_error_message_includes_current_fiber(self):
+        """Error must include the current fiber ID for diagnostics.
 
-        Before fix: "Resume: continuation already consumed" — no first-consumer info.
-        After fix: includes "First consumed by: Resume" so you know which operation
-        consumed k before the failing one.
+        The one-shot violation is now detected in VM core's continue_k,
+        which has access to self.current_segment. The error includes
+        the fiber ID so the doeff traceback can identify the handler.
         """
         try:
             _run(program_single_ping())
@@ -74,4 +74,4 @@ class TestDoubleResume:
         except RuntimeError as e:
             msg = str(e)
             assert "continuation already consumed" in msg
-            assert "First consumed by: Resume" in msg
+            assert "current fiber=" in msg

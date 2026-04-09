@@ -358,25 +358,18 @@ impl IRStream for PythonGeneratorStream {
 // classify_python_object — top-level classification for run()
 // ---------------------------------------------------------------------------
 
-/// Take a started continuation from a Py<PyK>, returning an error string on failure.
-/// Records who consumed the continuation for one-shot violation diagnostics.
+/// Extract continuation from PyK. No one-shot enforcement here — that's the VM core's job
+/// (continue_k in dispatch.rs, where self.current_segment is available for diagnostics).
+/// If PyK is already consumed, returns Continuation::consumed() sentinel.
 fn take_continuation(py: Python<'_>, k: &Py<doeff_vm_core::continuation::PyK>, label: &str) -> Result<doeff_vm_core::Continuation, String> {
     let k_ref = k.bind(py);
     let mut k_borrowed = k_ref.borrow_mut();
-    let owned = k_borrowed.take_with_label(label)
-        .ok_or_else(|| {
-            let first = k_borrowed.consumed_by().unwrap_or("unknown");
-            format!(
-                "{label}: continuation already consumed (one-shot violation). \
-                 First consumed by: {first}. \
-                 The doeff traceback shows the SECOND (failing) Resume site. \
-                 To find the FIRST Resume: search for the handler that yields \
-                 `{first}(k, ...)` before this point in the same handler chain."
-            )
-        })?;
-    match owned {
-        doeff_vm_core::OwnedControlContinuation::Started(k) => Ok(k),
-        _ => Err(format!("{}: expected started continuation", label)),
+    match k_borrowed.take() {
+        Some(doeff_vm_core::OwnedControlContinuation::Started(k)) => Ok(k),
+        Some(doeff_vm_core::OwnedControlContinuation::Pending(_)) => {
+            Err(format!("{}: expected started continuation, got pending", label))
+        }
+        None => Ok(doeff_vm_core::Continuation::empty()),
     }
 }
 
