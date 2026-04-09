@@ -116,8 +116,11 @@ impl VM {
         value: Value,
     ) -> Result<(), StepResult> {
         let (head, last) = k.take().ok_or_else(|| {
+            let current = self.current_segment
+                .map(|f| format!(" (current fiber={})", f.index()))
+                .unwrap_or_default();
             StepResult::Error(crate::error::VMError::internal(
-                "continue: continuation already consumed (one-shot violation)",
+                format!("Resume: continuation already consumed (one-shot violation){current}")
             ))
         })?;
 
