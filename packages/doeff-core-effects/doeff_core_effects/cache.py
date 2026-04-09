@@ -19,9 +19,9 @@ from typing import Any, TypeVar
 from frozendict import frozendict as FrozenDict
 
 from doeff import do
-from doeff_core_effects.cache_policy import CacheLifecycle, CachePolicy, CacheStorage, ensure_cache_policy
-from doeff_core_effects.cache_effects import CacheExists, CacheGet, CachePut, CacheGetEffect
-from doeff_core_effects.cache_handlers import content_address
+from doeff_core_effects.memo_policy import Lifecycle, MemoPolicy, ensure_memo_policy
+from doeff_core_effects.memo_effects import MemoExists, MemoGet, MemoPut, MemoGetEffect
+from doeff_core_effects.memo_handlers import content_address
 
 T = TypeVar("T")
 
@@ -80,12 +80,11 @@ def cache(
     ttl: float | None = None,
     key_func: Callable | None = None,
     *,
-    lifecycle: CacheLifecycle | str | None = None,
-    storage: CacheStorage | str | None = None,
+    lifecycle: Lifecycle | str | None = None,
     metadata: Mapping[str, Any] | None = None,
-    policy: CachePolicy | Mapping[str, Any] | None = None,
+    policy: MemoPolicy | Mapping[str, Any] | None = None,
 ) -> Callable:
-    """Cache decorator that uses CacheGet/CachePut effects for memoization.
+    """Cache decorator that uses MemoGet/MemoPut effects for memoization.
 
     The cache key defaults to ``(func_name, args, FrozenDict(kwargs))`` where
     ``func_name`` is the fully qualified module path of the wrapped callable.
@@ -94,14 +93,12 @@ def cache(
         ttl: Expiry in seconds. None means no expiry.
         key_func: Optional key builder. Receives (func_name, args, FrozenDict(kwargs)).
         lifecycle: Lifecycle hint for custom handlers.
-        storage: Storage hint for custom handlers.
         metadata: Extra metadata for custom handlers.
-        policy: Full CachePolicy (overrides ttl/lifecycle/storage/metadata).
+        policy: Full MemoPolicy (overrides ttl/lifecycle/metadata).
     """
-    cache_policy = ensure_cache_policy(
+    memo_policy = ensure_memo_policy(
         ttl=ttl,
         lifecycle=lifecycle,
-        storage=storage,
         metadata=metadata,
         policy=policy,
     )
@@ -118,19 +115,19 @@ def cache(
                 else (func_name, args, frozen_kwargs)
             )
 
-            # Check cache
-            if (yield CacheExists(cache_key_obj)):
+            # Check memo
+            if (yield MemoExists(cache_key_obj)):
                 try:
-                    cached_value = yield CacheGet(cache_key_obj)
+                    cached_value = yield MemoGet(cache_key_obj)
                     return cached_value
                 except KeyError:
-                    pass  # cache miss — compute below
+                    pass  # memo miss — compute below
 
-            # Cache miss — run the function
+            # Memo miss — run the function
             result = yield func(*args, **kwargs)
 
-            # Store in cache
-            yield CachePut(cache_key_obj, result, policy=cache_policy)
+            # Store in memo
+            yield MemoPut(cache_key_obj, result, policy=memo_policy)
             return result
 
         # Preserve metadata

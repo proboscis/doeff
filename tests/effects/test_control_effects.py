@@ -25,7 +25,7 @@ from doeff import (
     Put,
     Try,
 )
-from doeff_core_effects.cache import CacheGet
+from doeff_core_effects.memo_effects import MemoGet
 from doeff_core_effects.effects import Ask
 # REMOVED: from doeff_vm import NoMatchingHandlerError
 
@@ -279,7 +279,7 @@ class TestTryNoMatchingHandler:
 
         @do
         def program():
-            return (yield Try(CacheGet("missing-key")))
+            return (yield Try(MemoGet("missing-key")))
 
         result = await parameterized_interpreter.run_async(program())
         assert result.is_ok
@@ -294,7 +294,7 @@ class TestTryNoMatchingHandler:
 
         @do
         def child():
-            return (yield Try(CacheGet("spawned-missing-key")))
+            return (yield Try(MemoGet("spawned-missing-key")))
 
         @do
         def program():
@@ -315,7 +315,7 @@ class TestTryNoMatchingHandler:
 
         @do
         def program():
-            return (yield Try(Try(CacheGet("nested-missing-key"))))
+            return (yield Try(Try(MemoGet("nested-missing-key"))))
 
         result = await parameterized_interpreter.run_async(program())
         assert result.is_ok
@@ -332,7 +332,7 @@ class TestTryNoMatchingHandler:
 
         @do
         def program():
-            return (yield CacheGet("top-level-missing-key"))
+            return (yield MemoGet("top-level-missing-key"))
 
         result = await parameterized_interpreter.run_async(program())
         assert result.is_err()
@@ -344,7 +344,7 @@ class TestTryNoMatchingHandler:
 
         @do
         def program():
-            safe_cache_get = yield Try(CacheGet("cache-key"))
+            safe_cache_get = yield Try(MemoGet("cache-key"))
             return safe_cache_get
 
         result = await parameterized_interpreter.run_async(program())
@@ -357,7 +357,7 @@ class TestTryNoMatchingHandler:
 
         @do
         def program():
-            return (yield Try(CacheGet("typed-missing-key")))
+            return (yield Try(MemoGet("typed-missing-key")))
 
         result = await parameterized_interpreter.run_async(program())
         assert result.is_ok
