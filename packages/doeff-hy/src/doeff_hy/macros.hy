@@ -56,6 +56,87 @@
        (isinstance (get form 0) hy.models.Keyword)
        (= (str (get form 0)) ":")))
 
+(defn _type-check-target [form]
+  "If form is (: name Type), return name as string. Otherwise None."
+  (when (_is-type-check form)
+    (str (get form 1))))
+
+(defn _extract-param-names [params]
+  "Extract parameter names from a defk/deff param list.
+   Handles: [x y], [x * [timeout 30]], [x #^ int y], etc.
+   Returns set of name strings (excludes * separator)."
+  (setv names (set))
+  (for [p params]
+    (cond
+      ;; * is keyword-only separator
+      (and (isinstance p hy.models.Symbol) (= (str p) "*"))
+        None
+      ;; [name default] — keyword arg with default
+      (isinstance p hy.models.List)
+        (when (> (len p) 0)
+          (.add names (str (get p 0))))
+      ;; #^ type name — annotated param (annotation is previous form, name follows)
+      ;; Hy puts annotation as FComponent, we see Symbol
+      (isinstance p hy.models.Symbol)
+        (when (!= (str p) "&rest")
+          (.add names (str p)))))
+  names)
+
+(defn _validate-pre-type-checks [fn-name params pre-checks]
+  "Validate that :pre has a (: param Type) for every parameter.
+   Raises SyntaxError if any parameter lacks a type check."
+  (setv param-names (_extract-param-names params))
+  (when (not param-names) (return))  ; zero-arg function — nothing to check
+  (setv checked (set))
+  (for [check pre-checks]
+    (setv target (_type-check-target check))
+    (when (and target (in target param-names))
+      (.add checked target)))
+  (setv missing (sorted (- param-names checked)))
+  (when missing
+    (setv missing-str (.join ", " missing))
+    (setv all-params (sorted param-names))
+    (setv full-pre (.join " " (lfor p all-params (+ "(: " p " SomeType)"))))
+    (raise (SyntaxError (.format "
+defk {name}: :pre must have a (: param Type) for every parameter.
+
+  Missing: {missing}
+
+  Fix — add type checks for each parameter:
+
+    (defk {name} [{params}]
+      {{:pre [{pre}]
+       :post [(: % ReturnType)]}}
+      ...)
+" :name fn-name :missing missing-str
+  :params (.join " " all-params)
+  :pre full-pre)))))
+
+(defn _validate-post-type-check [fn-name post-checks]
+  "Validate that :post has at least one (: % Type) return type check.
+   Raises SyntaxError if missing."
+  (setv has-return-type False)
+  (for [check post-checks]
+    (setv target (_type-check-target check))
+    (when (= target "%")
+      (setv has-return-type True)
+      (break)))
+  (when (not has-return-type)
+    (raise (SyntaxError (.format "
+defk {name}: :post must include a return type check (: % Type).
+
+  Fix:
+
+    (defk {name} [...]
+      {{:pre [...]
+       :post [(: % dict)]}}              ;; ← add return type
+      ...)
+
+  (: % Type) checks isinstance on the return value.
+  You can add extra validations too:
+    {{:post [(: % pd.DataFrame) (> (len %) 0)]}}
+" :name fn-name)))))
+
 (defn _expand-check [check fn-name phase]
   "Expand a single contract check into an assert form.
    (: x T) → isinstance assert with clear type error message.
@@ -136,6 +217,8 @@ deff {name}: {{:post [...]}} is required.
   (: name Type) expands to (isinstance name Type).
   % binds to return value in :post checks.
 " :name name))))
+  (_validate-pre-type-checks name params pre-checks)
+  (_validate-post-type-check name post-checks)
   (_build-fn-with-contracts [] name params pre-checks post-checks real-body))
 
 
@@ -194,6 +277,9 @@ defk {name}: {{:post [...]}} is required.
   (: name Type) expands to (isinstance name Type).
   % binds to return value in :post checks.
 " :name name))))
+  ;; Validate type coverage: every param needs (: param Type), post needs (: % Type)
+  (_validate-pre-type-checks name params pre-checks)
+  (_validate-post-type-check name post-checks)
   ;; Expand bangs in the real body
   (setv expanded-forms [])
   (for [form real-body]

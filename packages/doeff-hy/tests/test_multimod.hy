@@ -133,13 +133,13 @@
 
 ;; Mock handlers — return dummy data
 (defk mock-price-handler [effect k]
-  {:pre [] :post []}
+  {:pre [(: effect object) (: k object)] :post [(: % object)]}
   (if (isinstance effect FetchPrice)
     (yield (Resume k [100 101 102]))
     (yield (Pass effect k))))
 
 (defk mock-news-handler [effect k]
-  {:pre [] :post []}
+  {:pre [(: effect object) (: k object)] :post [(: % object)]}
   (if (isinstance effect FetchNews)
     (yield (Resume k ["news-article-1" "news-article-2"]))
     (yield (Pass effect k))))
@@ -153,7 +153,7 @@
      (import doeff [do :as _doeff-do])
      (import tests.multimod.effects [FetchPrice FetchNews])
      (defk _compiled [ticker day]
-       {:pre [] :post []}
+       {:pre [(: ticker str) (: day str)] :post [(: % object)]}
        ~@transformed)
      _compiled))
 

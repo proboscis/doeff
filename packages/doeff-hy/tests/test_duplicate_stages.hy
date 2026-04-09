@@ -11,7 +11,7 @@
 
 ;; Pipeline with duplicate bind name
 (defk my-pipeline []
-  {:pre [] :post []}
+  {:pre [] :post [(: % dict)]}
   (<- data (FetchRaw))
   (<- data (Enrich :data data))
   (<- signal {"signal" data})
@@ -19,7 +19,7 @@
 
 ;; Mock handlers
 (defk mock [effect k]
-  {:pre [] :post []}
+  {:pre [(: effect object) (: k object)] :post [(: % object)]}
   (cond
     (isinstance effect FetchRaw)
       (yield (Resume k "raw-data"))
