@@ -17,15 +17,15 @@
 
 ;; Kleisli functions used by pipeline
 (defk merge-data [ohlc news]
-  {:pre [] :post []}
+  {:pre [(: ohlc object) (: news object)] :post [(: % dict)]}
   {"ohlc" ohlc "news" news})
 
 (defk compute-signal [data model]
-  {:pre [] :post []}
+  {:pre [(: data dict) (: model str)] :post [(: % dict)]}
   {"signal" "bullish" "data" data "model" model})
 
 (defk build-report [signal]
-  {:pre [] :post []}
+  {:pre [(: signal object)] :post [(: % str)]}
   (+ "Report: " (str signal)))
 
 ;; === The pipeline ===
@@ -56,19 +56,19 @@
 
 ;; Mock handlers
 (defk mock-ohlc [effect k]
-  {:pre [] :post []}
+  {:pre [(: effect object) (: k object)] :post [(: % object)]}
   (if (isinstance effect FetchOhlc)
     (yield (Resume k [100 101 102]))
     (yield (Pass effect k))))
 
 (defk mock-news [effect k]
-  {:pre [] :post []}
+  {:pre [(: effect object) (: k object)] :post [(: % object)]}
   (if (isinstance effect FetchNews)
     (yield (Resume k ["article-1" "article-2"]))
     (yield (Pass effect k))))
 
 (defk mock-llm [effect k]
-  {:pre [] :post []}
+  {:pre [(: effect object) (: k object)] :post [(: % object)]}
   (if (isinstance effect LLMRank)
     (yield (Resume k {"rank" "bullish"}))
     (yield (Pass effect k))))
