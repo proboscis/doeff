@@ -32,8 +32,8 @@ from doeff import (
     do,
     slog,
 )
-from doeff_core_effects.cache_effects import CacheGet, CachePut
-from doeff_core_effects.cache_policy import CacheLifecycle, CacheStorage
+from doeff_core_effects.memo_effects import MemoGet, MemoPut
+from doeff_core_effects.memo_policy import Lifecycle, RecomputeCost
 
 from .client import get_gemini_client, track_api_call
 from .types import GeminiImageEditResult
@@ -316,7 +316,7 @@ def _file_uri_to_local_path(file_uri: str) -> str:
 def _cache_get_optional(key: Any) -> EffectGenerator[Any | None]:
     @do
     def _lookup() -> EffectGenerator[Any]:
-        return (yield CacheGet(key))
+        return (yield MemoGet(key))
 
     safe_result = yield Try(_lookup())
     if safe_result.is_ok():
@@ -379,12 +379,12 @@ def _build_part_from_local_file(local_path: str, mime_type: str | None) -> Effec
         "uri": active_uri,
         "mime_type": _read_field(active_file, "mime_type") or mime_type,
     }
-    yield CachePut(
+    yield MemoPut(
         cache_key,
         cache_payload,
         ttl=_GEMINI_FILE_UPLOAD_TTL_SECONDS,
-        lifecycle=CacheLifecycle.PERSISTENT,
-        storage=CacheStorage.DISK,
+        lifecycle=Lifecycle.PERSISTENT,
+        recompute_cost=RecomputeCost.EXPENSIVE,
     )
 
     resolved_mime_type = mime_type or cache_payload.get("mime_type")

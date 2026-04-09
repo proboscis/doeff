@@ -33,16 +33,14 @@ from pathlib import Path
 from doeff_flow import run_workflow
 
 from doeff import (
-    CacheGet,
-    CachePut,
     Delegate,
     Resume,
     WithHandler,
     do,
     slog,
 )
-from doeff import CacheGetEffect, CachePut
-from doeff.storage import SQLiteStorage
+from doeff_core_effects.memo_effects import MemoGet, MemoPut, MemoGetEffect, MemoPutEffect
+from doeff_core_effects.storage import SQLiteStorage
 
 # =============================================================================
 # Simulated Expensive Operations
@@ -91,11 +89,11 @@ def cache_handler(storage: SQLiteStorage):
     """Handle cache effects using the provided SQLite storage backend."""
 
     def handle(effect, k):
-        if isinstance(effect, CacheGetEffect):
+        if isinstance(effect, MemoGetEffect):
             value = storage.get(str(effect.key))
             return (yield Resume(k, value))
 
-        if isinstance(effect, CachePutEffect):
+        if isinstance(effect, MemoPutEffect):
             storage.put(str(effect.key), effect.value)
             return (yield Resume(k, None))
 
@@ -115,7 +113,7 @@ def fetch_step(step_id: str, endpoint: str):
     cache_key = f"fetch_{step_id}"
 
     # Check if we have a cached result
-    cached = yield CacheGet(cache_key)
+    cached = yield MemoGet(cache_key)
     if cached is not None:
         yield slog(step="cache", status="hit", step_id=step_id)
         return cached
@@ -126,7 +124,7 @@ def fetch_step(step_id: str, endpoint: str):
     result = expensive_api_call(endpoint)
 
     # Cache the result for future runs
-    yield CachePut(cache_key, result)
+    yield MemoPut(cache_key, result)
     yield slog(step="cache", status="saved", step_id=step_id)
 
     return result
@@ -139,14 +137,14 @@ def compute_step(step_id: str, input_data: dict):
     """
     cache_key = f"compute_{step_id}"
 
-    cached = yield CacheGet(cache_key)
+    cached = yield MemoGet(cache_key)
     if cached is not None:
         yield slog(step="cache", status="hit", step_id=step_id)
         return cached
 
     yield slog(step="cache", status="miss", step_id=step_id)
     result = expensive_computation(input_data)
-    yield CachePut(cache_key, result)
+    yield MemoPut(cache_key, result)
     yield slog(step="cache", status="saved", step_id=step_id)
 
     return result
@@ -159,14 +157,14 @@ def aggregate_step(step_id: str, results: list[dict]):
     """
     cache_key = f"aggregate_{step_id}"
 
-    cached = yield CacheGet(cache_key)
+    cached = yield MemoGet(cache_key)
     if cached is not None:
         yield slog(step="cache", status="hit", step_id=step_id)
         return cached
 
     yield slog(step="cache", status="miss", step_id=step_id)
     result = expensive_aggregation(results)
-    yield CachePut(cache_key, result)
+    yield MemoPut(cache_key, result)
     yield slog(step="cache", status="saved", step_id=step_id)
 
     return result

@@ -48,7 +48,7 @@ genai_types = google_genai.types
 from pydantic import BaseModel
 
 from doeff import EffectGenerator, async_run, default_handlers, do
-from doeff_core_effects.cache import CacheGetEffect, CachePut
+from doeff_core_effects.memo_effects import MemoGetEffect, MemoPut, MemoPutEffect
 
 structured_llm_module = importlib.import_module("doeff_gemini.structured_llm")
 
@@ -66,14 +66,14 @@ class _InMemoryTTLCache:
         self.now = 0.0
         self.entries: dict[Any, tuple[Any, float | None]] = {}
         self.get_keys: list[Any] = []
-        self.put_effects: list[CachePutEffect] = []
+        self.put_effects: list[MemoPutEffect] = []
 
     def make_handler(self):
         cache = self
 
         @do
-        def handler(effect: CacheGetEffect | CachePutEffect, k: Any) -> EffectGenerator[Any]:
-            if isinstance(effect, CacheGetEffect):
+        def handler(effect: MemoGetEffect | MemoPutEffect, k: Any) -> EffectGenerator[Any]:
+            if isinstance(effect, MemoGetEffect):
                 cache.get_keys.append(effect.key)
                 entry = cache.entries.get(effect.key)
                 if entry is None:
@@ -86,7 +86,7 @@ class _InMemoryTTLCache:
 
                 return (yield Resume(k, value))
 
-            if isinstance(effect, CachePutEffect):
+            if isinstance(effect, MemoPutEffect):
                 cache.put_effects.append(effect)
                 ttl = effect.policy.ttl
                 expires_at = None if ttl is None else cache.now + ttl
@@ -198,7 +198,7 @@ async def test_build_contents_text_only() -> None:
 
 @pytest.mark.asyncio
 async def test_build_contents_uploads_local_file_and_caches_result(tmp_path: Path) -> None:
-    """Local files should auto-upload and be persisted via CachePut with 48h TTL."""
+    """Local files should auto-upload and be persisted via MemoPut with 48h TTL."""
 
     local_file = tmp_path / "clip.mp4"
     local_file.write_bytes(b"fake-video")
