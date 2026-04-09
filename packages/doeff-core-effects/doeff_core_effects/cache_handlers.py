@@ -174,15 +174,20 @@ def make_memo_rewriter(
         key = key_fn(effect)
         yield Slog(f"[memo] checking {effect_type.__name__} key={key[:16]}…")
 
-        # Check cache
+        # Check cache — narrow try/except to CacheGet only.
+        # Resume(k) must NOT be inside try/except: if the resumed body raises
+        # KeyError, it must propagate, not fall through to the MISS path.
+        _MISS = object()  # sentinel
         if (yield CacheExists(key)):
             try:
                 cached = yield CacheGet(key)
+            except KeyError:
+                cached = _MISS  # race: evicted between Exists and Get
+
+            if cached is not _MISS:
                 yield Slog(f"[memo] HIT {effect_type.__name__} key={key[:16]}…")
                 result = yield Resume(k, cached)
                 return result
-            except KeyError:
-                pass  # cache miss — fall through
 
         # Cache miss — "delegate" by re-performing the effect.
         yield Slog(f"[memo] MISS {effect_type.__name__} key={key[:16]}… → delegating")
