@@ -219,24 +219,44 @@ impl OwnedControlContinuation {
 #[pyclass(name = "K")]
 pub struct PyK {
     continuation: Option<OwnedControlContinuation>,
+    /// Records who first consumed this continuation (for one-shot violation diagnostics).
+    /// Format: "{label}" where label is Resume/Transfer/Pass/etc.
+    consumed_by: Option<String>,
 }
 
 impl PyK {
     pub fn from_continuation(k: Continuation) -> Self {
         Self {
             continuation: Some(OwnedControlContinuation::Started(k)),
+            consumed_by: None,
         }
     }
 
     pub fn from_pending(pending: PendingContinuation) -> Self {
         Self {
             continuation: Some(OwnedControlContinuation::Pending(pending)),
+            consumed_by: None,
         }
     }
 
     /// Take the continuation out (one-shot at PyK level).
     pub fn take(&mut self) -> Option<OwnedControlContinuation> {
         self.continuation.take()
+    }
+
+    /// Take with provenance tracking — records who consumed it.
+    /// Returns None if already consumed; caller should use `consumed_by()` for diagnostics.
+    pub fn take_with_label(&mut self, label: &str) -> Option<OwnedControlContinuation> {
+        let result = self.continuation.take();
+        if result.is_some() {
+            self.consumed_by = Some(label.to_string());
+        }
+        result
+    }
+
+    /// Who first consumed this continuation (if consumed).
+    pub fn consumed_by(&self) -> Option<&str> {
+        self.consumed_by.as_deref()
     }
 
     /// Borrow the continuation (for inspection without consuming).
