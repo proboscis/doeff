@@ -24,8 +24,8 @@ from doeff import (
     run,
 )
 from doeff_core_effects import slog, Try
-from doeff_core_effects.cache_handlers import (
-    in_memory_cache_handler,
+from doeff_core_effects.memo_handlers import (
+    in_memory_memo_handler,
     make_memo_rewriter,
 )
 from doeff_core_effects.handlers import (
@@ -158,7 +158,7 @@ class TestMemoRewriterSpawnContinuation:
             state(),
             await_handler(),
             slog_handler(),
-            in_memory_cache_handler(),
+            in_memory_memo_handler(),
             simple_fetch_handler,
             rewriter,
         ))
@@ -182,7 +182,7 @@ class TestMemoRewriterSpawnContinuation:
             state(),
             await_handler(),
             slog_handler(),
-            in_memory_cache_handler(),
+            in_memory_memo_handler(),
             spawn_fetch_handler,
             rewriter,
         ))
@@ -204,7 +204,7 @@ class TestMemoRewriterSpawnContinuation:
             state(),
             await_handler(),
             slog_handler(),
-            in_memory_cache_handler(),
+            in_memory_memo_handler(),
             spawn_fetch_handler,
             rewriter,
         ))
@@ -227,7 +227,7 @@ class TestMemoRewriterSpawnContinuation:
             state(),
             await_handler(),
             slog_handler(),
-            in_memory_cache_handler(),
+            in_memory_memo_handler(),
             spawn_fetch_handler,
             rewriter,
         ))
@@ -283,7 +283,7 @@ class TestMemoRewriterWithSimTime:
             await_handler(),
             sim_time_handler(start_time=start),
             slog_handler(),
-            in_memory_cache_handler(),
+            in_memory_memo_handler(),
             spawn_handler_with_gettime,
             parallel(concurrency=10),
             fail_handler,
@@ -332,7 +332,7 @@ class TestMemoRewriterWithSimTime:
             await_handler(),
             sim_time_handler(start_time=start),
             slog_handler(),
-            in_memory_cache_handler(),
+            in_memory_memo_handler(),
             spawn_handler_with_gettime,
             parallel(concurrency=40),
             fail_handler,
@@ -392,7 +392,7 @@ class TestMemoRewriterWithSimTime:
             prog(),
             writer(), try_handler, state(), await_handler(),
             sim_time_handler(start_time=start),
-            slog_handler(), in_memory_cache_handler(),
+            slog_handler(), in_memory_memo_handler(),
             spawn_ohlc,
             parallel(concurrency=40), fail_handler, slog_handler(),
             rewriter, order_handler,

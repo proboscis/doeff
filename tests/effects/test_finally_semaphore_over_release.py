@@ -463,8 +463,8 @@ class TestLayer5WithHandlerResume:
         assert result.value == [i * 10 for i in range(high_task_count)]
 
     def test_real_cache_handler_high_concurrency_sync(self) -> None:
-        from doeff_core_effects.cache import CacheGet, CachePut
-        from doeff_core_effects.cache import in_memory_cache_handler
+        from doeff_core_effects.memo_effects import MemoGet, MemoPut
+        from doeff_core_effects.memo_handlers import in_memory_memo_handler
 
         high_task_count = 85
         high_concurrency = 40
@@ -481,7 +481,7 @@ class TestLayer5WithHandlerResume:
 
             @do
             def _try_get():
-                return (yield CacheGet(f"key_{n}"))
+                return (yield MemoGet(f"key_{n}"))
 
             cached = yield Try(_try_get())
             if cached.is_ok():
@@ -489,13 +489,13 @@ class TestLayer5WithHandlerResume:
                 return cached.value
             yield Tell(f"cache miss {n}")
             result = yield Await(_fake_api_call(n))
-            yield CachePut(f"key_{n}", result)
+            yield MemoPut(f"key_{n}", result)
             yield Tell(f"done {n}")
             return result
 
         programs = [_worker_with_cache(i) for i in range(high_task_count)]
         body = _throttled(programs, high_concurrency, with_tell=True)
-        program = WithIntercept(_interceptor, WithHandler(in_memory_cache_handler(), body))
+        program = WithIntercept(_interceptor, WithHandler(in_memory_memo_handler(), body))
         result = _run_sync_with_timeout(program)
         assert result.is_ok(), result.display()
         assert result.value == [i * 10 for i in range(high_task_count)]
@@ -512,8 +512,8 @@ class TestLayer5WithHandlerResume:
 
         All wrapped in: WithIntercept(interceptor, WithHandler(cache_handler, throttled_gather(...)))
         """
-        from doeff_core_effects.cache import CacheGet, CachePut
-        from doeff_core_effects.cache import in_memory_cache_handler
+        from doeff_core_effects.memo_effects import MemoGet, MemoPut
+        from doeff_core_effects.memo_handlers import in_memory_memo_handler
 
         high_task_count = 85
         high_concurrency = 40
@@ -534,14 +534,14 @@ class TestLayer5WithHandlerResume:
 
             @do
             def _try_cache_get():
-                return (yield CacheGet(cache_key))
+                return (yield MemoGet(cache_key))
 
             cached = yield Try(_try_cache_get())
             if cached.is_ok():
                 return cached.value
 
             result = yield Await(_fake_api_call(n))
-            yield CachePut(cache_key, result)
+            yield MemoPut(cache_key, result)
             return result
 
         @do
@@ -554,7 +554,7 @@ class TestLayer5WithHandlerResume:
 
         programs = [_worker(i) for i in range(high_task_count)]
         body = _throttled(programs, high_concurrency, with_tell=True)
-        program = WithIntercept(_interceptor, WithHandler(in_memory_cache_handler(), body))
+        program = WithIntercept(_interceptor, WithHandler(in_memory_memo_handler(), body))
         result = _run_sync_with_timeout(program)
         assert result.is_ok(), result.display()
         assert result.value == [i * 10 for i in range(high_task_count)]
@@ -565,8 +565,8 @@ class TestLayer5WithHandlerResume:
         then result = yield llm(text=..., response_format=...)
         """
         from doeff import Ask, Local
-        from doeff_core_effects.cache import CacheGet, CachePut
-        from doeff_core_effects.cache import in_memory_cache_handler
+        from doeff_core_effects.memo_effects import MemoGet, MemoPut
+        from doeff_core_effects.memo_handlers import in_memory_memo_handler
 
         high_task_count = 85
         high_concurrency = 40
@@ -584,14 +584,14 @@ class TestLayer5WithHandlerResume:
 
             @do
             def _try_cache_get():
-                return (yield CacheGet(cache_key))
+                return (yield MemoGet(cache_key))
 
             cached = yield Try(_try_cache_get())
             if cached.is_ok():
                 return cached.value
 
             result = yield Await(_fake_api_call(n))
-            yield CachePut(cache_key, result)
+            yield MemoPut(cache_key, result)
             return result
 
         @do
@@ -608,7 +608,7 @@ class TestLayer5WithHandlerResume:
         env = {"compute_fn": _cached_compute}
         program = WithIntercept(
             _interceptor,
-            WithHandler(in_memory_cache_handler(), Local(env, body)),
+            WithHandler(in_memory_memo_handler(), Local(env, body)),
         )
         # Same correctness-oriented stress profile as the sqlite-backed variant above.
         result = _run_sync_with_custom_timeout(program, 30)
@@ -629,7 +629,7 @@ class TestLayer5WithHandlerResume:
 
         from doeff import Ask, Local
         from doeff.cache import cache
-        from doeff_core_effects.cache import sqlite_cache_handler
+        from doeff_core_effects.memo_handlers import sqlite_memo_handler
 
         high_task_count = 85
         high_concurrency = 40
@@ -660,7 +660,7 @@ class TestLayer5WithHandlerResume:
             db_path = f"{tmpdir}/test_cache.sqlite3"
             program = WithIntercept(
                 _interceptor,
-                WithHandler(sqlite_cache_handler(db_path), Local(env, body)),
+                WithHandler(sqlite_memo_handler(db_path), Local(env, body)),
             )
             # This is a high-concurrency correctness stress case; the exact wall-clock budget is
             # less important than verifying the scheduler/cache stack makes forward progress.
@@ -673,8 +673,8 @@ class TestLayer5WithHandlerResume:
         """Minimal test: nested KleisliProgram with Try(sub_program) where sub_program yields Await.
         This isolates whether Try wrapping an Await-containing program triggers the bug."""
         from doeff import Ask, Local
-        from doeff_core_effects.cache import CacheGet, CachePut
-        from doeff_core_effects.cache import in_memory_cache_handler
+        from doeff_core_effects.memo_effects import MemoGet, MemoPut
+        from doeff_core_effects.memo_handlers import in_memory_memo_handler
 
         high_task_count = 85
         high_concurrency = 40
@@ -696,7 +696,7 @@ class TestLayer5WithHandlerResume:
 
             @do
             def _try_cache_get():
-                return (yield CacheGet(cache_key))
+                return (yield MemoGet(cache_key))
 
             cached = yield Try(_try_cache_get())
             if cached.is_ok():
@@ -704,7 +704,7 @@ class TestLayer5WithHandlerResume:
 
             result = yield Try(_compute(n))
             if result.is_ok():
-                yield CachePut(cache_key, result.value)
+                yield MemoPut(cache_key, result.value)
                 return result.value
             raise result.error
 
@@ -721,7 +721,7 @@ class TestLayer5WithHandlerResume:
         env = {"compute_fn": _cached_compute_with_try}
         program = WithIntercept(
             _interceptor,
-            WithHandler(in_memory_cache_handler(), Local(env, body)),
+            WithHandler(in_memory_memo_handler(), Local(env, body)),
         )
         # Same correctness-oriented stress profile as the sqlite-backed variant above.
         result = _run_sync_with_custom_timeout(program, 30)
@@ -731,9 +731,9 @@ class TestLayer5WithHandlerResume:
     def test_get_execution_context_in_nested_kleisli_high_concurrency_sync(self) -> None:
         """Test if GetExecutionContext in nested KleisliProgram triggers the bug."""
         from doeff import Ask, Local
-        from doeff_core_effects.cache import CacheGet, CachePut
+        from doeff_core_effects.memo_effects import MemoGet, MemoPut
         from doeff_vm import GetExecutionContext
-        from doeff_core_effects.cache import in_memory_cache_handler
+        from doeff_core_effects.memo_handlers import in_memory_memo_handler
 
         high_task_count = 85
         high_concurrency = 40
@@ -757,7 +757,7 @@ class TestLayer5WithHandlerResume:
 
             @do
             def _try_cache_get():
-                return (yield CacheGet(cache_key))
+                return (yield MemoGet(cache_key))
 
             cached = yield Try(_try_cache_get())
             if cached.is_ok():
@@ -765,7 +765,7 @@ class TestLayer5WithHandlerResume:
 
             result = yield Try(_compute(n))
             if result.is_ok():
-                yield CachePut(cache_key, result.value)
+                yield MemoPut(cache_key, result.value)
                 return result.value
             raise result.error
 
@@ -782,7 +782,7 @@ class TestLayer5WithHandlerResume:
         env = {"compute_fn": _cached_compute_with_context}
         program = WithIntercept(
             _interceptor,
-            WithHandler(in_memory_cache_handler(), Local(env, body)),
+            WithHandler(in_memory_memo_handler(), Local(env, body)),
         )
         # This is a correctness stress test for interleaved scheduler tasks, not a strict
         # performance budget. The structural dispatch derivation is slower than the old side
@@ -814,7 +814,7 @@ class TestLayer5WithHandlerResume:
         """Same as sqlite test but with in_memory_cache_handler to isolate I/O vs @cache logic."""
         from doeff import Ask, Local
         from doeff.cache import cache
-        from doeff_core_effects.cache import in_memory_cache_handler
+        from doeff_core_effects.memo_handlers import in_memory_memo_handler
 
         high_task_count = 85
         high_concurrency = 40
@@ -842,7 +842,7 @@ class TestLayer5WithHandlerResume:
         env = {"compute_fn": _cached_compute}
         program = WithIntercept(
             _interceptor,
-            WithHandler(in_memory_cache_handler(), Local(env, body)),
+            WithHandler(in_memory_memo_handler(), Local(env, body)),
         )
         # Same correctness-oriented stress profile as the sqlite-backed variant above.
         result = _run_sync_with_custom_timeout(program, 30)

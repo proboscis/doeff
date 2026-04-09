@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from doeff import (
-    CacheGet,
-    # REMOVED: CachePut,
+    MemoGet,
+    # REMOVED: MemoPut,
     Delegate,
     Effect,
     EffectGenerator,
@@ -21,7 +21,7 @@ from doeff import (
     run,
 )
 from doeff_core_effects.effects import EffectBase
-from doeff_core_effects.cache import CacheGetEffect, CachePut
+from doeff_core_effects.memo_effects import MemoGetEffect, MemoPut, MemoPutEffect
 from doeff_vm import GetExecutionContext
 
 
@@ -116,9 +116,9 @@ def test_cache_miss_delegate_then_put_then_hit() -> None:
 
     @do
     def cache_backend(effect: Effect, k: object):
-        if isinstance(effect, CacheGetEffect):
+        if isinstance(effect, MemoGetEffect):
             return (yield Resume(k, cache_store.get(effect.key)))
-        if isinstance(effect, CachePutEffect):
+        if isinstance(effect, MemoPutEffect):
             cache_store[effect.key] = effect.value
             return (yield Resume(k, effect.value))
         yield Pass()
@@ -137,10 +137,10 @@ def test_cache_miss_delegate_then_put_then_hit() -> None:
             yield Pass()
             return
         key = ("greet", effect.name)
-        cached = yield CacheGet(key)
+        cached = yield MemoGet(key)
         if cached is None:
             delegated = yield Delegate()
-            _ = yield CachePut(key, delegated)
+            _ = yield MemoPut(key, delegated)
             return (yield Resume(k, delegated))
         return (yield Resume(k, cached))
 

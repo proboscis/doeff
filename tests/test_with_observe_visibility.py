@@ -12,9 +12,9 @@ from doeff_core_effects import Ask, Try, slog, Tell
 from doeff_core_effects.handlers import (
     reader, state, writer, try_handler, slog_handler,
 )
-from doeff_core_effects.cache_effects import CacheExists, CacheGet, CachePut
-from doeff_core_effects.cache_handlers import (
-    cache_handler, make_memo_rewriter, in_memory_cache_handler,
+from doeff_core_effects.memo_effects import MemoExists, MemoGet, MemoPut, MemoExistsEffect, MemoGetEffect, MemoPutEffect
+from doeff_core_effects.memo_handlers import (
+    memo_handler, make_memo_rewriter, in_memory_memo_handler,
 )
 from doeff_vm import EffectBase, Callable as VMCallable
 
@@ -92,7 +92,7 @@ def test_observe_sees_handler_body_effects():
 
 
 def test_observe_sees_cache_handler_effects():
-    """Observer sees CacheExists/CacheGet/CachePut from cache_handler."""
+    """Observer sees MemoExists/MemoGet/MemoPut from cache_handler."""
     observed = []
 
     def observer(effect):
@@ -100,23 +100,23 @@ def test_observe_sees_cache_handler_effects():
 
     @do
     def prog():
-        yield CachePut("key1", "value1")
-        exists = yield CacheExists("key1")
+        yield MemoPut("key1", "value1")
+        exists = yield MemoExists("key1")
         assert exists
-        value = yield CacheGet("key1")
+        value = yield MemoGet("key1")
         assert value == "value1"
         return "done"
 
     wrapped = prog()
-    for h in reversed([state(), writer(), slog_handler(), in_memory_cache_handler()]):
+    for h in reversed([state(), writer(), slog_handler(), in_memory_memo_handler()]):
         wrapped = WithHandler(h, wrapped)
     wrapped = WithObserve(VMCallable(observer), wrapped)
 
     result = run(wrapped)
     assert result == "done"
-    assert "CachePutEffect" in observed, f"observed: {observed}"
-    assert "CacheExistsEffect" in observed, f"observed: {observed}"
-    assert "CacheGetEffect" in observed, f"observed: {observed}"
+    assert "MemoPutEffect" in observed, f"observed: {observed}"
+    assert "MemoExistsEffect" in observed, f"observed: {observed}"
+    assert "MemoGetEffect" in observed, f"observed: {observed}"
 
 
 def test_observe_sees_memo_rewriter_effects():
@@ -144,7 +144,7 @@ def test_observe_sees_memo_rewriter_effects():
     wrapped = prog()
     for h in reversed([
         state(), writer(), slog_handler(),
-        in_memory_cache_handler(),
+        in_memory_memo_handler(),
         custom_handler_for_memo,
         memo,
     ]):
