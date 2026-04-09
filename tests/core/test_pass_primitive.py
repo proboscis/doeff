@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 
 from doeff import Effect, EffectBase, Pass, Resume, WithHandler, default_handlers, do, run
-# REMOVED: from doeff_vm import pass_
 
 
 class _EffectA(EffectBase):
@@ -47,9 +46,3 @@ def test_pass_is_terminal_passthrough() -> None:
 def test_pass_rejects_explicit_effect_argument() -> None:
     with pytest.raises(TypeError):
         Pass(_EffectB())
-
-
-@pytest.mark.skip(reason="uses removed API: pass_")
-def test_pass_exports_are_available() -> None:
-    assert Pass is not None
-    assert pass_ is Pass

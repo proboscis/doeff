@@ -10,11 +10,8 @@ from typing import Any
 
 import pytest
 
-import pytest
-
 from doeff import Gather, Spawn, async_run, default_handlers, do, run
 from doeff import CreateExternalPromise, Wait
-# REMOVED: from doeff import gather
 
 
 def _run_with_timeout(program_factory, timeout: float = 1.0) -> Any:
@@ -199,33 +196,6 @@ class TestExternalPromiseMultiple:
         result = run(program(), handlers=default_handlers())
         assert result.is_ok
         assert result.value == ("first", "second")
-
-    @pytest.mark.skip(reason="uses removed API: gather (lowercase)")
-    def test_gather_external_promises_completed_from_thread(self) -> None:
-        """Gather over external futures completes via scheduler bridge."""
-
-        @do
-        def program():
-            promise1 = yield CreateExternalPromise()
-            promise2 = yield CreateExternalPromise()
-
-            def worker():
-                time.sleep(0.01)
-                promise1.complete("one")
-                time.sleep(0.01)
-                promise2.complete("two")
-
-            thread = threading.Thread(target=worker)
-            thread.start()
-
-            results = yield gather(promise1.future, promise2.future)
-            thread.join()
-            return tuple(results)
-
-        result = _run_with_timeout(program, timeout=1.0)
-        assert result.is_ok
-        assert result.value == ("one", "two")
-
 
 class TestExternalPromiseRunIsolation:
     """Regression coverage for scheduler state isolation across runs."""

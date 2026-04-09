@@ -2,45 +2,16 @@ from __future__ import annotations
 
 import pytest
 
-import doeff as doeff_module
 import pytest
 
 from doeff import (
-    AllocVar,
     Apply,
     Ask,
-    Discontinue,
-    # REMOVED: Eval,
-    # REMOVED: EvalInScope,
     Expand,
-    Perform,
     Pure,
-    ReadVar,
-    # REMOVED: ResumeContinuation,
-    # REMOVED: WriteVar,
-    # REMOVED: WriteVarNonlocal,
     default_handlers,
-    do,
     run,
 )
-
-
-@pytest.mark.skip(reason="uses removed API: Eval, WriteVar, etc.")
-def test_doctrl_exports_are_available() -> None:
-    assert Pure is not None
-    assert Apply is not None
-    assert Expand is not None
-    assert Eval is not None
-    assert EvalInScope is not None
-    assert AllocVar is not None
-    assert ReadVar is not None
-    assert WriteVar is not None
-    assert WriteVarNonlocal is not None
-    assert Perform is not None
-    assert Discontinue is not None
-    assert ResumeContinuation is not None
-    with pytest.raises(AttributeError):
-        doeff_module.Finally
 
 
 def _meta() -> dict[str, object]:
@@ -49,31 +20,6 @@ def _meta() -> dict[str, object]:
         "source_file": __file__,
         "source_line": 1,
     }
-
-
-@pytest.mark.skip(reason="uses removed API: Eval")
-def test_pure_apply_eval_execute() -> None:
-    pure_result = run(Pure(123))
-    assert pure_result.value == 123
-
-    def add(a: int, b: int) -> int:
-        return a + b
-
-    apply_result = run(Apply(Pure(add), [Pure(1), Pure(2)], {}, _meta()))
-    assert apply_result.value == 3
-
-    @do
-    def identity(x: int):
-        return x
-
-    expand_result = run(identity(4))
-    assert expand_result.value == 4
-
-    eval_result = run(Eval(Perform(Ask("k"))), handlers=default_handlers(), env={"k": "value"})
-    assert eval_result.value == "value"
-
-    perform_result = run(Perform(Ask("k")), env={"k": "perform-value"}, handlers=default_handlers())
-    assert perform_result.value == "perform-value"
 
 
 def test_apply_delivers_doexpr_result_as_raw_value() -> None:
@@ -134,6 +80,3 @@ def test_expand_requires_meta() -> None:
         Expand(Pure(make_program), [Pure(1)], {})
 
 
-def test_resume_continuation_requires_k() -> None:
-    with pytest.raises(TypeError, match=r"K"):
-        ResumeContinuation("not_k", Ask("x"))
