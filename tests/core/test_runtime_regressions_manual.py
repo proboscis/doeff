@@ -25,7 +25,6 @@ from doeff import (
     do,
     run,
 )
-# REMOVED: from doeff_core_effects.handlers import result_safe as result_safe_handler
 from doeff_core_effects.handlers import state as state_handler
 from doeff_core_effects.scheduler import TaskCompleted
 
@@ -354,31 +353,6 @@ def test_missing_env_key_is_catchable_at_yield_site_and_try_still_wraps() -> Non
     assert safe_result.is_ok()
     assert safe_result.value.is_err() is True
     assert isinstance(safe_result.value.error, MissingEnvKeyError)
-
-
-@pytest.mark.skip(reason="uses removed API: result_safe")
-def test_state_missing_key_is_catchable_at_yield_site_and_try_still_wraps() -> None:
-    @do
-    def catch_program():
-        try:
-            _ = yield Get("missing")
-            return ("unexpected",)
-        except Exception as exc:
-            return ("caught", type(exc).__name__, str(exc))
-
-    @do
-    def safe_program():
-        return (yield Try(Get("missing")))
-
-    catch_result = run(catch_program(), handlers=[state_handler])
-    assert catch_result.is_ok()
-    assert catch_result.value[0] == "caught"
-    assert catch_result.value[1] == "KeyError"
-
-    safe_result = run(safe_program(), handlers=[result_safe_handler, state_handler])
-    assert safe_result.is_ok()
-    assert safe_result.value.is_err() is True
-    assert isinstance(safe_result.value.error, KeyError)
 
 
 def test_state_handler_callback_error_is_catchable_at_yield_site() -> None:
