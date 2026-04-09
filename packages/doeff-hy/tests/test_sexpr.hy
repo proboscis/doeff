@@ -12,12 +12,12 @@
 
 ;; Kleisli functions
 (defk fetch-and-filter [day]
-  {:pre [] :post []}
+  {:pre [(: day str)] :post [(: % object)]}
   (<- news (FetchNews :day day))
   news)
 
 (defk analyze [day]
-  {:pre [] :post []}
+  {:pre [(: day str)] :post [(: % object)]}
   (<- data (fetch-and-filter day))
   (<- result (LLMQuery :prompt "analyze"))
   result)

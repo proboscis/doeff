@@ -475,11 +475,15 @@
   (when mod
     (hy.macros.require "doeff_hy.macros" mod
       :assignments [["defk" "defk"] ["<-" "<-"]]))
-  ;; Build compilation form
+  ;; Build compilation form — generate (: param object) for each arg
+  (setv pre-checks (lfor a args
+    :if (and (isinstance a hy.models.Symbol) (!= (str a) "*"))
+    `(: ~a object)))
+  (when (not pre-checks) (setv pre-checks []))
   (setv compile-form
     `(do
        (defk _staged ~args
-         {:pre [] :post []}
+         {:pre ~(hy.models.List pre-checks) :post [(: % object)]}
          ~@truncated)
        ~(if args
           '_staged

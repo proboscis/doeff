@@ -14,20 +14,20 @@
 
 ;; Kleisli functions
 (defk merge-data [ohlc news]
-  {:pre [] :post []}
+  {:pre [(: ohlc object) (: news object)] :post [(: % dict)]}
   {"ohlc" ohlc "news" news})
 
 (defk compute-signal [data]
-  {:pre [] :post []}
+  {:pre [(: data dict)] :post [(: % dict)]}
   {"signal" "bullish" "data" data})
 
 (defk build-report [signal]
-  {:pre [] :post []}
+  {:pre [(: signal object)] :post [(: % str)]}
   (+ "Report: " (str signal)))
 
 ;; A "big" defk pipeline — as AI would write it
 (defk full-pipeline []
-  {:pre [] :post []}
+  {:pre [] :post [(: % str)]}
   (<- ohlc (FetchOhlc :ticker "7203.T"))
   (<- news (FetchNews :day "2025-11-10"))
   (<- data (merge-data ohlc news))
@@ -43,13 +43,13 @@
 
 ;; === Mock handlers ===
 (defk mock-ohlc [effect k]
-  {:pre [] :post []}
+  {:pre [(: effect object) (: k object)] :post [(: % object)]}
   (if (isinstance effect FetchOhlc)
     (yield (Resume k [100 101 102]))
     (yield (Pass effect k))))
 
 (defk mock-news [effect k]
-  {:pre [] :post []}
+  {:pre [(: effect object) (: k object)] :post [(: % object)]}
   (if (isinstance effect FetchNews)
     (yield (Resume k ["article-1" "article-2"]))
     (yield (Pass effect k))))
@@ -101,7 +101,7 @@
 (print "=== Reuse: new program using stage-of ===")
 ;; Build a new program that taps into 'data' stage of full-pipeline
 (defk alternative-analysis [data]
-  {:pre [] :post []}
+  {:pre [(: data dict)] :post [(: % str)]}
   (+ "Alt analysis on " (str (len (get data "ohlc"))) " prices"))
 
 (defp p-alt {:post []}
