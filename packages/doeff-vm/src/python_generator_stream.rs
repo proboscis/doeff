@@ -359,11 +359,21 @@ impl IRStream for PythonGeneratorStream {
 // ---------------------------------------------------------------------------
 
 /// Take a started continuation from a Py<PyK>, returning an error string on failure.
+/// Records who consumed the continuation for one-shot violation diagnostics.
 fn take_continuation(py: Python<'_>, k: &Py<doeff_vm_core::continuation::PyK>, label: &str) -> Result<doeff_vm_core::Continuation, String> {
     let k_ref = k.bind(py);
     let mut k_borrowed = k_ref.borrow_mut();
-    let owned = k_borrowed.take()
-        .ok_or_else(|| format!("{}: continuation already consumed", label))?;
+    let owned = k_borrowed.take_with_label(label)
+        .ok_or_else(|| {
+            let first = k_borrowed.consumed_by().unwrap_or("unknown");
+            format!(
+                "{label}: continuation already consumed (one-shot violation). \
+                 First consumed by: {first}. \
+                 The doeff traceback shows the SECOND (failing) Resume site. \
+                 To find the FIRST Resume: search for the handler that yields \
+                 `{first}(k, ...)` before this point in the same handler chain."
+            )
+        })?;
     match owned {
         doeff_vm_core::OwnedControlContinuation::Started(k) => Ok(k),
         _ => Err(format!("{}: expected started continuation", label)),
