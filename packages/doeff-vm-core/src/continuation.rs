@@ -13,7 +13,7 @@
 //! thread-local queue. The VM drains this queue each step, walking and freeing
 //! the orphaned fiber chains from the arena.
 
-use std::cell::RefCell;
+use std::sync::{Arc, Mutex};
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -23,21 +23,23 @@ use crate::memory_stats;
 use crate::py_shared::PyShared;
 
 // ---------------------------------------------------------------------------
-// Orphan fiber reclamation
+// Orphan fiber reclamation — per-VM queue
 // ---------------------------------------------------------------------------
 
-thread_local! {
-    /// Fiber chain heads from continuations dropped without being consumed.
-    /// The VM drains this each step to free the orphaned fibers from the arena.
-    static ORPHAN_FIBERS: RefCell<Vec<FiberId>> = RefCell::new(Vec::new());
+/// Per-VM queue for orphaned fiber heads. Each Continuation holds an Arc clone.
+/// When a Continuation is dropped without being consumed, its head FiberId is
+/// pushed to the owning VM's queue (not a global/thread-local).
+pub type OrphanQueue = Arc<Mutex<Vec<FiberId>>>;
+
+/// Create a new orphan queue. Called once per VM instance.
+pub fn new_orphan_queue() -> OrphanQueue {
+    Arc::new(Mutex::new(Vec::new()))
 }
 
-/// Drain all orphaned fiber head IDs. Called by the VM at each step.
-pub fn drain_orphan_fibers() -> Vec<FiberId> {
-    ORPHAN_FIBERS.with(|cell| {
-        let mut v = cell.borrow_mut();
-        std::mem::take(&mut *v)
-    })
+/// Drain all orphaned fiber head IDs from a queue. Called by the VM at each step.
+pub fn drain_orphan_fibers(queue: &OrphanQueue) -> Vec<FiberId> {
+    let mut v = queue.lock().unwrap();
+    std::mem::take(&mut *v)
 }
 
 // ---------------------------------------------------------------------------
@@ -56,22 +58,26 @@ pub struct Continuation {
     head: Option<FiberId>,
     /// Tail of the chain (last fiber). For O(1) append in reperform.
     pub(crate) last_fiber: Option<FiberId>,
+    /// Per-VM orphan queue. On drop, unconsumed heads are pushed here
+    /// so the owning VM (not another VM on the same thread) reclaims them.
+    orphan_queue: Option<OrphanQueue>,
 }
 
 impl Continuation {
     /// Create a continuation from a detached fiber chain.
     /// Called by perform after cutting the tail→handler parent pointer.
-    pub fn new(head: FiberId, last_fiber: FiberId) -> Self {
+    pub fn new(head: FiberId, last_fiber: FiberId, orphan_queue: OrphanQueue) -> Self {
         memory_stats::register_continuation();
         Self {
             head: Some(head),
             last_fiber: Some(last_fiber),
+            orphan_queue: Some(orphan_queue),
         }
     }
 
     /// Single-fiber continuation (head == last_fiber).
-    pub fn single(fiber_id: FiberId) -> Self {
-        Self::new(fiber_id, fiber_id)
+    pub fn single(fiber_id: FiberId, orphan_queue: OrphanQueue) -> Self {
+        Self::new(fiber_id, fiber_id, orphan_queue)
     }
 
     /// Sentinel for an already-consumed continuation (head=None).
@@ -84,6 +90,7 @@ impl Continuation {
         Self {
             head: None,
             last_fiber: None,
+            orphan_queue: None,
         }
     }
 
@@ -146,11 +153,18 @@ impl Drop for Continuation {
     fn drop(&mut self) {
         memory_stats::unregister_continuation();
         // If the continuation was never consumed, its fibers are orphaned
-        // in the arena. Record the head so the VM can free the chain.
+        // in the arena. Push the head to the owning VM's orphan queue.
         if let Some(head) = self.head.take() {
-            ORPHAN_FIBERS.with(|cell| {
-                cell.borrow_mut().push(head);
-            });
+            if let Some(ref queue) = self.orphan_queue {
+                if let Ok(mut v) = queue.lock() {
+                    v.push(head);
+                }
+                // If lock is poisoned, we silently leak the fiber.
+                // This is safe (just wastes arena slots) and avoids
+                // panicking in Drop.
+            }
+            // If orphan_queue is None (empty() sentinel), the fiber is
+            // not backed by any arena — nothing to reclaim.
         }
     }
 }

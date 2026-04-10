@@ -1,6 +1,7 @@
 //! Core VM struct — 5 registers.
 
 use crate::arena::FiberArena;
+use crate::continuation::{self, OrphanQueue};
 use crate::driver::Mode;
 use crate::ids::{FiberId, SegmentId};
 use crate::segment::Fiber;
@@ -32,6 +33,9 @@ pub struct VM {
     /// GetExecutionContext returns this if set, giving the error-site context
     /// rather than the post-unwind context.
     pub last_error_context: Option<Vec<Value>>,
+    /// Per-VM orphan queue. Continuations hold Arc clones; on drop they push
+    /// their head FiberId here. The VM drains this each step.
+    pub orphan_queue: OrphanQueue,
 }
 
 impl VM {
@@ -43,6 +47,7 @@ impl VM {
             pending_external: None,
             current_segment: None,
             last_error_context: None,
+            orphan_queue: continuation::new_orphan_queue(),
         }
     }
 
@@ -53,6 +58,9 @@ impl VM {
         self.pending_external = None;
         self.current_segment = None;
         self.last_error_context = None;
+        // Replace orphan queue so stale Continuations from previous runs
+        // push to the old (now-disconnected) queue, not this new one.
+        self.orphan_queue = continuation::new_orphan_queue();
     }
 
     pub fn end_active_run_session(&mut self) {
@@ -72,7 +80,7 @@ impl VM {
     /// This walks each orphaned chain from head→last following parent
     /// pointers, freeing every fiber.
     pub fn reclaim_orphaned_fibers(&mut self) {
-        let orphans = crate::continuation::drain_orphan_fibers();
+        let orphans = continuation::drain_orphan_fibers(&self.orphan_queue);
         for head in orphans {
             let mut cursor = Some(head);
             while let Some(fid) = cursor {
