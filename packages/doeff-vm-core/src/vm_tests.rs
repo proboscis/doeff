@@ -325,7 +325,7 @@ mod tests {
         let body_fid = vm.alloc_segment(body_fiber);
 
         // Create a continuation pointing to the body fiber
-        let mut k = Continuation::new(body_fid, body_fid);
+        let mut k = Continuation::new(body_fid, body_fid, vm.orphan_queue.clone());
 
         // Create a root fiber that yields Resume(k, 77)
         #[derive(Debug)]

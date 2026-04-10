@@ -84,7 +84,7 @@ impl VM {
         }
 
         // Create continuation: head = current (body), last = boundary
-        let continuation = Continuation::new(current, handler_fiber_id);
+        let continuation = Continuation::new(current, handler_fiber_id, self.orphan_queue.clone());
 
         // handler_parent is boundary's former parent
         let handler_parent = boundary_parent;
@@ -191,7 +191,7 @@ impl VM {
         self.current_segment = handler_parent;
 
         Ok(PerformResult {
-            continuation: Continuation::single(FiberId::from_index(0)), // placeholder — k is updated in place
+            continuation: Continuation::single(FiberId::from_index(0), self.orphan_queue.clone()), // placeholder — k is updated in place
             handler_fiber_id,
         })
     }

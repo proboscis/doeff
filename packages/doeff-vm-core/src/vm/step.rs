@@ -660,21 +660,21 @@ impl VM {
     fn step_eval_return(&mut self, eval_return: EvalReturnContinuation, value: Value) -> StepResult {
         match eval_return {
             EvalReturnContinuation::ResumeToContinuation { head_fiber } => {
-                let mut k = Continuation::new(head_fiber, head_fiber);
+                let mut k = Continuation::new(head_fiber, head_fiber, self.orphan_queue.clone());
                 match self.continue_k(&mut k, value) {
                     Ok(()) => StepResult::Continue,
                     Err(event) => event,
                 }
             }
             EvalReturnContinuation::ReturnToContinuation { head_fiber } => {
-                let mut k = Continuation::new(head_fiber, head_fiber);
+                let mut k = Continuation::new(head_fiber, head_fiber, self.orphan_queue.clone());
                 match self.continue_k(&mut k, value) {
                     Ok(()) => StepResult::Continue,
                     Err(event) => event,
                 }
             }
             EvalReturnContinuation::EvalInScopeReturn { head_fiber } => {
-                let mut k = Continuation::new(head_fiber, head_fiber);
+                let mut k = Continuation::new(head_fiber, head_fiber, self.orphan_queue.clone());
                 match self.continue_k(&mut k, value) {
                     Ok(()) => StepResult::Continue,
                     Err(event) => event,
