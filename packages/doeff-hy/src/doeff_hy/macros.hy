@@ -387,17 +387,17 @@ defk {name}: {{:post [...]}} is required.
   (if post-checks
       (let [post-asserts (lfor check post-checks
                            (_expand-check check "do!" "post-condition"))]
-        `((fn []
+        `((_doeff-do (fn []
            ~@pre-code
            ~@expanded
            (setv _contract_result ~body-expr)
            (let [% _contract_result]
              ~@post-asserts)
-           (return _contract_result))))
-      `((fn []
+           (return _contract_result)))))
+      `((_doeff-do (fn []
          ~@pre-code
          ~@expanded
-         (return ~body-expr)))))
+         (return ~body-expr))))))
 
 
 ;; ---------------------------------------------------------------------------
