@@ -61,6 +61,7 @@ def _enrich_exception_traceback(exc, task_meta=None, vm_ctx=None):
 # ---------------------------------------------------------------------------
 
 PRIORITY_IDLE = 0
+PRIORITY_EXTERNAL_WAIT = 5   # above IDLE (blocks clock driver), below NORMAL (yields to real work)
 PRIORITY_NORMAL = 10
 PRIORITY_HIGH = 20
 
@@ -300,6 +301,14 @@ def scheduled(body_program):
                 yield Perform(TaskCompleted(tid, Err(e)))
         return wrapped()
 
+    def _drain_one_external():
+        """Block for one external completion and process it."""
+        action, pid, value = external_queue.get()
+        if pid in promises and promises[pid]["status"] == "pending":
+            promises[pid]["status"] = "completed" if action == "complete" else "failed"
+            promises[pid]["result"] = value
+            wake_waiters(("promise", pid))
+
     def pick_next():
         from doeff.program import ResumeThrow
         while True:
@@ -322,14 +331,25 @@ def scheduled(body_program):
                 elif entry[0] == "raise":
                     _, cont, error = entry
                     return ResumeThrow(cont, error)
+                elif entry[0] == "wait_external":
+                    # Task waiting for external promise at NORMAL priority.
+                    # Keeps IDLE tasks (clock driver) from running.
+                    _, cont, wk = entry
+                    if waitable_status(wk)[0] in TERMINAL:
+                        resume_with_waitable_result(cont, wk)
+                        continue
+                    # Not yet resolved — block for one completion, drain rest
+                    _drain_one_external()
+                    drain()
+                    if waitable_status(wk)[0] in TERMINAL:
+                        resume_with_waitable_result(cont, wk)
+                    else:
+                        enqueue(entry, PRIORITY_EXTERNAL_WAIT)
+                    continue
             if not waiters:
                 return Pure(None)
             # All tasks blocked — block for one external completion
-            action, pid, value = external_queue.get()
-            if pid in promises and promises[pid]["status"] == "pending":
-                promises[pid]["status"] = "completed" if action == "complete" else "failed"
-                promises[pid]["result"] = value
-                wake_waiters(("promise", pid))
+            _drain_one_external()
 
     TERMINAL = ("completed", "failed", "cancelled")
 
@@ -469,7 +489,14 @@ def scheduled(body_program):
                 from doeff.program import ResumeThrow
                 return (yield ResumeThrow(k, TaskCancelledError()))
             else:
-                waiters.setdefault(wk, []).append(("wait", k))
+                kind, wid = wk
+                if kind == "promise" and promises.get(wid, {}).get("external"):
+                    # External promise: stay in ready queue above IDLE
+                    # (blocks clock driver) but below NORMAL (yields to real work).
+                    enqueue(("wait_external", k, wk), PRIORITY_EXTERNAL_WAIT)
+                else:
+                    # Internal promise: use waiters (resolved by other tasks)
+                    waiters.setdefault(wk, []).append(("wait", k))
                 yield TailEval(pick_next())
 
         elif isinstance(effect, Gather):
@@ -535,9 +562,11 @@ def scheduled(body_program):
             promises[pid]["status"] = "completed"
             promises[pid]["result"] = effect.value
             wake_waiters(("promise", pid))
-            # Re-queue completer rather than resuming immediately,
-            # so higher-priority woken tasks run first.
-            enqueue(("resume", k, None))
+            # Re-queue completer at IDLE so woken tasks (NORMAL) always
+            # run first.  The main user is the sim clock driver which is
+            # Spawned at IDLE — without this it would be promoted to
+            # NORMAL and race with the tasks it just woke.
+            enqueue(("resume", k, None), PRIORITY_IDLE)
             yield TailEval(pick_next())
 
         elif isinstance(effect, FailPromise):
@@ -545,11 +574,12 @@ def scheduled(body_program):
             promises[pid]["status"] = "failed"
             promises[pid]["result"] = effect.error
             wake_waiters(("promise", pid))
-            enqueue(("resume", k, None))
+            enqueue(("resume", k, None), PRIORITY_IDLE)
             yield TailEval(pick_next())
 
         elif isinstance(effect, CreateExternalPromise):
             pid = alloc_promise()
+            promises[pid]["external"] = True
             ep = ExternalPromise(pid, external_queue)
             r = yield Resume(k, ep)
             return r
