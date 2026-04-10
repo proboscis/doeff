@@ -380,10 +380,14 @@ defk {name}: {{:post [...]}} is required.
   (setv pre-code (lfor check (or pre-checks [])
                    (_expand-check check "do!" "pre-condition"))
         expanded (lfor bind bindings
-                   (let [#(name expr) (_bind-parts bind)]
-                     (if (is name None)
-                         `(yield ~expr)
-                         `(setv ~name (yield ~expr))))))
+                   (if (and (isinstance bind tuple) (= (get bind 0) "__plain__"))
+                       ;; Plain statement (setv, when, for, etc.) — emit as-is
+                       (get bind 1)
+                       ;; Effect binding — yield
+                       (let [#(name expr) (_bind-parts bind)]
+                         (if (is name None)
+                             `(yield ~expr)
+                             `(setv ~name (yield ~expr)))))))
   (if post-checks
       (let [post-asserts (lfor check post-checks
                            (_expand-check check "do!" "post-condition"))]
@@ -463,15 +467,19 @@ defk {name}: {{:post [...]}} is required.
 
 (defn _parse-do-body [forms [macro-name "do"]]
   "Split forms into (bindings, body-expr).
-   All (<- ...) and (When ...) forms are bindings. Last non-binding form is body."
+   (<- ...) and (When ...) forms are bindings.
+   Last non-binding form is body. Other non-binding forms are plain statements
+   (setv, when, for, etc.) emitted as-is into the function body."
   (setv bindings []
         body-expr None)
-  (for [form forms]
-    (cond
-      (_is-bind form) (.append bindings form)
-      (_is-when form) (.append bindings form)
-      True (setv body-expr form)))
-  (when (is body-expr None)
+  ;; Collect all forms; track the last non-bind form as body candidate
+  (setv all-forms (list forms))
+  ;; Find the last non-bind form (= body expression)
+  (setv body-idx None)
+  (for [#(i form) (enumerate all-forms)]
+    (when (not (or (_is-bind form) (_is-when form)))
+      (setv body-idx i)))
+  (when (is body-idx None)
     (raise (SyntaxError (.format "
 {macro}: missing body expression — only bindings found.
 
@@ -485,6 +493,15 @@ defk {name}: {{:post [...]}} is required.
   Every (<- ...) and (When ...) is a binding. You need at least one
   plain expression at the end as the result.
 " :macro macro-name))))
+  ;; Partition: everything before body-idx goes to bindings, body-idx is body
+  (for [#(i form) (enumerate all-forms)]
+    (cond
+      (= i body-idx) (setv body-expr form)
+      (_is-bind form) (.append bindings form)
+      (_is-when form) (.append bindings form)
+      ;; Non-bind, non-body form → plain statement (setv, when, for, etc.)
+      ;; Mark with :plain tag so expansion emits it as-is
+      True (.append bindings #("__plain__" form))))
   #(bindings body-expr))
 
 
