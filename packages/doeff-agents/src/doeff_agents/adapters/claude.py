@@ -45,11 +45,12 @@ class ClaudeAdapter:
 
     @property
     def onboarding_patterns(self) -> list[str]:
-        """Patterns for first-run onboarding dialogs that need Enter to dismiss.
-        Order matters — dialogs appear in this sequence."""
+        """Patterns for onboarding dialogs that need Enter to dismiss."""
         return [
             r"Choose the text style",          # Theme selection
+            r"Select login method",            # Auth method selection
             r"Press Enter to continue",        # Security notes / login success
+            r"Paste code here",               # OAuth code paste prompt
             r"Yes, I trust this folder",        # Trust dialog
         ]
 
