@@ -86,6 +86,7 @@ def launch_session(
     config: LaunchConfig,
     *,
     ready_timeout: float = 30.0,
+    dismiss_trust_dialog: bool = True,
     backend: SessionBackend | None = None,
 ) -> AgentSession:
     """Launch a new agent session in tmux.
@@ -135,6 +136,27 @@ def launch_session(
         if config.prompt:
             active_backend.send_keys(session_info.pane_id, config.prompt)
 
+    # Dismiss onboarding/trust dialogs (default: enabled)
+    if dismiss_trust_dialog:
+        onboarding_patterns = getattr(adapter, "onboarding_patterns", None)
+        if onboarding_patterns:
+            _dismiss_onboarding_dialogs(
+                session_info.pane_id,
+                onboarding_patterns,
+                timeout=ready_timeout,
+                backend=active_backend,
+            )
+        else:
+            # Fallback to trust-only for non-Claude adapters
+            trust_pattern = getattr(adapter, "trust_dialog_pattern", None)
+            if trust_pattern:
+                _dismiss_trust_dialog(
+                    session_info.pane_id,
+                    trust_pattern,
+                    timeout=ready_timeout,
+                    backend=active_backend,
+                )
+
     return AgentSession(
         session_name=session_name,
         pane_id=session_info.pane_id,
@@ -152,6 +174,7 @@ def session_scope(
     config: LaunchConfig,
     *,
     ready_timeout: float = 30.0,
+    dismiss_trust_dialog: bool = True,
     backend: SessionBackend | None = None,
 ) -> Iterator[AgentSession]:
     """Context manager for agent session lifecycle.
@@ -168,6 +191,7 @@ def session_scope(
         session_name,
         config,
         ready_timeout=ready_timeout,
+        dismiss_trust_dialog=dismiss_trust_dialog,
         backend=backend,
     )
     try:
@@ -287,6 +311,78 @@ def _wait_for_ready(
         if re.search(pattern, output):
             return True
         time.sleep(0.2)
+    return False
+
+
+def _dismiss_onboarding_dialogs(
+    target: str,
+    patterns: list[str],
+    *,
+    timeout: float = 30.0,
+    backend: SessionBackend | None = None,
+) -> int:
+    """Dismiss a sequence of onboarding dialogs (theme, login, trust) by sending Enter.
+
+    Handles dialogs that may appear in any order or not at all.
+    Returns the number of dialogs dismissed.
+    """
+    import logging
+    logger = logging.getLogger("doeff_agents.onboarding")
+
+    active_backend = backend or tmux.get_default_backend()
+    dismissed = 0
+    remaining = list(patterns)
+    deadline = time.time() + timeout
+
+    while remaining and time.time() < deadline:
+        output = active_backend.capture_pane(target, 50)
+        matched = False
+        for pattern in remaining:
+            if re.search(pattern, output):
+                logger.info("Onboarding dialog detected: %s — sending Enter", pattern)
+                active_backend.send_keys(target, "")  # sends Enter
+                remaining.remove(pattern)
+                dismissed += 1
+                matched = True
+                time.sleep(1.0)  # wait for next dialog to appear
+                break
+        if not matched:
+            time.sleep(0.5)
+
+    if remaining:
+        logger.debug("Onboarding: %d/%d dialogs dismissed (remaining: %s)",
+                      dismissed, len(patterns), remaining)
+    else:
+        logger.info("Onboarding: all %d dialogs dismissed", dismissed)
+    return dismissed
+
+
+def _dismiss_trust_dialog(
+    target: str,
+    pattern: str,
+    *,
+    timeout: float = 30.0,
+    backend: SessionBackend | None = None,
+) -> bool:
+    """Detect and dismiss a workspace trust dialog by sending Enter.
+
+    Polls the pane output for the trust pattern. If found, sends Enter
+    to accept. If not found within timeout, assumes no dialog appeared
+    (e.g., directory was already trusted) and returns False.
+    """
+    import logging
+    logger = logging.getLogger("doeff_agents.trust")
+
+    active_backend = backend or tmux.get_default_backend()
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        output = active_backend.capture_pane(target, 50)
+        if re.search(pattern, output):
+            logger.info("Trust dialog detected, sending Enter to accept")
+            active_backend.send_keys(target, "")  # sends Enter
+            return True
+        time.sleep(0.5)
+    logger.debug("Trust dialog not found within %.1fs (may already be trusted)", timeout)
     return False
 
 

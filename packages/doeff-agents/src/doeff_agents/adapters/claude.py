@@ -40,5 +40,18 @@ class ClaudeAdapter:
         return None  # Prompt passed via command line
 
     @property
+    def trust_dialog_pattern(self) -> str | None:
+        return r"Yes, I trust this folder"
+
+    @property
+    def onboarding_patterns(self) -> list[str]:
+        """Patterns for first-run onboarding dialogs that need Enter to dismiss."""
+        return [
+            r"Choose the text style",        # Theme selection
+            r"Select login method",           # Auth method selection
+            r"Yes, I trust this folder",      # Trust dialog
+        ]
+
+    @property
     def status_bar_lines(self) -> int:
         return 5  # Claude's status bar area
