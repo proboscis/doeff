@@ -318,12 +318,13 @@ def _dismiss_onboarding_dialogs(
     target: str,
     patterns: list[str],
     *,
-    timeout: float = 30.0,
+    timeout: float = 60.0,
     backend: SessionBackend | None = None,
 ) -> int:
-    """Dismiss a sequence of onboarding dialogs (theme, login, trust) by sending Enter.
+    """Dismiss onboarding dialogs by sending Enter (or Down+Enter for bypass permissions).
 
-    Handles dialogs that may appear in any order or not at all.
+    Handles dialogs that may appear multiple times or not at all.
+    Keeps polling until no new dialog is found for 5 consecutive seconds.
     Returns the number of dialogs dismissed.
     """
     import logging
@@ -331,29 +332,43 @@ def _dismiss_onboarding_dialogs(
 
     active_backend = backend or tmux.get_default_backend()
     dismissed = 0
-    remaining = list(patterns)
     deadline = time.time() + timeout
+    last_match_time = time.time()
 
-    while remaining and time.time() < deadline:
+    while time.time() < deadline:
+        # Stop if no dialog found for 5 seconds after last match
+        if dismissed > 0 and (time.time() - last_match_time) > 5.0:
+            break
+
         output = active_backend.capture_pane(target, 50)
         matched = False
-        for pattern in remaining:
+
+        # Check bypass permissions (needs Down+Enter, not just Enter)
+        if re.search(r"Yes, I accept", output):
+            logger.info("Onboarding: bypass permissions — sending Down+Enter")
+            active_backend.send_keys(target, "Down", enter=False)
+            time.sleep(0.3)
+            active_backend.send_keys(target, "")  # Enter
+            dismissed += 1
+            matched = True
+            last_match_time = time.time()
+            time.sleep(2.0)
+            continue
+
+        for pattern in patterns:
             if re.search(pattern, output):
                 logger.info("Onboarding dialog detected: %s — sending Enter", pattern)
                 active_backend.send_keys(target, "")  # sends Enter
-                remaining.remove(pattern)
                 dismissed += 1
                 matched = True
-                time.sleep(1.0)  # wait for next dialog to appear
+                last_match_time = time.time()
+                time.sleep(1.5)  # wait for next dialog to appear
                 break
+
         if not matched:
             time.sleep(0.5)
 
-    if remaining:
-        logger.debug("Onboarding: %d/%d dialogs dismissed (remaining: %s)",
-                      dismissed, len(patterns), remaining)
-    else:
-        logger.info("Onboarding: all %d dialogs dismissed", dismissed)
+    logger.info("Onboarding: %d dialogs dismissed", dismissed)
     return dismissed
 
 

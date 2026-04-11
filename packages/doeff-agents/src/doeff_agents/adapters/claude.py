@@ -45,12 +45,18 @@ class ClaudeAdapter:
 
     @property
     def onboarding_patterns(self) -> list[str]:
-        """Patterns for first-run onboarding dialogs that need Enter to dismiss."""
+        """Patterns for first-run onboarding dialogs that need Enter to dismiss.
+        Order matters — dialogs appear in this sequence."""
         return [
-            r"Choose the text style",        # Theme selection
-            r"Select login method",           # Auth method selection
-            r"Yes, I trust this folder",      # Trust dialog
+            r"Choose the text style",          # Theme selection
+            r"Press Enter to continue",        # Security notes / login success
+            r"Yes, I trust this folder",        # Trust dialog
         ]
+
+    @property
+    def bypass_permissions_pattern(self) -> str:
+        """Pattern for bypass permissions confirmation (need Down+Enter)."""
+        return r"Yes, I accept"
 
     @property
     def status_bar_lines(self) -> int:
