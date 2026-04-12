@@ -475,15 +475,17 @@
   (when mod
     (hy.macros.require "doeff_hy.macros" mod
       :assignments [["defk" "defk"] ["<-" "<-"]]))
-  ;; Build compilation form — generate (: param object) for each arg
+  ;; Build compilation form — generate (: param SExprValue) for each arg
+  ;; Use named alias, not bare `object` (defk rejects object/Any as too broad)
   (setv pre-checks (lfor a args
     :if (and (isinstance a hy.models.Symbol) (!= (str a) "*"))
-    `(: ~a object)))
+    `(: ~a SExprValue)))
   (when (not pre-checks) (setv pre-checks []))
   (setv compile-form
     `(do
+       (setv SExprValue object)
        (defk _staged ~args
-         {:pre ~(hy.models.List pre-checks) :post [(: % object)]}
+         {:pre ~(hy.models.List pre-checks) :post [(: % SExprValue)]}
          ~@truncated)
        ~(if args
           '_staged

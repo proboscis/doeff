@@ -1,7 +1,7 @@
 ;;; Test defpipeline macro
 (require doeff-hy.macros [defk defp <- defpipeline])
 (import doeff [do :as _doeff-do])
-(import doeff [EffectBase run WithHandler Resume Pass])
+(import doeff [EffectBase K run WithHandler Resume Pass])
 (import doeff_core_effects.scheduler [scheduled])
 (import dataclasses [dataclass])
 
@@ -17,7 +17,7 @@
 
 ;; Kleisli functions used by pipeline
 (defk merge-data [ohlc news]
-  {:pre [(: ohlc object) (: news object)] :post [(: % dict)]}
+  {:pre [(: ohlc list) (: news list)] :post [(: % dict)]}
   {"ohlc" ohlc "news" news})
 
 (defk compute-signal [data model]
@@ -25,7 +25,7 @@
   {"signal" "bullish" "data" data "model" model})
 
 (defk build-report [signal]
-  {:pre [(: signal object)] :post [(: % str)]}
+  {:pre [(: signal dict)] :post [(: % str)]}
   (+ "Report: " (str signal)))
 
 ;; === The pipeline ===
@@ -54,21 +54,23 @@
 (print)
 (print "=== Part 2: Run individual stages ===")
 
-;; Mock handlers
+;; Mock handlers — return type varies by effect chain
+(setv HandlerResult object)
+
 (defk mock-ohlc [effect k]
-  {:pre [(: effect object) (: k object)] :post [(: % object)]}
+  {:pre [(: effect EffectBase) (: k K)] :post [(: % HandlerResult)]}
   (if (isinstance effect FetchOhlc)
     (yield (Resume k [100 101 102]))
     (yield (Pass effect k))))
 
 (defk mock-news [effect k]
-  {:pre [(: effect object) (: k object)] :post [(: % object)]}
+  {:pre [(: effect EffectBase) (: k K)] :post [(: % HandlerResult)]}
   (if (isinstance effect FetchNews)
     (yield (Resume k ["article-1" "article-2"]))
     (yield (Pass effect k))))
 
 (defk mock-llm [effect k]
-  {:pre [(: effect object) (: k object)] :post [(: % object)]}
+  {:pre [(: effect EffectBase) (: k K)] :post [(: % HandlerResult)]}
   (if (isinstance effect LLMRank)
     (yield (Resume k {"rank" "bullish"}))
     (yield (Pass effect k))))
