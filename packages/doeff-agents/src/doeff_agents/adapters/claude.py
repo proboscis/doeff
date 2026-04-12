@@ -19,6 +19,9 @@ class ClaudeAdapter:
         """Return argv list - caller will shlex.join() if needed."""
         args = ["claude", "--dangerously-skip-permissions"]
 
+        if cfg.model:
+            args.extend(["--model", cfg.model])
+
         if cfg.profile:
             args.extend(["--profile", cfg.profile])
 
