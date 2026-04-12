@@ -4,12 +4,12 @@
 (import tests.multimod.effects [FetchPrice FetchNews])
 
 (defk fetch-price-data [ticker start end]
-  {:pre [(: ticker str) (: start str) (: end str)] :post [(: % object)]}
+  {:pre [(: ticker str) (: start str) (: end str)] :post [(: % list)]}
   (<- prices (FetchPrice :ticker ticker))
   prices)
 
 (defk fetch-news-for-day [day]
-  {:pre [(: day str)] :post [(: % object)]}
+  {:pre [(: day str)] :post [(: % list)]}
   (<- raw (FetchNews :day day))
   raw)
 

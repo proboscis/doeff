@@ -1,7 +1,7 @@
 ;;; Test stage-of: partial pipeline reuse
 (require doeff-hy.macros [defk defp <-])
 (import doeff [do :as _doeff-do])
-(import doeff [EffectBase run WithHandler Resume Pass])
+(import doeff [EffectBase K run WithHandler Resume Pass])
 (import doeff_core_effects.scheduler [scheduled])
 (import dataclasses [dataclass])
 
@@ -14,7 +14,7 @@
 
 ;; Kleisli functions
 (defk merge-data [ohlc news]
-  {:pre [(: ohlc object) (: news object)] :post [(: % dict)]}
+  {:pre [(: ohlc list) (: news list)] :post [(: % dict)]}
   {"ohlc" ohlc "news" news})
 
 (defk compute-signal [data]
@@ -22,7 +22,7 @@
   {"signal" "bullish" "data" data})
 
 (defk build-report [signal]
-  {:pre [(: signal object)] :post [(: % str)]}
+  {:pre [(: signal dict)] :post [(: % str)]}
   (+ "Report: " (str signal)))
 
 ;; A "big" defk pipeline — as AI would write it
@@ -42,14 +42,17 @@
 
 
 ;; === Mock handlers ===
+;; Handler return type varies by effect chain — use semantic alias
+(setv HandlerResult object)
+
 (defk mock-ohlc [effect k]
-  {:pre [(: effect object) (: k object)] :post [(: % object)]}
+  {:pre [(: effect EffectBase) (: k K)] :post [(: % HandlerResult)]}
   (if (isinstance effect FetchOhlc)
     (yield (Resume k [100 101 102]))
     (yield (Pass effect k))))
 
 (defk mock-news [effect k]
-  {:pre [(: effect object) (: k object)] :post [(: % object)]}
+  {:pre [(: effect EffectBase) (: k K)] :post [(: % HandlerResult)]}
   (if (isinstance effect FetchNews)
     (yield (Resume k ["article-1" "article-2"]))
     (yield (Pass effect k))))

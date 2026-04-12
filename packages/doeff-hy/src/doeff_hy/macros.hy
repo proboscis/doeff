@@ -82,9 +82,30 @@
           (.add names (str p)))))
   names)
 
+(setv _USELESS-TYPES #{"object" "Any"})
+
+(defn _reject-useless-types [fn-name phase checks]
+  "Reject (: name Type) where Type is object or Any — too broad to be useful.
+   Raises SyntaxError with a fix suggestion."
+  (for [check checks]
+    (when (_is-type-check check)
+      (setv tp-str (str (get check 2))
+            target-str (str (get check 1)))
+      (when (in tp-str _USELESS-TYPES)
+        (raise (SyntaxError (.format "
+defk {name}: {phase} type `{tp}` on `{target}` is too broad to be a useful contract.
+
+  Use a specific type instead of `{tp}`:
+
+    (: {target} SomeConcreteType)
+
+  Contracts exist to catch bugs early — `{tp}` matches everything and catches nothing.
+" :name fn-name :phase phase :tp tp-str :target target-str)))))))
+
 (defn _validate-pre-type-checks [fn-name params pre-checks]
   "Validate that :pre has a (: param Type) for every parameter.
    Raises SyntaxError if any parameter lacks a type check."
+  (_reject-useless-types fn-name ":pre" pre-checks)
   (setv param-names (_extract-param-names params))
   (when (not param-names) (return))  ; zero-arg function — nothing to check
   (setv checked (set))
@@ -115,6 +136,7 @@ defk {name}: :pre must have a (: param Type) for every parameter.
 (defn _validate-post-type-check [fn-name post-checks]
   "Validate that :post has at least one (: % Type) return type check.
    Raises SyntaxError if missing."
+  (_reject-useless-types fn-name ":post" post-checks)
   (setv has-return-type False)
   (for [check post-checks]
     (setv target (_type-check-target check))
