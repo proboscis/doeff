@@ -127,19 +127,22 @@
 
 (import doeff [run WithHandler Pure Resume Pass])
 (import doeff [do :as _doeff-do])
+(import doeff [EffectBase K])
 (import doeff_core_effects.scheduler [scheduled])
 (require doeff-hy.macros [defk <-])
 (import tests.multimod.effects [FetchPrice FetchNews])
 
-;; Mock handlers — return dummy data
+;; Mock handlers — return type varies by effect chain
+(setv HandlerResult object)
+
 (defk mock-price-handler [effect k]
-  {:pre [(: effect object) (: k object)] :post [(: % object)]}
+  {:pre [(: effect EffectBase) (: k K)] :post [(: % HandlerResult)]}
   (if (isinstance effect FetchPrice)
     (yield (Resume k [100 101 102]))
     (yield (Pass effect k))))
 
 (defk mock-news-handler [effect k]
-  {:pre [(: effect object) (: k object)] :post [(: % object)]}
+  {:pre [(: effect EffectBase) (: k K)] :post [(: % HandlerResult)]}
   (if (isinstance effect FetchNews)
     (yield (Resume k ["news-article-1" "news-article-2"]))
     (yield (Pass effect k))))
@@ -153,7 +156,7 @@
      (import doeff [do :as _doeff-do])
      (import tests.multimod.effects [FetchPrice FetchNews])
      (defk _compiled [ticker day]
-       {:pre [(: ticker str) (: day str)] :post [(: % object)]}
+       {:pre [(: ticker str) (: day str)] :post [(: % dict)]}
        ~@transformed)
      _compiled))
 
