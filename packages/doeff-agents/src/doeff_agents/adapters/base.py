@@ -35,6 +35,7 @@ class LaunchConfig:
     resume: bool = False
     session_name: str | None = None  # For resume
     profile: str | None = None  # For agents that support profiles
+    model: str | None = None  # For agents that support model selection
 
 
 @dataclass(frozen=True)
