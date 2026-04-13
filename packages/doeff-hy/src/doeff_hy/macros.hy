@@ -1,7 +1,7 @@
 ;;; doeff-hy standard macros — effect composition for doeff.
 ;;;
 ;;; Usage:
-;;;   (require doeff-hy.macros [do! defk deff fnk <- ! defp defpp defprogram
+;;;   (require doeff-hy.macros [do! defk deff fnk <- ! defp defpp
 ;;;                             defpipeline traverse for/do])
 ;;;   (import doeff [do :as _doeff-do])
 ;;;
@@ -16,6 +16,51 @@
 ;;;   - do!:         :pre/:post optional, supports (: name Type) shorthand
 ;;;   - (: name Type) in :pre/:post expands to (isinstance name Type)
 ;;;   - Arbitrary expressions can be mixed with (: ...) in the same list
+
+;; ---------------------------------------------------------------------------
+;; Internal: .hyk/.hyp extension enforcement
+;; ---------------------------------------------------------------------------
+
+(import os.path)
+(import inspect)
+
+(defn _compiling-file-ext []
+  "Return the file extension of the .hy/.hyk/.hyp file being compiled.
+   Walks the call stack to find the Hy source_to_code path argument."
+  (try
+    (for [frame-info (inspect.stack)]
+      ;; Hy's _hy_source_to_code has 'path' as a local variable
+      (setv loc (. frame-info [0] f_locals))
+      (when (in "path" loc)
+        (setv path (get loc "path"))
+        (when (isinstance path str)
+          (setv ext (get (os.path.splitext path) 1))
+          (when (in ext [".hyk" ".hyp"])
+            (return ext)))))
+    (return "")
+    (except [e Exception] (return ""))))
+
+(defn _enforce-no-defp-in-hyk [macro-name fn-name]
+  "Raise SyntaxError if a defp/defpp macro is used in a .hyk file."
+  (setv ext (_compiling-file-ext))
+  (when (= ext ".hyk")
+    (raise (SyntaxError (.format "
+{macro} {name}: cannot define a Program entrypoint in a .hyk file.
+
+  .hyk files are for kleisli functions (defk, deff, defhandler).
+  Move this {macro} to a .hyp file instead.
+" :macro macro-name :name fn-name)))))
+
+(defn _warn-defk-in-hyp [macro-name fn-name]
+  "Warn if defk/deff is used in a .hyp file."
+  (setv ext (_compiling-file-ext))
+  (when (= ext ".hyp")
+    (import warnings)
+    (warnings.warn
+      (.format "{macro} {name}: .hyp files are for Program entrypoints (defp). Consider moving {macro} to a .hyk file."
+               :macro macro-name :name fn-name)
+      UserWarning
+      :stacklevel 4)))
 
 ;; ---------------------------------------------------------------------------
 ;; Internal: contract extraction
@@ -271,6 +316,7 @@ defk {name}: :post type annotation cannot be an empty string.
    :pre and :post are REQUIRED.
    (: name Type) is shorthand for (isinstance name Type).
    Arbitrary validation expressions are also allowed in the same list."
+  (_warn-defk-in-hyp "deff" name)
   (setv #(pre-checks post-checks real-body) (_extract-contracts body))
   (when (is pre-checks None)
     (raise (SyntaxError (.format "
@@ -329,6 +375,8 @@ deff {name}: {{:post [...]}} is required.
      {:pre [(: x int) (: y int)]
       :post [(: % int)]}
      (k1 (! (k2 x)) (! (k3 y))))"
+  ;; Warn if defk is used in .hyp file
+  (_warn-defk-in-hyp "defk" name)
   ;; Reject handler-like signatures early — these should use defhandler
   (_reject-handler-signature name params)
   (setv #(pre-checks post-checks real-body) (_extract-contracts body))
@@ -852,8 +900,9 @@ defk {name}: {{:post [...]}} is required.
 " :name name))
 
 (defn _build-defp [macro-name name body * [program-return-mode "reject"]]
-  "Shared implementation for defp/defpp/defprogram.
+  "Shared implementation for defp/defpp.
    program-return-mode: 'reject' (defp) | 'require' (defpp)"
+  (_enforce-no-defp-in-hyk macro-name name)
   (setv #(pre-checks post-checks real-body) (_extract-contracts body))
   (when (is-not pre-checks None)
     (raise (SyntaxError (.format "
@@ -953,14 +1002,13 @@ defk {name}: {{:post [...]}} is required.
   (_build-defp "defpp" name body :program-return-mode "require"))
 
 (defmacro defprogram [name #* body]
-  "DEPRECATED: use defp (or defpp for Program[Program[T]])."
-  (import warnings)
-  (warnings.warn
-    (.format "defprogram is deprecated. Use defp (or defpp for Program[Program[T]]).\n  Replace: (defprogram {name} ...) → (defp {name} ...)"
-             :name name)
-    DeprecationWarning
-    :stacklevel 2)
-  (_build-defp "defprogram" name body))
+  "REMOVED: use defp (or defpp for Program[Program[T]])."
+  (raise (SyntaxError (.format "
+defprogram is removed. Use defp instead.
+
+  Replace:  (defprogram {name} ...)
+  With:     (defp {name} ...)
+" :name name))))
 
 
 ;; ---------------------------------------------------------------------------
