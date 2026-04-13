@@ -135,6 +135,38 @@
       #((get body-forms 1) (list (cut body-forms 2 None)))
       #(None (list body-forms))))
 
+(defn _expand-handler-binds [forms]
+  "Expand <- and ! in handler clause body.
+   (<- name expr) → (setv name (yield expr))  — delegate to outer handler
+   ! in arguments → expanded to <- bindings first"
+  (import doeff-hy.macros [_is-bind _bind-parts _expand-bangs])
+
+  (setv expanded [])
+  (for [form forms]
+    (if (_is-bind form)
+        (let [#(nm expr) (_bind-parts form)
+              #(inner-bindings rewritten) (_expand-bangs expr)]
+          ;; Expand inner bangs first
+          (for [b inner-bindings]
+            (let [#(bname bexpr) (_bind-parts b)]
+              (if (is bname None)
+                  (.append expanded `(yield ~bexpr))
+                  (.append expanded `(setv ~bname (yield ~bexpr))))))
+          ;; Then the main bind
+          (if (is nm None)
+              (.append expanded `(yield ~rewritten))
+              (.append expanded `(setv ~nm (yield ~rewritten)))))
+        ;; Not a bind — expand bangs in the form
+        (let [#(inner-bindings rewritten) (_expand-bangs form)]
+          (for [b inner-bindings]
+            (let [#(bname bexpr) (_bind-parts b)]
+              (if (is bname None)
+                  (.append expanded `(yield ~bexpr))
+                  (.append expanded `(setv ~bname (yield ~bexpr))))))
+          (.append expanded rewritten))))
+  expanded)
+
+
 (defn _build-clause [clause]
   "Parse one handler clause: (EffectType [fields] [:when guard] body...).
    Validates termination. Returns #(effect-type cond-body)."
@@ -153,8 +185,11 @@
   ;; Extract :when guard
   (setv #(guard cbody) (_parse-guard raw-body))
 
-  ;; Termination check BEFORE rewriting
+  ;; Termination check BEFORE rewriting (on original body)
   (_check-clause-terminates (str etype) cbody)
+
+  ;; Expand <- and ! bindings → (setv name (yield expr))
+  (setv cbody (_expand-handler-binds cbody))
 
   ;; Field bindings: (setv field (. effect field))
   (setv bindings
