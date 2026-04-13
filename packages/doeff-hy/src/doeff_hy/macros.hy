@@ -82,17 +82,62 @@
           (.add names (str p)))))
   names)
 
+(setv _HANDLER-PARAM-NAMES #{"effect" "eff" "k"})
+
+(setv _DEFHANDLER-EXAMPLE "
+  Use defhandler instead of defk for effect handlers:
+
+    (require doeff-hy.handle [defhandler])
+    (import doeff [WithHandler])
+
+    ;; Simple handler — pattern match on effects, unmatched auto-Pass
+    (defhandler my-handler
+      (MyEffect [field1 field2]
+        (resume (compute field1 field2)))
+      (OtherEffect [x]
+        (resume (+ x 1))))
+
+    ;; Handler with parameters — returns a handler factory
+    (defhandler my-handler [config]
+      (MyEffect [field]
+        (resume (process field config))))
+
+    ;; Handler with guard — auto-Pass when guard is false
+    (defhandler my-handler
+      (MyEffect [field]
+        :when (> field 0)
+        (resume field)))
+
+    ;; Install with WithHandler
+    (WithHandler my-handler body)
+    (WithHandler (my-handler config) body)
+")
+
+(defn _reject-handler-signature [fn-name params]
+  "Reject defk with handler-like parameter names (effect, eff, k).
+   These should use defhandler instead."
+  (setv param-names (_extract-param-names params))
+  (setv handler-params (sorted (& param-names _HANDLER-PARAM-NAMES)))
+  (when handler-params
+    (setv found (.join ", " handler-params))
+    (raise (SyntaxError (+ (.format "
+defk {name}: parameter names [{found}] look like an effect handler signature.
+" :name fn-name :found found) _DEFHANDLER-EXAMPLE)))))
+
 (setv _USELESS-TYPES #{"object" "Any"})
 
 (defn _reject-useless-types [fn-name phase checks]
   "Reject (: name Type) where Type is object or Any — too broad to be useful.
+   String literals are allowed (documentation-only annotations).
    Raises SyntaxError with a fix suggestion."
   (for [check checks]
     (when (_is-type-check check)
-      (setv tp-str (str (get check 2))
+      (setv tp (get check 2))
+      (when (isinstance tp hy.models.String) (continue))  ; string = doc annotation, skip
+      (setv tp-str (str tp)
             target-str (str (get check 1)))
       (when (in tp-str _USELESS-TYPES)
-        (raise (SyntaxError (.format "
+        (raise (SyntaxError (+ (.format "
 defk {name}: {phase} type `{tp}` on `{target}` is too broad to be a useful contract.
 
   Use a specific type instead of `{tp}`:
@@ -100,7 +145,10 @@ defk {name}: {phase} type `{tp}` on `{target}` is too broad to be a useful contr
     (: {target} SomeConcreteType)
 
   Contracts exist to catch bugs early — `{tp}` matches everything and catches nothing.
-" :name fn-name :phase phase :tp tp-str :target target-str)))))))
+
+  If this is an effect handler, the return type depends on the wrapped program
+  and cannot be expressed as a :post contract.
+" :name fn-name :phase phase :tp tp-str :target target-str) _DEFHANDLER-EXAMPLE))))))))
 
 (defn _validate-pre-type-checks [fn-name params pre-checks]
   "Validate that :pre has a (: param Type) for every parameter.
@@ -162,14 +210,28 @@ defk {name}: :post must include a return type check (: % Type).
 (defn _expand-check [check fn-name phase]
   "Expand a single contract check into an assert form.
    (: x T) → isinstance assert with clear type error message.
+   (: x \"desc\") → no-op (documentation-only annotation).
    Other  → generic condition assert."
   (if (_is-type-check check)
       (let [target (get check 1)
-            tp (get check 2)
-            target-label (if (= (str target) "%") "return value" (str target))]
-        `(assert (isinstance ~target ~tp)
-                 (+ ~(+ (str fn-name) ": " phase " type error: `" target-label "` expected " (str tp) ", got ")
-                    (. (type ~target) __name__))))
+            tp (get check 2)]
+        (if (isinstance tp hy.models.String)
+            ;; String literal — documentation-only, no runtime check
+            (do
+              (when (not (.strip (str tp)))
+                (raise (SyntaxError (.format "
+defk {name}: :post type annotation cannot be an empty string.
+
+  Describe what the return value represents:
+
+    (: % \"DataFrame with OHLCV columns\")
+    (: % \"list of matched handler results\")
+" :name fn-name))))
+              '(do))
+            (let [target-label (if (= (str target) "%") "return value" (str target))]
+              `(assert (isinstance ~target ~tp)
+                       (+ ~(+ (str fn-name) ": " phase " type error: `" target-label "` expected " (str tp) ", got ")
+                          (. (type ~target) __name__))))))
       `(assert ~check ~(+ (str fn-name) ": " phase " failed: " (str check)))))
 
 (defn _build-fn-with-contracts [decorators name params pre-checks post-checks real-body]
@@ -267,6 +329,8 @@ deff {name}: {{:post [...]}} is required.
      {:pre [(: x int) (: y int)]
       :post [(: % int)]}
      (k1 (! (k2 x)) (! (k3 y))))"
+  ;; Reject handler-like signatures early — these should use defhandler
+  (_reject-handler-signature name params)
   (setv #(pre-checks post-checks real-body) (_extract-contracts body))
   (when (is pre-checks None)
     (raise (SyntaxError (.format "
