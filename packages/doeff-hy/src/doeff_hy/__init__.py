@@ -1,13 +1,13 @@
 """doeff-hy — Standard Hy macros for doeff effect composition.
 
 Usage in .hy files:
-    (require doeff-hy.macros [do! defk deff fnk <- ! defp defpp defprogram traverse for/do])
+    (require doeff-hy.macros [do! defk deff fnk <- ! defp defpp deftest traverse for/do])
     (import doeff [do :as _doeff-do])
 
 File extensions:
     .hy  — general Hy source (interpreters, effects, utilities)
-    .hyk — kleisli modules (defk, deff, defhandler only — no defp)
-    .hyp — program modules (defp, defprogram entrypoints)
+    .hyk — kleisli modules (defk, deff, defhandler, deftest — no defp)
+    .hyp — program modules (defp, defpp, deftest entrypoints)
 """
 import importlib.machinery
 import os
