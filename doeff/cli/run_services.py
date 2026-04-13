@@ -194,7 +194,7 @@ def execute(resolved: ResolvedRunContext) -> Any:
 
     # Apply --set KEY=VALUE overrides (highest priority)
     if resolved.set_vars:
-        from doeff import Program, do
+        from doeff import Pure, do
 
         set_dict = dict(resolved.set_vars)
         if env_program is not None:
@@ -208,7 +208,7 @@ def execute(resolved: ResolvedRunContext) -> Any:
 
             env_program = with_overrides()
         else:
-            env_program = Program.pure(set_dict)
+            env_program = Pure(set_dict)
 
     # Build CLI context for interpreters that support remote execution
     run_ctx = None
