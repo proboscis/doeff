@@ -148,7 +148,7 @@ defk {name}: {phase} type `{tp}` on `{target}` is too broad to be a useful contr
 
   If this is an effect handler, the return type depends on the wrapped program
   and cannot be expressed as a :post contract.
-" :name fn-name :phase phase :tp tp-str :target target-str) _DEFHANDLER-EXAMPLE))))))))
+" :name fn-name :phase phase :tp tp-str :target target-str) _DEFHANDLER-EXAMPLE)))))))
 
 (defn _validate-pre-type-checks [fn-name params pre-checks]
   "Validate that :pre has a (: param Type) for every parameter.
