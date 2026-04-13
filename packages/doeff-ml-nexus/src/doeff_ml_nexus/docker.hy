@@ -1,7 +1,7 @@
 ;;; Dockerfile construction helpers
 ;;; Dockerfile = Program. Each instruction is an effect.
 
-(require doeff_hy.macros [defk defprogram <-])
+(require doeff_hy.macros [defk <-])
 (import doeff [do :as _doeff-do])
 
 (import pathlib [Path])
