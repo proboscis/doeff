@@ -139,6 +139,7 @@ def memo_handler(
     storage: DurableStorage,
     *,
     cost: RecomputeCost | str | None = None,
+    name: str | None = None,
 ):
     """Handle memo effects as a caching proxy.
 
@@ -147,9 +148,9 @@ def memo_handler(
 
     Stack multiple handlers for layered caching:
 
-        WithHandler(memo_handler(minio, cost=EXPENSIVE),  # outermost: MinIO
-          WithHandler(memo_handler(redis, cost=CHEAP),     # Redis
-            WithHandler(memo_handler(memory),               # L1 memory
+        WithHandler(memo_handler(minio, cost=EXPENSIVE, name="minio"),
+          WithHandler(memo_handler(redis, cost=CHEAP, name="redis"),
+            WithHandler(memo_handler(memory, name="L1"),
               program)))
 
     Each handler is a caching proxy. Position determines terminal behavior:
@@ -158,9 +159,14 @@ def memo_handler(
     Args:
         storage: The storage backend for this handler.
         cost: Only handle effects matching this cost tier. None = handle all.
+        name: Label for log messages (defaults to storage class name).
     """
     if isinstance(cost, str):
         cost = RecomputeCost(cost)
+
+    label = name or type(storage).__name__
+
+    from doeff_core_effects.effects import WriterTellEffect as Slog
 
     @do
     def handler(effect, k):
@@ -187,16 +193,20 @@ def memo_handler(
             exists = yield storage.exists(key)
             if exists:
                 value = yield storage.get(key)
+                yield Slog(f"[memo-layer:{label}] HIT key={key[:16]}...")
                 result = yield Resume(k, value)
                 return result
             # Miss — re-perform (outer handler resolves) → cache result
+            yield Slog(f"[memo-layer:{label}] MISS key={key[:16]}... → re-performing")
             outer_value = yield effect
             yield storage.put(key, outer_value)
+            yield Slog(f"[memo-layer:{label}] WRITE-THROUGH key={key[:16]}...")
             result = yield Resume(k, outer_value)
             return result
 
         # MemoPutEffect — write to this layer AND propagate to outer layers
         yield storage.put(key, effect.value)
+        yield Slog(f"[memo-layer:{label}] PUT key={key[:16]}...")
         yield effect  # re-perform → outer handlers also store
         result = yield Resume(k, None)
         return result
