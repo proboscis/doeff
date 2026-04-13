@@ -1,7 +1,7 @@
 ;;; doeff-hy standard macros — effect composition for doeff.
 ;;;
 ;;; Usage:
-;;;   (require doeff-hy.macros [do! defk deff fnk <- ! defp defpp
+;;;   (require doeff-hy.macros [do! defk deff fnk <- ! defp defpp deftest
 ;;;                             defpipeline traverse for/do])
 ;;;   (import doeff [do :as _doeff-do])
 ;;;
@@ -1009,6 +1009,131 @@ defprogram is removed. Use defp instead.
   Replace:  (defprogram {name} ...)
   With:     (defp {name} ...)
 " :name name))))
+
+
+;; ---------------------------------------------------------------------------
+;; deftest — effectful test that expands to pytest function
+;; ---------------------------------------------------------------------------
+
+(defn _extract-test-meta [body]
+  "Parse optional {:interpreters [...] :params {...}} from front of body.
+   Returns #(interpreters params-dict real-body).
+   Skips leading docstring if present."
+  (setv interpreters None
+        params-dict None
+        real-body body)
+  (setv meta-idx None)
+  (for [#(i form) (enumerate body)]
+    (when (isinstance form hy.models.Dict)
+      (setv meta-idx i)
+      (break))
+    ;; Skip string literals (docstrings) at the start
+    (when (not (isinstance form hy.models.String))
+      (break)))
+  (when (is-not meta-idx None)
+    (setv meta-dict (get body meta-idx)
+          real-body (+ (cut body 0 meta-idx) (cut body (+ meta-idx 1) None)))
+    (for [#(k v) (zip (cut meta-dict None None 2) (cut meta-dict 1 None 2))]
+      (when (= (str k) ":interpreters")
+        (setv interpreters (list v)))
+      (when (= (str k) ":params")
+        (setv params-dict v))))
+  #(interpreters params-dict real-body))
+
+(defmacro deftest [name #* args]
+  "Define an effectful test that expands to a pytest-compatible function.
+   The test body uses <- for effect binding, same as defk/defp.
+   No :pre/:post contracts — use assert for validation.
+
+   (deftest test-signal
+     (<- plan (compute-signal \"2026-04-01\"))
+     (assert (> (len plan.orders) 0)))
+
+   With interpreter list (string keys resolved by conftest.py):
+
+   (deftest test-signal-multi
+     {:interpreters [\"cllm_test\" \"cllm_sim\"]}
+     (<- plan (compute-signal \"2026-04-01\"))
+     (assert (> (len plan.orders) 0)))
+
+   With fixture parameters:
+
+   (deftest test-signal-dates [trade-date]
+     {:params {\"trade-date\" [\"2026-04-01\" \"2026-03-15\"]}}
+     (<- plan (compute-signal trade-date))
+     (assert (> (len plan.orders) 0)))
+
+   Expansion: generates def test_*(doeff_interpreter, ...fixtures...)
+   that creates a DoExpr program and passes it to the interpreter."
+  ;; Parse optional params list and body
+  (setv fixture-params []
+        body args)
+  (when (and (> (len args) 0) (isinstance (get args 0) hy.models.List))
+    (setv fixture-params (list (get args 0))
+          body (cut args 1 None)))
+
+  ;; Parse optional {:interpreters [...] :params {...}} metadata
+  (setv #(interpreters params-dict real-body) (_extract-test-meta body))
+
+  ;; Expand bangs in the body (same as defk/defp)
+  (setv expanded-forms [])
+  (for [form real-body]
+    (if (_is-bind form)
+        (let [#(nm expr) (_bind-parts form)
+              #(inner-bindings rewritten) (_expand-bangs expr)]
+          (.extend expanded-forms inner-bindings)
+          (if (is nm None)
+              (.append expanded-forms `(<- ~rewritten))
+              (.append expanded-forms `(<- ~nm ~rewritten))))
+        (let [#(inner-bindings rewritten) (_expand-bangs form)]
+          (.extend expanded-forms inner-bindings)
+          (.append expanded-forms rewritten))))
+
+  ;; Build the generator body: convert <- to yield, plain forms as-is
+  (setv gen-body [])
+  (for [form expanded-forms]
+    (cond
+      ;; (<- name expr) → (setv name (yield expr))
+      (and (_is-bind form) (is-not (_bind-parts form) None))
+      (let [#(bname expr) (_bind-parts form)]
+        (if (is bname None)
+            (.append gen-body `(yield ~expr))
+            (.append gen-body `(setv ~bname (yield ~expr)))))
+      ;; Everything else (assert, setv, when, for, print, etc.) — pass through
+      True
+      (.append gen-body form)))
+
+  ;; Build the test function
+  (setv fn-params (+ [(hy.models.Symbol "doeff_interpreter")] fixture-params))
+
+  ;; Build the program creation + interpreter call
+  (setv fn-body
+    `(doeff_interpreter
+       ((_doeff_do (fn [] ~@gen-body)))))
+
+  ;; Build the parametrize decorators
+  (setv decorators [])
+
+  ;; :interpreters → @pytest.mark.parametrize("doeff_interpreter_name", [...])
+  (when (is-not interpreters None)
+    (.append decorators
+      `(.parametrize (. pytest mark) "doeff_interpreter_name"
+         ~(hy.models.List interpreters))))
+
+  ;; :params → @pytest.mark.parametrize for each key
+  (when (is-not params-dict None)
+    (for [#(k v) (zip (cut params-dict None None 2) (cut params-dict 1 None 2))]
+      (setv param-name (if (isinstance k hy.models.String) (str k) (str k)))
+      (.append decorators
+        `(.parametrize (. pytest mark) ~(hy.models.String param-name)
+           ~v))))
+
+  ;; Assemble the function definition with decorators
+  (if decorators
+    `(do
+       (import pytest)
+       (defn [~@decorators] ~name [~@fn-params] ~fn-body))
+    `(defn ~name [~@fn-params] ~fn-body)))
 
 
 ;; ---------------------------------------------------------------------------
