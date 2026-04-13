@@ -5,7 +5,7 @@
 ;;;     uv run doeff run --program doeff_ml_nexus.runner.p_run \
 ;;;       --interpreter doeff_ml_nexus.runner.runner_interpreter
 
-(require doeff_hy.macros [defk defprogram <-])
+(require doeff_hy.macros [defk defp <-])
 (require doeff_docker.compose [with-handlers])
 (import doeff [do :as _doeff-do])
 (import doeff [run WithHandler])
@@ -31,7 +31,8 @@
   (setv output-path (os.environ.get "DOEFF_OUTPUT" "/tmp/doeff-exchange/result.pkl"))
   #(input-path output-path))
 
-(defprogram p-run
+(defp p-run
+  {:post [(: % str)]}
   (<- #(input-path output-path) (get-env-paths))
   (<- result (run-from-file input-path output-path default-serializer))
   result)

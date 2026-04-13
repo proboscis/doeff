@@ -2,7 +2,7 @@
 ;;; Each interpreter is a KleisliProgram: Program[T] -> Program[T]
 ;;; that composes effects to build+execute in a target environment.
 
-(require doeff_hy.macros [defk defprogram <-])
+(require doeff_hy.macros [defk <-])
 (import doeff [do :as _doeff-do])
 (import doeff_core_effects [slog])
 
