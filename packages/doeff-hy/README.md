@@ -92,6 +92,18 @@ def doeff_interpreter(doeff_interpreter_name):
     return INTERPRETERS[doeff_interpreter_name]
 ```
 
+### Env overrides
+
+Per-test environment overrides (merged with default env from conftest):
+
+```hy
+(deftest test-with-sim-time
+  {:interpreters ["cllm_sim"]
+   :env {"nakagawa.sim_start_time" "2026-04-10T06:00:00+09:00"}}
+  (<- result (my-pipeline))
+  (assert result))
+```
+
 ### Fixture parameters
 
 ```hy
@@ -100,6 +112,31 @@ def doeff_interpreter(doeff_interpreter_name):
    :interpreters ["cllm_test"]}
   (<- plan (compute-signal trade-date))
   (assert (> (len plan.orders) 0)))
+```
+
+### Marks and conditional skip
+
+```hy
+;; Static marks for pytest -m filtering
+(deftest test-kabu-prices
+  {:marks ["e2e" "slow"]}
+  (<- result (fetch-prices))
+  (assert result))
+
+;; Dynamic skip — condition evaluated at import time
+(deftest test-kabu-prices
+  {:skip-if (not (can-reach "plutus" 18082))
+   :skip-reason "kabuStation unreachable"}
+  (<- result (fetch-prices))
+  (assert result))
+```
+
+Run with mark filtering:
+
+```bash
+pytest -m "not e2e"       # skip e2e tests
+pytest -m "slow"          # only slow tests
+pytest -m "cllm and not slow"
 ```
 
 ### conftest.py for Hy test collection
