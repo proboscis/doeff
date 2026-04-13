@@ -216,6 +216,54 @@ class TestDeftestFixtureParams:
 
 
 # ---------------------------------------------------------------------------
+# Marks
+# ---------------------------------------------------------------------------
+
+class TestDeftestMarks:
+    def test_marks_adds_pytest_marks(self, tmp_hy_dir):
+        mod = _write_and_import(tmp_hy_dir, "marks_test.hy", """\
+            (require doeff-hy.macros [deftest <-])
+            (import doeff [do :as _doeff-do])
+            (import pytest)
+            (deftest test-marked
+              {:marks ["e2e" "slow"]}
+              (assert True))
+        """)
+        markers = list(mod.test_marked.pytestmark)
+        mark_names = {m.name for m in markers}
+        assert "e2e" in mark_names
+        assert "slow" in mark_names
+
+    def test_skipif_adds_skip_marker(self, tmp_hy_dir):
+        mod = _write_and_import(tmp_hy_dir, "skipif_test.hy", """\
+            (require doeff-hy.macros [deftest <-])
+            (import doeff [do :as _doeff-do])
+            (import pytest)
+            (deftest test-skippable
+              {:skip-if True :skip-reason "always skip"}
+              (assert False "should not run"))
+        """)
+        markers = list(mod.test_skippable.pytestmark)
+        skip_markers = [m for m in markers if m.name == "skipif"]
+        assert len(skip_markers) == 1
+        assert skip_markers[0].kwargs["reason"] == "always skip"
+
+    def test_skipif_with_expression(self, tmp_hy_dir):
+        mod = _write_and_import(tmp_hy_dir, "skipif_expr.hy", """\
+            (require doeff-hy.macros [deftest <-])
+            (import doeff [do :as _doeff-do])
+            (import pytest)
+            (import sys)
+            (deftest test-platform-skip
+              {:skip-if (= sys.platform "darwin") :skip-reason "not on mac"}
+              (assert True))
+        """)
+        markers = list(mod.test_platform_skip.pytestmark)
+        skip_markers = [m for m in markers if m.name == "skipif"]
+        assert len(skip_markers) == 1
+
+
+# ---------------------------------------------------------------------------
 # Allowed in all file types
 # ---------------------------------------------------------------------------
 
