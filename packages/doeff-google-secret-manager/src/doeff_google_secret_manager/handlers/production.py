@@ -8,7 +8,7 @@ from typing import Any
 
 from doeff_secret.effects import DeleteSecret, GetSecret, ListSecrets, SetSecret
 
-from doeff import Delegate, Resume, do
+from doeff import Effect, Pass, Resume, do
 from doeff_core_effects.effects import EffectBase
 from doeff_google_secret_manager.client import SecretManagerClient, get_secret_manager_client
 
@@ -158,7 +158,7 @@ def production_handlers(
             return (yield runtime.handle_list_secrets(effect, k))
         if isinstance(effect, DeleteSecret):
             return (yield runtime.handle_delete_secret(effect, k))
-        yield Delegate()
+        yield Pass(effect, k)
 
     return handler
 
