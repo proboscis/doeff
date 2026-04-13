@@ -184,8 +184,9 @@ def memo_handler(
             return result
 
         if isinstance(effect, MemoGetEffect):
-            value = yield storage.get(key)
-            if value is not None:
+            exists = yield storage.exists(key)
+            if exists:
+                value = yield storage.get(key)
                 result = yield Resume(k, value)
                 return result
             # Miss — re-perform (outer handler resolves) → cache result
