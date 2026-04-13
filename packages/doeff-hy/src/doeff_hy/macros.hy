@@ -1016,11 +1016,16 @@ defprogram is removed. Use defp instead.
 ;; ---------------------------------------------------------------------------
 
 (defn _extract-test-meta [body]
-  "Parse optional {:interpreters [...] :params {...}} from front of body.
-   Returns #(interpreters params-dict real-body).
+  "Parse optional test metadata dict from front of body.
+   Supported keys: :interpreters, :params, :env, :marks, :skip-if, :skip-reason.
+   Returns #(interpreters params-dict env-dict marks skip-if skip-reason real-body).
    Skips leading docstring if present."
   (setv interpreters None
         params-dict None
+        env-dict None
+        marks None
+        skip-if-expr None
+        skip-reason None
         real-body body)
   (setv meta-idx None)
   (for [#(i form) (enumerate body)]
@@ -1037,8 +1042,16 @@ defprogram is removed. Use defp instead.
       (when (= (str k) ":interpreters")
         (setv interpreters (list v)))
       (when (= (str k) ":params")
-        (setv params-dict v))))
-  #(interpreters params-dict real-body))
+        (setv params-dict v))
+      (when (= (str k) ":env")
+        (setv env-dict v))
+      (when (= (str k) ":marks")
+        (setv marks (list v)))
+      (when (= (str k) ":skip-if")
+        (setv skip-if-expr v))
+      (when (= (str k) ":skip-reason")
+        (setv skip-reason v))))
+  #(interpreters params-dict env-dict marks skip-if-expr skip-reason real-body))
 
 (defmacro deftest [name #* args]
   "Define an effectful test that expands to a pytest-compatible function.
@@ -1063,6 +1076,24 @@ defprogram is removed. Use defp instead.
      (<- plan (compute-signal trade-date))
      (assert (> (len plan.orders) 0)))
 
+   With env overrides (merged with default env by conftest fixture):
+
+   (deftest test-with-sim-time
+     {:interpreters [\"cllm_sim\"]
+      :env {\"nakagawa.sim_start_time\" \"2026-04-10T06:00:00+09:00\"}}
+     (<- result (my-pipeline))
+     (assert result))
+
+   With marks and conditional skip:
+
+   (deftest test-kabu-prices
+     {:interpreters [\"cllm_paper\"]
+      :marks [\"e2e\" \"slow\"]
+      :skip-if (not (can-reach \"plutus\" 18082))
+      :skip-reason \"kabuStation unreachable\"}
+     (<- result (fetch-prices))
+     (assert result))
+
    Expansion: generates def test_*(doeff_interpreter, ...fixtures...)
    that creates a DoExpr program and passes it to the interpreter."
   ;; Parse optional params list and body
@@ -1072,8 +1103,9 @@ defprogram is removed. Use defp instead.
     (setv fixture-params (list (get args 0))
           body (cut args 1 None)))
 
-  ;; Parse optional {:interpreters [...] :params {...}} metadata
-  (setv #(interpreters params-dict real-body) (_extract-test-meta body))
+  ;; Parse optional metadata dict
+  (setv #(interpreters params-dict env-dict marks skip-if-expr skip-reason real-body)
+    (_extract-test-meta body))
 
   ;; Expand bangs in the body (same as defk/defp)
   (setv expanded-forms [])
@@ -1108,8 +1140,12 @@ defprogram is removed. Use defp instead.
 
   ;; Build the program creation + interpreter call
   (setv fn-body
-    `(doeff_interpreter
-       ((_doeff_do (fn [] ~@gen-body)))))
+    (if (is-not env-dict None)
+      `(doeff_interpreter
+         ((_doeff_do (fn [] ~@gen-body)))
+         :env ~env-dict)
+      `(doeff_interpreter
+         ((_doeff_do (fn [] ~@gen-body))))))
 
   ;; Build the parametrize decorators
   (setv decorators [])
@@ -1127,6 +1163,20 @@ defprogram is removed. Use defp instead.
       (.append decorators
         `(.parametrize (. pytest mark) ~(hy.models.String param-name)
            ~v))))
+
+  ;; :marks → @pytest.mark.<name> for each mark
+  (when (is-not marks None)
+    (for [m marks]
+      (setv mark-name (if (isinstance m hy.models.String) (str m) (str m)))
+      (.append decorators
+        `(. (. pytest mark) ~(hy.models.Symbol mark-name)))))
+
+  ;; :skip-if → @pytest.mark.skipif(condition, reason=...)
+  (when (is-not skip-if-expr None)
+    (setv reason (if (is-not skip-reason None) skip-reason
+                     (hy.models.String "skip condition met")))
+    (.append decorators
+      `(.skipif (. pytest mark) ~skip-if-expr :reason ~reason)))
 
   ;; Assemble the function definition with decorators
   (if decorators
