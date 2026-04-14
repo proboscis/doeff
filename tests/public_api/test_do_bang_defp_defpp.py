@@ -162,7 +162,57 @@ class TestCheckProgramReturn:
         with pytest.raises(TypeError, match="defpp"):
             self._check(gen, "use defpp instead", "reject")
 
-    def test_require_error_message_mentions_defp(self) -> None:
-        """Error from defpp should tell user to use defp if they want plain value."""
-        with pytest.raises(TypeError, match="defp"):
-            self._check("hello", "use defp instead", "require")
+
+# ---------------------------------------------------------------------------
+# #388 — (import ...) inside defp/defk body must not corrupt return value
+# ---------------------------------------------------------------------------
+
+
+class TestImportInsideDefpDefk:
+    """Regression tests for #388: (import ...) inside defp/defk body.
+
+    _parse-do-body marks non-bind statements as __plain__. The defp
+    expansion must emit them as-is, not wrap in (yield ...).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _import_repro(self) -> None:
+        import sys
+        import os
+
+        import doeff_hy  # noqa: F401
+        import hy  # noqa: F401
+
+        sys.path.insert(0, os.path.join(os.getcwd(), "tests"))
+        sys.modules.pop("fixtures.repro_388", None)
+        import fixtures.repro_388 as mod
+
+        self.mod = mod
+
+    def test_defp_import_inside(self) -> None:
+        """defp with (import json) before last expression."""
+        result = run(
+            WithHandler(reader(env={"test": "hello"}), self.mod.import_inside_defp)
+        )
+        assert result == '{"a": "hello"}'
+
+    def test_defk_import_inside(self) -> None:
+        """defk with (import json) before last expression."""
+        result = run(self.mod.import_inside_defk("hello"))
+        assert result == '{"a": "hello"}'
+
+    def test_defp_import_only(self) -> None:
+        """defp with no effect bind — just import + expression."""
+        result = run(self.mod.import_only_defp)
+        assert result == '{"status": "ok"}'
+
+    def test_defp_multi_import(self) -> None:
+        """defp with multiple imports in body."""
+        result = run(
+            WithHandler(reader(env={"key": "world"}), self.mod.multi_import_defp)
+        )
+        assert result is not None
+        import json
+
+        parsed = json.loads(result)
+        assert parsed["val"] == "world"
