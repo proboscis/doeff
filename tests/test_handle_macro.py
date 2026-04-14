@@ -606,3 +606,111 @@ class TestDefhandlerReExport:
         result = self.mod.make_handler("http://test")
         assert callable(result)
         assert not inspect.isgenerator(result)
+
+
+# ---------------------------------------------------------------------------
+# Tests — (reperform effect) as OCaml 5 aligned replacement for (pass)
+# ---------------------------------------------------------------------------
+
+
+class TestReperform:
+    """(reperform effect) replaces (pass) — OCaml 5 aligned forwarding."""
+
+    def test_reperform_compiles(self):
+        """(reperform effect) should compile without error."""
+        _eval_hy("""
+        (defhandler noop-handler
+          (Add [x y] (reperform effect)))
+        """)
+
+    def test_reperform_forwards_to_outer(self):
+        """(reperform effect) forwards effect+k to outer handler."""
+        results = []
+        _eval_hy("""
+        (import doeff [WithHandler])
+        (defhandler passthrough
+          (Add [x y] (reperform effect)))
+
+        (run (scheduled
+          (WithHandler (await_handler)
+            (WithHandler (store_handler results)
+              (WithHandler (real_add_handler)
+                (WithHandler passthrough (add_program)))))))
+        """, results=results)
+        # passthrough reperforms Add → real_add_handler gets 7 → Store(7)
+        assert results == [7]
+
+    def test_reperform_in_conditional(self):
+        """(reperform effect) in if branch — the #389 pattern."""
+        results = []
+        _eval_hy("""
+        (import doeff [WithHandler])
+        (defhandler conditional-handler
+          (Add [x y]
+            (if (> x 10)
+                (resume 999)
+                (reperform effect))))
+
+        (run (scheduled
+          (WithHandler (await_handler)
+            (WithHandler (store_handler results)
+              (WithHandler (real_add_handler)
+                (WithHandler conditional-handler (add_program)))))))
+        """, results=results)
+        # x=3, not > 10 → reperform → real_add_handler → 7
+        assert results == [7]
+
+    def test_reperform_terminates(self):
+        """Termination checker should recognize reperform as terminal."""
+        _eval_hy("""
+        (defhandler guarded
+          (Add [x y]
+            (if (> x 0)
+                (resume (+ x y))
+                (reperform effect))))
+        """)
+
+    def test_pass_deprecated(self):
+        """(pass) should emit deprecation warning."""
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            _eval_hy("""
+            (defhandler old-style
+              (Add [x y] (pass)))
+            """)
+            deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
+            assert len(deprecation_warnings) > 0, \
+                "(pass) should emit DeprecationWarning"
+
+    def test_pass_still_works(self):
+        """(pass) should still work (backwards compat) even if deprecated."""
+        results = []
+        _eval_hy("""
+        (import doeff [WithHandler])
+        (defhandler old-passthrough
+          (Add [x y] (pass)))
+
+        (run (scheduled
+          (WithHandler (await_handler)
+            (WithHandler (store_handler results)
+              (WithHandler (real_add_handler)
+                (WithHandler old-passthrough (add_program)))))))
+        """, results=results)
+        assert results == [7]
+
+    def test_defhandler_self_contained_no_outer_imports(self):
+        """defhandler must work without _doeff-do or Resume/Pass in outer scope."""
+        results = []
+        _eval_hy_minimal("""
+        (import doeff [WithHandler])
+        (defhandler passthrough
+          (Add [x y] (reperform effect)))
+
+        (run (scheduled
+          (WithHandler (await_handler)
+            (WithHandler (store_handler results)
+              (WithHandler (real_add_handler)
+                (WithHandler passthrough (add_program)))))))
+        """, results=results)
+        assert results == [7]
