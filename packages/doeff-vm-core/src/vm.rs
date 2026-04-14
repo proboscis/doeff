@@ -145,8 +145,13 @@ impl VM {
     }
 
     /// Collect rich execution context starting from an arbitrary segment.
+    ///
+    /// Consecutive identical frames (same func, file, line) are compressed
+    /// into a single entry with an appended repeat count — this prevents
+    /// handler Resume loops from flooding the traceback (see #386).
     pub fn collect_rich_context_from(&self, start: SegmentId) -> Vec<Value> {
-        let mut frames = Vec::new();
+        // Phase 1: collect raw (func_name, source_file, source_line) tuples.
+        let mut raw: Vec<(String, String, u32)> = Vec::new();
         let mut first_boundary: Option<crate::ids::SegmentId> = None;
         let mut cursor = Some(start);
 
@@ -162,12 +167,7 @@ impl VM {
             for frame in seg.frames.iter().rev() {
                 if let crate::frame::Frame::Program { stream, .. } = frame {
                     if let Some(loc) = stream.source_location() {
-                        frames.push(Value::List(vec![
-                            Value::String("frame".to_string()),
-                            Value::String(loc.func_name),
-                            Value::String(loc.source_file),
-                            Value::Int(loc.source_line as i64),
-                        ]));
+                        raw.push((loc.func_name, loc.source_file, loc.source_line));
                     }
                 }
             }
@@ -175,7 +175,34 @@ impl VM {
             cursor = seg.parent;
         }
 
-        frames.reverse();
+        raw.reverse();
+
+        // Phase 2: deduplicate consecutive identical frames.
+        let mut frames = Vec::new();
+        let mut i = 0;
+        while i < raw.len() {
+            let (ref func, ref file, line) = raw[i];
+            let mut count: i64 = 1;
+            while i + (count as usize) < raw.len() {
+                let (ref nf, ref nfile, nline) = raw[i + count as usize];
+                if nf == func && nfile == file && nline == line {
+                    count += 1;
+                } else {
+                    break;
+                }
+            }
+            let mut entry = vec![
+                Value::String("frame".to_string()),
+                Value::String(func.clone()),
+                Value::String(file.clone()),
+                Value::Int(line as i64),
+            ];
+            if count > 1 {
+                entry.push(Value::Int(count));
+            }
+            frames.push(Value::List(entry));
+            i += count as usize;
+        }
 
         if let Some(boundary_id) = first_boundary {
             let handler_chain = self.handlers_in_caller_chain(boundary_id);
