@@ -206,3 +206,134 @@ class TestInlineHandleBind:
         """, results=results)
         # Add(3,4) → delegate → 7 → subtract 1 → 6 → Store(6)
         assert results == [6]
+
+
+# ---------------------------------------------------------------------------
+# Minimal eval helper — no doeff internals pre-injected
+# ---------------------------------------------------------------------------
+
+def _eval_hy_minimal(code: str, **extra_globals):
+    """Evaluate Hy code WITHOUT pre-injecting doeff internals.
+
+    Only provides user-level imports (effect types, run, scheduled).
+    Does NOT provide: _doeff_do, Resume, Transfer, Pass, WithHandler.
+    """
+    import types
+    module_name = "test_handle_self_contained"
+    mod = types.ModuleType(module_name)
+    sys.modules[module_name] = mod
+
+    mod.__dict__.update({
+        "run": run,
+        "Add": Add,
+        "Store": Store,
+        "add_program": add_program,
+        "store_handler": store_handler,
+        "real_add_handler": real_add_handler,
+        "scheduled": scheduled,
+        "await_handler": await_handler,
+        **extra_globals,
+    })
+
+    hy.macros.require("doeff_hy.handle", mod, assignments=[
+        ["handle", "handle"],
+        ["defhandler", "defhandler"],
+    ])
+
+    tree = hy.read_many(code)
+    result = None
+    for form in tree:
+        result = hy.eval(form, mod.__dict__, module=mod)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Tests — self-contained macros (no manual doeff imports needed)
+# ---------------------------------------------------------------------------
+
+class TestSelfContainedMacros:
+    """defhandler and handle must inject their own runtime deps."""
+
+    def test_defhandler_no_extra_imports(self):
+        """defhandler should define a handler without user importing doeff internals."""
+        _eval_hy_minimal("""
+        (defhandler simple-add
+          (Add [x y] (resume (+ x y))))
+        """)
+
+    def test_defhandler_parameterized_no_extra_imports(self):
+        """Parameterized defhandler should also be self-contained."""
+        _eval_hy_minimal("""
+        (defhandler scaled-add [scale]
+          (Add [x y] (resume (* (+ x y) scale))))
+        """)
+
+    def test_defhandler_end_to_end(self):
+        """defhandler + run end-to-end — user only imports WithHandler for composition."""
+        results = []
+        _eval_hy_minimal("""
+        (import doeff [WithHandler])
+        (defhandler simple-add
+          (Add [x y] (resume (+ x y))))
+
+        (run (scheduled
+          (WithHandler (await_handler)
+            (WithHandler (store_handler results)
+              (WithHandler simple-add (add_program))))))
+        """, results=results)
+        assert results == [7]
+
+    def test_defhandler_with_transfer(self):
+        """transfer in defhandler should also work without extra imports."""
+        results = []
+        _eval_hy_minimal("""
+        (import doeff [WithHandler])
+        (defhandler add-and-transfer
+          (Add [x y] (transfer (+ x y))))
+
+        (run (scheduled
+          (WithHandler (await_handler)
+            (WithHandler (store_handler results)
+              (WithHandler add-and-transfer (add_program))))))
+        """, results=results)
+        # transfer removes add-and-transfer; Store still hits store_handler
+        assert results == [7]
+
+    def test_defhandler_with_pass(self):
+        """pass in defhandler (via unmatched default) works without extra imports.
+
+        noop-handler matches no effects used by add_program, so everything
+        auto-passes through it to the real handlers above.
+        """
+        from dataclasses import dataclass
+
+        @dataclass(frozen=True)
+        class Unused(EffectBase):
+            pass
+
+        results = []
+        _eval_hy_minimal("""
+        (import doeff [WithHandler])
+        ;; noop-handler only matches Unused — Add and Store pass through
+        (defhandler noop-handler
+          (Unused [] (resume None)))
+
+        (run (scheduled
+          (WithHandler (await_handler)
+            (WithHandler (store_handler results)
+              (WithHandler (real_add_handler)
+                (WithHandler noop-handler (add_program)))))))
+        """, results=results, Unused=Unused)
+        assert results == [7]
+
+    def test_handle_inline_no_extra_imports(self):
+        """handle (inline) should also inject its own deps."""
+        results = []
+        _eval_hy_minimal("""
+        (run (scheduled
+          (WithHandler (await_handler)
+            (WithHandler (store_handler results)
+              (handle (add_program)
+                (Add [x y] (resume (+ x y))))))))
+        """, results=results)
+        assert results == [7]
