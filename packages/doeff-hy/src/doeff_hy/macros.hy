@@ -379,7 +379,7 @@ deff {name}: {{:post [...]}} is required.
 (defmacro defk [name params #* body]
   "Define a kleisli function (@do decorator) with :pre/:post contracts.
    Supports ! (bang) inline bind: (! expr) is expanded to (<- _tmp expr).
-   Requires (import doeff [do :as _doeff-do]) in the calling module.
+   No extra imports needed — macro injects its own runtime deps.
 
    (defk my-fn [x y]
      {:pre [(: x Asset)]
@@ -449,6 +449,7 @@ defk {name}: {{:post [...]}} is required.
           (.append expanded-forms rewritten))))
   (setv fn-form (_build-fn-with-contracts ['_doeff_do] name params pre-checks post-checks expanded-forms))
   `(do
+     (import doeff.do [do :as _doeff_do])
      ~fn-form
      (setv (. ~name __doeff_body__) '~real-body)
      (setv (. ~name __doeff_args__) '~params)
@@ -462,7 +463,7 @@ defk {name}: {{:post [...]}} is required.
 (defmacro fnk [params #* body]
   "Anonymous kleisli function. Like fn but returns a DoExpr.
    Supports <- (effect bind) and ! (bang) inline bind.
-   Requires (import doeff [do :as _doeff-do]) in the calling module.
+   No extra imports needed — macro injects its own runtime deps.
 
    (fnk [x] (* x 2))
 
@@ -486,7 +487,8 @@ defk {name}: {{:post [...]}} is required.
         (let [#(inner-bindings rewritten) (_expand-bangs form)]
           (.extend expanded-forms inner-bindings)
           (.append expanded-forms rewritten))))
-  `(fn [~@params] ((_doeff_do (fn [] (do ~@expanded-forms))))))
+  `(do (import doeff.do [do :as _doeff_do])
+       (fn [~@params] ((_doeff_do (fn [] (do ~@expanded-forms)))))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -545,17 +547,19 @@ defk {name}: {{:post [...]}} is required.
   (if post-checks
       (let [post-asserts (lfor check post-checks
                            (_expand-check check "do!" "post-condition"))]
-        `((_doeff-do (fn []
-           ~@pre-code
-           ~@expanded
-           (setv _contract_result ~body-expr)
-           (let [% _contract_result]
-             ~@post-asserts)
-           (return _contract_result)))))
-      `((_doeff-do (fn []
-         ~@pre-code
-         ~@expanded
-         (return ~body-expr))))))
+        `(do (import doeff.do [do :as _doeff-do])
+             ((_doeff-do (fn []
+               ~@pre-code
+               ~@expanded
+               (setv _contract_result ~body-expr)
+               (let [% _contract_result]
+                 ~@post-asserts)
+               (return _contract_result))))))
+      `(do (import doeff.do [do :as _doeff-do])
+           ((_doeff-do (fn []
+             ~@pre-code
+             ~@expanded
+             (return ~body-expr)))))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -985,6 +989,7 @@ defk {name}: {{:post [...]}} is required.
                        (_expand-check check name "post-condition")))
   `(do
      (import inspect)
+     (import doeff.do [do :as _doeff_do])
      (defn _doeff_check_program_return [v msg mode]
        "Check Program return value. Raises TypeError on violation. Returns False (for assert)."
        (setv is-program (inspect.isgenerator v))
@@ -1206,8 +1211,11 @@ defprogram is removed. Use defp instead.
   (if decorators
     `(do
        (import pytest)
+       (import doeff.do [do :as _doeff_do])
        (defn [~@decorators] ~name [~@fn-params] ~fn-body))
-    `(defn ~name [~@fn-params] ~fn-body)))
+    `(do
+       (import doeff.do [do :as _doeff_do])
+       (defn ~name [~@fn-params] ~fn-body))))
 
 
 ;; ---------------------------------------------------------------------------
