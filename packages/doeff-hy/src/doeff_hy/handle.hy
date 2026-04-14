@@ -9,10 +9,11 @@
 ;;;   (defhandler name [params?] (Effect [fields] body...) ...) — named handler
 ;;;
 ;;; Handler clause operations:
-;;;   (resume value)      — Resume k with value, handler stays installed
-;;;   (transfer value)    — Resume k with value, handler removed
-;;;   (pass)              — Forward effect+continuation to outer handler
-;;;   (<- result effect)  — Delegate: re-perform matched effect to outer handler
+;;;   (resume value)        — Resume k with value, handler stays installed
+;;;   (transfer value)      — Resume k with value, handler removed
+;;;   (reperform effect)    — Forward effect+continuation to outer handler (OCaml 5)
+;;;   (<- result effect)    — Delegate: re-perform matched effect to outer handler
+;;;   (pass)                — DEPRECATED: use (reperform effect)
 ;;;
 ;;; Clause guards:
 ;;;   (EffectType [fields] :when pred body...)  — auto-pass if pred is false
@@ -47,7 +48,7 @@
     (is head None) False
 
     ;; Direct terminals
-    (in head ["resume" "transfer" "pass" "raise"]) True
+    (in head ["resume" "transfer" "pass" "reperform" "raise"]) True
 
     ;; (if test then else) — both branches must terminate
     (= head "if")
@@ -158,10 +159,11 @@
 ;; ---------------------------------------------------------------------------
 
 (defn _rewrite-ops [form]
-  "Recursively rewrite resume/transfer/pass in handler clause body.
-   (resume expr)   → (yield (Resume k expr))
-   (transfer expr) → (yield (Transfer k expr))
-   (pass)          → (yield (Pass effect k))"
+  "Recursively rewrite resume/transfer/pass/reperform in handler clause body.
+   (resume expr)      → (yield (Resume k expr))
+   (transfer expr)    → (yield (Transfer k expr))
+   (reperform effect) → (yield (Pass effect k))     — OCaml 5 aligned
+   (pass)             → (yield (Pass effect k))      — deprecated, use reperform"
   (cond
     (not (isinstance form Expression)) form
     (= (len form) 0) form
@@ -175,8 +177,18 @@
           (and (= hname "transfer") (= (len form) 2))
             `(yield (Transfer k ~(_rewrite-ops (get form 1))))
 
+          ;; (reperform expr) — OCaml 5 aligned forwarding
+          (and (= hname "reperform") (= (len form) 2))
+            `(yield (Pass ~(_rewrite-ops (get form 1)) k))
+
+          ;; (pass) — deprecated, use (reperform effect) instead
           (and (= hname "pass") (= (len form) 1))
-            '(yield (Pass effect k))
+            (do
+              (import warnings)
+              (warnings.warn
+                "(pass) is deprecated in defhandler — use (reperform effect) instead"
+                DeprecationWarning)
+              '(yield (Pass effect k)))
 
           True
             (Expression (lfor f form (_rewrite-ops f)))))))
