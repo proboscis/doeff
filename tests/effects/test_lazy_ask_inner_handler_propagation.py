@@ -166,6 +166,194 @@ class TestLazyAskInnerHandlerPropagation:
         result = run(scheduled(composed))
         assert result == "secret:my-project-123:my-api-token"
 
+    def test_recursive_ask_chain_depth_3(self):
+        """3-level recursive Ask chain: each lazy value Asks for the next.
+
+        env:
+          "a" → Program that Asks "b"
+          "b" → Program that Asks "c"
+          "c" → Program that emits GetSecret
+
+        Stack: lazy_ask → secret_handler → program (Asks "a")
+
+        All 3 lazy evaluations must reinstall secret_handler so the
+        final GetSecret is handled.
+        """
+        @do
+        def lazy_c():
+            return (yield GetSecret("deep-secret"))
+
+        @do
+        def lazy_b():
+            return (yield Ask("c"))
+
+        @do
+        def lazy_a():
+            return (yield Ask("b"))
+
+        @do
+        def program():
+            return (yield Ask("a"))
+
+        env = {
+            "a": lazy_a(),
+            "b": lazy_b(),
+            "c": lazy_c(),
+        }
+
+        composed = WithHandler(
+            lazy_ask(env=env),
+            WithHandler(
+                secret_handler,
+                program(),
+            ),
+        )
+        result = run(scheduled(composed))
+        assert result == "secret:deep-secret"
+
+    def test_recursive_ask_chain_mixed_plain_and_lazy(self):
+        """Recursive chain where intermediate values mix plain and lazy.
+
+        env:
+          "a" → Program that Asks "b" and "plain", concatenates them
+          "b" → Program that emits GetSecret
+          "plain" → "hello" (not a Program)
+
+        Stack: lazy_ask → secret_handler → program (Asks "a")
+        """
+        @do
+        def lazy_a():
+            b_val = yield Ask("b")
+            plain_val = yield Ask("plain")
+            return f"{b_val}+{plain_val}"
+
+        @do
+        def lazy_b():
+            return (yield GetSecret("mixed-secret"))
+
+        @do
+        def program():
+            return (yield Ask("a"))
+
+        env = {
+            "a": lazy_a(),
+            "b": lazy_b(),
+            "plain": "hello",
+        }
+
+        composed = WithHandler(
+            lazy_ask(env=env),
+            WithHandler(
+                secret_handler,
+                program(),
+            ),
+        )
+        result = run(scheduled(composed))
+        assert result == "secret:mixed-secret+hello"
+
+    def test_recursive_ask_chain_with_multiple_inner_handlers(self):
+        """3-level recursive chain with TWO inner handlers that must both
+        be reinstalled at every level.
+
+        Adds a Transform effect + handler that uppercases strings.
+        The deepest lazy value emits GetSecret, then Transform.
+        Both handlers must be present at every recursive evaluation.
+
+        Stack: lazy_ask → secret_handler → transform_handler → program
+        """
+        @dataclass(frozen=True)
+        class Transform(EffectBase):
+            value: str
+
+        @do
+        def transform_handler(effect, k):
+            if not isinstance(effect, Transform):
+                return (yield Pass(effect, k))
+            return (yield Resume(k, effect.value.upper()))
+
+        @do
+        def lazy_c():
+            secret = yield GetSecret("final")
+            return (yield Transform(secret))
+
+        @do
+        def lazy_b():
+            return (yield Ask("c"))
+
+        @do
+        def lazy_a():
+            return (yield Ask("b"))
+
+        @do
+        def program():
+            return (yield Ask("a"))
+
+        env = {
+            "a": lazy_a(),
+            "b": lazy_b(),
+            "c": lazy_c(),
+        }
+
+        composed = WithHandler(
+            lazy_ask(env=env),
+            WithHandler(
+                secret_handler,
+                WithHandler(
+                    transform_handler,
+                    program(),
+                ),
+            ),
+        )
+        result = run(scheduled(composed))
+        # GetSecret("final") → "secret:final", Transform("secret:final") → "SECRET:FINAL"
+        assert result == "SECRET:FINAL"
+
+    def test_recursive_ask_caching_with_inner_handlers(self):
+        """Verify caching still works across recursive Ask chains.
+
+        Two top-level Asks both eventually resolve through the same
+        intermediate lazy value. The intermediate should be evaluated once.
+        """
+        eval_count = {"c": 0}
+
+        @do
+        def lazy_c():
+            eval_count["c"] += 1
+            return (yield GetSecret("shared"))
+
+        @do
+        def lazy_a():
+            c_val = yield Ask("c")
+            return f"a:{c_val}"
+
+        @do
+        def lazy_b():
+            c_val = yield Ask("c")
+            return f"b:{c_val}"
+
+        @do
+        def program():
+            a_val = yield Ask("a")
+            b_val = yield Ask("b")
+            return f"{a_val}|{b_val}"
+
+        env = {
+            "a": lazy_a(),
+            "b": lazy_b(),
+            "c": lazy_c(),
+        }
+
+        composed = WithHandler(
+            lazy_ask(env=env),
+            WithHandler(
+                secret_handler,
+                program(),
+            ),
+        )
+        result = run(scheduled(composed))
+        assert result == "a:secret:shared|b:secret:shared"
+        assert eval_count["c"] == 1, f"lazy_c evaluated {eval_count['c']} times, expected 1"
+
     def test_dual_lazy_ask_workaround_works(self):
         """Current workaround: dual lazy_ask with same env.
 
