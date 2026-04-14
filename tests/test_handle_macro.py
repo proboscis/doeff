@@ -4,9 +4,11 @@ Verifies:
   - defhandler clause body can use <- to delegate effects to outer handler
   - defhandler clause body can use ! (bang) for inline delegation
   - handle (inline) also supports <- and !
+  - defhandler inside defn factory does not leak yield (#387)
 """
 
 import importlib
+import inspect
 import sys
 import textwrap
 
@@ -337,3 +339,270 @@ class TestSelfContainedMacros:
                 (Add [x y] (resume (+ x y))))))))
         """, results=results)
         assert results == [7]
+
+
+# ---------------------------------------------------------------------------
+# Eval helper — both <- macro and defhandler macro (simulates real file)
+# ---------------------------------------------------------------------------
+
+def _eval_hy_with_bind(code: str, **extra_globals):
+    """Evaluate Hy code with BOTH <- macro (from macros) AND defhandler (from handle).
+
+    This simulates the real-world pattern:
+        (require doeff-hy.macros [defk <-])
+        (require doeff-hy.handle [defhandler])
+    """
+    import types
+    module_name = "test_handle_factory"
+    mod = types.ModuleType(module_name)
+    sys.modules[module_name] = mod
+
+    mod.__dict__.update({
+        "run": run,
+        "do": _doeff_do,
+        "_doeff_do": _doeff_do,
+        "WithHandler": WithHandler,
+        "Resume": Resume,
+        "Transfer": Transfer,
+        "Pass": Pass,
+        "Add": Add,
+        "Store": Store,
+        "add_program": add_program,
+        "real_add_handler": real_add_handler,
+        "store_handler": store_handler,
+        "scheduled": scheduled,
+        "await_handler": await_handler,
+        **extra_globals,
+    })
+
+    # Require both <- from macros AND defhandler from handle
+    hy.macros.require("doeff_hy.macros", mod, assignments=[
+        ["<-", "<-"],
+    ])
+    hy.macros.require("doeff_hy.handle", mod, assignments=[
+        ["handle", "handle"],
+        ["defhandler", "defhandler"],
+    ])
+
+    tree = hy.read_many(code)
+    result = None
+    for form in tree:
+        result = hy.eval(form, mod.__dict__, module=mod)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Tests — defhandler inside defn factory (#387)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Init(EffectBase):
+    """Side-effect for initializing state."""
+    label: str
+
+
+class TestDefhandlerFactoryYieldLeak:
+    """defhandler inside defn factory must not leak yield to outer defn.
+
+    Regression tests for #387: when <- appears nested inside (when ...)
+    in a handler clause body, _expand_handler_binds does not reach it.
+    The remaining <- is later expanded by the <- macro into (yield ...),
+    which may leak to the outer defn scope.
+    """
+
+    def test_factory_returns_function_not_generator_toplevel_bind(self):
+        """defhandler with <- at top level inside defn factory."""
+        result = _eval_hy_with_bind("""
+        (defn make-handler [config]
+          (defhandler _handler
+            (Add [x y]
+              (<- delegated (Add :x x :y y))
+              (resume (* delegated 2))))
+          _handler)
+
+        (make-handler "test")
+        """)
+        assert not inspect.isgenerator(result), \
+            f"factory returned generator instead of handler: {type(result)}"
+
+    def test_factory_returns_function_not_generator_nested_bind(self):
+        """defhandler with <- nested inside (when ...) — the #387 pattern.
+
+        _expand_handler_binds only handles top-level <- in clause body.
+        Nested <- inside (when ...) is left for the <- macro to expand,
+        generating (yield ...) that could leak to the outer defn.
+        """
+        result = _eval_hy_with_bind("""
+        (defn make-handler [base-url]
+          (setv _state {"client" None})
+          (defhandler _handler
+            (Add [x y]
+              (when (is (get _state "client") None)
+                (<- init-result (Init :label "setup"))
+                (setv (get _state "client") "ready"))
+              (resume (+ x y))))
+          _handler)
+
+        (make-handler "http://test")
+        """, Init=Init)
+        assert not inspect.isgenerator(result), \
+            f"factory returned generator instead of handler: {type(result)}"
+
+    def test_factory_returns_function_multi_clause_nested_bind(self):
+        """Multiple clauses each with nested <- — full #387 pattern.
+
+        Simulates handlers.hy: 6 clauses, each with lazy init via
+        nested (<- secret ...) inside (when ...).
+        """
+        result = _eval_hy_with_bind("""
+        (defn make-handler [base-url]
+          (setv _state {"client" None})
+          (defhandler _handler
+            (Add [x y]
+              (when (is (get _state "client") None)
+                (<- _init (Init :label "add-init"))
+                (setv (get _state "client") "ready"))
+              (<- delegated (Add :x x :y y))
+              (resume delegated))
+            (Store [value]
+              (when (is (get _state "client") None)
+                (<- _init (Init :label "store-init"))
+                (setv (get _state "client") "ready"))
+              (resume None)))
+          _handler)
+
+        (make-handler "http://test")
+        """, Init=Init)
+        assert not inspect.isgenerator(result), \
+            f"factory returned generator instead of handler: {type(result)}"
+
+    def test_factory_handler_works_end_to_end(self):
+        """Factory-produced handler actually works when composed."""
+        results = []
+        _eval_hy_with_bind("""
+        (defn make-handler [base-url]
+          (setv _state {"client" None})
+          (defhandler _handler
+            (Add [x y]
+              (when (is (get _state "client") None)
+                (<- _init (Init :label "setup"))
+                (setv (get _state "client") "ready"))
+              (resume (+ x y))))
+          _handler)
+
+        (defn init-handler []
+          "Handle Init effects (return label as confirmation)."
+          (_doeff-do
+            (fn [effect k]
+              (if (isinstance effect Init)
+                  (yield (Resume k (. effect label)))
+                  (yield (Pass effect k))))))
+
+        (setv h (make-handler "http://test"))
+        (run (scheduled
+          (WithHandler (await_handler)
+            (WithHandler (store_handler results)
+              (WithHandler (real_add_handler)
+                (WithHandler (init-handler)
+                  (WithHandler h (add_program))))))))
+        """, results=results, Init=Init)
+        assert results == [7]
+
+
+class TestDefhandlerFactoryModuleCompile:
+    """Same tests via .hy module import (full Hy compilation path).
+
+    hy.eval processes forms individually; module import compiles the
+    entire file. The #387 bug may only surface under module compilation
+    because the Hy compiler accumulates state across top-level forms.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _import_repro(self):
+        """Import the repro .hy fixture as a module."""
+        # Clear cached module for fresh compile each test
+        sys.modules.pop("tests.fixtures.repro_387", None)
+        sys.modules.pop("repro_387", None)
+        import tests.fixtures.repro_387 as mod
+        self.mod = mod
+
+    def test_make_handler_not_generator(self):
+        """make-handler factory must return handler, not generator."""
+        result = self.mod.make_handler("http://test")
+        assert not inspect.isgenerator(result), \
+            f"make_handler returned generator: {type(result)}"
+        assert callable(result)
+
+    def test_make_handler_many_clauses_not_generator(self):
+        """make-handler-many-clauses — multi-clause variant."""
+        result = self.mod.make_handler_many_clauses("http://test")
+        assert not inspect.isgenerator(result), \
+            f"make_handler_many_clauses returned generator: {type(result)}"
+        assert callable(result)
+
+    def test_factory_function_not_generator_function(self):
+        """The factory defn itself must not be a generator function."""
+        assert not inspect.isgeneratorfunction(self.mod.make_handler), \
+            "make_handler is a generator function — yield leaked to outer defn"
+        assert not inspect.isgeneratorfunction(self.mod.make_handler_many_clauses), \
+            "make_handler_many_clauses is a generator function — yield leaked"
+
+    def test_pre_handlers_are_callable(self):
+        """Sanity check: _doeff-do handlers before defhandler still work."""
+        h1 = self.mod.pre_handler_1()
+        h2 = self.mod.pre_handler_2("config")
+        h3 = self.mod.pre_handler_3("http://test")
+        assert callable(h1)
+        assert callable(h2)
+        assert callable(h3)
+
+
+class TestDefhandlerMissingRequire:
+    """Repro for #387: defhandler used WITHOUT (require doeff-hy.handle [defhandler]).
+
+    Root cause: when only <- is required but defhandler is NOT required,
+    (defhandler ...) is compiled as a plain function call. The <- macro
+    inside clauses still expands to (yield ...), but without the defhandler
+    macro creating the inner (fn [effect k] ...), the yield lands in the
+    outer defn — making the factory a generator function.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _import_repro(self):
+        """Import the no-require repro fixture."""
+        import os
+        sys.path.insert(0, os.path.join(os.getcwd(), "tests"))
+        sys.modules.pop("fixtures.repro_387_no_require", None)
+        import fixtures.repro_387_no_require as mod
+        self.mod = mod
+
+    def test_yield_leaks_without_defhandler_require(self):
+        """Without (require doeff-hy.handle [defhandler]), factory becomes generator.
+
+        This is the actual #387 bug — the fix is to add the require.
+        """
+        assert inspect.isgeneratorfunction(self.mod.make_handler_missing_require), \
+            "Expected yield leak: defhandler without require should make outer defn a generator"
+
+
+class TestDefhandlerReExport:
+    """defhandler available via (require doeff-hy.macros [...]) re-export.
+
+    After the #387 fix, users only need one require line instead of two.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _import_repro(self):
+        import os
+        sys.path.insert(0, os.path.join(os.getcwd(), "tests"))
+        sys.modules.pop("fixtures.repro_387_via_macros", None)
+        import fixtures.repro_387_via_macros as mod
+        self.mod = mod
+
+    def test_defhandler_via_macros_require(self):
+        """(require doeff-hy.macros [defk <- defhandler]) should work."""
+        assert not inspect.isgeneratorfunction(self.mod.make_handler), \
+            "defhandler via macros re-export should not leak yield"
+        result = self.mod.make_handler("http://test")
+        assert callable(result)
+        assert not inspect.isgenerator(result)
