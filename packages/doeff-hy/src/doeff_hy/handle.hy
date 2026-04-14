@@ -2,7 +2,7 @@
 ;;;
 ;;; Usage:
 ;;;   (require doeff-hy.handle [handle defhandler])
-;;;   (import doeff [do :as _doeff-do WithHandler Resume Transfer Pass])
+;;;   ;; No extra imports needed — macros inject their own runtime deps.
 ;;;
 ;;; Macros:
 ;;;   (handle body (Effect [fields] body...) ...)             — inline handler
@@ -243,7 +243,11 @@
 
    Wraps body with WithHandler. Unmatched effects auto-Pass.
    Compile-time error if any clause branch lacks resume/transfer/pass."
-  `(WithHandler ~(_build-handler-expr clauses) ~body))
+  (setv h-expr (_build-handler-expr clauses))
+  `(do
+     (import doeff.do [do :as _doeff-do])
+     (import doeff [Resume Transfer Pass WithHandler])
+     (WithHandler ~h-expr ~body)))
 
 
 (defmacro defhandler [name #* rest]
@@ -280,10 +284,14 @@
 
   (if (is params None)
       `(do
+         (import doeff.do [do :as _doeff-do])
+         (import doeff [Resume Transfer Pass])
          (setv ~name ~handler-expr)
          (setv (. ~name __doeff_body__) ~quoted-body)
          (setv (. ~name __doeff_name__) ~(str name)))
       `(do
+         (import doeff.do [do :as _doeff-do])
+         (import doeff [Resume Transfer Pass])
          (defn ~name [~@params] ~handler-expr)
          (setv (. ~name __doeff_body__) ~quoted-body)
          (setv (. ~name __doeff_name__) ~(str name)))))
