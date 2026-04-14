@@ -2,7 +2,8 @@
 ;;;
 ;;; Usage:
 ;;;   (require doeff-hy.macros [do! defk deff fnk <- ! defp defpp deftest
-;;;                             defpipeline traverse for/do])
+;;;                             defpipeline traverse for/do
+;;;                             defhandler handle])
 ;;;   (import doeff [do :as _doeff-do])
 ;;;
 ;;; Core effects are imported from doeff_core_effects:
@@ -23,6 +24,12 @@
 
 (import os.path)
 (import inspect)
+
+;; Re-export handle macros so users only need one require line.
+;; Without this, forgetting (require doeff-hy.handle [defhandler]) causes
+;; (defhandler ...) to compile as a function call, silently leaking yield
+;; from nested <- to the enclosing defn scope. See #387.
+(require doeff-hy.handle [defhandler handle])
 
 (defn _compiling-file-ext []
   "Return the file extension of the .hy/.hyk/.hyp file being compiled.
