@@ -38,9 +38,10 @@ def format_default(exception):
 
         if kind == "frame" and len(entry) >= 4:
             func_name, source_file, source_line = entry[1], entry[2], int(entry[3])
+            count = int(entry[4]) if len(entry) >= 5 else 1
             if _is_internal(source_file):
                 continue
-            lines.append(_render_frame(func_name, source_file, source_line))
+            lines.append(_render_frame(func_name, source_file, source_line, count))
 
         elif kind == "handler" and len(entry) >= 3:
             handler_chain = entry[2] if len(entry) > 2 else []
@@ -63,10 +64,12 @@ def _is_internal(source_file):
     return any(p in source_file for p in _INTERNAL_PATHS)
 
 
-def _render_frame(func_name, source_file, source_line):
+def _render_frame(func_name, source_file, source_line, count=1):
     short_file = _short_path(source_file)
     source_text = _get_source_line(source_file, source_line)
     result = f"\n  {func_name}()  {short_file}:{source_line}"
+    if count > 1:
+        result += f"  [×{count}]"
     if source_text:
         result += f"\n    {source_text}"
     return result
