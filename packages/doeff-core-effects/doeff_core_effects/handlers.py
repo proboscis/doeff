@@ -310,6 +310,7 @@ def lazy_ask(env=None):
 
     from doeff.program import Expand, ResumeThrow, WithHandler as WH
     from doeff import Program
+    from doeff.handler_utils import get_inner_handlers
     from doeff_core_effects.scheduler import (
         CreateSemaphore, AcquireSemaphore, ReleaseSemaphore,
     )
@@ -386,11 +387,17 @@ def lazy_ask(env=None):
 
                 # Evaluate the program under this handler so effects
                 # flow through lazy_ask and see the current env.
+                # Reinstall inner handlers (between lazy_ask and the
+                # Ask source) so the lazy Program's effects are handled.
+                inner_hs = yield get_inner_handlers(k)
+                wrapped = raw
+                for h in inner_hs:
+                    wrapped = WH(h, wrapped)
                 eval_stack.append(set())
                 error = None
                 value = None
                 try:
-                    value = yield WH(handler, raw)
+                    value = yield WH(handler, wrapped)
                 except Exception as e:
                     error = e
 
@@ -411,7 +418,13 @@ def lazy_ask(env=None):
                 merged_overrides = override_keys | frozenset(effect.env.keys())
                 inner_handler = _make_handler(merged, merged_overrides)
 
+                # Reinstall inner handlers so effects from the Local
+                # body flow through handlers between lazy_ask and the
+                # Local call site.
+                inner_hs = yield get_inner_handlers(k)
                 prog = effect.program
+                for h in inner_hs:
+                    prog = WH(h, prog)
 
                 error = None
                 inner_result = None
