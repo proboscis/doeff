@@ -94,6 +94,66 @@
 
 
 ;; ---------------------------------------------------------------------------
+;; TCO: tail-position (resume expr) → (transfer expr)
+;; ---------------------------------------------------------------------------
+
+(defn _tail-resume-to-transfer [form]
+  "Replace tail-position (resume expr) with (transfer expr).
+   Recurses into if/cond/do/let but NOT into try (need frame for except)."
+  (cond
+    (not (isinstance form Expression)) form
+    (= (len form) 0) form
+    True
+      (let [hname (_sym-name (get form 0))]
+        (cond
+          ;; (resume expr) → (transfer expr)
+          (and (= hname "resume") (= (len form) 2))
+            (Expression [(Symbol "transfer") (get form 1)])
+
+          ;; (if test then else) → optimize both branches
+          (and (= hname "if") (>= (len form) 4))
+            (Expression [(get form 0) (get form 1)
+                         (_tail-resume-to-transfer (get form 2))
+                         (_tail-resume-to-transfer (get form 3))])
+
+          ;; (cond p1 b1 p2 b2 ...) → optimize body (odd-index) forms
+          (= hname "cond")
+            (let [items (list (cut form 1 None))
+                  result [(get form 0)]]
+              (for [#(i item) (enumerate items)]
+                (.append result
+                  (if (% i 2)
+                      (_tail-resume-to-transfer item)
+                      item)))
+              (Expression result))
+
+          ;; (do ...) → optimize last form
+          (and (= hname "do") (> (len form) 1))
+            (Expression
+              (+ (list (cut form 0 -1))
+                 [(_tail-resume-to-transfer (get form -1))]))
+
+          ;; (let [...] body...) → optimize last body form
+          (and (= hname "let") (>= (len form) 3))
+            (Expression
+              (+ (list (cut form 0 -1))
+                 [(_tail-resume-to-transfer (get form -1))]))
+
+          ;; (try ...) → do NOT optimize (need frame for except)
+          (= hname "try") form
+
+          ;; Anything else → don't touch
+          True form))))
+
+(defn _tco-seq [forms]
+  "Apply tail-resume TCO to the last form in a sequence."
+  (if (= (len forms) 0)
+      forms
+      (+ (list (cut forms 0 -1))
+         [(_tail-resume-to-transfer (get forms -1))])))
+
+
+;; ---------------------------------------------------------------------------
 ;; Rewriting: resume/transfer/pass → yield expressions
 ;; ---------------------------------------------------------------------------
 
@@ -187,6 +247,11 @@
 
   ;; Termination check BEFORE rewriting (on original body)
   (_check-clause-terminates (str etype) cbody)
+
+  ;; TCO: tail-position (resume expr) → (transfer expr)
+  ;; Must run BEFORE _expand-handler-binds and _rewrite-ops so it sees
+  ;; the original (resume ...) forms, not the rewritten (yield (Resume ...)).
+  (setv cbody (_tco-seq cbody))
 
   ;; Expand <- and ! bindings → (setv name (yield expr))
   (setv cbody (_expand-handler-binds cbody))
