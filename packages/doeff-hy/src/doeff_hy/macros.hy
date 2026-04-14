@@ -960,10 +960,14 @@ defk {name}: {{:post [...]}} is required.
           (.append expanded-forms rewritten))))
   (setv #(bindings body-expr) (_parse-do-body expanded-forms macro-name))
   (setv expanded (lfor bind bindings
-                   (let [#(bname expr) (_bind-parts bind)]
-                     (if (is bname None)
-                         `(yield ~expr)
-                         `(setv ~bname (yield ~expr))))))
+                   (if (and (isinstance bind tuple) (= (get bind 0) "__plain__"))
+                       ;; Plain statement (import, setv, when, etc.) — emit as-is
+                       (get bind 1)
+                       ;; Effect binding — yield
+                       (let [#(bname expr) (_bind-parts bind)]
+                         (if (is bname None)
+                             `(yield ~expr)
+                             `(setv ~bname (yield ~expr)))))))
   (setv post-asserts (lfor check post-checks
                        (_expand-check check name "post-condition")))
   `(do
