@@ -139,7 +139,7 @@
 (setv _DEFHANDLER-EXAMPLE "
   Use defhandler instead of defk for effect handlers:
 
-    (require doeff-hy.handle [defhandler])
+    (require doeff-hy.macros [defk <- defhandler])
     (import doeff [WithHandler])
 
     ;; Simple handler — pattern match on effects, unmatched auto-Pass
@@ -154,11 +154,24 @@
       (MyEffect [field]
         (resume (process field config))))
 
-    ;; Handler with guard — auto-Pass when guard is false
+    ;; Handler with guard — auto-reperform when guard is false
     (defhandler my-handler
       (MyEffect [field]
         :when (> field 0)
         (resume field)))
+
+    ;; Conditional forwarding — (reperform effect) is terminal
+    (defhandler my-handler
+      (MyEffect [field]
+        (if (can-handle field)
+            (resume (process field))
+            (reperform effect))))
+
+    ;; Delegation — (<- result effect) is non-terminal (keeps control)
+    (defhandler my-handler
+      (MyEffect [field]
+        (<- base-result (MyEffect :field field))
+        (resume (* base-result 2))))
 
     ;; Install with WithHandler
     (WithHandler my-handler body)

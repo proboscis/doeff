@@ -8,18 +8,25 @@
 ;;;   (handle body (Effect [fields] body...) ...)             — inline handler
 ;;;   (defhandler name [params?] (Effect [fields] body...) ...) — named handler
 ;;;
-;;; Handler clause operations:
+;;; Handler clause operations (terminal — handler gives up control):
 ;;;   (resume value)        — Resume k with value, handler stays installed
-;;;   (transfer value)      — Resume k with value, handler removed
-;;;   (reperform effect)    — Forward effect+continuation to outer handler (OCaml 5)
-;;;   (<- result effect)    — Delegate: re-perform matched effect to outer handler
+;;;   (transfer value)      — Resume k with value, handler removed (tail-call)
+;;;   (reperform effect)    — Forward effect+k to outer handler (OCaml 5 reperform)
 ;;;   (pass)                — DEPRECATED: use (reperform effect)
 ;;;
+;;; Handler clause operations (non-terminal — handler keeps control):
+;;;   (<- result effect)    — Delegate effect to outer handler, bind result, continue
+;;;                           The handler pauses, outer handler resolves, handler resumes.
+;;;
+;;; Key distinction:
+;;;   (reperform effect)    → terminal: "I can't handle this, pass it up" → handler done
+;;;   (<- x (SomeEff ...))  → non-terminal: "ask outer, get result back, keep going"
+;;;
 ;;; Clause guards:
-;;;   (EffectType [fields] :when pred body...)  — auto-pass if pred is false
+;;;   (EffectType [fields] :when pred body...)  — auto-reperform if pred is false
 ;;;
 ;;; Compile-time checks:
-;;;   - Every clause body must reach resume/transfer/pass/raise on ALL branches
+;;;   - Every clause body must reach resume/transfer/reperform/raise on ALL branches
 ;;;   - Missing terminal in any if/cond branch → SyntaxError at macro expansion
 ;;;
 ;;; S-expr preservation:
@@ -343,6 +350,14 @@
      (Effect [field recompute-cost]
        :when (matches-cost recompute-cost cost)
        (resume (compute field))))
+
+   ;; Terminal operations:
+   ;;   (resume value)      — resume k, handler stays installed
+   ;;   (transfer value)    — resume k, handler removed (tail-call optimized)
+   ;;   (reperform effect)  — forward effect+k to outer handler (handler done)
+   ;;
+   ;; Non-terminal operation:
+   ;;   (<- result effect)  — delegate to outer handler, get result back, continue
 
    The handler's __doeff_body__ stores the original s-expr clauses."
 
