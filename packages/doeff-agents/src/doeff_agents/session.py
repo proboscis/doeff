@@ -110,6 +110,10 @@ def launch_session(
     if not adapter.is_available():
         raise AgentLaunchError(f"{config.agent_type.value} CLI is not available")
 
+    # Pre-launch setup (e.g. .claude.json restore for Claude)
+    if hasattr(adapter, "pre_launch"):
+        adapter.pre_launch()
+
     # Create tmux session (raises SessionAlreadyExistsError if exists)
     tmux_config = tmux.SessionConfig(
         session_name=session_name,
@@ -341,6 +345,17 @@ def _dismiss_onboarding_dialogs(
             break
 
         output = active_backend.capture_pane(target, 50)
+
+        # Early exit: agent is already at prompt — no onboarding needed
+        if re.search(r"❯", output):
+            logger.info("Onboarding: agent prompt detected, skipping remaining wait")
+            break
+
+        # Early exit: no dialog appeared within 10s — assume clean start
+        if dismissed == 0 and (time.time() - last_match_time) > 10.0:
+            logger.info("Onboarding: no dialogs detected within 10s, assuming clean start")
+            break
+
         matched = False
 
         # Check bypass permissions (needs Down+Enter, not just Enter)
