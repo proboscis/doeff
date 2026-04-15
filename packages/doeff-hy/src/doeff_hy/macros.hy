@@ -1,7 +1,7 @@
 ;;; doeff-hy standard macros — effect composition for doeff.
 ;;;
 ;;; Usage:
-;;;   (require doeff-hy.macros [do! defk deff fnk <- ! defp defpp deftest
+;;;   (require doeff-hy.macros [do! defk deff fnk <- ! <-> defp defpp deftest
 ;;;                             defpipeline traverse for/do
 ;;;                             defhandler handle])
 ;;;   (import doeff [do :as _doeff-do])
@@ -434,6 +434,39 @@ defk {name}: {{:post [...]}} is required.
   ;; Validate type coverage: every param needs (: param Type), post needs (: % Type)
   (_validate-pre-type-checks name params pre-checks)
   (_validate-post-type-check name post-checks)
+  ;; Extract lazy clauses from real-body
+  (import doeff-hy.handle [_is-lazy-clause _parse-lazy _references-symbol])
+  (setv lazy-defs [])
+  (setv body-without-lazy [])
+  (for [form real-body]
+    (if (_is-lazy-clause form)
+        (.append lazy-defs (_parse-lazy form))
+        (.append body-without-lazy form)))
+  ;; Build lazy init forms (using <- syntax for defk context)
+  (setv lazy-init-forms [])
+  (when lazy-defs
+    (for [#(lname lbody) lazy-defs]
+      ;; Symbol scan: only inject if body references this lazy name
+      (when (any (gfor form body-without-lazy
+                   (_references-symbol form (str lname))))
+        (setv key-suffix (+ "/" (str name) "/" (str lname)))
+        (setv key-expr `(+ __name__ ~key-suffix))
+        (setv cached-var (hy.models.Symbol (+ "_lazy_" (str lname) "_cached")))
+        (setv val-var (hy.models.Symbol (+ "_lazy_" (str lname) "_val")))
+        ;; init body: all forms except last are setup, last is value
+        (setv init-setup (list (cut lbody 0 -1)))
+        (setv init-value (get lbody -1))
+        (.append lazy-init-forms `(<- ~cached-var (Get ~key-expr)))
+        (.append lazy-init-forms
+          `(if (isinstance ~cached-var Some)
+               (setv ~(hy.models.Symbol (str lname)) (. ~cached-var value))
+               (do
+                 ~@init-setup
+                 (setv ~val-var ~init-value)
+                 (<- (Put ~key-expr (Some ~val-var)))
+                 (setv ~(hy.models.Symbol (str lname)) ~val-var)))))))
+  ;; Prepend lazy init to body
+  (setv real-body (+ lazy-init-forms body-without-lazy))
   ;; Expand bangs in the real body
   (setv expanded-forms [])
   (for [form real-body]
@@ -448,8 +481,15 @@ defk {name}: {{:post [...]}} is required.
           (.extend expanded-forms inner-bindings)
           (.append expanded-forms rewritten))))
   (setv fn-form (_build-fn-with-contracts ['_doeff_do] name params pre-checks post-checks expanded-forms))
+  ;; Extra imports for lazy
+  (setv lazy-imports
+    (if lazy-defs
+        `(do (import doeff [Some])
+             (import doeff_core_effects.effects [Get Put]))
+        `(do)))
   `(do
      (import doeff.do [do :as _doeff_do])
+     ~lazy-imports
      ~fn-form
      (setv (. ~name __doeff_body__) '~real-body)
      (setv (. ~name __doeff_args__) '~params)
@@ -1318,3 +1358,47 @@ defpipeline {pipeline}: no stages defined.
   (setv pipeline-defp (hy.models.Symbol (+ "p-" prefix)))
   (.append result-forms `(setv ~pipeline-defp ~last-defp))
   `(do ~@result-forms))
+
+
+;; ---------------------------------------------------------------------------
+;; <-> — effectful first-arg threading macro
+;; ---------------------------------------------------------------------------
+
+(setv _thread-counter 0)
+
+(defn _fresh-thread-tmp []
+  "Generate a fresh temporary variable for <-> threading."
+  (global _thread-counter)
+  (setv _thread-counter (+ _thread-counter 1))
+  (hy.models.Symbol (+ "_thread_" (str _thread-counter))))
+
+(defmacro <-> [#* forms]
+  "Effectful first-arg threading macro.
+
+   (<-> (f :k v) (g :k2 v2) (h))
+
+   Expands to:
+     (<- _t0 (f :k v))
+     (<- _t1 (g _t0 :k2 v2))
+     (<- _t2 (h _t1))
+     _t2
+
+   First form: no threading (initial value).
+   Subsequent forms: previous result inserted as first arg after fn name.
+   Keyword args (:k v pairs) are preserved in position."
+  (when (= (len forms) 0)
+    (raise (SyntaxError "<-> requires at least one form")))
+  (setv result-forms [])
+  (setv prev-tmp None)
+  (for [form forms]
+    (setv tmp (_fresh-thread-tmp))
+    (setv call
+      (if (is prev-tmp None)
+          ;; First form: no threading
+          form
+          ;; Subsequent: insert prev-tmp as first arg after fn name
+          (hy.models.Expression
+            (+ [(get form 0) prev-tmp] (list (cut form 1 None))))))
+    (.append result-forms `(<- ~tmp ~call))
+    (setv prev-tmp tmp))
+  `(do ~@result-forms ~prev-tmp))

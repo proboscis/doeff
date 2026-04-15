@@ -36,6 +36,93 @@
 
 
 ;; ---------------------------------------------------------------------------
+;; Lazy clause support — per-session effectful lazy init via Get/Put + Some
+;; ---------------------------------------------------------------------------
+
+(defn _is-lazy-clause [form]
+  "Check if form is (lazy name body...)."
+  (and (isinstance form Expression)
+       (>= (len form) 3)
+       (isinstance (get form 0) Symbol)
+       (= (str (get form 0)) "lazy")))
+
+(defn _parse-lazy [form]
+  "Parse (lazy name body...) → #(name-sym body-forms)."
+  (assert (_is-lazy-clause form))
+  #((get form 1) (list (cut form 2 None))))
+
+(defn _extract-lazy-clauses [clauses]
+  "Split clauses into (lazy-defs, effect-clauses).
+   lazy-defs: list of #(name-sym body-forms).
+   effect-clauses: remaining clauses."
+  (setv lazys []
+        effects [])
+  (for [c clauses]
+    (if (_is-lazy-clause c)
+        (.append lazys (_parse-lazy c))
+        (.append effects c)))
+  #(lazys effects))
+
+(setv _lazy-counter 0)
+
+(defn _fresh-lazy-tmp [lazy-name suffix]
+  "Generate a unique temp var for lazy init."
+  (global _lazy-counter)
+  (setv _lazy-counter (+ _lazy-counter 1))
+  (Symbol (+ "_lazy_" (str lazy-name) "_" suffix "_" (str _lazy-counter))))
+
+(defn _references-symbol [form sym-name]
+  "Check if form's AST contains a Symbol with the given name."
+  (cond
+    (isinstance form Symbol) (= (str form) sym-name)
+    (isinstance form #(Expression List))
+      (any (gfor f form (_references-symbol f (str sym-name))))
+    True False))
+
+(defn _build-lazy-init-forms [handler-name lazy-name lazy-body]
+  "Build the yield-based lazy init code for one lazy def.
+   Returns list of Hy forms (already in yield IR — no <- needed).
+
+   Generated pattern:
+     (setv _cached (yield (Get key)))
+     (if (isinstance _cached Some)
+         (setv name (. _cached value))
+         (do ...init-body...
+             (setv _val last-form)
+             (yield (Put key (Some _val)))
+             (setv name _val)))"
+  (import doeff-hy.macros [_expand-bangs _is-bind _bind-parts])
+
+  ;; Expand <- and ! in lazy body
+  (setv expanded-body (_expand-handler-binds lazy-body))
+
+  ;; Separate init steps from value expression
+  (setv init-forms (list (cut expanded-body 0 -1)))
+  (setv value-expr (get expanded-body -1))
+
+  ;; Generate temp vars
+  (setv cached-var (_fresh-lazy-tmp lazy-name "cached"))
+  (setv val-var (_fresh-lazy-tmp lazy-name "val"))
+
+  ;; Build state key: __name__ + "/handler-name/lazy-name"
+  (setv key-suffix (+ "/" (str handler-name) "/" (str lazy-name)))
+  (setv key-expr `(+ __name__ ~key-suffix))
+
+  ;; Build the init forms
+  (setv else-body
+    (+ init-forms
+       [`(setv ~val-var ~value-expr)
+        `(yield (Put ~key-expr (Some ~val-var)))
+        `(setv ~(Symbol (str lazy-name)) ~val-var)]))
+
+  ;; Build full lazy init sequence
+  [`(setv ~cached-var (yield (Get ~key-expr)))
+   `(if (isinstance ~cached-var Some)
+        (setv ~(Symbol (str lazy-name)) (. ~cached-var value))
+        (do ~@else-body))])
+
+
+;; ---------------------------------------------------------------------------
 ;; Termination analysis — every code path must hit resume/transfer/pass/raise
 ;; ---------------------------------------------------------------------------
 
@@ -246,9 +333,10 @@
   expanded)
 
 
-(defn _build-clause [clause]
+(defn _build-clause [clause [lazy-defs None] [handler-name None]]
   "Parse one handler clause: (EffectType [fields] [:when guard] body...).
-   Validates termination. Returns #(effect-type cond-body)."
+   Validates termination. Returns #(effect-type cond-body).
+   If lazy-defs is provided, inject lazy init for referenced lazy names."
   (assert (isinstance clause Expression)
           "handle clause must be an expression")
   (assert (>= (len clause) 3)
@@ -275,13 +363,24 @@
   ;; Expand <- and ! bindings → (setv name (yield expr))
   (setv cbody (_expand-handler-binds cbody))
 
+  ;; Inject lazy init for referenced lazy names (after bind expansion,
+  ;; before rewrite-ops — lazy init forms are already in yield IR)
+  (setv lazy-prefix [])
+  (when (and lazy-defs handler-name)
+    (for [#(lname lbody) lazy-defs]
+      ;; Symbol scan: only inject if clause body references this lazy name
+      (when (any (gfor form raw-body (_references-symbol form (str lname))))
+        (.extend lazy-prefix
+          (_build-lazy-init-forms handler-name lname lbody)))))
+
   ;; Field bindings: (setv field (. effect field))
   (setv bindings
     (lfor f fields
       `(setv ~f (. effect ~(Symbol (str f))))))
 
-  ;; Rewrite resume/transfer/pass
-  (setv rewritten (lfor form cbody (_rewrite-ops form)))
+  ;; Rewrite resume/transfer/pass (lazy-prefix is already in yield IR,
+  ;; but _rewrite-ops only touches resume/transfer/pass — safe to pass through)
+  (setv rewritten (+ lazy-prefix (lfor form cbody (_rewrite-ops form))))
 
   ;; Build body: bindings first, then guard, then logic
   (setv full-body
@@ -295,12 +394,15 @@
   #(etype full-body))
 
 
-(defn _build-handler-expr [clauses]
-  "Build handler expression from clauses. Returns _doeff-do wrapped fn."
+(defn _build-handler-expr [clauses [lazy-defs None] [handler-name None]]
+  "Build handler expression from clauses. Returns _doeff-do wrapped fn.
+   If lazy-defs is provided, lazy init is injected into clauses that reference them."
   (setv cond-forms [])
 
   (for [clause clauses]
-    (setv #(etype body) (_build-clause clause))
+    (setv #(etype body) (_build-clause clause
+                                       :lazy-defs lazy-defs
+                                       :handler-name handler-name))
     (.append cond-forms `(isinstance effect ~etype))
     (.append cond-forms body))
 
@@ -351,6 +453,13 @@
        :when (matches-cost recompute-cost cost)
        (resume (compute field))))
 
+   ;; With lazy init (per-session via Get/Put + Some/Nothing)
+   (defhandler my-handler
+     (lazy client
+       (<- secret (Ask \"api_key\"))
+       (Client :password secret))
+     (Effect [field] (resume (.fetch client field))))
+
    ;; Terminal operations:
    ;;   (resume value)      — resume k, handler stays installed
    ;;   (transfer value)    — resume k, handler removed (tail-call optimized)
@@ -369,21 +478,38 @@
     (setv params (get rest 0))
     (setv clauses (cut rest 1 None)))
 
-  (setv handler-expr (_build-handler-expr clauses))
+  ;; Separate lazy defs from effect clauses
+  (setv #(lazy-defs effect-clauses) (_extract-lazy-clauses clauses))
 
-  ;; Preserve s-expr body as quoted list of clauses
+  (setv handler-expr
+    (if lazy-defs
+        (_build-handler-expr effect-clauses
+                             :lazy-defs lazy-defs
+                             :handler-name name)
+        (_build-handler-expr effect-clauses)))
+
+  ;; Preserve s-expr body as quoted list of all clauses (including lazy)
   (setv quoted-body `(quote ~(list clauses)))
+
+  ;; Extra imports needed when lazy is used
+  (setv lazy-imports
+    (if lazy-defs
+        `(do (import doeff [Some])
+             (import doeff_core_effects.effects [Get Put]))
+        `(do)))
 
   (if (is params None)
       `(do
          (import doeff.do [do :as _doeff-do])
          (import doeff [Resume Transfer Pass])
+         ~lazy-imports
          (setv ~name ~handler-expr)
          (setv (. ~name __doeff_body__) ~quoted-body)
          (setv (. ~name __doeff_name__) ~(str name)))
       `(do
          (import doeff.do [do :as _doeff-do])
          (import doeff [Resume Transfer Pass])
+         ~lazy-imports
          (defn ~name [~@params] ~handler-expr)
          (setv (. ~name __doeff_body__) ~quoted-body)
          (setv (. ~name __doeff_name__) ~(str name)))))
