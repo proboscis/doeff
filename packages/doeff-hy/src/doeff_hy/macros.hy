@@ -1,7 +1,7 @@
 ;;; doeff-hy standard macros — effect composition for doeff.
 ;;;
 ;;; Usage:
-;;;   (require doeff-hy.macros [do! defk deff fnk <- ! <-> defp defpp deftest
+;;;   (require doeff-hy.macros [do! defk deff fnk <- ! <-> set! defp defpp deftest
 ;;;                             defpipeline traverse for/do
 ;;;                             defhandler handle])
 ;;;   (import doeff [do :as _doeff-do])
@@ -435,35 +435,41 @@ defk {name}: {{:post [...]}} is required.
   (_validate-pre-type-checks name params pre-checks)
   (_validate-post-type-check name post-checks)
   ;; Extract lazy clauses from real-body
-  (import doeff-hy.handle [_is-lazy-clause _parse-lazy _references-symbol])
+  (import doeff-hy.handle [_is-lazy-clause _parse-lazy _references-symbol
+                           _check-set-bang-violations])
   (setv lazy-defs [])
   (setv body-without-lazy [])
   (for [form real-body]
     (if (_is-lazy-clause form)
         (.append lazy-defs (_parse-lazy form))
         (.append body-without-lazy form)))
+  ;; Check set! violations on lazy-val names
+  (when lazy-defs
+    (_check-set-bang-violations lazy-defs body-without-lazy))
   ;; Build lazy init forms (using <- syntax for defk context)
   (setv lazy-init-forms [])
   (when lazy-defs
-    (for [#(lname lbody) lazy-defs]
+    (for [#(lname lbody _mut) lazy-defs]
       ;; Symbol scan: only inject if body references this lazy name
       (when (any (gfor form body-without-lazy
                    (_references-symbol form (str lname))))
         (setv key-suffix (+ "/" (str name) "/" (str lname)))
         (setv key-expr `(+ __name__ ~key-suffix))
+        (setv key-var (hy.models.Symbol (+ "_lazy_" (str lname) "_key")))
         (setv cached-var (hy.models.Symbol (+ "_lazy_" (str lname) "_cached")))
         (setv val-var (hy.models.Symbol (+ "_lazy_" (str lname) "_val")))
         ;; init body: all forms except last are setup, last is value
         (setv init-setup (list (cut lbody 0 -1)))
         (setv init-value (get lbody -1))
-        (.append lazy-init-forms `(<- ~cached-var (Get ~key-expr)))
+        (.append lazy-init-forms `(setv ~key-var ~key-expr))
+        (.append lazy-init-forms `(<- ~cached-var (Get ~key-var)))
         (.append lazy-init-forms
           `(if (isinstance ~cached-var Some)
                (setv ~(hy.models.Symbol (str lname)) (. ~cached-var value))
                (do
                  ~@init-setup
                  (setv ~val-var ~init-value)
-                 (<- (Put ~key-expr (Some ~val-var)))
+                 (<- (Put ~key-var (Some ~val-var)))
                  (setv ~(hy.models.Symbol (str lname)) ~val-var)))))))
   ;; Prepend lazy init to body
   (setv real-body (+ lazy-init-forms body-without-lazy))
@@ -1402,3 +1408,24 @@ defpipeline {pipeline}: no stages defined.
     (.append result-forms `(<- ~tmp ~call))
     (setv prev-tmp tmp))
   `(do ~@result-forms ~prev-tmp))
+
+
+;; ---------------------------------------------------------------------------
+;; set! — mutation macro for lazy-var
+;; ---------------------------------------------------------------------------
+
+(defmacro set! [name val]
+  "Mutate a lazy-var: update local binding and write back to state.
+
+   (set! items (+ items [new-item]))
+
+   Expands to:
+     (setv items (+ items [new-item]))
+     (<- (Put _lazy_items_key (Some (+ items [new-item]))))
+
+   Requires a lazy-var in scope (the _lazy_{name}_key variable must exist).
+   Using set! on a lazy-val raises a compile-time SyntaxError in defhandler/defk."
+  (setv key-var (hy.models.Symbol (+ "_lazy_" (str name) "_key")))
+  `(do
+     (setv ~name ~val)
+     (<- (Put ~key-var (Some ~name)))))
