@@ -181,8 +181,20 @@ pub struct PyWithHandler {
 #[pymethods]
 impl PyWithHandler {
     #[new]
-    fn new(handler: Py<PyAny>, body: Py<PyAny>) -> Self {
-        Self { handler, body }
+    fn new(handler: Py<PyAny>, body: Py<PyAny>) -> PyResult<Self> {
+        Python::attach(|py| {
+            let h = handler.bind(py);
+            if !h.is_callable() {
+                let type_name = h.get_type().qualname()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|_| "?".to_string());
+                return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                    "WithHandler: handler must be callable, got {}",
+                    type_name,
+                )));
+            }
+            Ok(Self { handler, body })
+        })
     }
 
     fn __repr__(&self) -> &'static str {
