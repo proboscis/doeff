@@ -23,25 +23,26 @@ class ClaudeAdapter:
     def pre_launch(self) -> None:
         """Ensure Claude Code config files exist before launch.
 
-        Creates config.json with hasCompletedOnboarding=true and settings.json
-        if missing. Without these, Claude Code shows onboarding dialogs that
-        block non-interactive (tmux) sessions.
-
-        NOTE: .claude.json restoration from backups is NOT handled here.
-        That is deployment-specific (e.g. k3s PVC) and belongs in the caller's
-        infrastructure layer, not in a generic library.
+        Creates minimal config so Claude Code starts without interactive
+        onboarding dialogs that block non-interactive (tmux) sessions.
         """
         home = Path.home()
         claude_dir = home / ".claude"
-
-        # Ensure config.json exists with onboarding complete
         claude_dir.mkdir(parents=True, exist_ok=True)
+
+        # ~/.claude.json — Claude Code warns and may stall without it
+        claude_json = home / ".claude.json"
+        if not claude_json.exists():
+            claude_json.write_text("{}")
+            logger.info("Created %s", claude_json)
+
+        # ~/.claude/config.json — must have hasCompletedOnboarding
         config_path = claude_dir / "config.json"
         if not config_path.exists():
             config_path.write_text(json.dumps({"hasCompletedOnboarding": True}))
-            logger.info("Created %s with hasCompletedOnboarding=true", config_path)
+            logger.info("Created %s", config_path)
 
-        # Ensure settings.json exists
+        # ~/.claude/settings.json
         settings_path = claude_dir / "settings.json"
         if not settings_path.exists():
             settings_path.write_text("{}")
