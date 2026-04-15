@@ -1,6 +1,5 @@
 """Adapter for Claude Code CLI."""
 
-import glob
 import json
 import logging
 import shutil
@@ -24,24 +23,16 @@ class ClaudeAdapter:
     def pre_launch(self) -> None:
         """Ensure Claude Code config files exist before launch.
 
-        Restores .claude.json from backup if missing, and ensures
-        config.json has hasCompletedOnboarding=true to skip onboarding.
-        Without this, Claude Code shows a Welcome/onboarding dialog that
-        blocks non-interactive (tmux) sessions indefinitely.
+        Creates config.json with hasCompletedOnboarding=true and settings.json
+        if missing. Without these, Claude Code shows onboarding dialogs that
+        block non-interactive (tmux) sessions.
+
+        NOTE: .claude.json restoration from backups is NOT handled here.
+        That is deployment-specific (e.g. k3s PVC) and belongs in the caller's
+        infrastructure layer, not in a generic library.
         """
         home = Path.home()
         claude_dir = home / ".claude"
-        claude_json = home / ".claude.json"
-
-        # Restore .claude.json from backup
-        if not claude_json.exists():
-            backup_dir = claude_dir / "backups"
-            if backup_dir.exists():
-                backups = sorted(glob.glob(str(backup_dir / ".claude.json.backup.*")))
-                if backups:
-                    latest = backups[-1]
-                    shutil.copy2(latest, str(claude_json))
-                    logger.info("Restored .claude.json from %s", latest)
 
         # Ensure config.json exists with onboarding complete
         claude_dir.mkdir(parents=True, exist_ok=True)
