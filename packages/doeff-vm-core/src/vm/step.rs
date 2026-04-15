@@ -485,6 +485,12 @@ impl VM {
                 self.mode = Mode::Eval(doctrl);
                 StepResult::Continue
             }
+            Err(VMError::UncaughtException { exception }) => {
+                // Python exception from handler callable — propagate through
+                // generator stack so try/except blocks can catch it.
+                self.mode = Mode::Raise(exception);
+                StepResult::Continue
+            }
             Err(err) => StepResult::Error(err),
         }
     }
@@ -612,6 +618,12 @@ impl VM {
         match handler_callable.call_handler(vec![effect, Value::Continuation(k)]) {
             Ok(doctrl) => {
                 self.mode = Mode::Eval(doctrl);
+                StepResult::Continue
+            }
+            Err(VMError::UncaughtException { exception }) => {
+                // Python exception from handler callable — propagate through
+                // generator stack so try/except blocks can catch it.
+                self.mode = Mode::Raise(exception);
                 StepResult::Continue
             }
             Err(err) => StepResult::Error(err),
