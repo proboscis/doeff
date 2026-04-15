@@ -465,3 +465,211 @@ class TestThreadingMacro:
             assert mod.__test_result__ == [1, 99]
         finally:
             del sys.modules["_test_threading_two"]
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 5. lazy-val / lazy-var + set!
+# ═══════════════════════════════════════════════════════════════════
+
+def _hy_eval_in_module(code, mod_name):
+    """Helper: eval Hy code in a fresh module, return the module."""
+    import hy
+    import doeff_hy  # noqa: F401
+    import types
+    import sys
+
+    mod = types.ModuleType(mod_name)
+    mod.__file__ = "<test>"
+    sys.modules[mod_name] = mod
+    hy.eval(hy.read_many(code), module=mod)
+    return mod
+
+
+class TestLazyValVar:
+    """Test lazy-val (immutable) and lazy-var (mutable via set!)."""
+
+    def test_lazy_val_is_alias_for_lazy(self):
+        """(lazy-val name body) should work identically to (lazy name body)."""
+        import sys
+        code = """
+(require doeff-hy.macros [defp <-])
+(require doeff-hy.handle [defhandler])
+(import doeff [do :as _doeff-do EffectBase WithHandler run :as doeff-run])
+(import doeff_core_effects [Ask Get Put state])
+(import doeff_core_effects.handlers [lazy-ask])
+(import doeff_core_effects.scheduler [scheduled])
+(import dataclasses [dataclass])
+
+(defclass [(dataclass :frozen True)] Ping [EffectBase])
+
+(defhandler ping-handler
+  (lazy-val greeting "hello")
+  (Ping [] (resume greeting)))
+
+(setv wrapped (WithHandler ping-handler
+                (WithHandler (state) body)))
+"""
+        # Build body separately to avoid defp issues
+        code2 = """
+(require doeff-hy.macros [defp <-])
+(require doeff-hy.handle [defhandler])
+(import doeff [do :as _doeff-do EffectBase WithHandler run :as doeff-run])
+(import doeff_core_effects [Get Put state])
+(import doeff_core_effects.scheduler [scheduled])
+(import dataclasses [dataclass])
+
+(defclass [(dataclass :frozen True)] Ping3 [EffectBase])
+
+(defhandler val-handler
+  (lazy-val msg "hi")
+  (Ping3 [] (resume msg)))
+
+(defp body {:post [(: % str)]}
+  (<- r (Ping3))
+  r)
+
+(setv wrapped body)
+(setv wrapped (WithHandler val-handler wrapped))
+(setv wrapped (WithHandler (state) wrapped))
+(setv wrapped (scheduled wrapped))
+(setv __test_result__ (doeff-run wrapped))
+"""
+        mod = _hy_eval_in_module(code2, "_test_lazy_val")
+        try:
+            assert mod.__test_result__ == "hi"
+        finally:
+            del sys.modules["_test_lazy_val"]
+
+    def test_lazy_var_with_set_bang(self):
+        """lazy-var + set! should update both local and state."""
+        import sys
+        code = """
+(require doeff-hy.macros [defk defp <- set!])
+(require doeff-hy.handle [defhandler])
+(import doeff [do :as _doeff-do EffectBase WithHandler run :as doeff-run])
+(import doeff_core_effects [Get Put state])
+(import doeff_core_effects.scheduler [scheduled])
+(import dataclasses [dataclass])
+
+(defclass [(dataclass :frozen True)] GetCounter [EffectBase])
+(defclass [(dataclass :frozen True)] Increment [EffectBase])
+
+(defhandler counter-handler
+  (lazy-var count 0)
+  (GetCounter [] (resume count))
+  (Increment []
+    (set! count (+ count 1))
+    (resume count)))
+
+(defp body {:post [(: % list)]}
+  (<- c0 (GetCounter))
+  (<- c1 (Increment))
+  (<- c2 (Increment))
+  (<- c3 (GetCounter))
+  [c0 c1 c2 c3])
+
+(setv wrapped body)
+(setv wrapped (WithHandler counter-handler wrapped))
+(setv wrapped (WithHandler (state) wrapped))
+(setv wrapped (scheduled wrapped))
+(setv __test_result__ (doeff-run wrapped))
+"""
+        mod = _hy_eval_in_module(code, "_test_lazy_var")
+        try:
+            assert mod.__test_result__ == [0, 1, 2, 2]
+        finally:
+            del sys.modules["_test_lazy_var"]
+
+    def test_lazy_var_set_bang_persists_across_calls(self):
+        """set! on lazy-var should persist via state (not just local)."""
+        import sys
+        code = """
+(require doeff-hy.macros [defk defp <- set!])
+(require doeff-hy.handle [defhandler])
+(import doeff [do :as _doeff-do EffectBase WithHandler run :as doeff-run Some])
+(import doeff_core_effects [Get Put state])
+(import doeff_core_effects.scheduler [scheduled])
+(import dataclasses [dataclass])
+
+(defclass [(dataclass :frozen True)] AddItem [EffectBase]
+  #^ str item)
+(defclass [(dataclass :frozen True)] GetItems [EffectBase])
+
+(defhandler bag-handler
+  (lazy-var items [])
+  (AddItem [item]
+    (set! items (+ items [item]))
+    (resume None))
+  (GetItems []
+    (resume items)))
+
+(defp body {:post [(: % list)]}
+  (<- (AddItem :item "a"))
+  (<- (AddItem :item "b"))
+  (<- result (GetItems))
+  result)
+
+(setv wrapped body)
+(setv wrapped (WithHandler bag-handler wrapped))
+(setv wrapped (WithHandler (state) wrapped))
+(setv wrapped (scheduled wrapped))
+(setv __test_result__ (doeff-run wrapped))
+"""
+        mod = _hy_eval_in_module(code, "_test_lazy_var_persist")
+        try:
+            assert mod.__test_result__ == ["a", "b"]
+        finally:
+            del sys.modules["_test_lazy_var_persist"]
+
+    def test_lazy_val_set_bang_compile_error(self):
+        """set! on lazy-val should raise SyntaxError at compile time."""
+        import hy
+        import doeff_hy  # noqa: F401
+
+        code = """
+(require doeff-hy.macros [set!])
+(require doeff-hy.handle [defhandler])
+(import doeff [EffectBase])
+(import dataclasses [dataclass])
+
+(defclass [(dataclass :frozen True)] Ping [EffectBase])
+
+(defhandler bad-handler
+  (lazy-val x 0)
+  (Ping []
+    (set! x 1)
+    (resume x)))
+"""
+        with pytest.raises(Exception, match="lazy-val.*immutable|set!.*lazy-val"):
+            hy.eval(hy.read_many(code))
+
+    def test_lazy_var_in_defk(self):
+        """lazy-var + set! should work in defk context too."""
+        import sys
+        code = """
+(require doeff-hy.macros [defk defp <- set!])
+(import doeff [do :as _doeff-do EffectBase WithHandler run :as doeff-run])
+(import doeff_core_effects [Get Put state])
+(import doeff_core_effects.scheduler [scheduled])
+
+(defk accumulate [item]
+  {:pre [(: item str)] :post [(: % list)]}
+  (lazy-var items [])
+  (set! items (+ items [item]))
+  items)
+
+(defp body {:post [(: % list)]}
+  (<- r1 (accumulate "a"))
+  (<- r2 (accumulate "b"))
+  [r1 r2])
+
+(setv wrapped body)
+(setv wrapped (WithHandler (state) wrapped))
+(setv wrapped (scheduled wrapped))
+(setv __test_result__ (doeff-run wrapped))
+"""
+        mod = _hy_eval_in_module(code, "_test_lazy_var_defk")
+        try:
+            assert mod.__test_result__ == [["a"], ["a", "b"]]
+        finally:
+            del sys.modules["_test_lazy_var_defk"]

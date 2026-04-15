@@ -40,20 +40,24 @@
 ;; ---------------------------------------------------------------------------
 
 (defn _is-lazy-clause [form]
-  "Check if form is (lazy name body...)."
+  "Check if form is (lazy name body...) or (lazy-val name body...) or (lazy-var name body...)."
   (and (isinstance form Expression)
        (>= (len form) 3)
        (isinstance (get form 0) Symbol)
-       (= (str (get form 0)) "lazy")))
+       (in (str (get form 0)) #{"lazy" "lazy-val" "lazy-var"})))
+
+(defn _lazy-mutability [form]
+  "Return :var for lazy-var, :val for lazy/lazy-val."
+  (if (= (str (get form 0)) "lazy-var") :var :val))
 
 (defn _parse-lazy [form]
-  "Parse (lazy name body...) → #(name-sym body-forms)."
+  "Parse (lazy[-val|-var] name body...) → #(name-sym body-forms mutability)."
   (assert (_is-lazy-clause form))
-  #((get form 1) (list (cut form 2 None))))
+  #((get form 1) (list (cut form 2 None)) (_lazy-mutability form)))
 
 (defn _extract-lazy-clauses [clauses]
   "Split clauses into (lazy-defs, effect-clauses).
-   lazy-defs: list of #(name-sym body-forms).
+   lazy-defs: list of #(name-sym body-forms mutability).
    effect-clauses: remaining clauses."
   (setv lazys []
         effects [])
@@ -62,6 +66,30 @@
         (.append lazys (_parse-lazy c))
         (.append effects c)))
   #(lazys effects))
+
+(defn _is-set-bang [form]
+  "Check if form is (set! name expr)."
+  (and (isinstance form Expression)
+       (= (len form) 3)
+       (isinstance (get form 0) Symbol)
+       (= (str (get form 0)) "set!")))
+
+(defn _check-set-bang-violations [lazy-defs clause-forms]
+  "Raise SyntaxError if set! is used on a lazy-val name."
+  (setv val-names
+    (set (gfor #(lname _ mut) lazy-defs :if (= mut :val) (str lname))))
+  (defn walk [form]
+    (when (isinstance form Expression)
+      (when (_is-set-bang form)
+        (setv target (str (get form 1)))
+        (when (in target val-names)
+          (raise (SyntaxError
+            (.format "set! on lazy-val '{name}': lazy-val is immutable. Use lazy-var instead."
+                     :name target)))))
+      (for [child form]
+        (walk child))))
+  (for [f clause-forms]
+    (walk f)))
 
 (setv _lazy-counter 0)
 
@@ -108,15 +136,19 @@
   (setv key-suffix (+ "/" (str handler-name) "/" (str lazy-name)))
   (setv key-expr `(+ __name__ ~key-suffix))
 
+  ;; Key variable for set! macro to reference
+  (setv key-var (Symbol (+ "_lazy_" (str lazy-name) "_key")))
+
   ;; Build the init forms
   (setv else-body
     (+ init-forms
        [`(setv ~val-var ~value-expr)
-        `(yield (Put ~key-expr (Some ~val-var)))
+        `(yield (Put ~key-var (Some ~val-var)))
         `(setv ~(Symbol (str lazy-name)) ~val-var)]))
 
   ;; Build full lazy init sequence
-  [`(setv ~cached-var (yield (Get ~key-expr)))
+  [`(setv ~key-var ~key-expr)
+   `(setv ~cached-var (yield (Get ~key-var)))
    `(if (isinstance ~cached-var Some)
         (setv ~(Symbol (str lazy-name)) (. ~cached-var value))
         (do ~@else-body))])
@@ -363,11 +395,15 @@
   ;; Expand <- and ! bindings → (setv name (yield expr))
   (setv cbody (_expand-handler-binds cbody))
 
+  ;; Check set! violations on lazy-val names
+  (when lazy-defs
+    (_check-set-bang-violations lazy-defs raw-body))
+
   ;; Inject lazy init for referenced lazy names (after bind expansion,
   ;; before rewrite-ops — lazy init forms are already in yield IR)
   (setv lazy-prefix [])
   (when (and lazy-defs handler-name)
-    (for [#(lname lbody) lazy-defs]
+    (for [#(lname lbody _mut) lazy-defs]
       ;; Symbol scan: only inject if clause body references this lazy name
       (when (any (gfor form raw-body (_references-symbol form (str lname))))
         (.extend lazy-prefix
