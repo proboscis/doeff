@@ -7,7 +7,9 @@ from typing import Any
 from doeff import Effect, Pass, Resume, do
 from doeff_agents.effects import (
     CaptureEffect,
+    ClaudeLaunchEffect,
     LaunchEffect,
+    LaunchTaskEffect,
     MonitorEffect,
     SendEffect,
     SleepEffect,
@@ -24,6 +26,8 @@ MOCK_AGENT_STATE_KEY = "__mock_agent_state__"
 # Supported effect types for doeff-agents handlers.
 AGENT_EFFECT_TYPES = (
     LaunchEffect,
+    LaunchTaskEffect,
+    ClaudeLaunchEffect,
     MonitorEffect,
     CaptureEffect,
     SendEffect,
@@ -34,18 +38,19 @@ AGENT_EFFECT_TYPES = (
 
 def dispatch_effect(handler: AgentHandler, effect: Any) -> Any:
     """Dispatch an effect to the appropriate handler method."""
-    if isinstance(effect, LaunchEffect):
-        return handler.handle_launch(effect)
-    if isinstance(effect, MonitorEffect):
-        return handler.handle_monitor(effect)
-    if isinstance(effect, CaptureEffect):
-        return handler.handle_capture(effect)
-    if isinstance(effect, SendEffect):
-        return handler.handle_send(effect)
-    if isinstance(effect, StopEffect):
-        return handler.handle_stop(effect)
-    if isinstance(effect, SleepEffect):
-        return handler.handle_sleep(effect)
+    dispatch_table = (
+        (LaunchEffect, handler.handle_launch),
+        (LaunchTaskEffect, handler.handle_launch_task),
+        (ClaudeLaunchEffect, handler.handle_claude_launch),
+        (MonitorEffect, handler.handle_monitor),
+        (CaptureEffect, handler.handle_capture),
+        (SendEffect, handler.handle_send),
+        (StopEffect, handler.handle_stop),
+        (SleepEffect, handler.handle_sleep),
+    )
+    for effect_type, method in dispatch_table:
+        if isinstance(effect, effect_type):
+            return method(effect)
     return None
 
 
@@ -73,7 +78,7 @@ def _make_protocol_handler(agent_handler: AgentHandler) -> ProtocolHandler:
     @do
     def protocol_handler(effect: Effect, k: Any):
         if not isinstance(effect, AGENT_EFFECT_TYPES):
-            yield Pass()
+            yield Pass(effect, k)
             return
         return (yield scheduled_dispatch(effect, k))
 

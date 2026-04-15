@@ -65,7 +65,7 @@ class RunContext:
     program_instance: Any | None
     interpreter_path: str | None
     env_paths: list[str] = field(default_factory=list)
-    set_vars: dict[str, Any] = field(default_factory=dict)
+    set_vars: dict[str, tuple[str, Any]] = field(default_factory=dict)
     apply_paths: list[str] = field(default_factory=list)
     transformer_paths: list[str] = field(default_factory=list)
     output_format: str = "text"
@@ -77,7 +77,7 @@ class ResolvedRunContext:
     program_instance: Any
     interpreter_path: str
     env_paths: list[str]
-    set_vars: dict[str, str]
+    set_vars: dict[str, tuple[str, Any]]
     apply_paths: list[str]
     transformer_paths: list[str]
     output_format: str
@@ -196,28 +196,29 @@ def execute(resolved: ResolvedRunContext) -> Any:
     if resolved.set_vars:
         from doeff import Pure, do
 
-        set_dict = dict(resolved.set_vars)
+        resolved_dict = {k: v for k, (_raw, v) in resolved.set_vars.items()}
         if env_program is not None:
             base = env_program
 
             @do
             def with_overrides():
                 merged = yield base
-                merged.update(set_dict)
+                merged.update(resolved_dict)
                 return merged
 
             env_program = with_overrides()
         else:
-            env_program = Pure(set_dict)
+            env_program = Pure(resolved_dict)
 
     # Build CLI context for interpreters that support remote execution
     run_ctx = None
     if resolved.program_path:
+        raw_overrides = {k: raw for k, (raw, _v) in resolved.set_vars.items()}
         run_ctx = DoeffRunContext(
             program_ref=resolved.program_path,
             interpreter_ref=resolved.interpreter_path,
             env_refs=list(resolved.env_paths),
-            set_overrides=dict(resolved.set_vars),
+            set_overrides=raw_overrides,
             apply_refs=list(resolved.apply_paths),
             transform_refs=list(resolved.transformer_paths),
         )

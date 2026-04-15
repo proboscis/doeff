@@ -3,9 +3,12 @@
 
 from dataclasses import dataclass, field
 
+from doeff_agents.adapters.base import AgentType
 from doeff_agents.effects import (
     CaptureEffect,
+    ClaudeLaunchEffect,
     LaunchEffect,
+    LaunchTaskEffect,
     MonitorEffect,
     Observation,
     SendEffect,
@@ -86,6 +89,36 @@ class MockAgentHandler(AgentHandler):
             pane_id=pane_id,
             agent_type=effect.config.agent_type,
             work_dir=effect.config.work_dir,
+        )
+        self._handles[effect.session_name] = handle
+        self._statuses[effect.session_name] = SessionStatus.BOOTING
+        self._outputs.setdefault(effect.session_name, "")
+        return handle
+
+    def handle_launch_task(self, effect: LaunchTaskEffect) -> SessionHandle:
+        """Create mock session for generic task launch."""
+        return self.handle_claude_launch(
+            ClaudeLaunchEffect(
+                session_name=effect.session_name,
+                task=effect.task,
+                tags=effect.tags,
+                ready_timeout_sec=effect.ready_timeout_sec,
+            )
+        )
+
+    def handle_claude_launch(self, effect: ClaudeLaunchEffect) -> SessionHandle:
+        """Create mock Claude session."""
+        if effect.session_name in self._handles:
+            raise SessionAlreadyExistsError(f"Session {effect.session_name} already exists")
+
+        pane_id = f"%mock{self._next_pane_id}"
+        self._next_pane_id += 1
+
+        handle = SessionHandle(
+            session_name=effect.session_name,
+            pane_id=pane_id,
+            agent_type=AgentType.CLAUDE,
+            work_dir=effect.task.work_dir,
         )
         self._handles[effect.session_name] = handle
         self._statuses[effect.session_name] = SessionStatus.BOOTING

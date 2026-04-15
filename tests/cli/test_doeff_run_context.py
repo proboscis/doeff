@@ -118,6 +118,31 @@ def test_ctx_contains_env_refs_and_set_overrides():
     assert "value" in ctx_repr
 
 
+def test_ctx_set_overrides_contains_raw_strings():
+    """set_overrides must contain raw CLI strings, not resolved objects.
+
+    When --set key={some.symbol} is used, the ctx passed to interpreters
+    must preserve the raw '{some.symbol}' string so that the original
+    doeff run command can be reconstructed for remote execution.
+    """
+    result = _run_cli(
+        "--program", "tests.cli_assets.ask_program",
+        "--interpreter", "tests.cli_assets.ctx_interpreter",
+        "--env", "tests.cli_assets.sample_env",
+        "--set", "obj={tests.cli_assets.sample_env}",
+        "--set", "plain=hello",
+        "--format", "json",
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout.strip())
+    assert payload["status"] == "ok"
+    ctx_repr = str(payload["result"])
+    # Raw brace syntax must be preserved in set_overrides
+    assert "{tests.cli_assets.sample_env}" in ctx_repr
+    # Plain string values stay as-is
+    assert "'plain': 'hello'" in ctx_repr
+
+
 def test_legacy_interpreter_works_without_ctx():
     """Existing interpreters without ctx= parameter still work."""
     result = _run_cli(

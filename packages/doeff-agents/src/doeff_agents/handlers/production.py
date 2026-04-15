@@ -1,12 +1,16 @@
 """Production effect handler backed by tmux."""
 
 
+import json
+import os
 import re
 import shlex
+import shutil
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 
 from doeff_agents import tmux
 from doeff_agents.adapters.base import AgentAdapter, AgentType, InjectionMethod
@@ -14,10 +18,13 @@ from doeff_agents.adapters.claude import ClaudeAdapter
 from doeff_agents.adapters.codex import CodexAdapter
 from doeff_agents.adapters.gemini import GeminiAdapter
 from doeff_agents.effects import (
+    AgentLaunchError,
     AgentNotAvailableError,
     AgentReadyTimeoutError,
     CaptureEffect,
+    ClaudeLaunchEffect,
     LaunchEffect,
+    LaunchTaskEffect,
     MonitorEffect,
     Observation,
     SendEffect,
@@ -27,6 +34,7 @@ from doeff_agents.effects import (
     SleepEffect,
     StopEffect,
 )
+from doeff_agents.adapters.base import LaunchConfig
 from doeff_agents.monitor import (
     MonitorState,
     SessionStatus,
@@ -35,6 +43,8 @@ from doeff_agents.monitor import (
     hash_content,
     is_waiting_for_input,
 )
+from doeff_agents.runtime import ClaudeRuntimePolicy, lower_task_launch_to_claude
+from doeff_agents.session import _dismiss_onboarding_dialogs
 from doeff_agents.session_backend import SessionBackend
 
 
@@ -44,6 +54,14 @@ class AgentHandler(ABC):
     @abstractmethod
     def handle_launch(self, effect: LaunchEffect) -> SessionHandle:
         """Handle Launch effect."""
+
+    @abstractmethod
+    def handle_launch_task(self, effect: LaunchTaskEffect) -> SessionHandle:
+        """Handle generic task launch effect."""
+
+    @abstractmethod
+    def handle_claude_launch(self, effect: ClaudeLaunchEffect) -> SessionHandle:
+        """Handle Claude-specific launch effect."""
 
     @abstractmethod
     def handle_monitor(self, effect: MonitorEffect) -> Observation:
@@ -100,9 +118,15 @@ def get_adapter(agent_type: AgentType) -> AgentAdapter:
 class TmuxAgentHandler(AgentHandler):
     """Handler that executes effects using real tmux sessions."""
 
-    def __init__(self, *, backend: SessionBackend | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        backend: SessionBackend | None = None,
+        claude_runtime_policy: ClaudeRuntimePolicy | None = None,
+    ) -> None:
         self._sessions: dict[str, SessionState] = {}
         self._backend = backend or tmux.get_default_backend()
+        self._claude_runtime_policy = claude_runtime_policy or ClaudeRuntimePolicy()
 
     def handle_launch(self, effect: LaunchEffect) -> SessionHandle:
         """Launch a new agent session in tmux."""
@@ -145,6 +169,75 @@ class TmuxAgentHandler(AgentHandler):
             work_dir=config.work_dir,
         )
 
+        self._sessions[effect.session_name] = SessionState(handle=handle, adapter=adapter)
+        return handle
+
+    def handle_launch_task(self, effect: LaunchTaskEffect) -> SessionHandle:
+        """Lower a generic task launch using runtime policy."""
+        if self._claude_runtime_policy is None:
+            raise AgentLaunchError("No runtime policy configured for LaunchTaskEffect")
+        return self.handle_claude_launch(
+            lower_task_launch_to_claude(effect, self._claude_runtime_policy)
+        )
+
+    def handle_claude_launch(self, effect: ClaudeLaunchEffect) -> SessionHandle:
+        """Launch a Claude-specific task with dedicated home/bootstrap handling."""
+        adapter = get_adapter(AgentType.CLAUDE)
+        if not adapter.is_available():
+            raise AgentNotAvailableError("claude CLI is not available")
+
+        if self._backend.has_session(effect.session_name):
+            raise SessionAlreadyExistsError(f"Session {effect.session_name} already exists")
+
+        self._materialize_task_workspace(effect.task)
+        agent_home = effect.agent_home or Path.home()
+        trusted_workspaces = effect.trusted_workspaces or (effect.task.work_dir,)
+        self._prepare_claude_home(agent_home, trusted_workspaces)
+
+        tmux_config = tmux.SessionConfig(
+            session_name=effect.session_name,
+            work_dir=effect.task.work_dir,
+        )
+        session_info = self._backend.new_session(tmux_config)
+
+        argv = adapter.launch_command(
+            LaunchConfig(
+                agent_type=AgentType.CLAUDE,
+                work_dir=effect.task.work_dir,
+                prompt=effect.task.instructions,
+                model=effect.model,
+            )
+        )
+        command = self._wrap_with_shell_exports(
+            shlex.join(argv),
+            {
+                "HOME": str(agent_home),
+                "CLAUDE_HOME": str(agent_home / ".claude"),
+                **(
+                    {"CLAUDE_CODE_OAUTH_TOKEN": os.environ["CLAUDE_CODE_OAUTH_TOKEN"]}
+                    if "CLAUDE_CODE_OAUTH_TOKEN" in os.environ
+                    else {}
+                ),
+                **effect.bootstrap_exports,
+            },
+        )
+        self._backend.send_keys(session_info.pane_id, command, literal=False)
+
+        onboarding_patterns = getattr(adapter, "onboarding_patterns", None)
+        if onboarding_patterns:
+            _dismiss_onboarding_dialogs(
+                session_info.pane_id,
+                onboarding_patterns,
+                timeout=effect.ready_timeout_sec,
+                backend=self._backend,
+            )
+
+        handle = SessionHandle(
+            session_name=effect.session_name,
+            pane_id=session_info.pane_id,
+            agent_type=AgentType.CLAUDE,
+            work_dir=effect.task.work_dir,
+        )
         self._sessions[effect.session_name] = SessionState(handle=handle, adapter=adapter)
         return handle
 
@@ -237,6 +330,87 @@ class TmuxAgentHandler(AgentHandler):
                 return True
             time.sleep(0.2)
         return False
+
+    def _materialize_task_workspace(self, task) -> None:
+        task.work_dir.mkdir(parents=True, exist_ok=True)
+        for wf in task.workspace_files:
+            dst = task.work_dir / wf.relative_path
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_text(wf.content)
+            if wf.executable:
+                dst.chmod(dst.stat().st_mode | 0o111)
+
+    def _prepare_claude_home(
+        self,
+        agent_home: Path,
+        trusted_workspaces: tuple[Path, ...],
+    ) -> None:
+        source_home = Path.home()
+        claude_dir = agent_home / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+
+        claude_json = agent_home / ".claude.json"
+        source_claude_json = source_home / ".claude.json"
+        if (
+            agent_home != source_home
+            and not claude_json.exists()
+            and source_claude_json.exists()
+        ):
+            shutil.copy2(source_claude_json, claude_json)
+        data = json.loads(claude_json.read_text()) if claude_json.exists() else {}
+        projects = data.setdefault("projects", {})
+        for workspace in trusted_workspaces:
+            projects.setdefault(
+                str(workspace),
+                {
+                    "allowedTools": [],
+                    "hasTrustDialogAccepted": True,
+                    "hasCompletedProjectOnboarding": True,
+                    "projectOnboardingSeenCount": 0,
+                },
+            )
+        claude_json.write_text(json.dumps(data))
+
+        config_path = claude_dir / "config.json"
+        source_config = source_home / ".claude" / "config.json"
+        if (
+            agent_home != source_home
+            and not config_path.exists()
+            and source_config.exists()
+        ):
+            shutil.copy2(source_config, config_path)
+        if not config_path.exists():
+            config_path.write_text(json.dumps({"hasCompletedOnboarding": True}))
+        else:
+            config_data = json.loads(config_path.read_text())
+            config_data["hasCompletedOnboarding"] = True
+            config_path.write_text(json.dumps(config_data))
+
+        settings_path = claude_dir / "settings.json"
+        source_settings = source_home / ".claude" / "settings.json"
+        if (
+            agent_home != source_home
+            and not settings_path.exists()
+            and source_settings.exists()
+        ):
+            shutil.copy2(source_settings, settings_path)
+        if not settings_path.exists():
+            settings_path.write_text("{}")
+
+        credentials_path = claude_dir / ".credentials.json"
+        source_credentials = source_home / ".claude" / ".credentials.json"
+        if (
+            agent_home != source_home
+            and not credentials_path.exists()
+            and source_credentials.exists()
+        ):
+            shutil.copy2(source_credentials, credentials_path)
+
+    def _wrap_with_shell_exports(self, command: str, env: dict[str, str]) -> str:
+        exports = " ".join(
+            f"export {key}={shlex.quote(value)};" for key, value in env.items()
+        )
+        return f"{exports} {command}"
 
 
 __all__ = [
