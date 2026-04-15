@@ -1,8 +1,14 @@
 """Adapter for Claude Code CLI."""
 
+import glob
+import json
+import logging
 import shutil
+from pathlib import Path
 
 from .base import AgentType, InjectionMethod, LaunchConfig
+
+logger = logging.getLogger("doeff_agents.claude")
 
 
 class ClaudeAdapter:
@@ -14,6 +20,40 @@ class ClaudeAdapter:
 
     def is_available(self) -> bool:
         return shutil.which("claude") is not None
+
+    def pre_launch(self) -> None:
+        """Ensure Claude Code config files exist before launch.
+
+        Restores .claude.json from backup if missing, and ensures
+        config.json has hasCompletedOnboarding=true to skip onboarding.
+        Without this, Claude Code shows a Welcome/onboarding dialog that
+        blocks non-interactive (tmux) sessions indefinitely.
+        """
+        home = Path.home()
+        claude_dir = home / ".claude"
+        claude_json = home / ".claude.json"
+
+        # Restore .claude.json from backup
+        if not claude_json.exists():
+            backup_dir = claude_dir / "backups"
+            if backup_dir.exists():
+                backups = sorted(glob.glob(str(backup_dir / ".claude.json.backup.*")))
+                if backups:
+                    latest = backups[-1]
+                    shutil.copy2(latest, str(claude_json))
+                    logger.info("Restored .claude.json from %s", latest)
+
+        # Ensure config.json exists with onboarding complete
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        config_path = claude_dir / "config.json"
+        if not config_path.exists():
+            config_path.write_text(json.dumps({"hasCompletedOnboarding": True}))
+            logger.info("Created %s with hasCompletedOnboarding=true", config_path)
+
+        # Ensure settings.json exists
+        settings_path = claude_dir / "settings.json"
+        if not settings_path.exists():
+            settings_path.write_text("{}")
 
     def launch_command(self, cfg: LaunchConfig) -> list[str]:
         """Return argv list - caller will shlex.join() if needed."""
