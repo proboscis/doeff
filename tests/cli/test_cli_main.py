@@ -66,17 +66,17 @@ def test_finalize_result_does_not_duck_type_run_result_like_object() -> None:
 
 def test_parse_set_vars_basic() -> None:
     result = cli._parse_set_vars(["key=value", "name=Alice"])
-    assert result == {"key": "value", "name": "Alice"}
+    assert result == {"key": ("value", "value"), "name": ("Alice", "Alice")}
 
 
 def test_parse_set_vars_value_with_equals() -> None:
     result = cli._parse_set_vars(["expr=a=b"])
-    assert result == {"expr": "a=b"}
+    assert result == {"expr": ("a=b", "a=b")}
 
 
 def test_parse_set_vars_empty_value() -> None:
     result = cli._parse_set_vars(["key="])
-    assert result == {"key": ""}
+    assert result == {"key": ("", "")}
 
 
 def test_parse_set_vars_none() -> None:
@@ -156,9 +156,22 @@ def test_set_vars_override_env(capsys) -> None:
     assert payload["result"] == "42"
 
 
+def test_parse_set_vars_returns_raw_and_resolved() -> None:
+    """_parse_set_vars returns (raw_string, resolved_value) tuples."""
+    result = cli._parse_set_vars(["key=value", "obj={tests.cli.test_cli_main._TEST_SYMBOL}"])
+    # Plain string: raw and resolved are the same
+    raw, resolved = result["key"]
+    assert raw == "value"
+    assert resolved == "value"
+    # Import: raw preserves the brace syntax, resolved is the imported object
+    raw, resolved = result["obj"]
+    assert raw == "{tests.cli.test_cli_main._TEST_SYMBOL}"
+    assert resolved == {"imported": True}
+
+
 def test_parse_set_vars_import_symbol() -> None:
     result = cli._parse_set_vars(["obj={tests.cli.test_cli_main._TEST_SYMBOL}"])
-    assert result == {"obj": {"imported": True}}
+    assert result["obj"] == ("{tests.cli.test_cli_main._TEST_SYMBOL}", {"imported": True})
 
 
 def test_parse_set_vars_import_empty_path() -> None:
@@ -168,7 +181,9 @@ def test_parse_set_vars_import_empty_path() -> None:
 
 def test_parse_set_vars_braces_not_closed_is_string() -> None:
     result = cli._parse_set_vars(["key={notclosed"])
-    assert result == {"key": "{notclosed"}
+    raw, resolved = result["key"]
+    assert raw == "{notclosed"
+    assert resolved == "{notclosed"
 
 
 def test_set_vars_import_injected_into_env(capsys) -> None:

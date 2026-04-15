@@ -346,16 +346,6 @@ def _dismiss_onboarding_dialogs(
 
         output = active_backend.capture_pane(target, 50)
 
-        # Early exit: agent is already at prompt — no onboarding needed
-        if re.search(r"❯", output):
-            logger.info("Onboarding: agent prompt detected, skipping remaining wait")
-            break
-
-        # Early exit: no dialog appeared within 10s — assume clean start
-        if dismissed == 0 and (time.time() - last_match_time) > 10.0:
-            logger.info("Onboarding: no dialogs detected within 10s, assuming clean start")
-            break
-
         matched = False
 
         # Check bypass permissions (needs Down+Enter, not just Enter)
@@ -379,6 +369,16 @@ def _dismiss_onboarding_dialogs(
                 last_match_time = time.time()
                 time.sleep(1.5)  # wait for next dialog to appear
                 break
+
+        # Early exit: only treat ❯ as ready prompt if no onboarding dialog matched
+        if not matched and re.search(r"❯", output):
+            logger.info("Onboarding: agent prompt detected, skipping remaining wait")
+            break
+
+        # Early exit: no dialog appeared within 10s — assume clean start
+        if dismissed == 0 and (time.time() - last_match_time) > 10.0:
+            logger.info("Onboarding: no dialogs detected within 10s, assuming clean start")
+            break
 
         if not matched:
             time.sleep(0.5)
