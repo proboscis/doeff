@@ -41,16 +41,17 @@ class RunArgs(argparse.Namespace):
     script: str | None
 
 
-def _parse_set_vars(set_vars: list[str] | None) -> dict[str, Any]:
-    """Parse --set KEY=VALUE args into a dict.
+def _parse_set_vars(set_vars: list[str] | None) -> dict[str, tuple[str, Any]]:
+    """Parse --set KEY=VALUE args into a dict of ``(raw, resolved)`` pairs.
 
     If VALUE is wrapped in braces like ``{myapp.module.symbol}``, the symbol
-    is imported and the resolved object is used as the value.  Otherwise the
-    raw string is kept.
+    is imported and returned as *resolved*; the original brace string is kept
+    as *raw* so that :class:`DoeffRunContext` can reconstruct the CLI command.
+    For plain strings, raw and resolved are identical.
     """
     if not set_vars:
         return {}
-    result: dict[str, Any] = {}
+    result: dict[str, tuple[str, Any]] = {}
     for item in set_vars:
         if "=" not in item:
             raise ValueError(f"Invalid --set format: {item!r} (expected KEY=VALUE)")
@@ -61,9 +62,9 @@ def _parse_set_vars(set_vars: list[str] | None) -> dict[str, Any]:
             symbol_path = value[1:-1]
             if not symbol_path:
                 raise ValueError(f"Invalid --set format: {item!r} (empty import path)")
-            result[key] = import_symbol(symbol_path)
+            result[key] = (value, import_symbol(symbol_path))
         else:
-            result[key] = value
+            result[key] = (value, value)
     return result
 
 

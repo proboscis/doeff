@@ -102,6 +102,67 @@ class LaunchEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
+class WorkspaceFile:
+    """A file that should exist in the launched agent workspace."""
+
+    relative_path: Path
+    content: str
+    executable: bool = False
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExpectedArtifact:
+    """An artifact the agent is expected to create."""
+
+    relative_path: Path
+    required: bool = True
+    description: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentTaskSpec:
+    """Implementation-neutral description of an agent workspace task."""
+
+    work_dir: Path
+    instructions: str
+    workspace_files: tuple[WorkspaceFile, ...] = ()
+    expected_artifacts: tuple[ExpectedArtifact, ...] = ()
+
+
+@dataclass(frozen=True, kw_only=True)
+class LaunchTaskEffect(AgentEffectBase):
+    """Implementation-neutral launch intent.
+
+    This effect intentionally avoids agent_type/model selection.
+    Handlers must lower this intent using runtime policy.
+    """
+
+    session_name: str
+    task: AgentTaskSpec
+    tags: tuple[str, ...] = ()
+    ready_timeout_sec: float = 30.0
+
+
+@dataclass(frozen=True, kw_only=True)
+class ClaudeLaunchEffect(AgentEffectBase):
+    """Claude-specific launch effect produced by lowering.
+
+    Programs should prefer LaunchTaskEffect. This effect exists so handlers
+    can formalize Claude-specific launch requirements without leaking them
+    into domain Programs.
+    """
+
+    session_name: str
+    task: AgentTaskSpec
+    tags: tuple[str, ...] = ()
+    ready_timeout_sec: float = 30.0
+    model: str | None = None
+    agent_home: Path | None = None
+    trusted_workspaces: tuple[Path, ...] = ()
+    bootstrap_exports: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, kw_only=True)
 class MonitorEffect(AgentEffectBase):
     """Effect to check and update session status.
 
@@ -213,6 +274,46 @@ def Launch(  # noqa: N802 - PascalCase follows doeff convention for effect const
         session_name=session_name,
         config=config,
         ready_timeout=ready_timeout,
+    )
+
+
+def LaunchTask(  # noqa: N802
+    session_name: str,
+    task: AgentTaskSpec,
+    *,
+    tags: tuple[str, ...] = (),
+    ready_timeout_sec: float = 30.0,
+) -> LaunchTaskEffect:
+    """Create an implementation-neutral task launch effect."""
+    return LaunchTaskEffect(
+        session_name=session_name,
+        task=task,
+        tags=tags,
+        ready_timeout_sec=ready_timeout_sec,
+    )
+
+
+def LaunchClaude(  # noqa: N802
+    session_name: str,
+    task: AgentTaskSpec,
+    *,
+    tags: tuple[str, ...] = (),
+    ready_timeout_sec: float = 30.0,
+    model: str | None = None,
+    agent_home: Path | None = None,
+    trusted_workspaces: tuple[Path, ...] = (),
+    bootstrap_exports: dict[str, str] | None = None,
+) -> ClaudeLaunchEffect:
+    """Create a Claude-specific launch effect."""
+    return ClaudeLaunchEffect(
+        session_name=session_name,
+        task=task,
+        tags=tags,
+        ready_timeout_sec=ready_timeout_sec,
+        model=model,
+        agent_home=agent_home,
+        trusted_workspaces=trusted_workspaces,
+        bootstrap_exports=bootstrap_exports or {},
     )
 
 

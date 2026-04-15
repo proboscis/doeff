@@ -34,12 +34,18 @@ from .effects import (
     # Errors (re-export effect-specific errors)
     AgentError,
     AgentNotAvailableError,
+    AgentTaskSpec,
     Capture,
     CaptureEffect,
+    ClaudeLaunchEffect,
+    ExpectedArtifact,
     # Constructors
     Launch,
+    LaunchClaude,
     # Effects
     LaunchEffect,
+    LaunchTask,
+    LaunchTaskEffect,
     Monitor,
     MonitorEffect,
     Observation,
@@ -52,6 +58,7 @@ from .effects import (
     Stop,
     StopEffect,
     WithSessionEffect,
+    WorkspaceFile,
 )
 
 # Effect handler imports (for doeff_vm integration)
@@ -87,6 +94,7 @@ from .programs import (
     wait_and_monitor,
     with_session,
 )
+from .runtime import ClaudeRuntimePolicy, lower_task_launch_to_claude
 from .session import (
     AgentLaunchError,
     AgentReadyTimeoutError,
@@ -114,47 +122,44 @@ from .tmux import (
     TmuxSessionBackend,
 )
 
-__all__ = [
+__all__ = sorted([
     "AGENT_SESSIONS_KEY",
     "MOCK_AGENT_STATE_KEY",
-    # Adapters
     "AgentAdapter",
-    # Effects API - Errors
     "AgentError",
-    # Handlers
     "AgentHandler",
-    # Session (imperative API)
     "AgentLaunchError",
     "AgentNotAvailableError",
     "AgentReadyTimeoutError",
-    # Programs
     "AgentResult",
     "AgentSession",
+    "AgentTaskSpec",
     "AgentType",
     "Capture",
     "CaptureEffect",
+    "ClaudeLaunchEffect",
+    "ClaudeRuntimePolicy",
+    "ExpectedArtifact",
     "InjectionMethod",
-    # Effects API - Constructors
     "Launch",
+    "LaunchClaude",
     "LaunchConfig",
-    # Effects API - Effects
     "LaunchEffect",
+    "LaunchTask",
+    "LaunchTaskEffect",
     "MockAgentHandler",
     "MockAgentState",
     "MockSessionScript",
     "Monitor",
     "MonitorEffect",
-    # Monitor
     "MonitorState",
     "Observation",
     "OnStatusChange",
     "Send",
     "SendEffect",
-    # Tmux
     "SessionAlreadyExistsError",
     "SessionBackend",
     "SessionConfig",
-    # Effects API - Types
     "SessionHandle",
     "SessionInfo",
     "SessionNotFoundError",
@@ -168,7 +173,7 @@ __all__ = [
     "TmuxNotAvailableError",
     "TmuxSessionBackend",
     "WithSessionEffect",
-    # Effect handlers (doeff_vm protocol)
+    "WorkspaceFile",
     "agent_effectful_handler",
     "agent_effectful_handlers",
     "async_monitor_session",
@@ -180,6 +185,7 @@ __all__ = [
     "get_adapter",
     "interactive_session",
     "launch_session",
+    "lower_task_launch_to_claude",
     "make_scheduled_handler",
     "mock_agent_handler",
     "mock_agent_handlers",
@@ -196,4 +202,4 @@ __all__ = [
     "stop_session",
     "wait_and_monitor",
     "with_session",
-]
+])

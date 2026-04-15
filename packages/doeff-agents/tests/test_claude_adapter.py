@@ -7,8 +7,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from doeff_agents.adapters.base import AgentType, LaunchConfig  # noqa: E402
-from doeff_agents.adapters.claude import ClaudeAdapter  # noqa: E402
+from doeff_agents.adapters.base import AgentType, LaunchConfig
+from doeff_agents.adapters.claude import ClaudeAdapter
 
 
 def test_launch_command_includes_model_when_provided() -> None:
