@@ -166,6 +166,11 @@ impl PyVM {
                         Value::Callable(callable) => {
                             match callable.call(call.args) {
                                 Ok(value) => self.vm.receive_external_result(Ok(value)),
+                                Err(doeff_vm_core::VMError::UncaughtException { exception }) => {
+                                    // Route Python exceptions through VM error
+                                    // handling so try/except blocks can catch them.
+                                    self.vm.receive_external_result(Err(exception));
+                                }
                                 Err(err) => {
                                     return Err(pyo3::exceptions::PyRuntimeError::new_err(
                                         format!("{}", err),
