@@ -4,7 +4,7 @@
 from collections.abc import Callable
 from typing import Any
 
-from doeff import Effect, Pass, Resume, do
+from doeff import Effect, GetHandlers, Pass, Resume, WithHandler, do, run
 from doeff_agents.effects import (
     CaptureEffect,
     ClaudeLaunchEffect,
@@ -15,6 +15,7 @@ from doeff_agents.effects import (
     SleepEffect,
     StopEffect,
 )
+from doeff.mcp import McpToolDef
 
 from .production import AgentHandler, SessionState, TmuxAgentHandler, get_adapter, register_adapter
 from .testing import MockAgentHandler, MockAgentState, MockSessionScript
@@ -68,6 +69,25 @@ def make_scheduled_handler(handler: SimpleHandler) -> ProtocolHandler:
     return scheduled_handler
 
 
+def _make_run_tool(handlers: list) -> Callable[[McpToolDef, dict], Any]:
+    """Create a run_tool closure that executes tool programs with captured handlers.
+
+    Each MCP tool call:
+      1. Builds a DoExpr program from tool.handler(*args)
+      2. Wraps it with the captured handler stack via WithHandler
+      3. Runs it via doeff.run()
+    """
+
+    def run_tool(tool: McpToolDef, arguments: dict) -> Any:
+        args = [arguments.get(name) for name in tool.param_names()]
+        program = tool.handler(*args)
+        for h in handlers:
+            program = WithHandler(h, program)
+        return run(program)
+
+    return run_tool
+
+
 def _make_protocol_handler(agent_handler: AgentHandler) -> ProtocolHandler:
     """Convert an AgentHandler object to doeff_vm handler protocol."""
 
@@ -80,6 +100,18 @@ def _make_protocol_handler(agent_handler: AgentHandler) -> ProtocolHandler:
         if not isinstance(effect, AGENT_EFFECT_TYPES):
             yield Pass(effect, k)
             return
+
+        # MCP-aware launch: capture handler stack and pass run_tool
+        if (
+            isinstance(effect, LaunchEffect)
+            and effect.config.mcp_tools
+            and hasattr(agent_handler, "handle_launch")
+        ):
+            handlers = yield GetHandlers()
+            run_tool_fn = _make_run_tool(handlers)
+            result = agent_handler.handle_launch(effect, run_tool=run_tool_fn)
+            return (yield Resume(k, result))
+
         return (yield scheduled_dispatch(effect, k))
 
     return protocol_handler
