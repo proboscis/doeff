@@ -34,6 +34,13 @@ class LaunchParams:
     work_dir: Path
     prompt: str | None = None
     model: str | None = None
+    # Claude-specific knobs (adapters that don't use them ignore them silently).
+    # `effort` maps to --effort; default None leaves Claude Code's default (xhigh).
+    # `bare` maps to --bare; when True, Claude Code skips hooks, LSP, plugin
+    # sync, auto-memory, and CLAUDE.md auto-discovery — significantly reduces
+    # startup time and per-turn prompt size for focused execution tasks.
+    effort: str | None = None
+    bare: bool = False
 
 
 @dataclass(frozen=True)
