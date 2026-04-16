@@ -2,7 +2,7 @@
 
 import shutil
 
-from .base import AgentType, InjectionMethod, LaunchConfig
+from .base import AgentType, InjectionMethod, LaunchParams
 
 
 class CodexAdapter:
@@ -15,16 +15,12 @@ class CodexAdapter:
     def is_available(self) -> bool:
         return shutil.which("codex") is not None
 
-    def launch_command(self, cfg: LaunchConfig) -> list[str]:
+    def launch_command(self, params: LaunchParams) -> list[str]:
         """Return argv list - caller will shlex.join() if needed."""
         args = ["codex", "--full-auto"]
 
-        if cfg.profile:
-            args.extend(["--profile", cfg.profile])
-
-        # Prompt is passed as positional argument
-        if cfg.prompt:
-            args.append(cfg.prompt)
+        if params.prompt:
+            args.append(params.prompt)
 
         return args
 

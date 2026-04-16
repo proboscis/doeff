@@ -9,7 +9,6 @@ from doeff_agents.effects import (
     CaptureEffect,
     ClaudeLaunchEffect,
     LaunchEffect,
-    LaunchTaskEffect,
     MonitorEffect,
     SendEffect,
     SleepEffect,
@@ -27,7 +26,6 @@ MOCK_AGENT_STATE_KEY = "__mock_agent_state__"
 # Supported effect types for doeff-agents handlers.
 AGENT_EFFECT_TYPES = (
     LaunchEffect,
-    LaunchTaskEffect,
     ClaudeLaunchEffect,
     MonitorEffect,
     CaptureEffect,
@@ -41,7 +39,6 @@ def dispatch_effect(handler: AgentHandler, effect: Any) -> Any:
     """Dispatch an effect to the appropriate handler method."""
     dispatch_table = (
         (LaunchEffect, handler.handle_launch),
-        (LaunchTaskEffect, handler.handle_launch_task),
         (ClaudeLaunchEffect, handler.handle_claude_launch),
         (MonitorEffect, handler.handle_monitor),
         (CaptureEffect, handler.handle_capture),
@@ -89,7 +86,11 @@ def _make_run_tool(handlers: list) -> Callable[[McpToolDef, dict], Any]:
 
 
 def _make_protocol_handler(agent_handler: AgentHandler) -> ProtocolHandler:
-    """Convert an AgentHandler object to doeff_vm handler protocol."""
+    """Convert an AgentHandler object to doeff_vm handler protocol.
+
+    DEPRECATED: legacy path for TmuxAgentHandler/MockAgentHandler OOP dispatch.
+    New code should use claude_resolver_handler + claude_handler instead.
+    """
 
     scheduled_dispatch = make_scheduled_handler(
         lambda effect: dispatch_effect(agent_handler, effect)
@@ -101,10 +102,11 @@ def _make_protocol_handler(agent_handler: AgentHandler) -> ProtocolHandler:
             yield Pass(effect, k)
             return
 
-        # MCP-aware launch: capture handler stack and pass run_tool
+        # MCP-aware launch: capture handler stack and pass run_tool.
+        # New LaunchEffect has .mcp_tools directly; old code with .config is no longer supported here.
         if (
             isinstance(effect, LaunchEffect)
-            and effect.config.mcp_tools
+            and getattr(effect, "mcp_tools", ())
             and hasattr(agent_handler, "handle_launch")
         ):
             handlers = yield GetHandlers(k)
@@ -115,6 +117,28 @@ def _make_protocol_handler(agent_handler: AgentHandler) -> ProtocolHandler:
         return (yield scheduled_dispatch(effect, k))
 
     return protocol_handler
+
+
+# ---------------------------------------------------------------------------
+# New handler composition — claude_resolver + claude_handler (Hy-based)
+# ---------------------------------------------------------------------------
+
+def claude_agent_handler(*, backend=None):
+    """Claude agent handler (new Hy-based architecture).
+
+    Catches LaunchEffect(agent_type=CLAUDE) directly — no resolver indirection.
+    The resolver pattern was removed because GetHandlers(k) captures handlers
+    from k's segment upward, and a resolver puts k inside itself, breaking the
+    capture of domain handlers.
+
+    Usage:
+        handler = claude_agent_handler()
+        wrapped = WithHandler(handler, program)
+        run(wrapped)
+    """
+    import hy  # activate Hy import hook  # noqa: F401
+    from doeff_agents.handlers.claude import claude_handler
+    return claude_handler(backend=backend)
 
 
 _tmux_effect_handler = TmuxAgentHandler()
