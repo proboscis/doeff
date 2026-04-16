@@ -334,6 +334,30 @@ impl PyGetHandlers {
     }
 }
 
+/// GetOuterHandlers — extract handlers installed ABOVE the current handler.
+///
+/// When a handler catches an effect, its segment's parent is detached from the
+/// chain. This means GetHandlers(k) cannot reach handlers installed above the
+/// catching handler. GetOuterHandlers walks from the VM's current_segment
+/// upward, capturing those outer handlers.
+///
+/// Used by MCP server runners that need the COMPLETE handler stack as it was
+/// at the Launch site — both inner (from GetHandlers(k)) and outer (from this).
+#[pyclass(name = "GetOuterHandlers", frozen, dict, module = "doeff_vm.doeff_vm")]
+pub struct PyGetOuterHandlers {}
+
+#[pymethods]
+impl PyGetOuterHandlers {
+    #[new]
+    fn new() -> Self {
+        Self {}
+    }
+
+    fn __repr__(&self) -> &'static str {
+        "GetOuterHandlers()"
+    }
+}
+
 /// TailEval(expr) — evaluate a DoExpr in tail position (pop the current
 /// handler stream frame before evaluating). Used by the scheduler to avoid
 /// orphaned stream frames that accumulate memory.

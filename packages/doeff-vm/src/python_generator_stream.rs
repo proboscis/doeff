@@ -480,6 +480,9 @@ pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<
         let head = peek_head(py, &gh.get().continuation, "GetHandlers")?;
         return Ok(DoCtrl::GetHandlers { from: head });
     }
+    if obj.downcast::<crate::do_expr::PyGetOuterHandlers>().is_ok() {
+        return Ok(DoCtrl::GetOuterHandlers);
+    }
     if let Ok(te) = obj.downcast::<crate::do_expr::PyTailEval>() {
         let inner = te.get().expr.bind(py);
         let inner_doctrl = classify_python_object(py, &inner)?;
@@ -607,6 +610,7 @@ fn classify_tagged_to_doctrl(py: Python<'_>, obj: &Bound<'_, PyAny>, tag: u8) ->
                 .ok_or_else(|| "GetHandlers: continuation has no head fiber".to_string())?;
             Ok(DoCtrl::GetHandlers { from: head })
         }
+        27 => Ok(DoCtrl::GetOuterHandlers),
         _ => Err(format!("unknown DoExpr tag: {}", tag)),
     }
 }
