@@ -87,9 +87,10 @@ class Gather(EffectBase):
 
 
 class Wait(EffectBase):
-    def __init__(self, task):
+    def __init__(self, task, priority=None):
         super().__init__()
         self.task = task
+        self.priority = priority
 
 
 class Cancel(EffectBase):
@@ -491,9 +492,17 @@ def scheduled(body_program):
             else:
                 kind, wid = wk
                 if kind == "promise" and promises.get(wid, {}).get("external"):
-                    # External promise: stay in ready queue above IDLE
-                    # (blocks clock driver) but below NORMAL (yields to real work).
-                    enqueue(("wait_external", k, wk), PRIORITY_EXTERNAL_WAIT)
+                    # External promise: by default stay in ready queue above
+                    # IDLE (blocks clock driver). Callers that are just
+                    # listening in the background (MCP server loop, result
+                    # file polling, etc.) pass priority=PRIORITY_IDLE, which
+                    # parks the task in `waiters` just like an internal
+                    # promise — drain() wakes it when the promise resolves,
+                    # and the clock driver is free to advance sim time.
+                    if effect.priority == PRIORITY_IDLE:
+                        waiters.setdefault(wk, []).append(("wait", k))
+                    else:
+                        enqueue(("wait_external", k, wk), PRIORITY_EXTERNAL_WAIT)
                 else:
                     # Internal promise: use waiters (resolved by other tasks)
                     waiters.setdefault(wk, []).append(("wait", k))
