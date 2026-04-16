@@ -3,7 +3,8 @@
 
 from dataclasses import dataclass, field
 
-from doeff_agents.adapters.base import AgentType
+from doeff_agents.adapters.base import AgentType, LaunchConfig
+from doeff_agents.mcp_server import McpToolServer, RunToolFn
 from doeff_agents.effects import (
     CaptureEffect,
     ClaudeLaunchEffect,
@@ -63,6 +64,7 @@ class MockAgentHandler(AgentHandler):
         self._sends: list[tuple[str, str]] = []
         self._sleep_calls: list[float] = []
         self._next_pane_id: int = 0
+        self._mcp_servers: dict[str, McpToolServer] = {}
 
     def configure_session(
         self,
@@ -76,10 +78,25 @@ class MockAgentHandler(AgentHandler):
         self._outputs[session_name] = initial_output
         self._statuses[session_name] = SessionStatus.BOOTING
 
-    def handle_launch(self, effect: LaunchEffect) -> SessionHandle:
-        """Create mock session."""
+    def handle_launch(
+        self,
+        effect: LaunchEffect,
+        run_tool: RunToolFn | None = None,
+    ) -> SessionHandle:
+        """Create mock session, optionally starting MCP server."""
         if effect.session_name in self._handles:
             raise SessionAlreadyExistsError(f"Session {effect.session_name} already exists")
+
+        # Start MCP server if tools are provided (same as TmuxAgentHandler)
+        if effect.config.mcp_tools and run_tool is not None:
+            import json
+            server = McpToolServer(tools=effect.config.mcp_tools, run_tool=run_tool)
+            server.start()
+            self._mcp_servers[effect.session_name] = server
+            mcp_json_path = effect.config.work_dir / ".mcp.json"
+            mcp_json_path.write_text(json.dumps({
+                "mcpServers": {"doeff": {"type": "sse", "url": server.url}},
+            }, indent=2))
 
         pane_id = f"%mock{self._next_pane_id}"
         self._next_pane_id += 1
@@ -163,8 +180,11 @@ class MockAgentHandler(AgentHandler):
         self._sends.append((session_name, effect.message))
 
     def handle_stop(self, effect: StopEffect) -> None:
-        """Mark session as stopped."""
+        """Mark session as stopped and shut down MCP server (if any)."""
         session_name = effect.handle.session_name
+        server = self._mcp_servers.pop(session_name, None)
+        if server is not None:
+            server.shutdown()
         if session_name in self._handles:
             self._statuses[session_name] = SessionStatus.STOPPED
 
