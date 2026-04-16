@@ -94,6 +94,12 @@ class ClaudeAdapter:
         if params.model:
             args.extend(["--model", params.model])
 
+        if params.effort:
+            args.extend(["--effort", params.effort])
+
+        if params.bare:
+            args.append("--bare")
+
         # Prompt is passed as positional argument (no quoting needed in argv)
         if params.prompt:
             args.append(params.prompt)
