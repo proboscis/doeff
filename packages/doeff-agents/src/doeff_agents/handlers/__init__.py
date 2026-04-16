@@ -107,7 +107,7 @@ def _make_protocol_handler(agent_handler: AgentHandler) -> ProtocolHandler:
             and effect.config.mcp_tools
             and hasattr(agent_handler, "handle_launch")
         ):
-            handlers = yield GetHandlers()
+            handlers = yield GetHandlers(k)
             run_tool_fn = _make_run_tool(handlers)
             result = agent_handler.handle_launch(effect, run_tool=run_tool_fn)
             return (yield Resume(k, result))
