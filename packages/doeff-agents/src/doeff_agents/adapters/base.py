@@ -1,9 +1,14 @@
 """Base protocol and types for agent adapters."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from doeff.mcp import McpToolDef
 
 
 class AgentType(Enum):
@@ -36,6 +41,7 @@ class LaunchConfig:
     session_name: str | None = None  # For resume
     profile: str | None = None  # For agents that support profiles
     model: str | None = None  # For agents that support model selection
+    mcp_tools: tuple[McpToolDef, ...] = ()  # MCP tools to expose via SSE server
 
 
 @dataclass(frozen=True)
