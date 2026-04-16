@@ -13,6 +13,7 @@ from doeff.program import (
     Expand,
     GetExecutionContext,
     GetHandlers,
+    GetOuterHandlers,
     GetTraceback,
     Pass,
     Perform,
@@ -70,7 +71,7 @@ from doeff_core_effects.scheduler import (  # noqa: E402
 _DOEXPR_TYPES = (
     Pure, Perform, Resume, Transfer, Apply, Expand, Pass,
     WithHandler, WithObserveRaw, ResumeThrow, TransferThrow,
-    GetTraceback, GetExecutionContext, GetHandlers,
+    GetTraceback, GetExecutionContext, GetHandlers, GetOuterHandlers,
 )
 
 

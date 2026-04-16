@@ -19,6 +19,7 @@ from doeff_vm import (
     GetTraceback,
     GetExecutionContext,
     GetHandlers,
+    GetOuterHandlers,
 )
 
 

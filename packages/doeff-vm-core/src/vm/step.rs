@@ -354,6 +354,23 @@ impl VM {
                 StepResult::Continue
             }
 
+            DoCtrl::GetOuterHandlers => {
+                // Walk from current_segment upward — captures handlers OUTSIDE the
+                // currently-catching handler. When a handler catches an effect, its
+                // segment's parent is detached, so GetHandlers(k) cannot reach above
+                // it. This effect walks the current execution chain instead.
+                let entries = match self.current_segment {
+                    Some(seg) => self.handlers_in_caller_chain(seg),
+                    None => Vec::new(),
+                };
+                let handlers: Vec<Value> = entries
+                    .into_iter()
+                    .map(|entry| Value::Callable(entry.handler))
+                    .collect();
+                self.mode = Mode::Send(Value::List(handlers));
+                StepResult::Continue
+            }
+
             DoCtrl::TailEval { expr } => {
                 // Pop the current stream frame (tail-call semantics),
                 // then evaluate the inner expression.
