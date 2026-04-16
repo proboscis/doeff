@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
-
-if TYPE_CHECKING:
-    from doeff.mcp import McpToolDef
+from typing import Protocol
 
 
 class AgentType(Enum):
@@ -28,44 +25,41 @@ class InjectionMethod(Enum):
 
 
 @dataclass(frozen=True)
-class LaunchConfig:
-    """Configuration for launching an agent.
+class LaunchParams:
+    """Parameters for building agent launch command.
 
-    Note: prompt is optional for resume/interactive sessions.
+    Used only by adapters to build argv — no agent_type needed.
+    """
+
+    work_dir: Path
+    prompt: str | None = None
+    model: str | None = None
+
+
+@dataclass(frozen=True)
+class LaunchConfig:
+    """Configuration for the imperative session API (session.py).
+
+    This is the old-style config that includes agent_type. New code should
+    use LaunchEffect (effects API) which has flat fields on the effect itself.
+    Kept for backward compat with session.py, programs.py, and CLI.
     """
 
     agent_type: AgentType
     work_dir: Path
-    prompt: str | None = None  # Optional for resume/interactive sessions
-    resume: bool = False
-    session_name: str | None = None  # For resume
-    profile: str | None = None  # For agents that support profiles
-    model: str | None = None  # For agents that support model selection
-    mcp_tools: tuple[McpToolDef, ...] = ()  # MCP tools to expose via SSE server
-
-
-@dataclass(frozen=True)
-class CustomLaunchConfig(LaunchConfig):
-    """Extended config for custom agents."""
-
-    custom_cmd: str | None = None
-    custom_args: list[str] = field(default_factory=list)
+    prompt: str | None = None
+    model: str | None = None
+    mcp_tools: tuple = ()
 
 
 class AgentAdapter(Protocol):
     """Protocol for agent adapters."""
 
     @property
-    def agent_type(self) -> AgentType:
-        """Return the agent type."""
-        ...
+    def agent_type(self) -> AgentType: ...
 
-    def launch_command(self, cfg: LaunchConfig) -> list[str]:
-        """Return the command as argv list (NOT a shell string).
-
-        Returns argv list to avoid shell injection and quoting issues.
-        The caller will use shlex.join() if a shell string is needed.
-        """
+    def launch_command(self, params: LaunchParams) -> list[str]:
+        """Return the command as argv list (NOT a shell string)."""
         ...
 
     def is_available(self) -> bool:
@@ -73,23 +67,10 @@ class AgentAdapter(Protocol):
         ...
 
     @property
-    def injection_method(self) -> InjectionMethod:
-        """How the prompt should be sent to the agent."""
-        ...
+    def injection_method(self) -> InjectionMethod: ...
 
     @property
-    def ready_pattern(self) -> str | None:
-        """Regex pattern to detect when agent is ready for input.
-
-        Used when injection_method is TMUX.
-        Return None if not needed.
-        """
-        ...
+    def ready_pattern(self) -> str | None: ...
 
     @property
-    def status_bar_lines(self) -> int:
-        """Number of lines to skip when hashing content (status bar).
-
-        Default is 5 for Claude. Override for other agents.
-        """
-        ...
+    def status_bar_lines(self) -> int: ...

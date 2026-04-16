@@ -226,8 +226,7 @@ class TmuxAgentHandler(AgentHandler):
         session_info = self._backend.new_session(tmux_config)
 
         argv = adapter.launch_command(
-            LaunchConfig(
-                agent_type=AgentType.CLAUDE,
+            LaunchParams(
                 work_dir=effect.task.work_dir,
                 prompt=effect.task.instructions,
                 model=effect.model,
