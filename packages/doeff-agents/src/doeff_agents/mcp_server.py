@@ -353,6 +353,8 @@ class McpToolServer(_ThreadingHTTPServer):
                 })
 
         # Queue-based dispatch: forward to the VM and block until it resolves
+        import time as _time
+        t_start = _time.perf_counter()
         req = McpToolRequest(
             tool_name=tool_name,
             arguments=arguments,
@@ -363,17 +365,30 @@ class McpToolServer(_ThreadingHTTPServer):
         try:
             wakeup_ep = self.wakeup_mailbox.get(timeout=TOOL_DISPATCH_WAKEUP_TIMEOUT)
         except queue.Empty:
+            log.warning("mcp %s: no wakeup ep (VM not accepting)", tool_name)
             return _jsonrpc_result(msg_id, {
                 "content": [{"type": "text", "text": "Error: VM not accepting tool calls"}],
                 "isError": True,
             })
+        t_wake = _time.perf_counter()
         wakeup_ep.complete(None)
 
         if not req.event.wait(timeout=TOOL_RESPONSE_TIMEOUT):
+            log.warning("mcp %s: timed out after %.3fs", tool_name, TOOL_RESPONSE_TIMEOUT)
             return _jsonrpc_result(msg_id, {
                 "content": [{"type": "text", "text": "Error: tool call timed out"}],
                 "isError": True,
             })
+
+        t_end = _time.perf_counter()
+        log.info(
+            "mcp %s: dispatch=%.1fms vm=%.1fms total=%.1fms args=%s",
+            tool_name,
+            (t_wake - t_start) * 1000,
+            (t_end - t_wake) * 1000,
+            (t_end - t_start) * 1000,
+            {k: (v if not isinstance(v, str) or len(v) < 40 else v[:37] + "...") for k, v in arguments.items()},
+        )
 
         ok, value = req.holder[0]
         if not ok:
