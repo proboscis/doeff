@@ -6,7 +6,7 @@ import os
 import shutil
 from pathlib import Path
 
-from .base import AgentType, InjectionMethod, LaunchConfig
+from .base import AgentType, InjectionMethod, LaunchParams
 
 logger = logging.getLogger("doeff_agents.claude")
 
@@ -87,22 +87,16 @@ class ClaudeAdapter:
         if not settings_path.exists():
             settings_path.write_text("{}")
 
-    def launch_command(self, cfg: LaunchConfig) -> list[str]:
+    def launch_command(self, params: LaunchParams) -> list[str]:
         """Return argv list - caller will shlex.join() if needed."""
         args = ["claude", "--dangerously-skip-permissions"]
 
-        if cfg.model:
-            args.extend(["--model", cfg.model])
-
-        if cfg.profile:
-            args.extend(["--profile", cfg.profile])
-
-        if cfg.resume and cfg.session_name:
-            args.extend(["--resume", cfg.session_name])
+        if params.model:
+            args.extend(["--model", params.model])
 
         # Prompt is passed as positional argument (no quoting needed in argv)
-        if cfg.prompt:
-            args.append(cfg.prompt)
+        if params.prompt:
+            args.append(params.prompt)
 
         return args
 

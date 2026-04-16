@@ -2,7 +2,7 @@
 
 import shutil
 
-from .base import AgentType, InjectionMethod, LaunchConfig
+from .base import AgentType, InjectionMethod, LaunchParams
 
 
 class GeminiAdapter:
@@ -19,13 +19,9 @@ class GeminiAdapter:
     def is_available(self) -> bool:
         return shutil.which("gemini") is not None
 
-    def launch_command(self, cfg: LaunchConfig) -> list[str]:
+    def launch_command(self, params: LaunchParams) -> list[str]:
         """Return argv list - caller will shlex.join() if needed."""
         args = ["gemini"]
-
-        if cfg.profile:
-            args.extend(["--profile", cfg.profile])
-
         # Gemini launches interactively - prompt is sent via tmux
         return args
 
