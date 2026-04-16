@@ -6,12 +6,26 @@ Implements the MCP SSE transport:
 
 Supports: initialize, tools/list, tools/call, ping.
 
-Usage:
-    server = McpToolServer(tools, run_tool_fn, port=0)
-    server.start()  # starts in daemon thread
-    print(server.url)  # http://127.0.0.1:<port>/sse
-    ...
-    server.shutdown()
+Two dispatch modes:
+
+1. Queue-based (preferred, for doeff-native flow): HTTP thread pushes
+   McpToolRequest onto self.request_queue and completes an ExternalPromise
+   on the mailbox to wake the VM. VM's mcp-server-loop task drains the queue
+   and runs tools inside the same VM as the caller. HTTP thread blocks on
+   the request's threading.Event until the VM sets the result.
+
+2. Direct callback (legacy, backward-compat): caller supplies run_tool fn;
+   HTTP thread calls it synchronously. Used by handlers/production.py and
+   handlers/testing.py (OOP path).
+
+Usage (queue mode):
+    server = McpToolServer(tools, port=0)
+    server.start(ready_promise=ep)          # ep completes when ready
+    # VM: yield Spawn(mcp-server-loop server full-stack)
+
+Usage (legacy):
+    server = McpToolServer(tools, run_tool=fn, port=0)
+    server.start()
 """
 
 from __future__ import annotations
@@ -21,6 +35,7 @@ import logging
 import queue
 import threading
 import uuid
+from dataclasses import dataclass
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from typing import Any, Callable
@@ -32,6 +47,26 @@ log = logging.getLogger(__name__)
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_INFO = {"name": "doeff-mcp", "version": "0.1.0"}
+
+# Timeouts — tunable via module constants (not McpToolServer args, to keep API small)
+TOOL_DISPATCH_WAKEUP_TIMEOUT = 5.0    # HTTP thread waits this long for VM to post wakeup ep
+TOOL_RESPONSE_TIMEOUT = 120.0          # HTTP thread waits this long for VM to produce result
+
+
+@dataclass
+class McpToolRequest:
+    """Tool invocation crossing the HTTP thread → VM boundary.
+
+    HTTP thread creates, VM resolves. event + holder form a single-shot
+    channel: VM writes holder[0] then sets event; HTTP thread .wait()s then
+    reads holder[0]. Errors are represented as (False, error_message);
+    success as (True, result_value).
+    """
+
+    tool_name: str
+    arguments: dict[str, Any]
+    event: threading.Event
+    holder: list  # [(ok: bool, value_or_error)]
 
 
 class _SseSession:
@@ -160,16 +195,18 @@ class McpToolServer(_ThreadingHTTPServer):
 
     Parameters:
         tools: Tuple of McpToolDef to serve.
-        run_tool: Callable that executes a tool with arguments.
-                  Signature: (tool, arguments_dict) -> result_value
+        run_tool: (legacy) direct callback for synchronous dispatch. If
+            provided, tools/call is handled inline in the HTTP thread. If
+            None (the doeff-native flow), tools/call pushes requests onto
+            self.request_queue and wakes the VM via self.wakeup_mailbox.
         port: Port to bind (0 = auto-assign).
     """
 
     def __init__(
         self,
         tools: tuple[McpToolDef, ...],
-        run_tool: RunToolFn,
         *,
+        run_tool: RunToolFn | None = None,
         port: int = 0,
     ) -> None:
         self._tools = {t.name: t for t in tools}
@@ -177,6 +214,18 @@ class McpToolServer(_ThreadingHTTPServer):
         self.sessions: dict[str, _SseSession] = {}
         self.shutting_down = False
         self._thread: threading.Thread | None = None
+
+        # Queue-based dispatch state (active when run_tool is None)
+        # request_queue: HTTP thread → VM (tool invocations)
+        # wakeup_mailbox: VM → HTTP thread (single-slot ExternalPromise the
+        #   HTTP thread completes to wake the VM's mcp-server-loop)
+        self.request_queue: queue.Queue[McpToolRequest] = queue.Queue()
+        self.wakeup_mailbox: queue.Queue[Any] = queue.Queue(maxsize=1)
+
+        # Ready signaling — set by start() if the caller provides an
+        # ExternalPromise so the VM can Wait on server readiness.
+        self._ready_promise: Any | None = None
+
         super().__init__(("127.0.0.1", port), _McpHandler)
 
     @property
@@ -191,22 +240,52 @@ class McpToolServer(_ThreadingHTTPServer):
 
     # -- Lifecycle -----------------------------------------------------------
 
-    def start(self) -> None:
-        """Start serving in a daemon thread."""
+    def start(self, *, ready_promise: Any | None = None) -> None:
+        """Start serving in a daemon thread.
+
+        If ready_promise is provided (typically an ExternalPromise), it is
+        completed with None once serve_forever has entered its accept loop.
+        The VM can Wait on ready_promise.future to avoid a race where the
+        agent process starts before the HTTP server can accept connections.
+        """
+        self._ready_promise = ready_promise
         self._thread = threading.Thread(
-            target=self.serve_forever,
+            target=self._serve_with_ready_signal,
             name="doeff-mcp-server",
             daemon=True,
         )
         self._thread.start()
         log.info("MCP server started at %s", self.url)
 
+    def _serve_with_ready_signal(self) -> None:
+        """Serve loop wrapper that signals readiness once accepting."""
+        if self._ready_promise is not None:
+            try:
+                self._ready_promise.complete(None)
+            except Exception:
+                log.exception("Failed to complete ready_promise")
+        self.serve_forever()
+
     def shutdown(self) -> None:
-        """Stop the server and close all SSE sessions."""
+        """Stop the server and close all SSE sessions.
+
+        Also wakes up any VM task blocked on wakeup_mailbox by completing
+        the wakeup promise (if one is posted) so mcp-server-loop can
+        observe self.shutting_down and exit cleanly.
+        """
         self.shutting_down = True
         # Signal all sessions to close
         for session in list(self.sessions.values()):
             session.queue.put(None)
+        # Wake the VM loop — block briefly for the next wakeup ep to arrive
+        # so we don't race against a VM iteration that's about to post one.
+        try:
+            wakeup_ep = self.wakeup_mailbox.get(timeout=5.0)
+            wakeup_ep.complete(None)
+        except queue.Empty:
+            pass
+        except Exception:
+            log.exception("Failed to wake VM on shutdown")
         super().shutdown()
         if self._thread:
             self._thread.join(timeout=5)
@@ -256,19 +335,57 @@ class McpToolServer(_ThreadingHTTPServer):
         if tool is None:
             return _jsonrpc_error(msg_id, -32602, f"Unknown tool: {tool_name}")
 
+        run_tool = self._run_tool
+        if run_tool is not None:
+            # Legacy inline dispatch path
+            try:
+                result = run_tool(tool, arguments)
+                text = json.dumps(result) if not isinstance(result, str) else result
+                return _jsonrpc_result(msg_id, {
+                    "content": [{"type": "text", "text": text}],
+                    "isError": False,
+                })
+            except Exception as e:
+                log.exception("MCP tool %s failed", tool_name)
+                return _jsonrpc_result(msg_id, {
+                    "content": [{"type": "text", "text": f"Error: {e}"}],
+                    "isError": True,
+                })
+
+        # Queue-based dispatch: forward to the VM and block until it resolves
+        req = McpToolRequest(
+            tool_name=tool_name,
+            arguments=arguments,
+            event=threading.Event(),
+            holder=[],
+        )
+        self.request_queue.put(req)
         try:
-            result = self._run_tool(tool, arguments)
-            text = json.dumps(result) if not isinstance(result, str) else result
+            wakeup_ep = self.wakeup_mailbox.get(timeout=TOOL_DISPATCH_WAKEUP_TIMEOUT)
+        except queue.Empty:
             return _jsonrpc_result(msg_id, {
-                "content": [{"type": "text", "text": text}],
-                "isError": False,
-            })
-        except Exception as e:
-            log.exception("MCP tool %s failed", tool_name)
-            return _jsonrpc_result(msg_id, {
-                "content": [{"type": "text", "text": f"Error: {e}"}],
+                "content": [{"type": "text", "text": "Error: VM not accepting tool calls"}],
                 "isError": True,
             })
+        wakeup_ep.complete(None)
+
+        if not req.event.wait(timeout=TOOL_RESPONSE_TIMEOUT):
+            return _jsonrpc_result(msg_id, {
+                "content": [{"type": "text", "text": "Error: tool call timed out"}],
+                "isError": True,
+            })
+
+        ok, value = req.holder[0]
+        if not ok:
+            return _jsonrpc_result(msg_id, {
+                "content": [{"type": "text", "text": f"Error: {value}"}],
+                "isError": True,
+            })
+        text = json.dumps(value) if not isinstance(value, str) else value
+        return _jsonrpc_result(msg_id, {
+            "content": [{"type": "text", "text": text}],
+            "isError": False,
+        })
 
 
 # -- JSON-RPC helpers --------------------------------------------------------
