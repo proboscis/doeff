@@ -7,6 +7,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+# Activate Hy's import hook so doeff run can resolve program/interpreter/env
+# paths that live in .hy files (e.g. nakagawa.live.agent_pipeline.p_agent_daily).
+# Without this, importlib.import_module for a .hy module silently creates an
+# empty entry in sys.modules, and subsequent getattr(mod, name) fails with
+# "module '<parent>' has no attribute '<child>'".
+try:
+    import hy.importer  # noqa: F401 — registers sys.meta_path hook
+except ImportError:
+    pass
+
 from doeff.cli.profiling import profile
 
 
