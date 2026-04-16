@@ -72,6 +72,7 @@ def _run_full_stack(program, backend):
     GetHandlers(k) captures greet_handler so MCP tool calls can use GreetEffect.
     """
     from doeff_agents.handlers import claude_agent_handler
+    from doeff_core_effects.scheduler import scheduled
 
     ch = claude_agent_handler(backend=backend)
     wrapped = WithHandler(
@@ -81,7 +82,7 @@ def _run_full_stack(program, backend):
             WithHandler(greet_handler, program),
         ),
     )
-    return run(wrapped)
+    return run(scheduled(wrapped))
 
 
 class TestFullIntegration:

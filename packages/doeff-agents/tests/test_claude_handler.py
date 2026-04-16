@@ -47,9 +47,10 @@ class FakeTmuxBackend:
 
 def _run(program, backend):
     from doeff_agents.handlers.claude import claude_handler
+    from doeff_core_effects.scheduler import scheduled
     handler = claude_handler(backend=backend)
     wrapped = WithHandler(state(), WithHandler(handler, program))
-    return run(wrapped)
+    return run(scheduled(wrapped))
 
 
 class TestClaudeHandlerLaunch:
