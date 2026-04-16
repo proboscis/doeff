@@ -93,7 +93,7 @@
     (lazy-var sessions {})
     (lazy-var mcp-servers {})
 
-    (LaunchEffect [session-name agent-type work-dir prompt model mcp-tools mcp-server-name ready-timeout]
+    (LaunchEffect [session-name agent-type work-dir prompt model mcp-tools mcp-server-name effort bare ready-timeout]
       :when (= agent-type AgentType.CLAUDE)
       ;; 1. Trust
       (_trust-workdir work-dir)
@@ -127,7 +127,12 @@
       (setv session-info (.new-session backend
         (tmux.SessionConfig :session-name session-name :work-dir work-dir)))
       ;; 4. Launch command
-      (setv params (LaunchParams :work-dir work-dir :prompt prompt :model model))
+      (setv params (LaunchParams
+        :work-dir work-dir
+        :prompt prompt
+        :model model
+        :effort effort
+        :bare bare))
       (setv argv (.launch-command adapter params))
       (.send-keys backend session-info.pane-id (shlex.join argv) :literal False)
       ;; 5. Store + resume

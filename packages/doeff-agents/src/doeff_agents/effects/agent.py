@@ -104,6 +104,8 @@ class LaunchEffect(AgentEffectBase):
     model: str | None = None
     mcp_tools: tuple[McpToolDef, ...] = ()
     mcp_server_name: str = "doeff"
+    effort: str | None = None
+    bare: bool = False
     ready_timeout: float = 30.0
 
 
@@ -123,6 +125,8 @@ class ClaudeLaunchEffect(AgentEffectBase):
     model: str | None = None
     mcp_tools: tuple[McpToolDef, ...] = ()
     mcp_server_name: str = "doeff"
+    effort: str | None = None
+    bare: bool = False
     ready_timeout: float = 30.0
 
 
@@ -220,6 +224,8 @@ def Launch(  # noqa: N802
     model: str | None = None,
     mcp_tools: tuple[McpToolDef, ...] = (),
     mcp_server_name: str = "doeff",
+    effort: str | None = None,
+    bare: bool = False,
     ready_timeout: float = 30.0,
 ) -> LaunchEffect:
     """Create a Launch effect with flat fields."""
@@ -231,6 +237,8 @@ def Launch(  # noqa: N802
         model=model,
         mcp_tools=mcp_tools,
         mcp_server_name=mcp_server_name,
+        effort=effort,
+        bare=bare,
         ready_timeout=ready_timeout,
     )
 
