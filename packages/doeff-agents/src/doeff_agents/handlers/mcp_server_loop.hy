@@ -21,7 +21,7 @@
 
 (require doeff-hy.macros [<- defk])
 (import doeff [WithHandler])
-(import doeff_core_effects.scheduler [CreateExternalPromise Wait Spawn])
+(import doeff_core_effects.scheduler [CreateExternalPromise Wait Spawn PRIORITY_IDLE])
 (import doeff_agents.mcp-server [McpToolServer McpToolRequest])
 
 
@@ -76,7 +76,10 @@
     ;; put, exit now rather than parking on an ep nobody will complete.
     (when server.shutting-down
       (break))
-    (<- _ (Wait wakeup-ep.future))
+    ;; Background wait: don't block the sim_time clock driver while idle.
+    ;; The HTTP thread completes this promise when a request arrives, and
+    ;; drain() picks that up without forcing a foreground external wait.
+    (<- _ (Wait wakeup-ep.future :priority PRIORITY_IDLE))
     (while (not (.empty server.request-queue))
       (setv req None)
       (try
