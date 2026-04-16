@@ -10,7 +10,8 @@
 
 (require doeff-hy.handle [defhandler])
 (require doeff-hy.macros [<- set!])
-(import doeff [do :as _doeff-do GetHandlers GetOuterHandlers WithHandler run])
+(import doeff [do :as _doeff-do GetHandlers GetOuterHandlers])
+(import doeff_core_effects.scheduler [CreateExternalPromise Wait Spawn])
 
 (import doeff_agents.effects.agent [
   LaunchEffect MonitorEffect CaptureEffect
@@ -18,6 +19,7 @@
 (import doeff_agents.adapters.base [AgentType LaunchParams])
 (import doeff_agents.adapters.claude [ClaudeAdapter])
 (import doeff_agents.mcp-server [McpToolServer])
+(import doeff_agents.handlers.mcp-server-loop [mcp-server-loop])
 (import doeff_agents.monitor [MonitorState SessionStatus
   detect-status hash-content is-waiting-for-input detect-pr-url])
 (import doeff_agents [tmux])
@@ -58,24 +60,15 @@
 ;; MCP server helpers
 ;; ---------------------------------------------------------------------------
 
-(defn _make-run-tool [handlers mcp-tools]
-  "Create run_tool closure for MCP server — executes tool programs with captured handlers.
-   `handlers` must be the FULL stack: outer (scheduled, state, lazy_ask, ...) +
-   inner (domain handlers). Install order: outermost first (wrapped last)."
-  (defn run-tool [tool arguments]
-    (setv args (lfor name (.param-names tool) (.get arguments name)))
-    (setv program (tool.handler #* args))
-    (for [h handlers]
-      (setv program (WithHandler h program)))
-    (run program))
-  run-tool)
+(defn _write-mcp-json [work-dir server mcp-server-name]
+  "Write .mcp.json for Claude Code to discover MCP tools.
 
-
-(defn _write-mcp-json [work-dir server]
-  "Write .mcp.json for Claude Code to discover MCP tools."
+   `mcp-server-name` becomes the key under mcpServers — Claude Code prefixes
+   tool invocations with it (e.g. @<name>:submit-order), so callers can
+   pick a namespace that matches their agent's domain."
   (setv mcp-config
     {"mcpServers"
-     {"doeff"
+     {mcp-server-name
       {"type" "sse"
        "url" server.url}}})
   (.write-text (/ work-dir ".mcp.json") (json.dumps mcp-config :indent 2)))
@@ -100,31 +93,35 @@
     (lazy-var sessions {})
     (lazy-var mcp-servers {})
 
-    (LaunchEffect [session-name agent-type work-dir prompt model mcp-tools ready-timeout]
+    (LaunchEffect [session-name agent-type work-dir prompt model mcp-tools mcp-server-name ready-timeout]
       :when (= agent-type AgentType.CLAUDE)
       ;; 1. Trust
       (_trust-workdir work-dir)
-      ;; 2. MCP server — capture FULL handler stack at Launch site:
-      ;;   - inner: handlers below claude_handler (domain handlers caught by GetHandlers(k))
-      ;;   - outer: handlers above claude_handler (scheduled, state, lazy_ask — captured
-      ;;     by GetOuterHandlers since claude_handler's segment is detached from parent)
-      ;; Tool programs are re-installed with the full stack so Launch-site semantics
-      ;; (including scheduler, state, Ask resolution) work in each tool call.
+      ;; 2. MCP server — tools run INSIDE the main VM as spawned tasks, not
+      ;;    in a separate run() from the HTTP thread. This way the scheduler,
+      ;;    sim_time clock, and state handler are shared between the pipeline
+      ;;    and every tool invocation, so WaitUntil / GetTime behave correctly.
+      ;;
+      ;;    Capture the full handler stack at the Launch site:
+      ;;      - inner: handlers below claude_handler (caught by GetHandlers(k))
+      ;;      - outer: handlers above claude_handler (scheduled, state, lazy_ask),
+      ;;        captured by GetOuterHandlers since claude_handler's segment is
+      ;;        detached from its parent after catching.
+      ;;    Tool programs are re-installed with this stack per call.
       (when mcp-tools
         (<- inner-handlers (GetHandlers k))
         (<- outer-handlers (GetOuterHandlers))
-        ;; Install order: outermost first (they get wrapped last, become outermost in new stack).
-        ;; GetOuterHandlers returns innermost-first within outer chain, so reverse to get outermost-first.
-        ;; But WithHandler wraps: for h in list -> program = WithHandler(h, program) — later ones
-        ;; become innermost. So we want: outer-reversed + inner = full chain innermost→outermost.
-        ;; Actually: GetHandlers returns innermost-first. Combining outer (innermost-of-outer first,
-        ;; outermost-of-outer last) + inner (innermost first, ..., claude_handler's direct child last)
-        ;; gives the right order for the iterative WithHandler wrap.
         (setv captured-handlers (+ (list inner-handlers) (list outer-handlers)))
-        (setv run-tool (_make-run-tool captured-handlers mcp-tools))
-        (setv server (McpToolServer :tools mcp-tools :run-tool run-tool))
-        (.start server)
-        (_write-mcp-json work-dir server)
+        (setv server (McpToolServer :tools mcp-tools))
+        ;; Wait for the HTTP server thread to enter its accept loop before
+        ;; launching the agent, so the CLI never hits a closed SSE endpoint.
+        (<- ready-ep (CreateExternalPromise))
+        (.start server :ready-promise ready-ep)
+        (<- _ (Wait ready-ep.future))
+        (_write-mcp-json work-dir server mcp-server-name)
+        ;; Spawn the dispatch loop as a scheduler child task — inherits the
+        ;; parent's scheduler so sim_time / state are shared.
+        (<- _ (Spawn (mcp-server-loop server captured-handlers)))
         (set! mcp-servers (| mcp-servers {session-name server})))
       ;; 3. Tmux session
       (setv session-info (.new-session backend
