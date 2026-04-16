@@ -10,8 +10,7 @@
 
 (require doeff-hy.handle [defhandler])
 (require doeff-hy.macros [<- set!])
-(import doeff [do :as _doeff-do GetHandlers WithHandler run])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff [do :as _doeff-do GetHandlers GetOuterHandlers WithHandler run])
 
 (import doeff_agents.effects.agent [
   LaunchEffect MonitorEffect CaptureEffect
@@ -61,13 +60,14 @@
 
 (defn _make-run-tool [handlers mcp-tools]
   "Create run_tool closure for MCP server — executes tool programs with captured handlers.
-   Wraps with scheduled() so tools using WaitUntil / Spawn / CreatePromise work."
+   `handlers` must be the FULL stack: outer (scheduled, state, lazy_ask, ...) +
+   inner (domain handlers). Install order: outermost first (wrapped last)."
   (defn run-tool [tool arguments]
     (setv args (lfor name (.param-names tool) (.get arguments name)))
     (setv program (tool.handler #* args))
     (for [h handlers]
       (setv program (WithHandler h program)))
-    (run (scheduled program)))
+    (run program))
   run-tool)
 
 
@@ -104,9 +104,23 @@
       :when (= agent-type AgentType.CLAUDE)
       ;; 1. Trust
       (_trust-workdir work-dir)
-      ;; 2. MCP server (capture handlers BEFORE any resolver layer)
+      ;; 2. MCP server — capture FULL handler stack at Launch site:
+      ;;   - inner: handlers below claude_handler (domain handlers caught by GetHandlers(k))
+      ;;   - outer: handlers above claude_handler (scheduled, state, lazy_ask — captured
+      ;;     by GetOuterHandlers since claude_handler's segment is detached from parent)
+      ;; Tool programs are re-installed with the full stack so Launch-site semantics
+      ;; (including scheduler, state, Ask resolution) work in each tool call.
       (when mcp-tools
-        (<- captured-handlers (GetHandlers k))
+        (<- inner-handlers (GetHandlers k))
+        (<- outer-handlers (GetOuterHandlers))
+        ;; Install order: outermost first (they get wrapped last, become outermost in new stack).
+        ;; GetOuterHandlers returns innermost-first within outer chain, so reverse to get outermost-first.
+        ;; But WithHandler wraps: for h in list -> program = WithHandler(h, program) — later ones
+        ;; become innermost. So we want: outer-reversed + inner = full chain innermost→outermost.
+        ;; Actually: GetHandlers returns innermost-first. Combining outer (innermost-of-outer first,
+        ;; outermost-of-outer last) + inner (innermost first, ..., claude_handler's direct child last)
+        ;; gives the right order for the iterative WithHandler wrap.
+        (setv captured-handlers (+ (list inner-handlers) (list outer-handlers)))
         (setv run-tool (_make-run-tool captured-handlers mcp-tools))
         (setv server (McpToolServer :tools mcp-tools :run-tool run-tool))
         (.start server)
