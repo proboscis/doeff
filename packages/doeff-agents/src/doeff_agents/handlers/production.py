@@ -177,6 +177,16 @@ class TmuxAgentHandler(AgentHandler):
             if config.prompt:
                 self._backend.send_keys(session_info.pane_id, config.prompt)
 
+        # Dismiss onboarding dialogs (trust, theme, auth) if adapter supports them
+        onboarding_patterns = getattr(adapter, "onboarding_patterns", None)
+        if onboarding_patterns:
+            _dismiss_onboarding_dialogs(
+                session_info.pane_id,
+                onboarding_patterns,
+                timeout=effect.ready_timeout,
+                backend=self._backend,
+            )
+
         handle = SessionHandle(
             session_name=effect.session_name,
             pane_id=session_info.pane_id,
