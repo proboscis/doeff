@@ -11,6 +11,7 @@
 (require doeff-hy.handle [defhandler])
 (require doeff-hy.macros [<- set!])
 (import doeff [do :as _doeff-do GetHandlers WithHandler run])
+(import doeff_core_effects.scheduler [scheduled])
 
 (import doeff_agents.effects.agent [
   LaunchEffect MonitorEffect CaptureEffect
@@ -59,13 +60,14 @@
 ;; ---------------------------------------------------------------------------
 
 (defn _make-run-tool [handlers mcp-tools]
-  "Create run_tool closure for MCP server — executes tool programs with captured handlers."
+  "Create run_tool closure for MCP server — executes tool programs with captured handlers.
+   Wraps with scheduled() so tools using WaitUntil / Spawn / CreatePromise work."
   (defn run-tool [tool arguments]
     (setv args (lfor name (.param-names tool) (.get arguments name)))
     (setv program (tool.handler #* args))
     (for [h handlers]
       (setv program (WithHandler h program)))
-    (run program))
+    (run (scheduled program)))
   run-tool)
 
 
