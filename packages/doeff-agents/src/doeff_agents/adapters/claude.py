@@ -21,28 +21,55 @@ class ClaudeAdapter:
         return shutil.which("claude") is not None
 
     def pre_launch(self) -> None:
-        """Ensure Claude Code config files exist before launch.
+        """Verify Claude Code is installed and authenticated before launch.
 
-        Creates minimal config so Claude Code starts without interactive
-        onboarding dialogs that block non-interactive (tmux) sessions.
+        Requires ~/.claude.json with oauthAccount to exist — this file is
+        created by running `claude` interactively and completing login.
+        doeff-agents will NOT create it automatically because authentication
+        is the user's responsibility.
+
+        On local machines: run `claude` once to authenticate.
+        On k3s: mount ~/.claude.json via PVC backup or k8s secret.
         """
         home = Path.home()
+        claude_json = home / ".claude.json"
+
+        # ~/.claude.json MUST exist with auth — fail loudly if not
+        if not claude_json.exists():
+            raise RuntimeError(
+                f"{claude_json} not found.\n"
+                "\n"
+                "Claude Code must be installed and authenticated before "
+                "doeff-agents can launch a session.\n"
+                "\n"
+                "To fix:\n"
+                "  Local:  run `claude` in a terminal and complete login\n"
+                "  k3s:    mount ~/.claude.json via PVC backup or k8s secret\n"
+                "  Docker: COPY a pre-authenticated .claude.json into the image\n"
+            )
+
+        # Verify oauthAccount is present (not an empty {})
+        try:
+            data = json.loads(claude_json.read_text())
+        except (json.JSONDecodeError, OSError):
+            data = {}
+        if "oauthAccount" not in data:
+            raise RuntimeError(
+                f"{claude_json} exists but has no oauthAccount.\n"
+                "\n"
+                "Claude Code is not authenticated. Run `claude` in a terminal "
+                "and complete login, then try again.\n"
+            )
+
+        # Ensure supporting config files exist (these are safe to create)
         claude_dir = home / ".claude"
         claude_dir.mkdir(parents=True, exist_ok=True)
 
-        # ~/.claude.json — Claude Code warns and may stall without it
-        claude_json = home / ".claude.json"
-        if not claude_json.exists():
-            claude_json.write_text("{}")
-            logger.info("Created %s", claude_json)
-
-        # ~/.claude/config.json — must have hasCompletedOnboarding
         config_path = claude_dir / "config.json"
         if not config_path.exists():
             config_path.write_text(json.dumps({"hasCompletedOnboarding": True}))
             logger.info("Created %s", config_path)
 
-        # ~/.claude/settings.json
         settings_path = claude_dir / "settings.json"
         if not settings_path.exists():
             settings_path.write_text("{}")
