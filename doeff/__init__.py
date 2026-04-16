@@ -44,6 +44,7 @@ def WithObserve(observer, body):
 from doeff.program import ResumeThrow, TransferThrow
 from doeff.run import run
 from doeff.result import Ok, Err, Some, Nothing, Maybe  # noqa: F811
+from doeff.mcp import McpToolDef, McpParamSchema
 from doeff_vm import Callable, EffectBase, K, PyVM
 
 Effect = EffectBase
