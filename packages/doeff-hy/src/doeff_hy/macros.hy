@@ -3,7 +3,7 @@
 ;;; Usage:
 ;;;   (require doeff-hy.macros [do! defk deff fnk <- ! <-> set! defp defpp deftest
 ;;;                             defpipeline traverse for/do
-;;;                             defhandler handle])
+;;;                             defhandler handle defmcp-tool])
 ;;;   (import doeff [do :as _doeff-do])
 ;;;
 ;;; Core effects are imported from doeff_core_effects:
@@ -1408,6 +1408,149 @@ defpipeline {pipeline}: no stages defined.
     (.append result-forms `(<- ~tmp ~call))
     (setv prev-tmp tmp))
   `(do ~@result-forms ~prev-tmp))
+
+
+;; ---------------------------------------------------------------------------
+;; defmcp-tool — MCP tool definition backed by doeff handler
+;; ---------------------------------------------------------------------------
+
+(defn _parse-mcp-params [param-list]
+  "Parse MCP parameter list into (param-schemas, fn-param-names).
+   Each element is a dict with :name, :type, :description, and optional
+   :enum, :required, :default.
+
+   Returns #(schema-exprs param-symbols) where schema-exprs are
+   McpParamSchema constructor calls and param-symbols are Hy symbols
+   for the @do function signature."
+  (setv schemas []
+        param-syms [])
+  (for [p param-list]
+    ;; p is a Hy Dict: {:name \"x\" :type \"string\" :description \"desc\" ...}
+    (setv pdict {})
+    (for [#(k v) (zip (cut p None None 2) (cut p 1 None 2))]
+      (setv (get pdict (str k)) v))
+    (setv pname (str (get pdict ":name")))
+    (setv ptype (str (get pdict ":type")))
+    (setv pdesc (str (get pdict ":description")))
+    ;; Build keyword args for McpParamSchema
+    (setv kw-args [])
+    (when (in ":enum" pdict)
+      (setv enum-vals (get pdict ":enum"))
+      (.append kw-args `(tuple ~enum-vals))
+      (.append kw-args None))  ; placeholder, handled below
+    (setv has-enum (in ":enum" pdict))
+    (setv has-required (in ":required" pdict))
+    (setv has-default (in ":default" pdict))
+    ;; Build the McpParamSchema(...) expression
+    (setv schema-expr
+      `(McpParamSchema
+         :name ~pname
+         :type ~ptype
+         :description ~pdesc))
+    (when has-enum
+      (setv enum-val (get pdict ":enum"))
+      (setv schema-expr
+        `(McpParamSchema
+           :name ~pname
+           :type ~ptype
+           :description ~pdesc
+           :enum (tuple ~enum-val))))
+    (when has-required
+      ;; Rebuild with :required
+      (setv req-val (get pdict ":required"))
+      (if has-enum
+          (setv schema-expr
+            `(McpParamSchema
+               :name ~pname
+               :type ~ptype
+               :description ~pdesc
+               :enum (tuple ~(get pdict ":enum"))
+               :required ~req-val))
+          (setv schema-expr
+            `(McpParamSchema
+               :name ~pname
+               :type ~ptype
+               :description ~pdesc
+               :required ~req-val))))
+    (when has-default
+      (setv def-val (get pdict ":default"))
+      ;; Rebuild with :default — append to whatever we have
+      ;; For simplicity, build with all optional fields
+      (setv schema-expr
+        `(McpParamSchema
+           :name ~pname
+           :type ~ptype
+           :description ~pdesc
+           ~@(if has-enum [`(:enum (tuple ~(get pdict ":enum")))] [])
+           ~@(if has-required [`(:required ~(get pdict ":required"))] [])
+           :default ~def-val)))
+    (.append schemas schema-expr)
+    (.append param-syms (hy.models.Symbol (.replace pname "-" "_"))))
+  #(schemas param-syms))
+
+(defmacro defmcp-tool [name description param-list #* body]
+  "Define an MCP tool backed by a doeff @do handler.
+
+   The body uses <- for effect binding, same as defk.
+   Typically the body is a single line calling an existing defk.
+
+   (defmcp-tool submit-order
+     \"Submit a trading order to Kabustation\"
+     [{:name \"symbol\" :type \"string\" :description \"Stock symbol code\"}
+      {:name \"side\" :type \"string\" :enum [\"buy\" \"sell\"] :description \"Order side\"}
+      {:name \"qty\" :type \"integer\" :description \"Quantity to trade\"}]
+     (<- result (submit-order symbol side qty))
+     result)
+
+   Expands to:
+   1. A @do function _<name>_mcp_handler with params from the schema
+   2. An McpToolDef instance <name> with the schema + handler"
+  (when (not (isinstance description hy.models.String))
+    (raise (SyntaxError (.format "
+defmcp-tool {name}: second argument must be a description string.
+
+  (defmcp-tool {name}
+    \"Description of what this tool does\"
+    [{{:name \"param\" :type \"string\" :description \"param desc\"}}]
+    body)
+" :name name))))
+  (when (not (isinstance param-list hy.models.List))
+    (raise (SyntaxError (.format "
+defmcp-tool {name}: third argument must be a parameter list [...].
+
+  (defmcp-tool {name}
+    \"Description\"
+    [{{:name \"param\" :type \"string\" :description \"param desc\"}}]
+    body)
+" :name name))))
+  ;; Parse param list
+  (setv #(schema-exprs param-syms) (_parse-mcp-params param-list))
+  ;; Build handler function name
+  (setv handler-name (hy.models.Symbol (+ "_" (str name) "_mcp_handler")))
+  ;; Expand bangs in body (same as defk)
+  (setv expanded-forms [])
+  (for [form body]
+    (if (_is-bind form)
+        (let [#(nm expr) (_bind-parts form)
+              #(inner-bindings rewritten) (_expand-bangs expr)]
+          (.extend expanded-forms inner-bindings)
+          (if (is nm None)
+              (.append expanded-forms `(<- ~rewritten))
+              (.append expanded-forms `(<- ~nm ~rewritten))))
+        (let [#(inner-bindings rewritten) (_expand-bangs form)]
+          (.extend expanded-forms inner-bindings)
+          (.append expanded-forms rewritten))))
+  `(do
+     (import doeff.do [do :as _doeff_do])
+     (import doeff.mcp [McpToolDef McpParamSchema])
+     (defn [_doeff_do] ~handler-name ~param-syms
+       ~@expanded-forms)
+     (setv ~name
+       (McpToolDef
+         :name ~(str name)
+         :description ~description
+         :params (tuple [~@schema-exprs])
+         :handler ~handler-name))))
 
 
 ;; ---------------------------------------------------------------------------
