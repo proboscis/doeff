@@ -93,6 +93,13 @@ pub enum DoCtrl {
     /// Non-consuming — does not take ownership of the continuation.
     GetHandlers { from: crate::ids::FiberId },
 
+    /// Extract OUTER handler callables — those installed ABOVE the current handler.
+    /// Walks from the VM's current_segment upward. When a handler catches an effect,
+    /// its own segment's parent is detached (set to None), so GetHandlers(k) cannot
+    /// reach them. GetOuterHandlers walks the current_segment chain to collect them.
+    /// Returns Value::List of handler callables (innermost first — closest to current).
+    GetOuterHandlers,
+
     /// Tail-call: pop the current stream frame, then evaluate `expr`.
     /// Used by handler generators that yield an instruction they don't
     /// need a return value from (e.g., scheduler's `yield TailEval(pick_next())`).
