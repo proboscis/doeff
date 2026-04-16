@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from doeff_agents import tmux
-from doeff_agents.adapters.base import AgentAdapter, AgentType, InjectionMethod
+from doeff_agents.adapters.base import AgentAdapter, AgentType, InjectionMethod, LaunchConfig
 from doeff_agents.adapters.claude import ClaudeAdapter
 from doeff_agents.adapters.codex import CodexAdapter
 from doeff_agents.adapters.gemini import GeminiAdapter
@@ -34,7 +34,7 @@ from doeff_agents.effects import (
     SleepEffect,
     StopEffect,
 )
-from doeff_agents.adapters.base import LaunchConfig
+from doeff_agents.mcp_server import McpToolServer, RunToolFn
 from doeff_agents.monitor import (
     MonitorState,
     SessionStatus,
@@ -127,9 +127,19 @@ class TmuxAgentHandler(AgentHandler):
         self._sessions: dict[str, SessionState] = {}
         self._backend = backend or tmux.get_default_backend()
         self._claude_runtime_policy = claude_runtime_policy or ClaudeRuntimePolicy()
+        self._mcp_servers: dict[str, McpToolServer] = {}
 
-    def handle_launch(self, effect: LaunchEffect) -> SessionHandle:
-        """Launch a new agent session in tmux."""
+    def handle_launch(
+        self,
+        effect: LaunchEffect,
+        run_tool: RunToolFn | None = None,
+    ) -> SessionHandle:
+        """Launch a new agent session in tmux.
+
+        If ``effect.config.mcp_tools`` is non-empty and ``run_tool`` is provided,
+        an SSE MCP server is started and ``.mcp.json`` is written to the work_dir
+        before launching the agent.
+        """
         config = effect.config
         adapter = get_adapter(config.agent_type)
 
@@ -138,6 +148,10 @@ class TmuxAgentHandler(AgentHandler):
 
         if self._backend.has_session(effect.session_name):
             raise SessionAlreadyExistsError(f"Session {effect.session_name} already exists")
+
+        # Start MCP server if tools are provided
+        if config.mcp_tools and run_tool is not None:
+            self._start_mcp_server(effect.session_name, config, run_tool)
 
         tmux_config = tmux.SessionConfig(
             session_name=effect.session_name,
@@ -155,6 +169,7 @@ class TmuxAgentHandler(AgentHandler):
             if adapter.ready_pattern and not self._wait_for_ready(
                 session_info.pane_id, adapter.ready_pattern, effect.ready_timeout
             ):
+                self._stop_mcp_server(effect.session_name)
                 self._backend.kill_session(effect.session_name)
                 raise AgentReadyTimeoutError(
                     f"Agent did not become ready within {effect.ready_timeout}s"
@@ -309,8 +324,9 @@ class TmuxAgentHandler(AgentHandler):
         )
 
     def handle_stop(self, effect: StopEffect) -> None:
-        """Stop session."""
+        """Stop session and its MCP server (if any)."""
         handle = effect.handle
+        self._stop_mcp_server(handle.session_name)
         if self._backend.has_session(handle.session_name):
             self._backend.kill_session(handle.session_name)
         state = self._sessions.get(handle.session_name)
@@ -320,6 +336,41 @@ class TmuxAgentHandler(AgentHandler):
     def handle_sleep(self, effect: SleepEffect) -> None:
         """Sleep for duration."""
         time.sleep(effect.seconds)
+
+    # -- MCP server lifecycle -------------------------------------------------
+
+    def _start_mcp_server(
+        self,
+        session_name: str,
+        config: LaunchConfig,
+        run_tool: RunToolFn,
+    ) -> None:
+        """Start an MCP SSE server and write .mcp.json to work_dir."""
+        server = McpToolServer(
+            tools=config.mcp_tools,
+            run_tool=run_tool,
+        )
+        server.start()
+        self._mcp_servers[session_name] = server
+
+        mcp_json_path = config.work_dir / ".mcp.json"
+        mcp_config = {
+            "mcpServers": {
+                "doeff": {
+                    "type": "sse",
+                    "url": server.url,
+                },
+            },
+        }
+        mcp_json_path.write_text(json.dumps(mcp_config, indent=2))
+
+    def _stop_mcp_server(self, session_name: str) -> None:
+        """Stop the MCP server for a session (if any)."""
+        server = self._mcp_servers.pop(session_name, None)
+        if server is not None:
+            server.shutdown()
+
+    # -- Helpers -------------------------------------------------------------
 
     def _wait_for_ready(self, target: str, pattern: str, timeout: float) -> bool:
         """Wait for agent to be ready for input."""
