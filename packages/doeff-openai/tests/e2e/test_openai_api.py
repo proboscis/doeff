@@ -32,7 +32,11 @@ from doeff import (
     do,
 )
 
-from _runner import openai_api_key_from_env_handler, run_program
+from _runner import (
+    doeff_py_has_openai_key,
+    openai_api_key_from_doeff_py_handler,
+    run_program,
+)
 
 # Mark all tests in this module as e2e
 pytestmark = pytest.mark.e2e
@@ -513,7 +517,7 @@ async def test_graph_tracking():
 
 
 _run_real_e2e = os.environ.get("RUN_OPENAI_E2E") == "1"  # noqa: PINJ050
-_skip_real_e2e = not (_run_real_e2e and os.environ.get("OPENAI_API_KEY"))  # noqa: PINJ050
+_skip_real_e2e = not (_run_real_e2e and doeff_py_has_openai_key())
 
 
 @pytest.mark.skipif(
@@ -535,7 +539,7 @@ async def test_real_api_unstructured_response():
         return result
 
     result = await run_program(
-        WithHandler(openai_api_key_from_env_handler, test_program()),
+        WithHandler(openai_api_key_from_doeff_py_handler, test_program()),
     )
 
     assert result.is_ok()
@@ -563,7 +567,7 @@ async def test_real_api_structured_response():
         return result
 
     result = await run_program(
-        WithHandler(openai_api_key_from_env_handler, test_program()),
+        WithHandler(openai_api_key_from_doeff_py_handler, test_program()),
     )
 
     assert result.is_ok()
