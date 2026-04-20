@@ -13,7 +13,13 @@ from doeff_llm.effects import (
 
 from doeff import Pass, Resume, do
 from doeff_openai.chat import chat_completion
+from doeff_openai.costs import (
+    MissingCachedPricingError,
+    UnknownModelPricingError,
+    calculate_cost,
+)
 from doeff_openai.effects import (
+    CalculateCost,
     ChatCompletion,
     Embedding,
     StreamingChatCompletion,
@@ -94,6 +100,23 @@ def _handle_structured_output(effect: LLMStructuredQuery, k):
 
 
 @do
+def _handle_calculate_cost(effect: CalculateCost, k):
+    """Default pricing handler.
+
+    Resolves against the built-in :data:`MODEL_PRICING` table. When the
+    model is unknown, OR when usage includes cached tokens but the
+    pricing entry lacks a cached rate, ``Pass`` is yielded so an outer
+    handler can substitute. With no outer handler, doeff surfaces the
+    effect as an unhandled-effect error — there is no silent fall-back.
+    """
+    try:
+        cost_info = calculate_cost(effect.model, effect.token_usage)
+    except (UnknownModelPricingError, MissingCachedPricingError):
+        return (yield Pass(effect, k))
+    return (yield Resume(k, cost_info))
+
+
+@do
 def openai_production_handler(effect: Any, k: Any):
     """Single protocol handler suitable for ``WithHandler`` usage."""
     if isinstance(effect, LLMStreamingChat | StreamingChatCompletion):
@@ -110,6 +133,8 @@ def openai_production_handler(effect: Any, k: Any):
         effect.model
     ):
         return (yield _handle_structured_output(effect, k))
+    elif isinstance(effect, CalculateCost):
+        return (yield _handle_calculate_cost(effect, k))
     yield Pass(effect, k)
 
 
