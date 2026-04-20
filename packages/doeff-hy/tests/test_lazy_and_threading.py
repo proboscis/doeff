@@ -673,3 +673,44 @@ class TestLazyValVar:
             assert mod.__test_result__ == [["a"], ["a", "b"]]
         finally:
             del sys.modules["_test_lazy_var_defk"]
+
+    def test_lazy_val_referenced_inside_tuple(self):
+        """Lazy init must fire when the name only appears inside a tuple
+        literal (``#(lazy-name ...)``), not just in Expression/List forms."""
+        import sys
+
+        code = """
+(require doeff-hy.macros [defp <-])
+(require doeff-hy.handle [defhandler])
+(import doeff [do :as _doeff-do EffectBase WithHandler run :as doeff-run])
+(import doeff_core_effects [Ask Get Put state])
+(import doeff_core_effects.handlers [lazy-ask])
+(import doeff_core_effects.scheduler [scheduled])
+(import dataclasses [dataclass])
+
+(defclass [(dataclass :frozen True)] Pair [EffectBase]
+  #^ str other)
+
+(defhandler pair-handler
+  (lazy-val sid
+    (<- s (Ask "session_id"))
+    s)
+  (Pair [other]
+    (resume #(sid other))))
+
+(defp body {:post [(: % tuple)]}
+  (<- r (Pair :other "x"))
+  r)
+
+(setv wrapped body)
+(setv wrapped (WithHandler pair-handler wrapped))
+(for [h (reversed [(lazy-ask :env {"session_id" "s1"}) (state)])]
+  (setv wrapped (WithHandler h wrapped)))
+(setv wrapped (scheduled wrapped))
+(setv __test_result__ (doeff-run wrapped))
+"""
+        mod = _hy_eval_in_module(code, "_test_lazy_val_tuple_ref")
+        try:
+            assert mod.__test_result__ == ("s1", "x")
+        finally:
+            del sys.modules["_test_lazy_val_tuple_ref"]
