@@ -32,7 +32,7 @@
 ;;; S-expr preservation:
 ;;;   - defhandler stores __doeff_body__ for introspection (like defk)
 
-(import hy.models [Expression Symbol List Keyword])
+(import hy.models [Expression Symbol List Keyword Sequence])
 
 
 ;; ---------------------------------------------------------------------------
@@ -100,11 +100,15 @@
   (Symbol (+ "_lazy_" (str lazy-name) "_" suffix "_" (str _lazy-counter))))
 
 (defn _references-symbol [form sym-name]
-  "Check if form's AST contains a Symbol with the given name."
+  "Check if form's AST contains a Symbol with the given name.
+   Traverses any hy.models.Sequence (Expression, List, Tuple, Set, Dict,
+   FString, FComponent) so references inside tuple/set/dict literals are
+   detected — required for lazy init injection when the lazy name appears
+   only inside a tuple constructor like ``#(lazy-name other)``."
   (cond
     (isinstance form Symbol) (= (str form) sym-name)
-    (isinstance form #(Expression List))
-      (any (gfor f form (_references-symbol f (str sym-name))))
+    (isinstance form Sequence)
+      (any (gfor f form (_references-symbol f sym-name)))
     True False))
 
 (defn _build-lazy-init-forms [handler-name lazy-name lazy-body]
