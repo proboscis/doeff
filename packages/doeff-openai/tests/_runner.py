@@ -14,7 +14,10 @@ pre-existing test suite can run unchanged.
 from __future__ import annotations
 
 import os  # noqa: PINJ050 — test-only env bridge for Ask("openai_api_key")
+import runpy
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from doeff import AskEffect, Pass, Resume, WithHandler, do, run
@@ -128,4 +131,54 @@ def openai_api_key_from_env_handler(effect, k):
     yield Pass(effect, k)
 
 
-__all__ = ["RunResult", "openai_api_key_from_env_handler", "run_program"]
+DOEFF_PY_PATH = Path("~/.doeff.py").expanduser()
+
+
+@lru_cache(maxsize=1)
+def _load_doeff_py_env() -> dict[str, Any]:
+    """Load ``__default_env__`` from ``~/.doeff.py`` as a plain dict.
+
+    ``~/.doeff.py`` defines ``__default_env__ = Pure({...})``. We read
+    the file via :func:`runpy.run_path` and extract the literal dict
+    from the ``Pure`` wrapper so callers can use it without running a
+    doeff program. Cached because the file is read-only per process.
+    Returns an empty dict if the file does not exist.
+    """
+    if not DOEFF_PY_PATH.exists():
+        return {}
+    module_globals = runpy.run_path(str(DOEFF_PY_PATH))
+    default_env = module_globals.get("__default_env__")
+    if default_env is None or not hasattr(default_env, "value"):
+        return {}
+    return dict(default_env.value)
+
+
+@do
+def openai_api_key_from_doeff_py_handler(effect, k):
+    """Resolve ``Ask("openai_api_key")`` from ``~/.doeff.py``.
+
+    The personal API key lives at ``openai_api_key__personal`` in the
+    user's ``~/.doeff.py``. This handler bridges the unqualified
+    ``openai_api_key`` the OpenAI call path expects onto that entry.
+    Any other Ask (or a missing ``~/.doeff.py``) is passed through.
+    """
+    if isinstance(effect, AskEffect) and effect.key == "openai_api_key":
+        env = _load_doeff_py_env()
+        value = env.get("openai_api_key__personal")
+        if value is not None:
+            return (yield Resume(k, value))
+    yield Pass(effect, k)
+
+
+def doeff_py_has_openai_key() -> bool:
+    """True when ``~/.doeff.py`` has an ``openai_api_key__personal`` entry."""
+    return bool(_load_doeff_py_env().get("openai_api_key__personal"))
+
+
+__all__ = [
+    "RunResult",
+    "doeff_py_has_openai_key",
+    "openai_api_key_from_doeff_py_handler",
+    "openai_api_key_from_env_handler",
+    "run_program",
+]

@@ -1,7 +1,7 @@
 """E2E smoke tests for doeff-openai domain effect handlers."""
 
 
-import os  # noqa: PINJ050 — only for the RUN_OPENAI_E2E gate; the API key itself flows through the env-var handler below
+import os  # noqa: PINJ050 — only for the RUN_OPENAI_E2E gate; the API key itself flows through a handler below
 
 import pytest
 from doeff_openai.effects import ChatCompletion as ChatCompletionEffect
@@ -11,7 +11,11 @@ from pydantic import BaseModel
 
 from doeff import EffectGenerator, WithHandler, do
 
-from _runner import openai_api_key_from_env_handler, run_program
+from _runner import (
+    doeff_py_has_openai_key,
+    openai_api_key_from_doeff_py_handler,
+    run_program,
+)
 
 pytestmark = pytest.mark.e2e
 
@@ -21,18 +25,22 @@ class ArithmeticResult(BaseModel):
 
 
 _run_real_e2e = os.environ.get("RUN_OPENAI_E2E") == "1"
-_skip_real_e2e = not (_run_real_e2e and os.environ.get("OPENAI_API_KEY"))
+_skip_real_e2e = not (_run_real_e2e and doeff_py_has_openai_key())
 
 
 async def _async_run_with_handler(program, handler):
-    """Run with the real OpenAI production handler + env-var key resolver.
+    """Run with the real OpenAI production handler + doeff.py key resolver.
 
-    No ``env=`` dict here — ``Ask("openai_api_key")`` is resolved by
-    ``openai_api_key_from_env_handler`` reading ``OPENAI_API_KEY`` from
-    ``os.environ``. That keeps env-var access out of the test program.
+    No ``env=`` dict — ``Ask("openai_api_key")`` is resolved by
+    ``openai_api_key_from_doeff_py_handler`` reading
+    ``openai_api_key__personal`` from ``~/.doeff.py``. That follows the
+    project convention of keeping secrets in ``~/.doeff.py`` rather than
+    environment variables.
     """
     return await run_program(
-        WithHandler(openai_api_key_from_env_handler, WithHandler(handler, program))
+        WithHandler(
+            openai_api_key_from_doeff_py_handler, WithHandler(handler, program)
+        )
     )
 
 
