@@ -13,10 +13,11 @@ pre-existing test suite can run unchanged.
 
 from __future__ import annotations
 
+import os  # noqa: PINJ050 — test-only env bridge for Ask("openai_api_key")
 from dataclasses import dataclass, field
 from typing import Any
 
-from doeff import WithHandler, do, run
+from doeff import AskEffect, Pass, Resume, WithHandler, do, run
 from doeff_core_effects.effects import Try
 from doeff_core_effects.handlers import (
     await_handler,
@@ -106,4 +107,25 @@ async def run_program(program: Any, env: dict | None = None) -> RunResult:
     )
 
 
-__all__ = ["RunResult", "run_program"]
+@do
+def openai_api_key_from_env_handler(effect, k):
+    """Resolve ``Ask("openai_api_key")`` from the ``OPENAI_API_KEY`` env var.
+
+    Keeps ``os.environ`` access confined to a single handler: the
+    program under test still yields a plain ``Ask`` effect and never
+    touches environment variables directly. Any other effect — or an
+    ``Ask`` for a different key — is passed through so an outer handler
+    (e.g. a ``lazy_ask`` with an env dict) can resolve it.
+
+    When the ``OPENAI_API_KEY`` variable is absent the effect is
+    ``Pass``-ed rather than resolved with ``None`` — that matches the
+    loud-fail contract for missing keys.
+    """
+    if isinstance(effect, AskEffect) and effect.key == "openai_api_key":
+        value = os.environ.get("OPENAI_API_KEY")
+        if value is not None:
+            return (yield Resume(k, value))
+    yield Pass(effect, k)
+
+
+__all__ = ["RunResult", "openai_api_key_from_env_handler", "run_program"]
