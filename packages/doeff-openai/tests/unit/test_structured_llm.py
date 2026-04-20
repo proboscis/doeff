@@ -30,15 +30,10 @@ from doeff import (
     Pass,
     Resume,
     WithHandler,
-    async_run,
-    default_handlers,
     do,
 )
 
-
-async def run_program(program: Any, env: dict[str, Any] | None = None) -> Any:
-    """Execute a test program with standard handlers."""
-    return await async_run(program, handlers=default_handlers(), env=env)
+from _runner import run_program
 
 
 # Test models for structured output
@@ -562,7 +557,7 @@ async def test_structured_llm_integration():
             return (yield Resume(k, mock_client))
         if isinstance(effect, AskEffect) and effect.key == "openai_api_key":
             return (yield Resume(k, "sk-fake-test-key"))
-        yield Pass()
+        yield Pass(effect, k)
 
     @do
     def test_flow() -> EffectGenerator[SimpleResponse]:

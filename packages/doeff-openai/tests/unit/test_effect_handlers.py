@@ -31,16 +31,15 @@ from pydantic import BaseModel
 
 from doeff import (
     Await,
-    Delegate,
     EffectGenerator,
+    Pass,
     Resume,
     WithHandler,
-    async_run,
-    default_async_handlers,
-    default_handlers,
     do,
 )
 from doeff_core_effects.effects import EffectBase
+
+from _runner import run_program
 
 
 class StructuredAnswer(BaseModel):
@@ -49,10 +48,7 @@ class StructuredAnswer(BaseModel):
 
 
 async def _async_run_with_handler(program, handler):
-    return await async_run(
-        WithHandler(handler, program),
-        handlers=default_async_handlers(),
-    )
+    return await run_program(WithHandler(handler, program))
 
 
 async def _collect_stream_text(stream: Any) -> str:
@@ -188,7 +184,7 @@ async def test_openai_handler_delegates_unsupported_models() -> None:
     state = MockOpenAIState()
 
     @do
-    def wrapped_openai_handler(effect: Effect, k: Any):
+    def wrapped_openai_handler(effect: EffectBase, k: Any):
         return (
             yield openai_mock_handler(
                 effect,
@@ -199,10 +195,10 @@ async def test_openai_handler_delegates_unsupported_models() -> None:
         )
 
     @do
-    def fallback_handler(effect: Effect, k: Any):
+    def fallback_handler(effect: EffectBase, k: Any):
         if isinstance(effect, LLMChat):
             return (yield Resume(k, "fallback-response"))
-        yield Delegate()
+        yield Pass(effect, k)
 
     @do
     def flow() -> EffectGenerator[str]:
@@ -213,9 +209,8 @@ async def test_openai_handler_delegates_unsupported_models() -> None:
             )
         )
 
-    result = await async_run(
-        WithHandler(fallback_handler, WithHandler(wrapped_openai_handler, flow())),
-        handlers=default_handlers(),
+    result = await run_program(
+        WithHandler(fallback_handler, WithHandler(wrapped_openai_handler, flow()))
     )
 
     assert result.is_ok()

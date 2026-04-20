@@ -39,6 +39,7 @@ class TokenUsage:
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    cached_prompt_tokens: int = 0  # portion of prompt_tokens served from cache
 
     @property
     def input_tokens(self) -> int:
@@ -49,6 +50,11 @@ class TokenUsage:
     def output_tokens(self) -> int:
         """Alias for completion_tokens."""
         return self.completion_tokens
+
+    @property
+    def fresh_input_tokens(self) -> int:
+        """Prompt tokens NOT served from cache (billed at input rate)."""
+        return max(self.prompt_tokens - self.cached_prompt_tokens, 0)
 
 
 @dataclass(frozen=True)
@@ -113,14 +119,54 @@ class APICallMetadata:
 @dataclass(frozen=True)
 class ModelPricing:
     """Pricing information for a model."""
-    input_price_per_1k: float  # USD per 1K input tokens
+    input_price_per_1k: float  # USD per 1K fresh input tokens
     output_price_per_1k: float  # USD per 1K output tokens
     context_window: int  # Maximum context size
     max_output_tokens: int | None = None  # Maximum output tokens
+    cached_input_price_per_1k: float | None = None
+    """USD per 1K cached input tokens. ``None`` means the provider does
+    not publish a cached-input rate for this model — any non-zero
+    ``cached_prompt_tokens`` then becomes an explicit pricing failure
+    (the handler Pass-es so an outer handler can substitute) rather
+    than silently billing at the fresh-input rate."""
 
 
-# Pricing as of 2024 (prices in USD per 1K tokens)
+# Pricing as of 2026-Q2 (prices in USD per 1K tokens).
+#
+# Sources:
+#   https://openai.com/api/pricing/            (official)
+#   https://platform.openai.com/docs/models/gpt-5
+#   https://platform.openai.com/docs/models/gpt-5-mini
+#   https://platform.openai.com/docs/models/gpt-5-nano
+#   Helicone cost calculator cross-check.
+#
+# Cached-input rates reflect OpenAI's 90% prompt-cache discount that is
+# advertised alongside the GPT-5 family; earlier generations (GPT-4,
+# GPT-3.5, o1) do not publish a separate cached rate so it stays unset
+# and the handler fails loudly if caching is ever reported for them.
 MODEL_PRICING: dict[str, ModelPricing] = {
+    # GPT-5 family (2025-08 launch)
+    "gpt-5": ModelPricing(
+        0.00125, 0.010, 400000, None, cached_input_price_per_1k=0.000125
+    ),
+    "gpt-5-mini": ModelPricing(
+        0.00025, 0.002, 400000, None, cached_input_price_per_1k=0.000025
+    ),
+    "gpt-5-nano": ModelPricing(
+        0.00005, 0.0004, 400000, None, cached_input_price_per_1k=0.000005
+    ),
+
+    # GPT-5.4 family (2026-03 launch; flagship as of 2026-Q2)
+    "gpt-5.4": ModelPricing(
+        0.00250, 0.015, 1050000, None, cached_input_price_per_1k=0.000250
+    ),
+    "gpt-5.4-mini": ModelPricing(
+        0.00075, 0.0045, 400000, None, cached_input_price_per_1k=0.0000750
+    ),
+    "gpt-5.4-nano": ModelPricing(
+        0.00020, 0.00125, 400000, None, cached_input_price_per_1k=0.0000200
+    ),
+
     # GPT-4 Turbo models
     "gpt-4-turbo-preview": ModelPricing(0.01, 0.03, 128000, 4096),
     "gpt-4-turbo-2024-04-09": ModelPricing(0.01, 0.03, 128000, 4096),

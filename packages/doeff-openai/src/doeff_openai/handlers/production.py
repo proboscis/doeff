@@ -13,7 +13,13 @@ from doeff_llm.effects import (
 
 from doeff import Pass, Resume, do
 from doeff_openai.chat import chat_completion
+from doeff_openai.costs import (
+    MissingCachedPricingError,
+    UnknownModelPricingError,
+    calculate_cost,
+)
 from doeff_openai.effects import (
+    CalculateCost,
     ChatCompletion,
     Embedding,
     StreamingChatCompletion,
@@ -94,6 +100,29 @@ def _handle_structured_output(effect: LLMStructuredQuery, k):
 
 
 @do
+def _handle_calculate_cost(effect: CalculateCost, k):
+    """Default pricing handler.
+
+    Resolves against the built-in :data:`MODEL_PRICING` table. When the
+    model is unknown, OR when usage includes cached tokens but the
+    pricing entry lacks a cached rate, ``Pass`` is yielded so an outer
+    handler can substitute. With no outer handler, doeff surfaces the
+    effect as an unhandled-effect error — there is no silent fall-back.
+
+    Any non-:class:`CalculateCost` effect is passed through untouched —
+    this makes the function safe to install via ``WithHandler`` on its
+    own, not just inside the multiplexed ``openai_production_handler``.
+    """
+    if not isinstance(effect, CalculateCost):
+        return (yield Pass(effect, k))
+    try:
+        cost_info = calculate_cost(effect.model, effect.token_usage)
+    except (UnknownModelPricingError, MissingCachedPricingError):
+        return (yield Pass(effect, k))
+    return (yield Resume(k, cost_info))
+
+
+@do
 def openai_production_handler(effect: Any, k: Any):
     """Single protocol handler suitable for ``WithHandler`` usage."""
     if isinstance(effect, LLMStreamingChat | StreamingChatCompletion):
@@ -110,12 +139,24 @@ def openai_production_handler(effect: Any, k: Any):
         effect.model
     ):
         return (yield _handle_structured_output(effect, k))
+    elif isinstance(effect, CalculateCost):
+        return (yield _handle_calculate_cost(effect, k))
     yield Pass(effect, k)
 
 
 def production_handlers() -> ProtocolHandler:
     """Protocol handler for real OpenAI API execution."""
     return openai_production_handler
+
+
+calculate_cost_handler = _handle_calculate_cost
+"""Standalone default handler for :class:`CalculateCost`.
+
+Exposed so test stacks (and callers that swap out the full production
+handler) can still resolve cost queries without bringing in the real
+OpenAI client path. Same Pass-on-miss semantics as the version embedded
+in :func:`openai_production_handler`.
+"""
 
 
 __all__ = [
@@ -125,6 +166,7 @@ __all__ = [
     "OPENAI_MODEL_PREFIXES",
     "ProtocolHandler",
     "_is_openai_model",
+    "calculate_cost_handler",
     "openai_production_handler",
     "production_handlers",
 ]

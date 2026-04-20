@@ -59,6 +59,9 @@ from doeff_openai.client import (
 
 # Cost calculation exports
 from doeff_openai.costs import (
+    MissingCachedPricingError,
+    PricingError,
+    UnknownModelPricingError,
     calculate_cost,
     count_embedding_tokens,
     count_message_tokens,
@@ -67,6 +70,15 @@ from doeff_openai.costs import (
     estimate_max_cost,
     get_encoding,
     get_model_pricing,
+)
+
+# Effect exports (includes CalculateCost)
+from doeff_openai.effects import (
+    CalculateCost,
+    ChatCompletion,
+    Embedding,
+    StreamingChatCompletion,
+    StructuredOutput,
 )
 
 # Embedding exports
@@ -117,17 +129,25 @@ from doeff_openai.types import (
 __all__ = [
     "MODEL_PRICING",
     "APICallMetadata",
+    "CalculateCost",
+    "ChatCompletion",
     "ClientHolder",
     "CompletionRequest",
     "CostInfo",
+    "Embedding",
     "EmbeddingRequest",
+    "MissingCachedPricingError",
     "ModelPricing",
     # Client
     "OpenAIClient",
     # Types
     "OpenAIModel",
+    "PricingError",
     "StreamChunk",
+    "StreamingChatCompletion",
+    "StructuredOutput",
     "TokenUsage",
+    "UnknownModelPricingError",
     # Version
     "__version__",
     "batch_embeddings",

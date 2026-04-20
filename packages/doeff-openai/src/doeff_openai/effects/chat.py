@@ -2,16 +2,22 @@
 
 
 import warnings
-from dataclasses import dataclass
 
 from doeff_llm.effects import LLMChat, LLMStreamingChat
 
 
-@dataclass(frozen=True, kw_only=True)
 class ChatCompletion(LLMChat):
-    """Deprecated alias of :class:`doeff_llm.effects.LLMChat`."""
+    """Deprecated alias of :class:`doeff_llm.effects.LLMChat`.
 
-    def __post_init__(self) -> None:
+    ``LLMChat`` defines an explicit ``__init__`` rather than being a
+    ``@dataclass``, so subclassing with ``@dataclass(kw_only=True)`` would
+    silently replace the parent's constructor with a zero-field one and
+    break every caller. Forwarding via ``__init__`` preserves the base
+    signature while keeping the deprecation surface.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         warnings.warn(
             "ChatCompletion is deprecated; use doeff_llm.effects.LLMChat instead.",
             DeprecationWarning,
@@ -19,11 +25,11 @@ class ChatCompletion(LLMChat):
         )
 
 
-@dataclass(frozen=True, kw_only=True)
 class StreamingChatCompletion(LLMStreamingChat):
     """Deprecated alias of :class:`doeff_llm.effects.LLMStreamingChat`."""
 
-    def __post_init__(self) -> None:
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         warnings.warn(
             "StreamingChatCompletion is deprecated; use doeff_llm.effects.LLMStreamingChat instead.",
             DeprecationWarning,
