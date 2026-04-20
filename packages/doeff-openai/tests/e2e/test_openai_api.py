@@ -29,9 +29,13 @@ from doeff import (
     Pass,
     Resume,
     WithHandler,
-    async_run,
-    default_handlers,
     do,
+)
+
+from _runner import (
+    doeff_py_has_openai_key,
+    openai_api_key_from_doeff_py_handler,
+    run_program,
 )
 
 # Mark all tests in this module as e2e
@@ -123,7 +127,7 @@ def _make_mock_handler(mock_client: Mock):
             return (yield Resume(k, mock_client))
         if isinstance(effect, AskEffect) and effect.key == "openai_api_key":
             return (yield Resume(k, "sk-fake-test-key"))
-        yield Pass()
+        yield Pass(effect, k)
 
     return mock_handler
 
@@ -131,9 +135,8 @@ def _make_mock_handler(mock_client: Mock):
 async def run_with_mock_handler(program: Any, mock_create: AsyncMock):
     """Run a program with handler-provided OpenAI client mocks."""
     mock_client = _make_mock_client(mock_create)
-    result = await async_run(
-        WithHandler(_make_mock_handler(mock_client), program),
-        handlers=default_handlers(),
+    result = await run_program(
+        WithHandler(_make_mock_handler(mock_client), program)
     )
     return result
 
@@ -513,9 +516,8 @@ async def test_graph_tracking():
     assert any(call.get("operation") == "structured_llm" for call in api_calls)
 
 
-_real_api_key = os.environ.get("OPENAI_API_KEY")  # noqa: PINJ050
 _run_real_e2e = os.environ.get("RUN_OPENAI_E2E") == "1"  # noqa: PINJ050
-_skip_real_e2e = not bool(_real_api_key and _run_real_e2e)
+_skip_real_e2e = not (_run_real_e2e and doeff_py_has_openai_key())
 
 
 @pytest.mark.skipif(
@@ -536,10 +538,8 @@ async def test_real_api_unstructured_response():
         )
         return result
 
-    result = await async_run(
-        test_program(),
-        handlers=default_handlers(),
-        env={"openai_api_key": _real_api_key},
+    result = await run_program(
+        WithHandler(openai_api_key_from_doeff_py_handler, test_program()),
     )
 
     assert result.is_ok()
@@ -566,10 +566,8 @@ async def test_real_api_structured_response():
         )
         return result
 
-    result = await async_run(
-        test_program(),
-        handlers=default_handlers(),
-        env={"openai_api_key": _real_api_key},
+    result = await run_program(
+        WithHandler(openai_api_key_from_doeff_py_handler, test_program()),
     )
 
     assert result.is_ok()

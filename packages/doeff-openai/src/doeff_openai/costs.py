@@ -113,30 +113,66 @@ def count_embedding_tokens(
     return sum(len(encoding.encode(text)) for text in input)
 
 
+class PricingError(ValueError):
+    """Base class for pricing-lookup failures."""
+
+
+class UnknownModelPricingError(PricingError):
+    """Raised when no entry matches the requested model."""
+
+    def __init__(self, model: str) -> None:
+        super().__init__(f"no pricing entry for model {model!r}")
+        self.model = model
+
+
+class MissingCachedPricingError(PricingError):
+    """Raised when cached_prompt_tokens > 0 but the model's pricing has
+    no cached_input_price_per_1k."""
+
+    def __init__(self, model: str, cached_tokens: int) -> None:
+        super().__init__(
+            f"model {model!r} reported {cached_tokens} cached_prompt_tokens "
+            f"but has no cached_input_price_per_1k"
+        )
+        self.model = model
+        self.cached_tokens = cached_tokens
+
+
 def calculate_cost(
     model: str,
     token_usage: TokenUsage,
 ) -> CostInfo:
+    """Calculate the billed cost of an API call.
+
+    Raises:
+        UnknownModelPricingError: when the model has no pricing entry
+            (neither exact nor prefix match). No silent fall-back is
+            provided — the caller is expected to handle this explicitly
+            (e.g. by yielding a :class:`doeff_openai.effects.CalculateCost`
+            effect so an outer handler can substitute a value).
+        MissingCachedPricingError: when usage reports cached tokens but
+            the pricing entry has no cached rate — charging at the fresh
+            input rate would silently overbill the user.
     """
-    Calculate the cost of an API call based on token usage.
-    
-    Returns CostInfo with costs in USD.
-    """
-    # Get pricing for the model
     pricing = MODEL_PRICING.get(model)
-    if not pricing:
-        # Try to find a matching model by prefix
+    if pricing is None:
         for model_key, model_pricing in MODEL_PRICING.items():
             if model.startswith(model_key) or model_key in model:
                 pricing = model_pricing
                 break
 
-    if not pricing:
-        # Default to GPT-3.5 pricing if model not found
-        pricing = MODEL_PRICING["gpt-3.5-turbo"]
+    if pricing is None:
+        raise UnknownModelPricingError(model)
 
-    # Calculate costs
-    input_cost = (token_usage.input_tokens / 1000) * pricing.input_price_per_1k
+    cached = token_usage.cached_prompt_tokens
+    if cached > 0 and pricing.cached_input_price_per_1k is None:
+        raise MissingCachedPricingError(model, cached)
+
+    fresh_input = token_usage.fresh_input_tokens
+    input_cost = (fresh_input / 1000) * pricing.input_price_per_1k
+    if cached > 0:
+        # pricing.cached_input_price_per_1k is not None here (guarded above)
+        input_cost += (cached / 1000) * pricing.cached_input_price_per_1k
     output_cost = (token_usage.output_tokens / 1000) * pricing.output_price_per_1k
     total_cost = input_cost + output_cost
 
@@ -205,26 +241,23 @@ def estimate_max_cost(
     max_tokens: int | None = None,
     messages: list[dict[str, Any]] | None = None,
 ) -> float:
-    """
-    Estimate the maximum cost for a completion request.
-    
-    Returns the maximum cost in USD based on the model's max tokens.
+    """Estimate the maximum cost for a completion request.
+
+    Raises:
+        UnknownModelPricingError: when the model has no pricing entry.
     """
     pricing = get_model_pricing(model)
-    if not pricing:
-        pricing = MODEL_PRICING["gpt-3.5-turbo"]
+    if pricing is None:
+        raise UnknownModelPricingError(model)
 
-    # Calculate input tokens
     if messages:
         input_tokens = count_message_tokens(messages, model)
     else:
         input_tokens = 0
 
-    # Use provided max_tokens or model's default
     if max_tokens is None:
         max_tokens = pricing.max_output_tokens or 4096
 
-    # Calculate maximum cost
     input_cost = (input_tokens / 1000) * pricing.input_price_per_1k
     output_cost = (max_tokens / 1000) * pricing.output_price_per_1k
 
