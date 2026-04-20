@@ -1,7 +1,7 @@
 """E2E smoke tests for doeff-openai domain effect handlers."""
 
 
-import os  # noqa: PINJ050 - true e2e env gating
+import os  # noqa: PINJ050 — only for the RUN_OPENAI_E2E gate; the API key itself flows through the env-var handler below
 
 import pytest
 from doeff_openai.effects import ChatCompletion as ChatCompletionEffect
@@ -9,7 +9,9 @@ from doeff_openai.effects import StructuredOutput
 from doeff_openai.handlers import production_handlers
 from pydantic import BaseModel
 
-from doeff import EffectGenerator, WithHandler, async_run, default_async_handlers, do
+from doeff import EffectGenerator, WithHandler, do
+
+from _runner import openai_api_key_from_env_handler, run_program
 
 pytestmark = pytest.mark.e2e
 
@@ -18,16 +20,19 @@ class ArithmeticResult(BaseModel):
     value: int
 
 
-_real_api_key = os.environ.get("OPENAI_API_KEY")
 _run_real_e2e = os.environ.get("RUN_OPENAI_E2E") == "1"
-_skip_real_e2e = not bool(_real_api_key and _run_real_e2e)
+_skip_real_e2e = not (_run_real_e2e and os.environ.get("OPENAI_API_KEY"))
 
 
-async def _async_run_with_handler(program, handler, *, env):
-    return await async_run(
-        WithHandler(handler, program),
-        handlers=default_async_handlers(),
-        env=env,
+async def _async_run_with_handler(program, handler):
+    """Run with the real OpenAI production handler + env-var key resolver.
+
+    No ``env=`` dict here — ``Ask("openai_api_key")`` is resolved by
+    ``openai_api_key_from_env_handler`` reading ``OPENAI_API_KEY`` from
+    ``os.environ``. That keeps env-var access out of the test program.
+    """
+    return await run_program(
+        WithHandler(openai_api_key_from_env_handler, WithHandler(handler, program))
     )
 
 
@@ -49,11 +54,7 @@ async def test_chat_completion_effect_with_production_handler() -> None:
         )
         return response.choices[0].message.content
 
-    result = await _async_run_with_handler(
-        flow(),
-        production_handlers(),
-        env={"openai_api_key": _real_api_key},
-    )
+    result = await _async_run_with_handler(flow(), production_handlers())
 
     assert result.is_ok()
     assert isinstance(result.value, str)
@@ -83,11 +84,7 @@ async def test_structured_output_effect_with_production_handler() -> None:
             )
         )
 
-    result = await _async_run_with_handler(
-        flow(),
-        production_handlers(),
-        env={"openai_api_key": _real_api_key},
-    )
+    result = await _async_run_with_handler(flow(), production_handlers())
 
     assert result.is_ok()
     assert isinstance(result.value, ArithmeticResult)
