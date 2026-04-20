@@ -11,15 +11,10 @@ from doeff import (
     Ask,
     EffectGenerator,
     Tell,
-    async_run,
-    default_handlers,
     do,
 )
 
-
-async def run_program(program, env=None):
-    """Execute a test program with standard handlers."""
-    return await async_run(program, handlers=default_handlers(), env=env)
+from _runner import run_program
 
 
 @pytest.mark.asyncio

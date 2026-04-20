@@ -108,7 +108,13 @@ def _handle_calculate_cost(effect: CalculateCost, k):
     pricing entry lacks a cached rate, ``Pass`` is yielded so an outer
     handler can substitute. With no outer handler, doeff surfaces the
     effect as an unhandled-effect error — there is no silent fall-back.
+
+    Any non-:class:`CalculateCost` effect is passed through untouched —
+    this makes the function safe to install via ``WithHandler`` on its
+    own, not just inside the multiplexed ``openai_production_handler``.
     """
+    if not isinstance(effect, CalculateCost):
+        return (yield Pass(effect, k))
     try:
         cost_info = calculate_cost(effect.model, effect.token_usage)
     except (UnknownModelPricingError, MissingCachedPricingError):
@@ -143,6 +149,16 @@ def production_handlers() -> ProtocolHandler:
     return openai_production_handler
 
 
+calculate_cost_handler = _handle_calculate_cost
+"""Standalone default handler for :class:`CalculateCost`.
+
+Exposed so test stacks (and callers that swap out the full production
+handler) can still resolve cost queries without bringing in the real
+OpenAI client path. Same Pass-on-miss semantics as the version embedded
+in :func:`openai_production_handler`.
+"""
+
+
 __all__ = [
     "DEFAULT_STRUCTURED_MAX_TOKENS",
     "DEFAULT_STRUCTURED_TEMPERATURE",
@@ -150,6 +166,7 @@ __all__ = [
     "OPENAI_MODEL_PREFIXES",
     "ProtocolHandler",
     "_is_openai_model",
+    "calculate_cost_handler",
     "openai_production_handler",
     "production_handlers",
 ]

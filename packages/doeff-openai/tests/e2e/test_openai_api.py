@@ -29,10 +29,10 @@ from doeff import (
     Pass,
     Resume,
     WithHandler,
-    async_run,
-    default_handlers,
     do,
 )
+
+from _runner import run_program
 
 # Mark all tests in this module as e2e
 pytestmark = pytest.mark.e2e
@@ -123,7 +123,7 @@ def _make_mock_handler(mock_client: Mock):
             return (yield Resume(k, mock_client))
         if isinstance(effect, AskEffect) and effect.key == "openai_api_key":
             return (yield Resume(k, "sk-fake-test-key"))
-        yield Pass()
+        yield Pass(effect, k)
 
     return mock_handler
 
@@ -131,9 +131,8 @@ def _make_mock_handler(mock_client: Mock):
 async def run_with_mock_handler(program: Any, mock_create: AsyncMock):
     """Run a program with handler-provided OpenAI client mocks."""
     mock_client = _make_mock_client(mock_create)
-    result = await async_run(
-        WithHandler(_make_mock_handler(mock_client), program),
-        handlers=default_handlers(),
+    result = await run_program(
+        WithHandler(_make_mock_handler(mock_client), program)
     )
     return result
 
@@ -536,9 +535,8 @@ async def test_real_api_unstructured_response():
         )
         return result
 
-    result = await async_run(
+    result = await run_program(
         test_program(),
-        handlers=default_handlers(),
         env={"openai_api_key": _real_api_key},
     )
 
@@ -566,9 +564,8 @@ async def test_real_api_structured_response():
         )
         return result
 
-    result = await async_run(
+    result = await run_program(
         test_program(),
-        handlers=default_handlers(),
         env={"openai_api_key": _real_api_key},
     )
 
