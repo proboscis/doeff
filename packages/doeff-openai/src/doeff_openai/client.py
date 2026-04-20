@@ -16,7 +16,7 @@ from doeff import do
 from doeff_core_effects import Ask, Get, Put, Tell, Try
 
 EffectGenerator = Generator
-from doeff_openai.costs import calculate_cost
+from doeff_openai.effects.cost import CalculateCost
 from doeff_openai.types import APICallMetadata, TokenUsage
 
 
@@ -193,13 +193,20 @@ def get_openai_client() -> EffectGenerator[OpenAIClient]:
 
 
 def extract_token_usage(response: ChatCompletion | CreateEmbeddingResponse) -> TokenUsage | None:
-    """Extract token usage from OpenAI response."""
+    """Extract token usage from OpenAI response.
+
+    Also reads ``usage.prompt_tokens_details.cached_tokens`` when present
+    so the pricing path can bill cached prefixes at the discounted rate.
+    """
     if hasattr(response, "usage") and response.usage:
         usage = response.usage
+        prompt_details = getattr(usage, "prompt_tokens_details", None)
+        cached = getattr(prompt_details, "cached_tokens", 0) if prompt_details else 0
         return TokenUsage(
             prompt_tokens=getattr(usage, "prompt_tokens", 0),
             completion_tokens=getattr(usage, "completion_tokens", 0),
             total_tokens=getattr(usage, "total_tokens", 0),
+            cached_prompt_tokens=cached or 0,
         )
     return None
 
@@ -237,13 +244,18 @@ def track_api_call(
         request_payload
     )
 
-    # Extract token usage if available
+    # Extract token usage and ask a handler to price it. Yielding the
+    # CalculateCost effect keeps the pricing table behind a handler —
+    # unknown models or missing cached rates are expected to ``Pass``
+    # through the default handler so an outer handler can substitute,
+    # and ultimately surface as an unhandled-effect error rather than
+    # being silently mispriced.
     token_usage = None
     cost_info = None
     if response and not error:
         token_usage = extract_token_usage(response)
         if token_usage:
-            cost_info = calculate_cost(model, token_usage)
+            cost_info = yield CalculateCost(model=model, token_usage=token_usage)
 
     # Extract request ID
     request_id = extract_request_id(response) if response else None
