@@ -6,6 +6,7 @@ Usage:
     doeff run --program myapp.program --env myapp.env
     doeff run --program myapp.program --set name=Alice --set count=10
     doeff run -c 'from doeff import Ask; yield Ask("key")'
+    doeff run --hy '(import doeff [Pure]) (Pure 42)'
     doeff run --program myapp.program --apply myapp.transforms.wrap
     doeff run --program myapp.program -- script.py
 """
@@ -31,6 +32,7 @@ class RunArgs(argparse.Namespace):
     func: Callable[["RunArgs"], int]
     program: str | None
     code: str | None
+    hy_code: str | None
     interpreter: str | None
     envs: list[str] | None
     set_vars: list[str] | None
@@ -156,7 +158,65 @@ def handle_run_code(args: RunArgs) -> int:
     return 0
 
 
+_HY_EXCLUSIVE_FLAGS = (
+    ("interpreter", "--interpreter"),
+    ("envs", "--env"),
+    ("set_vars", "--set"),
+    ("apply", "--apply"),
+    ("transform", "--transform"),
+)
+
+
+def handle_run_hy(args: RunArgs) -> int:
+    """Evaluate a Hy source block and run the resulting Program."""
+    from doeff import run as _run
+    from doeff.cli.hy_runner import HyRunnerError, evaluate_hy_source
+
+    for attr, flag in _HY_EXCLUSIVE_FLAGS:
+        if getattr(args, attr):
+            print(
+                f"Error: --hy cannot be combined with {flag}; "
+                "express handlers and env inline in the Hy source.",
+                file=sys.stderr,
+            )
+            return 2
+
+    source = args.hy_code
+    if source == "-":
+        source = sys.stdin.read()
+    if not source or not source.strip():
+        print("Error: No Hy source provided", file=sys.stderr)
+        return 1
+
+    maybe_create_runbox_record(skip_runbox=args.no_runbox)
+
+    try:
+        evaluated = evaluate_hy_source(source)
+    except HyRunnerError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    value = _run(evaluated.program)
+
+    if args.format == "json":
+        payload = {
+            "status": "ok",
+            "program": None,
+            "interpreter": None,
+            "envs": [],
+            "result": _json_safe(value),
+            "result_type": type(value).__name__,
+        }
+        print(json.dumps(payload))
+    else:
+        print(value)
+    return 0
+
+
 def handle_run(args: RunArgs) -> int:
+    if args.hy_code is not None:
+        return handle_run_hy(args)
+
     if args.code is not None:
         return handle_run_code(args)
 
@@ -213,6 +273,14 @@ def build_parser() -> argparse.ArgumentParser:
     source_group.add_argument(
         "-c", dest="code", metavar="CODE",
         help="Execute doeff code directly. Use '-' to read from stdin.",
+    )
+    source_group.add_argument(
+        "--hy", dest="hy_code", metavar="HYCODE",
+        help=(
+            "Execute a Hy source block directly. The block is auto-wrapped "
+            "in (do! ...) and runs without --interpreter/--env/--set/--apply/"
+            "--transform — configure handlers inline. Use '-' to read stdin."
+        ),
     )
     run_parser.add_argument("--interpreter", help="Callable that accepts the Program")
     run_parser.add_argument(
