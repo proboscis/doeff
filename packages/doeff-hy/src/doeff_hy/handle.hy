@@ -538,18 +538,42 @@
              (import doeff_core_effects.effects [Get Put]))
         `(do)))
 
+  ;; New-style: defhandler produces a function (Program -> Program) instead
+  ;; of a raw handler dispatcher. The inner dispatcher (handler-expr) is kept
+  ;; as handler-data and wrapped in a thin function that calls WithHandler.
+  ;;
+  ;; The function is marked with _doeff_is_handler_fn=True so the public
+  ;; WithHandler(h, body) shim (in doeff/program.py) can detect it and route
+  ;; to h(body) — letting legacy code paths using (WithHandler my-h body)
+  ;; keep working during migration.
   (if (is params None)
       `(do
          (import doeff.do [do :as _doeff-do])
-         (import doeff [Resume Transfer Pass])
+         (import doeff [Resume Transfer Pass WithHandler])
          ~lazy-imports
-         (setv ~name ~handler-expr)
+         (setv ~name
+           ((fn []
+              (setv __doeff-handler-data__ ~handler-expr)
+              (defn __doeff-handler-fn__ [__doeff-body__]
+                (WithHandler __doeff-handler-data__ __doeff-body__))
+              (setv (. __doeff-handler-fn__ _doeff_is_handler_fn) True)
+              (setv (. __doeff-handler-fn__ __doeff_handler_data__)
+                    __doeff-handler-data__)
+              __doeff-handler-fn__)))
          (setv (. ~name __doeff_body__) ~quoted-body)
          (setv (. ~name __doeff_name__) ~(str name)))
       `(do
          (import doeff.do [do :as _doeff-do])
-         (import doeff [Resume Transfer Pass])
+         (import doeff [Resume Transfer Pass WithHandler])
          ~lazy-imports
-         (defn ~name [~@params] ~handler-expr)
+         (defn ~name [~@params]
+           (setv __doeff-handler-data__ ~handler-expr)
+           (defn __doeff-handler-fn__ [__doeff-body__]
+             (WithHandler __doeff-handler-data__ __doeff-body__))
+           (setv (. __doeff-handler-fn__ _doeff_is_handler_fn) True)
+           (setv (. __doeff-handler-fn__ __doeff_handler_data__)
+                 __doeff-handler-data__)
+           (setv (. __doeff-handler-fn__ __doeff_name__) ~(str name))
+           __doeff-handler-fn__)
          (setv (. ~name __doeff_body__) ~quoted-body)
          (setv (. ~name __doeff_name__) ~(str name)))))
