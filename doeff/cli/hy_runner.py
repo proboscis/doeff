@@ -2,10 +2,10 @@
 
 The user supplies a block of Hy forms. Imports, requires, and defs execute at
 module scope; the value of the final expression is treated as the Program.
-Users compose handlers themselves (``WithHandler``, ``handle``, ``defhandler``
-stacks) inside the snippet. The doeff-hy macro prelude
-``(require doeff-hy.macros [do! <-])`` is prepended automatically so ``do!``
-and ``<-`` are available without boilerplate.
+Users compose handlers themselves inline — ``handle`` for one-shot
+installs, ``defhandler`` for reusable ones. The common macro prelude
+is prepended automatically so ``do!`` / ``<-`` / ``handle`` /
+``defhandler`` are available without extra ``require`` lines.
 """
 
 from __future__ import annotations
@@ -17,7 +17,10 @@ from dataclasses import dataclass
 from typing import Any
 
 
-_REQUIRE_PRELUDE = "(require doeff-hy.macros [do! <-])"
+_REQUIRE_PRELUDE = (
+    "(require doeff-hy.macros [do! <-])\n"
+    "(require doeff-hy.handle [defhandler handle])"
+)
 
 
 @dataclass
