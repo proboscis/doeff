@@ -112,7 +112,20 @@ impl PyVM {
         let ctx = self.vm.last_error_context.take();
         Python::attach(|py| {
             let desc = Self::describe_effect(py, effect);
-            let msg = format!("{}: {}", label, desc);
+            let chain: Vec<String> = ctx
+                .as_ref()
+                .and_then(|c| Self::extract_handler_chain(c))
+                .unwrap_or_default();
+            let msg = if chain.is_empty() {
+                format!("{}: {} (no handlers in scope)", label, desc)
+            } else {
+                format!(
+                    "{}: {}\n  handlers in scope (innermost→outermost): {}",
+                    label,
+                    desc,
+                    chain.join(" → "),
+                )
+            };
             let err = pyo3::exceptions::PyRuntimeError::new_err(msg);
             // Attach doeff traceback if captured
             if let Some(frames) = ctx {
@@ -125,6 +138,48 @@ impl PyVM {
             }
             err
         })
+    }
+
+    /// Pull the handler-chain entry out of a captured execution context.
+    ///
+    /// The VM stores the chain as ``["handler", "chain", [name1, name2, ...]]``
+    /// in ``last_error_context``. We strip consecutive duplicates to avoid the
+    /// ``handler.<locals>.clause`` repeats that Python closures produce.
+    fn extract_handler_chain(ctx: &[Value]) -> Option<Vec<String>> {
+        for entry in ctx {
+            let Value::List(items) = entry else { continue };
+            if items.len() < 3 {
+                continue;
+            }
+            let (Value::String(kind), Value::String(subkind)) = (&items[0], &items[1]) else {
+                continue;
+            };
+            if kind != "handler" || subkind != "chain" {
+                continue;
+            }
+            let Value::List(names) = &items[2] else {
+                continue;
+            };
+            let mut out: Vec<String> = Vec::new();
+            for n in names {
+                let Value::String(raw) = n else { continue };
+                // Mirror the traceback renderer: take everything before the
+                // first ``.<locals>.``. This surfaces the factory name for
+                // the core handler pattern (``lazy_ask.<locals>.handler``
+                // → ``lazy_ask``) while keeping unqualified names intact.
+                let base = match raw.split_once(".<locals>.") {
+                    Some((outer, _)) => outer,
+                    None => raw.as_str(),
+                };
+                // Drop module prefixes: ``pkg.mod.foo`` → ``foo``.
+                let trimmed = base.rsplit('.').next().unwrap_or(base).to_string();
+                if out.last().map_or(true, |prev| prev != &trimmed) {
+                    out.push(trimmed);
+                }
+            }
+            return Some(out);
+        }
+        None
     }
 
     /// Get a human-readable description of an effect value (type name + repr).
