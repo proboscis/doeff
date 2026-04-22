@@ -21,6 +21,7 @@ from doeff.program import (
     Resume,
     Transfer,
     WithHandler,
+    WithHandlerType,
     WithObserve as WithObserveRaw,
     program,
 )
@@ -70,7 +71,7 @@ from doeff_core_effects.scheduler import (  # noqa: E402
 # Enables isinstance(x, DoExpr) to check if a value is any program node.
 _DOEXPR_TYPES = (
     Pure, Perform, Resume, Transfer, Apply, Expand, Pass,
-    WithHandler, WithObserveRaw, ResumeThrow, TransferThrow,
+    WithHandlerType, WithObserveRaw, ResumeThrow, TransferThrow,
     GetTraceback, GetExecutionContext, GetHandlers, GetOuterHandlers,
 )
 

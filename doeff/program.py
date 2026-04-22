@@ -12,7 +12,7 @@ from doeff_vm import (
     Apply,
     Expand,
     Pass,
-    WithHandler,
+    WithHandler as _WithHandlerNode,
     ResumeThrow,
     TransferThrow,
     WithObserve,
@@ -21,6 +21,27 @@ from doeff_vm import (
     GetHandlers,
     GetOuterHandlers,
 )
+
+WithHandlerType = _WithHandlerNode
+
+
+def WithHandler(h, body, *args, **kwargs):
+    """Install handler ``h`` around ``body``.
+
+    Accepts two forms:
+
+    - New-style (preferred): ``h`` is a function ``Program -> Program`` marked
+      with ``_doeff_is_handler_fn = True``. The call is forwarded as ``h(body)``.
+    - Legacy: ``h`` is a raw handler dispatcher (an ``@do``-decorated
+      ``fn[effect, k]``). Falls through to the Rust ``WithHandler`` pyclass.
+
+    The legacy path is kept so that pre-migration code keeps working.
+    New code should build handlers via ``defhandler``/``handle`` and invoke
+    them as plain functions: ``(h body)`` in Hy, ``h(body)`` in Python.
+    """
+    if getattr(h, "_doeff_is_handler_fn", False):
+        return h(body, *args, **kwargs)
+    return _WithHandlerNode(h, body, *args, **kwargs)
 
 
 def program(gen_fn, *args):
