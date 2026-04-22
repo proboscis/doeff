@@ -87,15 +87,17 @@ class TestHyFlagBasic:
         payload = parse_json(result.stdout)
         assert payload["result"] == 42
 
-    def test_defhandler_then_with_handler(self) -> None:
+    def test_defhandler_direct_call(self) -> None:
+        # Post-PR-A1 idiom: defhandler produces a Program -> Program
+        # function; install by direct call, no WithHandler needed.
         source = """
-(import doeff [Ask WithHandler])
+(import doeff [Ask])
 
 (defhandler ask-env
   (Ask [key]
     (resume (get {"answer" 42} key))))
 
-(WithHandler ask-env
+(ask-env
   (do!
     (<- v (Ask "answer"))
     v))
@@ -104,6 +106,55 @@ class TestHyFlagBasic:
         assert result.returncode == 0, f"stderr: {result.stderr}"
         payload = parse_json(result.stdout)
         assert payload["result"] == 42
+
+    def test_defhandler_factory_with_args(self) -> None:
+        # Parameterised handler — defhandler wrapped in defn producing the
+        # Program -> Program function on demand.
+        source = """
+(import doeff [Ask])
+
+(defn make-ask [env]
+  (defhandler _h
+    (Ask [key]
+      (resume (get env key))))
+  _h)
+
+((make-ask {"answer" 42})
+  (do!
+    (<- v (Ask "answer"))
+    v))
+"""
+        result = run_cli("--hy", source, "--format", "json")
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        payload = parse_json(result.stdout)
+        assert payload["result"] == 42
+
+    def test_defhandler_stack_composition(self) -> None:
+        # Stack two handlers by composing Program -> Program functions.
+        source = """
+(import doeff [Ask])
+
+(defhandler outer
+  (Ask [key]
+    :when (= key "outer")
+    (resume "outer-value")))
+
+(defhandler inner
+  (Ask [key]
+    :when (= key "inner")
+    (resume "inner-value")))
+
+(outer
+  (inner
+    (do!
+      (<- a (Ask "inner"))
+      (<- b (Ask "outer"))
+      (+ a "/" b))))
+"""
+        result = run_cli("--hy", source, "--format", "json")
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        payload = parse_json(result.stdout)
+        assert payload["result"] == "inner-value/outer-value"
 
     def test_reads_stdin_with_dash(self) -> None:
         source = "(import doeff [Pure]) (Pure 99)"
