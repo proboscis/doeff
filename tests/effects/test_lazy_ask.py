@@ -358,10 +358,13 @@ class TestLazyAskErrorHandling:
         result = run_with_lazy(program(), env={"svc": failing_service()})
         assert hasattr(result, "error") and isinstance(result.error, ValueError)
 
-    def test_missing_key_error(self):
+    def test_missing_key_error_strict(self):
+        """strict=True preserves legacy KeyError-on-miss behaviour."""
         @do
         def program():
             return (yield Try(Ask("missing")))
 
-        result = run_with_lazy(program(), env={})
+        body = WithHandler(try_handler, program())
+        body = WithHandler(lazy_ask(env={}, strict=True), body)
+        result = run(scheduled(body))
         assert hasattr(result, "error") and isinstance(result.error, KeyError)
