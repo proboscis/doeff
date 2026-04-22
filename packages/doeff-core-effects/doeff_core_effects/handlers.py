@@ -279,7 +279,7 @@ def _missing_key_message(key):
     )
 
 
-def lazy_ask(env=None):
+def lazy_ask(env=None, *, strict=False):
     """Lazy Ask handler — replaces reader per SPEC-EFF-001.
 
     Handles Ask, Local, and lazy program evaluation. Takes env directly —
@@ -288,7 +288,11 @@ def lazy_ask(env=None):
     Ask resolution order:
     1. Local overrides (from active Local scopes)
     2. Base env (passed to lazy_ask())
-    3. KeyError if not found
+    3. Miss behavior:
+       - strict=False (default): ``Pass(effect, k)`` — delegate to outer
+         handler so composition like ``(lazy-ask (env-var-ask ...))`` works.
+       - strict=True: ``ResumeThrow(KeyError)`` — legacy behavior when you
+         want the handler to be authoritative and loud about misses.
 
     If the resolved value is a Program (any DoExpr node — Expand, Perform,
     Pure, etc.), it is evaluated lazily with caching. Concurrent asks for
@@ -355,9 +359,14 @@ def lazy_ask(env=None):
                 if effect.key in effective_env:
                     raw = effective_env[effect.key]
                 else:
-                    return (yield ResumeThrow(
-                        k, KeyError(_missing_key_message(effect.key))
-                    ))
+                    if strict:
+                        return (yield ResumeThrow(
+                            k, KeyError(_missing_key_message(effect.key))
+                        ))
+                    # Forward to outer handler so env-var-ask (or other
+                    # fallback handlers) can resolve the key.
+                    yield Pass(effect, k)
+                    return
 
                 # Plain value — resume directly
                 if not isinstance(raw, Program):
@@ -442,5 +451,113 @@ def lazy_ask(env=None):
         return handler
 
     return _make_handler(dict(env))
+
+
+def env_var_ask(*, prefix="DOEFF_"):
+    """Ask handler backed by ``os.environ``.
+
+    Contract
+    --------
+    Each ``Ask(key)`` looks up ``os.environ[prefix + key]`` on every call.
+
+    - Missing → ``Pass(effect, k)`` (forward to outer handler).
+    - Plain string → resume directly, no caching.
+    - ``"{module.path}"`` → import the symbol on every Ask.
+      If it's a Program, evaluate it with the current inner handlers
+      reinstalled so recursive Ask resolves naturally, then cache the
+      resolved value keyed on ``(ask_key, raw_env_value)``. A change to
+      the env var's raw string invalidates the cache.
+      Otherwise resume with the imported object verbatim.
+
+    Concurrency
+    -----------
+    A per-key semaphore ensures that concurrent Asks for the same lazy
+    Program evaluate it only once — matching ``lazy_ask``'s semantics.
+
+    The handler never calls ``strict=True``-style throws; unresolved keys
+    always flow through to outer handlers (or Unhandled).
+    """
+    import os
+    from doeff import Program
+    from doeff.program import WithHandler as WH
+    from doeff.handler_utils import get_inner_handlers
+    from doeff.cli.run_services import import_symbol
+    from doeff_core_effects.scheduler import (
+        AcquireSemaphore, CreateSemaphore, ReleaseSemaphore,
+    )
+
+    # cache[key] = (raw_env_value, resolved_value)
+    cache: dict = {}
+    sems: dict = {}
+
+    @do
+    def handler(effect, k):
+        if not isinstance(effect, Ask):
+            yield Pass(effect, k)
+            return
+
+        env_key = f"{prefix}{effect.key}"
+        raw = os.environ.get(env_key)
+        if raw is None:
+            yield Pass(effect, k)
+            return
+
+        # Plain string — no caching, always fresh.
+        if not (raw.startswith("{") and raw.endswith("}")):
+            return (yield Resume(k, raw))
+
+        # {module.path} — cache with raw-value invalidation.
+        cached = cache.get(effect.key)
+        if cached is not None and cached[0] == raw:
+            return (yield Resume(k, cached[1]))
+
+        # Per-key semaphore serialises concurrent evals.
+        if effect.key not in sems:
+            sems[effect.key] = yield CreateSemaphore(1)
+        yield AcquireSemaphore(sems[effect.key])
+
+        # Double-check after acquiring the semaphore.
+        cached = cache.get(effect.key)
+        if cached is not None and cached[0] == raw:
+            yield ReleaseSemaphore(sems[effect.key])
+            return (yield Resume(k, cached[1]))
+
+        try:
+            path = raw[1:-1].strip()
+            value = import_symbol(path)
+            # If the imported symbol is a zero-arg factory (typical for @do
+            # functions), call it to produce the Program. A value that's
+            # already a Program is used verbatim.
+            if (
+                not isinstance(value, Program)
+                and callable(value)
+                and not isinstance(value, type)
+            ):
+                try:
+                    maybe_program = value()
+                except TypeError:
+                    maybe_program = value
+                if isinstance(maybe_program, Program):
+                    value = maybe_program
+                else:
+                    value = maybe_program  # keep the callable's return value
+            if isinstance(value, Program):
+                inner_hs = yield get_inner_handlers(k)
+                wrapped = value
+                for h in inner_hs:
+                    wrapped = WH(h, wrapped)
+                resolved = yield wrapped
+            else:
+                resolved = value
+            cache[effect.key] = (raw, resolved)
+        except Exception as e:
+            yield ReleaseSemaphore(sems[effect.key])
+            from doeff.program import ResumeThrow
+            return (yield ResumeThrow(k, e))
+
+        yield ReleaseSemaphore(sems[effect.key])
+        return (yield Resume(k, resolved))
+
+    return handler
 
 
