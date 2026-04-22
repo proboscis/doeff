@@ -71,9 +71,24 @@ class TestHyFlagBasic:
         payload = parse_json(result.stdout)
         assert payload["result"] == 42
 
-    def test_with_handler_ask_inline(self) -> None:
+    def test_handle_macro_inline(self) -> None:
         source = """
-(require doeff-hy.handle [defhandler])
+(import doeff [Ask])
+
+(handle
+  (do!
+    (<- v (Ask "answer"))
+    v)
+  (Ask [key]
+    (resume (get {"answer" 42} key))))
+"""
+        result = run_cli("--hy", source, "--format", "json")
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        payload = parse_json(result.stdout)
+        assert payload["result"] == 42
+
+    def test_defhandler_then_with_handler(self) -> None:
+        source = """
 (import doeff [Ask WithHandler])
 
 (defhandler ask-env
