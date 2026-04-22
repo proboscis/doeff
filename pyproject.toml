@@ -66,10 +66,10 @@ doeff-openai = { workspace = true }
 doeff-openrouter = { workspace = true }
 doeff-time = { workspace = true }
 doeff-events = { workspace = true }
-doeff-hy = { workspace = true }
 doeff-traverse = { workspace = true }
 doeff-docker = { workspace = true }
 doeff-ml-nexus = { workspace = true }
+doeff-hy = { workspace = true }
 
 [tool.pytest.ini_options]
 timeout = 60
@@ -133,4 +133,6 @@ dev = [
     "doeff-traverse",
     "pytest-xdist>=3.8.0",
     "pytest-timeout>=2.3.1",
+    "hy>=1.2.0",
+    "doeff-hy",
 ]
