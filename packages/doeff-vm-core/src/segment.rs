@@ -20,10 +20,10 @@ pub enum InterceptMode {
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
 use crate::ids::{FiberId, Marker};
-use crate::value::CallableRef;
 use crate::memory_stats;
 use crate::py_shared::PyShared;
 pub use crate::scope_store::ScopeStore;
+use crate::value::CallableRef;
 
 // ---------------------------------------------------------------------------
 // Handler — the handler delimiter at the boundary fiber
@@ -188,7 +188,10 @@ impl Fiber {
 
     /// Is this a prompt (handler) boundary?
     pub fn is_prompt_boundary(&self) -> bool {
-        self.handler.as_ref().and_then(|h| h.prompt_boundary()).is_some()
+        self.handler
+            .as_ref()
+            .and_then(|h| h.prompt_boundary())
+            .is_some()
     }
 
     /// Get the handled marker if this is a prompt boundary.
@@ -198,19 +201,24 @@ impl Fiber {
 
     /// Get the prompt boundary handler.
     pub fn prompt_handler(&self) -> Option<&CallableRef> {
-        self.handler.as_ref()
+        self.handler
+            .as_ref()
             .and_then(|h| h.prompt_boundary())
             .map(|p| &p.handler)
     }
 
     /// Is this an intercept boundary?
     pub fn is_intercept_boundary(&self) -> bool {
-        self.handler.as_ref().and_then(|h| h.intercept_boundary()).is_some()
+        self.handler
+            .as_ref()
+            .and_then(|h| h.intercept_boundary())
+            .is_some()
     }
 
     /// Get the interceptor callable.
     pub fn intercept_handler(&self) -> Option<&CallableRef> {
-        self.handler.as_ref()
+        self.handler
+            .as_ref()
             .and_then(|h| h.intercept_boundary())
             .map(|i| &i.interceptor)
     }

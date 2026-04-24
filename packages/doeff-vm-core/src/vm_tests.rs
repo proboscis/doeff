@@ -31,7 +31,11 @@ mod tests {
 
     impl ScriptStream {
         fn new(steps: Vec<DoCtrl>, final_value: Value) -> Self {
-            Self { steps, final_value, index: 0 }
+            Self {
+                steps,
+                final_value,
+                index: 0,
+            }
         }
 
         fn returning(value: Value) -> Self {
@@ -71,7 +75,9 @@ mod tests {
 
     impl HandlerStream {
         fn resume_with(doctrl: DoCtrl) -> Self {
-            Self { response: Some(doctrl) }
+            Self {
+                response: Some(doctrl),
+            }
         }
     }
 
@@ -122,7 +128,9 @@ mod tests {
     fn expand_stream(stream: impl IRStream + 'static) -> Box<DoCtrl> {
         let stream_ref = IRStreamRef::new(Box::new(stream));
         Box::new(DoCtrl::Expand {
-            expr: Box::new(DoCtrl::Pure { value: Value::Stream(stream_ref) }),
+            expr: Box::new(DoCtrl::Pure {
+                value: Value::Stream(stream_ref),
+            }),
         })
     }
 
@@ -133,7 +141,9 @@ mod tests {
     #[test]
     fn test_pure_returns_value() {
         let stream = ScriptStream::new(
-            vec![DoCtrl::Pure { value: Value::Int(42) }],
+            vec![DoCtrl::Pure {
+                value: Value::Int(42),
+            }],
             Value::Unit,
         );
         let mut vm = setup_vm_with_stream(stream);
@@ -187,7 +197,9 @@ mod tests {
                     0 => {
                         // Initial resume — alloc var
                         self.state = 1;
-                        StreamStep::Instruction(DoCtrl::AllocVar { initial: Value::Int(10) })
+                        StreamStep::Instruction(DoCtrl::AllocVar {
+                            initial: Value::Int(10),
+                        })
                     }
                     1 => {
                         // Received Var(id) — read it
@@ -228,7 +240,10 @@ mod tests {
             }
         }
 
-        let stream = VarTestStream { state: 0, var_id: None };
+        let stream = VarTestStream {
+            state: 0,
+            var_id: None,
+        };
         let mut vm = setup_vm_with_stream(stream);
 
         let result = run_to_completion(&mut vm).unwrap();
@@ -248,7 +263,9 @@ mod tests {
         struct AddOne;
 
         impl Callable for AddOne {
-            fn as_any(&self) -> &dyn std::any::Any { self }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
             fn call(&self, args: Vec<Value>) -> Result<Value, VMError> {
                 match args.first() {
                     Some(Value::Int(n)) => Ok(Value::Int(n + 1)),
@@ -262,7 +279,9 @@ mod tests {
         let stream = ScriptStream::new(
             vec![DoCtrl::Apply {
                 f: Box::new(DoCtrl::Pure { value: callable }),
-                args: vec![DoCtrl::Pure { value: Value::Int(41) }],
+                args: vec![DoCtrl::Pure {
+                    value: Value::Int(41),
+                }],
             }],
             Value::Unit, // won't reach — Apply result is delivered to stream
         );
@@ -293,8 +312,12 @@ mod tests {
         let stream = CaptureStream {
             inner: ScriptStream::new(
                 vec![DoCtrl::Apply {
-                    f: Box::new(DoCtrl::Pure { value: Value::Callable(Arc::new(AddOne) as CallableRef) }),
-                    args: vec![DoCtrl::Pure { value: Value::Int(41) }],
+                    f: Box::new(DoCtrl::Pure {
+                        value: Value::Callable(Arc::new(AddOne) as CallableRef),
+                    }),
+                    args: vec![DoCtrl::Pure {
+                        value: Value::Int(41),
+                    }],
                 }],
                 Value::Unit,
             ),
@@ -326,8 +349,8 @@ mod tests {
         body_fiber.push_frame(Frame::program(body_stream, None));
         let body_fid = vm.alloc_segment(body_fiber);
 
-        // Create a continuation pointing to the body fiber
-        let mut k = Continuation::new(body_fid, body_fid, vm.orphan_queue.clone());
+        // Create a continuation owning the detached body fiber
+        let k = Continuation::from_chain(vm.segments.detach_chain(body_fid, body_fid).unwrap());
 
         // Create a root fiber that yields Resume(k, 77)
         #[derive(Debug)]
@@ -375,7 +398,9 @@ mod tests {
     fn test_eval_pure() {
         let stream = ScriptStream::new(
             vec![DoCtrl::Eval {
-                expr: Box::new(DoCtrl::Pure { value: Value::Int(55) }),
+                expr: Box::new(DoCtrl::Pure {
+                    value: Value::Int(55),
+                }),
             }],
             Value::Unit,
         );
@@ -406,7 +431,9 @@ mod tests {
             first: true,
             inner: ScriptStream::new(
                 vec![DoCtrl::Eval {
-                    expr: Box::new(DoCtrl::Pure { value: Value::Int(55) }),
+                    expr: Box::new(DoCtrl::Pure {
+                        value: Value::Int(55),
+                    }),
                 }],
                 Value::Unit,
             ),
@@ -457,7 +484,9 @@ mod tests {
         struct TestHandler;
 
         impl Callable for TestHandler {
-            fn as_any(&self) -> &dyn std::any::Any { self }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
             fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
                 Err(VMError::internal("TestHandler: use call_handler"))
             }
@@ -467,7 +496,10 @@ mod tests {
                     _ => return Err(VMError::internal("handler: expected continuation")),
                 };
                 // Return Resume DoCtrl — body gets 100, returns it
-                Ok(DoCtrl::Resume { k, value: Value::Int(100) })
+                Ok(DoCtrl::Resume {
+                    k,
+                    value: Value::Int(100),
+                })
             }
         }
 
@@ -552,7 +584,9 @@ mod tests {
         struct TransferHandler;
 
         impl Callable for TransferHandler {
-            fn as_any(&self) -> &dyn std::any::Any { self }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
             fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
                 Err(VMError::internal("TransferHandler: use call_handler"))
             }
@@ -561,27 +595,43 @@ mod tests {
                     Some(Value::Continuation(k)) => k,
                     _ => return Err(VMError::internal("handler: expected continuation")),
                 };
-                Ok(DoCtrl::Transfer { k, value: Value::Int(200) })
+                Ok(DoCtrl::Transfer {
+                    k,
+                    value: Value::Int(200),
+                })
             }
         }
 
         // Body: performs, returns what it gets
         #[derive(Debug)]
-        struct BodyStream { state: u8 }
+        struct BodyStream {
+            state: u8,
+        }
 
         impl IRStream for BodyStream {
             fn resume(&mut self, value: Value) -> StreamStep {
                 match self.state {
-                    0 => { self.state = 1; StreamStep::Instruction(DoCtrl::Perform { effect: Value::String("get".into()) }) }
+                    0 => {
+                        self.state = 1;
+                        StreamStep::Instruction(DoCtrl::Perform {
+                            effect: Value::String("get".into()),
+                        })
+                    }
                     1 => StreamStep::Done(value),
                     _ => StreamStep::Error(Value::String("bad".into())),
                 }
             }
-            fn throw(&mut self, error: Value) -> StreamStep { StreamStep::Error(error) }
+            fn throw(&mut self, error: Value) -> StreamStep {
+                StreamStep::Error(error)
+            }
         }
 
         #[derive(Debug)]
-        struct Root { done: bool, handler: Option<Value>, body: Option<Box<DoCtrl>> }
+        struct Root {
+            done: bool,
+            handler: Option<Value>,
+            body: Option<Box<DoCtrl>>,
+        }
 
         impl IRStream for Root {
             fn resume(&mut self, value: Value) -> StreamStep {
@@ -595,7 +645,9 @@ mod tests {
                     StreamStep::Done(value)
                 }
             }
-            fn throw(&mut self, error: Value) -> StreamStep { StreamStep::Error(error) }
+            fn throw(&mut self, error: Value) -> StreamStep {
+                StreamStep::Error(error)
+            }
         }
 
         let mut vm = setup_vm_with_stream(Root {
@@ -625,7 +677,9 @@ mod tests {
         struct CountHandler;
 
         impl Callable for CountHandler {
-            fn as_any(&self) -> &dyn std::any::Any { self }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
             fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
                 Err(VMError::internal("CountHandler: use call_handler"))
             }
@@ -635,25 +689,41 @@ mod tests {
                     _ => return Err(VMError::internal("expected k")),
                 };
 
-                static COUNTER: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(10);
+                static COUNTER: std::sync::atomic::AtomicI64 =
+                    std::sync::atomic::AtomicI64::new(10);
                 let val = COUNTER.fetch_add(10, std::sync::atomic::Ordering::Relaxed);
 
-                Ok(DoCtrl::Resume { k, value: Value::Int(val) })
+                Ok(DoCtrl::Resume {
+                    k,
+                    value: Value::Int(val),
+                })
             }
         }
 
         // Body: performs twice, adds the results
         #[derive(Debug)]
-        struct BodyStream { state: u8, first: i64 }
+        struct BodyStream {
+            state: u8,
+            first: i64,
+        }
 
         impl IRStream for BodyStream {
             fn resume(&mut self, value: Value) -> StreamStep {
                 match self.state {
-                    0 => { self.state = 1; StreamStep::Instruction(DoCtrl::Perform { effect: Value::String("a".into()) }) }
+                    0 => {
+                        self.state = 1;
+                        StreamStep::Instruction(DoCtrl::Perform {
+                            effect: Value::String("a".into()),
+                        })
+                    }
                     1 => {
-                        if let Value::Int(v) = value { self.first = v; }
+                        if let Value::Int(v) = value {
+                            self.first = v;
+                        }
                         self.state = 2;
-                        StreamStep::Instruction(DoCtrl::Perform { effect: Value::String("b".into()) })
+                        StreamStep::Instruction(DoCtrl::Perform {
+                            effect: Value::String("b".into()),
+                        })
                     }
                     2 => {
                         if let Value::Int(v) = value {
@@ -665,11 +735,17 @@ mod tests {
                     _ => StreamStep::Error(Value::String("bad".into())),
                 }
             }
-            fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
+            fn throw(&mut self, e: Value) -> StreamStep {
+                StreamStep::Error(e)
+            }
         }
 
         #[derive(Debug)]
-        struct Root { done: bool, handler: Option<Value>, body: Option<Box<DoCtrl>> }
+        struct Root {
+            done: bool,
+            handler: Option<Value>,
+            body: Option<Box<DoCtrl>>,
+        }
 
         impl IRStream for Root {
             fn resume(&mut self, value: Value) -> StreamStep {
@@ -683,7 +759,9 @@ mod tests {
                     StreamStep::Done(value)
                 }
             }
-            fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
+            fn throw(&mut self, e: Value) -> StreamStep {
+                StreamStep::Error(e)
+            }
         }
 
         // Reset counter for this test
@@ -716,10 +794,14 @@ mod tests {
         // Both handlers resume with different values
         fn make_handler(reply: i64) -> Value {
             #[derive(Debug)]
-            struct H { reply: i64 }
+            struct H {
+                reply: i64,
+            }
 
             impl Callable for H {
-                fn as_any(&self) -> &dyn std::any::Any { self }
+                fn as_any(&self) -> &dyn std::any::Any {
+                    self
+                }
 
                 fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
                     Err(VMError::internal("H: use call_handler"))
@@ -729,7 +811,10 @@ mod tests {
                         Some(Value::Continuation(k)) => k,
                         _ => return Err(VMError::internal("expected k")),
                     };
-                    Ok(DoCtrl::Resume { k, value: Value::Int(self.reply) })
+                    Ok(DoCtrl::Resume {
+                        k,
+                        value: Value::Int(self.reply),
+                    })
                 }
             }
 
@@ -738,17 +823,26 @@ mod tests {
 
         // Body: performs once, returns the value
         #[derive(Debug)]
-        struct BodyStream { state: u8 }
+        struct BodyStream {
+            state: u8,
+        }
 
         impl IRStream for BodyStream {
             fn resume(&mut self, value: Value) -> StreamStep {
                 match self.state {
-                    0 => { self.state = 1; StreamStep::Instruction(DoCtrl::Perform { effect: Value::String("ask".into()) }) }
+                    0 => {
+                        self.state = 1;
+                        StreamStep::Instruction(DoCtrl::Perform {
+                            effect: Value::String("ask".into()),
+                        })
+                    }
                     1 => StreamStep::Done(value),
                     _ => StreamStep::Error(Value::String("bad".into())),
                 }
             }
-            fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
+            fn throw(&mut self, e: Value) -> StreamStep {
+                StreamStep::Error(e)
+            }
         }
 
         // Structure:
@@ -757,7 +851,11 @@ mod tests {
         // Body performs → inner handles → returns 42
 
         #[derive(Debug)]
-        struct InnerRoot { done: bool, inner_handler: Option<Value>, body: Option<Box<DoCtrl>> }
+        struct InnerRoot {
+            done: bool,
+            inner_handler: Option<Value>,
+            body: Option<Box<DoCtrl>>,
+        }
 
         impl IRStream for InnerRoot {
             fn resume(&mut self, value: Value) -> StreamStep {
@@ -771,11 +869,17 @@ mod tests {
                     StreamStep::Done(value)
                 }
             }
-            fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
+            fn throw(&mut self, e: Value) -> StreamStep {
+                StreamStep::Error(e)
+            }
         }
 
         #[derive(Debug)]
-        struct OuterRoot { done: bool, outer_handler: Option<Value>, inner: Option<Box<DoCtrl>> }
+        struct OuterRoot {
+            done: bool,
+            outer_handler: Option<Value>,
+            inner: Option<Box<DoCtrl>>,
+        }
 
         impl IRStream for OuterRoot {
             fn resume(&mut self, value: Value) -> StreamStep {
@@ -789,7 +893,9 @@ mod tests {
                     StreamStep::Done(value)
                 }
             }
-            fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
+            fn throw(&mut self, e: Value) -> StreamStep {
+                StreamStep::Error(e)
+            }
         }
 
         let inner_stream = IRStreamRef::new(Box::new(InnerRoot {
@@ -801,7 +907,11 @@ mod tests {
         let mut vm = setup_vm_with_stream(OuterRoot {
             done: false,
             outer_handler: Some(make_handler(999)),
-            inner: Some(Box::new(DoCtrl::Expand { expr: Box::new(DoCtrl::Pure { value: Value::Stream(inner_stream) }) })),
+            inner: Some(Box::new(DoCtrl::Expand {
+                expr: Box::new(DoCtrl::Pure {
+                    value: Value::Stream(inner_stream),
+                }),
+            })),
         });
 
         let result = run_to_completion(&mut vm);
@@ -825,7 +935,9 @@ mod tests {
         struct PassHandler;
 
         impl Callable for PassHandler {
-            fn as_any(&self) -> &dyn std::any::Any { self }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
             fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
                 Err(VMError::internal("PassHandler: use call_handler"))
             }
@@ -842,10 +954,14 @@ mod tests {
         // Handler that resumes with a value
         fn make_resume_handler(reply: i64) -> Value {
             #[derive(Debug)]
-            struct H { reply: i64 }
+            struct H {
+                reply: i64,
+            }
 
             impl Callable for H {
-                fn as_any(&self) -> &dyn std::any::Any { self }
+                fn as_any(&self) -> &dyn std::any::Any {
+                    self
+                }
 
                 fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
                     Err(VMError::internal("H: use call_handler"))
@@ -855,7 +971,10 @@ mod tests {
                         Some(Value::Continuation(k)) => k,
                         _ => return Err(VMError::internal("expected k")),
                     };
-                    Ok(DoCtrl::Resume { k, value: Value::Int(self.reply) })
+                    Ok(DoCtrl::Resume {
+                        k,
+                        value: Value::Int(self.reply),
+                    })
                 }
             }
 
@@ -864,24 +983,37 @@ mod tests {
 
         // Body: performs once, returns the value
         #[derive(Debug)]
-        struct BodyStream { state: u8 }
+        struct BodyStream {
+            state: u8,
+        }
 
         impl IRStream for BodyStream {
             fn resume(&mut self, value: Value) -> StreamStep {
                 match self.state {
-                    0 => { self.state = 1; StreamStep::Instruction(DoCtrl::Perform { effect: Value::String("ask".into()) }) }
+                    0 => {
+                        self.state = 1;
+                        StreamStep::Instruction(DoCtrl::Perform {
+                            effect: Value::String("ask".into()),
+                        })
+                    }
                     1 => StreamStep::Done(value),
                     _ => StreamStep::Error(Value::String("bad".into())),
                 }
             }
-            fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
+            fn throw(&mut self, e: Value) -> StreamStep {
+                StreamStep::Error(e)
+            }
         }
 
         // WithHandler(outer=777, WithHandler(inner=Pass, body))
         // Body performs → inner passes → outer handles → 777
 
         #[derive(Debug)]
-        struct WrapStream { done: bool, h: Option<Value>, b: Option<Box<DoCtrl>> }
+        struct WrapStream {
+            done: bool,
+            h: Option<Value>,
+            b: Option<Box<DoCtrl>>,
+        }
 
         impl IRStream for WrapStream {
             fn resume(&mut self, value: Value) -> StreamStep {
@@ -891,9 +1023,13 @@ mod tests {
                         handler: self.h.take().unwrap(),
                         body: self.b.take().unwrap(),
                     })
-                } else { StreamStep::Done(value) }
+                } else {
+                    StreamStep::Done(value)
+                }
             }
-            fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
+            fn throw(&mut self, e: Value) -> StreamStep {
+                StreamStep::Error(e)
+            }
         }
 
         let inner_stream = IRStreamRef::new(Box::new(WrapStream {
@@ -905,7 +1041,11 @@ mod tests {
         let mut vm = setup_vm_with_stream(WrapStream {
             done: false,
             h: Some(make_resume_handler(777)),
-            b: Some(Box::new(DoCtrl::Expand { expr: Box::new(DoCtrl::Pure { value: Value::Stream(inner_stream) }) })),
+            b: Some(Box::new(DoCtrl::Expand {
+                expr: Box::new(DoCtrl::Pure {
+                    value: Value::Stream(inner_stream),
+                }),
+            })),
         });
 
         let result = run_to_completion(&mut vm);
@@ -929,7 +1069,9 @@ mod tests {
         struct InnerHandler;
 
         impl Callable for InnerHandler {
-            fn as_any(&self) -> &dyn std::any::Any { self }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
             fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
                 Err(VMError::internal("InnerHandler: use call_handler"))
             }
@@ -940,7 +1082,10 @@ mod tests {
                     _ => return Err(VMError::internal("expected k")),
                 };
                 if matches!(&effect, Value::String(s) if s == "ask") {
-                    Ok(DoCtrl::Resume { k, value: Value::Int(999) })
+                    Ok(DoCtrl::Resume {
+                        k,
+                        value: Value::Int(999),
+                    })
                 } else {
                     Ok(DoCtrl::Pass { effect, k })
                 }
@@ -953,7 +1098,9 @@ mod tests {
             struct H;
 
             impl Callable for H {
-                fn as_any(&self) -> &dyn std::any::Any { self }
+                fn as_any(&self) -> &dyn std::any::Any {
+                    self
+                }
 
                 fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
                     Err(VMError::internal("H: use call_handler"))
@@ -963,7 +1110,10 @@ mod tests {
                         Some(Value::Continuation(k)) => k,
                         _ => return Err(VMError::internal("expected k")),
                     };
-                    Ok(DoCtrl::Resume { k, value: Value::Int(0) })
+                    Ok(DoCtrl::Resume {
+                        k,
+                        value: Value::Int(0),
+                    })
                 }
             }
 
@@ -974,7 +1124,9 @@ mod tests {
         //       then performs "ask" (inner handles with 999),
         //       returns the ask result
         #[derive(Debug)]
-        struct BodyStream { state: u8 }
+        struct BodyStream {
+            state: u8,
+        }
 
         impl IRStream for BodyStream {
             fn resume(&mut self, value: Value) -> StreamStep {
@@ -999,12 +1151,18 @@ mod tests {
                     _ => StreamStep::Error(Value::String("bad state".into())),
                 }
             }
-            fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
+            fn throw(&mut self, e: Value) -> StreamStep {
+                StreamStep::Error(e)
+            }
         }
 
         // WithHandler(outer, WithHandler(inner, body))
         #[derive(Debug)]
-        struct WrapStream { done: bool, h: Option<Value>, b: Option<Box<DoCtrl>> }
+        struct WrapStream {
+            done: bool,
+            h: Option<Value>,
+            b: Option<Box<DoCtrl>>,
+        }
 
         impl IRStream for WrapStream {
             fn resume(&mut self, value: Value) -> StreamStep {
@@ -1014,9 +1172,13 @@ mod tests {
                         handler: self.h.take().unwrap(),
                         body: self.b.take().unwrap(),
                     })
-                } else { StreamStep::Done(value) }
+                } else {
+                    StreamStep::Done(value)
+                }
             }
-            fn throw(&mut self, e: Value) -> StreamStep { StreamStep::Error(e) }
+            fn throw(&mut self, e: Value) -> StreamStep {
+                StreamStep::Error(e)
+            }
         }
 
         let inner_stream = IRStreamRef::new(Box::new(WrapStream {
@@ -1029,7 +1191,9 @@ mod tests {
             done: false,
             h: Some(make_outer_handler()),
             b: Some(Box::new(DoCtrl::Expand {
-                expr: Box::new(DoCtrl::Pure { value: Value::Stream(inner_stream) }),
+                expr: Box::new(DoCtrl::Pure {
+                    value: Value::Stream(inner_stream),
+                }),
             })),
         });
 

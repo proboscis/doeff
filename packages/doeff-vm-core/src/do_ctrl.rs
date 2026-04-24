@@ -13,12 +13,10 @@ use crate::value::Value;
 #[derive(Debug)]
 pub enum DoCtrl {
     // --- Values ---
-
     /// Return a value. `Pure(v)` → delivers `v`.
     Pure { value: Value },
 
     // --- Evaluation ---
-
     /// Evaluate inner DoCtrl, return the resulting Value.
     Eval { expr: Box<DoCtrl> },
 
@@ -27,13 +25,11 @@ pub enum DoCtrl {
     Expand { expr: Box<DoCtrl> },
 
     // --- Function call ---
-
     /// Evaluate f and args, call f(args), return the result Value.
     /// Does NOT execute the result even if it's a Stream — use Expand for that.
     Apply { f: Box<DoCtrl>, args: Vec<DoCtrl> },
 
     // --- OCaml 5 effect handler operations ---
-
     /// Perform an effect. Walks the handler chain, detaches the fiber chain,
     /// creates a continuation, and calls the handler.
     Perform { effect: Value },
@@ -77,7 +73,6 @@ pub enum DoCtrl {
     WithObserve { observer: Value, body: Box<DoCtrl> },
 
     // --- Query ---
-
     /// Walk the fiber chain from a starting fiber, collect source locations.
     /// Returns Value::List of traceback frames.
     /// Non-consuming — does not take ownership of the continuation.
@@ -106,7 +101,6 @@ pub enum DoCtrl {
     TailEval { expr: Box<DoCtrl> },
 
     // --- Heap (OCaml ref cells) ---
-
     /// Allocate a mutable ref cell with initial value.
     AllocVar { initial: Value },
 

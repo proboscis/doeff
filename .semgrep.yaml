@@ -3278,3 +3278,40 @@ rules:
         - "**/packages/doeff-vm-core/src/vm/dispatch.rs"
         - "**/packages/doeff-vm/src/pyvm.rs"
     pattern-regex: '\bself\.mode\b'
+
+  # ---------------------------------------------------------------------------
+  # ISSUE-VM-001 / PR G1: fiber ownership and orphan reclamation
+  # ---------------------------------------------------------------------------
+
+  - id: vm-g1-no-orphan-queue
+    languages: [generic]
+    severity: ERROR
+    message: |
+      ISSUE-VM-001 G1: orphan reclamation must be owned by Continuation's
+      detached fiber chain, not by a VM-level orphan_queue side channel.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/**/*.rs"
+    pattern-regex: '\b(?:orphan_queue|OrphanQueue|new_orphan_queue|drain_orphan_fibers)\b'
+
+  - id: vm-g1-no-arc-mutex-fiberid-queue
+    languages: [generic]
+    severity: ERROR
+    message: |
+      ISSUE-VM-001 G1: do not represent fiber reclamation as Arc<Mutex<Vec<FiberId>>>.
+      Detached fibers must move into Continuation ownership and drop normally.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/**/*.rs"
+    pattern-regex: 'Arc\s*<\s*Mutex\s*<\s*Vec\s*<\s*FiberId\s*>\s*>\s*>'
+
+  - id: vm-g1-no-queue-backed-continuation-constructor
+    languages: [generic]
+    severity: ERROR
+    message: |
+      ISSUE-VM-001 G1: Continuation constructors must not receive a VM queue.
+      Construct continuations from an owned DetachedFiberChain.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/**/*.rs"
+    pattern-regex: 'Continuation::(?:new|single)\([^;\n]*orphan_queue'

@@ -22,9 +22,6 @@ use crate::vm::VM;
 impl VM {
     /// Execute one step.
     pub fn step(&mut self, signal: Signal) -> StepResult {
-        // Reclaim fibers from continuations dropped since the last step.
-        self.reclaim_orphaned_fibers();
-
         let Signal {
             action,
             error_context,
@@ -48,7 +45,11 @@ impl VM {
         // Fast path: fiber completed (no frames) — free it and move to parent.
         // Checked before the mutable borrow so we can call free() without
         // conflicting with the borrow used in the frame-processing match below.
-        if self.segments.get(seg_id).map_or(false, |s| s.frames.is_empty()) {
+        if self
+            .segments
+            .get(seg_id)
+            .map_or(false, |s| s.frames.is_empty())
+        {
             let parent = self.segments.get(seg_id).and_then(|s| s.parent);
             self.segments.free(seg_id);
             self.current_segment = parent;
@@ -70,19 +71,13 @@ impl VM {
                     unreachable!()
                 };
                 match stream.resume(value) {
-                    StreamStep::Instruction(doctrl) => {
-                        continue_eval(doctrl, error_context)
-                    }
+                    StreamStep::Instruction(doctrl) => continue_eval(doctrl, error_context),
                     StreamStep::Done(value) => {
                         seg.frames.pop();
                         continue_send(value, error_context)
                     }
-                    StreamStep::Error(error) => {
-                        continue_raise(error, error_context)
-                    }
-                    StreamStep::External(call) => {
-                        external_result(call, error_context)
-                    }
+                    StreamStep::Error(error) => continue_raise(error, error_context),
+                    StreamStep::External(call) => external_result(call, error_context),
                 }
             }
             Some(Frame::EvalReturn(_)) => {
@@ -96,8 +91,11 @@ impl VM {
                 // TODO: may need to pop scope on exit
                 continue_send(value, error_context)
             }
-            Some(Frame::MapReturn { .. } | Frame::FlatMapBindResult
-                | Frame::FlatMapBindSource { .. }) => {
+            Some(
+                Frame::MapReturn { .. }
+                | Frame::FlatMapBindResult
+                | Frame::FlatMapBindSource { .. },
+            ) => {
                 // Legacy frames — remove in future cleanup
                 seg.frames.pop();
                 continue_send(value, error_context)
@@ -111,15 +109,18 @@ impl VM {
 
     fn step_raise(&mut self, error: Value, error_context: Option<Vec<Value>>) -> StepResult {
         // Capture execution context on first error (before unwinding destroys it).
-        let error_context = error_context
-            .or_else(|| Some(self.collect_rich_execution_context()));
+        let error_context = error_context.or_else(|| Some(self.collect_rich_execution_context()));
 
         let Some(seg_id) = self.current_segment else {
             return error_result(VMError::uncaught_exception(error), error_context);
         };
 
         // Fast path: fiber completed (no frames) — free it and propagate to parent.
-        if self.segments.get(seg_id).map_or(false, |s| s.frames.is_empty()) {
+        if self
+            .segments
+            .get(seg_id)
+            .map_or(false, |s| s.frames.is_empty())
+        {
             let parent = self.segments.get(seg_id).and_then(|s| s.parent);
             self.segments.free(seg_id);
             self.current_segment = parent;
@@ -141,9 +142,7 @@ impl VM {
                     unreachable!()
                 };
                 match stream.throw(error) {
-                    StreamStep::Instruction(doctrl) => {
-                        continue_eval(doctrl, error_context)
-                    }
+                    StreamStep::Instruction(doctrl) => continue_eval(doctrl, error_context),
                     StreamStep::Done(value) => {
                         seg.frames.pop();
                         continue_send(value, error_context)
@@ -153,9 +152,7 @@ impl VM {
                         seg.frames.pop();
                         continue_raise(error, error_context)
                     }
-                    StreamStep::External(call) => {
-                        external_result(call, error_context)
-                    }
+                    StreamStep::External(call) => external_result(call, error_context),
                 }
             }
             _ => {
@@ -172,20 +169,14 @@ impl VM {
 
     fn step_eval(&mut self, doctrl: DoCtrl, mut error_context: Option<Vec<Value>>) -> StepResult {
         match doctrl {
-            DoCtrl::Pure { value } => {
-                continue_send(value, error_context)
-            }
+            DoCtrl::Pure { value } => continue_send(value, error_context),
 
-            DoCtrl::Eval { expr } => {
-                continue_eval(*expr, error_context)
-            }
+            DoCtrl::Eval { expr } => continue_eval(*expr, error_context),
 
             DoCtrl::Expand { expr } => {
                 // Evaluate inner, expect Value::Stream, push as frame
                 match *expr {
-                    DoCtrl::Pure { value } => {
-                        self.push_stream_value(value, error_context)
-                    }
+                    DoCtrl::Pure { value } => self.push_stream_value(value, error_context),
                     other => {
                         // Push ExpandReturn frame so we intercept the result
                         if let Some(seg_id) = self.current_segment {
@@ -200,20 +191,14 @@ impl VM {
                 }
             }
 
-            DoCtrl::Apply { f, args } => {
-                self.eval_apply(*f, args, error_context)
-            }
+            DoCtrl::Apply { f, args } => self.eval_apply(*f, args, error_context),
 
-            DoCtrl::Perform { effect } => {
-                self.eval_perform(effect, error_context)
-            }
+            DoCtrl::Perform { effect } => self.eval_perform(effect, error_context),
 
-            DoCtrl::Resume { mut k, value } => {
-                match self.continue_k(&mut k) {
-                    Ok(()) => continue_send(value, error_context),
-                    Err(error) => error_result(error, error_context),
-                }
-            }
+            DoCtrl::Resume { mut k, value } => match self.continue_k(&mut k) {
+                Ok(()) => continue_send(value, error_context),
+                Err(error) => error_result(error, error_context),
+            },
 
             DoCtrl::Transfer { mut k, value } => {
                 // Tail position — pop handler frame before resuming
@@ -228,12 +213,10 @@ impl VM {
                 }
             }
 
-            DoCtrl::ResumeThrow { mut k, exception } => {
-                match self.continue_k(&mut k) {
-                    Ok(()) => continue_raise(exception, error_context),
-                    Err(error) => error_result(error, error_context),
-                }
-            }
+            DoCtrl::ResumeThrow { mut k, exception } => match self.continue_k(&mut k) {
+                Ok(()) => continue_raise(exception, error_context),
+                Err(error) => error_result(error, error_context),
+            },
 
             DoCtrl::TransferThrow { mut k, exception } => {
                 // Tail position — pop handler frame before resuming
@@ -258,15 +241,13 @@ impl VM {
                 self.eval_pass(effect, k, error_context)
             }
 
-            DoCtrl::Delegate { .. } => {
-                error_result(
-                    VMError::type_error(
-                        "Delegate is removed. Use 'yield effect' from handler @do body to re-perform."
-                            .to_string(),
-                    ),
-                    error_context,
-                )
-            }
+            DoCtrl::Delegate { .. } => error_result(
+                VMError::type_error(
+                    "Delegate is removed. Use 'yield effect' from handler @do body to re-perform."
+                        .to_string(),
+                ),
+                error_context,
+            ),
 
             DoCtrl::WithObserve { observer, body } => {
                 self.eval_with_observe(observer, *body, error_context)
@@ -277,7 +258,10 @@ impl VM {
                     let var = self.alloc_scoped_var_in_segment(seg_id, initial);
                     continue_send(Value::Var(var), error_context)
                 } else {
-                    error_result(VMError::internal("AllocVar: no current segment"), error_context)
+                    error_result(
+                        VMError::internal("AllocVar: no current segment"),
+                        error_context,
+                    )
                 }
             }
 
@@ -291,7 +275,10 @@ impl VM {
                         ),
                     }
                 } else {
-                    error_result(VMError::internal("ReadVar: no current segment"), error_context)
+                    error_result(
+                        VMError::internal("ReadVar: no current segment"),
+                        error_context,
+                    )
                 }
             }
 
@@ -300,7 +287,10 @@ impl VM {
                     self.write_scoped_var_in_current_segment(seg_id, var, value.clone());
                     continue_send(value, error_context)
                 } else {
-                    error_result(VMError::internal("WriteVar: no current segment"), error_context)
+                    error_result(
+                        VMError::internal("WriteVar: no current segment"),
+                        error_context,
+                    )
                 }
             }
 
@@ -308,11 +298,13 @@ impl VM {
                 let locations = self.collect_traceback(from);
                 let frames: Vec<Value> = locations
                     .into_iter()
-                    .map(|loc| Value::List(vec![
-                        Value::String(loc.func_name),
-                        Value::String(loc.source_file),
-                        Value::Int(loc.source_line as i64),
-                    ]))
+                    .map(|loc| {
+                        Value::List(vec![
+                            Value::String(loc.func_name),
+                            Value::String(loc.source_file),
+                            Value::Int(loc.source_line as i64),
+                        ])
+                    })
                     .collect();
                 continue_send(Value::List(frames), error_context)
             }
@@ -320,7 +312,8 @@ impl VM {
             DoCtrl::GetExecutionContext => {
                 // Return error-site context if available (captured before unwinding),
                 // otherwise current live context.
-                let frames = error_context.take()
+                let frames = error_context
+                    .take()
                     .unwrap_or_else(|| self.collect_rich_execution_context());
                 continue_send(Value::List(frames), error_context)
             }
@@ -376,11 +369,7 @@ impl VM {
     // -------------------------------------------------------------------
 
     /// Push a Value::Stream as a new Program frame on the current fiber.
-    fn push_stream_value(
-        &mut self,
-        value: Value,
-        error_context: Option<Vec<Value>>,
-    ) -> StepResult {
+    fn push_stream_value(&mut self, value: Value, error_context: Option<Vec<Value>>) -> StepResult {
         match value {
             Value::Stream(stream) => {
                 if let Some(seg_id) = self.current_segment {
@@ -389,14 +378,15 @@ impl VM {
                         return continue_send(Value::Unit, error_context);
                     }
                 }
-                error_result(VMError::internal("push_stream: no current segment"), error_context)
-            }
-            other => {
                 error_result(
-                    VMError::type_error(format!("Expand: expected Value::Stream, got {:?}", other)),
+                    VMError::internal("push_stream: no current segment"),
                     error_context,
                 )
             }
+            other => error_result(
+                VMError::type_error(format!("Expand: expected Value::Stream, got {:?}", other)),
+                error_context,
+            ),
         }
     }
 
@@ -434,9 +424,7 @@ impl VM {
         match f_value {
             Value::Callable(callable) => {
                 match callable.call(arg_values) {
-                    Ok(result) => {
-                        continue_send(result, error_context)
-                    }
+                    Ok(result) => continue_send(result, error_context),
                     Err(VMError::UncaughtException { exception }) => {
                         // Python exception from callable — propagate through
                         // generator stack so try/except blocks can catch it.
@@ -445,9 +433,7 @@ impl VM {
                     Err(err) => error_result(err, error_context),
                 }
             }
-            _ => {
-                error_result(VMError::internal("Apply: f is not callable"), error_context)
-            }
+            _ => error_result(VMError::internal("Apply: f is not callable"), error_context),
         }
     }
 
@@ -478,25 +464,12 @@ impl VM {
             Err(step_result) => return step_result,
         };
 
-        let handler_fiber_id = result.handler_fiber_id;
         let k = result.continuation;
-
-        // 3. Get the handler callable from the handler boundary fiber
-        let handler_callable = self.segments.get(handler_fiber_id)
-            .and_then(|seg| seg.prompt_handler().cloned());
-
-        let Some(handler_callable) = handler_callable else {
-            return error_result(
-                VMError::internal("perform: handler has no callable"),
-                error_context,
-            );
-        };
+        let handler_callable = result.handler_callable;
 
         // 4. Call handler(effect, k) → must return a DoExpr.
         match handler_callable.call_handler(vec![effect, Value::Continuation(k)]) {
-            Ok(doctrl) => {
-                continue_eval(doctrl, error_context)
-            }
+            Ok(doctrl) => continue_eval(doctrl, error_context),
             Err(VMError::UncaughtException { exception }) => {
                 // Python exception from handler callable — propagate through
                 // generator stack so try/except blocks can catch it.
@@ -510,7 +483,9 @@ impl VM {
     fn call_all_observers(&self, start: FiberId, effect: &Value) {
         let mut cursor = Some(start);
         while let Some(fid) = cursor {
-            let Some(seg) = self.segments.get(fid) else { break };
+            let Some(seg) = self.segments.get(fid) else {
+                break;
+            };
             if seg.is_intercept_boundary() {
                 if let Some(observer) = seg.intercept_handler().cloned() {
                     let _ = observer.call(vec![effect.clone()]);
@@ -519,7 +494,6 @@ impl VM {
             cursor = seg.parent;
         }
     }
-
 
     /// Evaluate WithObserve: install observer boundary, create body fiber, evaluate body.
     fn eval_with_observe(
@@ -603,45 +577,21 @@ impl VM {
         };
 
         // Find handler walking up from current
-        let (handler_fiber_id, _handler_parent) = match self.find_handler_for_effect(current, &effect) {
-            Some(result) => result,
-            None => {
-                // Reconnect continuation to current chain so the full
-                // fiber walk (user code + handlers) is continuous.
-                if let (Some(last), Some(cur)) = (k.last_fiber(), self.current_segment) {
-                    if let Some(seg) = self.segments.get_mut(last) {
-                        seg.parent = Some(cur);
+        let (handler_fiber_id, _handler_parent) =
+            match self.find_handler_for_effect(current, &effect) {
+                Some(result) => result,
+                None => {
+                    let mut context = k.collect_rich_context().unwrap_or_default();
+                    if let Some(current) = self.current_segment {
+                        context.extend(self.collect_rich_context_from(current));
                     }
+                    return error_result(VMError::no_matching_handler(effect), Some(context));
                 }
-                let start = k.head().or(self.current_segment);
-                let context = start
-                    .map(|s| self.collect_rich_context_from(s))
-                    .unwrap_or_default();
-                return error_result(VMError::no_matching_handler(effect), Some(context));
-            }
-        };
+            };
 
-        // Extend k: include fibers from current up to (and including) the outer boundary
-        // Detach outer boundary from its parent
-        let boundary_parent = self.segments.get(handler_fiber_id).and_then(|s| s.parent);
-        if let Some(seg) = self.segments.get_mut(handler_fiber_id) {
-            seg.parent = None;
-        }
-
-        // Link k.last → current (extend the continuation with the intermediate chain)
-        let mut k = k;
-        if let Some(last) = k.last_fiber() {
-            if let Some(seg) = self.segments.get_mut(last) {
-                seg.parent = Some(current);
-            }
-        }
-        k.last_fiber = Some(handler_fiber_id);
-
-        // Switch to outer handler's parent
-        self.current_segment = boundary_parent;
-
-        // Get handler callable
-        let handler_callable = self.segments.get(handler_fiber_id)
+        let handler_callable = self
+            .segments
+            .get(handler_fiber_id)
             .and_then(|seg| seg.prompt_handler().cloned());
 
         let Some(handler_callable) = handler_callable else {
@@ -651,11 +601,26 @@ impl VM {
             );
         };
 
+        // Extend k: include fibers from current up to (and including) the outer boundary.
+        let boundary_parent = self.segments.get(handler_fiber_id).and_then(|s| s.parent);
+        let mut k = k;
+        let chain = match self.segments.detach_chain(current, handler_fiber_id) {
+            Ok(chain) => chain,
+            Err(error) => return error_result(error, error_context),
+        };
+        if !k.append_chain(chain) {
+            return error_result(
+                VMError::internal("Pass: continuation already consumed"),
+                error_context,
+            );
+        }
+
+        // Switch to outer handler's parent
+        self.current_segment = boundary_parent;
+
         // Call handler — must return DoExpr
         match handler_callable.call_handler(vec![effect, Value::Continuation(k)]) {
-            Ok(doctrl) => {
-                continue_eval(doctrl, error_context)
-            }
+            Ok(doctrl) => continue_eval(doctrl, error_context),
             Err(VMError::UncaughtException { exception }) => {
                 // Python exception from handler callable — propagate through
                 // generator stack so try/except blocks can catch it.
@@ -694,12 +659,7 @@ impl VM {
 
         // 1. Create boundary fiber with handler
         let marker = crate::ids::Marker::fresh();
-        let handler_obj = crate::segment::Handler::prompt(
-            marker,
-            marker,
-            handler_callable,
-            None,
-        );
+        let handler_obj = crate::segment::Handler::prompt(marker, marker, handler_callable, None);
         let boundary_fid = self.match_with(handler_obj);
 
         // 2. Create a SEPARATE body fiber whose parent is the boundary
@@ -720,32 +680,25 @@ impl VM {
     ) -> StepResult {
         match eval_return {
             EvalReturnContinuation::ResumeToContinuation { head_fiber } => {
-                let mut k = Continuation::new(head_fiber, head_fiber, self.orphan_queue.clone());
-                match self.continue_k(&mut k) {
+                match self.continue_attached_chain(head_fiber, head_fiber) {
                     Ok(()) => continue_send(value, error_context),
                     Err(error) => error_result(error, error_context),
                 }
             }
             EvalReturnContinuation::ReturnToContinuation { head_fiber } => {
-                let mut k = Continuation::new(head_fiber, head_fiber, self.orphan_queue.clone());
-                match self.continue_k(&mut k) {
+                match self.continue_attached_chain(head_fiber, head_fiber) {
                     Ok(()) => continue_send(value, error_context),
                     Err(error) => error_result(error, error_context),
                 }
             }
             EvalReturnContinuation::EvalInScopeReturn { head_fiber } => {
-                let mut k = Continuation::new(head_fiber, head_fiber, self.orphan_queue.clone());
-                match self.continue_k(&mut k) {
+                match self.continue_attached_chain(head_fiber, head_fiber) {
                     Ok(()) => continue_send(value, error_context),
                     Err(error) => error_result(error, error_context),
                 }
             }
-            EvalReturnContinuation::TailResumeReturn => {
-                continue_send(value, error_context)
-            }
-            EvalReturnContinuation::ExpandReturn => {
-                self.push_stream_value(value, error_context)
-            }
+            EvalReturnContinuation::TailResumeReturn => continue_send(value, error_context),
+            EvalReturnContinuation::ExpandReturn => self.push_stream_value(value, error_context),
             _ => {
                 // Other EvalReturn variants — TODO
                 continue_send(value, error_context)
