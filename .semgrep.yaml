@@ -3236,3 +3236,46 @@ rules:
         - "**/packages/doeff-vm-core/src/rust_store.rs"
         - "**/packages/doeff-vm-core/src/vm.rs"
     pattern-regex: '\bscope_bindings\b|\bRustStore\s*\{[^}]*\bstate\b|\bRustStore\s*\{[^}]*\benv\b|\bRustStore\s*\{[^}]*\blog\b|\bScopeStore\b'
+
+  # ---------------------------------------------------------------------------
+  # ISSUE-VM-001 / PR G0: VM mutable-state audit
+  # ---------------------------------------------------------------------------
+
+  - id: vm-g0-no-mode-register-on-vm
+    languages: [rust]
+    severity: ERROR
+    message: |
+      ISSUE-VM-001 G0: VM must not store the next-step signal as a mutable field.
+      Pass Signal into step() and return the next Signal through StepResult::Continue.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/vm.rs"
+    pattern-regex: 'pub\s+mode\s*:\s*(Mode|Signal)\b'
+
+  - id: vm-g0-no-last-error-context-register
+    languages: [generic]
+    severity: ERROR
+    message: |
+      ISSUE-VM-001 G0: diagnostic error context must travel by value through
+      Signal/StepResult/VMError surfaces, not through VM.last_error_context.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/vm.rs"
+        - "**/packages/doeff-vm-core/src/vm/step.rs"
+        - "**/packages/doeff-vm-core/src/vm/dispatch.rs"
+        - "**/packages/doeff-vm/src/pyvm.rs"
+    pattern-regex: '\blast_error_context\b'
+
+  - id: vm-g0-no-self-mode-access
+    languages: [generic]
+    severity: ERROR
+    message: |
+      ISSUE-VM-001 G0: VM step signals must be threaded explicitly. Do not read
+      or write self.mode in VM/PyVM runtime code.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/vm.rs"
+        - "**/packages/doeff-vm-core/src/vm/step.rs"
+        - "**/packages/doeff-vm-core/src/vm/dispatch.rs"
+        - "**/packages/doeff-vm/src/pyvm.rs"
+    pattern-regex: '\bself\.mode\b'
