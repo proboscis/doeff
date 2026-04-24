@@ -2,7 +2,7 @@
 
 The basic pattern (Finally + Semaphore + Spawn/Gather) works in isolation.
 The bug manifests in proboscis-ema's pipeline which has a richer handler stack:
-  WithIntercept(loguru_interceptor, ...)
+  WithObserve(loguru_observer, ...)
     WithHandler(cache_handler, ...)
       WithHandler(sync_await_handler, ...)
         spawn_intercept_handler
@@ -18,28 +18,18 @@ import asyncio
 import signal
 from typing import Any
 
-import pytest
-
 from doeff import (
     AcquireSemaphore,
+    Await,
     CreateSemaphore,
-    Effect,
     EffectBase,
     Gather,
-    Pass,
     ReleaseSemaphore,
-    Resume,
     Spawn,
     Tell,
-    WithHandler,
-    WithIntercept,
-    async_run,
-    default_async_handlers,
+    WithObserve,
     do,
-    run,)
-from doeff import Await
-# REMOVED: from doeff.effects._program_types import ProgramLike
-from doeff import EffectGenerator
+)
 from tests._run_helpers import run_with_defaults
 
 
@@ -108,7 +98,7 @@ def _worker_with_tell(n: int):
     return result
 
 
-def _wrap_with_semaphore_cleanup(program: ProgramLike, sem):
+def _wrap_with_semaphore_cleanup(program: Any, sem):
     @do
     def _impl():
         yield AcquireSemaphore(sem)
@@ -121,7 +111,7 @@ def _wrap_with_semaphore_cleanup(program: ProgramLike, sem):
     return _impl()
 
 
-def _wrap_with_semaphore_cleanup_and_tell(program: ProgramLike, sem):
+def _wrap_with_semaphore_cleanup_and_tell(program: Any, sem):
     @do
     def _impl():
         yield Tell("acquiring semaphore")
@@ -141,7 +131,7 @@ def _spawn_gather(programs: list):
     def _impl():
         tasks = []
         for p in programs:
-            task = yield Spawn(p, daemon=False)
+            task = yield Spawn(p)
             tasks.append(task)
         return list((yield Gather(*tasks)))
 
@@ -177,29 +167,17 @@ class TestLayer1WithIntercept:
 
 
 class TestLayer2WithTell:
-    @pytest.mark.xfail(
-        reason="move semantics: handler resume concurrency regression",
-        strict=False,
-    )
     def test_tell_workers_sync(self) -> None:
         programs = [_worker_with_tell(i) for i in range(TASK_COUNT)]
         result = _run_sync_with_timeout(_throttled(programs, CONCURRENCY, with_tell=True))
-        assert result.is_ok(), result.display()
+        assert result.is_ok(), result.error
         assert result.value == [i * 10 for i in range(TASK_COUNT)]
 
-    @pytest.mark.xfail(
-        reason="move semantics: handler resume concurrency regression",
-        strict=False,
-    )
-    def test_tell_workers_with_intercept_sync(self) -> None:
-        @do
-        def _interceptor(expr: ProgramLike):
-            return expr
-
+    def test_tell_workers_with_observe_sync(self) -> None:
         programs = [_worker_with_tell(i) for i in range(TASK_COUNT)]
-        program = WithIntercept(_interceptor, _throttled(programs, CONCURRENCY, with_tell=True))
+        program = WithObserve(lambda _effect: None, _throttled(programs, CONCURRENCY, with_tell=True))
         result = _run_sync_with_timeout(program)
-        assert result.is_ok(), result.display()
+        assert result.is_ok(), result.error
         assert result.value == [i * 10 for i in range(TASK_COUNT)]
 
 
