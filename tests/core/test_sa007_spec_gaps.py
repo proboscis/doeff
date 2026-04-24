@@ -36,26 +36,12 @@ def _mk_program(value: int = 42) -> GeneratorProgram[int]:
 
 
 
-@pytest.mark.skip(reason="uses removed API: GeneratorProgram")
-def test_SA_007_G03_withhandler_constructor_validates_handler_type() -> None:
-    with pytest.raises(TypeError, match=r"(?i)(callable|handler)"):
-        WithHandler("not_callable", _mk_program())
-
 
 def test_SA_007_G04_dothunk_removed_from_public_hierarchy() -> None:
     src = _read(ROOT / "doeff" / "program.py")
     assert "class DoThunk" not in src
 
 
-
-@pytest.mark.skip(reason="uses removed API: GeneratorProgram")
-def test_SA_007_G06_run_accepts_top_level_withhandler_expr() -> None:
-    @do
-    def passthrough_handler(effect: Effect, k):
-        yield Delegate()
-
-    result = run(WithHandler(passthrough_handler, _mk_program()), handlers=default_handlers())
-    assert result.value == 42
 
 
 def test_SA_007_G07_get_handlers_preserves_identity_not_placeholder() -> None:

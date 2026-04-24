@@ -76,37 +76,3 @@ def _spawn_gather_n(factory, n: int):
     return list((yield Gather(*tasks)))
 
 
-@pytest.mark.skip(reason="uses removed API: sqlite_cache_handler")
-class TestCacheAwaitSpawnHang:
-
-    def test_no_cache_100(self):
-        r = _run_with_timeout(_spawn_gather_n(_no_cache_task, 100))
-        assert r.is_ok(), f"Failed: {r.error}"
-        assert len(r.value) == 100
-
-    def test_no_cache_500(self):
-        r = _run_with_timeout(_spawn_gather_n(_no_cache_task, 500))
-        assert r.is_ok(), f"Failed: {r.error}"
-        assert len(r.value) == 500
-
-    def test_cached_50(self):
-        r = _run_cached_with_timeout(_spawn_gather_n(_cached_task, 50))
-        assert r.is_ok(), f"Failed: {r.error}"
-        assert len(r.value) == 50
-
-    def test_cached_100(self):
-        r = _run_cached_with_timeout(_spawn_gather_n(_cached_task, 100))
-        assert r.is_ok(), f"Failed: {r.error}"
-        assert len(r.value) == 100
-
-    def test_cached_200(self):
-        """Hangs without fix — first batch completes but scheduler stops dispatching."""
-        r = _run_cached_with_timeout(_spawn_gather_n(_cached_task, 200))
-        assert r.is_ok(), f"Failed: {r.error}"
-        assert len(r.value) == 200
-
-    def test_cached_500(self):
-        """Hangs without fix — same as 200 but larger."""
-        r = _run_cached_with_timeout(_spawn_gather_n(_cached_task, 500))
-        assert r.is_ok(), f"Failed: {r.error}"
-        assert len(r.value) == 500

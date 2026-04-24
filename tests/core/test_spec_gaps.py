@@ -134,41 +134,6 @@ class TestG17SchedulerErrorPropagation:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason="uses removed API: GeneratorProgram")
-class TestG18RunResultUnification:
-    """G18: doeff.RunResult must be the Rust VM RunResult."""
-
-    def test_run_result_type_matches(self) -> None:
-        """run_with_defaults() result must be isinstance of doeff.RunResult."""
-        from doeff import RunResult
-
-        def gen():
-            return 42
-            yield  # noqa: RET504
-
-        result = run(_prog(gen))
-        try:
-            is_run_result = isinstance(result, RunResult)
-        except ValueError as exc:
-            # Python 3.10 runtime-checkable Protocol checks can trigger property access
-            # on `RunResult.error`, which raises for Ok results in the Rust type.
-            assert "RunResult is Ok, not Err" in str(exc)
-            is_run_result = True
-        assert is_run_result, (
-            f"run() returned {type(result).__module__}.{type(result).__name__}, "
-            f"expected doeff.RunResult"
-        )
-
-    def test_run_result_has_raw_store(self) -> None:
-        """doeff.RunResult must have .raw_store attribute (Rust type does, Python doesn't)."""
-
-        def gen():
-            return 42
-            yield  # noqa: RET504
-
-        result = run_with_defaults(_prog(gen))
-        assert hasattr(result, "raw_store"), "RunResult missing .raw_store (Python type, not Rust)"
-
 
 # ---------------------------------------------------------------------------
 # G19: PyResultOk/Err != doeff Ok/Err
@@ -176,52 +141,6 @@ class TestG18RunResultUnification:
 # Current: result.result is Rust PyResultOk, not doeff Ok — isinstance fails
 # ---------------------------------------------------------------------------
 
-
-@pytest.mark.skip(reason="uses removed API: GeneratorProgram")
-class TestG19OkErrUnification:
-    """G19: doeff.Ok and doeff.Err must match what run().result returns."""
-
-    def test_ok_isinstance(self) -> None:
-        """isinstance(result.result, doeff.Ok) must be True for successful run."""
-        from doeff import Ok, do
-
-        @do
-        def program():
-            if False:
-                yield
-            return 42
-
-        result = run_with_defaults(program())
-        r = result.result
-        assert isinstance(r, Ok), (
-            f"result.result is {type(r).__module__}.{type(r).__name__}, not doeff.Ok"
-        )
-
-    def test_err_isinstance(self) -> None:
-        """isinstance(result.result, doeff.Err) must be True for failed run."""
-        from doeff import Err, do
-
-        @do
-        def program():
-            raise ValueError("boom")
-            if False:
-                yield
-
-        result = run_with_defaults(program())
-        r = result.result
-        assert isinstance(r, Err), (
-            f"result.result is {type(r).__module__}.{type(r).__name__}, not doeff.Err"
-        )
-
-    def test_strict_run_rejects_generator_program_callable(self) -> None:
-        """Strict run_with_defaults() should accept Program wrappers exposing to_generator()."""
-
-        def gen():
-            return 42
-            yield  # noqa: RET504
-
-        result = run(_prog(gen))
-        assert result.value == 42
 
 
 # ---------------------------------------------------------------------------
@@ -247,56 +166,6 @@ class TestG22FrozenBases:
 # Reader/Writer handlers uses unreachable!() not Return(value).
 # ---------------------------------------------------------------------------
 
-
-@pytest.mark.skip(reason="uses removed API: GeneratorProgram")
-class TestG24HandlerResumeSemantics:
-    """G24: Reader/Writer handlers resume() must be unreachable, not Return."""
-
-    def test_reader_handler_resume_is_unreachable(self) -> None:
-        """ReaderHandlerProgram::resume must use unreachable!(), not Return."""
-        handler_src = _read_vm_or_core_effects("handler.rs")
-
-        # Find ReaderHandlerProgram's resume method
-        # Look for the impl block and its resume fn
-        reader_section = _extract_impl_resume(handler_src, "ReaderHandlerProgram")
-        assert reader_section is not None, "Could not find ReaderHandlerProgram::resume"
-
-        assert "unreachable!" in reader_section, (
-            "ReaderHandlerProgram::resume should use unreachable!() per spec, "
-            f"but contains: {reader_section.strip()}"
-        )
-
-    def test_writer_handler_resume_is_unreachable(self) -> None:
-        """WriterHandlerProgram::resume must use unreachable!(), not Return."""
-        handler_src = _read_vm_or_core_effects("handler.rs")
-
-        writer_section = _extract_impl_resume(handler_src, "WriterHandlerProgram")
-        assert writer_section is not None, "Could not find WriterHandlerProgram::resume"
-
-        assert "unreachable!" in writer_section, (
-            "WriterHandlerProgram::resume should use unreachable!() per spec, "
-            f"but contains: {writer_section.strip()}"
-        )
-
-    def test_reader_one_shot_behavior(self) -> None:
-        """Ask effect returns value in one shot — no intermediate yield."""
-
-        def gen():
-            val = yield Ask("key")
-            return val
-
-        result = run_with_defaults(_prog(gen), env={"key": "hello"})
-        assert result.value == "hello"
-
-    def test_writer_one_shot_behavior(self) -> None:
-        """Tell effect returns unit in one shot — no intermediate yield."""
-
-        def gen():
-            yield Tell("message")
-            return "done"
-
-        result = run_with_defaults(_prog(gen))
-        assert result.value == "done"
 
 
 # ---------------------------------------------------------------------------
