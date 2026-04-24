@@ -137,6 +137,13 @@ Prerequisite for SPEC-VM-022 (Pass with reason trail):
 The V1/V3 cleanup makes SPEC-VM-022 much smaller: no new register to add,
 no old register to coexist with.
 
+## Progress
+
+- **PR G0** merged as #394. `VM.last_error_context` and `VM.mode` are removed;
+  step input/output now carries `Signal` and error context explicitly.
+- **PR G1** is now scoped by
+  `specs/vm/SPEC-VM-023-fiber-ownership.md`.
+
 ## Reliable-Checkpoint Requirement
 
 Before starting PR G0 work, the existing test suite must be green. Stale
