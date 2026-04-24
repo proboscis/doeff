@@ -70,102 +70,12 @@ def _extract_fn_body(source: str, fn_name: str) -> str | None:
 # ===========================================================================
 
 
-@pytest.mark.skip(reason="uses removed API: GeneratorProgram")
-class TestSA001G01RunDefaults:
-    """G01: run() defaults to default_handlers() — spec says handlers=[] by default."""
 
-    def test_run_no_handlers_raises_unhandled(self):
-        """run(program) with no handlers arg must NOT auto-install handlers."""
-
-        def gen():
-            yield Get("x")
-            return 1
-
-        # Spec: handlers=[] by default -> UnhandledEffect
-        # Current: handlers=None -> default_handlers() -> succeeds
-        result = run(_prog(gen), store={"x": 0})
-        assert result.is_err(), "run() without handlers should fail (no state handler)"
-
-    def test_run_empty_handlers_raises_unhandled(self):
-        """run(program, handlers=[]) must raise UnhandledEffect for Get."""
-
-        def gen():
-            yield Get("x")
-            return 1
-
-        result = run(_prog(gen), handlers=[], store={"x": 0})
-        assert result.is_err(), "run(handlers=[]) should fail for Get effect"
-
-
-@pytest.mark.skip(reason="uses removed API: GeneratorProgram")
-class TestSA001G02RawStore:
-    """G02: RunResult missing raw_store property."""
-
-    def test_result_has_raw_store(self):
-        """RunResult must have .raw_store property per SPEC-009 section 2."""
-
-        def gen():
-            yield Put("x", 42)
-            return "done"
-
-        result = run_with_defaults(_prog(gen), store={"x": 0})
-        assert hasattr(result, "raw_store"), "RunResult missing .raw_store"
-
-    def test_raw_store_reflects_final_state(self):
-        """raw_store must contain final store after execution."""
-
-        def gen():
-            yield Put("x", 42)
-            return "done"
-
-        result = run_with_defaults(_prog(gen), store={"x": 0})
-        assert result.raw_store == {"x": 42}
-
-
-@pytest.mark.skip(reason="uses removed API: GeneratorProgram")
-class TestSA001G03ModifyReturnValue:
-    """G03: Modify returns new_value not old_value."""
-
-    def test_modify_returns_old_value(self):
-        """Modify must return the OLD value (read-then-modify). SPEC-008 L1271."""
-        from doeff import Modify
-
-        def gen():
-            old = yield Modify("x", lambda v: v + 5)
-            return old
-
-        result = run_with_defaults(_prog(gen), store={"x": 10})
-        # Spec: old_value=10 returned. Impl currently returns 15 (new_value).
-        assert result.value == 10, f"Modify returned {result.value}, expected 10 (old)"
 
 
 class TestSA001G04Presets:
     """G04: doeff.presets module missing."""
 
-
-@pytest.mark.skip(reason="uses removed API: GeneratorProgram")
-class TestSA001G05ErrorProperty:
-    """G05: RunResult missing .error property."""
-
-    def test_result_has_error_property(self):
-        """RunResult must have .error property per SPEC-009 section 2."""
-
-        def gen():
-            raise ValueError("boom")
-            yield  # noqa: RET504
-
-        result = run_with_defaults(_prog(gen))
-        assert hasattr(result, "error"), "RunResult missing .error property"
-
-    def test_error_returns_exception(self):
-        """result.error must return the exception for Err results."""
-
-        def gen():
-            raise ValueError("boom")
-            yield
-
-        result = run_with_defaults(_prog(gen))
-        assert isinstance(result.error, ValueError)
 
 
 # ===========================================================================
@@ -264,21 +174,6 @@ class TestSA001G17ProgramAnnotations:
 class TestSA001G18Signature:
     """G18: run() signature defaults/types."""
 
-
-@pytest.mark.skip(reason="uses removed API: GeneratorProgram")
-class TestSA001G19StrictToGenerator:
-    """G19: to_generator too permissive."""
-
-    def test_raw_generator_rejected(self):
-        """run() must reject raw generators (not wrapped in ProgramBase)."""
-
-        def gen():
-            yield Get("x")
-            return 1
-
-        raw = gen()  # raw generator, not ProgramBase
-        with pytest.raises((TypeError, Exception)):
-            run_with_defaults(raw, store={"x": 0})
 
 
 class TestSA001G20TaskCompleted:
