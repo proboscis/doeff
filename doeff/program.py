@@ -25,22 +25,51 @@ from doeff_vm import (
 WithHandlerType = _WithHandlerNode
 
 
+_NEW_STYLE_DEPRECATION_MSG = (
+    "WithHandler(h, body) is deprecated: h is already a Program -> Program "
+    "function produced by defhandler, call it directly as h(body) "
+    "(or in Hy: (h body)). The shim stays in place indefinitely for "
+    "backward compatibility but emits this warning to steer new code."
+)
+
+_LEGACY_DEPRECATION_MSG = (
+    "WithHandler(h, body) with a raw @do-dispatcher ``h`` is deprecated: "
+    "rewrite the handler with defhandler (Hy) or @handler-style factory "
+    "that returns a Program -> Program function, then call it as h(body). "
+    "The shim stays in place indefinitely for backward compatibility but "
+    "emits this warning to steer new code toward the PR A1 idiom."
+)
+
+
 def WithHandler(h, body, *args, **kwargs):
-    """Install handler ``h`` around ``body``.
+    """Install handler ``h`` around ``body`` — **deprecated**.
 
-    Accepts two forms:
+    New-style handlers built with ``defhandler`` are already Program →
+    Program functions; prefer calling them directly::
 
-    - New-style (preferred): ``h`` is a function ``Program -> Program`` marked
-      with ``_doeff_is_handler_fn = True``. The call is forwarded as ``h(body)``.
-    - Legacy: ``h`` is a raw handler dispatcher (an ``@do``-decorated
-      ``fn[effect, k]``). Falls through to the Rust ``WithHandler`` pyclass.
+        # Before
+        WithHandler(my_handler, program)
+        # After
+        my_handler(program)
 
-    The legacy path is kept so that pre-migration code keeps working.
-    New code should build handlers via ``defhandler``/``handle`` and invoke
-    them as plain functions: ``(h body)`` in Hy, ``h(body)`` in Python.
+    Accepts two forms for backward compatibility:
+
+    - New-style: ``h`` is a function ``Program -> Program`` marked with
+      ``_doeff_is_handler_fn = True``. The call is forwarded as ``h(body)``.
+      Emits :class:`DeprecationWarning`.
+    - Legacy: ``h`` is a raw ``@do``-decorated dispatcher ``fn[effect, k]``.
+      Falls through to the Rust ``WithHandler`` pyclass. Emits
+      :class:`DeprecationWarning` pointing at ``defhandler``.
+
+    The shim itself is permanent (scope A) — the warning is informational
+    and does not break existing code.
     """
+    import warnings
+
     if getattr(h, "_doeff_is_handler_fn", False):
+        warnings.warn(_NEW_STYLE_DEPRECATION_MSG, DeprecationWarning, stacklevel=2)
         return h(body, *args, **kwargs)
+    warnings.warn(_LEGACY_DEPRECATION_MSG, DeprecationWarning, stacklevel=2)
     return _WithHandlerNode(h, body, *args, **kwargs)
 
 
