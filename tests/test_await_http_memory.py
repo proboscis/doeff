@@ -115,5 +115,3 @@ def _run_test(factory, n: int, conc: int = 40):
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old)
-
-

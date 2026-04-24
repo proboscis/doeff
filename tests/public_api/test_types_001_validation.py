@@ -150,5 +150,3 @@ def test_python_handler_transfer_and_delegate_with_k() -> None:
     assert transfer_result.value == "via-transfer"
     assert delegate_seen["is_k"] is True
     assert delegate_result.value == "original"
-
-

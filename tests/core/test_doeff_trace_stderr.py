@@ -47,6 +47,3 @@ def test_run_no_stderr_on_success(capsys: pytest.CaptureFixture[str]) -> None:
 
     captured = capsys.readouterr()
     assert captured.err == ""
-
-
-

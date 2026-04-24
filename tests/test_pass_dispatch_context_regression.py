@@ -40,5 +40,3 @@ def _compose(program, *handlers):
     for handler in reversed(handlers):
         wrapped = WithHandler(handler, wrapped)
     return wrapped
-
-

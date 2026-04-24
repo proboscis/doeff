@@ -77,7 +77,3 @@ def test_do_static_method_signature_and_execution() -> None:
     program = math.double(3)
     assert isinstance(program, Program)
     assert _run_program(program) == 6
-
-
-
-

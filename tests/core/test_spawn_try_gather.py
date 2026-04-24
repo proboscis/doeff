@@ -145,6 +145,3 @@ def test_sequential_try_compute_with_handler():
     result = run_with_defaults(wrapped)
     assert result.is_ok(), f"Failed: {result.error}"
     assert len(result.value) == 3
-
-
-

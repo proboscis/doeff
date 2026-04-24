@@ -171,5 +171,3 @@ def _spawn_gather_cached_throttled(n: int, duration: float, concurrency: int):
         t = yield Spawn(_cached_throttled_sleep(i, duration, sem))
         tasks.append(t)
     return list((yield Gather(*tasks)))
-
-

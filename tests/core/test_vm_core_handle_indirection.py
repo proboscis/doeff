@@ -41,9 +41,3 @@ def test_py_shared_uses_safe_unwrap_path() -> None:
     assert "Python::assume_attached()" not in src
     assert "Python::try_attach" in src
     assert "try_unwrap_token" in src
-
-
-
-
-
-

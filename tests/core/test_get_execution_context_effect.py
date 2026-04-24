@@ -96,12 +96,3 @@ def test_get_execution_context_active_chain_no_exception_site() -> None:
     assert result.is_ok(), result.error
     entries = _active_chain_entries(getattr(result.value, "active_chain", None))
     assert not any(entry.get("kind") == "exception_site" for entry in entries)
-
-
-
-
-
-
-
-
-

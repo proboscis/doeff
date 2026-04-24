@@ -53,6 +53,3 @@ def test_two_gets_returns_tuple_through_run() -> None:
 
     result = run_with_defaults(program(), store={"x": 9, "y": 8})
     assert result.value == (9, 8)
-
-
-

@@ -20,5 +20,3 @@ def test_effects_do_not_expose_direct_composition_methods() -> None:
 @dataclass(frozen=True)
 class _LocalEffect(EffectBase):
     value: int
-
-

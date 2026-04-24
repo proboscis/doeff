@@ -34,4 +34,3 @@ class TestCallDoctrlRuntimeContract:
             return 1
 
         assert isinstance(simple_program(), ProgramBase)
-

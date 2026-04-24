@@ -108,11 +108,3 @@ def _render_failure(
     doeff_tb = attach_doeff_traceback(result.error, traceback_data=result.traceback_data)
     assert doeff_tb is not None
     return doeff_tb.format_default()
-
-
-
-
-
-
-
-

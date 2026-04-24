@@ -198,4 +198,3 @@ class TestSA001G21EffectEnum:
 
 class TestSA001G25RunResultProtocol:
     """G25: RunResult concrete not Protocol."""
-
