@@ -101,45 +101,6 @@ def test_get_execution_context_active_chain_no_exception_site() -> None:
 
 
 
-@pytest.mark.skip(reason="uses removed API: build_doeff_traceback")
-def test_get_execution_context_active_chain_renderable() -> None:
-    @do
-    def program() -> Program[object]:
-        return (yield GetExecutionContext())
-
-    result = run_with_defaults(program())
-    assert result.is_ok(), result.error
-    context = result.value
-    active_chain = getattr(context, "active_chain", ())
-    tb = build_doeff_traceback(
-        RuntimeError("active-chain snapshot"),
-        trace_entries=[],
-        active_chain_entries=active_chain,
-        allow_active=True,
-    )
-    rendered = tb.format_default()
-    assert "doeff Traceback (most recent call last):" in rendered
-
-
-@pytest.mark.skip(reason="uses removed API: ProgramCallStack")
-def test_program_call_stack_deprecation_warning() -> None:
-    @do
-    def body() -> Program[object]:
-        stack = yield ProgramCallStack()
-        return stack
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        result = run_with_defaults(body())
-
-    assert result.is_ok(), result.error
-    warning_messages = [str(item.message) for item in caught]
-    assert any(
-        issubclass(item.category, DeprecationWarning)
-        and "GetExecutionContext" in str(item.message)
-        for item in caught
-    )
-    assert warning_messages
 
 
 

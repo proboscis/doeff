@@ -47,7 +47,3 @@ def test_string_keys_still_work() -> None:
 
 
 
-@pytest.mark.skip(reason="uses removed API: ask (lowercase)")
-def test_ask_rejects_unhashable_keys() -> None:
-    with pytest.raises(TypeError, match=r"key must be hashable"):
-        ask([])  # type: ignore[arg-type]

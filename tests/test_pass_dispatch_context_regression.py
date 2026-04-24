@@ -42,25 +42,3 @@ def _compose(program, *handlers):
     return wrapped
 
 
-@pytest.mark.skip(reason="uses removed API: memo_rewriters, in_memory_cache_handler")
-def test_memo_rewriter_delegate_finds_outer_handler():
-    """memo_rewriter(EffectA) + cache_handler: Delegate must find the cache handler.
-
-    This is the pattern from mediagen's make_memo_rewriter:
-      effect_a_handler (Pass non-EffectA) -> memo_rewriter (Delegate CacheGet) -> cache_handler
-    The Delegate fails with "no outer handler" because current_dispatch_id() returns None.
-    """
-
-    @do
-    def program() -> EffectGenerator:
-        return (yield EffectA())
-
-    wrapped = _compose(
-        program(),
-        effect_a_handler,
-        *memo_rewriters(EffectA),
-        in_memory_cache_handler(),
-    )
-    result = run_with_defaults(wrapped)
-    assert result.is_ok(), f"Expected Ok, got: {result.error}"
-    assert result.value == "handled"

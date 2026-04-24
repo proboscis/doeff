@@ -117,30 +117,3 @@ def _run_test(factory, n: int, conc: int = 40):
         signal.signal(signal.SIGALRM, old)
 
 
-@pytest.mark.skip(reason="uses removed API: sqlite_cache_handler")
-class TestAwaitHttpMemory:
-    def test_sleep_500_low_memory(self):
-        """Control: asyncio.sleep return is None — memory should be low."""
-        r, rss_before, rss_after = _run_test(_sleep_task, 500)
-        assert r.is_ok(), f"Failed: {r.error}"
-        assert len(r.value) == 500
-        delta = rss_after - rss_before
-        print(f"\n  sleep N=500: RSS {rss_before:.0f} -> {rss_after:.0f} MB (delta={delta:.0f})")
-        assert delta < 1000, f"Memory too high for sleep: {delta:.0f}MB"
-
-    def test_http_500_memory(self):
-        """BUG: Await returning ~10KB object — memory should not explode.
-
-        If continuations retain the return value, memory grows as
-        N * continuation_chain_size * return_value_size.
-        """
-        r, rss_before, rss_after = _run_test(_http_task, 500)
-        assert r.is_ok(), f"Failed: {r.error}"
-        assert len(r.value) == 500
-        delta = rss_after - rss_before
-        print(f"\n  http N=500: RSS {rss_before:.0f} -> {rss_after:.0f} MB (delta={delta:.0f})")
-        # 500 * 10KB = 5MB. Allow 500MB for overhead. If >2GB, it's the bug.
-        assert delta < 2000, (
-            f"Memory leak! http N=500 used {delta:.0f}MB "
-            f"(expected <500MB, sleep uses <200MB for same N)"
-        )
