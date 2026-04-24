@@ -1,7 +1,7 @@
 """E2E tests: Launch with MCP tools through the full doeff handler stack.
 
 These tests use the mock tmux backend but real MCP server, verifying:
-1. defmcp-tool → McpToolDef → LaunchConfig.mcp_tools
+1. defmcp-tool → McpToolDef → LaunchEffect.mcp_tools
 2. Protocol handler captures handler stack via GetHandlers()
 3. MCP server starts, serves tools, and is reachable over HTTP
 4. .mcp.json is written correctly
@@ -12,9 +12,11 @@ These tests use the mock tmux backend but real MCP server, verifying:
 import http.client
 import json
 from dataclasses import dataclass
-from pathlib import Path
 
-import pytest
+from doeff_agents.adapters.base import AgentType
+from doeff_agents.effects import LaunchEffect
+from doeff_agents.handlers import _make_protocol_handler
+from doeff_agents.handlers.testing import MockAgentHandler
 
 from doeff import (
     EffectBase,
@@ -25,11 +27,6 @@ from doeff import (
     run,
 )
 from doeff.mcp import McpParamSchema, McpToolDef
-from doeff_agents.adapters.base import AgentType, LaunchConfig
-from doeff_agents.effects import Launch, LaunchEffect, Stop
-from doeff_agents.handlers import _make_protocol_handler
-from doeff_agents.handlers.testing import MockAgentHandler
-
 
 # ---------------------------------------------------------------------------
 # Test effects & handlers — simulate a domain-specific handler stack
@@ -124,18 +121,18 @@ class TestMcpE2E:
 
         @do
         def program():
-            config = LaunchConfig(
-                agent_type=AgentType.CLAUDE,
-                work_dir=tmp_path,
-                prompt="test prompt",
-                mcp_tools=(greet_tool, upper_tool),
-            )
             handle = yield Perform(
-                LaunchEffect(session_name="mcp-test", config=config)
+                LaunchEffect(
+                    session_name="mcp-test",
+                    agent_type=AgentType.CLAUDE,
+                    work_dir=tmp_path,
+                    prompt="test prompt",
+                    mcp_tools=(greet_tool, upper_tool),
+                )
             )
             return handle
 
-        handle, mock = self._run_with_handlers(program())
+        _handle, _mock = self._run_with_handlers(program())
 
         # Verify .mcp.json was written
         mcp_json_path = tmp_path / ".mcp.json"
@@ -153,17 +150,17 @@ class TestMcpE2E:
 
         @do
         def program():
-            config = LaunchConfig(
-                agent_type=AgentType.CLAUDE,
-                work_dir=tmp_path,
-                mcp_tools=(greet_tool,),
-            )
             handle = yield Perform(
-                LaunchEffect(session_name="mcp-http-test", config=config)
+                LaunchEffect(
+                    session_name="mcp-http-test",
+                    agent_type=AgentType.CLAUDE,
+                    work_dir=tmp_path,
+                    mcp_tools=(greet_tool,),
+                )
             )
             return handle
 
-        handle, mock = self._run_with_handlers(program())
+        _handle, _mock = self._run_with_handlers(program())
 
         # Read server URL from .mcp.json
         mcp_config = json.loads((tmp_path / ".mcp.json").read_text())
@@ -184,21 +181,19 @@ class TestMcpE2E:
     def test_mcp_tool_call_uses_captured_handler_stack(self, tmp_path):
         """Tool calls execute through the captured domain handler stack."""
 
-        server_url_holder = {}
-
         @do
         def program():
-            config = LaunchConfig(
-                agent_type=AgentType.CLAUDE,
-                work_dir=tmp_path,
-                mcp_tools=(greet_tool, upper_tool),
-            )
             handle = yield Perform(
-                LaunchEffect(session_name="mcp-stack-test", config=config)
+                LaunchEffect(
+                    session_name="mcp-stack-test",
+                    agent_type=AgentType.CLAUDE,
+                    work_dir=tmp_path,
+                    mcp_tools=(greet_tool, upper_tool),
+                )
             )
             return handle
 
-        handle, mock = self._run_with_handlers(program())
+        _handle, _mock = self._run_with_handlers(program())
 
         mcp_config = json.loads((tmp_path / ".mcp.json").read_text())
         url = mcp_config["mcpServers"]["doeff"]["url"]
@@ -238,17 +233,17 @@ class TestMcpE2E:
 
         @do
         def program():
-            config = LaunchConfig(
-                agent_type=AgentType.CLAUDE,
-                work_dir=tmp_path,
-                mcp_tools=(greet_tool, upper_tool),
-            )
             handle = yield Perform(
-                LaunchEffect(session_name="mcp-list-test", config=config)
+                LaunchEffect(
+                    session_name="mcp-list-test",
+                    agent_type=AgentType.CLAUDE,
+                    work_dir=tmp_path,
+                    mcp_tools=(greet_tool, upper_tool),
+                )
             )
             return handle
 
-        handle, mock = self._run_with_handlers(program())
+        _handle, _mock = self._run_with_handlers(program())
 
         mcp_config = json.loads((tmp_path / ".mcp.json").read_text())
         url = mcp_config["mcpServers"]["doeff"]["url"]
@@ -281,17 +276,17 @@ class TestMcpE2E:
 
         @do
         def program():
-            config = LaunchConfig(
-                agent_type=AgentType.CLAUDE,
-                work_dir=tmp_path,
-                prompt="no mcp",
-            )
             handle = yield Perform(
-                LaunchEffect(session_name="no-mcp-test", config=config)
+                LaunchEffect(
+                    session_name="no-mcp-test",
+                    agent_type=AgentType.CLAUDE,
+                    work_dir=tmp_path,
+                    prompt="no mcp",
+                )
             )
             return handle
 
-        handle, mock = self._run_with_handlers(program())
+        _handle, _mock = self._run_with_handlers(program())
 
         mcp_json_path = tmp_path / ".mcp.json"
         assert not mcp_json_path.exists(), ".mcp.json should NOT be created"

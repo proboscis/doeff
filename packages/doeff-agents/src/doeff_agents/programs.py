@@ -36,6 +36,23 @@ T = TypeVar("T")
 EffectGenerator = Generator[Any, Any, T]
 
 
+def _launch_from_config(
+    session_name: str,
+    config: LaunchConfig,
+    *,
+    ready_timeout: float,
+):
+    return Launch(
+        session_name,
+        agent_type=config.agent_type,
+        work_dir=config.work_dir,
+        prompt=config.prompt,
+        model=config.model,
+        mcp_tools=config.mcp_tools,
+        ready_timeout=ready_timeout,
+    )
+
+
 # =============================================================================
 # Result Types
 # =============================================================================
@@ -190,7 +207,7 @@ def run_agent_to_completion(
     Returns: AgentResult with status and output
     """
     # Launch
-    handle: SessionHandle = yield Launch(
+    handle: SessionHandle = yield _launch_from_config(
         session_name,
         config,
         ready_timeout=ready_timeout,
@@ -261,7 +278,7 @@ def with_session(
     Yields: Fine-grained effects
     Returns: Result from use function
     """
-    handle: SessionHandle = yield Launch(
+    handle: SessionHandle = yield _launch_from_config(
         session_name,
         config,
         ready_timeout=ready_timeout,
@@ -369,7 +386,7 @@ def interactive_session(
 
     Returns: AgentResult
     """
-    handle: SessionHandle = yield Launch(
+    handle: SessionHandle = yield _launch_from_config(
         session_name,
         config,
         ready_timeout=ready_timeout,
