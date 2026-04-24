@@ -3,26 +3,23 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import doeff
-
 from doeff import (
     AcquireSemaphore,
     CreateSemaphore,
-    Discontinued,
     Effect,
+    EffectBase,
+    EffectGenerator,
     Gather,
     Get,
     Pass,
-    Pure,
     Put,
     ReleaseSemaphore,
     Resume,
     Spawn,
     Transfer,
-    Try,
     WithHandler,
     do,
 )
-from doeff import EffectBase, EffectGenerator
 from tests._run_helpers import run_with_defaults
 
 
@@ -112,6 +109,31 @@ def test_try_finally_with_transfer() -> None:
     def wrapper():
         value = yield WithHandler(_transfer_handler, program())
         cleaned = yield Get("cleaned")
+        return value, cleaned
+
+    result = run_with_defaults(wrapper(), store={})
+    assert result.value == ("handled:x", True)
+
+
+def test_tail_looking_resume_with_handler_finally_keeps_resume_semantics() -> None:
+    @do(non_tail=True)
+    def handler(effect: Effect, k: object) -> EffectGenerator:
+        if isinstance(effect, Ping):
+            try:
+                return (yield Resume(k, f"handled:{effect.label}"))
+            finally:
+                yield Put("handler_cleaned", True)
+        yield Pass(effect, k)
+
+    @do
+    def program():
+        return (yield Ping(label="x"))
+
+    @do
+    def wrapper():
+        yield Put("handler_cleaned", False)
+        value = yield WithHandler(handler, program())
+        cleaned = yield Get("handler_cleaned")
         return value, cleaned
 
     result = run_with_defaults(wrapper(), store={})
