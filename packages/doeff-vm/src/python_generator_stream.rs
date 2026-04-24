@@ -378,17 +378,56 @@ fn take_continuation(
     }
 }
 
-/// Peek at head FiberId from a Py<PyK> without consuming.
-fn peek_head(
+fn continuation_traceback_value(
     py: Python<'_>,
     k: &Py<doeff_vm_core::continuation::PyK>,
     label: &str,
-) -> Result<doeff_vm_core::FiberId, String> {
+) -> Result<Value, String> {
     let k_ref = k.bind(py);
     let k_borrowed = k_ref.borrow();
-    k_borrowed
-        .peek_head()
-        .ok_or_else(|| format!("{}: continuation has no head fiber", label))
+    let Some(doeff_vm_core::OwnedControlContinuation::Started(k)) = k_borrowed.continuation_ref()
+    else {
+        return Err(format!(
+            "{}: continuation has no detached fiber chain",
+            label
+        ));
+    };
+    let frames = k
+        .collect_traceback()
+        .ok_or_else(|| format!("{}: continuation has no detached fiber chain", label))?
+        .into_iter()
+        .map(|loc| {
+            Value::List(vec![
+                Value::String(loc.func_name),
+                Value::String(loc.source_file),
+                Value::Int(loc.source_line as i64),
+            ])
+        })
+        .collect();
+    Ok(Value::List(frames))
+}
+
+fn continuation_handlers_value(
+    py: Python<'_>,
+    k: &Py<doeff_vm_core::continuation::PyK>,
+    label: &str,
+) -> Result<Value, String> {
+    let k_ref = k.bind(py);
+    let k_borrowed = k_ref.borrow();
+    let Some(doeff_vm_core::OwnedControlContinuation::Started(k)) = k_borrowed.continuation_ref()
+    else {
+        return Err(format!(
+            "{}: continuation has no detached fiber chain",
+            label
+        ));
+    };
+    let handlers = k
+        .handler_callables()
+        .ok_or_else(|| format!("{}: continuation has no detached fiber chain", label))?
+        .into_iter()
+        .map(Value::Callable)
+        .collect();
+    Ok(Value::List(handlers))
 }
 
 /// Wrap a handler callable as Value::Callable.
@@ -493,15 +532,15 @@ pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<
         });
     }
     if let Ok(gt) = obj.downcast::<PyGetTraceback>() {
-        let head = peek_head(py, &gt.get().continuation, "GetTraceback")?;
-        return Ok(DoCtrl::GetTraceback { from: head });
+        let value = continuation_traceback_value(py, &gt.get().continuation, "GetTraceback")?;
+        return Ok(DoCtrl::Pure { value });
     }
     if obj.downcast::<PyGetExecutionContext>().is_ok() {
         return Ok(DoCtrl::GetExecutionContext);
     }
     if let Ok(gh) = obj.downcast::<PyGetHandlers>() {
-        let head = peek_head(py, &gh.get().continuation, "GetHandlers")?;
-        return Ok(DoCtrl::GetHandlers { from: head });
+        let value = continuation_handlers_value(py, &gh.get().continuation, "GetHandlers")?;
+        return Ok(DoCtrl::Pure { value });
     }
     if obj.downcast::<crate::do_expr::PyGetOuterHandlers>().is_ok() {
         return Ok(DoCtrl::GetOuterHandlers);
@@ -629,14 +668,35 @@ fn classify_tagged_to_doctrl(
             let k_obj = obj
                 .getattr("continuation")
                 .map_err(|_| "GetTraceback: missing 'continuation' attribute".to_string())?;
-            let k_ref = k_obj
+            let k = k_obj
                 .downcast::<doeff_vm_core::continuation::PyK>()
                 .map_err(|_| "GetTraceback: continuation must be K".to_string())?;
-            let k_borrowed = k_ref.borrow();
-            let head = k_borrowed
-                .peek_head()
-                .ok_or_else(|| "GetTraceback: continuation has no head fiber".to_string())?;
-            Ok(DoCtrl::GetTraceback { from: head })
+            let value = {
+                let k_borrowed = k.borrow();
+                let Some(doeff_vm_core::OwnedControlContinuation::Started(k)) =
+                    k_borrowed.continuation_ref()
+                else {
+                    return Err(
+                        "GetTraceback: continuation has no detached fiber chain".to_string()
+                    );
+                };
+                let frames = k
+                    .collect_traceback()
+                    .ok_or_else(|| {
+                        "GetTraceback: continuation has no detached fiber chain".to_string()
+                    })?
+                    .into_iter()
+                    .map(|loc| {
+                        Value::List(vec![
+                            Value::String(loc.func_name),
+                            Value::String(loc.source_file),
+                            Value::Int(loc.source_line as i64),
+                        ])
+                    })
+                    .collect();
+                Value::List(frames)
+            };
+            Ok(DoCtrl::Pure { value })
         }
         24 => {
             let observer_obj = obj
@@ -658,14 +718,27 @@ fn classify_tagged_to_doctrl(
             let k_obj = obj
                 .getattr("continuation")
                 .map_err(|_| "GetHandlers: missing 'continuation' attribute".to_string())?;
-            let k_ref = k_obj
+            let k = k_obj
                 .downcast::<doeff_vm_core::continuation::PyK>()
                 .map_err(|_| "GetHandlers: continuation must be K".to_string())?;
-            let k_borrowed = k_ref.borrow();
-            let head = k_borrowed
-                .peek_head()
-                .ok_or_else(|| "GetHandlers: continuation has no head fiber".to_string())?;
-            Ok(DoCtrl::GetHandlers { from: head })
+            let value = {
+                let k_borrowed = k.borrow();
+                let Some(doeff_vm_core::OwnedControlContinuation::Started(k)) =
+                    k_borrowed.continuation_ref()
+                else {
+                    return Err("GetHandlers: continuation has no detached fiber chain".to_string());
+                };
+                let handlers = k
+                    .handler_callables()
+                    .ok_or_else(|| {
+                        "GetHandlers: continuation has no detached fiber chain".to_string()
+                    })?
+                    .into_iter()
+                    .map(Value::Callable)
+                    .collect();
+                Value::List(handlers)
+            };
+            Ok(DoCtrl::Pure { value })
         }
         27 => Ok(DoCtrl::GetOuterHandlers),
         _ => Err(format!("unknown DoExpr tag: {}", tag)),

@@ -1,7 +1,6 @@
 //! Core VM struct.
 
 use crate::arena::FiberArena;
-use crate::continuation::{self, OrphanQueue};
 use crate::ids::{FiberId, SegmentId};
 use crate::segment::Fiber;
 use crate::value::Value;
@@ -26,9 +25,6 @@ pub struct VM {
     pub segments: FiberArena,
     pub var_store: VarStore,
     pub current_segment: Option<SegmentId>,
-    /// Per-VM orphan queue. Continuations hold Arc clones; on drop they push
-    /// their head FiberId here. The VM drains this each step.
-    pub orphan_queue: OrphanQueue,
 }
 
 impl VM {
@@ -37,7 +33,6 @@ impl VM {
             segments: FiberArena::new(),
             var_store: VarStore::new(),
             current_segment: None,
-            orphan_queue: continuation::new_orphan_queue(),
         }
     }
 
@@ -45,9 +40,6 @@ impl VM {
         self.segments.clear();
         self.var_store.clear_run_local();
         self.current_segment = None;
-        // Replace orphan queue so stale Continuations from previous runs
-        // push to the old (now-disconnected) queue, not this new one.
-        self.orphan_queue = continuation::new_orphan_queue();
     }
 
     pub fn end_active_run_session(&mut self) {
@@ -56,23 +48,6 @@ impl VM {
         self.var_store.clear_run_local();
         self.var_store.shrink_run_local_to_fit();
         self.current_segment = None;
-    }
-
-    /// Free fibers from continuations that were dropped without being consumed.
-    ///
-    /// When a handler drops a continuation (e.g., scheduler ignoring
-    /// TaskCompleted's k), the fiber chain stays orphaned in the arena.
-    /// This walks each orphaned chain from head→last following parent
-    /// pointers, freeing every fiber.
-    pub fn reclaim_orphaned_fibers(&mut self) {
-        let orphans = continuation::drain_orphan_fibers(&self.orphan_queue);
-        for head in orphans {
-            let mut cursor = Some(head);
-            while let Some(fid) = cursor {
-                cursor = self.segments.get(fid).and_then(|s| s.parent);
-                self.segments.free(fid);
-            }
-        }
     }
 
     pub fn alloc_segment(&mut self, fiber: Fiber) -> FiberId {
@@ -87,12 +62,17 @@ impl VM {
     ///
     /// For each fiber, queries each Program frame's stream for live source location.
     /// Returns frames from innermost (current fiber, topmost frame) to outermost (root).
-    pub fn collect_traceback(&self, start: SegmentId) -> Vec<crate::ir_stream::StreamSourceLocation> {
+    pub fn collect_traceback(
+        &self,
+        start: SegmentId,
+    ) -> Vec<crate::ir_stream::StreamSourceLocation> {
         let mut frames = Vec::new();
         let mut current = Some(start);
 
         while let Some(seg_id) = current {
-            let Some(seg) = self.segments.get(seg_id) else { break };
+            let Some(seg) = self.segments.get(seg_id) else {
+                break;
+            };
 
             // Walk frames top-to-bottom (innermost first)
             for frame in seg.frames.iter().rev() {
@@ -141,10 +121,17 @@ impl VM {
         let mut cursor = Some(start);
 
         while let Some(fid) = cursor {
-            let Some(seg) = self.segments.get(fid) else { break };
+            let Some(seg) = self.segments.get(fid) else {
+                break;
+            };
 
             if first_boundary.is_none() {
-                if seg.handler.as_ref().and_then(|h| h.prompt_boundary()).is_some() {
+                if seg
+                    .handler
+                    .as_ref()
+                    .and_then(|h| h.prompt_boundary())
+                    .is_some()
+                {
                     first_boundary = Some(fid);
                 }
             }
@@ -193,9 +180,14 @@ impl VM {
             let handler_chain = self.handlers_in_caller_chain(boundary_id);
             let handler_names: Vec<Value> = handler_chain
                 .into_iter()
-                .map(|entry| Value::String(
-                    entry.handler.name().unwrap_or_else(|| "<handler>".to_string())
-                ))
+                .map(|entry| {
+                    Value::String(
+                        entry
+                            .handler
+                            .name()
+                            .unwrap_or_else(|| "<handler>".to_string()),
+                    )
+                })
                 .collect();
             if !handler_names.is_empty() {
                 frames.push(Value::List(vec![
