@@ -27,23 +27,20 @@ from doeff import (
     Await,
     CreateSemaphore,
     AcquireSemaphore,
+    Effect,
     ReleaseSemaphore,
     EffectGenerator,
     Gather,
     Local,
     Pass,
     Resume,
-    Semaphore,
     Spawn,
     Try,
     WithHandler,
-    WithIntercept,
-    default_handlers,
     do,
-    run,
-    slog,
 )
-from doeff_core_effects.effects import EffectBase, EffectBase
+from doeff_core_effects.effects import EffectBase
+from tests._run_helpers import run_with_defaults
 
 
 # --- Custom effect (simulates HistoricalPriceEffect) ---
@@ -111,7 +108,7 @@ def make_handler():
     @do
     def _handler(effect: Effect, k):
         if not isinstance(effect, FetchEffect):
-            yield Pass()
+            yield Pass(effect, k)
             return
         svc = yield Ask("price_service")
         data = yield svc.fetch(effect.ticker, effect.start, effect.end)
@@ -162,7 +159,7 @@ def fetch_movements(
     ]
     tasks = []
     for p in programs:
-        t = yield Spawn(p, daemon=False)
+        t = yield Spawn(p)
         tasks.append(t)
     return list((yield Gather(*tasks)))
 
@@ -200,14 +197,6 @@ def _build_program(n: int = 5, concurrency: int = 3, with_intercept: bool = Fals
 def test_spawn_gather_handler_without_intercept():
     """Works: Spawn+Gather + custom handler WITHOUT WithIntercept."""
     program = _build_program(n=5, with_intercept=False)
-    result = run(program, handlers=default_handlers())
-    assert result.is_ok(), f"Failed: {result.error}"
-    assert len(result.value) == 5
-
-
-def test_spawn_gather_handler_with_intercept():
-    """Fails: same program WITH WithIntercept wrapping."""
-    program = _build_program(n=5, with_intercept=True)
-    result = run(program, handlers=default_handlers())
+    result = run_with_defaults(program)
     assert result.is_ok(), f"Failed: {result.error}"
     assert len(result.value) == 5

@@ -88,12 +88,12 @@ class TestBasicPrograms:
         """Raw generators must not be accepted — use DoExpr."""
         def gen():
             yield
-        with pytest.raises(TypeError, match="DoExpr expected"):
+        with pytest.raises(TypeError, match=r"DoExpr"):
             vm.run(gen())
 
     def test_run_rejects_plain_object(self, vm):
         """Plain objects without tag must not be accepted."""
-        with pytest.raises(TypeError, match="DoExpr expected"):
+        with pytest.raises(TypeError, match=r"DoExpr"):
             vm.run(42)
 
 

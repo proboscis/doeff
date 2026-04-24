@@ -27,6 +27,7 @@ import doeff_vm
 from doeff import do, run, default_handlers
 from doeff_core_effects.effects import EffectBase
 from doeff_vm import WithHandler
+from tests._run_helpers import run_with_defaults
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +112,7 @@ def _rss_mb() -> float:
 def _run_program(program):
     """Run a program with the big_data_handler installed."""
     wrapped = WithHandler(big_data_handler, program)
-    return run(wrapped, handlers=default_handlers())
+    return run_with_defaults(wrapped)
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +220,7 @@ class TestVmMemoryLeak:
         gc.collect()
         rss_before = _rss_mb()
 
-        result = run(wrapped, handlers=default_handlers())
+        result = run_with_defaults(wrapped)
 
         gc.collect()
         rss_after = _rss_mb()

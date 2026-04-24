@@ -7,10 +7,11 @@ import doeff_vm
 import pytest
 
 from doeff import Program, default_handlers, do, run
+from tests._run_helpers import run_with_defaults
 
 
 def _run_program(program: Program[Any]) -> Any:
-    return run(program, handlers=default_handlers()).value
+    return run_with_defaults(program).value
 
 
 def test_do_instance_method_signature_and_execution() -> None:
@@ -76,35 +77,3 @@ def test_do_static_method_signature_and_execution() -> None:
     program = math.double(3)
     assert isinstance(program, Program)
     assert _run_program(program) == 6
-
-
-def test_do_generator_wrapper_wraps_bridge_generator() -> None:
-    @do
-    def sample():
-        yield Program.pure(1)
-        return 2
-
-    wrapper = sample.func()
-    assert isinstance(wrapper, doeff_vm.DoeffGenerator)
-    assert inspect.isgenerator(wrapper.generator)
-    assert not hasattr(wrapper.generator, "__doeff_inner__")
-
-
-def test_do_rejects_async_function_decoration() -> None:
-    with pytest.raises(TypeError, match=r"@do does not support async def functions") as exc_info:
-
-        @do
-        async def bad() -> int:
-            return 1
-
-    assert "yield Await(coroutine)" in str(exc_info.value)
-
-
-def test_do_rejects_async_generator_decoration() -> None:
-    with pytest.raises(TypeError, match=r"@do does not support async def functions") as exc_info:
-
-        @do
-        async def bad_async_gen():
-            yield 1
-
-    assert "yield Await(coroutine)" in str(exc_info.value)

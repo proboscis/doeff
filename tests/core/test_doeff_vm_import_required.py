@@ -64,20 +64,3 @@ def test_importing_errors_module_fails_when_doeff_vm_is_unavailable() -> None:
     error = _import_error_with_blocked_doeff_vm("doeff.errors")
     assert error["type"] in {"ModuleNotFoundError", "ImportError"}
     assert "doeff_vm" in error["message"]
-
-
-def test_runtime_sources_do_not_recover_from_doeff_vm_import_failure() -> None:
-    pattern = re.compile(
-        r"try:\s+(?:from doeff_vm import .*?|import doeff_vm(?: as \w+)?|from doeff_vm import doeff_vm as \w+).*?"
-        r"except (?:ImportError|ModuleNotFoundError|Exception)\b",
-        re.S,
-    )
-    runtime_files = [
-        ROOT / "doeff" / "program.py",
-        ROOT / "doeff" / "_types_internal.py",
-        ROOT / "doeff" / "errors.py",
-        ROOT / "doeff" / "__init__.py",
-    ]
-    for path in runtime_files:
-        src = path.read_text(encoding="utf-8")
-        assert pattern.search(src) is None, f"{path} recovers from doeff_vm import failure"

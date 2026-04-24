@@ -15,13 +15,13 @@ pub mod pyvm;
 pub mod result;
 
 // Re-export VM core types
-pub use doeff_vm_core::{
-    Continuation, DoCtrl, FiberId, Frame, IRStream, IRStreamRef, Marker, Mode, SegmentId,
-    StepResult, StreamStep, Value, VarId, VarStore, VMError, VM,
-};
-pub use doeff_vm_core::value::{Callable, CallableRef};
-pub use doeff_vm_core::segment::Fiber;
 pub use doeff_vm_core::continuation::{OwnedControlContinuation, PendingContinuation, PyK};
+pub use doeff_vm_core::segment::Fiber;
+pub use doeff_vm_core::value::{Callable, CallableRef};
+pub use doeff_vm_core::{
+    Continuation, DoCtrl, FiberId, Frame, IRStream, IRStreamRef, Marker, SegmentId, Signal,
+    SignalAction, StepResult, StreamStep, VMError, Value, VarId, VarStore, VM,
+};
 
 #[pymodule]
 fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
