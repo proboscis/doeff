@@ -1,5 +1,7 @@
 //! Fiber arena for stable fiber IDs within a run.
 
+use crate::continuation::{DetachedFiber, DetachedFiberChain};
+use crate::error::VMError;
 use crate::ids::FiberId;
 use crate::segment::Fiber;
 
@@ -33,6 +35,61 @@ impl FiberArena {
                 self.free_list.push(id.index());
             }
         }
+    }
+
+    pub fn detach_chain(
+        &mut self,
+        head: FiberId,
+        last_fiber: FiberId,
+    ) -> Result<DetachedFiberChain, VMError> {
+        let ids = self.chain_ids(head, last_fiber)?;
+        let mut detached = Vec::with_capacity(ids.len());
+
+        for id in ids {
+            let idx = id.index();
+            let slot = self.fibers.get_mut(idx).ok_or_else(|| {
+                VMError::internal(format!("detach_chain: fiber {} out of range", idx))
+            })?;
+            let fiber = slot.take().ok_or_else(|| {
+                VMError::internal(format!("detach_chain: fiber {} is not in arena", idx))
+            })?;
+            detached.push(DetachedFiber { id, fiber });
+        }
+
+        let mut chain = DetachedFiberChain::new(head, last_fiber, detached);
+        let _ = chain.set_tail_parent(None);
+        Ok(chain)
+    }
+
+    pub fn attach_chain(
+        &mut self,
+        mut chain: DetachedFiberChain,
+        tail_parent: Option<FiberId>,
+    ) -> Result<FiberId, VMError> {
+        let head = chain.head();
+        let _ = chain.set_tail_parent(tail_parent);
+
+        for DetachedFiber { id, fiber } in chain.into_fibers() {
+            let idx = id.index();
+            if self.free_list.contains(&idx) {
+                return Err(VMError::internal(format!(
+                    "attach_chain: fiber {} slot was released",
+                    idx
+                )));
+            }
+            let slot = self.fibers.get_mut(idx).ok_or_else(|| {
+                VMError::internal(format!("attach_chain: fiber {} out of range", idx))
+            })?;
+            if slot.is_some() {
+                return Err(VMError::internal(format!(
+                    "attach_chain: fiber {} slot is occupied",
+                    idx
+                )));
+            }
+            *slot = Some(fiber);
+        }
+
+        Ok(head)
     }
 
     pub fn get(&self, id: FiberId) -> Option<&Fiber> {
@@ -99,6 +156,32 @@ impl FiberArena {
     pub fn shrink_to_fit(&mut self) {
         self.fibers.shrink_to_fit();
         self.free_list.shrink_to_fit();
+    }
+
+    fn chain_ids(&self, head: FiberId, last_fiber: FiberId) -> Result<Vec<FiberId>, VMError> {
+        let mut ids = Vec::new();
+        let mut cursor = head;
+
+        loop {
+            let fiber = self.segments_get_for_chain(cursor)?;
+            ids.push(cursor);
+            if cursor == last_fiber {
+                return Ok(ids);
+            }
+            cursor = fiber.parent.ok_or_else(|| {
+                VMError::internal(format!(
+                    "detach_chain: fiber {} does not reach tail {}",
+                    head.index(),
+                    last_fiber.index()
+                ))
+            })?;
+        }
+    }
+
+    fn segments_get_for_chain(&self, id: FiberId) -> Result<&Fiber, VMError> {
+        self.get(id).ok_or_else(|| {
+            VMError::internal(format!("detach_chain: fiber {} not found", id.index()))
+        })
     }
 }
 
@@ -184,6 +267,35 @@ mod tests {
         assert_eq!(
             arena.get(unrelated).and_then(|seg| seg.parent),
             Some(caller)
+        );
+    }
+
+    #[test]
+    fn test_detach_chain_moves_fibers_without_releasing_slots() {
+        let mut arena = FiberArena::new();
+
+        let boundary = arena.alloc(Fiber::new(None));
+        let body = arena.alloc(Fiber::new(Some(boundary)));
+
+        let chain = arena.detach_chain(body, boundary).unwrap();
+        assert_eq!(chain.head(), body);
+        assert_eq!(chain.last_fiber(), boundary);
+        assert_eq!(arena.len(), 0);
+        assert_eq!(arena.slot_count(), 2);
+
+        let unrelated = arena.alloc(Fiber::new(None));
+        assert_eq!(
+            unrelated.index(),
+            2,
+            "detached fiber slots stay reserved until the chain is attached or dropped"
+        );
+
+        let head = arena.attach_chain(chain, Some(unrelated)).unwrap();
+        assert_eq!(head, body);
+        assert_eq!(arena.len(), 3);
+        assert_eq!(
+            arena.get(boundary).and_then(|fiber| fiber.parent),
+            Some(unrelated)
         );
     }
 }

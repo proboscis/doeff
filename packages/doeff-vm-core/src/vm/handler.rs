@@ -5,8 +5,8 @@ use std::sync::Arc;
 use crate::effect::DispatchEffect;
 use crate::error::VMError;
 use crate::ids::{FiberId, Marker, SegmentId};
-use crate::value::CallableRef;
 use crate::py_shared::PyShared;
+use crate::value::CallableRef;
 use crate::vm::VM;
 
 /// A handler entry found while walking the caller chain.
