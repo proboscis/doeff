@@ -210,7 +210,13 @@ impl Frame {
     }
 
     pub fn has_metadata(&self) -> bool {
-        matches!(self, Frame::Program { metadata: Some(_), .. })
+        matches!(
+            self,
+            Frame::Program {
+                metadata: Some(_),
+                ..
+            }
+        )
     }
 }
 
