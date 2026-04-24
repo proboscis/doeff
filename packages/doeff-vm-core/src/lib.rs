@@ -53,7 +53,7 @@ pub use continuation::{Continuation, OwnedControlContinuation, PendingContinuati
 #[cfg(feature = "python_bridge")]
 pub use do_ctrl::DoCtrl;
 #[cfg(feature = "python_bridge")]
-pub use driver::{Mode, StepResult};
+pub use driver::{Signal, SignalAction, StepResult};
 #[cfg(feature = "python_bridge")]
 pub use effect::DispatchEffect;
 #[cfg(feature = "python_bridge")]

@@ -3,8 +3,8 @@
 //! These replace the plain Python classes in `doeff/program.py`.
 //! The VM classifies them via `downcast` (not tag-based `getattr`).
 
-use pyo3::prelude::*;
 use doeff_vm_core::continuation::PyK;
+use pyo3::prelude::*;
 
 /// Pure(value) — return a value immediately.
 #[pyclass(name = "Pure", frozen, dict, module = "doeff_vm.doeff_vm")]
@@ -69,7 +69,10 @@ pub struct PyResume {
 impl PyResume {
     #[new]
     fn new(k: Py<PyK>, value: Py<PyAny>) -> Self {
-        Self { continuation: k, value }
+        Self {
+            continuation: k,
+            value,
+        }
     }
 
     fn __repr__(&self) -> &'static str {
@@ -90,7 +93,10 @@ pub struct PyTransfer {
 impl PyTransfer {
     #[new]
     fn new(k: Py<PyK>, value: Py<PyAny>) -> Self {
-        Self { continuation: k, value }
+        Self {
+            continuation: k,
+            value,
+        }
     }
 
     fn __repr__(&self) -> &'static str {
@@ -161,7 +167,10 @@ pub struct PyPass {
 impl PyPass {
     #[new]
     fn new(effect: Py<PyAny>, k: Py<PyK>) -> Self {
-        Self { effect, continuation: k }
+        Self {
+            effect,
+            continuation: k,
+        }
     }
 
     fn __repr__(&self) -> &'static str {
@@ -185,7 +194,9 @@ impl PyWithHandler {
         Python::attach(|py| {
             let h = handler.bind(py);
             if !h.is_callable() {
-                let type_name = h.get_type().qualname()
+                let type_name = h
+                    .get_type()
+                    .qualname()
                     .map(|s| s.to_string())
                     .unwrap_or_else(|_| "?".to_string());
                 return Err(pyo3::exceptions::PyTypeError::new_err(format!(
@@ -220,7 +231,10 @@ pub struct PyResumeThrow {
 impl PyResumeThrow {
     #[new]
     fn new(k: Py<PyK>, exception: Py<PyAny>) -> Self {
-        Self { continuation: k, exception }
+        Self {
+            continuation: k,
+            exception,
+        }
     }
 
     fn __repr__(&self) -> &'static str {
@@ -241,7 +255,10 @@ pub struct PyTransferThrow {
 impl PyTransferThrow {
     #[new]
     fn new(k: Py<PyK>, exception: Py<PyAny>) -> Self {
-        Self { continuation: k, exception }
+        Self {
+            continuation: k,
+            exception,
+        }
     }
 
     fn __repr__(&self) -> &'static str {
@@ -295,7 +312,12 @@ impl PyGetTraceback {
 }
 
 /// GetExecutionContext() — get current execution context.
-#[pyclass(name = "GetExecutionContext", frozen, dict, module = "doeff_vm.doeff_vm")]
+#[pyclass(
+    name = "GetExecutionContext",
+    frozen,
+    dict,
+    module = "doeff_vm.doeff_vm"
+)]
 pub struct PyGetExecutionContext;
 
 #[pymethods]
