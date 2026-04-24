@@ -10,10 +10,9 @@
 //! No dispatch ID. No accumulated trace state. No ProgramDispatch.
 
 use crate::continuation::Continuation;
-use crate::driver::{Mode, StepResult};
+use crate::driver::{Signal, StepResult};
 use crate::effect::DispatchEffect;
-use crate::error::VMError;
-use crate::ids::{FiberId, Marker, SegmentId};
+use crate::ids::FiberId;
 use crate::segment::{Fiber, Handler};
 use crate::value::Value;
 use crate::vm::VM;
@@ -60,18 +59,23 @@ impl VM {
         effect: &DispatchEffect,
     ) -> Result<PerformResult, StepResult> {
         let current = self.current_segment.ok_or_else(|| {
-            StepResult::Error(crate::error::VMError::internal("perform: no current fiber"))
+            StepResult::Error {
+                error: crate::error::VMError::internal("perform: no current fiber"),
+                context: None,
+            }
         })?;
 
         // Walk up parent chain to find a handler boundary.
         // No skip-self needed — handler code runs on the parent fiber (above
         // the boundary), so performs from handler code naturally find outer handlers.
-        let (handler_fiber_id, handler_parent) = self
+        let (handler_fiber_id, _handler_parent) = self
             .find_handler_for_effect(current, effect)
             .ok_or_else(|| {
-                // Capture execution context before erroring so traceback is available
-                self.last_error_context = Some(self.collect_rich_execution_context());
-                StepResult::Error(crate::error::VMError::unhandled_effect(effect.clone()))
+                // Capture execution context before erroring so traceback is available.
+                StepResult::Error {
+                    error: crate::error::VMError::unhandled_effect(effect.clone()),
+                    context: Some(self.collect_rich_execution_context()),
+                }
             })?;
 
         // OCaml 5: continuation includes everything from body up to AND INCLUDING
@@ -113,15 +117,14 @@ impl VM {
     pub fn continue_k(
         &mut self,
         k: &mut Continuation,
-        value: Value,
-    ) -> Result<(), StepResult> {
+    ) -> Result<(), crate::error::VMError> {
         let (head, last) = k.take().ok_or_else(|| {
             let current = self.current_segment
                 .map(|f| format!(" (current fiber={})", f.index()))
                 .unwrap_or_default();
-            StepResult::Error(crate::error::VMError::internal(
+            crate::error::VMError::internal(
                 format!("Resume: continuation already consumed (one-shot violation){current}")
-            ))
+            )
         })?;
 
         // Reattach: link tail to current fiber (one pointer write)
@@ -132,7 +135,6 @@ impl VM {
 
         // Switch to the head of the resumed chain
         self.current_segment = Some(head);
-        self.mode = Mode::Send(value);
 
         Ok(())
     }
@@ -158,7 +160,10 @@ impl VM {
         effect: &DispatchEffect,
     ) -> Result<PerformResult, StepResult> {
         let current = self.current_segment.ok_or_else(|| {
-            StepResult::Error(crate::error::VMError::internal("reperform: no current fiber"))
+            StepResult::Error {
+                error: crate::error::VMError::internal("reperform: no current fiber"),
+                context: None,
+            }
         })?;
 
         // Append current fiber to the continuation chain
@@ -182,9 +187,10 @@ impl VM {
         let (handler_fiber_id, handler_parent) = current_parent
             .and_then(|p| self.find_handler_for_effect(p, effect))
             .ok_or_else(|| {
-                StepResult::Error(crate::error::VMError::internal(
-                    "reperform: no outer handler found",
-                ))
+                StepResult::Error {
+                    error: crate::error::VMError::internal("reperform: no outer handler found"),
+                    context: None,
+                }
             })?;
 
         // Switch to handler's parent
@@ -212,9 +218,12 @@ impl VM {
     pub fn fiber_return(&mut self, value: Value) -> StepResult {
         let current = match self.current_segment {
             Some(id) => id,
-            None => return StepResult::Error(crate::error::VMError::internal(
-                "fiber_return: no current fiber",
-            )),
+            None => {
+                return StepResult::Error {
+                    error: crate::error::VMError::internal("fiber_return: no current fiber"),
+                    context: None,
+                };
+            }
         };
 
         let parent = self.segments.get(current).and_then(|s| s.parent);
@@ -226,8 +235,7 @@ impl VM {
         self.segments.free(current);
 
         // Deliver return value to parent
-        self.mode = Mode::Send(value);
-        StepResult::Continue
+        StepResult::Continue(Signal::send(value))
     }
 
     // -----------------------------------------------------------------------

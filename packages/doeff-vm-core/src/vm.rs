@@ -1,8 +1,7 @@
-//! Core VM struct — 5 registers.
+//! Core VM struct.
 
 use crate::arena::FiberArena;
 use crate::continuation::{self, OrphanQueue};
-use crate::driver::Mode;
 use crate::ids::{FiberId, SegmentId};
 use crate::segment::Fiber;
 use crate::value::Value;
@@ -22,17 +21,11 @@ mod step_impl;
 #[path = "vm/var_store.rs"]
 mod var_store_impl;
 
-/// VM — 5 registers (OCaml 5 alignment).
+/// VM runtime state.
 pub struct VM {
     pub segments: FiberArena,
     pub var_store: VarStore,
-    pub mode: Mode,
-    pub pending_external: Option<crate::driver::ExternalCall>,
     pub current_segment: Option<SegmentId>,
-    /// Execution context captured at the first error point (before unwinding).
-    /// GetExecutionContext returns this if set, giving the error-site context
-    /// rather than the post-unwind context.
-    pub last_error_context: Option<Vec<Value>>,
     /// Per-VM orphan queue. Continuations hold Arc clones; on drop they push
     /// their head FiberId here. The VM drains this each step.
     pub orphan_queue: OrphanQueue,
@@ -43,10 +36,7 @@ impl VM {
         VM {
             segments: FiberArena::new(),
             var_store: VarStore::new(),
-            mode: Mode::Send(Value::Unit),
-            pending_external: None,
             current_segment: None,
-            last_error_context: None,
             orphan_queue: continuation::new_orphan_queue(),
         }
     }
@@ -54,10 +44,7 @@ impl VM {
     pub fn begin_run_session(&mut self) {
         self.segments.clear();
         self.var_store.clear_run_local();
-        self.mode = Mode::Send(Value::Unit);
-        self.pending_external = None;
         self.current_segment = None;
-        self.last_error_context = None;
         // Replace orphan queue so stale Continuations from previous runs
         // push to the old (now-disconnected) queue, not this new one.
         self.orphan_queue = continuation::new_orphan_queue();
@@ -68,8 +55,6 @@ impl VM {
         self.segments.shrink_to_fit();
         self.var_store.clear_run_local();
         self.var_store.shrink_run_local_to_fit();
-        self.mode = Mode::Send(Value::Unit);
-        self.pending_external = None;
         self.current_segment = None;
     }
 

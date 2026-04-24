@@ -2334,19 +2334,19 @@ rules:
   # Theoretical backing: CEK/CESK machines, Hillerström's ⟨C,E,H⟩ model,
   # OCaml fibers, libmprompt gstacks. See SPEC-VM-015 §3.
   #
-  # The type system enforces access patterns (self.mode won't compile if mode
-  # is not on VM), but these rules prevent someone from ADDING the fields back
-  # to the wrong struct.
+  # The type system enforces access patterns once the VM struct has no signal
+  # register, but these rules prevent someone from adding the fields back to
+  # the wrong struct.
 
   - id: vm-scope-no-mode-on-vm-struct
-    pattern-regex: 'pub\s+mode\s*:\s*Mode'
+    pattern-regex: 'pub\s+mode\s*:\s*(Mode|Signal)\b'
     paths:
       include:
-        - "**/packages/doeff-vm/src/vm.rs"
+        - "**/packages/doeff-vm-core/src/vm.rs"
     message: |
-      SPEC-VM-015 INV-1: `mode` must live on Segment, not VM.
-      The instruction register is execution-local state owned by the current
-      segment. Access via self.current_seg().mode / self.current_seg_mut().mode.
+      ISSUE-VM-001 G0: `mode`/`Signal` must not live on VM.
+      The next-step signal is execution-local data that must be passed into
+      step() and returned through StepResult::Continue.
       See SPEC-VM-015 §4.1 (target Segment definition) and §6 (invariants).
     languages: [rust]
     severity: ERROR
@@ -2922,13 +2922,13 @@ rules:
   #   The VM owns ALL runtime state:
   #     Fiber chain  = the stack (control flow)
   #     VarStore     = the heap (mutable ref cells)
-  #     Registers    = VM execution state (current_fiber, mode)
+  #     Step signal  = explicit Signal passed through step input/output
   #     Lexical scope = resolved by VM via fiber/heap walking
   #
   #   Mapping:
   #     OCaml 5 fiber           = doeff Fiber (frames + handler + parent)
   #     OCaml 5 heap ref cell   = doeff VarStore entry (VarId → Value)
-  #     OCaml 5 registers       = doeff VM registers (current_fiber, mode)
+  #     OCaml 5 dispatch signal = doeff Signal value
   #     OCaml 5 perform/continue = doeff yield Effect / Resume(k, v)
   #     OCaml 5 ref/!/(:=)      = doeff AllocVar/ReadVar/WriteVar
   #
@@ -2965,9 +2965,9 @@ rules:
     languages: [rust]
     severity: ERROR
     message: |
-      SPEC-VM-019 Rev 5: mode is a VM register, not a fiber field.
-      Like OCaml 5's IP/exception state, mode describes what the VM is doing
-      with the current fiber. Access via self.mode, not seg.mode/fiber.mode.
+      ISSUE-VM-001 G0: mode is a threaded Signal, not a fiber field.
+      The current fiber describes where execution resumes; Signal describes
+      what is delivered and must travel through step input/output.
     paths:
       include:
         - "**/packages/doeff-vm-core/src/segment.rs"
@@ -3042,16 +3042,15 @@ rules:
     pattern-regex: 'Arc<Segment>|Arc<Fiber>|segment_snapshot|captured_segment_snapshot|Arc::new\(Segment|Arc::new\(Fiber'
 
   # CRITICAL: mode on Fiber means each segment is a mini-VM.
-  # OCaml 5: mode is a register (one per VM), not per-fiber.
-  # The VM reads self.mode, not fiber.mode.
+  # ISSUE-VM-001 G0: the VM receives an explicit Signal per step; neither
+  # VM nor Fiber stores it as mutable state.
   - id: vm-ocaml5-mode-is-vm-register
     languages: [generic]
     severity: ERROR
     message: |
-      SPEC-VM-019 Rev 5: mode must be a VM register, not accessed via fiber/segment.
-      OCaml 5 has one execution state per VM, not per-fiber. The step function
-      should read self.mode, not self.current_seg().mode or seg.mode.
-      Each fiber carrying its own mode means the VM is not a register machine.
+      ISSUE-VM-001 G0: Signal must not be accessed through fiber/segment mode.
+      current_segment identifies where execution resumes; Signal describes
+      what to deliver and must be passed by value through step input/output.
     paths:
       include:
         - "**/packages/doeff-vm-core/src/vm/step.rs"

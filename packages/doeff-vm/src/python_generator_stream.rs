@@ -10,7 +10,6 @@ use pyo3::prelude::*;
 use pyo3::types::PyString;
 
 use doeff_vm_core::do_ctrl::DoCtrl;
-use doeff_vm_core::driver::ExternalCall;
 use doeff_vm_core::ir_stream::{IRStream, StreamStep};
 use doeff_vm_core::py_shared::PyShared;
 use doeff_vm_core::value::Value;
@@ -27,7 +26,10 @@ pub struct PyEffectBase;
 impl PyEffectBase {
     #[new]
     #[pyo3(signature = (*_args, **_kwargs))]
-    fn new(_args: &Bound<'_, pyo3::types::PyTuple>, _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
+    fn new(
+        _args: &Bound<'_, pyo3::types::PyTuple>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+    ) -> Self {
         Self
     }
 
@@ -41,11 +43,11 @@ impl PyEffectBase {
         let cls = slf.get_type();
         let args = pyo3::types::PyTuple::new(py, &[cls.as_any()])?;
         let state = slf.getattr("__dict__")?;
-        Ok(pyo3::types::PyTuple::new(py, &[
-            newobj.as_any(),
-            args.as_any(),
-            &state,
-        ])?.into_any().unbind())
+        Ok(
+            pyo3::types::PyTuple::new(py, &[newobj.as_any(), args.as_any(), &state])?
+                .into_any()
+                .unbind(),
+        )
     }
 }
 
@@ -85,9 +87,9 @@ impl doeff_vm_core::value::Callable for PythonCallable {
                     let bound = result.bind(py);
                     Ok(python_to_value(py, bound))
                 }
-                Err(err) => Err(doeff_vm_core::VMError::uncaught_exception(
-                    Value::Opaque(PyShared::new(err.value(py).clone().into_any().unbind()))
-                )),
+                Err(err) => Err(doeff_vm_core::VMError::uncaught_exception(Value::Opaque(
+                    PyShared::new(err.value(py).clone().into_any().unbind()),
+                ))),
             }
         })
     }
@@ -106,7 +108,10 @@ impl doeff_vm_core::value::Callable for PythonCallable {
         self
     }
 
-    fn call_handler(&self, args: Vec<Value>) -> Result<doeff_vm_core::do_ctrl::DoCtrl, doeff_vm_core::VMError> {
+    fn call_handler(
+        &self,
+        args: Vec<Value>,
+    ) -> Result<doeff_vm_core::do_ctrl::DoCtrl, doeff_vm_core::VMError> {
         Python::attach(|py| {
             let py_args: Vec<Py<PyAny>> = args
                 .into_iter()
@@ -118,14 +123,16 @@ impl doeff_vm_core::value::Callable for PythonCallable {
             match self.callable.call(py, py_tuple, None) {
                 Ok(result) => {
                     let bound = result.bind(py);
-                    classify_python_object(py, &bound)
-                        .map_err(|msg| doeff_vm_core::VMError::type_error(format!(
-                            "handler must return DoExpr: {}", msg
-                        )))
+                    classify_python_object(py, &bound).map_err(|msg| {
+                        doeff_vm_core::VMError::type_error(format!(
+                            "handler must return DoExpr: {}",
+                            msg
+                        ))
+                    })
                 }
-                Err(err) => Err(doeff_vm_core::VMError::uncaught_exception(
-                    Value::Opaque(PyShared::new(err.value(py).clone().into_any().unbind()))
-                )),
+                Err(err) => Err(doeff_vm_core::VMError::uncaught_exception(Value::Opaque(
+                    PyShared::new(err.value(py).clone().into_any().unbind()),
+                ))),
             }
         })
     }
@@ -145,7 +152,6 @@ impl PyIRStream {
     pub fn new(generator: Py<PyAny>) -> Self {
         Self { generator }
     }
-
 }
 
 /// A Python generator wrapped as an IRStream.
@@ -184,11 +190,7 @@ impl PythonGeneratorStream {
             .ok()?
             .extract::<String>()
             .ok()?;
-        let source_file = code
-            .getattr("co_filename")
-            .ok()?
-            .extract::<String>()
-            .ok()?;
+        let source_file = code.getattr("co_filename").ok()?.extract::<String>().ok()?;
 
         // Get line number from the exception's traceback (most accurate for raise site)
         let source_line = err
@@ -297,12 +299,14 @@ impl IRStream for PythonGeneratorStream {
             if py_error.is_instance_of::<pyo3::exceptions::PyBaseException>() {
                 self.throw_to_generator(&py_error)
             } else {
-                let msg = py_error.repr()
+                let msg = py_error
+                    .repr()
                     .map(|r| r.to_string())
                     .unwrap_or_else(|_| format!("{:?}", py_error));
-                let exc = pyo3::exceptions::PyRuntimeError::new_err(
-                    format!("VM error (non-exception value in Raise): {}", msg)
-                );
+                let exc = pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "VM error (non-exception value in Raise): {}",
+                    msg
+                ));
                 let exc_val = exc.value(py);
                 self.throw_to_generator(exc_val)
             }
@@ -325,11 +329,7 @@ impl IRStream for PythonGeneratorStream {
                 .ok()?
                 .extract::<String>()
                 .ok()?;
-            let source_file = code
-                .getattr("co_filename")
-                .ok()?
-                .extract::<String>()
-                .ok()?;
+            let source_file = code.getattr("co_filename").ok()?.extract::<String>().ok()?;
 
             // source_line from gi_frame.f_lineno (live — current yield site)
             let source_line = gen
@@ -361,23 +361,33 @@ impl IRStream for PythonGeneratorStream {
 /// Extract continuation from PyK. No one-shot enforcement here — that's the VM core's job
 /// (continue_k in dispatch.rs, where self.current_segment is available for diagnostics).
 /// If PyK is already consumed, returns Continuation::consumed() sentinel.
-fn take_continuation(py: Python<'_>, k: &Py<doeff_vm_core::continuation::PyK>, label: &str) -> Result<doeff_vm_core::Continuation, String> {
+fn take_continuation(
+    py: Python<'_>,
+    k: &Py<doeff_vm_core::continuation::PyK>,
+    label: &str,
+) -> Result<doeff_vm_core::Continuation, String> {
     let k_ref = k.bind(py);
     let mut k_borrowed = k_ref.borrow_mut();
     match k_borrowed.take() {
         Some(doeff_vm_core::OwnedControlContinuation::Started(k)) => Ok(k),
-        Some(doeff_vm_core::OwnedControlContinuation::Pending(_)) => {
-            Err(format!("{}: expected started continuation, got pending", label))
-        }
+        Some(doeff_vm_core::OwnedControlContinuation::Pending(_)) => Err(format!(
+            "{}: expected started continuation, got pending",
+            label
+        )),
         None => Ok(doeff_vm_core::Continuation::empty()),
     }
 }
 
 /// Peek at head FiberId from a Py<PyK> without consuming.
-fn peek_head(py: Python<'_>, k: &Py<doeff_vm_core::continuation::PyK>, label: &str) -> Result<doeff_vm_core::FiberId, String> {
+fn peek_head(
+    py: Python<'_>,
+    k: &Py<doeff_vm_core::continuation::PyK>,
+    label: &str,
+) -> Result<doeff_vm_core::FiberId, String> {
     let k_ref = k.bind(py);
     let k_borrowed = k_ref.borrow();
-    k_borrowed.peek_head()
+    k_borrowed
+        .peek_head()
         .ok_or_else(|| format!("{}: continuation has no head fiber", label))
 }
 
@@ -427,15 +437,22 @@ pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<
         let mut args = Vec::new();
         if let Ok(seq) = args_obj.downcast::<pyo3::types::PyList>() {
             for (i, item) in seq.iter().enumerate() {
-                args.push(classify_python_object(py, &item)
-                    .map_err(|e| format!("Apply: arg[{}]: {}", i, e))?);
+                args.push(
+                    classify_python_object(py, &item)
+                        .map_err(|e| format!("Apply: arg[{}]: {}", i, e))?,
+                );
             }
         }
-        return Ok(DoCtrl::Apply { f: Box::new(f_doctrl), args });
+        return Ok(DoCtrl::Apply {
+            f: Box::new(f_doctrl),
+            args,
+        });
     }
     if let Ok(e) = obj.downcast::<PyExpand>() {
         let expr_doctrl = classify_python_object(py, &e.get().expr.bind(py))?;
-        return Ok(DoCtrl::Expand { expr: Box::new(expr_doctrl) });
+        return Ok(DoCtrl::Expand {
+            expr: Box::new(expr_doctrl),
+        });
     }
     if let Ok(p) = obj.downcast::<PyPass>() {
         let p = p.get();
@@ -448,7 +465,10 @@ pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<
         let handler_value = wrap_handler(py, &wh.handler);
         let body_doctrl = classify_python_object(py, &wh.body.bind(py))
             .map_err(|e| format!("WithHandler body: {}", e))?;
-        return Ok(DoCtrl::WithHandler { handler: handler_value, body: Box::new(body_doctrl) });
+        return Ok(DoCtrl::WithHandler {
+            handler: handler_value,
+            body: Box::new(body_doctrl),
+        });
     }
     if let Ok(rt) = obj.downcast::<PyResumeThrow>() {
         let rt = rt.get();
@@ -467,7 +487,10 @@ pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<
         let observer = python_to_value(py, &wo.observer.bind(py));
         let body_doctrl = classify_python_object(py, &wo.body.bind(py))
             .map_err(|e| format!("WithObserve body: {}", e))?;
-        return Ok(DoCtrl::WithObserve { observer, body: Box::new(body_doctrl) });
+        return Ok(DoCtrl::WithObserve {
+            observer,
+            body: Box::new(body_doctrl),
+        });
     }
     if let Ok(gt) = obj.downcast::<PyGetTraceback>() {
         let head = peek_head(py, &gt.get().continuation, "GetTraceback")?;
@@ -486,7 +509,9 @@ pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<
     if let Ok(te) = obj.downcast::<crate::do_expr::PyTailEval>() {
         let inner = te.get().expr.bind(py);
         let inner_doctrl = classify_python_object(py, &inner)?;
-        return Ok(DoCtrl::TailEval { expr: Box::new(inner_doctrl) });
+        return Ok(DoCtrl::TailEval {
+            expr: Box::new(inner_doctrl),
+        });
     }
 
     // --- EffectBase (no tag) → implicit Perform ---
@@ -511,10 +536,16 @@ pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<
 
 /// Legacy tag-based classification fallback.
 /// Kept for backward compatibility with any code still using plain Python DoExpr classes.
-fn classify_tagged_to_doctrl(py: Python<'_>, obj: &Bound<'_, PyAny>, tag: u8) -> Result<DoCtrl, String> {
+fn classify_tagged_to_doctrl(
+    py: Python<'_>,
+    obj: &Bound<'_, PyAny>,
+    tag: u8,
+) -> Result<DoCtrl, String> {
     match tag {
         0 => {
-            let value = obj.getattr("value").ok()
+            let value = obj
+                .getattr("value")
+                .ok()
                 .map(|v| python_to_value(py, &v))
                 .unwrap_or(Value::Unit);
             Ok(DoCtrl::Pure { value })
@@ -537,41 +568,56 @@ fn classify_tagged_to_doctrl(py: Python<'_>, obj: &Bound<'_, PyAny>, tag: u8) ->
             .map(|(effect, k)| DoCtrl::Delegate { effect, k })
             .map_err(|_| "Delegate: failed to extract effect/continuation".to_string()),
         16 => {
-            let f_obj = obj.getattr("f")
+            let f_obj = obj
+                .getattr("f")
                 .map_err(|_| "Apply: missing 'f' attribute".to_string())?;
             let f_doctrl = classify_python_object(py, &f_obj)?;
-            let args_list = obj.getattr("args")
+            let args_list = obj
+                .getattr("args")
                 .map_err(|_| "Apply: missing 'args' attribute".to_string())?;
             let mut args = Vec::new();
             if let Ok(seq) = args_list.downcast::<pyo3::types::PyList>() {
                 for (i, item) in seq.iter().enumerate() {
-                    args.push(classify_python_object(py, &item)
-                        .map_err(|e| format!("Apply: arg[{}]: {}", i, e))?);
+                    args.push(
+                        classify_python_object(py, &item)
+                            .map_err(|e| format!("Apply: arg[{}]: {}", i, e))?,
+                    );
                 }
             }
-            Ok(DoCtrl::Apply { f: Box::new(f_doctrl), args })
+            Ok(DoCtrl::Apply {
+                f: Box::new(f_doctrl),
+                args,
+            })
         }
         17 => {
-            let expr_obj = obj.getattr("expr")
+            let expr_obj = obj
+                .getattr("expr")
                 .map_err(|_| "Expand: missing 'expr' attribute".to_string())?;
             let expr_doctrl = classify_python_object(py, &expr_obj)?;
-            Ok(DoCtrl::Expand { expr: Box::new(expr_doctrl) })
+            Ok(DoCtrl::Expand {
+                expr: Box::new(expr_doctrl),
+            })
         }
         19 => extract_effect_and_continuation(py, obj)
             .map(|(effect, k)| DoCtrl::Pass { effect, k })
             .map_err(|_| "Pass: failed to extract effect/continuation".to_string()),
         20 => {
-            let handler_obj = obj.getattr("handler")
+            let handler_obj = obj
+                .getattr("handler")
                 .map_err(|_| "WithHandler: missing 'handler' attribute".to_string())?;
             let handler_callable = PythonCallable::new(handler_obj.unbind());
             let handler_value = Value::Callable(
                 std::sync::Arc::new(handler_callable) as doeff_vm_core::value::CallableRef
             );
-            let body_obj = obj.getattr("body")
+            let body_obj = obj
+                .getattr("body")
                 .map_err(|_| "WithHandler: missing 'body' attribute".to_string())?;
             let body_doctrl = classify_python_object(py, &body_obj)
                 .map_err(|e| format!("WithHandler body: {}", e))?;
-            Ok(DoCtrl::WithHandler { handler: handler_value, body: Box::new(body_doctrl) })
+            Ok(DoCtrl::WithHandler {
+                handler: handler_value,
+                body: Box::new(body_doctrl),
+            })
         }
         21 => extract_continuation_and_exception(py, obj)
             .map(|(k, exc)| DoCtrl::ResumeThrow { k, exception: exc })
@@ -580,33 +626,44 @@ fn classify_tagged_to_doctrl(py: Python<'_>, obj: &Bound<'_, PyAny>, tag: u8) ->
             .map(|(k, exc)| DoCtrl::TransferThrow { k, exception: exc })
             .map_err(|_| "TransferThrow: failed to extract continuation/exception".to_string()),
         23 => {
-            let k_obj = obj.getattr("continuation")
+            let k_obj = obj
+                .getattr("continuation")
                 .map_err(|_| "GetTraceback: missing 'continuation' attribute".to_string())?;
-            let k_ref = k_obj.downcast::<doeff_vm_core::continuation::PyK>()
+            let k_ref = k_obj
+                .downcast::<doeff_vm_core::continuation::PyK>()
                 .map_err(|_| "GetTraceback: continuation must be K".to_string())?;
             let k_borrowed = k_ref.borrow();
-            let head = k_borrowed.peek_head()
+            let head = k_borrowed
+                .peek_head()
                 .ok_or_else(|| "GetTraceback: continuation has no head fiber".to_string())?;
             Ok(DoCtrl::GetTraceback { from: head })
         }
         24 => {
-            let observer_obj = obj.getattr("observer")
+            let observer_obj = obj
+                .getattr("observer")
                 .map_err(|_| "WithObserve: missing 'observer' attribute".to_string())?;
             let observer_value = python_to_value(py, &observer_obj);
-            let body_obj = obj.getattr("body")
+            let body_obj = obj
+                .getattr("body")
                 .map_err(|_| "WithObserve: missing 'body' attribute".to_string())?;
             let body_doctrl = classify_python_object(py, &body_obj)
                 .map_err(|e| format!("WithObserve body: {}", e))?;
-            Ok(DoCtrl::WithObserve { observer: observer_value, body: Box::new(body_doctrl) })
+            Ok(DoCtrl::WithObserve {
+                observer: observer_value,
+                body: Box::new(body_doctrl),
+            })
         }
         25 => Ok(DoCtrl::GetExecutionContext),
         26 => {
-            let k_obj = obj.getattr("continuation")
+            let k_obj = obj
+                .getattr("continuation")
                 .map_err(|_| "GetHandlers: missing 'continuation' attribute".to_string())?;
-            let k_ref = k_obj.downcast::<doeff_vm_core::continuation::PyK>()
+            let k_ref = k_obj
+                .downcast::<doeff_vm_core::continuation::PyK>()
                 .map_err(|_| "GetHandlers: continuation must be K".to_string())?;
             let k_borrowed = k_ref.borrow();
-            let head = k_borrowed.peek_head()
+            let head = k_borrowed
+                .peek_head()
                 .ok_or_else(|| "GetHandlers: continuation has no head fiber".to_string())?;
             Ok(DoCtrl::GetHandlers { from: head })
         }
@@ -619,18 +676,23 @@ fn extract_continuation_and_value(
     py: Python<'_>,
     obj: &Bound<'_, PyAny>,
 ) -> Result<(doeff_vm_core::Continuation, Value), Value> {
-    let k_obj = obj.getattr("continuation")
+    let k_obj = obj
+        .getattr("continuation")
         .map_err(|e| Value::Opaque(PyShared::new(e.value(py).clone().into_any().unbind())))?;
-    let k_ref = k_obj.downcast::<doeff_vm_core::continuation::PyK>()
+    let k_ref = k_obj
+        .downcast::<doeff_vm_core::continuation::PyK>()
         .map_err(|_| Value::String("expected K".into()))?;
     let mut k_borrowed = k_ref.borrow_mut();
-    let k = k_borrowed.take()
+    let k = k_borrowed
+        .take()
         .ok_or_else(|| Value::String("continuation consumed".into()))?;
     let continuation = match k {
         doeff_vm_core::OwnedControlContinuation::Started(k) => k,
         _ => return Err(Value::String("expected started continuation".into())),
     };
-    let value = obj.getattr("value").ok()
+    let value = obj
+        .getattr("value")
+        .ok()
         .map(|v| python_to_value(py, &v))
         .unwrap_or(Value::Unit);
     Ok((continuation, value))
@@ -640,15 +702,20 @@ fn extract_effect_and_continuation(
     py: Python<'_>,
     obj: &Bound<'_, PyAny>,
 ) -> Result<(Value, doeff_vm_core::Continuation), Value> {
-    let effect = obj.getattr("effect").ok()
+    let effect = obj
+        .getattr("effect")
+        .ok()
         .map(|e| Value::Opaque(PyShared::new(e.unbind())))
         .unwrap_or(Value::Unit);
-    let k_obj = obj.getattr("continuation")
+    let k_obj = obj
+        .getattr("continuation")
         .map_err(|e| Value::Opaque(PyShared::new(e.value(py).clone().into_any().unbind())))?;
-    let k_ref = k_obj.downcast::<doeff_vm_core::continuation::PyK>()
+    let k_ref = k_obj
+        .downcast::<doeff_vm_core::continuation::PyK>()
         .map_err(|_| Value::String("expected K".into()))?;
     let mut k_borrowed = k_ref.borrow_mut();
-    let k = k_borrowed.take()
+    let k = k_borrowed
+        .take()
         .ok_or_else(|| Value::String("continuation consumed".into()))?;
     let continuation = match k {
         doeff_vm_core::OwnedControlContinuation::Started(k) => k,
@@ -661,18 +728,23 @@ fn extract_continuation_and_exception(
     py: Python<'_>,
     obj: &Bound<'_, PyAny>,
 ) -> Result<(doeff_vm_core::Continuation, Value), Value> {
-    let k_obj = obj.getattr("continuation")
+    let k_obj = obj
+        .getattr("continuation")
         .map_err(|e| Value::Opaque(PyShared::new(e.value(py).clone().into_any().unbind())))?;
-    let k_ref = k_obj.downcast::<doeff_vm_core::continuation::PyK>()
+    let k_ref = k_obj
+        .downcast::<doeff_vm_core::continuation::PyK>()
         .map_err(|_| Value::String("expected K".into()))?;
     let mut k_borrowed = k_ref.borrow_mut();
-    let k = k_borrowed.take()
+    let k = k_borrowed
+        .take()
         .ok_or_else(|| Value::String("continuation consumed".into()))?;
     let continuation = match k {
         doeff_vm_core::OwnedControlContinuation::Started(k) => k,
         _ => return Err(Value::String("expected started continuation".into())),
     };
-    let exception = obj.getattr("exception").ok()
+    let exception = obj
+        .getattr("exception")
+        .ok()
         .map(|e| Value::Opaque(PyShared::new(e.unbind())))
         .unwrap_or(Value::String("unknown exception".into()));
     Ok((continuation, exception))
@@ -692,9 +764,7 @@ pub fn python_to_value(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> Value {
     if let Ok(pc) = obj.downcast::<PythonCallable>() {
         let inner = pc.borrow().callable.clone_ref(_py);
         let callable = PythonCallable::new(inner);
-        return Value::Callable(
-            std::sync::Arc::new(callable) as doeff_vm_core::value::CallableRef
-        );
+        return Value::Callable(std::sync::Arc::new(callable) as doeff_vm_core::value::CallableRef);
     }
     // PyK → Value::Continuation
     if let Ok(k) = obj.downcast::<doeff_vm_core::continuation::PyK>() {
@@ -730,7 +800,10 @@ pub fn value_to_python(py: Python<'_>, value: Value) -> Bound<'_, PyAny> {
                 .unwrap()
                 .into_any()
         }
-        Value::Var(var) => format!("Var({:?})", var).into_pyobject(py).unwrap().into_any(),
+        Value::Var(var) => format!("Var({:?})", var)
+            .into_pyobject(py)
+            .unwrap()
+            .into_any(),
         Value::Callable(c) => {
             if let Some(pc) = c.as_any().downcast_ref::<PythonCallable>() {
                 pc.callable.bind(py).clone().into_any()
@@ -740,7 +813,8 @@ pub fn value_to_python(py: Python<'_>, value: Value) -> Bound<'_, PyAny> {
         }
         Value::Stream(_) => "<stream>".into_pyobject(py).unwrap().into_any(),
         Value::List(items) => {
-            let py_items: Vec<_> = items.into_iter()
+            let py_items: Vec<_> = items
+                .into_iter()
                 .map(|v| value_to_python(py, v).unbind())
                 .collect();
             pyo3::types::PyList::new(py, &py_items).unwrap().into_any()
