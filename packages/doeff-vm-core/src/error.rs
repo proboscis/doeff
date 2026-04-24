@@ -6,48 +6,38 @@ use crate::value::Value;
 
 #[derive(Debug, Clone)]
 pub enum VMError {
-    OneShotViolation {
-        fiber_id: Option<FiberId>,
-    },
-    UnhandledEffect {
-        effect: DispatchEffect,
-    },
-    NoMatchingHandler {
-        effect: DispatchEffect,
-    },
-    DelegateNoOuterHandler {
-        effect: DispatchEffect,
-    },
-    HandlerNotFound {
-        marker: Marker,
-    },
-    InvalidSegment {
-        message: String,
-    },
-    PythonError {
-        message: String,
-    },
-    InternalError {
-        message: String,
-    },
-    TypeError {
-        message: String,
-    },
-    UncaughtException {
-        exception: Value,
-    },
+    OneShotViolation { fiber_id: Option<FiberId> },
+    UnhandledEffect { effect: DispatchEffect },
+    NoMatchingHandler { effect: DispatchEffect },
+    DelegateNoOuterHandler { effect: DispatchEffect },
+    HandlerNotFound { marker: Marker },
+    InvalidSegment { message: String },
+    PythonError { message: String },
+    InternalError { message: String },
+    TypeError { message: String },
+    UncaughtException { exception: Value },
 }
 
 impl std::fmt::Display for VMError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             VMError::OneShotViolation { fiber_id } => {
-                write!(f, "one-shot violation: continuation {:?} already consumed", fiber_id)
+                write!(
+                    f,
+                    "one-shot violation: continuation {:?} already consumed",
+                    fiber_id
+                )
             }
             VMError::UnhandledEffect { effect } => write!(f, "unhandled effect: {:?}", effect),
-            VMError::NoMatchingHandler { effect } => write!(f, "no matching handler for effect: {:?}", effect),
-            VMError::DelegateNoOuterHandler { effect } => write!(f, "delegate: no outer handler for effect: {:?}", effect),
-            VMError::HandlerNotFound { marker } => write!(f, "handler not found for marker {}", marker.raw()),
+            VMError::NoMatchingHandler { effect } => {
+                write!(f, "no matching handler for effect: {:?}", effect)
+            }
+            VMError::DelegateNoOuterHandler { effect } => {
+                write!(f, "delegate: no outer handler for effect: {:?}", effect)
+            }
+            VMError::HandlerNotFound { marker } => {
+                write!(f, "handler not found for marker {}", marker.raw())
+            }
             VMError::InvalidSegment { message } => write!(f, "invalid segment: {}", message),
             VMError::PythonError { message } => write!(f, "Python error: {}", message),
             VMError::InternalError { message } => write!(f, "internal error: {}", message),
@@ -81,19 +71,27 @@ impl VMError {
     }
 
     pub fn invalid_segment(message: impl Into<String>) -> Self {
-        VMError::InvalidSegment { message: message.into() }
+        VMError::InvalidSegment {
+            message: message.into(),
+        }
     }
 
     pub fn python_error(message: impl Into<String>) -> Self {
-        VMError::PythonError { message: message.into() }
+        VMError::PythonError {
+            message: message.into(),
+        }
     }
 
     pub fn internal(message: impl Into<String>) -> Self {
-        VMError::InternalError { message: message.into() }
+        VMError::InternalError {
+            message: message.into(),
+        }
     }
 
     pub fn type_error(message: impl Into<String>) -> Self {
-        VMError::TypeError { message: message.into() }
+        VMError::TypeError {
+            message: message.into(),
+        }
     }
 
     pub fn uncaught_exception(exception: Value) -> Self {

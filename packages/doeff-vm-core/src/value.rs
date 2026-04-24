@@ -22,7 +22,9 @@ pub trait Callable: Send + Sync + std::fmt::Debug + 'static {
     /// Call as effect handler: returns a DoCtrl to evaluate.
     /// The handler callable MUST return a DoExpr. Anything else is an error.
     fn call_handler(&self, args: Vec<Value>) -> Result<crate::do_ctrl::DoCtrl, VMError> {
-        Err(VMError::type_error("callable does not support call_handler"))
+        Err(VMError::type_error(
+            "callable does not support call_handler",
+        ))
     }
 
     /// Human-readable name for tracebacks (e.g., handler name).
@@ -79,15 +81,13 @@ impl Clone for Value {
             Value::Var(var) => Value::Var(*var),
             Value::List(list) => Value::List(list.clone()),
             Value::Opaque(obj) => Value::Opaque(obj.clone()),
-            Value::Continuation(_) => panic!(
-                "Value::Continuation must not be cloned — use move semantics (SPEC-VM-021)"
-            ),
-            Value::Callable(_) => panic!(
-                "Value::Callable must not be cloned — move or Arc::clone the CallableRef"
-            ),
-            Value::Stream(_) => panic!(
-                "Value::Stream must not be cloned — move semantics"
-            ),
+            Value::Continuation(_) => {
+                panic!("Value::Continuation must not be cloned — use move semantics (SPEC-VM-021)")
+            }
+            Value::Callable(_) => {
+                panic!("Value::Callable must not be cloned — move or Arc::clone the CallableRef")
+            }
+            Value::Stream(_) => panic!("Value::Stream must not be cloned — move semantics"),
         }
     }
 }
