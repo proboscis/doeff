@@ -53,10 +53,3 @@ def test_SA_002_G03_no_implicit_kpc_install_in_vm_new() -> None:
     body = _extract_fn_body(src, "new")
     assert "KpcHandlerFactory" not in body
     assert "install_handler" not in body
-
-
-
-
-
-
-

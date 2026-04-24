@@ -187,7 +187,3 @@ def test_three_level_nested_structural_isolation() -> None:
     result = run_with_defaults(wrapped)
     assert _is_ok(result), result.error
     assert result.value == ("L1<L2<L3>>", "L2<L3>", "L3")
-
-
-
-

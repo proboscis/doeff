@@ -43,4 +43,3 @@ class TestDefprogramDictAppendBug:
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "OK" in result.stdout
-

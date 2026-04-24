@@ -45,6 +45,3 @@ print(json.dumps({"before": before, "after": after, "package_dir": package_dir})
     )
     assert outcome["after"] == outcome["before"]
     assert outcome["package_dir"] in outcome["after"]
-
-
-

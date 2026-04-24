@@ -111,4 +111,3 @@ class TestAwaitAsyncioSemaphoreDeadlock:
 
         assert result.is_ok(), f"Native semaphore should work: {result.display()}"
         assert result.value == [i * 2 for i in range(50)]
-

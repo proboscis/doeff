@@ -148,4 +148,3 @@ class TestTypedHandler:
         result = run_with_defaults(_wrap(alpha_handler_typed, prog_alpha_alpha()))
         assert result.is_ok(), result.error
         assert result.value == ("alpha:1", "alpha:2")
-

@@ -74,5 +74,3 @@ def _spawn_gather_n(factory, n: int):
         t = yield Spawn(factory(i), daemon=False)
         tasks.append(t)
     return list((yield Gather(*tasks)))
-
-

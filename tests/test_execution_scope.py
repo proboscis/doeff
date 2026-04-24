@@ -163,5 +163,3 @@ def test_transfer_keeps_dispatch_stack_stable_for_repeated_effects() -> None:
     result = run_with_defaults(wrapped)
     assert _is_ok(result), result.error
     assert result.value == tuple(range(6))
-
-

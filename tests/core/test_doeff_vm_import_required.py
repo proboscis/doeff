@@ -64,5 +64,3 @@ def test_importing_errors_module_fails_when_doeff_vm_is_unavailable() -> None:
     error = _import_error_with_blocked_doeff_vm("doeff.errors")
     assert error["type"] in {"ModuleNotFoundError", "ImportError"}
     assert "doeff_vm" in error["message"]
-
-

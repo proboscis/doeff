@@ -200,5 +200,3 @@ def test_spawn_gather_handler_without_intercept():
     result = run_with_defaults(program)
     assert result.is_ok(), f"Failed: {result.error}"
     assert len(result.value) == 5
-
-

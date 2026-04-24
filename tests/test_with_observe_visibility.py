@@ -89,6 +89,3 @@ def test_observe_sees_handler_body_effects():
     tell_msgs = [o for o in observed if "tell from handler" in o]
     assert slog_msgs, f"Observer missed handler body slog. Observed: {observed}"
     assert tell_msgs, f"Observer missed handler body Tell. Observed: {observed}"
-
-
-

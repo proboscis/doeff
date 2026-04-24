@@ -37,10 +37,3 @@ def inner_program() -> Generator[Program[Any], Any, int]:
 def test_do_call_returns_expand_doctrl() -> None:
     result = takes_plain(1)
     assert isinstance(result, Expand), f"expected Expand DoCtrl, got {type(result).__name__}"
-
-
-
-
-
-
-

@@ -23,13 +23,3 @@ def test_run_resolves_plain_value_arg_before_kernel_call() -> None:
 
     result = run_with_defaults(add_one(41))
     assert result.value == 42
-
-
-
-
-
-
-
-
-
-
