@@ -144,13 +144,18 @@ impl doeff_vm_core::value::Callable for PythonCallable {
 #[derive(Debug)]
 pub struct PyIRStream {
     pub generator: Py<PyAny>,
+    pub tail_resume_lines: Vec<u32>,
 }
 
 #[pymethods]
 impl PyIRStream {
     #[new]
-    pub fn new(generator: Py<PyAny>) -> Self {
-        Self { generator }
+    #[pyo3(signature = (generator, tail_resume_lines=None))]
+    pub fn new(generator: Py<PyAny>, tail_resume_lines: Option<Vec<u32>>) -> Self {
+        Self {
+            generator,
+            tail_resume_lines: tail_resume_lines.unwrap_or_default(),
+        }
     }
 }
 
@@ -161,15 +166,17 @@ impl PyIRStream {
 #[derive(Debug)]
 pub struct PythonGeneratorStream {
     generator: PyShared,
+    tail_resume_lines: Vec<u32>,
     exhausted: bool,
     /// Last known source location, preserved after generator exhaustion.
     last_location: Option<doeff_vm_core::ir_stream::StreamSourceLocation>,
 }
 
 impl PythonGeneratorStream {
-    pub fn new(generator: PyShared) -> Self {
+    pub fn new(generator: PyShared, tail_resume_lines: Vec<u32>) -> Self {
         Self {
             generator,
+            tail_resume_lines,
             exhausted: false,
             last_location: None,
         }
@@ -270,6 +277,17 @@ impl PythonGeneratorStream {
     /// classify_python_object handles all cases:
     /// DoExpr (has tag), EffectBase (implicit Perform), or error.
     fn classify_yielded(&self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> StreamStep {
+        if is_tail_resume_candidate(obj) {
+            if let Some(line) = generator_current_line(py, &self.generator) {
+                if self.tail_resume_lines.contains(&line) {
+                    match classify_tail_resume(py, obj) {
+                        Ok(Some(doctrl)) => return StreamStep::Instruction(doctrl),
+                        Ok(None) => {}
+                        Err(msg) => return StreamStep::Error(Value::String(msg)),
+                    }
+                }
+            }
+        }
         match classify_python_object(py, obj) {
             Ok(doctrl) => StreamStep::Instruction(doctrl),
             Err(msg) => StreamStep::Error(Value::String(msg)),
@@ -357,6 +375,44 @@ impl IRStream for PythonGeneratorStream {
 // ---------------------------------------------------------------------------
 // classify_python_object — top-level classification for run()
 // ---------------------------------------------------------------------------
+
+fn is_tail_resume_candidate(obj: &Bound<'_, PyAny>) -> bool {
+    use crate::do_expr::{PyResume, PyResumeThrow};
+
+    obj.downcast::<PyResume>().is_ok() || obj.downcast::<PyResumeThrow>().is_ok()
+}
+
+fn generator_current_line(py: Python<'_>, generator: &PyShared) -> Option<u32> {
+    let gen = generator.bind(py);
+    let frame = gen.getattr("gi_frame").ok()?;
+    if frame.is_none() {
+        return None;
+    }
+    frame
+        .getattr("f_lineno")
+        .ok()
+        .and_then(|line| line.extract::<u32>().ok())
+}
+
+fn classify_tail_resume(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<Option<DoCtrl>, String> {
+    use crate::do_expr::{PyResume, PyResumeThrow};
+
+    if let Ok(r) = obj.downcast::<PyResume>() {
+        let r = r.get();
+        let k = take_continuation(py, &r.continuation, "Transfer")?;
+        let value = python_to_value(py, &r.value.bind(py));
+        return Ok(Some(DoCtrl::Transfer { k, value }));
+    }
+
+    if let Ok(rt) = obj.downcast::<PyResumeThrow>() {
+        let rt = rt.get();
+        let k = take_continuation(py, &rt.continuation, "TransferThrow")?;
+        let exception = Value::Opaque(PyShared::new(rt.exception.clone_ref(py)));
+        return Ok(Some(DoCtrl::TransferThrow { k, exception }));
+    }
+
+    Ok(None)
+}
 
 /// Extract continuation from PyK. No one-shot enforcement here — that's the VM core's job
 /// (continue_k in dispatch.rs, where self.current_segment is available for diagnostics).
@@ -850,8 +906,14 @@ pub fn python_to_value(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> Value {
     }
     // PyIRStream → Value::Stream
     if let Ok(s) = obj.downcast::<PyIRStream>() {
-        let gen = s.borrow().generator.clone_ref(_py);
-        let stream = PythonGeneratorStream::new(PyShared::new(gen));
+        let (gen, tail_resume_lines) = {
+            let stream = s.borrow();
+            (
+                stream.generator.clone_ref(_py),
+                stream.tail_resume_lines.clone(),
+            )
+        };
+        let stream = PythonGeneratorStream::new(PyShared::new(gen), tail_resume_lines);
         let stream_ref = doeff_vm_core::ir_stream::IRStreamRef::new(Box::new(stream));
         return Value::Stream(stream_ref);
     }
