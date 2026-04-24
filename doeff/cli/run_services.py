@@ -109,6 +109,24 @@ class DoeffRunContext:
     transform_refs: list[str]
 
 
+@dataclass(frozen=True)
+class RunnerContext:
+    """Invocation context passed to ``--runner`` callables.
+
+    Unlike :class:`DoeffRunContext` this captures every source form — Python
+    symbol path, inline ``-c`` Python, or inline ``--hy`` Hy — plus enough
+    metadata for remote backends (k3s, docker) to reconstruct the original
+    ``doeff run`` command verbatim via ``raw_argv``.
+    """
+
+    program_ref: str | None
+    py_source: str | None
+    hy_source: str | None
+    runner_ref: str
+    format: str
+    raw_argv: list[str]
+
+
 def resolve_context(ctx: RunContext) -> ResolvedRunContext:
     """Resolve a RunContext: load program, discover interpreter if needed."""
     # Load program

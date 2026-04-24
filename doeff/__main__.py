@@ -27,6 +27,9 @@ from doeff.cli.run_services import (
 )
 
 
+_DEFAULT_RUNNER = "doeff.runners.local.run_local"
+
+
 class RunArgs(argparse.Namespace):
     command: str
     func: Callable[["RunArgs"], int]
@@ -38,9 +41,121 @@ class RunArgs(argparse.Namespace):
     set_vars: list[str] | None
     apply: list[str] | None
     transform: list[str] | None
+    runner: str | None
     format: str
     no_runbox: bool
     script: str | None
+    raw_argv: list[str]
+
+
+_HY_FLAG_REWRITE = {
+    "interpreter": (
+        "--interpreter",
+        """--hy builds the handler stack inline instead of delegating to a
+  Python interpreter function. Import the composing function in Hy and
+  apply it to your Program:
+
+    doeff run --hy '
+    (import myapp [my_program])
+    (import myapp.sim [sim_interpreter])
+    (sim_interpreter my_program)
+    '
+
+  Migration reference: VAULT or design_doeff_run_redesign.md.""",
+    ),
+    "envs": (
+        "--env",
+        """--hy reaches env values through handler composition, not a CLI
+  flag. Two options:
+
+    # 1. Wrap with lazy_ask for structured / Program env entries:
+    doeff run --hy '
+    (import myapp [my_program])
+    (import doeff-core-effects [lazy-ask])
+    ((lazy-ask :env {"service_client" (myapp.build-client)})
+     my_program)
+    '
+
+    # 2. Point to string secrets via DOEFF_* environment variables:
+    export DOEFF_OPENAI_API_KEY=sk-...
+    doeff run --hy '(import myapp [my_program]) my_program'
+
+  Both paths play well together; see env_var_ask for lazy {path} syntax.""",
+    ),
+    "set_vars": (
+        "--set",
+        """--hy overrides values via Local (scoped) or DOEFF_* env vars
+  (ambient). Example replacement for ``--set model=gpt-4``:
+
+    # a. Scoped override in your Hy source:
+    doeff run --hy '
+    (import myapp [my_program])
+    (import doeff [Local])
+    (Local {"model" "gpt-4"} my_program)
+    '
+
+    # b. Ambient env var (read by env_var_ask):
+    export DOEFF_model=gpt-4
+    doeff run --hy '(import myapp [my_program]) my_program'""",
+    ),
+    "apply": (
+        "--apply",
+        """--hy composes Kleisli arrows inline. Replacement for
+  ``--apply myapp.transforms.double``:
+
+    doeff run --hy '
+    (import myapp [my_program])
+    (import myapp.transforms [double])
+    (-> my_program double)
+    '""",
+    ),
+    "transform": (
+        "--transform",
+        """--hy composes Program -> Program transforms inline. Replacement
+  for ``--transform myapp.memoize --transform myapp.sim``:
+
+    doeff run --hy '
+    (import myapp [my_program])
+    (import myapp.memoize myapp.sim)
+    (-> my_program myapp.memoize myapp.sim)
+    '""",
+    ),
+}
+
+
+_LEGACY_FLAG_DEPRECATION = {
+    "interpreter": """--interpreter is deprecated. Migration:
+  # Before
+  doeff run --program myapp.p --interpreter myapp.sim_interpreter
+  # After (compose inline with Hy)
+  doeff run --hy '(import myapp [p]) (import myapp.sim [sim_interpreter]) (sim_interpreter p)'""",
+    "envs": """--env is deprecated. Migration:
+  # Before
+  doeff run --program myapp.p --env myapp.env_dict
+  # After — choose one:
+  #  (a) inline lazy-ask in Hy:
+  doeff run --hy '(import myapp [p]) (import doeff-core-effects [lazy-ask]) ((lazy-ask :env myapp.env_dict) p)'
+  #  (b) string secrets via DOEFF_* env vars:
+  export DOEFF_OPENAI_API_KEY=sk-...; doeff run --program myapp.p""",
+    "set_vars": """--set is deprecated. Migration:
+  # Before
+  doeff run --program myapp.p --set model=gpt-4
+  # After — choose one:
+  #  (a) scoped Local inside Hy:
+  doeff run --hy '(import myapp [p]) (import doeff [Local]) (Local {"model" "gpt-4"} p)'
+  #  (b) ambient env var:
+  export DOEFF_model=gpt-4; doeff run --program myapp.p""",
+    "apply": """--apply is deprecated. Migration:
+  # Before
+  doeff run --program myapp.p --apply myapp.transforms.double
+  # After (inline threading with Hy)
+  doeff run --hy '(import myapp [p]) (import myapp.transforms [double]) (-> p double)'""",
+    "transform": """--transform is deprecated. Migration:
+  # Before
+  doeff run --program myapp.p --transform myapp.sim
+  # After (inline composition with Hy)
+  doeff run --hy '(import myapp [p]) (import myapp.sim) (-> p myapp.sim)'""",
+}
 
 
 def _parse_set_vars(set_vars: list[str] | None) -> dict[str, tuple[str, Any]]:
@@ -158,59 +273,94 @@ def handle_run_code(args: RunArgs) -> int:
     return 0
 
 
-_HY_EXCLUSIVE_FLAGS = (
-    ("interpreter", "--interpreter"),
-    ("envs", "--env"),
-    ("set_vars", "--set"),
-    ("apply", "--apply"),
-    ("transform", "--transform"),
-)
+def _check_hy_conflicts(args: RunArgs) -> int | None:
+    """Hard-fail with a rewrite example when ``--hy`` meets a legacy flag."""
+    violations = [attr for attr in _HY_FLAG_REWRITE if getattr(args, attr, None)]
+    if not violations:
+        return None
+    sections = []
+    for attr in violations:
+        flag, rewrite = _HY_FLAG_REWRITE[attr]
+        sections.append(
+            f"Error: --hy cannot be combined with {flag}.\n\n  {rewrite}"
+        )
+    print("\n\n".join(sections), file=sys.stderr)
+    return 2
+
+
+def _warn_legacy_flags(args: RunArgs) -> None:
+    """Emit a deprecation notice for every legacy flag the caller used."""
+    used = [attr for attr in _LEGACY_FLAG_DEPRECATION if getattr(args, attr, None)]
+    if not used:
+        return
+    lines = [
+        "[doeff] DeprecationWarning: the following flags are deprecated "
+        "and will be removed in a future release:",
+    ]
+    for attr in used:
+        lines.append("")
+        lines.append(_LEGACY_FLAG_DEPRECATION[attr])
+    print("\n".join(lines), file=sys.stderr)
+
+
+def _build_runner_context(args: RunArgs):
+    from doeff.cli.run_services import RunnerContext
+    return RunnerContext(
+        program_ref=args.program,
+        py_source=args.code,
+        hy_source=args.hy_code,
+        runner_ref=args.runner or _DEFAULT_RUNNER,
+        format=args.format,
+        raw_argv=list(args.raw_argv),
+    )
+
+
+def _dispatch_runner(args: RunArgs) -> int:
+    """Resolve the runner function and invoke it with a RunnerContext."""
+    from doeff.cli.run_services import import_symbol
+
+    runner_ref = args.runner or _DEFAULT_RUNNER
+    try:
+        runner = import_symbol(runner_ref)
+    except Exception as exc:
+        print(
+            "Error: failed to import --runner "
+            f"{runner_ref!r}: {exc}\n\n"
+            "  A runner is a callable of the form ``fn(ctx: RunnerContext) -> int``.\n"
+            "  Builtin: doeff.runners.local\n\n"
+            "  Examples:\n"
+            "    doeff run --hy '(import doeff [Pure]) (Pure 1)'\n"
+            "    doeff run --hy '(Pure 1)' --runner doeff.runners.local\n"
+            "    doeff run --hy '(Pure 1)' --runner myapp.runners.k3s\n",
+            file=sys.stderr,
+        )
+        return 1
+
+    ctx = _build_runner_context(args)
+    result = runner(ctx)
+    if isinstance(result, int):
+        return result
+    return 0
 
 
 def handle_run_hy(args: RunArgs) -> int:
-    """Evaluate a Hy source block and run the resulting Program."""
-    from doeff import run as _run
-    from doeff.cli.hy_runner import HyRunnerError, evaluate_hy_source
-
-    for attr, flag in _HY_EXCLUSIVE_FLAGS:
-        if getattr(args, attr):
-            print(
-                f"Error: --hy cannot be combined with {flag}; "
-                "express handlers and env inline in the Hy source.",
-                file=sys.stderr,
-            )
-            return 2
-
+    conflict = _check_hy_conflicts(args)
+    if conflict is not None:
+        return conflict
     source = args.hy_code
     if source == "-":
-        source = sys.stdin.read()
-    if not source or not source.strip():
-        print("Error: No Hy source provided", file=sys.stderr)
+        args.hy_code = sys.stdin.read()
+    elif not source or not source.strip():
+        print(
+            "Error: No Hy source provided.\n\n"
+            "  Pass a Hy block directly, or use '-' to read from stdin:\n\n"
+            "    doeff run --hy '(import doeff [Pure]) (Pure 42)'\n"
+            "    cat my_entrypoint.hy | doeff run --hy -\n",
+            file=sys.stderr,
+        )
         return 1
-
     maybe_create_runbox_record(skip_runbox=args.no_runbox)
-
-    try:
-        evaluated = evaluate_hy_source(source)
-    except HyRunnerError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
-
-    value = _run(evaluated.program)
-
-    if args.format == "json":
-        payload = {
-            "status": "ok",
-            "program": None,
-            "interpreter": None,
-            "envs": [],
-            "result": _json_safe(value),
-            "result_type": type(value).__name__,
-        }
-        print(json.dumps(payload))
-    else:
-        print(value)
-    return 0
+    return _dispatch_runner(args)
 
 
 def handle_run(args: RunArgs) -> int:
@@ -218,11 +368,28 @@ def handle_run(args: RunArgs) -> int:
         return handle_run_hy(args)
 
     if args.code is not None:
+        _warn_legacy_flags(args)
+        if args.runner and args.runner != _DEFAULT_RUNNER:
+            maybe_create_runbox_record(skip_runbox=args.no_runbox)
+            return _dispatch_runner(args)
         return handle_run_code(args)
 
     if not args.program:
-        print("Error: --program is required when not using -c", file=sys.stderr)
+        print(
+            "Error: one of PROGRAM / --hy / -c is required.\n\n"
+            "  Examples:\n"
+            "    doeff run --program myapp.entrypoints.p_daily\n"
+            "    doeff run --hy '(import doeff [Pure]) (Pure 42)'\n"
+            "    doeff run -c 'from doeff import Pure; Pure(42)'\n",
+            file=sys.stderr,
+        )
         return 1
+
+    _warn_legacy_flags(args)
+
+    if args.runner and args.runner != _DEFAULT_RUNNER:
+        maybe_create_runbox_record(skip_runbox=args.no_runbox)
+        return _dispatch_runner(args)
 
     maybe_create_runbox_record(skip_runbox=args.no_runbox)
 
@@ -300,6 +467,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Program -> Program transformer (can repeat)",
     )
     run_parser.add_argument(
+        "--runner", metavar="PATH",
+        help=(
+            "Runner callable (default: doeff.runners.local). Signature: "
+            "fn(ctx: RunnerContext) -> int. Remote runners (k3s, docker) "
+            "reconstruct the command via ctx.raw_argv / ctx.hy_source."
+        ),
+    )
+    run_parser.add_argument(
         "--format", choices=("text", "json"), default="text",
         help="Output format (default: text)",
     )
@@ -319,7 +494,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Iterable[str] | None = None) -> int:
     print_profiling_status()
     parser = build_parser()
-    args = cast(RunArgs, parser.parse_args(list(argv) if argv is not None else None, RunArgs()))
+    argv_list = list(argv) if argv is not None else sys.argv[1:]
+    args = cast(RunArgs, parser.parse_args(argv_list, RunArgs()))
+    args.raw_argv = argv_list
     try:
         return args.func(args)
     except Exception as exc:
