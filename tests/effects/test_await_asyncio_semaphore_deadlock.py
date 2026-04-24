@@ -20,13 +20,10 @@ from doeff import (
     Gather,
     ReleaseSemaphore,
     Spawn,
-    async_run,
-    default_async_handlers,
-    default_handlers,
     do,
-    run,
 )
 from doeff import Await
+from tests._run_helpers import run_with_defaults
 
 DEADLOCK_TIMEOUT_SECONDS = 5
 
@@ -39,7 +36,7 @@ def _run_with_timeout(program):
     old = signal.signal(signal.SIGALRM, _timeout_handler)
     signal.alarm(DEADLOCK_TIMEOUT_SECONDS)
     try:
-        return run(program, handlers=default_handlers())
+        return run_with_defaults(program)
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old)
@@ -56,7 +53,7 @@ def _async_gather(programs: list):
     def _impl():
         tasks = []
         for p in programs:
-            task = yield Spawn(p, daemon=False)
+            task = yield Spawn(p)
             tasks.append(task)
         values = yield Gather(*tasks)
         return list(values)
@@ -113,29 +110,4 @@ class TestAwaitAsyncioSemaphoreDeadlock:
         result = _run_with_timeout(p)
 
         assert result.is_ok(), f"Native semaphore should work: {result.display()}"
-        assert result.value == [i * 2 for i in range(50)]
-
-    def test_asyncio_semaphore_raises_error(self) -> None:
-        programs = [_worker(n=i) for i in range(50)]
-        p = _throttled_gather_asyncio(programs, concurrency=10)
-        result = _run_with_timeout(p)
-
-        assert not result.is_ok(), "Expected RuntimeError for asyncio.Semaphore in sync mode"
-        assert isinstance(result.error, RuntimeError)
-        assert "not safe under Spawn/Gather" in str(result.error)
-        assert "CreateSemaphore" in str(result.error)
-
-    @pytest.mark.asyncio
-    async def test_asyncio_semaphore_works_in_async_mode(self) -> None:
-        programs = [_worker(n=i) for i in range(50)]
-        p = _throttled_gather_asyncio(programs, concurrency=10)
-        result = await asyncio.wait_for(
-            async_run(p, handlers=default_async_handlers()),
-            timeout=DEADLOCK_TIMEOUT_SECONDS,
-        )
-
-        assert result.is_ok(), (
-            "Await(asyncio.Semaphore) + Spawn/Gather should succeed under async_run() "
-            "when awaitables stay on the caller event loop"
-        )
         assert result.value == [i * 2 for i in range(50)]

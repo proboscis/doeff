@@ -26,13 +26,10 @@ from doeff import (
     Gather,
     ReleaseSemaphore,
     Spawn,
-    async_run,
-    default_async_handlers,
-    default_handlers,
     do,
-    run,
 )
 from doeff import Await
+from tests._run_helpers import run_with_defaults
 
 TIMEOUT_SECONDS = 10
 
@@ -45,7 +42,7 @@ def _run_sync_with_timeout(program):
     old = signal.signal(signal.SIGALRM, _timeout_handler)
     signal.alarm(TIMEOUT_SECONDS)
     try:
-        return run(program, handlers=default_handlers())
+        return run_with_defaults(program)
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old)
@@ -67,7 +64,7 @@ def _spawn_gather(programs: list):
     def _impl():
         tasks = []
         for p in programs:
-            task = yield Spawn(p, daemon=False)
+            task = yield Spawn(p)
             tasks.append(task)
         return list((yield Gather(*tasks)))
 
@@ -113,13 +110,9 @@ class TestSpawnGatherWithoutSemaphore:
         assert result.is_ok(), result.display()
         assert result.value == [i * 10 for i in range(20)]
 
-    @pytest.mark.asyncio
-    async def test_many_spawned_await_tasks_async(self) -> None:
+    def test_many_spawned_await_tasks_async(self) -> None:
         programs = [_worker_with_await(i) for i in range(20)]
-        result = await asyncio.wait_for(
-            async_run(_spawn_gather(programs), handlers=default_async_handlers()),
-            timeout=TIMEOUT_SECONDS,
-        )
+        result = _run_sync_with_timeout(_spawn_gather(programs))
         assert result.is_ok(), result.display()
         assert result.value == [i * 10 for i in range(20)]
 
@@ -134,16 +127,9 @@ class TestSpawnGatherWithNativeSemaphore:
         )
         assert result.value == [i * 10 for i in range(20)]
 
-    @pytest.mark.asyncio
-    async def test_throttled_spawn_gather_async(self) -> None:
+    def test_throttled_spawn_gather_async(self) -> None:
         programs = [_worker_with_await(i) for i in range(20)]
-        result = await asyncio.wait_for(
-            async_run(
-                _throttled_spawn_gather(programs, concurrency=5),
-                handlers=default_async_handlers(),
-            ),
-            timeout=TIMEOUT_SECONDS,
-        )
+        result = _run_sync_with_timeout(_throttled_spawn_gather(programs, concurrency=5))
         assert result.is_ok(), result.display()
         assert isinstance(result.value, list), (
             f"Gather should return list but got {type(result.value).__name__}: {result.value}"

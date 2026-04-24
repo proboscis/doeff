@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from doeff import Ask, MissingEnvKeyError, default_handlers, do, run
+from tests._run_helpers import run_with_defaults
 
 
 def test_default_handlers_missing_ask_key_exits_without_hanging() -> None:
@@ -9,7 +10,7 @@ def test_default_handlers_missing_ask_key_exits_without_hanging() -> None:
         _ = yield Ask("missing_key")
         return 42
 
-    result = run(failing(), handlers=default_handlers(), print_doeff_trace=False)
+    result = run_with_defaults(failing())
 
     assert result.is_err()
     assert isinstance(result.error, MissingEnvKeyError)

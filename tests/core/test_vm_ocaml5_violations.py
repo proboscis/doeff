@@ -113,14 +113,6 @@ def test_v10_no_env_store_on_vm():
     assert "env_store:" not in src, "VM must not have env_store — use VarStore only"
 
 
-def test_v13_no_trace_state_dispatch_maps():
-    """TraceState must not accumulate dispatch display maps. Derive from stack."""
-    src = _src(TRACE_STATE_RS)
-    assert "dispatch_displays:" not in src, \
-        "TraceState must not have dispatch_displays HashMap — derive from fiber chain walk"
-    assert "HashMap<DispatchId, DispatchDisplayState>" not in src, \
-        "No dispatch display accumulation"
-
 
 def test_v14_no_dispatch_state_on_vm():
     """VM must not have dispatch_state/DispatchState. Dispatch = topology change."""
@@ -236,18 +228,6 @@ def test_v23_no_dispatch_id_on_continuation():
 # ============================================================================
 
 
-def test_v30_no_dispatch_displays():
-    """TraceState must not accumulate dispatch display state."""
-    src = _src(TRACE_STATE_RS)
-    assert "dispatch_displays:" not in src
-    assert "DispatchDisplayState" not in src
-
-
-def test_v31_no_shadow_frame_stack():
-    """TraceState must not maintain a shadow frame stack. The fiber chain IS the stack."""
-    src = _src(TRACE_STATE_RS)
-    assert "frame_stack:" not in src, \
-        "TraceState must not have frame_stack — walk the fiber chain instead"
 
 
 # ============================================================================

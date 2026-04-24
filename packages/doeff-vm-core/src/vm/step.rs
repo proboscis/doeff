@@ -1,35 +1,38 @@
 //! Step machine — drives the VM one step at a time.
 //!
-//! Modes:
+//! Signals:
 //!   Eval(DoCtrl)  — evaluate an instruction
 //!   Send(Value)   — send value to current stream
 //!   Raise(Value)  — signal error to current stream
 //!
-//! The step machine is a simple loop: take Mode, process it, set next Mode.
+//! The step machine is a simple loop: take Signal, process it, return next Signal.
 //! No implicit behavior. No Python. No trace state.
 
 use crate::continuation::Continuation;
 use crate::do_ctrl::DoCtrl;
-use crate::driver::{ExternalCall, Mode, StepResult};
+use crate::driver::{Signal, SignalAction, StepResult};
 use crate::error::VMError;
 use crate::frame::{EvalReturnContinuation, Frame};
-use crate::segment::Fiber;
-use crate::ids::{FiberId, VarId};
+use crate::ids::FiberId;
 use crate::ir_stream::StreamStep;
+use crate::segment::Fiber;
 use crate::value::Value;
 use crate::vm::VM;
 
 impl VM {
     /// Execute one step.
-    pub fn step(&mut self) -> StepResult {
+    pub fn step(&mut self, signal: Signal) -> StepResult {
         // Reclaim fibers from continuations dropped since the last step.
         self.reclaim_orphaned_fibers();
 
-        let mode = std::mem::replace(&mut self.mode, Mode::Send(Value::Unit));
-        match mode {
-            Mode::Eval(doctrl) => self.step_eval(doctrl),
-            Mode::Send(value) => self.step_send(value),
-            Mode::Raise(error) => self.step_raise(error),
+        let Signal {
+            action,
+            error_context,
+        } = signal;
+        match action {
+            SignalAction::Eval(doctrl) => self.step_eval(doctrl, error_context),
+            SignalAction::Send(value) => self.step_send(value, error_context),
+            SignalAction::Raise(error) => self.step_raise(error, error_context),
         }
     }
 
@@ -37,7 +40,7 @@ impl VM {
     // Send — deliver a value to the current stream
     // -------------------------------------------------------------------
 
-    fn step_send(&mut self, value: Value) -> StepResult {
+    fn step_send(&mut self, value: Value, error_context: Option<Vec<Value>>) -> StepResult {
         let Some(seg_id) = self.current_segment else {
             return StepResult::Done(value);
         };
@@ -50,15 +53,14 @@ impl VM {
             self.segments.free(seg_id);
             self.current_segment = parent;
             if parent.is_some() {
-                self.mode = Mode::Send(value);
-                return StepResult::Continue;
+                return continue_send(value, error_context);
             } else {
                 return StepResult::Done(value);
             }
         }
 
         let Some(seg) = self.segments.get_mut(seg_id) else {
-            return StepResult::Error(VMError::internal("send: segment not found"));
+            return error_result(VMError::internal("send: segment not found"), error_context);
         };
 
         match seg.frames.last() {
@@ -69,20 +71,17 @@ impl VM {
                 };
                 match stream.resume(value) {
                     StreamStep::Instruction(doctrl) => {
-                        self.mode = Mode::Eval(doctrl);
-                        StepResult::Continue
+                        continue_eval(doctrl, error_context)
                     }
                     StreamStep::Done(value) => {
                         seg.frames.pop();
-                        self.mode = Mode::Send(value);
-                        StepResult::Continue
+                        continue_send(value, error_context)
                     }
                     StreamStep::Error(error) => {
-                        self.mode = Mode::Raise(error);
-                        StepResult::Continue
+                        continue_raise(error, error_context)
                     }
                     StreamStep::External(call) => {
-                        StepResult::External(call)
+                        external_result(call, error_context)
                     }
                 }
             }
@@ -90,20 +89,18 @@ impl VM {
                 let Frame::EvalReturn(eval_return) = seg.frames.pop().unwrap() else {
                     unreachable!()
                 };
-                self.step_eval_return(*eval_return, value)
+                self.step_eval_return(*eval_return, value, error_context)
             }
             Some(Frame::LexicalScope { .. }) => {
                 // Scope frame — skip, deliver to next frame
                 // TODO: may need to pop scope on exit
-                self.mode = Mode::Send(value);
-                StepResult::Continue
+                continue_send(value, error_context)
             }
             Some(Frame::MapReturn { .. } | Frame::FlatMapBindResult
                 | Frame::FlatMapBindSource { .. }) => {
                 // Legacy frames — remove in future cleanup
                 seg.frames.pop();
-                self.mode = Mode::Send(value);
-                StepResult::Continue
+                continue_send(value, error_context)
             }
         }
     }
@@ -112,14 +109,13 @@ impl VM {
     // Raise — signal error to the current stream
     // -------------------------------------------------------------------
 
-    fn step_raise(&mut self, error: Value) -> StepResult {
+    fn step_raise(&mut self, error: Value, error_context: Option<Vec<Value>>) -> StepResult {
         // Capture execution context on first error (before unwinding destroys it).
-        if self.last_error_context.is_none() {
-            self.last_error_context = Some(self.collect_rich_execution_context());
-        }
+        let error_context = error_context
+            .or_else(|| Some(self.collect_rich_execution_context()));
 
         let Some(seg_id) = self.current_segment else {
-            return StepResult::Error(VMError::uncaught_exception(error));
+            return error_result(VMError::uncaught_exception(error), error_context);
         };
 
         // Fast path: fiber completed (no frames) — free it and propagate to parent.
@@ -128,15 +124,14 @@ impl VM {
             self.segments.free(seg_id);
             self.current_segment = parent;
             if parent.is_some() {
-                self.mode = Mode::Raise(error);
-                return StepResult::Continue;
+                return continue_raise(error, error_context);
             } else {
-                return StepResult::Error(VMError::uncaught_exception(error));
+                return error_result(VMError::uncaught_exception(error), error_context);
             }
         }
 
         let Some(seg) = self.segments.get_mut(seg_id) else {
-            return StepResult::Error(VMError::internal("raise: segment not found"));
+            return error_result(VMError::internal("raise: segment not found"), error_context);
         };
 
         match seg.frames.last() {
@@ -147,30 +142,26 @@ impl VM {
                 };
                 match stream.throw(error) {
                     StreamStep::Instruction(doctrl) => {
-                        self.mode = Mode::Eval(doctrl);
-                        StepResult::Continue
+                        continue_eval(doctrl, error_context)
                     }
                     StreamStep::Done(value) => {
                         seg.frames.pop();
-                        self.mode = Mode::Send(value);
-                        StepResult::Continue
+                        continue_send(value, error_context)
                     }
                     StreamStep::Error(error) => {
                         // Stream didn't handle — pop and propagate
                         seg.frames.pop();
-                        self.mode = Mode::Raise(error);
-                        StepResult::Continue
+                        continue_raise(error, error_context)
                     }
                     StreamStep::External(call) => {
-                        StepResult::External(call)
+                        external_result(call, error_context)
                     }
                 }
             }
             _ => {
                 // Non-program frames can't handle errors — pop and propagate
                 seg.frames.pop();
-                self.mode = Mode::Raise(error);
-                StepResult::Continue
+                continue_raise(error, error_context)
             }
         }
     }
@@ -179,23 +170,21 @@ impl VM {
     // Eval — process a DoCtrl instruction
     // -------------------------------------------------------------------
 
-    fn step_eval(&mut self, doctrl: DoCtrl) -> StepResult {
+    fn step_eval(&mut self, doctrl: DoCtrl, mut error_context: Option<Vec<Value>>) -> StepResult {
         match doctrl {
             DoCtrl::Pure { value } => {
-                self.mode = Mode::Send(value);
-                StepResult::Continue
+                continue_send(value, error_context)
             }
 
             DoCtrl::Eval { expr } => {
-                self.mode = Mode::Eval(*expr);
-                StepResult::Continue
+                continue_eval(*expr, error_context)
             }
 
             DoCtrl::Expand { expr } => {
                 // Evaluate inner, expect Value::Stream, push as frame
                 match *expr {
                     DoCtrl::Pure { value } => {
-                        self.push_stream_value(value)
+                        self.push_stream_value(value, error_context)
                     }
                     other => {
                         // Push ExpandReturn frame so we intercept the result
@@ -206,24 +195,23 @@ impl VM {
                                 )));
                             }
                         }
-                        self.mode = Mode::Eval(other);
-                        StepResult::Continue
+                        continue_eval(other, error_context)
                     }
                 }
             }
 
             DoCtrl::Apply { f, args } => {
-                self.eval_apply(*f, args)
+                self.eval_apply(*f, args, error_context)
             }
 
             DoCtrl::Perform { effect } => {
-                self.eval_perform(effect)
+                self.eval_perform(effect, error_context)
             }
 
             DoCtrl::Resume { mut k, value } => {
-                match self.continue_k(&mut k, value) {
-                    Ok(()) => StepResult::Continue,
-                    Err(event) => event,
+                match self.continue_k(&mut k) {
+                    Ok(()) => continue_send(value, error_context),
+                    Err(error) => error_result(error, error_context),
                 }
             }
 
@@ -234,19 +222,16 @@ impl VM {
                         seg.frames.pop(); // remove handler stream frame
                     }
                 }
-                match self.continue_k(&mut k, value) {
-                    Ok(()) => StepResult::Continue,
-                    Err(event) => event,
+                match self.continue_k(&mut k) {
+                    Ok(()) => continue_send(value, error_context),
+                    Err(error) => error_result(error, error_context),
                 }
             }
 
             DoCtrl::ResumeThrow { mut k, exception } => {
-                match self.continue_k(&mut k, Value::Unit) {
-                    Ok(()) => {
-                        self.mode = Mode::Raise(exception);
-                        StepResult::Continue
-                    }
-                    Err(event) => event,
+                match self.continue_k(&mut k) {
+                    Ok(()) => continue_raise(exception, error_context),
+                    Err(error) => error_result(error, error_context),
                 }
             }
 
@@ -257,67 +242,66 @@ impl VM {
                         seg.frames.pop();
                     }
                 }
-                match self.continue_k(&mut k, Value::Unit) {
-                    Ok(()) => {
-                        self.mode = Mode::Raise(exception);
-                        StepResult::Continue
-                    }
-                    Err(event) => event,
+                match self.continue_k(&mut k) {
+                    Ok(()) => continue_raise(exception, error_context),
+                    Err(error) => error_result(error, error_context),
                 }
             }
 
             DoCtrl::WithHandler { handler, body } => {
-                self.eval_with_handler(handler, *body)
+                self.eval_with_handler(handler, *body, error_context)
             }
 
             DoCtrl::Pass { effect, k } => {
                 // Inner handler doesn't handle — forward (effect, k) to outer handler.
                 // Pop handler stream, walk up to find next handler boundary.
-                self.eval_pass(effect, k)
+                self.eval_pass(effect, k, error_context)
             }
 
             DoCtrl::Delegate { .. } => {
-                StepResult::Error(VMError::type_error(
-                    "Delegate is removed. Use 'yield effect' from handler @do body to re-perform.".to_string()
-                ))
+                error_result(
+                    VMError::type_error(
+                        "Delegate is removed. Use 'yield effect' from handler @do body to re-perform."
+                            .to_string(),
+                    ),
+                    error_context,
+                )
             }
 
             DoCtrl::WithObserve { observer, body } => {
-                self.eval_with_observe(observer, *body)
+                self.eval_with_observe(observer, *body, error_context)
             }
 
             DoCtrl::AllocVar { initial } => {
                 if let Some(seg_id) = self.current_segment {
                     let var = self.alloc_scoped_var_in_segment(seg_id, initial);
-                    self.mode = Mode::Send(Value::Var(var));
+                    continue_send(Value::Var(var), error_context)
                 } else {
-                    return StepResult::Error(VMError::internal("AllocVar: no current segment"));
+                    error_result(VMError::internal("AllocVar: no current segment"), error_context)
                 }
-                StepResult::Continue
             }
 
             DoCtrl::ReadVar { var } => {
                 if let Some(seg_id) = self.current_segment {
                     match self.read_scoped_var_from(seg_id, var) {
-                        Some(value) => self.mode = Mode::Send(value),
-                        None => return StepResult::Error(VMError::internal(
-                            format!("ReadVar: variable {:?} not found", var)
-                        )),
+                        Some(value) => continue_send(value, error_context),
+                        None => error_result(
+                            VMError::internal(format!("ReadVar: variable {:?} not found", var)),
+                            error_context,
+                        ),
                     }
                 } else {
-                    return StepResult::Error(VMError::internal("ReadVar: no current segment"));
+                    error_result(VMError::internal("ReadVar: no current segment"), error_context)
                 }
-                StepResult::Continue
             }
 
             DoCtrl::WriteVar { var, value } => {
                 if let Some(seg_id) = self.current_segment {
                     self.write_scoped_var_in_current_segment(seg_id, var, value.clone());
-                    self.mode = Mode::Send(value);
+                    continue_send(value, error_context)
                 } else {
-                    return StepResult::Error(VMError::internal("WriteVar: no current segment"));
+                    error_result(VMError::internal("WriteVar: no current segment"), error_context)
                 }
-                StepResult::Continue
             }
 
             DoCtrl::GetTraceback { from } => {
@@ -330,17 +314,15 @@ impl VM {
                         Value::Int(loc.source_line as i64),
                     ]))
                     .collect();
-                self.mode = Mode::Send(Value::List(frames));
-                StepResult::Continue
+                continue_send(Value::List(frames), error_context)
             }
 
             DoCtrl::GetExecutionContext => {
                 // Return error-site context if available (captured before unwinding),
                 // otherwise current live context.
-                let frames = self.last_error_context.take()
+                let frames = error_context.take()
                     .unwrap_or_else(|| self.collect_rich_execution_context());
-                self.mode = Mode::Send(Value::List(frames));
-                StepResult::Continue
+                continue_send(Value::List(frames), error_context)
             }
 
             DoCtrl::GetHandlers { from } => {
@@ -350,8 +332,7 @@ impl VM {
                     .into_iter()
                     .map(|entry| Value::Callable(entry.handler))
                     .collect();
-                self.mode = Mode::Send(Value::List(handlers));
-                StepResult::Continue
+                continue_send(Value::List(handlers), error_context)
             }
 
             DoCtrl::GetOuterHandlers => {
@@ -367,8 +348,7 @@ impl VM {
                     .into_iter()
                     .map(|entry| Value::Callable(entry.handler))
                     .collect();
-                self.mode = Mode::Send(Value::List(handlers));
-                StepResult::Continue
+                continue_send(Value::List(handlers), error_context)
             }
 
             DoCtrl::TailEval { expr } => {
@@ -386,8 +366,7 @@ impl VM {
                         }
                     }
                 }
-                self.mode = Mode::Eval(*expr);
-                StepResult::Continue
+                continue_eval(*expr, error_context)
             }
         }
     }
@@ -397,35 +376,45 @@ impl VM {
     // -------------------------------------------------------------------
 
     /// Push a Value::Stream as a new Program frame on the current fiber.
-    fn push_stream_value(&mut self, value: Value) -> StepResult {
+    fn push_stream_value(
+        &mut self,
+        value: Value,
+        error_context: Option<Vec<Value>>,
+    ) -> StepResult {
         match value {
             Value::Stream(stream) => {
                 if let Some(seg_id) = self.current_segment {
                     if let Some(seg) = self.segments.get_mut(seg_id) {
                         seg.push_frame(Frame::program(stream, None));
-                        self.mode = Mode::Send(Value::Unit);
-                        return StepResult::Continue;
+                        return continue_send(Value::Unit, error_context);
                     }
                 }
-                StepResult::Error(VMError::internal("push_stream: no current segment"))
+                error_result(VMError::internal("push_stream: no current segment"), error_context)
             }
             other => {
-                StepResult::Error(VMError::type_error(format!(
-                    "Expand: expected Value::Stream, got {:?}", other
-                )))
+                error_result(
+                    VMError::type_error(format!("Expand: expected Value::Stream, got {:?}", other)),
+                    error_context,
+                )
             }
         }
     }
 
     /// Evaluate Apply: call f(args).
-    fn eval_apply(&mut self, f: DoCtrl, args: Vec<DoCtrl>) -> StepResult {
+    fn eval_apply(
+        &mut self,
+        f: DoCtrl,
+        args: Vec<DoCtrl>,
+        error_context: Option<Vec<Value>>,
+    ) -> StepResult {
         // Simple case: f and all args are Pure
         let f_value = match f {
             DoCtrl::Pure { value } => value,
             _ => {
-                return StepResult::Error(VMError::internal(
-                    "Apply: non-pure f not yet implemented"
-                ));
+                return error_result(
+                    VMError::internal("Apply: non-pure f not yet implemented"),
+                    error_context,
+                );
             }
         };
 
@@ -434,9 +423,10 @@ impl VM {
             match arg {
                 DoCtrl::Pure { value } => arg_values.push(value),
                 _ => {
-                    return StepResult::Error(VMError::internal(
-                        "Apply: non-pure arg not yet implemented"
-                    ));
+                    return error_result(
+                        VMError::internal("Apply: non-pure arg not yet implemented"),
+                        error_context,
+                    );
                 }
             }
         }
@@ -445,20 +435,18 @@ impl VM {
             Value::Callable(callable) => {
                 match callable.call(arg_values) {
                     Ok(result) => {
-                        self.mode = Mode::Send(result);
-                        StepResult::Continue
+                        continue_send(result, error_context)
                     }
                     Err(VMError::UncaughtException { exception }) => {
                         // Python exception from callable — propagate through
                         // generator stack so try/except blocks can catch it.
-                        self.mode = Mode::Raise(exception);
-                        StepResult::Continue
+                        continue_raise(exception, error_context)
                     }
-                    Err(err) => StepResult::Error(err),
+                    Err(err) => error_result(err, error_context),
                 }
             }
             _ => {
-                return StepResult::Error(VMError::internal("Apply: f is not callable"));
+                error_result(VMError::internal("Apply: f is not callable"), error_context)
             }
         }
     }
@@ -470,10 +458,15 @@ impl VM {
     /// OCaml 5 semantics: handler is called, returns a DoExpr (or stream)
     /// which is evaluated on the parent fiber. No manual stream pushing —
     /// handler result is evaluated as a normal program.
-    fn eval_perform(&mut self, effect: Value) -> StepResult {
+    fn eval_perform(&mut self, effect: Value, error_context: Option<Vec<Value>>) -> StepResult {
         let current = match self.current_segment {
             Some(id) => id,
-            None => return StepResult::Error(VMError::internal("perform: no current segment")),
+            None => {
+                return error_result(
+                    VMError::internal("perform: no current segment"),
+                    error_context,
+                );
+            }
         };
 
         // 1. Call ALL observers in the chain (synchronous, return value ignored)
@@ -493,22 +486,23 @@ impl VM {
             .and_then(|seg| seg.prompt_handler().cloned());
 
         let Some(handler_callable) = handler_callable else {
-            return StepResult::Error(VMError::internal("perform: handler has no callable"));
+            return error_result(
+                VMError::internal("perform: handler has no callable"),
+                error_context,
+            );
         };
 
         // 4. Call handler(effect, k) → must return a DoExpr.
         match handler_callable.call_handler(vec![effect, Value::Continuation(k)]) {
             Ok(doctrl) => {
-                self.mode = Mode::Eval(doctrl);
-                StepResult::Continue
+                continue_eval(doctrl, error_context)
             }
             Err(VMError::UncaughtException { exception }) => {
                 // Python exception from handler callable — propagate through
                 // generator stack so try/except blocks can catch it.
-                self.mode = Mode::Raise(exception);
-                StepResult::Continue
+                continue_raise(exception, error_context)
             }
-            Err(err) => StepResult::Error(err),
+            Err(err) => error_result(err, error_context),
         }
     }
 
@@ -528,13 +522,22 @@ impl VM {
 
 
     /// Evaluate WithObserve: install observer boundary, create body fiber, evaluate body.
-    fn eval_with_observe(&mut self, observer: Value, body: DoCtrl) -> StepResult {
+    fn eval_with_observe(
+        &mut self,
+        observer: Value,
+        body: DoCtrl,
+        error_context: Option<Vec<Value>>,
+    ) -> StepResult {
         let interceptor_callable = match observer {
             Value::Callable(c) => c,
             other => {
-                return StepResult::Error(VMError::type_error(format!(
-                    "WithObserve: observer must be Callable, got {:?}", other
-                )));
+                return error_result(
+                    VMError::type_error(format!(
+                        "WithObserve: observer must be Callable, got {:?}",
+                        other
+                    )),
+                    error_context,
+                );
             }
         };
 
@@ -552,8 +555,7 @@ impl VM {
         let body_fid = self.alloc_segment(body_fiber);
 
         self.current_segment = Some(body_fid);
-        self.mode = Mode::Eval(body);
-        StepResult::Continue
+        continue_eval(body, error_context)
     }
 
     /// Evaluate Pass: inner handler doesn't handle, forward to outer handler.
@@ -562,7 +564,12 @@ impl VM {
     /// k already includes the inner boundary (perform captures boundary in k).
     /// Handler runs on the parent. We just need to do a new perform from the
     /// parent to find the outer handler.
-    fn eval_pass(&mut self, effect: Value, k: Continuation) -> StepResult {
+    fn eval_pass(
+        &mut self,
+        effect: Value,
+        k: Continuation,
+        error_context: Option<Vec<Value>>,
+    ) -> StepResult {
         // Handler code runs on the parent fiber. The handler stream frame
         // yielded Pass — it's done. Pop it before extending k, otherwise
         // the dead frame gets hit again when the continuation is resumed.
@@ -574,19 +581,29 @@ impl VM {
         // k already includes body → ... → inner_boundary (because perform
         // includes boundary in continuation). Re-perform from current
         // position to find the outer handler.
-        self.eval_perform_with_k(effect, k)
+        self.eval_perform_with_k(effect, k, error_context)
     }
 
     /// Perform an effect with an existing continuation (used by Pass).
     /// Walks from current_segment to find the next handler, then calls it.
-    fn eval_perform_with_k(&mut self, effect: Value, k: Continuation) -> StepResult {
+    fn eval_perform_with_k(
+        &mut self,
+        effect: Value,
+        k: Continuation,
+        error_context: Option<Vec<Value>>,
+    ) -> StepResult {
         let current = match self.current_segment {
             Some(id) => id,
-            None => return StepResult::Error(VMError::internal("perform_with_k: no current segment")),
+            None => {
+                return error_result(
+                    VMError::internal("perform_with_k: no current segment"),
+                    error_context,
+                );
+            }
         };
 
         // Find handler walking up from current
-        let (handler_fiber_id, handler_parent) = match self.find_handler_for_effect(current, &effect) {
+        let (handler_fiber_id, _handler_parent) = match self.find_handler_for_effect(current, &effect) {
             Some(result) => result,
             None => {
                 // Reconnect continuation to current chain so the full
@@ -597,10 +614,10 @@ impl VM {
                     }
                 }
                 let start = k.head().or(self.current_segment);
-                self.last_error_context = Some(
-                    start.map(|s| self.collect_rich_context_from(s)).unwrap_or_default()
-                );
-                return StepResult::Error(VMError::no_matching_handler(effect));
+                let context = start
+                    .map(|s| self.collect_rich_context_from(s))
+                    .unwrap_or_default();
+                return error_result(VMError::no_matching_handler(effect), Some(context));
             }
         };
 
@@ -628,22 +645,23 @@ impl VM {
             .and_then(|seg| seg.prompt_handler().cloned());
 
         let Some(handler_callable) = handler_callable else {
-            return StepResult::Error(VMError::internal("Pass: outer handler has no callable"));
+            return error_result(
+                VMError::internal("Pass: outer handler has no callable"),
+                error_context,
+            );
         };
 
         // Call handler — must return DoExpr
         match handler_callable.call_handler(vec![effect, Value::Continuation(k)]) {
             Ok(doctrl) => {
-                self.mode = Mode::Eval(doctrl);
-                StepResult::Continue
+                continue_eval(doctrl, error_context)
             }
             Err(VMError::UncaughtException { exception }) => {
                 // Python exception from handler callable — propagate through
                 // generator stack so try/except blocks can catch it.
-                self.mode = Mode::Raise(exception);
-                StepResult::Continue
+                continue_raise(exception, error_context)
             }
-            Err(err) => StepResult::Error(err),
+            Err(err) => error_result(err, error_context),
         }
     }
 
@@ -655,13 +673,22 @@ impl VM {
     ///   body_fiber = alloc(parent = boundary_fiber)
     ///   current = body_fiber
     ///   evaluate body DoExpr on body_fiber
-    fn eval_with_handler(&mut self, handler: Value, body: DoCtrl) -> StepResult {
+    fn eval_with_handler(
+        &mut self,
+        handler: Value,
+        body: DoCtrl,
+        error_context: Option<Vec<Value>>,
+    ) -> StepResult {
         let handler_callable = match handler {
             Value::Callable(c) => c,
             other => {
-                return StepResult::Error(VMError::type_error(format!(
-                    "WithHandler: handler must be Callable, got {:?}", other
-                )));
+                return error_result(
+                    VMError::type_error(format!(
+                        "WithHandler: handler must be Callable, got {:?}",
+                        other
+                    )),
+                    error_context,
+                );
             }
         };
 
@@ -681,54 +708,74 @@ impl VM {
 
         // 3. Switch to body fiber and evaluate body DoExpr
         self.current_segment = Some(body_fid);
-        self.mode = Mode::Eval(body);
-        StepResult::Continue
+        continue_eval(body, error_context)
     }
 
     /// Process an EvalReturn frame with the delivered value.
-    fn step_eval_return(&mut self, eval_return: EvalReturnContinuation, value: Value) -> StepResult {
+    fn step_eval_return(
+        &mut self,
+        eval_return: EvalReturnContinuation,
+        value: Value,
+        error_context: Option<Vec<Value>>,
+    ) -> StepResult {
         match eval_return {
             EvalReturnContinuation::ResumeToContinuation { head_fiber } => {
                 let mut k = Continuation::new(head_fiber, head_fiber, self.orphan_queue.clone());
-                match self.continue_k(&mut k, value) {
-                    Ok(()) => StepResult::Continue,
-                    Err(event) => event,
+                match self.continue_k(&mut k) {
+                    Ok(()) => continue_send(value, error_context),
+                    Err(error) => error_result(error, error_context),
                 }
             }
             EvalReturnContinuation::ReturnToContinuation { head_fiber } => {
                 let mut k = Continuation::new(head_fiber, head_fiber, self.orphan_queue.clone());
-                match self.continue_k(&mut k, value) {
-                    Ok(()) => StepResult::Continue,
-                    Err(event) => event,
+                match self.continue_k(&mut k) {
+                    Ok(()) => continue_send(value, error_context),
+                    Err(error) => error_result(error, error_context),
                 }
             }
             EvalReturnContinuation::EvalInScopeReturn { head_fiber } => {
                 let mut k = Continuation::new(head_fiber, head_fiber, self.orphan_queue.clone());
-                match self.continue_k(&mut k, value) {
-                    Ok(()) => StepResult::Continue,
-                    Err(event) => event,
+                match self.continue_k(&mut k) {
+                    Ok(()) => continue_send(value, error_context),
+                    Err(error) => error_result(error, error_context),
                 }
             }
             EvalReturnContinuation::TailResumeReturn => {
-                self.mode = Mode::Send(value);
-                StepResult::Continue
+                continue_send(value, error_context)
             }
             EvalReturnContinuation::ExpandReturn => {
-                self.push_stream_value(value)
+                self.push_stream_value(value, error_context)
             }
             _ => {
                 // Other EvalReturn variants — TODO
-                self.mode = Mode::Send(value);
-                StepResult::Continue
+                continue_send(value, error_context)
             }
         }
     }
+}
 
-    /// Receive result from an external call.
-    pub fn receive_external_result(&mut self, result: Result<Value, Value>) {
-        match result {
-            Ok(value) => self.mode = Mode::Send(value),
-            Err(error) => self.mode = Mode::Raise(error),
-        }
+fn continue_eval(doctrl: DoCtrl, error_context: Option<Vec<Value>>) -> StepResult {
+    StepResult::Continue(Signal::eval(doctrl).with_error_context(error_context))
+}
+
+fn continue_send(value: Value, error_context: Option<Vec<Value>>) -> StepResult {
+    StepResult::Continue(Signal::send(value).with_error_context(error_context))
+}
+
+fn continue_raise(error: Value, error_context: Option<Vec<Value>>) -> StepResult {
+    StepResult::Continue(Signal::raise(error).with_error_context(error_context))
+}
+
+fn external_result(
+    call: crate::driver::ExternalCall,
+    error_context: Option<Vec<Value>>,
+) -> StepResult {
+    StepResult::External {
+        call,
+        context: error_context,
     }
+}
+
+fn error_result(error: VMError, context: Option<Vec<Value>>) -> StepResult {
+    StepResult::Error { error, context }
 }

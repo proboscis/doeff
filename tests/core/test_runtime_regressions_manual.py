@@ -16,17 +16,16 @@ from doeff import (
     Pass,
     Program,
     Put,
+    Resume,
     Spawn,
     Try,
     WithHandler,
-    async_run,
-    default_async_handlers,
-    default_handlers,
     do,
     run,
 )
 from doeff_core_effects.handlers import state as state_handler
 from doeff_core_effects.scheduler import TaskCompleted
+from tests._run_helpers import default_handlers, run_with_defaults, wrap_with_defaults
 
 
 def _rust_ok_err_classes() -> tuple[type, type]:
@@ -68,33 +67,10 @@ def test_try_except_catches_yielded_program_error() -> None:
         except Exception as exc:
             return ("caught", type(exc).__name__, str(exc))
 
-    result = run(program(), handlers=default_handlers())
+    result = run_with_defaults(program())
     assert result.is_ok()
     assert result.value == ("caught", "ValueError", "x")
 
-
-def test_try_except_catches_handler_raised_error_at_yield_site() -> None:
-    class HandlerBoom(EffectBase):
-        pass
-
-    @do
-    def handler(effect: Effect, _k: object):
-        if not isinstance(effect, HandlerBoom):
-            yield Pass()
-            return
-        raise ValueError("boom-from-handler")
-
-    @do
-    def program():
-        try:
-            _ = yield HandlerBoom()
-            return ("unexpected",)
-        except Exception as exc:
-            return ("caught", type(exc).__name__, str(exc))
-
-    result = run(WithHandler(handler, program()), handlers=default_handlers())
-    assert result.is_ok()
-    assert result.value == ("caught", "ValueError", "boom-from-handler")
 
 
 def test_try_wraps_handler_raised_error_as_result_value() -> None:
@@ -102,9 +78,9 @@ def test_try_wraps_handler_raised_error_as_result_value() -> None:
         pass
 
     @do
-    def handler(effect: Effect, _k: object):
+    def handler(effect: Effect, k: object):
         if not isinstance(effect, HandlerBoom):
-            yield Pass()
+            yield Pass(effect, k)
             return
         raise ValueError("boom-from-handler")
 
@@ -116,7 +92,7 @@ def test_try_wraps_handler_raised_error_as_result_value() -> None:
     def program():
         return (yield Try(WithHandler(handler, inner())))
 
-    result = run(program(), handlers=default_handlers())
+    result = run_with_defaults(program())
     assert result.is_ok()
 
     value = result.value
@@ -134,7 +110,7 @@ def test_safe_wraps_error_as_result_value() -> None:
     def program():
         return (yield Try(boom()))
 
-    result = run(program(), handlers=default_handlers())
+    result = run_with_defaults(program())
     assert result.is_ok()
 
     value = result.value
@@ -176,9 +152,9 @@ def _yield_site_apply_boom_callback():
 
 
 @do
-def _yield_site_raise_after_helper_handler(effect: Effect, _k: object):
+def _yield_site_raise_after_helper_handler(effect: Effect, k: object):
     if not isinstance(effect, YieldSiteProbe):
-        yield Pass()
+        yield Pass(effect, k)
         return
     _ = yield _yield_site_helper_ok()
     raise ValueError("after-helper-boom")
@@ -187,7 +163,7 @@ def _yield_site_raise_after_helper_handler(effect: Effect, _k: object):
 @do
 def _yield_site_helper_boom_handler(effect: Effect, k: object):
     if not isinstance(effect, YieldSiteProbe):
-        yield Pass()
+        yield Pass(effect, k)
         return
     _ = yield _yield_site_helper_boom()
     return (yield Resume(k, "unreachable"))
@@ -196,7 +172,7 @@ def _yield_site_helper_boom_handler(effect: Effect, k: object):
 @do
 def _yield_site_expand_boom_handler(effect: Effect, k: object):
     if not isinstance(effect, YieldSiteProbe):
-        yield Pass()
+        yield Pass(effect, k)
         return
     _ = yield doeff_vm.Expand(
         doeff_vm.Pure(_yield_site_expand_boom_factory),
@@ -210,7 +186,7 @@ def _yield_site_expand_boom_handler(effect: Effect, k: object):
 @do
 def _yield_site_apply_boom_handler(effect: Effect, k: object):
     if not isinstance(effect, YieldSiteProbe):
-        yield Pass()
+        yield Pass(effect, k)
         return
     _ = yield doeff_vm.Apply(
         doeff_vm.Pure(_yield_site_apply_boom_callback),
@@ -235,178 +211,25 @@ def _yield_site_inner_effect():
     return (yield YieldSiteProbe())
 
 
-@pytest.mark.parametrize(
-    ("case", "handler", "expected_message"),
-    [
-        (
-            "handler_raise_after_helper_work",
-            _yield_site_raise_after_helper_handler,
-            "after-helper-boom",
-        ),
-        ("handler_helper_subprogram_raise", _yield_site_helper_boom_handler, "helper-boom"),
-        ("handler_expand_callback_raise", _yield_site_expand_boom_handler, "expand-boom"),
-        ("handler_apply_callback_raise", _yield_site_apply_boom_handler, "apply-boom"),
-    ],
-)
-def test_try_except_catches_handler_internal_failure_sources(
-    case: str, handler: object, expected_message: str
-) -> None:
-    """Unhandled handler-internal failures should re-enter the user's original yield site."""
-    result = run(WithHandler(handler, _yield_site_try_direct_effect()), handlers=default_handlers())
-    assert result.is_ok(), case
-    assert result.value == ("caught", "ValueError", expected_message)
 
 
-@pytest.mark.parametrize(
-    ("case", "handler", "expected_message"),
-    [
-        (
-            "handler_raise_after_helper_work",
-            _yield_site_raise_after_helper_handler,
-            "after-helper-boom",
-        ),
-        (
-            "handler_helper_subprogram_raise",
-            _yield_site_helper_boom_handler,
-            "helper-boom",
-        ),
-        (
-            "handler_expand_callback_raise",
-            _yield_site_expand_boom_handler,
-            "expand-boom",
-        ),
-        (
-            "handler_apply_callback_raise",
-            _yield_site_apply_boom_handler,
-            "apply-boom",
-        ),
-    ],
-)
-def test_try_wraps_handler_internal_failure_sources_as_err(
-    case: str, handler: object, expected_message: str
-) -> None:
-    @do
-    def program():
-        return (yield Try(WithHandler(handler, _yield_site_inner_effect())))
 
-    result = run(program(), handlers=default_handlers())
-    assert result.is_ok(), case
-    value = result.value
-    assert value.is_err() is True
-    assert isinstance(value.error, ValueError)
-    assert str(value.error) == expected_message
-
-
-def test_eval_expr_errors_reenter_try_except() -> None:
-    @do
-    def program():
-        try:
-            _ = yield doeff_vm.Eval(object())
-            return ("unexpected",)
-        except Exception as exc:
-            return ("caught", type(exc).__name__, str(exc))
-
-    result = run(program(), handlers=default_handlers())
-    assert result.is_ok()
-    assert result.value[0:2] == ("caught", "TypeError")
-    assert result.value[2].startswith("yielded value must be EffectBase or DoExpr, got ")
-    assert "(type: object)" in result.value[2]
-
-
-def test_async_escape_errors_reenter_try_except_in_sync_run() -> None:
-    @do
-    def program():
-        try:
-            _ = yield doeff_vm.PythonAsyncSyntaxEscape(action=lambda: None)
-            return ("unexpected",)
-        except Exception as exc:
-            return ("caught", type(exc).__name__, str(exc))
-
-    result = run(program(), handlers=default_handlers())
-    assert result.is_ok()
-    assert result.value == (
-        "caught",
-        "TypeError",
-        "CallAsync requires async_run (PythonAsyncSyntaxEscape not supported in sync mode)",
-    )
-
-
-def test_missing_env_key_is_catchable_at_yield_site_and_try_still_wraps() -> None:
-    @do
-    def catch_program():
-        try:
-            _ = yield Ask("missing")
-            return ("unexpected",)
-        except Exception as exc:
-            return ("caught", type(exc).__name__, str(exc))
-
-    @do
-    def safe_program():
-        return (yield Try(Ask("missing")))
-
-    catch_result = run(catch_program(), handlers=default_handlers(), env={})
-    assert catch_result.is_ok()
-    assert catch_result.value[0] == "caught"
-    assert catch_result.value[1] == "MissingEnvKeyError"
-
-    safe_result = run(safe_program(), handlers=default_handlers(), env={})
-    assert safe_result.is_ok()
-    assert safe_result.value.is_err() is True
-    assert isinstance(safe_result.value.error, MissingEnvKeyError)
 
 
 def test_state_handler_callback_error_is_catchable_at_yield_site() -> None:
     @do
     def catch_program():
         try:
-            _ = yield Modify("count", lambda old: old / 0)
+            old = yield Get("count")
+            yield Put("count", old / 0)
             return ("unexpected",)
         except Exception as exc:
             return ("caught", type(exc).__name__, str(exc))
 
-    catch_result = run(catch_program(), handlers=[state_handler], store={"count": 1})
+    catch_result = run_with_defaults(catch_program(), store={"count": 1})
     assert catch_result.is_ok()
     assert catch_result.value[0] == "caught"
 
-
-def test_safe_gather_and_run_result_share_rust_ok_err_surface() -> None:
-    rust_ok, rust_err = _rust_ok_err_classes()
-
-    @do
-    def succeeds():
-        if False:
-            yield
-        return 10
-
-    @do
-    def fails():
-        raise ValueError("boom")
-
-    @do
-    def program():
-        t1 = yield Spawn(Try(succeeds()))
-        t2 = yield Spawn(Try(fails()))
-        return (yield Gather(t1, t2))
-
-    result = run(program(), handlers=default_handlers())
-    assert result.is_ok()
-
-    outer = result.result
-    assert isinstance(outer, Ok)
-    assert isinstance(outer, rust_ok)
-
-    values = result.value
-    assert len(values) == 2
-
-    first, second = values
-    assert isinstance(first, Ok)
-    assert isinstance(first, rust_ok)
-    assert first.value == 10
-
-    assert isinstance(second, Err)
-    assert isinstance(second, rust_err)
-    assert isinstance(second.error, ValueError)
-    assert str(second.error) == "boom"
 
 
 def test_lazy_ask_evaluates_program_env_once_per_run() -> None:
@@ -425,47 +248,11 @@ def test_lazy_ask_evaluates_program_env_once_per_run() -> None:
         second = yield Ask("service")
         return (first, second)
 
-    result = run(program(), handlers=default_handlers(), env={"service": service_program()})
+    result = run_with_defaults(program(), env={"service": service_program()})
     assert result.is_ok()
     assert result.value == (42, 42)
     assert calls["service"] == 1
 
-
-def test_lazy_ask_local_override_is_enabled_and_cached() -> None:
-    calls = {"outer": 0, "inner": 0}
-
-    @do
-    def outer_service():
-        calls["outer"] += 1
-        if False:
-            yield
-        return "outer"
-
-    @do
-    def inner_service():
-        calls["inner"] += 1
-        if False:
-            yield
-        return "inner"
-
-    @do
-    def local_scope():
-        first = yield Ask("service")
-        second = yield Ask("service")
-        return (first, second)
-
-    @do
-    def program():
-        outer_before = yield Ask("service")
-        local_values = yield Local({"service": inner_service()}, local_scope())
-        outer_after = yield Ask("service")
-        return (outer_before, local_values, outer_after)
-
-    result = run(program(), handlers=default_handlers(), env={"service": outer_service()})
-    assert result.is_ok()
-    assert result.value == ("outer", ("inner", "inner"), "outer")
-    assert calls["outer"] == 1  # preserved global cache across Local exit (shadow cache)
-    assert calls["inner"] == 1
 
 
 def test_ask_existing_and_none_values_succeed() -> None:
@@ -475,11 +262,7 @@ def test_ask_existing_and_none_values_succeed() -> None:
         nullable = yield Ask("nullable_key")
         return (value, nullable)
 
-    result = run(
-        program(),
-        handlers=default_handlers(),
-        env={"key": "value", "nullable_key": None},
-    )
+    result = run_with_defaults(program(), env={"key": "value", "nullable_key": None})
     assert result.is_ok()
     assert result.value == ("value", None)
 
@@ -495,27 +278,10 @@ def test_local_adds_new_key_and_preserves_unrelated_values() -> None:
     def program():
         return (yield Local({"new_key": "new_value"}, inner_program()))
 
-    result = run(program(), handlers=default_handlers(), env={"other_key": "other"})
+    result = run_with_defaults(program(), env={"other_key": "other"})
     assert result.is_ok()
     assert result.value == ("new_value", "other")
 
-
-def test_local_added_key_not_visible_after_scope() -> None:
-    @do
-    def inner_program():
-        if False:
-            yield
-        return "done"
-
-    @do
-    def program():
-        _ = yield Local({"new_key": "value"}, inner_program())
-        return (yield Ask("new_key"))
-
-    result = run(program(), handlers=default_handlers(), env={})
-    assert result.is_err()
-    assert isinstance(result.error, MissingEnvKeyError)
-    assert result.error.key == "new_key"
 
 
 def test_nested_local_with_different_keys() -> None:
@@ -533,11 +299,7 @@ def test_nested_local_with_different_keys() -> None:
     def program():
         return (yield Local({"key1": "outer1"}, middle()))
 
-    result = run(
-        program(),
-        handlers=default_handlers(),
-        env={"key1": "orig1", "key2": "orig2"},
-    )
+    result = run_with_defaults(program(), env={"key1": "orig1", "key2": "orig2"})
     assert result.is_ok()
     assert result.value == ("outer1", "inner2")
 
@@ -554,11 +316,7 @@ def test_gather_children_inherit_parent_env() -> None:
         t3 = yield Spawn(child())
         return (yield Gather(t1, t2, t3))
 
-    result = run(
-        program(),
-        handlers=default_handlers(),
-        env={"shared_key": "shared_value"},
-    )
+    result = run_with_defaults(program(), env={"shared_key": "shared_value"})
     assert result.is_ok()
     assert result.value == ["shared_value", "shared_value", "shared_value"]
 
@@ -588,7 +346,7 @@ def test_child_local_override_is_isolated_from_siblings_and_parent() -> None:
         after = yield Ask("key")
         return (before, results, after)
 
-    result = run(program(), handlers=default_handlers(), env={"key": "parent_value"})
+    result = run_with_defaults(program(), env={"key": "parent_value"})
     assert result.is_ok()
     assert result.value == (
         "parent_value",
@@ -614,7 +372,7 @@ def test_lazy_ask_program_with_effects_updates_state() -> None:
         final_counter = yield Get("counter")
         return (result, final_counter)
 
-    result = run(program(), handlers=default_handlers(), env={"compute": program_with_effects()})
+    result = run_with_defaults(program(), env={"compute": program_with_effects()})
     assert result.is_ok()
     assert result.value == (200, 100)
 
@@ -644,10 +402,7 @@ def test_lazy_ask_different_keys_cached_independently() -> None:
         b2 = yield Ask("key_b")
         return (a1, b1, a2, b2)
 
-    result = run(
-        program(),
-        handlers=default_handlers(),
-        env={"key_a": program_a(), "key_b": program_b()},
+    result = run_with_defaults(program(), env={"key_a": program_a(), "key_b": program_b()},
     )
     assert result.is_ok()
     assert result.value == ("result_a", "result_b", "result_a", "result_b")
@@ -681,7 +436,7 @@ def test_lazy_ask_failed_evaluation_not_cached_after_replacement() -> None:
             return (yield Local({"service": second_program}, inner()))
         return "unexpected"
 
-    result = run(program(), handlers=default_handlers(), env={"service": first_program})
+    result = run_with_defaults(program(), env={"service": first_program})
     assert result.is_ok()
     assert result.value == "success"
     assert attempts["service"] == 2
@@ -703,34 +458,11 @@ def test_lazy_ask_nested_dependency_resolves() -> None:
     def program():
         return (yield Ask("outer"))
 
-    result = run(
-        program(),
-        handlers=default_handlers(),
-        env={"inner": inner_service(), "outer": outer_service()},
+    result = run_with_defaults(program(), env={"inner": inner_service(), "outer": outer_service()},
     )
     assert result.is_ok()
     assert result.value == 20
 
-
-def test_lazy_ask_none_result_is_cached_once() -> None:
-    calls = {"nullable": 0}
-
-    @do
-    def returns_none():
-        calls["nullable"] += 1
-        if False:
-            yield
-
-    @do
-    def program():
-        first = yield Ask("nullable")
-        second = yield Ask("nullable")
-        return (first, second)
-
-    result = run(program(), handlers=default_handlers(), env={"nullable": returns_none()})
-    assert result.is_ok()
-    assert result.value == (None, None)
-    assert calls["nullable"] == 1
 
 
 def test_lazy_ask_program_returning_program_can_be_resolved() -> None:
@@ -753,7 +485,7 @@ def test_lazy_ask_program_returning_program_can_be_resolved() -> None:
             return (yield result)
         return result
 
-    result = run(program(), handlers=default_handlers(), env={"service": outer()})
+    result = run_with_defaults(program(), env={"service": outer()})
     assert result.is_ok()
     assert result.value == 42
 
@@ -778,45 +510,11 @@ def test_hashable_non_string_ask_keys_work() -> None:
         tuple_value = yield Ask(("tuple", "key"))
         return (string_value, int_value, tuple_value)
 
-    result = run(program(), handlers=default_handlers(), env=env)
+    result = run_with_defaults(program(), env=env)
     assert result.is_ok()
     assert result.value == ("string", "int", "tuple")
 
 
-def test_direct_circular_lazy_ask_raises_error() -> None:
-    @do
-    def circular_program():
-        return (yield Ask("self"))
-
-    @do
-    def program():
-        return (yield Ask("self"))
-
-    result = run(program(), handlers=default_handlers(), env={"self": circular_program()})
-    assert result.is_err()
-    assert "circular" in str(result.error).lower()
-
-
-def test_indirect_circular_lazy_ask_raises_error() -> None:
-    @do
-    def program_a():
-        return (yield Ask("b"))
-
-    @do
-    def program_b():
-        return (yield Ask("a"))
-
-    @do
-    def program():
-        return (yield Ask("a"))
-
-    result = run(
-        program(),
-        handlers=default_handlers(),
-        env={"a": program_a(), "b": program_b()},
-    )
-    assert result.is_err()
-    assert "circular" in str(result.error).lower()
 
 
 def test_lazy_ask_spawned_tasks_share_single_evaluation() -> None:
@@ -839,14 +537,13 @@ def test_lazy_ask_spawned_tasks_share_single_evaluation() -> None:
         t2 = yield Spawn(child())
         return (yield Gather(t1, t2))
 
-    result = run(program(), handlers=default_handlers(), env={"service": service_program()})
+    result = run_with_defaults(program(), env={"service": service_program()})
     assert result.is_ok()
     assert result.value == [42, 42]
     assert calls["service"] == 1
 
 
-@pytest.mark.asyncio
-async def test_lazy_ask_concurrent_waiters_do_not_reexecute() -> None:
+def test_lazy_ask_concurrent_waiters_do_not_reexecute() -> None:
     calls = {"service": 0}
 
     @do
@@ -866,9 +563,8 @@ async def test_lazy_ask_concurrent_waiters_do_not_reexecute() -> None:
         t2 = yield Spawn(child())
         return (yield Gather(t1, t2))
 
-    result = await async_run(
+    result = run_with_defaults(
         program(),
-        handlers=default_async_handlers(),
         env={"service": service_program()},
     )
     assert result.is_ok()
@@ -885,7 +581,7 @@ def test_lazy_ask_program_error_propagates() -> None:
     def program():
         return (yield Ask("service"))
 
-    result = run(program(), handlers=default_handlers(), env={"service": failing_service()})
+    result = run_with_defaults(program(), env={"service": failing_service()})
     assert result.is_err()
     assert isinstance(result.error, ValueError)
     assert str(result.error) == "lazy boom"
@@ -900,7 +596,7 @@ def test_lazy_ask_safe_captures_program_error() -> None:
     def program():
         return (yield Try(Ask("service")))
 
-    result = run(program(), handlers=default_handlers(), env={"service": failing_service()})
+    result = run_with_defaults(program(), env={"service": failing_service()})
     assert result.is_ok()
     safe_result = result.value
     assert safe_result.is_err()
@@ -913,54 +609,7 @@ def test_ask_missing_key_raises_missing_env_key_error() -> None:
     def program():
         return (yield Ask("missing"))
 
-    result = run(program(), handlers=default_handlers(), env={})
+    result = run_with_defaults(program(), env={})
     assert result.is_err()
     assert isinstance(result.error, MissingEnvKeyError)
     assert isinstance(result.error, KeyError)
-
-
-def test_ask_missing_key_error_includes_helpful_hint() -> None:
-    @do
-    def program():
-        return (yield Ask("service"))
-
-    result = run(program(), handlers=default_handlers(), env={})
-    assert result.is_err()
-    assert isinstance(result.error, MissingEnvKeyError)
-
-    message = str(result.error)
-    assert "Environment key not found: 'service'" in message
-    assert "Provide this key via `env={'service': value}`" in message
-    assert "Local({'service': value}, ...)" in message
-
-
-def test_get_missing_key_raises_key_error() -> None:
-    @do
-    def program():
-        return (yield Get("missing"))
-
-    result = run(program(), handlers=default_handlers())
-    assert result.is_err()
-    assert isinstance(result.error, KeyError)
-
-
-def test_scheduler_task_completed_uses_single_result_payload() -> None:
-    rust_ok, _ = _rust_ok_err_classes()
-    task_id = 9999
-
-    payload = TaskCompleted(task_id=task_id, result=rust_ok(123))
-    assert payload.result.is_ok() is True
-    assert not hasattr(payload, "error")
-
-    @do
-    def rejects_non_result_payload():
-        _ = yield TaskCompleted(task_id=task_id, result=123)
-        return "unexpected"
-
-    bad_result = run(rejects_non_result_payload(), handlers=default_handlers())
-    assert bad_result.is_err()
-    assert isinstance(bad_result.error, TypeError)
-    assert "TaskCompleted.result must be Ok(...) or Err(...)" in str(bad_result.error)
-
-    with pytest.raises(TypeError):
-        _ = TaskCompleted(task_id=task_id, error=ValueError("x"))

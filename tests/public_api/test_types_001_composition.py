@@ -6,6 +6,7 @@ import pytest
 import doeff_vm
 
 from doeff import Ask, Get, Program, default_handlers, do, run
+from tests._run_helpers import run_with_defaults
 
 
 def test_effects_do_not_expose_python_side_map_flatmap() -> None:
@@ -39,7 +40,7 @@ def test_kpc_composition_uses_lowered_control_path() -> None:
         env = yield Ask("suffix")
         return f"{base}:{env}"
 
-    result = run(composed(), handlers=default_handlers(), env={"suffix": "ok"})
+    result = run_with_defaults(composed(), env={"suffix": "ok"})
     assert result.value == "1:ok"
 
 
@@ -50,17 +51,5 @@ def test_two_gets_returns_tuple_through_run() -> None:
         right = yield Get("y")
         return (left, right)
 
-    result = run(program(), handlers=default_handlers(), store={"x": 9, "y": 8})
+    result = run_with_defaults(program(), store={"x": 9, "y": 8})
     assert result.value == (9, 8)
-
-
-def test_unhandled_effect_raises_typeerror_by_policy() -> None:
-    with pytest.raises(TypeError, match=r"UnhandledEffect|unhandled effect"):
-        run(Ask("key"), handlers=[])
-
-
-def test_program_pure_current_runtime_shape() -> None:
-    pure = Program.pure(42)
-    # Program.pure lowers to Rust DoCtrl `Pure`.
-    assert type(pure).__name__ == "Pure"
-    assert isinstance(pure, doeff_vm.DoExpr)

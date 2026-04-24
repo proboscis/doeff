@@ -1,4 +1,4 @@
-//! VM driver types — Mode, StepResult, and error representation.
+//! VM driver types — Signal, StepResult, and error representation.
 //!
 //! Language-agnostic. No Python types at the VM level.
 //! Exceptions are Values (opaque to the VM).
@@ -9,7 +9,14 @@ use crate::value::Value;
 
 /// What the VM should do next.
 #[derive(Debug)]
-pub enum Mode {
+pub struct Signal {
+    pub action: SignalAction,
+    pub error_context: Option<Vec<Value>>,
+}
+
+/// The next action for a VM step.
+#[derive(Debug)]
+pub enum SignalAction {
     /// Evaluate a DoCtrl instruction.
     Eval(DoCtrl),
     /// Send a value to the current stream (stream.resume(value)).
@@ -22,15 +29,21 @@ pub enum Mode {
 /// What a single VM step produces.
 #[derive(Debug)]
 pub enum StepResult {
-    /// More steps needed. Call step() again.
-    Continue,
+    /// More steps needed. Call step() again with this signal.
+    Continue(Signal),
     /// Execution complete. Here is the final value.
     Done(Value),
     /// Execution failed with a VM-level error.
-    Error(VMError),
+    Error {
+        error: VMError,
+        context: Option<Vec<Value>>,
+    },
     /// VM needs an external computation.
-    /// The driver should execute the call and feed the result back via receive_external_result().
-    External(ExternalCall),
+    /// The driver should execute the call and feed the result back as a Signal.
+    External {
+        call: ExternalCall,
+        context: Option<Vec<Value>>,
+    },
 }
 
 /// An external computation the VM cannot perform itself.
@@ -54,17 +67,38 @@ pub enum ExternalCallContinuation {
     Eval,
 }
 
-impl Mode {
+impl Signal {
     pub fn send(value: Value) -> Self {
-        Mode::Send(value)
+        Signal {
+            action: SignalAction::Send(value),
+            error_context: None,
+        }
     }
 
     pub fn raise(error: Value) -> Self {
-        Mode::Raise(error)
+        Signal {
+            action: SignalAction::Raise(error),
+            error_context: None,
+        }
     }
 
     pub fn eval(doctrl: DoCtrl) -> Self {
-        Mode::Eval(doctrl)
+        Signal {
+            action: SignalAction::Eval(doctrl),
+            error_context: None,
+        }
+    }
+
+    pub fn with_error_context(mut self, context: Option<Vec<Value>>) -> Self {
+        self.error_context = context;
+        self
+    }
+
+    pub fn from_external_result(result: Result<Value, Value>) -> Self {
+        match result {
+            Ok(value) => Signal::send(value),
+            Err(error) => Signal::raise(error),
+        }
     }
 }
 
@@ -74,10 +108,10 @@ impl StepResult {
     }
 
     pub fn is_error(&self) -> bool {
-        matches!(self, StepResult::Error(_))
+        matches!(self, StepResult::Error { .. })
     }
 
     pub fn is_external(&self) -> bool {
-        matches!(self, StepResult::External(_))
+        matches!(self, StepResult::External { .. })
     }
 }

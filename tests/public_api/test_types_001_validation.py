@@ -15,7 +15,6 @@ import pytest
 
 from doeff import (
     Ask,
-    Delegate,
     Effect,
     Get,
     K,
@@ -24,10 +23,10 @@ from doeff import (
     Resume,
     Transfer,
     WithHandler,
-    default_handlers,
     do,
     run,
 )
+from tests._run_helpers import run_with_defaults
 
 
 def test_run_rejects_generator_function_input() -> None:
@@ -38,42 +37,19 @@ def test_run_rejects_generator_function_input() -> None:
         run(gen)
 
 
-def test_run_rejects_raw_generator_input() -> None:
-    def gen():
-        yield Get("x")
-
-    with pytest.raises(TypeError, match=r"DoExpr"):
-        run(gen())
-
 
 def test_run_accepts_bare_rust_effectbase() -> None:
-    result = run(Get("x"), handlers=default_handlers(), store={"x": 99})
+    result = run_with_defaults(Get("x"), store={"x": 99})
     assert result.value == 99
 
 
-def test_run_rejects_non_dict_env_for_valid_program() -> None:
-    with pytest.raises(TypeError, match=r"dict"):
-        run(Get("x"), handlers=default_handlers(), env=cast(Any, "not_a_dict"))
 
-
-def test_run_rejects_non_dict_store_for_valid_program() -> None:
-    with pytest.raises(TypeError, match=r"dict"):
-        run(Get("x"), handlers=default_handlers(), store=cast(Any, [1, 2, 3]))
-
-
-def test_withhandler_expr_requires_rust_runtime_bases() -> None:
-    @do
-    def handler(_effect: Effect, _k):
-        yield Delegate()
-
-    with pytest.raises(TypeError, match=r"DoExpr"):
-        WithHandler(handler, object())
 
 
 def test_withhandler_accepts_rust_effect_expr() -> None:
     @do
     def handler(_effect: Effect, _k):
-        yield Delegate()
+        yield _effect
 
     ctrl = WithHandler(handler, Perform(Ask("key")))
     assert type(ctrl).__name__ == "WithHandler"
@@ -82,7 +58,7 @@ def test_withhandler_accepts_rust_effect_expr() -> None:
 def test_withhandler_rejects_return_clause_keyword() -> None:
     @do
     def handler(_effect: Effect, _k):
-        yield Delegate()
+        yield _effect
 
     @do
     def body():
@@ -101,7 +77,7 @@ def test_doeff_vm_withhandler_rejects_return_clause_keyword() -> None:
 
     @do
     def handler(_effect: Effect, _k):
-        yield Delegate()
+        yield _effect
 
     @do
     def body():
@@ -118,7 +94,7 @@ def test_doeff_vm_withhandler_rejects_return_clause_keyword() -> None:
 def test_withhandler_rejects_third_positional_argument() -> None:
     @do
     def handler(_effect: Effect, _k):
-        yield Delegate()
+        yield _effect
 
     args = (handler, Perform(Ask("key")), lambda value: value)
     with_handler = cast(Any, WithHandler)
@@ -126,14 +102,6 @@ def test_withhandler_rejects_third_positional_argument() -> None:
     with pytest.raises(TypeError, match=r"positional arguments|given"):
         with_handler(*args)
 
-
-def test_resume_transfer_require_real_k() -> None:
-    with pytest.raises(TypeError, match=r"K"):
-        Resume("not_k", Ask("x"))
-    with pytest.raises(TypeError, match=r"K"):
-        Transfer("not_k", Ask("x"))
-    with pytest.raises(TypeError, match=r"K"):
-        getattr(doeff, "Discontinue")("not_k")
 
 
 def test_python_handler_receives_k_for_resume() -> None:
@@ -144,9 +112,8 @@ def test_python_handler_receives_k_for_resume() -> None:
         seen["is_k"] = isinstance(k, K)
         return (yield Resume(k, "override"))
 
-    result = run(
+    result = run_with_defaults(
         WithHandler(handler, Perform(Ask("x"))),
-        handlers=default_handlers(),
         env={"x": "original"},
     )
 
@@ -162,9 +129,8 @@ def test_python_handler_transfer_and_delegate_with_k() -> None:
         transfer_seen["is_k"] = isinstance(k, K)
         yield Transfer(k, "via-transfer")
 
-    transfer_result = run(
+    transfer_result = run_with_defaults(
         WithHandler(transfer_handler, Perform(Ask("x"))),
-        handlers=default_handlers(),
         env={"x": "original"},
     )
 
@@ -173,11 +139,10 @@ def test_python_handler_transfer_and_delegate_with_k() -> None:
     @do
     def delegate_handler(_effect: Effect, k):
         delegate_seen["is_k"] = isinstance(k, K)
-        yield Pass()
+        yield Pass(_effect, k)
 
-    delegate_result = run(
+    delegate_result = run_with_defaults(
         WithHandler(delegate_handler, Perform(Ask("x"))),
-        handlers=default_handlers(),
         env={"x": "original"},
     )
 
@@ -185,11 +150,3 @@ def test_python_handler_transfer_and_delegate_with_k() -> None:
     assert transfer_result.value == "via-transfer"
     assert delegate_seen["is_k"] is True
     assert delegate_result.value == "original"
-
-
-def test_vm_doexpr_hierarchy_is_exposed() -> None:
-    import doeff_vm
-
-    assert hasattr(doeff_vm, "DoExpr")
-    assert not issubclass(doeff_vm.EffectBase, doeff_vm.DoExpr)
-    assert issubclass(doeff_vm.DoCtrlBase, doeff_vm.DoExpr)

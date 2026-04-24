@@ -20,12 +20,11 @@ from doeff import (
     Spawn,
     WithHandler,
     cache,
-    default_handlers,
     do,
     run,
-    slog,
-)
+    slog,)
 from doeff import Await
+from tests._run_helpers import run_with_defaults
 # REMOVED: from doeff_core_effects.handlers import sqlite_cache_handler
 
 TIMEOUT_SECONDS = 30
@@ -39,7 +38,7 @@ def _run_with_timeout(program):
     old = signal.signal(signal.SIGALRM, _timeout_handler)
     signal.alarm(TIMEOUT_SECONDS)
     try:
-        return run(program, handlers=default_handlers())
+        return run_with_defaults(program)
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old)
@@ -75,39 +74,3 @@ def _spawn_gather_n(factory, n: int):
         t = yield Spawn(factory(i), daemon=False)
         tasks.append(t)
     return list((yield Gather(*tasks)))
-
-
-@pytest.mark.skip(reason="uses removed API: sqlite_cache_handler")
-class TestCacheAwaitSpawnHang:
-
-    def test_no_cache_100(self):
-        r = _run_with_timeout(_spawn_gather_n(_no_cache_task, 100))
-        assert r.is_ok(), f"Failed: {r.error}"
-        assert len(r.value) == 100
-
-    def test_no_cache_500(self):
-        r = _run_with_timeout(_spawn_gather_n(_no_cache_task, 500))
-        assert r.is_ok(), f"Failed: {r.error}"
-        assert len(r.value) == 500
-
-    def test_cached_50(self):
-        r = _run_cached_with_timeout(_spawn_gather_n(_cached_task, 50))
-        assert r.is_ok(), f"Failed: {r.error}"
-        assert len(r.value) == 50
-
-    def test_cached_100(self):
-        r = _run_cached_with_timeout(_spawn_gather_n(_cached_task, 100))
-        assert r.is_ok(), f"Failed: {r.error}"
-        assert len(r.value) == 100
-
-    def test_cached_200(self):
-        """Hangs without fix — first batch completes but scheduler stops dispatching."""
-        r = _run_cached_with_timeout(_spawn_gather_n(_cached_task, 200))
-        assert r.is_ok(), f"Failed: {r.error}"
-        assert len(r.value) == 200
-
-    def test_cached_500(self):
-        """Hangs without fix — same as 200 but larger."""
-        r = _run_cached_with_timeout(_spawn_gather_n(_cached_task, 500))
-        assert r.is_ok(), f"Failed: {r.error}"
-        assert len(r.value) == 500
