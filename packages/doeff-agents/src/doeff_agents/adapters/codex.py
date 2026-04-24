@@ -19,6 +19,9 @@ class CodexAdapter:
         """Return argv list - caller will shlex.join() if needed."""
         args = ["codex", "--full-auto"]
 
+        if params.model:
+            args.extend(["--model", params.model])
+
         if params.prompt:
             args.append(params.prompt)
 

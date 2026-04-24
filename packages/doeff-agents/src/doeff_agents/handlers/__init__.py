@@ -5,6 +5,7 @@ from collections.abc import Callable
 from typing import Any
 
 from doeff import Effect, GetHandlers, Pass, Resume, WithHandler, do, run
+from doeff.mcp import McpToolDef
 from doeff_agents.effects import (
     CaptureEffect,
     ClaudeLaunchEffect,
@@ -14,7 +15,6 @@ from doeff_agents.effects import (
     SleepEffect,
     StopEffect,
 )
-from doeff.mcp import McpToolDef
 
 from .production import AgentHandler, SessionState, TmuxAgentHandler, get_adapter, register_adapter
 from .testing import MockAgentHandler, MockAgentState, MockSessionScript
@@ -137,8 +137,17 @@ def claude_agent_handler(*, backend=None):
         run(wrapped)
     """
     import hy  # activate Hy import hook  # noqa: F401
+
     from doeff_agents.handlers.claude import claude_handler
     return claude_handler(backend=backend)
+
+
+def codex_agent_handler(*, backend=None):
+    """Codex agent handler (Hy-based architecture)."""
+    import hy  # activate Hy import hook  # noqa: F401
+
+    from doeff_agents.handlers.codex import codex_handler
+    return codex_handler(backend=backend)
 
 
 _tmux_effect_handler = TmuxAgentHandler()
@@ -204,6 +213,7 @@ __all__ = [  # noqa: RUF022 - grouped by category for readability
     "TmuxAgentHandler",
     "agent_effectful_handler",
     "agent_effectful_handlers",
+    "codex_agent_handler",
     "configure_mock_session",
     "dispatch_effect",
     "get_adapter",

@@ -7,36 +7,35 @@ Requires: tmux, claude CLI (authenticated), network.
 Run with: uv run pytest packages/doeff-agents/tests/test_mcp_live_e2e.py -v -s
 """
 
-import json
 import logging
+import os
 import shutil
-import time
 from pathlib import Path
 from tempfile import mkdtemp
 
 import pytest
-
-from doeff import Perform, WithHandler, do, run
-from doeff.mcp import McpParamSchema, McpToolDef
-from doeff_agents.adapters.base import AgentType, LaunchConfig
+from doeff_agents.adapters.base import AgentType
 from doeff_agents.effects import (
     Capture,
     LaunchEffect,
     Monitor,
-    Send,
     Sleep,
     Stop,
 )
 from doeff_agents.handlers import _make_protocol_handler
 from doeff_agents.handlers.production import TmuxAgentHandler
-from doeff_agents.monitor import SessionStatus
+
+from doeff import Perform, WithHandler, do, run
+from doeff.mcp import McpParamSchema, McpToolDef
 
 logging.basicConfig(level=logging.INFO)
 
 # Skip entire module if tmux or claude are not available
 pytestmark = pytest.mark.skipif(
-    shutil.which("claude") is None or shutil.which("tmux") is None,
-    reason="Requires tmux and claude CLI",
+    not os.environ.get("DOEFFIC_RUN_LIVE_AGENT_E2E")
+    or shutil.which("claude") is None
+    or shutil.which("tmux") is None,
+    reason="Requires DOEFFIC_RUN_LIVE_AGENT_E2E=1 plus tmux and claude CLI",
 )
 
 # -- Tools -------------------------------------------------------------------
@@ -71,17 +70,17 @@ class TestMcpLiveE2E:
 
         @do
         def program():
-            config = LaunchConfig(
-                agent_type=AgentType.CLAUDE,
-                work_dir=work_dir,
-                prompt=(
-                    'You have an MCP tool called "doeff-echo". '
-                    'Call it with the message "hello-from-mcp".'
-                ),
-                mcp_tools=(echo_tool,),
-            )
             handle = yield Perform(
-                LaunchEffect(session_name="mcp-live-e2e", config=config)
+                LaunchEffect(
+                    session_name="mcp-live-e2e",
+                    agent_type=AgentType.CLAUDE,
+                    work_dir=work_dir,
+                    prompt=(
+                        'You have an MCP tool called "doeff-echo". '
+                        'Call it with the message "hello-from-mcp".'
+                    ),
+                    mcp_tools=(echo_tool,),
+                )
             )
 
             # Wait for Claude to boot, then poll until tool is called or timeout
@@ -111,7 +110,7 @@ class TestMcpLiveE2E:
                 f"Tool called with wrong message: {_tool_call_log}\n"
                 f"Session output:\n{output}"
             )
-            print(f"\n=== SUCCESS ===")
+            print("\n=== SUCCESS ===")
             print(f"Tool calls: {_tool_call_log}")
             print(f"Output tail:\n{output[-500:]}")
         finally:
@@ -120,8 +119,9 @@ class TestMcpLiveE2E:
             subprocess.run(
                 ["tmux", "kill-session", "-t", "mcp-live-e2e"],
                 capture_output=True,
+                check=False,
             )
             # Cleanup MCP server
-            if hasattr(handler, '_mcp_servers'):
+            if hasattr(handler, "_mcp_servers"):
                 for server in handler._mcp_servers.values():
                     server.shutdown()

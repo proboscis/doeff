@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from doeff_agents import tmux
-from doeff_agents.adapters.base import AgentAdapter, AgentType, InjectionMethod, LaunchConfig
+from doeff_agents.adapters.base import AgentAdapter, AgentType, InjectionMethod, LaunchParams
 from doeff_agents.adapters.claude import ClaudeAdapter
 from doeff_agents.adapters.codex import CodexAdapter
 from doeff_agents.adapters.gemini import GeminiAdapter
@@ -43,7 +43,7 @@ from doeff_agents.monitor import (
     hash_content,
     is_waiting_for_input,
 )
-from doeff_agents.runtime import ClaudeRuntimePolicy, lower_task_launch_to_claude
+from doeff_agents.runtime import ClaudeRuntimePolicy
 from doeff_agents.session import _dismiss_onboarding_dialogs
 from doeff_agents.session_backend import SessionBackend
 
@@ -136,30 +136,37 @@ class TmuxAgentHandler(AgentHandler):
     ) -> SessionHandle:
         """Launch a new agent session in tmux.
 
-        If ``effect.config.mcp_tools`` is non-empty and ``run_tool`` is provided,
+        If ``effect.mcp_tools`` is non-empty and ``run_tool`` is provided,
         an SSE MCP server is started and ``.mcp.json`` is written to the work_dir
         before launching the agent.
         """
-        config = effect.config
-        adapter = get_adapter(config.agent_type)
+        adapter = get_adapter(effect.agent_type)
 
         if not adapter.is_available():
-            raise AgentNotAvailableError(f"{config.agent_type.value} CLI is not available")
+            raise AgentNotAvailableError(f"{effect.agent_type.value} CLI is not available")
 
         if self._backend.has_session(effect.session_name):
             raise SessionAlreadyExistsError(f"Session {effect.session_name} already exists")
 
         # Start MCP server if tools are provided
-        if config.mcp_tools and run_tool is not None:
-            self._start_mcp_server(effect.session_name, config, run_tool)
+        if effect.mcp_tools and run_tool is not None:
+            self._start_mcp_server(effect, run_tool)
 
         tmux_config = tmux.SessionConfig(
             session_name=effect.session_name,
-            work_dir=config.work_dir,
+            work_dir=effect.work_dir,
         )
         session_info = self._backend.new_session(tmux_config)
 
-        argv = adapter.launch_command(config)
+        argv = adapter.launch_command(
+            LaunchParams(
+                work_dir=effect.work_dir,
+                prompt=effect.prompt,
+                model=effect.model,
+                effort=effect.effort,
+                bare=effect.bare,
+            )
+        )
         command = shlex.join(argv)
 
         if adapter.injection_method == InjectionMethod.ARG:
@@ -174,8 +181,8 @@ class TmuxAgentHandler(AgentHandler):
                 raise AgentReadyTimeoutError(
                     f"Agent did not become ready within {effect.ready_timeout}s"
                 )
-            if config.prompt:
-                self._backend.send_keys(session_info.pane_id, config.prompt)
+            if effect.prompt:
+                self._backend.send_keys(session_info.pane_id, effect.prompt)
 
         # Dismiss onboarding dialogs (trust, theme, auth) if adapter supports them
         onboarding_patterns = getattr(adapter, "onboarding_patterns", None)
@@ -190,8 +197,8 @@ class TmuxAgentHandler(AgentHandler):
         handle = SessionHandle(
             session_name=effect.session_name,
             pane_id=session_info.pane_id,
-            agent_type=config.agent_type,
-            work_dir=config.work_dir,
+            agent_type=effect.agent_type,
+            work_dir=effect.work_dir,
         )
 
         self._sessions[effect.session_name] = SessionState(handle=handle, adapter=adapter)
@@ -199,11 +206,7 @@ class TmuxAgentHandler(AgentHandler):
 
     def handle_launch_task(self, effect: LaunchTaskEffect) -> SessionHandle:
         """Lower a generic task launch using runtime policy."""
-        if self._claude_runtime_policy is None:
-            raise AgentLaunchError("No runtime policy configured for LaunchTaskEffect")
-        return self.handle_claude_launch(
-            lower_task_launch_to_claude(effect, self._claude_runtime_policy)
-        )
+        raise AgentLaunchError("LaunchTaskEffect is deprecated; use LaunchEffect directly")
 
     def handle_claude_launch(self, effect: ClaudeLaunchEffect) -> SessionHandle:
         """Launch a Claude-specific task with dedicated home/bootstrap handling."""
@@ -214,22 +217,23 @@ class TmuxAgentHandler(AgentHandler):
         if self._backend.has_session(effect.session_name):
             raise SessionAlreadyExistsError(f"Session {effect.session_name} already exists")
 
-        self._materialize_task_workspace(effect.task)
-        agent_home = effect.agent_home or Path.home()
-        trusted_workspaces = effect.trusted_workspaces or (effect.task.work_dir,)
+        agent_home = self._claude_runtime_policy.agent_home or Path.home()
+        trusted_workspaces = self._claude_runtime_policy.trusted_workspaces or (effect.work_dir,)
         self._prepare_claude_home(agent_home, trusted_workspaces)
 
         tmux_config = tmux.SessionConfig(
             session_name=effect.session_name,
-            work_dir=effect.task.work_dir,
+            work_dir=effect.work_dir,
         )
         session_info = self._backend.new_session(tmux_config)
 
         argv = adapter.launch_command(
             LaunchParams(
-                work_dir=effect.task.work_dir,
-                prompt=effect.task.instructions,
+                work_dir=effect.work_dir,
+                prompt=effect.prompt,
                 model=effect.model,
+                effort=effect.effort,
+                bare=effect.bare,
             )
         )
         command = self._wrap_with_shell_exports(
@@ -242,7 +246,7 @@ class TmuxAgentHandler(AgentHandler):
                     if "CLAUDE_CODE_OAUTH_TOKEN" in os.environ
                     else {}
                 ),
-                **effect.bootstrap_exports,
+                **self._claude_runtime_policy.bootstrap_exports,
             },
         )
         self._backend.send_keys(session_info.pane_id, command, literal=False)
@@ -260,7 +264,7 @@ class TmuxAgentHandler(AgentHandler):
             session_name=effect.session_name,
             pane_id=session_info.pane_id,
             agent_type=AgentType.CLAUDE,
-            work_dir=effect.task.work_dir,
+            work_dir=effect.work_dir,
         )
         self._sessions[effect.session_name] = SessionState(handle=handle, adapter=adapter)
         return handle
@@ -350,22 +354,21 @@ class TmuxAgentHandler(AgentHandler):
 
     def _start_mcp_server(
         self,
-        session_name: str,
-        config: LaunchConfig,
+        effect: LaunchEffect,
         run_tool: RunToolFn,
     ) -> None:
         """Start an MCP SSE server and write .mcp.json to work_dir."""
         server = McpToolServer(
-            tools=config.mcp_tools,
+            tools=effect.mcp_tools,
             run_tool=run_tool,
         )
         server.start()
-        self._mcp_servers[session_name] = server
+        self._mcp_servers[effect.session_name] = server
 
-        mcp_json_path = config.work_dir / ".mcp.json"
+        mcp_json_path = effect.work_dir / ".mcp.json"
         mcp_config = {
             "mcpServers": {
-                "doeff": {
+                effect.mcp_server_name: {
                     "type": "sse",
                     "url": server.url,
                 },

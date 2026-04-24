@@ -146,6 +146,7 @@
       (resume handle))
 
     (MonitorEffect [handle]
+      :when (= handle.agent-type AgentType.CLAUDE)
       (setv sname handle.session-name)
       (when (not (.has-session backend sname))
         (resume (Observation :status SessionStatus.EXITED)))
@@ -175,13 +176,16 @@
         :output-snippet (when output (cut output -500 None)))))
 
     (CaptureEffect [handle lines]
+      :when (= handle.agent-type AgentType.CLAUDE)
       (resume (.capture-pane backend handle.pane-id lines)))
 
     (SendEffect [handle message literal enter]
+      :when (= handle.agent-type AgentType.CLAUDE)
       (.send-keys backend handle.pane-id message :literal literal :enter enter)
       (resume None))
 
     (StopEffect [handle]
+      :when (= handle.agent-type AgentType.CLAUDE)
       (setv server (.pop mcp-servers handle.session-name None))
       (when server (.shutdown server))
       (set! mcp-servers mcp-servers)

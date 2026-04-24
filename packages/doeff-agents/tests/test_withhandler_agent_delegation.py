@@ -6,7 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from doeff import Effect, Pass, Resume, WithHandler, default_handlers, do, run
+from doeff import Effect, Pass, Resume, WithHandler, do, run
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -64,7 +64,7 @@ def _make_pipeline_handler(
             state["launches"].append(effect.session_name)
             handle = _session_handle(
                 session_name=effect.session_name,
-                agent_type=launch_agent_override or effect.config.agent_type,
+                agent_type=launch_agent_override or effect.agent_type,
             )
             return (yield Resume(k, handle))
 
@@ -97,7 +97,7 @@ def _make_pipeline_handler(
             state["sleep_calls"].append(effect.seconds)
             return (yield Resume(k, None))
 
-        yield Pass()
+        yield Pass(effect, k)
 
     return handler, state
 
@@ -131,14 +131,12 @@ def test_withhandler_delegation_returns_success() -> None:
     )
 
     result = run(
-        WithHandler(handler=handler, expr=_run_completion("worker", _build_config(), poll_interval=0.5)),
-        handlers=default_handlers(),
+        WithHandler(handler, _run_completion("worker", _build_config(), poll_interval=0.5)),
     )
 
-    assert result.is_ok()
-    assert result.value.final_status == SessionStatus.DONE
-    assert result.value.output == "mock output"
-    assert result.value.succeeded
+    assert result.final_status == SessionStatus.DONE
+    assert result.output == "mock output"
+    assert result.succeeded
     assert state["launches"] == ["worker"]
     assert state["stops"] == ["worker"]
     assert state["sleep_calls"] == [0.5]
@@ -154,14 +152,12 @@ def test_withhandler_delegation_returns_failure_status() -> None:
     )
 
     result = run(
-        WithHandler(handler=handler, expr=_run_completion("worker-fail", _build_config())),
-        handlers=default_handlers(),
+        WithHandler(handler, _run_completion("worker-fail", _build_config())),
     )
 
-    assert result.is_ok()
-    assert result.value.final_status == SessionStatus.FAILED
-    assert result.value.failed
-    assert result.value.output == "fatal error from mock"
+    assert result.final_status == SessionStatus.FAILED
+    assert result.failed
+    assert result.output == "fatal error from mock"
     assert state["launches"] == ["worker-fail"]
     assert state["stops"] == ["worker-fail"]
 
@@ -175,12 +171,10 @@ def test_withhandler_multiple_agent_delegations_in_sequence() -> None:
     )
 
     result = run(
-        WithHandler(handler=handler, expr=_run_two_completions(_build_config())),
-        handlers=default_handlers(),
+        WithHandler(handler, _run_two_completions(_build_config())),
     )
 
-    assert result.is_ok()
-    first, second = result.value
+    first, second = result
     assert first.final_status == SessionStatus.DONE
     assert second.final_status == SessionStatus.DONE
     assert first.output == "alpha output"
@@ -196,26 +190,25 @@ def test_withhandler_protocol_compliance_with_explicit_launch_handler() -> None:
     def launch_only_handler(effect: Effect, k):
         if isinstance(effect, LaunchEffect):
             launch_calls.append(effect.session_name)
-            return (yield Resume(k, _session_handle(effect.session_name, effect.config.agent_type)))
-        yield Pass()
+            return (yield Resume(k, _session_handle(effect.session_name, effect.agent_type)))
+        yield Pass(effect, k)
 
     lifecycle_handler, lifecycle_state = _make_pipeline_handler(
         {"typed-flow": [(SessionStatus.DONE, "typed done")]}
     )
 
     wrapped = WithHandler(
-        handler=lifecycle_handler,
-        expr=WithHandler(
-            handler=launch_only_handler,
-            expr=_run_completion("typed-flow", _build_config(), poll_interval=0.0),
+        lifecycle_handler,
+        WithHandler(
+            launch_only_handler,
+            _run_completion("typed-flow", _build_config(), poll_interval=0.0),
         ),
     )
 
-    result = run(wrapped, handlers=default_handlers())
+    result = run(wrapped)
 
-    assert result.is_ok()
-    assert result.value.final_status == SessionStatus.DONE
-    assert result.value.output == "typed done"
+    assert result.final_status == SessionStatus.DONE
+    assert result.output == "typed done"
     assert launch_calls == ["typed-flow"]
     assert lifecycle_state["launches"] == []
     assert lifecycle_state["stops"] == ["typed-flow"]
@@ -227,11 +220,11 @@ def test_withhandler_fallback_when_primary_agent_unavailable() -> None:
     @do
     def primary_handler(effect: Effect, k):
         if isinstance(effect, LaunchEffect):
-            primary_attempts.append(effect.config.agent_type)
-            if effect.config.agent_type == AgentType.CODEX:
+            primary_attempts.append(effect.agent_type)
+            if effect.agent_type == AgentType.CODEX:
                 handle = _session_handle(effect.session_name, AgentType.CODEX)
                 return (yield Resume(k, handle))
-        yield Pass()
+        yield Pass(effect, k)
 
     fallback_handler, fallback_state = _make_pipeline_handler(
         {"fallback-agent": [(SessionStatus.DONE, "fallback output")]},
@@ -239,10 +232,10 @@ def test_withhandler_fallback_when_primary_agent_unavailable() -> None:
     )
 
     wrapped = WithHandler(
-        handler=fallback_handler,
-        expr=WithHandler(
-            handler=primary_handler,
-            expr=_run_completion(
+        fallback_handler,
+        WithHandler(
+            primary_handler,
+            _run_completion(
                 "fallback-agent",
                 _build_config(agent_type=AgentType.CLAUDE),
                 poll_interval=0.0,
@@ -250,12 +243,11 @@ def test_withhandler_fallback_when_primary_agent_unavailable() -> None:
         ),
     )
 
-    result = run(wrapped, handlers=default_handlers())
+    result = run(wrapped)
 
-    assert result.is_ok()
-    assert result.value.final_status == SessionStatus.DONE
-    assert result.value.output == "fallback output"
-    assert result.value.handle.agent_type == AgentType.CODEX
+    assert result.final_status == SessionStatus.DONE
+    assert result.output == "fallback output"
+    assert result.handle.agent_type == AgentType.CODEX
     assert primary_attempts == [AgentType.CLAUDE]
     assert fallback_state["launches"] == ["fallback-agent"]
     assert fallback_state["stops"] == ["fallback-agent"]

@@ -76,14 +76,14 @@ def cli() -> None:
     help="Working directory for the agent",
 )
 @click.option("--prompt", "-p", type=str, help="Initial prompt for the agent")
-@click.option("--profile", type=str, help="Agent profile to use")
+@click.option("--model", "-m", type=str, help="Model to use")
 @click.option("--session", "-s", type=str, help="Session name (auto-generated if not provided)")
 @click.option("--watch", "-W", is_flag=True, help="Watch session after launching")
 def run(
     agent: str,
     work_dir: Path,
     prompt: str | None,
-    profile: str | None,
+    model: str | None,
     session: str | None,
     watch: bool,
 ) -> None:
@@ -105,7 +105,7 @@ def run(
         agent_type=agent_type,
         work_dir=work_dir.absolute(),
         prompt=prompt,
-        profile=profile,
+        model=model,
     )
 
     try:
