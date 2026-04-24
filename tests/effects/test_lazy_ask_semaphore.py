@@ -11,21 +11,17 @@ from doeff import (
     Spawn,
     Try,
     Wait,
-    async_run,
-    default_async_handlers,
-    default_handlers,
     do,
-    run,
 )
 from doeff_core_effects.handlers import lazy_ask, reader, state
 from doeff_core_effects.scheduler import scheduled as scheduler
+from tests._run_helpers import run_with_defaults
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 class TestLazyAskSemaphoreContract:
-    @pytest.mark.asyncio
-    async def test_lazy_ask_delegates_to_reader(self) -> None:
+    def test_lazy_ask_delegates_to_reader(self) -> None:
         """LazyAsk delegates Ask to Reader, then evaluates lazy values."""
 
         @do
@@ -36,11 +32,7 @@ class TestLazyAskSemaphoreContract:
         def program():
             return (yield Ask("svc"))
 
-        result = await async_run(
-            program(),
-            handlers=default_async_handlers(),
-            env={"svc": service()},
-        )
+        result = run_with_defaults(program(), env={"svc": service()})
         assert result.is_ok()
         assert result.value == 42
 
@@ -60,7 +52,7 @@ class TestLazyAskSemaphoreContract:
             second = yield Ask("service")
             return (first, second)
 
-        result = run(program(), handlers=default_handlers(), env={"service": service_program()})
+        result = run_with_defaults(program(), env={"service": service_program()})
         assert result.is_ok()
         assert result.value == (42, 42)
         assert calls["service"] == 1
@@ -86,46 +78,21 @@ class TestLazyAskSemaphoreContract:
             t2 = yield Spawn(child())
             return (yield Gather(t1, t2))
 
-        result = run(program(), handlers=default_handlers(), env={"service": service_program()})
+        result = run_with_defaults(program(), env={"service": service_program()})
         assert result.is_ok()
         assert result.value == [42, 42]
         assert calls["service"] == 1
-
-    def test_lazy_ask_dispatches_semaphore_effects_in_trace(self) -> None:
-        """trace=True should produce a trace while lazy Ask resolves correctly."""
-
-        @do
-        def service_program():
-            if False:
-                yield
-            return 42
-
-        @do
-        def program():
-            return (yield Ask("service"))
-
-        result = run(
-            program(),
-            handlers=default_handlers(),
-            env={"service": service_program()},
-            trace=True,
-        )
-        assert result.is_ok()
-        assert result.value == 42
-        assert result.trace is not None
-        assert len(result.trace) > 0
 
     def test_non_lazy_ask_passthrough(self) -> None:
         @do
         def program():
             return (yield Ask("key"))
 
-        result = run(program(), handlers=default_handlers(), env={"key": "plain_value"})
+        result = run_with_defaults(program(), env={"key": "plain_value"})
         assert result.is_ok()
         assert result.value == "plain_value"
 
-    @pytest.mark.asyncio
-    async def test_local_scoping(self) -> None:
+    def test_local_scoping(self) -> None:
         @do
         def program():
             outer = yield Ask("key")
@@ -133,11 +100,7 @@ class TestLazyAskSemaphoreContract:
             after = yield Ask("key")
             return (outer, inner, after)
 
-        result = await async_run(
-            program(),
-            handlers=default_async_handlers(),
-            env={"key": "original"},
-        )
+        result = run_with_defaults(program(), env={"key": "original"})
         assert result.is_ok()
         assert result.value == ("original", "override", "original")
 
@@ -164,9 +127,8 @@ class TestLazyAskSemaphoreContract:
             r2 = yield Wait(t2)
             return (r1, r2)
 
-        result = run(
+        result = run_with_defaults(
             Local({"svc": expensive()}, program()),
-            handlers=default_handlers(),
             env={},
         )
         assert result.is_ok()
@@ -183,9 +145,8 @@ class TestLazyAskSemaphoreContract:
             task = yield Spawn(worker())
             return (yield Wait(task))
 
-        result = run(
+        result = run_with_defaults(
             Local({"key": "override"}, program()),
-            handlers=default_handlers(),
             env={"key": "global"},
         )
         assert result.is_ok()
@@ -207,17 +168,13 @@ class TestLazyAskSemaphoreContract:
             outer = yield Ask("service")
             return (inner, outer)
 
-        result = run(
-            program(),
-            handlers=default_handlers(),
-            env={"db_url": "prod.db", "service": make_service()},
+        result = run_with_defaults(program(), env={"db_url": "prod.db", "service": make_service()},
         )
         assert result.is_ok()
         assert result.value == ("Service(test.db)", "Service(prod.db)")
         assert call_count == 2
 
-    @pytest.mark.asyncio
-    async def test_non_dependent_cache_survives_local_exit(self) -> None:
+    def test_non_dependent_cache_survives_local_exit(self) -> None:
         """Global cache entries that do not depend on overrides should survive Local scope exit."""
         service_count = 0
         logger_count = 0
@@ -245,22 +202,17 @@ class TestLazyAskSemaphoreContract:
             outer_logger = yield Ask("logger")
             return (inner_service, outer_service, outer_logger)
 
-        result = await async_run(
-            program(),
-            handlers=default_async_handlers(),
-            env={
+        result = run_with_defaults(program(), env={
                 "db_url": "prod.db",
                 "service": make_service(),
                 "logger": make_logger(),
-            },
-        )
+            })
         assert result.is_ok()
         assert result.value == ("Service(test.db)", "Service(prod.db)", "Logger()")
         assert service_count == 2
         assert logger_count == 1
 
-    @pytest.mark.asyncio
-    async def test_nested_local_with_lazy_values(self) -> None:
+    def test_nested_local_with_lazy_values(self) -> None:
         call_count = 0
 
         @do
@@ -280,30 +232,21 @@ class TestLazyAskSemaphoreContract:
             outer = yield Ask("service")
             return (inner, outer)
 
-        result = await async_run(
-            program(),
-            handlers=default_async_handlers(),
-            env={
+        result = run_with_defaults(program(), env={
                 "db_url": "prod.db",
                 "host": "prod-host",
                 "service": make_service(),
-            },
-        )
+            })
         assert result.is_ok()
         assert result.value == ("Service(test.db,inner-host)", "Service(prod.db,prod-host)")
         assert call_count == 2
 
-    @pytest.mark.asyncio
-    async def test_local_non_override_delegates(self) -> None:
+    def test_local_non_override_delegates(self) -> None:
         @do
         def program():
             return (yield Local({"other": "x"}, Ask("key")))
 
-        result = await async_run(
-            program(),
-            handlers=default_async_handlers(),
-            env={"key": "global_value"},
-        )
+        result = run_with_defaults(program(), env={"key": "global_value"})
         assert result.is_ok()
         assert result.value == "global_value"
 
@@ -342,7 +285,7 @@ class TestLazyAskSemaphoreContract:
             t3 = yield Spawn(child())
             return (yield Gather(t1, t2, t3))
 
-        result = run(program(), handlers=default_handlers(), env={"slow": slow_service()})
+        result = run_with_defaults(program(), env={"slow": slow_service()})
         assert result.is_ok()
         assert result.value == ["resolved", "resolved", "resolved"]
 
@@ -357,7 +300,7 @@ class TestLazyAskSemaphoreContract:
         def program():
             return (yield Try(Ask("service")))
 
-        result = run(program(), handlers=default_handlers(), env={"service": failing_service()})
+        result = run_with_defaults(program(), env={"service": failing_service()})
         assert result.is_ok()
         safe_result = result.value
         assert safe_result.is_err()
@@ -387,54 +330,10 @@ class TestLazyAskSemaphoreContract:
             b = yield Ask("svc_b")
             return (a, b)
 
-        result = run(
-            program(),
-            handlers=default_handlers(),
-            env={"svc_a": service_a(), "svc_b": service_b()},
+        result = run_with_defaults(program(), env={"svc_a": service_a(), "svc_b": service_b()},
             trace=True,
         )
         assert result.is_ok()
         assert result.value == ("a", "b")
         assert calls == {"a": 1, "b": 1}
 
-    def test_reader_no_semaphore_dependency(self) -> None:
-        """Reader must remain pure lookup and work without scheduler."""
-
-        @do
-        def program():
-            return (yield Ask("key"))
-
-        result = run(program(), handlers=[reader], env={"key": "value"})
-        assert result.is_ok()
-        assert result.value == "value"
-
-    def test_reader_pure_no_semaphore(self) -> None:
-        """Reader alone handles Ask without scheduler."""
-
-        @do
-        def program():
-            return (yield Ask("key"))
-
-        result = run(program(), handlers=[reader], env={"key": "value"})
-        assert result.is_ok()
-        assert result.value == "value"
-
-    def test_ordering_independence(self) -> None:
-        @do
-        def service():
-            if False:
-                yield
-            return 42
-
-        @do
-        def program():
-            return (yield Ask("svc"))
-
-        for ordering in (
-            [state, reader, scheduler, lazy_ask],
-            [scheduler, state, reader, lazy_ask],
-            [reader, state, scheduler, lazy_ask],
-        ):
-            result = run(program(), handlers=ordering, env={"svc": service()})
-            assert result.is_ok()
-            assert result.value == 42

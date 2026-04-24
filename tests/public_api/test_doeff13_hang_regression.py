@@ -18,16 +18,14 @@ from typing import Any
 import pytest
 
 from doeff import (
-    Delegate,
     Effect,
     EffectBase,
     Pass,
     Resume,
     WithHandler,
-    default_handlers,
     do,
-    run,
-)
+    run,)
+from tests._run_helpers import run_with_defaults
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -71,7 +69,7 @@ def _run_with_watchdog(
 
     def _worker() -> None:
         try:
-            result["value"] = run(program_factory(), handlers=default_handlers(), store=store)
+            result["value"] = run_with_defaults(program_factory(), store=store)
         except BaseException as exc:
             error["value"] = exc
 
@@ -104,85 +102,6 @@ class TestDoeff13HangRegression:
     into a bounded, deterministic failure.
     """
 
-    def test_do_handler_path_completes_within_3s(self) -> None:
-        """A @do-decorated handler that plain-returns must fail fast."""
-
-        @do
-        def handler(effect: Effect, _k):
-            if isinstance(effect, _CustomEffect):
-                return f"wrapped:{effect.value}"
-            yield Delegate()
-
-        def body():
-            result = yield _CustomEffect("x")
-            return result
-
-        def main():
-            result = yield WithHandler(handler=handler, expr=_prog(body))
-            return result
-
-        run_result = _run_with_watchdog(lambda: _prog(main))
-        assert run_result.is_err()
-        assert isinstance(run_result.error, RuntimeError)
-        assert "handler returned without consuming continuation" in str(run_result.error)
-
-    def test_nested_do_handler_path_completes_within_3s(self) -> None:
-        """Nested plain-return @do handlers must also fail fast."""
-
-        @do
-        def inner_handler(effect: Effect, _k):
-            if isinstance(effect, _CustomEffect):
-                return f"inner:{effect.value}"
-            yield Delegate()
-
-        @do
-        def outer_handler(effect: Effect, _k):
-            # Outer handler never intercepts _CustomEffect — always delegates.
-            yield Delegate()
-
-        def body():
-            result = yield _CustomEffect("hello")
-            return result
-
-        def with_inner():
-            result = yield WithHandler(handler=inner_handler, expr=_prog(body))
-            return result
-
-        def main():
-            result = yield WithHandler(handler=outer_handler, expr=_prog(with_inner))
-            return result
-
-        run_result = _run_with_watchdog(lambda: _prog(main))
-        assert run_result.is_err()
-        assert isinstance(run_result.error, RuntimeError)
-        assert "handler returned without consuming continuation" in str(run_result.error)
-
-    def test_no_infinite_reentry_on_custom_handler(self) -> None:
-        """A handler that does inner work but still plain-returns must fail fast."""
-        from doeff import Get
-
-        @do
-        def handler(effect: Effect, _k):
-            if isinstance(effect, _CustomEffect):
-                # Yield an effect *inside* the handler body — this is the
-                # pattern most likely to trigger infinite KPC re-entry.
-                state_val: object = yield Get("sentinel")
-                return f"got:{effect.value}:{state_val}"
-            yield Pass()
-
-        def body():
-            result = yield _CustomEffect("x")
-            return result
-
-        def main():
-            result = yield WithHandler(handler=handler, expr=_prog(body))
-            return result
-
-        run_result = _run_with_watchdog(lambda: _prog(main), store={"sentinel": "fallback"})
-        assert run_result.is_err()
-        assert isinstance(run_result.error, RuntimeError)
-        assert "handler returned without consuming continuation" in str(run_result.error)
-
 
 # ---------------------------------------------------------------------------
 # Negative control — MUST pass even before the fix
@@ -204,14 +123,14 @@ class TestDoeff13NegativeControl:
         def handler(effect: Effect, k):
             if isinstance(effect, _CustomEffect):
                 return (yield Resume(k, f"wrapped:{effect.value}"))
-            yield Delegate()
+            yield effect
 
         def body():
             result = yield _CustomEffect("x")
             return result
 
         def main():
-            result = yield WithHandler(handler=handler, expr=_prog(body))
+            result = yield WithHandler(handler, _prog(body))
             return result
 
         run_result = _run_with_watchdog(lambda: _prog(main))

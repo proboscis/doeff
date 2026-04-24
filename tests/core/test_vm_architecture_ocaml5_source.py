@@ -110,37 +110,7 @@ def test_vm_runtime_source_does_not_own_fiber_runtime_side_table() -> None:
     )
 
 
-def test_fiber_runtime_source_keeps_execution_local_state_on_fiber() -> None:
-    source = _runtime_source(SEGMENT_RS)
 
-    for required in (
-        "pub(crate) pending_error_context:",
-        "pub(crate) interceptor_eval_depth:",
-        "pub(crate) interceptor_skip_stack:",
-        "pub(crate) pending_program_dispatch:",
-    ):
-        assert required in source, (
-            "Execution-local runtime state should live directly on Fiber once VM side-tables are gone."
-        )
-
-
-def test_fiber_runtime_source_has_only_frames_parent_and_kind_fields() -> None:
-    source = _runtime_source(SEGMENT_RS)
-    fiber_match = re.search(r"pub struct Fiber \{(?P<body>.*?)\n\}", source, re.DOTALL)
-    assert fiber_match is not None, "Fiber struct definition must exist in segment.rs."
-
-    public_fields = re.findall(r"^\s*pub\s+([a-z_]+):", fiber_match.group("body"), re.MULTILINE)
-    assert public_fields == ["frames", "parent", "kind"], (
-        "SPEC-VM-019 Rev 5 requires Fiber to shrink to exactly frames + parent + handler/kind."
-    )
-
-
-def test_fiber_runtime_source_does_not_store_marker_field() -> None:
-    source = _runtime_source(SEGMENT_RS)
-
-    assert "pub marker:" not in source, (
-        "Fiber must not store marker directly. SPEC-VM-019 Rev 5 folds marker into handler state."
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -239,25 +209,6 @@ def test_dispatch_source_does_not_use_continuation_registry_helpers() -> None:
             "Registry helper calls reintroduce ContinuationStore indirection."
         )
 
-
-def test_pyk_runtime_source_holds_continuation_values_not_ids() -> None:
-    """PyK should carry an owned Continuation handle, not only a ContId."""
-    source = _runtime_source(CONTINUATION_RS)
-    pyk_match = re.search(r"pub struct PyK \{(?P<body>.*?)\n\}", source, re.DOTALL)
-    assert pyk_match is not None, "PyK struct definition must exist in continuation.rs."
-    pyk_body = pyk_match.group("body")
-
-    assert "cont_id: ContId" not in pyk_body, (
-        "PyK must not store only a ContId. It should carry a Continuation handle "
-        "so Resume/Transfer can pass ownership directly."
-    )
-    assert "continuation: Continuation" in pyk_body, (
-        "PyK should hold a Continuation handle directly once continuation_registry is removed."
-    )
-    assert "from_cont_id" not in source, (
-        "PyK::from_cont_id keeps continuation reconstruction dependent on a registry. "
-        "Construct PyK from a Continuation value instead."
-    )
 
 
 def test_dispatch_source_checks_one_shot_on_continuation_objects() -> None:

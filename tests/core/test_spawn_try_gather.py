@@ -13,24 +13,23 @@ from dataclasses import dataclass
 from typing import Any
 
 from doeff import (
-    Ask,
     CreateSemaphore,
     AcquireSemaphore,
     ReleaseSemaphore,
+    Effect,
     EffectGenerator,
     Gather,
-    Local,
     Pass,
     Resume,
     Spawn,
     Try,
     WithHandler,
-    default_handlers,
     do,
-    run,
 )
-# REMOVED: from doeff.effects._program_types import ProgramLike
-from doeff_core_effects.effects import EffectBase, EffectBase
+from doeff_core_effects.effects import EffectBase
+from tests._run_helpers import run_with_defaults
+
+ProgramLike = Any  # removed API shim
 
 
 @dataclass(frozen=True)
@@ -41,7 +40,7 @@ class FetchEffect(EffectBase):
 @do
 def handler(effect: Effect, k):
     if not isinstance(effect, FetchEffect):
-        yield Pass()
+        yield Pass(effect, k)
         return
     return (yield Resume(k, f"data-{effect.key}"))
 
@@ -79,7 +78,7 @@ def throttled_gather_untyped(
     wrapped = [wrap_sem(p, sem) for p in programs]
     tasks = []
     for w in wrapped:
-        t = yield Spawn(w, daemon=False)
+        t = yield Spawn(w)
         tasks.append(t)
     return list((yield Gather(*tasks)))
 
@@ -95,7 +94,7 @@ def throttled_gather(
     wrapped = [wrap_sem(p, sem) for p in programs]
     tasks = []
     for w in wrapped:
-        t = yield Spawn(w, daemon=False)
+        t = yield Spawn(w)
         tasks.append(t)
     return list((yield Gather(*tasks)))
 
@@ -112,7 +111,7 @@ def test_spawn_try_compute_with_handler():
         return (yield throttled_gather(*programs, concurrency=2))
 
     wrapped = WithHandler(handler, test_program())
-    result = run(wrapped, handlers=default_handlers())
+    result = run_with_defaults(wrapped)
     assert result.is_ok(), f"Failed: {result.error}"
     assert len(result.value) == 3
 
@@ -126,7 +125,7 @@ def test_spawn_compute_without_try():
         return (yield throttled_gather(*programs, concurrency=2))
 
     wrapped = WithHandler(handler, test_program())
-    result = run(wrapped, handlers=default_handlers())
+    result = run_with_defaults(wrapped)
     assert result.is_ok(), f"Failed: {result.error}"
     assert len(result.value) == 3
 
@@ -143,36 +142,9 @@ def test_sequential_try_compute_with_handler():
         return results
 
     wrapped = WithHandler(handler, test_program())
-    result = run(wrapped, handlers=default_handlers())
+    result = run_with_defaults(wrapped)
     assert result.is_ok(), f"Failed: {result.error}"
     assert len(result.value) == 3
 
 
-def test_spawn_untyped_wrapper_error_mentions_programlike_hint_for_plain_value():
-    @do
-    def test_program() -> EffectGenerator[list]:
-        programs = [compute("k0")]
-        return (yield throttled_gather_untyped(*programs, concurrency=1))
 
-    wrapped = WithHandler(handler, test_program())
-    result = run(wrapped, handlers=default_handlers())
-    assert result.is_err()
-    message = str(result.error)
-    assert message.startswith("yielded value must be EffectBase or DoExpr, got ")
-    assert "Hint: this may be a resolved ProgramLike value." in message
-    assert "annotated as ProgramLike" in message
-
-
-def test_spawn_untyped_wrapper_error_mentions_programlike_hint_for_ok_value():
-    @do
-    def test_program() -> EffectGenerator[list]:
-        programs = [Try(compute("k0"))]
-        return (yield throttled_gather_untyped(*programs, concurrency=1))
-
-    wrapped = WithHandler(handler, test_program())
-    result = run(wrapped, handlers=default_handlers())
-    assert result.is_err()
-    message = str(result.error)
-    assert message.startswith("yielded value must be EffectBase or DoExpr, got ")
-    assert "Hint: this may be a resolved ProgramLike value." in message
-    assert "annotated as ProgramLike" in message

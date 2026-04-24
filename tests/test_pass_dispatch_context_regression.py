@@ -20,6 +20,7 @@ from doeff import EffectBase
 # REMOVED: from doeff_core_effects.cache import in_memory_cache_handler, memo_rewriters
 from doeff import default_handlers, run
 from doeff import EffectGenerator
+from tests._run_helpers import run_with_defaults
 
 
 class EffectA(EffectBase):
@@ -60,6 +61,6 @@ def test_memo_rewriter_delegate_finds_outer_handler():
         *memo_rewriters(EffectA),
         in_memory_cache_handler(),
     )
-    result = run(wrapped, handlers=default_handlers())
+    result = run_with_defaults(wrapped)
     assert result.is_ok(), f"Expected Ok, got: {result.error}"
     assert result.value == "handled"

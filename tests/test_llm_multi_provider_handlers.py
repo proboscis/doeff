@@ -10,6 +10,7 @@ from doeff_gemini.handlers import gemini_mock_handler
 from doeff_llm.effects import LLMChat, LLMStructuredQuery
 from doeff_openrouter.handlers import MockOpenRouterRuntime, openrouter_mock_handler
 from pydantic import BaseModel
+from tests._run_helpers import run_with_defaults
 
 try:
     from doeff_openai.handlers import (
@@ -74,9 +75,8 @@ def test_multi_model_workflow_routes_to_openai_then_gemini() -> None:
             "summary": summary,
         }
 
-    result = run(
+    result = run_with_defaults(
         WithHandler(gemini_handler, WithHandler(openai_handler, workflow())),
-        handlers=default_handlers(),
     )
 
     assert result.is_ok()
@@ -108,9 +108,8 @@ def test_openrouter_catch_all_can_handle_unmatched_model() -> None:
     def catch_all_handler(effect: Effect, k: Any):
         return (yield openrouter_mock_handler(effect, k))
 
-    result = run(
+    result = run_with_defaults(
         WithHandler(catch_all_handler, workflow()),
-        handlers=default_handlers(),
     )
 
     assert result.is_ok()
@@ -121,9 +120,8 @@ def test_openrouter_catch_all_can_handle_unmatched_model() -> None:
     def router_handler(effect: Effect, k: Any):
         return (yield openrouter_mock_handler(effect, k, runtime=runtime))
 
-    routed = run(
+    routed = run_with_defaults(
         WithHandler(router_handler, workflow()),
-        handlers=default_handlers(),
     )
 
     assert routed.is_ok()

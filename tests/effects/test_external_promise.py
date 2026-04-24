@@ -10,8 +10,9 @@ from typing import Any
 
 import pytest
 
-from doeff import Gather, Spawn, async_run, default_handlers, do, run
+from doeff import Gather, Spawn, do
 from doeff import CreateExternalPromise, Wait
+from tests._run_helpers import run_with_defaults
 
 
 def _run_with_timeout(program_factory, timeout: float = 1.0) -> Any:
@@ -20,7 +21,7 @@ def _run_with_timeout(program_factory, timeout: float = 1.0) -> Any:
 
     def _worker() -> None:
         try:
-            result["value"] = run(program_factory(), handlers=default_handlers())
+            result["value"] = run_with_defaults(program_factory())
         except BaseException as exc:  # pragma: no cover - test helper
             error["value"] = exc
 
@@ -47,10 +48,10 @@ class TestExternalPromiseBasics:
             promise = yield CreateExternalPromise()
             return promise
 
-        result = run(program(), handlers=default_handlers())
+        result = run_with_defaults(program())
         assert result.is_ok
         assert isinstance(result.value, ExternalPromise)
-        assert result.value.id is not None
+        assert result.value.promise_id is not None
 
     def test_external_promise_has_future(self) -> None:
         """ExternalPromise.future returns a waitable Future."""
@@ -61,7 +62,7 @@ class TestExternalPromiseBasics:
             promise = yield CreateExternalPromise()
             return promise.future
 
-        result = run(program(), handlers=default_handlers())
+        result = run_with_defaults(program())
         assert result.is_ok
         assert isinstance(result.value, Future)
 
@@ -87,7 +88,7 @@ class TestExternalPromiseCompletion:
             thread.join()
             return result
 
-        result = run(program(), handlers=default_handlers())
+        result = run_with_defaults(program())
         assert result.is_ok
         assert result.value == 42
 
@@ -109,7 +110,7 @@ class TestExternalPromiseCompletion:
             thread.join()
             return result
 
-        result = run(program(), handlers=default_handlers())
+        result = run_with_defaults(program())
         assert result.is_err()
         assert isinstance(result.error, ValueError)
         assert "external error" in str(result.error)
@@ -131,7 +132,7 @@ class TestExternalPromiseCompletion:
             thread.join()
             return result
 
-        result = run(program(), handlers=default_handlers())
+        result = run_with_defaults(program())
         assert result.is_ok
         assert result.value is None
 
@@ -139,9 +140,8 @@ class TestExternalPromiseCompletion:
 class TestExternalPromiseWithAsyncRun:
     """Tests for ExternalPromise with async_run."""
 
-    @pytest.mark.asyncio
-    async def test_complete_from_thread_async(self) -> None:
-        """ExternalPromise works with async_run."""
+    def test_complete_from_thread_async(self) -> None:
+        """ExternalPromise works with run_with_defaults (formerly async_run)."""
 
         @do
         def program():
@@ -158,7 +158,7 @@ class TestExternalPromiseWithAsyncRun:
             thread.join()
             return result
 
-        result = await async_run(program(), handlers=default_handlers())
+        result = run_with_defaults(program())
         assert result.is_ok
         assert result.value == "async result"
 
@@ -193,7 +193,7 @@ class TestExternalPromiseMultiple:
             thread2.join()
             return (result1, result2)
 
-        result = run(program(), handlers=default_handlers())
+        result = run_with_defaults(program())
         assert result.is_ok
         assert result.value == ("first", "second")
 
@@ -212,7 +212,7 @@ class TestExternalPromiseRunIsolation:
             values = yield Gather(t1, t2)
             return tuple(values)
 
-        scheduler_result = run(scheduler_heavy_program(), handlers=default_handlers())
+        scheduler_result = run_with_defaults(scheduler_heavy_program())
         assert scheduler_result.is_ok
         assert scheduler_result.value == ("left", "right")
 

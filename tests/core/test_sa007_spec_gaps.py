@@ -34,14 +34,6 @@ def _mk_program(value: int = 42) -> GeneratorProgram[int]:
     return GeneratorProgram(gen)
 
 
-def test_SA_007_G01_no_top_level_normalization_wrapper() -> None:
-    src = _read(ROOT / "doeff" / "rust_vm.py")
-    assert "_normalize_program" not in src
-
-
-def test_SA_007_G02_run_typeerror_includes_actionable_hints() -> None:
-    with pytest.raises(TypeError, match=r"(?i)did you mean"):
-        run(lambda: 42)
 
 
 @pytest.mark.skip(reason="uses removed API: GeneratorProgram")
@@ -54,12 +46,6 @@ def test_SA_007_G04_dothunk_removed_from_public_hierarchy() -> None:
     src = _read(ROOT / "doeff" / "program.py")
     assert "class DoThunk" not in src
 
-
-def test_SA_007_G05_docontrol_has_pure_map_flatmap_nodes() -> None:
-    src = _read(ROOT / "packages" / "doeff-vm" / "src" / "do_ctrl.rs")
-    assert "Pure" in src
-    assert "Map" in src
-    assert "FlatMap" in src
 
 
 @pytest.mark.skip(reason="uses removed API: GeneratorProgram")

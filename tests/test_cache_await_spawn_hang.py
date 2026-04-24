@@ -20,12 +20,11 @@ from doeff import (
     Spawn,
     WithHandler,
     cache,
-    default_handlers,
     do,
     run,
-    slog,
-)
+    slog,)
 from doeff import Await
+from tests._run_helpers import run_with_defaults
 # REMOVED: from doeff_core_effects.handlers import sqlite_cache_handler
 
 TIMEOUT_SECONDS = 30
@@ -39,7 +38,7 @@ def _run_with_timeout(program):
     old = signal.signal(signal.SIGALRM, _timeout_handler)
     signal.alarm(TIMEOUT_SECONDS)
     try:
-        return run(program, handlers=default_handlers())
+        return run_with_defaults(program)
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old)

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from doeff import Effect, EffectBase, Pass, Resume, WithHandler, default_handlers, do, run
+from doeff import Effect, EffectBase, Pass, Resume, WithHandler, do
+from tests._run_helpers import run_with_defaults
 
 
 class _EffectA(EffectBase):
@@ -17,27 +18,26 @@ def test_pass_is_terminal_passthrough() -> None:
     resumed_after_pass = {"value": False}
 
     @do
-    def inner_handler(effect: Effect, _k):
+    def inner_handler(effect: Effect, k):
         if isinstance(effect, _EffectA):
-            yield Pass()
+            yield Pass(effect, k)
             resumed_after_pass["value"] = True
             return "unreachable"
-        yield Pass()
+        yield Pass(effect, k)
 
     @do
     def outer_handler(effect: Effect, k):
         if isinstance(effect, _EffectA):
             return (yield Resume(k, "handled-by-outer"))
-        yield Pass()
+        yield Pass(effect, k)
 
     @do
     def body():
         value = yield _EffectA()
         return value
 
-    result = run(
+    result = run_with_defaults(
         WithHandler(outer_handler, WithHandler(inner_handler, body())),
-        handlers=default_handlers(),
     )
     assert result.value == "handled-by-outer"
     assert resumed_after_pass["value"] is False
