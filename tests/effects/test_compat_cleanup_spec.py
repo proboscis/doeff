@@ -9,18 +9,6 @@ from doeff_core_effects.scheduler import Spawn
 # REMOVED: from doeff_core_effects.scheduler import spawn
 
 
-def test_futureawaiteffect_alias_removed() -> None:
-    import doeff.effects.future as future
-
-    assert not hasattr(future, "FutureAwaitEffect")
-
-
-def test_gather_futures_alias_removed() -> None:
-    from doeff_core_effects.scheduler import Gather
-
-    effect = GatherEffect(items=(1, 2))
-    with pytest.raises(AttributeError):
-        _ = getattr(effect, "futures")
 
 
 def test_spawn_deprecated_methods_removed() -> None:
@@ -31,11 +19,3 @@ def test_spawn_deprecated_methods_removed() -> None:
     assert not hasattr(Task, "join")
 
 
-def test_spawn_apis_return_spawn_effect_directly() -> None:
-    child = Program.pure(1)
-
-    lower = spawn(child)
-    upper = Spawn(child)
-
-    assert isinstance(lower, SpawnEffect)
-    assert isinstance(upper, SpawnEffect)

@@ -27,12 +27,11 @@ from doeff import (
     ReleaseSemaphore,
     Spawn,
     WithHandler,
-    default_handlers,
     do,
     run,
     Await,
-    slog,
-)
+    slog,)
+from tests._run_helpers import run_with_defaults
 # REMOVED: from doeff_core_effects.handlers import sqlite_cache_handler
 
 
@@ -110,7 +109,7 @@ def _run_test(factory, n: int, conc: int = 40):
             _spawn_gather(factory, n, conc),
         )
         rss_before = _rss_mb()
-        r = run(prog, handlers=default_handlers())
+        r = run_with_defaults(prog)
         rss_after = _rss_mb()
         return r, rss_before, rss_after
     finally:

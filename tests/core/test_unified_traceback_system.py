@@ -11,6 +11,7 @@ from doeff import EffectBase
 # REMOVED: from doeff import ProgramCallStack
 from doeff import Put
 from doeff_vm import Pass, Resume, WithHandler
+from tests._run_helpers import run_with_defaults
 # REMOVED: from doeff.trace import TraceDispatch
 # REMOVED: from doeff.traceback import attach_doeff_traceback, get_attached_doeff_traceback
 
@@ -34,7 +35,7 @@ def test_program_callstack_still_works_with_deprecation_warning() -> None:
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        result = run(body(), handlers=default_handlers())
+        result = run_with_defaults(body())
 
     assert any(issubclass(item.category, DeprecationWarning) for item in caught)
     assert result.is_ok(), result.error
@@ -49,7 +50,7 @@ def test_exceptions_attach_doeff_traceback_and_rendering() -> None:
         raise ValueError("boom")
         yield
 
-    result = run(body(), handlers=default_handlers(), store={"x": 0})
+    result = run_with_defaults(body(), store={"x": 0})
     assert result.is_err()
 
     error = result.error
@@ -156,17 +157,17 @@ def test_raw_vm_run_attaches_doeff_traceback_to_direct_exception() -> None:
 
 def test_delegation_chain_routes_to_outer_handler() -> None:
     @do
-    def inner_handler(effect: Effect, _k):
+    def inner_handler(effect: Effect, k):
         if isinstance(effect, NeedsHandler):
-            delegated_result = yield Delegate()
+            delegated_result = yield effect
             return delegated_result
-        yield Pass()
+        yield Pass(effect, k)
 
     @do
     def outer_handler(effect: Effect, k):
         if isinstance(effect, NeedsHandler):
             return (yield Resume(k, effect.value))
-        yield Pass()
+        yield Pass(effect, k)
 
     @do
     def body() -> Program[int]:
@@ -174,7 +175,7 @@ def test_delegation_chain_routes_to_outer_handler() -> None:
         return result
 
     wrapped = WithHandler(outer_handler, WithHandler(inner_handler, body()))
-    result = run(wrapped, handlers=default_handlers())
+    result = run_with_defaults(wrapped)
     assert result.is_ok(), result.error
     assert result.value == 7
 
@@ -194,7 +195,7 @@ def test_handler_sources_and_exception_repr_for_thrown_handler_excludes_complete
         return 0
 
     wrapped = WithHandler(crashing_handler, body())
-    result = run(wrapped, handlers=default_handlers(), store={"x": 0})
+    result = run_with_defaults(wrapped, store={"x": 0})
     assert result.is_err()
 
     traceback_data = result.traceback_data

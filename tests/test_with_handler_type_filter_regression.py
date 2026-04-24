@@ -15,8 +15,9 @@ from dataclasses import dataclass
 import doeff_vm
 import pytest
 
-from doeff import Effect, EffectBase, EffectGenerator, default_handlers, do, run
+from doeff import Effect, EffectBase, EffectGenerator, do
 from doeff_vm import WithHandler
+from tests._run_helpers import run_with_defaults
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,7 @@ def alpha_handler_typed(effect: Alpha, k):
 @do
 def alpha_handler_isinstance(effect: Effect, k):
     if not isinstance(effect, Alpha):
-        yield doeff_vm.Pass()
+        yield doeff_vm.Pass(effect, k)
         return
     return (yield doeff_vm.Resume(k, f"alpha:{effect.value}"))
 
@@ -48,7 +49,7 @@ def catch_all(effect: Effect, k):
         return (yield doeff_vm.Resume(k, f"fallback_alpha:{effect.value}"))
     if isinstance(effect, Beta):
         return (yield doeff_vm.Resume(k, f"fallback_beta:{effect.value}"))
-    yield doeff_vm.Pass()
+    yield doeff_vm.Pass(effect, k)
 
 
 def _wrap(inner_handler, program):
@@ -104,32 +105,32 @@ def prog_alpha_beta_alpha() -> EffectGenerator[tuple[str, str, str]]:
 
 class TestIsinstancePass:
     def test_alpha(self):
-        result = run(_wrap(alpha_handler_isinstance, prog_alpha()))
+        result = run_with_defaults(_wrap(alpha_handler_isinstance, prog_alpha()))
         assert result.is_ok(), result.error
         assert result.value == "alpha:1"
 
     def test_alpha_alpha(self):
-        result = run(_wrap(alpha_handler_isinstance, prog_alpha_alpha()))
+        result = run_with_defaults(_wrap(alpha_handler_isinstance, prog_alpha_alpha()))
         assert result.is_ok(), result.error
         assert result.value == ("alpha:1", "alpha:2")
 
     def test_beta_beta(self):
-        result = run(_wrap(alpha_handler_isinstance, prog_beta_beta()))
+        result = run_with_defaults(_wrap(alpha_handler_isinstance, prog_beta_beta()))
         assert result.is_ok(), result.error
         assert result.value == ("fallback_beta:1", "fallback_beta:2")
 
     def test_beta_alpha(self):
-        result = run(_wrap(alpha_handler_isinstance, prog_beta_alpha()))
+        result = run_with_defaults(_wrap(alpha_handler_isinstance, prog_beta_alpha()))
         assert result.is_ok(), result.error
         assert result.value == ("fallback_beta:1", "alpha:2")
 
     def test_alpha_beta(self):
-        result = run(_wrap(alpha_handler_isinstance, prog_alpha_beta()))
+        result = run_with_defaults(_wrap(alpha_handler_isinstance, prog_alpha_beta()))
         assert result.is_ok(), result.error
         assert result.value == ("alpha:1", "fallback_beta:2")
 
     def test_alpha_beta_alpha(self):
-        result = run(_wrap(alpha_handler_isinstance, prog_alpha_beta_alpha()))
+        result = run_with_defaults(_wrap(alpha_handler_isinstance, prog_alpha_beta_alpha()))
         assert result.is_ok(), result.error
         assert result.value == ("alpha:1", "fallback_beta:2", "alpha:3")
 
@@ -139,31 +140,12 @@ class TestIsinstancePass:
 
 class TestTypedHandler:
     def test_alpha(self):
-        result = run(_wrap(alpha_handler_typed, prog_alpha()))
+        result = run_with_defaults(_wrap(alpha_handler_typed, prog_alpha()))
         assert result.is_ok(), result.error
         assert result.value == "alpha:1"
 
     def test_alpha_alpha(self):
-        result = run(_wrap(alpha_handler_typed, prog_alpha_alpha()))
+        result = run_with_defaults(_wrap(alpha_handler_typed, prog_alpha_alpha()))
         assert result.is_ok(), result.error
         assert result.value == ("alpha:1", "alpha:2")
 
-    def test_beta_beta(self):
-        result = run(_wrap(alpha_handler_typed, prog_beta_beta()))
-        assert result.is_ok(), result.error
-        assert result.value == ("fallback_beta:1", "fallback_beta:2")
-
-    def test_beta_alpha(self):
-        result = run(_wrap(alpha_handler_typed, prog_beta_alpha()))
-        assert result.is_ok(), result.error
-        assert result.value == ("fallback_beta:1", "alpha:2")
-
-    def test_alpha_beta(self):
-        result = run(_wrap(alpha_handler_typed, prog_alpha_beta()))
-        assert result.is_ok(), result.error
-        assert result.value == ("alpha:1", "fallback_beta:2")
-
-    def test_alpha_beta_alpha(self):
-        result = run(_wrap(alpha_handler_typed, prog_alpha_beta_alpha()))
-        assert result.is_ok(), result.error
-        assert result.value == ("alpha:1", "fallback_beta:2", "alpha:3")

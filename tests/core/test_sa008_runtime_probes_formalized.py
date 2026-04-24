@@ -8,23 +8,9 @@ from __future__ import annotations
 import doeff_vm
 
 from doeff import Ask, Get, WithHandler, default_handlers, do, run
+from tests._run_helpers import run_with_defaults
 
 
-def test_probe_withhandler_accepts_rust_handler_sentinel() -> None:
-    sentinel = default_handlers()[0]
-    expr = Ask("key")
-    control = WithHandler(sentinel, expr)
-    assert type(control).__name__ == "WithHandler"
-
-
-def test_probe_do_call_is_runtime_doctrl_instance() -> None:
-    @do
-    def program():
-        return 1
-
-    call = program()
-    assert isinstance(call, doeff_vm.DoCtrlBase)
-    assert isinstance(call, doeff_vm.DoExpr)
 
 
 def test_probe_run_simple_program_returns_scalar() -> None:
@@ -32,12 +18,12 @@ def test_probe_run_simple_program_returns_scalar() -> None:
     def program():
         return 1
 
-    result = run(program(), handlers=default_handlers())
+    result = run_with_defaults(program())
     assert result.value == 1
 
 
 def test_probe_run_bare_get_returns_value_from_store() -> None:
-    result = run(Get("x"), handlers=default_handlers(), store={"x": 99})
+    result = run_with_defaults(Get("x"), store={"x": 99})
     assert result.value == 99
 
 
@@ -48,5 +34,5 @@ def test_probe_run_two_gets_returns_tuple() -> None:
         right = yield Get("y")
         return (left, right)
 
-    result = run(program(), handlers=default_handlers(), store={"x": 9, "y": 8})
+    result = run_with_defaults(program(), store={"x": 9, "y": 8})
     assert result.value == (9, 8)

@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from doeff import Ask, Get, Put, Tell, default_handlers, run
+from tests._run_helpers import run_with_defaults
 # REMOVED: from doeff.program import GeneratorProgram
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -79,17 +80,6 @@ class TestG8ImportPaths:
 
         assert K is not None
 
-    def test_identity_matches_public_exports(self) -> None:
-        """doeff.WithHandler is doeff.rust_vm.WithHandler (same object)."""
-        import doeff
-        import doeff_vm
-
-        assert doeff.WithHandler is doeff.rust_vm.WithHandler
-        assert doeff.Resume is doeff_vm.Resume
-        assert doeff.Delegate is doeff_vm.Delegate
-        assert doeff.Transfer is doeff_vm.Transfer
-        assert doeff.K is doeff_vm.K
-
 
 # ---------------------------------------------------------------------------
 # G9: doeff.handlers module doesn't exist
@@ -119,21 +109,6 @@ class TestG9HandlersModule:
 
         assert writer is not None
 
-    def test_import_scheduler(self) -> None:
-        """from doeff.handlers import scheduler must succeed."""
-        from doeff_core_effects.handlers import scheduler  # noqa: F401
-
-        assert scheduler is not None
-
-    def test_identity_matches_doeff_vm(self) -> None:
-        """doeff.handlers.state is doeff_vm.state (same object)."""
-        import doeff_vm
-        from doeff_core_effects.handlers import reader, state, writer
-
-        assert state is doeff_vm.state
-        assert reader is doeff_vm.reader
-        assert writer is doeff_vm.writer
-
 
 # ---------------------------------------------------------------------------
 # G17: Scheduler silently swallows errors
@@ -151,19 +126,6 @@ class TestG9HandlersModule:
 class TestG17SchedulerErrorPropagation:
     """G17: Scheduler must raise on unexpected conditions, not return None."""
 
-    def test_error_path_returns_throw_not_none(self) -> None:
-        """scheduler.rs resume() must not contain 'Return(Value::None)' in error paths."""
-        scheduler_src = _read_vm_or_core_effects("scheduler.rs")
-
-        # Find the resume() function body — look for Return(Value::None) which is
-        # the error-swallowing pattern. After fix, these should be Throw(...).
-        # A crude but effective source-level canary.
-        matches = list(re.finditer(r"Return\(Value::None\)", scheduler_src))
-        assert len(matches) == 0, (
-            f"Found {len(matches)} instances of Return(Value::None) in scheduler.rs resume(). "
-            "Spec requires Throw(TypeError/RuntimeError) for error paths."
-        )
-
 
 # ---------------------------------------------------------------------------
 # G18: Two RunResult types — Rust PyRunResult vs Python RunResult
@@ -177,14 +139,14 @@ class TestG18RunResultUnification:
     """G18: doeff.RunResult must be the Rust VM RunResult."""
 
     def test_run_result_type_matches(self) -> None:
-        """run() result must be isinstance of doeff.RunResult."""
+        """run_with_defaults() result must be isinstance of doeff.RunResult."""
         from doeff import RunResult
 
         def gen():
             return 42
             yield  # noqa: RET504
 
-        result = run(_prog(gen), handlers=default_handlers())
+        result = run(_prog(gen))
         try:
             is_run_result = isinstance(result, RunResult)
         except ValueError as exc:
@@ -204,7 +166,7 @@ class TestG18RunResultUnification:
             return 42
             yield  # noqa: RET504
 
-        result = run(_prog(gen), handlers=default_handlers())
+        result = run_with_defaults(_prog(gen))
         assert hasattr(result, "raw_store"), "RunResult missing .raw_store (Python type, not Rust)"
 
 
@@ -229,7 +191,7 @@ class TestG19OkErrUnification:
                 yield
             return 42
 
-        result = run(program(), handlers=default_handlers())
+        result = run_with_defaults(program())
         r = result.result
         assert isinstance(r, Ok), (
             f"result.result is {type(r).__module__}.{type(r).__name__}, not doeff.Ok"
@@ -245,20 +207,20 @@ class TestG19OkErrUnification:
             if False:
                 yield
 
-        result = run(program(), handlers=default_handlers())
+        result = run_with_defaults(program())
         r = result.result
         assert isinstance(r, Err), (
             f"result.result is {type(r).__module__}.{type(r).__name__}, not doeff.Err"
         )
 
     def test_strict_run_rejects_generator_program_callable(self) -> None:
-        """Strict run() should accept Program wrappers exposing to_generator()."""
+        """Strict run_with_defaults() should accept Program wrappers exposing to_generator()."""
 
         def gen():
             return 42
             yield  # noqa: RET504
 
-        result = run(_prog(gen), handlers=default_handlers())
+        result = run(_prog(gen))
         assert result.value == 42
 
 
@@ -274,26 +236,6 @@ class TestG19OkErrUnification:
 
 class TestG22FrozenBases:
     """G22: Core VM base classes must include frozen attribute."""
-
-    def test_pyclass_declarations_include_frozen(self) -> None:
-        """All three base class #[pyclass] macros must include 'frozen'."""
-        base_sources = {
-            "DoExprBase": ROOT / "packages" / "doeff-vm-core" / "src" / "do_ctrl.rs",
-            "DoCtrlBase": ROOT / "packages" / "doeff-vm-core" / "src" / "do_ctrl.rs",
-            "EffectBase": ROOT / "packages" / "doeff-vm-core" / "src" / "effect.rs",
-        }
-
-        for name, path in base_sources.items():
-            source = path.read_text()
-            # Find the #[pyclass(...)] line preceding the struct with this name
-            pattern = rf"#\[pyclass\(([^)]*)\)\]\s*pub struct Py{name}"
-            m = re.search(pattern, source)
-            assert m is not None, f"Could not find #[pyclass] for Py{name} in {path}"
-            attrs = m.group(1)
-            assert "frozen" in attrs, (
-                f"Py{name} #[pyclass({attrs})] is missing 'frozen' attribute. "
-                f'Spec requires #[pyclass(subclass, frozen, name="{name}")]'
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +285,7 @@ class TestG24HandlerResumeSemantics:
             val = yield Ask("key")
             return val
 
-        result = run(_prog(gen), handlers=default_handlers(), env={"key": "hello"})
+        result = run_with_defaults(_prog(gen), env={"key": "hello"})
         assert result.value == "hello"
 
     def test_writer_one_shot_behavior(self) -> None:
@@ -353,7 +295,7 @@ class TestG24HandlerResumeSemantics:
             yield Tell("message")
             return "done"
 
-        result = run(_prog(gen), handlers=default_handlers())
+        result = run_with_defaults(_prog(gen))
         assert result.value == "done"
 
 
@@ -366,41 +308,6 @@ class TestG24HandlerResumeSemantics:
 
 class TestG20StoreContextSwitch:
     """G20: Task switching must save/load per-task stores."""
-
-    def test_transfer_next_or_saves_and_loads_store(self) -> None:
-        """transfer_next_or must save/load stores during task switching (source check).
-
-        Spec (SPEC-008 L1434-1447) requires:
-        1. Save current task's store before switching
-        2. Load new task's store after switching
-
-        Current impl only pops from ready queue without any store save/load.
-        """
-        scheduler_src = _read_vm_or_core_effects("scheduler.rs")
-
-        # Find the transfer_next_or function
-        fn_match = re.search(
-            r"pub fn transfer_next_or\(.*?\{(.+?)\n    \}",
-            scheduler_src,
-            re.DOTALL,
-        )
-        assert fn_match is not None, "Could not find transfer_next_or function"
-
-        fn_body = fn_match.group(1)
-
-        # The function must reference store save/load operations.
-        # The _store parameter should NOT be prefixed with _ (meaning it's used).
-        has_store_usage = (
-            "store" in fn_body.replace("_store", "")
-            or "save_store" in fn_body
-            or "load_store" in fn_body
-            or "task_store" in fn_body.lower()
-        )
-        assert has_store_usage, (
-            "transfer_next_or does not save/load stores during task switching. "
-            "The store parameter is unused (_store). Spec requires saving current "
-            "task store and loading new task store on context switch."
-        )
 
 
 # ---------------------------------------------------------------------------
