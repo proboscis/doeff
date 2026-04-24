@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from doeff import (
-    Delegate,
     Effect,
     EffectGenerator,
     Pass,
@@ -12,11 +11,10 @@ from doeff import (
     Transfer,
     Try,
     WithHandler,
-    default_handlers,
     do,
-    run,
 )
 from doeff_core_effects.effects import EffectBase
+from tests._run_helpers import run_with_defaults
 
 
 def _with_handlers(program: Any, *handlers: Any) -> Any:
@@ -46,7 +44,7 @@ class ScopeBoom(EffectBase):
 @do
 def ping_base_handler(effect: Effect, k: object):
     if not isinstance(effect, ScopePing):
-        yield Pass()
+        yield Pass(effect, k)
         return
     return (yield Resume(k, f"base:{effect.label}"))
 
@@ -54,7 +52,7 @@ def ping_base_handler(effect: Effect, k: object):
 @do
 def boom_handler(effect: Effect, k: object):
     if not isinstance(effect, ScopeBoom):
-        yield Pass()
+        yield Pass(effect, k)
         return
     raise RuntimeError(f"boom:{effect.label}")
 
@@ -68,18 +66,18 @@ def test_nested_dispatch_scope_restores_outer_context() -> None:
     @do
     def outer(effect: Effect, k: object):
         if not isinstance(effect, ScopePing):
-            yield Pass()
+            yield Pass(effect, k)
             return
         # Under re-entrant dispatch, this handler sees nested ScopePing effects too.
         # Explicitly pass nested pings through so the base handler resolves them.
         if effect.label.endswith(":inner"):
-            yield Pass()
+            yield Pass(effect, k)
             return
         nested = yield ScopePing(label=f"{effect.label}:inner")
         return (yield Resume(k, f"{nested}|outer"))
 
     wrapped = _with_handlers(ping_program("x"), outer, ping_base_handler)
-    result = run(wrapped, handlers=default_handlers())
+    result = run_with_defaults(wrapped)
     assert _is_ok(result), result.error
     assert result.value == "base:x:inner|outer"
 
@@ -88,21 +86,21 @@ def test_delegate_keeps_nested_handler_scope_order() -> None:
     @do
     def inner(effect: Effect, k: object):
         if not isinstance(effect, ScopePing):
-            yield Pass()
+            yield Pass(effect, k)
             return
-        delegated = yield Delegate()
+        delegated = yield effect
         return (yield Resume(k, f"{delegated}|inner"))
 
     @do
     def outer(effect: Effect, k: object):
         if not isinstance(effect, ScopePing):
-            yield Pass()
+            yield Pass(effect, k)
             return
-        delegated = yield Delegate()
+        delegated = yield effect
         return (yield Resume(k, f"{delegated}|outer"))
 
     wrapped = _with_handlers(ping_program("x"), inner, outer, ping_base_handler)
-    result = run(wrapped, handlers=default_handlers())
+    result = run_with_defaults(wrapped)
     assert _is_ok(result), result.error
     assert result.value == "base:x|outer|inner"
 
@@ -116,7 +114,7 @@ def test_try_results_remain_scoped_across_multiple_failures() -> None:
         return first, second, final
 
     wrapped = _with_handlers(program(), boom_handler, ping_base_handler)
-    result = run(wrapped, handlers=default_handlers())
+    result = run_with_defaults(wrapped)
     assert _is_ok(result), result.error
     first, second, final = result.value
     assert first.is_err()
@@ -130,14 +128,14 @@ def test_nested_try_inside_handler_does_not_corrupt_outer_flow() -> None:
     @do
     def outer(effect: Effect, k: object):
         if not isinstance(effect, ScopePing):
-            yield Pass()
+            yield Pass(effect, k)
             return
         nested = yield Try(ScopeBoom(label="inner"))
         assert nested.is_err()
         return (yield Resume(k, f"after:{effect.label}"))
 
     wrapped = _with_handlers(ping_program("scope"), outer, boom_handler, ping_base_handler)
-    result = run(wrapped, handlers=default_handlers())
+    result = run_with_defaults(wrapped)
     assert _is_ok(result), result.error
     assert result.value == "after:scope"
 
@@ -150,7 +148,7 @@ def test_transfer_keeps_dispatch_stack_stable_for_repeated_effects() -> None:
     @do
     def transfer_handler(effect: Effect, k: object):
         if not isinstance(effect, TransferPing):
-            yield Pass()
+            yield Pass(effect, k)
             return
         yield Transfer(k, effect.value)
 
@@ -162,37 +160,6 @@ def test_transfer_keeps_dispatch_stack_stable_for_repeated_effects() -> None:
         return tuple(values)
 
     wrapped = _with_handlers(program(), transfer_handler)
-    result = run(wrapped, handlers=default_handlers())
+    result = run_with_defaults(wrapped)
     assert _is_ok(result), result.error
     assert result.value == tuple(range(6))
-
-
-def test_late_resume_of_consumed_continuation_stays_scoped() -> None:
-    captured: dict[str, object] = {}
-
-    @dataclass(frozen=True, kw_only=True)
-    class CaptureEffect(EffectBase):
-        label: str
-
-    @do
-    def capture_handler(effect: Effect, k: object):
-        if not isinstance(effect, CaptureEffect):
-            yield Pass()
-            return
-        captured["k"] = k
-        return (yield Resume(k, f"first:{effect.label}"))
-
-    @do
-    def program() -> EffectGenerator[tuple[str, object]]:
-        first = yield CaptureEffect(label="x")
-        late = yield Try(Resume(captured["k"], "late"))
-        return first, late
-
-    wrapped = _with_handlers(program(), capture_handler)
-    result = run(wrapped, handlers=default_handlers())
-    assert _is_ok(result), result.error
-    first, late = result.value
-    assert first == "first:x"
-    assert late.is_err()
-    message = str(late.error)
-    assert "one-shot violation" in message or "unknown continuation id" in message

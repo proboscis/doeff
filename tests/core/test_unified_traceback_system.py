@@ -11,6 +11,7 @@ from doeff import EffectBase
 # REMOVED: from doeff import ProgramCallStack
 from doeff import Put
 from doeff_vm import Pass, Resume, WithHandler
+from tests._run_helpers import run_with_defaults
 # REMOVED: from doeff.trace import TraceDispatch
 # REMOVED: from doeff.traceback import attach_doeff_traceback, get_attached_doeff_traceback
 
@@ -25,148 +26,23 @@ class Explode(EffectBase):
     pass
 
 
-@pytest.mark.skip(reason="uses removed API: ProgramCallStack")
-def test_program_callstack_still_works_with_deprecation_warning() -> None:
-    @do
-    def body() -> Program[object]:
-        stack = yield ProgramCallStack()
-        return stack
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        result = run(body(), handlers=default_handlers())
-
-    assert any(issubclass(item.category, DeprecationWarning) for item in caught)
-    assert result.is_ok(), result.error
-    assert isinstance(result.value, (tuple, list))
 
 
-@pytest.mark.skip(reason="uses removed API: attach_doeff_traceback")
-def test_exceptions_attach_doeff_traceback_and_rendering() -> None:
-    @do
-    def body() -> Program[int]:
-        yield Put("x", 1)
-        raise ValueError("boom")
-        yield
-
-    result = run(body(), handlers=default_handlers(), store={"x": 0})
-    assert result.is_err()
-
-    error = result.error
-    traceback_data = result.traceback_data
-    assert traceback_data is not None
-    assert type(traceback_data).__name__ == "DoeffTracebackData"
-    assert isinstance(traceback_data.entries, list)
-    assert not hasattr(error, "__doeff_traceback_data__")
-    assert not hasattr(error, "__doeff_traceback__")
-
-    doeff_tb = attach_doeff_traceback(error, traceback_data=traceback_data)
-    assert doeff_tb is not None
-    default = doeff_tb.format_default()
-    chained = doeff_tb.format_chained()
-    sectioned = doeff_tb.format_sectioned()
-    short = doeff_tb.format_short()
-
-    assert "doeff Traceback (most recent call last):" in default
-    assert "doeff Traceback (most recent call last):" in chained
-    assert "Program Stack:" in sectioned
-    assert "ValueError: boom" in short
-
-    assert "RunResult status: err" in result.display(verbose=False)
-    assert "RunResult status: err" in result.display(verbose=True)
-
-
-@pytest.mark.skip(reason="uses removed API: attach_doeff_traceback")
-def test_attach_doeff_traceback_preserves_existing_active_chain_entries() -> None:
-    error = ValueError("boom")
-    error.doeff_execution_context = type(
-        "ExecutionContextStub",
-        (),
-        {
-            "active_chain": [
-                {
-                    "kind": "program_yield",
-                    "function_name": "ctx_parent",
-                    "source_file": "ctx.py",
-                    "source_line": 12,
-                    "sub_program_repr": "Gather(task)",
-                }
-            ],
-            "entries": [
-                {
-                    "kind": "spawn_boundary",
-                    "task_id": 4,
-                    "parent_task": 0,
-                    "spawn_site": {
-                        "function_name": "parent",
-                        "source_file": "parent.py",
-                        "source_line": 22,
-                    },
-                }
-            ],
-        },
-    )()
-
-    doeff_tb = attach_doeff_traceback(
-        error,
-        traceback_data={
-            "trace": [],
-            "active_chain": [
-                {
-                    "kind": "exception_site",
-                    "function_name": "child",
-                    "source_file": "child.py",
-                    "source_line": 3,
-                    "exception_type": "ValueError",
-                    "message": "boom",
-                }
-            ],
-        },
-    )
-
-    assert doeff_tb is not None
-    active_chain_types = {type(entry).__name__ for entry in doeff_tb.active_chain}
-    assert "ProgramYield" in active_chain_types
-    assert "SpawnBoundary" in active_chain_types
-    assert "ExceptionSite" in active_chain_types
-
-
-@pytest.mark.skip(reason="uses removed API: attach_doeff_traceback")
-def test_raw_vm_run_attaches_doeff_traceback_to_direct_exception() -> None:
-    vm = doeff_vm.PyVM()
-
-    @do
-    def body() -> Program[object]:
-        yield object()
-        return "unreachable"
-
-    with pytest.raises(TypeError) as exc_info:
-        vm.run(body())
-
-    error = exc_info.value
-    doeff_tb = get_attached_doeff_traceback(error)
-    assert doeff_tb is not None
-    assert not getattr(error, "__notes__", ())
-
-    rendered = doeff_tb.format_default()
-    assert "doeff Traceback (most recent call last):" in rendered
-    assert "body()" in rendered
-    assert "yielded value must be EffectBase or DoExpr, got " in rendered
 
 
 def test_delegation_chain_routes_to_outer_handler() -> None:
     @do
-    def inner_handler(effect: Effect, _k):
+    def inner_handler(effect: Effect, k):
         if isinstance(effect, NeedsHandler):
-            delegated_result = yield Delegate()
+            delegated_result = yield effect
             return delegated_result
-        yield Pass()
+        yield Pass(effect, k)
 
     @do
     def outer_handler(effect: Effect, k):
         if isinstance(effect, NeedsHandler):
             return (yield Resume(k, effect.value))
-        yield Pass()
+        yield Pass(effect, k)
 
     @do
     def body() -> Program[int]:
@@ -174,44 +50,6 @@ def test_delegation_chain_routes_to_outer_handler() -> None:
         return result
 
     wrapped = WithHandler(outer_handler, WithHandler(inner_handler, body()))
-    result = run(wrapped, handlers=default_handlers())
+    result = run_with_defaults(wrapped)
     assert result.is_ok(), result.error
     assert result.value == 7
-
-
-@pytest.mark.skip(reason="uses removed API: TraceDispatch")
-def test_handler_sources_and_exception_repr_for_thrown_handler_excludes_completed_dispatches() -> None:
-    @do
-    def crashing_handler(effect: Effect, _k):
-        if isinstance(effect, Explode):
-            raise RuntimeError("handler exploded")
-        yield Pass()
-
-    @do
-    def body() -> Program[int]:
-        yield Put("x", 1)
-        yield Explode()
-        return 0
-
-    wrapped = WithHandler(crashing_handler, body())
-    result = run(wrapped, handlers=default_handlers(), store={"x": 0})
-    assert result.is_err()
-
-    traceback_data = result.traceback_data
-    assert traceback_data is not None
-    trace_entries = traceback_data.entries
-    dispatches = [entry for entry in trace_entries if isinstance(entry, TraceDispatch)]
-    assert dispatches
-
-    python_throw = next(
-        dispatch
-        for dispatch in dispatches
-        if "Explode" in dispatch.effect_repr and dispatch.action == "threw"
-    )
-    assert python_throw.handler_kind == "python"
-    assert python_throw.handler_source_file is not None
-    assert python_throw.handler_source_line is not None
-    assert python_throw.exception_repr is not None
-    assert "handler exploded" in python_throw.exception_repr
-
-    assert all("Put" not in dispatch.effect_repr for dispatch in dispatches)

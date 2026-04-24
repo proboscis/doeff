@@ -36,13 +36,13 @@ def WithObserve(observer, body):
 
     Use WithObserveRaw if you need the underlying pyclass directly.
     """
+    if isinstance(observer, _VmCallable):
+        return WithObserveRaw(observer, body)
     if not callable(observer):
         raise TypeError(
             f"WithObserve: observer must be callable, got {type(observer).__name__}"
         )
-    if not isinstance(observer, _VmCallable):
-        observer = _VmCallable(observer)
-    return WithObserveRaw(observer, body)
+    return WithObserveRaw(_VmCallable(observer), body)
 from doeff.program import ResumeThrow, TransferThrow
 from doeff.run import run
 from doeff.result import Ok, Err, Some, Nothing, Maybe  # noqa: F811

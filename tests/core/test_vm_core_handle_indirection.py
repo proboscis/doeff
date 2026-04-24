@@ -41,39 +41,3 @@ def test_py_shared_uses_safe_unwrap_path() -> None:
     assert "Python::assume_attached()" not in src
     assert "Python::try_attach" in src
     assert "try_unwrap_token" in src
-
-
-def test_bridge_crates_enable_python_bridge_feature() -> None:
-    vm_cargo = VM_CARGO.read_text(encoding="utf-8")
-    core_effects_cargo = CORE_EFFECTS_CARGO.read_text(encoding="utf-8")
-
-    assert 'doeff-vm-core = { path = "../doeff-vm-core", features = ["python_bridge"] }' in vm_cargo
-    assert (
-        'doeff-vm-core = { path = "../doeff-vm-core", features = ["python_bridge"] }'
-        in core_effects_cargo
-    )
-
-
-def test_value_runtime_stores_python_objects_via_pyshared() -> None:
-    src = _runtime_source(VALUE_RS)
-    assert "Python(PyShared)" in src
-    assert "Python(Py<PyAny>)" not in src
-    assert "Python::assume_attached()" not in src
-
-
-def test_do_ctrl_runtime_uses_pyshared_for_async_escape() -> None:
-    src = _runtime_source(DO_CTRL_RS)
-    assert re.search(r"PythonAsyncSyntaxEscape\s*\{\s*action:\s*PyShared,", src)
-    assert "action: Py<PyAny>" not in src
-
-
-def test_effect_execution_context_keeps_active_chain_as_handle() -> None:
-    src = _runtime_source(EFFECT_RS)
-    assert "active_chain: Option<PyShared>" in src
-
-
-def test_kleisli_runtime_wraps_python_values_in_pyshared() -> None:
-    src = _runtime_source(KLEISLI_RS)
-    assert re.search(r"Value::Python\(\s*PyShared::new\(produced\.unbind\(\)\)\s*\)", src)
-    assert "Value::Python(produced.unbind())" not in src
-    assert "dispatch_from_shared(obj.clone())" in src

@@ -3,17 +3,12 @@
 use pyo3::prelude::*;
 
 use doeff_vm_core::do_ctrl::DoCtrl;
-use doeff_vm_core::driver::{Mode, StepResult};
-use doeff_vm_core::frame::Frame;
-use doeff_vm_core::ir_stream::IRStreamRef;
-use doeff_vm_core::py_shared::PyShared;
+use doeff_vm_core::driver::{Signal, StepResult};
 use doeff_vm_core::segment::Fiber;
-use doeff_vm_core::value::{CallableRef, Value};
+use doeff_vm_core::value::Value;
 use doeff_vm_core::VM;
 
-use crate::python_generator_stream::{
-    classify_python_object, python_to_value, value_to_python, PythonCallable, PythonGeneratorStream,
-};
+use crate::python_generator_stream::{classify_python_object, value_to_python};
 
 /// The Python-visible VM wrapper.
 #[pyclass(name = "PyVM")]
@@ -44,7 +39,6 @@ impl PyVM {
             self.vm.var_store.cells.len(),
         )
     }
-
 }
 
 impl PyVM {
@@ -56,9 +50,8 @@ impl PyVM {
         let root_fiber = Fiber::new(None);
         let root_fid = self.vm.alloc_segment(root_fiber);
         self.vm.current_segment = Some(root_fid);
-        self.vm.mode = Mode::Eval(doctrl);
 
-        let result = self.step_loop()?;
+        let result = self.step_loop(Signal::eval(doctrl))?;
         self.vm.end_active_run_session();
 
         Ok(value_to_python(py, result).unbind())
@@ -67,19 +60,21 @@ impl PyVM {
     /// Convert a VMError to a Python exception.
     /// For UncaughtException with a Python error inside, re-raise the original.
     /// For unhandled/no-matching handler errors, include the effect type name
-    /// and attach __doeff_traceback__ from the VM's last_error_context.
-    fn convert_vm_error(&mut self, err: doeff_vm_core::VMError) -> pyo3::PyErr {
+    /// and attach __doeff_traceback__ from the threaded diagnostic context.
+    fn convert_vm_error(
+        &mut self,
+        err: doeff_vm_core::VMError,
+        context: Option<Vec<Value>>,
+    ) -> pyo3::PyErr {
         match err {
             doeff_vm_core::VMError::UncaughtException { exception } => {
-                let ctx = self.vm.last_error_context.take();
                 Python::attach(|py| {
                     let py_obj = value_to_python(py, exception);
                     // Attach VM-captured traceback to the exception
-                    if let Some(frames) = ctx {
+                    if let Some(frames) = context {
                         if !frames.is_empty() {
-                            let py_frames: Vec<_> = frames.into_iter()
-                                .map(|v| value_to_python(py, v))
-                                .collect();
+                            let py_frames: Vec<_> =
+                                frames.into_iter().map(|v| value_to_python(py, v)).collect();
                             if let Ok(tb_list) = pyo3::types::PyList::new(py, &py_frames) {
                                 let _ = py_obj.setattr("__doeff_traceback__", tb_list);
                             }
@@ -88,31 +83,36 @@ impl PyVM {
                     if py_obj.is_instance_of::<pyo3::exceptions::PyBaseException>() {
                         pyo3::PyErr::from_value(py_obj.unbind().into_bound(py))
                     } else {
-                        pyo3::exceptions::PyRuntimeError::new_err(
-                            format!("uncaught exception: {:?}", py_obj)
-                        )
+                        pyo3::exceptions::PyRuntimeError::new_err(format!(
+                            "uncaught exception: {:?}",
+                            py_obj
+                        ))
                     }
                 })
             }
             doeff_vm_core::VMError::UnhandledEffect { effect } => {
-                self.make_effect_error("unhandled effect", &effect)
+                self.make_effect_error("unhandled effect", &effect, context)
             }
             doeff_vm_core::VMError::NoMatchingHandler { effect } => {
-                self.make_effect_error("no handler found for effect", &effect)
+                self.make_effect_error("no handler found for effect", &effect, context)
             }
             doeff_vm_core::VMError::DelegateNoOuterHandler { effect } => {
-                self.make_effect_error("Pass: no outer handler", &effect)
+                self.make_effect_error("Pass: no outer handler", &effect, context)
             }
             other => pyo3::exceptions::PyRuntimeError::new_err(format!("{}", other)),
         }
     }
 
     /// Create a RuntimeError for an unhandled effect, with __doeff_traceback__ attached.
-    fn make_effect_error(&mut self, label: &str, effect: &Value) -> pyo3::PyErr {
-        let ctx = self.vm.last_error_context.take();
+    fn make_effect_error(
+        &self,
+        label: &str,
+        effect: &Value,
+        context: Option<Vec<Value>>,
+    ) -> pyo3::PyErr {
         Python::attach(|py| {
             let desc = Self::describe_effect(py, effect);
-            let chain: Vec<String> = ctx
+            let chain: Vec<String> = context
                 .as_ref()
                 .and_then(|c| Self::extract_handler_chain(c))
                 .unwrap_or_default();
@@ -128,10 +128,9 @@ impl PyVM {
             };
             let err = pyo3::exceptions::PyRuntimeError::new_err(msg);
             // Attach doeff traceback if captured
-            if let Some(frames) = ctx {
-                let py_frames: Vec<_> = frames.into_iter()
-                    .map(|v| value_to_python(py, v))
-                    .collect();
+            if let Some(frames) = context {
+                let py_frames: Vec<_> =
+                    frames.into_iter().map(|v| value_to_python(py, v)).collect();
                 let tb_list = pyo3::types::PyList::new(py, &py_frames).unwrap();
                 let exc_val = err.value(py);
                 let _ = exc_val.setattr("__doeff_traceback__", tb_list);
@@ -143,7 +142,7 @@ impl PyVM {
     /// Pull the handler-chain entry out of a captured execution context.
     ///
     /// The VM stores the chain as ``["handler", "chain", [name1, name2, ...]]``
-    /// in ``last_error_context``. We strip consecutive duplicates to avoid the
+    /// in the threaded diagnostic context. We strip consecutive duplicates to avoid the
     /// ``handler.<locals>.clause`` repeats that Python closures produce.
     fn extract_handler_chain(ctx: &[Value]) -> Option<Vec<String>> {
         for entry in ctx {
@@ -187,10 +186,13 @@ impl PyVM {
         match effect {
             Value::Opaque(shared) => {
                 let obj = shared.inner().bind(py);
-                let type_name = obj.get_type().qualname()
+                let type_name = obj
+                    .get_type()
+                    .qualname()
                     .map(|n| n.to_string())
                     .unwrap_or_else(|_| "<unknown>".to_string());
-                let repr = obj.repr()
+                let repr = obj
+                    .repr()
                     .map(|r| r.to_string())
                     .unwrap_or_else(|_| type_name.clone());
                 if repr == type_name {
@@ -203,28 +205,31 @@ impl PyVM {
         }
     }
 
-    fn step_loop(&mut self) -> PyResult<Value> {
+    fn step_loop(&mut self, mut signal: Signal) -> PyResult<Value> {
         loop {
-            match self.vm.step() {
-                StepResult::Continue => continue,
-                StepResult::Done(value) => return Ok(value),
-                StepResult::Error(err) => {
-                    // Ensure context is captured for ALL error paths
-                    if self.vm.last_error_context.is_none() {
-                        self.vm.last_error_context =
-                            Some(self.vm.collect_rich_execution_context());
-                    }
-                    return Err(self.convert_vm_error(err));
+            match self.vm.step(signal) {
+                StepResult::Continue(next_signal) => {
+                    signal = next_signal;
                 }
-                StepResult::External(call) => {
+                StepResult::Done(value) => return Ok(value),
+                StepResult::Error { error, context } => {
+                    let context =
+                        context.or_else(|| Some(self.vm.collect_rich_execution_context()));
+                    return Err(self.convert_vm_error(error, context));
+                }
+                StepResult::External { call, context } => {
                     match call.callable {
                         Value::Callable(callable) => {
                             match callable.call(call.args) {
-                                Ok(value) => self.vm.receive_external_result(Ok(value)),
+                                Ok(value) => {
+                                    signal = Signal::from_external_result(Ok(value))
+                                        .with_error_context(context);
+                                }
                                 Err(doeff_vm_core::VMError::UncaughtException { exception }) => {
                                     // Route Python exceptions through VM error
                                     // handling so try/except blocks can catch them.
-                                    self.vm.receive_external_result(Err(exception));
+                                    signal = Signal::from_external_result(Err(exception))
+                                        .with_error_context(context);
                                 }
                                 Err(err) => {
                                     return Err(pyo3::exceptions::PyRuntimeError::new_err(

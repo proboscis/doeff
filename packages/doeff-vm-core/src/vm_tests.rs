@@ -8,7 +8,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::do_ctrl::DoCtrl;
-    use crate::driver::{Mode, StepResult};
+    use crate::driver::{Signal, StepResult};
     use crate::error::VMError;
     use crate::frame::Frame;
     use crate::ids::FiberId;
@@ -93,12 +93,15 @@ mod tests {
     // -----------------------------------------------------------------------
 
     fn run_to_completion(vm: &mut VM) -> Result<Value, VMError> {
+        let mut signal = Signal::send(Value::Unit);
         loop {
-            match vm.step() {
-                StepResult::Continue => continue,
+            match vm.step(signal) {
+                StepResult::Continue(next_signal) => {
+                    signal = next_signal;
+                }
                 StepResult::Done(value) => return Ok(value),
-                StepResult::Error(err) => return Err(err),
-                StepResult::External(_) => {
+                StepResult::Error { error, .. } => return Err(error),
+                StepResult::External { .. } => {
                     return Err(VMError::internal("unexpected external call in test"))
                 }
             }
@@ -112,7 +115,6 @@ mod tests {
         fiber.push_frame(Frame::program(stream_ref, None));
         let fid = vm.alloc_segment(fiber);
         vm.current_segment = Some(fid);
-        vm.mode = Mode::Send(Value::Unit); // initial resume
         vm
     }
 
@@ -360,7 +362,6 @@ mod tests {
         }
 
         vm.current_segment = Some(root_fid);
-        vm.mode = Mode::Send(Value::Unit);
 
         let result = run_to_completion(&mut vm);
         assert!(result.is_ok(), "got error: {:?}", result.err());
@@ -718,6 +719,8 @@ mod tests {
             struct H { reply: i64 }
 
             impl Callable for H {
+                fn as_any(&self) -> &dyn std::any::Any { self }
+
                 fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
                     Err(VMError::internal("H: use call_handler"))
                 }
@@ -842,6 +845,8 @@ mod tests {
             struct H { reply: i64 }
 
             impl Callable for H {
+                fn as_any(&self) -> &dyn std::any::Any { self }
+
                 fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
                     Err(VMError::internal("H: use call_handler"))
                 }
@@ -948,6 +953,8 @@ mod tests {
             struct H;
 
             impl Callable for H {
+                fn as_any(&self) -> &dyn std::any::Any { self }
+
                 fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
                     Err(VMError::internal("H: use call_handler"))
                 }

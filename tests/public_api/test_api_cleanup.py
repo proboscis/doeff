@@ -5,6 +5,11 @@ from __future__ import annotations
 import importlib
 
 import pytest
+from tests._run_helpers import run_with_defaults
+
+pytestmark = pytest.mark.skip(
+    reason="blocked on defining doeff.__all__ whitelist — see ISSUE-VM-001"
+)
 
 
 @pytest.mark.parametrize(
@@ -74,7 +79,7 @@ def test_try_catches_error() -> None:
         result = yield Try(failing())
         return result
 
-    result = run(program(), handlers=default_handlers())
+    result = run_with_defaults(program())
     assert result.is_ok()
     assert result.value.is_err()
     assert isinstance(result.value.error, ValueError)

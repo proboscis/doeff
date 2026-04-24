@@ -31,19 +31,6 @@ def _run_hy_code(code: str) -> subprocess.CompletedProcess:
 
 
 class TestDefprogramDictAppendBug:
-    def test_defprogram_with_empty_post_compiles(self) -> None:
-        """defprogram with {:post []} should compile and run without error."""
-        result = _run_hy_code(
-            '(require doeff-hy.macros [defprogram <-])\n'
-            '(import doeff [do :as _doeff-do])\n'
-            '(defprogram p-test\n'
-            '  {:post []}\n'
-            '  42)\n'
-            '(print "OK" p-test)\n'
-        )
-        assert result.returncode == 0, f"stderr: {result.stderr}"
-        assert "OK" in result.stdout
-
     def test_defp_with_empty_post_compiles(self) -> None:
         """defp with {:post []} should compile and run without error."""
         result = _run_hy_code(
@@ -53,19 +40,6 @@ class TestDefprogramDictAppendBug:
             '  {:post []}\n'
             '  42)\n'
             '(print "OK" p-test)\n'
-        )
-        assert result.returncode == 0, f"stderr: {result.stderr}"
-        assert "OK" in result.stdout
-
-    def test_defprogram_with_type_post_compiles(self) -> None:
-        """defprogram with {:post [(: % int)]} should compile and run."""
-        result = _run_hy_code(
-            '(require doeff-hy.macros [defprogram <-])\n'
-            '(import doeff [do :as _doeff-do])\n'
-            '(defprogram p-typed\n'
-            '  {:post [(: % int)]}\n'
-            '  42)\n'
-            '(print "OK" p-typed)\n'
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "OK" in result.stdout

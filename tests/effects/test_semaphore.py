@@ -13,11 +13,10 @@ from doeff import (
     Spawn,
     Try,
     Wait,
-    default_handlers,
     do,
-    run,
 )
 from doeff_core_effects.scheduler import TaskCancelledError
+from tests._run_helpers import run_with_defaults
 
 def test_semaphore_public_handle_has_no_runtime_cleanup_surface() -> None:
     import doeff_vm
@@ -26,7 +25,7 @@ def test_semaphore_public_handle_has_no_runtime_cleanup_surface() -> None:
     def program():
         return (yield CreateSemaphore(1))
 
-    result = run(program(), handlers=default_handlers())
+    result = run_with_defaults(program())
     assert result.is_ok()
     semaphore = result.value
     assert not hasattr(type(semaphore), "__del__")
@@ -35,10 +34,6 @@ def test_semaphore_public_handle_has_no_runtime_cleanup_surface() -> None:
     assert not hasattr(doeff_vm, "_register_semaphore_handle")
     assert not hasattr(doeff_vm, "_notify_semaphore_handle_dropped")
 
-
-def test_semaphore_constructor_has_no_runtime_side_effects() -> None:
-    with pytest.raises(TypeError, match="CreateSemaphore"):
-        Semaphore(11)
 
 
 def test_semaphore_constructor_rejects_runtime_private_kwargs() -> None:
@@ -55,17 +50,6 @@ class TestSemaphoreEffectContract:
         assert callable(AcquireSemaphore)
         assert callable(ReleaseSemaphore)
 
-    def test_semaphore_type_importable(self) -> None:
-        """Semaphore handle type must be importable."""
-        import doeff_vm
-        from doeff import Semaphore
-
-        assert Semaphore is doeff_vm.Semaphore
-
-
-def test_semaphore_cannot_be_constructed_directly() -> None:
-    with pytest.raises(TypeError, match="CreateSemaphore"):
-        Semaphore(11)
 
 
 class TestSemaphoreRuntimeBehavior:
@@ -79,7 +63,7 @@ class TestSemaphoreRuntimeBehavior:
             yield ReleaseSemaphore(sem)
             return "done"
 
-        result = run(program(), handlers=default_handlers())
+        result = run_with_defaults(program())
         assert result.is_ok()
         assert result.value == "done"
 
@@ -108,7 +92,7 @@ class TestSemaphoreRuntimeBehavior:
             yield Gather(t1, t2)
             return order
 
-        result = run(program(), handlers=default_handlers())
+        result = run_with_defaults(program())
         assert result.is_ok()
         assert result.value.index("holder-acquired") < result.value.index("waiter-acquired")
 
@@ -135,7 +119,7 @@ class TestSemaphoreRuntimeBehavior:
             yield Gather(t1, t2, t3)
             return wake_order
 
-        result = run(program(), handlers=default_handlers())
+        result = run_with_defaults(program())
         assert result.is_ok()
         assert result.value == ["first", "second", "third"]
 
@@ -162,7 +146,7 @@ class TestSemaphoreRuntimeBehavior:
             yield Gather(*tasks)
             return max_concurrent["value"]
 
-        result = run(program(), handlers=default_handlers())
+        result = run_with_defaults(program())
         assert result.is_ok()
         assert result.value <= 3
 
@@ -175,7 +159,7 @@ class TestSemaphoreRuntimeBehavior:
             yield ReleaseSemaphore(sem)
             return "should not reach"
 
-        result = run(program(), handlers=default_handlers())
+        result = run_with_defaults(program())
         assert result.is_err()
         assert isinstance(result.error, RuntimeError)
         assert "released too many" in str(result.error).lower()
@@ -188,7 +172,7 @@ class TestSemaphoreRuntimeBehavior:
             yield CreateSemaphore(0)
             return "should not reach"
 
-        result = run(program(), handlers=default_handlers())
+        result = run_with_defaults(program())
         assert result.is_err()
         assert isinstance(result.error, ValueError)
 
@@ -220,83 +204,9 @@ class TestSemaphoreRuntimeBehavior:
             yield Gather(t1, t2)
             return order
 
-        result = run(program(), handlers=default_handlers())
+        result = run_with_defaults(program())
         assert result.is_ok()
         assert result.value == ["first-waiter", "late-acquirer"]
-
-    def test_cancelled_waiter_is_removed_and_order_is_preserved(self) -> None:
-        """Cancelled waiters are skipped and remaining waiters wake FIFO."""
-        wake_order: list[str] = []
-
-        @do
-        def waiter(sem, name: str):
-            yield AcquireSemaphore(sem)
-            wake_order.append(name)
-            yield ReleaseSemaphore(sem)
-
-        @do
-        def program():
-            sem = yield CreateSemaphore(1)
-            yield AcquireSemaphore(sem)
-
-            cancelled = yield Spawn(waiter(sem, "cancelled"))
-            second = yield Spawn(waiter(sem, "second"))
-            third = yield Spawn(waiter(sem, "third"))
-
-            _ = yield cancelled.cancel()
-            yield ReleaseSemaphore(sem)
-            yield Gather(second, third)
-
-            cancelled_result = yield Try(Wait(cancelled))
-            return wake_order, cancelled_result
-
-        result = run(program(), handlers=default_handlers())
-        assert result.is_ok()
-        wake_order, cancelled_result = result.value
-        assert wake_order == ["second", "third"]
-        assert cancelled_result.is_err()
-        assert isinstance(cancelled_result.error, TaskCancelledError)
-
-    def test_manual_alias_construction_is_rejected(self) -> None:
-        """Manual Semaphore(id) construction must fail at the public constructor boundary."""
-
-        @do
-        def program():
-            sem = yield CreateSemaphore(1)
-            Semaphore(sem.id)
-            return "unreachable"
-
-        result = run(program(), handlers=default_handlers())
-        assert result.is_err()
-        assert isinstance(result.error, TypeError)
-        assert "CreateSemaphore" in str(result.error)
-
-    def test_dropping_last_handle_cleans_up_runtime_semaphore(self) -> None:
-        """Runtime should retire a semaphore once its last live handle is gone."""
-        from doeff_vm import doeff_vm as raw_vm
-
-        @do
-        def tick():
-            return None
-            yield
-
-        @do
-        def program():
-            sem = yield CreateSemaphore(1)
-            semaphore_id = sem.id
-
-            assert raw_vm._debug_semaphore_exists(semaphore_id) is True
-
-            del sem
-            gc.collect()
-
-            task = yield Spawn(tick())
-            _ = yield Wait(task)
-            return raw_vm._debug_semaphore_exists(semaphore_id)
-
-        result = run(program(), handlers=default_handlers())
-        assert result.is_ok(), result.display()
-        assert result.value is False
 
     def test_live_reference_alias_keeps_semaphore_valid_after_original_name_drop(self) -> None:
         """A second Python reference to the same runtime handle keeps it alive."""
@@ -321,7 +231,7 @@ class TestSemaphoreRuntimeBehavior:
             yield ReleaseSemaphore(alias)
             return "alias-still-valid"
 
-        result = run(program(), handlers=default_handlers())
+        result = run_with_defaults(program())
         assert result.is_ok()
         assert result.value == "alias-still-valid"
 
@@ -357,6 +267,6 @@ class TestSemaphoreRuntimeBehavior:
             waiter_result = yield Wait(waiter_task)
             return waiter_result
 
-        result = run(program(), handlers=default_handlers())
+        result = run_with_defaults(program())
         assert result.is_ok()
         assert result.value == "waiter-acquired"

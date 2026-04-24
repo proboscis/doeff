@@ -2,14 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-import pytest
-
-from doeff import Ask, async_run, default_async_handlers, do
-# REMOVED: from doeff_core_effects.effects import ask
+from doeff import Ask, do
+from tests._run_helpers import run_with_defaults
 
 
-@pytest.mark.asyncio
-async def test_hashable_env_keys() -> None:
+def test_hashable_env_keys() -> None:
     """Non-string hashable keys work as env keys."""
 
     class ConfigKey:
@@ -28,39 +25,22 @@ async def test_hashable_env_keys() -> None:
     def program():
         return (yield Ask(key))
 
-    result = await async_run(
+    result = run_with_defaults(
         program(),
-        handlers=default_async_handlers(),
         env={key: "postgres://localhost"},
     )
     assert result.value == "postgres://localhost"
 
 
-@pytest.mark.asyncio
-async def test_string_keys_still_work() -> None:
+def test_string_keys_still_work() -> None:
     """String keys continue to work after HashedPyKey migration."""
 
     @do
     def program():
         return (yield Ask("key"))
 
-    result = await async_run(
+    result = run_with_defaults(
         program(),
-        handlers=default_async_handlers(),
         env={"key": "value"},
     )
     assert result.value == "value"
-
-
-def test_pylocal_effect_constructible() -> None:
-    """PyLocal effect can be constructed from Python."""
-    from doeff_vm import PyLocal
-
-    effect = PyLocal(env_update={"a": 1}, sub_program=None)
-    assert effect.env_update == {"a": 1}
-
-
-@pytest.mark.skip(reason="uses removed API: ask (lowercase)")
-def test_ask_rejects_unhashable_keys() -> None:
-    with pytest.raises(TypeError, match=r"key must be hashable"):
-        ask([])  # type: ignore[arg-type]
