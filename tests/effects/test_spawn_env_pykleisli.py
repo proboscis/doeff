@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from doeff import Ask, Gather, Local, Spawn, do, default_handlers, run
+from doeff import Ask, Gather, Local, Spawn, do
+from tests._run_helpers import run_with_defaults
 
 
 @do
@@ -22,7 +23,7 @@ class TestAskEnvPyKleisli:
             func = yield Ask("injected")
             return func(42)
 
-        result = run(program(), handlers=default_handlers(), env={"injected": _plain_func})
+        result = run_with_defaults(program(), env={"injected": _plain_func})
         assert result.is_ok(), result.display()
         assert result.value == 420
 
@@ -34,7 +35,7 @@ class TestAskEnvPyKleisli:
             result = yield func(42)
             return result
 
-        result = run(program(), handlers=default_handlers(), env={"injected": _kleisli_func})
+        result = run_with_defaults(program(), env={"injected": _kleisli_func})
         assert result.is_ok(), f"PyKleisli in env should survive Ask round-trip: {result.display()}"
         assert result.value == 420
 
@@ -43,7 +44,7 @@ class TestAskEnvPyKleisli:
         def program():
             return (yield Ask("injected"))
 
-        result = run(program(), handlers=default_handlers(), env={"injected": _kleisli_func})
+        result = run_with_defaults(program(), env={"injected": _kleisli_func})
         assert result.is_ok(), result.display()
         assert result.value is _kleisli_func
 
@@ -56,7 +57,7 @@ class TestAskEnvPyKleisli:
             return result
 
         env = {"injected": _kleisli_func}
-        result = run(Local(env, program()), handlers=default_handlers())
+        result = run_with_defaults(Local(env, program()))
         assert result.is_ok(), (
             f"PyKleisli in Local env should survive Ask round-trip: {result.display()}"
         )
@@ -76,7 +77,7 @@ class TestSpawnEnvPyKleisli:
             results = yield Gather(t)
             return results[0]
 
-        result = run(Local({"injected": _plain_func}, parent()), handlers=default_handlers())
+        result = run_with_defaults(Local({"injected": _plain_func}, parent()))
         assert result.is_ok(), result.display()
         assert result.value == 420
 
@@ -94,6 +95,6 @@ class TestSpawnEnvPyKleisli:
             results = yield Gather(t)
             return results[0]
 
-        result = run(Local({"injected": _kleisli_func}, parent()), handlers=default_handlers())
+        result = run_with_defaults(Local({"injected": _kleisli_func}, parent()))
         assert result.is_ok(), f"PyKleisli should survive Spawn env propagation: {result.display()}"
         assert result.value == 420

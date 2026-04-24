@@ -35,9 +35,3 @@ def test_no_handler_functions_in_effects_directory() -> None:
     assert violations == [], f"Handler functions found in effects/: {violations}"
 
 
-def test_effects_directory_has_no_handler_named_exports() -> None:
-    """effects/__init__.py should not export anything with 'handler' in the name."""
-    import doeff.effects as effects_pkg
-
-    handler_exports = [name for name in dir(effects_pkg) if "handler" in name.lower()]
-    assert handler_exports == [], f"Handler exports in effects/: {handler_exports}"

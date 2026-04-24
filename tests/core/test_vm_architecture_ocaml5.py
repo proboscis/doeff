@@ -10,7 +10,6 @@ They ensure the architecture converges toward OCaml 5:
 If these tests fail, the architecture has regressed.
 """
 
-import pytest
 from doeff import (
     Effect,
     EffectBase,
@@ -19,10 +18,9 @@ from doeff import (
     Spawn,
     Gather,
     WithHandler,
-    default_handlers,
     do,
-    run,
 )
+from tests._run_helpers import run_with_defaults
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +65,7 @@ def test_resume_returns_to_same_execution_context():
         val = yield MyEffect()
         return val
 
-    result = run(WithHandler(_handler, _program()), handlers=default_handlers())
+    result = run_with_defaults(WithHandler(_handler, _program()))
     assert result.is_ok()
     assert result.value == "resumed_value"
 
@@ -91,9 +89,8 @@ def test_continuation_is_one_shot():
 
         return (yield MyEffect())
 
-    result = run(
+    result = run_with_defaults(
         WithHandler(_double_resume_handler, _program()),
-        handlers=default_handlers(),
     )
     assert result.is_err()
     assert "one-shot" in str(result.error).lower() or "consumed" in str(
@@ -138,7 +135,7 @@ def test_spawned_tasks_share_handler_state():
             shared["value"] = effect.value
             return (yield Resume(k, None))
         else:
-            yield Pass()
+            yield Pass(effect, k)
 
     @do
     def _put_task():
@@ -157,8 +154,8 @@ def test_spawned_tasks_share_handler_state():
         result = yield Gather(t2)
         return result
 
-    result = run(
-        WithHandler(_shared_handler, _program()), handlers=default_handlers()
+    result = run_with_defaults(
+        WithHandler(_shared_handler, _program())
     )
     assert result.is_ok()
     assert result.value == [42], f"Spawned task should see Put(42), got {result.value}"
@@ -179,7 +176,7 @@ def test_spawn_does_not_duplicate_handlers():
     @do
     def _counting_handler(effect: Effect, k):
         if not isinstance(effect, CountEffect):
-            yield Pass()
+            yield Pass(effect, k)
             return
         handler_call_count["n"] += 1
         return (yield Resume(k, handler_call_count["n"]))
@@ -196,8 +193,8 @@ def test_spawn_does_not_duplicate_handlers():
         results = list((yield Gather(*tasks)))
         return results
 
-    result = run(
-        WithHandler(_counting_handler, _program()), handlers=default_handlers()
+    result = run_with_defaults(
+        WithHandler(_counting_handler, _program())
     )
     assert result.is_ok()
     # All 10 tasks should have called the SAME handler instance
@@ -227,7 +224,7 @@ def test_dispatch_does_not_corrupt_shared_handler_chain():
         if isinstance(effect, TaskEffect):
             return (yield Resume(k, "ok"))
         else:
-            yield Pass()
+            yield Pass(effect, k)
 
     @do
     def _task(task_id):
@@ -241,8 +238,8 @@ def test_dispatch_does_not_corrupt_shared_handler_chain():
             tasks.append((yield Spawn(_task(i))))
         return list((yield Gather(*tasks)))
 
-    result = run(
-        WithHandler(_handler, _program()), handlers=default_handlers()
+    result = run_with_defaults(
+        WithHandler(_handler, _program())
     )
     assert result.is_ok()
     assert len(result.value) == 5
@@ -278,7 +275,7 @@ def test_handler_state_survives_across_multiple_dispatches():
         elif isinstance(effect, GetCount):
             return (yield Resume(k, counter["n"]))
         else:
-            yield Pass()
+            yield Pass(effect, k)
 
     @do
     def _program():
@@ -287,8 +284,8 @@ def test_handler_state_survives_across_multiple_dispatches():
         yield Inc()
         return (yield GetCount())
 
-    result = run(
-        WithHandler(_counter_handler, _program()), handlers=default_handlers()
+    result = run_with_defaults(
+        WithHandler(_counter_handler, _program())
     )
     assert result.is_ok()
     assert result.value == 3

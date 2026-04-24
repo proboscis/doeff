@@ -131,8 +131,10 @@ dev = [
     "doeff-preset",
     "doeff-vm",
     "doeff-traverse",
+    "doeff-time",
     "pytest-xdist>=3.8.0",
     "pytest-timeout>=2.3.1",
     "hy>=1.2.0",
     "doeff-hy",
+    "cloudpickle>=3.0",
 ]

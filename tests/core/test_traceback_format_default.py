@@ -27,6 +27,7 @@ from doeff import (
 from doeff import Get, Put, Put
 from doeff_core_effects.scheduler import Gather
 from doeff_core_effects.scheduler import Spawn
+from tests._run_helpers import run_with_defaults
 # REMOVED: from doeff.trace import ProgramYield
 # REMOVED: from doeff.traceback import attach_doeff_traceback, build_doeff_traceback
 
@@ -1522,7 +1523,7 @@ def test_runtime_interceptor_frame_inside_handler_dispatch_is_not_handler() -> N
         (StatePutEffect,),
         "include",
     )
-    result = run(wrapped, handlers=default_handlers(), store={"intercepted": 0})
+    result = run_with_defaults(wrapped, store={"intercepted": 0})
     assert result.is_err()
 
     tb = _tb_from_run_result(result)
@@ -1583,7 +1584,7 @@ def test_format_default_filters_resumed_effects_by_default() -> None:
         raise ValueError("boom")
         yield
 
-    result = run(body(), handlers=default_handlers(), store={"k": 0})
+    result = run_with_defaults(body(), store={"k": 0})
     assert result.is_err()
 
     rendered = _tb_from_run_result(result).format_default()
@@ -1685,7 +1686,7 @@ def test_format_default_spawn_shows_effect_in_child() -> None:
         task = yield Spawn(WithHandler(crash_handler, child()))
         return (yield Gather(task))
 
-    result = run(parent(), handlers=default_handlers())
+    result = run_with_defaults(parent())
     assert result.is_err()
 
     rendered = _tb_from_run_result(result).format_default()
@@ -1728,7 +1729,7 @@ def test_spawn_site_attribution_under_single_delegate_handler() -> None:
         task = yield Spawn(WithHandler(crash_handler, child()))
         return (yield Gather(task))
 
-    result = run(parent_single(), handlers=default_handlers())
+    result = run_with_defaults(parent_single())
     assert result.is_err()
 
     tb = _tb_from_run_result(result)
@@ -1761,7 +1762,7 @@ def test_spawn_site_attribution_under_nested_delegate_handlers() -> None:
         task = yield Spawn(WithHandler(crash_handler, child()))
         return (yield Gather(task))
 
-    result = run(parent_nested(), handlers=default_handlers())
+    result = run_with_defaults(parent_nested())
     assert result.is_err()
 
     tb = _tb_from_run_result(result)

@@ -15,15 +15,14 @@ import pytest
 from doeff import (
     Gather,
     Spawn,
-    default_handlers,
     do,
-    run,
     slog,
 )
 from doeff import Await
 from doeff_vm import GetExecutionContext
 from doeff import Try
 from doeff_core_effects.cache import FrozenDict
+from tests._run_helpers import run_with_defaults
 
 TIMEOUT_SECONDS = 60
 
@@ -36,7 +35,7 @@ def _run_with_timeout(program):
     old = signal.signal(signal.SIGALRM, _timeout_handler)
     signal.alarm(TIMEOUT_SECONDS)
     try:
-        return run(program, handlers=default_handlers())
+        return run_with_defaults(program)
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old)
@@ -54,7 +53,7 @@ N = 500
 def _spawn_gather_n(factory, n: int):
     tasks = []
     for i in range(n):
-        t = yield Spawn(factory(i), daemon=False)
+        t = yield Spawn(factory(i))
         tasks.append(t)
     return list((yield Gather(*tasks)))
 

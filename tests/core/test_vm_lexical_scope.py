@@ -24,6 +24,7 @@ from doeff import (
     run,
 )
 from doeff import EffectGenerator
+from tests._run_helpers import run_with_defaults
 
 
 @do
@@ -61,7 +62,7 @@ def test_alloc_var_and_read_var_round_trip() -> None:
         var = yield AllocVar(42)
         return (yield ReadVar(var))
 
-    result = run(program(), handlers=default_handlers())
+    result = run_with_defaults(program())
     assert result.value == 42
 
 
@@ -73,7 +74,7 @@ def test_write_var_shadows_inside_local_child_scope() -> None:
         outer = yield ReadVar(var)
         return inner, outer
 
-    result = run(program(), handlers=default_handlers())
+    result = run_with_defaults(program())
     assert result.value == (20, 10)
 
 
@@ -85,7 +86,7 @@ def test_write_var_nonlocal_updates_parent_scope() -> None:
         outer = yield ReadVar(var)
         return inner, outer
 
-    result = run(program(), handlers=default_handlers())
+    result = run_with_defaults(program())
     assert result.value == (20, 20)
 
 
@@ -97,7 +98,7 @@ def test_spawn_inherits_scope_variables_from_yield_site() -> None:
         [value] = yield Gather(task)
         return value
 
-    result = run(program(), handlers=default_handlers())
+    result = run_with_defaults(program())
     assert result.value == 42
 
 
@@ -110,7 +111,7 @@ def test_spawn_shadow_write_does_not_mutate_parent_scope() -> None:
         outer = yield ReadVar(var)
         return inner, outer
 
-    result = run(program(), handlers=default_handlers())
+    result = run_with_defaults(program())
     assert result.value == (99, 10)
 
 
@@ -122,7 +123,7 @@ def test_spawn_does_not_duplicate_handler_chain() -> None:
         [spawned] = yield Gather(task)
         return direct, spawned
 
-    result = run(program(), handlers=default_handlers())
+    result = run_with_defaults(program())
     assert result.value[1] == result.value[0]
 
 

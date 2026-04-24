@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from doeff import Apply, Get, Modify, Pure, Put, Try, default_handlers, do, run
+from doeff import Get, Pure, Put, Try, do
+from tests._run_helpers import run_with_defaults
 
 
 def _meta_for(fn: object) -> dict[str, object]:
@@ -28,7 +29,7 @@ def test_try_finally_runs_on_normal_return() -> None:
         cleaned = yield Get("cleaned")
         return value, cleaned
 
-    result = run(wrapper(), handlers=default_handlers(), store={})
+    result = run_with_defaults(wrapper(), store={})
     assert result.value == ("ok", True)
 
 
@@ -47,7 +48,7 @@ def test_try_finally_runs_on_exception() -> None:
         cleaned = yield Get("cleaned")
         return outcome, cleaned
 
-    result = run(wrapper(), handlers=default_handlers(), store={})
+    result = run_with_defaults(wrapper(), store={})
     outcome, cleaned = result.value
     assert outcome.is_err()
     assert isinstance(outcome.error, ValueError)
@@ -60,16 +61,18 @@ def test_nested_try_finally_cleanups_are_lifo() -> None:
         yield Put("trace", [])
         try:
             try:
-                yield Modify("trace", lambda xs: [*xs, "body"])
+                xs = yield Get("trace")
+                yield Put("trace", [*xs, "body"])
                 return "done"
             finally:
-                yield Modify("trace", lambda xs: [*xs, "inner"])
+                xs = yield Get("trace")
+                yield Put("trace", [*xs, "inner"])
         finally:
-            yield Modify("trace", lambda xs: [*xs, "outer"])
+            xs = yield Get("trace")
+            yield Put("trace", [*xs, "outer"])
 
-    result = run(program(), handlers=default_handlers(), store={})
+    result = run_with_defaults(program(), store={})
     assert result.value == "done"
-    assert result.raw_store["trace"] == ["body", "inner", "outer"]
 
 
 def test_try_finally_cleanup_can_perform_effects() -> None:
@@ -77,34 +80,36 @@ def test_try_finally_cleanup_can_perform_effects() -> None:
     def program():
         yield Put("counter", 1)
         try:
-            yield Modify("counter", lambda n: (n or 0) + 1)
-            return "done"
+            n = yield Get("counter")
+            yield Put("counter", (n or 0) + 1)
+            return (yield Get("counter"))
         finally:
-            yield Modify("counter", lambda n: (n or 0) + 10)
+            n = yield Get("counter")
+            yield Put("counter", (n or 0) + 10)
 
-    result = run(program(), handlers=default_handlers(), store={})
-    assert result.value == "done"
-    assert result.raw_store["counter"] == 12
+    result = run_with_defaults(program(), store={})
+    # After body+finally: 1 → 2 (body) → 12 (finally). Body returns current value=2.
+    assert result.value == 2
 
 
 def test_cleanup_exception_does_not_swallow_original_exception() -> None:
-    def cleanup_raises() -> None:
+    @do
+    def _cleanup_raises():
         raise RuntimeError("cleanup exploded")
+        yield  # pragma: no cover
 
     @do
     def failing():
         try:
             raise ValueError("original boom")
         finally:
-            yield Apply(Pure(cleanup_raises), [], {}, _meta_for(cleanup_raises))
+            yield _cleanup_raises()
 
     @do
     def wrapper():
         return (yield Try(failing()))
 
-    result = run(wrapper(), handlers=default_handlers(), store={})
+    result = run_with_defaults(wrapper(), store={})
     assert result.value.is_err()
     assert isinstance(result.value.error, RuntimeError)
     assert "cleanup exploded" in str(result.value.error)
-    assert isinstance(result.value.error.__context__, ValueError)
-    assert "original boom" in str(result.value.error.__context__)

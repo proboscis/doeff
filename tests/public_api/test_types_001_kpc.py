@@ -23,6 +23,7 @@ from doeff import (
     do,
     run,
 )
+from tests._run_helpers import run_with_defaults
 # REMOVED: from doeff.program import DoCtrl, GeneratorProgram
 
 
@@ -117,7 +118,7 @@ class TestKD03NoHandlerNeeded:
 
 
 # ---------------------------------------------------------------------------
-# KD-04: run(kpc, handlers=default_handlers()) succeeds
+# KD-04: run_with_defaults(kpc) succeeds
 # ---------------------------------------------------------------------------
 
 
@@ -156,7 +157,7 @@ class TestKD05AutoUnwrap:
             result = yield use_value(Ask("key"))
             return result
 
-        result = run(main(), handlers=default_handlers(), env={"key": "hello"})
+        result = run_with_defaults(main(), env={"key": "hello"})
         assert result.value == "got:hello"
 
     def test_program_arg_is_resolved(self) -> None:
@@ -173,7 +174,7 @@ class TestKD05AutoUnwrap:
             result = yield consume(produce())
             return result
 
-        result = run(main(), handlers=default_handlers())
+        result = run_with_defaults(main())
         assert result.value == 43
 
     def test_multiple_args_resolved(self) -> None:
@@ -186,12 +187,7 @@ class TestKD05AutoUnwrap:
             result = yield combine(Ask("name"), Get("count"))
             return result
 
-        result = run(
-            main(),
-            handlers=default_handlers(),
-            env={"name": "items"},
-            store={"count": 5},
-        )
+        result = run_with_defaults(main(), env={"name": "items"}, store={"count": 5})
         assert result.value == "items=5"
 
 
@@ -218,7 +214,7 @@ class TestKD06ProgramAnnotationNoUnwrap:
             result = yield inspect_arg(produce())
             return result
 
-        result = run(main(), handlers=default_handlers())
+        result = run_with_defaults(main())
         assert result.value == 142
 
 
@@ -240,11 +236,7 @@ class TestKD07EffectAnnotationNoUnwrap:
             result = yield inspect_effect(Ask("key"))
             return result
 
-        result = run(
-            main(),
-            handlers=default_handlers(),
-            env={"key": "value"},
-        )
+        result = run_with_defaults(main(), env={"key": "value"})
         assert result.value == "value"
 
 
@@ -264,7 +256,7 @@ class TestKD08UnannotatedUnwrap:
             result = yield use_value(Ask("key"))
             return result
 
-        result = run(main(), handlers=default_handlers(), env={"key": "hello"})
+        result = run_with_defaults(main(), env={"key": "hello"})
         assert result.value == "got:hello"
 
 
@@ -337,7 +329,7 @@ class TestKD11MethodDecoration:
                 return value
 
         svc = Service()
-        result = run(svc.fetch("api_key"), handlers=default_handlers(), env={"api_key": "secret"})
+        result = run_with_defaults(svc.fetch("api_key"), env={"api_key": "secret"})
         assert result.value == "secret"
 
 
@@ -360,7 +352,7 @@ class TestKD12KleisliComposition:
         assert isinstance(pipeline, KleisliProgram)
 
         try:
-            result = run(pipeline(5), handlers=default_handlers())
+            result = run_with_defaults(pipeline(5))
         except TypeError as exc:
             assert "Kleisli program must return a Program or Effect" in str(exc)
         else:
@@ -385,7 +377,7 @@ class TestKD13NestedDoCalls:
             doubled = yield inner(x)
             return doubled + 1
 
-        result = run(outer(5), handlers=default_handlers())
+        result = run_with_defaults(outer(5))
         assert result.value == 11  # 5*2 + 1
 
     def test_three_level_nesting(self) -> None:
@@ -403,7 +395,7 @@ class TestKD13NestedDoCalls:
             val = yield level2(x)
             return val + 100
 
-        result = run(level1(5), handlers=default_handlers())
+        result = run_with_defaults(level1(5))
         assert result.value == 112  # ((5+1)*2) + 100
 
     def test_nested_with_effects(self) -> None:
@@ -418,7 +410,7 @@ class TestKD13NestedDoCalls:
             yield Put("result", doubled)
             return doubled
 
-        result = run(process(), handlers=default_handlers(), store={"x": 21, "result": 0})
+        result = run_with_defaults(process(), store={"x": 21, "result": 0})
         assert result.value == 42
         assert result.raw_store["result"] == 42
 

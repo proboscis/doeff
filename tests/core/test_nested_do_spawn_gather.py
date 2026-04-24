@@ -19,23 +19,23 @@ from doeff import (
     Await,
     CreateSemaphore,
     AcquireSemaphore,
+    Effect,
     ReleaseSemaphore,
     EffectGenerator,
     Gather,
     Local,
     Pass,
     Resume,
-    Semaphore,
     Spawn,
     Try,
     WithHandler,
-    default_handlers,
     do,
-    run,
     slog,
 )
-from doeff_core_effects.effects import EffectBase, EffectBase
-# REMOVED: from doeff.effects._program_types import ProgramLike
+from doeff_core_effects.effects import EffectBase
+from tests._run_helpers import run_with_defaults
+
+ProgramLike = Any  # removed shim
 
 
 # --- Custom effect + handler ---
@@ -62,7 +62,7 @@ def make_handler():
     @do
     def _handler(effect: Effect, k):
         if not isinstance(effect, FetchEffect):
-            yield Pass()
+            yield Pass(effect, k)
             return
         svc = yield Ask("service")
         data = yield svc.fetch(effect.key)
@@ -96,7 +96,7 @@ def my_async_gather(*programs):
     def _g() -> EffectGenerator[list]:
         tasks = []
         for p in programs:
-            t = yield Spawn(p, daemon=False)
+            t = yield Spawn(p)
             tasks.append(t)
         return list((yield Gather(*tasks)))
     return _g()
@@ -141,7 +141,7 @@ def test_direct_async_gather_works():
 
     wrapped = WithHandler(make_handler(), test())
     wrapped = Local(_env(), wrapped)
-    r = run(wrapped, handlers=default_handlers())
+    r = run_with_defaults(wrapped)
     assert r.is_ok(), f"Failed: {r.error}"
     assert len(r.value) == 3
 
@@ -155,7 +155,7 @@ def test_throttled_gather_wrapper():
 
     wrapped = WithHandler(make_handler(), test())
     wrapped = Local(_env(), wrapped)
-    r = run(wrapped, handlers=default_handlers())
+    r = run_with_defaults(wrapped)
     assert r.is_ok(), f"Failed: {r.error}"
     assert len(r.value) == 3
 
@@ -171,6 +171,6 @@ def test_throttled_gather_with_progress_wrapper():
 
     wrapped = WithHandler(make_handler(), test())
     wrapped = Local(_env(), wrapped)
-    r = run(wrapped, handlers=default_handlers())
+    r = run_with_defaults(wrapped)
     assert r.is_ok(), f"Failed: {r.error}"
     assert len(r.value) == 3

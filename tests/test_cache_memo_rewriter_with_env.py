@@ -32,6 +32,7 @@ from doeff import default_handlers, run
 
 pytestmark = pytest.mark.skip(reason="uses removed API: cache_handler, memo_rewriters")
 from doeff import EffectGenerator
+from tests._run_helpers import run_with_defaults
 # REMOVED: from doeff import RunResult
 
 
@@ -84,7 +85,7 @@ def test_memo_rewriter_with_cache_handler_no_env():
         in_memory_cache_handler(),
     )
 
-    result: RunResult = run(wrapped, handlers=default_handlers())
+    result: RunResult = run_with_defaults(wrapped)
     assert result.is_ok(), f"Expected Ok, got error: {result.error}"
     assert result.value == {"data": "value_for_test_key"}
 
@@ -110,7 +111,7 @@ def test_memo_rewriter_with_cache_handler_and_ask():
         in_memory_cache_handler(),
     )
 
-    result: RunResult = run(wrapped, handlers=default_handlers())
+    result: RunResult = run_with_defaults(wrapped)
     assert result.is_ok(), f"Expected Ok, got error: {result.error}"
     assert result.value == {"data": "value_for_test_key"}
 
@@ -142,7 +143,7 @@ def test_memo_rewriter_cache_miss_then_delegate():
         cache_handler(storage),
     )
 
-    result: RunResult = run(wrapped, handlers=default_handlers())
+    result: RunResult = run_with_defaults(wrapped)
     assert result.is_ok(), f"Expected Ok, got error: {result.error}"
     assert result.value["first"] == {"data": "value_for_key_a"}
     assert result.value["second"] == {"data": "value_for_key_a"}
@@ -159,7 +160,7 @@ def test_memo_rewriter_cache_handler_with_local_env():
         *memo_rewriters(HistoricalPriceQuery),
         sqlite_cache_handler(_CACHE_PATH),
     )
-    result = run(wrapped, handlers=default_handlers())
+    result = run_with_defaults(wrapped)
     ```
     """
     from doeff import Local
@@ -182,7 +183,7 @@ def test_memo_rewriter_cache_handler_with_local_env():
         cache_handler(storage),
     )
 
-    result: RunResult = run(wrapped, handlers=default_handlers())
+    result: RunResult = run_with_defaults(wrapped)
     assert result.is_ok(), (
         f"Expected Ok but got error: {result.error}\n"
         "This reproduces the NoMatchingHandlerError seen when memo_rewriter "

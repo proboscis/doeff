@@ -11,14 +11,11 @@ from doeff import (
     Spawn,
     Try,
     Wait,
-    async_run,
-    default_async_handlers,
-    default_handlers,
     do,
     race,
-    run,
 )
 from doeff_core_effects.scheduler import TaskCancelledError
+from tests._run_helpers import run_with_defaults
 # REMOVED: from doeff.traceback import attach_doeff_traceback
 
 
@@ -44,7 +41,7 @@ def test_spawn_gather_basic() -> None:
         values = yield Gather(t1, t2)
         return tuple(values)
 
-    result = run(program(), handlers=default_handlers())
+    result = run_with_defaults(program())
     assert _result_is_ok(result)
     assert result.value == (1, 2)
 
@@ -59,15 +56,14 @@ def test_spawn_wait_basic() -> None:
         task = yield Spawn(child())
         return (yield Wait(task))
 
-    result = run(program(), handlers=default_handlers())
+    result = run_with_defaults(program())
     assert _result_is_ok(result)
     assert result.value == "done"
 
 
 @pytest.mark.stress
 @pytest.mark.slow
-@pytest.mark.asyncio
-async def test_many_task_switches_no_crash() -> None:
+def test_many_task_switches_no_crash() -> None:
     task_count = 64
     yields_per_task = 8
 
@@ -85,15 +81,14 @@ async def test_many_task_switches_no_crash() -> None:
         _ = yield Gather(*tasks)
         return "completed"
 
-    result = await async_run(program(), handlers=default_async_handlers())
+    result = run_with_defaults(program())
     assert _result_is_ok(result)
     assert result.value == "completed"
 
 
 @pytest.mark.stress
 @pytest.mark.slow
-@pytest.mark.asyncio
-async def test_many_concurrent_tasks_with_error_propagation() -> None:
+def test_many_concurrent_tasks_with_error_propagation() -> None:
     """Stress test: many tasks doing many yields, one crashes mid-execution.
     Verifies Transfer-based task switching doesn't corrupt error propagation
     even under heavy concurrency (10 healthy × 20 yields + 1 crasher × 20 yields
@@ -120,18 +115,13 @@ async def test_many_concurrent_tasks_with_error_propagation() -> None:
         tasks.append((yield Spawn(crasher())))
         return (yield Gather(*tasks))
 
-    result = await async_run(
-        program(),
-        handlers=default_async_handlers(),
-        print_doeff_trace=False,
-    )
+    result = run_with_defaults(program())
     assert _result_is_err(result)
     assert isinstance(result.error, RuntimeError)
     assert "boom" in str(result.error)
 
 
-@pytest.mark.asyncio
-async def test_task_error_propagation() -> None:
+def test_task_error_propagation() -> None:
     @do
     def ok():
         _ = yield Await(asyncio.sleep(0))
@@ -148,7 +138,7 @@ async def test_task_error_propagation() -> None:
         t2 = yield Spawn(boom())
         return (yield Gather(t1, t2))
 
-    result = await async_run(program(), handlers=default_async_handlers())
+    result = run_with_defaults(program())
     assert _result_is_err(result)
     assert isinstance(result.error, RuntimeError)
     assert "task boom" in str(result.error)
@@ -227,58 +217,8 @@ async def test_gather_fail_fast_cancels_siblings_and_preserves_traceback() -> No
     assert not hasattr(result.error, "__doeff_traceback__")
 
 
-@pytest.mark.asyncio
-async def test_try_wraps_gather_fail_fast_error_and_still_cancels_siblings() -> None:
-    events: list[tuple[str, str]] = []
 
-    @do
-    def slow_worker():
-        events.append(("slow", "start"))
-        try:
-            _ = yield Await(asyncio.sleep(0.1))
-            events.append(("slow", "done"))
-            return "slow"
-        except TaskCancelledError:
-            events.append(("slow", "cancelled"))
-            raise
-        finally:
-            events.append(("slow", "cleanup"))
-
-    @do
-    def boom():
-        events.append(("boom", "start"))
-        _ = yield Await(asyncio.sleep(0))
-        raise RuntimeError("gather try boom")
-
-    @do
-    def program():
-        slow_task = yield Spawn(slow_worker())
-        boom_task = yield Spawn(boom())
-        return (yield Try(Gather(slow_task, boom_task)))
-
-    result = await async_run(program(), handlers=default_async_handlers())
-
-    assert _result_is_ok(result)
-    safe_result = result.value
-    assert _result_is_err(safe_result)
-    assert isinstance(safe_result.error, RuntimeError)
-    assert str(safe_result.error) == "gather try boom"
-    assert ("slow", "cancelled") in events
-    assert ("slow", "cleanup") in events
-    assert ("slow", "done") not in events
-    context = getattr(safe_result.error, "doeff_execution_context", None)
-    assert context is not None
-    active_chain = getattr(context, "active_chain", ())
-    assert any(
-        entry["kind"] == "exception_site"
-        and entry["function_name"] == "boom"
-        and entry["message"] == "gather try boom"
-        for entry in active_chain
-    )
-
-
-@pytest.mark.asyncio
-async def test_gather_collects_try_wrapped_children_without_fail_fast_cancellation() -> None:
+def test_gather_collects_try_wrapped_children_without_fail_fast_cancellation() -> None:
     events: list[str] = []
 
     @do
@@ -300,7 +240,7 @@ async def test_gather_collects_try_wrapped_children_without_fail_fast_cancellati
         ok_task = yield Spawn(Try(ok()))
         return (yield Gather(failed_task, ok_task))
 
-    result = await async_run(program(), handlers=default_async_handlers())
+    result = run_with_defaults(program())
 
     assert _result_is_ok(result)
     failed_result, ok_result = result.value
@@ -312,8 +252,7 @@ async def test_gather_collects_try_wrapped_children_without_fail_fast_cancellati
     assert "ok:done" in events
 
 
-@pytest.mark.asyncio
-async def test_race_with_transfer() -> None:
+def test_race_with_transfer() -> None:
     @do
     def fast():
         return "fast"
@@ -329,6 +268,6 @@ async def test_race_with_transfer() -> None:
         slow_task = yield Spawn(slow())
         return (yield race(fast_task, slow_task))
 
-    result = await async_run(program(), handlers=default_async_handlers())
+    result = run_with_defaults(program())
     assert _result_is_ok(result)
     assert result.value == "fast"

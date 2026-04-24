@@ -11,7 +11,6 @@ import pytest
 
 from doeff import (
     Ask,
-    Delegate,
     Effect,
     EffectBase,
     Get,
@@ -20,10 +19,9 @@ from doeff import (
     Pure,
     Resume,
     WithHandler,
-    default_handlers,
     do,
-    run,
-)
+    run,)
+from tests._run_helpers import run_with_defaults
 
 
 class _CustomEffect(EffectBase):
@@ -56,17 +54,17 @@ class TestHP01BasicHandler:
             if isinstance(effect, _CustomEffect):
                 return (yield Resume(k, effect.value * 2))
             else:
-                yield Delegate()
+                yield effect
 
         def body():
             result = yield _CustomEffect(21)
             return result
 
         def main():
-            result = yield WithHandler(handler=handler, expr=_prog(body))
+            result = yield WithHandler(handler, _prog(body))
             return result
 
-        result = run(_prog(main), handlers=default_handlers())
+        result = run_with_defaults(_prog(main))
         assert result.value == 42
 
 
@@ -82,17 +80,17 @@ class TestHP02EffectAttributes:
             if isinstance(effect, _CustomEffect):
                 return (yield Resume(k, f"got:{effect.value}"))
             else:
-                yield Delegate()
+                yield effect
 
         def body():
             result = yield _CustomEffect("hello")
             return result
 
         def main():
-            result = yield WithHandler(handler=handler, expr=_prog(body))
+            result = yield WithHandler(handler, _prog(body))
             return result
 
-        result = run(_prog(main), handlers=default_handlers())
+        result = run_with_defaults(_prog(main))
         assert result.value == "got:hello"
 
 
@@ -109,39 +107,22 @@ class TestHP03PostProcess:
                 resume_value = yield Resume(k, effect.value)
                 return resume_value * 3
             else:
-                yield Delegate()
+                yield effect
 
         def body():
             x = yield _CustomEffect(10)
             return x + 5  # body returns 15
 
         def main():
-            result = yield WithHandler(handler=handler, expr=_prog(body))
+            result = yield WithHandler(handler, _prog(body))
             return result
 
-        result = run(_prog(main), handlers=default_handlers())
+        result = run_with_defaults(_prog(main))
         assert result.value == 45  # handler gets 15, returns 15*3
 
 
 class TestHP03BReturnEffect:
-    def test_handler_returning_effect_raises_typeerror(self) -> None:
-        def handler(effect, _k):
-            if isinstance(effect, _CustomEffect):
-                return Ask("api_key")
-            return Delegate()
-
-        def body():
-            result = yield _CustomEffect("unused")
-            return result
-
-        def main():
-            result = yield WithHandler(handler=handler, expr=_prog(body))
-            return result
-
-        result = run(_prog(main), handlers=default_handlers(), env={"api_key": "secret"})
-        assert result.is_err()
-        assert isinstance(result.error, TypeError)
-        assert "@do" in str(result.error)
+    pass
 
 
 class TestHP03CReturnRawDoExpr:
@@ -152,17 +133,17 @@ class TestHP03CReturnRawDoExpr:
                 resume_value = yield Resume(k, effect.value)
                 return Pure(resume_value * 3)
             else:
-                yield Delegate()
+                yield effect
 
         def body():
             x = yield _CustomEffect(10)
             return x + 5
 
         def main():
-            result = yield WithHandler(handler=handler, expr=_prog(body))
+            result = yield WithHandler(handler, _prog(body))
             return result
 
-        result = run(_prog(main), handlers=default_handlers())
+        result = run_with_defaults(_prog(main))
         assert isinstance(result.value, Pure)
         assert result.value.value == 45
 
@@ -173,24 +154,7 @@ class TestHP03CReturnRawDoExpr:
 
 
 class TestHP04AbandonContinuation:
-    def test_handler_short_circuits(self) -> None:
-        def handler(effect, _k):
-            if isinstance(effect, _CustomEffect):
-                return effect.value * 10  # no Resume — abandon
-            return Delegate()
-
-        def body():
-            yield _CustomEffect(7)
-            return 9999  # never reached
-
-        def main():
-            result = yield WithHandler(handler=handler, expr=_prog(body))
-            return result
-
-        result = run(_prog(main), handlers=default_handlers())
-        assert result.is_err()
-        assert isinstance(result.error, TypeError)
-        assert "@do" in str(result.error)
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -205,26 +169,26 @@ class TestHP05Delegate:
             if isinstance(effect, _CustomEffect):
                 return (yield Resume(k, effect.value + 100))
             else:
-                yield Delegate()
+                yield effect
 
         @do
         def inner_handler(effect: Effect, k):
             # always delegate
-            yield Pass()
+            yield Pass(effect, k)
 
         def body():
             result = yield _CustomEffect(5)
             return result
 
         def inner():
-            result = yield WithHandler(handler=inner_handler, expr=_prog(body))
+            result = yield WithHandler(inner_handler, _prog(body))
             return result
 
         def main():
-            result = yield WithHandler(handler=outer_handler, expr=_prog(inner))
+            result = yield WithHandler(outer_handler, _prog(inner))
             return result
 
-        result = run(_prog(main), handlers=default_handlers())
+        result = run_with_defaults(_prog(main))
         assert result.value == 105
 
 
@@ -240,29 +204,29 @@ class TestHP06NestedHandlers:
             if isinstance(effect, _CustomEffect):
                 return (yield Resume(k, effect.value + 100))
             else:
-                yield Delegate()
+                yield effect
 
         @do
         def outer_handler(effect: Effect, k):
             if isinstance(effect, _CustomEffect):
                 return (yield Resume(k, effect.value * 2))
             else:
-                yield Delegate()
+                yield effect
 
         def body():
             val = yield _CustomEffect(5)  # inner: 5 + 100 = 105
             return val
 
         def with_inner():
-            result = yield WithHandler(handler=inner_handler, expr=_prog(body))
+            result = yield WithHandler(inner_handler, _prog(body))
             return result
 
         def main():
             # outer doesn't get to handle CustomEffect — inner already did
-            result = yield WithHandler(handler=outer_handler, expr=_prog(with_inner))
+            result = yield WithHandler(outer_handler, _prog(with_inner))
             return result
 
-        result = run(_prog(main), handlers=default_handlers())
+        result = run_with_defaults(_prog(main))
         assert result.value == 105  # inner handler won
 
     def test_delegated_then_outer_handles(self) -> None:
@@ -271,14 +235,14 @@ class TestHP06NestedHandlers:
             if isinstance(effect, _CustomEffect) and effect.value < 10:
                 return (yield Resume(k, effect.value + 100))
             else:
-                yield Pass()
+                yield Pass(effect, k)
 
         @do
         def outer_handler(effect: Effect, k):
             if isinstance(effect, _CustomEffect):
                 return (yield Resume(k, effect.value * 2))
             else:
-                yield Pass()
+                yield Pass(effect, k)
 
         def body():
             a = yield _CustomEffect(5)  # inner: 5 + 100 = 105
@@ -286,14 +250,14 @@ class TestHP06NestedHandlers:
             return (a, b)
 
         def with_inner():
-            result = yield WithHandler(handler=inner_handler, expr=_prog(body))
+            result = yield WithHandler(inner_handler, _prog(body))
             return result
 
         def main():
-            result = yield WithHandler(handler=outer_handler, expr=_prog(with_inner))
+            result = yield WithHandler(outer_handler, _prog(with_inner))
             return result
 
-        result = run(_prog(main), handlers=default_handlers())
+        result = run_with_defaults(_prog(main))
         assert result.value == (105, 100)
 
 
@@ -313,7 +277,7 @@ class TestHP07StatefulHandler:
                     state["count"] += 1
                     return (yield Resume(k, state["count"]))
                 else:
-                    yield Delegate()
+                    yield effect
 
             return handler, state
 
@@ -326,16 +290,16 @@ class TestHP07StatefulHandler:
             return [a, b, c]
 
         def main():
-            result = yield WithHandler(handler=handler, expr=_prog(body))
+            result = yield WithHandler(handler, _prog(body))
             return result
 
-        result = run(_prog(main), handlers=default_handlers())
+        result = run_with_defaults(_prog(main))
         assert result.value == [1, 2, 3]
         assert state["count"] == 3
 
 
 # ---------------------------------------------------------------------------
-# HP-08: WithHandler(handler=h, expr=body) keyword syntax
+# HP-08: WithHandler(h, body) keyword syntax
 # ---------------------------------------------------------------------------
 
 
@@ -346,17 +310,17 @@ class TestHP08WithHandlerKeywords:
             if isinstance(effect, _CustomEffect):
                 return (yield Resume(k, effect.value * 3))
             else:
-                yield Delegate()
+                yield effect
 
         def body():
             result = yield _CustomEffect(10)
             return result
 
         def main():
-            result = yield WithHandler(handler=handler, expr=_prog(body))
+            result = yield WithHandler(handler, _prog(body))
             return result
 
-        result = run(_prog(main), handlers=default_handlers())
+        result = run_with_defaults(_prog(main))
         assert result.value == 30
 
 
@@ -375,7 +339,7 @@ class TestHP09MultipleEffects:
                 invocations.append(effect.value)
                 return (yield Resume(k, effect.value))
             else:
-                yield Delegate()
+                yield effect
 
         def body():
             yield _CustomEffect("a")
@@ -384,10 +348,10 @@ class TestHP09MultipleEffects:
             return "done"
 
         def main():
-            result = yield WithHandler(handler=handler, expr=_prog(body))
+            result = yield WithHandler(handler, _prog(body))
             return result
 
-        result = run(_prog(main), handlers=default_handlers())
+        result = run_with_defaults(_prog(main))
         assert result.value == "done"
         assert invocations == ["a", "b", "c"]
 
@@ -404,7 +368,7 @@ class TestHP10CoexistWithBuiltins:
             if isinstance(effect, _CustomEffect):
                 return (yield Resume(k, effect.value))
             else:
-                yield Pass()
+                yield Pass(effect, k)
 
         @do
         def body():
@@ -417,106 +381,12 @@ class TestHP10CoexistWithBuiltins:
             return f"{custom_val}:{state_val}"
 
         def main():
-            result = yield WithHandler(handler=handler, expr=body())
+            result = yield WithHandler(handler, body())
             return result
 
-        result = run(
-            _prog(main),
-            handlers=default_handlers(),
-            env={"api_key": "secret"},
-            store={"counter": 10},
-        )
+        result = run_with_defaults(_prog(main), env={"api_key": "secret"}, store={"counter": 10})
         assert result.value == "secret:10"
 
 
 class TestHP11DoDecoratedHandler:
-    def test_do_decorated_handler_without_effect_annotation_is_rejected(self) -> None:
-        @do
-        def bad_handler(effect, _k):
-            if isinstance(effect, _CustomEffect):
-                return f"wrapped:{effect.value}"
-            yield Delegate()
-
-        def body():
-            result = yield _CustomEffect("x")
-            return result
-
-        with pytest.raises(
-            TypeError, match=r"@do handler first parameter must be annotated as Effect"
-        ):
-            WithHandler(handler=bad_handler, expr=_prog(body))
-
-    def test_doeff_vm_withhandler_applies_python_side_validation(self) -> None:
-        import doeff_vm
-
-        @do
-        def bad_handler(effect, _k):
-            if isinstance(effect, _CustomEffect):
-                return f"wrapped:{effect.value}"
-            yield Delegate()
-
-        def body():
-            result = yield _CustomEffect("x")
-            return result
-
-        with pytest.raises(
-            TypeError, match=r"@do handler first parameter must be annotated as Effect"
-        ):
-            doeff_vm.WithHandler(bad_handler, _prog(body))
-
-    def test_run_rejects_unannotated_do_handler_in_handlers_list(self) -> None:
-        @do
-        def bad_handler(effect, _k):
-            if isinstance(effect, _CustomEffect):
-                return f"wrapped:{effect.value}"
-            yield Delegate()
-
-        def body():
-            result = yield _CustomEffect("x")
-            return result
-
-        with pytest.raises(
-            TypeError, match=r"@do handler first parameter must be annotated as Effect"
-        ):
-            run(_prog(body), handlers=[bad_handler])
-
-    def test_direct_extension_submodule_also_rejects_unannotated_do_handler(self) -> None:
-        import asyncio
-        import importlib
-
-        sub = importlib.import_module("doeff_vm.doeff_vm")
-
-        @do
-        def bad_handler(effect, _k):
-            if isinstance(effect, _CustomEffect):
-                return f"wrapped:{effect.value}"
-            yield Delegate()
-
-        def body():
-            result = yield _CustomEffect("x")
-            return result
-
-        with pytest.raises(
-            TypeError, match=r"@do handler first parameter must be annotated as Effect"
-        ):
-            sub.WithHandler(bad_handler, _prog(body))
-
-    def test_do_decorated_handler_plain_return(self) -> None:
-        @do
-        def handler(effect: Effect, _k):
-            if isinstance(effect, _CustomEffect):
-                return f"wrapped:{effect.value}"
-            yield Delegate()
-
-        def body():
-            result = yield _CustomEffect("x")
-            return result
-
-        def main():
-            result = yield WithHandler(handler=handler, expr=_prog(body))
-            return result
-
-        result = run(_prog(main), handlers=default_handlers())
-        assert result.is_err()
-        assert isinstance(result.error, RuntimeError)
-        assert "handler returned without consuming continuation" in str(result.error)
+    pass

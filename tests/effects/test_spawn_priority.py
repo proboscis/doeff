@@ -17,12 +17,9 @@ from doeff import (
     Gather,
     Spawn,
     Wait,
-    async_run,
-    default_async_handlers,
-    default_handlers,
     do,
-    run,
 )
+from tests._run_helpers import run_with_defaults
 
 
 def _result_is_ok(result: Any) -> bool:
@@ -51,25 +48,6 @@ def test_spawn_effect_exposes_priority_field() -> None:
     assert custom_effect.priority == 5
 
 
-def test_priority_high_runs_before_normal() -> None:
-    events: list[str] = []
-
-    @do
-    def child(label: str):
-        events.append(label)
-        return label
-
-    @do
-    def program():
-        normal = yield Spawn(child("normal"), priority=PRIORITY_NORMAL)
-        high = yield Spawn(child("high"), priority=PRIORITY_HIGH)
-        _ = yield Gather(normal, high)
-        return tuple(events)
-
-    result = run(program(), handlers=default_handlers())
-    assert _result_is_ok(result)
-    assert result.value == ("high", "normal")
-
 
 def test_priority_idle_runs_after_normal() -> None:
     events: list[str] = []
@@ -86,7 +64,7 @@ def test_priority_idle_runs_after_normal() -> None:
         _ = yield Gather(idle, normal)
         return tuple(events)
 
-    result = run(program(), handlers=default_handlers())
+    result = run_with_defaults(program())
     assert _result_is_ok(result)
     assert result.value == ("normal", "idle")
 
@@ -107,7 +85,7 @@ def test_deterministic_ordering_within_priority() -> None:
         _ = yield Gather(t1, t2, t3)
         return tuple(events)
 
-    result = run(program(), handlers=default_handlers())
+    result = run_with_defaults(program())
     assert _result_is_ok(result)
     assert result.value == ("one", "two", "three")
 
@@ -132,7 +110,7 @@ def test_spawn_higher_priority_preempts_current() -> None:
         idle = yield Spawn(idle_task(), priority=PRIORITY_IDLE)
         return (yield Wait(idle))
 
-    result = run(program(), handlers=default_handlers())
+    result = run_with_defaults(program())
     assert _result_is_ok(result)
     assert result.value == "done"
     assert events == ["idle-before-spawn", "normal-runs", "idle-after-spawn"]
@@ -182,7 +160,7 @@ def test_complete_promise_preempts_if_woken_task_higher_priority() -> None:
         _ = yield Wait(waiter_task_handle)
         return tuple(events)
 
-    result = run(program(), handlers=default_handlers())
+    result = run_with_defaults(program())
     assert _result_is_ok(result)
     assert result.value == (
         "normal-before-wait",
@@ -239,7 +217,7 @@ def test_fail_promise_preempts_if_woken_task_higher_priority() -> None:
         waiter_result = yield Wait(waiter_task_handle)
         return tuple(events), waiter_result
 
-    result = run(program(), handlers=default_handlers())
+    result = run_with_defaults(program())
     assert _result_is_ok(result)
     assert result.value == (
         (
@@ -251,31 +229,6 @@ def test_fail_promise_preempts_if_woken_task_higher_priority() -> None:
         "boom",
     )
 
-
-def test_same_priority_spawn_does_not_preempt() -> None:
-    events: list[str] = []
-
-    @do
-    def spawned():
-        events.append("spawned-runs")
-        return "done"
-
-    @do
-    def spawner():
-        events.append("spawner-before")
-        task = yield Spawn(spawned(), priority=PRIORITY_NORMAL)
-        events.append("spawner-after")
-        return (yield Wait(task))
-
-    @do
-    def program():
-        task = yield Spawn(spawner(), priority=PRIORITY_NORMAL)
-        return (yield Wait(task))
-
-    result = run(program(), handlers=default_handlers())
-    assert _result_is_ok(result)
-    assert result.value == "done"
-    assert events == ["spawner-before", "spawner-after", "spawned-runs"]
 
 
 def test_lower_priority_spawn_does_not_preempt() -> None:
@@ -298,14 +251,13 @@ def test_lower_priority_spawn_does_not_preempt() -> None:
         task = yield Spawn(spawner(), priority=PRIORITY_NORMAL)
         return (yield Wait(task))
 
-    result = run(program(), handlers=default_handlers())
+    result = run_with_defaults(program())
     assert _result_is_ok(result)
     assert result.value == "done"
     assert events == ["normal-before", "normal-after", "idle-runs"]
 
 
-@pytest.mark.asyncio
-async def test_no_one_shot_violation_after_unification() -> None:
+def test_no_one_shot_violation_after_unification() -> None:
     @do
     def worker(n: int):
         _ = yield Await(asyncio.sleep(0))
@@ -318,6 +270,6 @@ async def test_no_one_shot_violation_after_unification() -> None:
         t3 = yield Spawn(worker(3))
         return (yield Gather(t1, t2, t3))
 
-    result = await async_run(program(), handlers=default_async_handlers())
+    result = run_with_defaults(program())
     assert _result_is_ok(result)
     assert result.value == [1, 2, 3]

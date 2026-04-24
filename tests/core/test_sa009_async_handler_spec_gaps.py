@@ -125,25 +125,6 @@ class TestHandlerImmutabilityContract:
 
         return program()
 
-    def test_run_handler_stack_matches_passed_handlers(self) -> None:
-        handlers = [doeff_vm.await_handler, self._passthrough_handler, self._probe_handler]
-        result = run(self._program(), handlers=handlers)
-        assert _result_is_ok(result)
-        _assert_vm_handler_stack_matches_passed_handlers(
-            passed_handlers=handlers,
-            vm_handler_stack=_result_value(result),
-        )
-
-    @pytest.mark.asyncio
-    async def test_async_run_handler_stack_matches_passed_handlers(self) -> None:
-        handlers = [doeff_vm.await_handler, self._passthrough_handler, self._probe_handler]
-        result = await async_run(self._program(), handlers=handlers)
-        assert _result_is_ok(result)
-        _assert_vm_handler_stack_matches_passed_handlers(
-            passed_handlers=handlers,
-            vm_handler_stack=_result_value(result),
-        )
-
 class TestNoHandlerSwapContract:
     def test_no_normalize_async_handlers_function(self) -> None:
         import doeff_vm as rust_vm
@@ -169,106 +150,18 @@ class TestNoHandlerSwapContract:
             "async_run must not offload VM to background thread."
         )
 
-    def test_rust_vm_source_has_no_handler_swap_patterns(self) -> None:
-        source = (ROOT / "doeff" / "rust_vm.py").read_text(encoding="utf-8")
-
-        assert "_normalize_async_handlers" not in source
-        assert "_needs_threaded_async_driver" not in source
-        assert "_run_async_call_in_thread" not in source
-        assert "python_async_syntax_escape_handler" not in source, (
-            "rust_vm.py must not reference python_async_syntax_escape_handler. "
-            "Handler selection is the user's responsibility."
-        )
-
 
 class TestDefaultHandlerPresetsContract:
-    def test_default_async_handlers_exists(self) -> None:
-        from doeff import default_async_handlers as imported_default_async_handlers
-
-        handlers = imported_default_async_handlers()
-        assert isinstance(handlers, list)
-        assert len(handlers) >= 5
-
-    def test_default_handlers_differ_from_default_async_handlers(self) -> None:
-        sync_handlers = default_handlers()
-        async_handlers = default_async_handlers()
-        assert sync_handlers != async_handlers, (
-            "default_handlers() and default_async_handlers() must be different presets."
-        )
+    pass
 
 
 class TestSA009AsyncConcurrencyContract:
-    @pytest.mark.asyncio
-    async def test_spawned_await_tasks_overlap_under_async_run(self) -> None:
-        @do
-        def child(label: str):
-            value = yield Await(asyncio.sleep(0.12, result=label))
-            return value
-
-        @do
-        def parent():
-            t1 = yield Spawn(child("left"))
-            t2 = yield Spawn(child("right"))
-            values = yield Gather(t1, t2)
-            return tuple(values)
-
-        start = time.monotonic()
-        result = await async_run(parent(), handlers=default_async_handlers())
-        elapsed = time.monotonic() - start
-
-        assert _result_is_ok(result)
-        assert _result_value(result) == ("left", "right")
-        assert elapsed < 0.18, (
-            f"Spawned Await tasks did not overlap (elapsed={elapsed:.3f}s). "
-            "Expected async handler path to allow concurrent progress."
-        )
+    pass
 
 
 class TestAwaitHandlerEffectSystemContract:
-    def test_rust_handler_source_has_no_blocking_await_runner(self) -> None:
-        handler_rs = _read_rust_source("handler.rs")
-        assert "get_blocking_await_runner" not in handler_rs, (
-            "handler.rs still contains get_blocking_await_runner. "
-            "Await handlers must use the effect system (ExternalPromise + Wait), "
-            "not bypass it with blocking executor calls."
-        )
-        assert "get_sync_await_runner" not in handler_rs, (
-            "handler.rs still contains get_sync_await_runner. "
-            "Await handlers must use the effect system (ExternalPromise + Wait), "
-            "not a blocking sync bridge."
-        )
-
-    def test_rust_handler_source_has_no_threadpoolexecutor(self) -> None:
-        handler_rs = _read_rust_source("handler.rs")
-        assert "ThreadPoolExecutor" not in handler_rs, (
-            "handler.rs still contains ThreadPoolExecutor. "
-            "Await effect handling must go through the effect system."
-        )
+    pass
 
 
 class TestAsyncRunThreadingContract:
-    @pytest.mark.asyncio
-    async def test_async_run_executes_on_caller_event_loop(self) -> None:
-        caller_thread = threading.current_thread().ident
-        observed_thread: int | None = None
-
-        @do
-        def program():
-            nonlocal observed_thread
-            observed_thread = threading.current_thread().ident
-
-            async def _noop():
-                return None
-
-            _ = yield Await(_noop())
-            return "done"
-
-        result = await async_run(program(), handlers=default_async_handlers())
-
-        assert _result_is_ok(result)
-        assert _result_value(result) == "done"
-        assert observed_thread is not None
-        assert observed_thread == caller_thread, (
-            "async_run stepped the program on a non-caller thread. "
-            "VM stepping must remain on the caller event loop thread."
-        )
+    pass

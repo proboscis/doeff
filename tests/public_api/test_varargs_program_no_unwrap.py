@@ -26,10 +26,9 @@ from doeff import (
     Effect,
     Program,
     ProgramBase,
-    default_handlers,
     do,
-    run,
-)
+    run,)
+from tests._run_helpers import run_with_defaults
 # REMOVED: from doeff.program import DoCtrl
 
 
@@ -65,7 +64,7 @@ class TestWithInterceptVariadicProgramNoUnwrap:
             result = yield gather_programs(produce(1), produce(2), produce(3), concurrency=2)
             return result
 
-        result = run(main(), handlers=default_handlers())
+        result = run_with_defaults(main())
         assert result.value == [10, 20, 30]
 
     def test_with_intercept_unwraps_varargs(self) -> None:
@@ -97,7 +96,7 @@ class TestWithInterceptVariadicProgramNoUnwrap:
             return result
 
         p = WithIntercept(_identity_interceptor, main())
-        result = run(p, handlers=default_handlers())
+        result = run_with_defaults(p)
         assert result.value == [10, 20, 30]
 
     def test_with_intercept_single_program_arg(self) -> None:
@@ -121,7 +120,7 @@ class TestWithInterceptVariadicProgramNoUnwrap:
             return result
 
         p = WithIntercept(_identity_interceptor, main())
-        result = run(p, handlers=default_handlers())
+        result = run_with_defaults(p)
         assert result.value == 142
 
     def test_with_intercept_mixed_args(self) -> None:
@@ -149,5 +148,5 @@ class TestWithInterceptVariadicProgramNoUnwrap:
             return result
 
         p = WithIntercept(_identity_interceptor, main())
-        result = run(p, handlers=default_handlers())
+        result = run_with_defaults(p)
         assert result.value == "test: [10, 20]"
