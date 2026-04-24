@@ -21,18 +21,8 @@ def lower_task_launch_to_claude(
     policy: ClaudeRuntimePolicy,
 ) -> ClaudeLaunchEffect:
     """Lower a generic task intent to a Claude-specific launch effect."""
-
-    trusted = policy.trusted_workspaces or (effect.task.work_dir,)
-    return ClaudeLaunchEffect(
-        session_name=effect.session_name,
-        task=effect.task,
-        tags=effect.tags,
-        ready_timeout_sec=effect.ready_timeout_sec,
-        model=policy.model,
-        agent_home=policy.agent_home,
-        trusted_workspaces=trusted,
-        bootstrap_exports=dict(policy.bootstrap_exports),
-    )
+    del effect, policy
+    raise NotImplementedError("LaunchTaskEffect is deprecated; use LaunchEffect directly")
 
 
 __all__ = [

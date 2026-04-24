@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import tmux
-from .adapters.base import AgentAdapter, AgentType, InjectionMethod, LaunchConfig
+from .adapters.base import AgentAdapter, AgentType, InjectionMethod, LaunchConfig, LaunchParams
 from .adapters.claude import ClaudeAdapter
 from .adapters.codex import CodexAdapter
 from .adapters.gemini import GeminiAdapter
@@ -122,7 +122,13 @@ def launch_session(
     session_info = active_backend.new_session(tmux_config)
 
     # Build and send command
-    argv = adapter.launch_command(config)
+    argv = adapter.launch_command(
+        LaunchParams(
+            work_dir=config.work_dir,
+            prompt=config.prompt,
+            model=config.model,
+        )
+    )
     command = shlex.join(argv)
 
     if adapter.injection_method == InjectionMethod.ARG:
@@ -370,8 +376,8 @@ def _dismiss_onboarding_dialogs(
                 time.sleep(1.5)  # wait for next dialog to appear
                 break
 
-        # Early exit: only treat ❯ as ready prompt if no onboarding dialog matched
-        if not matched and re.search(r"❯", output):
+        # Early exit: only treat U+276F as ready prompt if no onboarding dialog matched
+        if not matched and re.search("\u276f", output):
             logger.info("Onboarding: agent prompt detected, skipping remaining wait")
             break
 

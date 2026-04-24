@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from doeff import Effect, EffectBase, Pass, Resume, WithHandler, default_handlers, do, run
+from doeff import Effect, EffectBase, Pass, Resume, WithHandler, do, run
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -34,7 +34,14 @@ class UnknownEffect(EffectBase):
 
 @do
 def _mock_workflow(session_name: str, config: LaunchConfig):
-    handle = yield Launch(session_name, config)
+    handle = yield Launch(
+        session_name,
+        agent_type=config.agent_type,
+        work_dir=config.work_dir,
+        prompt=config.prompt,
+        model=config.model,
+        mcp_tools=config.mcp_tools,
+    )
     observation = yield Monitor(handle)
     yield Stop(handle)
     return observation.status
@@ -49,7 +56,7 @@ def _unknown_workflow():
 def _unknown_effect_fallback(effect: Effect, k):
     if isinstance(effect, UnknownEffect):
         return (yield Resume(k, effect.value))
-    yield Pass()
+    yield Pass(effect, k)
 
 
 def test_protocol_handlers_are_not_dict_registries() -> None:
@@ -67,13 +74,11 @@ def test_protocol_handlers_have_effect_k_signature() -> None:
 def test_unknown_effect_delegates() -> None:
     result = run(
         WithHandler(
-            handler=_unknown_effect_fallback,
-            expr=WithHandler(handler=agent_effectful_handler(), expr=_unknown_workflow()),
-        ),
-        handlers=default_handlers(),
+            _unknown_effect_fallback,
+            WithHandler(agent_effectful_handler(), _unknown_workflow()),
+        )
     )
-    assert result.is_ok()
-    assert result.value == "noop"
+    assert result == "noop"
 
 
 def test_mock_handler_runs_program_with_public_vm_api() -> None:
@@ -95,9 +100,7 @@ def test_mock_handler_runs_program_with_public_vm_api() -> None:
     )
 
     result = run(
-        _mock_workflow(session_name, config),
-        handlers=[*mock_agent_handlers(), *default_handlers()],
+        WithHandler(mock_agent_handler(), _mock_workflow(session_name, config)),
     )
 
-    assert result.is_ok()
-    assert result.value == SessionStatus.RUNNING
+    assert result == SessionStatus.RUNNING

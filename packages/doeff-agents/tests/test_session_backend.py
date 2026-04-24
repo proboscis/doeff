@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from doeff_agents import (  # noqa: E402
+from doeff_agents import (
     AgentType,
     CaptureEffect,
     LaunchConfig,
@@ -27,8 +27,11 @@ from doeff_agents import (  # noqa: E402
     send_message,
     stop_session,
 )
-from doeff_agents.adapters.base import InjectionMethod  # noqa: E402
-from doeff_agents.session_backend import SessionBackend  # noqa: E402
+from doeff_agents.adapters.base import (
+    InjectionMethod,
+    LaunchParams,
+)
+from doeff_agents.session_backend import SessionBackend
 
 
 class FakeAdapter:
@@ -37,7 +40,7 @@ class FakeAdapter:
     ready_pattern = None
     status_bar_lines = 0
 
-    def launch_command(self, _cfg: LaunchConfig) -> list[str]:
+    def launch_command(self, _params: LaunchParams) -> list[str]:
         return ["fake-agent", "--run"]
 
     def is_available(self) -> bool:
@@ -118,7 +121,13 @@ def test_tmux_agent_handler_uses_injected_backend(monkeypatch) -> None:
     monkeypatch.setattr("doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter())
 
     handler = TmuxAgentHandler(backend=backend)
-    launch = LaunchEffect(session_name="worker", config=_config(), ready_timeout=0.1)
+    launch = LaunchEffect(
+        session_name="worker",
+        agent_type=AgentType.CLAUDE,
+        work_dir=Path.cwd(),
+        prompt="hello",
+        ready_timeout=0.1,
+    )
     handle = handler.handle_launch(launch)
 
     assert backend.created[0].session_name == "worker"

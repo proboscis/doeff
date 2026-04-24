@@ -3,8 +3,7 @@
 
 from dataclasses import dataclass, field
 
-from doeff_agents.adapters.base import AgentType, LaunchConfig
-from doeff_agents.mcp_server import McpToolServer, RunToolFn
+from doeff_agents.adapters.base import AgentType
 from doeff_agents.effects import (
     CaptureEffect,
     ClaudeLaunchEffect,
@@ -19,6 +18,7 @@ from doeff_agents.effects import (
     SleepEffect,
     StopEffect,
 )
+from doeff_agents.mcp_server import McpToolServer, RunToolFn
 from doeff_agents.monitor import SessionStatus
 
 from .production import AgentHandler
@@ -88,14 +88,14 @@ class MockAgentHandler(AgentHandler):
             raise SessionAlreadyExistsError(f"Session {effect.session_name} already exists")
 
         # Start MCP server if tools are provided (same as TmuxAgentHandler)
-        if effect.config.mcp_tools and run_tool is not None:
+        if effect.mcp_tools and run_tool is not None:
             import json
-            server = McpToolServer(tools=effect.config.mcp_tools, run_tool=run_tool)
+            server = McpToolServer(tools=effect.mcp_tools, run_tool=run_tool)
             server.start()
             self._mcp_servers[effect.session_name] = server
-            mcp_json_path = effect.config.work_dir / ".mcp.json"
+            mcp_json_path = effect.work_dir / ".mcp.json"
             mcp_json_path.write_text(json.dumps({
-                "mcpServers": {"doeff": {"type": "sse", "url": server.url}},
+                "mcpServers": {effect.mcp_server_name: {"type": "sse", "url": server.url}},
             }, indent=2))
 
         pane_id = f"%mock{self._next_pane_id}"
@@ -104,8 +104,8 @@ class MockAgentHandler(AgentHandler):
         handle = SessionHandle(
             session_name=effect.session_name,
             pane_id=pane_id,
-            agent_type=effect.config.agent_type,
-            work_dir=effect.config.work_dir,
+            agent_type=effect.agent_type,
+            work_dir=effect.work_dir,
         )
         self._handles[effect.session_name] = handle
         self._statuses[effect.session_name] = SessionStatus.BOOTING
@@ -114,14 +114,7 @@ class MockAgentHandler(AgentHandler):
 
     def handle_launch_task(self, effect: LaunchTaskEffect) -> SessionHandle:
         """Create mock session for generic task launch."""
-        return self.handle_claude_launch(
-            ClaudeLaunchEffect(
-                session_name=effect.session_name,
-                task=effect.task,
-                tags=effect.tags,
-                ready_timeout_sec=effect.ready_timeout_sec,
-            )
-        )
+        raise NotImplementedError("LaunchTaskEffect is deprecated; use LaunchEffect directly")
 
     def handle_claude_launch(self, effect: ClaudeLaunchEffect) -> SessionHandle:
         """Create mock Claude session."""
@@ -135,7 +128,7 @@ class MockAgentHandler(AgentHandler):
             session_name=effect.session_name,
             pane_id=pane_id,
             agent_type=AgentType.CLAUDE,
-            work_dir=effect.task.work_dir,
+            work_dir=effect.work_dir,
         )
         self._handles[effect.session_name] = handle
         self._statuses[effect.session_name] = SessionStatus.BOOTING
