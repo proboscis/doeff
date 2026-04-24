@@ -84,8 +84,3 @@ def _run_cli(*args: str, input_text: str | None = None) -> subprocess.CompletedP
         command, cwd=PROJECT_ROOT, text=True, capture_output=True,
         env=env, check=False, input=input_text,
     )
-
-
-
-
-

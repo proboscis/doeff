@@ -17,5 +17,3 @@ def test_spawn_deprecated_methods_removed() -> None:
     assert not hasattr(Promise, "complete")
     assert not hasattr(Promise, "fail")
     assert not hasattr(Task, "join")
-
-

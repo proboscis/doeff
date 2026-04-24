@@ -336,4 +336,3 @@ class TestLazyAskSemaphoreContract:
         assert result.is_ok()
         assert result.value == ("a", "b")
         assert calls == {"a": 1, "b": 1}
-

@@ -149,4 +149,3 @@ from dataclasses import dataclass as _dc_import_check  # noqa: F401
 
 class TestMemoRewriterWithSimTime:
     """Production-like stack: sim_time + parallel + memo + Spawn handler."""
-

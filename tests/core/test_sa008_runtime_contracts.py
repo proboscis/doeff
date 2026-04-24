@@ -46,5 +46,3 @@ def test_sa008_sync_await_propagates_coroutine_error() -> None:
     assert result.is_err()
     assert isinstance(result.error, ValueError)
     assert str(result.error) == "await boom"
-
-

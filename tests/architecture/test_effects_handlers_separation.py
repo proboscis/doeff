@@ -33,5 +33,3 @@ def test_no_handler_functions_in_effects_directory() -> None:
         for filename, function_name, line_number in _handler_definitions_in_effects()
     ]
     assert violations == [], f"Handler functions found in effects/: {violations}"
-
-

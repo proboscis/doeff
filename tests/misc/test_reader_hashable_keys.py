@@ -44,6 +44,3 @@ def test_string_keys_still_work() -> None:
         env={"key": "value"},
     )
     assert result.value == "value"
-
-
-

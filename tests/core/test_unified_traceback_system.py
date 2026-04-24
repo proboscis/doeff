@@ -53,5 +53,3 @@ def test_delegation_chain_routes_to_outer_handler() -> None:
     result = run_with_defaults(wrapped)
     assert result.is_ok(), result.error
     assert result.value == 7
-
-

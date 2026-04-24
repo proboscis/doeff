@@ -34,7 +34,3 @@ def test_p0_pyvm_has_no_python_package_imports_or_traceback_attr_probing() -> No
     assert 'py.import("doeff.errors")' not in src
     assert 'getattr("active_chain")' not in src
     assert 'getattr("entries")' not in src
-
-
-
-

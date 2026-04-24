@@ -14,6 +14,3 @@ def test_run_module_does_not_import_cli_entrypoint() -> None:
     assert "import doeff.__main__" not in src
     assert "def _apply_envs" not in src
     assert "def _load_default_env" not in src
-
-
-

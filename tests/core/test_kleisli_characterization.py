@@ -291,5 +291,3 @@ def test_with_handler_post_composition() -> None:
 
     result = run_with_defaults(combined())
     assert result.value == "ret:done"
-
-
