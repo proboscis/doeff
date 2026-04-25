@@ -292,6 +292,10 @@ def make_memo_rewriter(
 
         _MISS = object()
         cached = _MISS
+        # Memo storage absent or reports miss -> fall through to compute. The
+        # yield effect compute path below is intentionally NOT wrapped: an
+        # UnhandledEffect there is a real bug (no handler can produce the
+        # value) and must propagate fail-fast.
         try:
             if (yield MemoExists(key, recompute_cost=recompute_cost)):
                 try:
