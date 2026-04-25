@@ -6,7 +6,18 @@
 //!
 //! Parent pointers in the arena are the source of truth for chain structure.
 //! Continuation owns detached fibers directly while they are outside the arena.
-//! One-shot via head.take() — destructive read, like OCaml 5's atomic_swap.
+//! One-shot via `lock().take()` — destructive read, like OCaml 5's atomic_swap.
+//!
+//! ## Shared cell ownership
+//!
+//! The internal storage is `Arc<Mutex<Option<DetachedFiberChain>>>` so the VM
+//! can hold a backup handle while a `Continuation` is on loan to a handler
+//! callable (Python). If the handler raises before consuming `k`, the VM
+//! recovers the chain through the backup handle and routes the exception to
+//! the original perform site. One-shot is preserved by the lock+take pattern:
+//! whoever takes first wins; the loser sees `None`.
+
+use std::sync::{Arc, Mutex};
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -227,16 +238,22 @@ impl DetachedFiberChain {
 // Continuation — the detached fiber chain
 // ---------------------------------------------------------------------------
 
-/// A captured fiber chain. NOT Clone — one owner, one-shot.
+/// A captured fiber chain. NOT Clone publicly — one semantic owner, one-shot.
+///
+/// Internally the chain lives in `Arc<Mutex<Option<DetachedFiberChain>>>` so
+/// the VM can hold a backup handle while the Continuation is loaned to a
+/// handler (see `share_handle`). One-shot is preserved by the lock+take
+/// pattern: only one caller can `take()` the chain; subsequent takes return
+/// `None`.
 ///
 /// Created by `perform` (detach chain from handler).
 /// Consumed by `reattach_chain` / `continue_k` (reattach chain to caller).
 /// Extended by `reperform` (append current fiber to chain).
 #[derive(Debug)]
 pub struct Continuation {
-    /// The owned detached fiber chain.
-    /// `take()` enforces one-shot: Some first time, None after.
-    chain: Option<DetachedFiberChain>,
+    /// Shared cell holding the detached fiber chain.
+    /// `lock().take()` enforces one-shot: Some first time, None after.
+    chain: Arc<Mutex<Option<DetachedFiberChain>>>,
 }
 
 impl Continuation {
@@ -244,7 +261,9 @@ impl Continuation {
     /// Called by perform after moving fibers out of the arena.
     pub fn from_chain(chain: DetachedFiberChain) -> Self {
         memory_stats::register_continuation();
-        Self { chain: Some(chain) }
+        Self {
+            chain: Arc::new(Mutex::new(Some(chain))),
+        }
     }
 
     /// Sentinel for an already-consumed continuation (head=None).
@@ -254,32 +273,70 @@ impl Continuation {
     pub fn empty() -> Self {
         // Register so Drop's unregister is balanced.
         memory_stats::register_continuation();
-        Self { chain: None }
+        Self {
+            chain: Arc::new(Mutex::new(None)),
+        }
     }
 
-    /// One-shot take: returns the detached chain and clears.
+    /// One-shot take: returns the detached chain and clears the cell.
+    /// If a backup handle (via `share_handle`) was created, this take is
+    /// observed by the backup as well — the cell becomes None for everyone.
     pub fn take(&mut self) -> Option<DetachedFiberChain> {
-        self.chain.take()
+        self.chain
+            .lock()
+            .expect("Continuation chain mutex poisoned")
+            .take()
+    }
+
+    /// Create a backup handle pointing at the same chain cell.
+    ///
+    /// Used by the VM during handler invocation: before passing a Continuation
+    /// to the handler callable, the VM keeps a `share_handle` so that, if the
+    /// handler raises before consuming `k`, the chain can be recovered through
+    /// the backup. The lock+take pattern guarantees one-shot: whichever side
+    /// (handler or VM) takes first wins; the other sees `None`.
+    ///
+    /// Crate-internal — handler/user code must NOT call this. Cloning at the
+    /// public API surface would violate the single-owner contract.
+    pub(crate) fn share_handle(&self) -> Self {
+        memory_stats::register_continuation();
+        Self {
+            chain: Arc::clone(&self.chain),
+        }
     }
 
     /// Head fiber (identity of this continuation).
     pub fn head(&self) -> Option<FiberId> {
-        self.chain.as_ref().map(DetachedFiberChain::head)
+        self.chain
+            .lock()
+            .expect("Continuation chain mutex poisoned")
+            .as_ref()
+            .map(DetachedFiberChain::head)
     }
 
     /// Last fiber in the chain.
     pub fn last_fiber(&self) -> Option<FiberId> {
-        self.chain.as_ref().map(DetachedFiberChain::last_fiber)
+        self.chain
+            .lock()
+            .expect("Continuation chain mutex poisoned")
+            .as_ref()
+            .map(DetachedFiberChain::last_fiber)
     }
 
     /// Is this continuation already consumed?
     pub fn consumed(&self) -> bool {
-        self.chain.is_none()
+        self.chain
+            .lock()
+            .expect("Continuation chain mutex poisoned")
+            .is_none()
     }
 
     /// Is this a live (unconsumed) continuation?
     pub fn is_live(&self) -> bool {
-        self.chain.is_some()
+        self.chain
+            .lock()
+            .expect("Continuation chain mutex poisoned")
+            .is_some()
     }
 
     /// Identity = head fiber. Used as dispatch identity.
@@ -288,7 +345,11 @@ impl Continuation {
     }
 
     pub(crate) fn append_chain(&mut self, chain: DetachedFiberChain) -> bool {
-        let Some(existing) = self.chain.as_mut() else {
+        let mut guard = self
+            .chain
+            .lock()
+            .expect("Continuation chain mutex poisoned");
+        let Some(existing) = guard.as_mut() else {
             return false;
         };
         existing.append(chain);
@@ -297,18 +358,24 @@ impl Continuation {
 
     pub fn collect_traceback(&self) -> Option<Vec<StreamSourceLocation>> {
         self.chain
+            .lock()
+            .expect("Continuation chain mutex poisoned")
             .as_ref()
             .map(DetachedFiberChain::collect_traceback)
     }
 
     pub fn handler_callables(&self) -> Option<Vec<CallableRef>> {
         self.chain
+            .lock()
+            .expect("Continuation chain mutex poisoned")
             .as_ref()
             .map(DetachedFiberChain::handler_callables)
     }
 
     pub fn collect_rich_context(&self) -> Option<Vec<Value>> {
         self.chain
+            .lock()
+            .expect("Continuation chain mutex poisoned")
             .as_ref()
             .map(DetachedFiberChain::collect_rich_context)
     }
