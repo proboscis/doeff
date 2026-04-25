@@ -14,13 +14,19 @@ class FetchValue(EffectBase):
         self.key = key
 
 
-@do
-def fetch_value_handler(effect, k):
-    if not isinstance(effect, FetchValue):
-        yield Pass(effect, k)
-        return
-    value = f"value:{effect.key}"
-    return (yield Resume(k, value))
+def _make_fetch_value_handler():
+    calls = {"count": 0}
+
+    @do
+    def fetch_value_handler(effect, k):
+        if not isinstance(effect, FetchValue):
+            yield Pass(effect, k)
+            return
+        calls["count"] += 1
+        value = f"value:{effect.key}"
+        return (yield Resume(k, value))
+
+    return fetch_value_handler, calls
 
 
 def _run_with_handlers(program, *handlers):
@@ -32,6 +38,7 @@ def _run_with_handlers(program, *handlers):
 
 def test_memo_rewriter_without_terminal_uses_original_handler():
     storage = InMemoryStorage()
+    fetch_value_handler, calls = _make_fetch_value_handler()
 
     @do
     def program():
@@ -49,4 +56,5 @@ def test_memo_rewriter_without_terminal_uses_original_handler():
     )
 
     assert result == ("value:alpha", "value:alpha")
+    assert calls["count"] == 1
     assert len(storage) == 1
