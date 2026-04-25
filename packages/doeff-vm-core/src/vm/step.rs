@@ -585,6 +585,10 @@ impl VM {
                     if let Some(current) = self.current_segment {
                         context.extend(self.collect_rich_context_from(current));
                     }
+                    let mut k = k;
+                    if let Err(error) = self.continue_k(&mut k) {
+                        return error_result(error, Some(context));
+                    }
                     return error_result(VMError::no_matching_handler(effect), Some(context));
                 }
             };
