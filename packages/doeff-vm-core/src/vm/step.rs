@@ -148,8 +148,22 @@ impl VM {
                         continue_send(value, error_context)
                     }
                     StreamStep::Error(error) => {
-                        // Stream didn't handle — pop and propagate
-                        seg.frames.pop();
+                        // Stream didn't handle — pop and propagate. If the
+                        // popped frame was a handler body that we have a
+                        // chain backup for, recover by reattaching the
+                        // perform-site chain and routing the error there.
+                        let popped = seg.frames.pop();
+                        if let Some(Frame::Program {
+                            chain_backup: Some(backup),
+                            ..
+                        }) = popped
+                        {
+                            return self.recover_handler_chain_then_raise(
+                                backup,
+                                error,
+                                error_context,
+                            );
+                        }
                         continue_raise(error, error_context)
                     }
                     StreamStep::External(call) => external_result(call, error_context),
@@ -370,11 +384,15 @@ impl VM {
 
     /// Push a Value::Stream as a new Program frame on the current fiber.
     fn push_stream_value(&mut self, value: Value, error_context: Option<Vec<Value>>) -> StepResult {
+        // Consume any backup handle stashed by eval_perform/eval_perform_with_k
+        // so the resulting Program frame can recover the original perform-site
+        // chain when its stream raises an uncaught exception.
+        let chain_backup = self.pending_handler_chain_backup.take();
         match value {
             Value::Stream(stream) => {
                 if let Some(seg_id) = self.current_segment {
                     if let Some(seg) = self.segments.get_mut(seg_id) {
-                        seg.push_frame(Frame::program(stream, None));
+                        seg.push_frame(Frame::program_with_backup(stream, None, chain_backup));
                         return continue_send(Value::Unit, error_context);
                     }
                 }
@@ -467,16 +485,68 @@ impl VM {
         let k = result.continuation;
         let handler_callable = result.handler_callable;
 
+        // Hold a backup handle on the chain so that, if the handler raises
+        // before consuming `k`, we can reattach the chain and route the
+        // exception to the original perform site (the inner stream's `<-`
+        // yield point), matching OCaml 5 semantics. The backup is stashed in
+        // `pending_handler_chain_backup` so `push_stream_value` can attach
+        // it to the resulting Program frame; that way the recovery fires
+        // when the handler body's stream raises (which happens after
+        // `call_handler` returns), not just when call_handler itself errors.
+        // If the handler consumes `k` (Resume/Pass/Transfer/etc.), the
+        // lock+take in `Continuation::take` empties the cell and the
+        // backup becomes a no-op.
+        let backup = k.share_handle();
+        self.pending_handler_chain_backup = Some(backup);
+
         // 4. Call handler(effect, k) → must return a DoExpr.
-        match handler_callable.call_handler(vec![effect, Value::Continuation(k)]) {
-            Ok(doctrl) => continue_eval(doctrl, error_context),
+        let outcome = handler_callable.call_handler(vec![effect, Value::Continuation(k)]);
+
+        // If push_stream_value never ran (because outcome was Err or Pure),
+        // we must drop the backup ourselves to avoid leaking it into the
+        // next handler call.
+        let leftover_backup = self.pending_handler_chain_backup.take();
+
+        match outcome {
+            Ok(doctrl) => {
+                // Restore the slot so push_stream_value can pick it up.
+                self.pending_handler_chain_backup = leftover_backup;
+                continue_eval(doctrl, error_context)
+            }
             Err(VMError::UncaughtException { exception }) => {
-                // Python exception from handler callable — propagate through
-                // generator stack so try/except blocks can catch it.
-                continue_raise(exception, error_context)
+                // Synchronous Python exception from call_handler itself
+                // (the @do wrapper's Expand construction raised). Use the
+                // leftover backup to recover.
+                let backup = leftover_backup.unwrap_or_else(crate::continuation::Continuation::empty);
+                self.recover_handler_chain_then_raise(backup, exception, error_context)
             }
             Err(err) => error_result(err, error_context),
         }
+    }
+
+    /// Recover from a handler-body exception by reattaching the backup
+    /// continuation (if still live) and raising the exception into the
+    /// resulting stream. This makes the inner handler's `<-` site (or the
+    /// user program's `yield` site, if no inner handler is in scope) see
+    /// the exception via Python's `gen.throw`, matching OCaml 5's semantics
+    /// for unhandled exceptions in handler bodies.
+    ///
+    /// If the handler consumed `k` before raising (e.g. Resume followed by
+    /// a body-level raise after the resumed continuation returned), `backup`
+    /// is empty and we fall back to the legacy behavior of raising on
+    /// `current_segment`.
+    fn recover_handler_chain_then_raise(
+        &mut self,
+        mut backup: crate::continuation::Continuation,
+        exception: Value,
+        error_context: Option<Vec<Value>>,
+    ) -> StepResult {
+        if backup.is_live() {
+            if let Err(error) = self.reattach_chain(&mut backup) {
+                return error_result(error, error_context);
+            }
+        }
+        continue_raise(exception, error_context)
     }
 
     /// Walk the entire chain and call all observers synchronously.
@@ -627,13 +697,23 @@ impl VM {
         // Switch to outer handler's parent
         self.current_segment = boundary_parent;
 
-        // Call handler — must return DoExpr
-        match handler_callable.call_handler(vec![effect, Value::Continuation(k)]) {
-            Ok(doctrl) => continue_eval(doctrl, error_context),
+        // Hold a backup handle and stash it for push_stream_value
+        // (see eval_perform's note for rationale).
+        let backup = k.share_handle();
+        self.pending_handler_chain_backup = Some(backup);
+
+        let outcome = handler_callable.call_handler(vec![effect, Value::Continuation(k)]);
+
+        let leftover_backup = self.pending_handler_chain_backup.take();
+
+        match outcome {
+            Ok(doctrl) => {
+                self.pending_handler_chain_backup = leftover_backup;
+                continue_eval(doctrl, error_context)
+            }
             Err(VMError::UncaughtException { exception }) => {
-                // Python exception from handler callable — propagate through
-                // generator stack so try/except blocks can catch it.
-                continue_raise(exception, error_context)
+                let backup = leftover_backup.unwrap_or_else(crate::continuation::Continuation::empty);
+                self.recover_handler_chain_then_raise(backup, exception, error_context)
             }
             Err(err) => error_result(err, error_context),
         }

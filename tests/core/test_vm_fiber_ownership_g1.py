@@ -36,11 +36,17 @@ def test_g1_continuation_owns_detached_fiber_chain_without_queue() -> None:
     source = _runtime_source(CONTINUATION_RS)
     body = _struct_body(source, "Continuation")
 
+    # Guard the architectural intent: Continuation owns a chain, not a queue.
+    # Arc<Mutex<Option<DetachedFiberChain>>> IS allowed — it backs the
+    # share_handle() recovery path so the VM can recover from a handler
+    # raising before consuming `k`. The lock+take pattern preserves one-shot
+    # semantics (locked take returns None on second call). What is NOT
+    # allowed is queue-style orphan tracking (Arc<Mutex<Vec<...>>>) or the
+    # old OrphanQueue type.
     assert "DetachedFiberChain" in body
     assert "orphan_queue" not in body
     assert "OrphanQueue" not in source
-    assert "Arc<Mutex" not in source
-    assert ".lock()" not in source
+    assert "Arc<Mutex<Vec" not in source
     assert ".push(head)" not in source
 
 
