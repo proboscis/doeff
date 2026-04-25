@@ -20,15 +20,12 @@ import gc
 import resource
 from dataclasses import dataclass
 
-import pytest
-
 import doeff_vm
-
-from doeff import do, run, default_handlers
 from doeff_core_effects.effects import EffectBase
 from doeff_vm import WithHandler
-from tests._run_helpers import run_with_defaults
 
+from doeff import do
+from tests._run_helpers import run_with_defaults
 
 # ---------------------------------------------------------------------------
 # Custom effect: request a chunk of big data
@@ -80,7 +77,7 @@ def _sequential_yield_discard(n: int):
     """Yield BigDataEffect n times, discarding the result each time."""
     for i in range(n):
         _unused = yield BigDataEffect(iteration=i)
-        # Explicitly discard – this value should be GC-eligible immediately.
+        # Explicitly discard - this value should be GC-eligible immediately.
         del _unused
     return n
 
@@ -105,8 +102,7 @@ def _rss_mb() -> float:
     import sys
     if sys.platform == "darwin":
         return usage.ru_maxrss / (1024 * 1024)
-    else:
-        return usage.ru_maxrss / 1024
+    return usage.ru_maxrss / 1024
 
 
 def _run_program(program):
@@ -127,13 +123,6 @@ MAX_ALLOWED_GROWTH_MB = 50
 
 
 class TestVmMemoryLeak:
-    @pytest.mark.xfail(
-        reason=(
-            "TODO(vm-memory): resumed Python handler generators still retain large payloads "
-            "across deep Resume chains; re-enable after branch retention is fixed."
-        ),
-        strict=False,
-    )
     def test_sequential_discard_bounded_memory(self):
         """Yielding large objects in a loop without storing them must not leak.
 
@@ -167,13 +156,6 @@ class TestVmMemoryLeak:
             f"to yielded effect return values."
         )
 
-    @pytest.mark.xfail(
-        reason=(
-            "TODO(vm-memory): resumed Python handler generators still retain large payloads "
-            "across deep Resume chains; re-enable after branch retention is fixed."
-        ),
-        strict=False,
-    )
     def test_sequential_keep_last_bounded_memory(self):
         """Same as above but keeping a reference to the last result.
 

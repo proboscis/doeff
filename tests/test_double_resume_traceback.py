@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
+from doeff_core_effects.handlers import state, try_handler, writer
+from doeff_core_effects.scheduler import scheduled
 
 from doeff import (
     EffectBase,
@@ -22,8 +24,6 @@ from doeff import (
     do,
     run,
 )
-from doeff_core_effects.handlers import writer, try_handler, state
-from doeff_core_effects.scheduler import scheduled
 
 
 @dataclass(frozen=True)
@@ -31,7 +31,7 @@ class Ping(EffectBase):
     value: int
 
 
-@do
+@do(non_tail=True)
 def double_resume_handler(effect, k):
     """Handler that incorrectly resumes k twice."""
     if not isinstance(effect, Ping):
