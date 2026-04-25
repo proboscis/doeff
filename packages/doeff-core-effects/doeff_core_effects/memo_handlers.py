@@ -222,30 +222,6 @@ def memo_handler(
     return handler
 
 
-@do
-def memo_terminal(effect, k):
-    """Deprecated optional terminal handler for memo effects.
-
-    Historically this sat outside all memo_handler layers to turn fallthrough
-    into storage misses. Compute-layer memo callers now catch UnhandledEffect
-    directly, so memo_terminal is no longer required for correctness.
-
-    Catches re-performed memo effects that fall through every caching layer:
-      MemoExists → False (not in any layer)
-      MemoGet    → KeyError (propagates to memo_rewriter's except KeyError)
-      MemoPut    → None (all layers already stored before re-performing)
-    """
-    if isinstance(effect, MemoExistsEffect):
-        result = yield Resume(k, False)
-        return result
-    if isinstance(effect, MemoGetEffect):
-        raise KeyError(effect.key)
-    if isinstance(effect, MemoPutEffect):
-        result = yield Resume(k, None)
-        return result
-    yield Pass(effect, k)
-
-
 def in_memory_memo_handler():
     """Return a memo handler backed by in-memory storage (handles all costs)."""
     return memo_handler(InMemoryStorage())
