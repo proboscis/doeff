@@ -71,3 +71,46 @@ def test_protected_tail_looking_resume_warns_without_marker() -> None:
                 pass
 
     assert callable(handler)
+
+
+def test_do_decorator_handles_unparseable_source() -> None:
+    """Hy-defined handlers and other non-Python source bodies must not crash @do.
+
+    inspect.getsourcelines on a Hy function returns the Hy source verbatim,
+    which Python's tokenizer rejects with tokenize.TokenError. The tail-resume
+    analysis is purely diagnostic and must silently skip when source cannot be
+    parsed — runtime behavior of the wrapped generator is unchanged.
+    """
+    import inspect
+    import tokenize
+
+    from doeff.do import _analyze_resume_yields
+
+    def real_handler(_effect: object, k: object):
+        yield Resume(k, "value")
+
+    real_getsourcelines = inspect.getsourcelines
+
+    def raising_getsourcelines(fn):
+        if fn is real_handler:
+            raise tokenize.TokenError("unexpected EOF in multi-line statement", (81, 0))
+        return real_getsourcelines(fn)
+
+    inspect.getsourcelines = raising_getsourcelines
+    try:
+        result = _analyze_resume_yields(real_handler, non_tail=False)
+    finally:
+        inspect.getsourcelines = real_getsourcelines
+
+    assert result == ()
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        inspect.getsourcelines = raising_getsourcelines
+        try:
+            wrapped = do(real_handler)
+        finally:
+            inspect.getsourcelines = real_getsourcelines
+
+    assert callable(wrapped)
+    assert _non_tail_resume_warnings(caught) == []
