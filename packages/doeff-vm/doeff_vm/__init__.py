@@ -9,6 +9,7 @@ K = _ext.K
 Callable = _ext.Callable
 EffectBase = _ext.EffectBase
 IRStream = _ext.IRStream
+UnhandledEffect = _ext.UnhandledEffect
 Ok = _ext.Ok
 Err = _ext.Err
 

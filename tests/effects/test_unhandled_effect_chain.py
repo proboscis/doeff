@@ -17,10 +17,9 @@ strip ``.<locals>.`` closure suffixes and drop the module prefix, so
 from __future__ import annotations
 
 import pytest
-
-from doeff import Ask, Pass, WithHandler, do, run
 from doeff_core_effects.handlers import lazy_ask, slog_handler
 
+from doeff import Ask, Pass, UnhandledEffect, WithHandler, do, run
 
 # Module-level handlers so their qualnames don't include ``.<locals>.`` noise
 # from the enclosing test class/function.
@@ -58,7 +57,7 @@ class TestUnhandledEffectMessageIncludesChain:
         def prog():
             return (yield Ask("missing"))
 
-        with pytest.raises(RuntimeError) as excinfo:
+        with pytest.raises(UnhandledEffect) as excinfo:
             run(WithHandler(only_handler, prog()))
         msg = _extract_msg(excinfo.value)
         assert "only_handler" in msg
@@ -79,7 +78,7 @@ class TestUnhandledEffectMessageIncludesChain:
                 WithHandler(telemetry_handler, prog()),
             ),
         )
-        with pytest.raises(RuntimeError) as excinfo:
+        with pytest.raises(UnhandledEffect) as excinfo:
             run(composed)
         msg = _extract_msg(excinfo.value)
         assert "telemetry_handler" in msg
@@ -97,7 +96,7 @@ class TestUnhandledEffectMessageIncludesChain:
             outer_pass_through,
             WithHandler(inner_pass_through, prog()),
         )
-        with pytest.raises(RuntimeError) as excinfo:
+        with pytest.raises(UnhandledEffect) as excinfo:
             run(composed)
         msg = _extract_msg(excinfo.value)
         assert "inner_pass_through" in msg
