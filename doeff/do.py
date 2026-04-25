@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import tokenize
 import warnings
 from collections.abc import Callable, Generator
 from functools import wraps
@@ -167,14 +168,18 @@ def _call_leaf_name(node: ast.AST) -> str | None:
 
 
 def _analyze_resume_yields(fn: Callable[..., Any], *, non_tail: bool) -> tuple[int, ...]:
+    # tail-resume analysis is purely a warning/diagnostic optimization. If we
+    # cannot recover Python source for `fn` (e.g. Hy-defined handlers, lambdas
+    # generated at runtime, frozen functions), silently skip — the runtime
+    # behavior of the @do wrapper is unaffected.
     try:
         source_lines, start_line = inspect.getsourcelines(fn)
-    except (OSError, TypeError):
+    except (OSError, TypeError, tokenize.TokenError, SyntaxError):
         return ()
 
     try:
         module = ast.parse(dedent("".join(source_lines)))
-    except SyntaxError:
+    except (SyntaxError, ValueError):
         return ()
 
     function_node = next(
