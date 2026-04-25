@@ -73,41 +73,39 @@ impl PyVM {
     /// and attach __doeff_traceback__ from the threaded diagnostic context.
     fn convert_vm_error(
         &mut self,
+        py: Python<'_>,
         err: doeff_vm_core::VMError,
         context: Option<Vec<Value>>,
     ) -> pyo3::PyErr {
         match err {
             doeff_vm_core::VMError::UncaughtException { exception } => {
-                Python::attach(|py| {
-                    let py_obj = value_to_python(py, exception);
-                    // Attach VM-captured traceback to the exception
-                    if let Some(frames) = context {
-                        if !frames.is_empty() {
-                            let py_frames: Vec<_> =
-                                frames.into_iter().map(|v| value_to_python(py, v)).collect();
-                            if let Ok(tb_list) = pyo3::types::PyList::new(py, &py_frames) {
-                                let _ = py_obj.setattr("__doeff_traceback__", tb_list);
-                            }
+                let py_obj = value_to_python(py, exception);
+                // Attach VM-captured traceback to the exception
+                if let Some(frames) = context {
+                    if !frames.is_empty() {
+                        let py_frames: Vec<_> =
+                            frames.into_iter().map(|v| value_to_python(py, v)).collect();
+                        if let Ok(tb_list) = pyo3::types::PyList::new(py, &py_frames) {
+                            let _ = py_obj.setattr("__doeff_traceback__", tb_list);
                         }
                     }
-                    if py_obj.is_instance_of::<pyo3::exceptions::PyBaseException>() {
-                        pyo3::PyErr::from_value(py_obj.unbind().into_bound(py))
-                    } else {
-                        pyo3::exceptions::PyRuntimeError::new_err(format!(
-                            "uncaught exception: {:?}",
-                            py_obj
-                        ))
-                    }
-                })
+                }
+                if py_obj.is_instance_of::<pyo3::exceptions::PyBaseException>() {
+                    pyo3::PyErr::from_value(py_obj.unbind().into_bound(py))
+                } else {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "uncaught exception: {:?}",
+                        py_obj
+                    ))
+                }
             }
             doeff_vm_core::VMError::UnhandledEffect { effect } => {
-                self.make_unhandled_effect_error("unhandled effect", &effect, context)
+                self.make_unhandled_effect_error(py, "unhandled effect", &effect, context)
             }
-            doeff_vm_core::VMError::NoMatchingHandler { effect } => {
-                self.make_unhandled_effect_error("no handler found for effect", &effect, context)
-            }
+            doeff_vm_core::VMError::NoMatchingHandler { effect } => self
+                .make_unhandled_effect_error(py, "no handler found for effect", &effect, context),
             doeff_vm_core::VMError::DelegateNoOuterHandler { effect } => {
-                self.make_unhandled_effect_error("Pass: no outer handler", &effect, context)
+                self.make_unhandled_effect_error(py, "Pass: no outer handler", &effect, context)
             }
             other => pyo3::exceptions::PyRuntimeError::new_err(format!("{}", other)),
         }
@@ -116,37 +114,35 @@ impl PyVM {
     /// Create an UnhandledEffect for an unhandled effect, with __doeff_traceback__ attached.
     fn make_unhandled_effect_error(
         &self,
+        py: Python<'_>,
         label: &str,
         effect: &Value,
         context: Option<Vec<Value>>,
     ) -> pyo3::PyErr {
-        Python::attach(|py| {
-            let desc = Self::describe_effect(py, effect);
-            let chain: Vec<String> = context
-                .as_ref()
-                .and_then(|c| Self::extract_handler_chain(c))
-                .unwrap_or_default();
-            let msg = if chain.is_empty() {
-                format!("{}: {} (no handlers in scope)", label, desc)
-            } else {
-                format!(
-                    "{}: {}\n  handlers in scope (innermost→outermost): {}",
-                    label,
-                    desc,
-                    chain.join(" → "),
-                )
-            };
-            let err = UnhandledEffect::new_err(msg);
-            // Attach doeff traceback if captured
-            if let Some(frames) = context {
-                let py_frames: Vec<_> =
-                    frames.into_iter().map(|v| value_to_python(py, v)).collect();
-                let tb_list = pyo3::types::PyList::new(py, &py_frames).unwrap();
-                let exc_val = err.value(py);
-                let _ = exc_val.setattr("__doeff_traceback__", tb_list);
-            }
-            err
-        })
+        let desc = Self::describe_effect(py, effect);
+        let chain: Vec<String> = context
+            .as_ref()
+            .and_then(|c| Self::extract_handler_chain(c))
+            .unwrap_or_default();
+        let msg = if chain.is_empty() {
+            format!("{}: {} (no handlers in scope)", label, desc)
+        } else {
+            format!(
+                "{}: {}\n  handlers in scope (innermost→outermost): {}",
+                label,
+                desc,
+                chain.join(" → "),
+            )
+        };
+        let err = UnhandledEffect::new_err(msg);
+        // Attach doeff traceback if captured
+        if let Some(frames) = context {
+            let py_frames: Vec<_> = frames.into_iter().map(|v| value_to_python(py, v)).collect();
+            let tb_list = pyo3::types::PyList::new(py, &py_frames).unwrap();
+            let exc_val = err.value(py);
+            let _ = exc_val.setattr("__doeff_traceback__", tb_list);
+        }
+        err
     }
 
     fn should_raise_into_stream(error: &doeff_vm_core::VMError) -> bool {
@@ -164,7 +160,7 @@ impl PyVM {
         context: Option<Vec<Value>>,
     ) -> Value {
         Python::attach(|py| {
-            let err = self.convert_vm_error(error, context);
+            let err = self.convert_vm_error(py, error, context);
             Value::Opaque(doeff_vm_core::py_shared::PyShared::new(
                 err.value(py).clone().into_any().unbind(),
             ))
@@ -245,16 +241,16 @@ impl PyVM {
                 }
                 StepResult::Done(value) => return Ok(value),
                 StepResult::Error { error, context } => {
+                    let context =
+                        context.or_else(|| Some(self.vm.collect_rich_execution_context()));
                     if Self::should_raise_into_stream(&error) && self.vm.current_segment.is_some() {
-                        let context =
-                            context.or_else(|| Some(self.vm.collect_rich_execution_context()));
                         let exception = self.vm_error_to_exception_value(error, context.clone());
                         signal = Signal::raise(exception).with_error_context(context);
                         continue;
                     }
-                    let context =
-                        context.or_else(|| Some(self.vm.collect_rich_execution_context()));
-                    return Err(self.convert_vm_error(error, context));
+                    return Err(Python::attach(|py| {
+                        self.convert_vm_error(py, error, context)
+                    }));
                 }
                 StepResult::External { call, context } => {
                     match call.callable {
