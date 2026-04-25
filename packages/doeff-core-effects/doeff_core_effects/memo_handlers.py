@@ -14,19 +14,17 @@ from collections.abc import Callable, Mapping, Set
 from pathlib import Path
 from typing import Any, TypeAlias
 
-from doeff import do
-from doeff.program import Resume, Pass
-
+from doeff import UnhandledEffect, do
+from doeff.program import Pass, Resume, TransferThrow
 from doeff_core_effects.memo_effects import (
-    MemoExistsEffect,
-    MemoGetEffect,
-    MemoPutEffect,
-    MemoGet,
-    MemoPut,
     MemoExists,
+    MemoExistsEffect,
+    MemoGet,
+    MemoGetEffect,
+    MemoPut,
+    MemoPutEffect,
 )
 from doeff_core_effects.memo_policy import RecomputeCost
-from doeff_core_effects.effects import Try
 from doeff_core_effects.storage import DurableStorage, InMemoryStorage, SQLiteStorage
 
 MemoKeyFn: TypeAlias = Callable[[object], str]
@@ -186,7 +184,11 @@ def memo_handler(
                 result = yield Resume(k, True)
                 return result
             # Not in this layer — re-perform to check outer layers
-            result = yield Resume(k, (yield effect))
+            try:
+                outer_exists = yield effect
+            except UnhandledEffect as exc:
+                return (yield TransferThrow(k, exc))
+            result = yield Resume(k, outer_exists)
             return result
 
         if isinstance(effect, MemoGetEffect):
@@ -198,7 +200,10 @@ def memo_handler(
                 return result
             # Miss — re-perform (outer handler resolves) → cache result
             yield Slog(f"[memo-layer:{label}] MISS key={key[:16]}... → re-performing")
-            outer_value = yield effect
+            try:
+                outer_value = yield effect
+            except UnhandledEffect as exc:
+                return (yield TransferThrow(k, exc))
             yield storage.put(key, outer_value)
             yield Slog(f"[memo-layer:{label}] WRITE-THROUGH key={key[:16]}...")
             result = yield Resume(k, outer_value)
@@ -207,7 +212,10 @@ def memo_handler(
         # MemoPutEffect — write to this layer AND propagate to outer layers
         yield storage.put(key, effect.value)
         yield Slog(f"[memo-layer:{label}] PUT key={key[:16]}...")
-        yield effect  # re-perform → outer handlers also store
+        try:
+            yield effect  # re-perform → outer handlers also store
+        except UnhandledEffect as exc:
+            return (yield TransferThrow(k, exc))
         result = yield Resume(k, None)
         return result
 
@@ -216,7 +224,11 @@ def memo_handler(
 
 @do
 def memo_terminal(effect, k):
-    """Terminal handler for memo effects — sits outside all memo_handler layers.
+    """Deprecated optional terminal handler for memo effects.
+
+    Historically this sat outside all memo_handler layers to turn fallthrough
+    into storage misses. Compute-layer memo callers now catch UnhandledEffect
+    directly, so memo_terminal is no longer required for correctness.
 
     Catches re-performed memo effects that fall through every caching layer:
       MemoExists → False (not in any layer)
@@ -279,22 +291,35 @@ def make_memo_rewriter(
         yield Slog(f"[memo] checking {effect_type.__name__} key={key[:16]}...")
 
         _MISS = object()
-        if (yield MemoExists(key, recompute_cost=recompute_cost)):
-            try:
-                cached = yield MemoGet(key, recompute_cost=recompute_cost)
-            except KeyError:
-                cached = _MISS
+        cached = _MISS
+        try:
+            if (yield MemoExists(key, recompute_cost=recompute_cost)):
+                try:
+                    cached = yield MemoGet(key, recompute_cost=recompute_cost)
+                except KeyError:
+                    cached = _MISS
+        except UnhandledEffect:
+            cached = _MISS
 
-            if cached is not _MISS:
-                yield Slog(f"[memo] HIT {effect_type.__name__} key={key[:16]}...")
-                result = yield Resume(k, cached)
-                return result
+        if cached is not _MISS:
+            yield Slog(f"[memo] HIT {effect_type.__name__} key={key[:16]}...")
+            result = yield Resume(k, cached)
+            return result
 
         yield Slog(f"[memo] MISS {effect_type.__name__} key={key[:16]}... -> delegating")
         delegated = yield effect
 
-        yield MemoPut(key, delegated, policy=MemoPolicy(recompute_cost=recompute_cost), source_effect=effect)
-        yield Slog(f"[memo] STORED {effect_type.__name__} key={key[:16]}...")
+        try:
+            yield MemoPut(
+                key,
+                delegated,
+                policy=MemoPolicy(recompute_cost=recompute_cost),
+                source_effect=effect,
+            )
+        except UnhandledEffect:
+            pass
+        else:
+            yield Slog(f"[memo] STORED {effect_type.__name__} key={key[:16]}...")
 
         result = yield Resume(k, delegated)
         return result
