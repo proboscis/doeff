@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, TypeAlias
 
 from doeff import UnhandledEffect, do
-from doeff.program import Pass, Resume, TransferThrow
+from doeff.program import Pass, Resume
 from doeff_core_effects.memo_effects import (
     MemoExists,
     MemoExistsEffect,
@@ -183,11 +183,13 @@ def memo_handler(
             if exists:
                 result = yield Resume(k, True)
                 return result
-            # Not in this layer — re-perform to check outer layers
+            # Not in this layer — re-perform to check outer layers.
+            # UnhandledEffect = no further outer storage = definitively not
+            # in any layer beyond this one, so resume with False.
             try:
                 outer_exists = yield effect
-            except UnhandledEffect as exc:
-                return (yield TransferThrow(k, exc))
+            except UnhandledEffect:
+                outer_exists = False
             result = yield Resume(k, outer_exists)
             return result
 
@@ -198,24 +200,31 @@ def memo_handler(
                 yield Slog(f"[memo-layer:{label}] HIT key={key[:16]}...")
                 result = yield Resume(k, value)
                 return result
-            # Miss — re-perform (outer handler resolves) → cache result
+            # Miss — re-perform (outer handler resolves) → cache result.
+            # UnhandledEffect = no further outer storage AND not here →
+            # established miss signal: raise KeyError. Callers (@cache,
+            # make_memo_rewriter, sessioned-memo) catch KeyError as miss.
             yield Slog(f"[memo-layer:{label}] MISS key={key[:16]}... → re-performing")
             try:
                 outer_value = yield effect
-            except UnhandledEffect as exc:
-                return (yield TransferThrow(k, exc))
+            except UnhandledEffect:
+                raise KeyError(effect.key)
             yield storage.put(key, outer_value)
             yield Slog(f"[memo-layer:{label}] WRITE-THROUGH key={key[:16]}...")
             result = yield Resume(k, outer_value)
             return result
 
-        # MemoPutEffect — write to this layer AND propagate to outer layers
+        # MemoPutEffect — write to this layer AND broadcast to outer layers.
+        # UnhandledEffect from re-perform = no further outer storage =
+        # broadcast complete (this layer was the outermost). Swallow and
+        # resume the caller with None — the user should not see an exception
+        # when all storage layers successfully stored.
         yield storage.put(key, effect.value)
         yield Slog(f"[memo-layer:{label}] PUT key={key[:16]}...")
         try:
             yield effect  # re-perform → outer handlers also store
-        except UnhandledEffect as exc:
-            return (yield TransferThrow(k, exc))
+        except UnhandledEffect:
+            pass  # no further outer = broadcast complete
         result = yield Resume(k, None)
         return result
 
