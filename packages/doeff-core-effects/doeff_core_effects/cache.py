@@ -113,7 +113,9 @@ def cache(
                 else (func_name, args, frozen_kwargs)
             )
 
-            # Fall through when memo storage is absent or reports a miss.
+            # Memo handler is optional. If absent (UnhandledEffect on MemoExists/Get)
+            # or storage misses (KeyError), fall through to compute. The
+            # yield func(...) below is NOT wrapped: its failures must propagate.
             try:
                 if (yield MemoExists(cache_key_obj)):
                     try:
@@ -127,7 +129,8 @@ def cache(
             # Memo miss — run the function
             result = yield func(*args, **kwargs)
 
-            # Store in memo when available, but keep the compute result authoritative.
+            # Best-effort store: if no memo handler is installed, swallow. The
+            # compute result returned above is authoritative.
             try:
                 yield MemoPut(cache_key_obj, result, policy=memo_policy)
             except UnhandledEffect:
