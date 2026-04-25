@@ -15,18 +15,16 @@ from pathlib import Path
 from typing import Any, TypeAlias
 
 from doeff import do
-from doeff.program import Resume, Pass
-
+from doeff.program import GetOuterHandlers, Pass, Resume
 from doeff_core_effects.memo_effects import (
-    MemoExistsEffect,
-    MemoGetEffect,
-    MemoPutEffect,
-    MemoGet,
-    MemoPut,
     MemoExists,
+    MemoExistsEffect,
+    MemoGet,
+    MemoGetEffect,
+    MemoPut,
+    MemoPutEffect,
 )
 from doeff_core_effects.memo_policy import RecomputeCost
-from doeff_core_effects.effects import Try
 from doeff_core_effects.storage import DurableStorage, InMemoryStorage, SQLiteStorage
 
 MemoKeyFn: TypeAlias = Callable[[object], str]
@@ -62,7 +60,7 @@ def _dumps(value: object) -> bytes:
     return serializer.dumps(value)
 
 
-def _normalize_for_hash(value: object) -> object:
+def _normalize_for_hash(value: object) -> object:  # noqa: PLR0911
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return {
             "__type__": f"{type(value).__module__}.{type(value).__qualname__}",
@@ -71,27 +69,27 @@ def _normalize_for_hash(value: object) -> object:
                 for field in dataclasses.fields(value)
             },
         }
-    elif isinstance(value, Mapping):
+    if isinstance(value, Mapping):
         return {
             str(key): _normalize_for_hash(item)
             for key, item in sorted(value.items(), key=lambda item: str(item[0]))
         }
-    elif isinstance(value, tuple):
+    if isinstance(value, tuple):
         return {"__tuple__": [_normalize_for_hash(item) for item in value]}
-    elif isinstance(value, list):
+    if isinstance(value, list):
         return [_normalize_for_hash(item) for item in value]
-    elif isinstance(value, Set) and not isinstance(value, (str, bytes, bytearray)):
+    if isinstance(value, Set) and not isinstance(value, (str, bytes, bytearray)):
         normalized = [_normalize_for_hash(item) for item in value]
         return {
             "__set__": sorted(normalized, key=lambda item: json.dumps(item, sort_keys=True))
         }
-    elif isinstance(value, Path):
+    if isinstance(value, Path):
         return {"__path__": str(value)}
-    elif isinstance(value, bytes):
+    if isinstance(value, bytes):
         return {"__bytes__": value.hex()}
-    elif isinstance(value, type):
+    if isinstance(value, type):
         return f"{value.__module__}.{value.__qualname__}"
-    elif hasattr(value, "__dict__") and not isinstance(value, type):
+    if hasattr(value, "__dict__") and not isinstance(value, type):
         return {
             "__type__": f"{type(value).__module__}.{type(value).__qualname__}",
             **{
@@ -135,6 +133,22 @@ def _effect_cost(effect) -> RecomputeCost:
     return effect.recompute_cost
 
 
+def _is_memo_handler(handler: object) -> bool:
+    return hasattr(handler, "_doeff_memo_handler") and handler._doeff_memo_handler is True
+
+
+def _is_memo_terminal(handler: object) -> bool:
+    return hasattr(handler, "_doeff_memo_terminal") and handler._doeff_memo_terminal is True
+
+
+def _has_memo_handler(handlers: list[object]) -> bool:
+    return any(_is_memo_handler(handler) for handler in handlers)
+
+
+def _has_memo_fallthrough_handler(handlers: list[object]) -> bool:
+    return any(_is_memo_handler(handler) or _is_memo_terminal(handler) for handler in handlers)
+
+
 def memo_handler(
     storage: DurableStorage,
     *,
@@ -169,6 +183,48 @@ def memo_handler(
     from doeff_core_effects.effects import WriterTellEffect as Slog
 
     @do
+    def _resume_exists(effect, k, key):
+        exists = yield storage.exists(key)
+        if exists:
+            return (yield Resume(k, True))
+
+        outer_handlers = yield GetOuterHandlers()
+        if not _has_memo_fallthrough_handler(outer_handlers):
+            return (yield Resume(k, False))
+
+        return (yield Resume(k, (yield effect)))
+
+    @do
+    def _resume_get(effect, k, key):
+        exists = yield storage.exists(key)
+        if exists:
+            value = yield storage.get(key)
+            yield Slog(f"[memo-layer:{label}] HIT key={key[:16]}...")
+            return (yield Resume(k, value))
+
+        outer_handlers = yield GetOuterHandlers()
+        if not _has_memo_fallthrough_handler(outer_handlers):
+            raise KeyError(effect.key)
+
+        yield Slog(f"[memo-layer:{label}] MISS key={key[:16]}... → re-performing")
+        outer_value = yield effect
+        yield storage.put(key, outer_value)
+        yield Slog(f"[memo-layer:{label}] WRITE-THROUGH key={key[:16]}...")
+        return (yield Resume(k, outer_value))
+
+    @do
+    def _resume_put(effect, k, key):
+        yield storage.put(key, effect.value)
+        yield Slog(f"[memo-layer:{label}] PUT key={key[:16]}...")
+
+        outer_handlers = yield GetOuterHandlers()
+        if not _has_memo_fallthrough_handler(outer_handlers):
+            return (yield Resume(k, None))
+
+        yield effect
+        return (yield Resume(k, None))
+
+    @do
     def handler(effect, k):
         if not isinstance(effect, (MemoGetEffect, MemoExistsEffect, MemoPutEffect)):
             yield Pass(effect, k)
@@ -181,44 +237,27 @@ def memo_handler(
         key = _storage_key(effect.key)
 
         if isinstance(effect, MemoExistsEffect):
-            exists = yield storage.exists(key)
-            if exists:
-                result = yield Resume(k, True)
-                return result
-            # Not in this layer — re-perform to check outer layers
-            result = yield Resume(k, (yield effect))
-            return result
+            return (yield _resume_exists(effect, k, key))
 
         if isinstance(effect, MemoGetEffect):
-            exists = yield storage.exists(key)
-            if exists:
-                value = yield storage.get(key)
-                yield Slog(f"[memo-layer:{label}] HIT key={key[:16]}...")
-                result = yield Resume(k, value)
-                return result
-            # Miss — re-perform (outer handler resolves) → cache result
-            yield Slog(f"[memo-layer:{label}] MISS key={key[:16]}... → re-performing")
-            outer_value = yield effect
-            yield storage.put(key, outer_value)
-            yield Slog(f"[memo-layer:{label}] WRITE-THROUGH key={key[:16]}...")
-            result = yield Resume(k, outer_value)
-            return result
+            return (yield _resume_get(effect, k, key))
 
-        # MemoPutEffect — write to this layer AND propagate to outer layers
-        yield storage.put(key, effect.value)
-        yield Slog(f"[memo-layer:{label}] PUT key={key[:16]}...")
-        yield effect  # re-perform → outer handlers also store
-        result = yield Resume(k, None)
-        return result
+        return (yield _resume_put(effect, k, key))
 
+    handler._doeff_memo_handler = True
     return handler
 
 
 @do
 def memo_terminal(effect, k):
-    """Terminal handler for memo effects — sits outside all memo_handler layers.
+    """Deprecated terminal handler for memo effects.
 
-    Catches re-performed memo effects that fall through every caching layer:
+    Deprecated: memo callers now treat missing memo storage as a miss, so
+    ``memo_terminal`` is optional and retained only for backward compatibility.
+
+    This handler sits outside all ``memo_handler`` layers and catches
+    re-performed memo effects that fall through every caching layer:
+
       MemoExists → False (not in any layer)
       MemoGet    → KeyError (propagates to memo_rewriter's except KeyError)
       MemoPut    → None (all layers already stored before re-performing)
@@ -232,6 +271,9 @@ def memo_terminal(effect, k):
         result = yield Resume(k, None)
         return result
     yield Pass(effect, k)
+
+
+memo_terminal._doeff_memo_terminal = True
 
 
 def in_memory_memo_handler():
@@ -278,14 +320,16 @@ def make_memo_rewriter(
         key = key_fn(effect)
         yield Slog(f"[memo] checking {effect_type.__name__} key={key[:16]}...")
 
-        _MISS = object()
-        if (yield MemoExists(key, recompute_cost=recompute_cost)):
+        outer_handlers = yield GetOuterHandlers()
+        memo_storage_available = _has_memo_handler(outer_handlers)
+        _miss = object()
+        if memo_storage_available and (yield MemoExists(key, recompute_cost=recompute_cost)):
             try:
                 cached = yield MemoGet(key, recompute_cost=recompute_cost)
             except KeyError:
-                cached = _MISS
+                cached = _miss
 
-            if cached is not _MISS:
+            if cached is not _miss:
                 yield Slog(f"[memo] HIT {effect_type.__name__} key={key[:16]}...")
                 result = yield Resume(k, cached)
                 return result
@@ -293,8 +337,14 @@ def make_memo_rewriter(
         yield Slog(f"[memo] MISS {effect_type.__name__} key={key[:16]}... -> delegating")
         delegated = yield effect
 
-        yield MemoPut(key, delegated, policy=MemoPolicy(recompute_cost=recompute_cost), source_effect=effect)
-        yield Slog(f"[memo] STORED {effect_type.__name__} key={key[:16]}...")
+        if memo_storage_available:
+            yield MemoPut(
+                key,
+                delegated,
+                policy=MemoPolicy(recompute_cost=recompute_cost),
+                source_effect=effect,
+            )
+            yield Slog(f"[memo] STORED {effect_type.__name__} key={key[:16]}...")
 
         result = yield Resume(k, delegated)
         return result
