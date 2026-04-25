@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, SupportsIndex, TypeVar
 
 _T = TypeVar("_T")
 
@@ -18,16 +18,16 @@ class K:
 # --- Callable / Stream ---
 
 class Callable:
-    def __init__(self, callable: Any) -> None: ...
+    def __init__(self, callable_: Any) -> None: ...
 
 class IRStream:
-    def __init__(self, generator: Any) -> None: ...
+    def __init__(self, generator: Any, tail_resume_lines: Any | None = None) -> None: ...
 
 # --- EffectBase ---
 
 class EffectBase:
     def __init__(self, *_args: Any, **_kwargs: Any) -> None: ...
-    def __reduce_ex__(self, protocol: int) -> tuple[Any, ...]: ...
+    def __reduce_ex__(self, protocol: SupportsIndex) -> tuple[Any, ...]: ...
 
 # --- Result types ---
 
