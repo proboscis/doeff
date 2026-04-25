@@ -412,27 +412,48 @@ class TmuxAgentHandler(AgentHandler):
         claude_dir = agent_home / ".claude"
         claude_dir.mkdir(parents=True, exist_ok=True)
 
-        claude_json = agent_home / ".claude.json"
+        # Claude Code 2.1+ reads `${CLAUDE_HOME}/.claude.json` (CLAUDE_HOME is
+        # set to `${agent_home}/.claude` below). Older versions read
+        # `${HOME}/.claude.json`. Write trust state to both so the
+        # workspace-trust dialog is skipped regardless of which version of
+        # Claude Code is installed (the dialog is interactive and would
+        # block the tmux launch indefinitely otherwise).
+        candidate_json_paths: list[Path] = [
+            agent_home / ".claude.json",                # legacy
+            agent_home / ".claude" / ".claude.json",    # 2.1+ — read by CLI
+        ]
         source_claude_json = source_home / ".claude.json"
-        if (
-            agent_home != source_home
-            and not claude_json.exists()
-            and source_claude_json.exists()
-        ):
-            shutil.copy2(source_claude_json, claude_json)
-        data = json.loads(claude_json.read_text()) if claude_json.exists() else {}
-        projects = data.setdefault("projects", {})
-        for workspace in trusted_workspaces:
-            projects.setdefault(
-                str(workspace),
-                {
-                    "allowedTools": [],
-                    "hasTrustDialogAccepted": True,
-                    "hasCompletedProjectOnboarding": True,
-                    "projectOnboardingSeenCount": 0,
-                },
+
+        # Reuse the user's authentication blob in agent_home (only if the
+        # caller explicitly relocated to a non-default home).
+        for claude_json in candidate_json_paths:
+            if (
+                agent_home != source_home
+                and not claude_json.exists()
+                and source_claude_json.exists()
+            ):
+                claude_json.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_claude_json, claude_json)
+
+        for claude_json in candidate_json_paths:
+            data = (
+                json.loads(claude_json.read_text()) if claude_json.exists() else {}
             )
-        claude_json.write_text(json.dumps(data))
+            projects = data.setdefault("projects", {})
+            for workspace in trusted_workspaces:
+                entry = projects.setdefault(str(workspace), {})
+                # Claude Code keeps each project entry's existing fields
+                # (allowedTools, mcpServers, etc.) intact; we only need to
+                # ensure the trust + onboarding flags are set so no dialog
+                # appears on launch. Always overwrite — a stale entry from
+                # a previous launch where trust was declined would still
+                # show the dialog otherwise.
+                entry.setdefault("allowedTools", [])
+                entry["hasTrustDialogAccepted"] = True
+                entry["hasCompletedProjectOnboarding"] = True
+                entry.setdefault("projectOnboardingSeenCount", 0)
+            claude_json.parent.mkdir(parents=True, exist_ok=True)
+            claude_json.write_text(json.dumps(data))
 
         config_path = claude_dir / "config.json"
         source_config = source_home / ".claude" / "config.json"
