@@ -25,6 +25,12 @@ pub struct VM {
     pub segments: FiberArena,
     pub var_store: VarStore,
     pub current_segment: Option<SegmentId>,
+    /// Transient slot used by `eval_perform`/`eval_perform_with_k` to thread
+    /// the chain backup through to the next `push_stream_value` call. Set
+    /// before calling a handler callable; consumed when the resulting Stream
+    /// frame is pushed (the backup ends up in `Frame::Program.chain_backup`).
+    /// Always None outside that narrow window.
+    pub pending_handler_chain_backup: Option<crate::continuation::Continuation>,
 }
 
 impl VM {
@@ -33,6 +39,7 @@ impl VM {
             segments: FiberArena::new(),
             var_store: VarStore::new(),
             current_segment: None,
+            pending_handler_chain_backup: None,
         }
     }
 
@@ -40,6 +47,7 @@ impl VM {
         self.segments.clear();
         self.var_store.clear_run_local();
         self.current_segment = None;
+        self.pending_handler_chain_backup = None;
     }
 
     pub fn end_active_run_session(&mut self) {
@@ -48,6 +56,7 @@ impl VM {
         self.var_store.clear_run_local();
         self.var_store.shrink_run_local_to_fit();
         self.current_segment = None;
+        self.pending_handler_chain_backup = None;
     }
 
     pub fn alloc_segment(&mut self, fiber: Fiber) -> FiberId {

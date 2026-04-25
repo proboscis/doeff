@@ -183,6 +183,16 @@ pub enum Frame {
     Program {
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
+        /// Backup handle on the original perform-site continuation, used
+        /// only for handler-body program frames. If this stream raises an
+        /// uncaught exception, the VM reattaches `chain_backup`'s chain and
+        /// raises into the resulting stream so the inner handler's `<-`
+        /// site (or the user program's perform site) can `try/except` the
+        /// error. None for ordinary program frames (user body, etc.).
+        ///
+        /// One-shot is preserved by `Continuation::take` (lock+take); the
+        /// handler's own PyK shares the same chain cell.
+        chain_backup: Option<crate::continuation::Continuation>,
     },
     LexicalScope {
         bindings: HashMap<HashedPyKey, Value>,
@@ -202,7 +212,23 @@ pub enum Frame {
 
 impl Frame {
     pub fn program(stream: IRStreamRef, metadata: Option<CallMetadata>) -> Self {
-        Frame::Program { stream, metadata }
+        Frame::Program {
+            stream,
+            metadata,
+            chain_backup: None,
+        }
+    }
+
+    pub fn program_with_backup(
+        stream: IRStreamRef,
+        metadata: Option<CallMetadata>,
+        chain_backup: Option<crate::continuation::Continuation>,
+    ) -> Self {
+        Frame::Program {
+            stream,
+            metadata,
+            chain_backup,
+        }
     }
 
     pub fn is_program(&self) -> bool {
