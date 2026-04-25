@@ -10,7 +10,6 @@ is not yet ported. This module provides the core cache helpers and a simplified
 """
 
 import os
-import sys
 import tempfile
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -18,10 +17,9 @@ from typing import Any, TypeVar
 
 from frozendict import frozendict as FrozenDict
 
-from doeff import do
+from doeff import UnhandledEffect, do
+from doeff_core_effects.memo_effects import MemoExists, MemoGet, MemoPut
 from doeff_core_effects.memo_policy import Lifecycle, MemoPolicy, ensure_memo_policy
-from doeff_core_effects.memo_effects import MemoExists, MemoGet, MemoPut, MemoGetEffect
-from doeff_core_effects.memo_handlers import content_address
 
 T = TypeVar("T")
 
@@ -115,19 +113,28 @@ def cache(
                 else (func_name, args, frozen_kwargs)
             )
 
-            # Check memo
-            if (yield MemoExists(cache_key_obj)):
-                try:
-                    cached_value = yield MemoGet(cache_key_obj)
-                    return cached_value
-                except KeyError:
-                    pass  # memo miss — compute below
+            # Memo handler is optional. If absent (UnhandledEffect on MemoExists/Get)
+            # or storage misses (KeyError), fall through to compute. The
+            # yield func(...) below is NOT wrapped: its failures must propagate.
+            try:
+                if (yield MemoExists(cache_key_obj)):
+                    try:
+                        cached_value = yield MemoGet(cache_key_obj)
+                        return cached_value
+                    except KeyError:
+                        pass
+            except UnhandledEffect:
+                pass
 
             # Memo miss — run the function
             result = yield func(*args, **kwargs)
 
-            # Store in memo
-            yield MemoPut(cache_key_obj, result, policy=memo_policy)
+            # Best-effort store: if no memo handler is installed, swallow. The
+            # compute result returned above is authoritative.
+            try:
+                yield MemoPut(cache_key_obj, result, policy=memo_policy)
+            except UnhandledEffect:
+                pass
             return result
 
         # Preserve metadata

@@ -230,7 +230,7 @@ impl DetachedFiberChain {
 /// A captured fiber chain. NOT Clone — one owner, one-shot.
 ///
 /// Created by `perform` (detach chain from handler).
-/// Consumed by `continue_k` (reattach chain to caller).
+/// Consumed by `reattach_chain` / `continue_k` (reattach chain to caller).
 /// Extended by `reperform` (append current fiber to chain).
 #[derive(Debug)]
 pub struct Continuation {
@@ -249,8 +249,8 @@ impl Continuation {
 
     /// Sentinel for an already-consumed continuation (head=None).
     /// Used by the Python bridge when PyK has already been taken.
-    /// The VM core's continue_k will detect this and raise the one-shot error
-    /// with full VM context (current_segment, traceback).
+    /// The VM core's reattach_chain will detect this and raise the one-shot
+    /// error with full VM context (current_segment, traceback).
     pub fn empty() -> Self {
         // Register so Drop's unregister is balanced.
         memory_stats::register_continuation();
