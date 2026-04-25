@@ -54,9 +54,6 @@ htmlcov/
 uv.lock
 .venv/
 
-# Pyright
-pyrightconfig.json
-
 # Ruff
 .ruff_cache/
 
