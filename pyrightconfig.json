@@ -1,0 +1,8 @@
+{
+  "include": ["doeff"],
+  "extraPaths": [
+    "packages/doeff-core-effects",
+    "packages/doeff-indexer/python",
+    "packages/doeff-vm"
+  ]
+}
