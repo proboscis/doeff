@@ -60,6 +60,17 @@ def test_unhandled_effect_is_catchable_inside_do():
     assert run(program()) == "fallback"
 
 
+def test_pass_fallthrough_unhandled_effect_is_catchable_inside_do():
+    @do
+    def program():
+        try:
+            yield MissingEffect(label="catchable-after-pass")
+        except UnhandledEffect:
+            return "fallback"
+
+    assert run(WithHandler(pass_through, program())) == "fallback"
+
+
 def test_unhandled_effect_preserves_doeff_traceback():
     @do
     def program():

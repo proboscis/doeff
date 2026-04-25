@@ -2,7 +2,7 @@
 //!
 //! 1. match_with  — install handler (create boundary fiber, attach to chain)
 //! 2. perform     — yield effect (detach chain at handler, create continuation)
-//! 3. continue_k  — resume continuation (reattach chain, deliver value)
+//! 3. continue_k  — resume continuation (reattach chain, then caller delivers value)
 //! 4. reperform   — pass effect to outer handler (append fiber to continuation)
 //! 5. fiber_return — fiber completes (call handler's handle_value)
 //!
@@ -112,22 +112,24 @@ impl VM {
     // 3. continue_k — resume a continuation
     // -----------------------------------------------------------------------
 
-    /// Resume a continuation: reattach the chain by linking its tail to the
-    /// current fiber, then switch execution to the chain's head.
+    /// Reattach a detached fiber chain by linking its tail to the current
+    /// fiber, then switch execution to the chain's head.
     ///
-    /// OCaml 5 equivalent:
-    ///   (head, last) = atomic_swap(cont, NULL)  // one-shot
-    ///   last.handler.parent = current_stack      // reattach
-    ///   current_stack = head                     // switch
-    ///   deliver v to head
-    pub fn continue_k(&mut self, k: &mut Continuation) -> Result<(), crate::error::VMError> {
+    /// The caller is responsible for what signal (send / raise) is delivered
+    /// after reattach. Use this directly when an error path needs the body's
+    /// stream to be reachable, e.g. so `should_raise_into_stream` can deliver
+    /// `UnhandledEffect` to the user's try/except.
+    pub(crate) fn reattach_chain(
+        &mut self,
+        k: &mut Continuation,
+    ) -> Result<(), crate::error::VMError> {
         let chain = k.take().ok_or_else(|| {
             let current = self
                 .current_segment
                 .map(|f| format!(" (current fiber={})", f.index()))
                 .unwrap_or_default();
             crate::error::VMError::internal(format!(
-                "Resume: continuation already consumed (one-shot violation){current}"
+                "Continuation: continuation already consumed (one-shot violation){current}"
             ))
         })?;
 
@@ -136,6 +138,18 @@ impl VM {
         self.current_segment = Some(head);
 
         Ok(())
+    }
+
+    /// Resume a continuation: reattach the chain, then the step machine
+    /// delivers the resume value to the restored head.
+    ///
+    /// OCaml 5 equivalent:
+    ///   (head, last) = atomic_swap(cont, NULL)  // one-shot
+    ///   last.handler.parent = current_stack      // reattach
+    ///   current_stack = head                     // switch
+    ///   deliver v to head
+    pub fn continue_k(&mut self, k: &mut Continuation) -> Result<(), crate::error::VMError> {
+        self.reattach_chain(k)
     }
 
     pub(crate) fn continue_attached_chain(
