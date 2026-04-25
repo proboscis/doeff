@@ -337,6 +337,24 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    fn test_reattach_chain_restores_detached_body_chain() {
+        use crate::continuation::Continuation;
+
+        let mut vm = VM::new();
+        let root_fid = vm.alloc_segment(Fiber::new(None));
+        let body_fid = vm.alloc_segment(Fiber::new(Some(root_fid)));
+        let mut k = Continuation::from_chain(vm.segments.detach_chain(body_fid, body_fid).unwrap());
+
+        vm.current_segment = Some(root_fid);
+        vm.reattach_chain(&mut k).unwrap();
+
+        assert_eq!(vm.current_segment, Some(body_fid));
+        let body_parent = vm.segments.get(body_fid).and_then(|body| body.parent);
+        assert_eq!(body_parent, Some(root_fid));
+        assert!(k.consumed());
+    }
+
+    #[test]
     fn test_resume_continuation() {
         use crate::continuation::Continuation;
 

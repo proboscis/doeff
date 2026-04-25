@@ -587,13 +587,13 @@ impl VM {
                     }
                     // Reattach the detached chain so the raised UnhandledEffect surfaces to the
                     // user body's try/except via should_raise_into_stream. Unlike eval_perform,
-                    // eval_perform_with_k arrives here with k detached, so current_segment lacks
-                    // the user body's program frame; continue_k restores it before the error is
-                    // raised. If reattachment itself fails, keep the original user-facing
-                    // NoMatchingHandler diagnostic: the effect that went unhandled is still the
-                    // actionable error.
+                    // eval_perform_with_k arrives here after perform dispatch pre-detached k, so
+                    // current_segment lacks the user body's program frame; reattach_chain restores
+                    // it before the error is raised.
                     let mut k = k;
-                    let _ = self.continue_k(&mut k);
+                    if let Err(error) = self.reattach_chain(&mut k) {
+                        return error_result(error, Some(context));
+                    }
                     return error_result(VMError::no_matching_handler(effect), Some(context));
                 }
             };
