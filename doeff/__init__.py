@@ -98,7 +98,7 @@ AskEffect = Ask
 
 
 @do
-def merge_dicts(*sources) -> Generator:
+def merge_dicts(*sources) -> Generator[Any, Any, dict]:
     """Monadically merge multiple Program[dict] or plain dicts left-to-right.
 
     Usage: merge_dicts(Pure({"a": 1}), Pure({"b": 2})) → Program[{"a": 1, "b": 2}]
@@ -107,6 +107,10 @@ def merge_dicts(*sources) -> Generator:
     for source in sources:
         if isinstance(source, DoExpr):
             d = yield source
+            if not isinstance(d, dict):
+                raise TypeError(
+                    f"merge_dicts: expected Program[dict] to yield dict, got {type(d).__name__}"
+                )
         elif isinstance(source, dict):
             d = source
         else:
