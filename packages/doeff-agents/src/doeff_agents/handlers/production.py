@@ -148,6 +148,20 @@ class TmuxAgentHandler(AgentHandler):
         if self._backend.has_session(effect.session_name):
             raise SessionAlreadyExistsError(f"Session {effect.session_name} already exists")
 
+        # Pre-trust the workdir for Claude Code so the workspace-trust dialog
+        # never appears in the tmux pane. Without this, Claude Code 2.1+ shows
+        # an interactive prompt that the dismiss-onboarding pattern matcher
+        # may not catch in time, causing the agent to hang at "Yes, I trust
+        # this folder" indefinitely. _prepare_claude_home writes the trust
+        # flags to BOTH ~/.claude.json (legacy) and ~/.claude/.claude.json
+        # (Claude Code 2.1+), covering both CLI versions.
+        if effect.agent_type == AgentType.CLAUDE:
+            agent_home = self._claude_runtime_policy.agent_home or Path.home()
+            trusted_workspaces = self._claude_runtime_policy.trusted_workspaces or (
+                effect.work_dir,
+            )
+            self._prepare_claude_home(agent_home, trusted_workspaces)
+
         # Start MCP server if tools are provided
         if effect.mcp_tools and run_tool is not None:
             self._start_mcp_server(effect, run_tool)
