@@ -10,20 +10,21 @@ is not yet ported. This module provides the core cache helpers and a simplified
 """
 
 import os
-import sys
 import tempfile
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, TypeVar
 
-from frozendict import frozendict as FrozenDict
+from frozendict import frozendict
 
-from doeff import do
+from doeff import GetOuterHandlers, do
+from doeff_core_effects.memo_effects import MemoExists, MemoGet, MemoPut
+from doeff_core_effects.memo_handlers import _has_memo_handler
 from doeff_core_effects.memo_policy import Lifecycle, MemoPolicy, ensure_memo_policy
-from doeff_core_effects.memo_effects import MemoExists, MemoGet, MemoPut, MemoGetEffect
-from doeff_core_effects.memo_handlers import content_address
 
 T = TypeVar("T")
+FrozenDict = frozendict
 
 CACHE_PATH_ENV_KEY = "DOEFF_CACHE_PATH"
 
@@ -71,7 +72,7 @@ def _function_identifier(target: Any) -> str:
     return f"{cls.__module__}.{cls.__qualname__}"
 
 
-def default_cache_key(func_name: str, args: tuple, kwargs: FrozenDict) -> tuple:
+def default_cache_key(func_name: str, args: tuple, kwargs: frozendict) -> tuple:
     """Default cache key: (func_name, args, FrozenDict(kwargs))."""
     return (func_name, args, kwargs)
 
@@ -108,12 +109,15 @@ def cache(
 
         @do
         def cached_fn(*args, **kwargs):
-            frozen_kwargs = FrozenDict(kwargs) if kwargs else FrozenDict()
+            frozen_kwargs = frozendict(kwargs) if kwargs else frozendict()
             cache_key_obj = (
                 key_func(func_name, args, frozen_kwargs)
                 if key_func
                 else (func_name, args, frozen_kwargs)
             )
+
+            if not _has_memo_handler((yield GetOuterHandlers())):
+                return (yield func(*args, **kwargs))
 
             # Check memo
             if (yield MemoExists(cache_key_obj)):
@@ -134,10 +138,8 @@ def cache(
         for attr in ("__name__", "__qualname__", "__doc__", "__module__"):
             val = getattr(func, attr, None)
             if val is not None:
-                try:
+                with suppress(AttributeError, TypeError):
                     setattr(cached_fn, attr, val)
-                except (AttributeError, TypeError):
-                    pass
 
         return cached_fn
 
