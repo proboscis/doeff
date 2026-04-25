@@ -5,6 +5,7 @@ use pyo3::prelude::*;
 
 use doeff_vm_core::do_ctrl::DoCtrl;
 use doeff_vm_core::driver::{Signal, StepResult};
+use doeff_vm_core::py_shared::PyShared;
 use doeff_vm_core::segment::Fiber;
 use doeff_vm_core::value::Value;
 use doeff_vm_core::VM;
@@ -145,6 +146,8 @@ impl PyVM {
         err
     }
 
+    /// Returns true for VMErrors that should be re-raised into the IRStream
+    /// so user @do try/except blocks can catch them.
     fn should_raise_into_stream(error: &doeff_vm_core::VMError) -> bool {
         matches!(
             error,
@@ -154,6 +157,8 @@ impl PyVM {
         )
     }
 
+    /// Serializes a VMError into a Python-exception Value::Opaque for
+    /// re-injection into the IRStream.
     fn vm_error_to_exception_value(
         &mut self,
         error: doeff_vm_core::VMError,
@@ -161,9 +166,7 @@ impl PyVM {
     ) -> Value {
         Python::attach(|py| {
             let err = self.convert_vm_error(py, error, context);
-            Value::Opaque(doeff_vm_core::py_shared::PyShared::new(
-                err.value(py).clone().into_any().unbind(),
-            ))
+            Value::Opaque(PyShared::new(err.value(py).clone().into_any().unbind()))
         })
     }
 
