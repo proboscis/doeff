@@ -134,14 +134,14 @@ def _effect_cost(effect) -> RecomputeCost:
 
 
 def _is_memo_handler(handler: object) -> bool:
-    return hasattr(handler, "_doeff_memo_handler") and handler._doeff_memo_handler is True
+    return getattr(handler, "_doeff_memo_handler", False) is True
 
 
 def _is_memo_terminal(handler: object) -> bool:
-    return hasattr(handler, "_doeff_memo_terminal") and handler._doeff_memo_terminal is True
+    return getattr(handler, "_doeff_memo_terminal", False) is True
 
 
-def _has_memo_handler(handlers: list[object]) -> bool:
+def has_memo_handler(handlers: list[object]) -> bool:
     return any(_is_memo_handler(handler) for handler in handlers)
 
 
@@ -167,8 +167,10 @@ def memo_handler(
             WithHandler(memo_handler(memory, name="L1"),
               program)))
 
-    Each handler is a caching proxy. Position determines terminal behavior:
-    the outermost handler's miss re-perform is unhandled → memo_rewriter treats as miss.
+    Each handler is a caching proxy. When a miss reaches the outermost memo
+    layer and there is no outer memo layer or ``memo_terminal``, that layer
+    returns the terminal behavior locally (False / KeyError / None) instead
+    of re-performing into an unhandled memo effect.
 
     Args:
         storage: The storage backend for this handler.
@@ -321,7 +323,7 @@ def make_memo_rewriter(
         yield Slog(f"[memo] checking {effect_type.__name__} key={key[:16]}...")
 
         outer_handlers = yield GetOuterHandlers()
-        memo_storage_available = _has_memo_handler(outer_handlers)
+        memo_storage_available = has_memo_handler(outer_handlers)
         _miss = object()
         if memo_storage_available and (yield MemoExists(key, recompute_cost=recompute_cost)):
             try:
@@ -365,3 +367,17 @@ def memo_rewriters(
         recompute_cost: Cost tier for all provided types.
     """
     return [make_memo_rewriter(et, key_fn=key_fn, recompute_cost=recompute_cost) for et in effect_types]
+
+
+__all__ = [
+    "content_address",
+    "has_memo_handler",
+    "in_memory_memo_handler",
+    "json_gzip_deserialize",
+    "json_gzip_serialize",
+    "make_memo_rewriter",
+    "memo_handler",
+    "memo_rewriters",
+    "memo_terminal",
+    "sqlite_memo_handler",
+]

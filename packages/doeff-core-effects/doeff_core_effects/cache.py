@@ -20,7 +20,7 @@ from frozendict import frozendict
 
 from doeff import GetOuterHandlers, do
 from doeff_core_effects.memo_effects import MemoExists, MemoGet, MemoPut
-from doeff_core_effects.memo_handlers import _has_memo_handler
+from doeff_core_effects.memo_handlers import has_memo_handler
 from doeff_core_effects.memo_policy import Lifecycle, MemoPolicy, ensure_memo_policy
 
 T = TypeVar("T")
@@ -116,7 +116,8 @@ def cache(
                 else (func_name, args, frozen_kwargs)
             )
 
-            if not _has_memo_handler((yield GetOuterHandlers())):
+            # Transparent passthrough: with no memo storage installed, skip cache I/O; MemoExists would otherwise raise UnhandledEffect.
+            if not has_memo_handler((yield GetOuterHandlers())):
                 return (yield func(*args, **kwargs))
 
             # Check memo
