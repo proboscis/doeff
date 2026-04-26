@@ -181,9 +181,20 @@ class TmuxAgentHandler(AgentHandler):
         if effect.mcp_tools and run_tool is not None:
             self._start_mcp_server(effect, run_tool)
 
+        # Disable oh-my-zsh's auto-update prompt. Without isolated HOME the
+        # user's `.zshrc` would suppress this, but with `HOME=<work_dir>/
+        # .agent-home` the agent's shell starts without that config and omz
+        # blocks on its `[Y/n]` prompt — eating the first character of the
+        # launch command we send next.
+        session_env: dict[str, str] = {}
+        if effect.agent_type == AgentType.CLAUDE:
+            session_env["DISABLE_AUTO_UPDATE"] = "true"
+            session_env["DISABLE_UPDATE_PROMPT"] = "true"
+
         tmux_config = tmux.SessionConfig(
             session_name=effect.session_name,
             work_dir=effect.work_dir,
+            env=session_env or None,
         )
         session_info = self._backend.new_session(tmux_config)
 
