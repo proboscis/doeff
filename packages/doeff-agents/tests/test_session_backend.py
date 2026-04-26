@@ -132,7 +132,13 @@ def test_tmux_agent_handler_uses_injected_backend(monkeypatch) -> None:
 
     assert backend.created[0].session_name == "worker"
     assert backend.sent[0][0] == handle.pane_id
-    assert backend.sent[0][1] == "fake-agent --run"
+    # handle_launch wraps the command with HOME/CLAUDE_HOME exports for
+    # AgentType.CLAUDE so the launched agent's `.claude.json` is isolated
+    # from any concurrently-running Claude Code instance on the host.
+    sent_command = backend.sent[0][1]
+    assert "fake-agent --run" in sent_command
+    assert "export HOME=" in sent_command
+    assert "export CLAUDE_HOME=" in sent_command
 
     observation = handler.handle_monitor(MonitorEffect(handle=handle))
     assert observation.status == SessionStatus.DONE

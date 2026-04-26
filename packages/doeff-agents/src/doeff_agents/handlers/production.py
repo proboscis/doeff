@@ -148,19 +148,34 @@ class TmuxAgentHandler(AgentHandler):
         if self._backend.has_session(effect.session_name):
             raise SessionAlreadyExistsError(f"Session {effect.session_name} already exists")
 
-        # Pre-trust the workdir for Claude Code so the workspace-trust dialog
-        # never appears in the tmux pane. Without this, Claude Code 2.1+ shows
-        # an interactive prompt that the dismiss-onboarding pattern matcher
-        # may not catch in time, causing the agent to hang at "Yes, I trust
-        # this folder" indefinitely. _prepare_claude_home writes the trust
-        # flags to BOTH ~/.claude.json (legacy) and ~/.claude/.claude.json
-        # (Claude Code 2.1+), covering both CLI versions.
+        # Isolate Claude Code state per launch so the agent's `.claude.json`
+        # is not shared with any concurrently-running Claude Code instance
+        # on the host (e.g. the user's editor session). Without this, two
+        # Claude processes race on `~/.claude/.claude.json` writes and the
+        # workspace-trust entry we plant gets clobbered, causing the agent
+        # to hang at "Yes, I trust this folder" forever.
+        agent_env_exports: dict[str, str] = {}
         if effect.agent_type == AgentType.CLAUDE:
-            agent_home = self._claude_runtime_policy.agent_home or Path.home()
+            agent_home = self._claude_runtime_policy.agent_home
+            if agent_home is None:
+                # Default to a per-launch isolated home under the workdir so
+                # state cannot leak between concurrent agent runs or with
+                # the user's interactive Claude Code session.
+                agent_home = effect.work_dir / ".agent-home"
             trusted_workspaces = self._claude_runtime_policy.trusted_workspaces or (
                 effect.work_dir,
             )
             self._prepare_claude_home(agent_home, trusted_workspaces)
+            agent_env_exports = {
+                "HOME": str(agent_home),
+                "CLAUDE_HOME": str(agent_home / ".claude"),
+                **(
+                    {"CLAUDE_CODE_OAUTH_TOKEN": os.environ["CLAUDE_CODE_OAUTH_TOKEN"]}
+                    if "CLAUDE_CODE_OAUTH_TOKEN" in os.environ
+                    else {}
+                ),
+                **self._claude_runtime_policy.bootstrap_exports,
+            }
 
         # Start MCP server if tools are provided
         if effect.mcp_tools and run_tool is not None:
@@ -182,6 +197,8 @@ class TmuxAgentHandler(AgentHandler):
             )
         )
         command = shlex.join(argv)
+        if agent_env_exports:
+            command = self._wrap_with_shell_exports(command, agent_env_exports)
 
         if adapter.injection_method == InjectionMethod.ARG:
             self._backend.send_keys(session_info.pane_id, command, literal=False)
