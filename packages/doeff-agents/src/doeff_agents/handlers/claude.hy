@@ -35,22 +35,27 @@
 ;; ---------------------------------------------------------------------------
 
 (defn _trust-workdir [work-dir]
-  "Mark work_dir as trusted in ~/.claude.json."
+  "Mark work_dir as trusted in BOTH ~/.claude.json (legacy) and
+   ~/.claude/.claude.json (Claude Code 2.1+ — the path the CLI actually reads).
+   Without the 2.1+ path the agent hits the workspace-trust dialog and hangs
+   even though `--dangerously-skip-permissions` is set."
   (setv home (Path.home))
-  (setv claude-json (/ home ".claude.json"))
-  (setv data (if (.exists claude-json)
-                 (json.loads (.read-text claude-json))
-                 {}))
-  (setv projects (.setdefault data "projects" {}))
-  (setv workdir-str (str (.resolve work-dir)))
-  (.setdefault projects workdir-str
-    {"allowedTools" []
-     "hasTrustDialogAccepted" True
-     "hasCompletedProjectOnboarding" True})
-  (.write-text claude-json (json.dumps data))
-  ;; Ensure onboarding config exists
   (setv claude-dir (/ home ".claude"))
   (.mkdir claude-dir :parents True :exist-ok True)
+  (setv workdir-str (str (.resolve work-dir)))
+  (for [claude-json [(/ home ".claude.json") (/ claude-dir ".claude.json")]]
+    (setv data (if (.exists claude-json)
+                   (json.loads (.read-text claude-json))
+                   {}))
+    (setv projects (.setdefault data "projects" {}))
+    (setv entry (.setdefault projects workdir-str {"allowedTools" []}))
+    ;; Always overwrite trust + onboarding flags. A stale entry from a previous
+    ;; launch where the dialog was declined would still show the prompt
+    ;; otherwise.
+    (setv (get entry "hasTrustDialogAccepted") True)
+    (setv (get entry "hasCompletedProjectOnboarding") True)
+    (.write-text claude-json (json.dumps data)))
+  ;; Ensure onboarding config exists
   (setv config-path (/ claude-dir "config.json"))
   (when (not (.exists config-path))
     (.write-text config-path (json.dumps {"hasCompletedOnboarding" True}))))
