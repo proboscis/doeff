@@ -66,12 +66,14 @@ class TmuxSessionBackend(SessionBackend):
             args.extend(["-c", str(cfg.work_dir)])
         if cfg.window_name:
             args.extend(["-n", cfg.window_name])
-
-        env = dict(os.environ)
+        # Propagate env vars into the pane shell. Setting them on the
+        # tmux client subprocess doesn't reach the pane (the daemon spawns
+        # the shell), so we must use `-e KEY=VAL`.
         if cfg.env:
-            env.update(cfg.env)
+            for key, value in cfg.env.items():
+                args.extend(["-e", f"{key}={value}"])
 
-        result = subprocess.run(args, env=env, capture_output=True, text=True, check=True)
+        result = subprocess.run(args, capture_output=True, text=True, check=True)
         pane_id = result.stdout.strip()
 
         return SessionInfo(
