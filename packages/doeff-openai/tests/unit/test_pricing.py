@@ -35,6 +35,8 @@ from doeff_openai.handlers.production import openai_production_handler
         ("gpt-5.4",      0.00250, 0.015,   0.000250),
         ("gpt-5.4-mini", 0.00075, 0.0045,  0.0000750),
         ("gpt-5.4-nano", 0.00020, 0.00125, 0.0000200),
+        ("gpt-5.5",              0.005, 0.030, 0.0005),
+        ("gpt-5.5-2026-04-23",   0.005, 0.030, 0.0005),
     ],
 )
 def test_gpt5_family_rates(model, input_rate, output_rate, cached_rate):
@@ -42,6 +44,13 @@ def test_gpt5_family_rates(model, input_rate, output_rate, cached_rate):
     assert pricing.input_price_per_1k == input_rate
     assert pricing.output_price_per_1k == output_rate
     assert pricing.cached_input_price_per_1k == cached_rate
+
+
+def test_gpt5_5_pro_no_cached_rate():
+    pricing = MODEL_PRICING["gpt-5.5-pro"]
+    assert pricing.input_price_per_1k == 0.030
+    assert pricing.output_price_per_1k == 0.180
+    assert pricing.cached_input_price_per_1k is None
 
 
 # ---------------------------------------------------------------------------
