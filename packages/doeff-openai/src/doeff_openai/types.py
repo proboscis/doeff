@@ -167,6 +167,18 @@ MODEL_PRICING: dict[str, ModelPricing] = {
         0.00020, 0.00125, 400000, None, cached_input_price_per_1k=0.0000200
     ),
 
+    # GPT-5.5 family (2026-04 launch; current flagship). No mini/nano
+    # published — the smaller tier remains gpt-5.4-mini / gpt-5.4-nano.
+    # gpt-5.5-pro has no cached-input rate (left None so the handler
+    # fails loudly if a cache hit is ever reported).
+    "gpt-5.5": ModelPricing(
+        0.005, 0.030, 1050000, None, cached_input_price_per_1k=0.0005
+    ),
+    "gpt-5.5-2026-04-23": ModelPricing(
+        0.005, 0.030, 1050000, None, cached_input_price_per_1k=0.0005
+    ),
+    "gpt-5.5-pro": ModelPricing(0.030, 0.180, 1050000, None),
+
     # GPT-4 Turbo models
     "gpt-4-turbo-preview": ModelPricing(0.01, 0.03, 128000, 4096),
     "gpt-4-turbo-2024-04-09": ModelPricing(0.01, 0.03, 128000, 4096),
