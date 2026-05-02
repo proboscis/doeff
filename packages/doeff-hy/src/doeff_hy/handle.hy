@@ -32,7 +32,7 @@
 ;;; S-expr preservation:
 ;;;   - defhandler stores __doeff_body__ for introspection (like defk)
 
-(import hy.models [Expression Symbol List Keyword Sequence])
+(import hy.models [Expression Symbol List Keyword Sequence String])
 
 
 ;; ---------------------------------------------------------------------------
@@ -477,7 +477,7 @@
 
 
 (defmacro defhandler [name #* rest]
-  "Named handler with optional parameters. Preserves s-expr body.
+  "Named handler with optional parameters and docstring. Preserves s-expr body.
 
    ;; No params — plain handler value
    (defhandler my-handler
@@ -485,6 +485,11 @@
 
    ;; With params — handler factory function
    (defhandler my-handler [config timeout]
+     (Effect [field] (resume (process field config))))
+
+   ;; With docstring
+   (defhandler documented-handler [config]
+     \"Handle documented effects.\"
      (Effect [field] (resume (process field config))))
 
    ;; With guard
@@ -508,15 +513,22 @@
    ;; Non-terminal operation:
    ;;   (<- result effect)  — delegate to outer handler, get result back, continue
 
-   The handler's __doeff_body__ stores the original s-expr clauses."
+   The handler's __doeff_body__ stores handler clauses, excluding docstring metadata."
 
-  (setv params None)
-  (setv clauses rest)
+  (setv params None
+        docstring None
+        clauses rest)
 
   ;; First item after name: List = params, Expression = first clause
   (when (and (> (len rest) 0) (isinstance (get rest 0) List))
     (setv params (get rest 0))
     (setv clauses (cut rest 1 None)))
+
+  ;; Optional docstring after params, or immediately after name for handlers
+  ;; without params. Docstrings are metadata, not handler clauses.
+  (when (and (> (len clauses) 0) (isinstance (get clauses 0) String))
+    (setv docstring (get clauses 0))
+    (setv clauses (cut clauses 1 None)))
 
   ;; Separate lazy defs from effect clauses
   (setv #(lazy-defs effect-clauses) (_extract-lazy-clauses clauses))
@@ -527,6 +539,15 @@
                              :lazy-defs lazy-defs
                              :handler-name name)
         (_build-handler-expr effect-clauses)))
+
+  (setv set-handler-doc
+    (if (is docstring None)
+        `(do)
+        `(setv (. __doeff-handler-fn__ __doc__) ~docstring)))
+  (setv set-name-doc
+    (if (is docstring None)
+        `(do)
+        `(setv (. ~name __doc__) ~docstring)))
 
   ;; Preserve s-expr body as quoted list of all clauses (including lazy)
   (setv quoted-body `(quote ~(list clauses)))
@@ -559,8 +580,10 @@
               (setv (. __doeff-handler-fn__ _doeff_is_handler_fn) True)
               (setv (. __doeff-handler-fn__ __doeff_handler_data__)
                     __doeff-handler-data__)
+              ~set-handler-doc
               __doeff-handler-fn__)))
          (setv (. ~name __doeff_body__) ~quoted-body)
+         ~set-name-doc
          (setv (. ~name __doeff_name__) ~(str name)))
       `(do
          (import doeff.do [do :as _doeff-do])
@@ -574,6 +597,8 @@
            (setv (. __doeff-handler-fn__ __doeff_handler_data__)
                  __doeff-handler-data__)
            (setv (. __doeff-handler-fn__ __doeff_name__) ~(str name))
+           ~set-handler-doc
            __doeff-handler-fn__)
          (setv (. ~name __doeff_body__) ~quoted-body)
+         ~set-name-doc
          (setv (. ~name __doeff_name__) ~(str name)))))
