@@ -6,7 +6,8 @@
 ;;;
 ;;; Macros:
 ;;;   (handle body (Effect [fields] body...) ...)             — inline handler
-;;;   (defhandler name [params?] (Effect [fields] body...) ...) — named handler
+;;;   (defhandler name [params?] ["docstring"] (Effect [fields] body...) ...)
+;;;                                                            — named handler
 ;;;
 ;;; Handler clause operations (terminal — handler gives up control):
 ;;;   (resume value)        — Resume k with value, handler stays installed
@@ -32,7 +33,7 @@
 ;;; S-expr preservation:
 ;;;   - defhandler stores __doeff_body__ for introspection (like defk)
 
-(import hy.models [Expression Symbol List Keyword Sequence])
+(import hy.models [Expression Symbol List Keyword Sequence String])
 
 
 ;; ---------------------------------------------------------------------------
@@ -483,6 +484,11 @@
    (defhandler my-handler
      (Effect [field] (resume (compute field))))
 
+   ;; With docstring
+   (defhandler my-handler
+     \"Handle MyEffect values.\"
+     (Effect [field] (resume (compute field))))
+
    ;; With params — handler factory function
    (defhandler my-handler [config timeout]
      (Effect [field] (resume (process field config))))
@@ -511,12 +517,23 @@
    The handler's __doeff_body__ stores the original s-expr clauses."
 
   (setv params None)
+  (setv docstring None)
   (setv clauses rest)
 
+  ;; Optional docstring may appear immediately after name for no-arg handlers
+  ;; or after params for parameterized handlers.
+  (when (and (> (len clauses) 0) (isinstance (get clauses 0) String))
+    (setv docstring (get clauses 0))
+    (setv clauses (cut clauses 1 None)))
+
   ;; First item after name: List = params, Expression = first clause
-  (when (and (> (len rest) 0) (isinstance (get rest 0) List))
-    (setv params (get rest 0))
-    (setv clauses (cut rest 1 None)))
+  (when (and (> (len clauses) 0) (isinstance (get clauses 0) List))
+    (setv params (get clauses 0))
+    (setv clauses (cut clauses 1 None)))
+
+  (when (and (> (len clauses) 0) (isinstance (get clauses 0) String))
+    (setv docstring (get clauses 0))
+    (setv clauses (cut clauses 1 None)))
 
   ;; Separate lazy defs from effect clauses
   (setv #(lazy-defs effect-clauses) (_extract-lazy-clauses clauses))
@@ -556,6 +573,7 @@
               (setv __doeff-handler-data__ ~handler-expr)
               (defn __doeff-handler-fn__ [__doeff-body__]
                 (WithHandler __doeff-handler-data__ __doeff-body__))
+              (setv (. __doeff-handler-fn__ __doc__) ~docstring)
               (setv (. __doeff-handler-fn__ _doeff_is_handler_fn) True)
               (setv (. __doeff-handler-fn__ __doeff_handler_data__)
                     __doeff-handler-data__)
@@ -570,10 +588,12 @@
            (setv __doeff-handler-data__ ~handler-expr)
            (defn __doeff-handler-fn__ [__doeff-body__]
              (WithHandler __doeff-handler-data__ __doeff-body__))
+           (setv (. __doeff-handler-fn__ __doc__) ~docstring)
            (setv (. __doeff-handler-fn__ _doeff_is_handler_fn) True)
            (setv (. __doeff-handler-fn__ __doeff_handler_data__)
                  __doeff-handler-data__)
            (setv (. __doeff-handler-fn__ __doeff_name__) ~(str name))
            __doeff-handler-fn__)
+         (setv (. ~name __doc__) ~docstring)
          (setv (. ~name __doeff_body__) ~quoted-body)
          (setv (. ~name __doeff_name__) ~(str name)))))

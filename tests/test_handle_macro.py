@@ -256,6 +256,32 @@ def _eval_hy_minimal(code: str, **extra_globals):
 class TestSelfContainedMacros:
     """defhandler and handle must inject their own runtime deps."""
 
+    def test_defhandler_accepts_docstring(self):
+        """No-arg defhandler should accept and preserve a docstring."""
+        result = _eval_hy_minimal("""
+        (do
+          (defhandler documented-add
+            "Handle Add effects."
+            (Add [x y] (resume (+ x y))))
+          [(. documented-add __doc__)
+           (len (. documented-add __doeff_body__))])
+        """)
+        assert result == ["Handle Add effects.", 1]
+
+    def test_parameterized_defhandler_accepts_docstring(self):
+        """Parameterized defhandler should accept and preserve a docstring."""
+        result = _eval_hy_minimal("""
+        (do
+          (defhandler scaled-add [scale]
+            "Scale Add effects."
+            (Add [x y] (resume (* (+ x y) scale))))
+          (setv handler (scaled-add 3))
+          [(. scaled-add __doc__)
+           (. handler __doc__)
+           (. handler __doeff_name__)])
+        """)
+        assert result == ["Scale Add effects.", "Scale Add effects.", "scaled-add"]
+
     def test_defhandler_no_extra_imports(self):
         """defhandler should define a handler without user importing doeff internals."""
         _eval_hy_minimal("""
