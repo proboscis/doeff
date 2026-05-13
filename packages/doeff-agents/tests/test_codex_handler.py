@@ -4,7 +4,8 @@ from pathlib import Path
 
 from doeff_agents.adapters.base import AgentType
 from doeff_agents.effects.agent import LaunchEffect, SessionHandle, StopEffect
-from doeff_core_effects.handlers import state
+from doeff_agents.session_backend import SessionBackend
+from doeff_core_effects.handlers import lazy_ask, state
 
 from doeff import Perform, WithHandler, do, run
 
@@ -71,6 +72,35 @@ def test_launch_creates_tmux_session(tmp_path: Path) -> None:
     assert handle.session_name == "codex-launch"
     assert handle.agent_type == AgentType.CODEX
     assert backend.has_session("codex-launch")
+
+
+def test_codex_handler_asks_for_backend(tmp_path: Path) -> None:
+    from doeff_agents.handlers.codex import codex_handler
+    from doeff_core_effects.scheduler import scheduled
+
+    backend = FakeTmuxBackend()
+
+    @do
+    def program():
+        return (yield Perform(LaunchEffect(
+            session_name="codex-ask-backend",
+            agent_type=AgentType.CODEX,
+            work_dir=tmp_path,
+            prompt="hello",
+        )))
+
+    wrapped = WithHandler(
+        lazy_ask(env={SessionBackend: backend}),
+        WithHandler(
+            state(),
+            WithHandler(codex_handler(), program()),
+        ),
+    )
+
+    handle = run(scheduled(wrapped))
+
+    assert isinstance(handle, SessionHandle)
+    assert backend.has_session("codex-ask-backend")
 
 
 def test_launch_sends_codex_command(tmp_path: Path) -> None:

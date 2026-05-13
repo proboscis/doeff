@@ -44,7 +44,7 @@ class ClaudeAdapter:
             if has_oauth_env:
                 # Create minimal .claude.json — Claude Code will populate
                 # oauthAccount after authenticating via env var.
-                claude_json.write_text("{}")
+                claude_json.write_text("{}", encoding="utf-8")
                 logger.info("Created minimal %s (CLAUDE_CODE_OAUTH_TOKEN set)", claude_json)
             else:
                 raise RuntimeError(
@@ -63,7 +63,7 @@ class ClaudeAdapter:
         # Verify oauthAccount is present (unless env var handles auth)
         if not has_oauth_env:
             try:
-                data = json.loads(claude_json.read_text())
+                data = json.loads(claude_json.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 data = {}
             if "oauthAccount" not in data:
@@ -80,12 +80,15 @@ class ClaudeAdapter:
 
         config_path = claude_dir / "config.json"
         if not config_path.exists():
-            config_path.write_text(json.dumps({"hasCompletedOnboarding": True}))
+            config_path.write_text(
+                json.dumps({"hasCompletedOnboarding": True}),
+                encoding="utf-8",
+            )
             logger.info("Created %s", config_path)
 
         settings_path = claude_dir / "settings.json"
         if not settings_path.exists():
-            settings_path.write_text("{}")
+            settings_path.write_text("{}", encoding="utf-8")
 
     def launch_command(self, params: LaunchParams) -> list[str]:
         """Return argv list - caller will shlex.join() if needed."""

@@ -3,9 +3,14 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+from doeff_core_effects.handlers import lazy_ask
+
+from doeff import WithHandler, do, run
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -21,6 +26,7 @@ from doeff_agents import (
     SessionStatus,
     StopEffect,
     TmuxAgentHandler,
+    agent_effectful_handler,
     capture_output,
     launch_session,
     monitor_session,
@@ -32,6 +38,33 @@ from doeff_agents.adapters.base import (
     LaunchParams,
 )
 from doeff_agents.session_backend import SessionBackend
+from doeff_agents.tmux import TmuxSessionBackend
+
+
+def test_session_api_import_does_not_load_doeff_core() -> None:
+    src_path = Path(__file__).resolve().parents[1] / "src"
+    code = (
+        "import sys\n"
+        f"sys.path.insert(0, {str(src_path)!r})\n"
+        "from doeff_agents.session import launch_session\n"
+        "from doeff_agents.tmux import TmuxSessionBackend\n"
+        "print(launch_session.__name__)\n"
+        "print(TmuxSessionBackend.__name__)\n"
+        "print('doeff' in sys.modules)\n"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.splitlines() == [
+        "launch_session",
+        "TmuxSessionBackend",
+        "False",
+    ]
 
 
 class FakeAdapter:
@@ -113,6 +146,7 @@ def _config() -> LaunchConfig:
         agent_type=AgentType.CLAUDE,
         work_dir=Path.cwd(),
         prompt="hello",
+        session_env={"PATH": "/agent/bin"},
     )
 
 
@@ -126,17 +160,21 @@ def test_tmux_agent_handler_uses_injected_backend(monkeypatch) -> None:
         agent_type=AgentType.CLAUDE,
         work_dir=Path.cwd(),
         prompt="hello",
+        session_env={"PATH": "/agent/bin"},
         ready_timeout=0.1,
     )
     handle = handler.handle_launch(launch)
 
     assert backend.created[0].session_name == "worker"
+    assert backend.created[0].env is not None
+    assert backend.created[0].env["PATH"] == "/agent/bin"
     assert backend.sent[0][0] == handle.pane_id
     # handle_launch wraps the command with HOME/CLAUDE_HOME exports for
     # AgentType.CLAUDE so the launched agent's `.claude.json` is isolated
     # from any concurrently-running Claude Code instance on the host.
     sent_command = backend.sent[0][1]
     assert "fake-agent --run" in sent_command
+    assert "export PATH=/agent/bin;" in sent_command
     assert "export HOME=" in sent_command
     assert "export CLAUDE_HOME=" in sent_command
 
@@ -160,6 +198,8 @@ def test_imperative_session_api_accepts_injected_backend(monkeypatch) -> None:
     session = launch_session("worker", _config(), backend=backend)
     status = monitor_session(session)
 
+    assert backend.created[0].env == {"PATH": "/agent/bin"}
+    assert "export PATH=/agent/bin;" in backend.sent[0][1]
     assert status == SessionStatus.DONE
 
     send_message(session, "ship it")
@@ -169,3 +209,126 @@ def test_imperative_session_api_accepts_injected_backend(monkeypatch) -> None:
 
     stop_session(session)
     assert backend.killed == ["worker"]
+
+
+def test_agent_effectful_handler_asks_for_backend(monkeypatch) -> None:
+    backend = FakeBackend()
+    monkeypatch.setattr("doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter())
+
+    @do
+    def workflow():
+        handle = yield LaunchEffect(
+            session_name="worker",
+            agent_type=AgentType.CLAUDE,
+            work_dir=Path.cwd(),
+            prompt="hello",
+            ready_timeout=0.1,
+        )
+        observation = yield MonitorEffect(handle=handle)
+        yield StopEffect(handle=handle)
+        return observation.status
+
+    result = run(
+        WithHandler(
+            lazy_ask(env={SessionBackend: backend}),
+            WithHandler(agent_effectful_handler(), workflow()),
+        )
+    )
+
+    assert result == SessionStatus.DONE
+    assert backend.created[0].session_name == "worker"
+    assert backend.killed == ["worker"]
+
+
+def test_tmux_backend_uses_injected_executable(monkeypatch, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args, **kwargs):
+        calls.append(list(args))
+        if args[1] == "has-session":
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+        if args[1] == "new-session":
+            return subprocess.CompletedProcess(args, 0, stdout="%42\n", stderr="")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("doeff_agents.tmux.subprocess.run", fake_run)
+
+    backend = TmuxSessionBackend(executable=r"C:\msys64\usr\bin\tmux.exe")
+    assert backend.is_available()
+    info = backend.new_session(SessionConfig(session_name="worker", work_dir=tmp_path))
+    backend.send_keys(info.pane_id, "hello")
+    backend.capture_pane(info.pane_id)
+    backend.kill_session("worker")
+
+    assert calls[0][0] == r"C:\msys64\usr\bin\tmux.exe"
+    assert all(call[0] == r"C:\msys64\usr\bin\tmux.exe" for call in calls)
+
+
+def test_tmux_backend_defaults_to_tmux(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args, **kwargs):
+        calls.append(list(args))
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("doeff_agents.tmux.subprocess.run", fake_run)
+
+    backend = TmuxSessionBackend()
+    assert backend.is_available()
+
+    assert calls == [["tmux", "-V"]]
+
+
+def test_tmux_backend_uses_legacy_format_tokens(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args, **kwargs):
+        calls.append(list(args))
+        if args[1] == "has-session":
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+        if args[1] == "new-session":
+            return subprocess.CompletedProcess(args, 0, stdout="%42\n", stderr="")
+        if args[1] == "list-sessions":
+            return subprocess.CompletedProcess(args, 0, stdout="worker\n", stderr="")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("doeff_agents.tmux.subprocess.run", fake_run)
+
+    backend = TmuxSessionBackend()
+    info = backend.new_session(SessionConfig(session_name="worker"))
+    sessions = backend.list_sessions()
+
+    new_session_call = next(call for call in calls if call[1] == "new-session")
+    list_sessions_call = next(call for call in calls if call[1] == "list-sessions")
+
+    assert info.pane_id == "%42"
+    assert sessions == ["worker"]
+    assert new_session_call[new_session_call.index("-F") + 1] == "#D"
+    assert list_sessions_call[list_sessions_call.index("-F") + 1] == "#S"
+
+
+def test_tmux_backend_decodes_text_output_as_utf8(monkeypatch) -> None:
+    text_calls: list[dict] = []
+
+    def fake_run(args, **kwargs):
+        if kwargs.get("text"):
+            text_calls.append(kwargs)
+        if args[1] == "has-session":
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+        if args[1] == "new-session":
+            return subprocess.CompletedProcess(args, 0, stdout="%42\n", stderr="")
+        if args[1] == "capture-pane":
+            return subprocess.CompletedProcess(args, 0, stdout="日本語\n", stderr="")
+        if args[1] == "list-sessions":
+            return subprocess.CompletedProcess(args, 0, stdout="worker\n", stderr="")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("doeff_agents.tmux.subprocess.run", fake_run)
+
+    backend = TmuxSessionBackend()
+    info = backend.new_session(SessionConfig(session_name="worker"))
+    assert backend.capture_pane(info.pane_id) == "日本語\n"
+    assert backend.list_sessions() == ["worker"]
+
+    assert text_calls
+    assert all(call["encoding"] == "utf-8" for call in text_calls)

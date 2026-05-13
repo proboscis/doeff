@@ -4,7 +4,7 @@
 from collections.abc import Callable
 from typing import Any
 
-from doeff import Effect, GetHandlers, Pass, Resume, WithHandler, do, run
+from doeff import Ask, Effect, GetHandlers, Pass, Resume, WithHandler, do, run
 from doeff.mcp import McpToolDef
 from doeff_agents.effects import (
     CaptureEffect,
@@ -15,6 +15,7 @@ from doeff_agents.effects import (
     SleepEffect,
     StopEffect,
 )
+from doeff_agents.session_backend import SessionBackend
 
 from .production import AgentHandler, SessionState, TmuxAgentHandler, get_adapter, register_adapter
 from .testing import MockAgentHandler, MockAgentState, MockSessionScript
@@ -119,6 +120,33 @@ def _make_protocol_handler(agent_handler: AgentHandler) -> ProtocolHandler:
     return protocol_handler
 
 
+def _make_ask_agent_protocol_handler() -> ProtocolHandler:
+    agent_handler_ref: dict[str, AgentHandler] = {}
+
+    @do
+    def protocol_handler(effect: Effect, k: Any):
+        if not isinstance(effect, AGENT_EFFECT_TYPES):
+            yield Pass(effect, k)
+            return
+
+        agent_handler = agent_handler_ref.get("handler")
+        if agent_handler is None:
+            backend = yield Ask(SessionBackend)
+            agent_handler = TmuxAgentHandler(backend=backend)
+            agent_handler_ref["handler"] = agent_handler
+
+        if isinstance(effect, LaunchEffect) and getattr(effect, "mcp_tools", ()):
+            handlers = yield GetHandlers(k)
+            run_tool_fn = _make_run_tool(handlers)
+            result = agent_handler.handle_launch(effect, run_tool=run_tool_fn)
+            return (yield Resume(k, result))
+
+        result = dispatch_effect(agent_handler, effect)
+        return (yield Resume(k, result))
+
+    return protocol_handler
+
+
 # ---------------------------------------------------------------------------
 # New handler composition — claude_resolver + claude_handler (Hy-based)
 # ---------------------------------------------------------------------------
@@ -150,15 +178,17 @@ def codex_agent_handler(*, backend=None):
     return codex_handler(backend=backend)
 
 
-_tmux_effect_handler = TmuxAgentHandler()
 _mock_effect_handler = MockAgentHandler()
-_tmux_protocol_handler = _make_protocol_handler(_tmux_effect_handler)
 _mock_protocol_handler = _make_protocol_handler(_mock_effect_handler)
 
 
 def agent_effectful_handler() -> ProtocolHandler:
-    """Return the real tmux handler in `(effect, k) -> DoExpr` form."""
-    return _tmux_protocol_handler
+    """Return the real tmux handler in `(effect, k) -> DoExpr` form.
+
+    The session backend is resolved through Ask(SessionBackend), so
+    deployment-specific tmux paths are injected by the doeff environment.
+    """
+    return _make_ask_agent_protocol_handler()
 
 
 def mock_agent_handler() -> ProtocolHandler:

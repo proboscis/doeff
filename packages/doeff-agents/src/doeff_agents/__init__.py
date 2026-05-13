@@ -1,90 +1,101 @@
-# ruff: noqa: F401
 """doeff-agents: Agent session management for coding agents in tmux.
 
-Effects API Example:
-    from doeff_agents.effects import Launch, Monitor, Stop
-    from doeff_agents.adapters.base import AgentType
-
-    handle = yield Launch("my-session", agent_type=AgentType.CLAUDE, work_dir=Path.cwd(), prompt="hello")
-    obs = yield Monitor(handle)
-    yield Stop(handle)
+The package root intentionally keeps imports lazy. The imperative session
+transport API can run without importing the doeff VM, which matters on hosts
+that only need tmux-backed process supervision.
 """
 
-from .adapters.base import AgentAdapter, AgentType, InjectionMethod, LaunchConfig, LaunchParams
-from .effects import (
-    AgentError,
-    AgentNotAvailableError,
-    Capture,
-    CaptureEffect,
-    ClaudeLaunchEffect,
-    Launch,
-    LaunchEffect,
-    Monitor,
-    MonitorEffect,
-    Observation,
-    Send,
-    SendEffect,
-    SessionAlreadyExistsError,
-    SessionHandle,
-    SessionNotFoundError,
-    Sleep,
-    SleepEffect,
-    Stop,
-    StopEffect,
-)
-from .handlers import (
-    AGENT_SESSIONS_KEY,
-    MOCK_AGENT_STATE_KEY,
-    AgentHandler,
-    MockAgentHandler,
-    MockAgentState,
-    MockSessionScript,
-    TmuxAgentHandler,
-    agent_effectful_handler,
-    agent_effectful_handlers,
-    codex_agent_handler,
-    configure_mock_session,
-    dispatch_effect,
-    get_mock_agent_state,
-    make_scheduled_handler,
-    mock_agent_handler,
-    mock_agent_handlers,
-    mock_handlers,
-    production_handlers,
-)
-from .monitor import MonitorState, OnStatusChange, SessionStatus
-from .programs import (
-    AgentResult,
-    interactive_session,
-    monitor_once,
-    monitor_until_terminal,
-    quick_agent,
-    run_agent_to_completion,
-    wait_and_monitor,
-    with_session,
-)
-from .runtime import ClaudeRuntimePolicy
-from .session import (
-    AgentLaunchError,
-    AgentReadyTimeoutError,
-    AgentSession,
-    async_monitor_session,
-    async_session_scope,
-    attach_session,
-    capture_output,
-    get_adapter,
-    launch_session,
-    monitor_session,
-    register_adapter,
-    send_message,
-    session_scope,
-    stop_session,
-)
-from .session_backend import SessionBackend
-from .tmux import (
-    SessionConfig,
-    SessionInfo,
-    TmuxError,
-    TmuxNotAvailableError,
-    TmuxSessionBackend,
-)
+from importlib import import_module
+from typing import Any
+
+_LAZY_EXPORTS = {
+    "AgentAdapter": ".adapters.base",
+    "AgentType": ".adapters.base",
+    "InjectionMethod": ".adapters.base",
+    "LaunchConfig": ".adapters.base",
+    "LaunchParams": ".adapters.base",
+    "AgentError": ".effects",
+    "AgentNotAvailableError": ".effects",
+    "Capture": ".effects",
+    "CaptureEffect": ".effects",
+    "ClaudeLaunchEffect": ".effects",
+    "Launch": ".effects",
+    "LaunchEffect": ".effects",
+    "Monitor": ".effects",
+    "MonitorEffect": ".effects",
+    "Observation": ".effects",
+    "Send": ".effects",
+    "SendEffect": ".effects",
+    "SessionAlreadyExistsError": ".effects",
+    "SessionHandle": ".effects",
+    "SessionNotFoundError": ".effects",
+    "Sleep": ".effects",
+    "SleepEffect": ".effects",
+    "Stop": ".effects",
+    "StopEffect": ".effects",
+    "AGENT_SESSIONS_KEY": ".handlers",
+    "MOCK_AGENT_STATE_KEY": ".handlers",
+    "AgentHandler": ".handlers",
+    "MockAgentHandler": ".handlers",
+    "MockAgentState": ".handlers",
+    "MockSessionScript": ".handlers",
+    "TmuxAgentHandler": ".handlers",
+    "agent_effectful_handler": ".handlers",
+    "agent_effectful_handlers": ".handlers",
+    "codex_agent_handler": ".handlers",
+    "configure_mock_session": ".handlers",
+    "dispatch_effect": ".handlers",
+    "get_mock_agent_state": ".handlers",
+    "make_scheduled_handler": ".handlers",
+    "mock_agent_handler": ".handlers",
+    "mock_agent_handlers": ".handlers",
+    "mock_handlers": ".handlers",
+    "production_handlers": ".handlers",
+    "MonitorState": ".monitor",
+    "OnStatusChange": ".monitor",
+    "SessionStatus": ".monitor",
+    "AgentResult": ".programs",
+    "interactive_session": ".programs",
+    "monitor_once": ".programs",
+    "monitor_until_terminal": ".programs",
+    "quick_agent": ".programs",
+    "run_agent_to_completion": ".programs",
+    "wait_and_monitor": ".programs",
+    "with_session": ".programs",
+    "ClaudeRuntimePolicy": ".runtime",
+    "AgentLaunchError": ".session",
+    "AgentReadyTimeoutError": ".session",
+    "AgentSession": ".session",
+    "async_monitor_session": ".session",
+    "async_session_scope": ".session",
+    "attach_session": ".session",
+    "capture_output": ".session",
+    "get_adapter": ".session",
+    "launch_session": ".session",
+    "monitor_session": ".session",
+    "register_adapter": ".session",
+    "send_message": ".session",
+    "session_scope": ".session",
+    "stop_session": ".session",
+    "SessionBackend": ".session_backend",
+    "SessionConfig": ".tmux",
+    "SessionInfo": ".tmux",
+    "TmuxError": ".tmux",
+    "TmuxNotAvailableError": ".tmux",
+    "TmuxSessionBackend": ".tmux",
+}
+
+
+def __getattr__(name: str) -> Any:
+    module_name = _LAZY_EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    module = import_module(module_name, __name__)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted([*globals(), *_LAZY_EXPORTS])

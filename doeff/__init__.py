@@ -153,4 +153,4 @@ default_async_handlers = _Removed("default_async_handlers", "compose handlers ex
 
 from doeff.cli.run_services import DoeffRunContext
 
-__version__ = "0.2.1"
+__version__ = "0.4.1"

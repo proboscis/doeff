@@ -57,6 +57,7 @@ class LaunchConfig:
     prompt: str | None = None
     model: str | None = None
     mcp_tools: tuple = ()
+    session_env: dict[str, str] | None = None
 
 
 class AgentAdapter(Protocol):

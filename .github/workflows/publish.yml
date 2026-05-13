@@ -56,6 +56,31 @@ jobs:
           name: doeff-dist
           path: dist/*
 
+  build-doeff-agents-dist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Build doeff-agents wheel and sdist
+        run: uv build --package doeff-agents --wheel --sdist --out-dir dist-doeff-agents
+
+      - name: Verify built metadata
+        run: uv run python tools/verify_dist_metadata.py dist-doeff-agents/*.whl dist-doeff-agents/*.tar.gz
+
+      - name: Upload doeff-agents distribution artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: doeff-agents-dist
+          path: dist-doeff-agents/*
+
   publish:
     name: Publish to PyPI
     needs: [build-dist, publish-doeff-vm, publish-doeff-indexer]
@@ -75,5 +100,27 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          skip_existing: true
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
+  publish-doeff-agents:
+    name: Publish doeff-agents to PyPI
+    needs: [build-doeff-agents-dist, publish]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    steps:
+      - name: Download doeff-agents dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: doeff-agents-dist
+          path: dist-doeff-agents
+
+      - name: List doeff-agents artifacts
+        run: ls -la dist-doeff-agents/
+
+      - name: Publish doeff-agents to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-doeff-agents/
           skip_existing: true
           password: ${{ secrets.PYPI_API_TOKEN }}

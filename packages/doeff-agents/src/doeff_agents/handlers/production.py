@@ -46,6 +46,7 @@ from doeff_agents.monitor import (
 from doeff_agents.runtime import ClaudeRuntimePolicy
 from doeff_agents.session import _dismiss_onboarding_dialogs
 from doeff_agents.session_backend import SessionBackend
+from doeff_agents.shell import wrap_with_shell_exports
 
 
 class AgentHandler(ABC):
@@ -121,11 +122,11 @@ class TmuxAgentHandler(AgentHandler):
     def __init__(
         self,
         *,
-        backend: SessionBackend | None = None,
+        backend: SessionBackend,
         claude_runtime_policy: ClaudeRuntimePolicy | None = None,
     ) -> None:
         self._sessions: dict[str, SessionState] = {}
-        self._backend = backend or tmux.get_default_backend()
+        self._backend = backend
         self._claude_runtime_policy = claude_runtime_policy or ClaudeRuntimePolicy()
         self._mcp_servers: dict[str, McpToolServer] = {}
 
@@ -154,7 +155,7 @@ class TmuxAgentHandler(AgentHandler):
         # Claude processes race on `~/.claude/.claude.json` writes and the
         # workspace-trust entry we plant gets clobbered, causing the agent
         # to hang at "Yes, I trust this folder" forever.
-        agent_env_exports: dict[str, str] = {}
+        agent_env_exports: dict[str, str] = dict(effect.session_env or {})
         if effect.agent_type == AgentType.CLAUDE:
             agent_home = self._claude_runtime_policy.agent_home
             if agent_home is None:
@@ -166,7 +167,7 @@ class TmuxAgentHandler(AgentHandler):
                 effect.work_dir,
             )
             self._prepare_claude_home(agent_home, trusted_workspaces)
-            agent_env_exports = {
+            agent_env_exports.update({
                 "HOME": str(agent_home),
                 "CLAUDE_HOME": str(agent_home / ".claude"),
                 **(
@@ -175,7 +176,7 @@ class TmuxAgentHandler(AgentHandler):
                     else {}
                 ),
                 **self._claude_runtime_policy.bootstrap_exports,
-            }
+            })
 
         # Start MCP server if tools are provided
         if effect.mcp_tools and run_tool is not None:
@@ -186,7 +187,7 @@ class TmuxAgentHandler(AgentHandler):
         # .agent-home` the agent's shell starts without that config and omz
         # blocks on its `[Y/n]` prompt — eating the first character of the
         # launch command we send next.
-        session_env: dict[str, str] = {}
+        session_env: dict[str, str] = dict(effect.session_env or {})
         if effect.agent_type == AgentType.CLAUDE:
             session_env["DISABLE_AUTO_UPDATE"] = "true"
             session_env["DISABLE_UPDATE_PROMPT"] = "true"
@@ -208,8 +209,7 @@ class TmuxAgentHandler(AgentHandler):
             )
         )
         command = shlex.join(argv)
-        if agent_env_exports:
-            command = self._wrap_with_shell_exports(command, agent_env_exports)
+        command = self._wrap_with_shell_exports(command, agent_env_exports)
 
         if adapter.injection_method == InjectionMethod.ARG:
             self._backend.send_keys(session_info.pane_id, command, literal=False)
@@ -266,6 +266,7 @@ class TmuxAgentHandler(AgentHandler):
         tmux_config = tmux.SessionConfig(
             session_name=effect.session_name,
             work_dir=effect.work_dir,
+            env=effect.session_env,
         )
         session_info = self._backend.new_session(tmux_config)
 
@@ -281,6 +282,7 @@ class TmuxAgentHandler(AgentHandler):
         command = self._wrap_with_shell_exports(
             shlex.join(argv),
             {
+                **(effect.session_env or {}),
                 "HOME": str(agent_home),
                 "CLAUDE_HOME": str(agent_home / ".claude"),
                 **(
@@ -298,7 +300,7 @@ class TmuxAgentHandler(AgentHandler):
             _dismiss_onboarding_dialogs(
                 session_info.pane_id,
                 onboarding_patterns,
-                timeout=effect.ready_timeout_sec,
+                timeout=effect.ready_timeout,
                 backend=self._backend,
             )
 
@@ -533,10 +535,7 @@ class TmuxAgentHandler(AgentHandler):
             shutil.copy2(source_credentials, credentials_path)
 
     def _wrap_with_shell_exports(self, command: str, env: dict[str, str]) -> str:
-        exports = " ".join(
-            f"export {key}={shlex.quote(value)};" for key, value in env.items()
-        )
-        return f"{exports} {command}"
+        return wrap_with_shell_exports(command, env)
 
 
 __all__ = [

@@ -32,7 +32,7 @@ dependencies = [
 [project.optional-dependencies]
 # Legacy tmux-based handler (deprecated)
 legacy = [
-    "doeff-agents>=0.1.0",
+    "doeff-agents>=0.1.1",
 ]
 dev = [
     "pytest>=7.0.0",

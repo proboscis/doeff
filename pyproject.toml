@@ -1,6 +1,6 @@
 [project]
 name = "doeff"
-version = "0.4.0"
+version = "0.4.1"
 description = "Pragmatic do-notation and effects system for Python"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,7 +21,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "doeff-vm>=0.1.0",
+    "doeff-vm>=0.2.0",
     "doeff-core-effects>=0.1.0",
 ]
 
