@@ -4,13 +4,15 @@
 (import pathlib [Path])
 (import pytest)
 (import doeff [WithHandler])
-(import doeff_core_effects [HttpRequest HttpResponse])
+(import doeff_core_effects [HttpError HttpRequest HttpResponse])
 (import doeff_core_effects.handlers [await-handler slog-handler])
 (import doeff_core_effects.http_handlers [http-production-handler http-fixture-handler])
 (import doeff_hy.http [http-get http-post http-put http-delete http-head])
 (import tests.effects.http_request_support
   [FakeAsyncClient
+   handler-name
    handler-log
+   is-doeff-handler
    make-response
    noop-sleep
    record-sleep
@@ -22,6 +24,41 @@
   (HttpRequest []
     (.append captured effect)
     (resume response)))
+
+
+(deftest test-http-request-effect-shape-and-raise-for-status
+  (setv request (HttpRequest "get" "https://example.test/data"))
+  (assert (= request.method "GET"))
+  (assert (= (repr request) "HttpRequest(GET 'https://example.test/data')"))
+
+  (setv response (HttpResponse :status 404
+                               :headers {"Content-Type" "text/plain"}
+                               :content b"not found"
+                               :text "not found"
+                               :url "https://example.test/data"
+                               :elapsed-seconds 0.5))
+  (with [(pytest.raises HttpError
+                        :match "HTTP 404 https://example\\.test/data: not found")]
+    (.raise-for-status response)))
+
+
+(deftest test-http-handlers-are-defhandler-functions [tmp-path]
+  (setv production-handler (http-production-handler
+                             :client-factory (fn [] (FakeAsyncClient []))
+                             :sleep noop-sleep))
+  (setv record-handler (http-fixture-handler (/ tmp-path "http-fixture.pickle")
+                                             :mode "record"
+                                             :client-factory (fn [] (FakeAsyncClient []))
+                                             :sleep noop-sleep))
+  (setv replay-handler (http-fixture-handler (/ tmp-path "http-fixture.pickle")
+                                             :mode "replay"))
+
+  (assert (is-doeff-handler production-handler))
+  (assert (= (handler-name production-handler) "_http-production-handler"))
+  (assert (is-doeff-handler record-handler))
+  (assert (= (handler-name record-handler) "_http-fixture-record-handler"))
+  (assert (is-doeff-handler replay-handler))
+  (assert (= (handler-name replay-handler) "_http-fixture-replay-handler")))
 
 
 (deftest test-http-production-handler-get-slog-and-close-client
