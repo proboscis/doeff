@@ -1,15 +1,13 @@
-"""
-Core effects — Ask, Get, Put, Tell, HttpRequest.
+"""Core effects — Ask, Get, Put, Tell, HttpRequest.
 
 These are EffectBase subclasses. Yield them from @do functions.
 Handlers (reader, state, writer) handle them.
 """
 
-from typing import Any
-
+import doeff_hy as _doeff_hy  # noqa: F401  # registers Hy import hooks
 from doeff_vm import EffectBase
 
-_HTTP_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
+from doeff_core_effects.http_effects import HttpError, HttpRequest, HttpResponse  # noqa: F401
 
 
 class Ask(EffectBase):
@@ -107,78 +105,6 @@ class Try(EffectBase):
 
     def __repr__(self):
         return f"Try({self.program!r})"
-
-
-class HttpRequest(EffectBase):
-    """HTTP request effect: dispatch a generic HTTP call.
-
-    yield HttpRequest(method="GET", url="https://...") -> HttpResponse
-    """
-
-    def __init__(
-        self,
-        method: str,
-        url: str,
-        *,
-        headers: dict[str, str] | None = None,
-        params: dict[str, Any] | None = None,
-        body: bytes | str | dict[str, Any] | None = None,
-        timeout_seconds: float = 30.0,
-        max_retries: int = 3,
-        follow_redirects: bool = True,
-    ) -> None:
-        super().__init__()
-        normalized_method = method.upper()
-        if normalized_method not in _HTTP_METHODS:
-            raise ValueError(f"Unsupported HTTP method: {method!r}")
-        if max_retries < 0:
-            raise ValueError(f"max_retries must be non-negative: {max_retries!r}")
-
-        self.method = normalized_method
-        self.url = url
-        self.headers = headers
-        self.params = params
-        self.body = body
-        self.timeout_seconds = timeout_seconds
-        self.max_retries = max_retries
-        self.follow_redirects = follow_redirects
-
-    def __repr__(self) -> str:
-        return f"HttpRequest({self.method} {self.url!r})"
-
-
-class HttpResponse:
-    """Result of HttpRequest. Plain data — not an effect."""
-
-    def __init__(
-        self,
-        status: int,
-        headers: dict[str, str],
-        content: bytes,
-        text: str,
-        url: str,
-        elapsed_seconds: float,
-    ) -> None:
-        self.status = status
-        self.headers = headers
-        self.content = content
-        self.text = text
-        self.url = url
-        self.elapsed_seconds = elapsed_seconds
-
-    def raise_for_status(self) -> None:
-        if self.status >= 400:
-            raise HttpError(self.status, self.url, self.text[:500])
-
-
-class HttpError(Exception):
-    """Raised by HttpResponse.raise_for_status for HTTP error statuses."""
-
-    def __init__(self, status: int, url: str, body_snippet: str) -> None:
-        super().__init__(f"HTTP {status} {url}: {body_snippet}")
-        self.status = status
-        self.url = url
-        self.body_snippet = body_snippet
 
 
 class WriterTellEffect(EffectBase):
