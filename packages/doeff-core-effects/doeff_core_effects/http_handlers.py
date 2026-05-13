@@ -1,0 +1,300 @@
+"""HTTP handlers for doeff-core-effects."""
+
+import hashlib
+import json
+import pickle
+from collections.abc import Awaitable, Callable
+from pathlib import Path
+from typing import Any, Literal, Protocol
+
+import httpx
+
+from doeff import do
+from doeff_core_effects.effects import Await, HttpRequest, HttpResponse, slog
+
+FixtureMode = Literal["record", "replay"]
+SleepFn = Callable[[float], Awaitable[None]]
+
+
+class HttpAsyncClient(Protocol):
+    async def request(
+        self,
+        method: str,
+        url: Any,
+        *,
+        params: Any = None,
+        content: Any = None,
+        headers: Any = None,
+        timeout: Any = None,
+        follow_redirects: bool = True,
+    ) -> Any: ...
+
+    async def aclose(self) -> None: ...
+
+
+AsyncClientFactory = Callable[[], HttpAsyncClient]
+
+
+def _default_client_factory() -> HttpAsyncClient:
+    return httpx.AsyncClient()
+
+
+async def _asyncio_sleep(delay: float) -> None:
+    import asyncio
+
+    await asyncio.sleep(delay)
+
+
+def http_production_handler(
+    *,
+    client_factory: AsyncClientFactory = _default_client_factory,
+    sleep: SleepFn = _asyncio_sleep,
+):
+    """Handle HttpRequest with a single async HTTP client and retry/backoff."""
+
+    _ensure_hy_import_hooks()
+    from doeff_core_effects._http_handlers_impl import _http_production_handler
+
+    client = client_factory()
+    handler = _http_production_handler(client, sleep)
+    return _with_client_lifecycle(handler, client)
+
+
+def http_fixture_handler(
+    fixture_path: str | Path,
+    *,
+    mode: FixtureMode,
+    client_factory: AsyncClientFactory = _default_client_factory,
+    sleep: SleepFn = _asyncio_sleep,
+):
+    """Record or replay HttpRequest responses from a pickle fixture file."""
+
+    if mode not in ("record", "replay"):
+        raise ValueError(f"Unsupported HTTP fixture mode: {mode!r}")
+
+    _ensure_hy_import_hooks()
+    from doeff_core_effects._http_handlers_impl import (
+        _http_fixture_record_handler,
+        _http_fixture_replay_handler,
+    )
+
+    path = Path(fixture_path)
+    fixtures = _load_fixtures(path)
+
+    if mode == "record":
+        record_handler = _http_fixture_record_handler(path, fixtures)
+        production_handler = http_production_handler(client_factory=client_factory, sleep=sleep)
+        return _compose_recording_handler(record_handler, production_handler)
+    return _http_fixture_replay_handler(fixtures)
+
+
+def _ensure_hy_import_hooks() -> None:
+    import doeff_hy  # noqa: F401  # registers Hy import hooks for the defhandler module
+
+
+def _with_client_lifecycle(handler: Any, client: HttpAsyncClient):
+    def lifecycle_handler(program: Any) -> Any:
+        return _run_with_client_lifecycle(handler, client, program)
+
+    _copy_handler_metadata(lifecycle_handler, handler)
+    return lifecycle_handler
+
+
+@do
+def _run_with_client_lifecycle(handler: Any, client: HttpAsyncClient, program: Any):
+    try:
+        return (yield handler(program))
+    finally:
+        yield Await(client.aclose())
+
+
+def _compose_recording_handler(record_handler: Any, production_handler: Any):
+    def recording_handler(program: Any) -> Any:
+        return production_handler(record_handler(program))
+
+    _copy_handler_metadata(recording_handler, record_handler)
+    return recording_handler
+
+
+def _copy_handler_metadata(target: Any, source: Any) -> None:
+    target.__doc__ = source.__doc__
+    target._doeff_is_handler_fn = True
+    target.__doeff_name__ = source.__doeff_name__
+    target.__doeff_handler_data__ = source.__doeff_handler_data__
+
+
+@do
+def _perform_request_with_retries(
+    client: HttpAsyncClient,
+    request: HttpRequest,
+    sleep: SleepFn,
+):
+    for attempt_index in range(request.max_retries + 1):
+        try:
+            response = yield Await(_perform_request_once(client, request))
+        except httpx.RequestError:
+            if attempt_index == request.max_retries:
+                raise
+            yield Await(sleep(_retry_delay_seconds(attempt_index)))
+            continue
+
+        yield slog(
+            "http_request",
+            method=request.method,
+            url=request.url,
+            status=response.status,
+            final_url=response.url,
+            elapsed_seconds=response.elapsed_seconds,
+            attempt=attempt_index + 1,
+        )
+
+        if response.status >= 500 and attempt_index < request.max_retries:
+            yield Await(sleep(_retry_delay_seconds(attempt_index)))
+            continue
+
+        return response
+
+    raise AssertionError("unreachable HttpRequest retry state")
+
+
+async def _perform_request_once(client: HttpAsyncClient, request: HttpRequest) -> HttpResponse:
+    headers, content = _request_headers_and_content(request)
+    response = await client.request(
+        method=request.method,
+        url=request.url,
+        headers=headers,
+        params=request.params,
+        content=content,
+        timeout=request.timeout_seconds,
+        follow_redirects=request.follow_redirects,
+    )
+    return HttpResponse(
+        status=response.status_code,
+        headers=dict(response.headers),
+        content=response.content,
+        text=response.text,
+        url=str(response.url),
+        elapsed_seconds=response.elapsed.total_seconds(),
+    )
+
+
+def _request_headers_and_content(
+    request: HttpRequest,
+) -> tuple[dict[str, str] | None, bytes | None]:
+    headers = dict(request.headers) if request.headers is not None else None
+    body = request.body
+
+    if body is None:
+        return headers, None
+
+    if isinstance(body, bytes):
+        return headers, body
+
+    if isinstance(body, str):
+        return headers, body.encode("utf-8")
+
+    data = _json_body_bytes(body)
+    if headers is None:
+        headers = {"Content-Type": "application/json"}
+    elif not _has_header(headers, "Content-Type"):
+        headers["Content-Type"] = "application/json"
+    return headers, data
+
+
+def _has_header(headers: dict[str, str], header_name: str) -> bool:
+    target = header_name.lower()
+    return any(name.lower() == target for name in headers)
+
+
+def _json_body_bytes(body: dict[str, Any]) -> bytes:
+    return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _retry_delay_seconds(attempt_index: int) -> float:
+    return 0.25 * (2**attempt_index)
+
+
+def _fixture_key(request: HttpRequest) -> str:
+    payload = {
+        "method": request.method,
+        "url": request.url,
+        "params": _sorted_mapping(request.params),
+        "body_sha256": _body_sha256(request.body),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _sorted_mapping(mapping: dict[str, Any] | None) -> list[tuple[str, Any]] | None:
+    if mapping is None:
+        return None
+    return sorted(mapping.items())
+
+
+def _body_sha256(body: bytes | str | dict[str, Any] | None) -> str | None:
+    if body is None:
+        return None
+    if isinstance(body, bytes):
+        data = body
+    elif isinstance(body, str):
+        data = body.encode("utf-8")
+    else:
+        data = _json_body_bytes(body)
+    return hashlib.sha256(data).hexdigest()
+
+
+def _load_fixtures(path: Path) -> dict[str, dict[str, Any]]:
+    if not path.exists():
+        return {}
+    with path.open("rb") as fixture_file:
+        return pickle.load(fixture_file)
+
+
+def _write_fixtures(path: Path, fixtures: dict[str, dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as fixture_file:
+        pickle.dump(fixtures, fixture_file)
+
+
+def _record_fixture_response(
+    path: Path,
+    fixtures: dict[str, dict[str, Any]],
+    key: str,
+    response: HttpResponse,
+) -> None:
+    if not isinstance(response, HttpResponse):
+        raise TypeError(f"HttpRequest fixture recorder received non-HttpResponse: {response!r}")
+    fixtures[key] = _response_to_record(response)
+    _write_fixtures(path, fixtures)
+
+
+def _replay_fixture_response(
+    fixtures: dict[str, dict[str, Any]],
+    key: str,
+    request: HttpRequest,
+) -> HttpResponse:
+    if key not in fixtures:
+        raise KeyError(f"No recorded HTTP fixture for {request!r}")
+    return _response_from_record(fixtures[key])
+
+
+def _response_to_record(response: HttpResponse) -> dict[str, Any]:
+    return {
+        "status": response.status,
+        "headers": response.headers,
+        "content": response.content,
+        "text": response.text,
+        "url": response.url,
+        "elapsed_seconds": response.elapsed_seconds,
+    }
+
+
+def _response_from_record(record: dict[str, Any]) -> HttpResponse:
+    return HttpResponse(
+        status=record["status"],
+        headers=record["headers"],
+        content=record["content"],
+        text=record["text"],
+        url=record["url"],
+        elapsed_seconds=record["elapsed_seconds"],
+    )
