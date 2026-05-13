@@ -5,6 +5,7 @@ requires-python = ">=3.10"
 dependencies = [
     "doeff",
     "frozendict>=2.4.0",
+    "requests>=2.31.0",
 ]
 
 [build-system]
