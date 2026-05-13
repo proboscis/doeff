@@ -1,0 +1,251 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import pytest
+from doeff import Pass, Resume, WithHandler, do, run
+from doeff_core_effects.handlers import await_handler, slog_handler
+from doeff_core_effects.http_handlers import http_fixture_handler, http_production_handler
+from doeff_core_effects.scheduler import scheduled
+
+
+def _with_handlers(program: Any, *handlers: Any) -> Any:
+    wrapped = program
+    for handler in reversed(handlers):
+        wrapped = WithHandler(handler, wrapped)
+    return wrapped
+
+
+@dataclass
+class _FakeElapsed:
+    seconds: float
+
+    def total_seconds(self) -> float:
+        return self.seconds
+
+
+@dataclass
+class _FakeResponse:
+    status_code: int
+    headers: dict[str, str]
+    content: bytes
+    text: str
+    url: str
+    elapsed: _FakeElapsed
+
+
+class _FakeSession:
+    def __init__(self, responses: list[_FakeResponse]) -> None:
+        self.responses = responses
+        self.calls: list[dict[str, Any]] = []
+
+    def request(self, **kwargs: Any) -> _FakeResponse:
+        self.calls.append(kwargs)
+        return self.responses.pop(0)
+
+
+def test_http_request_effect_shape_and_raise_for_status() -> None:
+    from doeff_core_effects import HttpError, HttpRequest, HttpResponse
+
+    request = HttpRequest("get", "https://example.test/data")
+    assert request.method == "GET"
+    assert repr(request) == "HttpRequest(GET 'https://example.test/data')"
+
+    response = HttpResponse(
+        status=404,
+        headers={"Content-Type": "text/plain"},
+        content=b"not found",
+        text="not found",
+        url="https://example.test/data",
+        elapsed_seconds=0.5,
+    )
+
+    with pytest.raises(HttpError, match="HTTP 404 https://example.test/data: not found"):
+        response.raise_for_status()
+
+
+def test_http_production_handler_get_and_slog() -> None:
+    from doeff_core_effects import HttpRequest
+
+    session = _FakeSession([
+        _FakeResponse(200, {"X-Test": "yes"}, b"ok", "ok", "https://example.test/final", _FakeElapsed(0.2))
+    ])
+    logs = slog_handler()
+
+    @do
+    def body():
+        return (yield HttpRequest("GET", "https://example.test/start", params={"a": "1"}))
+
+    result = run(scheduled(_with_handlers(
+        body(),
+        logs,
+        await_handler(),
+        http_production_handler(session_factory=lambda: session, sleep=lambda _: None),
+    )))
+
+    assert result.status == 200
+    assert result.headers == {"X-Test": "yes"}
+    assert result.content == b"ok"
+    assert result.text == "ok"
+    assert result.url == "https://example.test/final"
+    assert session.calls == [
+        {
+            "method": "GET",
+            "url": "https://example.test/start",
+            "headers": None,
+            "params": {"a": "1"},
+            "data": None,
+            "timeout": 30.0,
+            "allow_redirects": True,
+        }
+    ]
+    assert logs.log == [
+        {
+            "msg": "http_request",
+            "method": "GET",
+            "url": "https://example.test/start",
+            "status": 200,
+            "final_url": "https://example.test/final",
+            "elapsed_seconds": 0.2,
+            "attempt": 1,
+        }
+    ]
+
+
+def test_http_production_handler_post_json_body() -> None:
+    from doeff_core_effects import HttpRequest
+
+    session = _FakeSession([
+        _FakeResponse(201, {"Content-Type": "application/json"}, b"{}", "{}", "https://example.test/api", _FakeElapsed(0.1))
+    ])
+
+    @do
+    def body():
+        return (yield HttpRequest(
+            "POST",
+            "https://example.test/api",
+            headers={"X-Trace": "abc"},
+            body={"b": 2, "a": 1},
+        ))
+
+    result = run(scheduled(_with_handlers(
+        body(),
+        await_handler(),
+        http_production_handler(session_factory=lambda: session, sleep=lambda _: None),
+    )))
+
+    assert result.status == 201
+    assert session.calls[0]["headers"] == {
+        "X-Trace": "abc",
+        "Content-Type": "application/json",
+    }
+    assert session.calls[0]["data"] == b'{"a":1,"b":2}'
+
+
+def test_http_production_handler_redirect_flag_and_timeout() -> None:
+    from doeff_core_effects import HttpRequest
+
+    session = _FakeSession([
+        _FakeResponse(302, {"Location": "/next"}, b"", "", "https://example.test/start", _FakeElapsed(0.1))
+    ])
+
+    @do
+    def body():
+        return (yield HttpRequest(
+            "HEAD",
+            "https://example.test/start",
+            timeout_seconds=1.25,
+            follow_redirects=False,
+        ))
+
+    result = run(scheduled(_with_handlers(
+        body(),
+        await_handler(),
+        http_production_handler(session_factory=lambda: session, sleep=lambda _: None),
+    )))
+
+    assert result.status == 302
+    assert session.calls[0]["timeout"] == 1.25
+    assert session.calls[0]["allow_redirects"] is False
+
+
+def test_http_production_handler_retries_5xx_statuses() -> None:
+    from doeff_core_effects import HttpRequest
+
+    session = _FakeSession([
+        _FakeResponse(500, {}, b"error", "error", "https://example.test/api", _FakeElapsed(0.1)),
+        _FakeResponse(502, {}, b"bad", "bad", "https://example.test/api", _FakeElapsed(0.1)),
+        _FakeResponse(200, {}, b"ok", "ok", "https://example.test/api", _FakeElapsed(0.1)),
+    ])
+    sleeps: list[float] = []
+
+    @do
+    def body():
+        return (yield HttpRequest("GET", "https://example.test/api", max_retries=2))
+
+    result = run(scheduled(_with_handlers(
+        body(),
+        await_handler(),
+        http_production_handler(session_factory=lambda: session, sleep=sleeps.append),
+    )))
+
+    assert result.status == 200
+    assert len(session.calls) == 3
+    assert sleeps == [0.25, 0.5]
+
+
+def test_http_fixture_handler_record_replay_round_trip(tmp_path: Path) -> None:
+    from doeff_core_effects import HttpRequest, HttpResponse
+
+    fixture_path = tmp_path / "http-fixture.pickle"
+    response = HttpResponse(
+        status=200,
+        headers={"X-Fixture": "yes"},
+        content=b"fixture",
+        text="fixture",
+        url="https://example.test/resource",
+        elapsed_seconds=0.3,
+    )
+    calls = {"count": 0}
+
+    @do
+    def fake_transport(effect, k):
+        if isinstance(effect, HttpRequest):
+            calls["count"] += 1
+            return (yield Resume(k, response))
+        yield Pass(effect, k)
+
+    @do
+    def body():
+        return (yield HttpRequest("GET", "https://example.test/resource"))
+
+    recorded = run(_with_handlers(
+        body(),
+        fake_transport,
+        http_fixture_handler(fixture_path, mode="record"),
+    ))
+    replayed = run(_with_handlers(
+        body(),
+        http_fixture_handler(fixture_path, mode="replay"),
+    ))
+
+    assert recorded.status == 200
+    assert replayed.status == 200
+    assert replayed.text == "fixture"
+    assert calls["count"] == 1
+
+
+def test_http_fixture_handler_replay_errors_on_unknown_request(tmp_path: Path) -> None:
+    from doeff_core_effects import HttpRequest
+
+    @do
+    def body():
+        return (yield HttpRequest("GET", "https://example.test/missing"))
+
+    with pytest.raises(KeyError, match="No recorded HTTP fixture"):
+        run(_with_handlers(
+            body(),
+            http_fixture_handler(tmp_path / "http-fixture.pickle", mode="replay"),
+        ))
