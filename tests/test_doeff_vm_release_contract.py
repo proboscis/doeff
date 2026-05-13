@@ -77,3 +77,15 @@ def test_reusable_native_publish_workflows_honor_publish_input() -> None:
 
         assert "|| inputs.publish" in text
         assert "github.event_name == 'workflow_call' && inputs.publish" not in text
+
+
+def test_pypi_publish_actions_use_current_skip_existing_input_name() -> None:
+    for path in [
+        ROOT / ".github" / "workflows" / "build-vm.yml",
+        ROOT / ".github" / "workflows" / "build-indexer.yml",
+        ROOT / ".github" / "workflows" / "publish.yml",
+    ]:
+        text = path.read_text(encoding="utf-8")
+
+        assert "skip-existing: true" in text
+        assert "skip_existing:" not in text
