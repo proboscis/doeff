@@ -233,6 +233,9 @@ General review scope:
 - Focus on actionable correctness, maintainability, convention, and missing-test findings.
 
 Outcome rules:
+- Do not finish a turn while the issue remains in `PR Review` unless a command or tool call is
+  still actively running in this same turn. `PR Review` is an agent-active state and will be
+  picked up again by Symphony.
 - If you find actionable issues or cannot approve the PR, post a concise Japanese review comment
   with file/line references where possible, then move the Linear issue back to `In Progress` so
   the implementation agent can fix it.
@@ -269,6 +272,17 @@ Operating rules:
 - If a PR is ready after implementation, leave it open and move the Linear issue to `PR Review`.
   Do not run `gh pr merge`, `gh api .../merge`, GitHub connector merge actions, or any auto-merge
   command.
+- Do not finish a turn while the issue remains in `Todo`, `In Progress`, or `PR Review` unless a
+  command or tool call is still actively running in this same turn. These are Symphony-active
+  states and will be picked up again.
+- If implementation is complete and ready for automated review, move the Linear issue to
+  `PR Review` before ending.
+- If you are blocked by another Linear issue, add or verify the Linear `blocked by` relation,
+  move this issue back to `Todo`, and post a Japanese blocker comment. Symphony skips blocked
+  `Todo` issues until their blockers reach a terminal state.
+- If you are blocked on missing credentials, permissions, product decision, external data access,
+  or another human-owned decision without a concrete Linear blocker issue, post a Japanese blocker
+  comment and move the issue to `In Review` for human decision. Do not leave it in `In Progress`.
 - Treat missing required credentials or permissions as blockers and record them clearly.
 - Do not add fallback or silent degradation behavior. Required services should fail loudly.
 - Avoid production anti-patterns called out in `AGENTS.md`, including `getattr(obj, "attr", default)`,
