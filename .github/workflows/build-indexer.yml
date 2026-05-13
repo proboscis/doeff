@@ -248,7 +248,7 @@ jobs:
     name: Publish to PyPI
     needs: [build-linux, build-linux-freethreaded, build-macos, build-macos-freethreaded, build-windows, build-windows-freethreaded, sdist]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/doeff-indexer-v') || (github.event_name == 'workflow_dispatch' && inputs.publish) || (github.event_name == 'workflow_call' && inputs.publish)
+    if: startsWith(github.ref, 'refs/tags/doeff-indexer-v') || inputs.publish
     steps:
       - name: Download doeff-indexer artifacts
         uses: actions/download-artifact@v4
