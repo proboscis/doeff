@@ -26,6 +26,10 @@ def _dependency_lower_bound(dependencies: list[str], package_name: str) -> str:
     raise AssertionError(f"{package_name} dependency must use an explicit >= lower bound")
 
 
+def _dependency_names(dependencies: list[str]) -> set[str]:
+    return {re.split(r"[<>=!~; ]", dependency, maxsplit=1)[0] for dependency in dependencies}
+
+
 def test_doeff_vm_release_version_is_newer_than_published_stale_wheel() -> None:
     """0.1.0 is already published; reusing it leaves Windows hosts on stale wheels."""
     vm_pyproject = _read_toml(ROOT / "packages" / "doeff-vm" / "pyproject.toml")
@@ -66,6 +70,19 @@ def test_publish_workflow_releases_doeff_agents() -> None:
     assert "uv build --package doeff-agents" in text
     assert "doeff-agents-dist" in text
     assert "publish-doeff-agents" in text
+
+
+def test_publish_workflow_releases_root_workspace_runtime_dependencies() -> None:
+    root_pyproject = _read_toml(ROOT / "pyproject.toml")
+    workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text()
+
+    workspace_sources = set(root_pyproject["tool"]["uv"]["sources"])
+    runtime_workspace_deps = _dependency_names(root_pyproject["project"]["dependencies"]) & workspace_sources
+
+    for package_name in runtime_workspace_deps - {"doeff-vm", "doeff-indexer"}:
+        assert f"uv build --package {package_name}" in workflow
+        assert f"{package_name}-dist" in workflow
+        assert f"publish-{package_name}" in workflow
 
 
 def test_reusable_native_publish_workflows_honor_publish_input() -> None:
