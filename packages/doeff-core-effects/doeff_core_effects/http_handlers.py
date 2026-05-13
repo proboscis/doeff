@@ -1,7 +1,5 @@
 """HTTP handlers for doeff-core-effects."""
 
-from __future__ import annotations
-
 import hashlib
 import json
 import pickle
@@ -12,7 +10,6 @@ from typing import Any, Literal, Protocol
 import httpx
 
 from doeff import do
-from doeff.program import Pass, Resume
 from doeff_core_effects.effects import Await, HttpRequest, HttpResponse, slog
 
 FixtureMode = Literal["record", "replay"]
@@ -53,43 +50,10 @@ def http_production_handler(
 ):
     """Handle HttpRequest with a single async HTTP client and retry/backoff."""
 
-    client = client_factory()
+    _ensure_hy_import_hooks()
+    from doeff_core_effects._http_handlers_impl import _http_production_handler
 
-    @do
-    def handler(effect, k):
-        if not isinstance(effect, HttpRequest):
-            yield Pass(effect, k)
-            return
-
-        for attempt_index in range(effect.max_retries + 1):
-            try:
-                response = yield Await(_perform_request_once(client, effect))
-            except httpx.RequestError:
-                if attempt_index == effect.max_retries:
-                    raise
-                yield Await(sleep(_retry_delay_seconds(attempt_index)))
-                continue
-
-            yield slog(
-                "http_request",
-                method=effect.method,
-                url=effect.url,
-                status=response.status,
-                final_url=response.url,
-                elapsed_seconds=response.elapsed_seconds,
-                attempt=attempt_index + 1,
-            )
-
-            if response.status >= 500 and attempt_index < effect.max_retries:
-                yield Await(sleep(_retry_delay_seconds(attempt_index)))
-                continue
-
-            result = yield Resume(k, response)
-            return result
-
-        raise AssertionError("unreachable HttpRequest retry state")
-
-    return handler
+    return _http_production_handler(client_factory(), sleep)
 
 
 def http_fixture_handler(fixture_path: str | Path, *, mode: FixtureMode):
@@ -98,32 +62,56 @@ def http_fixture_handler(fixture_path: str | Path, *, mode: FixtureMode):
     if mode not in ("record", "replay"):
         raise ValueError(f"Unsupported HTTP fixture mode: {mode!r}")
 
+    _ensure_hy_import_hooks()
+    from doeff_core_effects._http_handlers_impl import (
+        _http_fixture_record_handler,
+        _http_fixture_replay_handler,
+    )
+
     path = Path(fixture_path)
     fixtures = _load_fixtures(path)
 
-    @do
-    def handler(effect, k):
-        if not isinstance(effect, HttpRequest):
-            yield Pass(effect, k)
-            return
+    if mode == "record":
+        return _http_fixture_record_handler(path, fixtures)
+    return _http_fixture_replay_handler(fixtures)
 
-        key = _fixture_key(effect)
-        if mode == "replay":
-            if key not in fixtures:
-                raise KeyError(f"No recorded HTTP fixture for {effect!r}")
-            response = _response_from_record(fixtures[key])
-            result = yield Resume(k, response)
-            return result
 
-        response = yield effect
-        if not isinstance(response, HttpResponse):
-            raise TypeError(f"HttpRequest fixture recorder received non-HttpResponse: {response!r}")
-        fixtures[key] = _response_to_record(response)
-        _write_fixtures(path, fixtures)
-        result = yield Resume(k, response)
-        return result
+def _ensure_hy_import_hooks() -> None:
+    import doeff_hy  # noqa: F401  # registers Hy import hooks for the defhandler module
 
-    return handler
+
+@do
+def _perform_request_with_retries(
+    client: HttpAsyncClient,
+    request: HttpRequest,
+    sleep: SleepFn,
+):
+    for attempt_index in range(request.max_retries + 1):
+        try:
+            response = yield Await(_perform_request_once(client, request))
+        except httpx.RequestError:
+            if attempt_index == request.max_retries:
+                raise
+            yield Await(sleep(_retry_delay_seconds(attempt_index)))
+            continue
+
+        yield slog(
+            "http_request",
+            method=request.method,
+            url=request.url,
+            status=response.status,
+            final_url=response.url,
+            elapsed_seconds=response.elapsed_seconds,
+            attempt=attempt_index + 1,
+        )
+
+        if response.status >= 500 and attempt_index < request.max_retries:
+            yield Await(sleep(_retry_delay_seconds(attempt_index)))
+            continue
+
+        return response
+
+    raise AssertionError("unreachable HttpRequest retry state")
 
 
 async def _perform_request_once(client: HttpAsyncClient, request: HttpRequest) -> HttpResponse:
@@ -223,6 +211,28 @@ def _write_fixtures(path: Path, fixtures: dict[str, dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as fixture_file:
         pickle.dump(fixtures, fixture_file)
+
+
+def _record_fixture_response(
+    path: Path,
+    fixtures: dict[str, dict[str, Any]],
+    key: str,
+    response: HttpResponse,
+) -> None:
+    if not isinstance(response, HttpResponse):
+        raise TypeError(f"HttpRequest fixture recorder received non-HttpResponse: {response!r}")
+    fixtures[key] = _response_to_record(response)
+    _write_fixtures(path, fixtures)
+
+
+def _replay_fixture_response(
+    fixtures: dict[str, dict[str, Any]],
+    key: str,
+    request: HttpRequest,
+) -> HttpResponse:
+    if key not in fixtures:
+        raise KeyError(f"No recorded HTTP fixture for {request!r}")
+    return _response_from_record(fixtures[key])
 
 
 def _response_to_record(response: HttpResponse) -> dict[str, Any]:

@@ -5,9 +5,10 @@
 ### Added
 
 - Added `HttpRequest`, `HttpResponse`, and `HttpError` to `doeff-core-effects`.
-- Added `http_production_handler` with `httpx.AsyncClient` pooling, JSON body serialization,
-  retry/backoff, timeout/redirect forwarding, and `slog` request events.
-- Added `http_fixture_handler` for record/replay HTTP fixtures keyed by request identity.
+- Added Hy `defhandler`-backed `http_production_handler` with `httpx.AsyncClient` pooling,
+  JSON body serialization, retry/backoff, timeout/redirect forwarding, and `slog` request events.
+- Added Hy `defhandler`-backed `http_fixture_handler` for record/replay HTTP fixtures keyed by
+  request identity.
 - Added doeff-hy HTTP verb wrappers: `http-get`, `http-post`, `http-put`, `http-delete`,
   and `http-head`.
 - Added new workspace package `doeff-llm` with unified effects:
