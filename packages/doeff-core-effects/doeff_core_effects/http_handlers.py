@@ -2,59 +2,52 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import pickle
-import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-import requests
+import httpx
 
 from doeff import do
 from doeff.program import Pass, Resume
 from doeff_core_effects.effects import Await, HttpRequest, HttpResponse, slog
 
 FixtureMode = Literal["record", "replay"]
-SleepFn = Callable[[float], None]
+SleepFn = Callable[[float], Awaitable[None]]
 
 
-class HttpSession(Protocol):
-    def request(
+class HttpAsyncClient(Protocol):
+    async def request(
         self,
         method: str,
         url: Any,
         params: Any = None,
-        data: Any = None,
+        content: Any = None,
         headers: Any = None,
-        cookies: Any = None,
-        files: Any = None,
-        auth: Any = None,
         timeout: Any = None,
-        allow_redirects: bool = True,
-        proxies: Any = None,
-        hooks: Any = None,
-        stream: Any = None,
-        verify: Any = None,
-        cert: Any = None,
-        json: Any = None,
+        follow_redirects: bool = True,
     ) -> Any: ...
 
 
-SessionFactory = Callable[[], HttpSession]
+AsyncClientFactory = Callable[[], HttpAsyncClient]
+
+
+def _default_client_factory() -> HttpAsyncClient:
+    return httpx.AsyncClient()
 
 
 def http_production_handler(
     *,
-    session_factory: SessionFactory = requests.Session,
-    sleep: SleepFn = time.sleep,
+    client_factory: AsyncClientFactory = _default_client_factory,
+    sleep: SleepFn = asyncio.sleep,
 ):
-    """Handle HttpRequest with a single requests.Session and retry/backoff."""
+    """Handle HttpRequest with a single async HTTP client and retry/backoff."""
 
-    import asyncio
-
-    session = session_factory()
+    client = client_factory()
 
     @do
     def handler(effect, k):
@@ -64,11 +57,11 @@ def http_production_handler(
 
         for attempt_index in range(effect.max_retries + 1):
             try:
-                response = yield Await(asyncio.to_thread(_perform_request_once, session, effect))
-            except requests.RequestException:
+                response = yield Await(_perform_request_once(client, effect))
+            except httpx.RequestError:
                 if attempt_index == effect.max_retries:
                     raise
-                yield Await(asyncio.to_thread(sleep, _retry_delay_seconds(attempt_index)))
+                yield Await(sleep(_retry_delay_seconds(attempt_index)))
                 continue
 
             yield slog(
@@ -82,7 +75,7 @@ def http_production_handler(
             )
 
             if response.status >= 500 and attempt_index < effect.max_retries:
-                yield Await(asyncio.to_thread(sleep, _retry_delay_seconds(attempt_index)))
+                yield Await(sleep(_retry_delay_seconds(attempt_index)))
                 continue
 
             result = yield Resume(k, response)
@@ -127,28 +120,28 @@ def http_fixture_handler(fixture_path: str | Path, *, mode: FixtureMode):
     return handler
 
 
-def _perform_request_once(session: HttpSession, request: HttpRequest) -> HttpResponse:
-    headers, data = _request_headers_and_data(request)
-    response = session.request(
+async def _perform_request_once(client: HttpAsyncClient, request: HttpRequest) -> HttpResponse:
+    headers, content = _request_headers_and_content(request)
+    response = await client.request(
         method=request.method,
         url=request.url,
         headers=headers,
         params=request.params,
-        data=data,
+        content=content,
         timeout=request.timeout_seconds,
-        allow_redirects=request.follow_redirects,
+        follow_redirects=request.follow_redirects,
     )
     return HttpResponse(
         status=response.status_code,
         headers=dict(response.headers),
         content=response.content,
         text=response.text,
-        url=response.url,
+        url=str(response.url),
         elapsed_seconds=response.elapsed.total_seconds(),
     )
 
 
-def _request_headers_and_data(
+def _request_headers_and_content(
     request: HttpRequest,
 ) -> tuple[dict[str, str] | None, bytes | None]:
     headers = dict(request.headers) if request.headers is not None else None
