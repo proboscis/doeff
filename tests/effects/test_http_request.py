@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, cast
 
+import httpx
 import pytest
-import requests
 from doeff_core_effects.handlers import await_handler, slog_handler
 from doeff_core_effects.http_handlers import http_fixture_handler, http_production_handler
 from doeff_core_effects.scheduler import scheduled
@@ -44,23 +44,23 @@ class _SlogCapture(Protocol):
     log: list[dict[str, Any]]
 
 
-class _FakeSession:
-    def __init__(self, responses: list[_FakeResponse | requests.RequestException]) -> None:
+class _FakeAsyncClient:
+    def __init__(self, responses: list[_FakeResponse | httpx.RequestError]) -> None:
         self.responses = responses
         self.calls: list[dict[str, Any]] = []
 
-    def request(
+    async def request(
         self,
         method: str,
         url: Any,
         params: dict[str, Any] | None = None,
-        data: Any = None,
+        content: Any = None,
         headers: Mapping[str, str | bytes] | None = None,
         cookies: Any = None,
         files: Any = None,
         auth: Any = None,
         timeout: float | None = None,
-        allow_redirects: bool = True,
+        follow_redirects: bool = True,
         proxies: Any = None,
         hooks: Any = None,
         stream: Any = None,
@@ -74,15 +74,26 @@ class _FakeSession:
                 "url": url,
                 "headers": headers,
                 "params": params,
-                "data": data,
+                "content": content,
                 "timeout": timeout,
-                "allow_redirects": allow_redirects,
+                "follow_redirects": follow_redirects,
             }
         )
         response = self.responses.pop(0)
-        if isinstance(response, requests.RequestException):
+        if isinstance(response, httpx.RequestError):
             raise response
         return response
+
+
+async def _noop_sleep(_: float) -> None:
+    return None
+
+
+def _record_sleep(sleeps: list[float]):
+    async def sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    return sleep
 
 
 def test_http_request_effect_shape_and_raise_for_status() -> None:
@@ -111,7 +122,7 @@ def test_http_request_effect_shape_and_raise_for_status() -> None:
 def test_http_production_handler_get_and_slog() -> None:
     from doeff_core_effects import HttpRequest
 
-    session = _FakeSession(
+    client = _FakeAsyncClient(
         [
             _FakeResponse(
                 200, {"X-Test": "yes"}, b"ok", "ok", "https://example.test/final", _FakeElapsed(0.2)
@@ -130,7 +141,7 @@ def test_http_production_handler_get_and_slog() -> None:
                 body(),
                 logs,
                 await_handler(),
-                http_production_handler(session_factory=lambda: session, sleep=lambda _: None),
+                http_production_handler(client_factory=lambda: client, sleep=_noop_sleep),
             )
         )
     )
@@ -140,15 +151,15 @@ def test_http_production_handler_get_and_slog() -> None:
     assert result.content == b"ok"
     assert result.text == "ok"
     assert result.url == "https://example.test/final"
-    assert session.calls == [
+    assert client.calls == [
         {
             "method": "GET",
             "url": "https://example.test/start",
             "headers": None,
             "params": {"a": "1"},
-            "data": None,
+            "content": None,
             "timeout": 30.0,
-            "allow_redirects": True,
+            "follow_redirects": True,
         }
     ]
     assert logs.log == [
@@ -167,7 +178,7 @@ def test_http_production_handler_get_and_slog() -> None:
 def test_http_production_handler_post_json_body() -> None:
     from doeff_core_effects import HttpRequest
 
-    session = _FakeSession(
+    client = _FakeAsyncClient(
         [
             _FakeResponse(
                 201,
@@ -197,23 +208,23 @@ def test_http_production_handler_post_json_body() -> None:
                 body(),
                 slog_handler(),
                 await_handler(),
-                http_production_handler(session_factory=lambda: session, sleep=lambda _: None),
+                http_production_handler(client_factory=lambda: client, sleep=_noop_sleep),
             )
         )
     )
 
     assert result.status == 201
-    assert session.calls[0]["headers"] == {
+    assert client.calls[0]["headers"] == {
         "X-Trace": "abc",
         "Content-Type": "application/json",
     }
-    assert session.calls[0]["data"] == b'{"a":1,"b":2}'
+    assert client.calls[0]["content"] == b'{"a":1,"b":2}'
 
 
 def test_http_production_handler_redirect_flag_and_timeout() -> None:
     from doeff_core_effects import HttpRequest
 
-    session = _FakeSession(
+    client = _FakeAsyncClient(
         [
             _FakeResponse(
                 302, {"Location": "/next"}, b"", "", "https://example.test/start", _FakeElapsed(0.1)
@@ -238,20 +249,20 @@ def test_http_production_handler_redirect_flag_and_timeout() -> None:
                 body(),
                 slog_handler(),
                 await_handler(),
-                http_production_handler(session_factory=lambda: session, sleep=lambda _: None),
+                http_production_handler(client_factory=lambda: client, sleep=_noop_sleep),
             )
         )
     )
 
     assert result.status == 302
-    assert session.calls[0]["timeout"] == 1.25
-    assert session.calls[0]["allow_redirects"] is False
+    assert client.calls[0]["timeout"] == 1.25
+    assert client.calls[0]["follow_redirects"] is False
 
 
 def test_http_production_handler_retries_5xx_statuses() -> None:
     from doeff_core_effects import HttpRequest
 
-    session = _FakeSession(
+    client = _FakeAsyncClient(
         [
             _FakeResponse(
                 500, {}, b"error", "error", "https://example.test/api", _FakeElapsed(0.1)
@@ -272,22 +283,22 @@ def test_http_production_handler_retries_5xx_statuses() -> None:
                 body(),
                 slog_handler(),
                 await_handler(),
-                http_production_handler(session_factory=lambda: session, sleep=sleeps.append),
+                http_production_handler(client_factory=lambda: client, sleep=_record_sleep(sleeps)),
             )
         )
     )
 
     assert result.status == 200
-    assert len(session.calls) == 3
+    assert len(client.calls) == 3
     assert sleeps == [0.25, 0.5]
 
 
 def test_http_production_handler_retries_request_exceptions_with_timeout() -> None:
     from doeff_core_effects import HttpRequest
 
-    session = _FakeSession(
+    client = _FakeAsyncClient(
         [
-            requests.Timeout("slow response"),
+            httpx.TimeoutException("slow response"),
             _FakeResponse(200, {}, b"ok", "ok", "https://example.test/api", _FakeElapsed(0.1)),
         ]
     )
@@ -310,14 +321,14 @@ def test_http_production_handler_retries_request_exceptions_with_timeout() -> No
                 body(),
                 slog_handler(),
                 await_handler(),
-                http_production_handler(session_factory=lambda: session, sleep=sleeps.append),
+                http_production_handler(client_factory=lambda: client, sleep=_record_sleep(sleeps)),
             )
         )
     )
 
     assert result.status == 200
-    assert len(session.calls) == 2
-    assert [call["timeout"] for call in session.calls] == [0.01, 0.01]
+    assert len(client.calls) == 2
+    assert [call["timeout"] for call in client.calls] == [0.01, 0.01]
     assert sleeps == [0.25]
 
 
