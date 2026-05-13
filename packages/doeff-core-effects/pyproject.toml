@@ -4,7 +4,9 @@ version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
     "doeff",
+    "doeff-hy",
     "frozendict>=2.4.0",
+    "httpx>=0.27.0",
 ]
 
 [build-system]
@@ -16,3 +18,4 @@ packages = ["doeff_core_effects"]
 
 [tool.uv.sources]
 doeff = { workspace = true }
+doeff-hy = { workspace = true }
