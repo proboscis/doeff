@@ -176,6 +176,22 @@ def test_http_production_handler_get_and_slog() -> None:
     ]
 
 
+def test_http_handlers_are_defhandler_functions(tmp_path: Path) -> None:
+    production_handler = http_production_handler(
+        client_factory=lambda: _FakeAsyncClient([]),
+        sleep=_noop_sleep,
+    )
+    record_handler = http_fixture_handler(tmp_path / "http-fixture.pickle", mode="record")
+    replay_handler = http_fixture_handler(tmp_path / "http-fixture.pickle", mode="replay")
+
+    assert production_handler._doeff_is_handler_fn is True
+    assert production_handler.__doeff_name__ == "_http-production-handler"
+    assert record_handler._doeff_is_handler_fn is True
+    assert record_handler.__doeff_name__ == "_http-fixture-record-handler"
+    assert replay_handler._doeff_is_handler_fn is True
+    assert replay_handler.__doeff_name__ == "_http-fixture-replay-handler"
+
+
 def test_http_production_handler_post_json_body() -> None:
     from doeff_core_effects import HttpRequest
 
