@@ -4,9 +4,9 @@ from pathlib import Path
 from typing import Any
 
 import doeff_hy  # noqa: F401  # registers Hy import hooks for the deftest module
-import tests.effects.http_request_deftest_cases as http_request_deftest
 from doeff_core_effects.scheduler import scheduled
 
+import tests.effects.http_request_deftest_cases as http_request_deftest
 from doeff import run
 
 
@@ -16,6 +16,19 @@ def _deftest_interpreter(program: Any, *, env: dict[Any, Any] | None = None) -> 
     if env is not None:
         raise ValueError("ARC-528 HTTP deftests do not use deftest env overrides")
     return run(scheduled(program))
+
+
+def test_http_request_effect_shape_and_raise_for_status() -> None:
+    http_request_deftest.test_http_request_effect_shape_and_raise_for_status(
+        _deftest_interpreter
+    )
+
+
+def test_http_handlers_are_defhandler_functions(tmp_path: Path) -> None:
+    http_request_deftest.test_http_handlers_are_defhandler_functions(
+        _deftest_interpreter,
+        tmp_path,
+    )
 
 
 def test_http_production_handler_get_slog_and_close_client() -> None:
