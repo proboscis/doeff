@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import pickle
@@ -25,6 +24,7 @@ class HttpAsyncClient(Protocol):
         self,
         method: str,
         url: Any,
+        *,
         params: Any = None,
         content: Any = None,
         headers: Any = None,
@@ -40,10 +40,16 @@ def _default_client_factory() -> HttpAsyncClient:
     return httpx.AsyncClient()
 
 
+async def _asyncio_sleep(delay: float) -> None:
+    import asyncio
+
+    await asyncio.sleep(delay)
+
+
 def http_production_handler(
     *,
     client_factory: AsyncClientFactory = _default_client_factory,
-    sleep: SleepFn = asyncio.sleep,
+    sleep: SleepFn = _asyncio_sleep,
 ):
     """Handle HttpRequest with a single async HTTP client and retry/backoff."""
 

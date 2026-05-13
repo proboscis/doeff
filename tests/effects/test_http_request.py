@@ -53,6 +53,7 @@ class _FakeAsyncClient:
         self,
         method: str,
         url: Any,
+        *,
         params: dict[str, Any] | None = None,
         content: Any = None,
         headers: Mapping[str, str | bytes] | None = None,
