@@ -10,7 +10,7 @@
 
 (require doeff-hy.handle [defhandler])
 (require doeff-hy.macros [<- set!])
-(import doeff [do :as _doeff-do GetHandlers GetOuterHandlers])
+(import doeff [do :as _doeff-do Ask GetHandlers GetOuterHandlers])
 (import doeff_core_effects.scheduler [CreateExternalPromise Wait Spawn])
 
 (import doeff_agents.effects.agent [
@@ -18,10 +18,12 @@
   SendEffect StopEffect SleepEffect SessionHandle Observation])
 (import doeff_agents.adapters.base [AgentType LaunchParams])
 (import doeff_agents.adapters.claude [ClaudeAdapter])
+(import doeff_agents.session-backend [SessionBackend])
 (import doeff_agents.mcp-server [McpToolServer])
 (import doeff_agents.handlers.mcp-server-loop [mcp-server-loop])
 (import doeff_agents.monitor [MonitorState SessionStatus
   detect-status hash-content is-waiting-for-input detect-pr-url])
+(import doeff_agents.shell [wrap-with-shell-exports])
 (import doeff_agents [tmux])
 
 (import json)
@@ -91,15 +93,17 @@
 
    Non-CLAUDE LaunchEffects are Passed to outer handlers (so other agent handlers
    can pick them up)."
-  (setv backend (or backend (tmux.get-default-backend)))
   (setv adapter (ClaudeAdapter))
 
   (defhandler _handler
     (lazy-var sessions {})
     (lazy-var mcp-servers {})
 
-    (LaunchEffect [session-name agent-type work-dir prompt model mcp-tools mcp-server-name effort bare ready-timeout]
+    (LaunchEffect [session-name agent-type work-dir prompt model mcp-tools mcp-server-name effort bare ready-timeout session-env]
       :when (= agent-type AgentType.CLAUDE)
+      (setv active-backend backend)
+      (when (is active-backend None)
+        (<- active-backend (Ask SessionBackend)))
       ;; 1. Trust
       (_trust-workdir work-dir)
       ;; 2. MCP server — tools run INSIDE the main VM as spawned tasks, not
@@ -129,8 +133,8 @@
         (<- _ (Spawn (mcp-server-loop server captured-handlers)))
         (set! mcp-servers (| mcp-servers {session-name server})))
       ;; 3. Tmux session
-      (setv session-info (.new-session backend
-        (tmux.SessionConfig :session-name session-name :work-dir work-dir)))
+      (setv session-info (.new-session active-backend
+        (tmux.SessionConfig :session-name session-name :work-dir work-dir :env session-env)))
       ;; 4. Launch command
       (setv params (LaunchParams
         :work-dir work-dir
@@ -139,7 +143,9 @@
         :effort effort
         :bare bare))
       (setv argv (.launch-command adapter params))
-      (.send-keys backend session-info.pane-id (shlex.join argv) :literal False)
+      (.send-keys active-backend session-info.pane-id
+        (wrap-with-shell-exports (shlex.join argv) session-env)
+        :literal False)
       ;; 5. Store + resume
       (setv handle (SessionHandle
         :session-name session-name
@@ -152,10 +158,13 @@
 
     (MonitorEffect [handle]
       :when (= handle.agent-type AgentType.CLAUDE)
+      (setv active-backend backend)
+      (when (is active-backend None)
+        (<- active-backend (Ask SessionBackend)))
       (setv sname handle.session-name)
-      (when (not (.has-session backend sname))
+      (when (not (.has-session active-backend sname))
         (resume (Observation :status SessionStatus.EXITED)))
-      (setv output (.capture-pane backend handle.pane-id 100))
+      (setv output (.capture-pane active-backend handle.pane-id 100))
       (setv session-data (.get sessions sname {}))
       (setv mon (.get session-data "monitor" (MonitorState)))
       (setv skip-lines 5)
@@ -182,20 +191,29 @@
 
     (CaptureEffect [handle lines]
       :when (= handle.agent-type AgentType.CLAUDE)
-      (resume (.capture-pane backend handle.pane-id lines)))
+      (setv active-backend backend)
+      (when (is active-backend None)
+        (<- active-backend (Ask SessionBackend)))
+      (resume (.capture-pane active-backend handle.pane-id lines)))
 
     (SendEffect [handle message literal enter]
       :when (= handle.agent-type AgentType.CLAUDE)
-      (.send-keys backend handle.pane-id message :literal literal :enter enter)
+      (setv active-backend backend)
+      (when (is active-backend None)
+        (<- active-backend (Ask SessionBackend)))
+      (.send-keys active-backend handle.pane-id message :literal literal :enter enter)
       (resume None))
 
     (StopEffect [handle]
       :when (= handle.agent-type AgentType.CLAUDE)
+      (setv active-backend backend)
+      (when (is active-backend None)
+        (<- active-backend (Ask SessionBackend)))
       (setv server (.pop mcp-servers handle.session-name None))
       (when server (.shutdown server))
       (set! mcp-servers mcp-servers)
-      (when (.has-session backend handle.session-name)
-        (.kill-session backend handle.session-name))
+      (when (.has-session active-backend handle.session-name)
+        (.kill-session active-backend handle.session-name))
       (resume None))
 
     (SleepEffect [seconds]

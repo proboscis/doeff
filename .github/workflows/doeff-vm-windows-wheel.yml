@@ -1,0 +1,41 @@
+name: doeff-vm Windows Wheel Smoke
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/doeff-vm-windows-wheel.yml"
+      - "packages/doeff-vm/**"
+      - "packages/doeff-vm-core/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-wheel-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build doeff-vm wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          args: --release --out dist -i python
+          working-directory: packages/doeff-vm
+
+      - name: Install built wheel
+        shell: pwsh
+        run: |
+          $wheel = Get-ChildItem packages/doeff-vm/dist/doeff_vm-*-cp312-*-win_amd64.whl | Select-Object -First 1
+          if ($null -eq $wheel) {
+            throw "No CPython 3.12 Windows wheel was built."
+          }
+          python -m pip install $wheel.FullName
+
+      - name: Smoke import current VM symbols
+        run: python -c "import doeff_vm; print(doeff_vm.GetHandlers); print(doeff_vm.Apply)"

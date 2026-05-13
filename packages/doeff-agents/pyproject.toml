@@ -1,6 +1,6 @@
 [project]
 name = "doeff-agents"
-version = "0.1.0"
+version = "0.1.1"
 description = "Agent session management for coding agents (Claude, Codex, Gemini) in tmux"
 readme = "README.md"
 requires-python = ">=3.10"

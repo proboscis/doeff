@@ -10,15 +10,16 @@ The full flow through the composed handler stack:
 import json
 from dataclasses import dataclass
 
-from doeff import EffectBase, Pass, Perform, Resume, WithHandler, do, run
-from doeff_core_effects.handlers import state
-
 from doeff_agents.adapters.base import AgentType
 from doeff_agents.effects.agent import (
     LaunchEffect,
     SessionHandle,
     StopEffect,
 )
+from doeff_agents.session_backend import SessionBackend
+from doeff_core_effects.handlers import lazy_ask, state
+
+from doeff import EffectBase, Pass, Perform, Resume, WithHandler, do, run
 
 
 # Fake tmux backend (same as test_claude_handler.py)
@@ -34,6 +35,7 @@ class FakeTmuxBackend:
 
     def new_session(self, cfg):
         from datetime import datetime, timezone
+
         from doeff_agents.tmux import SessionInfo
         pane_id = f"%fake{self._next_pane}"
         self._next_pane += 1
@@ -111,6 +113,36 @@ class TestFullIntegration:
         assert len(backend.sent_keys) >= 1
         assert "claude" in backend.sent_keys[0]["keys"]
 
+    def test_claude_agent_handler_asks_for_backend(self, tmp_path):
+        """claude_agent_handler() resolves tmux backend through Ask."""
+        from doeff_agents.handlers import claude_agent_handler
+        from doeff_core_effects.scheduler import scheduled
+
+        backend = FakeTmuxBackend()
+
+        @do
+        def program():
+            handle = yield Perform(LaunchEffect(
+                session_name="ask-backend-test",
+                agent_type=AgentType.CLAUDE,
+                work_dir=tmp_path,
+                prompt="hello",
+            ))
+            return handle
+
+        wrapped = WithHandler(
+            lazy_ask(env={SessionBackend: backend}),
+            WithHandler(
+                state(),
+                WithHandler(claude_agent_handler(), program()),
+            ),
+        )
+
+        handle = run(scheduled(wrapped))
+
+        assert handle.session_name == "ask-backend-test"
+        assert backend.has_session("ask-backend-test")
+
     def test_mcp_tool_captures_domain_handler(self, tmp_path):
         """MCP tool call executes with captured domain handler stack."""
         from doeff.mcp import McpParamSchema, McpToolDef
@@ -140,7 +172,7 @@ class TestFullIntegration:
             yield Perform(StopEffect(handle=handle))
             return handle
 
-        handle = _run_full_stack(program(), backend)
+        _run_full_stack(program(), backend)
         # .mcp.json should exist
         mcp_json = tmp_path / ".mcp.json"
         assert mcp_json.exists()

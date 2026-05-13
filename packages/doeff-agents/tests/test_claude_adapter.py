@@ -40,3 +40,28 @@ def test_launch_command_omits_model_when_not_provided() -> None:
         "--dangerously-skip-permissions",
         "ship it",
     ]
+
+
+def test_pre_launch_reads_and_writes_claude_files_as_utf8(monkeypatch, tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".claude.json").write_text('{"oauthAccount": {"name": "日本語"}}', encoding="utf-8")
+
+    original_read_text = Path.read_text
+    original_write_text = Path.write_text
+
+    def read_text(path: Path, *args, **kwargs):
+        if path.name == ".claude.json":
+            assert kwargs.get("encoding") == "utf-8"
+        return original_read_text(path, *args, **kwargs)
+
+    def write_text(path: Path, data: str, *args, **kwargs):
+        if path.name in {"config.json", "settings.json"}:
+            assert kwargs.get("encoding") == "utf-8"
+        return original_write_text(path, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setattr(Path, "read_text", read_text)
+    monkeypatch.setattr(Path, "write_text", write_text)
+
+    ClaudeAdapter().pre_launch()

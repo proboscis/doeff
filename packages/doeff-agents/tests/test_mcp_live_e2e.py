@@ -24,6 +24,7 @@ from doeff_agents.effects import (
 )
 from doeff_agents.handlers import _make_protocol_handler
 from doeff_agents.handlers.production import TmuxAgentHandler
+from doeff_agents.tmux import TmuxSessionBackend
 
 from doeff import Perform, WithHandler, do, run
 from doeff.mcp import McpParamSchema, McpToolDef
@@ -65,7 +66,7 @@ class TestMcpLiveE2E:
         work_dir = Path(mkdtemp(prefix="doeff-mcp-e2e-"))
         _tool_call_log.clear()
 
-        handler = TmuxAgentHandler()
+        handler = TmuxAgentHandler(backend=TmuxSessionBackend())
         agent_protocol = _make_protocol_handler(handler)
 
         @do

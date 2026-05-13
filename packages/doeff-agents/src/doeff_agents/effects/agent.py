@@ -107,6 +107,7 @@ class LaunchEffect(AgentEffectBase):
     effort: str | None = None
     bare: bool = False
     ready_timeout: float = 30.0
+    session_env: dict[str, str] | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -128,6 +129,7 @@ class ClaudeLaunchEffect(AgentEffectBase):
     effort: str | None = None
     bare: bool = False
     ready_timeout: float = 30.0
+    session_env: dict[str, str] | None = None
 
 
 # =============================================================================
@@ -227,6 +229,7 @@ def Launch(  # noqa: N802
     effort: str | None = None,
     bare: bool = False,
     ready_timeout: float = 30.0,
+    session_env: dict[str, str] | None = None,
 ) -> LaunchEffect:
     """Create a Launch effect with flat fields."""
     return LaunchEffect(
@@ -240,6 +243,7 @@ def Launch(  # noqa: N802
         effort=effort,
         bare=bare,
         ready_timeout=ready_timeout,
+        session_env=session_env,
     )
 
 
@@ -299,25 +303,25 @@ class SessionAlreadyExistsError(AgentError):
 
 
 __all__ = [
-    "SessionHandle",
-    "Observation",
-    "LaunchEffect",
-    "ClaudeLaunchEffect",
-    "MonitorEffect",
-    "CaptureEffect",
-    "SendEffect",
-    "StopEffect",
-    "SleepEffect",
-    "Launch",
-    "Monitor",
-    "Capture",
-    "Send",
-    "Stop",
-    "Sleep",
     "AgentError",
     "AgentLaunchError",
     "AgentNotAvailableError",
     "AgentReadyTimeoutError",
-    "SessionNotFoundError",
+    "Capture",
+    "CaptureEffect",
+    "ClaudeLaunchEffect",
+    "Launch",
+    "LaunchEffect",
+    "Monitor",
+    "MonitorEffect",
+    "Observation",
+    "Send",
+    "SendEffect",
     "SessionAlreadyExistsError",
+    "SessionHandle",
+    "SessionNotFoundError",
+    "Sleep",
+    "SleepEffect",
+    "Stop",
+    "StopEffect",
 ]
