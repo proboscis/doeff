@@ -66,3 +66,14 @@ def test_publish_workflow_releases_doeff_agents() -> None:
     assert "uv build --package doeff-agents" in text
     assert "doeff-agents-dist" in text
     assert "publish-doeff-agents" in text
+
+
+def test_reusable_native_publish_workflows_honor_publish_input() -> None:
+    for path in [
+        ROOT / ".github" / "workflows" / "build-vm.yml",
+        ROOT / ".github" / "workflows" / "build-indexer.yml",
+    ]:
+        text = path.read_text(encoding="utf-8")
+
+        assert "|| inputs.publish" in text
+        assert "github.event_name == 'workflow_call' && inputs.publish" not in text
