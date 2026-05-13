@@ -47,6 +47,21 @@ rules:
       include:
         - packages/
 
+  - id: http-request-handlers-use-defhandler
+    languages: [python]
+    severity: ERROR
+    message: >
+      ARC-528: HttpRequest effect dispatch handlers must be implemented with
+      Hy defhandler, not raw Python @do dispatchers.
+    patterns:
+      - pattern: |
+          @do
+          def $HANDLER(effect, k):
+              ...
+    paths:
+      include:
+        - /packages/doeff-core-effects/doeff_core_effects/http_handlers.py
+
   - id: no-runresult-hasattr-duck-typing
     languages: [python]
     severity: ERROR
