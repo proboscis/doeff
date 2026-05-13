@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import pickle
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 import requests
 
@@ -17,9 +16,33 @@ from doeff import do
 from doeff.program import Pass, Resume
 from doeff_core_effects.effects import Await, HttpRequest, HttpResponse, slog
 
-SleepFn = Callable[[float], None]
-SessionFactory = Callable[[], requests.Session]
 FixtureMode = Literal["record", "replay"]
+SleepFn = Callable[[float], None]
+
+
+class HttpSession(Protocol):
+    def request(
+        self,
+        method: str,
+        url: Any,
+        params: Any = None,
+        data: Any = None,
+        headers: Any = None,
+        cookies: Any = None,
+        files: Any = None,
+        auth: Any = None,
+        timeout: Any = None,
+        allow_redirects: bool = True,
+        proxies: Any = None,
+        hooks: Any = None,
+        stream: Any = None,
+        verify: Any = None,
+        cert: Any = None,
+        json: Any = None,
+    ) -> Any: ...
+
+
+SessionFactory = Callable[[], HttpSession]
 
 
 def http_production_handler(
@@ -28,6 +51,8 @@ def http_production_handler(
     sleep: SleepFn = time.sleep,
 ):
     """Handle HttpRequest with a single requests.Session and retry/backoff."""
+
+    import asyncio
 
     session = session_factory()
 
@@ -102,7 +127,7 @@ def http_fixture_handler(fixture_path: str | Path, *, mode: FixtureMode):
     return handler
 
 
-def _perform_request_once(session: requests.Session, request: HttpRequest) -> HttpResponse:
+def _perform_request_once(session: HttpSession, request: HttpRequest) -> HttpResponse:
     headers, data = _request_headers_and_data(request)
     response = session.request(
         method=request.method,
