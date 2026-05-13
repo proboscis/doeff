@@ -29,6 +29,8 @@ class HttpAsyncClient(Protocol):
         follow_redirects: bool = True,
     ) -> Any: ...
 
+    async def aclose(self) -> None: ...
+
 
 AsyncClientFactory = Callable[[], HttpAsyncClient]
 
@@ -53,10 +55,18 @@ def http_production_handler(
     _ensure_hy_import_hooks()
     from doeff_core_effects._http_handlers_impl import _http_production_handler
 
-    return _http_production_handler(client_factory(), sleep)
+    client = client_factory()
+    handler = _http_production_handler(client, sleep)
+    return _with_client_lifecycle(handler, client)
 
 
-def http_fixture_handler(fixture_path: str | Path, *, mode: FixtureMode):
+def http_fixture_handler(
+    fixture_path: str | Path,
+    *,
+    mode: FixtureMode,
+    client_factory: AsyncClientFactory = _default_client_factory,
+    sleep: SleepFn = _asyncio_sleep,
+):
     """Record or replay HttpRequest responses from a pickle fixture file."""
 
     if mode not in ("record", "replay"):
@@ -72,12 +82,45 @@ def http_fixture_handler(fixture_path: str | Path, *, mode: FixtureMode):
     fixtures = _load_fixtures(path)
 
     if mode == "record":
-        return _http_fixture_record_handler(path, fixtures)
+        record_handler = _http_fixture_record_handler(path, fixtures)
+        production_handler = http_production_handler(client_factory=client_factory, sleep=sleep)
+        return _compose_recording_handler(record_handler, production_handler)
     return _http_fixture_replay_handler(fixtures)
 
 
 def _ensure_hy_import_hooks() -> None:
     import doeff_hy  # noqa: F401  # registers Hy import hooks for the defhandler module
+
+
+def _with_client_lifecycle(handler: Any, client: HttpAsyncClient):
+    def lifecycle_handler(program: Any) -> Any:
+        return _run_with_client_lifecycle(handler, client, program)
+
+    _copy_handler_metadata(lifecycle_handler, handler)
+    return lifecycle_handler
+
+
+@do
+def _run_with_client_lifecycle(handler: Any, client: HttpAsyncClient, program: Any):
+    try:
+        return (yield handler(program))
+    finally:
+        yield Await(client.aclose())
+
+
+def _compose_recording_handler(record_handler: Any, production_handler: Any):
+    def recording_handler(program: Any) -> Any:
+        return production_handler(record_handler(program))
+
+    _copy_handler_metadata(recording_handler, record_handler)
+    return recording_handler
+
+
+def _copy_handler_metadata(target: Any, source: Any) -> None:
+    target.__doc__ = source.__doc__
+    target._doeff_is_handler_fn = True
+    target.__doeff_name__ = source.__doeff_name__
+    target.__doeff_handler_data__ = source.__doeff_handler_data__
 
 
 @do
