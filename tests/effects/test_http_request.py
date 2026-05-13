@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
-from doeff import Pass, Resume, WithHandler, do, run
 from doeff_core_effects.handlers import await_handler, slog_handler
 from doeff_core_effects.http_handlers import http_fixture_handler, http_production_handler
 from doeff_core_effects.scheduler import scheduled
+
+from doeff import Pass, Resume, WithHandler, do, run
 
 
 def _with_handlers(program: Any, *handlers: Any) -> Any:
@@ -62,7 +64,10 @@ def test_http_request_effect_shape_and_raise_for_status() -> None:
         elapsed_seconds=0.5,
     )
 
-    with pytest.raises(HttpError, match="HTTP 404 https://example.test/data: not found"):
+    with pytest.raises(
+        HttpError,
+        match=re.escape("HTTP 404 https://example.test/data: not found"),
+    ):
         response.raise_for_status()
 
 
@@ -132,6 +137,7 @@ def test_http_production_handler_post_json_body() -> None:
 
     result = run(scheduled(_with_handlers(
         body(),
+        slog_handler(),
         await_handler(),
         http_production_handler(session_factory=lambda: session, sleep=lambda _: None),
     )))
@@ -162,6 +168,7 @@ def test_http_production_handler_redirect_flag_and_timeout() -> None:
 
     result = run(scheduled(_with_handlers(
         body(),
+        slog_handler(),
         await_handler(),
         http_production_handler(session_factory=lambda: session, sleep=lambda _: None),
     )))
@@ -187,6 +194,7 @@ def test_http_production_handler_retries_5xx_statuses() -> None:
 
     result = run(scheduled(_with_handlers(
         body(),
+        slog_handler(),
         await_handler(),
         http_production_handler(session_factory=lambda: session, sleep=sleeps.append),
     )))
