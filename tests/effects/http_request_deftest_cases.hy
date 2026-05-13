@@ -211,3 +211,12 @@
   (assert (= (. (get captured 2) method) "PUT"))
   (assert (= (. (get captured 3) method) "DELETE"))
   (assert (= (. (get captured 4) method) "HEAD")))
+
+
+(deftest test-http-request-implementation-surface-is-hy
+  (assert (= HttpRequest.__module__ "doeff_core_effects.http_effects"))
+  (assert (= HttpResponse.__module__ "doeff_core_effects.http_effects"))
+  (assert (= http-production-handler.__module__
+             "doeff_core_effects._http_handlers_impl"))
+  (assert (= http-fixture-handler.__module__
+             "doeff_core_effects._http_handlers_impl")))
