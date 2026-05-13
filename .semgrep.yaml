@@ -62,6 +62,39 @@ rules:
       include:
         - /packages/doeff-core-effects/doeff_core_effects/http_handlers.py
 
+  - id: http-request-effect-shape-is-hy
+    languages: [python]
+    severity: ERROR
+    message: >
+      ARC-529: HttpRequest, HttpResponse, and HttpError must be implemented in
+      Hy. Keep doeff_core_effects.effects as an export surface only.
+    pattern-either:
+      - pattern: |
+          class HttpRequest(...):
+              ...
+      - pattern: |
+          class HttpResponse(...):
+              ...
+      - pattern: |
+          class HttpError(...):
+              ...
+    paths:
+      include:
+        - /packages/doeff-core-effects/doeff_core_effects/effects.py
+
+  - id: http-request-handler-logic-is-hy
+    languages: [python]
+    severity: ERROR
+    message: >
+      ARC-529: HttpRequest handler logic must live in Hy defhandler modules.
+      The Python http_handlers.py file may only be a compatibility/export shim.
+    pattern: |
+      def $FUNC(...):
+          ...
+    paths:
+      include:
+        - /packages/doeff-core-effects/doeff_core_effects/http_handlers.py
+
   - id: no-runresult-hasattr-duck-typing
     languages: [python]
     severity: ERROR
