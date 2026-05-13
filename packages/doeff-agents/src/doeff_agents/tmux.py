@@ -36,12 +36,18 @@ def strip_ansi(text: str) -> str:
 class TmuxSessionBackend(SessionBackend):
     """Session backend implementation backed by tmux."""
 
+    def __init__(self, executable: str | os.PathLike[str] | None = None) -> None:
+        self.executable = str(executable or "tmux")
+
+    def _args(self, *args: str) -> list[str]:
+        return [self.executable, *args]
+
     def _ensure_tmux_available(self) -> None:
         if not self.is_available():
-            raise TmuxNotAvailableError("tmux is not installed or not in PATH")
+            raise TmuxNotAvailableError(f"tmux is not available: {self.executable}")
 
     def is_available(self) -> bool:
-        result = subprocess.run(["tmux", "-V"], check=False, capture_output=True)
+        result = subprocess.run(self._args("-V"), check=False, capture_output=True)
         return result.returncode == 0
 
     def is_inside_session(self) -> bool:
@@ -50,7 +56,7 @@ class TmuxSessionBackend(SessionBackend):
     def has_session(self, name: str) -> bool:
         self._ensure_tmux_available()
         result = subprocess.run(
-            ["tmux", "has-session", "-t", name],
+            self._args("has-session", "-t", name),
             check=False,
             capture_output=True,
         )
@@ -61,7 +67,7 @@ class TmuxSessionBackend(SessionBackend):
         if self.has_session(cfg.session_name):
             raise SessionAlreadyExistsError(f"Session '{cfg.session_name}' already exists")
 
-        args = ["tmux", "new-session", "-d", "-s", cfg.session_name, "-P", "-F", "#{pane_id}"]
+        args = self._args("new-session", "-d", "-s", cfg.session_name, "-P", "-F", "#D")
         if cfg.work_dir:
             args.extend(["-c", str(cfg.work_dir)])
         if cfg.window_name:
@@ -73,7 +79,13 @@ class TmuxSessionBackend(SessionBackend):
             for key, value in cfg.env.items():
                 args.extend(["-e", f"{key}={value}"])
 
-        result = subprocess.run(args, capture_output=True, text=True, check=True)
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
         pane_id = result.stdout.strip()
 
         return SessionInfo(
@@ -91,7 +103,7 @@ class TmuxSessionBackend(SessionBackend):
         enter: bool = True,
     ) -> None:
         self._ensure_tmux_available()
-        args = ["tmux", "send-keys", "-t", target]
+        args = self._args("send-keys", "-t", target)
         if literal:
             args.extend(["-l", keys])
         else:
@@ -99,7 +111,7 @@ class TmuxSessionBackend(SessionBackend):
         subprocess.run(args, check=True)
 
         if enter:
-            subprocess.run(["tmux", "send-keys", "-t", target, "Enter"], check=True)
+            subprocess.run(self._args("send-keys", "-t", target, "Enter"), check=True)
 
     def capture_pane(
         self,
@@ -110,9 +122,10 @@ class TmuxSessionBackend(SessionBackend):
     ) -> str:
         self._ensure_tmux_available()
         result = subprocess.run(
-            ["tmux", "capture-pane", "-t", target, "-p", "-S", f"-{lines}"],
+            self._args("capture-pane", "-t", target, "-p", "-S", f"-{lines}"),
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=True,
         )
         output = result.stdout
@@ -122,22 +135,23 @@ class TmuxSessionBackend(SessionBackend):
 
     def kill_session(self, session: str) -> None:
         self._ensure_tmux_available()
-        subprocess.run(["tmux", "kill-session", "-t", session], check=True)
+        subprocess.run(self._args("kill-session", "-t", session), check=True)
 
     def attach_session(self, session: str) -> None:
         self._ensure_tmux_available()
         if self.is_inside_session():
-            subprocess.run(["tmux", "switch-client", "-t", session], check=True)
+            subprocess.run(self._args("switch-client", "-t", session), check=True)
         else:
-            subprocess.run(["tmux", "attach-session", "-t", session], check=True)
+            subprocess.run(self._args("attach-session", "-t", session), check=True)
 
     def list_sessions(self) -> list[str]:
         self._ensure_tmux_available()
         result = subprocess.run(
-            ["tmux", "list-sessions", "-F", "#{session_name}"],
+            self._args("list-sessions", "-F", "#S"),
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
         if result.returncode != 0:
             if "no server running" in result.stderr:
@@ -146,48 +160,45 @@ class TmuxSessionBackend(SessionBackend):
         return [session for session in result.stdout.strip().split("\n") if session]
 
 
-_DEFAULT_BACKEND = TmuxSessionBackend()
-
-
 def get_default_backend() -> TmuxSessionBackend:
-    """Return the process-wide default tmux backend instance."""
-    return _DEFAULT_BACKEND
+    """Return a default tmux backend instance using `tmux` from PATH."""
+    return TmuxSessionBackend()
 
 
 def is_tmux_available() -> bool:
-    return _DEFAULT_BACKEND.is_available()
+    return get_default_backend().is_available()
 
 
 def is_inside_tmux() -> bool:
-    return _DEFAULT_BACKEND.is_inside_session()
+    return get_default_backend().is_inside_session()
 
 
 def has_session(name: str) -> bool:
-    return _DEFAULT_BACKEND.has_session(name)
+    return get_default_backend().has_session(name)
 
 
 def new_session(cfg: SessionConfig) -> SessionInfo:
-    return _DEFAULT_BACKEND.new_session(cfg)
+    return get_default_backend().new_session(cfg)
 
 
 def send_keys(target: str, keys: str, *, literal: bool = True, enter: bool = True) -> None:
-    _DEFAULT_BACKEND.send_keys(target, keys, literal=literal, enter=enter)
+    get_default_backend().send_keys(target, keys, literal=literal, enter=enter)
 
 
 def capture_pane(target: str, lines: int = 100, *, strip_ansi_codes: bool = True) -> str:
-    return _DEFAULT_BACKEND.capture_pane(target, lines, strip_ansi_codes=strip_ansi_codes)
+    return get_default_backend().capture_pane(target, lines, strip_ansi_codes=strip_ansi_codes)
 
 
 def kill_session(session: str) -> None:
-    _DEFAULT_BACKEND.kill_session(session)
+    get_default_backend().kill_session(session)
 
 
 def attach_session(session: str) -> None:
-    _DEFAULT_BACKEND.attach_session(session)
+    get_default_backend().attach_session(session)
 
 
 def list_sessions() -> list[str]:
-    return _DEFAULT_BACKEND.list_sessions()
+    return get_default_backend().list_sessions()
 
 
 __all__ = [

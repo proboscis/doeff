@@ -25,6 +25,7 @@ from .monitor import (
     is_waiting_for_input,
 )
 from .session_backend import SessionBackend
+from .shell import wrap_with_shell_exports
 
 
 class AgentLaunchError(Exception):
@@ -118,6 +119,7 @@ def launch_session(
     tmux_config = tmux.SessionConfig(
         session_name=session_name,
         work_dir=config.work_dir,
+        env=config.session_env,
     )
     session_info = active_backend.new_session(tmux_config)
 
@@ -129,7 +131,7 @@ def launch_session(
             model=config.model,
         )
     )
-    command = shlex.join(argv)
+    command = wrap_with_shell_exports(shlex.join(argv), config.session_env)
 
     if adapter.injection_method == InjectionMethod.ARG:
         # Command includes prompt - send directly
