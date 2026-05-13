@@ -60,3 +60,7 @@ def test_http_fixture_replay_errors_on_unknown_request(tmp_path: Path) -> None:
 
 def test_http_wrapper_methods_build_requests() -> None:
     http_request_deftest.test_http_wrapper_methods_build_requests(_deftest_interpreter)
+
+
+def test_http_request_implementation_surface_is_hy() -> None:
+    http_request_deftest.test_http_request_implementation_surface_is_hy(_deftest_interpreter)

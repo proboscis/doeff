@@ -42,3 +42,8 @@ def test_http_fixture_replay_errors_on_unknown_request(
 
 
 def test_http_wrapper_methods_build_requests(doeff_interpreter: DeftestInterpreter) -> None: ...
+
+
+def test_http_request_implementation_surface_is_hy(
+    doeff_interpreter: DeftestInterpreter,
+) -> None: ...
