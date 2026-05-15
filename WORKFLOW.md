@@ -75,8 +75,42 @@ hooks:
     EOF
       chmod +x .symphony-bin/git
     }
+    ensure_issue_branch() {
+      workspace_name="$(basename "$(pwd -P)")"
+      issue_slug="$(printf '%s' "$workspace_name" | tr '[:upper:]' '[:lower:]')"
+      default_branch="symphony/$issue_slug"
+      repo_branch="$(git --git-dir=.git branch --show-current 2>/dev/null || true)"
+      case "$repo_branch" in
+        ""|main|master) target_branch="$default_branch" ;;
+        *) target_branch="$repo_branch" ;;
+      esac
+      agent_git() {
+        PATH="$PWD/.symphony-bin:$PATH" git "$@"
+      }
+      current_branch="$(agent_git branch --show-current 2>/dev/null || true)"
+      if [ -z "$current_branch" ]; then
+        base_ref="$(git --git-dir=.git rev-parse HEAD)"
+        mkdir -p .aigit_/refs/heads .aigit_/worktrees/current
+        git --git-dir=.aigit_ update-ref "refs/heads/$target_branch" "$base_ref"
+        printf 'ref: refs/heads/%s\n' "$target_branch" > .aigit_/HEAD
+        printf 'ref: refs/heads/%s\n' "$target_branch" > .aigit_/worktrees/current/HEAD
+        current_branch="$target_branch"
+      fi
+      case "$current_branch" in
+        "$target_branch")
+          ;;
+        main|master)
+          if agent_git show-ref --verify --quiet "refs/heads/$target_branch"; then
+            agent_git switch "$target_branch"
+          else
+            agent_git switch -c "$target_branch"
+          fi
+          ;;
+      esac
+    }
     create_shadow_git_dir .aigit
     install_git_wrapper
+    ensure_issue_branch
     make sync
   before_run: |
     create_shadow_git_dir() {
@@ -141,18 +175,51 @@ hooks:
     EOF
       chmod +x .symphony-bin/git
     }
+    ensure_issue_branch() {
+      workspace_name="$(basename "$(pwd -P)")"
+      issue_slug="$(printf '%s' "$workspace_name" | tr '[:upper:]' '[:lower:]')"
+      default_branch="symphony/$issue_slug"
+      repo_branch="$(git --git-dir=.git branch --show-current 2>/dev/null || true)"
+      case "$repo_branch" in
+        ""|main|master) target_branch="$default_branch" ;;
+        *) target_branch="$repo_branch" ;;
+      esac
+      agent_git() {
+        PATH="$PWD/.symphony-bin:$PATH" git "$@"
+      }
+      current_branch="$(agent_git branch --show-current 2>/dev/null || true)"
+      if [ -z "$current_branch" ]; then
+        base_ref="$(git --git-dir=.git rev-parse HEAD)"
+        mkdir -p .aigit_/refs/heads .aigit_/worktrees/current
+        git --git-dir=.aigit_ update-ref "refs/heads/$target_branch" "$base_ref"
+        printf 'ref: refs/heads/%s\n' "$target_branch" > .aigit_/HEAD
+        printf 'ref: refs/heads/%s\n' "$target_branch" > .aigit_/worktrees/current/HEAD
+        current_branch="$target_branch"
+      fi
+      case "$current_branch" in
+        "$target_branch")
+          ;;
+        main|master)
+          if agent_git show-ref --verify --quiet "refs/heads/$target_branch"; then
+            agent_git switch "$target_branch"
+          else
+            agent_git switch -c "$target_branch"
+          fi
+          ;;
+      esac
+    }
     create_shadow_git_dir .aigit
     install_git_wrapper
+    ensure_issue_branch
 agent:
-  max_concurrent_agents: 5
+  max_concurrent_agents: 10
   max_turns: 20
 codex:
-  command: CODEX_HOME=${CODEX_HOME:-/Users/s22625/.codex/profiles/company} PATH=$PWD/.symphony-bin:$PATH codex -m gpt-5.5 --config 'model_reasoning_effort="xhigh"' --config 'service_tier="fast"' --config shell_environment_policy.inherit=all app-server
+  command: CODEX_HOME=/Users/s22625/.codex/profiles/company PATH=$PWD/.symphony-bin:$PATH codex --dangerously-bypass-approvals-and-sandbox -m gpt-5.5 --config 'model_reasoning_effort="xhigh"' --config 'service_tier="fast"' --config shell_environment_policy.inherit=all app-server
   approval_policy: never
-  thread_sandbox: workspace-write
+  thread_sandbox: danger-full-access
   turn_sandbox_policy:
-    type: workspaceWrite
-    networkAccess: true
+    type: dangerFullAccess
 ---
 
 You are working on Linear issue `{{ issue.identifier }}` for this repository.
@@ -187,6 +254,21 @@ Review-only operating rules:
   history, Linear links/comments, and local diffs as far as possible, then report the gap.
 - Prefer posting review findings to Linear. Add GitHub review comments only when they are precise
   and useful; never block solely because inline commenting is unavailable.
+- Do not request plugin or connector installation. Symphony runs headlessly and cannot complete
+  install approval prompts. If Chrome, browser automation, or another unavailable tool is required,
+  post a Japanese blocker comment with the exact missing capability and move the issue to
+  `In Review` for human action.
+- If a review task requires browser verification or asks you to "use Chrome", use the `@chrome`
+  / Chrome plugin path backed by the Codex Chrome Extension. Control the user's Chrome through the
+  plugin's `browser-client` runtime.
+- For `@chrome` work, load and follow the Chrome skill. Use the `node_repl` `js` execution tool to
+  import the plugin's `scripts/browser-client.mjs` by absolute path and call
+  `agent.browsers.get("extension")`. If `js_reset` is visible but `js` is not, use `tool_search`
+  for `node_repl js` before declaring Chrome unavailable.
+- Do not substitute repository-local Playwright, Chrome for Testing, headless Chromium, Selenium,
+  AppleScript, shell HTTP requests, or ad-hoc browser scripts for a requested Chrome-plugin check.
+  If the Chrome plugin or extension bridge is unavailable, post a Japanese blocker comment with the
+  exact error and move the issue back to `In Progress`.
 
 Required startup checks:
 - Fetch the latest Linear issue comments with `linear_graphql`.
@@ -258,6 +340,9 @@ Operating rules:
   updates in Japanese. Keep code identifiers, commands, file paths, and quoted error text in
   their original language when that is clearer.
 - Create a branch and PR for code changes when GitHub access is available.
+- Before editing, confirm the current branch is issue-specific and is not `main` or `master`.
+  The workspace hook normally prepares this automatically; if it did not, create or switch to
+  `symphony/<issue-id>` such as `symphony/arc-552` before changing files.
 - Never merge PRs and never enable auto-merge. Even if the issue description includes acceptance
   criteria such as "upstream PR merged", treat merge as a human-owned step outside Symphony.
   Your handoff endpoint is `PR Review`, not `Done` or merged.
@@ -285,6 +370,21 @@ Operating rules:
   comment and move the issue to `In Review` for human decision. Do not leave it in `In Progress`.
 - Treat missing required credentials or permissions as blockers and record them clearly.
 - Do not add fallback or silent degradation behavior. Required services should fail loudly.
+- Do not request plugin or connector installation. Symphony runs headlessly and cannot complete
+  install approval prompts. If Chrome, browser automation, or another unavailable tool is required,
+  post a Japanese blocker comment with the exact missing capability and move the issue to
+  `In Review` for human action.
+- If the issue requires browser verification or asks you to "use Chrome", use the `@chrome` /
+  Chrome plugin path backed by the Codex Chrome Extension. Control the user's Chrome through the
+  plugin's `browser-client` runtime.
+- For `@chrome` work, load and follow the Chrome skill. Use the `node_repl` `js` execution tool to
+  import the plugin's `scripts/browser-client.mjs` by absolute path and call
+  `agent.browsers.get("extension")`. If `js_reset` is visible but `js` is not, use `tool_search`
+  for `node_repl js` before declaring Chrome unavailable.
+- Do not substitute repository-local Playwright, Chrome for Testing, headless Chromium, Selenium,
+  AppleScript, shell HTTP requests, or ad-hoc browser scripts for a requested Chrome-plugin check.
+  If the Chrome plugin or extension bridge is unavailable, post a Japanese blocker comment with the
+  exact error and move the issue to `In Review` for human action.
 - Avoid production anti-patterns called out in `AGENTS.md`, including `getattr(obj, "attr", default)`,
   broad swallowed exceptions, type suppressions, and Rust catch-all match arms.
 
