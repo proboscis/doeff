@@ -142,6 +142,23 @@ rules:
       include:
         - /doeff/cli/**
 
+  - id: no-defprogram-hy-macro
+    languages: [generic]
+    severity: ERROR
+    message: >
+      HYP-049: defprogram has been removed from the doeff-hy public macro surface.
+      Use defp for Program[T] or defpp for Program[Program[T]] instead.
+    pattern-regex: '\bdefprogram\b'
+    paths:
+      include:
+        - "**/*.hy"
+        - "**/*.hyk"
+        - "**/*.hyp"
+      exclude:
+        - "**/tests/**"
+        - "tests/**"
+        - "**/docs/**"
+
   - id: cache-handler-no-result-duck-typing
     languages: [python]
     severity: ERROR

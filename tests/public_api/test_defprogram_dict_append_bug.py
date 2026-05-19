@@ -1,6 +1,6 @@
-"""Reproducer for defprogram Dict.append bug.
+"""Reproducer for defp Dict.append bug.
 
-defprogram / defp with {:post []} crashes at macro expansion time with:
+defp with {:post []} used to crash at macro expansion time with:
   AttributeError: 'Dict' object has no attribute 'append'
 
 Regression in _build_defp (c8010400) where hy.models.Dict construction
@@ -30,7 +30,7 @@ def _run_hy_code(code: str) -> subprocess.CompletedProcess:
         )
 
 
-class TestDefprogramDictAppendBug:
+class TestDefpDictAppendBug:
     def test_defp_with_empty_post_compiles(self) -> None:
         """defp with {:post []} should compile and run without error."""
         result = _run_hy_code(

@@ -6,7 +6,7 @@ Verifies:
   - .hyp files can be imported and contain defp
   - defp in .hyk raises SyntaxError
   - defk in .hyp emits a warning
-  - defprogram raises SyntaxError (removed)
+  - defprogram cannot be required from public macro surface (removed)
   - Existing .hy files are unaffected
 """
 
@@ -200,17 +200,16 @@ class TestDefkWarningInHyp:
 
 
 # ---------------------------------------------------------------------------
-# defprogram removed
+# defprogram removed from public require surface
 # ---------------------------------------------------------------------------
 
 class TestDefprogramRemoved:
-    def test_defprogram_raises_syntax_error(self):
+    def test_defprogram_cannot_be_required(self):
         code = """\
             (require doeff-hy.macros [defprogram])
             (import doeff [do :as _doeff-do])
-            (defprogram old-style {:post []} 42)
         """
-        with pytest.raises(Exception, match="defprogram is removed"):
+        with pytest.raises(Exception, match="Could not require name defprogram"):
             tree = hy.reader.read_many(textwrap.dedent(code), filename="test.hy")
             hy.compiler.hy_compile(tree, "__main__")
 

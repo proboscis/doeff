@@ -605,6 +605,16 @@ mod tests {
     }
 
     #[test]
+    fn test_removed_defprogram_is_not_function_surface() {
+        let info = analyze(r#"
+(defprogram legacy-entrypoint {:post []}
+  42)
+"#);
+        assert!(!info.functions.contains("legacy_entrypoint"));
+        assert!(!info.function_defs.contains_key("legacy_entrypoint"));
+    }
+
+    #[test]
     fn test_function_call_extraction() {
         let info = analyze(r#"
 (defk pipeline [items]
