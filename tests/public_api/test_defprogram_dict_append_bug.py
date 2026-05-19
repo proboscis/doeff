@@ -12,9 +12,6 @@ from __future__ import annotations
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
-
-import pytest
 
 
 def _run_hy_code(code: str) -> subprocess.CompletedProcess:
@@ -24,6 +21,7 @@ def _run_hy_code(code: str) -> subprocess.CompletedProcess:
         f.flush()
         return subprocess.run(
             [sys.executable, "-c", f"import hy; import runpy; runpy.run_path({f.name!r})"],
+            check=False,
             capture_output=True,
             text=True,
             timeout=30,
