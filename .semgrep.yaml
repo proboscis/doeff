@@ -1432,6 +1432,18 @@ rules:
   # DEPENDENCY INJECTION PATTERNS
   # ---------------------------------------------------------------------------
 
+  - id: doeff-ml-nexus-runner-no-process-env
+    languages: [generic]
+    severity: ERROR
+    message: >
+      HYP-050: doeff_ml_nexus.runner.p_run must read file exchange paths through
+      Ask-injected Program env. Keep DOEFF_INPUT/DOEFF_OUTPUT process-env reads
+      in an interpreter or launcher adapter, not in runner.hy runtime Program logic.
+    pattern-regex: 'os\.(environ|getenv)'
+    paths:
+      include:
+        - /packages/doeff-ml-nexus/src/doeff_ml_nexus/runner.hy
+
   - id: doeff-no-hardcoded-instantiation-in-do
     patterns:
       - pattern-inside: |
