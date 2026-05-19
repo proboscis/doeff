@@ -12,20 +12,15 @@ Verifies:
 
 import importlib
 import importlib.machinery
-import os
 import sys
 import textwrap
 import warnings
-from pathlib import Path
 
-import pytest
-
+import doeff_hy  # noqa: F401  # registers .hyk/.hyp extensions
 import hy
 import hy.compiler
 import hy.reader
-
-import doeff_hy  # registers .hyk/.hyp extensions
-
+import pytest
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -164,7 +159,7 @@ class TestCrossImport:
 
 class TestDefpBlockedInHyk:
     def test_defp_in_hyk_raises_syntax_error(self, tmp_hy_dir):
-        with pytest.raises(Exception, match="cannot define a Program entrypoint in a .hyk file"):
+        with pytest.raises(Exception, match=r"cannot define a Program entrypoint in a \.hyk file"):
             _write_and_import(tmp_hy_dir, "bad_prog.hyk", """\
                 (require doeff-hy.macros [defp])
                 (import doeff [do :as _doeff-do])
@@ -172,7 +167,7 @@ class TestDefpBlockedInHyk:
             """)
 
     def test_defpp_in_hyk_raises_syntax_error(self, tmp_hy_dir):
-        with pytest.raises(Exception, match="cannot define a Program entrypoint in a .hyk file"):
+        with pytest.raises(Exception, match=r"cannot define a Program entrypoint in a \.hyk file"):
             _write_and_import(tmp_hy_dir, "bad_pp.hyk", """\
                 (require doeff-hy.macros [defpp])
                 (import doeff [do :as _doeff-do])
@@ -209,8 +204,8 @@ class TestDefprogramRemoved:
             (require doeff-hy.macros [defprogram])
             (import doeff [do :as _doeff-do])
         """
+        tree = hy.reader.read_many(textwrap.dedent(code), filename="test.hy")
         with pytest.raises(Exception, match="Could not require name defprogram"):
-            tree = hy.reader.read_many(textwrap.dedent(code), filename="test.hy")
             hy.compiler.hy_compile(tree, "__main__")
 
 

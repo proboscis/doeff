@@ -156,7 +156,6 @@ rules:
         - "**/*.hyp"
       exclude:
         - "**/tests/**"
-        - "tests/**"
         - "**/docs/**"
 
   - id: cache-handler-no-result-duck-typing
