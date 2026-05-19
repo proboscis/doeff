@@ -123,6 +123,25 @@ rules:
     paths:
       include:
         - /doeff/run.py
+
+  - id: cli-profiling-no-runtime-env-read
+    languages: [python]
+    severity: ERROR
+    message: >
+      HYP-048: DOEFF_DISABLE_PROFILE is a CLI launcher compatibility input.
+      Runtime profiling helpers must receive injected ProfilingConfig instead of
+      reading the process environment directly.
+    pattern-either:
+      - pattern: os.environ.get("DOEFF_DISABLE_PROFILE")
+      - pattern: os.environ["DOEFF_DISABLE_PROFILE"]
+      - pattern: os.getenv("DOEFF_DISABLE_PROFILE")
+      - pattern: environ.get("DOEFF_DISABLE_PROFILE")
+      - pattern: environ["DOEFF_DISABLE_PROFILE"]
+      - pattern: getenv("DOEFF_DISABLE_PROFILE")
+    paths:
+      include:
+        - /doeff/cli/**
+
   - id: cache-handler-no-result-duck-typing
     languages: [python]
     severity: ERROR
