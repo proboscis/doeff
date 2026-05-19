@@ -1076,15 +1076,6 @@ defk {name}: {{:post [...]}} is required.
      (build-pipeline config))"
   (_build-defp "defpp" name body :program-return-mode "require"))
 
-(defmacro defprogram [name #* body]
-  "REMOVED: use defp (or defpp for Program[Program[T]])."
-  (raise (SyntaxError (.format "
-defprogram is removed. Use defp instead.
-
-  Replace:  (defprogram {name} ...)
-  With:     (defp {name} ...)
-" :name name))))
-
 
 ;; ---------------------------------------------------------------------------
 ;; deftest — effectful test that expands to pytest function

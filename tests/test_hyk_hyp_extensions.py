@@ -6,26 +6,21 @@ Verifies:
   - .hyp files can be imported and contain defp
   - defp in .hyk raises SyntaxError
   - defk in .hyp emits a warning
-  - defprogram raises SyntaxError (removed)
+  - defprogram cannot be required from public macro surface (removed)
   - Existing .hy files are unaffected
 """
 
 import importlib
 import importlib.machinery
-import os
 import sys
 import textwrap
 import warnings
-from pathlib import Path
 
-import pytest
-
+import doeff_hy  # noqa: F401  # registers .hyk/.hyp extensions
 import hy
 import hy.compiler
 import hy.reader
-
-import doeff_hy  # registers .hyk/.hyp extensions
-
+import pytest
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -164,7 +159,7 @@ class TestCrossImport:
 
 class TestDefpBlockedInHyk:
     def test_defp_in_hyk_raises_syntax_error(self, tmp_hy_dir):
-        with pytest.raises(Exception, match="cannot define a Program entrypoint in a .hyk file"):
+        with pytest.raises(Exception, match=r"cannot define a Program entrypoint in a \.hyk file"):
             _write_and_import(tmp_hy_dir, "bad_prog.hyk", """\
                 (require doeff-hy.macros [defp])
                 (import doeff [do :as _doeff-do])
@@ -172,7 +167,7 @@ class TestDefpBlockedInHyk:
             """)
 
     def test_defpp_in_hyk_raises_syntax_error(self, tmp_hy_dir):
-        with pytest.raises(Exception, match="cannot define a Program entrypoint in a .hyk file"):
+        with pytest.raises(Exception, match=r"cannot define a Program entrypoint in a \.hyk file"):
             _write_and_import(tmp_hy_dir, "bad_pp.hyk", """\
                 (require doeff-hy.macros [defpp])
                 (import doeff [do :as _doeff-do])
@@ -200,18 +195,17 @@ class TestDefkWarningInHyp:
 
 
 # ---------------------------------------------------------------------------
-# defprogram removed
+# defprogram removed from public require surface
 # ---------------------------------------------------------------------------
 
 class TestDefprogramRemoved:
-    def test_defprogram_raises_syntax_error(self):
+    def test_defprogram_cannot_be_required(self):
         code = """\
             (require doeff-hy.macros [defprogram])
             (import doeff [do :as _doeff-do])
-            (defprogram old-style {:post []} 42)
         """
-        with pytest.raises(Exception, match="defprogram is removed"):
-            tree = hy.reader.read_many(textwrap.dedent(code), filename="test.hy")
+        tree = hy.reader.read_many(textwrap.dedent(code), filename="test.hy")
+        with pytest.raises(Exception, match="Could not require name defprogram"):
             hy.compiler.hy_compile(tree, "__main__")
 
 
