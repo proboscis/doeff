@@ -43,9 +43,10 @@
   result)
 
 
-(defn runner-interpreter [program * [env None]]  ; doeff: interpreter
+;; Plain callable required by doeff CLI --interpreter.
+(defn runner-interpreter [program * [env None]]
   "Minimal interpreter for the runner program."
-  (setv resolved-env (resolve-runner-env env))
+  (setv resolved-env (run (resolve-runner-env env)))
   (run (scheduled
     (with-handlers [(reader :env resolved-env) (slog-handler) (writer)]
       program))))

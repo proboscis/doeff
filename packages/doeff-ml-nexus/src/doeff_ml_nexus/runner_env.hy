@@ -3,8 +3,11 @@
 ;;; DOEFF_INPUT/DOEFF_OUTPUT remain the remote launcher contract, but this
 ;;; module translates them into doeff Program env before p_run executes.
 
+(require doeff_hy.macros [defk <-])
+
 (import os)
-(import doeff [run])
+(import doeff [do :as _doeff-do])
+(import doeff [run Program])
 
 
 (setv RUNNER-INPUT-PATH-KEY "doeff_ml_nexus.runner.input_path")
@@ -13,22 +16,29 @@
 (setv DEFAULT-RUNNER-OUTPUT-PATH "/tmp/doeff-exchange/result.pkl")
 
 
-(defn default-runner-env []
+(defk default-runner-env []
   "Return explicit default Program env for runner file exchange paths."
+  {:pre []
+   :post [(: % dict)]}
   {RUNNER-INPUT-PATH-KEY DEFAULT-RUNNER-INPUT-PATH
    RUNNER-OUTPUT-PATH-KEY DEFAULT-RUNNER-OUTPUT-PATH})
 
 
-(defn runner-env-from-process []
+(defk runner-env-from-process []
   "Translate launcher OS environment into doeff Program env at the boundary."
-  (| (default-runner-env)
+  {:pre []
+   :post [(: % dict)]}
+  (<- defaults dict (default-runner-env))
+  (| defaults
      {RUNNER-INPUT-PATH-KEY (os.environ.get "DOEFF_INPUT" DEFAULT-RUNNER-INPUT-PATH)
       RUNNER-OUTPUT-PATH-KEY (os.environ.get "DOEFF_OUTPUT" DEFAULT-RUNNER-OUTPUT-PATH)}))
 
 
-(defn resolve-runner-env [env]
+(defk resolve-runner-env [env]
   "Merge interpreter env over launcher-derived runner env."
-  (setv base (runner-env-from-process))
+  {:pre [(: env #(dict Program (type None)))]
+   :post [(: % dict)]}
+  (<- base dict (runner-env-from-process))
   (if (is env None)
       base
       (| base (if (isinstance env dict) env (run env)))))
