@@ -4,7 +4,7 @@ import hy  # noqa: F401
 import pytest
 from pathlib import Path
 
-from doeff import Pure
+from doeff import Pure, run
 from doeff_ml_nexus.runner import p_run, runner_interpreter
 from doeff_ml_nexus.runner_env import (
     DEFAULT_RUNNER_INPUT_PATH,
@@ -12,6 +12,7 @@ from doeff_ml_nexus.runner_env import (
     RUNNER_INPUT_PATH_KEY,
     RUNNER_OUTPUT_PATH_KEY,
     default_runner_env,
+    resolve_runner_env,
     runner_env_from_process,
 )
 from doeff_ml_nexus.serializer import default_serializer
@@ -68,11 +69,36 @@ def test_runner_env_defaults_are_explicit_injected_config(monkeypatch):
     monkeypatch.delenv("DOEFF_INPUT", raising=False)
     monkeypatch.delenv("DOEFF_OUTPUT", raising=False)
 
-    assert default_runner_env() == {
+    expected_defaults = {
         RUNNER_INPUT_PATH_KEY: DEFAULT_RUNNER_INPUT_PATH,
         RUNNER_OUTPUT_PATH_KEY: DEFAULT_RUNNER_OUTPUT_PATH,
     }
-    assert runner_env_from_process() == default_runner_env()
+
+    assert run(default_runner_env()) == expected_defaults
+    assert run(runner_env_from_process()) == expected_defaults
+
+
+def test_resolve_runner_env_accepts_program_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("DOEFF_INPUT", str(tmp_path / "process-program.pkl"))
+    monkeypatch.setenv("DOEFF_OUTPUT", str(tmp_path / "process-result.pkl"))
+    injected_input = tmp_path / "program-env-program.pkl"
+    injected_output = tmp_path / "program-env-result.pkl"
+
+    resolved = run(
+        resolve_runner_env(
+            Pure(
+                {
+                    RUNNER_INPUT_PATH_KEY: str(injected_input),
+                    RUNNER_OUTPUT_PATH_KEY: str(injected_output),
+                }
+            )
+        )
+    )
+
+    assert resolved == {
+        RUNNER_INPUT_PATH_KEY: str(injected_input),
+        RUNNER_OUTPUT_PATH_KEY: str(injected_output),
+    }
 
 
 def test_docker_handler_preserves_process_env_file_exchange_contract():
