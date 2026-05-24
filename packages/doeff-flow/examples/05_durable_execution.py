@@ -23,13 +23,15 @@ Reset and run again:
     uv run python examples/05_durable_execution.py --reset
 
 Note: Traces are written to ~/.local/state/doeff-flow/ (XDG spec).
-      Database is stored at ./durable_workflow.db
+      Database is stored at ./.doeff-flow/durable_workflow.db
 """
 
 import sys
 import time
 from pathlib import Path
 
+from doeff_core_effects.memo_effects import MemoGet, MemoGetEffect, MemoPut, MemoPutEffect
+from doeff_core_effects.storage import SQLiteStorage
 from doeff_flow import run_workflow
 
 from doeff import (
@@ -39,8 +41,6 @@ from doeff import (
     do,
     slog,
 )
-from doeff_core_effects.memo_effects import MemoGet, MemoPut, MemoGetEffect, MemoPutEffect
-from doeff_core_effects.storage import SQLiteStorage
 
 # =============================================================================
 # Simulated Expensive Operations
@@ -209,8 +209,7 @@ def durable_pipeline():
     yield slog(step="phase3", msg="Aggregating results")
 
     final_result = yield aggregate_step(
-        "final_aggregation",
-        [processed_a, processed_b, processed_c]
+        "final_aggregation", [processed_a, processed_b, processed_c]
     )
 
     elapsed = time.time() - start_time
@@ -233,7 +232,7 @@ def main():
     # Parse --reset flag
     reset = "--reset" in sys.argv
 
-    db_path = Path("durable_workflow.db")
+    db_path = Path(".doeff-flow") / "durable_workflow.db"
 
     if reset and db_path.exists():
         print("Resetting: Deleting cached data...")
@@ -260,6 +259,7 @@ def main():
     print()
 
     # Run the workflow with observability and custom cache effect handling
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     storage = SQLiteStorage(str(db_path))
     program = WithHandler(cache_handler(storage), durable_pipeline())
     result = run_workflow(
