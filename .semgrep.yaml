@@ -1812,11 +1812,13 @@ rules:
       rationale: "canonical WithHandler signature is (handler, expr: DoExpr)"
 
   - id: doeff-withhandler-no-return-clause
-    pattern-either:
-      - pattern: WithHandler(..., return_clause=$RETURN, ...)
-      - pattern: WithHandler($HANDLER, $EXPR, $RETURN, ...)
-      - pattern: $VM.WithHandler(..., return_clause=$RETURN, ...)
-      - pattern: $VM.WithHandler($HANDLER, $EXPR, $RETURN, ...)
+    patterns:
+      - pattern-either:
+          - pattern: WithHandler(..., return_clause=$RETURN, ...)
+          - pattern: WithHandler($HANDLER, $EXPR, $RETURN, ...)
+          - pattern: $VM.WithHandler(..., return_clause=$RETURN, ...)
+          - pattern: $VM.WithHandler($HANDLER, $EXPR, $RETURN, ...)
+      - pattern-not: _WithHandlerNode(h, body, *args, **kwargs)
     paths:
       include:
         - "**/doeff/**/*.py"
