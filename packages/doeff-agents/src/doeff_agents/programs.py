@@ -6,7 +6,7 @@ yield fine-grained effects internally.
 
 Key design:
 - Programs are lazy computations, not immediate side effects
-- Programs compose fine-grained effects (Launch, Monitor, Sleep, etc.)
+- Programs compose fine-grained effects (Launch, Monitor, Delay, etc.)
 - Programs can be run with different handlers (real tmux or mock)
 - Programs are testable and inspectable
 """
@@ -17,15 +17,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
+from doeff_time import Delay
+
 from .adapters.base import AgentType, LaunchConfig
 from .effects import (
+    AgentSessionSnapshot,
     Capture,
+    CleanupAgentSession,
     Launch,
     Monitor,
     Observation,
+    ObserveAgentSession,
     Send,
     SessionHandle,
-    Sleep,
     Stop,
 )
 from .monitor import SessionStatus
@@ -108,11 +112,11 @@ def wait_and_monitor(
     handle: SessionHandle,
     poll_interval: float = 1.0,
 ) -> EffectGenerator[Observation]:
-    """Sleep then monitor session.
+    """Delay then monitor session.
 
     Useful for polling loops.
     """
-    yield Sleep(poll_interval)
+    yield Delay(poll_interval)
     observation: Observation = yield Monitor(handle)
     return observation
 
@@ -152,7 +156,7 @@ def monitor_until_terminal(
         max_iterations: Maximum iterations (0 = unlimited)
         on_observation: Optional callback for each observation
 
-    Yields: Fine-grained effects (Monitor, Sleep)
+    Yields: Fine-grained effects (Monitor, Delay)
     Returns: (final_observation, iteration_count)
     """
     iteration = 0
@@ -170,7 +174,102 @@ def monitor_until_terminal(
         if max_iterations > 0 and iteration >= max_iterations:
             return (observation, iteration)
 
-        yield Sleep(poll_interval)
+        yield Delay(poll_interval)
+
+
+def monitor_agent_to_completion(
+    handle: SessionHandle,
+    *,
+    poll_interval: float = 1.0,
+    timeout_iterations: int = 0,  # 0 = no limit
+    capture_lines: int = 100,
+    cleanup: bool = True,
+    on_observation: Callable[[Observation], None] | None = None,
+) -> EffectGenerator[AgentResult]:
+    """Monitor an existing agent session to terminal status and clean it up.
+
+    This is the managed lifecycle half used after a caller has already launched
+    a session. It owns the monitor-capture-stop sequence so higher-level
+    orchestrators do not need to duplicate tmux cleanup rules.
+    """
+    pr_url: str | None = None
+    iteration = 0
+    final_observation: Observation | None = None
+
+    try:
+        while True:
+            observation: Observation = yield Monitor(handle)
+
+            if on_observation:
+                on_observation(observation)
+
+            if observation.pr_url:
+                pr_url = observation.pr_url
+
+            if observation.is_terminal:
+                final_observation = observation
+                break
+
+            iteration += 1
+            if timeout_iterations > 0 and iteration >= timeout_iterations:
+                final_observation = observation
+                break
+
+            yield Delay(poll_interval)
+
+        output: str = yield Capture(handle, lines=capture_lines)
+
+        return AgentResult(
+            handle=handle,
+            final_status=(
+                final_observation.status
+                if final_observation
+                else SessionStatus.EXITED
+            ),
+            output=output,
+            pr_url=pr_url,
+            iterations=iteration,
+        )
+
+    finally:
+        if cleanup:
+            yield Stop(handle)
+
+
+def wait_agent_session(
+    session_id: str,
+    *,
+    poll_interval: float = 1.0,
+    timeout_iterations: int = 0,
+    cleanup: bool = True,
+) -> EffectGenerator[AgentSessionSnapshot]:
+    """Observe a persisted session by id until it reaches a terminal state.
+
+    This is the session-state API equivalent of ``monitor_agent_to_completion``.
+    The caller does not need a backend-specific ``SessionHandle``; the active
+    handler resolves that from the persisted session snapshot.
+    """
+    iteration = 0
+
+    while True:
+        snapshot: AgentSessionSnapshot = yield ObserveAgentSession(session_id)
+        if snapshot.status in (
+            SessionStatus.DONE,
+            SessionStatus.FAILED,
+            SessionStatus.EXITED,
+            SessionStatus.STOPPED,
+        ):
+            break
+
+        iteration += 1
+        if timeout_iterations > 0 and iteration >= timeout_iterations:
+            break
+
+        yield Delay(poll_interval)
+
+    if cleanup:
+        snapshot = yield CleanupAgentSession(session_id)
+    return snapshot
 
 
 def run_agent_to_completion(
@@ -203,7 +302,7 @@ def run_agent_to_completion(
         ready_timeout: Timeout for agent to be ready
         on_observation: Callback for each observation
 
-    Yields: Fine-grained effects (Launch, Monitor, Sleep, Capture, Stop)
+    Yields: Fine-grained effects (Launch, Monitor, Delay, Capture, Stop)
     Returns: AgentResult with status and output
     """
     # Launch
@@ -213,48 +312,15 @@ def run_agent_to_completion(
         ready_timeout=ready_timeout,
     )
 
-    pr_url: str | None = None
-
-    try:
-        # Monitor until terminal
-        iteration = 0
-        final_observation: Observation | None = None
-
-        while True:
-            observation: Observation = yield Monitor(handle)
-
-            if on_observation:
-                on_observation(observation)
-
-            # Track PR URL
-            if observation.pr_url:
-                pr_url = observation.pr_url
-
-            if observation.is_terminal:
-                final_observation = observation
-                break
-
-            iteration += 1
-            if timeout_iterations > 0 and iteration >= timeout_iterations:
-                final_observation = observation
-                break
-
-            yield Sleep(poll_interval)
-
-        # Capture final output
-        output: str = yield Capture(handle, lines=capture_lines)
-
-        return AgentResult(
-            handle=handle,
-            final_status=final_observation.status if final_observation else SessionStatus.EXITED,
-            output=output,
-            pr_url=pr_url,
-            iterations=iteration,
-        )
-
-    finally:
-        # Always stop
-        yield Stop(handle)
+    result: AgentResult = yield from monitor_agent_to_completion(
+        handle,
+        poll_interval=poll_interval,
+        timeout_iterations=timeout_iterations,
+        capture_lines=capture_lines,
+        cleanup=True,
+        on_observation=on_observation,
+    )
+    return result
 
 
 def with_session(
@@ -415,7 +481,7 @@ def interactive_session(
                 message_index += 1
 
             iteration += 1
-            yield Sleep(poll_interval)
+            yield Delay(poll_interval)
 
         output: str = yield Capture(handle, lines=100)
 
@@ -440,6 +506,7 @@ __all__ = [  # noqa: RUF022 - grouped by category for readability
     "wait_and_monitor",
     "capture_and_send",
     # Core workflows
+    "monitor_agent_to_completion",
     "monitor_until_terminal",
     "run_agent_to_completion",
     "with_session",

@@ -2,24 +2,32 @@
 
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from doeff_agents.adapters.base import AgentType
 from doeff_agents.effects import (
+    AgentSessionSnapshot,
+    AttachAgentSessionEffect,
+    CancelAgentSessionEffect,
     CaptureEffect,
     ClaudeLaunchEffect,
+    CleanupAgentSessionEffect,
+    GetAgentSessionEffect,
     LaunchEffect,
     LaunchTaskEffect,
+    ListAgentSessionsEffect,
     MonitorEffect,
     Observation,
+    ObserveAgentSessionEffect,
     SendEffect,
     SessionAlreadyExistsError,
     SessionHandle,
     SessionNotFoundError,
-    SleepEffect,
     StopEffect,
 )
 from doeff_agents.mcp_server import McpToolServer, RunToolFn
 from doeff_agents.monitor import SessionStatus
+from doeff_agents.session_store import AgentSessionRepository, InMemoryAgentSessionRepository
 
 from .production import AgentHandler
 
@@ -49,22 +57,23 @@ class MockAgentState:
     statuses: dict[str, SessionStatus] = field(default_factory=dict)
     outputs: dict[str, str] = field(default_factory=dict)
     sends: list[tuple[str, str]] = field(default_factory=list)
-    sleep_calls: list[float] = field(default_factory=list)
     next_pane_id: int = 0
 
 
 class MockAgentHandler(AgentHandler):
     """Mock handler for testing without tmux."""
 
-    def __init__(self) -> None:
+    def __init__(self, session_repository: AgentSessionRepository | None = None) -> None:
         self._sessions: dict[str, MockSessionScript] = {}
         self._handles: dict[str, SessionHandle] = {}
         self._statuses: dict[str, SessionStatus] = {}
         self._outputs: dict[str, str] = {}
         self._sends: list[tuple[str, str]] = []
-        self._sleep_calls: list[float] = []
         self._next_pane_id: int = 0
         self._mcp_servers: dict[str, McpToolServer] = {}
+        self._session_repository = (
+            session_repository or InMemoryAgentSessionRepository()
+        )
 
     def configure_session(
         self,
@@ -110,6 +119,7 @@ class MockAgentHandler(AgentHandler):
         self._handles[effect.session_name] = handle
         self._statuses[effect.session_name] = SessionStatus.BOOTING
         self._outputs.setdefault(effect.session_name, "")
+        self._record_snapshot("session_started", handle, SessionStatus.BOOTING)
         return handle
 
     def handle_launch_task(self, effect: LaunchTaskEffect) -> SessionHandle:
@@ -133,6 +143,7 @@ class MockAgentHandler(AgentHandler):
         self._handles[effect.session_name] = handle
         self._statuses[effect.session_name] = SessionStatus.BOOTING
         self._outputs.setdefault(effect.session_name, "")
+        self._record_snapshot("session_started", handle, SessionStatus.BOOTING)
         return handle
 
     def handle_monitor(self, effect: MonitorEffect) -> Observation:
@@ -147,23 +158,43 @@ class MockAgentHandler(AgentHandler):
             status, output = script.next_observation()
             self._statuses[session_name] = status
             self._outputs[session_name] = output
-            return Observation(
+            observation = Observation(
                 status=status,
                 output_changed=True,
                 output_snippet=output[-500:] if output else None,
             )
+            self._record_snapshot(
+                "session_observed",
+                self._handles[session_name],
+                status,
+                output_snippet=observation.output_snippet,
+            )
+            return observation
 
-        return Observation(
+        observation = Observation(
             status=self._statuses.get(session_name, SessionStatus.RUNNING),
             output_changed=False,
         )
+        self._record_snapshot(
+            "session_observed",
+            self._handles[session_name],
+            observation.status,
+        )
+        return observation
 
     def handle_capture(self, effect: CaptureEffect) -> str:
         """Return captured output."""
         session_name = effect.handle.session_name
         if session_name not in self._handles:
             raise SessionNotFoundError(f"Session {session_name} does not exist")
-        return self._outputs.get(session_name, "")
+        output = self._outputs.get(session_name, "")
+        self._record_snapshot(
+            "session_captured",
+            effect.handle,
+            self._statuses.get(session_name, SessionStatus.RUNNING),
+            output_snippet=output[-500:] if output else None,
+        )
+        return output
 
     def handle_send(self, effect: SendEffect) -> None:
         """Record sent message."""
@@ -180,20 +211,114 @@ class MockAgentHandler(AgentHandler):
             server.shutdown()
         if session_name in self._handles:
             self._statuses[session_name] = SessionStatus.STOPPED
+            self._record_snapshot("session_stopped", effect.handle, SessionStatus.STOPPED)
 
-    def handle_sleep(self, effect: SleepEffect) -> None:
-        """Record sleep call (no actual delay)."""
-        self._sleep_calls.append(effect.seconds)
+    def handle_get_session(
+        self,
+        effect: GetAgentSessionEffect,
+    ) -> AgentSessionSnapshot | None:
+        """Return persisted mock session state."""
+        return self._session_repository.get_session(effect.session_id)
+
+    def handle_list_sessions(
+        self,
+        effect: ListAgentSessionsEffect,
+    ) -> tuple[AgentSessionSnapshot, ...]:
+        """Return persisted mock session states."""
+        return self._session_repository.list_sessions(effect.query)
+
+    def handle_observe_session(
+        self,
+        effect: ObserveAgentSessionEffect,
+    ) -> AgentSessionSnapshot:
+        """Observe a mock session by id."""
+        snapshot = self._require_snapshot(effect.session_id)
+        self.handle_monitor(MonitorEffect(handle=snapshot.to_handle()))
+        updated = self._session_repository.get_session(effect.session_id)
+        if updated is None:
+            raise SessionNotFoundError(f"Session {effect.session_id} is not registered")
+        return updated
+
+    def handle_attach_session(self, effect: AttachAgentSessionEffect) -> None:
+        """Mock attach is a no-op after validating the session exists."""
+        self._require_snapshot(effect.session_id)
+
+    def handle_cancel_session(
+        self,
+        effect: CancelAgentSessionEffect,
+    ) -> AgentSessionSnapshot:
+        """Cancel a mock session by id."""
+        snapshot = self._require_snapshot(effect.session_id)
+        self.handle_stop(StopEffect(handle=snapshot.to_handle()))
+        updated = self._session_repository.get_session(effect.session_id)
+        if updated is None:
+            raise SessionNotFoundError(f"Session {effect.session_id} is not registered")
+        return updated
+
+    def handle_cleanup_session(
+        self,
+        effect: CleanupAgentSessionEffect,
+    ) -> AgentSessionSnapshot:
+        """Clean up a mock session by id."""
+        snapshot = self._require_snapshot(effect.session_id)
+        self._handles.pop(snapshot.session_name, None)
+        self._statuses[snapshot.session_name] = SessionStatus.STOPPED
+        now = datetime.now(timezone.utc)
+        cleaned = snapshot.with_update(
+            status=SessionStatus.STOPPED,
+            cleaned_at=now,
+            last_observed_at=now,
+        )
+        return self._session_repository.record_snapshot(
+            "session_cleaned",
+            cleaned,
+        )
+
+    def _require_snapshot(self, session_id: str) -> AgentSessionSnapshot:
+        snapshot = self._session_repository.get_session(session_id)
+        if snapshot is None:
+            raise SessionNotFoundError(f"Session {session_id} is not registered")
+        return snapshot
+
+    def _record_snapshot(
+        self,
+        event_type: str,
+        handle: SessionHandle,
+        status: SessionStatus,
+        *,
+        output_snippet: str | None = None,
+    ) -> AgentSessionSnapshot:
+        now = datetime.now(timezone.utc)
+        previous = self._session_repository.get_session(handle.session_id)
+        finished_at = previous.finished_at if previous is not None else None
+        if finished_at is None and status in (
+            SessionStatus.DONE,
+            SessionStatus.FAILED,
+            SessionStatus.EXITED,
+            SessionStatus.STOPPED,
+        ):
+            finished_at = now
+        snapshot = AgentSessionSnapshot.from_handle(
+            handle,
+            status=status,
+            last_observed_at=now,
+            finished_at=finished_at,
+            cleaned_at=previous.cleaned_at if previous is not None else None,
+            pr_url=previous.pr_url if previous is not None else None,
+            output_snippet=(
+                output_snippet
+                if output_snippet is not None
+                else previous.output_snippet
+                if previous is not None
+                else None
+            ),
+        )
+        return self._session_repository.record_snapshot(event_type, snapshot)
 
     @property
     def sent_messages(self) -> list[tuple[str, str]]:
         """Get all sent messages as (session_name, message) tuples."""
         return list(self._sends)
-
-    @property
-    def total_sleep_time(self) -> float:
-        """Get total sleep time requested."""
-        return sum(self._sleep_calls)
 
     def snapshot(self) -> MockAgentState:
         """Return a copyable state snapshot for compatibility/debugging."""
@@ -203,7 +328,6 @@ class MockAgentHandler(AgentHandler):
             statuses=dict(self._statuses),
             outputs=dict(self._outputs),
             sends=list(self._sends),
-            sleep_calls=list(self._sleep_calls),
             next_pane_id=self._next_pane_id,
         )
 

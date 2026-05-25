@@ -31,6 +31,7 @@ from pathlib import Path
 
 from doeff import AsyncRuntime, do
 from doeff.effects.writer import slog
+from doeff_time import Delay
 from doeff_preset import preset_handlers
 
 from doeff_agents import (
@@ -41,7 +42,6 @@ from doeff_agents import (
     LaunchConfig,
     Monitor,
     SessionStatus,
-    Sleep,
     Stop,
     configure_mock_session,
     mock_agent_handlers,
@@ -60,7 +60,7 @@ def my_agent_workflow(session_name: str, config: LaunchConfig):
             
             if observation.is_terminal:
                 break
-            yield Sleep(1.0)
+            yield Delay(1.0)
         
         output = yield Capture(handle, lines=30)
         return {"status": observation.status.value, "output": output}
@@ -194,7 +194,7 @@ handle = yield Launch(session_name, config)
 observation = yield Monitor(handle)
 output = yield Capture(handle, lines=50)
 yield Send(handle, "Continue")
-yield Sleep(1.0)
+yield Delay(1.0)
 yield Stop(handle)
 ```
 

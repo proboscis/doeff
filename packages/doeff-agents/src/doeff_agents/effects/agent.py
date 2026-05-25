@@ -5,16 +5,14 @@ Fine-grained effects for agent session management.
 Key design:
 - LaunchEffect: flat fields (no LaunchConfig wrapper), user-facing
 - ClaudeLaunchEffect: internal, emitted by claude_resolver_handler
-- Monitor/Capture/Send/Stop/Sleep: session lifecycle
+- Monitor/Capture/Send/Stop: session lifecycle
+- Get/List/Observe/Cleanup/Cancel/Attach: session state management by id
 - SessionHandle: immutable value-type identifier
 """
-
-from __future__ import annotations
-
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from doeff import EffectBase
 
@@ -46,6 +44,16 @@ class SessionHandle:
     def __repr__(self) -> str:
         return f"SessionHandle({self.session_name!r}, pane={self.pane_id})"
 
+    @property
+    def session_id(self) -> str:
+        """Stable public id for this agent session.
+
+        For the current tmux backend this intentionally equals ``session_name``.
+        Other backends can still use the same public API without exposing a
+        backend-specific field name to callers.
+        """
+        return self.session_name
+
 
 # =============================================================================
 # Observation - Immutable snapshot of session state
@@ -69,6 +77,142 @@ class Observation:
             SessionStatus.EXITED,
             SessionStatus.STOPPED,
         )
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentSessionSnapshot:
+    """Persistent, backend-neutral snapshot of an agent session."""
+
+    session_id: str
+    session_name: str
+    pane_id: str
+    agent_type: AgentType
+    work_dir: Path
+    status: SessionStatus
+    backend_kind: str = "terminal"
+    backend_ref: dict[str, str] = field(default_factory=dict)
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_observed_at: datetime | None = None
+    finished_at: datetime | None = None
+    cleaned_at: datetime | None = None
+    pr_url: str | None = None
+    output_snippet: str | None = None
+
+    @classmethod
+    def from_handle(
+        cls,
+        handle: SessionHandle,
+        *,
+        status: SessionStatus,
+        backend_kind: str = "terminal",
+        backend_ref: dict[str, str] | None = None,
+        last_observed_at: datetime | None = None,
+        finished_at: datetime | None = None,
+        cleaned_at: datetime | None = None,
+        pr_url: str | None = None,
+        output_snippet: str | None = None,
+    ) -> "AgentSessionSnapshot":
+        """Create a snapshot from the public handle."""
+        return cls(
+            session_id=handle.session_id,
+            session_name=handle.session_name,
+            pane_id=handle.pane_id,
+            agent_type=handle.agent_type,
+            work_dir=handle.work_dir,
+            status=status,
+            backend_kind=backend_kind,
+            backend_ref=backend_ref
+            or {
+                "session_name": handle.session_name,
+                "pane_id": handle.pane_id,
+            },
+            started_at=handle.started_at,
+            last_observed_at=last_observed_at,
+            finished_at=finished_at,
+            cleaned_at=cleaned_at,
+            pr_url=pr_url,
+            output_snippet=output_snippet,
+        )
+
+    def to_handle(self) -> SessionHandle:
+        """Recreate the public handle from a persisted snapshot."""
+        return SessionHandle(
+            session_name=self.session_name,
+            pane_id=self.pane_id,
+            agent_type=self.agent_type,
+            work_dir=self.work_dir,
+            started_at=self.started_at,
+        )
+
+    def with_update(self, **changes: Any) -> "AgentSessionSnapshot":
+        """Return a copy with selected fields updated."""
+        return replace(self, **changes)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to JSON-compatible values."""
+        return {
+            "session_id": self.session_id,
+            "session_name": self.session_name,
+            "pane_id": self.pane_id,
+            "agent_type": self.agent_type.value,
+            "work_dir": str(self.work_dir),
+            "status": self.status.value,
+            "backend_kind": self.backend_kind,
+            "backend_ref": dict(self.backend_ref),
+            "started_at": self.started_at.isoformat(),
+            "last_observed_at": (
+                self.last_observed_at.isoformat()
+                if self.last_observed_at is not None
+                else None
+            ),
+            "finished_at": self.finished_at.isoformat()
+            if self.finished_at is not None
+            else None,
+            "cleaned_at": self.cleaned_at.isoformat()
+            if self.cleaned_at is not None
+            else None,
+            "pr_url": self.pr_url,
+            "output_snippet": self.output_snippet,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AgentSessionSnapshot":
+        """Deserialize from JSON-compatible values."""
+        return cls(
+            session_id=str(data["session_id"]),
+            session_name=str(data["session_name"]),
+            pane_id=str(data["pane_id"]),
+            agent_type=AgentType(str(data["agent_type"])),
+            work_dir=Path(str(data["work_dir"])),
+            status=SessionStatus(str(data["status"])),
+            backend_kind=str(data.get("backend_kind", "terminal")),
+            backend_ref=dict(data.get("backend_ref", {})),
+            started_at=_parse_datetime(str(data["started_at"])),
+            last_observed_at=_parse_optional_datetime(data.get("last_observed_at")),
+            finished_at=_parse_optional_datetime(data.get("finished_at")),
+            cleaned_at=_parse_optional_datetime(data.get("cleaned_at")),
+            pr_url=data.get("pr_url"),
+            output_snippet=data.get("output_snippet"),
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentSessionQuery:
+    """Read-only filter for persistent agent session snapshots."""
+
+    status: SessionStatus | None = None
+    agent_type: AgentType | None = None
+    backend_kind: str | None = None
+
+
+def _parse_datetime(value: str) -> datetime:
+    return datetime.fromisoformat(value)
+
+
+def _parse_optional_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    return datetime.fromisoformat(str(value))
 
 
 # =============================================================================
@@ -102,7 +246,7 @@ class LaunchEffect(AgentEffectBase):
     work_dir: Path
     prompt: str | None = None
     model: str | None = None
-    mcp_tools: tuple[McpToolDef, ...] = ()
+    mcp_tools: tuple["McpToolDef", ...] = ()
     mcp_server_name: str = "doeff"
     effort: str | None = None
     bare: bool = False
@@ -124,7 +268,7 @@ class ClaudeLaunchEffect(AgentEffectBase):
     work_dir: Path
     prompt: str | None = None
     model: str | None = None
-    mcp_tools: tuple[McpToolDef, ...] = ()
+    mcp_tools: tuple["McpToolDef", ...] = ()
     mcp_server_name: str = "doeff"
     effort: str | None = None
     bare: bool = False
@@ -181,19 +325,70 @@ class StopEffect(AgentEffectBase):
     handle: SessionHandle
 
 
+# =============================================================================
+# Session State Effects
+# =============================================================================
+
+
 @dataclass(frozen=True, kw_only=True)
-class SleepEffect(AgentEffectBase):
-    """Sleep for a duration (testable — mock handlers skip the wait).
+class GetAgentSessionEffect(AgentEffectBase):
+    """Read a persisted session snapshot by public session id.
+
+    Yields: AgentSessionSnapshot | None
+    """
+
+    session_id: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class ListAgentSessionsEffect(AgentEffectBase):
+    """List persisted session snapshots.
+
+    Yields: tuple[AgentSessionSnapshot, ...]
+    """
+
+    query: AgentSessionQuery = field(default_factory=AgentSessionQuery)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ObserveAgentSessionEffect(AgentEffectBase):
+    """Observe a session by id and persist the resulting snapshot.
+
+    Yields: AgentSessionSnapshot
+    """
+
+    session_id: str
+    lines: int = 100
+
+
+@dataclass(frozen=True, kw_only=True)
+class AttachAgentSessionEffect(AgentEffectBase):
+    """Attach to a session by id using the active backend.
 
     Yields: None
     """
 
-    seconds: float
+    session_id: str
 
 
-# =============================================================================
-# Effect Constructors
-# =============================================================================
+@dataclass(frozen=True, kw_only=True)
+class CancelAgentSessionEffect(AgentEffectBase):
+    """Cancel a running session by id and persist the resulting status.
+
+    Yields: AgentSessionSnapshot
+    """
+
+    session_id: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class CleanupAgentSessionEffect(AgentEffectBase):
+    """Clean up backend resources for a session by id.
+
+    Yields: AgentSessionSnapshot
+    """
+
+    session_id: str
 
 
 # =============================================================================
@@ -224,7 +419,7 @@ def Launch(  # noqa: N802
     work_dir: Path,
     prompt: str | None = None,
     model: str | None = None,
-    mcp_tools: tuple[McpToolDef, ...] = (),
+    mcp_tools: tuple["McpToolDef", ...] = (),
     mcp_server_name: str = "doeff",
     effort: str | None = None,
     bare: bool = False,
@@ -269,8 +464,43 @@ def Stop(handle: SessionHandle) -> StopEffect:  # noqa: N802
     return StopEffect(handle=handle)
 
 
-def Sleep(seconds: float) -> SleepEffect:  # noqa: N802
-    return SleepEffect(seconds=seconds)
+def GetAgentSession(session_id: str) -> GetAgentSessionEffect:  # noqa: N802
+    return GetAgentSessionEffect(session_id=session_id)
+
+
+def ListAgentSessions(  # noqa: N802
+    *,
+    status: SessionStatus | None = None,
+    agent_type: AgentType | None = None,
+    backend_kind: str | None = None,
+) -> ListAgentSessionsEffect:
+    return ListAgentSessionsEffect(
+        query=AgentSessionQuery(
+            status=status,
+            agent_type=agent_type,
+            backend_kind=backend_kind,
+        )
+    )
+
+
+def ObserveAgentSession(  # noqa: N802
+    session_id: str,
+    *,
+    lines: int = 100,
+) -> ObserveAgentSessionEffect:
+    return ObserveAgentSessionEffect(session_id=session_id, lines=lines)
+
+
+def AttachAgentSession(session_id: str) -> AttachAgentSessionEffect:  # noqa: N802
+    return AttachAgentSessionEffect(session_id=session_id)
+
+
+def CancelAgentSession(session_id: str) -> CancelAgentSessionEffect:  # noqa: N802
+    return CancelAgentSessionEffect(session_id=session_id)
+
+
+def CleanupAgentSession(session_id: str) -> CleanupAgentSessionEffect:  # noqa: N802
+    return CleanupAgentSessionEffect(session_id=session_id)
 
 
 # =============================================================================
@@ -307,21 +537,33 @@ __all__ = [
     "AgentLaunchError",
     "AgentNotAvailableError",
     "AgentReadyTimeoutError",
+    "AgentSessionQuery",
+    "AgentSessionSnapshot",
+    "AttachAgentSession",
+    "AttachAgentSessionEffect",
+    "CancelAgentSession",
+    "CancelAgentSessionEffect",
     "Capture",
     "CaptureEffect",
     "ClaudeLaunchEffect",
+    "CleanupAgentSession",
+    "CleanupAgentSessionEffect",
+    "GetAgentSession",
+    "GetAgentSessionEffect",
     "Launch",
     "LaunchEffect",
+    "ListAgentSessions",
+    "ListAgentSessionsEffect",
     "Monitor",
     "MonitorEffect",
     "Observation",
+    "ObserveAgentSession",
+    "ObserveAgentSessionEffect",
     "Send",
     "SendEffect",
     "SessionAlreadyExistsError",
     "SessionHandle",
     "SessionNotFoundError",
-    "Sleep",
-    "SleepEffect",
     "Stop",
     "StopEffect",
 ]
