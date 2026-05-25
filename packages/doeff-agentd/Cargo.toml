@@ -1,0 +1,21 @@
+[package]
+name = "doeff-agentd"
+version = "0.1.0"
+edition = "2021"
+description = "Long-lived agent session supervisor for doeff-agents"
+license = "MIT"
+repository = "https://github.com/proboscis/doeff"
+
+[[bin]]
+name = "doeff-agentd"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+tempfile = "3.10"
