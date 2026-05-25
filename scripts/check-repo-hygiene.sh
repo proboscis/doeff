@@ -7,6 +7,12 @@ tracked_artifacts="$(
 	git ls-files -- \
 		'None' \
 		'Untitled' \
+		'server.js' \
+		'.claude/settings.local.json' \
+		':(glob).agent-home/**' \
+		':(glob).playwright-mcp/**' \
+		':(glob).claude/skills/install-vscode-plugin/**' \
+		':(glob).agents/skills/install-vscode-plugin/**' \
 		'*.db' \
 		'*.db-journal' \
 		'*.db-shm' \

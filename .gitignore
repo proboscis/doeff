@@ -79,6 +79,16 @@ dmypy.json
 None
 Untitled
 
+# Local agent and browser automation state
+.agent-home/
+.playwright-mcp/
+.claude/settings.local.json
+.claude/skills/install-vscode-plugin/
+.agents/skills/install-vscode-plugin/
+
+# Accidental desktop helper bundle captured at repository root
+/server.js
+
 # Rust build artifacts
 rust/**/target/
 packages/**/target/
