@@ -21,6 +21,7 @@ from doeff_agents import (
     AgentType,
     DaemonAgentHandler,
     LaunchEffect,
+    LazyAgentdClient,
     ObserveAgentSessionEffect,
     SessionStatus,
     agentd_client,
@@ -163,6 +164,32 @@ def test_ensure_agentd_starts_daemon_when_socket_is_not_ready(
             "serve",
         ]
     ]
+
+
+def test_lazy_agentd_client_starts_daemon_on_first_operation(monkeypatch, tmp_path: Path) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class FakeResolvedClient:
+        def status(self):
+            return {"state": "running"}
+
+    def fake_ensure_agentd(**kwargs):
+        calls.append(kwargs)
+        return FakeResolvedClient()
+
+    monkeypatch.setattr(agentd_client, "ensure_agentd", fake_ensure_agentd)
+    client = LazyAgentdClient(
+        db_path=tmp_path / "agentd.sqlite",
+        socket_path=tmp_path / "agentd.sock",
+        daemon_bin="/usr/local/bin/doeff-agentd",
+        max_running=4,
+    )
+
+    assert calls == []
+    assert client.status() == {"state": "running"}
+    assert client.status() == {"state": "running"}
+    assert len(calls) == 1
+    assert calls[0]["max_running"] == 4
 
 
 def test_daemon_handler_observe_is_read_only() -> None:

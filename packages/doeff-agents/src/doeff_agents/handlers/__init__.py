@@ -10,7 +10,7 @@ from doeff_time import sync_time_handler
 
 from doeff import Effect, Resume, WithHandler, do, run
 from doeff.mcp import McpToolDef
-from doeff_agents.agentd_client import ensure_agentd
+from doeff_agents.agentd_client import LazyAgentdClient
 from doeff_agents.effects import (
     AttachAgentSessionEffect,
     CancelAgentSessionEffect,
@@ -218,7 +218,7 @@ def daemon_agent_handler(
     """Return the daemon-backed agent handler as a Hy defhandler."""
     active_client = client
     if active_client is None:
-        active_client = ensure_agentd(
+        active_client = LazyAgentdClient(
             socket_path=socket_path,
             db_path=db_path,
             daemon_bin=daemon_bin,
