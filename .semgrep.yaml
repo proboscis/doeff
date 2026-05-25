@@ -77,6 +77,54 @@ rules:
       include:
         - /packages/doeff-agents/**
 
+  - id: http-request-handlers-use-defhandler
+    languages: [python]
+    severity: ERROR
+    message: >
+      ARC-528: HttpRequest effect dispatch handlers must be implemented with
+      Hy defhandler, not raw Python @do dispatchers.
+    patterns:
+      - pattern: |
+          @do
+          def $HANDLER(effect, k):
+              ...
+    paths:
+      include:
+        - /packages/doeff-core-effects/doeff_core_effects/http_handlers.py
+
+  - id: http-request-effect-shape-is-hy
+    languages: [python]
+    severity: ERROR
+    message: >
+      ARC-529: HttpRequest, HttpResponse, and HttpError must be implemented in
+      Hy. Keep doeff_core_effects.effects as an export surface only.
+    pattern-either:
+      - pattern: |
+          class HttpRequest(...):
+              ...
+      - pattern: |
+          class HttpResponse(...):
+              ...
+      - pattern: |
+          class HttpError(...):
+              ...
+    paths:
+      include:
+        - /packages/doeff-core-effects/doeff_core_effects/effects.py
+
+  - id: http-request-handler-logic-is-hy
+    languages: [python]
+    severity: ERROR
+    message: >
+      ARC-529: HttpRequest handler logic must live in Hy defhandler modules.
+      The Python http_handlers.py file may only be a compatibility/export shim.
+    pattern: |
+      def $FUNC(...):
+          ...
+    paths:
+      include:
+        - /packages/doeff-core-effects/doeff_core_effects/http_handlers.py
+
   - id: no-runresult-hasattr-duck-typing
     languages: [python]
     severity: ERROR
@@ -105,6 +153,41 @@ rules:
     paths:
       include:
         - /doeff/run.py
+
+  - id: cli-profiling-no-runtime-env-read
+    languages: [python]
+    severity: ERROR
+    message: >
+      HYP-048: DOEFF_DISABLE_PROFILE is a CLI launcher compatibility input.
+      Runtime profiling helpers must receive injected ProfilingConfig instead of
+      reading the process environment directly.
+    pattern-either:
+      - pattern: os.environ.get("DOEFF_DISABLE_PROFILE")
+      - pattern: os.environ["DOEFF_DISABLE_PROFILE"]
+      - pattern: os.getenv("DOEFF_DISABLE_PROFILE")
+      - pattern: environ.get("DOEFF_DISABLE_PROFILE")
+      - pattern: environ["DOEFF_DISABLE_PROFILE"]
+      - pattern: getenv("DOEFF_DISABLE_PROFILE")
+    paths:
+      include:
+        - /doeff/cli/**
+
+  - id: no-defprogram-hy-macro
+    languages: [generic]
+    severity: ERROR
+    message: >
+      HYP-049: defprogram has been removed from the doeff-hy public macro surface.
+      Use defp for Program[T] or defpp for Program[Program[T]] instead.
+    pattern-regex: '\bdefprogram\b'
+    paths:
+      include:
+        - "**/*.hy"
+        - "**/*.hyk"
+        - "**/*.hyp"
+      exclude:
+        - "**/tests/**"
+        - "**/docs/**"
+
   - id: cache-handler-no-result-duck-typing
     languages: [python]
     severity: ERROR
@@ -1378,6 +1461,18 @@ rules:
   # ---------------------------------------------------------------------------
   # DEPENDENCY INJECTION PATTERNS
   # ---------------------------------------------------------------------------
+
+  - id: doeff-ml-nexus-runner-no-process-env
+    languages: [generic]
+    severity: ERROR
+    message: >
+      HYP-050: doeff_ml_nexus.runner.p_run must read file exchange paths through
+      Ask-injected Program env. Keep DOEFF_INPUT/DOEFF_OUTPUT process-env reads
+      in an interpreter or launcher adapter, not in runner.hy runtime Program logic.
+    pattern-regex: 'os\.(environ|getenv)'
+    paths:
+      include:
+        - /packages/doeff-ml-nexus/src/doeff_ml_nexus/runner.hy
 
   - id: doeff-no-hardcoded-instantiation-in-do
     patterns:

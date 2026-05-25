@@ -62,7 +62,7 @@ pub fn analyze_hy_source(
         };
 
         match head {
-            "defk" | "defn" | "defprogram" | "defp" | "defpp" => {
+            "defk" | "defn" | "defp" | "defpp" => {
                 if let Some(func_info) = analyze_function_def(list, source, &file_str, head) {
                     info.functions.insert(func_info.name.clone());
                     info.function_defs.insert(func_info.name.clone(), func_info);
@@ -104,7 +104,7 @@ fn analyze_function_def(
     let body_start = find_body_start(list);
     let body = &list[body_start..];
 
-    let kind = if head == "defk" || head == "defprogram" || head == "defp" || head == "defpp" {
+    let kind = if head == "defk" || head == "defp" || head == "defpp" {
         TargetKind::KleisliProgram
     } else {
         TargetKind::Other
@@ -602,6 +602,16 @@ mod tests {
         let effect_keys: Vec<_> = func.summary.local_effects.iter().map(|e| &e.key).collect();
         assert!(effect_keys.iter().any(|k| k.starts_with("ask:")));
         assert!(effect_keys.iter().any(|k| k.contains("Compute")));
+    }
+
+    #[test]
+    fn test_removed_defprogram_is_not_function_surface() {
+        let info = analyze(r#"
+(defprogram legacy-entrypoint {:post []}
+  42)
+"#);
+        assert!(!info.functions.contains("legacy_entrypoint"));
+        assert!(!info.function_defs.contains_key("legacy_entrypoint"));
     }
 
     #[test]
