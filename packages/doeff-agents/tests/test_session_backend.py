@@ -340,7 +340,7 @@ def test_agent_effectful_handler_asks_for_backend(monkeypatch) -> None:
     result = run(
         WithHandler(
             lazy_ask(env={SessionBackend: backend}),
-            WithHandler(agent_effectful_handler(), workflow()),
+            agent_effectful_handler()(workflow()),
         )
     )
 
