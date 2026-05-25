@@ -46,6 +46,9 @@ class MonitorState:
 OnStatusChange = Callable[[SessionStatus, SessionStatus, str | None], None]
 
 
+CODEX_IDLE_DONE_SECONDS = 2.0
+
+
 def hash_content(output: str, skip_lines: int = 5) -> str:
     """Hash content excluding status bar (last N lines)."""
     lines = output.split("\n")
@@ -117,15 +120,59 @@ def is_agent_exited(output: str, ui_patterns: list[str] | None = None) -> bool:
 
 def is_completed(output: str) -> bool:
     """Check if agent completed successfully."""
-    # Check last 10 lines instead of 5 to account for UI chrome after completion
-    lines = "\n".join(output.split("\n")[-10:]).lower()
+    # Check enough lines to account for UI chrome after completion.
+    lines = "\n".join(output.split("\n")[-30:]).lower()
     patterns = [
         "task completed successfully",
         "all tasks completed",
         "session ended",
         "goodbye",
+        "worked for",  # Codex end-of-turn footer
     ]
     return any(p in lines for p in patterns)
+
+
+def has_codex_active_marker(output: str) -> bool:
+    """Return True when Codex is visibly inside an active turn."""
+    lines = "\n".join(output.split("\n")[-30:]).lower()
+    patterns = [
+        "working (",
+        "thinking",
+        "esc to interrupt",
+        "ctrl + t to view transcript",
+    ]
+    return any(p in lines for p in patterns)
+
+
+def has_codex_idle_prompt(output: str) -> bool:
+    """Return True when Codex shows its idle prompt/status footer."""
+    has_prompt = re.search(r"(?m)^› ", output) is not None  # noqa: RUF001
+    has_model_status = re.search(r"(?m)\bgpt-[^\n]+·", output) is not None
+    return bool(has_prompt and has_model_status)
+
+
+def is_codex_turn_complete(
+    output: str,
+    state: MonitorState,
+    *,
+    output_changed: bool,
+    idle_done_seconds: float = CODEX_IDLE_DONE_SECONDS,
+) -> bool:
+    """Detect Codex's normal post-turn idle screen.
+
+    Codex often finishes a turn and returns to its interactive prompt without
+    printing generic phrases like "task completed successfully". In tmux the
+    process is still alive, so process-exit detection is not enough. Treat a
+    stable Codex prompt with no active-turn marker as a completed turn.
+    """
+    if not has_codex_idle_prompt(output):
+        return False
+    if has_codex_active_marker(output):
+        return False
+    if output_changed:
+        return False
+    idle_seconds = (datetime.now(timezone.utc) - state.last_output_at).total_seconds()
+    return idle_seconds >= idle_done_seconds
 
 
 def is_api_limited(output: str) -> bool:
@@ -168,15 +215,19 @@ def detect_status(  # noqa: PLR0911
 
     Detection order (IMPORTANT: completion before exit check):
     1. Completion patterns → Done (even if shell prompt is visible)
-    2. API limit patterns → BlockedAPI
-    3. Error patterns → Failed
-    4. Agent exited → Exited (shell prompt showing)
-    5. Output changing → Running
-    6. Output stable + prompt → Blocked
-    7. Otherwise → None (no change)
+    2. Codex idle completed turn → Done
+    3. API limit patterns → BlockedAPI
+    4. Error patterns → Failed
+    5. Agent exited → Exited (shell prompt showing)
+    6. Output changing → Running
+    7. Output stable + prompt → Blocked
+    8. Otherwise → None (no change)
     """
     # Check terminal states first (completion before exit!)
     if is_completed(output):
+        return SessionStatus.DONE
+
+    if is_codex_turn_complete(output, state, output_changed=output_changed):
         return SessionStatus.DONE
 
     if is_api_limited(output):
