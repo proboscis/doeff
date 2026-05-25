@@ -1,0 +1,289 @@
+"""Agent effect handler backed by the doeff-agentd supervisor daemon."""
+
+from __future__ import annotations
+
+import os
+import shlex
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Protocol
+
+from doeff_agents.adapters.base import AgentType, LaunchParams
+from doeff_agents.adapters.codex import trust_workspace_in_codex_home
+from doeff_agents.claude_home import prepare_claude_home
+from doeff_agents.effects import (
+    AgentError,
+    AgentLaunchError,
+    AgentNotAvailableError,
+    AgentSessionSnapshot,
+    AttachAgentSessionEffect,
+    CancelAgentSessionEffect,
+    CaptureEffect,
+    ClaudeLaunchEffect,
+    CleanupAgentSessionEffect,
+    GetAgentSessionEffect,
+    LaunchEffect,
+    LaunchTaskEffect,
+    ListAgentSessionsEffect,
+    MonitorEffect,
+    Observation,
+    ObserveAgentSessionEffect,
+    SendEffect,
+    SessionHandle,
+    SessionNotFoundError,
+    StopEffect,
+)
+from doeff_agents.mcp_server import RunToolFn
+from doeff_agents.runtime import ClaudeRuntimePolicy
+from doeff_agents.shell import wrap_with_shell_exports
+
+from .production import AgentHandler, get_adapter
+
+
+class AgentdSessionClient(Protocol):
+    """Subset of AgentdClient used by DaemonAgentHandler."""
+
+    def launch_session(
+        self,
+        *,
+        session_id: str,
+        session_name: str,
+        agent_type: str,
+        work_dir: Path,
+        command: str,
+        session_env: Mapping[str, str] | None = None,
+    ) -> AgentSessionSnapshot: ...
+
+    def get_session(self, session_id: str) -> AgentSessionSnapshot | None: ...
+
+    def list_sessions(
+        self,
+        query=None,
+    ) -> tuple[AgentSessionSnapshot, ...]: ...
+
+    def capture_session(self, session_id: str, *, lines: int = 100) -> str: ...
+
+    def send_session(
+        self,
+        session_id: str,
+        message: str,
+        *,
+        enter: bool = True,
+        literal: bool = True,
+    ) -> None: ...
+
+    def cancel_session(self, session_id: str) -> AgentSessionSnapshot: ...
+
+    def cleanup_session(self, session_id: str) -> AgentSessionSnapshot: ...
+
+
+class DaemonAgentHandler(AgentHandler):
+    """Agent handler that delegates lifecycle ownership to doeff-agentd."""
+
+    def __init__(
+        self,
+        *,
+        client: AgentdSessionClient,
+        claude_runtime_policy: ClaudeRuntimePolicy | None = None,
+    ) -> None:
+        self._client = client
+        self._claude_runtime_policy = claude_runtime_policy or ClaudeRuntimePolicy()
+
+    def handle_launch(
+        self,
+        effect: LaunchEffect,
+        run_tool: RunToolFn | None = None,
+    ) -> SessionHandle:
+        """Build the launch command and register it with doeff-agentd."""
+        if effect.mcp_tools:
+            raise AgentLaunchError(
+                "doeff-agentd does not manage MCP lifecycle; prepare MCP with defmcp"
+            )
+        return self._launch(
+            session_name=effect.session_name,
+            agent_type=effect.agent_type,
+            work_dir=effect.work_dir,
+            prompt=effect.prompt,
+            model=effect.model,
+            effort=effect.effort,
+            bare=effect.bare,
+            session_env=effect.session_env,
+        )
+
+    def handle_launch_task(self, effect: LaunchTaskEffect) -> SessionHandle:
+        """LaunchTaskEffect is deprecated."""
+        raise AgentLaunchError("LaunchTaskEffect is deprecated; use LaunchEffect directly")
+
+    def handle_claude_launch(self, effect: ClaudeLaunchEffect) -> SessionHandle:
+        """Launch a Claude session through doeff-agentd."""
+        if effect.mcp_tools:
+            raise AgentLaunchError(
+                "doeff-agentd does not manage MCP lifecycle; prepare MCP with defmcp"
+            )
+        return self._launch(
+            session_name=effect.session_name,
+            agent_type=AgentType.CLAUDE,
+            work_dir=effect.work_dir,
+            prompt=effect.prompt,
+            model=effect.model,
+            effort=effect.effort,
+            bare=effect.bare,
+            session_env=effect.session_env,
+        )
+
+    def handle_monitor(self, effect: MonitorEffect) -> Observation:
+        """Return the daemon's latest recorded session state."""
+        snapshot = self._require_snapshot(effect.handle.session_id)
+        return Observation(
+            status=snapshot.status,
+            output_changed=False,
+            pr_url=snapshot.pr_url,
+            output_snippet=snapshot.output_snippet,
+        )
+
+    def handle_capture(self, effect: CaptureEffect) -> str:
+        """Capture current session output through the daemon."""
+        return self._client.capture_session(effect.handle.session_id, lines=effect.lines)
+
+    def handle_send(self, effect: SendEffect) -> None:
+        """Send input to a running session through the daemon."""
+        self._client.send_session(
+            effect.handle.session_id,
+            effect.message,
+            enter=effect.enter,
+            literal=effect.literal,
+        )
+
+    def handle_stop(self, effect: StopEffect) -> None:
+        """Cancel a session through the daemon."""
+        self._client.cancel_session(effect.handle.session_id)
+
+    def handle_get_session(
+        self,
+        effect: GetAgentSessionEffect,
+    ) -> AgentSessionSnapshot | None:
+        """Read a session snapshot without causing backend observation."""
+        return self._client.get_session(effect.session_id)
+
+    def handle_list_sessions(
+        self,
+        effect: ListAgentSessionsEffect,
+    ) -> tuple[AgentSessionSnapshot, ...]:
+        """List daemon-owned session snapshots."""
+        return self._client.list_sessions(effect.query)
+
+    def handle_observe_session(
+        self,
+        effect: ObserveAgentSessionEffect,
+    ) -> AgentSessionSnapshot:
+        """Read the daemon's latest snapshot without mutating session state."""
+        return self._require_snapshot(effect.session_id)
+
+    def handle_attach_session(self, effect: AttachAgentSessionEffect) -> None:
+        """Attach is intentionally not part of the first daemon RPC slice."""
+        raise AgentError("AttachAgentSession is not implemented by doeff-agentd client")
+
+    def handle_cancel_session(
+        self,
+        effect: CancelAgentSessionEffect,
+    ) -> AgentSessionSnapshot:
+        """Cancel a running session through the daemon."""
+        return self._client.cancel_session(effect.session_id)
+
+    def handle_cleanup_session(
+        self,
+        effect: CleanupAgentSessionEffect,
+    ) -> AgentSessionSnapshot:
+        """Clean up daemon-owned session resources."""
+        return self._client.cleanup_session(effect.session_id)
+
+    def _launch(
+        self,
+        *,
+        session_name: str,
+        agent_type: AgentType,
+        work_dir: Path,
+        prompt: str | None,
+        model: str | None,
+        effort: str | None,
+        bare: bool,
+        session_env: Mapping[str, str] | None,
+    ) -> SessionHandle:
+        adapter = get_adapter(agent_type)
+        if not adapter.is_available():
+            raise AgentNotAvailableError(f"{agent_type.value} CLI is not available")
+
+        tmux_env: dict[str, str] = dict(session_env or {})
+        command_env: dict[str, str] = dict(session_env or {})
+        self._prepare_agent_environment(agent_type, work_dir, tmux_env, command_env)
+
+        argv = adapter.launch_command(
+            LaunchParams(
+                work_dir=work_dir,
+                prompt=prompt,
+                model=model,
+                effort=effort,
+                bare=bare,
+            )
+        )
+        command = wrap_with_shell_exports(shlex.join(argv), command_env)
+        snapshot = self._client.launch_session(
+            session_id=session_name,
+            session_name=session_name,
+            agent_type=agent_type.value,
+            work_dir=work_dir,
+            command=command,
+            session_env=tmux_env,
+        )
+        return snapshot.to_handle()
+
+    def _prepare_agent_environment(
+        self,
+        agent_type: AgentType,
+        work_dir: Path,
+        tmux_env: dict[str, str],
+        command_env: dict[str, str],
+    ) -> None:
+        if agent_type == AgentType.CLAUDE:
+            agent_home = self._claude_runtime_policy.agent_home or work_dir / ".agent-home"
+            trusted_workspaces = self._claude_runtime_policy.trusted_workspaces or (work_dir,)
+            self._prepare_claude_home(agent_home, trusted_workspaces)
+            tmux_env.setdefault("DISABLE_AUTO_UPDATE", "true")
+            tmux_env.setdefault("DISABLE_UPDATE_PROMPT", "true")
+            command_env.update(
+                {
+                    "HOME": str(agent_home),
+                    "CLAUDE_HOME": str(agent_home / ".claude"),
+                    **(
+                        {"CLAUDE_CODE_OAUTH_TOKEN": os.environ["CLAUDE_CODE_OAUTH_TOKEN"]}
+                        if "CLAUDE_CODE_OAUTH_TOKEN" in os.environ
+                        else {}
+                    ),
+                    **self._claude_runtime_policy.bootstrap_exports,
+                }
+            )
+        elif agent_type == AgentType.CODEX:
+            codex_home = command_env.get(
+                "CODEX_HOME",
+                os.environ.get("CODEX_HOME", str(Path.home() / ".codex")),
+            )
+            trust_workspace_in_codex_home(codex_home, work_dir)
+
+    def _require_snapshot(self, session_id: str) -> AgentSessionSnapshot:
+        snapshot = self._client.get_session(session_id)
+        if snapshot is None:
+            raise SessionNotFoundError(f"Session {session_id} is not registered")
+        return snapshot
+
+    def _prepare_claude_home(
+        self,
+        agent_home: Path,
+        trusted_workspaces: tuple[Path, ...],
+    ) -> None:
+        prepare_claude_home(agent_home, trusted_workspaces)
+
+
+__all__ = [
+    "AgentdSessionClient",
+    "DaemonAgentHandler",
+]

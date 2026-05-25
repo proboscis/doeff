@@ -41,6 +41,7 @@ class LaunchParams:
     # startup time and per-turn prompt size for focused execution tasks.
     effort: str | None = None
     bare: bool = False
+    mcp_servers: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)

@@ -15,7 +15,7 @@
 
 (import doeff_agents.effects.agent [
   LaunchEffect MonitorEffect CaptureEffect
-  SendEffect StopEffect SleepEffect SessionHandle Observation])
+  SendEffect StopEffect SessionHandle Observation])
 (import doeff_agents.adapters.base [AgentType LaunchParams])
 (import doeff_agents.adapters.claude [ClaudeAdapter])
 (import doeff_agents.session-backend [SessionBackend])
@@ -28,7 +28,6 @@
 
 (import json)
 (import shlex)
-(import time)
 (import pathlib [Path])
 
 
@@ -214,10 +213,6 @@
       (set! mcp-servers mcp-servers)
       (when (.has-session active-backend handle.session-name)
         (.kill-session active-backend handle.session-name))
-      (resume None))
-
-    (SleepEffect [seconds]
-      (time.sleep seconds)
       (resume None)))
 
   _handler)
