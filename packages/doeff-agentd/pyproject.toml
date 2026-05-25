@@ -1,0 +1,9 @@
+[project]
+name = "doeff-agentd"
+version = "0.1.0"
+description = "Long-lived agent session supervisor for doeff-agents"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.uv]
+package = false

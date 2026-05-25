@@ -3,12 +3,14 @@
 
 from collections.abc import Callable
 from importlib import import_module
+from pathlib import Path
 from typing import Any
 
 from doeff_time import sync_time_handler
 
 from doeff import Effect, Resume, WithHandler, do, run
 from doeff.mcp import McpToolDef
+from doeff_agents.agentd_client import ensure_agentd
 from doeff_agents.effects import (
     AttachAgentSessionEffect,
     CancelAgentSessionEffect,
@@ -23,8 +25,10 @@ from doeff_agents.effects import (
     SendEffect,
     StopEffect,
 )
+from doeff_agents.runtime import ClaudeRuntimePolicy
 from doeff_agents.session_store import AgentSessionRepository
 
+from .daemon import AgentdSessionClient, DaemonAgentHandler
 from .production import AgentHandler, SessionState, TmuxAgentHandler, get_adapter, register_adapter
 from .testing import MockAgentHandler, MockAgentState, MockSessionScript
 
@@ -202,6 +206,55 @@ def agent_effectful_handlers(
     )
 
 
+def daemon_agent_handler(
+    *,
+    socket_path: str | Path | None = None,
+    db_path: str | Path | None = None,
+    daemon_bin: str | Path | None = None,
+    client: AgentdSessionClient | None = None,
+    claude_runtime_policy: ClaudeRuntimePolicy | None = None,
+    max_running: int = 10,
+) -> ProtocolHandler:
+    """Return the daemon-backed agent handler as a Hy defhandler."""
+    active_client = client
+    if active_client is None:
+        active_client = ensure_agentd(
+            socket_path=socket_path,
+            db_path=db_path,
+            daemon_bin=daemon_bin,
+            max_running=max_running,
+        )
+    agent_handler = DaemonAgentHandler(
+        client=active_client,
+        claude_runtime_policy=claude_runtime_policy,
+    )
+    return _hy_effectful_module().agent_handler_defhandler(agent_handler)
+
+
+def daemon_agent_handlers(
+    *,
+    socket_path: str | Path | None = None,
+    db_path: str | Path | None = None,
+    daemon_bin: str | Path | None = None,
+    client: AgentdSessionClient | None = None,
+    claude_runtime_policy: ClaudeRuntimePolicy | None = None,
+    time_handler: ProtocolHandler | None = None,
+    max_running: int = 10,
+) -> tuple[ProtocolHandler, ...]:
+    """Return standard handlers for doeff-agentd-backed workflows."""
+    return (
+        time_handler or sync_time_handler(),
+        daemon_agent_handler(
+            socket_path=socket_path,
+            db_path=db_path,
+            daemon_bin=daemon_bin,
+            client=client,
+            claude_runtime_policy=claude_runtime_policy,
+            max_running=max_running,
+        ),
+    )
+
+
 def mock_agent_handlers(
     *,
     time_handler: ProtocolHandler | None = None,
@@ -242,7 +295,9 @@ __all__ = [  # noqa: RUF022 - grouped by category for readability
     "AGENT_EFFECT_TYPES",
     "AGENT_SESSIONS_KEY",
     "AgentHandler",
+    "AgentdSessionClient",
     "AgentSessionRepository",
+    "DaemonAgentHandler",
     "MockAgentHandler",
     "MockAgentState",
     "MOCK_AGENT_STATE_KEY",
@@ -254,6 +309,8 @@ __all__ = [  # noqa: RUF022 - grouped by category for readability
     "agent_effectful_handlers",
     "codex_agent_handler",
     "configure_mock_session",
+    "daemon_agent_handler",
+    "daemon_agent_handlers",
     "dispatch_effect",
     "get_adapter",
     "get_mock_agent_state",
