@@ -19,6 +19,8 @@ tracked_artifacts="$(
 		'*.db-wal' \
 		'*.sqlite' \
 		'*.sqlite-journal' \
+		'*.sqlite-shm' \
+		'*.sqlite-wal' \
 		'*.sqlite3' \
 		'*.sqlite3-journal' \
 		'*.sqlite3-shm' \
