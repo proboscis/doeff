@@ -10,6 +10,7 @@ from typing import Any
 
 _LAZY_EXPORTS = {
     "AgentAdapter": ".adapters.base",
+    "AgentSessionLifecycle": ".adapters.base",
     "AgentType": ".adapters.base",
     "InjectionMethod": ".adapters.base",
     "LaunchConfig": ".adapters.base",

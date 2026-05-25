@@ -17,6 +17,13 @@ class AgentType(Enum):
     CUSTOM = "custom"
 
 
+class AgentSessionLifecycle(Enum):
+    """How a session should be supervised after an agent turn completes."""
+
+    RUN_TO_COMPLETION = "run_to_completion"
+    INTERACTIVE = "interactive"
+
+
 class InjectionMethod(Enum):
     """How the prompt should be sent to the agent."""
 
@@ -59,6 +66,7 @@ class LaunchConfig:
     model: str | None = None
     mcp_tools: tuple = ()
     session_env: dict[str, str] | None = None
+    lifecycle: AgentSessionLifecycle = AgentSessionLifecycle.RUN_TO_COMPLETION
 
 
 class AgentAdapter(Protocol):

@@ -15,6 +15,7 @@ from doeff_agents.effects import (
     AgentError,
     AgentLaunchError,
     AgentNotAvailableError,
+    AgentSessionLifecycle,
     AgentSessionSnapshot,
     AttachAgentSessionEffect,
     CancelAgentSessionEffect,
@@ -51,6 +52,7 @@ class AgentdSessionClient(Protocol):
         agent_type: str,
         work_dir: Path,
         command: str,
+        lifecycle: AgentSessionLifecycle,
         session_env: Mapping[str, str] | None = None,
     ) -> AgentSessionSnapshot: ...
 
@@ -107,6 +109,7 @@ class DaemonAgentHandler(AgentHandler):
             model=effect.model,
             effort=effect.effort,
             bare=effect.bare,
+            lifecycle=effect.lifecycle,
             session_env=effect.session_env,
         )
 
@@ -128,6 +131,7 @@ class DaemonAgentHandler(AgentHandler):
             model=effect.model,
             effort=effect.effort,
             bare=effect.bare,
+            lifecycle=effect.lifecycle,
             session_env=effect.session_env,
         )
 
@@ -207,6 +211,7 @@ class DaemonAgentHandler(AgentHandler):
         model: str | None,
         effort: str | None,
         bare: bool,
+        lifecycle: AgentSessionLifecycle,
         session_env: Mapping[str, str] | None,
     ) -> SessionHandle:
         adapter = get_adapter(agent_type)
@@ -233,6 +238,7 @@ class DaemonAgentHandler(AgentHandler):
             agent_type=agent_type.value,
             work_dir=work_dir,
             command=command,
+            lifecycle=lifecycle,
             session_env=tmux_env,
         )
         return snapshot.to_handle()

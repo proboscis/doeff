@@ -19,7 +19,7 @@ from doeff import EffectBase
 if TYPE_CHECKING:
     from doeff.mcp import McpToolDef
 
-from doeff_agents.adapters.base import AgentType
+from doeff_agents.adapters.base import AgentSessionLifecycle, AgentType
 from doeff_agents.monitor import SessionStatus
 
 # =============================================================================
@@ -39,6 +39,9 @@ class SessionHandle:
     pane_id: str
     agent_type: AgentType
     work_dir: Path
+    lifecycle: "AgentSessionLifecycle" = field(
+        default_factory=lambda: AgentSessionLifecycle.RUN_TO_COMPLETION
+    )
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __repr__(self) -> str:
@@ -89,6 +92,7 @@ class AgentSessionSnapshot:
     agent_type: AgentType
     work_dir: Path
     status: SessionStatus
+    lifecycle: AgentSessionLifecycle = AgentSessionLifecycle.RUN_TO_COMPLETION
     backend_kind: str = "terminal"
     backend_ref: dict[str, str] = field(default_factory=dict)
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -111,6 +115,7 @@ class AgentSessionSnapshot:
         cleaned_at: datetime | None = None,
         pr_url: str | None = None,
         output_snippet: str | None = None,
+        lifecycle: AgentSessionLifecycle | None = None,
     ) -> "AgentSessionSnapshot":
         """Create a snapshot from the public handle."""
         return cls(
@@ -119,6 +124,7 @@ class AgentSessionSnapshot:
             pane_id=handle.pane_id,
             agent_type=handle.agent_type,
             work_dir=handle.work_dir,
+            lifecycle=lifecycle or handle.lifecycle,
             status=status,
             backend_kind=backend_kind,
             backend_ref=backend_ref
@@ -141,6 +147,7 @@ class AgentSessionSnapshot:
             pane_id=self.pane_id,
             agent_type=self.agent_type,
             work_dir=self.work_dir,
+            lifecycle=self.lifecycle,
             started_at=self.started_at,
         )
 
@@ -156,6 +163,7 @@ class AgentSessionSnapshot:
             "pane_id": self.pane_id,
             "agent_type": self.agent_type.value,
             "work_dir": str(self.work_dir),
+            "lifecycle": self.lifecycle.value,
             "status": self.status.value,
             "backend_kind": self.backend_kind,
             "backend_ref": dict(self.backend_ref),
@@ -184,6 +192,9 @@ class AgentSessionSnapshot:
             pane_id=str(data["pane_id"]),
             agent_type=AgentType(str(data["agent_type"])),
             work_dir=Path(str(data["work_dir"])),
+            lifecycle=AgentSessionLifecycle(
+                str(data.get("lifecycle", AgentSessionLifecycle.RUN_TO_COMPLETION.value))
+            ),
             status=SessionStatus(str(data["status"])),
             backend_kind=str(data.get("backend_kind", "terminal")),
             backend_ref=dict(data.get("backend_ref", {})),
@@ -203,6 +214,7 @@ class AgentSessionQuery:
     status: SessionStatus | None = None
     agent_type: AgentType | None = None
     backend_kind: str | None = None
+    lifecycle: AgentSessionLifecycle | None = None
 
 
 def _parse_datetime(value: str) -> datetime:
@@ -250,6 +262,7 @@ class LaunchEffect(AgentEffectBase):
     mcp_server_name: str = "doeff"
     effort: str | None = None
     bare: bool = False
+    lifecycle: AgentSessionLifecycle = AgentSessionLifecycle.RUN_TO_COMPLETION
     ready_timeout: float = 30.0
     session_env: dict[str, str] | None = None
 
@@ -272,6 +285,7 @@ class ClaudeLaunchEffect(AgentEffectBase):
     mcp_server_name: str = "doeff"
     effort: str | None = None
     bare: bool = False
+    lifecycle: AgentSessionLifecycle = AgentSessionLifecycle.RUN_TO_COMPLETION
     ready_timeout: float = 30.0
     session_env: dict[str, str] | None = None
 
@@ -423,6 +437,7 @@ def Launch(  # noqa: N802
     mcp_server_name: str = "doeff",
     effort: str | None = None,
     bare: bool = False,
+    lifecycle: AgentSessionLifecycle = AgentSessionLifecycle.RUN_TO_COMPLETION,
     ready_timeout: float = 30.0,
     session_env: dict[str, str] | None = None,
 ) -> LaunchEffect:
@@ -437,6 +452,7 @@ def Launch(  # noqa: N802
         mcp_server_name=mcp_server_name,
         effort=effort,
         bare=bare,
+        lifecycle=lifecycle,
         ready_timeout=ready_timeout,
         session_env=session_env,
     )
