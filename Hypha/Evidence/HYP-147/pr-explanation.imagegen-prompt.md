@@ -3,34 +3,16 @@ Tool: imagegen
 Prompt:
 
 Use case: infographic-diagram
-Asset type: GitHub PR 説明図として使う横長 PNG
-Primary request: HYP-147 の実装内容を説明する、霞ヶ関風の情報密度が高い業務ブリーフ図を作成してください。全ての見出し、説明、ラベルは日本語にしてください。英語の文章は禁止です。技術識別子だけはそのまま使えます。
+Asset type: GitHub PR explanation diagram saved as a PNG for HYP-147.
+Primary request: Create an information-dense Japanese Kasumigaseki-style briefing diagram that explains PR #416 for HYP-147. The theme is repository hygiene: generated lint logs, local databases, doeff-flow traces, agent runtime state, browser automation captures, local Claude skill/settings files, and an accidental root server.js bundle are removed from git tracking and ignored; a repo hygiene guard checks that they do not return.
 
-Canvas: 16:9 横長、白背景、細い罫線、淡いグレーの区画、濃紺と深緑をアクセントにした官公庁資料風。文字は読みやすい太めの日本語ゴシック。小さな pictogram と矢印を使い、表形式と流れ図を組み合わせる。
+Required visible Japanese text only, except exact technical identifiers. Use crisp Japanese labels and headings. No English explanatory headings. Technical identifiers that may appear: HYP-147, PR #416, `make lint-doeff`, `--no-log`, `.gitignore`, `make check-repo-hygiene`, `git ls-files`, `.agent-home/`, `.playwright-mcp/`, `.doeff-flow/`, `.doeff-lint.jsonl`, `server.js`.
 
-Visible title: 「HYP-147 生成物を追跡対象から外す」
-Subtitle: 「標準 lint と doeff-flow example が git 差分を汚さない状態へ」
+Composition: A clean bureaucratic policy brief layout, dense but readable, landscape 16:9. White background with thin navy and dark gray rule lines, small accent colors in red/blue/green, table-like sections, numbered review points, arrows, and simple pictograms/icons. Use four main zones:
+1. Top title bar: 「HYP-147 リポジトリ整理」 and subtitle 「生成物を追跡対象から外し、再混入を検査」.
+2. Left zone titled 「混入していた生成物」 with small icons and grouped labels: 「lint ログ」, 「SQLite / trace」, 「agent 実行状態」, 「画面キャプチャ」, 「ローカル設定・skill」, 「root server.js」.
+3. Center zone titled 「変更した境界」 with arrows: `make lint-doeff` -> `--no-log`; `.gitignore` -> generated artifacts ignored; doeff-flow sample -> `.doeff-flow/` local output; tracked artifacts -> removed from git.
+4. Right zone titled 「確認観点」 with checklist rows: `make check-repo-hygiene`, `git ls-files` guard, current `main` artifacts covered, UI 変更なし.
+5. Bottom strip titled 「レビュアーが見ること」: 「削除対象の分類が妥当か」, 「ignore ルールが広すぎないか」, 「検査が再発を止めるか」.
 
-Main layout:
-1. 左カラム「変更前の問題」
-   - 「make lint-doeff が .doeff-lint.jsonl を更新」
-   - 「example 実行で SQLite DB と trace.jsonl が残る」
-   - 「None / Untitled など用途不明の出力も追跡」
-   Use warning icon, dirty git diff icon, file icons.
-2. 中央カラム「今回の変更」
-   - 「lint-doeff は --no-log を使用」
-   - 「.gitignore に log / trace / DB / 一時出力を追加」
-   - 「doeff-flow の DB は .doeff-flow/durable_workflow.db へ」
-   - 「既存の生成物ファイルを削除」
-   Use wrench icon, folder icon, database icon, arrow flow.
-3. 右カラム「再発防止」
-   - 「make check-repo-hygiene を追加」
-   - 「git ls-files で DB / SQLite / JSONL / None / Untitled を検査」
-   - 「fixture 化する場合は明示的な配置と許可リストへ」
-   Use shield icon, checklist icon.
-4. 下段「レビュアー確認点」
-   - 「意図した fixture を削除していないか」
-   - 「標準 lint 経路が追跡ファイルを変更しないか」
-   - 「doeff-flow README と example の説明が一致しているか」
-
-Avoid: pseudo-code, invented APIs, English headings, English callouts, raw command dumps, screenshots, decorative blobs, gradients, handwritten style.
+Style details: professional Japanese government briefing, compact labels, deliberate section hierarchy, small arrows connecting cause to fix to verification, no decorative gradients, no pseudo-code, no fake APIs, no screenshots, no logos, no watermarks.
