@@ -1,15 +1,18 @@
-"""
-Core effects — Ask, Get, Put, Tell.
+"""Core effects — Ask, Get, Put, Tell, HttpRequest.
 
 These are EffectBase subclasses. Yield them from @do functions.
 Handlers (reader, state, writer) handle them.
 """
 
+import doeff_hy as _doeff_hy  # noqa: F401  # registers Hy import hooks
 from doeff_vm import EffectBase
+
+from doeff_core_effects.http_effects import HttpError, HttpRequest, HttpResponse  # noqa: F401
 
 
 class Ask(EffectBase):
     """Reader effect: get a value from the environment by key."""
+
     def __init__(self, key):
         super().__init__()
         self.key = key
@@ -20,6 +23,7 @@ class Ask(EffectBase):
 
 class Get(EffectBase):
     """State effect: get a value from mutable state by key."""
+
     def __init__(self, key):
         super().__init__()
         self.key = key
@@ -30,6 +34,7 @@ class Get(EffectBase):
 
 class Put(EffectBase):
     """State effect: set a value in mutable state."""
+
     def __init__(self, key, value):
         super().__init__()
         self.key = key
@@ -39,7 +44,7 @@ class Put(EffectBase):
         return f"Put({self.key!r}, {self.value!r})"
 
 
-def Tell(message):
+def Tell(message):  # noqa: N802
     """Convenience: Tell(message) → WriterTellEffect(message)."""
     return WriterTellEffect(message)
 
@@ -49,6 +54,7 @@ class Local(EffectBase):
 
     yield Local({key: value, ...}, program) → result of program
     """
+
     def __init__(self, env, program):
         super().__init__()
         self.env = env
@@ -63,13 +69,14 @@ class Listen(EffectBase):
 
     yield Listen(program, types=(WriterTellEffect,)) → (result, collected)
     """
+
     def __init__(self, program, types=None):
         super().__init__()
         self.program = program
         self.types = types
 
     def __repr__(self):
-        return f"Listen(...)"
+        return "Listen(...)"
 
 
 class Await(EffectBase):
@@ -77,12 +84,13 @@ class Await(EffectBase):
 
     yield Await(some_coroutine) → result
     """
+
     def __init__(self, coroutine):
         super().__init__()
         self.coroutine = coroutine
 
     def __repr__(self):
-        return f"Await(...)"
+        return "Await(...)"
 
 
 class Try(EffectBase):
@@ -90,6 +98,7 @@ class Try(EffectBase):
 
     yield Try(some_program) → Ok(value) or Err(error)
     """
+
     def __init__(self, program):
         super().__init__()
         self.program = program
@@ -103,6 +112,7 @@ class WriterTellEffect(EffectBase):
 
     This is the wire type for slog() and Tell(). Listen collects these.
     """
+
     def __init__(self, msg, **kwargs):
         super().__init__()
         self.msg = msg

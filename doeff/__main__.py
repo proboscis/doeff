@@ -13,19 +13,23 @@ Usage:
 
 import argparse
 import json
+import os
 import sys
-from collections.abc import Iterable
-from typing import Any, Callable, cast
+from collections.abc import Callable, Iterable
+from typing import Any, cast
 
-from doeff.cli.profiling import print_profiling_status
-from doeff.cli.runbox import maybe_create_runbox_record
+from doeff.cli.profiling import (
+    print_profiling_status,
+    profiling_config_from_env,
+    use_profiling_config,
+)
 from doeff.cli.run_services import (
     RunContext,
     execute,
     import_symbol,
     resolve_context,
 )
-
+from doeff.cli.runbox import maybe_create_runbox_record
 
 _DEFAULT_RUNNER = "doeff.runners.local.run_local"
 
@@ -371,8 +375,10 @@ def handle_run(args: RunArgs) -> int:
         _warn_legacy_flags(args)
         if args.runner and args.runner != _DEFAULT_RUNNER:
             maybe_create_runbox_record(skip_runbox=args.no_runbox)
-            return _dispatch_runner(args)
-        return handle_run_code(args)
+            code_result = _dispatch_runner(args)
+        else:
+            code_result = handle_run_code(args)
+        return code_result
 
     if not args.program:
         print(
@@ -491,7 +497,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Iterable[str] | None = None) -> int:
+def _main(argv: Iterable[str] | None = None) -> int:
     print_profiling_status()
     parser = build_parser()
     argv_list = list(argv) if argv is not None else sys.argv[1:]
@@ -518,6 +524,12 @@ def main(argv: Iterable[str] | None = None) -> int:
         else:
             print(f"Error: {reported}", file=sys.stderr)
         return 1
+
+
+def main(argv: Iterable[str] | None = None) -> int:
+    profiling_config = profiling_config_from_env(os.environ)
+    with use_profiling_config(profiling_config):
+        return _main(argv)
 
 
 if __name__ == "__main__":
