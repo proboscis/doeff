@@ -47,6 +47,36 @@ rules:
       include:
         - packages/
 
+  - id: doeff-agents-no-sleep-effect
+    languages: [python]
+    severity: ERROR
+    message: >
+      doeff-agents must not define or use its own Sleep/SleepEffect.
+      Agent lifecycle polling must use doeff_time.Delay so waiting remains a
+      normal time effect that can be handled by sync, async, or simulated time runtimes.
+    pattern-either:
+      - pattern: |
+          class SleepEffect(...):
+              ...
+      - pattern: |
+          def Sleep(...):
+              ...
+      - pattern: |
+          from doeff_agents import Sleep
+      - pattern: |
+          from doeff_agents import SleepEffect
+      - pattern: |
+          from doeff_agents.effects import Sleep
+      - pattern: |
+          from doeff_agents.effects import SleepEffect
+      - pattern: |
+          from doeff_agents.effects.agent import Sleep
+      - pattern: |
+          from doeff_agents.effects.agent import SleepEffect
+    paths:
+      include:
+        - /packages/doeff-agents/**
+
   - id: no-runresult-hasattr-duck-typing
     languages: [python]
     severity: ERROR

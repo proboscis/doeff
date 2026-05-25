@@ -9,7 +9,7 @@
 (import doeff [Ask])
 (import doeff_agents.effects.agent [
   LaunchEffect MonitorEffect CaptureEffect
-  SendEffect StopEffect SleepEffect SessionHandle Observation])
+  SendEffect StopEffect SessionHandle Observation])
 (import doeff_agents.adapters.base [AgentType LaunchParams])
 (import doeff_agents.adapters.codex [CodexAdapter])
 (import doeff_agents.session-backend [SessionBackend])
@@ -19,7 +19,6 @@
 (import doeff_agents [tmux])
 
 (import shlex)
-(import time)
 
 
 (defn codex-handler [* [backend None]]
@@ -112,10 +111,6 @@
         (<- active-backend (Ask SessionBackend)))
       (when (.has-session active-backend handle.session-name)
         (.kill-session active-backend handle.session-name))
-      (resume None))
-
-    (SleepEffect [seconds]
-      (time.sleep seconds)
       (resume None)))
 
   _handler)

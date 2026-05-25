@@ -17,9 +17,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from doeff_agents import (
     AgentType,
     CaptureEffect,
+    CleanupAgentSession,
+    GetAgentSession,
     LaunchConfig,
     LaunchEffect,
+    ListAgentSessions,
     MonitorEffect,
+    ObserveAgentSession,
     SendEffect,
     SessionConfig,
     SessionInfo,
@@ -37,7 +41,9 @@ from doeff_agents.adapters.base import (
     InjectionMethod,
     LaunchParams,
 )
+from doeff_agents.adapters.codex import CodexAdapter
 from doeff_agents.session_backend import SessionBackend
+from doeff_agents.session_store import InMemoryAgentSessionRepository
 from doeff_agents.tmux import TmuxSessionBackend
 
 
@@ -76,6 +82,11 @@ class FakeAdapter:
     def launch_command(self, _params: LaunchParams) -> list[str]:
         return ["fake-agent", "--run"]
 
+    def is_available(self) -> bool:
+        return True
+
+
+class FakeCodexAdapter(CodexAdapter):
     def is_available(self) -> bool:
         return True
 
@@ -189,6 +200,104 @@ def test_tmux_agent_handler_uses_injected_backend(monkeypatch) -> None:
 
     handler.handle_stop(StopEffect(handle=handle))
     assert backend.killed == ["worker"]
+
+
+def test_tmux_agent_handler_persists_session_state(monkeypatch) -> None:
+    backend = FakeBackend()
+    repository = InMemoryAgentSessionRepository()
+    monkeypatch.setattr("doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter())
+
+    handler = TmuxAgentHandler(backend=backend, session_repository=repository)
+    launch = LaunchEffect(
+        session_name="persistent-worker",
+        agent_type=AgentType.CLAUDE,
+        work_dir=Path.cwd(),
+        prompt="hello",
+        ready_timeout=0.1,
+    )
+
+    handle = handler.handle_launch(launch)
+    snapshot = handler.handle_get_session(GetAgentSession("persistent-worker"))
+
+    assert snapshot is not None
+    assert snapshot.session_id == "persistent-worker"
+    assert snapshot.pane_id == handle.pane_id
+    assert snapshot.status == SessionStatus.BOOTING
+
+    observed = handler.handle_observe_session(ObserveAgentSession("persistent-worker"))
+
+    assert observed.status == SessionStatus.DONE
+    assert observed.finished_at is not None
+    assert observed.output_snippet == "Goodbye!"
+    assert [
+        session.session_id
+        for session in handler.handle_list_sessions(ListAgentSessions())
+    ] == ["persistent-worker"]
+
+    cleaned = handler.handle_cleanup_session(CleanupAgentSession("persistent-worker"))
+
+    assert cleaned.status == SessionStatus.STOPPED
+    assert cleaned.cleaned_at is not None
+    assert backend.killed == ["persistent-worker"]
+
+
+def test_tmux_agent_handler_trusts_codex_workspace(monkeypatch, tmp_path: Path) -> None:
+    backend = FakeBackend()
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter",
+        lambda _agent_type: FakeCodexAdapter(),
+    )
+    codex_home = tmp_path / "codex-home"
+    work_dir = tmp_path / "workspace"
+
+    handler = TmuxAgentHandler(backend=backend)
+    launch = LaunchEffect(
+        session_name="codex-worker",
+        agent_type=AgentType.CODEX,
+        work_dir=work_dir,
+        prompt="hello",
+        session_env={"CODEX_HOME": str(codex_home)},
+    )
+
+    handler.handle_launch(launch)
+
+    assert (codex_home / "config.toml").read_text(encoding="utf-8") == (
+        f'[projects."{work_dir}"]\n'
+        'trust_level = "trusted"\n'
+    )
+    assert "export CODEX_HOME=" in backend.sent[0][1]
+
+
+def test_tmux_agent_handler_injects_codex_mcp_config(monkeypatch, tmp_path: Path) -> None:
+    backend = FakeBackend()
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter",
+        lambda _agent_type: FakeCodexAdapter(),
+    )
+
+    class FakeMcpServer:
+        url = "http://127.0.0.1:51978/sse"
+
+    monkeypatch.setattr(
+        TmuxAgentHandler,
+        "_start_mcp_server",
+        lambda _self, _effect, _run_tool: FakeMcpServer(),
+    )
+
+    handler = TmuxAgentHandler(backend=backend)
+    launch = LaunchEffect(
+        session_name="codex-mcp-worker",
+        agent_type=AgentType.CODEX,
+        work_dir=tmp_path / "workspace",
+        prompt="hello",
+        mcp_tools=("hypha-transition-issue",),
+        mcp_server_name="hypha",
+    )
+
+    handler.handle_launch(launch, run_tool=lambda *_args, **_kwargs: None)
+
+    sent_command = backend.sent[0][1]
+    assert 'mcp_servers."hypha".url="http://127.0.0.1:51978/sse"' in sent_command
 
 
 def test_imperative_session_api_accepts_injected_backend(monkeypatch) -> None:

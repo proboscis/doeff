@@ -19,12 +19,12 @@ from doeff_agents.effects import (
     Capture,
     LaunchEffect,
     Monitor,
-    Sleep,
     Stop,
 )
 from doeff_agents.handlers import _make_protocol_handler
 from doeff_agents.handlers.production import TmuxAgentHandler
 from doeff_agents.tmux import TmuxSessionBackend
+from doeff_time import Delay, sync_time_handler
 
 from doeff import Perform, WithHandler, do, run
 from doeff.mcp import McpParamSchema, McpToolDef
@@ -86,10 +86,10 @@ class TestMcpLiveE2E:
 
             # Wait for Claude to boot, then poll until tool is called or timeout
             for _ in range(90):  # 90 sec max
-                yield Sleep(1.0)
+                yield Delay(1.0)
                 if len(_tool_call_log) > 0:
                     # Tool was called — wait a bit for Claude to finish
-                    yield Sleep(3.0)
+                    yield Delay(3.0)
                     break
                 obs = yield Monitor(handle)
                 if obs.is_terminal:
@@ -100,7 +100,7 @@ class TestMcpLiveE2E:
             return output
 
         try:
-            output = run(WithHandler(agent_protocol, program()))
+            output = run(WithHandler(sync_time_handler(), WithHandler(agent_protocol, program())))
 
             # Verify the tool was actually called via the in-process log
             assert len(_tool_call_log) > 0, (
