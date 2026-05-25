@@ -15,23 +15,29 @@ from pathlib import Path
 from doeff_agents import tmux
 from doeff_agents.adapters.base import AgentAdapter, AgentType, InjectionMethod, LaunchParams
 from doeff_agents.adapters.claude import ClaudeAdapter
-from doeff_agents.adapters.codex import CodexAdapter
+from doeff_agents.adapters.codex import CodexAdapter, trust_workspace_in_codex_home
 from doeff_agents.adapters.gemini import GeminiAdapter
 from doeff_agents.effects import (
     AgentLaunchError,
     AgentNotAvailableError,
     AgentReadyTimeoutError,
+    AgentSessionSnapshot,
+    AttachAgentSessionEffect,
+    CancelAgentSessionEffect,
     CaptureEffect,
     ClaudeLaunchEffect,
+    CleanupAgentSessionEffect,
+    GetAgentSessionEffect,
     LaunchEffect,
     LaunchTaskEffect,
+    ListAgentSessionsEffect,
     MonitorEffect,
     Observation,
+    ObserveAgentSessionEffect,
     SendEffect,
     SessionAlreadyExistsError,
     SessionHandle,
     SessionNotFoundError,
-    SleepEffect,
     StopEffect,
 )
 from doeff_agents.mcp_server import McpToolServer, RunToolFn
@@ -46,6 +52,7 @@ from doeff_agents.monitor import (
 from doeff_agents.runtime import ClaudeRuntimePolicy
 from doeff_agents.session import _dismiss_onboarding_dialogs
 from doeff_agents.session_backend import SessionBackend
+from doeff_agents.session_store import AgentSessionRepository, InMemoryAgentSessionRepository
 from doeff_agents.shell import wrap_with_shell_exports
 
 
@@ -53,7 +60,11 @@ class AgentHandler(ABC):
     """Abstract handler for agent effects."""
 
     @abstractmethod
-    def handle_launch(self, effect: LaunchEffect) -> SessionHandle:
+    def handle_launch(
+        self,
+        effect: LaunchEffect,
+        run_tool: RunToolFn | None = None,
+    ) -> SessionHandle:
         """Handle Launch effect."""
 
     @abstractmethod
@@ -81,9 +92,40 @@ class AgentHandler(ABC):
         """Handle Stop effect."""
 
     @abstractmethod
-    def handle_sleep(self, effect: SleepEffect) -> None:
-        """Handle Sleep effect."""
+    def handle_get_session(
+        self,
+        effect: GetAgentSessionEffect,
+    ) -> AgentSessionSnapshot | None:
+        """Handle GetAgentSession effect."""
 
+    @abstractmethod
+    def handle_list_sessions(
+        self,
+        effect: ListAgentSessionsEffect,
+    ) -> tuple[AgentSessionSnapshot, ...]:
+        """Handle ListAgentSessions effect."""
+
+    @abstractmethod
+    def handle_observe_session(
+        self,
+        effect: ObserveAgentSessionEffect,
+    ) -> AgentSessionSnapshot:
+        """Handle ObserveAgentSession effect."""
+
+    @abstractmethod
+    def handle_attach_session(self, effect: AttachAgentSessionEffect) -> None:
+        """Handle AttachAgentSession effect."""
+
+    @abstractmethod
+    def handle_cancel_session(self, effect: CancelAgentSessionEffect) -> AgentSessionSnapshot:
+        """Handle CancelAgentSession effect."""
+
+    @abstractmethod
+    def handle_cleanup_session(
+        self,
+        effect: CleanupAgentSessionEffect,
+    ) -> AgentSessionSnapshot:
+        """Handle CleanupAgentSession effect."""
 
 @dataclass
 class SessionState:
@@ -123,10 +165,14 @@ class TmuxAgentHandler(AgentHandler):
         self,
         *,
         backend: SessionBackend,
+        session_repository: AgentSessionRepository | None = None,
         claude_runtime_policy: ClaudeRuntimePolicy | None = None,
     ) -> None:
         self._sessions: dict[str, SessionState] = {}
         self._backend = backend
+        self._session_repository = (
+            session_repository or InMemoryAgentSessionRepository()
+        )
         self._claude_runtime_policy = claude_runtime_policy or ClaudeRuntimePolicy()
         self._mcp_servers: dict[str, McpToolServer] = {}
 
@@ -177,10 +223,24 @@ class TmuxAgentHandler(AgentHandler):
                 ),
                 **self._claude_runtime_policy.bootstrap_exports,
             })
+        elif effect.agent_type == AgentType.CODEX:
+            codex_home = agent_env_exports.get(
+                "CODEX_HOME",
+                os.environ.get("CODEX_HOME", str(Path.home() / ".codex")),
+            )
+            trust_workspace_in_codex_home(codex_home, effect.work_dir)
 
-        # Start MCP server if tools are provided
+        mcp_servers: dict[str, str] = {}
+
+        # Start MCP server if tools are provided.
+        #
+        # .mcp.json is still written for clients such as Claude Code, but
+        # Codex CLI does not auto-load that file from the workdir. For Codex
+        # the adapter also receives the active server URL and injects it as a
+        # `-c mcp_servers.<name>.url=...` override in the launch command.
         if effect.mcp_tools and run_tool is not None:
-            self._start_mcp_server(effect, run_tool)
+            server = self._start_mcp_server(effect, run_tool)
+            mcp_servers[effect.mcp_server_name] = server.url
 
         # Disable oh-my-zsh's auto-update prompt. Without isolated HOME the
         # user's `.zshrc` would suppress this, but with `HOME=<work_dir>/
@@ -206,6 +266,7 @@ class TmuxAgentHandler(AgentHandler):
                 model=effect.model,
                 effort=effect.effort,
                 bare=effect.bare,
+                mcp_servers=mcp_servers or None,
             )
         )
         command = shlex.join(argv)
@@ -244,6 +305,7 @@ class TmuxAgentHandler(AgentHandler):
         )
 
         self._sessions[effect.session_name] = SessionState(handle=handle, adapter=adapter)
+        self._record_snapshot("session_started", handle, SessionStatus.BOOTING)
         return handle
 
     def handle_launch_task(self, effect: LaunchTaskEffect) -> SessionHandle:
@@ -311,6 +373,7 @@ class TmuxAgentHandler(AgentHandler):
             work_dir=effect.work_dir,
         )
         self._sessions[effect.session_name] = SessionState(handle=handle, adapter=adapter)
+        self._record_snapshot("session_started", handle, SessionStatus.BOOTING)
         return handle
 
     def handle_monitor(self, effect: MonitorEffect) -> Observation:
@@ -320,12 +383,14 @@ class TmuxAgentHandler(AgentHandler):
 
         if state is None:
             if not self._backend.has_session(handle.session_name):
+                self._record_snapshot("session_exited", handle, SessionStatus.EXITED)
                 return Observation(status=SessionStatus.EXITED)
             state = SessionState(handle=handle, adapter=get_adapter(handle.agent_type))
             self._sessions[handle.session_name] = state
 
         if not self._backend.has_session(handle.session_name):
             state.status = SessionStatus.EXITED
+            self._record_snapshot("session_exited", handle, SessionStatus.EXITED)
             return Observation(status=SessionStatus.EXITED)
 
         output = self._backend.capture_pane(handle.pane_id)
@@ -354,19 +419,37 @@ class TmuxAgentHandler(AgentHandler):
         if new_status:
             state.status = new_status
 
-        return Observation(
+        observation = Observation(
             status=state.status,
             output_changed=output_changed,
             pr_url=pr_url,
             output_snippet=output[-500:] if output else None,
         )
+        self._record_snapshot(
+            "session_observed",
+            handle,
+            state.status,
+            pr_url=state.pr_url,
+            output_snippet=observation.output_snippet,
+        )
+        return observation
 
     def handle_capture(self, effect: CaptureEffect) -> str:
         """Capture pane output."""
         handle = effect.handle
         if not self._backend.has_session(handle.session_name):
             raise SessionNotFoundError(f"Session {handle.session_name} does not exist")
-        return self._backend.capture_pane(handle.pane_id, effect.lines)
+        output = self._backend.capture_pane(handle.pane_id, effect.lines)
+        state = self._sessions.get(handle.session_name)
+        status = state.status if state is not None else SessionStatus.RUNNING
+        self._record_snapshot(
+            "session_captured",
+            handle,
+            status,
+            pr_url=state.pr_url if state is not None else None,
+            output_snippet=output[-500:] if output else None,
+        )
+        return output
 
     def handle_send(self, effect: SendEffect) -> None:
         """Send message to session."""
@@ -389,10 +472,137 @@ class TmuxAgentHandler(AgentHandler):
         state = self._sessions.get(handle.session_name)
         if state:
             state.status = SessionStatus.STOPPED
+        self._record_snapshot("session_stopped", handle, SessionStatus.STOPPED)
 
-    def handle_sleep(self, effect: SleepEffect) -> None:
-        """Sleep for duration."""
-        time.sleep(effect.seconds)
+    def handle_get_session(
+        self,
+        effect: GetAgentSessionEffect,
+    ) -> AgentSessionSnapshot | None:
+        """Return persisted session state without touching the backend."""
+        return self._session_repository.get_session(effect.session_id)
+
+    def handle_list_sessions(
+        self,
+        effect: ListAgentSessionsEffect,
+    ) -> tuple[AgentSessionSnapshot, ...]:
+        """Return persisted sessions matching the query."""
+        return self._session_repository.list_sessions(effect.query)
+
+    def handle_observe_session(
+        self,
+        effect: ObserveAgentSessionEffect,
+    ) -> AgentSessionSnapshot:
+        """Observe a session by persisted id and return updated state."""
+        snapshot = self._require_snapshot(effect.session_id)
+        handle = snapshot.to_handle()
+        observation = self.handle_monitor(MonitorEffect(handle=handle))
+        updated = self._session_repository.get_session(effect.session_id)
+        if updated is None:
+            return self._snapshot_from_observation(handle, observation)
+        return updated
+
+    def handle_attach_session(self, effect: AttachAgentSessionEffect) -> None:
+        """Attach to a session by persisted id."""
+        snapshot = self._require_snapshot(effect.session_id)
+        if not self._backend.has_session(snapshot.session_name):
+            raise SessionNotFoundError(f"Session {effect.session_id} does not exist")
+        self._backend.attach_session(snapshot.session_name)
+
+    def handle_cancel_session(
+        self,
+        effect: CancelAgentSessionEffect,
+    ) -> AgentSessionSnapshot:
+        """Cancel a session by persisted id."""
+        snapshot = self._require_snapshot(effect.session_id)
+        handle = snapshot.to_handle()
+        self.handle_stop(StopEffect(handle=handle))
+        updated = self._session_repository.get_session(effect.session_id)
+        if updated is None:
+            return self._record_snapshot("session_cancelled", handle, SessionStatus.STOPPED)
+        return updated
+
+    def handle_cleanup_session(
+        self,
+        effect: CleanupAgentSessionEffect,
+    ) -> AgentSessionSnapshot:
+        """Clean up a session by persisted id."""
+        snapshot = self._require_snapshot(effect.session_id)
+        handle = snapshot.to_handle()
+        self._stop_mcp_server(handle.session_name)
+        if self._backend.has_session(handle.session_name):
+            self._backend.kill_session(handle.session_name)
+        now = datetime.now(timezone.utc)
+        cleaned = snapshot.with_update(
+            status=SessionStatus.STOPPED,
+            cleaned_at=now,
+            last_observed_at=now,
+        )
+        self._sessions.pop(handle.session_name, None)
+        return self._session_repository.record_snapshot(
+            "session_cleaned",
+            cleaned,
+        )
+
+    def _require_snapshot(self, session_id: str) -> AgentSessionSnapshot:
+        snapshot = self._session_repository.get_session(session_id)
+        if snapshot is None:
+            raise SessionNotFoundError(f"Session {session_id} is not registered")
+        return snapshot
+
+    def _snapshot_from_observation(
+        self,
+        handle: SessionHandle,
+        observation: Observation,
+    ) -> AgentSessionSnapshot:
+        now = datetime.now(timezone.utc)
+        return AgentSessionSnapshot.from_handle(
+            handle,
+            status=observation.status,
+            last_observed_at=now,
+            finished_at=now if observation.is_terminal else None,
+            pr_url=observation.pr_url,
+            output_snippet=observation.output_snippet,
+        )
+
+    def _record_snapshot(
+        self,
+        event_type: str,
+        handle: SessionHandle,
+        status: SessionStatus,
+        *,
+        pr_url: str | None = None,
+        output_snippet: str | None = None,
+    ) -> AgentSessionSnapshot:
+        now = datetime.now(timezone.utc)
+        previous = self._session_repository.get_session(handle.session_id)
+        snapshot = AgentSessionSnapshot.from_handle(
+            handle,
+            status=status,
+            last_observed_at=now,
+            finished_at=(
+                previous.finished_at
+                if previous is not None and previous.finished_at is not None
+                else now
+                if status
+                in (
+                    SessionStatus.DONE,
+                    SessionStatus.FAILED,
+                    SessionStatus.EXITED,
+                    SessionStatus.STOPPED,
+                )
+                else None
+            ),
+            cleaned_at=previous.cleaned_at if previous is not None else None,
+            pr_url=pr_url or (previous.pr_url if previous is not None else None),
+            output_snippet=(
+                output_snippet
+                if output_snippet is not None
+                else previous.output_snippet
+                if previous is not None
+                else None
+            ),
+        )
+        return self._session_repository.record_snapshot(event_type, snapshot)
 
     # -- MCP server lifecycle -------------------------------------------------
 
@@ -400,7 +610,7 @@ class TmuxAgentHandler(AgentHandler):
         self,
         effect: LaunchEffect,
         run_tool: RunToolFn,
-    ) -> None:
+    ) -> McpToolServer:
         """Start an MCP SSE server and write .mcp.json to work_dir."""
         server = McpToolServer(
             tools=effect.mcp_tools,
@@ -419,6 +629,7 @@ class TmuxAgentHandler(AgentHandler):
             },
         }
         mcp_json_path.write_text(json.dumps(mcp_config, indent=2))
+        return server
 
     def _stop_mcp_server(self, session_name: str) -> None:
         """Stop the MCP server for a session (if any)."""

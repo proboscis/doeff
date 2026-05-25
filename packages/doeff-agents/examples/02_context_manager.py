@@ -19,6 +19,7 @@ from pathlib import Path
 
 from doeff import do
 from doeff.effects.writer import slog
+from doeff_time import Delay
 from doeff_preset import preset_handlers
 
 from _runtime import run_program
@@ -31,7 +32,6 @@ from doeff_agents import (
     Send,
     SessionHandle,
     SessionStatus,
-    Sleep,
     agent_effectful_handlers,
     configure_mock_session,
     mock_agent_handlers,
@@ -89,7 +89,7 @@ def interactive_workflow(handle: SessionHandle):
                 yield Send(handle, "That's perfect, thank you!")
         
         iteration += 1
-        yield Sleep(1.0)
+        yield Delay(1.0)
     
     # Final output
     final_output = yield Capture(handle, lines=50)
@@ -138,7 +138,7 @@ def demonstrate_exception_safety(session_name: str, config: LaunchConfig):
         yield slog(step="monitored", status=observation.status.value)
         
         # Simulate some work
-        yield Sleep(1.0)
+        yield Delay(1.0)
         
         # Simulate an error
         yield slog(step="error", msg="About to raise exception!")

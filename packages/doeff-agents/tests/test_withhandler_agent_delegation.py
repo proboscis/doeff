@@ -4,7 +4,9 @@
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+
+from doeff_time import DelayEffect
 
 from doeff import Effect, Pass, Resume, WithHandler, do, run
 
@@ -19,8 +21,8 @@ from doeff_agents import (
     Observation,
     SessionHandle,
     SessionStatus,
-    SleepEffect,
     StopEffect,
+    monitor_agent_to_completion,
     run_agent_to_completion,
 )
 
@@ -45,6 +47,16 @@ def _session_handle(session_name: str, agent_type: AgentType) -> SessionHandle:
     )
 
 
+@do
+def _monitor_existing_completion(handle: SessionHandle, *, poll_interval: float = 0.1):
+    return (
+        yield from monitor_agent_to_completion(
+            handle,
+            poll_interval=poll_interval,
+        )
+    )
+
+
 def _make_pipeline_handler(
     scripts: Script,
     *,
@@ -54,22 +66,24 @@ def _make_pipeline_handler(
     state: dict[str, Any] = {
         "launches": [],
         "stops": [],
-        "sleep_calls": [],
+        "delay_calls": [],
         "captures": {},
     }
 
     @do
     def handler(effect: Effect, k):
         if isinstance(effect, LaunchEffect):
-            state["launches"].append(effect.session_name)
+            launch_effect = cast(LaunchEffect, effect)
+            state["launches"].append(launch_effect.session_name)
             handle = _session_handle(
-                session_name=effect.session_name,
-                agent_type=launch_agent_override or effect.agent_type,
+                session_name=launch_effect.session_name,
+                agent_type=launch_agent_override or launch_effect.agent_type,
             )
             return (yield Resume(k, handle))
 
         if isinstance(effect, MonitorEffect):
-            session_name = effect.handle.session_name
+            monitor_effect = cast(MonitorEffect, effect)
+            session_name = monitor_effect.handle.session_name
             script = queue.setdefault(session_name, [])
 
             if script:
@@ -86,15 +100,18 @@ def _make_pipeline_handler(
             return (yield Resume(k, observation))
 
         if isinstance(effect, CaptureEffect):
-            output = state["captures"].get(effect.handle.session_name, "")
+            capture_effect = cast(CaptureEffect, effect)
+            output = state["captures"].get(capture_effect.handle.session_name, "")
             return (yield Resume(k, output))
 
         if isinstance(effect, StopEffect):
-            state["stops"].append(effect.handle.session_name)
+            stop_effect = cast(StopEffect, effect)
+            state["stops"].append(stop_effect.handle.session_name)
             return (yield Resume(k, None))
 
-        if isinstance(effect, SleepEffect):
-            state["sleep_calls"].append(effect.seconds)
+        if isinstance(effect, DelayEffect):
+            delay_effect = cast(DelayEffect, effect)
+            state["delay_calls"].append(delay_effect.seconds)
             return (yield Resume(k, None))
 
         yield Pass(effect, k)
@@ -139,7 +156,29 @@ def test_withhandler_delegation_returns_success() -> None:
     assert result.succeeded
     assert state["launches"] == ["worker"]
     assert state["stops"] == ["worker"]
-    assert state["sleep_calls"] == [0.5]
+    assert state["delay_calls"] == [0.5]
+
+
+def test_monitor_agent_to_completion_cleans_existing_session() -> None:
+    handler, state = _make_pipeline_handler(
+        {
+            "existing": [
+                (SessionStatus.RUNNING, "working"),
+                (SessionStatus.DONE, "final output"),
+            ]
+        }
+    )
+    handle = _session_handle("existing", AgentType.CODEX)
+
+    result = run(
+        WithHandler(handler, _monitor_existing_completion(handle, poll_interval=0.5)),
+    )
+
+    assert result.final_status == SessionStatus.DONE
+    assert result.output == "final output"
+    assert state["launches"] == []
+    assert state["stops"] == ["existing"]
+    assert state["delay_calls"] == [0.5]
 
 
 def test_withhandler_delegation_returns_failure_status() -> None:
@@ -189,8 +228,17 @@ def test_withhandler_protocol_compliance_with_explicit_launch_handler() -> None:
     @do
     def launch_only_handler(effect: Effect, k):
         if isinstance(effect, LaunchEffect):
-            launch_calls.append(effect.session_name)
-            return (yield Resume(k, _session_handle(effect.session_name, effect.agent_type)))
+            launch_effect = cast(LaunchEffect, effect)
+            launch_calls.append(launch_effect.session_name)
+            return (
+                yield Resume(
+                    k,
+                    _session_handle(
+                        launch_effect.session_name,
+                        launch_effect.agent_type,
+                    ),
+                )
+            )
         yield Pass(effect, k)
 
     lifecycle_handler, lifecycle_state = _make_pipeline_handler(
@@ -220,9 +268,10 @@ def test_withhandler_fallback_when_primary_agent_unavailable() -> None:
     @do
     def primary_handler(effect: Effect, k):
         if isinstance(effect, LaunchEffect):
-            primary_attempts.append(effect.agent_type)
-            if effect.agent_type == AgentType.CODEX:
-                handle = _session_handle(effect.session_name, AgentType.CODEX)
+            launch_effect = cast(LaunchEffect, effect)
+            primary_attempts.append(launch_effect.agent_type)
+            if launch_effect.agent_type == AgentType.CODEX:
+                handle = _session_handle(launch_effect.session_name, AgentType.CODEX)
                 return (yield Resume(k, handle))
         yield Pass(effect, k)
 

@@ -24,6 +24,7 @@ from doeff_agents import (
     configure_mock_session,
     mock_agent_handler,
     mock_agent_handlers,
+    run_agent_to_completion,
 )
 
 
@@ -45,6 +46,17 @@ def _mock_workflow(session_name: str, config: LaunchConfig):
     observation = yield Monitor(handle)
     yield Stop(handle)
     return observation.status
+
+
+@do
+def _mock_run_to_completion(session_name: str, config: LaunchConfig):
+    return (
+        yield from run_agent_to_completion(
+            session_name,
+            config,
+            poll_interval=5.0,
+        )
+    )
 
 
 @do
@@ -104,3 +116,39 @@ def test_mock_handler_runs_program_with_public_vm_api() -> None:
     )
 
     assert result == SessionStatus.RUNNING
+
+
+def _install_handlers(handlers, program):
+    wrapped = program
+    for handler in reversed(handlers):
+        wrapped = WithHandler(handler, wrapped)
+    return wrapped
+
+
+def test_mock_handlers_include_time_handler_for_run_to_completion() -> None:
+    session_name = f"mock-run-completion-{time.time_ns()}"
+    configure_mock_session(
+        session_name,
+        MockSessionScript(
+            observations=[
+                (SessionStatus.RUNNING, "working"),
+                (SessionStatus.DONE, "done"),
+            ]
+        ),
+    )
+
+    config = LaunchConfig(
+        agent_type=AgentType.CLAUDE,
+        work_dir=Path.cwd(),
+        prompt="say hello",
+    )
+
+    result = run(
+        _install_handlers(
+            mock_agent_handlers(),
+            _mock_run_to_completion(session_name, config),
+        ),
+    )
+
+    assert result.succeeded
+    assert result.output == "done"
