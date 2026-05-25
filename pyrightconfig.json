@@ -2,6 +2,7 @@
   "include": ["doeff"],
   "extraPaths": [
     "packages/doeff-core-effects",
+    "packages/doeff-hy/src",
     "packages/doeff-indexer/python",
     "packages/doeff-vm"
   ]

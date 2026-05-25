@@ -97,7 +97,7 @@
   "Get the globals dict of the module where fn-obj was defined.
    Prefers __module__ + importlib over __globals__ because defk-generated
    inner functions may have a different __globals__ than the defining module."
-  ;; Prefer __doeff_module__ (set by defp/defprogram on Program values),
+  ;; Prefer __doeff_module__ (set by defp on Program values),
   ;; then __module__ (set on defk functions by Python).
   ;; Note: DoExpr classes have __module__="doeff_vm.doeff_vm" from pyclass,
   ;; which leaks to instances via class lookup — so __doeff_module__ must come first.
