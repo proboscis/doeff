@@ -78,16 +78,20 @@ def test_protocol_handlers_are_not_dict_registries() -> None:
     assert not isinstance(mock_agent_handlers(), dict)
 
 
-def test_protocol_handlers_have_effect_k_signature() -> None:
-    assert tuple(inspect.signature(agent_effectful_handler()).parameters) == ("effect", "k")
-    assert tuple(inspect.signature(mock_agent_handler()).parameters) == ("effect", "k")
+def test_agent_handlers_are_defhandler_program_wrappers() -> None:
+    assert tuple(inspect.signature(agent_effectful_handler()).parameters) == (
+        "__doeff_body__",
+    )
+    assert tuple(inspect.signature(mock_agent_handler()).parameters) == (
+        "__doeff_body__",
+    )
 
 
 def test_unknown_effect_delegates() -> None:
     result = run(
         WithHandler(
             _unknown_effect_fallback,
-            WithHandler(agent_effectful_handler(), _unknown_workflow()),
+            agent_effectful_handler()(_unknown_workflow()),
         )
     )
     assert result == "noop"
@@ -111,9 +115,7 @@ def test_mock_handler_runs_program_with_public_vm_api() -> None:
         prompt="say hello",
     )
 
-    result = run(
-        WithHandler(mock_agent_handler(), _mock_workflow(session_name, config)),
-    )
+    result = run(mock_agent_handler()(_mock_workflow(session_name, config)))
 
     assert result == SessionStatus.RUNNING
 
@@ -121,7 +123,10 @@ def test_mock_handler_runs_program_with_public_vm_api() -> None:
 def _install_handlers(handlers, program):
     wrapped = program
     for handler in reversed(handlers):
-        wrapped = WithHandler(handler, wrapped)
+        if tuple(inspect.signature(handler).parameters) == ("__doeff_body__",):
+            wrapped = handler(wrapped)
+        else:
+            wrapped = WithHandler(handler, wrapped)
     return wrapped
 
 
