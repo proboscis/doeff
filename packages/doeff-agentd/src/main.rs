@@ -18,6 +18,8 @@ const DEFAULT_MONITOR_INTERVAL_MS: u64 = 1000;
 const DEFAULT_MAX_RUNNING_SESSIONS: usize = 10;
 const LEASE_NAME: &str = "doeff-agentd";
 const LEASE_TTL_SECONDS: i64 = 10;
+const LIFECYCLE_RUN_TO_COMPLETION: &str = "run_to_completion";
+const LIFECYCLE_INTERACTIVE: &str = "interactive";
 
 #[derive(Debug, Clone)]
 struct Config {
@@ -61,6 +63,7 @@ struct SessionSnapshot {
     pane_id: String,
     agent_type: String,
     work_dir: String,
+    lifecycle: String,
     status: String,
     backend_kind: String,
     backend_ref: BTreeMap<String, String>,
@@ -79,6 +82,8 @@ struct LaunchParams {
     agent_type: String,
     work_dir: String,
     command: String,
+    #[serde(default = "default_session_lifecycle")]
+    lifecycle: String,
     #[serde(default)]
     session_env: BTreeMap<String, String>,
 }
@@ -110,6 +115,7 @@ struct ListParams {
     status: Option<Vec<String>>,
     agent_type: Option<String>,
     backend_kind: Option<String>,
+    lifecycle: Option<String>,
 }
 
 fn default_capture_lines() -> i64 {
@@ -118,6 +124,26 @@ fn default_capture_lines() -> i64 {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_session_lifecycle() -> String {
+    String::from(LIFECYCLE_RUN_TO_COMPLETION)
+}
+
+fn validate_session_lifecycle(lifecycle: &str) -> Result<()> {
+    if lifecycle == LIFECYCLE_RUN_TO_COMPLETION || lifecycle == LIFECYCLE_INTERACTIVE {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "unsupported session lifecycle: {} (expected {} or {})",
+        lifecycle,
+        LIFECYCLE_RUN_TO_COMPLETION,
+        LIFECYCLE_INTERACTIVE
+    ))
+}
+
+fn is_run_to_completion_lifecycle(lifecycle: &str) -> bool {
+    lifecycle == LIFECYCLE_RUN_TO_COMPLETION
 }
 
 fn now_iso() -> String {
@@ -268,6 +294,27 @@ fn migrate(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
           ON agent_session_events(session_id, id);
         "#,
+    )?;
+    ensure_column(
+        conn,
+        "agent_sessions",
+        "lifecycle",
+        "TEXT NOT NULL DEFAULT 'run_to_completion'",
+    )?;
+    Ok(())
+}
+
+fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str) -> Result<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    for row in rows {
+        if row? == column {
+            return Ok(());
+        }
+    }
+    conn.execute(
+        &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+        [],
     )?;
     Ok(())
 }
@@ -481,6 +528,7 @@ fn session_launch(
     config: &Config,
     params: LaunchParams,
 ) -> Result<SessionSnapshot> {
+    validate_session_lifecycle(&params.lifecycle)?;
     if session_get(conn, &params.session_id)?.is_some() {
         return Err(anyhow!(
             "session is already registered: {}",
@@ -519,6 +567,7 @@ fn session_launch(
         pane_id,
         agent_type: params.agent_type,
         work_dir: params.work_dir,
+        lifecycle: params.lifecycle,
         status: String::from("booting"),
         backend_kind: String::from("tmux"),
         backend_ref,
@@ -544,7 +593,7 @@ fn session_launch(
 
 fn session_get(conn: &Connection, session_id: &str) -> Result<Option<SessionSnapshot>> {
     conn.query_row(
-        "SELECT session_id, session_name, pane_id, agent_type, work_dir, status,
+        "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status,
                 backend_kind, backend_ref_json, started_at, last_observed_at,
                 finished_at, cleaned_at, pr_url, output_snippet
          FROM agent_sessions WHERE session_id = ?1",
@@ -557,7 +606,7 @@ fn session_get(conn: &Connection, session_id: &str) -> Result<Option<SessionSnap
 
 fn session_list(conn: &Connection, query: ListParams) -> Result<Vec<SessionSnapshot>> {
     let mut stmt = conn.prepare(
-        "SELECT session_id, session_name, pane_id, agent_type, work_dir, status,
+        "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status,
                 backend_kind, backend_ref_json, started_at, last_observed_at,
                 finished_at, cleaned_at, pr_url, output_snippet
          FROM agent_sessions
@@ -590,6 +639,11 @@ fn list_query_matches(snapshot: &SessionSnapshot, query: &ListParams) -> bool {
             return false;
         }
     }
+    if let Some(lifecycle) = &query.lifecycle {
+        if lifecycle != &snapshot.lifecycle {
+            return false;
+        }
+    }
     true
 }
 
@@ -600,6 +654,7 @@ fn count_active_sessions(conn: &Connection) -> Result<usize> {
             status: Some(active_statuses()),
             agent_type: None,
             backend_kind: None,
+            lifecycle: None,
         },
     )?;
     Ok(active.len())
@@ -680,7 +735,9 @@ fn session_cleanup(
         tmux_kill_session(config, &snapshot.session_name)?;
     }
     let now = now_iso();
-    snapshot.status = String::from("stopped");
+    if !is_terminal_status(&snapshot.status) {
+        snapshot.status = String::from("stopped");
+    }
     snapshot.finished_at.get_or_insert_with(|| now.clone());
     snapshot.cleaned_at = Some(now.clone());
     snapshot.last_observed_at = Some(now);
@@ -702,10 +759,10 @@ fn require_session(conn: &Connection, session_id: &str) -> Result<SessionSnapsho
 }
 
 fn row_to_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSnapshot> {
-    let backend_ref_json: String = row.get(7)?;
+    let backend_ref_json: String = row.get(8)?;
     let backend_ref =
         serde_json::from_str::<BTreeMap<String, String>>(&backend_ref_json).map_err(|err| {
-            rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(err))
+            rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(err))
         })?;
     Ok(SessionSnapshot {
         session_id: row.get(0)?,
@@ -713,15 +770,16 @@ fn row_to_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSnapshot>
         pane_id: row.get(2)?,
         agent_type: row.get(3)?,
         work_dir: row.get(4)?,
-        status: row.get(5)?,
-        backend_kind: row.get(6)?,
+        lifecycle: row.get(5)?,
+        status: row.get(6)?,
+        backend_kind: row.get(7)?,
         backend_ref,
-        started_at: row.get(8)?,
-        last_observed_at: row.get(9)?,
-        finished_at: row.get(10)?,
-        cleaned_at: row.get(11)?,
-        pr_url: row.get(12)?,
-        output_snippet: row.get(13)?,
+        started_at: row.get(9)?,
+        last_observed_at: row.get(10)?,
+        finished_at: row.get(11)?,
+        cleaned_at: row.get(12)?,
+        pr_url: row.get(13)?,
+        output_snippet: row.get(14)?,
     })
 }
 
@@ -729,15 +787,16 @@ fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> 
     let backend_ref_json = serde_json::to_string(&snapshot.backend_ref)?;
     conn.execute(
         "INSERT INTO agent_sessions (
-            session_id, session_name, pane_id, agent_type, work_dir, status,
+            session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status,
             backend_kind, backend_ref_json, started_at, last_observed_at,
             finished_at, cleaned_at, pr_url, output_snippet
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
          ON CONFLICT(session_id) DO UPDATE SET
             session_name = excluded.session_name,
             pane_id = excluded.pane_id,
             agent_type = excluded.agent_type,
             work_dir = excluded.work_dir,
+            lifecycle = excluded.lifecycle,
             status = excluded.status,
             backend_kind = excluded.backend_kind,
             backend_ref_json = excluded.backend_ref_json,
@@ -753,6 +812,7 @@ fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> 
             snapshot.pane_id,
             snapshot.agent_type,
             snapshot.work_dir,
+            snapshot.lifecycle,
             snapshot.status,
             snapshot.backend_kind,
             backend_ref_json,
@@ -899,6 +959,114 @@ fn tmux_kill_session(config: &Config, session_name: &str) -> Result<()> {
     Ok(())
 }
 
+fn observed_status_for_snapshot(snapshot: &SessionSnapshot, output: &str) -> &'static str {
+    if output_has_failure_marker(output) {
+        return "failed";
+    }
+    if output_has_api_limit_marker(output) {
+        return "blocked_api";
+    }
+
+    let completion = output_has_completion_marker(output);
+    let idle_done = output_has_codex_idle_prompt(output)
+        && !output_has_codex_active_marker(output)
+        && output_is_stable(snapshot, output);
+    if is_run_to_completion_lifecycle(&snapshot.lifecycle) && (completion || idle_done) {
+        return "done";
+    }
+    if completion || idle_done || output_has_waiting_marker(output) {
+        return "blocked";
+    }
+    "running"
+}
+
+fn should_cleanup_after_observed_status(snapshot: &SessionSnapshot, status: &str) -> bool {
+    is_run_to_completion_lifecycle(&snapshot.lifecycle) && (status == "done" || status == "failed")
+}
+
+fn is_terminal_status(status: &str) -> bool {
+    status == "done" || status == "failed" || status == "exited" || status == "stopped"
+}
+
+fn event_type_for_observed_status(status: &str) -> &'static str {
+    if status == "done" {
+        return "session_done";
+    }
+    if status == "failed" {
+        return "session_failed";
+    }
+    if status == "blocked" || status == "blocked_api" {
+        return "session_blocked";
+    }
+    "session_observed"
+}
+
+fn output_is_stable(snapshot: &SessionSnapshot, output: &str) -> bool {
+    if let Some(previous) = &snapshot.output_snippet {
+        return previous == &tail_chars(output, 500);
+    }
+    false
+}
+
+fn output_tail_lower(output: &str, max_lines: usize) -> String {
+    let lines: Vec<&str> = output.lines().collect();
+    let start = lines.len().saturating_sub(max_lines);
+    lines[start..].join("\n").to_lowercase()
+}
+
+fn output_has_completion_marker(output: &str) -> bool {
+    let text = output_tail_lower(output, 30);
+    text.contains("task completed successfully")
+        || text.contains("all tasks completed")
+        || text.contains("session ended")
+        || text.contains("goodbye")
+        || text.contains("worked for")
+}
+
+fn output_has_failure_marker(output: &str) -> bool {
+    let text = output_tail_lower(output, 10);
+    text.contains("fatal error")
+        || text.contains("unrecoverable error")
+        || text.contains("agent crashed")
+        || text.contains("session terminated")
+        || text.contains("authentication failed")
+}
+
+fn output_has_api_limit_marker(output: &str) -> bool {
+    let text = output_tail_lower(output, 30);
+    text.contains("cost limit reached")
+        || text.contains("rate limit exceeded")
+        || text.contains("rate limit reached")
+        || text.contains("quota exceeded")
+        || text.contains("insufficient quota")
+        || text.contains("resource exhausted")
+        || text.contains("you've hit your limit")
+        || text.contains("/rate-limit-options")
+        || text.contains("stop and wait for limit to reset")
+}
+
+fn output_has_waiting_marker(output: &str) -> bool {
+    output.contains("tell Claude what to do differently")
+        || output.contains("Type your message")
+        || output.contains("accept edits")
+        || output.contains("bypass permissions")
+        || output.contains("shift+tab to cycle")
+        || output.contains("Esc to cancel")
+        || output.contains("to show all projects")
+}
+
+fn output_has_codex_idle_prompt(output: &str) -> bool {
+    output.starts_with("› ") || output.contains("\n› ")
+}
+
+fn output_has_codex_active_marker(output: &str) -> bool {
+    let text = output_tail_lower(output, 30);
+    text.contains("working (")
+        || text.contains("thinking")
+        || text.contains("esc to interrupt")
+        || text.contains("ctrl + t to view transcript")
+}
+
 fn monitor_loop(config: Config) {
     loop {
         if let Err(err) = monitor_once(&config) {
@@ -943,6 +1111,7 @@ fn monitor_once(config: &Config) -> Result<()> {
             status: Some(active_statuses()),
             agent_type: None,
             backend_kind: Some(String::from("tmux")),
+            lifecycle: None,
         },
     )?;
     for mut snapshot in active {
@@ -950,11 +1119,26 @@ fn monitor_once(config: &Config) -> Result<()> {
         let observed_at = now_iso();
         if exists {
             let output = tmux_capture(config, &snapshot.pane_id, 100)?;
-            snapshot.status = String::from("running");
+            let observed_status = observed_status_for_snapshot(&snapshot, &output);
+            snapshot.status = String::from(observed_status);
             snapshot.last_observed_at = Some(observed_at);
             snapshot.output_snippet = Some(tail_chars(&output, 500));
+            if is_terminal_status(observed_status) {
+                snapshot.finished_at.get_or_insert_with(now_iso);
+            }
+            if should_cleanup_after_observed_status(&snapshot, observed_status)
+                && tmux_has_session(config, &snapshot.session_name)?
+            {
+                tmux_kill_session(config, &snapshot.session_name)?;
+                snapshot.cleaned_at.get_or_insert_with(now_iso);
+            }
             upsert_snapshot(&conn, &snapshot)?;
-            record_event(&conn, &snapshot.session_id, "session_observed", &snapshot)?;
+            record_event(
+                &conn,
+                &snapshot.session_id,
+                event_type_for_observed_status(observed_status),
+                &snapshot,
+            )?;
         } else {
             snapshot.status = String::from("exited");
             snapshot.last_observed_at = Some(observed_at.clone());
@@ -992,6 +1176,7 @@ mod tests {
             pane_id: String::from("%1"),
             agent_type: String::from("codex"),
             work_dir: String::from("/tmp"),
+            lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
             status: String::from("running"),
             backend_kind: String::from("tmux"),
             backend_ref: BTreeMap::new(),
@@ -1008,6 +1193,7 @@ mod tests {
                 status: Some(vec![String::from("running")]),
                 agent_type: Some(String::from("codex")),
                 backend_kind: Some(String::from("tmux")),
+                lifecycle: Some(String::from(LIFECYCLE_RUN_TO_COMPLETION)),
             },
         ));
         assert!(!list_query_matches(
@@ -1016,6 +1202,7 @@ mod tests {
                 status: Some(vec![String::from("failed")]),
                 agent_type: None,
                 backend_kind: None,
+                lifecycle: None,
             },
         ));
     }
@@ -1112,6 +1299,7 @@ mod tests {
                 pane_id: String::from("%1"),
                 agent_type: String::from("codex"),
                 work_dir: String::from("/tmp"),
+                lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
                 status: String::from("running"),
                 backend_kind: String::from("tmux"),
                 backend_ref: BTreeMap::new(),
@@ -1140,6 +1328,7 @@ mod tests {
                 agent_type: String::from("codex"),
                 work_dir: String::from("/tmp"),
                 command: String::from("true"),
+                lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
                 session_env: BTreeMap::new(),
             },
         )
@@ -1147,5 +1336,47 @@ mod tests {
         assert!(err
             .to_string()
             .contains("max running agent sessions reached"));
+    }
+
+    #[test]
+    fn run_to_completion_output_marks_session_done() {
+        let snapshot = snapshot_for_lifecycle("run_to_completion", "running");
+        let output = "task completed successfully\nworked for 1m 2s\n› ";
+
+        let status = observed_status_for_snapshot(&snapshot, output);
+
+        assert_eq!(status, "done");
+        assert!(should_cleanup_after_observed_status(&snapshot, status));
+    }
+
+    #[test]
+    fn interactive_output_remains_available_for_more_input() {
+        let snapshot = snapshot_for_lifecycle("interactive", "running");
+        let output = "task completed successfully\nworked for 1m 2s\n› ";
+
+        let status = observed_status_for_snapshot(&snapshot, output);
+
+        assert_eq!(status, "blocked");
+        assert!(!should_cleanup_after_observed_status(&snapshot, status));
+    }
+
+    fn snapshot_for_lifecycle(lifecycle: &str, status: &str) -> SessionSnapshot {
+        SessionSnapshot {
+            session_id: String::from("s1"),
+            session_name: String::from("s1"),
+            pane_id: String::from("%1"),
+            agent_type: String::from("codex"),
+            work_dir: String::from("/tmp"),
+            lifecycle: String::from(lifecycle),
+            status: String::from(status),
+            backend_kind: String::from("tmux"),
+            backend_ref: BTreeMap::new(),
+            started_at: now_iso(),
+            last_observed_at: None,
+            finished_at: None,
+            cleaned_at: None,
+            pr_url: None,
+            output_snippet: None,
+        }
     }
 }

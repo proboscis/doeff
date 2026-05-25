@@ -21,6 +21,7 @@ from doeff_time import Delay
 
 from .adapters.base import AgentType, LaunchConfig
 from .effects import (
+    AgentSessionLifecycle,
     AgentSessionSnapshot,
     Capture,
     CleanupAgentSession,
@@ -45,6 +46,7 @@ def _launch_from_config(
     config: LaunchConfig,
     *,
     ready_timeout: float,
+    lifecycle: AgentSessionLifecycle | None = None,
 ):
     return Launch(
         session_name,
@@ -53,6 +55,7 @@ def _launch_from_config(
         prompt=config.prompt,
         model=config.model,
         mcp_tools=config.mcp_tools,
+        lifecycle=lifecycle or config.lifecycle,
         ready_timeout=ready_timeout,
     )
 
@@ -348,6 +351,7 @@ def with_session(
         session_name,
         config,
         ready_timeout=ready_timeout,
+        lifecycle=AgentSessionLifecycle.INTERACTIVE,
     )
 
     try:
@@ -456,6 +460,7 @@ def interactive_session(
         session_name,
         config,
         ready_timeout=ready_timeout,
+        lifecycle=AgentSessionLifecycle.INTERACTIVE,
     )
 
     pr_url: str | None = None

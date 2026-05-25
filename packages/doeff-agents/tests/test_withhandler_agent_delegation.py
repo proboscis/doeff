@@ -13,15 +13,18 @@ from doeff import Effect, Pass, Resume, WithHandler, do, run
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from doeff_agents import (
+    AgentSessionLifecycle,
     AgentType,
     CaptureEffect,
     LaunchConfig,
     LaunchEffect,
     MonitorEffect,
     Observation,
+    SendEffect,
     SessionHandle,
     SessionStatus,
     StopEffect,
+    interactive_session,
     monitor_agent_to_completion,
     run_agent_to_completion,
 )
@@ -68,6 +71,8 @@ def _make_pipeline_handler(
         "stops": [],
         "delay_calls": [],
         "captures": {},
+        "launch_lifecycles": [],
+        "sent": [],
     }
 
     @do
@@ -75,6 +80,7 @@ def _make_pipeline_handler(
         if isinstance(effect, LaunchEffect):
             launch_effect = cast(LaunchEffect, effect)
             state["launches"].append(launch_effect.session_name)
+            state["launch_lifecycles"].append(launch_effect.lifecycle)
             handle = _session_handle(
                 session_name=launch_effect.session_name,
                 agent_type=launch_agent_override or launch_effect.agent_type,
@@ -103,6 +109,11 @@ def _make_pipeline_handler(
             capture_effect = cast(CaptureEffect, effect)
             output = state["captures"].get(capture_effect.handle.session_name, "")
             return (yield Resume(k, output))
+
+        if isinstance(effect, SendEffect):
+            send_effect = cast(SendEffect, effect)
+            state["sent"].append((send_effect.handle.session_name, send_effect.message))
+            return (yield Resume(k, None))
 
         if isinstance(effect, StopEffect):
             stop_effect = cast(StopEffect, effect)
@@ -135,6 +146,18 @@ def _run_two_completions(config: LaunchConfig):
     first = yield from run_agent_to_completion("alpha", config, poll_interval=0.0)
     second = yield from run_agent_to_completion("beta", config, poll_interval=0.0)
     return first, second
+
+
+@do
+def _run_interactive(session_name: str, config: LaunchConfig, messages: list[str]):
+    return (
+        yield from interactive_session(
+            session_name,
+            config,
+            messages,
+            poll_interval=0.0,
+        )
+    )
 
 
 def test_withhandler_delegation_returns_success() -> None:
@@ -300,3 +323,29 @@ def test_withhandler_fallback_when_primary_agent_unavailable() -> None:
     assert primary_attempts == [AgentType.CLAUDE]
     assert fallback_state["launches"] == ["fallback-agent"]
     assert fallback_state["stops"] == ["fallback-agent"]
+
+
+def test_interactive_session_launches_with_interactive_lifecycle() -> None:
+    handler, state = _make_pipeline_handler(
+        {
+            "chat": [
+                (SessionStatus.BLOCKED, "ready"),
+                (SessionStatus.DONE, "done"),
+            ]
+        }
+    )
+
+    wrapped = WithHandler(
+        handler,
+        _run_interactive(
+            "chat",
+            _build_config(agent_type=AgentType.CODEX),
+            ["continue"],
+        ),
+    )
+
+    result = run(wrapped)
+
+    assert result.final_status == SessionStatus.DONE
+    assert state["launches"] == ["chat"]
+    assert state["launch_lifecycles"] == [AgentSessionLifecycle.INTERACTIVE]

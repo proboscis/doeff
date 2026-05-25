@@ -302,6 +302,7 @@ class TmuxAgentHandler(AgentHandler):
             pane_id=session_info.pane_id,
             agent_type=effect.agent_type,
             work_dir=effect.work_dir,
+            lifecycle=effect.lifecycle,
         )
 
         self._sessions[effect.session_name] = SessionState(handle=handle, adapter=adapter)
@@ -371,6 +372,7 @@ class TmuxAgentHandler(AgentHandler):
             pane_id=session_info.pane_id,
             agent_type=AgentType.CLAUDE,
             work_dir=effect.work_dir,
+            lifecycle=effect.lifecycle,
         )
         self._sessions[effect.session_name] = SessionState(handle=handle, adapter=adapter)
         self._record_snapshot("session_started", handle, SessionStatus.BOOTING)

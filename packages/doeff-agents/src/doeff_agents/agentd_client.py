@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from doeff_agents.effects import AgentSessionQuery, AgentSessionSnapshot
+from doeff_agents.effects import AgentSessionLifecycle, AgentSessionQuery, AgentSessionSnapshot
 
 
 class AgentdClientError(RuntimeError):
@@ -57,6 +57,7 @@ class AgentdClient:
         agent_type: str,
         work_dir: Path,
         command: str,
+        lifecycle: AgentSessionLifecycle | str = AgentSessionLifecycle.RUN_TO_COMPLETION,
         session_env: Mapping[str, str] | None = None,
     ) -> AgentSessionSnapshot:
         result = self.request(
@@ -67,6 +68,7 @@ class AgentdClient:
                 "agent_type": agent_type,
                 "work_dir": str(work_dir),
                 "command": command,
+                "lifecycle": _lifecycle_value(lifecycle),
                 "session_env": dict(session_env or {}),
             },
         )
@@ -204,6 +206,7 @@ class LazyAgentdClient:
         agent_type: str,
         work_dir: Path,
         command: str,
+        lifecycle: AgentSessionLifecycle | str = AgentSessionLifecycle.RUN_TO_COMPLETION,
         session_env: Mapping[str, str] | None = None,
     ) -> AgentSessionSnapshot:
         return self._resolve().launch_session(
@@ -212,6 +215,7 @@ class LazyAgentdClient:
             agent_type=agent_type,
             work_dir=work_dir,
             command=command,
+            lifecycle=lifecycle,
             session_env=session_env,
         )
 
@@ -388,7 +392,15 @@ def _query_to_params(query: AgentSessionQuery | None) -> dict[str, Any]:
         params["agent_type"] = query.agent_type.value
     if query.backend_kind is not None:
         params["backend_kind"] = query.backend_kind
+    if query.lifecycle is not None:
+        params["lifecycle"] = query.lifecycle.value
     return params
+
+
+def _lifecycle_value(lifecycle: AgentSessionLifecycle | str) -> str:
+    if isinstance(lifecycle, AgentSessionLifecycle):
+        return lifecycle.value
+    return str(lifecycle)
 
 
 def _snapshot_from_result(result: Any) -> AgentSessionSnapshot:
