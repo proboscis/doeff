@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from doeff_agents import (
     AgentdClient,
     AgentdClientError,
+    AgentSessionLifecycle,
     AgentType,
     DaemonAgentHandler,
     LaunchEffect,
@@ -91,6 +92,33 @@ def test_agentd_client_get_session_round_trip() -> None:
     assert snapshot.status == SessionStatus.RUNNING
     assert server.requests[0]["method"] == "session.get"
     assert server.requests[0]["params"] == {"session_id": "s1"}
+
+
+def test_agentd_client_launch_sends_interactive_lifecycle(tmp_path: Path) -> None:
+    def handle(request: Mapping[str, Any]) -> Mapping[str, Any]:
+        return {
+            "id": request["id"],
+            "ok": True,
+            "result": _snapshot_payload(lifecycle="interactive"),
+        }
+
+    with (
+        tempfile.TemporaryDirectory(prefix="agentd-", dir="/tmp") as temp_dir,
+        OneShotAgentdServer(Path(temp_dir) / "agentd.sock", handle) as server,
+    ):
+        client = AgentdClient(server.socket_path, timeout=2.0)
+        snapshot = client.launch_session(
+            session_id="s1",
+            session_name="s1",
+            agent_type="codex",
+            work_dir=tmp_path,
+            command="codex",
+            lifecycle=AgentSessionLifecycle.INTERACTIVE,
+        )
+
+    assert snapshot.lifecycle == AgentSessionLifecycle.INTERACTIVE
+    assert server.requests[0]["method"] == "session.launch"
+    assert server.requests[0]["params"]["lifecycle"] == "interactive"
 
 
 def test_agentd_client_raises_daemon_error() -> None:
@@ -215,6 +243,7 @@ def test_daemon_handler_launch_delegates_lifecycle_to_client(monkeypatch, tmp_pa
             work_dir=tmp_path,
             prompt="review this",
             model="test-model",
+            lifecycle=AgentSessionLifecycle.INTERACTIVE,
         )
     )
 
@@ -223,6 +252,7 @@ def test_daemon_handler_launch_delegates_lifecycle_to_client(monkeypatch, tmp_pa
     assert adapter.params.prompt == "review this"
     assert fake_client.launches[0]["session_id"] == "s2"
     assert fake_client.launches[0]["agent_type"] == "custom"
+    assert fake_client.launches[0]["lifecycle"] == AgentSessionLifecycle.INTERACTIVE
     assert "custom-agent" in fake_client.launches[0]["command"]
 
 
@@ -261,6 +291,7 @@ def _snapshot_payload(
     session_id: str = "s1",
     agent_type: str = "codex",
     work_dir: str = "/tmp/work",
+    lifecycle: str = "run_to_completion",
 ) -> dict[str, Any]:
     return {
         "session_id": session_id,
@@ -268,6 +299,7 @@ def _snapshot_payload(
         "pane_id": "%1",
         "agent_type": agent_type,
         "work_dir": work_dir,
+        "lifecycle": lifecycle,
         "status": "running",
         "backend_kind": "tmux",
         "backend_ref": {"session_name": session_id, "pane_id": "%1"},

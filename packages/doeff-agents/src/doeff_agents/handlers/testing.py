@@ -115,6 +115,7 @@ class MockAgentHandler(AgentHandler):
             pane_id=pane_id,
             agent_type=effect.agent_type,
             work_dir=effect.work_dir,
+            lifecycle=effect.lifecycle,
         )
         self._handles[effect.session_name] = handle
         self._statuses[effect.session_name] = SessionStatus.BOOTING
@@ -139,6 +140,7 @@ class MockAgentHandler(AgentHandler):
             pane_id=pane_id,
             agent_type=AgentType.CLAUDE,
             work_dir=effect.work_dir,
+            lifecycle=effect.lifecycle,
         )
         self._handles[effect.session_name] = handle
         self._statuses[effect.session_name] = SessionStatus.BOOTING
