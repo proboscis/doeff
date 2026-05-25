@@ -5,7 +5,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -17,6 +16,7 @@ from doeff_agents.adapters.base import AgentAdapter, AgentType, InjectionMethod,
 from doeff_agents.adapters.claude import ClaudeAdapter
 from doeff_agents.adapters.codex import CodexAdapter, trust_workspace_in_codex_home
 from doeff_agents.adapters.gemini import GeminiAdapter
+from doeff_agents.claude_home import prepare_claude_home
 from doeff_agents.effects import (
     AgentLaunchError,
     AgentNotAvailableError,
@@ -663,87 +663,7 @@ class TmuxAgentHandler(AgentHandler):
         agent_home: Path,
         trusted_workspaces: tuple[Path, ...],
     ) -> None:
-        source_home = Path.home()
-        claude_dir = agent_home / ".claude"
-        claude_dir.mkdir(parents=True, exist_ok=True)
-
-        # Claude Code 2.1+ reads `${CLAUDE_HOME}/.claude.json` (CLAUDE_HOME is
-        # set to `${agent_home}/.claude` below). Older versions read
-        # `${HOME}/.claude.json`. Write trust state to both so the
-        # workspace-trust dialog is skipped regardless of which version of
-        # Claude Code is installed (the dialog is interactive and would
-        # block the tmux launch indefinitely otherwise).
-        candidate_json_paths: list[Path] = [
-            agent_home / ".claude.json",                # legacy
-            agent_home / ".claude" / ".claude.json",    # 2.1+ — read by CLI
-        ]
-        source_claude_json = source_home / ".claude.json"
-
-        # Reuse the user's authentication blob in agent_home (only if the
-        # caller explicitly relocated to a non-default home).
-        for claude_json in candidate_json_paths:
-            if (
-                agent_home != source_home
-                and not claude_json.exists()
-                and source_claude_json.exists()
-            ):
-                claude_json.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source_claude_json, claude_json)
-
-        for claude_json in candidate_json_paths:
-            data = (
-                json.loads(claude_json.read_text()) if claude_json.exists() else {}
-            )
-            projects = data.setdefault("projects", {})
-            for workspace in trusted_workspaces:
-                entry = projects.setdefault(str(workspace), {})
-                # Claude Code keeps each project entry's existing fields
-                # (allowedTools, mcpServers, etc.) intact; we only need to
-                # ensure the trust + onboarding flags are set so no dialog
-                # appears on launch. Always overwrite — a stale entry from
-                # a previous launch where trust was declined would still
-                # show the dialog otherwise.
-                entry.setdefault("allowedTools", [])
-                entry["hasTrustDialogAccepted"] = True
-                entry["hasCompletedProjectOnboarding"] = True
-                entry.setdefault("projectOnboardingSeenCount", 0)
-            claude_json.parent.mkdir(parents=True, exist_ok=True)
-            claude_json.write_text(json.dumps(data))
-
-        config_path = claude_dir / "config.json"
-        source_config = source_home / ".claude" / "config.json"
-        if (
-            agent_home != source_home
-            and not config_path.exists()
-            and source_config.exists()
-        ):
-            shutil.copy2(source_config, config_path)
-        if not config_path.exists():
-            config_path.write_text(json.dumps({"hasCompletedOnboarding": True}))
-        else:
-            config_data = json.loads(config_path.read_text())
-            config_data["hasCompletedOnboarding"] = True
-            config_path.write_text(json.dumps(config_data))
-
-        settings_path = claude_dir / "settings.json"
-        source_settings = source_home / ".claude" / "settings.json"
-        if (
-            agent_home != source_home
-            and not settings_path.exists()
-            and source_settings.exists()
-        ):
-            shutil.copy2(source_settings, settings_path)
-        if not settings_path.exists():
-            settings_path.write_text("{}")
-
-        credentials_path = claude_dir / ".credentials.json"
-        source_credentials = source_home / ".claude" / ".credentials.json"
-        if (
-            agent_home != source_home
-            and not credentials_path.exists()
-            and source_credentials.exists()
-        ):
-            shutil.copy2(source_credentials, credentials_path)
+        prepare_claude_home(agent_home, trusted_workspaces)
 
     def _wrap_with_shell_exports(self, command: str, env: dict[str, str]) -> str:
         return wrap_with_shell_exports(command, env)
