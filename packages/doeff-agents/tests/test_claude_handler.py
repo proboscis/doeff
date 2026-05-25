@@ -3,16 +3,15 @@
 import json
 from pathlib import Path
 
-from doeff import Perform, WithHandler, do, run
-from doeff_core_effects.handlers import state
-
 from doeff_agents.adapters.base import AgentType
 from doeff_agents.effects.agent import (
     LaunchEffect,
     SessionHandle,
-    SleepEffect,
     StopEffect,
 )
+from doeff_core_effects.handlers import state
+
+from doeff import Perform, WithHandler, do, run
 
 
 class FakeTmuxBackend:
@@ -27,6 +26,7 @@ class FakeTmuxBackend:
 
     def new_session(self, cfg):
         from datetime import datetime, timezone
+
         from doeff_agents.tmux import SessionInfo
         pane_id = f"%fake{self._next_pane}"
         self._next_pane += 1
@@ -171,22 +171,3 @@ class TestClaudeHandlerStop:
         result = _run(program(), backend)
         assert result == "stopped"
         assert not backend.has_session("stop-test")
-
-
-class TestClaudeHandlerSleep:
-
-    def test_sleep_effect(self, tmp_path):
-        backend = FakeTmuxBackend()
-
-        @do
-        def program():
-            yield Perform(LaunchEffect(
-                session_name="sleep-test",
-                agent_type=AgentType.CLAUDE,
-                work_dir=tmp_path,
-            ))
-            yield Perform(SleepEffect(seconds=0.0))
-            return "ok"
-
-        result = _run(program(), backend)
-        assert result == "ok"
