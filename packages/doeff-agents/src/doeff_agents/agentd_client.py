@@ -158,6 +158,92 @@ class AgentdClient:
             return self._request_id
 
 
+class LazyAgentdClient:
+    """Client proxy that starts doeff-agentd only when an agent effect needs it."""
+
+    def __init__(
+        self,
+        *,
+        db_path: str | Path | None = None,
+        socket_path: str | Path | None = None,
+        daemon_bin: str | Path | None = None,
+        timeout: float = 5.0,
+        client_timeout: float = 1.0,
+        max_running: int = 10,
+    ) -> None:
+        self.db_path = db_path
+        self.socket_path = socket_path
+        self.daemon_bin = daemon_bin
+        self.timeout = timeout
+        self.client_timeout = client_timeout
+        self.max_running = max_running
+        self._client: AgentdClient | None = None
+        self._lock = threading.Lock()
+
+    def _resolve(self) -> AgentdClient:
+        with self._lock:
+            if self._client is None:
+                self._client = ensure_agentd(
+                    db_path=self.db_path,
+                    socket_path=self.socket_path,
+                    daemon_bin=self.daemon_bin,
+                    timeout=self.timeout,
+                    client_timeout=self.client_timeout,
+                    max_running=self.max_running,
+                )
+            return self._client
+
+    def status(self) -> Mapping[str, Any]:
+        return self._resolve().status()
+
+    def launch_session(
+        self,
+        *,
+        session_id: str,
+        session_name: str,
+        agent_type: str,
+        work_dir: Path,
+        command: str,
+        session_env: Mapping[str, str] | None = None,
+    ) -> AgentSessionSnapshot:
+        return self._resolve().launch_session(
+            session_id=session_id,
+            session_name=session_name,
+            agent_type=agent_type,
+            work_dir=work_dir,
+            command=command,
+            session_env=session_env,
+        )
+
+    def get_session(self, session_id: str) -> AgentSessionSnapshot | None:
+        return self._resolve().get_session(session_id)
+
+    def list_sessions(
+        self,
+        query: AgentSessionQuery | None = None,
+    ) -> tuple[AgentSessionSnapshot, ...]:
+        return self._resolve().list_sessions(query)
+
+    def capture_session(self, session_id: str, *, lines: int = 100) -> str:
+        return self._resolve().capture_session(session_id, lines=lines)
+
+    def send_session(
+        self,
+        session_id: str,
+        message: str,
+        *,
+        enter: bool = True,
+        literal: bool = True,
+    ) -> None:
+        self._resolve().send_session(session_id, message, enter=enter, literal=literal)
+
+    def cancel_session(self, session_id: str) -> AgentSessionSnapshot:
+        return self._resolve().cancel_session(session_id)
+
+    def cleanup_session(self, session_id: str) -> AgentSessionSnapshot:
+        return self._resolve().cleanup_session(session_id)
+
+
 def default_agentd_paths() -> AgentdPaths:
     """Return XDG-style default paths for doeff-agentd."""
     state_home = (
@@ -316,6 +402,7 @@ __all__ = [
     "AgentdClientError",
     "AgentdPaths",
     "AgentdProtocolError",
+    "LazyAgentdClient",
     "default_agentd_paths",
     "ensure_agentd",
 ]
