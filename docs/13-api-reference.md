@@ -524,26 +524,33 @@ value = yield Pure({"status": "ok"})
 
 ---
 
-### WithHandler(handler, expr)
+### Handler Installer Call
 
-Run a scoped sub-program under a custom handler.
+Run a scoped sub-program under a custom handler by calling a Program -> Program handler installer.
 
 ```python
-@do
-def ask_override(effect: AskEffect, k):
-    return (yield Resume(k, "override"))
+from doeff_core_effects.handlers import reader
 
-scoped = WithHandler(handler=ask_override, expr=worker())
+scoped = reader(env={"name": "override"})(worker())
 ```
 
-**Signature:** `WithHandler(handler: HandlerFn, expr: DoExpr[T])`
+**Shape:** `handler(program: Program[T]) -> Program[T]`
 
 **Notes:**
 
-- The public parameter names are `handler=` and `expr=`.
-- The handler's first-parameter effect annotation is converted into a runtime type filter.
+- New-style handlers built with `defhandler` already have this Program -> Program shape.
+- Python handler factories should return this shape rather than asking callers to use the
+  deprecated `WithHandler` compatibility shim.
+- The raw handler's first-parameter effect annotation is converted into a runtime type filter
+  inside the installed handler scope.
 - Use `yield Pass()` for transparent fallthrough.
 - Use `yield Delegate()` only when the handler intentionally wants the outer handler's result.
+
+### Deprecated WithHandler Shim
+
+`WithHandler` remains exported for backward compatibility. New code should call a handler installer
+directly, for example `handler(program)`. `WithHandlerType` is the low-level VM node/type alias for
+code that needs direct DoExpr construction or `isinstance` checks.
 
 ---
 
@@ -732,8 +739,8 @@ def run(
 ```
 
 `env` and `store` are the execution inputs (Reader and State roots).
-`handlers` is a low-level runner hook. For custom handler composition, prefer explicit
-`WithHandler(handler=..., expr=...)` around the program.
+`handlers` is a low-level runner hook. For custom handler composition, prefer direct
+`handler(program)` calls.
 
 ---
 
@@ -764,8 +771,8 @@ async def async_run(
 ) -> RunResult[T]
 ```
 
-`handlers` is a low-level runner hook. For custom handler composition, prefer explicit
-`WithHandler(handler=..., expr=...)` around the program.
+`handlers` is a low-level runner hook. For custom handler composition, prefer direct
+`handler(program)` calls.
 
 ---
 
@@ -814,7 +821,7 @@ path = run(write_graph_html(graph, "output.html"), handlers=default_handlers()).
 | **Writer** | Tell, Listen, StructuredLog, slog |
 | **Async/Concurrency** | Await, Spawn, Wait, Gather, Race, Task.cancel, TaskCancelledError |
 | **Semaphore** | CreateSemaphore, AcquireSemaphore, ReleaseSemaphore |
-| **Control** | Pure, WithHandler, WithIntercept |
+| **Control** | Pure, handler installer calls, WithHandlerType, WithIntercept |
 | **Error** | Try, Ok, Err |
 | **Cache** | CacheGet, CachePut |
 | **Graph** | Step, Annotate, Snapshot, CaptureGraph |
@@ -841,7 +848,7 @@ from doeff.effects import TaskCancelledError  # raised on Wait/Gather/Race for c
 from doeff import AcquireSemaphore, CreateSemaphore, ReleaseSemaphore, Semaphore
 
 # Control
-from doeff import Pure, WithHandler, WithIntercept
+from doeff import Pure, WithHandlerType, WithIntercept
 
 # Error handling
 from doeff import Try, Ok, Err

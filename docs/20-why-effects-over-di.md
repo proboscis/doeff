@@ -53,7 +53,7 @@ async def my_workflow(llm: LLMService, images: ImageService):
 ## Approach 2: Algebraic Effects (doeff)
 
 ```python
-from doeff import WithHandler, do, run
+from doeff import do, run
 from doeff_llm.effects import LLMChat, LLMStructuredOutput
 from doeff_image.effects import ImageGenerate
 
@@ -72,14 +72,9 @@ def my_workflow():
 
 # Stack handlers — routing is automatic
 result = run(
-    WithHandler(
-        handler=seedream_handler,
-        expr=WithHandler(
-            handler=gemini_handler,
-            expr=WithHandler(
-                handler=openai_handler,
-                expr=my_workflow(),
-            ),
+    seedream_handler(
+        gemini_handler(
+            openai_handler(my_workflow()),
         ),
     ),
     env={"openai_api_key": "...", "gemini_api_key": "...", "seedream_api_key": "..."}
@@ -243,12 +238,8 @@ def gemini_handler(effect: LLMChat, k):
 
 # Stacking = routing
 result = run(
-    WithHandler(
-        handler=gemini_handler,
-        expr=WithHandler(
-            handler=openai_handler,   # inner tries first
-            expr=my_workflow(),
-        ),
+    gemini_handler(
+        openai_handler(my_workflow()),   # inner tries first
     ),
     env={...}
 )
@@ -274,19 +265,18 @@ The program never mentions a provider. The handler stack decides where secrets c
 
 ```python
 # Production: Google Cloud Secret Manager
-run(WithHandler(handler=gsm_handler, expr=deploy_workflow()), env={...})
+run(gsm_handler(deploy_workflow()), env={...})
 
 # Local dev: 1Password
-run(WithHandler(handler=onepassword_handler, expr=deploy_workflow()), env={...})
+run(onepassword_handler(deploy_workflow()), env={...})
 
 # CI: AWS Secrets Manager
-run(WithHandler(handler=aws_secrets_handler, expr=deploy_workflow()), env={...})
+run(aws_secrets_handler(deploy_workflow()), env={...})
 
 # Fallback chain: try 1Password, fall back to env vars
 run(
-    WithHandler(
-        handler=env_var_handler,
-        expr=WithHandler(handler=onepassword_handler, expr=deploy_workflow()),
+    env_var_handler(
+        onepassword_handler(deploy_workflow()),
     ),
 )
 ```
@@ -298,19 +288,19 @@ With DI, you'd need a `SecretService` protocol, provider implementations, a fact
 ```python
 # Production
 result = run(
-    WithHandler(handler=openai_production_handler, expr=my_workflow()),
+    openai_production_handler(my_workflow()),
     env={"openai_api_key": real_key}
 )
 
 # Test — swap handler, everything else identical
 result = run(
-    WithHandler(handler=openai_mock_handler, expr=my_workflow()),
+    openai_mock_handler(my_workflow()),
     store={"mock_config": MockOpenAIConfig(default_response="test")}
 )
 
 # Replay — record and replay real responses
 result = run(
-    WithHandler(handler=replay_handler(recorded_responses), expr=my_workflow()),
+    replay_handler(recorded_responses)(my_workflow()),
 )
 ```
 
@@ -461,25 +451,17 @@ from doeff import async_run, default_async_handlers, run
 
 # Deterministic simulation (instant, reproducible)
 result = run(
-    WithHandler(
-        handler=deterministic_sim_handler(  # Handles Delay/GetTime/ScheduleAt
-            start_time=1704067200.0,        #   + intercepts Spawn/Wait for
-        ),                                  #   deterministic scheduling
-        expr=WithHandler(
-            handler=event_handler(),        # Handles Publish/WaitForEvent
-            expr=trading_strategy(),
-        ),
+    deterministic_sim_handler(              # Handles Delay/GetTime/ScheduleAt
+        start_time=1704067200.0,            #   + intercepts Spawn/Wait for
+    )(                                      #   deterministic scheduling
+        event_handler()(trading_strategy()),  # Handles Publish/WaitForEvent
     ),
 )
 
 # Same program, real-time execution (wall-clock, asyncio)
 result = await async_run(
-    WithHandler(
-        handler=async_time_handler(),     # asyncio.sleep, time.time()
-        expr=WithHandler(
-            handler=event_handler(),      # Same event handler
-            expr=trading_strategy(),
-        ),
+    async_time_handler()(                 # asyncio.sleep, time.time()
+        event_handler()(trading_strategy()),  # Same event handler
     ),
     handlers=default_async_handlers(),
 )

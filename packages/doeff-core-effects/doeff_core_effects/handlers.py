@@ -1,21 +1,41 @@
 """
 Core handlers — reader, state, writer.
 
-Each is a function that takes config and returns a @do handler function.
-Use with WithHandler:
+Handler factories return Program -> Program installers. Compose them by calling
+the returned handler with the program to wrap:
 
-    run(WithHandler(reader(env={"key": "value"}),
-        WithHandler(state(initial={"count": 0}),
-            body())))
+    prog = state(initial={"count": 0})(body())
+    prog = reader(env={"key": "value"})(prog)
+    run(prog)
 """
 
 from doeff import do
-from doeff.program import Resume, Pass
-
+from doeff.program import Pass, Resume, WithHandlerType
 from doeff_core_effects.effects import (
-    Ask, Get, Put, Tell, Try, Slog, WriterTellEffect,
-    Local, Listen, Await,
+    Ask,
+    Await,
+    Get,
+    Listen,
+    Local,
+    Put,
+    Slog,
+    Try,
+    WriterTellEffect,
 )
+
+
+def _program_handler(raw_handler):
+    """Wrap a raw dispatcher as the current Program -> Program handler shape."""
+
+    def install(body):
+        return WithHandlerType(raw_handler, body)
+
+    install.__name__ = raw_handler.__name__
+    install.__qualname__ = raw_handler.__qualname__
+    install.__doc__ = raw_handler.__doc__
+    install._doeff_is_handler_fn = True
+    install.__doeff_handler_data__ = raw_handler
+    return install
 
 
 def reader(env=None):
@@ -37,7 +57,7 @@ def reader(env=None):
             return (yield ResumeThrow(k, KeyError(_missing_key_message(effect.key))))
         yield Pass(effect, k)
 
-    return handler
+    return _program_handler(handler)
 
 
 def state(initial=None):
@@ -59,7 +79,7 @@ def state(initial=None):
             return result
         yield Pass(effect, k)
 
-    return handler
+    return _program_handler(handler)
 
 
 def writer():
@@ -78,8 +98,9 @@ def writer():
             return result
         yield Pass(effect, k)
 
-    handler.log = log  # expose for inspection
-    return handler
+    install = _program_handler(handler)
+    install.log = log  # expose for inspection
+    return install
 
 
 @do
@@ -95,9 +116,10 @@ def try_handler(effect, k):
         result = yield Try(some_program)  # Ok(value) or Err(error)
     """
     if isinstance(effect, Try):
-        from doeff_vm import Ok, Err
-        from doeff.program import WithHandler as WH
+        from doeff_vm import Err, Ok
+
         from doeff.handler_utils import get_inner_handlers
+        from doeff.program import WithHandler as WH
 
         inner_hs = yield get_inner_handlers(k)
 
@@ -136,8 +158,9 @@ def slog_handler():
             return result
         yield Pass(effect, k)
 
-    handler.log = log
-    return handler
+    install = _program_handler(handler)
+    install.log = log
+    return install
 
 
 @do
@@ -156,8 +179,8 @@ def local_handler(effect, k):
         WithHandler(local_handler, body)
     """
     if isinstance(effect, Local):
-        from doeff.program import WithHandler as WH
         from doeff.handler_utils import get_inner_handlers
+        from doeff.program import WithHandler as WH
         overrides = effect.env
 
         # Capture inner handlers from continuation (between Local site
@@ -194,8 +217,8 @@ def listen_handler(effect, k):
         WithHandler(listen_handler, body)
     """
     if isinstance(effect, Listen):
-        from doeff.program import WithHandler as WH
         from doeff.handler_utils import get_inner_handlers
+        from doeff.program import WithHandler as WH
         collected = []
         types_to_collect = effect.types or (WriterTellEffect,)
 
@@ -224,9 +247,10 @@ def await_handler():
     Uses ExternalPromise to bridge async into the scheduler.
     Requires scheduler to be installed.
     """
-    from doeff_core_effects.scheduler import CreateExternalPromise, Wait
     import asyncio
     import threading
+
+    from doeff_core_effects.scheduler import CreateExternalPromise, Wait
 
     # Shared event loop running in a background thread
     _loop = [None]
@@ -260,7 +284,7 @@ def await_handler():
             return result
         yield Pass(effect, k)
 
-    return handler
+    return _program_handler(handler)
 
 
 def _missing_key_message(key):
@@ -312,11 +336,14 @@ def lazy_ask(env=None, *, strict=False):
     if env is None:
         env = {}
 
-    from doeff.program import Expand, ResumeThrow, WithHandler as WH
     from doeff import Program
     from doeff.handler_utils import get_inner_handlers
+    from doeff.program import ResumeThrow
+    from doeff.program import WithHandler as WH
     from doeff_core_effects.scheduler import (
-        CreateSemaphore, AcquireSemaphore, ReleaseSemaphore,
+        AcquireSemaphore,
+        CreateSemaphore,
+        ReleaseSemaphore,
     )
 
     shared_cache = {}       # key → value (override-independent entries)
@@ -450,7 +477,7 @@ def lazy_ask(env=None, *, strict=False):
 
         return handler
 
-    return _make_handler(dict(env))
+    return _program_handler(_make_handler(dict(env)))
 
 
 def env_var_ask(*, prefix="DOEFF_"):
@@ -478,12 +505,15 @@ def env_var_ask(*, prefix="DOEFF_"):
     always flow through to outer handlers (or Unhandled).
     """
     import os
+
     from doeff import Program
-    from doeff.program import WithHandler as WH
-    from doeff.handler_utils import get_inner_handlers
     from doeff.cli.run_services import import_symbol
+    from doeff.handler_utils import get_inner_handlers
+    from doeff.program import WithHandler as WH
     from doeff_core_effects.scheduler import (
-        AcquireSemaphore, CreateSemaphore, ReleaseSemaphore,
+        AcquireSemaphore,
+        CreateSemaphore,
+        ReleaseSemaphore,
     )
 
     # cache[key] = (raw_env_value, resolved_value)
@@ -558,6 +588,4 @@ def env_var_ask(*, prefix="DOEFF_"):
         yield ReleaseSemaphore(sems[effect.key])
         return (yield Resume(k, resolved))
 
-    return handler
-
-
+    return _program_handler(handler)

@@ -21,7 +21,8 @@ This chapter covers async integration and scheduler primitives for cooperative c
 Pair each runner with the matching handler preset. The preferred pairings are marked below.
 
 The examples in this chapter use `handlers=` only to install the builtin sync/async runtime preset.
-For custom handler composition, prefer `WithHandler(handler=..., expr=...)` around the program.
+For custom handler composition, call a Program -> Program handler installer directly, for example
+`handler(program)`.
 
 | Runner | Preset | Status | Await Behavior |
 | --- | --- | --- | --- |

@@ -99,8 +99,11 @@ def cost_cap_handler(effect: Effect, k):
     yield Delegate()
 
 result = run(
-    WithHandler(research_agent(query), cost_cap_handler),
-    handlers=[OpenAIHandler(), ClaudeHandler()],
+    openai_handler(
+        claude_handler(
+            cost_cap_handler(research_agent(query)),
+        ),
+    ),
 )
 print(result.effect_log)
 # LLMChat: 3 calls, $0.12 total, 4.2s latency
