@@ -3,7 +3,7 @@ use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
@@ -73,6 +73,66 @@ struct SessionSnapshot {
     cleaned_at: Option<String>,
     pr_url: Option<String>,
     output_snippet: Option<String>,
+    /// Optional output-file contract.  When set, the monitor refuses to
+    /// finalise the session as terminal until the named file exists and
+    /// (when configured) matches the declared schema.  Missing or
+    /// invalid output triggers an auto-retry up to `max_retries`
+    /// times; exhausting retries marks the session as failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expected_result: Option<ExpectedResultSpec>,
+    /// How many retries the monitor has issued so far for this session.
+    /// Used together with `expected_result.max_retries` to decide
+    /// whether the next validation failure triggers another retry or
+    /// finalises as failed.
+    #[serde(default)]
+    retries_used: u32,
+    /// Most recent validation reason — surfaced in events so callers
+    /// can see *why* the monitor retried (or gave up).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_validation_error: Option<String>,
+}
+
+/// Contract the launcher attaches to a session to enforce input→output
+/// semantics on top of doeff-agentd's existing terminal-detection
+/// heuristics.  When set, the monitor validates the agent's output on
+/// every transition to "done" before letting the session enter a
+/// terminal state — and auto-prompts the agent to fix forgotten or
+/// malformed outputs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ExpectedResultSpec {
+    /// Path to the expected output, relative to `work_dir`.
+    file_path: String,
+    /// When set, the parsed JSON's top-level `schema` field must equal
+    /// this name for validation to pass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    schema_name: Option<String>,
+    /// When set, the parsed JSON's top-level `schemaVersion` field
+    /// must equal this integer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    schema_version: Option<u32>,
+    /// Message sent back to the agent when its output is missing or
+    /// malformed.  The literal substring `%REASON%` is replaced with
+    /// the validator's explanation so the agent has actionable
+    /// feedback.
+    #[serde(default = "default_retry_prompt")]
+    retry_prompt: String,
+    /// Maximum number of times the monitor re-prompts the agent before
+    /// finalising the session as failed.  Counts retries only, not the
+    /// initial run, so total attempts = max_retries + 1.
+    #[serde(default = "default_max_retries")]
+    max_retries: u32,
+}
+
+fn default_retry_prompt() -> String {
+    String::from(
+        "You exited without producing the required output file: %REASON%. \
+         Re-read your previous instructions, write the file at the expected path \
+         with the exact schema declared, and do not exit until the file is valid.",
+    )
+}
+
+fn default_max_retries() -> u32 {
+    2
 }
 
 #[derive(Debug, Deserialize)]
@@ -104,6 +164,11 @@ struct LaunchParams {
     lifecycle: String,
     #[serde(default)]
     session_env: BTreeMap<String, String>,
+    /// Optional output-file contract.  See 'ExpectedResultSpec' for the
+    /// semantics; persisted with the session so the monitor can enforce
+    /// it after the agent appears to finish.
+    #[serde(default)]
+    expected_result: Option<ExpectedResultSpec>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -318,6 +383,24 @@ fn migrate(conn: &Connection) -> Result<()> {
         "agent_sessions",
         "lifecycle",
         "TEXT NOT NULL DEFAULT 'run_to_completion'",
+    )?;
+    ensure_column(
+        conn,
+        "agent_sessions",
+        "expected_result_json",
+        "TEXT",
+    )?;
+    ensure_column(
+        conn,
+        "agent_sessions",
+        "retries_used",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column(
+        conn,
+        "agent_sessions",
+        "last_validation_error",
+        "TEXT",
     )?;
     Ok(())
 }
@@ -782,6 +865,9 @@ fn session_launch(
         cleaned_at: None,
         pr_url: None,
         output_snippet: None,
+        expected_result: params.expected_result,
+        retries_used: 0,
+        last_validation_error: None,
     };
     record_command(
         conn,
@@ -800,7 +886,8 @@ fn session_get(conn: &Connection, session_id: &str) -> Result<Option<SessionSnap
     conn.query_row(
         "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status,
                 backend_kind, backend_ref_json, started_at, last_observed_at,
-                finished_at, cleaned_at, pr_url, output_snippet
+                finished_at, cleaned_at, pr_url, output_snippet,
+                expected_result_json, retries_used, last_validation_error
          FROM agent_sessions WHERE session_id = ?1",
         params![session_id],
         row_to_snapshot,
@@ -813,7 +900,8 @@ fn session_list(conn: &Connection, query: ListParams) -> Result<Vec<SessionSnaps
     let mut stmt = conn.prepare(
         "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status,
                 backend_kind, backend_ref_json, started_at, last_observed_at,
-                finished_at, cleaned_at, pr_url, output_snippet
+                finished_at, cleaned_at, pr_url, output_snippet,
+                expected_result_json, retries_used, last_validation_error
          FROM agent_sessions
          ORDER BY started_at DESC, session_id ASC",
     )?;
@@ -969,6 +1057,17 @@ fn row_to_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSnapshot>
         serde_json::from_str::<BTreeMap<String, String>>(&backend_ref_json).map_err(|err| {
             rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(err))
         })?;
+    let expected_result_json: Option<String> = row.get(15)?;
+    let expected_result = match expected_result_json {
+        Some(json) => Some(serde_json::from_str::<ExpectedResultSpec>(&json).map_err(|err| {
+            rusqlite::Error::FromSqlConversionFailure(
+                15,
+                rusqlite::types::Type::Text,
+                Box::new(err),
+            )
+        })?),
+        None => None,
+    };
     Ok(SessionSnapshot {
         session_id: row.get(0)?,
         session_name: row.get(1)?,
@@ -985,17 +1084,25 @@ fn row_to_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSnapshot>
         cleaned_at: row.get(12)?,
         pr_url: row.get(13)?,
         output_snippet: row.get(14)?,
+        expected_result,
+        retries_used: row.get::<_, i64>(16)? as u32,
+        last_validation_error: row.get(17)?,
     })
 }
 
 fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> {
     let backend_ref_json = serde_json::to_string(&snapshot.backend_ref)?;
+    let expected_result_json = match &snapshot.expected_result {
+        Some(spec) => Some(serde_json::to_string(spec)?),
+        None => None,
+    };
     conn.execute(
         "INSERT INTO agent_sessions (
             session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status,
             backend_kind, backend_ref_json, started_at, last_observed_at,
-            finished_at, cleaned_at, pr_url, output_snippet
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+            finished_at, cleaned_at, pr_url, output_snippet,
+            expected_result_json, retries_used, last_validation_error
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
          ON CONFLICT(session_id) DO UPDATE SET
             session_name = excluded.session_name,
             pane_id = excluded.pane_id,
@@ -1010,7 +1117,10 @@ fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> 
             finished_at = excluded.finished_at,
             cleaned_at = excluded.cleaned_at,
             pr_url = excluded.pr_url,
-            output_snippet = excluded.output_snippet",
+            output_snippet = excluded.output_snippet,
+            expected_result_json = excluded.expected_result_json,
+            retries_used = excluded.retries_used,
+            last_validation_error = excluded.last_validation_error",
         params![
             snapshot.session_id,
             snapshot.session_name,
@@ -1027,6 +1137,9 @@ fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> 
             snapshot.cleaned_at,
             snapshot.pr_url,
             snapshot.output_snippet,
+            expected_result_json,
+            i64::from(snapshot.retries_used),
+            snapshot.last_validation_error,
         ],
     )?;
     Ok(())
@@ -1324,10 +1437,47 @@ fn monitor_once(config: &Config) -> Result<()> {
         let observed_at = now_iso();
         if exists {
             let output = tmux_capture(config, &snapshot.pane_id, 100)?;
-            let observed_status = observed_status_for_snapshot(&snapshot, &output);
-            snapshot.status = String::from(observed_status);
+            let mut observed_status = observed_status_for_snapshot(&snapshot, &output);
             snapshot.last_observed_at = Some(observed_at);
             snapshot.output_snippet = Some(tail_chars(&output, 500));
+            // If the agent claims it is done and a result file was promised,
+            // validate before we let the session enter a terminal state.
+            // Missing or invalid output triggers an auto-retry up to
+            // `max_retries`; exhausting retries downgrades the result to
+            // `failed` so callers see a hard error rather than a silently
+            // missing artefact.
+            if observed_status == "done" && snapshot.expected_result.is_some() {
+                let spec = snapshot.expected_result.clone().unwrap();
+                match validate_expected_result(&snapshot.work_dir, &spec) {
+                    Ok(()) => {
+                        snapshot.last_validation_error = None;
+                    }
+                    Err(reason) => {
+                        if snapshot.retries_used < spec.max_retries {
+                            send_retry_prompt(config, &snapshot, &spec, &reason)?;
+                            snapshot.retries_used += 1;
+                            snapshot.last_validation_error = Some(reason.clone());
+                            snapshot.status = String::from("running");
+                            snapshot.finished_at = None;
+                            upsert_snapshot(&conn, &snapshot)?;
+                            record_event(
+                                &conn,
+                                &snapshot.session_id,
+                                "session_output_retry",
+                                &snapshot,
+                            )?;
+                            continue;
+                        } else {
+                            observed_status = "failed";
+                            snapshot.last_validation_error = Some(format!(
+                                "output validation exhausted after {} retries: {}",
+                                spec.max_retries, reason
+                            ));
+                        }
+                    }
+                }
+            }
+            snapshot.status = String::from(observed_status);
             if is_terminal_status(observed_status) {
                 snapshot.finished_at.get_or_insert_with(now_iso);
             }
@@ -1353,6 +1503,106 @@ fn monitor_once(config: &Config) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Validate the file the launcher promised the agent would produce.
+/// Returns `Ok(())` when the file exists, parses as JSON, and matches
+/// the declared schema name / version (when those are configured).
+/// Otherwise the `Err(String)` carries a one-line explanation suitable
+/// for inclusion in the retry prompt and in the session's last
+/// `validation_error` audit field.
+fn validate_expected_result(
+    work_dir: &str,
+    spec: &ExpectedResultSpec,
+) -> std::result::Result<(), String> {
+    let path = Path::new(work_dir).join(&spec.file_path);
+    let raw = match fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(err) => {
+            return Err(format!(
+                "expected result file not readable at {}: {}",
+                path.display(),
+                err
+            ));
+        }
+    };
+    let value: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(err) => {
+            return Err(format!(
+                "expected result file at {} is not valid JSON: {}",
+                path.display(),
+                err
+            ));
+        }
+    };
+    if let Some(expected_name) = &spec.schema_name {
+        let actual = value
+            .get("schema")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if actual != expected_name.as_str() {
+            return Err(format!(
+                "schema mismatch in {}: expected '{}', got '{}'",
+                path.display(),
+                expected_name,
+                actual
+            ));
+        }
+    }
+    if let Some(expected_version) = spec.schema_version {
+        let actual = value
+            .get("schemaVersion")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        if actual != u64::from(expected_version) {
+            return Err(format!(
+                "schemaVersion mismatch in {}: expected {}, got {}",
+                path.display(),
+                expected_version,
+                actual
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Re-launch the agent in the same tmux session with a follow-up prompt
+/// asking it to produce the missing or invalid output.  We rebuild a
+/// minimal codex/claude argv with the retry prompt; previous model /
+/// effort / mcp settings are not re-applied because the agent's
+/// session-level configuration (e.g. Codex workspace trust) persists,
+/// and a follow-up prompt does not need the original tuning.
+fn send_retry_prompt(
+    config: &Config,
+    snapshot: &SessionSnapshot,
+    spec: &ExpectedResultSpec,
+    reason: &str,
+) -> Result<()> {
+    let prompt = spec.retry_prompt.replace("%REASON%", reason);
+    let argv = retry_argv(&snapshot.agent_type, &prompt)?;
+    let command_line = shell_join(argv);
+    tmux_send_keys(config, &snapshot.pane_id, &command_line, true, true)?;
+    Ok(())
+}
+
+fn retry_argv(agent_type: &str, prompt: &str) -> Result<Vec<String>> {
+    match agent_type {
+        "codex" => Ok(vec![
+            String::from("codex"),
+            String::from("--yolo"),
+            prompt.to_string(),
+        ]),
+        "claude" => Ok(vec![
+            String::from("claude"),
+            String::from("--dangerously-skip-permissions"),
+            prompt.to_string(),
+        ]),
+        other => Err(anyhow!(
+            "cannot auto-retry agent_type '{}': only codex and claude are supported",
+            other
+        )),
+    }
 }
 
 fn tail_chars(value: &str, max_chars: usize) -> String {
@@ -1391,6 +1641,9 @@ mod tests {
             cleaned_at: None,
             pr_url: None,
             output_snippet: None,
+            expected_result: None,
+            retries_used: 0,
+            last_validation_error: None,
         };
         assert!(list_query_matches(
             &snapshot,
@@ -1509,6 +1762,9 @@ mod tests {
                 backend_kind: String::from("tmux"),
                 backend_ref: BTreeMap::new(),
                 started_at: now_iso(),
+                expected_result: None,
+                retries_used: 0,
+                last_validation_error: None,
                 last_observed_at: None,
                 finished_at: None,
                 cleaned_at: None,
@@ -1532,9 +1788,15 @@ mod tests {
                 session_name: String::from("new"),
                 agent_type: String::from("codex"),
                 work_dir: String::from("/tmp"),
-                command: String::from("true"),
+                command: Some(String::from("true")),
+                prompt: None,
+                model: None,
+                effort: None,
+                mcp_servers: BTreeMap::new(),
+                skip_trust_setup: true,
                 lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
                 session_env: BTreeMap::new(),
+                expected_result: None,
             },
         )
         .expect_err("max running should reject before tmux");
@@ -1565,6 +1827,101 @@ mod tests {
         assert!(!should_cleanup_after_observed_status(&snapshot, status));
     }
 
+    #[test]
+    fn validate_expected_result_accepts_well_formed_envelope() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let work_dir = tmp.path().to_path_buf();
+        fs::write(
+            work_dir.join(".reactor-impl-result.json"),
+            r#"{"schema":"ImplResult","schemaVersion":1,"payload":{"pr_url":"https://x"}}"#,
+        )
+        .expect("write envelope");
+        let spec = ExpectedResultSpec {
+            file_path: String::from(".reactor-impl-result.json"),
+            schema_name: Some(String::from("ImplResult")),
+            schema_version: Some(1),
+            retry_prompt: default_retry_prompt(),
+            max_retries: 2,
+        };
+        assert!(validate_expected_result(work_dir.to_str().unwrap(), &spec).is_ok());
+    }
+
+    #[test]
+    fn validate_expected_result_rejects_missing_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let spec = ExpectedResultSpec {
+            file_path: String::from(".reactor-impl-result.json"),
+            schema_name: None,
+            schema_version: None,
+            retry_prompt: default_retry_prompt(),
+            max_retries: 2,
+        };
+        let err = validate_expected_result(tmp.path().to_str().unwrap(), &spec)
+            .expect_err("missing file should reject");
+        assert!(err.contains("not readable"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_expected_result_rejects_schema_mismatch() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let work_dir = tmp.path().to_path_buf();
+        fs::write(
+            work_dir.join(".reactor-impl-result.json"),
+            r#"{"schema":"WrongSchema","schemaVersion":1}"#,
+        )
+        .expect("write envelope");
+        let spec = ExpectedResultSpec {
+            file_path: String::from(".reactor-impl-result.json"),
+            schema_name: Some(String::from("ImplResult")),
+            schema_version: Some(1),
+            retry_prompt: default_retry_prompt(),
+            max_retries: 2,
+        };
+        let err = validate_expected_result(work_dir.to_str().unwrap(), &spec)
+            .expect_err("schema mismatch should reject");
+        assert!(err.contains("schema mismatch"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_expected_result_rejects_schema_version_mismatch() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let work_dir = tmp.path().to_path_buf();
+        fs::write(
+            work_dir.join(".reactor-impl-result.json"),
+            r#"{"schema":"ImplResult","schemaVersion":2}"#,
+        )
+        .expect("write envelope");
+        let spec = ExpectedResultSpec {
+            file_path: String::from(".reactor-impl-result.json"),
+            schema_name: Some(String::from("ImplResult")),
+            schema_version: Some(1),
+            retry_prompt: default_retry_prompt(),
+            max_retries: 2,
+        };
+        let err = validate_expected_result(work_dir.to_str().unwrap(), &spec)
+            .expect_err("schema version mismatch should reject");
+        assert!(err.contains("schemaVersion mismatch"), "got: {err}");
+    }
+
+    #[test]
+    fn retry_argv_includes_prompt_for_codex() {
+        let argv = retry_argv("codex", "please write the file").expect("argv");
+        assert_eq!(
+            argv,
+            vec![
+                String::from("codex"),
+                String::from("--yolo"),
+                String::from("please write the file"),
+            ]
+        );
+    }
+
+    #[test]
+    fn retry_argv_rejects_unsupported_agent_type() {
+        let err = retry_argv("generic", "prompt").expect_err("generic must fail");
+        assert!(err.to_string().contains("cannot auto-retry"), "got: {err:#}");
+    }
+
     fn snapshot_for_lifecycle(lifecycle: &str, status: &str) -> SessionSnapshot {
         SessionSnapshot {
             session_id: String::from("s1"),
@@ -1582,6 +1939,9 @@ mod tests {
             cleaned_at: None,
             pr_url: None,
             output_snippet: None,
+            expected_result: None,
+            retries_used: 0,
+            last_validation_error: None,
         }
     }
 }
