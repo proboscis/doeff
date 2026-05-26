@@ -886,6 +886,15 @@ fn session_launch(
     if uses_interactive_prompt(&params) {
         if let Some(prompt) = params.prompt.as_ref() {
             if !prompt.trim().is_empty() {
+                // Wait for the agent's REPL to actually be ready for
+                // input before sending the prompt + Enter.  Codex (and
+                // similar) print their banner, load MCP servers, and
+                // only then enter the input loop.  Sending keys before
+                // that race lets the text queue up while the Enter is
+                // eaten by the loading screen — the visible symptom
+                // was a prompt sitting in codex's input box that was
+                // never submitted.
+                wait_for_repl_idle(config, &pane_id, Duration::from_secs(20))?;
                 tmux_send_keys(config, &pane_id, prompt, true, true)?;
                 awaiting_response = true;
             }
@@ -1674,6 +1683,29 @@ fn send_retry_prompt(
 
 fn is_interactive_agent_type(agent_type: &str) -> bool {
     matches!(agent_type, "codex" | "claude")
+}
+
+/// Poll the tmux pane until the agent's REPL is in a state where it is
+/// ready to receive a user message — concretely, the codex / claude
+/// idle prompt marker (`›`) is visible.  Codex prints a banner and
+/// loads MCP servers before its input loop is wired up; sending keys
+/// during that window queues the text in the pty but lets the Enter
+/// get eaten by the loading UI, leaving the prompt sitting in the
+/// input box without ever being submitted.  Returns once the marker
+/// appears or after `max_wait`, whichever comes first; the caller is
+/// expected to send the keys regardless so a stuck startup at least
+/// fails the normal validation path instead of hanging the RPC.
+fn wait_for_repl_idle(config: &Config, pane_id: &str, max_wait: Duration) -> Result<()> {
+    let start = std::time::Instant::now();
+    let poll_interval = Duration::from_millis(300);
+    while start.elapsed() < max_wait {
+        let output = tmux_capture(config, pane_id, 60)?;
+        if output_has_codex_idle_prompt(&output) {
+            return Ok(());
+        }
+        thread::sleep(poll_interval);
+    }
+    Ok(())
 }
 
 fn tail_chars(value: &str, max_chars: usize) -> String {
