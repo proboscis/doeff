@@ -648,6 +648,20 @@ fn resolve_launch_command(params: &LaunchParams) -> Result<String> {
     }
 }
 
+/// True when 'session_launch' should hand the prompt to the running
+/// agent as an interactive message instead of baking it into the argv.
+/// Currently codex and claude are the supported interactive agents;
+/// callers using `agent_type=generic` (or anything else) opt out by
+/// passing their own command + prompt argv explicitly.
+fn uses_interactive_prompt(params: &LaunchParams) -> bool {
+    if let Some(cmd) = params.command.as_ref() {
+        if !cmd.trim().is_empty() {
+            return false;
+        }
+    }
+    matches!(params.agent_type.as_str(), "codex" | "claude")
+}
+
 fn build_codex_argv(params: &LaunchParams) -> Vec<String> {
     let mut args: Vec<String> = vec![String::from("codex"), String::from("--yolo")];
     if let Some(effort) = params.effort.as_ref() {
@@ -673,11 +687,15 @@ fn build_codex_argv(params: &LaunchParams) -> Vec<String> {
             args.push(model.clone());
         }
     }
-    if let Some(prompt) = params.prompt.as_ref() {
-        if !prompt.is_empty() {
-            args.push(prompt.clone());
-        }
-    }
+    // Intentionally do NOT pass the prompt as a positional argument.
+    // Codex would treat that as a single-shot invocation and exit when
+    // the task completed, which destroys the agent process before the
+    // monitor can validate output or send follow-up feedback.
+    //
+    // Instead we leave codex in its interactive REPL and 'session_launch'
+    // sends the prompt as the first message into the live session via
+    // 'tmux_send_keys', keeping codex alive for retries with full
+    // conversation context.
     args
 }
 
@@ -692,11 +710,9 @@ fn build_claude_argv(params: &LaunchParams) -> Vec<String> {
             args.push(model.clone());
         }
     }
-    if let Some(prompt) = params.prompt.as_ref() {
-        if !prompt.is_empty() {
-            args.push(prompt.clone());
-        }
-    }
+    // Same rationale as 'build_codex_argv': the prompt is sent as a
+    // message into the running agent (not as a positional argv) so the
+    // session stays alive past task completion and can be re-prompted.
     args
 }
 
@@ -843,6 +859,20 @@ fn session_launch(
     )?;
     if !command_line.trim().is_empty() {
         tmux_send_keys(config, &pane_id, &command_line, true, true)?;
+    }
+    // For interactive agents (codex / claude), the prompt is sent as a
+    // message INTO the running agent's REPL — not as a positional argv —
+    // so the session survives task completion and the monitor can
+    // re-prompt the still-alive agent when the output contract is
+    // violated.  Agents launched via an explicit `command` keep the
+    // legacy behaviour: callers that hand over their own argv are
+    // responsible for including a prompt if they want one.
+    if uses_interactive_prompt(&params) {
+        if let Some(prompt) = params.prompt.as_ref() {
+            if !prompt.trim().is_empty() {
+                tmux_send_keys(config, &pane_id, prompt, true, true)?;
+            }
+        }
     }
     let mut backend_ref = BTreeMap::new();
     backend_ref.insert(String::from("session_name"), params.session_name.clone());
@@ -1567,42 +1597,37 @@ fn validate_expected_result(
     Ok(())
 }
 
-/// Re-launch the agent in the same tmux session with a follow-up prompt
-/// asking it to produce the missing or invalid output.  We rebuild a
-/// minimal codex/claude argv with the retry prompt; previous model /
-/// effort / mcp settings are not re-applied because the agent's
-/// session-level configuration (e.g. Codex workspace trust) persists,
-/// and a follow-up prompt does not need the original tuning.
+/// Send the validator's feedback into the still-alive agent session as
+/// the next message in its REPL.  Crucially we do NOT re-run a fresh
+/// agent invocation — the agent process is the same one that just
+/// finished the task, so it has the full conversation context and can
+/// act on the feedback the way a human user would by typing follow-up
+/// instructions.  The prompt template's `%REASON%` placeholder is
+/// substituted with the validator's explanation so the agent knows
+/// what to fix.
+///
+/// Supported agents are the ones that own an interactive REPL we can
+/// drive via tmux keystrokes; for everything else we cannot auto-retry
+/// reliably and the caller surfaces the failure instead.
 fn send_retry_prompt(
     config: &Config,
     snapshot: &SessionSnapshot,
     spec: &ExpectedResultSpec,
     reason: &str,
 ) -> Result<()> {
+    if !is_interactive_agent_type(&snapshot.agent_type) {
+        return Err(anyhow!(
+            "cannot auto-retry agent_type '{}': only codex and claude are supported",
+            snapshot.agent_type
+        ));
+    }
     let prompt = spec.retry_prompt.replace("%REASON%", reason);
-    let argv = retry_argv(&snapshot.agent_type, &prompt)?;
-    let command_line = shell_join(argv);
-    tmux_send_keys(config, &snapshot.pane_id, &command_line, true, true)?;
+    tmux_send_keys(config, &snapshot.pane_id, &prompt, true, true)?;
     Ok(())
 }
 
-fn retry_argv(agent_type: &str, prompt: &str) -> Result<Vec<String>> {
-    match agent_type {
-        "codex" => Ok(vec![
-            String::from("codex"),
-            String::from("--yolo"),
-            prompt.to_string(),
-        ]),
-        "claude" => Ok(vec![
-            String::from("claude"),
-            String::from("--dangerously-skip-permissions"),
-            prompt.to_string(),
-        ]),
-        other => Err(anyhow!(
-            "cannot auto-retry agent_type '{}': only codex and claude are supported",
-            other
-        )),
-    }
+fn is_interactive_agent_type(agent_type: &str) -> bool {
+    matches!(agent_type, "codex" | "claude")
 }
 
 fn tail_chars(value: &str, max_chars: usize) -> String {
@@ -1904,22 +1929,77 @@ mod tests {
     }
 
     #[test]
-    fn retry_argv_includes_prompt_for_codex() {
-        let argv = retry_argv("codex", "please write the file").expect("argv");
-        assert_eq!(
-            argv,
-            vec![
-                String::from("codex"),
-                String::from("--yolo"),
-                String::from("please write the file"),
-            ]
-        );
+    fn interactive_agent_types_are_codex_and_claude() {
+        assert!(is_interactive_agent_type("codex"));
+        assert!(is_interactive_agent_type("claude"));
+        assert!(!is_interactive_agent_type("generic"));
+        assert!(!is_interactive_agent_type(""));
     }
 
     #[test]
-    fn retry_argv_rejects_unsupported_agent_type() {
-        let err = retry_argv("generic", "prompt").expect_err("generic must fail");
-        assert!(err.to_string().contains("cannot auto-retry"), "got: {err:#}");
+    fn build_codex_argv_does_not_include_prompt_as_argument() {
+        let params = LaunchParams {
+            session_id: String::from("s"),
+            session_name: String::from("s"),
+            agent_type: String::from("codex"),
+            work_dir: String::from("/tmp"),
+            command: None,
+            prompt: Some(String::from("hello world")),
+            model: None,
+            effort: None,
+            mcp_servers: BTreeMap::new(),
+            skip_trust_setup: true,
+            lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
+            session_env: BTreeMap::new(),
+            expected_result: None,
+        };
+        let argv = build_codex_argv(&params);
+        assert!(
+            !argv.iter().any(|arg| arg == "hello world"),
+            "prompt must not appear in codex argv (it is sent via send-keys instead): {argv:?}"
+        );
+        assert_eq!(argv[0], "codex");
+        assert!(argv.contains(&String::from("--yolo")));
+    }
+
+    #[test]
+    fn uses_interactive_prompt_is_true_for_codex_without_command() {
+        let params = LaunchParams {
+            session_id: String::from("s"),
+            session_name: String::from("s"),
+            agent_type: String::from("codex"),
+            work_dir: String::from("/tmp"),
+            command: None,
+            prompt: Some(String::from("p")),
+            model: None,
+            effort: None,
+            mcp_servers: BTreeMap::new(),
+            skip_trust_setup: true,
+            lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
+            session_env: BTreeMap::new(),
+            expected_result: None,
+        };
+        assert!(uses_interactive_prompt(&params));
+    }
+
+    #[test]
+    fn uses_interactive_prompt_is_false_for_explicit_command_override() {
+        let params = LaunchParams {
+            session_id: String::from("s"),
+            session_name: String::from("s"),
+            agent_type: String::from("codex"),
+            work_dir: String::from("/tmp"),
+            command: Some(String::from("./run.sh")),
+            prompt: Some(String::from("p")),
+            model: None,
+            effort: None,
+            mcp_servers: BTreeMap::new(),
+            skip_trust_setup: true,
+            lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
+            session_env: BTreeMap::new(),
+            expected_result: None,
+        };
+        assert!(!uses_interactive_prompt(&params));
     }
 
     fn snapshot_for_lifecycle(lifecycle: &str, status: &str) -> SessionSnapshot {
