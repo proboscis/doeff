@@ -90,6 +90,15 @@ struct SessionSnapshot {
     /// can see *why* the monitor retried (or gave up).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_validation_error: Option<String>,
+    /// True while the monitor is waiting for the agent to acknowledge
+    /// a freshly-sent prompt (initial launch message or a retry).  The
+    /// monitor flips this back to false the first time it observes the
+    /// agent's "active" marker (e.g. codex's "Working ...").  Without
+    /// this latch a freshly-launched interactive agent that is briefly
+    /// idle while booting would be misclassified as "done" before it
+    /// even processed the message.
+    #[serde(default)]
+    awaiting_response: bool,
 }
 
 /// Contract the launcher attaches to a session to enforce input→output
@@ -401,6 +410,12 @@ fn migrate(conn: &Connection) -> Result<()> {
         "agent_sessions",
         "last_validation_error",
         "TEXT",
+    )?;
+    ensure_column(
+        conn,
+        "agent_sessions",
+        "awaiting_response",
+        "INTEGER NOT NULL DEFAULT 0",
     )?;
     Ok(())
 }
@@ -867,10 +882,12 @@ fn session_launch(
     // violated.  Agents launched via an explicit `command` keep the
     // legacy behaviour: callers that hand over their own argv are
     // responsible for including a prompt if they want one.
+    let mut awaiting_response = false;
     if uses_interactive_prompt(&params) {
         if let Some(prompt) = params.prompt.as_ref() {
             if !prompt.trim().is_empty() {
                 tmux_send_keys(config, &pane_id, prompt, true, true)?;
+                awaiting_response = true;
             }
         }
     }
@@ -898,6 +915,7 @@ fn session_launch(
         expected_result: params.expected_result,
         retries_used: 0,
         last_validation_error: None,
+        awaiting_response,
     };
     record_command(
         conn,
@@ -917,7 +935,8 @@ fn session_get(conn: &Connection, session_id: &str) -> Result<Option<SessionSnap
         "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status,
                 backend_kind, backend_ref_json, started_at, last_observed_at,
                 finished_at, cleaned_at, pr_url, output_snippet,
-                expected_result_json, retries_used, last_validation_error
+                expected_result_json, retries_used, last_validation_error,
+                awaiting_response
          FROM agent_sessions WHERE session_id = ?1",
         params![session_id],
         row_to_snapshot,
@@ -931,7 +950,8 @@ fn session_list(conn: &Connection, query: ListParams) -> Result<Vec<SessionSnaps
         "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status,
                 backend_kind, backend_ref_json, started_at, last_observed_at,
                 finished_at, cleaned_at, pr_url, output_snippet,
-                expected_result_json, retries_used, last_validation_error
+                expected_result_json, retries_used, last_validation_error,
+                awaiting_response
          FROM agent_sessions
          ORDER BY started_at DESC, session_id ASC",
     )?;
@@ -1117,6 +1137,7 @@ fn row_to_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSnapshot>
         expected_result,
         retries_used: row.get::<_, i64>(16)? as u32,
         last_validation_error: row.get(17)?,
+        awaiting_response: row.get::<_, i64>(18)? != 0,
     })
 }
 
@@ -1131,8 +1152,9 @@ fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> 
             session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status,
             backend_kind, backend_ref_json, started_at, last_observed_at,
             finished_at, cleaned_at, pr_url, output_snippet,
-            expected_result_json, retries_used, last_validation_error
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+            expected_result_json, retries_used, last_validation_error,
+            awaiting_response
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
          ON CONFLICT(session_id) DO UPDATE SET
             session_name = excluded.session_name,
             pane_id = excluded.pane_id,
@@ -1150,7 +1172,8 @@ fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> 
             output_snippet = excluded.output_snippet,
             expected_result_json = excluded.expected_result_json,
             retries_used = excluded.retries_used,
-            last_validation_error = excluded.last_validation_error",
+            last_validation_error = excluded.last_validation_error,
+            awaiting_response = excluded.awaiting_response",
         params![
             snapshot.session_id,
             snapshot.session_name,
@@ -1170,6 +1193,7 @@ fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> 
             expected_result_json,
             i64::from(snapshot.retries_used),
             snapshot.last_validation_error,
+            i64::from(snapshot.awaiting_response),
         ],
     )?;
     Ok(())
@@ -1467,7 +1491,23 @@ fn monitor_once(config: &Config) -> Result<()> {
         let observed_at = now_iso();
         if exists {
             let output = tmux_capture(config, &snapshot.pane_id, 100)?;
-            let mut observed_status = observed_status_for_snapshot(&snapshot, &output);
+            // First, clear the awaiting-response latch once we see the
+            // agent's "active" marker — that confirms the prompt landed
+            // in the REPL and the agent is actually working on it.
+            if snapshot.awaiting_response && output_has_codex_active_marker(&output) {
+                snapshot.awaiting_response = false;
+            }
+            let raw_status = observed_status_for_snapshot(&snapshot, &output);
+            // Suppress "done" while we are still waiting for the agent
+            // to pick up the prompt we just typed.  Without this, an
+            // interactive agent that is briefly idle while booting (or
+            // right after we send a retry message) would be marked
+            // terminal before it ever processed the input.
+            let mut observed_status = if snapshot.awaiting_response && raw_status == "done" {
+                "booting"
+            } else {
+                raw_status
+            };
             snapshot.last_observed_at = Some(observed_at);
             snapshot.output_snippet = Some(tail_chars(&output, 500));
             // If the agent claims it is done and a result file was promised,
@@ -1489,6 +1529,12 @@ fn monitor_once(config: &Config) -> Result<()> {
                             snapshot.last_validation_error = Some(reason.clone());
                             snapshot.status = String::from("running");
                             snapshot.finished_at = None;
+                            // The agent is momentarily idle until it
+                            // processes the new message; suppress "done"
+                            // detection until we observe an active marker
+                            // again so we do not loop validating before
+                            // the agent has even read the retry.
+                            snapshot.awaiting_response = true;
                             upsert_snapshot(&conn, &snapshot)?;
                             record_event(
                                 &conn,
@@ -1669,6 +1715,7 @@ mod tests {
             expected_result: None,
             retries_used: 0,
             last_validation_error: None,
+            awaiting_response: false,
         };
         assert!(list_query_matches(
             &snapshot,
@@ -1790,6 +1837,7 @@ mod tests {
                 expected_result: None,
                 retries_used: 0,
                 last_validation_error: None,
+                awaiting_response: false,
                 last_observed_at: None,
                 finished_at: None,
                 cleaned_at: None,
@@ -2022,6 +2070,7 @@ mod tests {
             expected_result: None,
             retries_used: 0,
             last_validation_error: None,
+            awaiting_response: false,
         }
     }
 }
