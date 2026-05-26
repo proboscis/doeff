@@ -81,7 +81,25 @@ struct LaunchParams {
     session_name: String,
     agent_type: String,
     work_dir: String,
-    command: String,
+    /// Optional explicit command override.  When provided, agentd sends this
+    /// string verbatim to the new tmux pane and skips the agent-type-aware
+    /// argv builder.  Required when agent_type is "generic" or unrecognized.
+    #[serde(default)]
+    command: Option<String>,
+    #[serde(default)]
+    prompt: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
+    /// Map of MCP server name → URL passed to the agent.  Caller owns the
+    /// MCP server lifecycle; agentd only forwards URLs into the agent argv.
+    #[serde(default)]
+    mcp_servers: BTreeMap<String, String>,
+    /// When true, skip agent-specific pre-launch setup such as Codex's
+    /// workspace trust file.  Use for sandboxed test invocations.
+    #[serde(default)]
+    skip_trust_setup: bool,
     #[serde(default = "default_session_lifecycle")]
     lifecycle: String,
     #[serde(default)]
@@ -523,6 +541,188 @@ fn dispatch_request_result(
     }
 }
 
+/// Build the shell command line that tmux runs in the new pane.  Per-agent
+/// adapters (codex, claude) own the argv shape; callers passing
+/// `agent_type=generic` (or any unknown type) must provide `command`
+/// explicitly as an escape hatch.
+fn resolve_launch_command(params: &LaunchParams) -> Result<String> {
+    if let Some(explicit) = params.command.as_ref() {
+        if !explicit.trim().is_empty() {
+            return Ok(explicit.clone());
+        }
+    }
+    match params.agent_type.as_str() {
+        "codex" => Ok(shell_join(build_codex_argv(params))),
+        "claude" => Ok(shell_join(build_claude_argv(params))),
+        "generic" | "" => Err(anyhow!(
+            "session.launch: agent_type='{}' requires an explicit `command`",
+            params.agent_type
+        )),
+        other => Err(anyhow!(
+            "session.launch: unknown agent_type '{}'; pass `command` to use generic launch",
+            other
+        )),
+    }
+}
+
+fn build_codex_argv(params: &LaunchParams) -> Vec<String> {
+    let mut args: Vec<String> = vec![String::from("codex"), String::from("--yolo")];
+    if let Some(effort) = params.effort.as_ref() {
+        if !effort.is_empty() {
+            args.push(String::from("-c"));
+            args.push(format!(
+                "model_reasoning_effort={}",
+                toml_quoted_string(effort)
+            ));
+        }
+    }
+    for (name, url) in &params.mcp_servers {
+        args.push(String::from("-c"));
+        args.push(format!(
+            "mcp_servers.{}.url={}",
+            toml_quoted_key(name),
+            toml_quoted_string(url)
+        ));
+    }
+    if let Some(model) = params.model.as_ref() {
+        if !model.is_empty() {
+            args.push(String::from("--model"));
+            args.push(model.clone());
+        }
+    }
+    if let Some(prompt) = params.prompt.as_ref() {
+        if !prompt.is_empty() {
+            args.push(prompt.clone());
+        }
+    }
+    args
+}
+
+fn build_claude_argv(params: &LaunchParams) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        String::from("claude"),
+        String::from("--dangerously-skip-permissions"),
+    ];
+    if let Some(model) = params.model.as_ref() {
+        if !model.is_empty() {
+            args.push(String::from("--model"));
+            args.push(model.clone());
+        }
+    }
+    if let Some(prompt) = params.prompt.as_ref() {
+        if !prompt.is_empty() {
+            args.push(prompt.clone());
+        }
+    }
+    args
+}
+
+fn run_pre_launch_setup(params: &LaunchParams) -> Result<()> {
+    if params.agent_type == "codex" {
+        if let Err(err) = trust_codex_workspace(&params.work_dir) {
+            eprintln!(
+                "doeff-agentd: warning: failed to persist Codex workspace trust for {}: {err:#}",
+                params.work_dir
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Persist Codex's per-workspace trust in `~/.codex/config.toml` so launching
+/// without `--yolo` (or after a Codex update that drops `--yolo`) still skips
+/// the "Do you trust this directory?" prompt.  Mirrors the helper in
+/// doeff-agents/adapters/codex.py.
+fn trust_codex_workspace(work_dir: &str) -> Result<()> {
+    let codex_home = env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join(".codex"));
+    fs::create_dir_all(&codex_home)
+        .with_context(|| format!("creating codex home: {}", codex_home.display()))?;
+    let config_path = codex_home.join("config.toml");
+    let existing = if config_path.exists() {
+        fs::read_to_string(&config_path).with_context(|| {
+            format!("reading codex config: {}", config_path.display())
+        })?
+    } else {
+        String::new()
+    };
+    let header = format!("[projects.{}]", toml_quoted_key(work_dir));
+    let trust_line = String::from("trust_level = \"trusted\"");
+    let mut lines: Vec<String> = existing.lines().map(|s| s.to_string()).collect();
+    let mut replaced = false;
+    let mut header_index: Option<usize> = None;
+    for (index, line) in lines.iter().enumerate() {
+        if line.trim() == header {
+            header_index = Some(index);
+            break;
+        }
+    }
+    if let Some(start) = header_index {
+        let mut end = start + 1;
+        while end < lines.len() && !lines[end].starts_with('[') {
+            end += 1;
+        }
+        for line in lines.iter_mut().take(end).skip(start + 1) {
+            if line.trim_start().starts_with("trust_level") {
+                *line = trust_line.clone();
+                replaced = true;
+                break;
+            }
+        }
+        if !replaced {
+            lines.insert(start + 1, trust_line.clone());
+            replaced = true;
+        }
+    } else {
+        if !lines.is_empty() && !lines.last().map(|s| s.is_empty()).unwrap_or(true) {
+            lines.push(String::new());
+        }
+        lines.push(header);
+        lines.push(trust_line);
+        replaced = true;
+    }
+    if replaced {
+        let mut output = lines.join("\n");
+        if !output.ends_with('\n') {
+            output.push('\n');
+        }
+        fs::write(&config_path, output).with_context(|| {
+            format!("writing codex config: {}", config_path.display())
+        })?;
+    }
+    Ok(())
+}
+
+fn toml_quoted_key(value: &str) -> String {
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
+}
+
+fn toml_quoted_string(value: &str) -> String {
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
+}
+
+fn shell_join(args: Vec<String>) -> String {
+    args.into_iter().map(shell_quote).collect::<Vec<_>>().join(" ")
+}
+
+fn shell_quote(value: String) -> String {
+    if value.is_empty() {
+        return String::from("''");
+    }
+    let safe = value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "-_./:=@,%+".contains(c));
+    if safe {
+        value
+    } else {
+        let escaped = value.replace('\'', "'\\''");
+        format!("'{escaped}'")
+    }
+}
+
 fn session_launch(
     conn: &Connection,
     config: &Config,
@@ -548,18 +748,23 @@ fn session_launch(
             params.session_name
         ));
     }
+    let command_line = resolve_launch_command(&params)?;
+    if !params.skip_trust_setup {
+        run_pre_launch_setup(&params)?;
+    }
     let pane_id = tmux_new_session(
         config,
         &params.session_name,
         &params.work_dir,
         &params.session_env,
     )?;
-    if !params.command.trim().is_empty() {
-        tmux_send_keys(config, &pane_id, &params.command, true, true)?;
+    if !command_line.trim().is_empty() {
+        tmux_send_keys(config, &pane_id, &command_line, true, true)?;
     }
     let mut backend_ref = BTreeMap::new();
     backend_ref.insert(String::from("session_name"), params.session_name.clone());
     backend_ref.insert(String::from("pane_id"), pane_id.clone());
+    backend_ref.insert(String::from("command"), command_line.clone());
     let started_at = now_iso();
     let snapshot = SessionSnapshot {
         session_id: params.session_id.clone(),
