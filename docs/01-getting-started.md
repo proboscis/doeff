@@ -77,8 +77,9 @@ Let's break down what's happening:
 5. **Result**: Returns a `RunResult` with `.value` for success or `.error` for failure
 
 Examples in this guide use `default_handlers()` / `default_async_handlers()` only to install the
-builtin runtime preset. For custom handler composition, prefer `WithHandler(handler=..., expr=...)`
-around the program instead of passing custom handlers directly to `run()` / `async_run()`.
+builtin runtime preset. For custom handler composition, call a Program -> Program handler installer
+directly, for example `handler(program)`, instead of passing custom handlers directly to `run()` /
+`async_run()`.
 
 ## Key Concepts
 

@@ -9,11 +9,12 @@ here.
 
 - Use the effect-specific APIs that exist today: `Ask`, `Local`, `Get`, `Put`, `Tell`, `Await`,
   `Spawn`, `Wait`, `Gather`, `Race`, `Try`, cache effects, graph effects, and semaphore effects.
-- For custom handler composition, prefer `WithHandler(handler=..., expr=...)`.
+- For custom handler composition, call a Program -> Program handler installer directly, for example
+  `handler(program)`.
 - For builtin runtime behavior, install the sync or async preset with `default_handlers()` or
   `default_async_handlers()`.
 - If you need to model a new side effect, define a domain-specific effect type and handle it with
-  `WithHandler(...)` instead of reaching for a generic `IO(...)` wrapper.
+  a dedicated handler installer instead of reaching for a generic `IO(...)` wrapper.
 
 ## Migration from Legacy `IO(...)`
 

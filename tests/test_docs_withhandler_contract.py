@@ -4,9 +4,9 @@ import re
 import warnings
 from pathlib import Path
 
-from doeff import Get, Put, Tell, do, run
 from doeff_core_effects.handlers import reader, state, writer
 
+from doeff import Get, Put, Tell, do, run
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -27,6 +27,7 @@ BANNED_PROMOTION = re.compile(
 def _current_doc_paths() -> list[Path]:
     docs = [REPO_ROOT / "README.md"]
     docs.extend(sorted((REPO_ROOT / "docs").rglob("*.md")))
+    docs.extend(sorted((REPO_ROOT / "examples").glob("*.py")))
     current_docs: list[Path] = []
     for path in docs:
         rel = path.relative_to(REPO_ROOT)
@@ -43,9 +44,7 @@ def test_current_docs_do_not_show_deprecated_withhandler_call_snippets() -> None
     for path in _current_doc_paths():
         rel = path.relative_to(REPO_ROOT)
         for line_no, line in enumerate(path.read_text().splitlines(), start=1):
-            if "WithHandler(" in line:
-                violations.append(f"{rel}:{line_no}: {line.strip()}")
-            elif BANNED_PROMOTION.search(line):
+            if "WithHandler(" in line or BANNED_PROMOTION.search(line):
                 violations.append(f"{rel}:{line_no}: {line.strip()}")
 
     assert violations == []

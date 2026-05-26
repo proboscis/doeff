@@ -85,7 +85,6 @@ from doeff import (
     EffectBase,
     Resume,
     Tell,
-    WithHandler,
     WithIntercept,
     WriterTellEffect,
     default_handlers,
@@ -107,11 +106,8 @@ def observe_tells(effect: Effect):
         seen.append(effect.message)
     return effect
 
-@do
-def ping_handler(effect: Ping, k: object):
-    """Handler that internally yields a Tell when it handles a Ping."""
-    yield Tell(f"handler:{effect.label}")           # <- this Tell is visible!
-    return (yield Resume(k, f"handled:{effect.label}"))
+# Assume ping_handler is a Program -> Program handler installer, for example one
+# produced by defhandler. It internally yields Tell while handling Ping.
 
 @do
 def user_program() -> EffectGenerator[str]:
@@ -120,10 +116,10 @@ def user_program() -> EffectGenerator[str]:
     yield Tell("after-ping")
     return result
 
-# WithIntercept wraps WithHandler — so f sees handler's yields
+# WithIntercept wraps the handler scope, so f sees handler's yields.
 observed_program = WithIntercept(
     observe_tells,
-    WithHandler(handler=ping_handler, expr=user_program()),
+    ping_handler(user_program()),
     types=(WriterTellEffect,),
     mode="include",
 )
@@ -188,7 +184,7 @@ The `isinstance` check applies to the yielded value, so subclass relationships w
 Type filtering works on `DoCtrl` types too, not just `Effect` subclasses. This lets you observe structural control flow — handler installations, resumptions, and delegations.
 
 ```python
-from doeff import Effect, WithIntercept, WithHandler, Resume, Delegate, do
+from doeff import Effect, WithHandlerType, WithIntercept, Resume, Delegate, do
 
 ctrl_log: list[str] = []
 
@@ -197,11 +193,11 @@ def log_ctrl(effect: Effect):
     ctrl_log.append(type(effect).__name__)
     return effect
 
-# Observe only WithHandler and Resume control nodes
+# Observe only handler-scope and Resume control nodes
 observed = WithIntercept(
     log_ctrl,
-    WithHandler(handler=my_handler, expr=my_program()),
-    types=(WithHandler, Resume),
+    my_handler(my_program()),
+    types=(WithHandlerType, Resume),
     mode="include",
 )
 ```
@@ -247,7 +243,7 @@ def audit_interceptor(effect: Effect):
 
 audited = WithIntercept(
     audit_interceptor,
-    WithHandler(handler=ping_handler, expr=user_program()),
+    ping_handler(user_program()),
     types=(Ping,),
     mode="include",
 )
@@ -320,7 +316,7 @@ Here:
 
 ## Scoping Rules
 
-`WithIntercept` sees **all** effects in the causal chain — including effects emitted by handlers that are processing effects from within the interceptor's scope. The placement of `WithIntercept` relative to `WithHandler` does **not** affect visibility.
+`WithIntercept` sees **all** effects in the causal chain — including effects emitted by handlers that are processing effects from within the interceptor's scope. The placement of `WithIntercept` relative to handler installer calls does **not** affect visibility.
 
 ```python
 # Both arrangements are equivalent — f sees ping_handler's Tell yields in either case.
@@ -328,15 +324,14 @@ Here:
 # Arrangement A: WithIntercept outside
 WithIntercept(
     f,
-    WithHandler(handler=ping_handler, expr=user_program()),
+    ping_handler(user_program()),
     types=(WriterTellEffect,),
     mode="include",
 )
 
 # Arrangement B: WithIntercept inside
-WithHandler(
-    handler=ping_handler,
-    expr=WithIntercept(f, user_program(), types=(WriterTellEffect,), mode="include"),
+ping_handler(
+    WithIntercept(f, user_program(), types=(WriterTellEffect,), mode="include"),
 )
 ```
 
@@ -354,7 +349,7 @@ The only effects `f` does **not** see are its own yields (re-entrancy guard) and
 | Transform signature | `(effect) -> Effect \| Program \| None` | `(effect) -> DoExpr` |
 | Can yield effects | No | Yes (`f` is a generator) |
 | Re-entrancy guard | N/A | `f`'s yields skip its own interceptor |
-| Filters on DoCtrl types | No | Yes (`WithHandler`, `Resume`, `Delegate`) |
+| Filters on DoCtrl types | No | Yes (`WithHandlerType`, `Resume`, `Delegate`) |
 | Propagates to Gather/Spawn | Yes | Scoped to `expr` subtree |
 | Composability | First non-None transform wins | All layers compose independently |
 

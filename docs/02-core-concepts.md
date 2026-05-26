@@ -78,7 +78,7 @@ Core control nodes include:
 - `Map(source, f)` composition node
 - `FlatMap(source, f)` bind node
 - `Perform(effect)` effect dispatch node
-- `WithHandler(handler, expr)` handler scoping node
+- handler scoping node used internally by handler installers
 - continuation/control nodes such as `Resume`, `Transfer`, `Delegate`, `ResumeContinuation`
 
 These nodes are VM syntax, so composition remains in IR.
@@ -254,7 +254,7 @@ result = run(
 ```
 
 Here `handlers=default_handlers()` is installing the builtin runtime preset. For custom handler
-composition, prefer explicit `WithHandler(handler=..., expr=...)`.
+composition, prefer direct `handler(program)` calls.
 
 ## Summary
 
