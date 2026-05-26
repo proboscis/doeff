@@ -147,9 +147,11 @@ presets = _Removed("presets", "presets module removed")
 rust_vm = _Removed("rust_vm", "use PyVM directly")
 race = Race  # lowercase alias
 
-default_handlers = _Removed("default_handlers", "compose handlers explicitly with WithHandler")
+default_handlers = _Removed("default_handlers", "compose handlers by calling handler(program)")
 async_run = _Removed("async_run", "use run() with scheduled()")
-default_async_handlers = _Removed("default_async_handlers", "compose handlers explicitly with WithHandler")
+default_async_handlers = _Removed(
+    "default_async_handlers", "compose handlers by calling handler(program)"
+)
 
 from doeff.cli.run_services import DoeffRunContext
 
