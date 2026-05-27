@@ -1394,23 +1394,29 @@ fn observed_status_for_snapshot(snapshot: &SessionSnapshot, output: &str) -> &'s
     "running"
 }
 
-/// True when codex has visibly finished one turn — its per-turn
-/// "Worked for X" status line is on screen, the idle @›@ prompt is
-/// showing, the agent is not currently working, and the pane content
-/// is stable since the last observation.  Used by 'monitor_once' as a
-/// trigger to evaluate the input→output contract for Kind 2 sessions.
+/// True when codex has visibly finished one turn — the idle @›@
+/// prompt is showing, the agent is not currently working, and the
+/// pane content is stable since the last observation.  Used by
+/// 'monitor_once' as a trigger to evaluate the input→output
+/// contract for Kind 2 sessions.
+///
+/// We deliberately do *not* require the "Worked for X" status line
+/// to be visible: that text scrolls out of the pane on long
+/// sessions, so a session that genuinely finished a turn hours ago
+/// would otherwise sit forever in "running" even though it is
+/// clearly parked at the idle prompt.  False positives at launch
+/// are caught by the stability check — codex's banner and MCP
+/// loading produce non-stable output for the first few polls.
 ///
 /// A turn ending is **not** the same as the work ending: a single
 /// prompt may take several turns to complete, and Kind 1 sessions
 /// keep serving turns indefinitely.  We only graduate to a terminal
 /// status when (a) Kind 2 and (b) the contract validates.
 fn output_indicates_turn_end(snapshot: &SessionSnapshot, output: &str) -> bool {
-    let text = output_tail_lower(output, 30);
-    let worked_for = text.contains("worked for");
     let idle = output_has_codex_idle_prompt(output)
         && !output_has_codex_active_marker(output);
     let stable = output_is_stable(snapshot, output);
-    worked_for && idle && stable
+    idle && stable
 }
 
 fn should_cleanup_after_observed_status(snapshot: &SessionSnapshot, status: &str) -> bool {
@@ -2019,21 +2025,32 @@ mod tests {
 
     #[test]
     fn output_indicates_turn_end_requires_idle_prompt_and_stable_output() {
-        // The "worked for" marker alone is not enough: the agent must
-        // also be sitting at the idle prompt and the pane content must
-        // have stopped changing since the last observation.
+        // Turn-end needs the idle prompt visible, no active marker,
+        // and an output that matches the previous observation (the
+        // stability guard absorbs codex's banner / streaming state).
         let mut snapshot = snapshot_for_lifecycle("run_to_completion", "running");
-        let stable_tail = "worked for 1m 2s\n› ";
-        // Prime the snapshot's previous output snippet so output_is_stable
-        // can return true on the next call.
+        let stable_tail = "› ";
         snapshot.output_snippet = Some(stable_tail.to_string());
-
         assert!(output_indicates_turn_end(&snapshot, stable_tail));
 
-        // No idle prompt → not a turn end (agent still streaming text).
-        let mid_turn = "worked for 1m 2s\nWorking on changes…\n";
-        snapshot.output_snippet = Some(mid_turn.to_string());
-        assert!(!output_indicates_turn_end(&snapshot, mid_turn));
+        // The "Worked for" line is NOT required: a long-running
+        // session whose status line has scrolled out of view is
+        // still parked at the idle prompt.
+        let scrolled_tail = "  feat/some-branch · ~/some/dir\n› ";
+        snapshot.output_snippet = Some(scrolled_tail.to_string());
+        assert!(output_indicates_turn_end(&snapshot, scrolled_tail));
+
+        // Active marker present → agent is still working, not a
+        // turn end yet.
+        let working = "Working (10s • esc to interrupt)\n› ";
+        snapshot.output_snippet = Some(working.to_string());
+        assert!(!output_indicates_turn_end(&snapshot, working));
+
+        // Pane unstable → wait one more cycle before deciding.
+        let cycle_n = "› ";
+        let cycle_n_plus_1 = "  doing stuff\n› ";
+        snapshot.output_snippet = Some(cycle_n.to_string());
+        assert!(!output_indicates_turn_end(&snapshot, cycle_n_plus_1));
     }
 
     #[test]
