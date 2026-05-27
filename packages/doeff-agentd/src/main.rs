@@ -1502,10 +1502,19 @@ fn output_has_codex_idle_prompt(output: &str) -> bool {
 
 fn output_has_codex_active_marker(output: &str) -> bool {
     let text = output_tail_lower(output, 30);
-    text.contains("working (")
-        || text.contains("thinking")
-        || text.contains("esc to interrupt")
-        || text.contains("ctrl + t to view transcript")
+    // We only count markers that codex shows *during* active work.
+    //
+    // The status row ("Working (12s • esc to interrupt)") is the
+    // reliable signal — both substrings only appear while the agent
+    // is producing tokens.
+    //
+    // We deliberately do NOT match "ctrl + t to view transcript":
+    // codex renders that hint next to collapsed historical turns
+    // (e.g. "… +9 lines (ctrl + t to view transcript)") which stay
+    // on screen indefinitely while the agent sits idle, so matching
+    // it would make turn-end detection impossible on any pane that
+    // has carried more than a couple of turns.
+    text.contains("working (") || text.contains("esc to interrupt")
 }
 
 fn monitor_loop(config: Config) {
