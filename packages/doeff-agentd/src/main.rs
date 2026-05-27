@@ -18,6 +18,22 @@ const DEFAULT_MONITOR_INTERVAL_MS: u64 = 1000;
 const DEFAULT_MAX_RUNNING_SESSIONS: usize = 10;
 const LEASE_NAME: &str = "doeff-agentd";
 const LEASE_TTL_SECONDS: i64 = 10;
+/// Wait up to 30s for sqlite write locks. The default `busy_timeout = 0`
+/// causes silent monitor-loop death: with multiple connections (serve
+/// thread + monitor thread) writing to a delete-journal database, any
+/// momentary write conflict returns `SQLITE_BUSY` immediately, `?`
+/// bubbles it out, and the eprintln goes to an orphaned PIPE when
+/// agentd runs under launchd. Set globally so every connection retries.
+const SQLITE_BUSY_TIMEOUT_MS: u32 = 30_000;
+/// Force a running session to `exited` once its last_observed_at is
+/// older than this threshold. Guards against tmux probes that hang
+/// or DB write paths that silently fail: the watchdog touches only
+/// the database, so even if the rest of the monitor pipeline is
+/// broken the session can no longer occupy a concurrency slot
+/// forever. Real codex sessions refresh `last_observed_at` every
+/// monitor_interval (~1s), so 5 minutes is two orders of magnitude
+/// above the noise floor.
+const STALE_OBSERVATION_THRESHOLD_SECONDS: i64 = 300;
 const LIFECYCLE_RUN_TO_COMPLETION: &str = "run_to_completion";
 const LIFECYCLE_INTERACTIVE: &str = "interactive";
 
@@ -242,6 +258,25 @@ fn now_iso() -> String {
     Utc::now().to_rfc3339()
 }
 
+/// Open a sqlite connection with a non-zero busy timeout. Always use
+/// this instead of `Connection::open` so the monitor thread does not
+/// silently die the first time it races the serve thread for a write
+/// lock.
+fn open_conn(path: &Path) -> Result<Connection> {
+    let conn = Connection::open(path)?;
+    conn.busy_timeout(Duration::from_millis(u64::from(SQLITE_BUSY_TIMEOUT_MS)))?;
+    Ok(conn)
+}
+
+/// Parse an ISO-8601 / RFC-3339 timestamp from the agent_sessions table
+/// into UTC. Returns `None` for missing or malformed values; callers
+/// treat that as "watchdog cannot evaluate this row" and fall through
+/// to the regular tmux probe.
+fn parse_iso_timestamp(raw: Option<&str>) -> Option<DateTime<Utc>> {
+    raw.and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&Utc))
+}
+
 fn main() -> Result<()> {
     let config = parse_args(env::args().skip(1).collect())?;
     if let Some(parent) = config.db_path.parent() {
@@ -250,7 +285,7 @@ fn main() -> Result<()> {
     if let Some(parent) = config.socket_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let conn = Connection::open(&config.db_path)?;
+    let conn = open_conn(&config.db_path)?;
     migrate(&conn)?;
     acquire_lease(&conn)?;
     // A fresh agentd has no way to verify what the previous instance
@@ -555,7 +590,7 @@ fn handle_stream(stream: UnixStream, config: Config) -> Result<()> {
     let reader_stream = stream.try_clone()?;
     let mut reader = BufReader::new(reader_stream);
     let mut writer = stream;
-    let conn = Connection::open(&config.db_path)?;
+    let conn = open_conn(&config.db_path)?;
     migrate(&conn)?;
     loop {
         let mut line = String::new();
@@ -1578,7 +1613,7 @@ fn heartbeat_loop(config: Config) {
 }
 
 fn heartbeat_once(config: &Config) -> Result<()> {
-    let conn = Connection::open(&config.db_path)?;
+    let conn = open_conn(&config.db_path)?;
     migrate(&conn)?;
     let current = read_lease(&conn)?
         .ok_or_else(|| anyhow!("doeff-agentd lease disappeared while daemon was running"))?;
@@ -1594,7 +1629,7 @@ fn heartbeat_once(config: &Config) -> Result<()> {
 }
 
 fn monitor_once(config: &Config) -> Result<()> {
-    let conn = Connection::open(&config.db_path)?;
+    let conn = open_conn(&config.db_path)?;
     migrate(&conn)?;
     let active = session_list(
         &conn,
@@ -1605,7 +1640,33 @@ fn monitor_once(config: &Config) -> Result<()> {
             lifecycle: None,
         },
     )?;
+    let now = Utc::now();
     for mut snapshot in active {
+        // Stale-observation watchdog. Runs BEFORE any tmux probe so a
+        // hung or misbehaving tmux call cannot prevent the watchdog
+        // from firing. Past incident: monitor_loop appeared live in
+        // stack samples but DB writes stopped silently for ~11 hours,
+        // pinning four sessions in `running` with no one driving them.
+        // Touching only sqlite (with the global busy_timeout) ensures
+        // this branch makes progress even if the rest of the pipeline
+        // is broken.
+        if let Some(last) = parse_iso_timestamp(snapshot.last_observed_at.as_deref()) {
+            let age = now.signed_duration_since(last);
+            if age > ChronoDuration::seconds(STALE_OBSERVATION_THRESHOLD_SECONDS) {
+                snapshot.status = String::from("exited");
+                let observed = now_iso();
+                snapshot.last_observed_at = Some(observed.clone());
+                snapshot.finished_at.get_or_insert(observed);
+                upsert_snapshot(&conn, &snapshot)?;
+                record_event(
+                    &conn,
+                    &snapshot.session_id,
+                    "session_stale_reaped",
+                    &snapshot,
+                )?;
+                continue;
+            }
+        }
         let exists = tmux_has_session(config, &snapshot.session_name)?;
         let observed_at = now_iso();
         if exists {
@@ -2074,6 +2135,141 @@ mod tests {
         assert!(err
             .to_string()
             .contains("max running agent sessions reached"));
+    }
+
+    #[test]
+    fn monitor_once_reaps_session_with_stale_observation() {
+        // Watchdog: a `running` session whose last_observed_at is older
+        // than STALE_OBSERVATION_THRESHOLD_SECONDS must be forced to
+        // `exited` even if tmux probes would otherwise leave it
+        // running. Touches only sqlite — no tmux binary required.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        let stale_iso = (Utc::now()
+            - ChronoDuration::seconds(STALE_OBSERVATION_THRESHOLD_SECONDS + 60))
+            .to_rfc3339();
+        upsert_snapshot(
+            &conn,
+            &SessionSnapshot {
+                session_id: String::from("stale-running"),
+                session_name: String::from("stale-running"),
+                pane_id: String::from("%1"),
+                agent_type: String::from("codex"),
+                work_dir: String::from("/tmp"),
+                lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
+                status: String::from("running"),
+                backend_kind: String::from("tmux"),
+                backend_ref: BTreeMap::new(),
+                started_at: stale_iso.clone(),
+                expected_result: None,
+                retries_used: 0,
+                last_validation_error: None,
+                awaiting_response: false,
+                last_observed_at: Some(stale_iso),
+                finished_at: None,
+                cleaned_at: None,
+                pr_url: None,
+                output_snippet: None,
+            },
+        )
+        .expect("insert stale session");
+        let config = Config {
+            db_path: db.clone(),
+            socket_path: tmp.path().join("agentd.sock"),
+            // Point tmux at a binary that always fails — proves the
+            // watchdog path does not invoke tmux at all on the stale
+            // row. If we ever do invoke it the test fails loudly.
+            tmux_bin: String::from("/nonexistent/tmux"),
+            monitor_interval: Duration::from_millis(1000),
+            max_running: 10,
+        };
+
+        monitor_once(&config).expect("monitor_once succeeds via watchdog");
+
+        let row: (String, Option<String>) = Connection::open(&db)
+            .expect("reopen sqlite")
+            .query_row(
+                "SELECT status, finished_at FROM agent_sessions WHERE session_id = ?1",
+                params!["stale-running"],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("session row");
+        assert_eq!(row.0, "exited");
+        assert!(row.1.is_some(), "finished_at must be stamped on reap");
+        let event: String = Connection::open(&db)
+            .expect("reopen sqlite")
+            .query_row(
+                "SELECT event_type FROM agent_session_events \
+                 WHERE session_id = ?1 ORDER BY id DESC LIMIT 1",
+                params!["stale-running"],
+                |r| r.get(0),
+            )
+            .expect("event row");
+        assert_eq!(event, "session_stale_reaped");
+    }
+
+    #[test]
+    fn monitor_once_leaves_recently_observed_session_alone() {
+        // Inverse of the watchdog test: a session whose last_observed_at
+        // is fresh must not be reaped, even if everything else about it
+        // looks identical. The fall-through path then exercises tmux,
+        // which we let succeed (the session is absent ⇒ status=exited
+        // via the existing "no tmux session" branch). The point of this
+        // test is that the stale watchdog itself stays off.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        let fresh_iso = Utc::now().to_rfc3339();
+        upsert_snapshot(
+            &conn,
+            &SessionSnapshot {
+                session_id: String::from("fresh-running"),
+                session_name: String::from("doeff-agentd-monitor-test-absent"),
+                pane_id: String::from("%1"),
+                agent_type: String::from("codex"),
+                work_dir: String::from("/tmp"),
+                lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
+                status: String::from("running"),
+                backend_kind: String::from("tmux"),
+                backend_ref: BTreeMap::new(),
+                started_at: fresh_iso.clone(),
+                expected_result: None,
+                retries_used: 0,
+                last_validation_error: None,
+                awaiting_response: false,
+                last_observed_at: Some(fresh_iso),
+                finished_at: None,
+                cleaned_at: None,
+                pr_url: None,
+                output_snippet: None,
+            },
+        )
+        .expect("insert fresh session");
+        let config = Config {
+            db_path: db.clone(),
+            socket_path: tmp.path().join("agentd.sock"),
+            tmux_bin: String::from("tmux"),
+            monitor_interval: Duration::from_millis(1000),
+            max_running: 10,
+        };
+
+        monitor_once(&config).expect("monitor_once succeeds");
+
+        // No `session_stale_reaped` event should have been recorded for
+        // this row — the watchdog path must stay silent on fresh data.
+        let reaped_count: i64 = Connection::open(&db)
+            .expect("reopen sqlite")
+            .query_row(
+                "SELECT COUNT(*) FROM agent_session_events \
+                 WHERE session_id = ?1 AND event_type = 'session_stale_reaped'",
+                params!["fresh-running"],
+                |r| r.get(0),
+            )
+            .expect("count rows");
+        assert_eq!(reaped_count, 0);
     }
 
     #[test]
