@@ -1303,6 +1303,14 @@ fn tmux_send_keys(
         return Err(anyhow!("tmux send-keys failed"));
     }
     if enter {
+        // codex renders the input box character-by-character; if we
+        // press Enter the same millisecond the last byte of the
+        // prompt lands, the keystroke can arrive while the UI is
+        // still in a transient state and get silently dropped, leaving
+        // the text sitting in the input forever.  A short pause gives
+        // codex time to settle into the "prompt ready, awaiting
+        // submit" state before the Enter is delivered.
+        thread::sleep(Duration::from_millis(200));
         let enter_status = Command::new(&config.tmux_bin)
             .args(["send-keys", "-t", target, "Enter"])
             .status()
@@ -1718,6 +1726,14 @@ fn send_retry_prompt(
             snapshot.agent_type
         ));
     }
+    // Make sure codex is parked at the idle prompt before we type
+    // anything — otherwise the message lands in an unrelated UI
+    // state (banner, MCP loader, modal) and the Enter that follows
+    // can be eaten.  We tolerate a missing idle marker because the
+    // caller already concluded the agent reached turn-end; this
+    // poll just absorbs the small window between turn-end detection
+    // and the input box becoming receptive.
+    wait_for_repl_idle(config, &snapshot.pane_id, Duration::from_secs(5))?;
     let prompt = spec.retry_prompt.replace("%REASON%", reason);
     tmux_send_keys(config, &snapshot.pane_id, &prompt, true, true)?;
     Ok(())
