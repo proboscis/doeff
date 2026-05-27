@@ -1361,6 +1361,47 @@ fn tmux_kill_session(config: &Config, session_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Read tmux's `pane_current_command` for a pane.  Returns `Ok(None)`
+/// when the pane is missing (tmux exits non-zero) — callers treat that
+/// the same as "session went away".
+fn tmux_pane_current_command(config: &Config, pane_id: &str) -> Result<Option<String>> {
+    let output = Command::new(&config.tmux_bin)
+        .args([
+            "display-message",
+            "-p",
+            "-t",
+            pane_id,
+            "#{pane_current_command}",
+        ])
+        .output()
+        .context("tmux display-message failed to run")?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    Ok(Some(
+        String::from_utf8_lossy(&output.stdout).trim().to_string(),
+    ))
+}
+
+/// Names of interactive shells we treat as "no agent is currently
+/// running in this pane".  When the pane's foreground process drops
+/// back to one of these, the codex / claude binary the launcher
+/// originally started has exited and tmux is just keeping the pane
+/// alive against its parent shell.  See 'pane_looks_like_idle_shell'.
+const IDLE_SHELL_COMMANDS: &[&str] = &["zsh", "bash", "sh", "dash", "fish", "ksh"];
+
+/// True when the pane's foreground process is one of the interactive
+/// shells we recognise as "no agent here anymore".  We deliberately
+/// list shells explicitly rather than blacklisting known agent
+/// commands: codex / claude may legitimately fork short-lived helpers
+/// (git, gh, jq, etc.) that briefly become the pane's current
+/// command — those must not be misclassified as "agent gone".
+fn pane_looks_like_idle_shell(current_command: &str) -> bool {
+    IDLE_SHELL_COMMANDS
+        .iter()
+        .any(|shell| current_command == *shell)
+}
+
 /// Classify the agent's output into a coarse status.
 ///
 /// This function never returns @done@ from a heuristic — work-end is
@@ -1568,6 +1609,37 @@ fn monitor_once(config: &Config) -> Result<()> {
         let exists = tmux_has_session(config, &snapshot.session_name)?;
         let observed_at = now_iso();
         if exists {
+            // Zombie reaper: tmux session still exists but the
+            // agent process inside the pane has exited and left
+            // tmux at its parent shell.  Without this branch the
+            // monitor sees a live tmux session, captures the
+            // long-stale agent output, fails the turn-end stability
+            // check forever (the output never changes), and the
+            // session sits at @running@ holding a slot in the
+            // concurrency cap.  Limit the check to sessions whose
+            // status is already @running@ so we do not race against
+            // the early-boot moment where the pane is briefly at
+            // @zsh@ before the launcher's @send-keys@ actually
+            // starts codex.
+            if snapshot.status == "running" {
+                if let Some(current_command) =
+                    tmux_pane_current_command(config, &snapshot.pane_id)?
+                {
+                    if pane_looks_like_idle_shell(&current_command) {
+                        snapshot.status = String::from("exited");
+                        snapshot.last_observed_at = Some(observed_at.clone());
+                        snapshot.finished_at.get_or_insert_with(now_iso);
+                        upsert_snapshot(&conn, &snapshot)?;
+                        record_event(
+                            &conn,
+                            &snapshot.session_id,
+                            "session_exited",
+                            &snapshot,
+                        )?;
+                        continue;
+                    }
+                }
+            }
             let output = tmux_capture(config, &snapshot.pane_id, 100)?;
             // First, clear the awaiting-response latch once we see the
             // agent's "active" marker — that confirms the prompt landed
