@@ -1340,6 +1340,20 @@ fn tmux_kill_session(config: &Config, session_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Classify the agent's output into a coarse status.
+///
+/// This function never returns @done@ from a heuristic — work-end is
+/// decided in 'monitor_once' after the input→output contract has been
+/// validated.  The signals that this function *does* return are:
+///
+/// * @failed@ — output contains a hard-failure marker we recognise.
+/// * @blocked_api@ — provider rate-limit / quota message.
+/// * @blocked@ — agent is asking the user a question or waiting on
+///   interactive permission.
+/// * @running@ — anything else, including codex's per-turn "Worked
+///   for X" status display.  That marker is a *turn-end* signal, not
+///   a work-end signal: see 'output_indicates_turn_end' and the
+///   monitor's contract-validation block.
 fn observed_status_for_snapshot(snapshot: &SessionSnapshot, output: &str) -> &'static str {
     if output_has_failure_marker(output) {
         return "failed";
@@ -1347,18 +1361,35 @@ fn observed_status_for_snapshot(snapshot: &SessionSnapshot, output: &str) -> &'s
     if output_has_api_limit_marker(output) {
         return "blocked_api";
     }
-
-    let completion = output_has_completion_marker(output);
-    let idle_done = output_has_codex_idle_prompt(output)
-        && !output_has_codex_active_marker(output)
-        && output_is_stable(snapshot, output);
-    if is_run_to_completion_lifecycle(&snapshot.lifecycle) && (completion || idle_done) {
-        return "done";
-    }
-    if completion || idle_done || output_has_waiting_marker(output) {
+    if output_has_waiting_marker(output) {
         return "blocked";
     }
+    // For Kind 1 (Interactive) the agent simply sits at the idle
+    // prompt between turns; for Kind 2 (RunToCompletion) the turn
+    // end is interpreted by 'monitor_once' against the contract.
+    // Either way the *status* the snapshot carries until that
+    // decision is "running".
+    let _ = snapshot;
     "running"
+}
+
+/// True when codex has visibly finished one turn — its per-turn
+/// "Worked for X" status line is on screen, the idle @›@ prompt is
+/// showing, the agent is not currently working, and the pane content
+/// is stable since the last observation.  Used by 'monitor_once' as a
+/// trigger to evaluate the input→output contract for Kind 2 sessions.
+///
+/// A turn ending is **not** the same as the work ending: a single
+/// prompt may take several turns to complete, and Kind 1 sessions
+/// keep serving turns indefinitely.  We only graduate to a terminal
+/// status when (a) Kind 2 and (b) the contract validates.
+fn output_indicates_turn_end(snapshot: &SessionSnapshot, output: &str) -> bool {
+    let text = output_tail_lower(output, 30);
+    let worked_for = text.contains("worked for");
+    let idle = output_has_codex_idle_prompt(output)
+        && !output_has_codex_active_marker(output);
+    let stable = output_is_stable(snapshot, output);
+    worked_for && idle && stable
 }
 
 fn should_cleanup_after_observed_status(snapshot: &SessionSnapshot, status: &str) -> bool {
@@ -1395,14 +1426,16 @@ fn output_tail_lower(output: &str, max_lines: usize) -> String {
     lines[start..].join("\n").to_lowercase()
 }
 
-fn output_has_completion_marker(output: &str) -> bool {
-    let text = output_tail_lower(output, 30);
-    text.contains("task completed successfully")
-        || text.contains("all tasks completed")
-        || text.contains("session ended")
-        || text.contains("goodbye")
-        || text.contains("worked for")
-}
+// The previous 'output_has_completion_marker' heuristic was deleted
+// because every marker it recognised was either:
+//   * a turn-end signal that codex shows after *every* prompt
+//     ("worked for"), or
+//   * an agent-authored claim of completion that has no relationship
+//     to whether the input→output contract has actually been met
+//     ("task completed successfully", "goodbye", …).
+// Both classes routinely fired before the work was actually done and
+// triggered premature cleanup.  Work-end is now decided exclusively
+// by 'validate_expected_result' inside 'monitor_once'.
 
 fn output_has_failure_marker(output: &str) -> bool {
     let text = output_tail_lower(output, 10);
@@ -1507,61 +1540,70 @@ fn monitor_once(config: &Config) -> Result<()> {
                 snapshot.awaiting_response = false;
             }
             let raw_status = observed_status_for_snapshot(&snapshot, &output);
-            // Suppress "done" while we are still waiting for the agent
-            // to pick up the prompt we just typed.  Without this, an
-            // interactive agent that is briefly idle while booting (or
-            // right after we send a retry message) would be marked
-            // terminal before it ever processed the input.
-            let mut observed_status = if snapshot.awaiting_response && raw_status == "done" {
-                "booting"
-            } else {
-                raw_status
-            };
             snapshot.last_observed_at = Some(observed_at);
             snapshot.output_snippet = Some(tail_chars(&output, 500));
-            // If the agent claims it is done and a result file was promised,
-            // validate before we let the session enter a terminal state.
-            // Missing or invalid output triggers an auto-retry up to
-            // `max_retries`; exhausting retries downgrades the result to
-            // `failed` so callers see a hard error rather than a silently
-            // missing artefact.
-            if observed_status == "done" && snapshot.expected_result.is_some() {
-                let spec = snapshot.expected_result.clone().unwrap();
-                match validate_expected_result(&snapshot.work_dir, &spec) {
-                    Ok(()) => {
-                        snapshot.last_validation_error = None;
-                    }
-                    Err(reason) => {
-                        if snapshot.retries_used < spec.max_retries {
-                            send_retry_prompt(config, &snapshot, &spec, &reason)?;
-                            snapshot.retries_used += 1;
-                            snapshot.last_validation_error = Some(reason.clone());
-                            snapshot.status = String::from("running");
-                            snapshot.finished_at = None;
-                            // The agent is momentarily idle until it
-                            // processes the new message; suppress "done"
-                            // detection until we observe an active marker
-                            // again so we do not loop validating before
-                            // the agent has even read the retry.
-                            snapshot.awaiting_response = true;
-                            upsert_snapshot(&conn, &snapshot)?;
-                            record_event(
-                                &conn,
-                                &snapshot.session_id,
-                                "session_output_retry",
-                                &snapshot,
-                            )?;
-                            continue;
-                        } else {
-                            observed_status = "failed";
-                            snapshot.last_validation_error = Some(format!(
-                                "output validation exhausted after {} retries: {}",
-                                spec.max_retries, reason
-                            ));
+
+            // Turn-end is the agent's "I finished one ply, what's
+            // next" signal.  We use it for two things:
+            //
+            //  * Kind 2 (RunToCompletion): trigger contract
+            //    validation.  Until the contract passes the work is
+            //    not done — we either retry or fail.
+            //  * Kind 1 (Interactive): nothing.  The session just
+            //    sits at the idle prompt awaiting the next user
+            //    input; cleanup is the client's responsibility.
+            //
+            // 'awaiting_response' is the latch that ignores turn-end
+            // events between the moment we inject a retry prompt and
+            // the moment the agent visibly picks it up; that prevents
+            // us re-validating against the same "Worked for" line
+            // we already reacted to one cycle earlier.
+            let turn_ended =
+                !snapshot.awaiting_response && output_indicates_turn_end(&snapshot, &output);
+
+            let mut observed_status = raw_status;
+
+            if turn_ended && is_run_to_completion_lifecycle(&snapshot.lifecycle) {
+                match snapshot.expected_result.clone() {
+                    Some(spec) => match validate_expected_result(&snapshot.work_dir, &spec) {
+                        Ok(()) => {
+                            observed_status = "done";
+                            snapshot.last_validation_error = None;
                         }
+                        Err(reason) => {
+                            if snapshot.retries_used < spec.max_retries {
+                                send_retry_prompt(config, &snapshot, &spec, &reason)?;
+                                snapshot.retries_used += 1;
+                                snapshot.last_validation_error = Some(reason.clone());
+                                snapshot.status = String::from("running");
+                                snapshot.finished_at = None;
+                                snapshot.awaiting_response = true;
+                                upsert_snapshot(&conn, &snapshot)?;
+                                record_event(
+                                    &conn,
+                                    &snapshot.session_id,
+                                    "session_output_retry",
+                                    &snapshot,
+                                )?;
+                                continue;
+                            } else {
+                                observed_status = "failed";
+                                snapshot.last_validation_error = Some(format!(
+                                    "output validation exhausted after {} retries: {}",
+                                    spec.max_retries, reason
+                                ));
+                            }
+                        }
+                    },
+                    None => {
+                        // RunToCompletion without an explicit contract
+                        // means the launcher trusts the turn-end signal
+                        // as work-end.  Mark done and let cleanup run.
+                        observed_status = "done";
                     }
                 }
             }
+
             snapshot.status = String::from(observed_status);
             if is_terminal_status(observed_status) {
                 snapshot.finished_at.get_or_insert_with(now_iso);
@@ -1911,25 +1953,50 @@ mod tests {
     }
 
     #[test]
-    fn run_to_completion_output_marks_session_done() {
+    fn turn_end_signal_does_not_mark_session_done_without_contract_check() {
+        // Codex always shows "Worked for X" between turns, even when
+        // the larger task is unfinished.  observed_status_for_snapshot
+        // must keep the session "running" — the work-end decision
+        // belongs to monitor_once's contract-validation pass.
         let snapshot = snapshot_for_lifecycle("run_to_completion", "running");
         let output = "task completed successfully\nworked for 1m 2s\n› ";
 
         let status = observed_status_for_snapshot(&snapshot, output);
 
-        assert_eq!(status, "done");
-        assert!(should_cleanup_after_observed_status(&snapshot, status));
+        assert_eq!(status, "running");
+        assert!(!should_cleanup_after_observed_status(&snapshot, status));
     }
 
     #[test]
     fn interactive_output_remains_available_for_more_input() {
+        // For Kind 1 sessions, turn-end never changes status either:
+        // the session keeps serving prompts until the client cancels.
         let snapshot = snapshot_for_lifecycle("interactive", "running");
         let output = "task completed successfully\nworked for 1m 2s\n› ";
 
         let status = observed_status_for_snapshot(&snapshot, output);
 
-        assert_eq!(status, "blocked");
+        assert_eq!(status, "running");
         assert!(!should_cleanup_after_observed_status(&snapshot, status));
+    }
+
+    #[test]
+    fn output_indicates_turn_end_requires_idle_prompt_and_stable_output() {
+        // The "worked for" marker alone is not enough: the agent must
+        // also be sitting at the idle prompt and the pane content must
+        // have stopped changing since the last observation.
+        let mut snapshot = snapshot_for_lifecycle("run_to_completion", "running");
+        let stable_tail = "worked for 1m 2s\n› ";
+        // Prime the snapshot's previous output snippet so output_is_stable
+        // can return true on the next call.
+        snapshot.output_snippet = Some(stable_tail.to_string());
+
+        assert!(output_indicates_turn_end(&snapshot, stable_tail));
+
+        // No idle prompt → not a turn end (agent still streaming text).
+        let mid_turn = "worked for 1m 2s\nWorking on changes…\n";
+        snapshot.output_snippet = Some(mid_turn.to_string());
+        assert!(!output_indicates_turn_end(&snapshot, mid_turn));
     }
 
     #[test]
