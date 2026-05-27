@@ -253,6 +253,19 @@ fn main() -> Result<()> {
     let conn = Connection::open(&config.db_path)?;
     migrate(&conn)?;
     acquire_lease(&conn)?;
+    // A fresh agentd has no way to verify what the previous instance
+    // was waiting on — any 'awaiting_response' latches in the
+    // session table refer to retry prompts the previous process sent
+    // and that nobody is monitoring anymore.  Clear the latches so
+    // the new monitor loop is free to re-evaluate turn-end on the
+    // next stable observation instead of sitting on stale state
+    // forever.
+    conn.execute(
+        "UPDATE agent_sessions SET awaiting_response = 0 \
+         WHERE awaiting_response = 1 \
+           AND status NOT IN ('done','failed','exited','stopped','cancelled')",
+        [],
+    )?;
     serve(config)
 }
 
@@ -1549,7 +1562,6 @@ fn monitor_once(config: &Config) -> Result<()> {
             }
             let raw_status = observed_status_for_snapshot(&snapshot, &output);
             snapshot.last_observed_at = Some(observed_at);
-            snapshot.output_snippet = Some(tail_chars(&output, 500));
 
             // Turn-end is the agent's "I finished one ply, what's
             // next" signal.  We use it for two things:
@@ -1566,8 +1578,17 @@ fn monitor_once(config: &Config) -> Result<()> {
             // the moment the agent visibly picks it up; that prevents
             // us re-validating against the same "Worked for" line
             // we already reacted to one cycle earlier.
+            //
+            // CRITICAL: 'output_indicates_turn_end' compares the
+            // current output against 'snapshot.output_snippet' to
+            // decide stability.  We must therefore evaluate it
+            // BEFORE writing the fresh snippet back into the
+            // snapshot, otherwise the comparison degenerates into
+            // "current == current" and every observation looks
+            // stable, firing the turn-end branch prematurely.
             let turn_ended =
                 !snapshot.awaiting_response && output_indicates_turn_end(&snapshot, &output);
+            snapshot.output_snippet = Some(tail_chars(&output, 500));
 
             let mut observed_status = raw_status;
 
