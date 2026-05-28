@@ -104,6 +104,8 @@ struct SessionSnapshot {
     cleaned_at: Option<String>,
     pr_url: Option<String>,
     output_snippet: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    terminal_cause: Option<TerminalCause>,
     /// Optional output-file contract.  When set, the monitor refuses to
     /// finalise the session as terminal until the named file exists and
     /// (when configured) matches the declared schema.  Missing or
@@ -144,6 +146,36 @@ struct SessionSnapshot {
     /// startup spinner.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     observed_active_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum TerminalCauseCategory {
+    RateLimited,
+    TimedOut,
+    Cancelled,
+    Lost,
+    ProtocolError,
+    RunnerUnavailable,
+    RunFailed,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TerminalCause {
+    category: TerminalCauseCategory,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+    retryable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retry_after_seconds: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    backend_error_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    signal: Option<String>,
+    observed_at: String,
 }
 
 /// Contract the launcher attaches to a session to enforce input→output
@@ -429,7 +461,8 @@ fn migrate(conn: &Connection) -> Result<()> {
           finished_at TEXT,
           cleaned_at TEXT,
           pr_url TEXT,
-          output_snippet TEXT
+          output_snippet TEXT,
+          terminal_cause_json TEXT
         );
 
         CREATE TABLE IF NOT EXISTS agent_session_events (
@@ -470,24 +503,14 @@ fn migrate(conn: &Connection) -> Result<()> {
         "lifecycle",
         "TEXT NOT NULL DEFAULT 'run_to_completion'",
     )?;
-    ensure_column(
-        conn,
-        "agent_sessions",
-        "expected_result_json",
-        "TEXT",
-    )?;
+    ensure_column(conn, "agent_sessions", "expected_result_json", "TEXT")?;
     ensure_column(
         conn,
         "agent_sessions",
         "retries_used",
         "INTEGER NOT NULL DEFAULT 0",
     )?;
-    ensure_column(
-        conn,
-        "agent_sessions",
-        "last_validation_error",
-        "TEXT",
-    )?;
+    ensure_column(conn, "agent_sessions", "last_validation_error", "TEXT")?;
     ensure_column(
         conn,
         "agent_sessions",
@@ -495,6 +518,7 @@ fn migrate(conn: &Connection) -> Result<()> {
         "INTEGER NOT NULL DEFAULT 0",
     )?;
     ensure_column(conn, "agent_sessions", "observed_active_at", "TEXT")?;
+    ensure_column(conn, "agent_sessions", "terminal_cause_json", "TEXT")?;
     Ok(())
 }
 
@@ -833,9 +857,8 @@ fn trust_codex_workspace(work_dir: &str) -> Result<()> {
         .with_context(|| format!("creating codex home: {}", codex_home.display()))?;
     let config_path = codex_home.join("config.toml");
     let existing = if config_path.exists() {
-        fs::read_to_string(&config_path).with_context(|| {
-            format!("reading codex config: {}", config_path.display())
-        })?
+        fs::read_to_string(&config_path)
+            .with_context(|| format!("reading codex config: {}", config_path.display()))?
     } else {
         String::new()
     };
@@ -879,9 +902,8 @@ fn trust_codex_workspace(work_dir: &str) -> Result<()> {
         if !output.ends_with('\n') {
             output.push('\n');
         }
-        fs::write(&config_path, output).with_context(|| {
-            format!("writing codex config: {}", config_path.display())
-        })?;
+        fs::write(&config_path, output)
+            .with_context(|| format!("writing codex config: {}", config_path.display()))?;
     }
     Ok(())
 }
@@ -897,7 +919,10 @@ fn toml_quoted_string(value: &str) -> String {
 }
 
 fn shell_join(args: Vec<String>) -> String {
-    args.into_iter().map(shell_quote).collect::<Vec<_>>().join(" ")
+    args.into_iter()
+        .map(shell_quote)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn shell_quote(value: String) -> String {
@@ -999,6 +1024,7 @@ fn session_launch(
         cleaned_at: None,
         pr_url: None,
         output_snippet: None,
+        terminal_cause: None,
         expected_result: params.expected_result,
         retries_used: 0,
         last_validation_error: None,
@@ -1023,7 +1049,7 @@ fn session_get(conn: &Connection, session_id: &str) -> Result<Option<SessionSnap
         "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status,
                 backend_kind, backend_ref_json, started_at, last_observed_at,
                 finished_at, cleaned_at, pr_url, output_snippet,
-                expected_result_json, retries_used, last_validation_error,
+                terminal_cause_json, expected_result_json, retries_used, last_validation_error,
                 awaiting_response, observed_active_at
          FROM agent_sessions WHERE session_id = ?1",
         params![session_id],
@@ -1038,7 +1064,7 @@ fn session_list(conn: &Connection, query: ListParams) -> Result<Vec<SessionSnaps
         "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status,
                 backend_kind, backend_ref_json, started_at, last_observed_at,
                 finished_at, cleaned_at, pr_url, output_snippet,
-                expected_result_json, retries_used, last_validation_error,
+                terminal_cause_json, expected_result_json, retries_used, last_validation_error,
                 awaiting_response, observed_active_at
          FROM agent_sessions
          ORDER BY started_at DESC, session_id ASC",
@@ -1142,7 +1168,14 @@ fn session_cancel(conn: &Connection, config: &Config, session_id: &str) -> Resul
     let now = now_iso();
     snapshot.status = String::from("stopped");
     snapshot.finished_at = Some(now.clone());
-    snapshot.last_observed_at = Some(now);
+    snapshot.last_observed_at = Some(now.clone());
+    set_terminal_cause_if_absent(
+        &mut snapshot,
+        TerminalCauseCategory::Cancelled,
+        "session.cancel requested",
+        false,
+        &now,
+    );
     upsert_snapshot(conn, &snapshot)?;
     record_command(
         conn,
@@ -1168,6 +1201,13 @@ fn session_cleanup(
     let now = now_iso();
     if !is_terminal_status(&snapshot.status) {
         snapshot.status = String::from("stopped");
+        set_terminal_cause_if_absent(
+            &mut snapshot,
+            TerminalCauseCategory::Cancelled,
+            "session.cleanup stopped a non-terminal session",
+            false,
+            &now,
+        );
     }
     snapshot.finished_at.get_or_insert_with(|| now.clone());
     snapshot.cleaned_at = Some(now.clone());
@@ -1195,15 +1235,28 @@ fn row_to_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSnapshot>
         serde_json::from_str::<BTreeMap<String, String>>(&backend_ref_json).map_err(|err| {
             rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(err))
         })?;
-    let expected_result_json: Option<String> = row.get(15)?;
-    let expected_result = match expected_result_json {
-        Some(json) => Some(serde_json::from_str::<ExpectedResultSpec>(&json).map_err(|err| {
+    let terminal_cause_json: Option<String> = row.get(15)?;
+    let terminal_cause = match terminal_cause_json {
+        Some(json) => Some(serde_json::from_str::<TerminalCause>(&json).map_err(|err| {
             rusqlite::Error::FromSqlConversionFailure(
                 15,
                 rusqlite::types::Type::Text,
                 Box::new(err),
             )
         })?),
+        None => None,
+    };
+    let expected_result_json: Option<String> = row.get(16)?;
+    let expected_result = match expected_result_json {
+        Some(json) => Some(
+            serde_json::from_str::<ExpectedResultSpec>(&json).map_err(|err| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    16,
+                    rusqlite::types::Type::Text,
+                    Box::new(err),
+                )
+            })?,
+        ),
         None => None,
     };
     Ok(SessionSnapshot {
@@ -1222,16 +1275,21 @@ fn row_to_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSnapshot>
         cleaned_at: row.get(12)?,
         pr_url: row.get(13)?,
         output_snippet: row.get(14)?,
+        terminal_cause,
         expected_result,
-        retries_used: row.get::<_, i64>(16)? as u32,
-        last_validation_error: row.get(17)?,
-        awaiting_response: row.get::<_, i64>(18)? != 0,
-        observed_active_at: row.get(19)?,
+        retries_used: row.get::<_, i64>(17)? as u32,
+        last_validation_error: row.get(18)?,
+        awaiting_response: row.get::<_, i64>(19)? != 0,
+        observed_active_at: row.get(20)?,
     })
 }
 
 fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> {
     let backend_ref_json = serde_json::to_string(&snapshot.backend_ref)?;
+    let terminal_cause_json = match &snapshot.terminal_cause {
+        Some(cause) => Some(serde_json::to_string(cause)?),
+        None => None,
+    };
     let expected_result_json = match &snapshot.expected_result {
         Some(spec) => Some(serde_json::to_string(spec)?),
         None => None,
@@ -1241,9 +1299,9 @@ fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> 
             session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status,
             backend_kind, backend_ref_json, started_at, last_observed_at,
             finished_at, cleaned_at, pr_url, output_snippet,
-            expected_result_json, retries_used, last_validation_error,
+            terminal_cause_json, expected_result_json, retries_used, last_validation_error,
             awaiting_response, observed_active_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
          ON CONFLICT(session_id) DO UPDATE SET
             session_name = excluded.session_name,
             pane_id = excluded.pane_id,
@@ -1259,6 +1317,7 @@ fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> 
             cleaned_at = excluded.cleaned_at,
             pr_url = excluded.pr_url,
             output_snippet = excluded.output_snippet,
+            terminal_cause_json = COALESCE(agent_sessions.terminal_cause_json, excluded.terminal_cause_json),
             expected_result_json = excluded.expected_result_json,
             retries_used = excluded.retries_used,
             last_validation_error = excluded.last_validation_error,
@@ -1280,6 +1339,7 @@ fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> 
             snapshot.cleaned_at,
             snapshot.pr_url,
             snapshot.output_snippet,
+            terminal_cause_json,
             expected_result_json,
             i64::from(snapshot.retries_used),
             snapshot.last_validation_error,
@@ -1523,8 +1583,7 @@ fn observed_status_for_snapshot(snapshot: &SessionSnapshot, output: &str) -> &'s
 /// keep serving turns indefinitely.  We only graduate to a terminal
 /// status when (a) Kind 2 and (b) the contract validates.
 fn output_indicates_turn_end(snapshot: &SessionSnapshot, output: &str) -> bool {
-    let idle = output_has_codex_idle_prompt(output)
-        && !output_has_codex_active_marker(output);
+    let idle = output_has_codex_idle_prompt(output) && !output_has_codex_active_marker(output);
     let stable = output_is_stable(snapshot, output);
     idle && stable
 }
@@ -1534,7 +1593,68 @@ fn should_cleanup_after_observed_status(snapshot: &SessionSnapshot, status: &str
 }
 
 fn is_terminal_status(status: &str) -> bool {
-    status == "done" || status == "failed" || status == "exited" || status == "stopped"
+    status == "done"
+        || status == "failed"
+        || status == "exited"
+        || status == "stopped"
+        || status == "cancelled"
+}
+
+fn set_terminal_cause_if_absent(
+    snapshot: &mut SessionSnapshot,
+    category: TerminalCauseCategory,
+    reason: impl Into<String>,
+    retryable: bool,
+    observed_at: &str,
+) {
+    if snapshot.terminal_cause.is_some() {
+        return;
+    }
+    snapshot.terminal_cause = Some(TerminalCause {
+        category,
+        reason: Some(reason.into()),
+        retryable,
+        retry_after_seconds: None,
+        backend_error_code: None,
+        exit_code: None,
+        signal: None,
+        observed_at: observed_at.to_string(),
+    });
+}
+
+fn set_failed_output_cause_if_absent(
+    snapshot: &mut SessionSnapshot,
+    output: &str,
+    observed_at: &str,
+) {
+    if snapshot.terminal_cause.is_some() {
+        return;
+    }
+    let lower = output_tail_lower(output, 30);
+    let (category, retryable) = if output_has_api_limit_marker(output) {
+        (TerminalCauseCategory::RateLimited, true)
+    } else if lower.contains("timeout") || lower.contains("timed out") || lower.contains("deadline")
+    {
+        (TerminalCauseCategory::TimedOut, true)
+    } else if lower.contains("authentication failed") {
+        (TerminalCauseCategory::RunnerUnavailable, false)
+    } else if lower.contains("invalid json") || lower.contains("protocol error") {
+        (TerminalCauseCategory::ProtocolError, false)
+    } else {
+        (TerminalCauseCategory::RunFailed, false)
+    };
+    let reason = tail_chars(output.trim(), 500);
+    set_terminal_cause_if_absent(
+        snapshot,
+        category,
+        if reason.is_empty() {
+            String::from("agent output indicated failure")
+        } else {
+            reason
+        },
+        retryable,
+        observed_at,
+    );
 }
 
 fn event_type_for_observed_status(status: &str) -> &'static str {
@@ -1690,7 +1810,17 @@ fn monitor_once(config: &Config) -> Result<()> {
                 snapshot.status = String::from("exited");
                 let observed = now_iso();
                 snapshot.last_observed_at = Some(observed.clone());
-                snapshot.finished_at.get_or_insert(observed);
+                snapshot.finished_at.get_or_insert(observed.clone());
+                set_terminal_cause_if_absent(
+                    &mut snapshot,
+                    TerminalCauseCategory::Lost,
+                    format!(
+                        "no monitor observation for more than {}s",
+                        STALE_OBSERVATION_THRESHOLD_SECONDS
+                    ),
+                    true,
+                    &observed,
+                );
                 upsert_snapshot(&conn, &snapshot)?;
                 record_event(
                     &conn,
@@ -1718,11 +1848,19 @@ fn monitor_once(config: &Config) -> Result<()> {
                     snapshot.status = String::from("failed");
                     let observed = now_iso();
                     snapshot.last_observed_at = Some(observed.clone());
-                    snapshot.finished_at.get_or_insert(observed);
-                    snapshot.last_validation_error = Some(format!(
+                    snapshot.finished_at.get_or_insert(observed.clone());
+                    let reason = format!(
                         "launch timeout: never reached active state within {}s",
                         LAUNCH_TIMEOUT_SECONDS
-                    ));
+                    );
+                    snapshot.last_validation_error = Some(reason.clone());
+                    set_terminal_cause_if_absent(
+                        &mut snapshot,
+                        TerminalCauseCategory::TimedOut,
+                        reason,
+                        true,
+                        &observed,
+                    );
                     upsert_snapshot(&conn, &snapshot)?;
                     record_event(
                         &conn,
@@ -1750,20 +1888,21 @@ fn monitor_once(config: &Config) -> Result<()> {
             // @zsh@ before the launcher's @send-keys@ actually
             // starts codex.
             if snapshot.status == "running" {
-                if let Some(current_command) =
-                    tmux_pane_current_command(config, &snapshot.pane_id)?
+                if let Some(current_command) = tmux_pane_current_command(config, &snapshot.pane_id)?
                 {
                     if pane_looks_like_idle_shell(&current_command) {
                         snapshot.status = String::from("exited");
                         snapshot.last_observed_at = Some(observed_at.clone());
                         snapshot.finished_at.get_or_insert_with(now_iso);
+                        set_terminal_cause_if_absent(
+                            &mut snapshot,
+                            TerminalCauseCategory::Lost,
+                            format!("tmux pane returned to idle shell: {current_command}"),
+                            true,
+                            &observed_at,
+                        );
                         upsert_snapshot(&conn, &snapshot)?;
-                        record_event(
-                            &conn,
-                            &snapshot.session_id,
-                            "session_exited",
-                            &snapshot,
-                        )?;
+                        record_event(&conn, &snapshot.session_id, "session_exited", &snapshot)?;
                         continue;
                     }
                 }
@@ -1785,7 +1924,7 @@ fn monitor_once(config: &Config) -> Result<()> {
                 snapshot.observed_active_at = Some(observed_at.clone());
             }
             let raw_status = observed_status_for_snapshot(&snapshot, &output);
-            snapshot.last_observed_at = Some(observed_at);
+            snapshot.last_observed_at = Some(observed_at.clone());
 
             // Turn-end is the agent's "I finished one ply, what's
             // next" signal.  We use it for two things:
@@ -1841,10 +1980,18 @@ fn monitor_once(config: &Config) -> Result<()> {
                                 continue;
                             } else {
                                 observed_status = "failed";
-                                snapshot.last_validation_error = Some(format!(
+                                let reason = format!(
                                     "output validation exhausted after {} retries: {}",
                                     spec.max_retries, reason
-                                ));
+                                );
+                                snapshot.last_validation_error = Some(reason.clone());
+                                set_terminal_cause_if_absent(
+                                    &mut snapshot,
+                                    TerminalCauseCategory::RunFailed,
+                                    reason,
+                                    false,
+                                    &observed_at,
+                                );
                             }
                         }
                     },
@@ -1859,6 +2006,19 @@ fn monitor_once(config: &Config) -> Result<()> {
 
             snapshot.status = String::from(observed_status);
             if is_terminal_status(observed_status) {
+                if observed_status == "failed" {
+                    if let Some(reason) = snapshot.last_validation_error.clone() {
+                        set_terminal_cause_if_absent(
+                            &mut snapshot,
+                            TerminalCauseCategory::RunFailed,
+                            reason,
+                            false,
+                            &observed_at,
+                        );
+                    } else {
+                        set_failed_output_cause_if_absent(&mut snapshot, &output, &observed_at);
+                    }
+                }
                 snapshot.finished_at.get_or_insert_with(now_iso);
             }
             if should_cleanup_after_observed_status(&snapshot, observed_status)
@@ -1877,7 +2037,14 @@ fn monitor_once(config: &Config) -> Result<()> {
         } else {
             snapshot.status = String::from("exited");
             snapshot.last_observed_at = Some(observed_at.clone());
-            snapshot.finished_at = Some(observed_at);
+            snapshot.finished_at = Some(observed_at.clone());
+            set_terminal_cause_if_absent(
+                &mut snapshot,
+                TerminalCauseCategory::Lost,
+                "tmux session disappeared",
+                true,
+                &observed_at,
+            );
             upsert_snapshot(&conn, &snapshot)?;
             record_event(&conn, &snapshot.session_id, "session_exited", &snapshot)?;
         }
@@ -1917,10 +2084,7 @@ fn validate_expected_result(
         }
     };
     if let Some(expected_name) = &spec.schema_name {
-        let actual = value
-            .get("schema")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let actual = value.get("schema").and_then(|v| v.as_str()).unwrap_or("");
         if actual != expected_name.as_str() {
             return Err(format!(
                 "schema mismatch in {}: expected '{}', got '{}'",
@@ -2047,11 +2211,12 @@ mod tests {
             cleaned_at: None,
             pr_url: None,
             output_snippet: None,
+            terminal_cause: None,
             expected_result: None,
             retries_used: 0,
             last_validation_error: None,
             awaiting_response: false,
-                observed_active_at: None,
+            observed_active_at: None,
         };
         assert!(list_query_matches(
             &snapshot,
@@ -2093,6 +2258,33 @@ mod tests {
             )
             .expect("table count");
         assert_eq!(count, 4);
+    }
+
+    #[test]
+    fn terminal_cause_round_trips_through_store() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        let mut snapshot = snapshot_for_lifecycle(LIFECYCLE_RUN_TO_COMPLETION, "failed");
+        let observed_at = now_iso();
+        set_terminal_cause_if_absent(
+            &mut snapshot,
+            TerminalCauseCategory::TimedOut,
+            "launch timeout",
+            true,
+            &observed_at,
+        );
+        upsert_snapshot(&conn, &snapshot).expect("upsert snapshot");
+
+        let loaded = session_get(&conn, &snapshot.session_id)
+            .expect("session_get")
+            .expect("snapshot exists");
+        let cause = loaded.terminal_cause.expect("terminal cause");
+        assert!(matches!(cause.category, TerminalCauseCategory::TimedOut));
+        assert_eq!(cause.reason.as_deref(), Some("launch timeout"));
+        assert!(cause.retryable);
+        assert_eq!(cause.observed_at, observed_at);
     }
 
     #[test]
@@ -2180,6 +2372,7 @@ mod tests {
                 cleaned_at: None,
                 pr_url: None,
                 output_snippet: None,
+                terminal_cause: None,
             },
         )
         .expect("insert active session");
@@ -2227,7 +2420,7 @@ mod tests {
         migrate(&conn).expect("migrate");
         let stale_iso = (Utc::now()
             - ChronoDuration::seconds(STALE_OBSERVATION_THRESHOLD_SECONDS + 60))
-            .to_rfc3339();
+        .to_rfc3339();
         upsert_snapshot(
             &conn,
             &SessionSnapshot {
@@ -2251,6 +2444,7 @@ mod tests {
                 cleaned_at: None,
                 pr_url: None,
                 output_snippet: None,
+                terminal_cause: None,
             },
         )
         .expect("insert stale session");
@@ -2331,6 +2525,7 @@ mod tests {
                 cleaned_at: None,
                 pr_url: None,
                 output_snippet: None,
+                terminal_cause: None,
                 observed_active_at: None,
             },
         )
@@ -2387,9 +2582,8 @@ mod tests {
         migrate(&conn).expect("migrate");
         let started =
             (Utc::now() - ChronoDuration::seconds(LAUNCH_TIMEOUT_SECONDS * 2)).to_rfc3339();
-        let active_at = (Utc::now()
-            - ChronoDuration::seconds(LAUNCH_TIMEOUT_SECONDS * 2 - 30))
-            .to_rfc3339();
+        let active_at =
+            (Utc::now() - ChronoDuration::seconds(LAUNCH_TIMEOUT_SECONDS * 2 - 30)).to_rfc3339();
         let fresh_observation = Utc::now().to_rfc3339();
         upsert_snapshot(
             &conn,
@@ -2413,6 +2607,7 @@ mod tests {
                 cleaned_at: None,
                 pr_url: None,
                 output_snippet: None,
+                terminal_cause: None,
                 observed_active_at: Some(active_at),
             },
         )
@@ -2475,6 +2670,7 @@ mod tests {
                 cleaned_at: None,
                 pr_url: None,
                 output_snippet: None,
+                terminal_cause: None,
             },
         )
         .expect("insert fresh session");
@@ -2727,11 +2923,12 @@ mod tests {
             cleaned_at: None,
             pr_url: None,
             output_snippet: None,
+            terminal_cause: None,
             expected_result: None,
             retries_used: 0,
             last_validation_error: None,
             awaiting_response: false,
-                observed_active_at: None,
+            observed_active_at: None,
         }
     }
 }
