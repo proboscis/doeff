@@ -34,6 +34,21 @@ const SQLITE_BUSY_TIMEOUT_MS: u32 = 30_000;
 /// monitor_interval (~1s), so 5 minutes is two orders of magnitude
 /// above the noise floor.
 const STALE_OBSERVATION_THRESHOLD_SECONDS: i64 = 300;
+/// Force a `running` session to `failed` if it has never reached
+/// the agent's "active" marker (= still inside startup) for this
+/// long.  Distinct from the stale-observation watchdog: the startup
+/// spinner ticks the wall-clock every second so the tmux capture
+/// keeps changing and `last_observed_at` keeps refreshing — the
+/// agent is "live" by every external measure but never actually
+/// starts work.  Past incident: an MCP server with an expired
+/// refresh token blocked codex's initialisation for 8+ hours on
+/// every launch, eventually filling the concurrency cap with
+/// sessions that produced no output beyond the startup banner.
+/// 10 minutes is comfortably past codex's normal cold-start time
+/// (which fits in tens of seconds for typical MCP fleets) without
+/// being so short that a transiently slow network rip-cords a
+/// session that would have recovered.
+const LAUNCH_TIMEOUT_SECONDS: i64 = 600;
 const LIFECYCLE_RUN_TO_COMPLETION: &str = "run_to_completion";
 const LIFECYCLE_INTERACTIVE: &str = "interactive";
 
@@ -115,6 +130,20 @@ struct SessionSnapshot {
     /// even processed the message.
     #[serde(default)]
     awaiting_response: bool,
+    /// Wall-clock timestamp of the first observation where the agent's
+    /// active marker appeared in the tmux capture.  None for sessions
+    /// that have not yet completed startup; once set, never cleared.
+    ///
+    /// The `LAUNCH_TIMEOUT_SECONDS` watchdog uses this to distinguish
+    /// "agent is taking a while" from "agent never got past startup":
+    /// the latter is the failure mode we hit when a hung MCP server
+    /// (e.g. one with an invalid auth token) blocks codex's
+    /// initialisation forever.  Without this field every such session
+    /// pinned a concurrency slot until manual operator cleanup, since
+    /// the existing zombie reaper looks for idle shell — not idle
+    /// startup spinner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    observed_active_at: Option<String>,
 }
 
 /// Contract the launcher attaches to a session to enforce input→output
@@ -465,6 +494,7 @@ fn migrate(conn: &Connection) -> Result<()> {
         "awaiting_response",
         "INTEGER NOT NULL DEFAULT 0",
     )?;
+    ensure_column(conn, "agent_sessions", "observed_active_at", "TEXT")?;
     Ok(())
 }
 
@@ -973,6 +1003,7 @@ fn session_launch(
         retries_used: 0,
         last_validation_error: None,
         awaiting_response,
+        observed_active_at: None,
     };
     record_command(
         conn,
@@ -993,7 +1024,7 @@ fn session_get(conn: &Connection, session_id: &str) -> Result<Option<SessionSnap
                 backend_kind, backend_ref_json, started_at, last_observed_at,
                 finished_at, cleaned_at, pr_url, output_snippet,
                 expected_result_json, retries_used, last_validation_error,
-                awaiting_response
+                awaiting_response, observed_active_at
          FROM agent_sessions WHERE session_id = ?1",
         params![session_id],
         row_to_snapshot,
@@ -1008,7 +1039,7 @@ fn session_list(conn: &Connection, query: ListParams) -> Result<Vec<SessionSnaps
                 backend_kind, backend_ref_json, started_at, last_observed_at,
                 finished_at, cleaned_at, pr_url, output_snippet,
                 expected_result_json, retries_used, last_validation_error,
-                awaiting_response
+                awaiting_response, observed_active_at
          FROM agent_sessions
          ORDER BY started_at DESC, session_id ASC",
     )?;
@@ -1195,6 +1226,7 @@ fn row_to_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSnapshot>
         retries_used: row.get::<_, i64>(16)? as u32,
         last_validation_error: row.get(17)?,
         awaiting_response: row.get::<_, i64>(18)? != 0,
+        observed_active_at: row.get(19)?,
     })
 }
 
@@ -1210,8 +1242,8 @@ fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> 
             backend_kind, backend_ref_json, started_at, last_observed_at,
             finished_at, cleaned_at, pr_url, output_snippet,
             expected_result_json, retries_used, last_validation_error,
-            awaiting_response
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+            awaiting_response, observed_active_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
          ON CONFLICT(session_id) DO UPDATE SET
             session_name = excluded.session_name,
             pane_id = excluded.pane_id,
@@ -1230,7 +1262,8 @@ fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> 
             expected_result_json = excluded.expected_result_json,
             retries_used = excluded.retries_used,
             last_validation_error = excluded.last_validation_error,
-            awaiting_response = excluded.awaiting_response",
+            awaiting_response = excluded.awaiting_response,
+            observed_active_at = excluded.observed_active_at",
         params![
             snapshot.session_id,
             snapshot.session_name,
@@ -1251,6 +1284,7 @@ fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> 
             i64::from(snapshot.retries_used),
             snapshot.last_validation_error,
             i64::from(snapshot.awaiting_response),
+            snapshot.observed_active_at,
         ],
     )?;
     Ok(())
@@ -1667,6 +1701,39 @@ fn monitor_once(config: &Config) -> Result<()> {
                 continue;
             }
         }
+        // Launch-timeout watchdog: a session that has been at status
+        // `running` for longer than `LAUNCH_TIMEOUT_SECONDS` without
+        // ever showing the agent's "active" marker is stuck inside
+        // startup (typical cause: a hung MCP server holding codex's
+        // initialisation loop indefinitely).  The stale-observation
+        // watchdog above does not catch this because the startup
+        // spinner ticks the wall-clock every second, so the tmux
+        // capture keeps changing and `last_observed_at` keeps
+        // refreshing.  Reap directly via SQL so a misbehaving tmux
+        // child cannot itself block the watchdog.
+        if snapshot.status == "running" && snapshot.observed_active_at.is_none() {
+            if let Some(started) = parse_iso_timestamp(Some(snapshot.started_at.as_str())) {
+                let age = now.signed_duration_since(started);
+                if age > ChronoDuration::seconds(LAUNCH_TIMEOUT_SECONDS) {
+                    snapshot.status = String::from("failed");
+                    let observed = now_iso();
+                    snapshot.last_observed_at = Some(observed.clone());
+                    snapshot.finished_at.get_or_insert(observed);
+                    snapshot.last_validation_error = Some(format!(
+                        "launch timeout: never reached active state within {}s",
+                        LAUNCH_TIMEOUT_SECONDS
+                    ));
+                    upsert_snapshot(&conn, &snapshot)?;
+                    record_event(
+                        &conn,
+                        &snapshot.session_id,
+                        "session_launch_timeout",
+                        &snapshot,
+                    )?;
+                    continue;
+                }
+            }
+        }
         let exists = tmux_has_session(config, &snapshot.session_name)?;
         let observed_at = now_iso();
         if exists {
@@ -1705,8 +1772,17 @@ fn monitor_once(config: &Config) -> Result<()> {
             // First, clear the awaiting-response latch once we see the
             // agent's "active" marker — that confirms the prompt landed
             // in the REPL and the agent is actually working on it.
-            if snapshot.awaiting_response && output_has_codex_active_marker(&output) {
+            let active_marker_seen = output_has_codex_active_marker(&output);
+            if snapshot.awaiting_response && active_marker_seen {
                 snapshot.awaiting_response = false;
+            }
+            // Record the first time the agent's active marker appeared.
+            // This is the signal the launch-timeout watchdog uses to
+            // distinguish "agent finished startup" from "agent stuck
+            // in startup": once set, the session is past the boot
+            // phase and watchdog stops considering it for reaping.
+            if active_marker_seen && snapshot.observed_active_at.is_none() {
+                snapshot.observed_active_at = Some(observed_at.clone());
             }
             let raw_status = observed_status_for_snapshot(&snapshot, &output);
             snapshot.last_observed_at = Some(observed_at);
@@ -1975,6 +2051,7 @@ mod tests {
             retries_used: 0,
             last_validation_error: None,
             awaiting_response: false,
+                observed_active_at: None,
         };
         assert!(list_query_matches(
             &snapshot,
@@ -2097,6 +2174,7 @@ mod tests {
                 retries_used: 0,
                 last_validation_error: None,
                 awaiting_response: false,
+                observed_active_at: None,
                 last_observed_at: None,
                 finished_at: None,
                 cleaned_at: None,
@@ -2167,6 +2245,7 @@ mod tests {
                 retries_used: 0,
                 last_validation_error: None,
                 awaiting_response: false,
+                observed_active_at: None,
                 last_observed_at: Some(stale_iso),
                 finished_at: None,
                 cleaned_at: None,
@@ -2211,6 +2290,156 @@ mod tests {
     }
 
     #[test]
+    fn monitor_once_fails_session_stuck_in_startup_past_launch_timeout() {
+        // Launch-timeout watchdog: a session whose start time is past
+        // 'LAUNCH_TIMEOUT_SECONDS' AND that has never recorded an
+        // 'observed_active_at' is stuck inside startup (typical
+        // cause: a hung MCP server blocking codex's initialisation).
+        // The stale-observation watchdog above does NOT catch this
+        // case because the startup spinner ticks the wall-clock
+        // every second so the tmux capture changes and
+        // 'last_observed_at' keeps refreshing.  This test pins the
+        // distinction by keeping 'last_observed_at' very recent
+        // while 'started_at' is well past the timeout and
+        // 'observed_active_at' is None.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        let started =
+            (Utc::now() - ChronoDuration::seconds(LAUNCH_TIMEOUT_SECONDS + 120)).to_rfc3339();
+        let fresh_observation = Utc::now().to_rfc3339();
+        upsert_snapshot(
+            &conn,
+            &SessionSnapshot {
+                session_id: String::from("startup-hang"),
+                session_name: String::from("startup-hang"),
+                pane_id: String::from("%1"),
+                agent_type: String::from("codex"),
+                work_dir: String::from("/tmp"),
+                lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
+                status: String::from("running"),
+                backend_kind: String::from("tmux"),
+                backend_ref: BTreeMap::new(),
+                started_at: started,
+                expected_result: None,
+                retries_used: 0,
+                last_validation_error: None,
+                awaiting_response: false,
+                last_observed_at: Some(fresh_observation),
+                finished_at: None,
+                cleaned_at: None,
+                pr_url: None,
+                output_snippet: None,
+                observed_active_at: None,
+            },
+        )
+        .expect("insert hung-startup session");
+        let config = Config {
+            db_path: db.clone(),
+            socket_path: tmp.path().join("agentd.sock"),
+            tmux_bin: String::from("/nonexistent/tmux"),
+            monitor_interval: Duration::from_millis(1000),
+            max_running: 10,
+        };
+
+        monitor_once(&config).expect("monitor_once via launch-timeout watchdog");
+
+        let row: (String, Option<String>) = Connection::open(&db)
+            .expect("reopen sqlite")
+            .query_row(
+                "SELECT status, last_validation_error FROM agent_sessions WHERE session_id = ?1",
+                params!["startup-hang"],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("session row");
+        assert_eq!(row.0, "failed");
+        assert!(
+            row.1
+                .as_deref()
+                .map(|s| s.starts_with("launch timeout:"))
+                .unwrap_or(false),
+            "expected launch-timeout reason, got {:?}",
+            row.1
+        );
+        let event: String = Connection::open(&db)
+            .expect("reopen sqlite")
+            .query_row(
+                "SELECT event_type FROM agent_session_events \
+                 WHERE session_id = ?1 ORDER BY id DESC LIMIT 1",
+                params!["startup-hang"],
+                |r| r.get(0),
+            )
+            .expect("event row");
+        assert_eq!(event, "session_launch_timeout");
+    }
+
+    #[test]
+    fn monitor_once_leaves_session_alone_once_active_marker_was_seen() {
+        // Counterpart: a session that DID reach the active marker
+        // before the timeout (= got past startup) must not be reaped
+        // by the launch-timeout watchdog even if it has been
+        // running for far longer than 'LAUNCH_TIMEOUT_SECONDS'.
+        // Long-running agent work must not look like a startup hang.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        let started =
+            (Utc::now() - ChronoDuration::seconds(LAUNCH_TIMEOUT_SECONDS * 2)).to_rfc3339();
+        let active_at = (Utc::now()
+            - ChronoDuration::seconds(LAUNCH_TIMEOUT_SECONDS * 2 - 30))
+            .to_rfc3339();
+        let fresh_observation = Utc::now().to_rfc3339();
+        upsert_snapshot(
+            &conn,
+            &SessionSnapshot {
+                session_id: String::from("long-running-but-active"),
+                session_name: String::from("doeff-agentd-launch-test-absent"),
+                pane_id: String::from("%1"),
+                agent_type: String::from("codex"),
+                work_dir: String::from("/tmp"),
+                lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
+                status: String::from("running"),
+                backend_kind: String::from("tmux"),
+                backend_ref: BTreeMap::new(),
+                started_at: started,
+                expected_result: None,
+                retries_used: 0,
+                last_validation_error: None,
+                awaiting_response: false,
+                last_observed_at: Some(fresh_observation),
+                finished_at: None,
+                cleaned_at: None,
+                pr_url: None,
+                output_snippet: None,
+                observed_active_at: Some(active_at),
+            },
+        )
+        .expect("insert long-running active session");
+        let config = Config {
+            db_path: db.clone(),
+            socket_path: tmp.path().join("agentd.sock"),
+            tmux_bin: String::from("tmux"),
+            monitor_interval: Duration::from_millis(1000),
+            max_running: 10,
+        };
+
+        monitor_once(&config).expect("monitor_once succeeds");
+
+        let count: i64 = Connection::open(&db)
+            .expect("reopen sqlite")
+            .query_row(
+                "SELECT COUNT(*) FROM agent_session_events \
+                 WHERE session_id = ?1 AND event_type = 'session_launch_timeout'",
+                params!["long-running-but-active"],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(count, 0);
+    }
+
+    #[test]
     fn monitor_once_leaves_recently_observed_session_alone() {
         // Inverse of the watchdog test: a session whose last_observed_at
         // is fresh must not be reaped, even if everything else about it
@@ -2240,6 +2469,7 @@ mod tests {
                 retries_used: 0,
                 last_validation_error: None,
                 awaiting_response: false,
+                observed_active_at: None,
                 last_observed_at: Some(fresh_iso),
                 finished_at: None,
                 cleaned_at: None,
@@ -2501,6 +2731,7 @@ mod tests {
             retries_used: 0,
             last_validation_error: None,
             awaiting_response: false,
+                observed_active_at: None,
         }
     }
 }
