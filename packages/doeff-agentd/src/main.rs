@@ -52,6 +52,30 @@ const LAUNCH_TIMEOUT_SECONDS: i64 = 600;
 const LIFECYCLE_RUN_TO_COMPLETION: &str = "run_to_completion";
 const LIFECYCLE_INTERACTIVE: &str = "interactive";
 
+/// Default cap on how long `session.await_result` blocks before
+/// returning a timeout error.  10 minutes matches the typical upper
+/// bound of a single agent turn under `run_to_completion`.
+const DEFAULT_AWAIT_TIMEOUT_SECONDS: f64 = 600.0;
+/// Lower bound for the await_result timeout.  Below 1s the polling
+/// loop has no useful work to do and the connection thrashes.
+const MIN_AWAIT_TIMEOUT_SECONDS: f64 = 1.0;
+/// Upper bound for the await_result timeout.  Keeps a misbehaving
+/// client from parking an agentd thread for an unbounded time.
+const MAX_AWAIT_TIMEOUT_SECONDS: f64 = 3600.0;
+/// Cadence at which the await loop re-reads the session row.  500ms
+/// is well below the monitor loop's own cadence (~1s) so callers see
+/// terminal transitions promptly without putting noticeable load on
+/// sqlite.
+const AWAIT_POLL_INTERVAL_MS: u64 = 500;
+/// JSON-RPC error code returned when `session.await_result` exceeds
+/// its caller-supplied timeout.  Inside the JSON-RPC 2.0 reserved
+/// "server error" range (-32000..-32099).
+const RPC_ERR_AWAIT_TIMEOUT: i32 = -32000;
+/// JSON-RPC error code returned when `session.await_result` targets a
+/// session id that does not exist (or has been deleted during the
+/// wait).
+const RPC_ERR_NO_SUCH_SESSION: i32 = -32001;
+
 #[derive(Debug, Clone)]
 struct Config {
     db_path: PathBuf,
@@ -85,7 +109,34 @@ struct RpcResponse {
     result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    /// Structured JSON-RPC 2.0 style error code.  Present only on
+    /// failure responses raised through `RpcError`; preserved alongside
+    /// the human-readable `error` string for back-compat with existing
+    /// clients (notably the Python client which only reads `error`).
+    /// New methods such as `session.await_result` use this so callers
+    /// can distinguish e.g. "no such session" (-32001) from "timeout"
+    /// (-32000) without parsing the error message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_code: Option<i32>,
 }
+
+/// Structured error carrying a JSON-RPC 2.0 style error code.  Used by
+/// handlers that need to differentiate failure modes on the wire — the
+/// dispatch wrapper downcasts the inner `anyhow::Error` and forwards
+/// both the code and the message into the response.
+#[derive(Debug, Clone)]
+struct RpcError {
+    code: i32,
+    message: String,
+}
+
+impl std::fmt::Display for RpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for RpcError {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SessionSnapshot {
@@ -260,6 +311,18 @@ struct LaunchParams {
 #[derive(Debug, Deserialize)]
 struct SessionIdParams {
     session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AwaitResultParams {
+    session_id: String,
+    /// Maximum number of seconds to block before returning a timeout
+    /// error.  Defaults to `DEFAULT_AWAIT_TIMEOUT_SECONDS` (10 min) and
+    /// is clamped into `[MIN_AWAIT_TIMEOUT_SECONDS, MAX_AWAIT_TIMEOUT_SECONDS]`
+    /// inside the handler so misbehaving clients cannot park threads
+    /// for arbitrarily long.
+    #[serde(default)]
+    timeout_seconds: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -662,6 +725,7 @@ fn handle_stream(stream: UnixStream, config: Config) -> Result<()> {
                 ok: false,
                 result: None,
                 error: Some(format!("invalid request: {err}")),
+                error_code: None,
             },
         };
         let encoded = serde_json::to_string(&response)?;
@@ -681,13 +745,26 @@ fn dispatch_request(conn: &Connection, config: &Config, request: RpcRequest) -> 
             ok: true,
             result: Some(value),
             error: None,
+            error_code: None,
         },
-        Err(err) => RpcResponse {
-            id,
-            ok: false,
-            result: None,
-            error: Some(format!("{err:#}")),
-        },
+        Err(err) => {
+            // If the handler raised a structured RpcError, surface its
+            // code on the wire so callers (notably session.await_result
+            // clients) can distinguish failure modes without parsing
+            // the message.  Fall back to the legacy plain-string error
+            // for handlers that haven't migrated.
+            let (message, code) = match err.downcast_ref::<RpcError>() {
+                Some(rpc_err) => (rpc_err.message.clone(), Some(rpc_err.code)),
+                None => (format!("{err:#}"), None),
+            };
+            RpcResponse {
+                id,
+                ok: false,
+                result: None,
+                error: Some(message),
+                error_code: code,
+            }
+        }
     }
 }
 
@@ -736,6 +813,9 @@ fn dispatch_request_result(
         let params: SessionIdParams = serde_json::from_value(request.params)?;
         let snapshot = session_cleanup(conn, config, &params.session_id)?;
         Ok(serde_json::to_value(snapshot)?)
+    } else if request.method == "session.await_result" {
+        let params: AwaitResultParams = serde_json::from_value(request.params)?;
+        session_await_result(conn, params)
     } else {
         Err(anyhow!("unknown method: {}", request.method))
     }
@@ -1225,6 +1305,179 @@ fn session_cleanup(
     Ok(snapshot)
 }
 
+/// Block until the named session reaches a terminal status (or the
+/// caller-supplied timeout elapses).  Built for the Haskell agent-
+/// control-plane daemon: clients used to poll `session.get` and then
+/// read the result file directly off disk, which bypassed agentd's
+/// `validate_expected_result` contract.  This RPC consolidates the
+/// wait + validation handoff into a single response so the daemon
+/// never sees an unvalidated payload.
+///
+/// Threading note: each agentd connection runs in its own thread (see
+/// `serve` / `handle_stream`), so blocking the calling thread here
+/// does not stall the rest of the daemon — other RPCs continue to be
+/// served concurrently.
+fn session_await_result(
+    conn: &Connection,
+    params: AwaitResultParams,
+) -> Result<Value> {
+    session_await_result_with_interval(
+        conn,
+        params,
+        Duration::from_millis(AWAIT_POLL_INTERVAL_MS),
+    )
+}
+
+/// Test-friendly variant of `session_await_result` that exposes the
+/// polling cadence.  Production code uses `AWAIT_POLL_INTERVAL_MS`;
+/// tests override it to keep total runtime small.
+fn session_await_result_with_interval(
+    conn: &Connection,
+    params: AwaitResultParams,
+    poll_interval: Duration,
+) -> Result<Value> {
+    let timeout_seconds = params
+        .timeout_seconds
+        .unwrap_or(DEFAULT_AWAIT_TIMEOUT_SECONDS)
+        .clamp(MIN_AWAIT_TIMEOUT_SECONDS, MAX_AWAIT_TIMEOUT_SECONDS);
+    let timeout = Duration::from_secs_f64(timeout_seconds);
+    let started = std::time::Instant::now();
+
+    // Probe once up front so a missing session fails fast with the
+    // dedicated -32001 code instead of waiting for the timeout.
+    let initial = session_get(conn, &params.session_id)?;
+    let mut snapshot = match initial {
+        Some(snap) => snap,
+        None => {
+            return Err(anyhow::Error::new(RpcError {
+                code: RPC_ERR_NO_SUCH_SESSION,
+                message: format!("no session with id '{}'", params.session_id),
+            }));
+        }
+    };
+
+    loop {
+        if is_await_terminal_status(&snapshot.status) {
+            return Ok(build_await_response(&snapshot));
+        }
+        if started.elapsed() >= timeout {
+            return Err(anyhow::Error::new(RpcError {
+                code: RPC_ERR_AWAIT_TIMEOUT,
+                message: format!(
+                    "session.await_result timed out after {}s for session '{}'",
+                    timeout_seconds as u64, params.session_id
+                ),
+            }));
+        }
+        thread::sleep(poll_interval);
+        snapshot = match session_get(conn, &params.session_id)? {
+            Some(snap) => snap,
+            None => {
+                // The session row vanished mid-wait — surface the same
+                // dedicated error code as the initial-not-found case
+                // so the Haskell client can branch identically.
+                return Err(anyhow::Error::new(RpcError {
+                    code: RPC_ERR_NO_SUCH_SESSION,
+                    message: format!("no session with id '{}'", params.session_id),
+                }));
+            }
+        };
+    }
+}
+
+/// Assemble the success response for `session.await_result`.  The
+/// `result` field is `Some(...)` only when the session reached `done`
+/// AND its `expected_result` contract revalidates successfully; in
+/// every other terminal state (including `failed` due to validation
+/// timeout) `result` is null and `validation_error` carries whichever
+/// reason the monitor recorded.
+fn build_await_response(snapshot: &SessionSnapshot) -> Value {
+    let mut response = serde_json::Map::new();
+    response.insert(
+        String::from("session"),
+        serde_json::to_value(snapshot).unwrap_or(Value::Null),
+    );
+
+    let mut result_value: Value = Value::Null;
+    let mut validation_error: Option<String> = snapshot.last_validation_error.clone();
+
+    if snapshot.status == "done" {
+        if let Some(spec) = snapshot.expected_result.as_ref() {
+            match validate_expected_result(&snapshot.work_dir, spec) {
+                Ok(()) => {
+                    // Re-read the validated file so we hand the caller
+                    // the live payload.  `validate_expected_result`
+                    // already confirmed the file exists and parses, so
+                    // a second failure here is genuinely surprising
+                    // (e.g. a race deleting the file between the two
+                    // reads) — surface it as a validation_error rather
+                    // than crashing the await call.
+                    let path = Path::new(&snapshot.work_dir).join(&spec.file_path);
+                    match fs::read_to_string(&path)
+                        .ok()
+                        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+                    {
+                        Some(parsed) => {
+                            let payload = parsed
+                                .get("payload")
+                                .cloned()
+                                .unwrap_or(Value::Null);
+                            let mut result_obj = serde_json::Map::new();
+                            if let Some(name) = spec.schema_name.as_ref() {
+                                result_obj.insert(
+                                    String::from("schema_name"),
+                                    Value::String(name.clone()),
+                                );
+                            } else if let Some(name) =
+                                parsed.get("schema").and_then(|v| v.as_str())
+                            {
+                                result_obj.insert(
+                                    String::from("schema_name"),
+                                    Value::String(name.to_string()),
+                                );
+                            }
+                            if let Some(version) = spec.schema_version {
+                                result_obj.insert(
+                                    String::from("schema_version"),
+                                    Value::Number(serde_json::Number::from(version)),
+                                );
+                            } else if let Some(version) =
+                                parsed.get("schemaVersion").and_then(|v| v.as_u64())
+                            {
+                                result_obj.insert(
+                                    String::from("schema_version"),
+                                    Value::Number(serde_json::Number::from(version)),
+                                );
+                            }
+                            result_obj.insert(String::from("payload"), payload);
+                            result_value = Value::Object(result_obj);
+                            validation_error = None;
+                        }
+                        None => {
+                            validation_error = Some(format!(
+                                "expected result file at {} disappeared after validation",
+                                path.display()
+                            ));
+                        }
+                    }
+                }
+                Err(reason) => {
+                    validation_error = Some(reason);
+                }
+            }
+        }
+    }
+
+    response.insert(String::from("result"), result_value);
+    if let Some(reason) = validation_error {
+        response.insert(
+            String::from("validation_error"),
+            Value::String(reason),
+        );
+    }
+    Value::Object(response)
+}
+
 fn require_session(conn: &Connection, session_id: &str) -> Result<SessionSnapshot> {
     session_get(conn, session_id)?.ok_or_else(|| anyhow!("session is not registered: {session_id}"))
 }
@@ -1655,6 +1908,18 @@ fn set_failed_output_cause_if_absent(
         retryable,
         observed_at,
     );
+}
+
+/// Terminal-status check used by `session.await_result`.  Wider than
+/// `is_terminal_status` because the await contract documents that a
+/// session reaching `cancelled` or `lost` is also a final, no-more-
+/// transitions state from the caller's point of view — there is no
+/// useful reason to keep blocking once one of those is observed.
+fn is_await_terminal_status(status: &str) -> bool {
+    matches!(
+        status,
+        "done" | "failed" | "cancelled" | "exited" | "stopped" | "lost"
+    )
 }
 
 fn event_type_for_observed_status(status: &str) -> &'static str {
@@ -2930,5 +3195,271 @@ mod tests {
             awaiting_response: false,
             observed_active_at: None,
         }
+    }
+
+    /// Build an `agent_sessions` row directly via `upsert_snapshot`,
+    /// bypassing tmux.  Tests for `session.await_result` need to flip
+    /// the status field without going through the launch pathway,
+    /// which would require a live tmux server.
+    fn insert_test_snapshot(
+        conn: &Connection,
+        session_id: &str,
+        status: &str,
+        work_dir: &str,
+        expected_result: Option<ExpectedResultSpec>,
+        last_validation_error: Option<String>,
+    ) {
+        let snapshot = SessionSnapshot {
+            session_id: String::from(session_id),
+            session_name: String::from(session_id),
+            pane_id: String::from("%1"),
+            agent_type: String::from("codex"),
+            work_dir: String::from(work_dir),
+            lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
+            status: String::from(status),
+            backend_kind: String::from("tmux"),
+            backend_ref: BTreeMap::new(),
+            started_at: now_iso(),
+            last_observed_at: None,
+            finished_at: None,
+            cleaned_at: None,
+            pr_url: None,
+            output_snippet: None,
+            expected_result,
+            retries_used: 0,
+            last_validation_error,
+            awaiting_response: false,
+            observed_active_at: None,
+        };
+        upsert_snapshot(conn, &snapshot).expect("upsert test snapshot");
+    }
+
+    #[test]
+    fn await_result_returns_terminal_session_with_null_result_when_no_contract() {
+        // Spec test #1: a session that exits cleanly with no
+        // expected_result contract must return `result: null` and the
+        // snapshot in a terminal state.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        insert_test_snapshot(&conn, "await-no-contract", "exited", "/tmp", None, None);
+
+        let value = session_await_result_with_interval(
+            &conn,
+            AwaitResultParams {
+                session_id: String::from("await-no-contract"),
+                timeout_seconds: Some(2.0),
+            },
+            Duration::from_millis(50),
+        )
+        .expect("await_result should succeed");
+
+        assert_eq!(value.get("result"), Some(&Value::Null));
+        let session = value.get("session").expect("session field");
+        assert_eq!(
+            session.get("status").and_then(|v| v.as_str()),
+            Some("exited")
+        );
+        assert!(
+            value.get("validation_error").is_none(),
+            "no contract ⇒ no validation_error: got {value:?}"
+        );
+    }
+
+    #[test]
+    fn await_result_returns_parsed_payload_when_contract_validates() {
+        // Spec test #2: contract present, file valid → response carries
+        // the parsed payload alongside the schema descriptors.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+
+        let work_dir = tmp.path().join("work");
+        fs::create_dir_all(&work_dir).expect("mkdir work_dir");
+        fs::write(
+            work_dir.join(".reactor-impl-result.json"),
+            r#"{"schema":"PrConventionsVerdict","schemaVersion":1,"payload":{"verdict":"ok","notes":"clean"}}"#,
+        )
+        .expect("write envelope");
+
+        let spec = ExpectedResultSpec {
+            file_path: String::from(".reactor-impl-result.json"),
+            schema_name: Some(String::from("PrConventionsVerdict")),
+            schema_version: Some(1),
+            retry_prompt: default_retry_prompt(),
+            max_retries: 2,
+        };
+        insert_test_snapshot(
+            &conn,
+            "await-with-contract",
+            "done",
+            work_dir.to_str().unwrap(),
+            Some(spec),
+            None,
+        );
+
+        let value = session_await_result_with_interval(
+            &conn,
+            AwaitResultParams {
+                session_id: String::from("await-with-contract"),
+                timeout_seconds: Some(2.0),
+            },
+            Duration::from_millis(50),
+        )
+        .expect("await_result should succeed");
+
+        let result = value.get("result").expect("result field");
+        assert!(result.is_object(), "result must be an object: {value:?}");
+        assert_eq!(
+            result.get("schema_name").and_then(|v| v.as_str()),
+            Some("PrConventionsVerdict")
+        );
+        assert_eq!(
+            result.get("schema_version").and_then(|v| v.as_u64()),
+            Some(1)
+        );
+        assert_eq!(
+            result
+                .get("payload")
+                .and_then(|v| v.get("verdict"))
+                .and_then(|v| v.as_str()),
+            Some("ok")
+        );
+        assert!(value.get("validation_error").is_none());
+    }
+
+    #[test]
+    fn await_result_returns_timeout_error_when_session_never_reaches_terminal() {
+        // Spec test #3: contract present, session stays non-terminal,
+        // await must return a -32000 timeout error.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+
+        let spec = ExpectedResultSpec {
+            file_path: String::from(".reactor-impl-result.json"),
+            schema_name: Some(String::from("PrConventionsVerdict")),
+            schema_version: Some(1),
+            retry_prompt: default_retry_prompt(),
+            max_retries: 2,
+        };
+        insert_test_snapshot(
+            &conn,
+            "await-timeout",
+            "running",
+            "/tmp",
+            Some(spec),
+            None,
+        );
+
+        let err = session_await_result_with_interval(
+            &conn,
+            AwaitResultParams {
+                session_id: String::from("await-timeout"),
+                // Below the documented minimum, gets clamped up to 1s.
+                timeout_seconds: Some(0.5),
+            },
+            Duration::from_millis(50),
+        )
+        .expect_err("await_result must time out");
+
+        let rpc_err = err
+            .downcast_ref::<RpcError>()
+            .expect("must be an RpcError, got plain anyhow");
+        assert_eq!(rpc_err.code, RPC_ERR_AWAIT_TIMEOUT);
+        assert!(
+            rpc_err.message.contains("timed out"),
+            "unexpected message: {}",
+            rpc_err.message
+        );
+        assert!(
+            rpc_err.message.contains("await-timeout"),
+            "message must include the session id: {}",
+            rpc_err.message
+        );
+    }
+
+    #[test]
+    fn await_result_returns_no_such_session_for_unknown_id() {
+        // Spec test #4: unknown session id → -32001 error, fast path
+        // (no polling).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+
+        let err = session_await_result_with_interval(
+            &conn,
+            AwaitResultParams {
+                session_id: String::from("does-not-exist"),
+                timeout_seconds: Some(2.0),
+            },
+            Duration::from_millis(50),
+        )
+        .expect_err("await_result on missing session must error");
+
+        let rpc_err = err
+            .downcast_ref::<RpcError>()
+            .expect("must be an RpcError, got plain anyhow");
+        assert_eq!(rpc_err.code, RPC_ERR_NO_SUCH_SESSION);
+        assert!(
+            rpc_err.message.contains("does-not-exist"),
+            "message must include the session id: {}",
+            rpc_err.message
+        );
+    }
+
+    #[test]
+    fn await_result_surfaces_validation_error_when_contract_fails_post_done() {
+        // Cross-cutting check: a session that landed in `done` but
+        // whose expected_result file is missing should yield
+        // result: null AND surface the validation reason so the
+        // Haskell client can branch on it.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+
+        let work_dir = tmp.path().join("work");
+        fs::create_dir_all(&work_dir).expect("mkdir work_dir");
+        // Intentionally do NOT write the result file.
+        let spec = ExpectedResultSpec {
+            file_path: String::from(".reactor-impl-result.json"),
+            schema_name: Some(String::from("PrConventionsVerdict")),
+            schema_version: Some(1),
+            retry_prompt: default_retry_prompt(),
+            max_retries: 2,
+        };
+        insert_test_snapshot(
+            &conn,
+            "await-bad-file",
+            "done",
+            work_dir.to_str().unwrap(),
+            Some(spec),
+            None,
+        );
+
+        let value = session_await_result_with_interval(
+            &conn,
+            AwaitResultParams {
+                session_id: String::from("await-bad-file"),
+                timeout_seconds: Some(2.0),
+            },
+            Duration::from_millis(50),
+        )
+        .expect("await_result returns ok-with-null even on contract failure");
+
+        assert_eq!(value.get("result"), Some(&Value::Null));
+        let reason = value
+            .get("validation_error")
+            .and_then(|v| v.as_str())
+            .expect("validation_error string must be present");
+        assert!(
+            reason.contains("not readable"),
+            "expected file-not-readable reason, got: {reason}"
+        );
     }
 }
