@@ -3225,6 +3225,7 @@ mod tests {
             cleaned_at: None,
             pr_url: None,
             output_snippet: None,
+            terminal_cause: None,
             expected_result,
             retries_used: 0,
             last_validation_error,
