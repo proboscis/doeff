@@ -257,20 +257,21 @@ struct TerminalCause {
 /// malformed outputs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ExpectedResultSpec {
-    /// Path to the expected output, relative to `work_dir`.
-    file_path: String,
-    /// When set, the parsed JSON's top-level `schema` field must equal
-    /// this name for validation to pass.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    schema_name: Option<String>,
-    /// When set, the parsed JSON's top-level `schemaVersion` field
-    /// must equal this integer.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    schema_version: Option<u32>,
-    /// Message sent back to the agent when its output is missing or
-    /// malformed.  The literal substring `%REASON%` is replaced with
-    /// the validator's explanation so the agent has actionable
-    /// feedback.
+    /// The JSON-Schema (a constrained subset agentd enforces — see
+    /// `validate_against_schema`) the agent's result must satisfy.  This
+    /// is the ONLY thing the launcher supplies.  agentd owns the entire
+    /// transmission contract: it picks the result file path
+    /// (`DEFAULT_RESULT_FILE`), injects the how/where instruction into
+    /// the agent (`result_protocol_instruction`), reads the file and
+    /// validates its content directly against this schema, and re-prompts
+    /// on violation.  The schema is opaque to agentd — it enforces
+    /// structure, it does not know what any field means — so the daemon
+    /// stays domain-agnostic.
+    payload_schema: serde_json::Value,
+    /// Message sent back to the agent when its result is missing or does
+    /// not satisfy the schema.  `%REASON%` is replaced with the
+    /// validator's explanation so the agent has actionable feedback.
+    /// agentd policy — launchers leave it at the default.
     #[serde(default = "default_retry_prompt")]
     retry_prompt: String,
     /// Maximum number of times the monitor re-prompts the agent before
@@ -278,19 +279,32 @@ struct ExpectedResultSpec {
     /// initial run, so total attempts = max_retries + 1.
     #[serde(default = "default_max_retries")]
     max_retries: u32,
-    /// Optional structural contract for the envelope's inner `payload`
-    /// object.  When set, the parsed `payload` must satisfy this schema
-    /// for validation to pass; a violation is fed back to the agent
-    /// verbatim through the same `%REASON%` retry loop that handles a
-    /// missing file or a schema-name mismatch.  This is a deliberately
-    /// small JSON-Schema *subset* (see `validate_against_schema`) — not
-    /// a full validator — chosen so the daemon stays dependency-free and
-    /// the error messages stay actionable for the agent.  The schema is
-    /// supplied by the launcher as opaque data, so the daemon stays
-    /// domain-agnostic: it knows how to enforce a schema, not what any
-    /// particular field means.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    payload_schema: Option<serde_json::Value>,
+}
+
+/// Default result-file name agentd uses when the launcher does not name
+/// one.  Dot-prefixed so it stays out of the way; agentd also adds it to
+/// `.git/info/exclude` (see `ignore_result_file`) so a result written
+/// into the agent's git worktree never dirties `git status` or lands in
+/// a commit.  The name is agentd's own — the launcher (e.g. ACP) never
+/// learns it, keeping the transmission contract entirely inside agentd.
+const DEFAULT_RESULT_FILE: &str = ".agentd-result.json";
+
+/// The instruction agentd injects into the agent's first prompt telling
+/// it HOW and WHERE to emit its result.  This is agentd's transmission
+/// contract with the tmux agent — the launcher never authors it, so a
+/// launcher that knows only the data schema still gets a working result
+/// channel.  The agent writes the result object directly; agentd reads
+/// it from `DEFAULT_RESULT_FILE` and validates it against the launcher's
+/// `payload_schema`.
+fn result_protocol_instruction() -> String {
+    format!(
+        "\n\n---\nWhen you have finished the task, WRITE your result as a single JSON \
+         object to the file '{DEFAULT_RESULT_FILE}' in your current working directory.  \
+         agentd reads that file, validates it, and — if it is missing or does not \
+         satisfy the contract — sends the reason back so you can fix it; rewrite the \
+         file and do NOT exit until it is accepted.  Write only the result object \
+         itself; the required fields are described in the task above.",
+    )
 }
 
 fn default_retry_prompt() -> String {
@@ -946,6 +960,62 @@ fn build_claude_argv(params: &LaunchParams) -> Vec<String> {
     args
 }
 
+/// Add `file_name` to the git repo's local `info/exclude` so a result
+/// file agentd reads from a git worktree stays invisible to `git status`
+/// and can never be `git add`-ed into a commit.  No-op when work_dir is
+/// not a git work tree.  Uses the local exclude (not the tracked
+/// `.gitignore`) so the agent's PR is unaffected.  Idempotent.
+///
+/// Resolves the real git directory: in a plain checkout `.git` is a
+/// directory; in a linked worktree (what ACP uses) `.git` is a FILE
+/// holding `gitdir: <path>` pointing at `…/.git/worktrees/<name>`, whose
+/// own `info/exclude` is the per-worktree exclude.
+fn ignore_result_file(work_dir: &str, file_name: &str) -> Result<()> {
+    let dot_git = Path::new(work_dir).join(".git");
+    let git_dir: std::path::PathBuf = if dot_git.is_dir() {
+        dot_git
+    } else if dot_git.is_file() {
+        let contents = fs::read_to_string(&dot_git)?;
+        match contents
+            .lines()
+            .find_map(|l| l.strip_prefix("gitdir:").map(|p| p.trim().to_string()))
+        {
+            Some(p) => std::path::PathBuf::from(p),
+            None => return Ok(()),
+        }
+    } else {
+        return Ok(());
+    };
+    // `info/exclude` lives in the COMMON git dir, shared across all
+    // worktrees — NOT the per-worktree gitdir.  A linked worktree's
+    // gitdir carries a `commondir` file pointing at the common dir;
+    // follow it so a single exclude entry covers every worktree.  A
+    // plain checkout has no `commondir` and is its own common dir.
+    let common_dir = match fs::read_to_string(git_dir.join("commondir")) {
+        Ok(rel) => {
+            let joined = git_dir.join(rel.trim());
+            joined.canonicalize().unwrap_or(joined)
+        }
+        Err(_) => git_dir.clone(),
+    };
+    let info_dir = common_dir.join("info");
+    fs::create_dir_all(&info_dir)?;
+    let exclude_path = info_dir.join("exclude");
+    let existing = fs::read_to_string(&exclude_path).unwrap_or_default();
+    let entry = format!("/{file_name}");
+    if existing.lines().any(|line| line.trim() == entry || line.trim() == file_name) {
+        return Ok(());
+    }
+    let mut contents = existing;
+    if !contents.is_empty() && !contents.ends_with('\n') {
+        contents.push('\n');
+    }
+    contents.push_str(&entry);
+    contents.push('\n');
+    fs::write(&exclude_path, contents)?;
+    Ok(())
+}
+
 fn run_pre_launch_setup(params: &LaunchParams) -> Result<()> {
     if params.agent_type == "codex" {
         if let Err(err) = trust_codex_workspace(&params.work_dir) {
@@ -1082,6 +1152,18 @@ fn session_launch(
     if !params.skip_trust_setup {
         run_pre_launch_setup(&params)?;
     }
+    // Keep the result file agentd will read from out of the agent's git
+    // worktree status, so a result written into a checkout the agent
+    // commits from never dirties `git status` or lands in a PR.  Local
+    // (`.git/info/exclude`) so no tracked `.gitignore` is touched.
+    if params.expected_result.is_some() {
+        if let Err(err) = ignore_result_file(&params.work_dir, DEFAULT_RESULT_FILE) {
+            eprintln!(
+                "doeff-agentd: warning: could not register result file in git exclude for {}: {err:#}",
+                params.work_dir
+            );
+        }
+    }
     let pane_id = tmux_new_session(
         config,
         &params.session_name,
@@ -1102,6 +1184,17 @@ fn session_launch(
     if uses_interactive_prompt(&params) {
         if let Some(prompt) = params.prompt.as_ref() {
             if !prompt.trim().is_empty() {
+                // agentd owns the result transmission contract: when an
+                // `expected_result` is attached, append the HOW/WHERE
+                // instruction here so the launcher never has to author
+                // file/path/envelope prose.  The launcher's prompt
+                // describes WHAT data to report; agentd adds where to
+                // put it and how it is validated.
+                let full_prompt = if params.expected_result.is_some() {
+                    format!("{prompt}{}", result_protocol_instruction())
+                } else {
+                    prompt.clone()
+                };
                 // Wait for the agent's REPL to actually be ready for
                 // input before sending the prompt + Enter.  Codex (and
                 // similar) print their banner, load MCP servers, and
@@ -1111,7 +1204,7 @@ fn session_launch(
                 // was a prompt sitting in codex's input box that was
                 // never submitted.
                 wait_for_repl_idle(config, &pane_id, Duration::from_secs(20))?;
-                tmux_send_keys(config, &pane_id, prompt, true, true)?;
+                tmux_send_keys(config, &pane_id, &full_prompt, true, true)?;
                 awaiting_response = true;
             }
         }
@@ -1445,44 +1538,17 @@ fn build_await_response(snapshot: &SessionSnapshot) -> Value {
                     // (e.g. a race deleting the file between the two
                     // reads) — surface it as a validation_error rather
                     // than crashing the await call.
-                    let path = Path::new(&snapshot.work_dir).join(&spec.file_path);
+                    let path = Path::new(&snapshot.work_dir).join(DEFAULT_RESULT_FILE);
                     match fs::read_to_string(&path)
                         .ok()
                         .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
                     {
                         Some(parsed) => {
-                            let payload = parsed
-                                .get("payload")
-                                .cloned()
-                                .unwrap_or(Value::Null);
+                            // The file content IS the payload — no
+                            // envelope.  Hand it back under `payload` so
+                            // the caller's await shape stays stable.
                             let mut result_obj = serde_json::Map::new();
-                            if let Some(name) = spec.schema_name.as_ref() {
-                                result_obj.insert(
-                                    String::from("schema_name"),
-                                    Value::String(name.clone()),
-                                );
-                            } else if let Some(name) =
-                                parsed.get("schema").and_then(|v| v.as_str())
-                            {
-                                result_obj.insert(
-                                    String::from("schema_name"),
-                                    Value::String(name.to_string()),
-                                );
-                            }
-                            if let Some(version) = spec.schema_version {
-                                result_obj.insert(
-                                    String::from("schema_version"),
-                                    Value::Number(serde_json::Number::from(version)),
-                                );
-                            } else if let Some(version) =
-                                parsed.get("schemaVersion").and_then(|v| v.as_u64())
-                            {
-                                result_obj.insert(
-                                    String::from("schema_version"),
-                                    Value::Number(serde_json::Number::from(version)),
-                                );
-                            }
-                            result_obj.insert(String::from("payload"), payload);
+                            result_obj.insert(String::from("payload"), parsed);
                             result_value = Value::Object(result_obj);
                             validation_error = None;
                         }
@@ -2406,17 +2472,17 @@ fn monitor_once(config: &Config) -> Result<()> {
     Ok(())
 }
 
-/// Validate the file the launcher promised the agent would produce.
-/// Returns `Ok(())` when the file exists, parses as JSON, and matches
-/// the declared schema name / version (when those are configured).
-/// Otherwise the `Err(String)` carries a one-line explanation suitable
-/// for inclusion in the retry prompt and in the session's last
-/// `validation_error` audit field.
+/// Validate the result file the agent was instructed to produce.
+/// Returns `Ok(())` when the file exists, parses as JSON, and satisfies
+/// `payload_schema`.  The file content IS the result — there is no
+/// envelope and agentd owns the path (`DEFAULT_RESULT_FILE`).  The
+/// `Err(String)` carries a one-line explanation suitable for the retry
+/// prompt and the session's `last_validation_error` audit field.
 fn validate_expected_result(
     work_dir: &str,
     spec: &ExpectedResultSpec,
 ) -> std::result::Result<(), String> {
-    let path = Path::new(work_dir).join(&spec.file_path);
+    let path = Path::new(work_dir).join(DEFAULT_RESULT_FILE);
     let raw = match fs::read_to_string(&path) {
         Ok(contents) => contents,
         Err(err) => {
@@ -2437,45 +2503,12 @@ fn validate_expected_result(
             ));
         }
     };
-    if let Some(expected_name) = &spec.schema_name {
-        let actual = value.get("schema").and_then(|v| v.as_str()).unwrap_or("");
-        if actual != expected_name.as_str() {
-            return Err(format!(
-                "schema mismatch in {}: expected '{}', got '{}'",
-                path.display(),
-                expected_name,
-                actual
-            ));
-        }
-    }
-    if let Some(expected_version) = spec.schema_version {
-        let actual = value
-            .get("schemaVersion")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        if actual != u64::from(expected_version) {
-            return Err(format!(
-                "schemaVersion mismatch in {}: expected {}, got {}",
-                path.display(),
-                expected_version,
-                actual
-            ));
-        }
-    }
-    if let Some(schema) = &spec.payload_schema {
-        // The inner `payload` object is the agent-authored body; the
-        // top-level `schema`/`schemaVersion` are envelope framing we
-        // already checked above.  An absent `payload` validates as JSON
-        // `null`, which lets the schema decide (via `type`/`required`)
-        // whether that is acceptable.
-        let payload = value.get("payload").cloned().unwrap_or(Value::Null);
-        if let Err(reason) = validate_against_schema(&payload, schema, "payload") {
-            return Err(format!(
-                "payload does not satisfy its schema in {}: {}",
-                path.display(),
-                reason
-            ));
-        }
+    if let Err(reason) = validate_against_schema(&value, &spec.payload_schema, "result") {
+        return Err(format!(
+            "result does not satisfy its schema in {}: {}",
+            path.display(),
+            reason
+        ));
     }
     Ok(())
 }
@@ -3322,84 +3355,116 @@ mod tests {
         assert!(!output_indicates_turn_end(&snapshot, cycle_n_plus_1));
     }
 
+    /// A spec carrying just a schema, as the single-protocol launcher
+    /// sends it: agentd owns the path (`DEFAULT_RESULT_FILE`) and the
+    /// retry policy; the launcher supplies only `payload_schema`.
+    fn schema_only_spec(schema: Value) -> ExpectedResultSpec {
+        ExpectedResultSpec {
+            payload_schema: schema,
+            retry_prompt: default_retry_prompt(),
+            max_retries: 2,
+        }
+    }
+
     #[test]
-    fn validate_expected_result_accepts_well_formed_envelope() {
+    fn validate_expected_result_accepts_well_formed_result() {
+        // The file content IS the result (no envelope), written to the
+        // agentd-owned default path and validated against payload_schema.
         let tmp = tempfile::tempdir().expect("tempdir");
         let work_dir = tmp.path().to_path_buf();
         fs::write(
-            work_dir.join(".reactor-impl-result.json"),
-            r#"{"schema":"ImplResult","schemaVersion":1,"payload":{"pr_url":"https://x"}}"#,
+            work_dir.join(DEFAULT_RESULT_FILE),
+            r#"{"pr_url":"https://x","pr_head_sha":"abc123","branch":"feat/x"}"#,
         )
-        .expect("write envelope");
-        let spec = ExpectedResultSpec {
-            file_path: String::from(".reactor-impl-result.json"),
-            schema_name: Some(String::from("ImplResult")),
-            schema_version: Some(1),
-            retry_prompt: default_retry_prompt(),
-            max_retries: 2,
-            payload_schema: None,
-        };
+        .expect("write result");
+        let spec = schema_only_spec(impl_result_payload_schema());
         assert!(validate_expected_result(work_dir.to_str().unwrap(), &spec).is_ok());
     }
 
     #[test]
     fn validate_expected_result_rejects_missing_file() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let spec = ExpectedResultSpec {
-            file_path: String::from(".reactor-impl-result.json"),
-            schema_name: None,
-            schema_version: None,
-            retry_prompt: default_retry_prompt(),
-            max_retries: 2,
-            payload_schema: None,
-        };
+        let spec = schema_only_spec(impl_result_payload_schema());
         let err = validate_expected_result(tmp.path().to_str().unwrap(), &spec)
             .expect_err("missing file should reject");
         assert!(err.contains("not readable"), "got: {err}");
     }
 
     #[test]
-    fn validate_expected_result_rejects_schema_mismatch() {
+    fn validate_expected_result_rejects_result_not_satisfying_schema() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let work_dir = tmp.path().to_path_buf();
-        fs::write(
-            work_dir.join(".reactor-impl-result.json"),
-            r#"{"schema":"WrongSchema","schemaVersion":1}"#,
-        )
-        .expect("write envelope");
-        let spec = ExpectedResultSpec {
-            file_path: String::from(".reactor-impl-result.json"),
-            schema_name: Some(String::from("ImplResult")),
-            schema_version: Some(1),
-            retry_prompt: default_retry_prompt(),
-            max_retries: 2,
-            payload_schema: None,
-        };
+        fs::write(work_dir.join(DEFAULT_RESULT_FILE), r#"{"pr_url":""}"#)
+            .expect("write bad result");
+        let spec = schema_only_spec(impl_result_payload_schema());
         let err = validate_expected_result(work_dir.to_str().unwrap(), &spec)
-            .expect_err("schema mismatch should reject");
-        assert!(err.contains("schema mismatch"), "got: {err}");
+            .expect_err("empty pr_url should fail the schema");
+        assert!(err.contains("does not satisfy"), "got: {err}");
     }
 
     #[test]
-    fn validate_expected_result_rejects_schema_version_mismatch() {
+    fn ignore_result_file_registers_default_in_git_info_exclude() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let work_dir = tmp.path().to_path_buf();
+        fs::create_dir_all(work_dir.join(".git")).expect("fake .git");
+        ignore_result_file(work_dir.to_str().unwrap(), DEFAULT_RESULT_FILE)
+            .expect("register exclude");
+        let exclude = fs::read_to_string(work_dir.join(".git").join("info").join("exclude"))
+            .expect("exclude file written");
+        assert!(
+            exclude.lines().any(|l| l.trim() == format!("/{DEFAULT_RESULT_FILE}")),
+            "exclude should contain the result file, got: {exclude}"
+        );
+        // Idempotent: a second call does not duplicate the entry.
+        ignore_result_file(work_dir.to_str().unwrap(), DEFAULT_RESULT_FILE)
+            .expect("register exclude again");
+        let exclude2 = fs::read_to_string(work_dir.join(".git").join("info").join("exclude"))
+            .expect("exclude file still there");
+        let count = exclude2
+            .lines()
+            .filter(|l| l.trim() == format!("/{DEFAULT_RESULT_FILE}"))
+            .count();
+        assert_eq!(count, 1, "entry must not be duplicated, got: {exclude2}");
+    }
+
+    #[test]
+    fn ignore_result_file_writes_to_worktree_common_dir_exclude() {
+        // ACP runs agents in linked worktrees, where `.git` is a FILE
+        // ("gitdir: <path>") and excludes live in the SHARED common git
+        // dir (located via the gitdir's `commondir` file), NOT the
+        // per-worktree gitdir.  The exclude must land in the common
+        // dir's info/exclude — that is the only one git consults.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let common_git = tmp.path().join("mainrepo/.git");
+        let worktree_gitdir = common_git.join("worktrees/wt");
+        fs::create_dir_all(&worktree_gitdir).expect("mkdir worktree gitdir");
+        // commondir points from the per-worktree gitdir back to the
+        // shared .git (../.. from .git/worktrees/wt).
+        fs::write(worktree_gitdir.join("commondir"), "../..\n").expect("write commondir");
+
+        let work_dir = tmp.path().join("wt");
+        fs::create_dir_all(&work_dir).expect("mkdir worktree");
         fs::write(
-            work_dir.join(".reactor-impl-result.json"),
-            r#"{"schema":"ImplResult","schemaVersion":2}"#,
+            work_dir.join(".git"),
+            format!("gitdir: {}\n", worktree_gitdir.display()),
         )
-        .expect("write envelope");
-        let spec = ExpectedResultSpec {
-            file_path: String::from(".reactor-impl-result.json"),
-            schema_name: Some(String::from("ImplResult")),
-            schema_version: Some(1),
-            retry_prompt: default_retry_prompt(),
-            max_retries: 2,
-            payload_schema: None,
-        };
-        let err = validate_expected_result(work_dir.to_str().unwrap(), &spec)
-            .expect_err("schema version mismatch should reject");
-        assert!(err.contains("schemaVersion mismatch"), "got: {err}");
+        .expect("write .git pointer file");
+
+        ignore_result_file(work_dir.to_str().unwrap(), DEFAULT_RESULT_FILE)
+            .expect("register exclude via worktree common dir");
+
+        let common_exclude = fs::read_to_string(common_git.join("info").join("exclude"))
+            .expect("exclude written into the COMMON git dir");
+        assert!(
+            common_exclude.lines().any(|l| l.trim() == format!("/{DEFAULT_RESULT_FILE}")),
+            "common exclude should contain the result file, got: {common_exclude}"
+        );
+        // It must NOT have been written into the per-worktree gitdir,
+        // which git does not consult for excludes.
+        assert!(
+            !worktree_gitdir.join("info").join("exclude").exists(),
+            "exclude must not be written into the per-worktree gitdir"
+        );
     }
 
     // ---- validate_against_schema: the JSON-Schema subset ----
@@ -3503,21 +3568,14 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let work_dir = tmp.path().to_path_buf();
         fs::write(
-            work_dir.join(".reactor-impl-result.json"),
-            r#"{"schema":"ImplResult","schemaVersion":1,"payload":{"pr_url":"","pr_head_sha":"","branch":""}}"#,
+            work_dir.join(DEFAULT_RESULT_FILE),
+            r#"{"pr_url":"","pr_head_sha":"","branch":""}"#,
         )
-        .expect("write envelope");
-        let spec = ExpectedResultSpec {
-            file_path: String::from(".reactor-impl-result.json"),
-            schema_name: Some(String::from("ImplResult")),
-            schema_version: Some(1),
-            retry_prompt: default_retry_prompt(),
-            max_retries: 2,
-            payload_schema: Some(impl_result_payload_schema()),
-        };
+        .expect("write result");
+        let spec = schema_only_spec(impl_result_payload_schema());
         let err = validate_expected_result(work_dir.to_str().unwrap(), &spec)
             .expect_err("blank identity must fail the contract");
-        assert!(err.contains("payload does not satisfy its schema"), "got: {err}");
+        assert!(err.contains("result does not satisfy its schema"), "got: {err}");
     }
 
     #[test]
@@ -3694,7 +3752,8 @@ mod tests {
     #[test]
     fn await_result_returns_parsed_payload_when_contract_validates() {
         // Spec test #2: contract present, file valid → response carries
-        // the parsed payload alongside the schema descriptors.
+        // the parsed result under `payload` (the file content IS the
+        // payload — there is no envelope).
         let tmp = tempfile::tempdir().expect("tempdir");
         let db = tmp.path().join("agentd.sqlite");
         let conn = Connection::open(&db).expect("open sqlite");
@@ -3703,19 +3762,17 @@ mod tests {
         let work_dir = tmp.path().join("work");
         fs::create_dir_all(&work_dir).expect("mkdir work_dir");
         fs::write(
-            work_dir.join(".reactor-impl-result.json"),
-            r#"{"schema":"PrConventionsVerdict","schemaVersion":1,"payload":{"verdict":"ok","notes":"clean"}}"#,
+            work_dir.join(DEFAULT_RESULT_FILE),
+            r#"{"verdict":"ok","notes":"clean"}"#,
         )
-        .expect("write envelope");
+        .expect("write result");
 
-        let spec = ExpectedResultSpec {
-            file_path: String::from(".reactor-impl-result.json"),
-            schema_name: Some(String::from("PrConventionsVerdict")),
-            schema_version: Some(1),
-            retry_prompt: default_retry_prompt(),
-            max_retries: 2,
-            payload_schema: None,
-        };
+        let verdict_schema = serde_json::json!({
+            "type": "object",
+            "required": ["verdict"],
+            "properties": {"verdict": {"type": "string", "minLength": 1}}
+        });
+        let spec = schema_only_spec(verdict_schema);
         insert_test_snapshot(
             &conn,
             "await-with-contract",
@@ -3738,14 +3795,6 @@ mod tests {
         let result = value.get("result").expect("result field");
         assert!(result.is_object(), "result must be an object: {value:?}");
         assert_eq!(
-            result.get("schema_name").and_then(|v| v.as_str()),
-            Some("PrConventionsVerdict")
-        );
-        assert_eq!(
-            result.get("schema_version").and_then(|v| v.as_u64()),
-            Some(1)
-        );
-        assert_eq!(
             result
                 .get("payload")
                 .and_then(|v| v.get("verdict"))
@@ -3764,14 +3813,7 @@ mod tests {
         let conn = Connection::open(&db).expect("open sqlite");
         migrate(&conn).expect("migrate");
 
-        let spec = ExpectedResultSpec {
-            file_path: String::from(".reactor-impl-result.json"),
-            schema_name: Some(String::from("PrConventionsVerdict")),
-            schema_version: Some(1),
-            retry_prompt: default_retry_prompt(),
-            max_retries: 2,
-            payload_schema: None,
-        };
+        let spec = schema_only_spec(serde_json::json!({"type": "object"}));
         insert_test_snapshot(
             &conn,
             "await-timeout",
@@ -3852,14 +3894,7 @@ mod tests {
         let work_dir = tmp.path().join("work");
         fs::create_dir_all(&work_dir).expect("mkdir work_dir");
         // Intentionally do NOT write the result file.
-        let spec = ExpectedResultSpec {
-            file_path: String::from(".reactor-impl-result.json"),
-            schema_name: Some(String::from("PrConventionsVerdict")),
-            schema_version: Some(1),
-            retry_prompt: default_retry_prompt(),
-            max_retries: 2,
-            payload_schema: None,
-        };
+        let spec = schema_only_spec(serde_json::json!({"type": "object"}));
         insert_test_snapshot(
             &conn,
             "await-bad-file",
