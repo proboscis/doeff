@@ -2012,6 +2012,45 @@ fn output_has_codex_active_marker(output: &str) -> bool {
     text.contains("working (") || text.contains("esc to interrupt")
 }
 
+/// Detect codex's interactive "Update available!" version-check dialog,
+/// e.g.
+///
+/// ```text
+///   ✨ Update available! 0.134.0 -> 0.135.0
+///   › 1. Update now (runs `npm install -g @openai/codex`)
+///     2. Skip
+///     3. Skip until next version
+///   Press enter to continue
+/// ```
+///
+/// Matches on the actionable MENU OPTIONS ("Update now" + "Skip until
+/// next version") rather than the "Update available!" headline: the
+/// headline can scroll out of the capture window above a long codex
+/// banner, but the menu (next to "Press enter to continue") is on screen
+/// exactly while the dialog is blocking input. Requiring both option
+/// labels keeps ordinary agent output (which never contains both of
+/// these exact phrases) from triggering a stray keystroke.
+fn output_has_codex_update_dialog(output: &str) -> bool {
+    let lower = output.to_lowercase();
+    lower.contains("update now") && lower.contains("skip until next version")
+}
+
+/// Dismiss the codex update dialog by selecting "Skip until next version"
+/// (the last option) so it does not re-prompt for the same release.
+///
+/// The default highlight is "1. Update now", so we move DOWN twice and
+/// then confirm with Enter. Using arrow keys (never Enter on the default
+/// selection, never a bare digit that some menu layouts ignore)
+/// guarantees we can never accidentally trigger the "Update now" upgrade.
+fn dismiss_codex_update_dialog(config: &Config, pane_id: &str) -> Result<()> {
+    tmux_send_keys(config, pane_id, "Down", false, false)?;
+    thread::sleep(Duration::from_millis(120));
+    tmux_send_keys(config, pane_id, "Down", false, false)?;
+    thread::sleep(Duration::from_millis(120));
+    tmux_send_keys(config, pane_id, "Enter", false, false)?;
+    Ok(())
+}
+
 fn monitor_loop(config: Config) {
     loop {
         if let Err(err) = monitor_once(&config) {
@@ -2432,6 +2471,24 @@ fn wait_for_repl_idle(config: &Config, pane_id: &str, max_wait: Duration) -> Res
     let poll_interval = Duration::from_millis(300);
     while start.elapsed() < max_wait {
         let output = tmux_capture(config, pane_id, 60)?;
+        // Codex can interrupt startup with an interactive "Update
+        // available!" version-check dialog whose DEFAULT highlight is
+        // "1. Update now" — pressing Enter there runs
+        // `npm install -g @openai/codex` and stalls the agent for the
+        // whole upgrade (and may fail in a sandboxed workspace). The
+        // dialog also renders the `›` selection marker, so
+        // 'output_has_codex_idle_prompt' would mistake it for a ready
+        // REPL and we'd send the prompt straight into the menu.
+        // Detect and dismiss it BEFORE the idle check.
+        if output_has_codex_update_dialog(&output) {
+            dismiss_codex_update_dialog(config, pane_id)?;
+            // Give codex time to process the selection and redraw the
+            // REPL before the next capture, so we don't re-detect a
+            // half-cleared dialog and send another Down/Down/Enter into
+            // what is by then the input box.
+            thread::sleep(Duration::from_millis(800));
+            continue;
+        }
         if output_has_codex_idle_prompt(&output) {
             return Ok(());
         }
@@ -2457,6 +2514,36 @@ fn parse_datetime(value: &str) -> Result<DateTime<Utc>> {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn detects_codex_update_dialog() {
+        let dialog = "\
+  ✨ Update available! 0.134.0 -> 0.135.0\n\
+\n\
+  Release notes: https://github.com/openai/codex/releases/latest\n\
+\n\
+› 1. Update now (runs `npm install -g @openai/codex`)\n\
+  2. Skip\n\
+  3. Skip until next version\n\
+\n\
+  Press enter to continue\n";
+        assert!(output_has_codex_update_dialog(dialog));
+    }
+
+    #[test]
+    fn update_dialog_detector_ignores_ordinary_output() {
+        // The idle REPL prompt must not look like the update dialog.
+        assert!(!output_has_codex_update_dialog("› \n"));
+        // A passing mention of "update" must not trigger a keystroke
+        // without the menu options present.
+        assert!(!output_has_codex_update_dialog(
+            "I checked for an update available in the changelog.\n"
+        ));
+        // The update dialog must not be mistaken for an idle prompt path
+        // even though it contains the `›` marker.
+        let dialog = "› 1. Update now\n  3. Skip until next version\n";
+        assert!(output_has_codex_update_dialog(dialog));
+    }
 
     #[test]
     fn list_query_filters_snapshot() {
