@@ -278,6 +278,19 @@ struct ExpectedResultSpec {
     /// initial run, so total attempts = max_retries + 1.
     #[serde(default = "default_max_retries")]
     max_retries: u32,
+    /// Optional structural contract for the envelope's inner `payload`
+    /// object.  When set, the parsed `payload` must satisfy this schema
+    /// for validation to pass; a violation is fed back to the agent
+    /// verbatim through the same `%REASON%` retry loop that handles a
+    /// missing file or a schema-name mismatch.  This is a deliberately
+    /// small JSON-Schema *subset* (see `validate_against_schema`) — not
+    /// a full validator — chosen so the daemon stays dependency-free and
+    /// the error messages stay actionable for the agent.  The schema is
+    /// supplied by the launcher as opaque data, so the daemon stays
+    /// domain-agnostic: it knows how to enforce a schema, not what any
+    /// particular field means.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    payload_schema: Option<serde_json::Value>,
 }
 
 fn default_retry_prompt() -> String {
@@ -2449,6 +2462,142 @@ fn validate_expected_result(
             ));
         }
     }
+    if let Some(schema) = &spec.payload_schema {
+        // The inner `payload` object is the agent-authored body; the
+        // top-level `schema`/`schemaVersion` are envelope framing we
+        // already checked above.  An absent `payload` validates as JSON
+        // `null`, which lets the schema decide (via `type`/`required`)
+        // whether that is acceptable.
+        let payload = value.get("payload").cloned().unwrap_or(Value::Null);
+        if let Err(reason) = validate_against_schema(&payload, schema, "payload") {
+            return Err(format!(
+                "payload does not satisfy its schema in {}: {}",
+                path.display(),
+                reason
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Validate `instance` against a constrained subset of JSON Schema.
+///
+/// Supported keywords: `type`, `const`, `minLength`, `required`,
+/// `properties`, `oneOf`.  This is intentionally NOT a full JSON-Schema
+/// implementation — it covers exactly what the launcher-supplied
+/// contracts need (discriminated unions via `oneOf` + `const`, presence
+/// via `required`, and non-empty strings via `minLength`) so the daemon
+/// stays free of a heavyweight schema dependency and, more importantly,
+/// can phrase violations as actionable feedback the agent can act on.
+///
+/// `loc` is a dotted breadcrumb (e.g. `payload.pr_url`) woven into the
+/// error message so the agent knows which field to fix.
+fn validate_against_schema(
+    instance: &Value,
+    schema: &Value,
+    loc: &str,
+) -> std::result::Result<(), String> {
+    let obj = match schema.as_object() {
+        Some(o) => o,
+        None => return Err(format!("schema at '{loc}' is not a JSON object")),
+    };
+
+    // oneOf: exactly one branch must match.  Reported as an aggregate so
+    // the agent sees why every variant was rejected.
+    if let Some(one_of) = obj.get("oneOf") {
+        let branches = one_of
+            .as_array()
+            .ok_or_else(|| format!("'oneOf' at '{loc}' must be an array"))?;
+        let mut matched = 0usize;
+        let mut branch_errors = Vec::new();
+        for (i, branch) in branches.iter().enumerate() {
+            match validate_against_schema(instance, branch, loc) {
+                Ok(()) => matched += 1,
+                Err(e) => branch_errors.push(format!("  variant {i}: {e}")),
+            }
+        }
+        match matched {
+            1 => {}
+            0 => {
+                return Err(format!(
+                    "value at '{loc}' matched none of the {} allowed variants:\n{}",
+                    branches.len(),
+                    branch_errors.join("\n")
+                ));
+            }
+            n => {
+                return Err(format!(
+                    "value at '{loc}' matched {n} variants but exactly one is allowed"
+                ));
+            }
+        }
+    }
+
+    // const: exact value equality.
+    if let Some(expected) = obj.get("const") {
+        if instance != expected {
+            return Err(format!("'{loc}' must equal {expected}"));
+        }
+    }
+
+    // type: JSON type tag.
+    if let Some(ty) = obj.get("type").and_then(|v| v.as_str()) {
+        let ok = match ty {
+            "object" => instance.is_object(),
+            "array" => instance.is_array(),
+            "string" => instance.is_string(),
+            "number" => instance.is_number(),
+            "integer" => instance.is_i64() || instance.is_u64(),
+            "boolean" => instance.is_boolean(),
+            "null" => instance.is_null(),
+            other => {
+                return Err(format!(
+                    "schema at '{loc}' uses unsupported type '{other}'"
+                ));
+            }
+        };
+        if !ok {
+            return Err(format!("'{loc}' must be of type {ty}"));
+        }
+    }
+
+    // minLength: non-empty / minimum-length strings.
+    if let Some(min) = obj.get("minLength").and_then(|v| v.as_u64()) {
+        if let Some(s) = instance.as_str() {
+            if (s.chars().count() as u64) < min {
+                return Err(format!(
+                    "'{loc}' must be a string of at least length {min} (got {} chars)",
+                    s.chars().count()
+                ));
+            }
+        }
+    }
+
+    // required: named fields must be present on an object.
+    if let Some(req) = obj.get("required").and_then(|v| v.as_array()) {
+        let map = instance.as_object();
+        for key in req {
+            if let Some(k) = key.as_str() {
+                let present = map.map(|m| m.contains_key(k)).unwrap_or(false);
+                if !present {
+                    return Err(format!("'{loc}' is missing required field '{k}'"));
+                }
+            }
+        }
+    }
+
+    // properties: recurse into present children only (absence is governed
+    // by `required`, mirroring JSON-Schema semantics).
+    if let Some(props) = obj.get("properties").and_then(|v| v.as_object()) {
+        if let Some(map) = instance.as_object() {
+            for (key, subschema) in props {
+                if let Some(child) = map.get(key) {
+                    validate_against_schema(child, subschema, &format!("{loc}.{key}"))?;
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -3188,6 +3337,7 @@ mod tests {
             schema_version: Some(1),
             retry_prompt: default_retry_prompt(),
             max_retries: 2,
+            payload_schema: None,
         };
         assert!(validate_expected_result(work_dir.to_str().unwrap(), &spec).is_ok());
     }
@@ -3201,6 +3351,7 @@ mod tests {
             schema_version: None,
             retry_prompt: default_retry_prompt(),
             max_retries: 2,
+            payload_schema: None,
         };
         let err = validate_expected_result(tmp.path().to_str().unwrap(), &spec)
             .expect_err("missing file should reject");
@@ -3222,6 +3373,7 @@ mod tests {
             schema_version: Some(1),
             retry_prompt: default_retry_prompt(),
             max_retries: 2,
+            payload_schema: None,
         };
         let err = validate_expected_result(work_dir.to_str().unwrap(), &spec)
             .expect_err("schema mismatch should reject");
@@ -3243,10 +3395,129 @@ mod tests {
             schema_version: Some(1),
             retry_prompt: default_retry_prompt(),
             max_retries: 2,
+            payload_schema: None,
         };
         let err = validate_expected_result(work_dir.to_str().unwrap(), &spec)
             .expect_err("schema version mismatch should reject");
         assert!(err.contains("schemaVersion mismatch"), "got: {err}");
+    }
+
+    // ---- validate_against_schema: the JSON-Schema subset ----
+
+    /// The discriminated-union schema the impl launcher attaches: either
+    /// a succeeded result with non-empty PR identity, or a blocked result
+    /// that explains why no PR was produced.
+    fn impl_result_payload_schema() -> Value {
+        serde_json::json!({
+            "oneOf": [
+                {
+                    "type": "object",
+                    "required": ["pr_url", "pr_head_sha", "branch"],
+                    "properties": {
+                        "status": {"const": "succeeded"},
+                        "pr_url": {"type": "string", "minLength": 1},
+                        "pr_head_sha": {"type": "string", "minLength": 1},
+                        "branch": {"type": "string", "minLength": 1}
+                    }
+                },
+                {
+                    "type": "object",
+                    "required": ["status", "reason"],
+                    "properties": {
+                        "status": {"const": "blocked"},
+                        "reason": {"type": "string", "minLength": 1}
+                    }
+                }
+            ]
+        })
+    }
+
+    #[test]
+    fn schema_accepts_succeeded_payload_without_status() {
+        // Backward compatibility: a legacy agent emits no `status` and
+        // still matches the succeeded branch.
+        let payload = serde_json::json!({
+            "pr_url": "https://github.com/o/r/pull/1",
+            "pr_head_sha": "abc123",
+            "branch": "feat/x"
+        });
+        assert!(
+            validate_against_schema(&payload, &impl_result_payload_schema(), "payload").is_ok()
+        );
+    }
+
+    #[test]
+    fn schema_accepts_blocked_payload() {
+        let payload = serde_json::json!({
+            "status": "blocked",
+            "reason": "workspace allocation failed; no PR was produced"
+        });
+        assert!(
+            validate_against_schema(&payload, &impl_result_payload_schema(), "payload").is_ok()
+        );
+    }
+
+    #[test]
+    fn schema_rejects_blank_pr_identity_masquerading_as_success() {
+        // The exact bug this feature exists to catch: a blocked agent
+        // wrote a "success" payload with empty identity strings.
+        let payload = serde_json::json!({
+            "pr_url": "",
+            "pr_head_sha": "",
+            "branch": ""
+        });
+        let err = validate_against_schema(&payload, &impl_result_payload_schema(), "payload")
+            .expect_err("blank identity must be rejected");
+        assert!(err.contains("matched none"), "got: {err}");
+        // The aggregate must mention the minLength failure so the agent
+        // knows the field is empty rather than absent.
+        assert!(err.contains("length"), "got: {err}");
+    }
+
+    #[test]
+    fn schema_rejects_blocked_without_reason() {
+        let payload = serde_json::json!({"status": "blocked"});
+        let err = validate_against_schema(&payload, &impl_result_payload_schema(), "payload")
+            .expect_err("blocked without reason must be rejected");
+        assert!(err.contains("matched none"), "got: {err}");
+    }
+
+    #[test]
+    fn schema_const_and_type_and_required_report_field_path() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["k"],
+            "properties": {"k": {"type": "string", "minLength": 2}}
+        });
+        let missing = validate_against_schema(&serde_json::json!({}), &schema, "payload")
+            .expect_err("missing required");
+        assert!(missing.contains("required field 'k'"), "got: {missing}");
+        let wrong_type = validate_against_schema(&serde_json::json!({"k": 5}), &schema, "payload")
+            .expect_err("wrong type");
+        assert!(wrong_type.contains("payload.k"), "got: {wrong_type}");
+        assert!(wrong_type.contains("type string"), "got: {wrong_type}");
+    }
+
+    #[test]
+    fn validate_expected_result_enforces_payload_schema() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let work_dir = tmp.path().to_path_buf();
+        fs::write(
+            work_dir.join(".reactor-impl-result.json"),
+            r#"{"schema":"ImplResult","schemaVersion":1,"payload":{"pr_url":"","pr_head_sha":"","branch":""}}"#,
+        )
+        .expect("write envelope");
+        let spec = ExpectedResultSpec {
+            file_path: String::from(".reactor-impl-result.json"),
+            schema_name: Some(String::from("ImplResult")),
+            schema_version: Some(1),
+            retry_prompt: default_retry_prompt(),
+            max_retries: 2,
+            payload_schema: Some(impl_result_payload_schema()),
+        };
+        let err = validate_expected_result(work_dir.to_str().unwrap(), &spec)
+            .expect_err("blank identity must fail the contract");
+        assert!(err.contains("payload does not satisfy its schema"), "got: {err}");
     }
 
     #[test]
@@ -3443,6 +3714,7 @@ mod tests {
             schema_version: Some(1),
             retry_prompt: default_retry_prompt(),
             max_retries: 2,
+            payload_schema: None,
         };
         insert_test_snapshot(
             &conn,
@@ -3498,6 +3770,7 @@ mod tests {
             schema_version: Some(1),
             retry_prompt: default_retry_prompt(),
             max_retries: 2,
+            payload_schema: None,
         };
         insert_test_snapshot(
             &conn,
@@ -3585,6 +3858,7 @@ mod tests {
             schema_version: Some(1),
             retry_prompt: default_retry_prompt(),
             max_retries: 2,
+            payload_schema: None,
         };
         insert_test_snapshot(
             &conn,
