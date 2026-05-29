@@ -44,11 +44,31 @@ const STALE_OBSERVATION_THRESHOLD_SECONDS: i64 = 300;
 /// refresh token blocked codex's initialisation for 8+ hours on
 /// every launch, eventually filling the concurrency cap with
 /// sessions that produced no output beyond the startup banner.
-/// 10 minutes is comfortably past codex's normal cold-start time
-/// (which fits in tens of seconds for typical MCP fleets) without
-/// being so short that a transiently slow network rip-cords a
-/// session that would have recovered.
-const LAUNCH_TIMEOUT_SECONDS: i64 = 600;
+/// That incident went uncaught because codex's MCP-startup spinner
+/// shows the same "(… • esc to interrupt)" marker as active work,
+/// which set `observed_active_at` and DISABLED this watchdog — see
+/// `output_has_codex_active_marker`, now fixed to ignore the
+/// "Starting MCP servers" phase so a startup hang keeps
+/// `observed_active_at` unset and is reaped here.
+///
+/// Default 60s: codex's normal cold-start (incl. healthy MCP fleet)
+/// fits in tens of seconds, so 60s catches a hung MCP server quickly
+/// without rip-cording a transiently slow but recoverable launch.
+/// Override with the `DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS` env var.
+const LAUNCH_TIMEOUT_SECONDS: i64 = 60;
+
+/// Effective launch/MCP-startup timeout: the `LAUNCH_TIMEOUT_SECONDS`
+/// default, overridable at runtime via the
+/// `DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS` env var (positive integer
+/// seconds). Read at use-site so an operator can retune without a
+/// rebuild.
+fn effective_launch_timeout_seconds() -> i64 {
+    env::var("DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.trim().parse::<i64>().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(LAUNCH_TIMEOUT_SECONDS)
+}
 const LIFECYCLE_RUN_TO_COMPLETION: &str = "run_to_completion";
 const LIFECYCLE_INTERACTIVE: &str = "interactive";
 
@@ -1995,8 +2015,24 @@ fn output_has_codex_idle_prompt(output: &str) -> bool {
     output.starts_with("› ") || output.contains("\n› ")
 }
 
+/// True while codex is still booting its MCP servers, e.g.
+/// "Starting MCP servers (4/5): playwright (16h 25m • esc to interrupt)".
+/// This boot phase reuses the active-work spinner, so it must NOT be
+/// treated as the agent doing work.
+fn output_is_starting_mcp_servers(output: &str) -> bool {
+    output_tail_lower(output, 30).contains("starting mcp servers")
+}
+
 fn output_has_codex_active_marker(output: &str) -> bool {
     let text = output_tail_lower(output, 30);
+    // MCP startup shows the same "(… • esc to interrupt)" spinner as
+    // active work.  Counting it as active would set 'observed_active_at'
+    // during boot and DISABLE the launch-timeout watchdog, letting a
+    // hung MCP server pin the session at "running" indefinitely (the
+    // 16h-stuck incident).  Boot is not work.
+    if output_is_starting_mcp_servers(output) {
+        return false;
+    }
     // We only count markers that codex shows *during* active work.
     //
     // The status row ("Working (12s • esc to interrupt)") is the
@@ -2148,14 +2184,15 @@ fn monitor_once(config: &Config) -> Result<()> {
         if snapshot.status == "running" && snapshot.observed_active_at.is_none() {
             if let Some(started) = parse_iso_timestamp(Some(snapshot.started_at.as_str())) {
                 let age = now.signed_duration_since(started);
-                if age > ChronoDuration::seconds(LAUNCH_TIMEOUT_SECONDS) {
+                let launch_timeout = effective_launch_timeout_seconds();
+                if age > ChronoDuration::seconds(launch_timeout) {
                     snapshot.status = String::from("failed");
                     let observed = now_iso();
                     snapshot.last_observed_at = Some(observed.clone());
                     snapshot.finished_at.get_or_insert(observed.clone());
                     let reason = format!(
-                        "launch timeout: never reached active state within {}s",
-                        LAUNCH_TIMEOUT_SECONDS
+                        "launch timeout: never reached active state within {}s (stuck in startup — likely a hung MCP server)",
+                        launch_timeout
                     );
                     snapshot.last_validation_error = Some(reason.clone());
                     set_terminal_cause_if_absent(
@@ -2543,6 +2580,34 @@ mod tests {
         // even though it contains the `›` marker.
         let dialog = "› 1. Update now\n  3. Skip until next version\n";
         assert!(output_has_codex_update_dialog(dialog));
+    }
+
+    #[test]
+    fn active_marker_ignores_mcp_startup_spinner() {
+        // The 16h-stuck incident: codex's MCP-startup line reuses the
+        // "esc to interrupt" spinner. It must NOT count as active work,
+        // else observed_active_at gets set during boot and the
+        // launch-timeout watchdog never reaps a hung MCP startup.
+        let booting = "• Starting MCP servers (4/5): playwright (16h 25m 27s • esc to interrupt)\n";
+        assert!(output_is_starting_mcp_servers(booting));
+        assert!(!output_has_codex_active_marker(booting));
+    }
+
+    #[test]
+    fn active_marker_true_for_real_work() {
+        // Genuine mid-turn work (no MCP-startup line) still counts.
+        assert!(output_has_codex_active_marker("Working (12s • esc to interrupt)\n"));
+        assert!(output_has_codex_active_marker("foo\nbar (3s • esc to interrupt)\n"));
+        assert!(!output_is_starting_mcp_servers(
+            "Working (12s • esc to interrupt)\n"
+        ));
+    }
+
+    #[test]
+    fn launch_timeout_default_is_60s() {
+        // The MCP/launch-startup wait defaults to 60s (overridable via
+        // the DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS env var at runtime).
+        assert_eq!(LAUNCH_TIMEOUT_SECONDS, 60);
     }
 
     #[test]
