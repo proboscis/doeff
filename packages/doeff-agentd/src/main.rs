@@ -1765,6 +1765,43 @@ fn record_command<T: Serialize>(
     Ok(())
 }
 
+/// Baseline environment injected into every agent tmux session so an
+/// interactive shell-STARTUP prompt cannot derail the agent we are about to
+/// drive with `send-keys`.  These vars are set in the tmux session environment
+/// (via `new-session -e`), so the spawned shell inherits them BEFORE it sources
+/// its rc — that is the only point early enough to suppress a prompt that fires
+/// during shell init.  A blocked `[y/N]` at startup eats the launch keystrokes
+/// (the agent command is typed into the prompt, not the shell) and the session
+/// never starts; agentd cannot answer it (its only channel is `send-keys`,
+/// which is what the prompt is stealing).  Each var is harmless on shells /
+/// frameworks that don't recognise it (just an unused export).  Caller-supplied
+/// `session_env` overrides any key here.
+///   * DISABLE_AUTO_UPDATE / DISABLE_UPDATE_PROMPT — oh-my-zsh's "[oh-my-zsh]
+///     Would you like to update? [Y/n]" auto-update reminder at shell startup.
+/// (The agent's OWN update dialog — e.g. codex's "Update available!" — is a
+/// separate, in-app prompt handled after launch by `dismiss_codex_update_dialog`.)
+const SHELL_PROMPT_SUPPRESSING_ENV: &[(&str, &str)] = &[
+    ("DISABLE_AUTO_UPDATE", "true"),
+    ("DISABLE_UPDATE_PROMPT", "true"),
+];
+
+/// The ordered `KEY=VALUE` env entries to set on a new agent session: the
+/// baseline prompt-suppressors first (skipped when the caller overrides that
+/// key), then the caller's own `session_env`.  Pure so the merge/override
+/// behaviour is unit-tested without a live tmux.
+fn session_env_entries(env_vars: &BTreeMap<String, String>) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for (key, value) in SHELL_PROMPT_SUPPRESSING_ENV {
+        if !env_vars.contains_key(*key) {
+            out.push(((*key).to_string(), (*value).to_string()));
+        }
+    }
+    for (key, value) in env_vars {
+        out.push((key.clone(), value.clone()));
+    }
+    out
+}
+
 fn tmux_new_session(
     config: &Config,
     session_name: &str,
@@ -1774,7 +1811,7 @@ fn tmux_new_session(
     let mut command = Command::new(&config.tmux_bin);
     command.args(["new-session", "-d", "-s", session_name, "-P", "-F", "#D"]);
     command.args(["-c", work_dir]);
-    for (key, value) in env_vars {
+    for (key, value) in session_env_entries(env_vars) {
         command.args(["-e", &format!("{key}={value}")]);
     }
     let output = command.output().context("tmux new-session failed to run")?;
@@ -3625,6 +3662,33 @@ mod tests {
         assert!(is_interactive_agent_type("claude"));
         assert!(!is_interactive_agent_type("generic"));
         assert!(!is_interactive_agent_type(""));
+    }
+
+    #[test]
+    fn session_env_injects_prompt_suppressors_and_lets_caller_override() {
+        // A launch with no caller env still gets the baseline prompt-suppressors
+        // so an interactive shell-startup prompt (e.g. oh-my-zsh's update [Y/n])
+        // can never derail the agent we drive via send-keys.
+        let entries = session_env_entries(&BTreeMap::new());
+        assert!(entries.contains(&(String::from("DISABLE_AUTO_UPDATE"), String::from("true"))));
+        assert!(entries.contains(&(String::from("DISABLE_UPDATE_PROMPT"), String::from("true"))));
+
+        // A caller key passes through alongside the baseline.
+        let mut caller = BTreeMap::new();
+        caller.insert(String::from("CODEX_HOME"), String::from("/x/agent"));
+        let entries = session_env_entries(&caller);
+        assert!(entries.contains(&(String::from("CODEX_HOME"), String::from("/x/agent"))));
+        assert!(entries.contains(&(String::from("DISABLE_AUTO_UPDATE"), String::from("true"))));
+
+        // A caller override of a baseline key wins (baseline value not duplicated).
+        let mut override_env = BTreeMap::new();
+        override_env.insert(String::from("DISABLE_AUTO_UPDATE"), String::from("false"));
+        let entries = session_env_entries(&override_env);
+        let auto_update: Vec<_> = entries
+            .iter()
+            .filter(|(k, _)| k == "DISABLE_AUTO_UPDATE")
+            .collect();
+        assert_eq!(auto_update, vec![&(String::from("DISABLE_AUTO_UPDATE"), String::from("false"))]);
     }
 
     #[test]
