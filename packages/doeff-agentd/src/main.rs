@@ -217,6 +217,16 @@ struct SessionSnapshot {
     /// startup spinner.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     observed_active_at: Option<String>,
+    /// The validated result payload, captured from `DEFAULT_RESULT_FILE`
+    /// at the moment the monitor accepted it (status → `done`).  Stored as
+    /// the serialized JSON object the agent wrote.  This is the durable
+    /// copy `session.await_result` returns: the result file lives in the
+    /// agent's git worktree, which is reaped on the terminal transition, so
+    /// without this field a successfully-produced result is lost before the
+    /// launcher can read it back.  `None` for non-contract sessions and for
+    /// rows written by an agentd predating this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    result_payload: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -629,6 +639,7 @@ fn migrate(conn: &Connection) -> Result<()> {
     )?;
     ensure_column(conn, "agent_sessions", "observed_active_at", "TEXT")?;
     ensure_column(conn, "agent_sessions", "terminal_cause_json", "TEXT")?;
+    ensure_column(conn, "agent_sessions", "result_payload_json", "TEXT")?;
     Ok(())
 }
 
@@ -1236,6 +1247,7 @@ fn session_launch(
         last_validation_error: None,
         awaiting_response,
         observed_active_at: None,
+        result_payload: None,
     };
     record_command(
         conn,
@@ -1256,7 +1268,7 @@ fn session_get(conn: &Connection, session_id: &str) -> Result<Option<SessionSnap
                 backend_kind, backend_ref_json, started_at, last_observed_at,
                 finished_at, cleaned_at, pr_url, output_snippet,
                 terminal_cause_json, expected_result_json, retries_used, last_validation_error,
-                awaiting_response, observed_active_at
+                awaiting_response, observed_active_at, result_payload_json
          FROM agent_sessions WHERE session_id = ?1",
         params![session_id],
         row_to_snapshot,
@@ -1271,7 +1283,7 @@ fn session_list(conn: &Connection, query: ListParams) -> Result<Vec<SessionSnaps
                 backend_kind, backend_ref_json, started_at, last_observed_at,
                 finished_at, cleaned_at, pr_url, output_snippet,
                 terminal_cause_json, expected_result_json, retries_used, last_validation_error,
-                awaiting_response, observed_active_at
+                awaiting_response, observed_active_at, result_payload_json
          FROM agent_sessions
          ORDER BY started_at DESC, session_id ASC",
     )?;
@@ -1529,40 +1541,42 @@ fn build_await_response(snapshot: &SessionSnapshot) -> Value {
 
     if snapshot.status == "done" {
         if let Some(spec) = snapshot.expected_result.as_ref() {
-            match validate_expected_result(&snapshot.work_dir, spec) {
-                Ok(()) => {
-                    // Re-read the validated file so we hand the caller
-                    // the live payload.  `validate_expected_result`
-                    // already confirmed the file exists and parses, so
-                    // a second failure here is genuinely surprising
-                    // (e.g. a race deleting the file between the two
-                    // reads) — surface it as a validation_error rather
-                    // than crashing the await call.
-                    let path = Path::new(&snapshot.work_dir).join(DEFAULT_RESULT_FILE);
-                    match fs::read_to_string(&path)
-                        .ok()
-                        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-                    {
-                        Some(parsed) => {
-                            // The file content IS the payload — no
-                            // envelope.  Hand it back under `payload` so
-                            // the caller's await shape stays stable.
-                            let mut result_obj = serde_json::Map::new();
-                            result_obj.insert(String::from("payload"), parsed);
-                            result_value = Value::Object(result_obj);
-                            validation_error = None;
-                        }
-                        None => {
-                            validation_error = Some(format!(
-                                "expected result file at {} disappeared after validation",
-                                path.display()
-                            ));
-                        }
+            // Prefer the payload the monitor persisted at validation time.
+            // It was captured from the result file the instant the session
+            // went `done`, BEFORE the worktree was reaped — so it survives
+            // cleanup, whereas the on-disk file almost never does (the
+            // worktree is removed milliseconds after the terminal
+            // transition).  Re-reading the file is only a fallback for
+            // sessions validated by an older agentd that stored no payload
+            // and whose worktree happens to still exist; since
+            // `validate_expected_result` now returns the parsed value, that
+            // path captures the payload in the same read that validates it,
+            // so there is no longer a "disappeared after validation" race.
+            let stored = snapshot
+                .result_payload
+                .as_ref()
+                .and_then(|raw| serde_json::from_str::<Value>(raw).ok());
+            match stored {
+                Some(parsed) => {
+                    let mut result_obj = serde_json::Map::new();
+                    result_obj.insert(String::from("payload"), parsed);
+                    result_value = Value::Object(result_obj);
+                    validation_error = None;
+                }
+                None => match validate_expected_result(&snapshot.work_dir, spec) {
+                    Ok(parsed) => {
+                        // The file content IS the payload — no envelope.
+                        // Hand it back under `payload` so the caller's await
+                        // shape stays stable.
+                        let mut result_obj = serde_json::Map::new();
+                        result_obj.insert(String::from("payload"), parsed);
+                        result_value = Value::Object(result_obj);
+                        validation_error = None;
                     }
-                }
-                Err(reason) => {
-                    validation_error = Some(reason);
-                }
+                    Err(reason) => {
+                        validation_error = Some(reason);
+                    }
+                },
             }
         }
     }
@@ -1633,6 +1647,7 @@ fn row_to_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSnapshot>
         last_validation_error: row.get(18)?,
         awaiting_response: row.get::<_, i64>(19)? != 0,
         observed_active_at: row.get(20)?,
+        result_payload: row.get(21)?,
     })
 }
 
@@ -1652,8 +1667,8 @@ fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> 
             backend_kind, backend_ref_json, started_at, last_observed_at,
             finished_at, cleaned_at, pr_url, output_snippet,
             terminal_cause_json, expected_result_json, retries_used, last_validation_error,
-            awaiting_response, observed_active_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+            awaiting_response, observed_active_at, result_payload_json
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
          ON CONFLICT(session_id) DO UPDATE SET
             session_name = excluded.session_name,
             pane_id = excluded.pane_id,
@@ -1674,7 +1689,8 @@ fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> 
             retries_used = excluded.retries_used,
             last_validation_error = excluded.last_validation_error,
             awaiting_response = excluded.awaiting_response,
-            observed_active_at = excluded.observed_active_at",
+            observed_active_at = excluded.observed_active_at,
+            result_payload_json = COALESCE(agent_sessions.result_payload_json, excluded.result_payload_json)",
         params![
             snapshot.session_id,
             snapshot.session_name,
@@ -1697,6 +1713,7 @@ fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> 
             snapshot.last_validation_error,
             i64::from(snapshot.awaiting_response),
             snapshot.observed_active_at,
+            snapshot.result_payload,
         ],
     )?;
     Ok(())
@@ -2378,9 +2395,18 @@ fn monitor_once(config: &Config) -> Result<()> {
             if turn_ended && is_run_to_completion_lifecycle(&snapshot.lifecycle) {
                 match snapshot.expected_result.clone() {
                     Some(spec) => match validate_expected_result(&snapshot.work_dir, &spec) {
-                        Ok(()) => {
+                        Ok(payload) => {
                             observed_status = "done";
                             snapshot.last_validation_error = None;
+                            // Persist the validated payload NOW, on the same
+                            // tick that flips the session to "done" — the
+                            // worktree (and the result file inside it) is
+                            // reaped milliseconds later when cleanup runs, so
+                            // a payload kept only on disk is lost before the
+                            // launcher can await it.  build_await_response
+                            // serves this stored copy, decoupling result
+                            // delivery from the worktree's lifetime.
+                            snapshot.result_payload = serde_json::to_string(&payload).ok();
                         }
                         Err(reason) => {
                             if snapshot.retries_used < spec.max_retries {
@@ -2472,16 +2498,25 @@ fn monitor_once(config: &Config) -> Result<()> {
     Ok(())
 }
 
-/// Validate the result file the agent was instructed to produce.
-/// Returns `Ok(())` when the file exists, parses as JSON, and satisfies
-/// `payload_schema`.  The file content IS the result — there is no
-/// envelope and agentd owns the path (`DEFAULT_RESULT_FILE`).  The
-/// `Err(String)` carries a one-line explanation suitable for the retry
-/// prompt and the session's `last_validation_error` audit field.
+/// Validate the result file the agent was instructed to produce, and on
+/// success return the parsed payload.  `Ok(value)` when the file exists,
+/// parses as JSON, and satisfies `payload_schema`.  The file content IS
+/// the result — there is no envelope and agentd owns the path
+/// (`DEFAULT_RESULT_FILE`).  The `Err(String)` carries a one-line
+/// explanation suitable for the retry prompt and the session's
+/// `last_validation_error` audit field.
+///
+/// Returning the parsed value (rather than `()`) lets the caller PERSIST
+/// the validated payload at validation time — the file lives in the
+/// agent's git worktree, which agentd reaps the instant the session goes
+/// terminal, so a result delivered only via on-disk re-read is lost the
+/// moment the worktree is cleaned.  Validation and capture must be a
+/// single read so there is no window for the file to change or vanish
+/// between them.
 fn validate_expected_result(
     work_dir: &str,
     spec: &ExpectedResultSpec,
-) -> std::result::Result<(), String> {
+) -> std::result::Result<serde_json::Value, String> {
     let path = Path::new(work_dir).join(DEFAULT_RESULT_FILE);
     let raw = match fs::read_to_string(&path) {
         Ok(contents) => contents,
@@ -2510,7 +2545,7 @@ fn validate_expected_result(
             reason
         ));
     }
-    Ok(())
+    Ok(value)
 }
 
 /// Validate `instance` against a constrained subset of JSON Schema.
@@ -2816,6 +2851,7 @@ mod tests {
             last_validation_error: None,
             awaiting_response: false,
             observed_active_at: None,
+            result_payload: None,
         };
         assert!(list_query_matches(
             &snapshot,
@@ -2966,6 +3002,7 @@ mod tests {
                 last_validation_error: None,
                 awaiting_response: false,
                 observed_active_at: None,
+                result_payload: None,
                 last_observed_at: None,
                 finished_at: None,
                 cleaned_at: None,
@@ -3038,6 +3075,7 @@ mod tests {
                 last_validation_error: None,
                 awaiting_response: false,
                 observed_active_at: None,
+                result_payload: None,
                 last_observed_at: Some(stale_iso),
                 finished_at: None,
                 cleaned_at: None,
@@ -3126,6 +3164,7 @@ mod tests {
                 output_snippet: None,
                 terminal_cause: None,
                 observed_active_at: None,
+                result_payload: None,
             },
         )
         .expect("insert hung-startup session");
@@ -3208,6 +3247,7 @@ mod tests {
                 output_snippet: None,
                 terminal_cause: None,
                 observed_active_at: Some(active_at),
+                result_payload: None,
             },
         )
         .expect("insert long-running active session");
@@ -3264,6 +3304,7 @@ mod tests {
                 last_validation_error: None,
                 awaiting_response: false,
                 observed_active_at: None,
+                result_payload: None,
                 last_observed_at: Some(fresh_iso),
                 finished_at: None,
                 cleaned_at: None,
@@ -3675,6 +3716,7 @@ mod tests {
             last_validation_error: None,
             awaiting_response: false,
             observed_active_at: None,
+            result_payload: None,
         }
     }
 
@@ -3712,6 +3754,7 @@ mod tests {
             last_validation_error,
             awaiting_response: false,
             observed_active_at: None,
+            result_payload: None,
         };
         upsert_snapshot(conn, &snapshot).expect("upsert test snapshot");
     }
@@ -3802,6 +3845,82 @@ mod tests {
             Some("ok")
         );
         assert!(value.get("validation_error").is_none());
+    }
+
+    #[test]
+    fn await_result_serves_persisted_payload_after_worktree_reaped() {
+        // Regression (result-payload loss): the monitor validates the
+        // result file and persists the payload, then cleanup reaps the
+        // agent's git worktree — so by the time the launcher awaits, the
+        // file is GONE.  await must serve the PERSISTED payload rather than
+        // fail with "expected result file not readable".  Before the fix
+        // the validated result was discarded and await re-read a deleted
+        // file, losing the agent's work forever.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+
+        // A work_dir that does NOT exist on disk — the worktree was reaped.
+        let reaped_work_dir = tmp.path().join("reaped-worktree");
+        assert!(!reaped_work_dir.exists());
+
+        let verdict_schema = serde_json::json!({
+            "type": "object",
+            "required": ["verdict"],
+            "properties": {"verdict": {"type": "string", "minLength": 1}}
+        });
+        let snapshot = SessionSnapshot {
+            session_id: String::from("await-reaped"),
+            session_name: String::from("await-reaped"),
+            pane_id: String::from("%1"),
+            agent_type: String::from("codex"),
+            work_dir: reaped_work_dir.to_string_lossy().into_owned(),
+            lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
+            status: String::from("done"),
+            backend_kind: String::from("tmux"),
+            backend_ref: BTreeMap::new(),
+            started_at: now_iso(),
+            last_observed_at: None,
+            finished_at: Some(now_iso()),
+            cleaned_at: Some(now_iso()),
+            pr_url: None,
+            output_snippet: None,
+            terminal_cause: None,
+            expected_result: Some(schema_only_spec(verdict_schema)),
+            retries_used: 0,
+            last_validation_error: None,
+            awaiting_response: false,
+            observed_active_at: None,
+            result_payload: Some(String::from(r#"{"verdict":"ok","notes":"clean"}"#)),
+        };
+        // Round-trips through the DB: upsert → session_get → row_to_snapshot
+        // → build_await_response, so it also exercises the new column.
+        upsert_snapshot(&conn, &snapshot).expect("upsert reaped snapshot");
+
+        let value = session_await_result_with_interval(
+            &conn,
+            AwaitResultParams {
+                session_id: String::from("await-reaped"),
+                timeout_seconds: Some(2.0),
+            },
+            Duration::from_millis(50),
+        )
+        .expect("await_result should succeed");
+
+        let result = value.get("result").expect("result field");
+        assert_eq!(
+            result
+                .get("payload")
+                .and_then(|v| v.get("verdict"))
+                .and_then(|v| v.as_str()),
+            Some("ok"),
+            "persisted payload must be served even though work_dir is gone: {value:?}"
+        );
+        assert!(
+            value.get("validation_error").is_none(),
+            "persisted payload ⇒ no validation_error: {value:?}"
+        );
     }
 
     #[test]
