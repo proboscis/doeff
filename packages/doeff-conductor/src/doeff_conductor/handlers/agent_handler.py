@@ -1,19 +1,34 @@
-"""
-Agent handler for doeff-conductor.
-"""
+"""Agent handler for doeff-conductor."""
 
 import secrets
+from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..effects.agent import AgentEffect
+    from ..types import Workspace
+
+
+WorkspaceResolver = Callable[["Workspace"], Path]
 
 
 class AgentHandler:
     """Handler for schema-validated conductor agent effects."""
 
-    def __init__(self, workflow_id: str | None = None):
+    def __init__(
+        self,
+        workflow_id: str | None = None,
+        *,
+        workspace_resolver: WorkspaceResolver | None = None,
+    ) -> None:
         self.workflow_id = workflow_id or secrets.token_hex(4)
+        self._workspace_resolver = workspace_resolver
+
+    def _resolve_workspace_path(self, workspace: "Workspace") -> Path:
+        if self._workspace_resolver is None:
+            raise ValueError("Agent workspace requires a workspace resolver")
+        return self._workspace_resolver(workspace)
 
     def handle_agent(self, effect: "AgentEffect") -> object:
         """Handle schema-validated Agent effect via doeff-agents."""
@@ -42,7 +57,7 @@ class AgentHandler:
                     node_id=effect.task.node_id,
                     attempt=effect.task.attempt,
                     agent_type=agent_type,
-                    work_dir=effect.task.env.path,
+                    work_dir=self._resolve_workspace_path(effect.task.env),
                     prompt=effect.task.prompt,
                     result_schema=effect.task.result_schema,
                     model=effect.task.model,

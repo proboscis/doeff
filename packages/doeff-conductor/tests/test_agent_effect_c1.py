@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 from doeff_agents.result_validation import validate_result_payload
-from doeff_conductor import CreateWorktree
+from doeff_conductor import CreateWorkspace
 from doeff_conductor.effects import Agent, AgentAttemptExhaustedError, AgentEffect, AgentTask
 from doeff_conductor.handlers import run_sync
 from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
@@ -42,7 +42,11 @@ def _run(program, runtime: MockConductorRuntime):
     return run_sync(program, scheduled_handlers=mock_handlers(runtime=runtime))
 
 
-def _run_real_codex_agent(effect: AgentEffect, tmp_path: Path) -> dict[str, Any]:
+def _run_real_codex_agent(
+    effect: AgentEffect,
+    tmp_path: Path,
+    runtime: MockConductorRuntime,
+) -> dict[str, Any]:
     codex_bin = shutil.which("codex")
     if codex_bin is None:
         pytest.skip("codex CLI is not installed")
@@ -66,7 +70,7 @@ def _run_real_codex_agent(effect: AgentEffect, tmp_path: Path) -> dict[str, Any]
             "--sandbox",
             "read-only",
             "--cd",
-            str(effect.task.env.path),
+            str(runtime.resolve_path(effect.task.env)),
             "--output-schema",
             str(schema_path),
             "--output-last-message",
@@ -98,7 +102,7 @@ def test_two_node_workflow_runs_on_scenario_stubs(tmp_path: Path) -> None:
 
     @do
     def workflow():
-        env = yield CreateWorktree(suffix="impl")
+        env = yield CreateWorkspace(suffix="impl")
         implementation = yield Agent(
             AgentTask(
                 run_id="run-001",
@@ -145,7 +149,7 @@ def test_schema_invalid_retry_exhaustion_fails_typed(tmp_path: Path) -> None:
 
     @do
     def workflow():
-        env = yield CreateWorktree(suffix="impl")
+        env = yield CreateWorkspace(suffix="impl")
         return (
             yield Agent(
                 AgentTask(
@@ -175,7 +179,7 @@ def test_real_codex_worker_returns_schema_valid_json_through_agent(tmp_path: Pat
 
     @do
     def workflow():
-        env = yield CreateWorktree(suffix="codex-real")
+        env = yield CreateWorkspace(suffix="codex-real")
         return (
             yield Agent(
                 AgentTask(
@@ -197,7 +201,7 @@ def test_real_codex_worker_returns_schema_valid_json_through_agent(tmp_path: Pat
         scheduled_handlers=mock_handlers(
             runtime=runtime,
             overrides={
-                AgentEffect: lambda effect: _run_real_codex_agent(effect, tmp_path),
+                AgentEffect: lambda effect: _run_real_codex_agent(effect, tmp_path, runtime),
             },
         ),
     )

@@ -4,7 +4,7 @@ Reviewed PR workflow template.
 Workflow: issue -> agent -> review -> PR
 
 A workflow with code review:
-1. Create a worktree for the issue
+1. Create a workspace for the issue
 2. Run an agent to implement the issue
 3. Run a review agent to check the implementation
 4. If issues found, have implementer fix them
@@ -18,7 +18,7 @@ from doeff_conductor.effects import (
     AgentTask,
     Commit,
     CreatePR,
-    CreateWorktree,
+    CreateWorkspace,
     Push,
     ResolveIssue,
 )
@@ -50,8 +50,8 @@ def reviewed_pr(
     Returns:
         PRHandle for the created PR
     """
-    # Step 1: Create isolated worktree
-    env = yield CreateWorktree(issue=issue)
+    # Step 1: Create isolated workspace
+    env = yield CreateWorkspace(issue=issue)
 
     # Step 2: Run agent to implement the issue
     implement_prompt = f"""
@@ -141,14 +141,14 @@ Please address these review comments and improve the implementation.
 
     # Step 4: Commit and push
     commit_msg = f"feat: {issue.title}\n\nResolves: {issue.id}"
-    yield Commit(env=env, message=commit_msg)
-    yield Push(env=env)
+    yield Commit(workspace=env, message=commit_msg)
+    yield Push(workspace=env)
 
     # Step 5: Create PR
     review_status = "approved" if review_approved else f"after {max_reviews + 1} reviews"
 
     pr = yield CreatePR(
-        env=env,
+        workspace=env,
         title=issue.title,
         body=f"""
 ## Summary

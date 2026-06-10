@@ -34,10 +34,10 @@ def basic_pr(issue: Issue) -> EffectGenerator[PRHandle]:
     Returns:
         PRHandle for the created PR
     """
-    from ..effects import Agent, AgentTask, Commit, CreatePR, CreateWorktree, Push, ResolveIssue
+    from ..effects import Agent, AgentTask, Commit, CreatePR, CreateWorkspace, Push, ResolveIssue
 
     # Step 1: Create isolated worktree
-    env = yield CreateWorktree(issue=issue)
+    env = yield CreateWorkspace(issue=issue)
 
     # Step 2: Run agent to implement the issue
     prompt = f"""
@@ -65,12 +65,12 @@ When done, make sure all changes are complete and working.
 
     # Step 3: Commit and push changes
     commit_msg = f"feat: {issue.title}\n\nResolves: {issue.id}"
-    yield Commit(env=env, message=commit_msg)
-    yield Push(env=env)
+    yield Commit(workspace=env, message=commit_msg)
+    yield Push(workspace=env)
 
     # Step 4: Create PR
     pr = yield CreatePR(
-        env=env,
+        workspace=env,
         title=issue.title,
         body=f"""
 ## Summary

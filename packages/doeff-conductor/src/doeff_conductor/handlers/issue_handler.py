@@ -181,7 +181,7 @@ class IssueHandler:
                     },
                 )
                 issues.append(issue)
-            except Exception:
+            except (OSError, KeyError, TypeError, ValueError):
                 # Skip malformed files
                 continue
 
