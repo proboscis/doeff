@@ -9,8 +9,8 @@ Provides programmatic access to conductor functionality:
 """
 
 import json
-import os
 import secrets
+import sys
 from collections.abc import Generator
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,15 +18,13 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from .handlers import AgentBackend, AgentBackendName
     from .types import Issue, WorkflowHandle, WorkflowStatus, Workspace
 
 
 def _get_state_dir() -> Path:
     """Get the state directory for conductor."""
-    xdg_state = os.environ.get(
-        "XDG_STATE_HOME", os.path.expanduser("~/.local/state")
-    )
-    return Path(xdg_state) / "doeff-conductor"
+    return Path.home() / ".local" / "state" / "doeff-conductor"
 
 
 class ConductorAPI:
@@ -42,11 +40,13 @@ class ConductorAPI:
         self.workflows_dir = self.state_dir / "workflows"
         self.workflows_dir.mkdir(parents=True, exist_ok=True)
 
-    def run_workflow(
+    def run_workflow(  # noqa: PLR0912, PLR0915
         self,
         template_or_file: str,
         issue: "Issue | None" = None,
         params: dict[str, Any] | None = None,
+        run_id: str | None = None,
+        agent_backend: "AgentBackendName | str | AgentBackend | None" = None,
     ) -> "WorkflowHandle":
         """Run a workflow template or file.
 
@@ -54,15 +54,17 @@ class ConductorAPI:
             template_or_file: Template name or path to workflow file
             issue: Issue to pass to workflow
             params: Additional parameters
+            run_id: Optional caller-supplied workflow id for resume/replay runs
+            agent_backend: Optional agent execution backend strategy
 
         Returns:
             WorkflowHandle for the started workflow
         """
         from .templates import get_template, is_template
-        from .types import WorkflowHandle, WorkflowStatus
+        from .types import PRHandle, WorkflowHandle, WorkflowStatus
 
         # Generate workflow ID
-        workflow_id = secrets.token_hex(4)
+        workflow_id = run_id or secrets.token_hex(4)
 
         # Determine if template or file
         workflow_name: str
@@ -86,6 +88,7 @@ class ConductorAPI:
                 raise ValueError(f"Cannot load workflow: {template_or_file}")
 
             module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
             spec.loader.exec_module(module)
 
             # Look for workflow function (named 'workflow' or 'main')
@@ -129,6 +132,8 @@ class ConductorAPI:
             self._save_workflow(handle)
 
             # Execute the workflow
+            from doeff_core_effects.scheduler import scheduled
+
             from doeff import WithHandler, run
 
             # Build kwargs
@@ -145,9 +150,10 @@ class ConductorAPI:
             conductor_handler = production_handlers(
                 journal_state_dir=self.state_dir,
                 journal_run_id=workflow_id,
+                agent_backend=agent_backend,
             )
 
-            result = run(WithHandler(conductor_handler, program))
+            result = run(scheduled(WithHandler(conductor_handler, program)))
             result_value = result.value if type(result).__name__ == "RunResult" else result
             pr_url = None
             if isinstance(result_value, PRHandle):
@@ -441,6 +447,6 @@ class ConductorAPI:
 
 
 # Import WorkflowHandle for type hints
-from .types import PRHandle, WorkflowHandle  # noqa: E402
+from .types import WorkflowHandle  # noqa: E402
 
 __all__ = ["ConductorAPI"]
