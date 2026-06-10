@@ -702,7 +702,10 @@ class TmuxAgentHandler(AgentHandler):
 
     def handle_await_result(self, effect: AwaitResultEffect) -> AwaitOutcome:
         """Await a result file or an awaiting-input/timeout state."""
-        timeout_seconds = effect.timeout_seconds if effect.timeout_seconds is not None else 600.0
+        # Same default contract as agentd_client.DEFAULT_AWAIT_BUDGET_SECONDS:
+        # one real agent turn routinely outlives 600s, and a long await is
+        # free in the failure case (terminal states resolve it early).
+        timeout_seconds = effect.timeout_seconds if effect.timeout_seconds is not None else 3600.0
         deadline = time.monotonic() + timeout_seconds
         while True:
             state = self._state_for_handle(effect.handle)
