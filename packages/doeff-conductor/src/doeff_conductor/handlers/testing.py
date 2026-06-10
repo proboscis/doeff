@@ -11,20 +11,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from doeff import Effect, Pass, do
+from doeff_agents.result_validation import validate_result_payload
+
+from doeff import Effect, Gather, Pass, Resume, Spawn, WithHandler, do
 from doeff_conductor.effects.agent import (
-    CaptureOutput,
-    RunAgent,
-    SendMessage,
-    SpawnAgent,
-    WaitForStatus,
+    AgentAttemptExhaustedError,
+    AgentEffect,
+    AgentValidationErrorKind,
+    AgentValidationFailure,
 )
 from doeff_conductor.effects.git import Commit, CreatePR, MergePR, Push
 from doeff_conductor.effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
 from doeff_conductor.effects.worktree import CreateWorktree, DeleteWorktree, MergeBranches
 from doeff_conductor.exceptions import IssueNotFoundError
 from doeff_conductor.types import (
-    AgentRef,
     Issue,
     IssueStatus,
     PRHandle,
@@ -55,15 +55,6 @@ def _supports_continuation(handler: Callable[..., Any]) -> bool:
     ]
     return len(positional) >= 2
 
-def _done_status() -> Any:
-    """Return AgenticSessionStatus.DONE when available, otherwise string fallback."""
-    try:
-        from doeff_agentic import AgenticSessionStatus
-
-        return AgenticSessionStatus.DONE
-    except Exception:
-        return "done"
-
 
 class MockConductorRuntime:
     """In-memory + filesystem-backed mock runtime for conductor tests."""
@@ -89,15 +80,14 @@ class MockConductorRuntime:
 
         self._issues: dict[str, Issue] = {}
         self._worktrees: dict[str, WorktreeEnv] = {}
-        self._agents: dict[str, AgentRef] = {}
-        self._agent_statuses: dict[str, Any] = {}
-        self._agent_messages: dict[str, list[tuple[str, str]]] = {}
+        self._agent_scripts: dict[str, list[Any]] = {}
+        self._agent_script_indices: dict[str, int] = {}
+        self._agent_follow_ups: dict[str, list[str]] = {}
         self._prs: dict[int, PRHandle] = {}
 
         self._issue_counter = 0
         self._worktree_counter = 0
         self._merge_counter = 0
-        self._agent_counter = 0
         self._pr_counter = 0
         self.pushed_branches: list[str] = []
 
@@ -143,17 +133,14 @@ class MockConductorRuntime:
         self._worktrees[env_id] = env
         return env
 
-    def _agent_response(self, prompt: str) -> str:
-        prompt_lower = prompt.lower()
-        if "fix" in prompt_lower:
-            return "Applied fixes and validated updates."
-        if "review" in prompt_lower:
-            return "Review complete: identified and documented findings."
-        if "test" in prompt_lower:
-            return "All tests passed successfully."
-        if "implement" in prompt_lower:
-            return "Implementation complete with requested changes."
-        return f"Mock response: {prompt[:80]}"
+    def configure_agent_script(self, session_id: str, script: list[Any]) -> None:
+        """Configure deterministic artifacts for the schema-validated Agent effect."""
+        self._agent_scripts[session_id] = list(script)
+        self._agent_script_indices[session_id] = 0
+
+    def agent_follow_ups(self, session_id: str) -> list[str]:
+        """Return validation follow-up messages sent for a scripted agent."""
+        return list(self._agent_follow_ups.get(session_id, []))
 
     def handle_create_issue(self, effect: CreateIssue) -> Issue:
         self._issue_counter += 1
@@ -242,44 +229,56 @@ class MockConductorRuntime:
         self._worktrees.pop(effect.env.id, None)
         return True
 
-    def handle_run_agent(self, effect: RunAgent) -> str:
-        return self._agent_response(effect.prompt)
+    def handle_agent(self, effect: AgentEffect) -> object:
+        session_id = effect.task.session_id
+        attempts = 0
+        while attempts <= effect.task.max_retries:
+            payload = self._next_agent_payload(session_id)
+            if payload is None:
+                failure = AgentValidationFailure(
+                    kind=AgentValidationErrorKind.ABSENT,
+                    message="result artifact is absent",
+                )
+            else:
+                validation_error = validate_result_payload(payload, effect.task.result_schema)
+                if validation_error is None:
+                    return payload
+                failure = AgentValidationFailure(
+                    kind=AgentValidationErrorKind.INVALID,
+                    message=validation_error,
+                )
 
-    def handle_spawn_agent(self, effect: SpawnAgent) -> AgentRef:
-        self._agent_counter += 1
-        session_id = f"session-{self._agent_counter:03d}"
-        name = effect.name or f"agent-{self._agent_counter:03d}"
-        output = self._agent_response(effect.prompt)
+            if attempts >= effect.task.max_retries:
+                raise AgentAttemptExhaustedError(
+                    session_id=session_id,
+                    attempts=attempts + 1,
+                    last_error=failure,
+                )
 
-        agent_ref = AgentRef(
-            id=session_id,
-            name=name,
-            workflow_id=self.workflow_id,
-            env_id=effect.env.id,
-            agent_type=effect.agent_type,
+            self._agent_follow_ups.setdefault(session_id, []).append(
+                self._agent_retry_message(failure)
+            )
+            attempts += 1
+
+        raise AssertionError("unreachable agent retry state")
+
+    def _next_agent_payload(self, session_id: str) -> object | None:
+        script = self._agent_scripts.get(session_id)
+        if not script:
+            return {"summary": "mock artifact"}
+        index = self._agent_script_indices.get(session_id, 0)
+        if index >= len(script):
+            return script[-1]
+        self._agent_script_indices[session_id] = index + 1
+        return script[index]
+
+    def _agent_retry_message(self, failure: AgentValidationFailure) -> str:
+        if failure.kind == AgentValidationErrorKind.ABSENT:
+            return "No result artifact was produced. Return the required result artifact as JSON."
+        return (
+            f"The result artifact was invalid: {failure.message}. "
+            "Return a corrected result artifact that satisfies the schema."
         )
-        self._agents[session_id] = agent_ref
-        self._agent_statuses[session_id] = _done_status()
-        self._agent_messages[session_id] = [("user", effect.prompt), ("assistant", output)]
-        return agent_ref
-
-    def handle_send_message(self, effect: SendMessage) -> None:
-        session_id = effect.agent_ref.id
-        response = self._agent_response(effect.message)
-        messages = self._agent_messages.setdefault(session_id, [])
-        messages.append(("user", effect.message))
-        messages.append(("assistant", response))
-        self._agent_statuses[session_id] = _done_status()
-
-    def handle_wait_for_status(self, effect: WaitForStatus) -> Any:
-        return self._agent_statuses.get(effect.agent_ref.id, _done_status())
-
-    def handle_capture_output(self, effect: CaptureOutput) -> str:
-        messages = self._agent_messages.get(effect.agent_ref.id, [])
-        if effect.lines <= 0:
-            return ""
-        limited_messages = messages[-effect.lines :]
-        return "\n\n".join(f"[{role}] {content}" for role, content in limited_messages)
 
     def handle_commit(self, effect: Commit) -> str:
         payload = f"{effect.env.id}:{effect.env.branch}:{effect.message}"
@@ -330,7 +329,7 @@ def mock_handlers(
         runtime: Optional runtime instance to keep state between invocations.
         overrides: Optional per-effect handlers to replace defaults.
         root: Optional root directory for created mock runtime state.
-        workflow_id: Workflow ID for mock agent references.
+        workflow_id: Workflow ID for mock runtime bookkeeping.
     """
     active_runtime = runtime or MockConductorRuntime(root=root, workflow_id=workflow_id)
 
@@ -342,11 +341,7 @@ def mock_handlers(
         (ListIssues, make_scheduled_handler(active_runtime.handle_list_issues)),
         (GetIssue, make_scheduled_handler(active_runtime.handle_get_issue)),
         (ResolveIssue, make_scheduled_handler(active_runtime.handle_resolve_issue)),
-        (RunAgent, make_scheduled_handler(active_runtime.handle_run_agent)),
-        (SpawnAgent, make_scheduled_handler(active_runtime.handle_spawn_agent)),
-        (SendMessage, make_scheduled_handler(active_runtime.handle_send_message)),
-        (WaitForStatus, make_scheduled_handler(active_runtime.handle_wait_for_status)),
-        (CaptureOutput, make_scheduled_handler(active_runtime.handle_capture_output)),
+        (AgentEffect, make_scheduled_handler(active_runtime.handle_agent)),
         (Commit, make_scheduled_handler(active_runtime.handle_commit)),
         (Push, make_scheduled_handler(active_runtime.handle_push)),
         (CreatePR, make_scheduled_handler(active_runtime.handle_create_pr)),
@@ -361,12 +356,27 @@ def mock_handlers(
         )
         handlers.insert(0, (effect_type, normalized))
 
+    spawn_results: dict[str, Any] = {}
+    spawn_counter = 0
+
     @do
     def handler(effect: Effect, k: Any):
+        nonlocal spawn_counter
+        if isinstance(effect, Spawn):
+            spawn_counter += 1
+            task_id = f"mock-spawn-{spawn_counter}"
+            result = yield WithHandler(handler, effect.program)
+            spawn_results[task_id] = result
+            return (yield Resume(k, task_id))
+
+        if isinstance(effect, Gather):
+            results = tuple(spawn_results[task] for task in effect.tasks)
+            return (yield Resume(k, results))
+
         for effect_type, effect_handler in handlers:
             if isinstance(effect, effect_type):
                 return (yield effect_handler(effect, k))
-        yield Pass()
+        yield Pass(effect, k)
 
     return handler
 

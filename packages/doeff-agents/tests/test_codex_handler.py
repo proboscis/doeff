@@ -69,8 +69,8 @@ def test_launch_creates_tmux_session(tmp_path: Path) -> None:
 
     handle = _run(program(), backend)
     assert isinstance(handle, SessionHandle)
-    assert handle.session_name == "codex-launch"
-    assert handle.agent_type == AgentType.CODEX
+    assert handle.session_id == "codex-launch"
+    assert not hasattr(handle, "agent_type")
     assert backend.has_session("codex-launch")
 
 
