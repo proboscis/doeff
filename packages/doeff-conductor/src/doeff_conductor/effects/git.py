@@ -40,6 +40,7 @@ class Commit(ConductorEffectBase):
     workspace: "Workspace"  # Workspace to commit in
     message: str  # Commit message
     all: bool = True  # Stage all changes (git add -A)
+    skip_if_clean: bool = False  # Clean tree: return HEAD SHA instead of failing
 
 
 @dataclass(frozen=True, kw_only=True)
