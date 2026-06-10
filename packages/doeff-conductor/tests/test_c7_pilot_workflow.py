@@ -62,6 +62,13 @@ def test_c7_pilot_workflow_validates_closure_scenarios() -> None:
     }
 
 
+def test_c8_pilot_workflow_is_dsl_only() -> None:
+    source = _workflow_path().read_text(encoding="utf-8")
+
+    assert "def main" not in source
+    assert "report_path" not in source
+
+
 def test_c7_scratch_repo_has_build_test_lint_gate_shape(tmp_path: Path) -> None:
     repo_path = tmp_path / "scratch"
     subprocess.run(

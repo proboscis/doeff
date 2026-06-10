@@ -10,7 +10,7 @@ This module defines the core data types for conductor orchestration:
 """
 
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
@@ -330,6 +330,7 @@ class WorkflowHandle:
     agents: tuple[str, ...] = ()  # Agent session IDs
     pr_url: str | None = None  # Resulting PR URL
     error: str | None = None  # Error message if failed
+    result_payload: Any | None = None  # Workflow return payload when JSON-serializable
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -345,6 +346,7 @@ class WorkflowHandle:
             "agents": list(self.agents),
             "pr_url": self.pr_url,
             "error": self.error,
+            "result_payload": _jsonable(self.result_payload),
         }
 
     @classmethod
@@ -362,10 +364,11 @@ class WorkflowHandle:
             agents=tuple(data.get("agents", [])),
             pr_url=data.get("pr_url"),
             error=data.get("error"),
+            result_payload=data.get("result_payload"),
         )
 
 
-__all__ = [
+__all__ = [  # noqa: RUF022
     # Agent types
     "AgentRef",
     "ExecResult",
@@ -384,3 +387,27 @@ __all__ = [
     "WorkflowHandle",
     "WorkflowStatus",
 ]
+
+
+def _jsonable(value: Any) -> Any:  # noqa: PLR0911
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_jsonable(item) for item in value]
+    if is_dataclass(value) and not isinstance(value, type):
+        return _jsonable(asdict(value))
+    if isinstance(value, type):
+        return value.__name__
+    if hasattr(value, "to_dict"):
+        to_dict = value.to_dict
+        if callable(to_dict):
+            return _jsonable(to_dict())
+    if hasattr(value, "__dict__"):
+        return _jsonable(vars(value))
+    return str(value)

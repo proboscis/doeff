@@ -15,9 +15,9 @@ It ports the reference shape into the C7 DSL surface:
 - full build/test/lint gate loop with a conditional fixer, bounded to 3 rounds
 - 4 adversarial reviewers returning the C5 verdict schema
 
-The production entrypoint in the same file runs the shape with real Codex
-workers through `conductor run`. The scratch target is generated outside the
-doeff repository:
+The same file is now DSL-only: `conductor run` executes the expanded
+`WorkflowSpec` directly through the production interpreter. The scratch target
+is generated outside the doeff repository:
 
 ```bash
 uv run python packages/doeff-conductor/examples/setup_k2_k3_scratch_repo.py \
@@ -60,8 +60,7 @@ PYTHONUNBUFFERED=1 \
   packages/doeff-conductor/examples/k2_k3_pilot_workflow.py \
   --run-id c7-replay2 \
   --agent-mode codex-exec \
-  --params '{"run_id":"c7-replay2","base_ref":"main","effort":"low",
-             "report_path":"/tmp/c7-pilot-result.json"}' \
+  --params '{"run_id":"c7-replay2","base_ref":"main","effort":"low"}' \
   --json 2>&1 | tee /tmp/c7-full-run.log
 ```
 
@@ -118,9 +117,8 @@ Cost notes:
 
 ## Honest Deltas
 
-- The DSL can express the static k2-k3 graph, but production execution still
-  requires a hand-written `main` Program in the same file. A native DSL
-  interpreter for `WorkflowSpec` is still missing.
+- C8 removed the hand-written `main` Program. The example is a DSL-only
+  `WorkflowSpec` and production execution uses the native interpreter.
 - Conditional fixer execution is represented conservatively in `plan` as a
   static worker row even when the production gate passes and the fixer is not
   launched.
@@ -129,9 +127,8 @@ Cost notes:
   This is not a sound durable workspace replay story yet; it was acceptable
   here because deterministic gates and later fixers revalidated the merged
   tree.
-- `conductor run` did not expose arbitrary workflow return payloads, so the
-  pilot used the workflow's `report_path` parameter to persist phase timings
-  and review-routing measurements.
+- C8 exposes the workflow return payload through `conductor run --json`, so the
+  old `report_path` workaround is gone.
 - The local environment did not have a reachable `doeff-agentd`; the pilot used
   explicit `--agent-mode codex-exec`, which still runs real Codex workers
   through the production conductor handler but bypasses agentd session
