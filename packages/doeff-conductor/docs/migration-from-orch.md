@@ -109,7 +109,7 @@ steps:
 #### conductor Python Template
 
 ```python
-# my_workflow.py
+# my_workflow.hy
 from doeff import do
 from doeff_conductor import Agent, AgentTask, CreateWorkspace, Commit, Push, CreatePR
 
