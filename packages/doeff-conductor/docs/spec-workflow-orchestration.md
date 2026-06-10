@@ -212,14 +212,23 @@ invoked as plain functions** — not kleisli, so they structurally cannot
 yield effects: no agent launches, no `ask`, no `Local`, by construction.
 
 The remaining hole — raw Python calls that are not effects — is closed by
-the **nondeterminism validator** (doeff-linter rule set over workflow
-modules):
+the **workflow loader's nondeterminism check** (an AST walk conductor runs
+on every workflow module at load time, so `plan`, `validate`, and `run`
+all inherit it and cannot skip it):
 
 - ban `datetime.now` / `time.time` / `random.*` / `open` / network and
   subprocess calls / non-allowlisted imports inside workflow modules;
 - each diagnostic names the replacement (`time!`, `random!`, `gate!`,
   a `:params` entry);
-- severity is ERROR; there is no baseline and no allowlist-by-file.
+- load fails hard; there is no baseline, no allowlist-by-file, and no
+  suppression mechanism.
+
+The enforcement point is deliberate: workflows are ephemeral request
+artifacts (§4.7) that no CI or separately-run linter will ever see. No
+module marker is needed — the loader checks exactly what it loads.
+(History: this check first shipped as doeff-linter rule DOEFF032; the
+rule logic and fixtures move into the loader and the linter rule is
+deleted — single owner, no parallel implementations.)
 
 ### 4.5 Expansion-time checks (complete list, all pre-token)
 
@@ -237,7 +246,8 @@ modules):
    the `:roles` table and call-site fields;
 9. dataflow: every reference defined before use; unconsumed results are
    flagged;
-10. nondeterminism validator (§4.4) over the containing module.
+10. the loader's nondeterminism check (§4.4) over the workflow module —
+    enforced at load, so no verb can skip it.
 
 ### 4.6 Example — 4 parallel feature implementations
 
@@ -267,6 +277,27 @@ modules):
                                     (:workspace export) (:workspace i18n)]))
     (gate! :workspace merged :cmd "cargo build && cargo test")))
 ```
+
+### 4.7 Workflow source lifecycle — ephemeral by design
+
+A workflow encodes one request; it is kin to a prompt, not to code
+(ADR D10). Lifecycle contract:
+
+- The author (typically an agent) writes the workflow to **any throwaway
+  location** (`/tmp`, a session directory) — never into the target
+  repository. Committing a per-request workflow is an anti-pattern: it
+  rots into unowned state referencing branches/issues that no longer
+  exist.
+- `conductor plan` / `conductor run` **snapshot the workflow source into
+  the run state directory**, alongside the journal. The snapshot is the
+  authoritative source for that run: resume — including edit-and-resume —
+  reads and modifies the snapshot; the original file may vanish freely.
+- The only durable workflow-shaped artifacts are **named, parameterized
+  templates** (library code instantiated via `:params`); the
+  instantiation is still snapshotted per run.
+- Version-controlled: ADR/spec, environment config (profiles, router
+  policy), templates. Run-state-controlled: journal + workflow snapshot
+  (the audit record). Ephemeral: everything else.
 
 ## 5. L2 — the session algebra
 
@@ -489,7 +520,10 @@ because where to pause is a trust/stakes judgment extrinsic to the task:
 ## 10. Enforcement summary
 
 - expansion-time checks: §4.5 (each rule ships with a failing-case test);
-- nondeterminism validator: §4.4 (doeff-linter, ERROR, no baselines);
+- nondeterminism check: §4.4 — enforced by the workflow loader at load
+  time (no separate linter; no suppression);
+- workflow source snapshot: §4.7 — every `plan`/`run` captures the source
+  into the run state dir; resume reads the snapshot;
 - layer-boundary lint: workflow modules must not import L1 handler modules
   or the profile registry (same enforcement pattern as agent-control-plane
   ADR 0005's semgrep boundary rules);
