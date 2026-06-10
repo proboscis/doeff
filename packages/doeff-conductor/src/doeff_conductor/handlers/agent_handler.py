@@ -5,220 +5,53 @@ Agent handler for doeff-conductor.
 import secrets
 from typing import TYPE_CHECKING
 
-from ..exceptions import AgentTimeoutError
-
 if TYPE_CHECKING:
-    from doeff_agentic import AgenticSessionStatus
-
-    from ..effects.agent import (
-        CaptureOutput,
-        RunAgent,
-        SendMessage,
-        SpawnAgent,
-        WaitForStatus,
-    )
-    from ..types import AgentRef
+    from ..effects.agent import AgentEffect
 
 
 class AgentHandler:
-    """Handler for agent effects. Delegates to doeff-agentic."""
+    """Handler for schema-validated conductor agent effects."""
 
     def __init__(self, workflow_id: str | None = None):
         self.workflow_id = workflow_id or secrets.token_hex(4)
-        self._sessions: dict[str, "AgentRef"] = {}
-        self._opencode_handler = None
 
-    def _get_opencode_handler(self):
-        """Lazily initialize OpenCode handler."""
-        if self._opencode_handler is None:
-            from doeff_agentic import OpenCodeHandler
-
-            self._opencode_handler = OpenCodeHandler()
-        return self._opencode_handler
-
-    def handle_run_agent(self, effect: "RunAgent") -> str:
-        """Handle RunAgent effect.
-
-        Spawns an agent and waits for completion.
-        """
-        from doeff_agentic import (
-            AgenticCreateSession,
-            AgenticGetMessages,
-            AgenticSendMessage,
+    def handle_agent(self, effect: "AgentEffect") -> object:
+        """Handle schema-validated Agent effect via doeff-agents."""
+        from doeff_agents import (
+            AgentEffect as AgentsAgentEffect,
+        )
+        from doeff_agents import (
+            AgentTask as AgentsAgentTask,
+        )
+        from doeff_agents import (
+            AgentType,
+            DaemonAgentHandler,
+            LazyAgentdClient,
         )
 
-        handler = self._get_opencode_handler()
+        try:
+            agent_type = AgentType(effect.task.agent_type)
+        except ValueError as exc:
+            raise ValueError(f"unsupported agent_type: {effect.task.agent_type}") from exc
 
-        # Create session
-        session_name = effect.name or f"agent-{secrets.token_hex(3)}"
-
-        # Use the handler to create session and send message
-        # Since we're in a synchronous handler, we need to use the handler methods directly
-        from doeff_agentic import (
-            AgenticCreateEnvironment,
-            AgenticEnvironmentType,
-        )
-
-        # Create environment for the worktree path
-        env_effect = AgenticCreateEnvironment(
-            env_type=AgenticEnvironmentType.SHARED,
-            working_dir=str(effect.env.path),
-        )
-        env_handle = handler.handle_create_environment(env_effect)
-
-        # Create session
-        session_effect = AgenticCreateSession(
-            name=session_name,
-            environment_id=env_handle.id,
-            agent=effect.agent_type,
-        )
-        session = handler.handle_create_session(session_effect)
-
-        # Send the prompt and wait for completion
-        msg_effect = AgenticSendMessage(
-            session_id=session.id,
-            content=effect.prompt,
-            wait=True,
-        )
-        handler.handle_send_message(msg_effect)
-
-        # Get messages to extract output
-        messages_effect = AgenticGetMessages(session_id=session.id)
-        messages = handler.handle_get_messages(messages_effect)
-
-        # Return last assistant message content
-        for msg in reversed(messages):
-            if msg.role == "assistant":
-                return msg.content
-
-        return ""
-
-    def handle_spawn_agent(self, effect: "SpawnAgent") -> "AgentRef":
-        """Handle SpawnAgent effect.
-
-        Starts an agent without waiting for completion.
-        """
-        from doeff_agentic import (
-            AgenticCreateEnvironment,
-            AgenticCreateSession,
-            AgenticEnvironmentType,
-            AgenticSendMessage,
-        )
-
-        from ..types import AgentRef
-
-        handler = self._get_opencode_handler()
-
-        # Create session name
-        session_name = effect.name or f"agent-{secrets.token_hex(3)}"
-
-        # Create environment
-        env_effect = AgenticCreateEnvironment(
-            env_type=AgenticEnvironmentType.SHARED,
-            working_dir=str(effect.env.path),
-        )
-        env_handle = handler.handle_create_environment(env_effect)
-
-        # Create session
-        session_effect = AgenticCreateSession(
-            name=session_name,
-            environment_id=env_handle.id,
-            agent=effect.agent_type,
-        )
-        session = handler.handle_create_session(session_effect)
-
-        # Send prompt without waiting
-        msg_effect = AgenticSendMessage(
-            session_id=session.id,
-            content=effect.prompt,
-            wait=False,
-        )
-        handler.handle_send_message(msg_effect)
-
-        # Create agent ref
-        agent_ref = AgentRef(
-            id=session.id,
-            name=session_name,
-            workflow_id=self.workflow_id,
-            env_id=effect.env.id,
-            agent_type=effect.agent_type,
-        )
-
-        self._sessions[session_name] = agent_ref
-        return agent_ref
-
-    def handle_send_message(self, effect: "SendMessage") -> None:
-        """Handle SendMessage effect.
-
-        Sends a message to a running agent.
-        """
-        from doeff_agentic import AgenticSendMessage
-
-        handler = self._get_opencode_handler()
-
-        msg_effect = AgenticSendMessage(
-            session_id=effect.agent_ref.id,
-            content=effect.message,
-            wait=effect.wait,
-        )
-        handler.handle_send_message(msg_effect)
-
-    def handle_wait_for_status(self, effect: "WaitForStatus") -> "AgenticSessionStatus":
-        """Wait for an agent to reach a specific status."""
-        import time
-
-        from doeff_agentic import AgenticGetSessionStatus, AgenticSessionStatus
-
-        handler = self._get_opencode_handler()
-
-        targets = effect.target
-        if isinstance(targets, AgenticSessionStatus):
-            targets = (targets,)
-
-        deadline = None
-        if effect.timeout:
-            deadline = time.time() + effect.timeout
-
-        while True:
-            status_effect = AgenticGetSessionStatus(session_id=effect.agent_ref.id)
-            status = handler.handle_get_session_status(status_effect)
-
-            if status in targets:
-                return status
-
-            if status.is_terminal() and status not in targets:
-                return status
-
-            if deadline and time.time() > deadline:
-                raise AgentTimeoutError(
-                    agent_id=effect.agent_ref.id,
-                    timeout=effect.timeout or 0.0,
-                    last_status=str(status),
+        handler = DaemonAgentHandler(client=LazyAgentdClient())
+        return handler.handle_agent(
+            AgentsAgentEffect(
+                task=AgentsAgentTask(
+                    run_id=effect.task.run_id,
+                    node_id=effect.task.node_id,
+                    attempt=effect.task.attempt,
+                    agent_type=agent_type,
+                    work_dir=effect.task.env.path,
+                    prompt=effect.task.prompt,
+                    result_schema=effect.task.result_schema,
+                    model=effect.task.model,
+                    effort=effect.task.effort,
+                    max_retries=effect.task.max_retries,
+                    timeout_seconds=effect.task.timeout_seconds,
                 )
-
-            time.sleep(effect.poll_interval)
-
-    def handle_capture_output(self, effect: "CaptureOutput") -> str:
-        """Handle CaptureOutput effect.
-
-        Captures output from an agent session.
-        """
-        from doeff_agentic import AgenticGetMessages
-
-        handler = self._get_opencode_handler()
-
-        messages_effect = AgenticGetMessages(
-            session_id=effect.agent_ref.id,
-            limit=effect.lines,
+            )
         )
-        messages = handler.handle_get_messages(messages_effect)
-
-        # Combine message contents
-        output_parts = []
-        for msg in messages:
-            output_parts.append(f"[{msg.role}] {msg.content}")
-
-        return "\n\n".join(output_parts)
 
 
 __all__ = ["AgentHandler"]

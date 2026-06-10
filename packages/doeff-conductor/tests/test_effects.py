@@ -1,8 +1,11 @@
 """Tests for doeff-conductor effects."""
 
+import dataclasses
+
 import pytest
 from doeff_conductor.effects import (
-    CaptureOutput,
+    Agent,
+    AgentTask,
     Commit,
     CreateIssue,
     CreatePR,
@@ -14,10 +17,6 @@ from doeff_conductor.effects import (
     MergePR,
     Push,
     ResolveIssue,
-    RunAgent,
-    SendMessage,
-    SpawnAgent,
-    WaitForStatus,
 )
 
 
@@ -162,8 +161,13 @@ class TestIssueEffects:
 class TestAgentEffects:
     """Tests for agent effects."""
 
-    def test_run_agent_required_fields(self):
-        """Test RunAgent required fields."""
+    def test_agent_task_requires_explicit_agent_type(self):
+        """AgentTask has no worker identity default at call sites."""
+        assert "agent_type" in AgentTask.__dataclass_fields__
+        assert AgentTask.__dataclass_fields__["agent_type"].default is dataclasses.MISSING
+
+    def test_agent_effect_wraps_task(self):
+        """Test schema-validated Agent effect construction."""
         from pathlib import Path
 
         from doeff_conductor.types import WorktreeEnv
@@ -175,120 +179,21 @@ class TestAgentEffects:
             base_commit="abc",
         )
 
-        effect = RunAgent(env=env, prompt="Do the thing")
-        assert effect.prompt == "Do the thing"
-        assert effect.agent_type == "claude"  # default
-
-    def test_spawn_agent_name(self):
-        from pathlib import Path
-
-        from doeff_conductor.types import WorktreeEnv
-
-        env = WorktreeEnv(
-            id="test",
-            path=Path("/tmp"),
-            branch="test",
-            base_commit="abc",
+        task = AgentTask(
+            run_id="run-001",
+            node_id="implement",
+            attempt=0,
+            env=env,
+            prompt="Do the thing",
+            result_schema={"type": "object"},
+            verification_class="test-verifiable",
+            agent_type="codex",
         )
+        effect = Agent(task)
 
-        effect = SpawnAgent(env=env, prompt="Start task", name="worker-1")
-        assert effect.name == "worker-1"
-
-    def test_send_message(self):
-        from doeff_conductor.types import AgentRef
-
-        agent_ref = AgentRef(
-            id="session-001",
-            name="agent-1",
-            workflow_id="wf-001",
-            env_id="env-001",
-            agent_type="claude",
-        )
-
-        effect = SendMessage(agent_ref=agent_ref, message="Continue")
-        assert effect.agent_ref == agent_ref
-        assert effect.message == "Continue"
-        assert effect.wait is False  # default is False
-
-    def test_send_message_no_wait(self):
-        from doeff_conductor.types import AgentRef
-
-        agent_ref = AgentRef(
-            id="session-001",
-            name="agent-1",
-            workflow_id="wf-001",
-            env_id="env-001",
-            agent_type="claude",
-        )
-
-        effect = SendMessage(agent_ref=agent_ref, message="Fire and forget", wait=False)
-        assert effect.wait is False
-
-    def test_wait_for_status(self):
-        from doeff_agentic import AgenticSessionStatus
-        from doeff_conductor.types import AgentRef
-
-        agent_ref = AgentRef(
-            id="session-001",
-            name="agent-1",
-            workflow_id="wf-001",
-            env_id="env-001",
-            agent_type="claude",
-        )
-
-        effect = WaitForStatus(
-            agent_ref=agent_ref,
-            target=AgenticSessionStatus.DONE,
-            timeout=60.0,
-        )
-        assert effect.agent_ref == agent_ref
-        assert effect.target == AgenticSessionStatus.DONE
-        assert effect.timeout == 60.0
-
-    def test_wait_for_status_defaults(self):
-        from doeff_agentic import AgenticSessionStatus
-        from doeff_conductor.types import AgentRef
-
-        agent_ref = AgentRef(
-            id="session-001",
-            name="agent-1",
-            workflow_id="wf-001",
-            env_id="env-001",
-            agent_type="claude",
-        )
-
-        effect = WaitForStatus(agent_ref=agent_ref, target=AgenticSessionStatus.DONE)
-        assert effect.timeout is None
-        assert effect.poll_interval == 1.0
-
-    def test_capture_output(self):
-        from doeff_conductor.types import AgentRef
-
-        agent_ref = AgentRef(
-            id="session-001",
-            name="agent-1",
-            workflow_id="wf-001",
-            env_id="env-001",
-            agent_type="claude",
-        )
-
-        effect = CaptureOutput(agent_ref=agent_ref, lines=50)
-        assert effect.agent_ref == agent_ref
-        assert effect.lines == 50
-
-    def test_capture_output_defaults(self):
-        from doeff_conductor.types import AgentRef
-
-        agent_ref = AgentRef(
-            id="session-001",
-            name="agent-1",
-            workflow_id="wf-001",
-            env_id="env-001",
-            agent_type="claude",
-        )
-
-        effect = CaptureOutput(agent_ref=agent_ref)
-        assert effect.lines == 500  # default is 500
+        assert effect.task is task
+        assert task.agent_type == "codex"
+        assert task.session_id == "run-001-implement-0"
 
 
 class TestGitEffects:
@@ -437,11 +342,9 @@ class TestModuleExports:
             "ListIssues",
             "GetIssue",
             "ResolveIssue",
-            "RunAgent",
-            "SpawnAgent",
-            "SendMessage",
-            "WaitForStatus",
-            "CaptureOutput",
+            "Agent",
+            "AgentEffect",
+            "AgentTask",
             "Commit",
             "Push",
             "CreatePR",
