@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from doeff_agents import (
     AgentdClient,
     AgentdClientError,
+    AgentdUnavailableError,
     AgentSessionLifecycle,
     AgentType,
     DaemonAgentHandler,
@@ -28,7 +29,6 @@ from doeff_agents import (
     agentd_client,
     default_agentd_paths,
     ensure_agentd,
-    AgentdUnavailableError,
 )
 
 
