@@ -55,7 +55,7 @@ def resolved_identity_fingerprint(identity: ResolvedIdentity) -> str:
     return _sha256_payload(
         {
             "adapter": identity.adapter,
-            "model": identity.model,
+            "model": identity.model if identity.model is not None else "adapter-default",
             "identity": identity.identity,
         }
     )

@@ -33,25 +33,25 @@ DEFAULT_ROLE_CONVENTIONS: Mapping[str, str] = {
 DEFAULT_PROFILE_DATA: Mapping[str, Mapping[str, Any]] = {
     "cheap-coder": {
         "adapter": "codex",
-        "model": "default-cheap-coder",
+        "model": None,
         "capabilities": ("durable-sessions", "schema-validation"),
         "budget_units": 1,
     },
     "cheap-reviewer": {
         "adapter": "codex",
-        "model": "default-cheap-reviewer",
+        "model": None,
         "capabilities": ("durable-sessions", "schema-validation"),
         "budget_units": 1,
     },
     "frontier-reviewer": {
         "adapter": "claude",
-        "model": "default-frontier-reviewer",
+        "model": None,
         "capabilities": ("durable-sessions", "interactive", "schema-validation"),
         "budget_units": 3,
     },
     "frontier-author": {
         "adapter": "claude",
-        "model": "default-frontier-author",
+        "model": None,
         "capabilities": ("durable-sessions", "interactive", "schema-validation"),
         "budget_units": 3,
     },
@@ -64,7 +64,7 @@ class ProfileBinding:
 
     name: str
     adapter: str
-    model: str
+    model: str | None
     capabilities: tuple[str, ...]
     budget_units: int
 
@@ -74,8 +74,12 @@ class ProfileBinding:
         model: object | None = data.get("model")
         if not isinstance(adapter, str) or not adapter:
             raise ValueError(f"profile {name!r} requires non-empty adapter")
-        if not isinstance(model, str) or not model:
-            raise ValueError(f"profile {name!r} requires non-empty model")
+        # model=None means "the agent CLI's own default model". Inventing a
+        # placeholder name here is worse than omitting the flag: an unknown
+        # model reaches the worker CLI and every turn fails (observed live:
+        # `codex --model default-cheap-coder` exhausted its retries in 14s).
+        if model is not None and (not isinstance(model, str) or not model):
+            raise ValueError(f"profile {name!r} model must be a non-empty string or None")
 
         raw_capabilities: object = data.get("capabilities", ())
         if not isinstance(raw_capabilities, (list, tuple)):
