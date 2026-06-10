@@ -28,6 +28,7 @@ from doeff_agents import (
     agentd_client,
     default_agentd_paths,
     ensure_agentd,
+    AgentdUnavailableError,
 )
 
 
@@ -149,52 +150,48 @@ def test_default_agentd_paths_use_xdg(monkeypatch, tmp_path: Path) -> None:
     assert paths.log_path == state_home / "doeff" / "agentd.log"
 
 
-def test_ensure_agentd_starts_daemon_when_socket_is_not_ready(
+def test_ensure_agentd_uses_reachable_canonical_socket(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    ready_calls = 0
-    commands: list[list[str]] = []
+    def handle(request: Mapping[str, Any]) -> Mapping[str, Any]:
+        return {"id": request["id"], "ok": True, "result": {"state": "running"}}
 
-    def fake_ready(_client: AgentdClient) -> bool:
-        nonlocal ready_calls
-        ready_calls += 1
-        return ready_calls > 1
+    state_home = tmp_path / "state"
+    runtime_dir = tmp_path / "runtime"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
+    paths = default_agentd_paths()
+    paths.socket_path.parent.mkdir(parents=True)
 
-    class FakeProcess:
-        def poll(self) -> None:
-            return None
+    with OneShotAgentdServer(paths.socket_path, handle) as server:
+        client = ensure_agentd(client_timeout=2.0)
 
-    def fake_popen(command, **_kwargs):
-        commands.append(command)
-        return FakeProcess()
-
-    monkeypatch.setattr(agentd_client, "_agentd_is_ready", fake_ready)
-    monkeypatch.setattr(agentd_client.subprocess, "Popen", fake_popen)
-
-    client = ensure_agentd(
-        db_path=tmp_path / "agentd.sqlite",
-        socket_path=tmp_path / "agentd.sock",
-        daemon_bin="/usr/local/bin/doeff-agentd",
-        max_running=7,
-    )
-
-    assert client.socket_path == tmp_path / "agentd.sock"
-    assert commands == [
-        [
-            "/usr/local/bin/doeff-agentd",
-            "--db",
-            str(tmp_path / "agentd.sqlite"),
-            "--socket",
-            str(tmp_path / "agentd.sock"),
-            "--max-running",
-            "7",
-            "serve",
-        ]
-    ]
+    assert client.socket_path == paths.socket_path
+    assert server.requests[0]["method"] == "daemon.status"
 
 
-def test_lazy_agentd_client_starts_daemon_on_first_operation(monkeypatch, tmp_path: Path) -> None:
+def test_ensure_agentd_fails_loudly_when_canonical_socket_unreachable(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    state_home = tmp_path / "state"
+    runtime_dir = tmp_path / "runtime"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
+    paths = default_agentd_paths()
+
+    with pytest.raises(AgentdUnavailableError) as error:
+        ensure_agentd(daemon_bin="/usr/local/bin/doeff-agentd", max_running=7)
+
+    message = str(error.value)
+    assert str(paths.socket_path) in message
+    assert "doeff-agentd --db" in message
+    assert f"--socket {paths.socket_path}" in message
+    assert "--max-running 7 serve" in message
+
+
+def test_lazy_agentd_client_resolves_daemon_on_first_operation(monkeypatch, tmp_path: Path) -> None:
     calls: list[dict[str, Any]] = []
 
     class FakeResolvedClient:

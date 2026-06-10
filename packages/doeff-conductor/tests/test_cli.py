@@ -705,33 +705,16 @@ class TestTemplateCommands(TestCLIBase):
 class TestRunCommand(TestCLIBase):
     """Tests for the run command."""
 
-    def test_run_passes_agent_mode_option_to_api(
+    def test_run_command_has_no_agent_mode_option(
         self,
         runner: CliRunner,
-        tmp_state_dir: Path,
     ):
-        """Run command passes the selected agent backend to the API."""
-        with patch("doeff_conductor.api.ConductorAPI.run_workflow") as run_workflow:
-            run_workflow.return_value = SimpleNamespace(
-                id="workflow-1",
-                template=None,
-                issue_id=None,
-            )
-
-            result = runner.invoke(
-                cli,
-                [
-                    "--state-dir",
-                    str(tmp_state_dir),
-                    "run",
-                    "basic_pr",
-                    "--agent-mode",
-                    "codex-exec",
-                ],
-            )
+        """Run command exposes no worker backend selector."""
+        result = runner.invoke(cli, ["run", "--help"])
 
         assert result.exit_code == 0
-        assert run_workflow.call_args.kwargs["agent_backend"] == "codex-exec"
+        assert "--agent-mode" not in result.output
+        assert "CONDUCTOR_AGENT_MODE" not in result.output
 
     def test_run_template_not_found(self, runner: CliRunner, tmp_state_dir: Path):
         """Run a non-existent template."""
