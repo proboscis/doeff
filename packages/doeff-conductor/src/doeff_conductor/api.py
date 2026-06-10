@@ -18,7 +18,6 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .handlers import AgentBackend, AgentBackendName
     from .types import Issue, WorkflowHandle, WorkflowStatus, Workspace
 
 
@@ -46,7 +45,6 @@ class ConductorAPI:
         issue: "Issue | None" = None,
         params: dict[str, Any] | None = None,
         run_id: str | None = None,
-        agent_backend: "AgentBackendName | str | AgentBackend | None" = None,
     ) -> "WorkflowHandle":
         """Run a workflow template or file.
 
@@ -55,7 +53,6 @@ class ConductorAPI:
             issue: Issue to pass to workflow
             params: Additional parameters
             run_id: Optional caller-supplied workflow id for resume/replay runs
-            agent_backend: Optional agent execution backend strategy
 
         Returns:
             WorkflowHandle for the started workflow
@@ -200,7 +197,6 @@ class ConductorAPI:
             conductor_handler = handlers_module.production_handlers(
                 journal_state_dir=self.state_dir,
                 journal_run_id=workflow_id,
-                agent_backend=agent_backend,
             )
 
             result = run(scheduled(WithHandler(conductor_handler, program)))
@@ -249,7 +245,6 @@ class ConductorAPI:
         workflow_id: str,
         *,
         params: dict[str, Any] | None = None,
-        agent_backend: "AgentBackendName | str | AgentBackend | None" = None,
     ) -> "WorkflowHandle":
         """Resume a run from its snapshotted workflow source."""
 
@@ -262,7 +257,6 @@ class ConductorAPI:
             str(snapshot_path),
             params=params,
             run_id=workflow_id,
-            agent_backend=agent_backend,
         )
 
     def list_workflows(

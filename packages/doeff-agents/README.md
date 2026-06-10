@@ -57,6 +57,30 @@ doeff-agents stop my-session
 doeff-agents watch my-session
 ```
 
+## doeff-agentd Socket Convention
+
+The daemon and Python client share one canonical socket convention:
+
+- DB: `${XDG_STATE_HOME:-$HOME/.local/state}/doeff/agentd.sqlite`
+- socket when `XDG_RUNTIME_DIR` is set: `$XDG_RUNTIME_DIR/doeff/agentd.sock`
+- socket when `XDG_RUNTIME_DIR` is unset: `/tmp/doeff-agentd-${USER:-unknown}.sock`
+
+Start the daemon with the same derived paths:
+
+```bash
+AGENTD_DB="${XDG_STATE_HOME:-$HOME/.local/state}/doeff/agentd.sqlite"
+if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+  AGENTD_SOCKET="$XDG_RUNTIME_DIR/doeff/agentd.sock"
+else
+  AGENTD_SOCKET="/tmp/doeff-agentd-${USER:-unknown}.sock"
+fi
+doeff-agentd --db "$AGENTD_DB" --socket "$AGENTD_SOCKET" --max-running 10 serve
+```
+
+`LazyAgentdClient` connects only to that expected socket. It does not probe
+per-run temporary sockets or fall back to direct worker execution; if no daemon
+is reachable, it raises an actionable error containing the exact start command.
+
 ## Features
 
 - **Tmux abstraction**: Pythonic wrapper around tmux commands
