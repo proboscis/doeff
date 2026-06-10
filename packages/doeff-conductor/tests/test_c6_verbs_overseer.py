@@ -27,7 +27,7 @@ RESULT_SCHEMA = {
 
 
 def _fixture_path() -> Path:
-    return Path(__file__).parent / "fixtures" / "c6_k2_k3_workflow.py"
+    return Path(__file__).parent / "fixtures" / "c6_k2_k3_workflow.hy"
 
 
 def _cascade_agent(role: str, verification_class: str, **overrides: object) -> object:

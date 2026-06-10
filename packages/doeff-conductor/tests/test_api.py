@@ -394,8 +394,16 @@ class TestRunWorkflow:
     def test_run_workflow_file_not_found(self, api: ConductorAPI):
         """run_workflow raises error for non-existent file."""
         with pytest.raises(ValueError) as exc_info:
-            api.run_workflow("/nonexistent/workflow.py")
+            api.run_workflow("/nonexistent/workflow.hy")
         assert "not found" in str(exc_info.value)
+
+    def test_run_workflow_rejects_user_python_workflow(self, api: ConductorAPI, tmp_path: Path):
+        """run_workflow rejects .py workflow files, naming the Hy surface."""
+        workflow_file = tmp_path / "test_workflow.py"
+        workflow_file.write_text("WORKFLOW = None\n")
+
+        with pytest.raises(ValueError, match=r"Hy macro DSL"):
+            api.run_workflow(str(workflow_file))
 
     def test_run_workflow_creates_workflow_record(
         self,
@@ -403,59 +411,63 @@ class TestRunWorkflow:
         mock_issue: Issue,
         tmp_path: Path,
     ):
-        """run_workflow creates workflow in state directory.
-        
-        Note: This test uses a custom workflow file to avoid patching complexities.
-        """
-        workflow_file = tmp_path / "test_workflow.py"
+        """run_workflow creates workflow in state directory."""
+        workflow_file = tmp_path / "test_workflow.hy"
         workflow_file.write_text("""
-from doeff import do, Program
+(require doeff-hy.conductor [defworkflow])
+(import doeff_conductor.dsl [artifact])
 
-@do
-def workflow(issue):
-    return Program.pure("done")
+(defworkflow record-workflow
+  :params {}
+  :roles {}
+  (artifact "done"))
+
+(setv WORKFLOW record-workflow)
 """)
 
-        try:
-            handle = api.run_workflow(str(workflow_file), issue=mock_issue)
-            assert handle.id is not None
-            assert handle.issue_id == "ISSUE-001"
-        except Exception:
-            pass
+        handle = api.run_workflow(str(workflow_file), issue=mock_issue)
+
+        assert handle.id is not None
+        assert handle.issue_id == "ISSUE-001"
+        assert handle.status == WorkflowStatus.DONE
 
     def test_run_workflow_with_params(self, api: ConductorAPI, mock_issue: Issue, tmp_path: Path):
-        """run_workflow passes params to workflow function.
-        
-        Note: This test uses a custom workflow file to avoid patching complexities.
-        """
-        workflow_file = tmp_path / "param_workflow.py"
+        """run_workflow passes params through to workflow refs."""
+        workflow_file = tmp_path / "param_workflow.hy"
         workflow_file.write_text("""
-from doeff import do, Program
+(require doeff-hy.conductor [defworkflow])
+(import doeff_conductor.dsl [artifact ref])
 
-@do
-def workflow(issue, custom_param=None):
-    return Program.pure(custom_param)
+(defworkflow param-workflow
+  :params {"custom_param" str}
+  :roles {}
+  (artifact (ref "custom_param")))
+
+(setv WORKFLOW param-workflow)
 """)
 
-        try:
-            handle = api.run_workflow(
-                str(workflow_file),
-                issue=mock_issue,
-                params={"custom_param": "test_value"},
-            )
-            assert handle is not None
-        except Exception:
-            pass
+        handle = api.run_workflow(
+            str(workflow_file),
+            issue=mock_issue,
+            params={"custom_param": "test_value"},
+        )
+
+        assert handle.status == WorkflowStatus.DONE
+        assert handle.result_payload == "test_value"
 
     def test_run_workflow_extracts_pr_url_from_real_run_result(self, api: ConductorAPI, tmp_path: Path):
-        workflow_file = tmp_path / "pr_url_workflow.py"
+        workflow_file = tmp_path / "pr_url_workflow.hy"
         workflow_file.write_text("""
-from types import SimpleNamespace
-from doeff import Pure, do
+(require doeff-hy.conductor [defworkflow])
+(import types [SimpleNamespace])
+(import doeff_conductor.dsl [artifact])
 
-@do
-def workflow():
-    return (yield Pure(SimpleNamespace(url="runresult-url")))
+(defworkflow pr-url-workflow
+  :params {}
+  :roles {}
+  (artifact (SimpleNamespace :url "runresult-url")))
+
+(setv WORKFLOW pr-url-workflow)
 """)
 
         handle = api.run_workflow(str(workflow_file))
@@ -468,13 +480,17 @@ def workflow():
         api: ConductorAPI,
         tmp_path: Path,
     ):
-        workflow_file = tmp_path / "dict_result_workflow.py"
+        workflow_file = tmp_path / "dict_result_workflow.hy"
         workflow_file.write_text("""
-from doeff import Pure, do
+(require doeff-hy.conductor [defworkflow])
+(import doeff_conductor.dsl [artifact])
 
-@do
-def workflow():
-    return (yield Pure({"status": "ok"}))
+(defworkflow dict-result-workflow
+  :params {}
+  :roles {}
+  (artifact {"status" "ok"}))
+
+(setv WORKFLOW dict-result-workflow)
 """)
 
         handle = api.run_workflow(str(workflow_file), run_id="stable-run")
@@ -493,26 +509,26 @@ def workflow():
         api: ConductorAPI,
         tmp_path: Path,
     ):
-        workflow_file = tmp_path / "spawn_workflow.py"
+        """parallel compiles to Spawn/Gather, so the run must install a scheduler."""
+        workflow_file = tmp_path / "spawn_workflow.hy"
         workflow_file.write_text("""
-from doeff import Gather, Pure, Spawn, do
+(require doeff-hy.conductor [defworkflow parallel <-])
+(import doeff_conductor.dsl [artifact prompt ref])
 
-@do
-def child(value):
-    return (yield Pure(value))
+(defworkflow spawn-workflow
+  :params {}
+  :roles {}
+  (<- values (parallel (prompt "left") (prompt "right")))
+  (artifact (ref "values")))
 
-@do
-def workflow():
-    left = yield Spawn(child("left"))
-    right = yield Spawn(child("right"))
-    values = yield Gather(left, right)
-    return {"values": list(values)}
+(setv WORKFLOW spawn-workflow)
 """)
 
         handle = api.run_workflow(str(workflow_file), run_id="spawn-run")
 
         assert handle.id == "spawn-run"
         assert handle.status == WorkflowStatus.DONE
+        assert list(handle.result_payload) == ["left", "right"]
 
     def test_run_workflow_does_not_unwrap_non_run_result_value_objects(
         self,
@@ -520,13 +536,17 @@ def workflow():
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        workflow_file = tmp_path / "non_run_result_workflow.py"
+        workflow_file = tmp_path / "non_run_result_workflow.hy"
         workflow_file.write_text("""
-from doeff import Program, do
+(require doeff-hy.conductor [defworkflow])
+(import doeff_conductor.dsl [artifact])
 
-@do
-def workflow():
-    return Program.pure("ignored")
+(defworkflow non-run-result-workflow
+  :params {}
+  :roles {}
+  (artifact "ignored"))
+
+(setv WORKFLOW non-run-result-workflow)
 """)
 
         class NonRunResultWithValue:
