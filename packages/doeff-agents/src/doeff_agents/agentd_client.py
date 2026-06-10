@@ -60,6 +60,18 @@ class AgentdPaths:
     log_path: Path
 
 
+# RPC read-timeout contract.  The daemon BLOCKS on these methods by design:
+# `session.launch` waits for agent readiness (daemon LAUNCH_TIMEOUT_SECONDS,
+# 60s) and `session.await_result` waits up to its caller-supplied budget
+# (daemon default 600s, clamp [1, 3600]).  The client socket timeout must
+# therefore cover the daemon-side budget plus a margin — a short default
+# here silently breaks the protocol (observed live: 10s client timeout vs
+# 60s launch budget -> client disconnect, daemon Broken pipe).
+RPC_TIMEOUT_MARGIN_SECONDS: float = 15.0
+LAUNCH_RPC_TIMEOUT_SECONDS: float = 60.0 + RPC_TIMEOUT_MARGIN_SECONDS
+DEFAULT_AWAIT_BUDGET_SECONDS: float = 600.0
+
+
 class AgentdClient:
     """Synchronous client for the long-lived agent supervisor daemon."""
 
@@ -108,7 +120,11 @@ class AgentdClient:
             params["effort"] = effort
         if expected_result is not None:
             params["expected_result"] = dict(expected_result)
-        result = self.request("session.launch", params)
+        result = self.request(
+            "session.launch",
+            params,
+            read_timeout=LAUNCH_RPC_TIMEOUT_SECONDS,
+        )
         return _snapshot_from_result(result)
 
     def await_result(
@@ -120,8 +136,15 @@ class AgentdClient:
         params: dict[str, Any] = {"session_id": session_id}
         if timeout_seconds is not None:
             params["timeout_seconds"] = timeout_seconds
+        await_budget = (
+            timeout_seconds if timeout_seconds is not None else DEFAULT_AWAIT_BUDGET_SECONDS
+        )
         try:
-            result = self.request("session.await_result", params)
+            result = self.request(
+                "session.await_result",
+                params,
+                read_timeout=await_budget + RPC_TIMEOUT_MARGIN_SECONDS,
+            )
         except AgentdClientError as exc:
             if exc.error_code == RPC_ERR_AWAIT_TIMEOUT:
                 return AwaitOutcome(status=AwaitStatus.TIMED_OUT, validation_error=str(exc))
@@ -180,7 +203,13 @@ class AgentdClient:
         result = self.request("session.cleanup", {"session_id": session_id})
         return _snapshot_from_result(result)
 
-    def request(self, method: str, params: Mapping[str, Any] | None = None) -> Any:
+    def request(
+        self,
+        method: str,
+        params: Mapping[str, Any] | None = None,
+        *,
+        read_timeout: float | None = None,
+    ) -> Any:
         request = {
             "id": self._next_request_id(),
             "method": method,
@@ -188,9 +217,10 @@ class AgentdClient:
         }
         encoded = json.dumps(request, separators=(",", ":")).encode("utf-8") + b"\n"
 
+        effective_timeout = read_timeout if read_timeout is not None else self.timeout
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            if self.timeout is not None:
-                sock.settimeout(self.timeout)
+            if effective_timeout is not None:
+                sock.settimeout(effective_timeout)
             sock.connect(str(self.socket_path))
             sock.sendall(encoded)
             with sock.makefile("r", encoding="utf-8") as reader:
