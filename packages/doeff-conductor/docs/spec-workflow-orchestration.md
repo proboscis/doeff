@@ -18,7 +18,7 @@ none may reach below it:
 | Party | Surface | Never sees |
 |---|---|---|
 | **Author** — an LLM agent writing a workflow on demand | the DSL (closed vocabulary, §4); expansion/validation errors; `conductor env describe` output | effects machinery, handler stacks, interpreters, account names, substrate names, filesystem paths |
-| **Overseer** — the agent or human responsible for a run | verbs: `plan` (binding table, budget, capability check) → approve; progress views; the gate queue; `resume` | interpreter names, session internals (except via capability-gated ops escape hatches: attach/transcript/steer) |
+| **Overseer** — the agent or human responsible for a run | verbs: `plan` (binding table, budget, capability check) → approve; the supervision policy (§8.1); progress views; the gate queue; `resume` | interpreter names, session internals (except via capability-gated ops escape hatches: attach/transcript/steer) |
 | **System** — conductor runtime + environment config | everything: interpreter constants, profile registry, substrate handlers, stub scenarios, calibration state | — |
 
 Interfaces are **verb-shaped**. No author- or overseer-facing interface
@@ -153,7 +153,9 @@ capabilities satisfied".
                       :persona name} ...} ;; flat table; the only sharing mechanism
   body...)
 
-(defphase NAME body...)                   ;; progress grouping; matched against uses
+(defphase NAME [:stakes low|normal|high]  ;; progress grouping; matched against uses
+  body...)                                ;; :stakes is intrinsic metadata consumed
+                                          ;;   by the supervision policy (§8.1)
 
 (agent! :role ROLE                        ;; row in :roles
         :class CLASS                      ;; REQUIRED, always explicit, never inherited
@@ -436,6 +438,37 @@ overseers ask for outcomes (`plan`, `--dry-run`), never name interpreters.
 The closure law bounds the overseer's cognitive load: there is no "silently
 wedged" state to hunt for; every terminal is a verdict, an artifact, an
 escalation, or an open gate.
+
+### 8.1 Supervision policy — the in-the-loop dial
+
+The overseer is in the loop by default only through filtered channels:
+escalation gates (BLOCKERs, tier-1 disagreements — blocking only the
+dependent subtree), calibration samples, and failure parks. Beyond that,
+**how synchronously the overseer supervises is a run-scoped policy the
+overseer sets at plan approval** — never written in the workflow text,
+because where to pause is a trust/stakes judgment extrinsic to the task:
+
+```
+:supervision  autonomous                  ;; default: gates/escalations only
+            | (checkpoints [PhaseName …]) ;; checkpoint gates after named phases
+            | phase-checkpoints           ;; every phase boundary
+            | step                        ;; every node (debugging)
+```
+
+- A **checkpoint** is an ordinary gate, auto-inserted at the phase
+  boundary, closure-law compliant, blocking only the nodes data-dependent
+  on the phase's results. It presents the phase's **artifact summaries and
+  binding deltas — not diffs**; if adjudication requires reading a diff,
+  that is an escalation and the tier economics of §3/ADR D4 apply.
+- Checkpoint options are closure-preserving: **proceed** / **redirect**
+  (edit-and-resume, §8) / **abort**.
+- Authors may declare intrinsic `:stakes` on phases (§4.2); the policy maps
+  stakes to checkpoint defaults (e.g. `high`-stakes phases checkpoint even
+  under `autonomous` until the dial is explicitly lowered).
+- Supervision is a **trust dial**, not a quality mechanism: reviewing every
+  boundary by default would resurrect the cost problem attention tiers
+  solve. First runs of a new workflow run supervised; the dial relaxes
+  toward `autonomous` as calibration escape rates earn it.
 
 ## 9. Replay, caching, durability
 
