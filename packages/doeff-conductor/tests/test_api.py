@@ -29,7 +29,7 @@ class TestConductorAPIInit:
     """Tests for ConductorAPI initialization."""
 
     def test_init_with_default_state_dir(self):
-        """API uses XDG default state directory."""
+        """API uses default state directory."""
         api = ConductorAPI()
         assert api.state_dir.name == "doeff-conductor"
 
@@ -477,6 +477,44 @@ def workflow():
         assert handle.id == "stable-run"
         assert handle.status == WorkflowStatus.DONE
         assert handle.pr_url is None
+
+    def test_run_workflow_passes_agent_backend_to_production_handlers(
+        self,
+        api: ConductorAPI,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        workflow_file = tmp_path / "backend_result_workflow.py"
+        workflow_file.write_text("""
+from doeff import Pure, do
+
+@do
+def workflow():
+    return (yield Pure({"status": "ok"}))
+""")
+        import doeff_conductor.handlers as handlers_module
+
+        real_production_handlers = handlers_module.production_handlers
+        captured: dict[str, object] = {}
+
+        def capture_production_handlers(**kwargs: object):
+            captured.update(kwargs)
+            return real_production_handlers(**kwargs)
+
+        monkeypatch.setattr(
+            handlers_module,
+            "production_handlers",
+            capture_production_handlers,
+        )
+
+        handle = api.run_workflow(
+            str(workflow_file),
+            run_id="backend-run",
+            agent_backend="codex-exec",
+        )
+
+        assert handle.id == "backend-run"
+        assert captured["agent_backend"] == "codex-exec"
 
     def test_run_workflow_installs_scheduler_for_spawn_gather(
         self,

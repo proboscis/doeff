@@ -9,7 +9,6 @@ Provides programmatic access to conductor functionality:
 """
 
 import json
-import os
 import secrets
 import sys
 from collections.abc import Generator
@@ -19,15 +18,13 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from .handlers import AgentBackend, AgentBackendName
     from .types import Issue, WorkflowHandle, WorkflowStatus, Workspace
 
 
 def _get_state_dir() -> Path:
     """Get the state directory for conductor."""
-    xdg_state = os.environ.get(
-        "XDG_STATE_HOME", os.path.expanduser("~/.local/state")
-    )
-    return Path(xdg_state) / "doeff-conductor"
+    return Path.home() / ".local" / "state" / "doeff-conductor"
 
 
 class ConductorAPI:
@@ -49,6 +46,7 @@ class ConductorAPI:
         issue: "Issue | None" = None,
         params: dict[str, Any] | None = None,
         run_id: str | None = None,
+        agent_backend: "AgentBackendName | str | AgentBackend | None" = None,
     ) -> "WorkflowHandle":
         """Run a workflow template or file.
 
@@ -57,6 +55,7 @@ class ConductorAPI:
             issue: Issue to pass to workflow
             params: Additional parameters
             run_id: Optional caller-supplied workflow id for resume/replay runs
+            agent_backend: Optional agent execution backend strategy
 
         Returns:
             WorkflowHandle for the started workflow
@@ -151,6 +150,7 @@ class ConductorAPI:
             conductor_handler = production_handlers(
                 journal_state_dir=self.state_dir,
                 journal_run_id=workflow_id,
+                agent_backend=agent_backend,
             )
 
             result = run(scheduled(WithHandler(conductor_handler, program)))

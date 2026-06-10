@@ -1,13 +1,13 @@
 """Agent handler for doeff-conductor."""
 
 import json
-import os
 import secrets
 import shutil
 import subprocess
 from collections.abc import Callable
+from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from doeff_conductor.effects.agent import AgentEffect
@@ -17,25 +17,33 @@ if TYPE_CHECKING:
 WorkspaceResolver = Callable[["Workspace"], Path]
 
 
-class AgentHandler:
-    """Handler for schema-validated conductor agent effects."""
+class AgentBackendName(str, Enum):
+    """Built-in conductor agent backend names."""
 
-    def __init__(
+    AGENTD = "agentd"
+    CODEX_EXEC = "codex-exec"
+
+
+class AgentBackend(Protocol):
+    """Strategy object that executes conductor agent effects."""
+
+    def handle_agent(
         self,
-        workflow_id: str | None = None,
-        *,
-        workspace_resolver: WorkspaceResolver | None = None,
-    ) -> None:
-        self.workflow_id = workflow_id or secrets.token_hex(4)
-        self._workspace_resolver = workspace_resolver
+        effect: "AgentEffect",
+        workspace_resolver: WorkspaceResolver,
+    ) -> object:
+        """Handle one agent effect."""
 
-    def _resolve_workspace_path(self, workspace: "Workspace") -> Path:
-        if self._workspace_resolver is None:
-            raise ValueError("Agent workspace requires a workspace resolver")
-        return self._workspace_resolver(workspace)
 
-    def handle_agent(self, effect: "AgentEffect") -> object:
-        """Handle schema-validated Agent effect via doeff-agents."""
+class AgentdAgentBackend:
+    """Agent backend backed by doeff-agentd."""
+
+    def handle_agent(
+        self,
+        effect: "AgentEffect",
+        workspace_resolver: WorkspaceResolver,
+    ) -> object:
+        """Handle schema-validated Agent effect via doeff-agentd."""
         from doeff_agents import (
             AgentEffect as AgentsAgentEffect,
         )
@@ -47,9 +55,6 @@ class AgentHandler:
             DaemonAgentHandler,
             LazyAgentdClient,
         )
-
-        if os.environ.get("CONDUCTOR_AGENT_MODE") == "codex-exec":
-            return self._handle_codex_exec(effect)
 
         try:
             agent_type = AgentType(effect.task.agent_type)
@@ -64,7 +69,7 @@ class AgentHandler:
                     node_id=effect.task.node_id,
                     attempt=effect.task.attempt,
                     agent_type=agent_type,
-                    work_dir=self._resolve_workspace_path(effect.task.env),
+                    work_dir=workspace_resolver(effect.task.env),
                     prompt=effect.task.prompt,
                     result_schema=effect.task.result_schema,
                     model=effect.task.model,
@@ -75,20 +80,30 @@ class AgentHandler:
             )
         )
 
-    def _handle_codex_exec(self, effect: "AgentEffect") -> object:
+
+class CodexExecAgentBackend:
+    """Agent backend backed by native structured ``codex exec`` output."""
+
+    def __init__(self, *, codex_home: str | Path | None = None) -> None:
+        self.codex_home = Path(codex_home).expanduser() if codex_home else Path.home() / ".codex"
+
+    def handle_agent(
+        self,
+        effect: "AgentEffect",
+        workspace_resolver: WorkspaceResolver,
+    ) -> object:
         """Handle a Codex task through native structured ``codex exec`` output."""
         from doeff_agents.adapters.codex import trust_workspace_in_codex_home
         from doeff_agents.result_validation import validate_result_payload
 
         if effect.task.agent_type != "codex":
-            raise ValueError("CONDUCTOR_AGENT_MODE=codex-exec only supports codex tasks")
+            raise ValueError("codex-exec backend only supports codex tasks")
         codex_bin: str | None = shutil.which("codex")
         if codex_bin is None:
             raise ValueError("codex CLI is not installed")
 
-        work_dir: Path = self._resolve_workspace_path(effect.task.env)
-        codex_home: str = os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
-        trust_workspace_in_codex_home(codex_home, work_dir)
+        work_dir: Path = workspace_resolver(effect.task.env)
+        trust_workspace_in_codex_home(str(self.codex_home), work_dir)
 
         conductor_dir: Path = work_dir / ".conductor"
         schema_dir: Path = conductor_dir / "schemas"
@@ -146,6 +161,56 @@ class AgentHandler:
         return payload
 
 
+def make_agent_backend(
+    agent_backend: AgentBackendName | str | AgentBackend | None = None,
+    *,
+    codex_home: str | Path | None = None,
+) -> AgentBackend:
+    """Build the requested agent backend strategy."""
+    if agent_backend is None:
+        return AgentdAgentBackend()
+    if isinstance(agent_backend, AgentBackendName):
+        backend_name = agent_backend
+    elif isinstance(agent_backend, str):
+        try:
+            backend_name = AgentBackendName(agent_backend)
+        except ValueError as exc:
+            valid_names = ", ".join(item.value for item in AgentBackendName)
+            raise ValueError(f"unsupported agent backend: {agent_backend}; expected {valid_names}") from exc
+    else:
+        return agent_backend
+
+    factories: dict[AgentBackendName, Callable[[], AgentBackend]] = {
+        AgentBackendName.AGENTD: AgentdAgentBackend,
+        AgentBackendName.CODEX_EXEC: lambda: CodexExecAgentBackend(codex_home=codex_home),
+    }
+    return factories[backend_name]()
+
+
+class AgentHandler:
+    """Handler for schema-validated conductor agent effects."""
+
+    def __init__(
+        self,
+        workflow_id: str | None = None,
+        *,
+        workspace_resolver: WorkspaceResolver | None = None,
+        backend: AgentBackend | None = None,
+    ) -> None:
+        self.workflow_id = workflow_id or secrets.token_hex(4)
+        self._workspace_resolver = workspace_resolver
+        self._backend = backend or AgentdAgentBackend()
+
+    def _resolve_workspace_path(self, workspace: "Workspace") -> Path:
+        if self._workspace_resolver is None:
+            raise ValueError("Agent workspace requires a workspace resolver")
+        return self._workspace_resolver(workspace)
+
+    def handle_agent(self, effect: "AgentEffect") -> object:
+        """Handle schema-validated Agent effect via the injected backend."""
+        return self._backend.handle_agent(effect, self._resolve_workspace_path)
+
+
 def _codex_strict_schema(schema: dict[str, object]) -> dict[str, object]:
     """Return a Codex/OpenAI structured-output-compatible schema copy."""
     strict_schema = _codex_strict_schema_value(schema)
@@ -172,4 +237,11 @@ def _codex_strict_schema_value(value: object) -> object:
     return value
 
 
-__all__ = ["AgentHandler"]
+__all__ = [
+    "AgentBackend",
+    "AgentBackendName",
+    "AgentHandler",
+    "AgentdAgentBackend",
+    "CodexExecAgentBackend",
+    "make_agent_backend",
+]

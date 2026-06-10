@@ -10,6 +10,7 @@ Tests all CLI commands using Click's CliRunner for:
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -703,6 +704,34 @@ class TestTemplateCommands(TestCLIBase):
 
 class TestRunCommand(TestCLIBase):
     """Tests for the run command."""
+
+    def test_run_passes_agent_mode_option_to_api(
+        self,
+        runner: CliRunner,
+        tmp_state_dir: Path,
+    ):
+        """Run command passes the selected agent backend to the API."""
+        with patch("doeff_conductor.api.ConductorAPI.run_workflow") as run_workflow:
+            run_workflow.return_value = SimpleNamespace(
+                id="workflow-1",
+                template=None,
+                issue_id=None,
+            )
+
+            result = runner.invoke(
+                cli,
+                [
+                    "--state-dir",
+                    str(tmp_state_dir),
+                    "run",
+                    "basic_pr",
+                    "--agent-mode",
+                    "codex-exec",
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert run_workflow.call_args.kwargs["agent_backend"] == "codex-exec"
 
     def test_run_template_not_found(self, runner: CliRunner, tmp_state_dir: Path):
         """Run a non-existent template."""
