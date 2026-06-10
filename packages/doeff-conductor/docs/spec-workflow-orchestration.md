@@ -145,6 +145,10 @@ capabilities satisfied".
 
 ### 4.2 Grammar
 
+The grammar below IS the authoring surface: workflows are `.hy` files
+written in these macros. The Python dataclass IR the macros expand into is
+internal — never authored, never accepted by the loader.
+
 ```hy
 (defworkflow NAME
   :params {param-name schema ...}        ;; supplied at launch, schema-validated
@@ -283,8 +287,8 @@ deleted — single owner, no parallel implementations.)
 A workflow encodes one request; it is kin to a prompt, not to code
 (ADR D10). Lifecycle contract:
 
-- The author (typically an agent) writes the workflow to **any throwaway
-  location** (`/tmp`, a session directory) — never into the target
+- The author (typically an agent) writes the workflow **as a `.hy` DSL
+  file** to **any throwaway location** (`/tmp`, a session directory) — never into the target
   repository. Committing a per-request workflow is an anti-pattern: it
   rots into unowned state referencing branches/issues that no longer
   exist.
