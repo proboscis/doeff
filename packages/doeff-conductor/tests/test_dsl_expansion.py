@@ -197,6 +197,21 @@ def test_check_9_rejects_unconsumed_binding() -> None:
         workflow.expand()
 
 
+def test_check_9_allows_reference_to_declared_param() -> None:
+    workflow = valid_workflow(artifact(ref("base_ref")))
+
+    expanded = workflow.expand()
+
+    assert expanded.bindings["base_ref"].source_kind == "param"
+
+
+def test_check_9_rejects_binding_that_shadows_param() -> None:
+    workflow = valid_workflow(bind("base_ref", valid_agent()))
+
+    with pytest.raises(WorkflowExpansionError, match="duplicate binding"):
+        workflow.expand()
+
+
 def test_parallel_for_expands_static_fanout() -> None:
     workflow = valid_workflow(
         bind(
