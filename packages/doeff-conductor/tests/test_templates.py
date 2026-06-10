@@ -7,6 +7,8 @@ Tests workflow templates with mocked handlers:
 - multi_agent: issue -> parallel agents -> merge -> PR
 """
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,27 +16,16 @@ from typing import Any
 
 import pytest
 from doeff_conductor import (
+    AgentEffect,
     Commit,
     CreatePR,
     CreateWorktree,
     MergeBranches,
     Push,
     ResolveIssue,
-    RunAgent,
 )
 from doeff_conductor.handlers import mock_handlers as build_mock_handlers
 from doeff_conductor.handlers import run_sync
-from doeff_conductor.templates import (
-    TEMPLATES,
-    basic_pr,
-    enforced_pr,
-    get_available_templates,
-    get_template,
-    get_template_source,
-    is_template,
-    multi_agent,
-    reviewed_pr,
-)
 from doeff_conductor.types import (
     Issue,
     IssueStatus,
@@ -47,37 +38,67 @@ def _run_with_effect_handlers(program: Any, handlers: dict[type, Callable[[Any],
     return run_sync(program, scheduled_handlers=build_mock_handlers(overrides=handlers))
 
 
+def _templates_module() -> Any:
+    import doeff_conductor.templates as conductor_templates
+
+    return conductor_templates
+
+
+def _valid_agent_artifact(
+    effect: AgentEffect,
+    *,
+    passed: bool = True,
+    verdict: str = "PASS",
+    summary: str = "ok",
+    findings: list[str] | None = None,
+) -> dict[str, Any]:
+    properties = effect.task.result_schema.get("properties", {})
+    if "passed" in properties:
+        return {
+            "passed": passed,
+            "summary": summary,
+            "failures": [] if passed else ["test_something failed"],
+        }
+    if "verdict" in properties:
+        return {
+            "verdict": verdict,
+            "findings": [] if verdict == "PASS" else (findings or ["Missing error handling"]),
+            "summary": summary,
+        }
+    return {"summary": summary, "files_changed": []}
+
+
 class TestTemplateRegistry:
     """Tests for template registry functions."""
 
     def test_is_template_valid(self):
         """Test is_template returns True for valid templates."""
-        assert is_template("basic_pr")
-        assert is_template("enforced_pr")
-        assert is_template("reviewed_pr")
-        assert is_template("multi_agent")
+        assert _templates_module().is_template("basic_pr")
+        assert _templates_module().is_template("enforced_pr")
+        assert _templates_module().is_template("reviewed_pr")
+        assert _templates_module().is_template("multi_agent")
 
     def test_is_template_invalid(self):
         """Test is_template returns False for invalid templates."""
-        assert not is_template("nonexistent")
-        assert not is_template("")
-        assert not is_template("Basic_PR")  # Case sensitive
+        assert not _templates_module().is_template("nonexistent")
+        assert not _templates_module().is_template("")
+        assert not _templates_module().is_template("Basic_PR")  # Case sensitive
 
     def test_get_template_valid(self):
         """Test get_template returns callable for valid templates."""
-        func = get_template("basic_pr")
+        func = _templates_module().get_template("basic_pr")
         assert callable(func)
-        assert func is basic_pr
+        assert func is _templates_module().basic_pr
 
     def test_get_template_invalid(self):
         """Test get_template raises KeyError for invalid templates."""
         with pytest.raises(KeyError) as exc_info:
-            get_template("nonexistent")
+            _templates_module().get_template("nonexistent")
         assert "nonexistent" in str(exc_info.value)
 
     def test_get_available_templates(self):
         """Test get_available_templates returns all templates."""
-        templates = get_available_templates()
+        templates = _templates_module().get_available_templates()
         assert isinstance(templates, dict)
         assert "basic_pr" in templates
         assert "enforced_pr" in templates
@@ -98,7 +119,7 @@ class TestTemplateRegistry:
         source: str | None = None
         source_error: TypeError | None = None
         try:
-            source = get_template_source("basic_pr")
+            source = _templates_module().get_template_source("basic_pr")
         except TypeError as exc:
             source_error = exc
 
@@ -114,12 +135,12 @@ class TestTemplateRegistry:
     def test_get_template_source_invalid(self):
         """Test get_template_source raises KeyError for invalid templates."""
         with pytest.raises(KeyError):
-            get_template_source("nonexistent")
+            _templates_module().get_template_source("nonexistent")
 
     def test_templates_registry_structure(self):
         """Test TEMPLATES registry has correct structure."""
-        assert isinstance(TEMPLATES, dict)
-        for _name, (func, desc) in TEMPLATES.items():
+        assert isinstance(_templates_module().TEMPLATES, dict)
+        for _name, (func, desc) in _templates_module().TEMPLATES.items():
             assert callable(func)
             assert isinstance(desc, str)
 
@@ -181,9 +202,8 @@ class MockHandlerFixtures:
         def handle_merge_branches(effect: MergeBranches) -> WorktreeEnv:
             return mock_worktree_env
 
-        def handle_run_agent(effect: RunAgent) -> str:
-            # Simulate passing tests by default
-            return "All tests passed successfully"
+        def handle_agent(effect: AgentEffect) -> dict[str, Any]:
+            return _valid_agent_artifact(effect, summary="All tests passed successfully")
 
         def handle_commit(effect: Commit) -> str:
             return "abc123def456789012345678901234567890"
@@ -208,7 +228,7 @@ class MockHandlerFixtures:
         return {
             CreateWorktree: handle_create_worktree,
             MergeBranches: handle_merge_branches,
-            RunAgent: handle_run_agent,
+            AgentEffect: handle_agent,
             Commit: handle_commit,
             Push: handle_push,
             CreatePR: handle_create_pr,
@@ -221,13 +241,15 @@ class TestBasicPRTemplate(MockHandlerFixtures):
 
     def test_template_structure(self):
         """Verify basic_pr is a valid @do workflow."""
-        assert callable(basic_pr)
+        assert callable(_templates_module().basic_pr)
         # Should have __wrapped__ from @do decorator
-        assert hasattr(basic_pr, "__wrapped__") or callable(basic_pr)
+        assert hasattr(_templates_module().basic_pr, "__wrapped__") or callable(
+            _templates_module().basic_pr
+        )
 
     def test_template_returns_program(self, mock_issue: Issue):
         """Test that basic_pr returns a Program."""
-        program = basic_pr(mock_issue)
+        program = _templates_module().basic_pr(mock_issue)
         assert program is not None
 
     def test_template_with_mock_handlers(
@@ -237,7 +259,7 @@ class TestBasicPRTemplate(MockHandlerFixtures):
         mock_pr: PRHandle,
     ):
         """Run basic_pr template with mocked effects."""
-        result = _run_with_effect_handlers(basic_pr(mock_issue), mock_handlers)
+        result = _run_with_effect_handlers(_templates_module().basic_pr(mock_issue), mock_handlers)
 
         assert result.is_ok()
         pr = result.value
@@ -259,9 +281,9 @@ class TestBasicPRTemplate(MockHandlerFixtures):
                 created_at=datetime.now(timezone.utc),
             )
 
-        def handle_run_agent(effect: RunAgent) -> str:
-            calls.append("run_agent")
-            return "ok"
+        def handle_agent(effect: AgentEffect) -> dict[str, Any]:
+            calls.append("agent")
+            return _valid_agent_artifact(effect)
 
         def handle_commit(effect: Commit) -> str:
             calls.append("commit")
@@ -296,17 +318,17 @@ class TestBasicPRTemplate(MockHandlerFixtures):
 
         handlers = {
             CreateWorktree: handle_create_worktree,
-            RunAgent: handle_run_agent,
+            AgentEffect: handle_agent,
             Commit: handle_commit,
             Push: handle_push,
             CreatePR: handle_create_pr,
             ResolveIssue: handle_resolve_issue,
         }
-        result = _run_with_effect_handlers(basic_pr(mock_issue), handlers)
+        result = _run_with_effect_handlers(_templates_module().basic_pr(mock_issue), handlers)
         assert result.is_ok()
         assert calls == [
             "create_worktree",
-            "run_agent",
+            "agent",
             "commit",
             "push",
             "create_pr",
@@ -319,11 +341,11 @@ class TestEnforcedPRTemplate(MockHandlerFixtures):
 
     def test_template_structure(self):
         """Verify enforced_pr is a valid @do workflow."""
-        assert callable(enforced_pr)
+        assert callable(_templates_module().enforced_pr)
 
     def test_template_returns_program(self, mock_issue: Issue):
         """Test that enforced_pr returns a Program."""
-        program = enforced_pr(mock_issue)
+        program = _templates_module().enforced_pr(mock_issue)
         assert program is not None
 
     def test_template_with_mock_handlers_passing_tests(
@@ -332,7 +354,9 @@ class TestEnforcedPRTemplate(MockHandlerFixtures):
         mock_handlers: dict,
     ):
         """Run enforced_pr with tests that pass on first try."""
-        result = _run_with_effect_handlers(enforced_pr(mock_issue), mock_handlers)
+        result = _run_with_effect_handlers(
+            _templates_module().enforced_pr(mock_issue), mock_handlers
+        )
         assert result.is_ok()
 
     def test_template_with_failing_tests(
@@ -344,14 +368,15 @@ class TestEnforcedPRTemplate(MockHandlerFixtures):
         """Test enforced_pr handles test failures correctly."""
         test_call_count = [0]
 
-        def handle_run_agent(effect: RunAgent) -> str:
-            test_call_count[0] += 1
-            # First call is implementation, second is test (fails), third is fix, fourth is test (passes)
-            if test_call_count[0] == 2:
-                return "FAILED: test_something - AssertionError"
-            if test_call_count[0] == 4:
-                return "All tests passed successfully"
-            return "Implementation complete"
+        def handle_agent(effect: AgentEffect) -> dict[str, Any]:
+            if effect.task.node_id == "test":
+                test_call_count[0] += 1
+                return _valid_agent_artifact(
+                    effect,
+                    passed=test_call_count[0] > 1,
+                    summary="test run",
+                )
+            return _valid_agent_artifact(effect, summary="Implementation complete")
 
         def handle_create_worktree(e):
             return mock_worktree_env
@@ -375,14 +400,14 @@ class TestEnforcedPRTemplate(MockHandlerFixtures):
 
         handlers = {
             CreateWorktree: handle_create_worktree,
-            RunAgent: handle_run_agent,
+            AgentEffect: handle_agent,
             Commit: handle_commit,
             Push: handle_push,
             CreatePR: handle_create_pr,
             ResolveIssue: handle_resolve_issue,
         }
 
-        result = _run_with_effect_handlers(enforced_pr(mock_issue), handlers)
+        result = _run_with_effect_handlers(_templates_module().enforced_pr(mock_issue), handlers)
         assert result.is_ok()
 
     def test_template_fails_after_max_retries(
@@ -392,32 +417,33 @@ class TestEnforcedPRTemplate(MockHandlerFixtures):
     ):
         """Test enforced_pr raises error after max retries."""
 
-        def handle_run_agent(effect: RunAgent) -> str:
-            # Always fail tests
-            if "test" in effect.prompt.lower():
-                return "FAILED: test_something - AssertionError"
-            return "Implementation complete"
+        def handle_agent(effect: AgentEffect) -> dict[str, Any]:
+            if effect.task.node_id == "test":
+                return _valid_agent_artifact(effect, passed=False, summary="tests failed")
+            return _valid_agent_artifact(effect, summary="Implementation complete")
 
         def handle_create_worktree(e):
             return mock_worktree_env
 
         handlers = {
             CreateWorktree: handle_create_worktree,
-            RunAgent: handle_run_agent,
+            AgentEffect: handle_agent,
         }
 
-        result = _run_with_effect_handlers(enforced_pr(mock_issue, max_retries=2), handlers)
+        result = _run_with_effect_handlers(
+            _templates_module().enforced_pr(mock_issue, max_retries=2), handlers
+        )
         # Should fail with RuntimeError after max retries
         assert result.is_err()
 
     def test_custom_max_retries(self, mock_issue: Issue):
         """Test enforced_pr respects max_retries parameter."""
-        program = enforced_pr(mock_issue, max_retries=5)
+        program = _templates_module().enforced_pr(mock_issue, max_retries=5)
         assert program is not None
 
     def test_custom_test_command(self, mock_issue: Issue):
         """Test enforced_pr respects test_command parameter."""
-        program = enforced_pr(mock_issue, test_command="npm test")
+        program = _templates_module().enforced_pr(mock_issue, test_command="npm test")
         assert program is not None
 
 
@@ -426,11 +452,11 @@ class TestReviewedPRTemplate(MockHandlerFixtures):
 
     def test_template_structure(self):
         """Verify reviewed_pr is a valid @do workflow."""
-        assert callable(reviewed_pr)
+        assert callable(_templates_module().reviewed_pr)
 
     def test_template_returns_program(self, mock_issue: Issue):
         """Test that reviewed_pr returns a Program."""
-        program = reviewed_pr(mock_issue)
+        program = _templates_module().reviewed_pr(mock_issue)
         assert program is not None
 
     def test_template_with_mock_handlers_approved(
@@ -441,10 +467,14 @@ class TestReviewedPRTemplate(MockHandlerFixtures):
     ):
         """Run reviewed_pr with review that approves on first try."""
 
-        def handle_run_agent(effect: RunAgent) -> str:
-            if effect.name == "reviewer":
-                return "APPROVED - Code looks good, well tested"
-            return "Implementation complete"
+        def handle_agent(effect: AgentEffect) -> dict[str, Any]:
+            if effect.task.node_id == "review":
+                return _valid_agent_artifact(
+                    effect,
+                    verdict="PASS",
+                    summary="Code looks good, well tested",
+                )
+            return _valid_agent_artifact(effect, summary="Implementation complete")
 
         def handle_create_worktree(e):
             return mock_worktree_env
@@ -468,14 +498,14 @@ class TestReviewedPRTemplate(MockHandlerFixtures):
 
         handlers = {
             CreateWorktree: handle_create_worktree,
-            RunAgent: handle_run_agent,
+            AgentEffect: handle_agent,
             Commit: handle_commit,
             Push: handle_push,
             CreatePR: handle_create_pr,
             ResolveIssue: handle_resolve_issue,
         }
 
-        result = _run_with_effect_handlers(reviewed_pr(mock_issue), handlers)
+        result = _run_with_effect_handlers(_templates_module().reviewed_pr(mock_issue), handlers)
         assert result.is_ok()
 
     def test_template_with_review_feedback(
@@ -487,13 +517,22 @@ class TestReviewedPRTemplate(MockHandlerFixtures):
         """Test reviewed_pr handles review feedback correctly."""
         review_count = [0]
 
-        def handle_run_agent(effect: RunAgent) -> str:
-            if effect.name == "reviewer":
+        def handle_agent(effect: AgentEffect) -> dict[str, Any]:
+            if effect.task.node_id == "review":
                 review_count[0] += 1
                 if review_count[0] == 1:
-                    return "Issues found: Missing error handling"
-                return "APPROVED - Issues addressed"
-            return "Implementation complete"
+                    return _valid_agent_artifact(
+                        effect,
+                        verdict="CHANGES_REQUESTED",
+                        summary="Issues found",
+                        findings=["Missing error handling"],
+                    )
+                return _valid_agent_artifact(
+                    effect,
+                    verdict="PASS",
+                    summary="Issues addressed",
+                )
+            return _valid_agent_artifact(effect, summary="Implementation complete")
 
         def handle_create_worktree(e):
             return mock_worktree_env
@@ -517,19 +556,19 @@ class TestReviewedPRTemplate(MockHandlerFixtures):
 
         handlers = {
             CreateWorktree: handle_create_worktree,
-            RunAgent: handle_run_agent,
+            AgentEffect: handle_agent,
             Commit: handle_commit,
             Push: handle_push,
             CreatePR: handle_create_pr,
             ResolveIssue: handle_resolve_issue,
         }
 
-        result = _run_with_effect_handlers(reviewed_pr(mock_issue), handlers)
+        result = _run_with_effect_handlers(_templates_module().reviewed_pr(mock_issue), handlers)
         assert result.is_ok()
 
     def test_custom_max_reviews(self, mock_issue: Issue):
         """Test reviewed_pr respects max_reviews parameter."""
-        program = reviewed_pr(mock_issue, max_reviews=5)
+        program = _templates_module().reviewed_pr(mock_issue, max_reviews=5)
         assert program is not None
 
 
@@ -538,11 +577,11 @@ class TestMultiAgentTemplate(MockHandlerFixtures):
 
     def test_template_structure(self):
         """Verify multi_agent is a valid @do workflow."""
-        assert callable(multi_agent)
+        assert callable(_templates_module().multi_agent)
 
     def test_template_returns_program(self, mock_issue: Issue):
         """Test that multi_agent returns a Program."""
-        program = multi_agent(mock_issue)
+        program = _templates_module().multi_agent(mock_issue)
         assert program is not None
 
     def test_multi_agent_effects_include_spawn_and_gather(self, mock_issue: Issue):
@@ -571,9 +610,9 @@ class TestMultiAgentTemplate(MockHandlerFixtures):
                 created_at=datetime.now(timezone.utc),
             )
 
-        def handle_run_agent(effect: RunAgent) -> str:
-            calls.append(f"run_agent:{effect.name}")
-            return "ok"
+        def handle_agent(effect: AgentEffect) -> dict[str, Any]:
+            calls.append(f"agent:{effect.task.node_id}")
+            return _valid_agent_artifact(effect)
 
         def handle_commit(effect: Commit) -> str:
             calls.append("commit")
@@ -609,14 +648,14 @@ class TestMultiAgentTemplate(MockHandlerFixtures):
         handlers = {
             CreateWorktree: handle_create_worktree,
             MergeBranches: handle_merge_branches,
-            RunAgent: handle_run_agent,
+            AgentEffect: handle_agent,
             Commit: handle_commit,
             Push: handle_push,
             CreatePR: handle_create_pr,
             ResolveIssue: handle_resolve_issue,
         }
 
-        result = _run_with_effect_handlers(multi_agent(mock_issue), handlers)
+        result = _run_with_effect_handlers(_templates_module().multi_agent(mock_issue), handlers)
         assert result.is_ok()
         assert calls.count("create_pr") == 1
         assert calls.count("merge_branches") == 1
@@ -639,8 +678,8 @@ class TestMultiAgentTemplate(MockHandlerFixtures):
         def handle_merge_branches(e):
             return mock_worktree_env
 
-        def handle_run_agent(e):
-            return "Done"
+        def handle_agent(e):
+            return _valid_agent_artifact(e, summary="Done")
 
         def handle_commit(e):
             return "abc123"
@@ -662,14 +701,14 @@ class TestMultiAgentTemplate(MockHandlerFixtures):
         handlers = {
             CreateWorktree: handle_create_worktree,
             MergeBranches: handle_merge_branches,
-            RunAgent: handle_run_agent,
+            AgentEffect: handle_agent,
             Commit: handle_commit,
             Push: handle_push,
             CreatePR: handle_create_pr,
             ResolveIssue: handle_resolve_issue,
         }
 
-        result = _run_with_effect_handlers(multi_agent(mock_issue), handlers)
+        result = _run_with_effect_handlers(_templates_module().multi_agent(mock_issue), handlers)
         assert result.is_ok()
 
 
@@ -678,26 +717,32 @@ class TestTemplateDocumentation:
 
     def test_basic_pr_docstring(self):
         """Verify basic_pr has a docstring."""
-        assert basic_pr.__doc__ is not None
-        assert "issue" in basic_pr.__doc__.lower()
-        assert "agent" in basic_pr.__doc__.lower()
-        assert "pr" in basic_pr.__doc__.lower()
+        assert _templates_module().basic_pr.__doc__ is not None
+        assert "issue" in _templates_module().basic_pr.__doc__.lower()
+        assert "agent" in _templates_module().basic_pr.__doc__.lower()
+        assert "pr" in _templates_module().basic_pr.__doc__.lower()
 
     def test_enforced_pr_docstring(self):
         """Verify enforced_pr has a docstring."""
-        assert enforced_pr.__doc__ is not None
-        assert "test" in enforced_pr.__doc__.lower()
-        assert "retry" in enforced_pr.__doc__.lower() or "retries" in enforced_pr.__doc__.lower()
+        assert _templates_module().enforced_pr.__doc__ is not None
+        assert "test" in _templates_module().enforced_pr.__doc__.lower()
+        assert (
+            "retry" in _templates_module().enforced_pr.__doc__.lower()
+            or "retries" in _templates_module().enforced_pr.__doc__.lower()
+        )
 
     def test_reviewed_pr_docstring(self):
         """Verify reviewed_pr has a docstring."""
-        assert reviewed_pr.__doc__ is not None
-        assert "review" in reviewed_pr.__doc__.lower()
+        assert _templates_module().reviewed_pr.__doc__ is not None
+        assert "review" in _templates_module().reviewed_pr.__doc__.lower()
 
     def test_multi_agent_docstring(self):
         """Verify multi_agent has a docstring."""
-        assert multi_agent.__doc__ is not None
-        assert "parallel" in multi_agent.__doc__.lower() or "multi" in multi_agent.__doc__.lower()
+        assert _templates_module().multi_agent.__doc__ is not None
+        assert (
+            "parallel" in _templates_module().multi_agent.__doc__.lower()
+            or "multi" in _templates_module().multi_agent.__doc__.lower()
+        )
 
 
 class TestTemplateErrorHandling(MockHandlerFixtures):
@@ -717,7 +762,7 @@ class TestTemplateErrorHandling(MockHandlerFixtures):
             CreateWorktree: handle_create_worktree,
         }
 
-        result = _run_with_effect_handlers(basic_pr(mock_issue), handlers)
+        result = _run_with_effect_handlers(_templates_module().basic_pr(mock_issue), handlers)
         assert result.is_err()
 
     def test_basic_pr_propagates_agent_error(
@@ -731,15 +776,15 @@ class TestTemplateErrorHandling(MockHandlerFixtures):
         def handle_create_worktree(e):
             return mock_worktree_env
 
-        def handle_run_agent(e):
+        def handle_agent(e):
             raise AgentError(operation="run", message="Agent crashed")
 
         handlers = {
             CreateWorktree: handle_create_worktree,
-            RunAgent: handle_run_agent,
+            AgentEffect: handle_agent,
         }
 
-        result = _run_with_effect_handlers(basic_pr(mock_issue), handlers)
+        result = _run_with_effect_handlers(_templates_module().basic_pr(mock_issue), handlers)
         assert result.is_err()
 
     def test_basic_pr_propagates_pr_error(
@@ -753,8 +798,8 @@ class TestTemplateErrorHandling(MockHandlerFixtures):
         def handle_create_worktree(e):
             return mock_worktree_env
 
-        def handle_run_agent(e):
-            return "Done"
+        def handle_agent(e):
+            return _valid_agent_artifact(e, summary="Done")
 
         def handle_commit(e):
             return "abc123"
@@ -767,11 +812,11 @@ class TestTemplateErrorHandling(MockHandlerFixtures):
 
         handlers = {
             CreateWorktree: handle_create_worktree,
-            RunAgent: handle_run_agent,
+            AgentEffect: handle_agent,
             Commit: handle_commit,
             Push: handle_push,
             CreatePR: handle_create_pr,
         }
 
-        result = _run_with_effect_handlers(basic_pr(mock_issue), handlers)
+        result = _run_with_effect_handlers(_templates_module().basic_pr(mock_issue), handlers)
         assert result.is_err()

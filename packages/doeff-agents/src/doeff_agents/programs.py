@@ -69,13 +69,12 @@ def _launch_from_config(
 class AgentResult:
     """Result from running an agent to completion.
 
-    Contains the final observation, captured output, and any PR URL detected.
+    Contains the final observation and captured output.
     """
 
     handle: SessionHandle
     final_status: SessionStatus
     output: str
-    pr_url: str | None = None
     iterations: int = 0
 
     @property
@@ -195,7 +194,6 @@ def monitor_agent_to_completion(
     a session. It owns the monitor-capture-stop sequence so higher-level
     orchestrators do not need to duplicate tmux cleanup rules.
     """
-    pr_url: str | None = None
     iteration = 0
     final_observation: Observation | None = None
 
@@ -205,9 +203,6 @@ def monitor_agent_to_completion(
 
             if on_observation:
                 on_observation(observation)
-
-            if observation.pr_url:
-                pr_url = observation.pr_url
 
             if observation.is_terminal:
                 final_observation = observation
@@ -230,7 +225,6 @@ def monitor_agent_to_completion(
                 else SessionStatus.EXITED
             ),
             output=output,
-            pr_url=pr_url,
             iterations=iteration,
         )
 
@@ -463,16 +457,12 @@ def interactive_session(
         lifecycle=AgentSessionLifecycle.INTERACTIVE,
     )
 
-    pr_url: str | None = None
     message_index = 0
     iteration = 0
 
     try:
         while True:
             observation: Observation = yield Monitor(handle)
-
-            if observation.pr_url:
-                pr_url = observation.pr_url
 
             if observation.is_terminal:
                 break
@@ -494,7 +484,6 @@ def interactive_session(
             handle=handle,
             final_status=observation.status,
             output=output,
-            pr_url=pr_url,
             iterations=iteration,
         )
 

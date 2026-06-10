@@ -12,7 +12,17 @@ A workflow with parallel agents:
 """
 
 from doeff import EffectGenerator, Gather, Spawn, do
+
 from ..types import Issue, PRHandle, WorktreeEnv
+
+ARTIFACT_SCHEMA = {
+    "type": "object",
+    "required": ["summary"],
+    "properties": {
+        "summary": {"type": "string"},
+        "files_changed": {"type": "array", "items": {"type": "string"}},
+    },
+}
 
 
 # Helper functions to wrap effects as Programs for Spawn
@@ -24,10 +34,27 @@ def _create_worktree(issue: Issue, suffix: str) -> EffectGenerator[WorktreeEnv]:
 
 
 @do
-def _run_agent(env: WorktreeEnv, prompt: str, name: str) -> EffectGenerator[str]:
+def _run_agent(
+    issue: Issue,
+    env: WorktreeEnv,
+    prompt: str,
+    node_id: str,
+) -> EffectGenerator[dict]:
     """Run an agent (wrapper for Spawn compatibility)."""
-    from ..effects import RunAgent
-    return (yield RunAgent(env=env, prompt=prompt, name=name))
+    from ..effects import Agent, AgentTask
+    return (
+        yield Agent(
+            AgentTask(
+                run_id=issue.id,
+                node_id=node_id,
+                attempt=0,
+                env=env,
+                prompt=prompt,
+                result_schema=ARTIFACT_SCHEMA,
+                verification_class="test-verifiable",
+            )
+        )
+    )
 
 
 @do
@@ -48,12 +75,13 @@ def multi_agent(issue: Issue) -> EffectGenerator[PRHandle]:
         PRHandle for the created PR
     """
     from ..effects import (
+        Agent,
+        AgentTask,
         Commit,
         CreatePR,
         MergeBranches,
         Push,
         ResolveIssue,
-        RunAgent,
     )
 
     # Step 1: Create parallel worktrees (spawn to get futures, then gather)
@@ -88,8 +116,8 @@ Focus on writing comprehensive tests:
 Do NOT implement the feature - just write the tests.
 """
 
-    impl_agent_task = yield Spawn(_run_agent(impl_env, impl_prompt, "implementer"))
-    test_agent_task = yield Spawn(_run_agent(test_env, test_prompt, "tester"))
+    impl_agent_task = yield Spawn(_run_agent(issue, impl_env, impl_prompt, "implementer"))
+    test_agent_task = yield Spawn(_run_agent(issue, test_env, test_prompt, "tester"))
     yield Gather(impl_agent_task, test_agent_task)
 
     # Step 3: Commit changes in parallel environments
@@ -115,7 +143,17 @@ Check that:
 
 If any fixes are needed, make them now.
 """
-    yield RunAgent(env=merged_env, prompt=review_prompt, name="reviewer")
+    yield Agent(
+        AgentTask(
+            run_id=issue.id,
+            node_id="reviewer",
+            attempt=0,
+            env=merged_env,
+            prompt=review_prompt,
+            result_schema=ARTIFACT_SCHEMA,
+            verification_class="review",
+        )
+    )
 
     # Step 6: Final commit and push
     yield Commit(env=merged_env, message=f"chore: finalize {issue.title}")

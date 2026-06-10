@@ -107,7 +107,7 @@ class TestFullIntegration:
         handle = _run_full_stack(program(), backend)
         assert isinstance(handle, SessionHandle)
         assert handle.session_name == "integ-test"
-        assert handle.agent_type == AgentType.CLAUDE
+        assert not hasattr(handle, "agent_type")
         assert backend.has_session("integ-test")
         # Verify trust file was written (~/.claude.json)
         assert len(backend.sent_keys) >= 1

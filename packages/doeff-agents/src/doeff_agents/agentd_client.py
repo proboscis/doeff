@@ -14,11 +14,24 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from doeff_agents.effects import AgentSessionLifecycle, AgentSessionQuery, AgentSessionSnapshot
+from doeff_agents.effects import (
+    AgentSessionLifecycle,
+    AgentSessionQuery,
+    AgentSessionSnapshot,
+    AwaitOutcome,
+    AwaitStatus,
+)
+
+RPC_ERR_AWAIT_TIMEOUT = -32000
+RPC_ERR_NO_SUCH_SESSION = -32001
 
 
 class AgentdClientError(RuntimeError):
     """Base error raised by the doeff-agentd client."""
+
+    def __init__(self, message: str, *, error_code: int | None = None) -> None:
+        self.error_code = error_code
+        super().__init__(message)
 
 
 class AgentdProtocolError(AgentdClientError):
@@ -56,23 +69,53 @@ class AgentdClient:
         session_name: str,
         agent_type: str,
         work_dir: Path,
-        command: str,
+        command: str | None = None,
+        prompt: str | None = None,
+        model: str | None = None,
+        effort: str | None = None,
         lifecycle: AgentSessionLifecycle | str = AgentSessionLifecycle.RUN_TO_COMPLETION,
         session_env: Mapping[str, str] | None = None,
+        expected_result: Mapping[str, Any] | None = None,
     ) -> AgentSessionSnapshot:
-        result = self.request(
-            "session.launch",
-            {
-                "session_id": session_id,
-                "session_name": session_name,
-                "agent_type": agent_type,
-                "work_dir": str(work_dir),
-                "command": command,
-                "lifecycle": _lifecycle_value(lifecycle),
-                "session_env": dict(session_env or {}),
-            },
-        )
+        params: dict[str, Any] = {
+            "session_id": session_id,
+            "session_name": session_name,
+            "agent_type": agent_type,
+            "work_dir": str(work_dir),
+            "lifecycle": _lifecycle_value(lifecycle),
+            "session_env": dict(session_env or {}),
+        }
+        if command is not None:
+            params["command"] = command
+        if prompt is not None:
+            params["prompt"] = prompt
+        if model is not None:
+            params["model"] = model
+        if effort is not None:
+            params["effort"] = effort
+        if expected_result is not None:
+            params["expected_result"] = dict(expected_result)
+        result = self.request("session.launch", params)
         return _snapshot_from_result(result)
+
+    def await_result(
+        self,
+        session_id: str,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> AwaitOutcome:
+        params: dict[str, Any] = {"session_id": session_id}
+        if timeout_seconds is not None:
+            params["timeout_seconds"] = timeout_seconds
+        try:
+            result = self.request("session.await_result", params)
+        except AgentdClientError as exc:
+            if exc.error_code == RPC_ERR_AWAIT_TIMEOUT:
+                return AwaitOutcome(status=AwaitStatus.TIMED_OUT, validation_error=str(exc))
+            raise
+        if not isinstance(result, Mapping):
+            raise AgentdProtocolError("session.await_result returned a non-object result")
+        return _await_outcome_from_result(result)
 
     def get_session(self, session_id: str) -> AgentSessionSnapshot | None:
         result = self.request("session.get", {"session_id": session_id})
@@ -151,7 +194,10 @@ class AgentdClient:
             error = response.get("error")
             if not isinstance(error, str) or not error:
                 error = "doeff-agentd request failed"
-            raise AgentdClientError(error)
+            error_code = response.get("error_code")
+            if error_code is not None and not isinstance(error_code, int):
+                raise AgentdProtocolError("doeff-agentd error_code was not an integer")
+            raise AgentdClientError(error, error_code=error_code)
         return response.get("result")
 
     def _next_request_id(self) -> int:
@@ -205,9 +251,13 @@ class LazyAgentdClient:
         session_name: str,
         agent_type: str,
         work_dir: Path,
-        command: str,
+        command: str | None = None,
+        prompt: str | None = None,
+        model: str | None = None,
+        effort: str | None = None,
         lifecycle: AgentSessionLifecycle | str = AgentSessionLifecycle.RUN_TO_COMPLETION,
         session_env: Mapping[str, str] | None = None,
+        expected_result: Mapping[str, Any] | None = None,
     ) -> AgentSessionSnapshot:
         return self._resolve().launch_session(
             session_id=session_id,
@@ -215,9 +265,21 @@ class LazyAgentdClient:
             agent_type=agent_type,
             work_dir=work_dir,
             command=command,
+            prompt=prompt,
+            model=model,
+            effort=effort,
             lifecycle=lifecycle,
             session_env=session_env,
+            expected_result=expected_result,
         )
+
+    def await_result(
+        self,
+        session_id: str,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> AwaitOutcome:
+        return self._resolve().await_result(session_id, timeout_seconds=timeout_seconds)
 
     def get_session(self, session_id: str) -> AgentSessionSnapshot | None:
         return self._resolve().get_session(session_id)
@@ -409,7 +471,36 @@ def _snapshot_from_result(result: Any) -> AgentSessionSnapshot:
     return AgentSessionSnapshot.from_dict(dict(result))
 
 
+def _await_outcome_from_result(result: Mapping[str, Any]) -> AwaitOutcome:
+    session = result.get("session")
+    status = "exited"
+    if isinstance(session, Mapping):
+        status = str(session.get("status", "exited"))
+    validation_error = result.get("validation_error")
+    if validation_error is not None and not isinstance(validation_error, str):
+        raise AgentdProtocolError("session.await_result validation_error was not a string")
+
+    if status in ("blocked", "blocked_api"):
+        return AwaitOutcome(
+            status=AwaitStatus.AWAITING_INPUT,
+            validation_error=validation_error or status,
+        )
+
+    payload = None
+    response_result = result.get("result")
+    if isinstance(response_result, Mapping):
+        payload = response_result.get("payload")
+
+    return AwaitOutcome(
+        status=AwaitStatus.EXITED,
+        result=payload,
+        validation_error=validation_error,
+    )
+
+
 __all__ = [
+    "RPC_ERR_AWAIT_TIMEOUT",
+    "RPC_ERR_NO_SUCH_SESSION",
     "AgentdClient",
     "AgentdClientError",
     "AgentdPaths",

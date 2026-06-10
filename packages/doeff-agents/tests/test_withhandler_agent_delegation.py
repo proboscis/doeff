@@ -42,12 +42,7 @@ def _build_config(*, agent_type: AgentType = AgentType.CLAUDE) -> LaunchConfig:
 
 
 def _session_handle(session_name: str, agent_type: AgentType) -> SessionHandle:
-    return SessionHandle(
-        session_name=session_name,
-        pane_id=f"%{session_name}",
-        agent_type=agent_type,
-        work_dir=Path.cwd(),
-    )
+    return SessionHandle(session_id=session_name)
 
 
 @do
@@ -319,7 +314,7 @@ def test_withhandler_fallback_when_primary_agent_unavailable() -> None:
 
     assert result.final_status == SessionStatus.DONE
     assert result.output == "fallback output"
-    assert result.handle.agent_type == AgentType.CODEX
+    assert not hasattr(result.handle, "agent_type")
     assert primary_attempts == [AgentType.CLAUDE]
     assert fallback_state["launches"] == ["fallback-agent"]
     assert fallback_state["stops"] == ["fallback-agent"]

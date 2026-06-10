@@ -124,8 +124,7 @@ class ConductorAPI:
             self._save_workflow(handle)
 
             # Execute the workflow
-            from doeff import Effect, Pass, default_handlers, do, run
-            from doeff_vm import RunResult as VmRunResult
+            from doeff import Effect, Pass, WithHandler, do, run
 
             # Build kwargs
             kwargs = params or {}
@@ -150,6 +149,7 @@ class ConductorAPI:
             git_handler = GitHandler()
 
             from .effects import (
+                AgentEffect,
                 CaptureOutput,
                 Commit,
                 CreateIssue,
@@ -176,6 +176,7 @@ class ConductorAPI:
                 (ListIssues, make_scheduled_handler(issue_handler.handle_list_issues)),
                 (GetIssue, make_scheduled_handler(issue_handler.handle_get_issue)),
                 (ResolveIssue, make_scheduled_handler(issue_handler.handle_resolve_issue)),
+                (AgentEffect, make_scheduled_handler(agent_handler.handle_agent)),
                 (RunAgent, make_scheduled_handler(agent_handler.handle_run_agent)),
                 (SpawnAgent, make_scheduled_handler(agent_handler.handle_spawn_agent)),
                 (SendMessage, make_scheduled_handler(agent_handler.handle_send_message)),
@@ -192,13 +193,10 @@ class ConductorAPI:
                 for effect_type, effect_handler in handlers:
                     if isinstance(effect, effect_type):
                         return (yield effect_handler(effect, k))
-                yield Pass()
+                yield Pass(effect, k)
 
-            result = run(
-                program,
-                handlers=[conductor_handler, *default_handlers()],
-            )
-            result_value = result.value if isinstance(result, VmRunResult) else result
+            result = run(WithHandler(conductor_handler, program))
+            result_value = result.value if result.__class__.__name__ == "RunResult" else result
 
             # Update workflow status
             handle = WorkflowHandle(

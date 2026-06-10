@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import json
+import shutil
+import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
-from doeff import do
-
+from doeff_agents.result_validation import validate_result_payload
 from doeff_conductor import CreateWorktree
-from doeff_conductor.effects import Agent, AgentAttemptExhaustedError, AgentTask
+from doeff_conductor.effects import Agent, AgentAttemptExhaustedError, AgentEffect, AgentTask
 from doeff_conductor.handlers import run_sync
 from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
 
+from doeff import do
 
 IMPLEMENT_SCHEMA = {
     "type": "object",
@@ -36,6 +40,49 @@ REVIEW_SCHEMA = {
 
 def _run(program, runtime: MockConductorRuntime):
     return run_sync(program, scheduled_handlers=mock_handlers(runtime=runtime))
+
+
+def _run_real_codex_agent(effect: AgentEffect, tmp_path: Path) -> dict[str, Any]:
+    codex_bin = shutil.which("codex")
+    if codex_bin is None:
+        pytest.skip("codex CLI is not installed")
+
+    schema_path = tmp_path / "codex-agent.schema.json"
+    output_path = tmp_path / "codex-agent-output.json"
+    schema_path.write_text(json.dumps(effect.task.result_schema), encoding="utf-8")
+    prompt = (
+        "You are a schema-constrained integration test worker. "
+        "Return a JSON object with summary='codex schema ok' and files_changed=[] only. "
+        "Do not inspect files and do not include Markdown."
+    )
+
+    completed = subprocess.run(
+        [
+            codex_bin,
+            "exec",
+            "--ephemeral",
+            "--ignore-rules",
+            "--skip-git-repo-check",
+            "--sandbox",
+            "read-only",
+            "--cd",
+            str(effect.task.env.path),
+            "--output-schema",
+            str(schema_path),
+            "--output-last-message",
+            str(output_path),
+            prompt,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=55,
+    )
+    assert completed.returncode == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    validation_error = validate_result_payload(payload, effect.task.result_schema)
+    assert validation_error is None, validation_error
+    return payload
 
 
 def test_two_node_workflow_runs_on_scenario_stubs(tmp_path: Path) -> None:
@@ -112,8 +159,44 @@ def test_schema_invalid_retry_exhaustion_fails_typed(tmp_path: Path) -> None:
             )
         )
 
-    with pytest.raises(AgentAttemptExhaustedError) as exc_info:
-        _run(workflow(), runtime)
+    result = _run(workflow(), runtime)
 
-    assert exc_info.value.session_id == "run-002-implement-0"
-    assert "files_changed" in exc_info.value.last_error.message
+    assert result.is_err()
+    assert isinstance(result.error, AgentAttemptExhaustedError)
+    assert result.error.session_id == "run-002-implement-0"
+    assert "files_changed" in result.error.last_error.message
+
+
+def test_real_codex_worker_returns_schema_valid_json_through_agent(tmp_path: Path) -> None:
+    runtime = MockConductorRuntime(tmp_path)
+
+    @do
+    def workflow():
+        env = yield CreateWorktree(suffix="codex-real")
+        return (
+            yield Agent(
+                AgentTask(
+                    run_id="run-real-codex",
+                    node_id="implement",
+                    attempt=0,
+                    env=env,
+                    prompt="return a minimal implementation artifact",
+                    result_schema=IMPLEMENT_SCHEMA,
+                    verification_class="test-verifiable",
+                    max_retries=0,
+                )
+            )
+        )
+
+    result = run_sync(
+        workflow(),
+        scheduled_handlers=mock_handlers(
+            runtime=runtime,
+            overrides={
+                AgentEffect: lambda effect: _run_real_codex_agent(effect, tmp_path),
+            },
+        ),
+    )
+
+    assert result.is_ok()
+    assert result.value == {"summary": "codex schema ok", "files_changed": []}

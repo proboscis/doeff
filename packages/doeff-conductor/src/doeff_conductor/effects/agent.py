@@ -10,7 +10,14 @@ Effects for managing agent sessions:
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from doeff_agents.effects import (  # re-exported for conductor callers
+    AgentAttemptExhaustedError,
+    AgentValidationErrorKind,
+    AgentValidationFailure,
+    deterministic_session_id,
+)
 
 from .base import ConductorEffectBase
 
@@ -18,6 +25,41 @@ if TYPE_CHECKING:
     from doeff_agentic import AgenticSessionStatus
 
     from ..types import AgentRef, WorktreeEnv
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentTask:
+    """Schema-validated conductor worker task."""
+
+    run_id: str
+    node_id: str
+    attempt: int
+    env: "WorktreeEnv"
+    prompt: str
+    result_schema: dict[str, Any]
+    verification_class: str
+    agent_type: str = "codex"
+    name: str | None = None
+    profile: str | None = None
+    model: str | None = None
+    effort: str | None = None
+    max_retries: int = 2
+    timeout_seconds: float | None = None
+
+    @property
+    def session_id(self) -> str:
+        return deterministic_session_id(
+            run_id=self.run_id,
+            node_id=self.node_id,
+            attempt=self.attempt,
+        )
+
+
+@dataclass(frozen=True)
+class AgentEffect(ConductorEffectBase):
+    """Run an agent and return its validated artifact object."""
+
+    task: AgentTask
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -138,7 +180,17 @@ class CaptureOutput(ConductorEffectBase):
     lines: int = 500  # Number of lines to capture
 
 
+def Agent(task: AgentTask) -> AgentEffect:  # noqa: N802
+    return AgentEffect(task=task)
+
+
 __all__ = [
+    "Agent",
+    "AgentAttemptExhaustedError",
+    "AgentEffect",
+    "AgentTask",
+    "AgentValidationErrorKind",
+    "AgentValidationFailure",
     "CaptureOutput",
     "RunAgent",
     "SendMessage",
