@@ -5,8 +5,8 @@ Tests the ConductorAPI Python interface:
 - get_workflow(id) - get workflow by ID
 - stop_workflow(id) - stop a workflow
 - run_workflow() - run workflow templates
-- list_environments() - list worktree environments
-- cleanup_environments() - cleanup orphaned environments
+- list_workspaces() - list materialized workspaces
+- cleanup_workspaces() - cleanup orphaned workspaces
 """
 
 import json
@@ -184,7 +184,7 @@ class TestGetWorkflow:
             "issue_id": "ISSUE-001",
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
-            "environments": ["env-1"],
+            "workspaces": ["env-1"],
             "agents": ["agent-1"],
         }
         (wf_dir / "meta.json").write_text(json.dumps(data))
@@ -310,56 +310,57 @@ class TestWatchWorkflow:
         assert updates[0]["terminal"] is True
 
 
-class TestListEnvironments:
-    """Tests for list_environments API method."""
+class TestListWorkspaces:
+    """Tests for list_workspaces API method."""
 
     @pytest.fixture
     def api(self, tmp_path: Path) -> ConductorAPI:
         """Create API with temporary state directory."""
         return ConductorAPI(state_dir=tmp_path / "state")
 
-    def test_list_environments_empty(self, api: ConductorAPI):
-        """list_environments returns empty list when no worktrees exist."""
-        envs = api.list_environments()
-        assert envs == []
+    def test_list_workspaces_empty(self, api: ConductorAPI):
+        """list_workspaces returns empty list when no workspaces exist."""
+        workspaces = api.list_workspaces()
+        assert workspaces == []
 
-    def test_list_environments_with_mock(self, api: ConductorAPI, tmp_path: Path):
-        """list_environments returns worktree environments."""
-        with patch("doeff_conductor.handlers.worktree_handler._get_worktree_base_dir") as mock_base:
-            worktree_base = tmp_path / "worktrees"
-            worktree_base.mkdir()
-            mock_base.return_value = worktree_base
+    def test_list_workspaces_with_mock(self, api: ConductorAPI, tmp_path: Path):
+        """list_workspaces returns workspace objects."""
+        with patch("doeff_conductor.handlers.workspace_handler._get_workspace_base_dir") as mock_base:
+            workspace_base = tmp_path / "workspaces"
+            workspace_base.mkdir()
+            mock_base.return_value = workspace_base
 
-            envs = api.list_environments()
-            assert isinstance(envs, list)
+            workspaces = api.list_workspaces()
+            assert isinstance(workspaces, list)
 
 
-class TestCleanupEnvironments:
-    """Tests for cleanup_environments API method."""
+class TestCleanupWorkspaces:
+    """Tests for cleanup_workspaces API method."""
 
     @pytest.fixture
     def api(self, tmp_path: Path) -> ConductorAPI:
         """Create API with temporary state directory."""
         return ConductorAPI(state_dir=tmp_path / "state")
 
-    def test_cleanup_environments_empty(self, api: ConductorAPI):
-        """cleanup_environments returns empty list when no worktrees exist."""
-        cleaned = api.cleanup_environments()
+    def test_cleanup_workspaces_empty(self, api: ConductorAPI):
+        """cleanup_workspaces returns empty list when no workspaces exist."""
+        cleaned = api.cleanup_workspaces()
         assert cleaned == []
 
-    def test_cleanup_environments_dry_run(self, api: ConductorAPI, tmp_path: Path):
-        """cleanup_environments dry_run doesn't delete."""
-        with patch("doeff_conductor.handlers.worktree_handler._get_worktree_base_dir") as mock_base:
-            worktree_base = tmp_path / "worktrees"
-            worktree_base.mkdir()
+    def test_cleanup_workspaces_dry_run(self, api: ConductorAPI, tmp_path: Path):
+        """cleanup_workspaces dry_run doesn't delete."""
+        with patch("doeff_conductor.handlers.workspace_handler._get_workspace_base_dir") as mock_base:
+            workspace_base = tmp_path / "workspaces"
+            repo_base = workspace_base / "default"
+            repo_base.mkdir(parents=True)
 
-            old_env = worktree_base / "old-env"
-            old_env.mkdir()
+            old_workspace = repo_base / "old-workspace"
+            old_workspace.mkdir()
 
-            mock_base.return_value = worktree_base
+            mock_base.return_value = workspace_base
 
-            cleaned = api.cleanup_environments(dry_run=True)
-            assert old_env in cleaned or len(cleaned) >= 0
+            cleaned = api.cleanup_workspaces(dry_run=True)
+            assert old_workspace in cleaned
 
 
 class TestRunWorkflow:
@@ -499,7 +500,7 @@ class TestWorkflowHandleSerialization:
             issue_id="ISSUE-001",
             created_at=now,
             updated_at=now,
-            environments=("env-1", "env-2"),
+            workspaces=("env-1", "env-2"),
             agents=("agent-1",),
             pr_url="https://github.com/test/repo/pull/1",
         )
@@ -510,7 +511,7 @@ class TestWorkflowHandleSerialization:
         assert data["status"] == "running"
         assert data["template"] == "basic_pr"
         assert data["issue_id"] == "ISSUE-001"
-        assert data["environments"] == ["env-1", "env-2"]
+        assert data["workspaces"] == ["env-1", "env-2"]
         assert data["agents"] == ["agent-1"]
         assert data["pr_url"] == "https://github.com/test/repo/pull/1"
 
@@ -525,7 +526,7 @@ class TestWorkflowHandleSerialization:
             "issue_id": "ISSUE-001",
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
-            "environments": ["env-1"],
+            "workspaces": ["env-1"],
             "agents": ["agent-1"],
             "pr_url": "https://github.com/test/repo/pull/1",
             "error": None,

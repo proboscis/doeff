@@ -1,28 +1,14 @@
-"""
-Handlers for doeff-conductor effects.
-
-Each handler implements the logic for a category of effects:
-- WorktreeHandler: Git worktree operations
-- IssueHandler: Issue vault operations
-- AgentHandler: Agent session management
-- GitHandler: Git operations
-
-Handler utilities:
-- make_scheduled_handler
-- make_async_scheduled_handler
-- make_blocking_scheduled_handler
-
-Execution utilities:
-- run_sync: direct synchronous execution with default handlers
-"""
+"""Handlers for doeff-conductor effects."""
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from doeff import WithHandler, run
 
 from .agent_handler import AgentHandler
+from .exec_handler import ExecHandler
 from .git_handler import GitHandler
 from .issue_handler import IssueHandler
 from .testing import MockConductorRuntime, mock_handlers
@@ -34,7 +20,7 @@ from .utils import (
     make_scheduled_handler,
     make_scheduled_handler_with_store,
 )
-from .worktree_handler import WorktreeHandler
+from .workspace_handler import WorkspaceHandler
 
 if TYPE_CHECKING:
     from doeff import Program, RunResult
@@ -44,6 +30,8 @@ HandlerProtocol = Callable[..., Any]
 
 
 class _ResultFlag:
+    """Boolean flag that also supports legacy call syntax."""
+
     def __init__(self, value: bool) -> None:
         self._value = value
 
@@ -69,19 +57,25 @@ class RunSyncResult:
     def is_err(self) -> _ResultFlag:
         return _ResultFlag(self.error is not None)
 
+    @property
+    def result(self) -> SimpleNamespace:
+        return SimpleNamespace(value=self.value, error=self.error)
+
 
 def production_handlers(
-    worktree_handler: WorktreeHandler | None = None,
+    workspace_handler: WorkspaceHandler | None = None,
     issue_handler: IssueHandler | None = None,
     agent_handler: AgentHandler | None = None,
     git_handler: GitHandler | None = None,
+    exec_handler: ExecHandler | None = None,
 ) -> HandlerProtocol:
     """Build the default production protocol handler for all conductor effects."""
     return default_scheduled_handlers(
-        worktree_handler=worktree_handler,
+        workspace_handler=workspace_handler,
         issue_handler=issue_handler,
         agent_handler=agent_handler,
         git_handler=git_handler,
+        exec_handler=exec_handler,
     )
 
 
@@ -92,22 +86,10 @@ def run_sync(
     *,
     scheduled_handlers: Sequence[HandlerProtocol] | HandlerProtocol | None = None,
 ) -> "RunResult[Any]":
-    """Run a program synchronously with custom handlers.
+    """Run a program synchronously with custom handlers."""
+    if env is not None or store is not None:
+        raise NotImplementedError("run_sync no longer accepts env/store with explicit handlers")
 
-    Args:
-        program: The program to execute
-        env: Optional initial environment
-        store: Optional initial store
-        scheduled_handlers: Optional protocol handler(s)
-
-    Returns:
-        RunResult containing the execution outcome
-
-    Example:
-        result = run_sync(my_workflow())
-        if result.is_ok():
-            print(result.value)
-    """
     protocol_handlers: list[HandlerProtocol] = []
     if scheduled_handlers is not None:
         if callable(scheduled_handlers):
@@ -115,33 +97,30 @@ def run_sync(
         else:
             protocol_handlers = list(scheduled_handlers)
 
-    if env is not None or store is not None:
-        raise NotImplementedError("run_sync no longer accepts env/store with explicit handlers")
-    wrapped = program
+    wrapped_program = program
     for handler in reversed(protocol_handlers):
-        wrapped = WithHandler(handler, wrapped)
+        wrapped_program = WithHandler(handler, wrapped_program)
     try:
-        return RunSyncResult(value=run(wrapped))
-    except Exception as exc:
-        return RunSyncResult(error=exc)
+        return RunSyncResult(value=run(wrapped_program))
+    except Exception as error:
+        return RunSyncResult(error=error)
 
 
 __all__ = [
     "AgentHandler",
+    "ExecHandler",
     "GitHandler",
     "IssueHandler",
     "MockConductorRuntime",
-    # Handlers
-    "WorktreeHandler",
+    "RunSyncResult",
+    "WorkspaceHandler",
     "default_scheduled_handlers",
     "make_async_scheduled_handler",
     "make_blocking_scheduled_handler",
     "make_blocking_scheduled_handler_with_store",
-    # Utilities
     "make_scheduled_handler",
     "make_scheduled_handler_with_store",
     "mock_handlers",
     "production_handlers",
-    # Testing utility
     "run_sync",
 ]
