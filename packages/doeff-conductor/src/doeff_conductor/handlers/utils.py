@@ -6,11 +6,12 @@ from typing import TYPE_CHECKING, Any
 from doeff import Effect, Pass, Resume, do
 
 if TYPE_CHECKING:
-    from .agent_handler import AgentHandler
-    from .exec_handler import ExecHandler
-    from .git_handler import GitHandler
-    from .issue_handler import IssueHandler
-    from .workspace_handler import WorkspaceHandler
+    from doeff_conductor.handlers.agent_handler import AgentHandler
+    from doeff_conductor.handlers.exec_handler import ExecHandler
+    from doeff_conductor.handlers.git_handler import GitHandler
+    from doeff_conductor.handlers.issue_handler import IssueHandler
+    from doeff_conductor.handlers.journaled_agent import JournaledAgentHandler
+    from doeff_conductor.handlers.workspace_handler import WorkspaceHandler
 
 SimpleHandler = Callable[[Any], Any]
 
@@ -57,21 +58,32 @@ def make_async_scheduled_handler(
 def default_scheduled_handlers(
     workspace_handler: "WorkspaceHandler | None" = None,
     issue_handler: "IssueHandler | None" = None,
-    agent_handler: "AgentHandler | None" = None,
+    agent_handler: "AgentHandler | JournaledAgentHandler | None" = None,
     git_handler: "GitHandler | None" = None,
     exec_handler: "ExecHandler | None" = None,
 ) -> Callable[..., Any]:
-    """Build a complete protocol handler for all conductor effects."""
-    from ..effects.agent import AgentEffect
-    from ..effects.exec import Exec
-    from ..effects.git import Commit, CreatePR, MergePR, Push
-    from ..effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
-    from ..effects.workspace import CreateWorkspace, DeleteWorkspace, MergeWorkspaces
-    from .agent_handler import AgentHandler
-    from .exec_handler import ExecHandler
-    from .git_handler import GitHandler
-    from .issue_handler import IssueHandler
-    from .workspace_handler import WorkspaceHandler
+    """Build a complete protocol handler for all conductor effects.
+
+    Args:
+        workspace_handler: Custom WorkspaceHandler, or None to create default
+        issue_handler: Custom IssueHandler, or None to create default
+        agent_handler: Custom AgentHandler, or None to create default
+        git_handler: Custom GitHandler, or None to create default
+        exec_handler: Custom ExecHandler, or None to create default
+
+    Returns:
+        Handler-protocol callable for all conductor effects.
+    """
+    from doeff_conductor.effects.agent import AgentEffect
+    from doeff_conductor.effects.exec import Exec
+    from doeff_conductor.effects.git import Commit, CreatePR, MergePR, Push
+    from doeff_conductor.effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
+    from doeff_conductor.effects.workspace import CreateWorkspace, DeleteWorkspace, MergeWorkspaces
+    from doeff_conductor.handlers.agent_handler import AgentHandler
+    from doeff_conductor.handlers.exec_handler import ExecHandler
+    from doeff_conductor.handlers.git_handler import GitHandler
+    from doeff_conductor.handlers.issue_handler import IssueHandler
+    from doeff_conductor.handlers.workspace_handler import WorkspaceHandler
 
     workspace = workspace_handler or WorkspaceHandler()
     iss = issue_handler or IssueHandler()

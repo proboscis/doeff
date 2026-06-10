@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
@@ -11,6 +12,7 @@ from .agent_handler import AgentHandler
 from .exec_handler import ExecHandler
 from .git_handler import GitHandler
 from .issue_handler import IssueHandler
+from .journaled_agent import JournaledAgentHandler
 from .testing import MockConductorRuntime, mock_handlers
 from .utils import (
     default_scheduled_handlers,
@@ -68,12 +70,26 @@ def production_handlers(
     agent_handler: AgentHandler | None = None,
     git_handler: GitHandler | None = None,
     exec_handler: ExecHandler | None = None,
+    journal_state_dir: str | Path | None = None,
+    journal_run_id: str | None = None,
 ) -> HandlerProtocol:
     """Build the default production protocol handler for all conductor effects."""
+    active_workspace_handler = workspace_handler or WorkspaceHandler()
+    resolved_agent_handler = agent_handler
+    if journal_state_dir is not None or journal_run_id is not None:
+        base_agent_handler = resolved_agent_handler or AgentHandler(
+            workflow_id=journal_run_id,
+            workspace_resolver=active_workspace_handler.resolve_path,
+        )
+        resolved_agent_handler = JournaledAgentHandler(
+            base_agent_handler.handle_agent,
+            state_dir=journal_state_dir,
+            run_id=journal_run_id,
+        )
     return default_scheduled_handlers(
-        workspace_handler=workspace_handler,
+        workspace_handler=active_workspace_handler,
         issue_handler=issue_handler,
-        agent_handler=agent_handler,
+        agent_handler=resolved_agent_handler,
         git_handler=git_handler,
         exec_handler=exec_handler,
     )
@@ -111,6 +127,7 @@ __all__ = [
     "ExecHandler",
     "GitHandler",
     "IssueHandler",
+    "JournaledAgentHandler",
     "MockConductorRuntime",
     "RunSyncResult",
     "WorkspaceHandler",
