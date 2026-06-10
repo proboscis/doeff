@@ -2220,11 +2220,54 @@ fn dismiss_codex_update_dialog(config: &Config, pane_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Extract a human-readable message from a `catch_unwind` panic payload.
+fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        String::from("<non-string panic payload>")
+    }
+}
+
+/// Run one tick of a critical background worker with panic isolation.
+///
+/// A worker loop (`monitor_loop` / `heartbeat_loop`) runs forever on its
+/// own thread.  Before this wrapper a *panic* inside the tick body
+/// unwound straight out of the loop and killed the thread permanently —
+/// with no supervision the worker never came back, yet the accept loop on
+/// the main thread kept the daemon looking healthy.  The monitor is the
+/// ONLY code that advances a session past `booting`, so a dead monitor
+/// pins every session at `booting` (surfaced upstream as `AgentStarting`)
+/// for the entire life of the process.  This is exactly what a disk-full
+/// storm triggered: both workers panicked, and the panic messages were
+/// lost because stderr (a log file on the full disk) could not be
+/// written, so the death was completely silent.
+///
+/// Treat a panic the same way the loop already treats an `Err`: log it
+/// and let the loop proceed to the next tick.  The tick body opens its
+/// own sqlite connection per call, so unwinding drops that connection and
+/// rolls back any in-flight transaction — there is no shared mutable
+/// state left poisoned across ticks.  Once the transient condition (full
+/// disk, locked db, flaky tmux) clears, the worker resumes on its own.
+fn run_worker_tick<F>(worker: &str, tick: F)
+where
+    F: FnOnce() -> Result<()>,
+{
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(tick)) {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => eprintln!("doeff-agentd {worker} error: {err:#}"),
+        Err(payload) => eprintln!(
+            "doeff-agentd {worker} PANIC recovered (worker continues): {}",
+            panic_payload_message(payload.as_ref())
+        ),
+    }
+}
+
 fn monitor_loop(config: Config) {
     loop {
-        if let Err(err) = monitor_once(&config) {
-            eprintln!("doeff-agentd monitor error: {err:#}");
-        }
+        run_worker_tick("monitor", || monitor_once(&config));
         thread::sleep(config.monitor_interval);
     }
 }
@@ -2232,9 +2275,7 @@ fn monitor_loop(config: Config) {
 fn heartbeat_loop(config: Config) {
     let interval = Duration::from_secs((LEASE_TTL_SECONDS as u64 / 3).max(1));
     loop {
-        if let Err(err) = heartbeat_once(&config) {
-            eprintln!("doeff-agentd heartbeat error: {err:#}");
-        }
+        run_worker_tick("heartbeat", || heartbeat_once(&config));
         thread::sleep(interval);
     }
 }
@@ -2805,6 +2846,33 @@ fn parse_datetime(value: &str) -> Result<DateTime<Utc>> {
 mod tests {
     use super::*;
     use std::path::Path;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn run_worker_tick_isolates_panics_and_errors() {
+        // A worker tick that panics must NOT unwind out of run_worker_tick;
+        // if it did, the real worker loop's thread would die permanently and
+        // the daemon would silently stop monitoring (the booting-freeze bug).
+        // Silence the default panic hook so the deliberate panic below does
+        // not spam the test output, then restore it.
+        let previous_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+
+        run_worker_tick("test", || panic!("boom"));
+        run_worker_tick("test", || Err(anyhow!("transient failure")));
+
+        std::panic::set_hook(previous_hook);
+
+        // A tick that succeeds runs to completion and its side effect is
+        // observed — proving run_worker_tick actually invokes the body.
+        let ran = AtomicUsize::new(0);
+        run_worker_tick("test", || {
+            ran.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+        assert_eq!(ran.load(Ordering::SeqCst), 1);
+        // Reaching here at all means neither the panic nor the Err propagated.
+    }
 
     #[test]
     fn detects_codex_update_dialog() {
