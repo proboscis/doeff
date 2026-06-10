@@ -21,9 +21,9 @@ Architecture:
     |  Effects                                                             |
     |  +----------+ +----------+ +----------+ +----------+                |
     |  | Worktree | |  Issue   | |  Agent   | |   Git    |                |
-    |  | Create   | | Create   | | RunAgent | | Commit   |                |
-    |  | Merge    | | List     | | Send     | | Push     |                |
-    |  | Delete   | | Resolve  | | Capture  | | CreatePR |                |
+    |  | Create   | | Create   | | Agent   | | Commit   |                |
+    |  | Merge    | | List     | | Task    | | Push     |                |
+    |  | Delete   | | Resolve  | | Artifact| | CreatePR |                |
     |  +----------+ +----------+ +----------+ +----------+                |
     +---------------------------------------------------------------------+
     |  Dependencies                                                        |
@@ -34,12 +34,21 @@ Architecture:
 
 Quick Start:
     from doeff import do
-    from doeff_conductor import CreateWorktree, RunAgent, CreatePR
+    from doeff_conductor import Agent, AgentTask, CreateWorktree, CreatePR
 
     @do
     def basic_pr(issue):
         env = yield CreateWorktree(issue=issue)
-        yield RunAgent(env=env, prompt=issue.body)
+        yield Agent(AgentTask(
+            run_id=issue.id,
+            node_id="implement",
+            attempt=0,
+            env=env,
+            prompt=issue.body,
+            result_schema={"type": "object"},
+            verification_class="test-verifiable",
+            agent_type="codex",
+        ))
         pr = yield CreatePR(env=env, title=issue.title)
         return pr
 
@@ -62,7 +71,6 @@ from .effects import (
     AgentTask,
     AgentValidationErrorKind,
     AgentValidationFailure,
-    CaptureOutput,
     # Git
     Commit,
     # Base
@@ -79,11 +87,6 @@ from .effects import (
     MergePR,
     Push,
     ResolveIssue,
-    # Agent
-    RunAgent,
-    SendMessage,
-    SpawnAgent,
-    WaitForStatus,
 )
 
 # Exceptions
@@ -155,7 +158,6 @@ __all__ = [
     "AgentTimeoutError",
     "AgentValidationErrorKind",
     "AgentValidationFailure",
-    "CaptureOutput",
     # Effects - Git
     "Commit",
     # API
@@ -189,11 +191,6 @@ __all__ = [
     "PRHandle",
     "Push",
     "ResolveIssue",
-    # Effects - Agent
-    "RunAgent",
-    "SendMessage",
-    "SpawnAgent",
-    "WaitForStatus",
     "WorkflowHandle",
     "WorkflowStatus",
     "WorktreeEnv",

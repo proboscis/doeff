@@ -247,7 +247,7 @@ def test_daemon_handler_launch_delegates_lifecycle_to_client(monkeypatch, tmp_pa
         )
     )
 
-    assert handle.session_name == "s2"
+    assert handle.session_id == "s2"
     assert adapter.params is not None
     assert adapter.params.prompt == "review this"
     assert fake_client.launches[0]["session_id"] == "s2"

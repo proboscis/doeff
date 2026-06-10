@@ -84,7 +84,7 @@ def _make_pipeline_handler(
 
         if isinstance(effect, MonitorEffect):
             monitor_effect = cast(MonitorEffect, effect)
-            session_name = monitor_effect.handle.session_name
+            session_name = monitor_effect.handle.session_id
             script = queue.setdefault(session_name, [])
 
             if script:
@@ -102,17 +102,17 @@ def _make_pipeline_handler(
 
         if isinstance(effect, CaptureEffect):
             capture_effect = cast(CaptureEffect, effect)
-            output = state["captures"].get(capture_effect.handle.session_name, "")
+            output = state["captures"].get(capture_effect.handle.session_id, "")
             return (yield Resume(k, output))
 
         if isinstance(effect, SendEffect):
             send_effect = cast(SendEffect, effect)
-            state["sent"].append((send_effect.handle.session_name, send_effect.message))
+            state["sent"].append((send_effect.handle.session_id, send_effect.message))
             return (yield Resume(k, None))
 
         if isinstance(effect, StopEffect):
             stop_effect = cast(StopEffect, effect)
-            state["stops"].append(stop_effect.handle.session_name)
+            state["stops"].append(stop_effect.handle.session_id)
             return (yield Resume(k, None))
 
         if isinstance(effect, DelayEffect):

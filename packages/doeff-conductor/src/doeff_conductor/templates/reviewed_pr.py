@@ -74,6 +74,7 @@ Write clean, well-documented code following best practices.
             prompt=implement_prompt,
             result_schema=IMPLEMENT_SCHEMA,
             verification_class="test-verifiable",
+            agent_type="codex",
         )
     )
 
@@ -108,6 +109,7 @@ If the implementation is good, say "APPROVED" and explain why it's acceptable.
                 prompt=review_prompt,
                 result_schema=REVIEW_SCHEMA,
                 verification_class="review",
+                agent_type="codex",
             )
         )
         last_review = review_result
@@ -134,6 +136,7 @@ Please address these review comments and improve the implementation.
                     prompt=fix_prompt,
                     result_schema=IMPLEMENT_SCHEMA,
                     verification_class="test-verifiable",
+                    agent_type="codex",
                 )
             )
 
