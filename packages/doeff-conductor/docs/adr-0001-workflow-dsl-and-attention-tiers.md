@@ -110,7 +110,7 @@ A conductor workflow invokes workers only through an `agent!` effect:
 prompt, result JSON-schema (or pydantic model), a **semantic profile name**
 (a capability tier such as `:cheap-coder` / `:frontier-reviewer` — never a
 concrete agent kind or an account; the project env binds the name to
-adapter+model and the user env completes it with auth. `stub` is NOT a
+adapter+model+effort and the user env completes it with auth. `stub` is NOT a
 profile but an interpreter choice reachable only via the `validate` verb
 and tests), workspace, label/phase, and the
 **verification class** (required, always explicit, never inherited or
@@ -203,7 +203,7 @@ Macros compile to a static DAG of doeff Programs. Expansion-time checks
 Keep the JS tool's load-bearing constraints: static graph skeleton, pure
 metadata, effect-boundary caching for replay resume — with the cache key
 defined by the **result-distribution criterion**: prompt, schema, and the
-resolved identity fingerprint (adapter kind, model) enter the key;
+resolved identity fingerprint (adapter kind, model, effort) enter the key;
 substrate never does (see D7).
 
 ### D3 — Deterministic gates are plain steps, not agents
@@ -298,10 +298,13 @@ runtime-scoped (one site per run, interpreter-bound); persona is
 intent-side. Per `agent!`, **exactly one resolver** evaluates the fixed
 cascade `explicit field > :roles entry > router default > interpreter
 env` — no ask-with-default fallbacks anywhere. The **resolved fingerprint**
-(adapter kind, model — the result-distribution-affecting subset) is
+(adapter kind, model, effort — the result-distribution-affecting subset) is
 journaled; cache hits require fingerprint match, so editing a profile's
 definition between resume invalidates correctly while substrate swaps do
-not. Before any worker starts, the conductor produces the **binding plan**
+not. Reasoning **effort** is an axis of the profile binding (L0 identity
+environment), never a workflow/run parameter: it changes the result
+distribution, so it participates in the identity fingerprint exactly like
+adapter kind and model. Before any worker starts, the conductor produces the **binding plan**
 (all static nodes resolved: profiles exist, capabilities satisfied,
 budgets sum) for overseer approval — resolve early, execute late.
 

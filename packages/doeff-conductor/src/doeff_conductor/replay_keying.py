@@ -15,6 +15,7 @@ class ResolvedIdentity:
     adapter: str
     model: str
     identity: str | None = None
+    effort: str | None = None
 
 
 def _canonical_payload(value: Any) -> Any:
@@ -57,6 +58,9 @@ def resolved_identity_fingerprint(identity: ResolvedIdentity) -> str:
             "adapter": identity.adapter,
             "model": identity.model if identity.model is not None else "adapter-default",
             "identity": identity.identity,
+            # Reasoning effort changes the result distribution (ADR D7), so it
+            # is part of the identity fingerprint, never a run parameter.
+            "effort": identity.effort,
         }
     )
 
