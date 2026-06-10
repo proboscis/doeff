@@ -2161,6 +2161,20 @@ fn output_has_agent_idle_prompt(output: &str) -> bool {
     output.lines().any(|line| line.starts_with('❯'))
 }
 
+/// "Startup finished" signal for the launch-timeout watchdog: the REPL
+/// input box (`› ` for codex, `❯` for claude) renders only once the agent
+/// is initialised, and the codex active-work marker implies the same.
+/// MCP-boot and update-dialog screens are excluded — those are exactly
+/// the stuck-in-startup states the watchdog must keep reaping (the
+/// update dialog also renders a `›` selection marker that would
+/// otherwise read as a ready REPL).
+fn output_indicates_startup_finished(output: &str) -> bool {
+    if output_is_starting_mcp_servers(output) || output_has_codex_update_dialog(output) {
+        return false;
+    }
+    output_has_codex_active_marker(output) || output_has_agent_idle_prompt(output)
+}
+
 /// True while codex is still booting its MCP servers, e.g.
 /// "Starting MCP servers (4/5): playwright (16h 25m • esc to interrupt)".
 /// This boot phase reuses the active-work spinner, so it must NOT be
@@ -2457,12 +2471,22 @@ fn monitor_once(config: &Config) -> Result<()> {
             {
                 snapshot.awaiting_response = false;
             }
-            // Record the first time the agent's active marker appeared.
+            // Record the first time the agent visibly finished startup.
             // This is the signal the launch-timeout watchdog uses to
             // distinguish "agent finished startup" from "agent stuck
             // in startup": once set, the session is past the boot
             // phase and watchdog stops considering it for reaping.
-            if active_marker_seen && snapshot.observed_active_at.is_none() {
+            //
+            // The codex active marker alone is NOT enough: claude never
+            // shows it, so the watchdog reaped a healthy claude worker
+            // mid-review as "stuck in startup" (observed live).  The
+            // agent-agnostic startup-finished signal is the REPL input
+            // box itself (`› ` / `❯`) — boot screens render it only once
+            // initialisation is done.  MCP-boot and update-dialog panes
+            // are explicitly excluded so the watchdog stays armed through
+            // the hung-MCP startup it exists to catch.
+            if snapshot.observed_active_at.is_none() && output_indicates_startup_finished(&output)
+            {
                 snapshot.observed_active_at = Some(observed_at.clone());
             }
             let raw_status = observed_status_for_snapshot(&snapshot, &output);
@@ -3549,6 +3573,29 @@ mod tests {
         let working_t2 = "✢ Swooping… (38s · ↓ 1.2k tokens)\n\n❯\u{00A0}";
         snapshot.output_snippet = Some(working_t1.to_string());
         assert!(!output_indicates_turn_end(&snapshot, working_t2));
+    }
+
+    #[test]
+    fn startup_finished_signal_is_agent_agnostic_but_boot_safe() {
+        // The watchdog disarms once the REPL input box is visible —
+        // codex `› ` or claude `❯` — or codex shows its work marker.
+        assert!(output_indicates_startup_finished("banner\n❯\u{00A0}"));
+        assert!(output_indicates_startup_finished("banner\n› "));
+        assert!(output_indicates_startup_finished(
+            "Working (10s • esc to interrupt)\n› "
+        ));
+        // Still booting (no input box yet): watchdog stays armed.
+        assert!(!output_indicates_startup_finished("Loading…"));
+        // Hung MCP startup is the case the watchdog exists for — the
+        // spinner and even a visible prompt must not disarm it.
+        assert!(!output_indicates_startup_finished(
+            "Starting MCP servers (4/5): playwright (16h 25m • esc to interrupt)\n› "
+        ));
+        // The update dialog renders a `›` selection marker that must
+        // not read as a ready REPL.
+        assert!(!output_indicates_startup_finished(
+            "✨ Update available!\n› 1. Update now\n  3. Skip until next version"
+        ));
     }
 
     #[test]
