@@ -14,7 +14,7 @@ from doeff_agents.result_validation import validate_result_payload
 from doeff_conductor import CreateWorkspace
 from doeff_conductor.effects import Agent, AgentAttemptExhaustedError, AgentEffect, AgentTask
 from doeff_conductor.handlers import run_sync
-from doeff_conductor.handlers.agent_handler import AgentHandler
+from doeff_conductor.handlers.agent_handler import AgentHandler, CodexExecAgentBackend
 from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
 from doeff_conductor.types import Workspace
 
@@ -227,7 +227,10 @@ def test_agent_handler_codex_exec_mode_uses_native_structured_output(
     def resolve_workspace(_workspace: Workspace) -> Path:
         return tmp_path
 
-    handler = AgentHandler(workspace_resolver=resolve_workspace)
+    handler = AgentHandler(
+        workspace_resolver=resolve_workspace,
+        backend=CodexExecAgentBackend(codex_home=tmp_path / "codex-home"),
+    )
     task = AgentTask(
         run_id="run-codex-exec",
         node_id="implement",
@@ -252,7 +255,6 @@ def test_agent_handler_codex_exec_mode_uses_native_structured_output(
         )
         return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
 
-    monkeypatch.setenv("CONDUCTOR_AGENT_MODE", "codex-exec")
     monkeypatch.setattr("doeff_conductor.handlers.agent_handler.shutil.which", lambda _: "codex")
     monkeypatch.setattr("doeff_conductor.handlers.agent_handler.subprocess.run", fake_run)
 
