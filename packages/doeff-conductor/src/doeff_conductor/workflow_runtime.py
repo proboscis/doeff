@@ -305,11 +305,14 @@ def _execute_agent(
             name=effect.label,
             profile=profile_name,
             model=profile.model,
-            effort=_param_as_str(context.params.get("effort")),
+            # Effort is an axis of the profile binding (L0 identity), never a
+            # workflow/run parameter (ADR D7).
+            effort=profile.effort,
             resolved_identity=ResolvedIdentity(
                 adapter=profile.adapter,
                 model=profile.model,
                 identity=None,
+                effort=profile.effort,
             ),
             max_retries=max_retries,
         )
