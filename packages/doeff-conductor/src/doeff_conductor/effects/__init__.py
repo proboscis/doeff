@@ -6,6 +6,7 @@ All effects for conductor orchestration:
 - Issue: CreateIssue, ListIssues, GetIssue, ResolveIssue
 - Agent: Agent, AgentTask
 - Git: Commit, Push, CreatePR, MergePR
+- DSL: AgentCall, GateCall, WorkspaceCall, MergeCall, TimeCall, RandomCall
 """
 
 from .agent import (
@@ -17,6 +18,14 @@ from .agent import (
     AgentValidationFailure,
 )
 from .base import ConductorEffectBase
+from .dsl import (
+    AgentCall,
+    GateCall,
+    MergeCall,
+    RandomCall,
+    TimeCall,
+    WorkspaceCall,
+)
 from .git import (
     Commit,
     CreatePR,
@@ -44,6 +53,7 @@ from .worktree import (
 __all__ = [
     "Agent",
     "AgentAttemptExhaustedError",
+    "AgentCall",
     "AgentEffect",
     "AgentTask",
     "AgentValidationErrorKind",
@@ -55,6 +65,7 @@ __all__ = [
     # Issue
     "CreateIssue",
     "CreatePR",
+    "GateCall",
     "GitCommitEffect",
     "GitCreatePREffect",
     "GitDiffEffect",
@@ -66,8 +77,12 @@ __all__ = [
     "DeleteWorktree",
     "GetIssue",
     "ListIssues",
+    "MergeCall",
     "MergeBranches",
     "MergePR",
     "Push",
+    "RandomCall",
     "ResolveIssue",
+    "TimeCall",
+    "WorkspaceCall",
 ]
