@@ -13,7 +13,7 @@ A workflow with parallel agents:
 
 from doeff import EffectGenerator, Gather, Spawn, do
 
-from ..types import Issue, PRHandle, WorktreeEnv
+from ..types import Issue, PRHandle, Workspace
 
 ARTIFACT_SCHEMA = {
     "type": "object",
@@ -27,16 +27,16 @@ ARTIFACT_SCHEMA = {
 
 # Helper functions to wrap effects as Programs for Spawn
 @do
-def _create_worktree(issue: Issue, suffix: str) -> EffectGenerator[WorktreeEnv]:
+def _create_workspace(issue: Issue, suffix: str) -> EffectGenerator[Workspace]:
     """Create a worktree (wrapper for Spawn compatibility)."""
-    from ..effects import CreateWorktree
-    return (yield CreateWorktree(issue=issue, suffix=suffix))
+    from ..effects import CreateWorkspace
+    return (yield CreateWorkspace(issue=issue, suffix=suffix))
 
 
 @do
 def _run_agent(
     issue: Issue,
-    env: WorktreeEnv,
+    env: Workspace,
     prompt: str,
     node_id: str,
 ) -> EffectGenerator[dict]:
@@ -59,10 +59,10 @@ def _run_agent(
 
 
 @do
-def _commit(env: WorktreeEnv, message: str) -> EffectGenerator[str]:
+def _commit(env: Workspace, message: str) -> EffectGenerator[str]:
     """Create a commit (wrapper for Spawn compatibility)."""
     from ..effects import Commit
-    return (yield Commit(env=env, message=message))
+    return (yield Commit(workspace=env, message=message))
 
 
 @do
@@ -80,14 +80,14 @@ def multi_agent(issue: Issue) -> EffectGenerator[PRHandle]:
         AgentTask,
         Commit,
         CreatePR,
-        MergeBranches,
+        MergeWorkspaces,
         Push,
         ResolveIssue,
     )
 
     # Step 1: Create parallel worktrees (spawn to get futures, then gather)
-    impl_task = yield Spawn(_create_worktree(issue, "impl"))
-    test_task = yield Spawn(_create_worktree(issue, "tests"))
+    impl_task = yield Spawn(_create_workspace(issue, "impl"))
+    test_task = yield Spawn(_create_workspace(issue, "tests"))
     impl_env, test_env = yield Gather(impl_task, test_task)
 
     # Step 2: Run agents in parallel
@@ -126,8 +126,11 @@ Do NOT implement the feature - just write the tests.
     test_commit_task = yield Spawn(_commit(test_env, f"test: add tests for {issue.title}"))
     yield Gather(impl_commit_task, test_commit_task)
 
-    # Step 4: Merge branches
-    merged_env = yield MergeBranches(envs=(impl_env, test_env))
+    # Step 4: Reconcile workspaces
+    merge_result = yield MergeWorkspaces(workspaces=(impl_env, test_env))
+    if not merge_result.merged or merge_result.workspace is None:
+        raise RuntimeError(f"Workspace merge failed: {merge_result.message}")
+    merged_env = merge_result.workspace
 
     # Step 5: Review and finalize
     review_prompt = f"""
@@ -158,12 +161,12 @@ If any fixes are needed, make them now.
     )
 
     # Step 6: Final commit and push
-    yield Commit(env=merged_env, message=f"chore: finalize {issue.title}")
-    yield Push(env=merged_env)
+    yield Commit(workspace=merged_env, message=f"chore: finalize {issue.title}")
+    yield Push(workspace=merged_env)
 
     # Step 7: Create PR
     pr = yield CreatePR(
-        env=merged_env,
+        workspace=merged_env,
         title=issue.title,
         body=f"""
 ## Summary

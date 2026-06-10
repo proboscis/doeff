@@ -1,13 +1,13 @@
 # doeff-conductor
 
-Multi-agent workflow orchestration for doeff with issue-driven development, git worktree management, and DAG execution.
+Multi-agent workflow orchestration for doeff with issue-driven development, git workspace management, and DAG execution.
 
 ## Overview
 
 doeff-conductor provides a unified orchestration layer combining:
 
 - **Issue-driven agent workflows**: Create issues, dispatch agents, track progress
-- **Git worktree management**: Isolated environments for each agent
+- **Git workspace management**: Isolated workspaces for each agent
 - **Multi-agent DAG execution**: Parallel agents with merge points
 - **Full CLI for monitoring and control**: run, ps, watch, attach, logs, stop
 
@@ -25,18 +25,29 @@ uv add doeff-conductor
 
 ```python
 from doeff import do
-from doeff_conductor import CreateWorktree, RunAgent, CreatePR
+from doeff_conductor import Agent, AgentTask, CreateWorkspace, CreatePR
+
+AGENT_SCHEMA = {"type": "object", "required": ["summary"], "properties": {"summary": {"type": "string"}}}
 
 @do
 def basic_pr(issue):
-    # Create isolated worktree for the issue
-    env = yield CreateWorktree(issue=issue)
+    # Create isolated workspace for the issue
+    workspace = yield CreateWorkspace(issue=issue)
     
     # Run agent to implement the issue
-    yield RunAgent(env=env, prompt=issue.body)
+    yield Agent(AgentTask(
+        run_id=issue.id,
+        node_id="implement",
+        attempt=0,
+        env=workspace,
+        prompt=issue.body,
+        result_schema=AGENT_SCHEMA,
+        verification_class="test-verifiable",
+        agent_type="codex",
+    ))
     
     # Create PR with changes
-    pr = yield CreatePR(env=env, title=issue.title)
+    pr = yield CreatePR(workspace=workspace, title=issue.title)
     return pr
 ```
 
@@ -44,27 +55,59 @@ def basic_pr(issue):
 
 ```python
 from doeff import do, Gather
-from doeff_conductor import CreateWorktree, RunAgent, MergeBranches
+from doeff_conductor import Agent, AgentTask, CreateWorkspace, MergeWorkspaces
+
+AGENT_SCHEMA = {"type": "object", "required": ["summary"], "properties": {"summary": {"type": "string"}}}
 
 @do
 def multi_agent_pr(issue):
-    # Create parallel worktrees
-    impl_env, test_env = yield Gather(
-        CreateWorktree(issue=issue, suffix="impl"),
-        CreateWorktree(issue=issue, suffix="tests"),
+    # Create parallel workspaces
+    impl_workspace, test_workspace = yield Gather(
+        CreateWorkspace(issue=issue, suffix="impl"),
+        CreateWorkspace(issue=issue, suffix="tests"),
     )
     
     # Run agents in parallel
     yield Gather(
-        RunAgent(env=impl_env, prompt=issue.body),
-        RunAgent(env=test_env, prompt=f"Write tests for: {issue.body}"),
+        Agent(AgentTask(
+            run_id=issue.id,
+            node_id="implement",
+            attempt=0,
+            env=impl_workspace,
+            prompt=issue.body,
+            result_schema=AGENT_SCHEMA,
+            verification_class="test-verifiable",
+            agent_type="codex",
+        )),
+        Agent(AgentTask(
+            run_id=issue.id,
+            node_id="tests",
+            attempt=0,
+            env=test_workspace,
+            prompt=f"Write tests for: {issue.body}",
+            result_schema=AGENT_SCHEMA,
+            verification_class="test-verifiable",
+            agent_type="codex",
+        )),
     )
     
-    # Merge branches
-    merged_env = yield MergeBranches(envs=(impl_env, test_env))
+    # Reconcile workspaces
+    merge_result = yield MergeWorkspaces(workspaces=(impl_workspace, test_workspace))
+    if not merge_result.merged or merge_result.workspace is None:
+        raise RuntimeError(merge_result.message)
+    merged_workspace = merge_result.workspace
     
     # Review and create PR
-    yield RunAgent(env=merged_env, prompt="Review and create PR")
+    yield Agent(AgentTask(
+        run_id=issue.id,
+        node_id="review",
+        attempt=0,
+        env=merged_workspace,
+        prompt="Review and create PR",
+        result_schema=AGENT_SCHEMA,
+        verification_class="review",
+        agent_type="codex",
+    ))
 ```
 
 ## CLI Commands
@@ -86,9 +129,9 @@ conductor issue list [--status open|resolved|all]
 conductor issue show <id>
 conductor issue resolve <id> [--pr URL]
 
-# Environment
-conductor env list [--workflow ID]
-conductor env cleanup [--dry-run] [--older-than DAYS]
+# Workspace
+conductor workspace list [--workflow ID]
+conductor workspace cleanup [--dry-run] [--older-than DAYS]
 
 # Templates
 conductor template list
@@ -98,13 +141,13 @@ conductor template new <name>
 
 ## Effects Catalog
 
-### Worktree Effects
+### Workspace Effects
 
 | Effect | Description |
 |--------|-------------|
-| `CreateWorktree(issue?, base_branch?, suffix?)` | Create git worktree |
-| `MergeBranches([envs], strategy?)` | Merge multiple branches |
-| `DeleteWorktree(env)` | Cleanup worktree |
+| `CreateWorkspace(issue?, from_ref?, suffix?)` | Create git workspace |
+| `MergeWorkspaces(workspaces, strategy?)` | Reconcile multiple workspaces |
+| `DeleteWorkspace(workspace)` | Cleanup workspace |
 
 ### Issue Effects
 
@@ -119,19 +162,15 @@ conductor template new <name>
 
 | Effect | Description |
 |--------|-------------|
-| `RunAgent(type, env, prompt, output_format?)` | Run agent to completion |
-| `SpawnAgent(type, env, prompt)` | Start agent, don't wait |
-| `SendMessage(agent_ref, message)` | Send to running agent |
-| `WaitForStatus(agent_ref, status, timeout?)` | Wait for agent state |
-| `CaptureOutput(agent_ref, lines?)` | Get agent output |
+| `Agent(AgentTask(...))` | Run an agent to completion and return a schema-validated artifact |
 
 ### Git Effects
 
 | Effect | Description |
 |--------|-------------|
-| `Commit(env, message)` | Create commit |
-| `Push(env, remote?, force?)` | Push branch |
-| `CreatePR(env, title, body, target?)` | Create pull request |
+| `Commit(workspace, message)` | Create commit |
+| `Push(workspace, remote?, force?)` | Push branch |
+| `CreatePR(workspace, title, body, target?)` | Create pull request |
 | `MergePR(pr, strategy?)` | Merge PR |
 
 ## Templates
@@ -154,13 +193,13 @@ Pre-built workflow templates:
 |  CLI Layer                                                           |
 |  - run, ps, show, watch, attach, stop, logs                         |
 |  - issue create/list/show/resolve                                   |
-|  - env list/cleanup                                                 |
+|  - workspace list/cleanup                                           |
 |  - template list/show/run                                           |
 +---------------------------------------------------------------------+
 |  Effects                                                             |
 |  +----------+ +----------+ +----------+ +----------+                |
-|  | Worktree | |  Issue   | |  Agent   | |   Git    |                |
-|  | Create   | | Create   | | RunAgent | | Commit   |                |
+|  | Workspace | |  Issue   | |  Agent   | |   Git    |                |
+|  | Create   | | Create   | | Agent    | | Commit   |                |
 |  | Merge    | | List     | | Send     | | Push     |                |
 |  | Delete   | | Resolve  | | Capture  | | CreatePR |                |
 |  +----------+ +----------+ +----------+ +----------+                |

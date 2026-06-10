@@ -2,18 +2,17 @@
 
 import dataclasses
 
-import pytest
 from doeff_conductor.effects import (
     Agent,
     AgentTask,
     Commit,
     CreateIssue,
     CreatePR,
-    CreateWorktree,
-    DeleteWorktree,
+    CreateWorkspace,
+    DeleteWorkspace,
     GetIssue,
     ListIssues,
-    MergeBranches,
+    MergeWorkspaces,
     MergePR,
     Push,
     ResolveIssue,
@@ -25,7 +24,7 @@ class TestEffectBase:
 
     def test_effect_base_protocol(self):
         """Test that effects follow the protocol."""
-        effect = CreateWorktree()
+        effect = CreateWorkspace()
 
         # Should have intercept method (no nested programs for conductor effects).
         intercepted = effect.intercept(lambda x: x)
@@ -37,56 +36,52 @@ class TestEffectBase:
         assert isinstance(effect, EffectBase)
 
 
-class TestWorktreeEffects:
-    """Tests for worktree effects."""
+class TestWorkspaceEffects:
+    """Tests for workspace effects."""
 
-    def test_create_worktree_defaults(self):
-        """Test CreateWorktree with defaults."""
-        effect = CreateWorktree()
+    def test_create_workspace_defaults(self):
+        """Test CreateWorkspace with defaults."""
+        effect = CreateWorkspace()
 
         assert effect.issue is None
-        assert effect.base_branch is None
+        assert effect.from_ref is None
         assert effect.suffix is None
         assert effect.name is None
 
-    def test_create_worktree_with_suffix(self):
-        """Test CreateWorktree with suffix."""
-        effect = CreateWorktree(suffix="impl")
+    def test_create_workspace_with_suffix(self):
+        """Test CreateWorkspace with suffix."""
+        effect = CreateWorkspace(suffix="impl")
         assert effect.suffix == "impl"
 
-    def test_merge_branches_requires_envs(self):
-        effect = MergeBranches(envs=())
-        assert effect.envs == ()
+    def test_merge_workspaces_requires_workspaces(self):
+        effect = MergeWorkspaces(workspaces=())
+        assert effect.workspaces == ()
 
-    def test_delete_worktree(self):
-        from pathlib import Path
+    def test_delete_workspace(self):
+        from doeff_conductor.types import Workspace
 
-        from doeff_conductor.types import WorktreeEnv
-
-        env = WorktreeEnv(
+        env = Workspace(
             id="test",
-            path=Path("/tmp/worktree"),
-            branch="test-branch",
-            base_commit="abc123",
+            repo="default",
+            ref="test-branch",
+            base_ref="main",
         )
 
-        effect = DeleteWorktree(env=env)
-        assert effect.env == env
+        effect = DeleteWorkspace(workspace=env)
+        assert effect.workspace == env
         assert effect.force is False
 
-    def test_delete_worktree_force(self):
-        from pathlib import Path
+    def test_delete_workspace_force(self):
+        from doeff_conductor.types import Workspace
 
-        from doeff_conductor.types import WorktreeEnv
-
-        env = WorktreeEnv(
+        env = Workspace(
             id="test",
-            path=Path("/tmp/worktree"),
-            branch="test-branch",
-            base_commit="abc123",
+            repo="default",
+            ref="test-branch",
+            base_ref="main",
         )
 
-        effect = DeleteWorktree(env=env, force=True)
+        effect = DeleteWorkspace(workspace=env, force=True)
         assert effect.force is True
 
 
@@ -168,15 +163,13 @@ class TestAgentEffects:
 
     def test_agent_effect_wraps_task(self):
         """Test schema-validated Agent effect construction."""
-        from pathlib import Path
+        from doeff_conductor.types import Workspace
 
-        from doeff_conductor.types import WorktreeEnv
-
-        env = WorktreeEnv(
+        env = Workspace(
             id="test",
-            path=Path("/tmp"),
-            branch="test",
-            base_commit="abc",
+            repo="default",
+            ref="test",
+            base_ref="main",
         )
 
         task = AgentTask(
@@ -201,53 +194,47 @@ class TestGitEffects:
 
     def test_commit_defaults(self):
         """Test Commit effect defaults."""
-        from pathlib import Path
+        from doeff_conductor.types import Workspace
 
-        from doeff_conductor.types import WorktreeEnv
-
-        env = WorktreeEnv(
+        env = Workspace(
             id="test",
-            path=Path("/tmp"),
-            branch="test",
-            base_commit="abc",
+            repo="default",
+            ref="test",
+            base_ref="main",
         )
 
-        effect = Commit(env=env, message="feat: add feature")
+        effect = Commit(workspace=env, message="feat: add feature")
         assert effect.message == "feat: add feature"
         assert effect.all is True  # default
 
     def test_push_defaults(self):
         """Test Push effect defaults."""
-        from pathlib import Path
+        from doeff_conductor.types import Workspace
 
-        from doeff_conductor.types import WorktreeEnv
-
-        env = WorktreeEnv(
+        env = Workspace(
             id="test",
-            path=Path("/tmp"),
-            branch="test",
-            base_commit="abc",
+            repo="default",
+            ref="test",
+            base_ref="main",
         )
 
-        effect = Push(env=env)
+        effect = Push(workspace=env)
         assert effect.remote == "origin"
         assert effect.force is False
         assert effect.set_upstream is True
 
     def test_create_pr_required_fields(self):
         """Test CreatePR required fields."""
-        from pathlib import Path
+        from doeff_conductor.types import Workspace
 
-        from doeff_conductor.types import WorktreeEnv
-
-        env = WorktreeEnv(
+        env = Workspace(
             id="test",
-            path=Path("/tmp"),
-            branch="test",
-            base_commit="abc",
+            repo="default",
+            ref="test",
+            base_ref="main",
         )
 
-        effect = CreatePR(env=env, title="Add feature")
+        effect = CreatePR(workspace=env, title="Add feature")
         assert effect.title == "Add feature"
         assert effect.target == "main"
         assert effect.draft is False
@@ -291,24 +278,6 @@ class TestGitEffects:
         assert effect.strategy == MergeStrategy.SQUASH
         assert effect.delete_branch is True
 
-    def test_legacy_git_effects_are_deprecated(self):
-        from pathlib import Path
-
-        from doeff_conductor.types import WorktreeEnv
-
-        env = WorktreeEnv(
-            id="test",
-            path=Path("/tmp"),
-            branch="test",
-            base_commit="abc",
-        )
-
-        with pytest.warns(
-            DeprecationWarning,
-            match="doeff_conductor\\.effects\\.git\\.Commit",
-        ):
-            _ = Commit(env=env, message="feat: deprecated")
-
     def test_generic_git_aliases_are_exported(self):
         from doeff_conductor.effects.git import (
             GitCommitEffect,
@@ -335,9 +304,9 @@ class TestModuleExports:
 
         expected_names = {
             "ConductorEffectBase",
-            "CreateWorktree",
-            "MergeBranches",
-            "DeleteWorktree",
+            "CreateWorkspace",
+            "MergeWorkspaces",
+            "DeleteWorkspace",
             "CreateIssue",
             "ListIssues",
             "GetIssue",
@@ -362,10 +331,11 @@ class TestModuleExports:
         runtime = MockConductorRuntime(tmp_path)
 
         production = production_handlers(
-            worktree_handler=runtime,
+            workspace_handler=runtime,
             issue_handler=runtime,
             agent_handler=runtime,
             git_handler=runtime,
+            exec_handler=runtime,
         )
         mocked = mock_handlers(runtime=runtime)
 
