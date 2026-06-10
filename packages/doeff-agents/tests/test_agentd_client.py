@@ -330,3 +330,42 @@ def _snapshot_payload_obj(
     return AgentSessionSnapshot.from_dict(
         _snapshot_payload(session_id=session_id, agent_type=agent_type, work_dir=work_dir)
     )
+
+
+def _spy_client(captured: dict) -> AgentdClient:
+    class _Spy(AgentdClient):
+        def request(self, method, params=None, *, read_timeout=None):
+            captured["method"] = method
+            captured["read_timeout"] = read_timeout
+            if method == "session.launch":
+                return _snapshot_payload()
+            return {"session": _snapshot_payload(), "result": None, "validation_error": None}
+
+    return _Spy("/tmp/unused.sock")
+
+
+def test_launch_read_timeout_covers_daemon_launch_budget() -> None:
+    """session.launch blocks daemon-side up to 60s; the client socket must wait longer."""
+    captured: dict = {}
+    _spy_client(captured).launch_session(
+        session_id="s1",
+        session_name="s1",
+        agent_type="codex",
+        work_dir=Path("/tmp"),
+    )
+    assert captured["method"] == "session.launch"
+    assert captured["read_timeout"] is not None
+    assert captured["read_timeout"] > 60.0
+
+
+def test_await_result_read_timeout_covers_caller_budget() -> None:
+    captured: dict = {}
+    _spy_client(captured).await_result("s1", timeout_seconds=120.0)
+    assert captured["method"] == "session.await_result"
+    assert captured["read_timeout"] > 120.0
+
+
+def test_await_result_read_timeout_covers_default_budget() -> None:
+    captured: dict = {}
+    _spy_client(captured).await_result("s1")
+    assert captured["read_timeout"] > 600.0
