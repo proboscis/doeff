@@ -129,7 +129,7 @@ class ConductorAPI:
             self._save_workflow(handle)
 
             # Execute the workflow
-            from doeff import Effect, Pass, WithHandler, do, run
+            from doeff import WithHandler, run
 
             # Build kwargs
             kwargs = params or {}
@@ -140,71 +140,12 @@ class ConductorAPI:
             program = workflow_func(**kwargs)
 
             # Run with conductor handlers
-            from .handlers import (
-                AgentHandler,
-                ExecHandler,
-                GitHandler,
-                IssueHandler,
-                WorkspaceHandler,
-                make_scheduled_handler,
-            )
+            from .handlers import production_handlers
 
-            workspace_handler = WorkspaceHandler()
-            issue_handler = IssueHandler()
-            agent_handler = AgentHandler(
-                workflow_id=workflow_id,
-                workspace_resolver=workspace_handler.resolve_path,
+            conductor_handler = production_handlers(
+                journal_state_dir=self.state_dir,
+                journal_run_id=workflow_id,
             )
-            git_handler = GitHandler(workspace_resolver=workspace_handler.resolve_path)
-            exec_handler = ExecHandler(workspace_resolver=workspace_handler.resolve_path)
-
-            from .effects import (
-                AgentEffect,
-                Commit,
-                CreateWorkspace,
-                DeleteWorkspace,
-                Exec,
-                CreateIssue,
-                CreatePR,
-                GetIssue,
-                ListIssues,
-                MergeWorkspaces,
-                MergePR,
-                Push,
-                ResolveIssue,
-            )
-
-            handlers = (
-                (
-                    CreateWorkspace,
-                    make_scheduled_handler(workspace_handler.handle_create_workspace),
-                ),
-                (
-                    MergeWorkspaces,
-                    make_scheduled_handler(workspace_handler.handle_merge_workspaces),
-                ),
-                (
-                    DeleteWorkspace,
-                    make_scheduled_handler(workspace_handler.handle_delete_workspace),
-                ),
-                (Exec, make_scheduled_handler(exec_handler.handle_exec)),
-                (CreateIssue, make_scheduled_handler(issue_handler.handle_create_issue)),
-                (ListIssues, make_scheduled_handler(issue_handler.handle_list_issues)),
-                (GetIssue, make_scheduled_handler(issue_handler.handle_get_issue)),
-                (ResolveIssue, make_scheduled_handler(issue_handler.handle_resolve_issue)),
-                (AgentEffect, make_scheduled_handler(agent_handler.handle_agent)),
-                (Commit, make_scheduled_handler(git_handler.handle_commit)),
-                (Push, make_scheduled_handler(git_handler.handle_push)),
-                (CreatePR, make_scheduled_handler(git_handler.handle_create_pr)),
-                (MergePR, make_scheduled_handler(git_handler.handle_merge_pr)),
-            )
-
-            @do
-            def conductor_handler(effect: Effect, k: Any):
-                for effect_type, effect_handler in handlers:
-                    if isinstance(effect, effect_type):
-                        return (yield effect_handler(effect, k))
-                yield Pass(effect, k)
 
             result = run(WithHandler(conductor_handler, program))
             result_value = result.value if type(result).__name__ == "RunResult" else result
