@@ -110,7 +110,7 @@ A conductor workflow invokes workers only through an `agent!` effect:
 prompt, result JSON-schema (or pydantic model), a **semantic profile name**
 (a capability tier such as `:cheap-coder` / `:frontier-reviewer` — never a
 concrete agent kind or an account; the project env binds the name to
-adapter+model and the user env completes it with auth. `stub` is NOT a
+adapter+model+effort and the user env completes it with auth. `stub` is NOT a
 profile but an interpreter choice reachable only via the `validate` verb
 and tests), workspace, label/phase, and the
 **verification class** (required, always explicit, never inherited or
@@ -203,7 +203,7 @@ Macros compile to a static DAG of doeff Programs. Expansion-time checks
 Keep the JS tool's load-bearing constraints: static graph skeleton, pure
 metadata, effect-boundary caching for replay resume — with the cache key
 defined by the **result-distribution criterion**: prompt, schema, and the
-resolved identity fingerprint (adapter kind, model) enter the key;
+resolved identity fingerprint (adapter kind, model, effort) enter the key;
 substrate never does (see D7).
 
 ### D3 — Deterministic gates are plain steps, not agents

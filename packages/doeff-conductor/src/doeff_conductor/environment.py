@@ -89,6 +89,11 @@ class ProfileBinding:
 
         # effort=None means "the agent CLI's own default effort"; an empty
         # string would silently produce a broken CLI flag downstream.
+        # Validation is shape-only by design: the effort vocabulary is
+        # adapter-specific (claude and codex accept different level names),
+        # so a closed enum here would couple L0 to adapter versions. The
+        # cost is that an adapter-invalid value (e.g. a typo) passes the
+        # binding plan and fails only at worker launch.
         effort: object | None = data.get("effort")
         if effort is not None and (not isinstance(effort, str) or not effort):
             raise ValueError(f"profile {name!r} effort must be a non-empty string or None")
