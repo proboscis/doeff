@@ -8,7 +8,7 @@ This directory contains tests for the doeff-conductor package.
 - `test_effects.py` - Tests for effect construction
 - `test_types.py` - Tests for type definitions
 - `test_agent_handler.py` - Tests for agent handler with fully mocked dependencies
-- `test_worktree_handler.py` - Tests for worktree management
+- `test_workspace_handler.py` - Tests for workspace management
 - `test_issue_handler.py` - Tests for issue lifecycle
 - `test_git_handler.py` - Tests for git operations
 
@@ -99,10 +99,10 @@ This keeps tests focused on conductor's responsibility: orchestrating agentic ef
 ### Test Fixtures
 
 ```python
-def test_with_repo(test_repo, worktree_base, issues_dir):
+def test_with_repo(test_repo, workspace_base, issues_dir):
     """Fixtures for git repository testing."""
     # test_repo - Path to initialized git repository
-    # worktree_base - Path for worktree storage
+    # workspace_base - Path for workspace storage
     # issues_dir - Path for issue storage
 
 def test_with_opencode(opencode_url):

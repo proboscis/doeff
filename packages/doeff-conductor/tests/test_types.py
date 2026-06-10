@@ -1,17 +1,19 @@
 """Tests for doeff-conductor types."""
 
 from datetime import datetime, timezone
-from pathlib import Path
 
 from doeff_conductor.types import (
     AgentRef,
+    ExecResult,
     Issue,
     IssueStatus,
+    MergeStatus,
     MergeStrategy,
+    MergeWorkspacesResult,
     PRHandle,
+    Workspace,
     WorkflowHandle,
     WorkflowStatus,
-    WorktreeEnv,
 )
 
 
@@ -66,39 +68,54 @@ class TestIssue:
         assert issue.labels == ("bug",)
 
 
-class TestWorktreeEnv:
-    """Tests for WorktreeEnv type."""
+class TestWorkspace:
+    """Tests for Workspace type."""
 
-    def test_create_worktree_env(self):
-        """Test creating a worktree environment."""
-        env = WorktreeEnv(
+    def test_create_workspace(self):
+        """Test creating a logical workspace."""
+        workspace = Workspace(
             id="abc123",
-            path=Path("/tmp/test"),
-            branch="feature-branch",
-            base_commit="deadbeef",
+            repo="default",
+            ref="feature-branch",
+            base_ref="main",
         )
 
-        assert env.id == "abc123"
-        assert env.path == Path("/tmp/test")
-        assert env.branch == "feature-branch"
+        assert workspace.id == "abc123"
+        assert workspace.repo == "default"
+        assert workspace.ref == "feature-branch"
 
-    def test_worktree_env_roundtrip(self):
-        """Test worktree env serialization roundtrip."""
-        env = WorktreeEnv(
+    def test_workspace_roundtrip_does_not_expose_path(self):
+        """Test workspace serialization roundtrip."""
+        workspace = Workspace(
             id="def456",
-            path=Path("/tmp/worktree"),
-            branch="test-branch",
-            base_commit="cafebabe",
+            repo="default",
+            ref="test-branch",
+            base_ref="main",
             issue_id="ISSUE-001",
         )
 
-        data = env.to_dict()
-        restored = WorktreeEnv.from_dict(data)
+        data = workspace.to_dict()
+        restored = Workspace.from_dict(data)
 
-        assert restored.id == env.id
-        assert restored.path == env.path
-        assert restored.branch == env.branch
-        assert restored.issue_id == env.issue_id
+        assert "path" not in data
+        assert restored.id == workspace.id
+        assert restored.ref == workspace.ref
+        assert restored.issue_id == workspace.issue_id
+
+
+class TestGateResults:
+    """Tests for structured gate and merge results."""
+
+    def test_exec_result_passed_property(self):
+        result = ExecResult(exit_code=0, log_path="/tmp/log.txt")
+
+        assert result.passed
+
+    def test_merge_result_merged_property(self):
+        workspace = Workspace(id="ws", repo="default", ref="merged", base_ref="main")
+        result = MergeWorkspacesResult(status=MergeStatus.MERGED, workspace=workspace)
+
+        assert result.merged
 
 
 class TestWorkflowHandle:
@@ -161,7 +178,7 @@ class TestAgentRef:
             id="session123",
             name="implementer",
             workflow_id="workflow456",
-            env_id="env789",
+            workspace_id="workspace789",
             agent_type="claude",
         )
 

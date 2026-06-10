@@ -3,7 +3,7 @@ Pytest configuration and fixtures for doeff-conductor tests.
 
 This module provides:
 - Custom markers for E2E and OpenCode-dependent tests
-- Fixtures for test repositories and worktrees
+- Fixtures for test repositories and workspaces
 - Detection functions for external dependencies
 """
 
@@ -172,11 +172,11 @@ def test_repo(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def worktree_base(tmp_path: Path) -> Path:
-    """Fixture providing a temporary directory for worktrees."""
-    worktrees = tmp_path / "worktrees"
-    worktrees.mkdir()
-    return worktrees
+def workspace_base(tmp_path: Path) -> Path:
+    """Fixture providing a temporary directory for workspace materializations."""
+    workspaces = tmp_path / "workspaces"
+    workspaces.mkdir()
+    return workspaces
 
 
 @pytest.fixture

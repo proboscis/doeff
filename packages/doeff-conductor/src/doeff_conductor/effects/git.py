@@ -1,10 +1,5 @@
-"""Git effects for doeff-conductor.
+"""Git effects for doeff-conductor."""
 
-This module keeps conductor-specific git effects for backward compatibility.
-New workflows should prefer direct use of ``doeff_git.effects``.
-"""
-
-import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -24,28 +19,12 @@ from doeff_git.effects import (
 from doeff_conductor.effects.base import ConductorEffectBase
 
 if TYPE_CHECKING:
-    from doeff_conductor.types import MergeStrategy, PRHandle, WorktreeEnv
-
-
-def _warn_deprecated(effect_name: str) -> None:
-    replacement_map = {
-        "Commit": "GitCommit",
-        "Push": "GitPush",
-        "CreatePR": "CreatePR",
-        "MergePR": "MergePR",
-    }
-    replacement = replacement_map.get(effect_name, effect_name)
-    warnings.warn(
-        f"doeff_conductor.effects.git.{effect_name} is deprecated. "
-        f"Use doeff_git.effects.{replacement} instead.",
-        DeprecationWarning,
-        stacklevel=3,
-    )
+    from doeff_conductor.types import MergeStrategy, PRHandle, Workspace
 
 
 @dataclass(frozen=True, kw_only=True)
 class Commit(ConductorEffectBase):
-    """Create a commit in the worktree.
+    """Create a commit in the workspace.
 
     Stages all changes and creates a commit with the given message.
 
@@ -54,72 +33,63 @@ class Commit(ConductorEffectBase):
     Example:
         @do
         def save_changes(env):
-            sha = yield Commit(env=env, message="feat: add login feature")
+            sha = yield Commit(workspace=workspace, message="feat: add login feature")
             return sha
     """
 
-    env: "WorktreeEnv"  # Worktree to commit in
+    workspace: "Workspace"  # Workspace to commit in
     message: str  # Commit message
     all: bool = True  # Stage all changes (git add -A)
-
-    def __post_init__(self) -> None:
-        _warn_deprecated("Commit")
 
 
 @dataclass(frozen=True, kw_only=True)
 class Push(ConductorEffectBase):
     """Push branch to remote.
 
-    Pushes the worktree's branch to the remote repository.
+    Pushes the workspace's ref to the remote repository.
 
     Yields: bool (True if successful)
 
     Example:
         @do
         def publish_changes(env):
-            yield Commit(env=env, message="feat: new feature")
-            yield Push(env=env)
+            yield Commit(workspace=workspace, message="feat: new feature")
+            yield Push(workspace=workspace)
     """
 
-    env: "WorktreeEnv"  # Worktree to push from
+    workspace: "Workspace"  # Workspace to push from
     remote: str = "origin"  # Remote name
     force: bool = False  # Force push
     set_upstream: bool = True  # Set upstream tracking
-
-    def __post_init__(self) -> None:
-        _warn_deprecated("Push")
 
 
 @dataclass(frozen=True, kw_only=True)
 class CreatePR(ConductorEffectBase):
     """Create a pull request.
 
-    Creates a PR from the worktree's branch to the target branch.
+    Creates a PR from the workspace's ref to the target branch.
 
     Yields: PRHandle
 
     Example:
         @do
-        def create_feature_pr(env, issue):
-            yield Commit(env=env, message=f"feat: {issue.title}")
-            yield Push(env=env)
+        def create_feature_pr(workspace, issue):
+            yield Commit(workspace=workspace, message=f"feat: {issue.title}")
+            yield Push(workspace=workspace)
             pr = yield CreatePR(
-                env=env,
+                workspace=workspace,
                 title=issue.title,
                 body=f"Resolves: {issue.id}",
             )
             return pr
     """
 
-    env: "WorktreeEnv"  # Worktree with changes
+    workspace: "Workspace"  # Workspace with changes
     title: str  # PR title
     body: str | None = None  # PR body
     target: str = "main"  # Target branch
     draft: bool = False  # Create as draft PR
     labels: tuple[str, ...] | list[str] | None = None  # Labels to apply on create
-
-    def __post_init__(self) -> None:
-        _warn_deprecated("CreatePR")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -134,9 +104,6 @@ class MergePR(ConductorEffectBase):
     pr: "PRHandle"  # PR to merge
     strategy: "MergeStrategy | None" = None  # Merge strategy (default: merge)
     delete_branch: bool = True  # Delete source branch after merge
-
-    def __post_init__(self) -> None:
-        _warn_deprecated("MergePR")
 
 
 # Generic aliases exposed for migration convenience.

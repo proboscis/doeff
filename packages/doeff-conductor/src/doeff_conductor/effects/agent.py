@@ -18,7 +18,7 @@ from doeff_agents.effects import (  # re-exported for conductor callers
 from .base import ConductorEffectBase
 
 if TYPE_CHECKING:
-    from ..types import WorktreeEnv
+    from ..types import Workspace
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -28,7 +28,7 @@ class AgentTask:
     run_id: str
     node_id: str
     attempt: int
-    env: "WorktreeEnv"
+    env: "Workspace"
     prompt: str
     result_schema: dict[str, Any]
     verification_class: str
