@@ -259,7 +259,7 @@ def run(
     Examples:
         conductor run basic_pr --issue ISSUE-001.md
         conductor run enforced_pr --issue /path/to/issue.md --watch
-        conductor run ./my_workflow.py --params '{"key": "value"}'
+        conductor run ./my_workflow.hy --params '{"key": "value"}'
     """
     from .api import ConductorAPI
 
