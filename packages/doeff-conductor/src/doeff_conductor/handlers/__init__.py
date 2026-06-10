@@ -10,11 +10,8 @@ from doeff import WithHandler, run
 
 from .agent_handler import (
     AgentBackend,
-    AgentBackendName,
     AgentdAgentBackend,
     AgentHandler,
-    CodexExecAgentBackend,
-    make_agent_backend,
 )
 from .exec_handler import ExecHandler
 from .git_handler import GitHandler
@@ -32,7 +29,7 @@ from .utils import (
 from .workspace_handler import WorkspaceHandler
 
 if TYPE_CHECKING:
-    from doeff import Program, RunResult
+    from doeff import Program
 
 
 HandlerProtocol = Callable[..., Any]
@@ -75,21 +72,17 @@ def production_handlers(
     workspace_handler: WorkspaceHandler | None = None,
     issue_handler: IssueHandler | None = None,
     agent_handler: AgentHandler | None = None,
-    agent_backend: AgentBackendName | str | AgentBackend | None = None,
     git_handler: GitHandler | None = None,
     exec_handler: ExecHandler | None = None,
     journal_state_dir: str | Path | None = None,
     journal_run_id: str | None = None,
-    codex_home: str | Path | None = None,
 ) -> HandlerProtocol:
     """Build the default production protocol handler for all conductor effects."""
-    if agent_handler is not None and agent_backend is not None:
-        raise ValueError("agent_handler and agent_backend cannot both be supplied")
     active_workspace_handler = workspace_handler or WorkspaceHandler()
     resolved_agent_handler = agent_handler or AgentHandler(
         workflow_id=journal_run_id,
         workspace_resolver=active_workspace_handler.resolve_path,
-        backend=make_agent_backend(agent_backend, codex_home=codex_home),
+        backend=AgentdAgentBackend(),
     )
     if journal_state_dir is not None or journal_run_id is not None:
         resolved_agent_handler = JournaledAgentHandler(
@@ -107,12 +100,12 @@ def production_handlers(
 
 
 def run_sync(
-    program: "Program[Any]",
+    program: "Program",
     env: dict[str, Any] | None = None,
     store: dict[str, Any] | None = None,
     *,
     scheduled_handlers: Sequence[HandlerProtocol] | HandlerProtocol | None = None,
-) -> "RunResult[Any]":
+) -> RunSyncResult:
     """Run a program synchronously with custom handlers."""
     if env is not None or store is not None:
         raise NotImplementedError("run_sync no longer accepts env/store with explicit handlers")
@@ -135,10 +128,8 @@ def run_sync(
 
 __all__ = [
     "AgentBackend",
-    "AgentBackendName",
     "AgentHandler",
     "AgentdAgentBackend",
-    "CodexExecAgentBackend",
     "ExecHandler",
     "GitHandler",
     "IssueHandler",

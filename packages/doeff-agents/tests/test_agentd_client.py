@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import shutil
 import socket
 import sys
 import tempfile
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from doeff_agents import (
     AgentdClient,
     AgentdClientError,
+    AgentdUnavailableError,
     AgentSessionLifecycle,
     AgentType,
     DaemonAgentHandler,
@@ -29,6 +31,16 @@ from doeff_agents import (
     default_agentd_paths,
     ensure_agentd,
 )
+
+
+@pytest.fixture
+def short_runtime_dir() -> Iterator[Path]:
+    """Return a short runtime dir so AF_UNIX socket paths fit on macOS."""
+    runtime_dir = Path(tempfile.mkdtemp(prefix="agentd-runtime-", dir="/tmp"))
+    try:
+        yield runtime_dir
+    finally:
+        shutil.rmtree(runtime_dir, ignore_errors=True)
 
 
 class OneShotAgentdServer:
@@ -149,52 +161,48 @@ def test_default_agentd_paths_use_xdg(monkeypatch, tmp_path: Path) -> None:
     assert paths.log_path == state_home / "doeff" / "agentd.log"
 
 
-def test_ensure_agentd_starts_daemon_when_socket_is_not_ready(
+def test_ensure_agentd_uses_reachable_canonical_socket(
     monkeypatch,
     tmp_path: Path,
+    short_runtime_dir: Path,
 ) -> None:
-    ready_calls = 0
-    commands: list[list[str]] = []
+    def handle(request: Mapping[str, Any]) -> Mapping[str, Any]:
+        return {"id": request["id"], "ok": True, "result": {"state": "running"}}
 
-    def fake_ready(_client: AgentdClient) -> bool:
-        nonlocal ready_calls
-        ready_calls += 1
-        return ready_calls > 1
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    paths = default_agentd_paths()
+    paths.socket_path.parent.mkdir(parents=True)
 
-    class FakeProcess:
-        def poll(self) -> None:
-            return None
+    with OneShotAgentdServer(paths.socket_path, handle) as server:
+        client = ensure_agentd(client_timeout=2.0)
 
-    def fake_popen(command, **_kwargs):
-        commands.append(command)
-        return FakeProcess()
-
-    monkeypatch.setattr(agentd_client, "_agentd_is_ready", fake_ready)
-    monkeypatch.setattr(agentd_client.subprocess, "Popen", fake_popen)
-
-    client = ensure_agentd(
-        db_path=tmp_path / "agentd.sqlite",
-        socket_path=tmp_path / "agentd.sock",
-        daemon_bin="/usr/local/bin/doeff-agentd",
-        max_running=7,
-    )
-
-    assert client.socket_path == tmp_path / "agentd.sock"
-    assert commands == [
-        [
-            "/usr/local/bin/doeff-agentd",
-            "--db",
-            str(tmp_path / "agentd.sqlite"),
-            "--socket",
-            str(tmp_path / "agentd.sock"),
-            "--max-running",
-            "7",
-            "serve",
-        ]
-    ]
+    assert client.socket_path == paths.socket_path
+    assert server.requests[0]["method"] == "daemon.status"
 
 
-def test_lazy_agentd_client_starts_daemon_on_first_operation(monkeypatch, tmp_path: Path) -> None:
+def test_ensure_agentd_fails_loudly_when_canonical_socket_unreachable(
+    monkeypatch,
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    paths = default_agentd_paths()
+
+    with pytest.raises(AgentdUnavailableError) as error:
+        ensure_agentd(daemon_bin="/usr/local/bin/doeff-agentd", max_running=7)
+
+    message = str(error.value)
+    assert str(paths.socket_path) in message
+    assert "doeff-agentd --db" in message
+    assert f"--socket {paths.socket_path}" in message
+    assert "--max-running 7 serve" in message
+
+
+def test_lazy_agentd_client_resolves_daemon_on_first_operation(monkeypatch, tmp_path: Path) -> None:
     calls: list[dict[str, Any]] = []
 
     class FakeResolvedClient:

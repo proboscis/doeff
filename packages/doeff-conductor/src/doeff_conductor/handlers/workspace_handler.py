@@ -2,12 +2,20 @@
 
 import secrets
 import shutil
-import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from doeff_conductor.git_workspace import (
+    GitCommandError,
+    append_git_output,
+    conflicted_files,
+    get_current_commit,
+    get_default_branch,
+    get_repo_root,
+    run_git,
+)
 from doeff_conductor.types import (
     MergeConflict,
     MergeStatus,
@@ -37,84 +45,6 @@ def _get_workspace_base_dir() -> Path:
     return Path.home() / ".local" / "share" / "doeff-conductor" / "workspaces"
 
 
-def _get_default_branch(repo_path: Path) -> str:
-    """Get the default branch name for a repository."""
-    try:
-        result = subprocess.run(
-            ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
-            capture_output=True,
-            text=True,
-            cwd=repo_path,
-            check=True,
-        )
-        return result.stdout.strip().split("/")[-1]
-    except subprocess.CalledProcessError:
-        for branch_name in ("main", "master"):
-            result = subprocess.run(
-                ["git", "rev-parse", "--verify", f"refs/heads/{branch_name}"],
-                capture_output=True,
-                cwd=repo_path,
-                check=False,
-            )
-            if result.returncode == 0:
-                return branch_name
-        return "main"
-
-
-def _get_current_commit(repo_path: Path) -> str:
-    """Get the current HEAD commit SHA for a repository."""
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        capture_output=True,
-        text=True,
-        cwd=repo_path,
-        check=True,
-    )
-    return result.stdout.strip()
-
-
-def _get_repo_root(path: Path | None = None) -> Path:
-    """Get the git repository root directory."""
-    cwd: Path = path or Path.cwd()
-    result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-        cwd=cwd,
-        check=True,
-    )
-    return Path(result.stdout.strip())
-
-
-def _run_git(args: list[str], *, cwd: Path, log_path: Path | None = None) -> None:
-    """Run a git command and optionally append full output to a log file."""
-    completed = subprocess.run(
-        args,
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    if log_path is not None:
-        with log_path.open("a", encoding="utf-8") as log_file:
-            if completed.stdout:
-                log_file.write(completed.stdout)
-            if completed.stderr:
-                log_file.write(completed.stderr)
-
-
-def _conflicted_files(path: Path) -> tuple[str, ...]:
-    """Return the conflicted file list for a merge in progress."""
-    result = subprocess.run(
-        ["git", "diff", "--name-only", "--diff-filter=U"],
-        cwd=path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return tuple(line for line in result.stdout.splitlines() if line)
-
-
 class WorkspaceHandler:
     """Handler for logical workspaces backed by git worktrees."""
 
@@ -125,7 +55,7 @@ class WorkspaceHandler:
         repo_paths: "Mapping[str, Path] | None" = None,
         workspace_base: Path | None = None,
     ) -> None:
-        default_repo_path: Path = repo_path or _get_repo_root()
+        default_repo_path: Path = repo_path or get_repo_root()
         resolved_repo_paths: dict[str, Path] = {"default": default_repo_path}
         if repo_paths is not None:
             for repo_name, candidate_path in repo_paths.items():
@@ -162,14 +92,14 @@ class WorkspaceHandler:
         self._materializations[workspace.id] = _WorkspaceMaterialization(
             workspace=workspace,
             path=path,
-            base_commit=base_commit or _get_current_commit(path),
+            base_commit=base_commit or get_current_commit(path),
         )
 
     def handle_create_workspace(self, effect: "CreateWorkspace") -> Workspace:
         """Create a logical workspace from a git ref."""
         repo_path: Path = self.repo_path(effect.repo)
         workspace_id: str = secrets.token_hex(4)
-        base_ref: str = effect.from_ref or _get_default_branch(repo_path)
+        base_ref: str = effect.from_ref or get_default_branch(repo_path)
 
         branch_parts: list[str] = ["conductor"]
         if effect.issue is not None:
@@ -180,9 +110,9 @@ class WorkspaceHandler:
         ref: str = effect.name or "-".join(branch_parts)
         materialized_path: Path = self.workspace_base / effect.repo / workspace_id
         materialized_path.parent.mkdir(parents=True, exist_ok=True)
-        base_commit: str = _get_current_commit(repo_path)
+        base_commit: str = get_current_commit(repo_path)
 
-        _run_git(
+        run_git(
             ["git", "worktree", "add", "-b", ref, str(materialized_path), base_ref],
             cwd=repo_path,
         )
@@ -221,7 +151,7 @@ class WorkspaceHandler:
         materialized_path.parent.mkdir(parents=True, exist_ok=True)
         log_path: Path = self.logs_dir / f"merge-{workspace_id}.log"
 
-        _run_git(
+        run_git(
             ["git", "worktree", "add", "-b", ref, str(materialized_path), base_workspace.ref],
             cwd=repo_path,
             log_path=log_path,
@@ -236,7 +166,7 @@ class WorkspaceHandler:
         self._materializations[workspace_id] = _WorkspaceMaterialization(
             workspace=workspace,
             path=materialized_path,
-            base_commit=_get_current_commit(materialized_path),
+            base_commit=get_current_commit(materialized_path),
         )
 
         strategy: MergeStrategy = effect.strategy or MergeStrategy.MERGE
@@ -249,22 +179,18 @@ class WorkspaceHandler:
                 args = ["git", "merge", "--squash", source_workspace.ref]
 
             try:
-                _run_git(args, cwd=materialized_path, log_path=log_path)
+                run_git(args, cwd=materialized_path, log_path=log_path)
                 if strategy is MergeStrategy.SQUASH:
-                    _run_git(
+                    run_git(
                         ["git", "commit", "-m", f"Merge {source_workspace.ref}"],
                         cwd=materialized_path,
                         log_path=log_path,
                     )
-            except subprocess.CalledProcessError as error:
-                with log_path.open("a", encoding="utf-8") as log_file:
-                    if error.stdout:
-                        log_file.write(str(error.stdout))
-                    if error.stderr:
-                        log_file.write(str(error.stderr))
+            except GitCommandError as error:
+                append_git_output(log_path, error.result)
                 conflict = MergeConflict(
                     workspace=source_workspace,
-                    files=_conflicted_files(materialized_path),
+                    files=conflicted_files(materialized_path),
                 )
                 return MergeWorkspacesResult(
                     status=MergeStatus.CONFLICT,
@@ -292,20 +218,17 @@ class WorkspaceHandler:
         args.append(str(materialization.path))
 
         try:
-            subprocess.run(
+            run_git(
                 args,
                 cwd=self.repo_path(effect.workspace.repo),
-                check=True,
-                capture_output=True,
             )
-        except subprocess.CalledProcessError:
+        except GitCommandError:
             if not effect.force:
                 return False
             shutil.rmtree(materialization.path, ignore_errors=True)
-            subprocess.run(
+            run_git(
                 ["git", "worktree", "prune"],
                 cwd=self.repo_path(effect.workspace.repo),
-                capture_output=True,
                 check=False,
             )
 

@@ -9,6 +9,7 @@ Tests the ConductorAPI Python interface:
 - cleanup_workspaces() - cleanup orphaned workspaces
 """
 
+import inspect
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -478,43 +479,10 @@ def workflow():
         assert handle.status == WorkflowStatus.DONE
         assert handle.pr_url is None
 
-    def test_run_workflow_passes_agent_backend_to_production_handlers(
-        self,
-        api: ConductorAPI,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        workflow_file = tmp_path / "backend_result_workflow.py"
-        workflow_file.write_text("""
-from doeff import Pure, do
-
-@do
-def workflow():
-    return (yield Pure({"status": "ok"}))
-""")
-        import doeff_conductor.handlers as handlers_module
-
-        real_production_handlers = handlers_module.production_handlers
-        captured: dict[str, object] = {}
-
-        def capture_production_handlers(**kwargs: object):
-            captured.update(kwargs)
-            return real_production_handlers(**kwargs)
-
-        monkeypatch.setattr(
-            handlers_module,
-            "production_handlers",
-            capture_production_handlers,
-        )
-
-        handle = api.run_workflow(
-            str(workflow_file),
-            run_id="backend-run",
-            agent_backend="codex-exec",
-        )
-
-        assert handle.id == "backend-run"
-        assert captured["agent_backend"] == "codex-exec"
+    def test_workflow_api_exposes_no_agent_backend_selector(self):
+        """Production workflows always use the agentd-backed handler."""
+        assert "agent_backend" not in inspect.signature(ConductorAPI.run_workflow).parameters
+        assert "agent_backend" not in inspect.signature(ConductorAPI.resume_workflow).parameters
 
     def test_run_workflow_installs_scheduler_for_spawn_gather(
         self,

@@ -19,6 +19,7 @@ _LAZY_EXPORTS = {
     "AgentdClientError": ".agentd_client",
     "AgentdPaths": ".agentd_client",
     "AgentdProtocolError": ".agentd_client",
+    "AgentdUnavailableError": ".agentd_client",
     "LazyAgentdClient": ".agentd_client",
     "default_agentd_paths": ".agentd_client",
     "ensure_agentd": ".agentd_client",

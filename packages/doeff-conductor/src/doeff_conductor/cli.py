@@ -242,15 +242,6 @@ def validate_cmd(
 @click.option("--issue", "-i", type=click.Path(exists=True), help="Issue file")
 @click.option("--params", "-p", help="Parameters as JSON")
 @click.option("--run-id", help="Use a stable workflow id for replay/resume measurements")
-@click.option(
-    "--agent-mode",
-    type=click.Choice(["agentd", "codex-exec"]),
-    default="agentd",
-    envvar="CONDUCTOR_AGENT_MODE",
-    show_default=True,
-    show_envvar=True,
-    help="Agent backend to use for production agent effects",
-)
 @click.option("--watch", "-w", is_flag=True, help="Watch workflow progress")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
 @click.pass_context
@@ -260,7 +251,6 @@ def run(
     issue: str | None,
     params: str | None,
     run_id: str | None,
-    agent_mode: str,
     watch: bool,
     output_json: bool,
 ) -> None:
@@ -306,7 +296,6 @@ def run(
             issue=issue_obj,
             params=parsed_params,
             run_id=run_id,
-            agent_backend=agent_mode,
         )
 
         if output_json:
@@ -332,22 +321,12 @@ def run(
 @cli.command("resume")
 @click.argument("workflow_id")
 @click.option("--params", "-p", help="Parameters as JSON")
-@click.option(
-    "--agent-mode",
-    type=click.Choice(["agentd", "codex-exec"]),
-    default="agentd",
-    envvar="CONDUCTOR_AGENT_MODE",
-    show_default=True,
-    show_envvar=True,
-    help="Agent backend to use for production agent effects",
-)
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
 @click.pass_context
 def resume_cmd(
     ctx: click.Context,
     workflow_id: str,
     params: str | None,
-    agent_mode: str,
     output_json: bool,
 ) -> None:
     """Resume a workflow from its snapshotted source."""
@@ -362,7 +341,6 @@ def resume_cmd(
         workflow = api.resume_workflow(
             workflow_id,
             params=parsed_params,
-            agent_backend=agent_mode,
         )
         if output_json:
             click.echo(json.dumps(workflow.to_dict(), indent=2))

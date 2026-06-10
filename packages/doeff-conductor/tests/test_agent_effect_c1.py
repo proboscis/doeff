@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import shutil
 import subprocess
@@ -10,11 +11,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from doeff_agents import AgentSessionLifecycle, AgentSessionSnapshot, AgentType, SessionStatus
+from doeff_agents.effects import AwaitOutcome, AwaitStatus
 from doeff_agents.result_validation import validate_result_payload
 from doeff_conductor import CreateWorkspace
 from doeff_conductor.effects import Agent, AgentAttemptExhaustedError, AgentEffect, AgentTask
 from doeff_conductor.handlers import run_sync
-from doeff_conductor.handlers.agent_handler import AgentHandler, CodexExecAgentBackend
+from doeff_conductor.handlers.agent_handler import AgentdAgentBackend, AgentHandler
 from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
 from doeff_conductor.types import Workspace
 
@@ -213,7 +216,7 @@ def test_real_codex_worker_returns_schema_valid_json_through_agent(tmp_path: Pat
     assert result.value == {"summary": "codex schema ok", "files_changed": []}
 
 
-def test_agent_handler_codex_exec_mode_uses_native_structured_output(
+def test_agent_handler_delegates_schema_agent_to_agentd_client(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -224,15 +227,25 @@ def test_agent_handler_codex_exec_mode_uses_native_structured_output(
         base_ref="main",
         created_at=datetime.now(timezone.utc),
     )
+
     def resolve_workspace(_workspace: Workspace) -> Path:
         return tmp_path
 
+    class AvailableAdapter:
+        def is_available(self) -> bool:
+            return True
+
+    fake_client = FakeAgentdClient()
+    monkeypatch.setattr(
+        "doeff_agents.handlers.daemon.get_adapter",
+        lambda _agent_type: AvailableAdapter(),
+    )
     handler = AgentHandler(
         workspace_resolver=resolve_workspace,
-        backend=CodexExecAgentBackend(codex_home=tmp_path / "codex-home"),
+        backend=AgentdAgentBackend(client=fake_client),
     )
     task = AgentTask(
-        run_id="run-codex-exec",
+        run_id="run-agentd",
         node_id="implement",
         attempt=0,
         env=workspace,
@@ -243,21 +256,104 @@ def test_agent_handler_codex_exec_mode_uses_native_structured_output(
         max_retries=0,
     )
 
-    def fake_run(
-        args: list[str],
-        **_kwargs: object,
-    ) -> subprocess.CompletedProcess[str]:
-        output_index = args.index("--output-last-message") + 1
-        output_path = Path(args[output_index])
-        output_path.write_text(
-            json.dumps({"summary": "ok", "files_changed": []}),
-            encoding="utf-8",
-        )
-        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr("doeff_conductor.handlers.agent_handler.shutil.which", lambda _: "codex")
-    monkeypatch.setattr("doeff_conductor.handlers.agent_handler.subprocess.run", fake_run)
-
     result = handler.handle_agent(AgentEffect(task=task))
 
     assert result == {"summary": "ok", "files_changed": []}
+    assert fake_client.launches[0]["session_id"] == "run-agentd-implement-0"
+    assert fake_client.launches[0]["prompt"] == "return JSON"
+    assert fake_client.launches[0]["expected_result"] == {
+        "payload_schema": IMPLEMENT_SCHEMA,
+        "max_retries": 0,
+    }
+    assert fake_client.awaited == [("run-agentd-implement-0", None)]
+
+
+def test_agent_handler_has_no_subprocess_or_os_environ_imports() -> None:
+    source_path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "doeff_conductor"
+        / "handlers"
+        / "agent_handler.py"
+    )
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    imported_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            module_name = node.module or ""
+            imported_names.add(module_name)
+            imported_names.update(f"{module_name}.{alias.name}" for alias in node.names)
+
+    assert "subprocess" not in imported_names
+    assert "os" not in imported_names
+    assert "os.environ" not in imported_names
+    assert "os.getenv" not in imported_names
+
+
+class FakeAgentdClient:
+    def __init__(self) -> None:
+        self.launches: list[dict[str, Any]] = []
+        self.awaited: list[tuple[str, float | None]] = []
+
+    def get_session(self, _session_id: str) -> None:
+        return None
+
+    def launch_session(self, **payload: Any) -> AgentSessionSnapshot:
+        self.launches.append(payload)
+        return AgentSessionSnapshot(
+            session_id=payload["session_id"],
+            session_name=payload["session_name"],
+            agent_type=AgentType(payload["agent_type"]),
+            work_dir=payload["work_dir"],
+            lifecycle=AgentSessionLifecycle.RUN_TO_COMPLETION,
+            status=SessionStatus.RUNNING,
+            backend_kind="agentd",
+        )
+
+    def await_result(
+        self,
+        session_id: str,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> AwaitOutcome:
+        self.awaited.append((session_id, timeout_seconds))
+        return AwaitOutcome(
+            status=AwaitStatus.EXITED,
+            result={"summary": "ok", "files_changed": []},
+        )
+
+    def list_sessions(self, _query: object = None) -> tuple[AgentSessionSnapshot, ...]:
+        return ()
+
+    def capture_session(self, _session_id: str, *, lines: int = 100) -> str:
+        return ""
+
+    def send_session(
+        self,
+        _session_id: str,
+        _message: str,
+        *,
+        enter: bool = True,
+        literal: bool = True,
+    ) -> None:
+        return None
+
+    def cancel_session(self, session_id: str) -> AgentSessionSnapshot:
+        return AgentSessionSnapshot(
+            session_id=session_id,
+            session_name=session_id,
+            agent_type=AgentType.CODEX,
+            work_dir=Path("."),
+            status=SessionStatus.STOPPED,
+        )
+
+    def cleanup_session(self, session_id: str) -> AgentSessionSnapshot:
+        return AgentSessionSnapshot(
+            session_id=session_id,
+            session_name=session_id,
+            agent_type=AgentType.CODEX,
+            work_dir=Path("."),
+            status=SessionStatus.STOPPED,
+        )
