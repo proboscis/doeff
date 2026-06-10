@@ -5,7 +5,7 @@ Date: 2026-06-10
 ## Workflow and target
 
 The pilot workflow lives at
-`packages/doeff-conductor/examples/k2_k3_pilot_workflow.py`.
+`packages/doeff-conductor/examples/k2_k3_pilot_workflow.hy`.
 
 It ports the reference shape into the C7 DSL surface:
 
@@ -38,10 +38,10 @@ The scratch pilot uses one repo but keeps the same isolation contract.
 ## Verification
 
 ```bash
-uv run conductor plan packages/doeff-conductor/examples/k2_k3_pilot_workflow.py --json \
+uv run conductor plan packages/doeff-conductor/examples/k2_k3_pilot_workflow.hy --json \
   2>&1 | tee /tmp/c7-plan.log
 
-uv run conductor validate packages/doeff-conductor/examples/k2_k3_pilot_workflow.py --json \
+uv run conductor validate packages/doeff-conductor/examples/k2_k3_pilot_workflow.hy --json \
   2>&1 | tee /tmp/c7-validate.log
 ```
 
@@ -72,7 +72,7 @@ selector and fails loudly if that daemon is not reachable:
 CONDUCTOR_STATE_DIR=/tmp/c7-conductor-state \
 PYTHONUNBUFFERED=1 \
 /path/to/.venv/bin/conductor --state-dir /tmp/c7-conductor-state run \
-  packages/doeff-conductor/examples/k2_k3_pilot_workflow.py \
+  packages/doeff-conductor/examples/k2_k3_pilot_workflow.hy \
   --run-id c7-replay2 \
   --params '{"run_id":"c7-replay2","base_ref":"main","effort":"low"}' \
   --json 2>&1 | tee /tmp/c7-full-run.log
