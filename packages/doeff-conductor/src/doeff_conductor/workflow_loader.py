@@ -1,4 +1,10 @@
-"""Load Python workflow request artifacts for conductor verbs."""
+"""Load Hy workflow request artifacts for conductor verbs.
+
+The authoring surface is exclusively the Hy macro DSL (ADR 0001 D2): user
+workflows are ``.hy`` modules built with the ``doeff_hy.conductor`` macros.
+The Python spec IR those macros expand into is an internal compilation
+target — user-supplied ``.py`` workflow files are rejected here.
+"""
 
 from __future__ import annotations
 
@@ -6,15 +12,27 @@ import ast
 import importlib.util
 import shutil
 import sys
+import types
 from dataclasses import dataclass
 from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
+from hy.compiler import hy_compile
+from hy.errors import HyError
+from hy.importer import HyLoader
+from hy.reader import read_many
+
 from doeff_conductor.dsl import WorkflowSpec
 
-WORKFLOW_SNAPSHOT_FILENAME = "workflow.py"
+WORKFLOW_SNAPSHOT_FILENAME = "workflow.hy"
+
+_HY_AUTHORING_GUIDANCE = (
+    "the conductor authoring surface is exclusively the Hy macro DSL "
+    "(ADR 0001 D2): author the workflow as a .hy module using the "
+    "doeff_hy.conductor macros (defworkflow/agent!/gate!/...)"
+)
 
 _ALLOWLISTED_IMPORT_ROOTS: frozenset[str] = frozenset(
     {
@@ -26,9 +44,11 @@ _ALLOWLISTED_IMPORT_ROOTS: frozenset[str] = frozenset(
         "decimal",
         "doeff",
         "doeff_conductor",
+        "doeff_hy",
         "enum",
         "fractions",
         "functools",
+        "hy",
         "itertools",
         "json",
         "math",
@@ -110,22 +130,23 @@ class WorkflowNondeterminismError(ValueError):
 
 
 def load_workflow_spec(workflow_path_text: str) -> WorkflowSpec:
-    """Load a WorkflowSpec from a Python file.
+    """Load a WorkflowSpec from a Hy workflow module.
 
-    The module may expose ``workflow``/``WORKFLOW`` directly or a zero-argument
-    ``build_workflow`` function.
+    The module may expose the macro-produced spec as ``workflow``/``WORKFLOW``
+    directly or via a zero-argument ``build_workflow`` function.
     """
 
     workflow_path: Path = Path(workflow_path_text)
     if not workflow_path.exists():
         raise ValueError(f"workflow file not found: {workflow_path_text}")
-    if workflow_path.suffix != ".py":
-        raise ValueError("C6 workflow verbs currently load Python workflow fixtures")
+    _require_hy_workflow_source(workflow_path)
     _check_workflow_source_determinism(workflow_path)
 
+    module_name: str = f"doeff_conductor_workflow_{workflow_path.stem}"
     spec: ModuleSpec | None = importlib.util.spec_from_file_location(
-        f"doeff_conductor_workflow_{workflow_path.stem}",
+        module_name,
         workflow_path,
+        loader=HyLoader(module_name, str(workflow_path)),
     )
     if spec is None or spec.loader is None:
         raise ValueError(f"cannot load workflow: {workflow_path_text}")
@@ -169,8 +190,7 @@ def snapshot_workflow_source(
     workflow_path: Path = Path(workflow_path_text)
     if not workflow_path.exists():
         raise ValueError(f"workflow file not found: {workflow_path_text}")
-    if workflow_path.suffix != ".py":
-        raise ValueError("workflow source snapshots currently require a Python file")
+    _require_hy_workflow_source(workflow_path)
     _check_workflow_source_determinism(workflow_path)
 
     snapshot_path: Path = workflow_snapshot_path(state_dir, run_id)
@@ -202,12 +222,47 @@ def workflow_snapshot_path(state_dir: str | Path, run_id: str) -> Path:
     return Path(state_dir) / "workflows" / run_id / WORKFLOW_SNAPSHOT_FILENAME
 
 
-def _check_workflow_source_determinism(workflow_path: Path) -> None:
+def _require_hy_workflow_source(workflow_path: Path) -> None:
+    if workflow_path.suffix == ".hy":
+        return
+    if workflow_path.suffix == ".py":
+        raise ValueError(
+            f"user-authored Python workflow files are rejected: {workflow_path}; "
+            f"{_HY_AUTHORING_GUIDANCE}; the Python spec IR is an internal "
+            "compilation target and is never loaded from user files"
+        )
+    raise ValueError(
+        f"unsupported workflow file suffix {workflow_path.suffix!r}: "
+        f"{workflow_path}; {_HY_AUTHORING_GUIDANCE}"
+    )
+
+
+def _compile_workflow_module_ast(workflow_path: Path) -> ast.Module:
+    """Compile a Hy workflow module to a Python AST without executing it."""
+
     source: str = workflow_path.read_text(encoding="utf-8")
+    shadow_module = types.ModuleType(
+        f"doeff_conductor_workflow_check_{workflow_path.stem}"
+    )
+    shadow_module.__file__ = str(workflow_path)
     try:
-        module_ast: ast.Module = ast.parse(source, filename=str(workflow_path))
-    except SyntaxError as error:
-        raise ValueError(f"cannot parse workflow source: {workflow_path}: {error}") from error
+        forms = read_many(source, filename=str(workflow_path), skip_shebang=True)
+        compiled = hy_compile(
+            forms,
+            shadow_module,
+            filename=str(workflow_path),
+            source=source,
+        )
+    except (HyError, SyntaxError) as error:
+        raise ValueError(
+            f"cannot compile workflow source: {workflow_path}: {error}"
+        ) from error
+    return cast(ast.Module, compiled)
+
+
+def _check_workflow_source_determinism(workflow_path: Path) -> None:
+    _require_hy_workflow_source(workflow_path)
+    module_ast: ast.Module = _compile_workflow_module_ast(workflow_path)
 
     visitor = _WorkflowNondeterminismVisitor(workflow_path)
     visitor.visit(module_ast)
