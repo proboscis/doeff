@@ -298,10 +298,13 @@ runtime-scoped (one site per run, interpreter-bound); persona is
 intent-side. Per `agent!`, **exactly one resolver** evaluates the fixed
 cascade `explicit field > :roles entry > router default > interpreter
 env` — no ask-with-default fallbacks anywhere. The **resolved fingerprint**
-(adapter kind, model — the result-distribution-affecting subset) is
+(adapter kind, model, effort — the result-distribution-affecting subset) is
 journaled; cache hits require fingerprint match, so editing a profile's
 definition between resume invalidates correctly while substrate swaps do
-not. Before any worker starts, the conductor produces the **binding plan**
+not. Reasoning **effort** is an axis of the profile binding (L0 identity
+environment), never a workflow/run parameter: it changes the result
+distribution, so it participates in the identity fingerprint exactly like
+adapter kind and model. Before any worker starts, the conductor produces the **binding plan**
 (all static nodes resolved: profiles exist, capabilities satisfied,
 budgets sum) for overseer approval — resolve early, execute late.
 

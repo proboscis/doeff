@@ -65,10 +65,15 @@ kinds: `:cheap-coder`, `:cheap-reviewer`, `:frontier-reviewer`,
 `:frontier-author`. The environment binds names in two stages, both outside
 the DSL:
 
-- the **project env** maps semantic name → adapter + model
-  (`cheap-coder → codex / gpt-x`);
+- the **project env** maps semantic name → adapter + model + reasoning
+  effort (`cheap-coder → codex / gpt-x / xhigh`);
 - the **user env** completes it with identity (auth home, e.g. a
   `CODEX_HOME`); secrets never appear in repo config.
+
+Reasoning **effort** is profile-owned: it is an axis of the profile
+binding, participates in the resolved identity fingerprint (it affects the
+result distribution, ADR D7), and is never a workflow/run parameter. House
+policy binds every default profile to `xhigh`.
 
 `stub` is NOT a profile; it is an interpreter choice reachable only through
 the `validate` verb and the test suite (§7).

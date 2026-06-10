@@ -30,28 +30,33 @@ DEFAULT_ROLE_CONVENTIONS: Mapping[str, str] = {
     "reviewer": "emits structured verdicts; usually cheap-reviewer or frontier-reviewer",
 }
 
+# House policy: every default profile runs at xhigh reasoning effort.
 DEFAULT_PROFILE_DATA: Mapping[str, Mapping[str, Any]] = {
     "cheap-coder": {
         "adapter": "codex",
         "model": None,
+        "effort": "xhigh",
         "capabilities": ("durable-sessions", "schema-validation"),
         "budget_units": 1,
     },
     "cheap-reviewer": {
         "adapter": "codex",
         "model": None,
+        "effort": "xhigh",
         "capabilities": ("durable-sessions", "schema-validation"),
         "budget_units": 1,
     },
     "frontier-reviewer": {
         "adapter": "claude",
         "model": None,
+        "effort": "xhigh",
         "capabilities": ("durable-sessions", "interactive", "schema-validation"),
         "budget_units": 3,
     },
     "frontier-author": {
         "adapter": "claude",
         "model": None,
+        "effort": "xhigh",
         "capabilities": ("durable-sessions", "interactive", "schema-validation"),
         "budget_units": 3,
     },
@@ -67,6 +72,7 @@ class ProfileBinding:
     model: str | None
     capabilities: tuple[str, ...]
     budget_units: int
+    effort: str | None = None
 
     @classmethod
     def from_mapping(cls, name: str, data: Mapping[str, Any]) -> ProfileBinding:
@@ -80,6 +86,12 @@ class ProfileBinding:
         # `codex --model default-cheap-coder` exhausted its retries in 14s).
         if model is not None and (not isinstance(model, str) or not model):
             raise ValueError(f"profile {name!r} model must be a non-empty string or None")
+
+        # effort=None means "the agent CLI's own default effort"; an empty
+        # string would silently produce a broken CLI flag downstream.
+        effort: object | None = data.get("effort")
+        if effort is not None and (not isinstance(effort, str) or not effort):
+            raise ValueError(f"profile {name!r} effort must be a non-empty string or None")
 
         raw_capabilities: object = data.get("capabilities", ())
         if not isinstance(raw_capabilities, (list, tuple)):
@@ -98,11 +110,17 @@ class ProfileBinding:
             model=model,
             capabilities=capabilities,
             budget_units=raw_budget_units,
+            effort=effort,
         )
 
     @property
     def resolved_identity(self) -> ResolvedIdentity:
-        return ResolvedIdentity(adapter=self.adapter, model=self.model, identity=None)
+        return ResolvedIdentity(
+            adapter=self.adapter,
+            model=self.model,
+            identity=None,
+            effort=self.effort,
+        )
 
     @property
     def identity_fingerprint(self) -> str:
