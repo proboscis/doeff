@@ -2145,15 +2145,20 @@ fn output_has_waiting_marker(output: &str) -> bool {
 }
 
 fn output_has_agent_idle_prompt(output: &str) -> bool {
-    // `› ` is codex's REPL prompt; `❯ ` is Claude Code's input box.  The
+    // `› ` is codex's REPL prompt; `❯` is Claude Code's input box.  The
     // claude prompt is visible even DURING active work (the input box sits
     // below the spinner), so idle detection for claude leans entirely on
     // the stability guard in `output_indicates_turn_end`: the spinner's
     // per-second timer tick keeps a working pane unstable.
-    output.starts_with("› ")
-        || output.contains("\n› ")
-        || output.starts_with("❯ ")
-        || output.contains("\n❯ ")
+    //
+    // Claude separates `❯` from typed text with a NO-BREAK SPACE (U+00A0),
+    // not an ASCII space (observed live: '❯\u{00A0}text'), and an empty
+    // input box may render `❯` with nothing after it — so match the glyph
+    // at line start alone, never the two-char `❯ `.
+    if output.starts_with("› ") || output.contains("\n› ") {
+        return true;
+    }
+    output.lines().any(|line| line.starts_with('❯'))
 }
 
 /// True while codex is still booting its MCP servers, e.g.
@@ -3532,16 +3537,16 @@ mod tests {
         // valid result file sat "blocked" until the launcher's awaits
         // exhausted).
         let mut snapshot = snapshot_for_lifecycle("run_to_completion", "running");
-        let claude_idle = "  done. result written.\n\n❯ \n  🏢 ca  Fable 5 XHI";
+        let claude_idle = "  done. result written.\n\n❯\u{00A0}\n  🏢 ca  Fable 5 XHI";
         snapshot.output_snippet = Some(claude_idle.to_string());
         assert!(output_indicates_turn_end(&snapshot, claude_idle));
 
-        // While claude is WORKING the `❯ ` input box is still visible
+        // While claude is WORKING the `❯` input box is still visible
         // below the spinner, so idle-prompt detection alone would
         // misfire; the per-second spinner tick keeps the pane unstable,
         // and the stability guard must hold the turn-end back.
-        let working_t1 = "✢ Swooping… (37s · ↓ 1.1k tokens)\n\n❯ ";
-        let working_t2 = "✢ Swooping… (38s · ↓ 1.2k tokens)\n\n❯ ";
+        let working_t1 = "✢ Swooping… (37s · ↓ 1.1k tokens)\n\n❯\u{00A0}";
+        let working_t2 = "✢ Swooping… (38s · ↓ 1.2k tokens)\n\n❯\u{00A0}";
         snapshot.output_snippet = Some(working_t1.to_string());
         assert!(!output_indicates_turn_end(&snapshot, working_t2));
     }
@@ -3550,9 +3555,13 @@ mod tests {
     fn agent_idle_prompt_accepts_codex_and_claude_prompts() {
         assert!(output_has_agent_idle_prompt("› "));
         assert!(output_has_agent_idle_prompt("some scroll\n› "));
-        assert!(output_has_agent_idle_prompt("❯ "));
-        assert!(output_has_agent_idle_prompt("some scroll\n❯ "));
+        // Real claude capture: the glyph is followed by U+00A0, not an
+        // ASCII space, and may carry typed-but-unsubmitted text.
+        assert!(output_has_agent_idle_prompt("❯\u{00A0}monitor-nudge"));
+        assert!(output_has_agent_idle_prompt("scroll\n❯\u{00A0}\n  statusline"));
+        assert!(output_has_agent_idle_prompt("❯"));
         assert!(!output_has_agent_idle_prompt("plain shell $ "));
+        assert!(!output_has_agent_idle_prompt("  quoted mid-line ❯ glyph"));
     }
 
     /// A spec carrying just a schema, as the single-protocol launcher
