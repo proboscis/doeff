@@ -59,13 +59,23 @@ def test_vm_failfast_python_rules_detect_known_bad_examples() -> None:
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     check_ids = _semgrep_rule_ids(
         REPO_ROOT / ".semgrep.yaml",
-        ".",
+        "doeff",
         cwd=fixture_root,
     )
 
     expected = {
-        "adr0001-d1-agentd-only-worker-route",
         "no-silent-except-in-traceback",
         "no-silent-except-return-none",
     }
     assert all(_has_rule(check_ids, rule_id) for rule_id in expected)
+
+
+def test_agentd_only_worker_route_rule_detects_conductor_handler_bypass() -> None:
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    check_ids = _semgrep_rule_ids(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-conductor/src/doeff_conductor/handlers/agent_handler.py",
+        cwd=fixture_root,
+    )
+
+    assert _has_rule(check_ids, "adr0001-d1-agentd-only-worker-route")
