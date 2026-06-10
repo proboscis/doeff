@@ -352,13 +352,17 @@ validation errors) is preserved end to end, never collapsed.
 ### 5.3 Result channel (handler-private)
 
 The contract is only "AwaitResult returns the result payload attributable
-to this session and attempt". Mechanisms are adapter-private and MUST work
+to this session and attempt". **Workers launch ONLY as
+doeff-agentd-supervised sessions** — observable (attach/capture),
+steerable, durable across conductor restarts. Direct subprocess execution
+of a worker is forbidden (an unsupervised worker is invisible and dies
+with its parent); if agentd is unreachable, the handler fails loudly with
+start instructions — never a fallback. Result-channel mechanisms are
+adapter-private, operate inside the supervised session, and MUST work
 inside the worker's sandbox boundary (no out-of-workspace writes):
 
 - in-workdir reserved file (agentd: `.agentd-result.json`), mechanically
   excluded by the conductor from merges and `:files` checks;
-- native structured output (`codex exec --output-last-message`,
-  `claude -p --output-format json`);
 - an MCP result tool exposed by the conductor (schema enforced at the
   tool-call boundary).
 
