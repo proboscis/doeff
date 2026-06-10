@@ -83,6 +83,7 @@ Make sure to:
             prompt=implement_prompt,
             result_schema=IMPLEMENT_SCHEMA,
             verification_class="test-verifiable",
+            agent_type="codex",
         )
     )
 
@@ -111,6 +112,7 @@ If tests pass, confirm that all tests are passing.
                 prompt=test_prompt,
                 result_schema=TEST_SCHEMA,
                 verification_class="test-verifiable",
+                agent_type="codex",
             )
         )
 
@@ -140,6 +142,7 @@ Focus on:
                     prompt=fix_prompt,
                     result_schema=IMPLEMENT_SCHEMA,
                     verification_class="test-verifiable",
+                    agent_type="codex",
                 )
             )
             last_failure = str(test_result)

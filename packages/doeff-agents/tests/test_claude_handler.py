@@ -70,7 +70,7 @@ class TestClaudeHandlerLaunch:
 
         handle = _run(program(), backend)
         assert isinstance(handle, SessionHandle)
-        assert handle.session_name == "test-launch"
+        assert handle.session_id == "test-launch"
         assert not hasattr(handle, "agent_type")
         assert backend.has_session("test-launch")
 

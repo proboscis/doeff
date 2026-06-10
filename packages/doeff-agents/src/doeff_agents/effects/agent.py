@@ -42,11 +42,6 @@ class SessionHandle:
     def __repr__(self) -> str:
         return f"SessionHandle({self.session_id!r})"
 
-    @property
-    def session_name(self) -> str:
-        """Compatibility spelling for callers that still display a name."""
-        return self.session_id
-
 
 L2SessionHandle = SessionHandle
 
@@ -192,7 +187,7 @@ class AgentSessionSnapshot:
         """Create a snapshot from the public handle."""
         return cls(
             session_id=handle.session_id,
-            session_name=handle.session_name,
+            session_name=handle.session_id,
             agent_type=AgentType(str((backend_ref or {}).get("agent_type", AgentType.CUSTOM.value))),
             work_dir=Path(str((backend_ref or {}).get("work_dir", "."))),
             lifecycle=lifecycle or AgentSessionLifecycle.RUN_TO_COMPLETION,
@@ -200,7 +195,7 @@ class AgentSessionSnapshot:
             backend_kind=backend_kind,
             backend_ref=backend_ref
             or {
-                "session_name": handle.session_name,
+                "session_name": handle.session_id,
             },
             started_at=datetime.now(timezone.utc),
             last_observed_at=last_observed_at,

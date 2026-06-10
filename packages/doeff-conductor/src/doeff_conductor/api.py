@@ -150,7 +150,6 @@ class ConductorAPI:
 
             from .effects import (
                 AgentEffect,
-                CaptureOutput,
                 Commit,
                 CreateIssue,
                 CreatePR,
@@ -162,10 +161,6 @@ class ConductorAPI:
                 MergePR,
                 Push,
                 ResolveIssue,
-                RunAgent,
-                SendMessage,
-                SpawnAgent,
-                WaitForStatus,
             )
 
             handlers = (
@@ -177,11 +172,6 @@ class ConductorAPI:
                 (GetIssue, make_scheduled_handler(issue_handler.handle_get_issue)),
                 (ResolveIssue, make_scheduled_handler(issue_handler.handle_resolve_issue)),
                 (AgentEffect, make_scheduled_handler(agent_handler.handle_agent)),
-                (RunAgent, make_scheduled_handler(agent_handler.handle_run_agent)),
-                (SpawnAgent, make_scheduled_handler(agent_handler.handle_spawn_agent)),
-                (SendMessage, make_scheduled_handler(agent_handler.handle_send_message)),
-                (WaitForStatus, make_scheduled_handler(agent_handler.handle_wait_for_status)),
-                (CaptureOutput, make_scheduled_handler(agent_handler.handle_capture_output)),
                 (Commit, make_scheduled_handler(git_handler.handle_commit)),
                 (Push, make_scheduled_handler(git_handler.handle_push)),
                 (CreatePR, make_scheduled_handler(git_handler.handle_create_pr)),

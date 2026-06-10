@@ -59,6 +59,7 @@ When done, make sure all changes are complete and working.
             prompt=prompt,
             result_schema=IMPLEMENT_SCHEMA,
             verification_class="test-verifiable",
+            agent_type="codex",
         )
     )
 

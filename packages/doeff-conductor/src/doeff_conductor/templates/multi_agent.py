@@ -52,6 +52,7 @@ def _run_agent(
                 prompt=prompt,
                 result_schema=ARTIFACT_SCHEMA,
                 verification_class="test-verifiable",
+                agent_type="codex",
             )
         )
     )
@@ -152,6 +153,7 @@ If any fixes are needed, make them now.
             prompt=review_prompt,
             result_schema=ARTIFACT_SCHEMA,
             verification_class="review",
+            agent_type="codex",
         )
     )
 

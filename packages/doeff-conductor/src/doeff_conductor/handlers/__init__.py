@@ -75,7 +75,6 @@ def production_handlers(
     issue_handler: IssueHandler | None = None,
     agent_handler: AgentHandler | None = None,
     git_handler: GitHandler | None = None,
-    agentic_handler: HandlerProtocol | None = None,
 ) -> HandlerProtocol:
     """Build the default production protocol handler for all conductor effects."""
     return default_scheduled_handlers(
@@ -83,7 +82,6 @@ def production_handlers(
         issue_handler=issue_handler,
         agent_handler=agent_handler,
         git_handler=git_handler,
-        agentic_handler=agentic_handler,
     )
 
 
