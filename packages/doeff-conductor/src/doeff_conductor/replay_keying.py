@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any
 
 
@@ -18,21 +18,22 @@ class ResolvedIdentity:
 
 
 def _canonical_payload(value: Any) -> Any:
-    if isinstance(value, dict):
+    canonical_source = asdict(value) if is_dataclass(value) and not isinstance(value, type) else value
+    if isinstance(canonical_source, dict):
         return {
-            str(key): _canonical_payload(value[key])
-            for key in sorted(value, key=str)
+            str(key): _canonical_payload(canonical_source[key])
+            for key in sorted(canonical_source, key=str)
         }
-    if isinstance(value, (list, tuple)):
-        return [_canonical_payload(item) for item in value]
-    if isinstance(value, set):
-        return sorted(_canonical_payload(item) for item in value)
-    if isinstance(value, type):
-        return {"python_type": f"{value.__module__}.{value.__qualname__}"}
-    if hasattr(value, "model_json_schema"):
-        model_schema = value.model_json_schema()
+    if isinstance(canonical_source, (list, tuple)):
+        return [_canonical_payload(item) for item in canonical_source]
+    if isinstance(canonical_source, set):
+        return sorted(_canonical_payload(item) for item in canonical_source)
+    if isinstance(canonical_source, type):
+        return {"python_type": f"{canonical_source.__module__}.{canonical_source.__qualname__}"}
+    if hasattr(canonical_source, "model_json_schema"):
+        model_schema = canonical_source.model_json_schema()
         return _canonical_payload(model_schema)
-    return value
+    return canonical_source
 
 
 def _canonical_json(value: Any) -> str:
