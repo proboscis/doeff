@@ -232,9 +232,8 @@ medium family* implementing the fork/reconcile contract; core vocabulary
 and checks must not depend on a medium family's nouns. v1 implements the
 git family only — a scope decision, not a structural constraint. New media
 (document vaults, asset directories) arrive as new closed vocabulary
-families added by system designers, never by authors. The existing
-`CreateWorktree` effect name leaks the materialization noun and is renamed
-into the workspace vocabulary in C4.
+families added by system designers, never by authors. Stage C4 uses public
+workspace vocabulary; site-local materialization nouns remain handler-private.
 
 ### D6 — Layer boundaries and the L2 session algebra
 
@@ -373,7 +372,7 @@ calibration escape rates earn it.
   BLOCKERs reach the tier-2 callback. Done-condition includes the
   closure-law model check (D8): the stub scenario suite proves no
   reachable terminal state lacks a verdict/escalation/gate.
-- **C6 — verbs + overseer surfaces**: `conductor env describe` (the
+- **C6 — verbs + overseer surfaces**: `conductor workspace describe` (the
   author's discoverable vocabulary: profiles, roles conventions, router
   defaults), `conductor plan` (binding plan for overseer approval),
   `conductor validate` (stub scenario runs); gate queue and delta-oriented
@@ -423,11 +422,11 @@ by `CreatePR`'s typed result and are NOT part of this list.)
 
 | Where | What |
 |---|---|
-| `doeff-conductor/src/doeff_conductor/effects/agent.py` (`RunAgent`) | contract "Yields: str (agent output)" — a rendered text blob as the workflow result; superseded by `agent!` |
+| `doeff-conductor/src/doeff_conductor/effects/agent.py` legacy text-result agent effect | contract "Yields: str (agent output)" — a rendered text blob as the workflow result; superseded by `agent!` |
 | `doeff-conductor/src/doeff_conductor/handlers/agent_handler.py:201-221` | `handle_capture_output` joining `[role] content` as the result |
-| `doeff-conductor` templates consuming `RunAgent` text (`basic_pr`, `enforced_pr`, `reviewed_pr`, `multi_agent`) | rewrite onto `agent!` (schema-validated artifact) |
-| `doeff-agentic` `RunAgentEffect` result contract | same text-blob shape; superseded by `agent!` |
-| `doeff-conductor/src/doeff_conductor/effects/agent.py` (`CaptureOutput`) | as a data channel: condemned. Survives only as the ops/human transcript capability, never yielded by workflow code |
+| `doeff-conductor` templates consuming legacy text agent output (`basic_pr`, `enforced_pr`, `reviewed_pr`, `multi_agent`) | rewrite onto `agent!` (schema-validated artifact) |
+| `doeff-agentic` legacy text-result agent effect contract | same text-blob shape; superseded by `agent!` |
+| `doeff-conductor/src/doeff_conductor/effects/agent.py` legacy transcript capture effect | as a data channel: condemned. Survives only as the ops/human transcript capability, never yielded by workflow code |
 
 ### C. Success/failure judged from screen text
 

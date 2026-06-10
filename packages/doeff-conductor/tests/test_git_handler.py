@@ -9,7 +9,7 @@ import pytest
 from doeff_conductor.effects.git import Commit, CreatePR, MergePR, Push
 from doeff_conductor.exceptions import GitCommandError
 from doeff_conductor.handlers.git_handler import GitHandler
-from doeff_conductor.types import MergeStrategy, PRHandle, WorktreeEnv
+from doeff_conductor.types import MergeStrategy, PRHandle, Workspace
 
 
 class TestGitHandler:
@@ -45,50 +45,66 @@ class TestGitHandler:
         return repo_path
 
     @pytest.fixture
-    def worktree_env(self, git_repo: Path) -> WorktreeEnv:
-        return WorktreeEnv(
-            id="test-env",
-            path=git_repo,
-            branch="main",
-            base_commit="abc123",
+    def workspace(self, git_repo: Path) -> Workspace:
+        return Workspace(
+            id="test-workspace",
+            repo="default",
+            ref="main",
+            base_ref="main",
             created_at=datetime.now(timezone.utc),
         )
 
     @pytest.fixture
-    def handler(self) -> GitHandler:
-        return GitHandler()
+    def handler(self, git_repo: Path) -> GitHandler:
+        return GitHandler(workspace_resolver=lambda _workspace: git_repo)
 
-    def test_commit_with_changes(self, handler: GitHandler, worktree_env: WorktreeEnv):
-        (worktree_env.path / "new_file.txt").write_text("new content")
+    def test_commit_with_changes(
+        self,
+        handler: GitHandler,
+        workspace: Workspace,
+        git_repo: Path,
+    ):
+        (git_repo / "new_file.txt").write_text("new content")
 
-        effect = Commit(env=worktree_env, message="Add new file", all=True)
+        effect = Commit(workspace=workspace, message="Add new file", all=True)
         sha = handler.handle_commit(effect)
 
         assert sha is not None
         assert len(sha) == 40
 
-    def test_commit_without_all_flag(self, handler: GitHandler, worktree_env: WorktreeEnv):
-        (worktree_env.path / "staged.txt").write_text("staged content")
+    def test_commit_without_all_flag(
+        self,
+        handler: GitHandler,
+        workspace: Workspace,
+        git_repo: Path,
+    ):
+        (git_repo / "staged.txt").write_text("staged content")
         subprocess.run(
             ["git", "add", "staged.txt"],
-            cwd=worktree_env.path,
+            cwd=git_repo,
             check=True,
             capture_output=True,
         )
 
-        effect = Commit(env=worktree_env, message="Add staged file", all=False)
+        effect = Commit(workspace=workspace, message="Add staged file", all=False)
         sha = handler.handle_commit(effect)
 
         assert sha is not None
         assert len(sha) == 40
 
-    def test_commit_empty_raises(self, handler: GitHandler, worktree_env: WorktreeEnv):
-        effect = Commit(env=worktree_env, message="Empty commit", all=True)
+    def test_commit_empty_raises(self, handler: GitHandler, workspace: Workspace):
+        effect = Commit(workspace=workspace, message="Empty commit", all=True)
 
         with pytest.raises(GitCommandError):
             handler.handle_commit(effect)
 
-    def test_push_basic(self, handler: GitHandler, worktree_env: WorktreeEnv, tmp_path: Path):
+    def test_push_basic(
+        self,
+        handler: GitHandler,
+        workspace: Workspace,
+        git_repo: Path,
+        tmp_path: Path,
+    ):
         remote_path = tmp_path / "remote.git"
         subprocess.run(
             ["git", "init", "--bare", str(remote_path)],
@@ -97,12 +113,12 @@ class TestGitHandler:
         )
         subprocess.run(
             ["git", "remote", "add", "origin", str(remote_path)],
-            cwd=worktree_env.path,
+            cwd=git_repo,
             check=True,
             capture_output=True,
         )
 
-        effect = Push(env=worktree_env, set_upstream=True)
+        effect = Push(workspace=workspace, set_upstream=True)
         handler.handle_push(effect)
 
         result = subprocess.run(
@@ -112,7 +128,13 @@ class TestGitHandler:
         )
         assert "refs/heads/main" in result.stdout
 
-    def test_push_force(self, handler: GitHandler, worktree_env: WorktreeEnv, tmp_path: Path):
+    def test_push_force(
+        self,
+        handler: GitHandler,
+        workspace: Workspace,
+        git_repo: Path,
+        tmp_path: Path,
+    ):
         remote_path = tmp_path / "remote.git"
         subprocess.run(
             ["git", "init", "--bare", str(remote_path)],
@@ -121,34 +143,39 @@ class TestGitHandler:
         )
         subprocess.run(
             ["git", "remote", "add", "origin", str(remote_path)],
-            cwd=worktree_env.path,
+            cwd=git_repo,
             check=True,
             capture_output=True,
         )
         subprocess.run(
             ["git", "push", "-u", "origin", "main"],
-            cwd=worktree_env.path,
+            cwd=git_repo,
             check=True,
             capture_output=True,
         )
 
-        effect = Push(env=worktree_env, force=True)
+        effect = Push(workspace=workspace, force=True)
         handler.handle_push(effect)
 
-    def test_push_no_remote_raises(self, handler: GitHandler, worktree_env: WorktreeEnv):
-        effect = Push(env=worktree_env)
+    def test_push_no_remote_raises(self, handler: GitHandler, workspace: Workspace):
+        effect = Push(workspace=workspace)
 
         with pytest.raises(GitCommandError):
             handler.handle_push(effect)
 
     @patch("doeff_git.handlers.production._run_command")
-    def test_create_pr_success(self, mock_run: MagicMock, handler: GitHandler, worktree_env: WorktreeEnv):
+    def test_create_pr_success(
+        self,
+        mock_run: MagicMock,
+        handler: GitHandler,
+        workspace: Workspace,
+    ):
         mock_run.return_value = MagicMock(
             stdout="https://github.com/user/repo/pull/42\n",
             returncode=0,
         )
 
-        effect = CreatePR(env=worktree_env, title="Test PR", body="PR body", target="main")
+        effect = CreatePR(workspace=workspace, title="Test PR", body="PR body", target="main")
         pr = handler.handle_create_pr(effect)
 
         assert pr.url == "https://github.com/user/repo/pull/42"
@@ -158,13 +185,18 @@ class TestGitHandler:
         assert pr.status == "open"
 
     @patch("doeff_git.handlers.production._run_command")
-    def test_create_pr_draft(self, mock_run: MagicMock, handler: GitHandler, worktree_env: WorktreeEnv):
+    def test_create_pr_draft(
+        self,
+        mock_run: MagicMock,
+        handler: GitHandler,
+        workspace: Workspace,
+    ):
         mock_run.return_value = MagicMock(
             stdout="https://github.com/user/repo/pull/43\n",
             returncode=0,
         )
 
-        effect = CreatePR(env=worktree_env, title="Draft PR", draft=True, target="main")
+        effect = CreatePR(workspace=workspace, title="Draft PR", draft=True, target="main")
         handler.handle_create_pr(effect)
 
         call_args = mock_run.call_args[0][0]

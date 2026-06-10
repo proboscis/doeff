@@ -7,9 +7,10 @@ from doeff import Effect, Pass, Resume, do
 
 if TYPE_CHECKING:
     from .agent_handler import AgentHandler
+    from .exec_handler import ExecHandler
     from .git_handler import GitHandler
     from .issue_handler import IssueHandler
-    from .worktree_handler import WorktreeHandler
+    from .workspace_handler import WorkspaceHandler
 
 SimpleHandler = Callable[[Any], Any]
 
@@ -54,41 +55,35 @@ def make_async_scheduled_handler(
 
 
 def default_scheduled_handlers(
-    worktree_handler: "WorktreeHandler | None" = None,
+    workspace_handler: "WorkspaceHandler | None" = None,
     issue_handler: "IssueHandler | None" = None,
     agent_handler: "AgentHandler | None" = None,
     git_handler: "GitHandler | None" = None,
+    exec_handler: "ExecHandler | None" = None,
 ) -> Callable[..., Any]:
-    """Build a complete protocol handler for all conductor effects.
-
-    Args:
-        worktree_handler: Custom WorktreeHandler, or None to create default
-        issue_handler: Custom IssueHandler, or None to create default
-        agent_handler: Custom AgentHandler, or None to create default
-        git_handler: Custom GitHandler, or None to create default
-
-    Returns:
-        Handler-protocol callable for all conductor effects.
-    """
+    """Build a complete protocol handler for all conductor effects."""
     from ..effects.agent import AgentEffect
+    from ..effects.exec import Exec
     from ..effects.git import Commit, CreatePR, MergePR, Push
     from ..effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
-    from ..effects.worktree import CreateWorktree, DeleteWorktree, MergeBranches
+    from ..effects.workspace import CreateWorkspace, DeleteWorkspace, MergeWorkspaces
     from .agent_handler import AgentHandler
+    from .exec_handler import ExecHandler
     from .git_handler import GitHandler
     from .issue_handler import IssueHandler
-    from .worktree_handler import WorktreeHandler
+    from .workspace_handler import WorkspaceHandler
 
-    # Create default handlers if not provided
-    wt = worktree_handler or WorktreeHandler()
+    workspace = workspace_handler or WorkspaceHandler()
     iss = issue_handler or IssueHandler()
-    agent = agent_handler or AgentHandler()
-    git = git_handler or GitHandler()
+    agent = agent_handler or AgentHandler(workspace_resolver=workspace.resolve_path)
+    git = git_handler or GitHandler(workspace_resolver=workspace.resolve_path)
+    exec_gate = exec_handler or ExecHandler(workspace_resolver=workspace.resolve_path)
 
     handlers: tuple[tuple[type[Any], Callable[..., Any]], ...] = (
-        (CreateWorktree, make_blocking_scheduled_handler(wt.handle_create_worktree)),
-        (MergeBranches, make_blocking_scheduled_handler(wt.handle_merge_branches)),
-        (DeleteWorktree, make_blocking_scheduled_handler(wt.handle_delete_worktree)),
+        (CreateWorkspace, make_blocking_scheduled_handler(workspace.handle_create_workspace)),
+        (MergeWorkspaces, make_blocking_scheduled_handler(workspace.handle_merge_workspaces)),
+        (DeleteWorkspace, make_blocking_scheduled_handler(workspace.handle_delete_workspace)),
+        (Exec, make_blocking_scheduled_handler(exec_gate.handle_exec)),
         (CreateIssue, make_blocking_scheduled_handler(iss.handle_create_issue)),
         (ListIssues, make_blocking_scheduled_handler(iss.handle_list_issues)),
         (GetIssue, make_blocking_scheduled_handler(iss.handle_get_issue)),

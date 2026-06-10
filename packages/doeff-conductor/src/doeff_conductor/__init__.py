@@ -4,66 +4,12 @@ doeff-conductor: Multi-agent workflow orchestration.
 This package provides a unified orchestration layer for multi-agent workflows:
 
 - Issue-driven agent workflows
-- Git worktree management
+- Git workspace management
 - Multi-agent DAG execution
 - Full CLI for monitoring and control
-
-Architecture:
-    +---------------------------------------------------------------------+
-    |                         doeff-conductor                              |
-    +---------------------------------------------------------------------+
-    |  CLI Layer                                                           |
-    |  - run, ps, show, watch, attach, stop, logs                         |
-    |  - issue create/list/show/resolve                                   |
-    |  - env list/cleanup                                                 |
-    |  - template list/show/run                                           |
-    +---------------------------------------------------------------------+
-    |  Effects                                                             |
-    |  +----------+ +----------+ +----------+ +----------+                |
-    |  | Worktree | |  Issue   | |  Agent   | |   Git    |                |
-    |  | Create   | | Create   | | Agent   | | Commit   |                |
-    |  | Merge    | | List     | | Task    | | Push     |                |
-    |  | Delete   | | Resolve  | | Artifact| | CreatePR |                |
-    |  +----------+ +----------+ +----------+ +----------+                |
-    +---------------------------------------------------------------------+
-    |  Dependencies                                                        |
-    |  - doeff-agentic (session management, agent adapters)               |
-    |  - doeff-flow (trace observability)                                 |
-    |  - doeff (core effects, @do, run_sync)                              |
-    +---------------------------------------------------------------------+
-
-Quick Start:
-    from doeff import do
-    from doeff_conductor import Agent, AgentTask, CreateWorktree, CreatePR
-
-    @do
-    def basic_pr(issue):
-        env = yield CreateWorktree(issue=issue)
-        yield Agent(AgentTask(
-            run_id=issue.id,
-            node_id="implement",
-            attempt=0,
-            env=env,
-            prompt=issue.body,
-            result_schema={"type": "object"},
-            verification_class="test-verifiable",
-            agent_type="codex",
-        ))
-        pr = yield CreatePR(env=env, title=issue.title)
-        return pr
-
-CLI Usage:
-    $ conductor run basic_pr --issue ISSUE-001.md
-    $ conductor ps
-    $ conductor watch <workflow-id>
-    $ conductor issue create "Add feature"
 """
 
-# Types
-# API
 from .api import ConductorAPI
-
-# Effects
 from .effects import (
     BLOCKER_FINDING,
     CALIBRATION_SAMPLE_BUDGET_KEY,
@@ -78,24 +24,21 @@ from .effects import (
     AgentTask,
     AgentValidationErrorKind,
     AgentValidationFailure,
-    # Git
     Commit,
-    # Base
     ConductorEffectBase,
-    # Issue
     CreateIssue,
     CreatePR,
-    # Worktree
-    CreateWorktree,
+    CreateWorkspace,
     DefaultReviewRouter,
-    DeleteWorktree,
+    DeleteWorkspace,
     DurableReviewBudget,
+    Exec,
     GateCall,
     GetIssue,
     ListIssues,
-    MergeBranches,
     MergeCall,
     MergePR,
+    MergeWorkspaces,
     OpenGate,
     OpenGateReason,
     Push,
@@ -119,8 +62,6 @@ from .effects import (
     route_review_item,
     run_review_routing_demo,
 )
-
-# Exceptions
 from .exceptions import (
     AgentError,
     AgentTimeoutError,
@@ -129,21 +70,19 @@ from .exceptions import (
     IssueAlreadyExistsError,
     IssueNotFoundError,
     PRError,
-    WorktreeError,
+    WorkspaceError,
 )
-
-# Handlers
 from .handlers import (
     AgentHandler,
+    ExecHandler,
     GitHandler,
     IssueHandler,
     MockConductorRuntime,
-    WorktreeHandler,
+    WorkspaceHandler,
     default_scheduled_handlers,
     make_async_scheduled_handler,
     make_blocking_scheduled_handler,
     make_blocking_scheduled_handler_with_store,
-    # Handler utilities
     make_scheduled_handler,
     make_scheduled_handler_with_store,
     mock_handlers,
@@ -156,8 +95,6 @@ from .replay_keying import (
     node_identity_fingerprint,
     resolved_identity_fingerprint,
 )
-
-# Templates
 from .templates import (
     basic_pr,
     enforced_pr,
@@ -169,20 +106,18 @@ from .templates import (
     reviewed_pr,
 )
 from .types import (
-    # Agent types
     AgentRef,
-    # Issue types
+    ExecResult,
     Issue,
-    # Enums
     IssueStatus,
+    MergeConflict,
+    MergeStatus,
     MergeStrategy,
-    # Git types
+    MergeWorkspacesResult,
     PRHandle,
-    # Workflow types
     WorkflowHandle,
     WorkflowStatus,
-    # Environment types
-    WorktreeEnv,
+    Workspace,
 )
 
 __all__ = [
@@ -203,38 +138,36 @@ __all__ = [
     "AgentTimeoutError",
     "AgentValidationErrorKind",
     "AgentValidationFailure",
-    # Effects - Git
     "Commit",
-    # API
     "ConductorAPI",
-    # Effects - Base
     "ConductorEffectBase",
-    # Exceptions
     "ConductorError",
-    # Effects - Issue
     "CreateIssue",
     "CreatePR",
-    # Effects - Worktree
-    "CreateWorktree",
+    "CreateWorkspace",
     "DefaultReviewRouter",
-    "DeleteWorktree",
+    "DeleteWorkspace",
     "DurableReviewBudget",
+    "Exec",
+    "ExecHandler",
+    "ExecResult",
     "GateCall",
     "GetIssue",
     "GitCommandError",
     "GitHandler",
-    # Types - Data classes
     "Issue",
     "IssueAlreadyExistsError",
     "IssueHandler",
     "IssueNotFoundError",
-    # Types - Enums
     "IssueStatus",
     "ListIssues",
-    "MergeBranches",
     "MergeCall",
+    "MergeConflict",
     "MergePR",
+    "MergeStatus",
     "MergeStrategy",
+    "MergeWorkspaces",
+    "MergeWorkspacesResult",
     "MockConductorRuntime",
     "OpenGate",
     "OpenGateReason",
@@ -260,13 +193,11 @@ __all__ = [
     "TimeCall",
     "WorkflowHandle",
     "WorkflowStatus",
+    "Workspace",
     "WorkspaceCall",
-    "WorktreeEnv",
-    "WorktreeError",
-    # Handlers
-    "WorktreeHandler",
+    "WorkspaceError",
+    "WorkspaceHandler",
     "agent_cache_key",
-    # Templates
     "basic_pr",
     "default_scheduled_handlers",
     "enforced_pr",
@@ -280,7 +211,6 @@ __all__ = [
     "make_blocking_scheduled_handler_with_store",
     "make_scheduled_handler",
     "make_scheduled_handler_with_store",
-    # Handler utilities
     "mock_handlers",
     "multi_agent",
     "node_identity_fingerprint",

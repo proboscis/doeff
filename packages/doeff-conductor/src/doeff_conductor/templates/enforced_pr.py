@@ -55,10 +55,10 @@ def enforced_pr(
     Raises:
         RuntimeError: If tests still fail after max_retries
     """
-    from ..effects import Agent, AgentTask, Commit, CreatePR, CreateWorktree, Push, ResolveIssue
+    from ..effects import Agent, AgentTask, Commit, CreatePR, CreateWorkspace, Push, ResolveIssue
 
     # Step 1: Create isolated worktree
-    env = yield CreateWorktree(issue=issue)
+    env = yield CreateWorkspace(issue=issue)
 
     # Step 2: Run agent to implement the issue
     implement_prompt = f"""
@@ -156,12 +156,12 @@ Focus on:
 
     # Step 4: Commit and push changes
     commit_msg = f"feat: {issue.title}\n\nResolves: {issue.id}\n\nAll tests passing."
-    yield Commit(env=env, message=commit_msg)
-    yield Push(env=env)
+    yield Commit(workspace=env, message=commit_msg)
+    yield Push(workspace=env)
 
     # Step 5: Create PR
     pr = yield CreatePR(
-        env=env,
+        workspace=env,
         title=issue.title,
         body=f"""
 ## Summary

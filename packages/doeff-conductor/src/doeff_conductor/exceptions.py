@@ -99,30 +99,30 @@ class GitCommandError(ConductorError):
         )
 
 
-class WorktreeError(ConductorError):
-    """Raised when a worktree operation fails.
+class WorkspaceError(ConductorError):
+    """Raised when a workspace operation fails.
 
     Attributes:
-        worktree_id: The ID of the worktree involved.
+        workspace_id: The ID of the workspace involved.
         operation: The operation that failed (create, delete, merge).
     """
 
     def __init__(
         self,
-        worktree_id: str | None = None,
+        workspace_id: str | None = None,
         operation: str | None = None,
         message: str | None = None,
     ):
-        self.worktree_id = worktree_id
+        self.workspace_id = workspace_id
         self.operation = operation
         if message:
             super().__init__(message)
         else:
-            parts = ["Worktree operation failed"]
+            parts = ["Workspace operation failed"]
             if operation:
-                parts[0] = f"Worktree {operation} failed"
-            if worktree_id:
-                parts.append(f"worktree_id={worktree_id}")
+                parts[0] = f"Workspace {operation} failed"
+            if workspace_id:
+                parts.append(f"workspace_id={workspace_id}")
             super().__init__(": ".join(parts))
 
 
@@ -211,5 +211,5 @@ __all__ = [
     "IssueAlreadyExistsError",
     "IssueNotFoundError",
     "PRError",
-    "WorktreeError",
+    "WorkspaceError",
 ]
