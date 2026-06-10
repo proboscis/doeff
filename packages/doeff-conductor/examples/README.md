@@ -6,12 +6,13 @@ This directory contains progressive examples demonstrating doeff-conductor usage
 
 | Example | Description | Concepts |
 |---------|-------------|----------|
-| [01_hello_workflow.py](./01_hello_workflow.py) | Minimal workflow | Workspace, Commit, basic effects |
+| Python API hello example | Minimal workflow | Workspace, Commit, basic effects |
 | [02_issue_lifecycle.py](./02_issue_lifecycle.py) | Issue management | Create, List, Get, Resolve issues |
-| [03_basic_pr_workflow.py](./03_basic_pr_workflow.py) | Complete PR workflow | Agent, Push, CreatePR, templates |
+| Python API PR example | Complete PR workflow | Agent, Push, CreatePR, templates |
 | [04_multi_agent.py](./04_multi_agent.py) | Parallel agents | Gather, MergeWorkspaces, parallelism |
 | [05_custom_template.py](./05_custom_template.py) | Custom templates | Custom effects, quality gates |
 | [06_api_usage.py](./06_api_usage.py) | ConductorAPI | Programmatic access, JSON output |
+| [k2_k3_pilot_workflow.hy](./k2_k3_pilot_workflow.hy) | Canonical Hy workflow artifact | `defworkflow`, `agent!`, gates, review |
 
 ## Running Examples
 
@@ -19,8 +20,8 @@ This directory contains progressive examples demonstrating doeff-conductor usage
 # From the doeff-conductor package directory
 cd packages/doeff-conductor
 
-# Run a specific example
-uv run python examples/01_hello_workflow.py
+# Run a specific Python API example
+uv run python examples/02_issue_lifecycle.py
 
 # Or run all examples
 for f in examples/0*.py; do uv run python "$f"; done

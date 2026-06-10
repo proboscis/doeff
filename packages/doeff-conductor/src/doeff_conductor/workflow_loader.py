@@ -1,8 +1,7 @@
-"""Load Python workflow request artifacts for conductor verbs."""
-
-from __future__ import annotations
+"""Load Hy workflow request artifacts for conductor verbs."""
 
 import ast
+import hashlib
 import importlib.util
 import shutil
 import sys
@@ -12,9 +11,16 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
+from hy.errors import HyLanguageError
+
 from doeff_conductor.dsl import WorkflowSpec
 
-WORKFLOW_SNAPSHOT_FILENAME = "workflow.py"
+WORKFLOW_SOURCE_SUFFIX = ".hy"
+WORKFLOW_SNAPSHOT_FILENAME = "workflow.hy"
+_HY_SURFACE_ERROR = (
+    "workflow authoring surface is the .hy Hy macro DSL; "
+    "provide a .hy workflow file with a module-level WORKFLOW"
+)
 
 _ALLOWLISTED_IMPORT_ROOTS: frozenset[str] = frozenset(
     {
@@ -26,9 +32,11 @@ _ALLOWLISTED_IMPORT_ROOTS: frozenset[str] = frozenset(
         "decimal",
         "doeff",
         "doeff_conductor",
+        "doeff_hy",
         "enum",
         "fractions",
         "functools",
+        "hy",
         "itertools",
         "json",
         "math",
@@ -110,21 +118,14 @@ class WorkflowNondeterminismError(ValueError):
 
 
 def load_workflow_spec(workflow_path_text: str) -> WorkflowSpec:
-    """Load a WorkflowSpec from a Python file.
-
-    The module may expose ``workflow``/``WORKFLOW`` directly or a zero-argument
-    ``build_workflow`` function.
-    """
+    """Load a WorkflowSpec from a Hy DSL workflow file."""
 
     workflow_path: Path = Path(workflow_path_text)
-    if not workflow_path.exists():
-        raise ValueError(f"workflow file not found: {workflow_path_text}")
-    if workflow_path.suffix != ".py":
-        raise ValueError("C6 workflow verbs currently load Python workflow fixtures")
+    _ensure_hy_workflow_path(workflow_path)
     _check_workflow_source_determinism(workflow_path)
 
     spec: ModuleSpec | None = importlib.util.spec_from_file_location(
-        f"doeff_conductor_workflow_{workflow_path.stem}",
+        _workflow_module_name(workflow_path),
         workflow_path,
     )
     if spec is None or spec.loader is None:
@@ -134,28 +135,21 @@ def load_workflow_spec(workflow_path_text: str) -> WorkflowSpec:
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
 
-    candidate: Any
-    if "workflow" in module.__dict__:
-        candidate = module.__dict__["workflow"]
-    elif "WORKFLOW" in module.__dict__:
-        candidate = module.__dict__["WORKFLOW"]
-    elif "build_workflow" in module.__dict__:
-        builder: object = module.__dict__["build_workflow"]
-        if not callable(builder):
-            raise ValueError("build_workflow must be callable")
-        candidate = builder()
-    else:
-        raise ValueError("workflow file must define workflow, WORKFLOW, or build_workflow")
+    if "WORKFLOW" not in module.__dict__:
+        raise ValueError("workflow .hy file must define module-level WORKFLOW")
 
+    candidate: object = module.__dict__["WORKFLOW"]
     if not isinstance(candidate, WorkflowSpec):
-        raise ValueError("loaded workflow object must be doeff_conductor.dsl.WorkflowSpec")
+        raise ValueError("WORKFLOW must be doeff_conductor.dsl.WorkflowSpec")
     return candidate
 
 
 def check_workflow_source_determinism(workflow_path_text: str) -> None:
     """Validate a workflow module's source without executing it."""
 
-    _check_workflow_source_determinism(Path(workflow_path_text))
+    workflow_path: Path = Path(workflow_path_text)
+    _ensure_hy_workflow_path(workflow_path)
+    _check_workflow_source_determinism(workflow_path)
 
 
 def snapshot_workflow_source(
@@ -167,10 +161,7 @@ def snapshot_workflow_source(
     """Copy a workflow source file into the run state directory."""
 
     workflow_path: Path = Path(workflow_path_text)
-    if not workflow_path.exists():
-        raise ValueError(f"workflow file not found: {workflow_path_text}")
-    if workflow_path.suffix != ".py":
-        raise ValueError("workflow source snapshots currently require a Python file")
+    _ensure_hy_workflow_path(workflow_path)
     _check_workflow_source_determinism(workflow_path)
 
     snapshot_path: Path = workflow_snapshot_path(state_dir, run_id)
@@ -203,11 +194,8 @@ def workflow_snapshot_path(state_dir: str | Path, run_id: str) -> Path:
 
 
 def _check_workflow_source_determinism(workflow_path: Path) -> None:
-    source: str = workflow_path.read_text(encoding="utf-8")
-    try:
-        module_ast: ast.Module = ast.parse(source, filename=str(workflow_path))
-    except SyntaxError as error:
-        raise ValueError(f"cannot parse workflow source: {workflow_path}: {error}") from error
+    _ensure_hy_workflow_path(workflow_path)
+    module_ast: ast.Module = _compile_hy_source_to_python_ast(workflow_path)
 
     visitor = _WorkflowNondeterminismVisitor(workflow_path)
     visitor.visit(module_ast)
@@ -216,6 +204,41 @@ def _check_workflow_source_determinism(workflow_path: Path) -> None:
             workflow_path,
             tuple(visitor.diagnostics),
         )
+
+
+def _ensure_hy_workflow_path(workflow_path: Path) -> None:
+    if not workflow_path.exists():
+        raise ValueError(f"workflow file not found: {workflow_path}")
+    if workflow_path.suffix != WORKFLOW_SOURCE_SUFFIX:
+        raise ValueError(_HY_SURFACE_ERROR)
+
+
+def _compile_hy_source_to_python_ast(workflow_path: Path) -> ast.Module:
+    import hy.compiler
+    import hy.reader
+    import doeff_hy  # noqa: F401  # activates Hy import hooks for .hy imports
+
+    source: str = workflow_path.read_text(encoding="utf-8")
+    try:
+        hy_tree = hy.reader.read_many(source, filename=str(workflow_path))
+        compiled = hy.compiler.hy_compile(
+            hy_tree,
+            "__main__",
+            filename=str(workflow_path),
+            source=source,
+        )
+        return cast(ast.Module, compiled)
+    except (HyLanguageError, SyntaxError) as error:
+        raise ValueError(f"cannot parse workflow source: {workflow_path}: {error}") from error
+
+
+def _workflow_module_name(workflow_path: Path) -> str:
+    fingerprint = hashlib.sha256(str(workflow_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    safe_stem = "".join(
+        character if character.isalnum() else "_"
+        for character in workflow_path.stem
+    )
+    return f"doeff_conductor_workflow_{safe_stem}_{fingerprint}"
 
 
 class _WorkflowNondeterminismVisitor(ast.NodeVisitor):

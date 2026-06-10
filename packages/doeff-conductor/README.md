@@ -274,12 +274,13 @@ Workflow state is stored at `~/.local/state/doeff-conductor/`:
 
 | Example | Description |
 |---------|-------------|
-| [01_hello_workflow.py](./examples/01_hello_workflow.py) | Minimal workflow |
+| Python API hello example | Minimal Python API workflow |
 | [02_issue_lifecycle.py](./examples/02_issue_lifecycle.py) | Issue management |
-| [03_basic_pr_workflow.py](./examples/03_basic_pr_workflow.py) | Complete PR workflow |
+| Python API PR example | Complete PR workflow |
 | [04_multi_agent.py](./examples/04_multi_agent.py) | Parallel agents |
 | [05_custom_template.py](./examples/05_custom_template.py) | Custom templates |
 | [06_api_usage.py](./examples/06_api_usage.py) | ConductorAPI usage |
+| [k2_k3_pilot_workflow.hy](./examples/k2_k3_pilot_workflow.hy) | Canonical Hy workflow request artifact |
 
 ## License
 

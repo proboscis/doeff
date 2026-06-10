@@ -10,15 +10,20 @@ Provides programmatic access to conductor functionality:
 
 import json
 import secrets
-import sys
 from collections.abc import Generator
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from .types import Issue, WorkflowHandle, WorkflowStatus, Workspace
+
+
+def _unwrap_run_result(result: object) -> object:
+    if type(result).__name__ == "RunResult":
+        return cast(Any, result).value
+    return result
 
 
 def _get_state_dir() -> Path:
@@ -57,9 +62,8 @@ class ConductorAPI:
         Returns:
             WorkflowHandle for the started workflow
         """
-        from doeff_conductor.dsl import WorkflowSpec
         from doeff_conductor.workflow_loader import (
-            check_workflow_source_determinism,
+            load_workflow_spec,
             prepare_workflow_source_for_run,
         )
 
@@ -80,62 +84,14 @@ class ConductorAPI:
         else:
             # Load from file
             template_name = None
-            source_path = Path(template_or_file)
             workflow_path = prepare_workflow_source_for_run(
                 template_or_file,
                 state_dir=self.state_dir,
                 run_id=workflow_id,
             )
-            workflow_name = source_path.stem
-            if not workflow_path.exists():
-                raise ValueError(f"Workflow file not found: {template_or_file}")
-            check_workflow_source_determinism(str(workflow_path))
-
-            # Import workflow function
-            import importlib.util
-
-            spec = importlib.util.spec_from_file_location(
-                f"doeff_conductor_run_{workflow_id}",
-                workflow_path,
-            )
-            if spec is None or spec.loader is None:
-                raise ValueError(f"Cannot load workflow: {template_or_file}")
-
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[spec.name] = module
-            spec.loader.exec_module(module)
-
-            # Look for workflow function (named 'workflow' or 'main')
             workflow_func = None
-            if "workflow" in module.__dict__:
-                workflow_candidate: object = module.__dict__["workflow"]
-                if isinstance(workflow_candidate, WorkflowSpec):
-                    workflow_spec = workflow_candidate
-                elif callable(workflow_candidate):
-                    workflow_func = workflow_candidate
-                else:
-                    raise ValueError("workflow must be a WorkflowSpec or callable")
-            elif "main" in module.__dict__:
-                main_candidate: object = module.__dict__["main"]
-                if not callable(main_candidate):
-                    raise ValueError("main workflow entrypoint must be callable")
-                workflow_func = main_candidate
-            elif "WORKFLOW" in module.__dict__:
-                workflow_spec = module.__dict__["WORKFLOW"]
-            elif "build_workflow" in module.__dict__:
-                builder = module.__dict__["build_workflow"]
-                if not callable(builder):
-                    raise ValueError("build_workflow must be callable")
-                workflow_spec = builder()
-            if workflow_spec is not None and not isinstance(workflow_spec, WorkflowSpec):
-                raise ValueError("loaded workflow object must be doeff_conductor.dsl.WorkflowSpec")
-            if workflow_func is None:
-                if workflow_spec is None:
-                    raise ValueError(
-                        f"No 'workflow', 'main', 'WORKFLOW', or 'build_workflow' found in "
-                        f"{template_or_file}"
-                    )
-                workflow_name = workflow_spec.name
+            workflow_spec = load_workflow_spec(str(workflow_path))
+            workflow_name = workflow_spec.name
 
         # Create workflow handle
         now = datetime.now(timezone.utc)
@@ -200,15 +156,20 @@ class ConductorAPI:
             )
 
             result = run(scheduled(WithHandler(conductor_handler, program)))
-            result_value = result.value if type(result).__name__ == "RunResult" else result
+            result_value = _unwrap_run_result(result)
             pr_url = None
             if isinstance(result_value, PRHandle):
                 pr_url = result_value.url
             elif isinstance(result_value, SimpleNamespace):
                 if "url" in vars(result_value):
                     pr_url = vars(result_value)["url"]
-            elif hasattr(result_value, "__dict__") and "url" in vars(result_value):
-                pr_url = vars(result_value)["url"]
+            else:
+                try:
+                    result_vars = vars(result_value)
+                except TypeError:
+                    result_vars = {}
+                if "url" in result_vars:
+                    pr_url = result_vars["url"]
 
             # Update workflow status
             handle = WorkflowHandle(

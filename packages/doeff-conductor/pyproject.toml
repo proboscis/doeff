@@ -26,6 +26,7 @@ dependencies = [
     "doeff-agents>=0.1.1",
     "doeff-agentic>=0.1.0",
     "doeff-flow>=0.1.0",
+    "doeff-hy>=0.1.0",
     "click>=8.0.0",
     "rich>=13.0.0",
     "pyyaml>=6.0",
@@ -60,4 +61,5 @@ doeff-git = { workspace = true }
 doeff-agents = { workspace = true }
 doeff-agentic = { workspace = true }
 doeff-flow = { workspace = true }
+doeff-hy = { workspace = true }
 doeff-preset = { workspace = true }
