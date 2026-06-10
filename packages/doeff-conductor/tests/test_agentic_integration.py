@@ -20,7 +20,6 @@ Run:
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 import pytest
 from doeff_agentic import (
@@ -45,7 +44,7 @@ from doeff_conductor.handlers import run_sync
 from doeff_conductor.handlers.agent_handler import AgentHandler
 from doeff_conductor.types import AgentRef, WorktreeEnv
 
-from doeff import Effect, Pass, WithHandler, default_handlers, do, run
+from doeff import Effect, Pass, do
 
 # =============================================================================
 # Mock OpenCode Handler
@@ -542,12 +541,9 @@ class TestWithHandlerIntegration:
         def intercepted_handler(effect: Effect, k):
             if isinstance(effect, RunAgent):
                 return (yield run_agent_handler(effect, k))
-            yield Pass()
+            yield Pass(effect, k)
 
-        result = run(
-            WithHandler(handler=intercepted_handler, expr=workflow()),
-            handlers=default_handlers(),
-        )
+        result = run_sync(workflow(), scheduled_handlers=intercepted_handler)
 
         assert result.is_ok
         assert result.value
@@ -575,10 +571,7 @@ class TestWithHandlerIntegration:
             agentic_handler=mock_agentic_handlers(working_dir=str(worktree_env.path)),
         )
 
-        result = run(
-            WithHandler(handler, workflow()),
-            handlers=default_handlers(),
-        )
+        result = run_sync(workflow(), scheduled_handlers=handler)
 
         assert result.is_ok
-        assert "Mock response to: Implement feature X" == result.value
+        assert result.value == "Mock response to: Implement feature X"

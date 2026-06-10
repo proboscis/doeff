@@ -4,26 +4,37 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from doeff import Effect, Pass, Resume, WithHandler, do
 from doeff_agents.adapters.base import AgentType
 from doeff_agents.effects import (
+    AgentEffect,
+    AgentSessionLifecycle,
     AgentSessionSnapshot,
     AttachAgentSessionEffect,
+    AwaitOutcome,
+    AwaitResultEffect,
+    AwaitStatus,
     CancelAgentSessionEffect,
     CaptureEffect,
     ClaudeLaunchEffect,
     CleanupAgentSessionEffect,
+    FollowUpEffect,
     GetAgentSessionEffect,
+    L2SessionHandle,
     LaunchEffect,
+    LaunchSessionEffect,
     LaunchTaskEffect,
     ListAgentSessionsEffect,
     MonitorEffect,
     Observation,
     ObserveAgentSessionEffect,
+    ReleaseSessionEffect,
     SendEffect,
     SessionAlreadyExistsError,
     SessionHandle,
     SessionNotFoundError,
     StopEffect,
+    StopSessionEffect,
 )
 from doeff_agents.mcp_server import McpToolServer, RunToolFn
 from doeff_agents.monitor import SessionStatus
@@ -68,6 +79,9 @@ class MockAgentHandler(AgentHandler):
         self._handles: dict[str, SessionHandle] = {}
         self._statuses: dict[str, SessionStatus] = {}
         self._outputs: dict[str, str] = {}
+        self._agent_types: dict[str, AgentType] = {}
+        self._work_dirs: dict[str, object] = {}
+        self._lifecycles: dict[str, AgentSessionLifecycle] = {}
         self._sends: list[tuple[str, str]] = []
         self._next_pane_id: int = 0
         self._mcp_servers: dict[str, McpToolServer] = {}
@@ -107,19 +121,17 @@ class MockAgentHandler(AgentHandler):
                 "mcpServers": {effect.mcp_server_name: {"type": "sse", "url": server.url}},
             }, indent=2))
 
-        pane_id = f"%mock{self._next_pane_id}"
         self._next_pane_id += 1
 
         handle = SessionHandle(
-            session_name=effect.session_name,
-            pane_id=pane_id,
-            agent_type=effect.agent_type,
-            work_dir=effect.work_dir,
-            lifecycle=effect.lifecycle,
+            session_id=effect.session_name,
         )
         self._handles[effect.session_name] = handle
         self._statuses[effect.session_name] = SessionStatus.BOOTING
         self._outputs.setdefault(effect.session_name, "")
+        self._agent_types[effect.session_name] = effect.agent_type
+        self._work_dirs[effect.session_name] = effect.work_dir
+        self._lifecycles[effect.session_name] = effect.lifecycle
         self._record_snapshot("session_started", handle, SessionStatus.BOOTING)
         return handle
 
@@ -132,19 +144,17 @@ class MockAgentHandler(AgentHandler):
         if effect.session_name in self._handles:
             raise SessionAlreadyExistsError(f"Session {effect.session_name} already exists")
 
-        pane_id = f"%mock{self._next_pane_id}"
         self._next_pane_id += 1
 
         handle = SessionHandle(
-            session_name=effect.session_name,
-            pane_id=pane_id,
-            agent_type=AgentType.CLAUDE,
-            work_dir=effect.work_dir,
-            lifecycle=effect.lifecycle,
+            session_id=effect.session_name,
         )
         self._handles[effect.session_name] = handle
         self._statuses[effect.session_name] = SessionStatus.BOOTING
         self._outputs.setdefault(effect.session_name, "")
+        self._agent_types[effect.session_name] = AgentType.CLAUDE
+        self._work_dirs[effect.session_name] = effect.work_dir
+        self._lifecycles[effect.session_name] = effect.lifecycle
         self._record_snapshot("session_started", handle, SessionStatus.BOOTING)
         return handle
 
@@ -303,10 +313,15 @@ class MockAgentHandler(AgentHandler):
         snapshot = AgentSessionSnapshot.from_handle(
             handle,
             status=status,
+            backend_ref={
+                "session_name": handle.session_name,
+                "agent_type": self._agent_types.get(handle.session_name, AgentType.CUSTOM).value,
+                "work_dir": str(self._work_dirs.get(handle.session_name, ".")),
+            },
+            lifecycle=self._lifecycles.get(handle.session_name),
             last_observed_at=now,
             finished_at=finished_at,
             cleaned_at=previous.cleaned_at if previous is not None else None,
-            pr_url=previous.pr_url if previous is not None else None,
             output_snippet=(
                 output_snippet
                 if output_snippet is not None
@@ -334,8 +349,127 @@ class MockAgentHandler(AgentHandler):
         )
 
 
+@dataclass(frozen=True)
+class ScenarioStep:
+    """One scripted L2 await outcome for the scenario stub."""
+
+    status: AwaitStatus
+    payload: object | None = None
+    validation_error: str | None = None
+
+    @classmethod
+    def success(cls, payload: object) -> "ScenarioStep":
+        return cls(status=AwaitStatus.EXITED, payload=payload)
+
+    @classmethod
+    def invalid(cls, *, payload: object, validation_error: str) -> "ScenarioStep":
+        return cls(
+            status=AwaitStatus.EXITED,
+            payload=payload,
+            validation_error=validation_error,
+        )
+
+    @classmethod
+    def absent(cls) -> "ScenarioStep":
+        return cls(status=AwaitStatus.EXITED)
+
+    @classmethod
+    def awaiting_input(cls, message: str) -> "ScenarioStep":
+        return cls(status=AwaitStatus.AWAITING_INPUT, validation_error=message)
+
+    @classmethod
+    def timeout(cls) -> "ScenarioStep":
+        return cls(status=AwaitStatus.TIMED_OUT)
+
+
+class ScenarioAgentHandler(MockAgentHandler):
+    """Scenario-driven C1 stub handler.
+
+    Scripts are keyed by deterministic session id.  Each await consumes one
+    step, so retries are explicit in the test data.
+    """
+
+    def __init__(
+        self,
+        *,
+        scripts: dict[str, list[ScenarioStep]] | None = None,
+    ) -> None:
+        super().__init__()
+        self._scenario_scripts: dict[str, list[ScenarioStep]] = {
+            session_id: list(steps) for session_id, steps in (scripts or {}).items()
+        }
+        self._scenario_indices: dict[str, int] = {}
+        self._launch_counts: dict[str, int] = {}
+        self._follow_ups: dict[str, list[str]] = {}
+        self.stopped_sessions: list[str] = []
+        self.released_sessions: list[str] = []
+
+    def wrap(self, program):
+        """Wrap a Program with this scenario handler."""
+
+        @do
+        def handler(effect: Effect, k):
+            if isinstance(effect, AgentEffect):
+                return (yield Resume(k, self.handle_agent(effect)))
+            if isinstance(effect, LaunchSessionEffect):
+                return (yield Resume(k, self.handle_launch_session(effect)))
+            if isinstance(effect, AwaitResultEffect):
+                return (yield Resume(k, self.handle_await_result(effect)))
+            if isinstance(effect, FollowUpEffect):
+                return (yield Resume(k, self.handle_follow_up(effect)))
+            if isinstance(effect, StopSessionEffect):
+                self.handle_stop_session(effect)
+                return (yield Resume(k, None))
+            if isinstance(effect, ReleaseSessionEffect):
+                self.handle_release_session(effect)
+                return (yield Resume(k, None))
+            yield Pass(effect, k)
+
+        return WithHandler(handler, program)
+
+    def handle_launch_session(self, effect: LaunchSessionEffect) -> L2SessionHandle:
+        session_id = effect.spec.session_id
+        if session_id not in self._handles:
+            self._launch_counts[session_id] = self._launch_counts.get(session_id, 0) + 1
+            self._handles[session_id] = L2SessionHandle(session_id=session_id)
+        return L2SessionHandle(session_id=session_id)
+
+    def handle_await_result(self, effect: AwaitResultEffect) -> AwaitOutcome:
+        session_id = effect.handle.session_id
+        script = self._scenario_scripts.get(session_id, [ScenarioStep.success({})])
+        index = self._scenario_indices.get(session_id, 0)
+        if index >= len(script):
+            step = script[-1]
+        else:
+            step = script[index]
+            self._scenario_indices[session_id] = index + 1
+        return AwaitOutcome(
+            status=step.status,
+            result=step.payload,
+            validation_error=step.validation_error,
+        )
+
+    def handle_follow_up(self, effect: FollowUpEffect) -> L2SessionHandle:
+        self._follow_ups.setdefault(effect.handle.session_id, []).append(effect.message)
+        return effect.handle
+
+    def handle_stop_session(self, effect: StopSessionEffect) -> None:
+        self.stopped_sessions.append(effect.handle.session_id)
+
+    def handle_release_session(self, effect: ReleaseSessionEffect) -> None:
+        self.released_sessions.append(effect.handle.session_id)
+
+    def launch_count(self, session_id: str) -> int:
+        return self._launch_counts.get(session_id, 0)
+
+    def follow_up_messages(self, session_id: str) -> list[str]:
+        return list(self._follow_ups.get(session_id, []))
+
+
 __all__ = [
     "MockAgentHandler",
     "MockAgentState",
     "MockSessionScript",
+    "ScenarioAgentHandler",
+    "ScenarioStep",
 ]

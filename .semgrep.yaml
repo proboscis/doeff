@@ -77,6 +77,43 @@ rules:
       include:
         - /packages/doeff-agents/**
 
+  - id: doeff-agents-no-pr-url-session-sniffing
+    languages: [generic]
+    severity: ERROR
+    message: >
+      ADR 0001 C1: doeff-agents must not infer workflow success or PR links from
+      captured terminal text. The agent boundary returns schema-validated artifacts;
+      PR URL ownership belongs to conductor/git issue layers, not session algebra.
+    pattern-regex: '\b(pr_url|detect_pr_url|PR_URL_PATTERN)\b'
+    paths:
+      include:
+        - /packages/doeff-agents/src/**
+
+  - id: doeff-agents-no-terminal-text-success-status
+    languages: [python]
+    severity: ERROR
+    message: >
+      ADR 0001 C1: doeff-agents must not derive DONE/FAILED workflow truth from
+      terminal output. Success is decided solely by the schema-validated result artifact.
+    pattern-either:
+      - pattern: |
+          if "worked for" in $OUTPUT:
+              ...
+      - pattern: |
+          if "Done" in $OUTPUT:
+              ...
+      - pattern: |
+          if "DONE" in $OUTPUT:
+              ...
+      - pattern: |
+          if "FAILED" in $OUTPUT:
+              ...
+      - pattern-regex: '\b(is_completed|is_failed)\s*\('
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/monitor.py
+        - /packages/doeff-agents/src/doeff_agents/session.py
+
   - id: http-request-handlers-use-defhandler
     languages: [python]
     severity: ERROR

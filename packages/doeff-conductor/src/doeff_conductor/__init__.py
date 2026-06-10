@@ -56,6 +56,12 @@ from .api import ConductorAPI
 
 # Effects
 from .effects import (
+    Agent,
+    AgentAttemptExhaustedError,
+    AgentEffect,
+    AgentTask,
+    AgentValidationErrorKind,
+    AgentValidationFailure,
     CaptureOutput,
     # Git
     Commit,
@@ -139,10 +145,16 @@ from .types import (
 )
 
 __all__ = [
+    "Agent",
+    "AgentAttemptExhaustedError",
+    "AgentEffect",
     "AgentError",
     "AgentHandler",
     "AgentRef",
+    "AgentTask",
     "AgentTimeoutError",
+    "AgentValidationErrorKind",
+    "AgentValidationFailure",
     "CaptureOutput",
     # Effects - Git
     "Commit",
