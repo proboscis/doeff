@@ -959,6 +959,14 @@ fn build_claude_argv(params: &LaunchParams) -> Vec<String> {
         String::from("claude"),
         String::from("--dangerously-skip-permissions"),
     ];
+    // Effort delivery, symmetric with build_codex_argv's
+    // model_reasoning_effort: the claude CLI has a real --effort flag.
+    if let Some(effort) = params.effort.as_ref() {
+        if !effort.is_empty() {
+            args.push(String::from("--effort"));
+            args.push(effort.clone());
+        }
+    }
     if let Some(model) = params.model.as_ref() {
         if !model.is_empty() {
             args.push(String::from("--model"));
@@ -3921,23 +3929,27 @@ mod tests {
         assert_eq!(auto_update, vec![&(String::from("DISABLE_AUTO_UPDATE"), String::from("false"))]);
     }
 
-    #[test]
-    fn build_codex_argv_does_not_include_prompt_as_argument() {
-        let params = LaunchParams {
+    fn launch_params_for(agent_type: &str, effort: Option<&str>) -> LaunchParams {
+        LaunchParams {
             session_id: String::from("s"),
             session_name: String::from("s"),
-            agent_type: String::from("codex"),
+            agent_type: String::from(agent_type),
             work_dir: String::from("/tmp"),
             command: None,
             prompt: Some(String::from("hello world")),
             model: None,
-            effort: None,
+            effort: effort.map(String::from),
             mcp_servers: BTreeMap::new(),
             skip_trust_setup: true,
             lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
             session_env: BTreeMap::new(),
             expected_result: None,
-        };
+        }
+    }
+
+    #[test]
+    fn build_codex_argv_does_not_include_prompt_as_argument() {
+        let params = launch_params_for("codex", None);
         let argv = build_codex_argv(&params);
         assert!(
             !argv.iter().any(|arg| arg == "hello world"),
@@ -3945,6 +3957,52 @@ mod tests {
         );
         assert_eq!(argv[0], "codex");
         assert!(argv.contains(&String::from("--yolo")));
+    }
+
+    #[test]
+    fn build_codex_argv_delivers_effort_as_model_reasoning_effort() {
+        let params = launch_params_for("codex", Some("xhigh"));
+        let argv = build_codex_argv(&params);
+        let position = argv
+            .iter()
+            .position(|arg| arg == "model_reasoning_effort=\"xhigh\"")
+            .expect("effort config must appear in codex argv");
+        assert_eq!(argv[position - 1], "-c");
+    }
+
+    #[test]
+    fn build_codex_argv_omits_effort_when_absent_or_empty() {
+        for effort in [None, Some("")] {
+            let params = launch_params_for("codex", effort);
+            let argv = build_codex_argv(&params);
+            assert!(
+                !argv.iter().any(|arg| arg.contains("model_reasoning_effort")),
+                "no effort config expected for effort={effort:?}: {argv:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn build_claude_argv_delivers_effort_flag() {
+        let params = launch_params_for("claude", Some("xhigh"));
+        let argv = build_claude_argv(&params);
+        let position = argv
+            .iter()
+            .position(|arg| arg == "--effort")
+            .expect("--effort must appear in claude argv");
+        assert_eq!(argv[position + 1], "xhigh");
+    }
+
+    #[test]
+    fn build_claude_argv_omits_effort_when_absent_or_empty() {
+        for effort in [None, Some("")] {
+            let params = launch_params_for("claude", effort);
+            let argv = build_claude_argv(&params);
+            assert!(
+                !argv.iter().any(|arg| arg == "--effort"),
+                "no --effort expected for effort={effort:?}: {argv:?}"
+            );
+        }
     }
 
     #[test]

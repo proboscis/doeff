@@ -278,6 +278,7 @@ def resolve_agent_task_identity(task: AgentTask) -> ResolvedIdentity:
         adapter=task.agent_type,
         model=task.model or "",
         identity=task.profile,
+        effort=task.effort,
     )
 
 
