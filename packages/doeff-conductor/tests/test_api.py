@@ -319,9 +319,11 @@ class TestListWorkspaces:
         """Create API with temporary state directory."""
         return ConductorAPI(state_dir=tmp_path / "state")
 
-    def test_list_workspaces_empty(self, api: ConductorAPI):
+    def test_list_workspaces_empty(self, api: ConductorAPI, tmp_path: Path):
         """list_workspaces returns empty list when no workspaces exist."""
-        workspaces = api.list_workspaces()
+        with patch("doeff_conductor.handlers.workspace_handler._get_workspace_base_dir") as mock_base:
+            mock_base.return_value = tmp_path / "empty-workspaces"
+            workspaces = api.list_workspaces()
         assert workspaces == []
 
     def test_list_workspaces_with_mock(self, api: ConductorAPI, tmp_path: Path):
@@ -343,9 +345,11 @@ class TestCleanupWorkspaces:
         """Create API with temporary state directory."""
         return ConductorAPI(state_dir=tmp_path / "state")
 
-    def test_cleanup_workspaces_empty(self, api: ConductorAPI):
+    def test_cleanup_workspaces_empty(self, api: ConductorAPI, tmp_path: Path):
         """cleanup_workspaces returns empty list when no workspaces exist."""
-        cleaned = api.cleanup_workspaces()
+        with patch("doeff_conductor.handlers.workspace_handler._get_workspace_base_dir") as mock_base:
+            mock_base.return_value = tmp_path / "empty-workspaces"
+            cleaned = api.cleanup_workspaces()
         assert cleaned == []
 
     def test_cleanup_workspaces_dry_run(self, api: ConductorAPI, tmp_path: Path):
