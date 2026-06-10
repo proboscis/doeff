@@ -54,12 +54,12 @@ Observed:
 Production run used real Codex workers via explicit native structured output:
 
 ```bash
-CONDUCTOR_AGENT_MODE=codex-exec \
 CONDUCTOR_STATE_DIR=/tmp/c7-conductor-state \
 PYTHONUNBUFFERED=1 \
 /path/to/.venv/bin/conductor --state-dir /tmp/c7-conductor-state run \
   packages/doeff-conductor/examples/k2_k3_pilot_workflow.py \
   --run-id c7-replay2 \
+  --agent-mode codex-exec \
   --params '{"run_id":"c7-replay2","base_ref":"main","effort":"low",
              "report_path":"/tmp/c7-pilot-result.json"}' \
   --json 2>&1 | tee /tmp/c7-full-run.log
@@ -133,6 +133,6 @@ Cost notes:
   pilot used the workflow's `report_path` parameter to persist phase timings
   and review-routing measurements.
 - The local environment did not have a reachable `doeff-agentd`; the pilot used
-  explicit `CONDUCTOR_AGENT_MODE=codex-exec`, which still runs real Codex
-  workers through the production conductor handler but bypasses agentd session
+  explicit `--agent-mode codex-exec`, which still runs real Codex workers
+  through the production conductor handler but bypasses agentd session
   supervision.
