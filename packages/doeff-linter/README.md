@@ -81,22 +81,6 @@ skip_test_functions = true
 | DOEFF012 | No Append Loop Pattern | Use list comprehension instead of empty list + for loop append |
 | DOEFF013 | Prefer Maybe Monad | Use `Maybe[T]` instead of `Optional[T]` or `T \| None` |
 | DOEFF014 | No Try-Except Blocks | Use doeff's error handling effects instead of try-except |
-| DOEFF032 | Workflow Nondeterminism | Workflow modules must use `time!`, `random!`, `gate!`, or `:params` instead of raw nondeterminism |
-
-## Workflow Modules
-
-`DOEFF032` applies only to workflow modules. Prefer marking those files with a
-top-level pragma:
-
-```python
-# doeff: workflow
-```
-
-Files under a `workflows/` path component and files named `*_workflow.py` are
-also treated as workflow modules. In those modules, raw clock reads,
-`random.*`, `open`, pathlib writes, subprocess/network access, and
-non-allowlisted imports are ERROR diagnostics. The rule intentionally has no
-baseline or per-file allowlist; `noqa` does not suppress `DOEFF032`.
 
 ## Inline Suppression
 
