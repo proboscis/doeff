@@ -60,6 +60,12 @@ class ConductorAPI:
         Returns:
             WorkflowHandle for the started workflow
         """
+        from doeff_conductor.dsl import WorkflowSpec
+        from doeff_conductor.workflow_loader import (
+            check_workflow_source_determinism,
+            prepare_workflow_source_for_run,
+        )
+
         from .templates import get_template, is_template
         from .types import PRHandle, WorkflowHandle, WorkflowStatus
 
@@ -68,6 +74,8 @@ class ConductorAPI:
 
         # Determine if template or file
         workflow_name: str
+        workflow_spec = None
+        workflow_func: Any | None
         if is_template(template_or_file):
             template_name = template_or_file
             workflow_func = get_template(template_name)
@@ -75,15 +83,24 @@ class ConductorAPI:
         else:
             # Load from file
             template_name = None
-            workflow_path = Path(template_or_file)
-            workflow_name = workflow_path.stem
+            source_path = Path(template_or_file)
+            workflow_path = prepare_workflow_source_for_run(
+                template_or_file,
+                state_dir=self.state_dir,
+                run_id=workflow_id,
+            )
+            workflow_name = source_path.stem
             if not workflow_path.exists():
                 raise ValueError(f"Workflow file not found: {template_or_file}")
+            check_workflow_source_determinism(str(workflow_path))
 
             # Import workflow function
             import importlib.util
 
-            spec = importlib.util.spec_from_file_location("workflow", workflow_path)
+            spec = importlib.util.spec_from_file_location(
+                f"doeff_conductor_run_{workflow_id}",
+                workflow_path,
+            )
             if spec is None or spec.loader is None:
                 raise ValueError(f"Cannot load workflow: {template_or_file}")
 
@@ -94,13 +111,34 @@ class ConductorAPI:
             # Look for workflow function (named 'workflow' or 'main')
             workflow_func = None
             if "workflow" in module.__dict__:
-                workflow_func = module.__dict__["workflow"]
+                workflow_candidate: object = module.__dict__["workflow"]
+                if isinstance(workflow_candidate, WorkflowSpec):
+                    workflow_spec = workflow_candidate
+                elif callable(workflow_candidate):
+                    workflow_func = workflow_candidate
+                else:
+                    raise ValueError("workflow must be a WorkflowSpec or callable")
             elif "main" in module.__dict__:
-                workflow_func = module.__dict__["main"]
+                main_candidate: object = module.__dict__["main"]
+                if not callable(main_candidate):
+                    raise ValueError("main workflow entrypoint must be callable")
+                workflow_func = main_candidate
+            elif "WORKFLOW" in module.__dict__:
+                workflow_spec = module.__dict__["WORKFLOW"]
+            elif "build_workflow" in module.__dict__:
+                builder = module.__dict__["build_workflow"]
+                if not callable(builder):
+                    raise ValueError("build_workflow must be callable")
+                workflow_spec = builder()
+            if workflow_spec is not None and not isinstance(workflow_spec, WorkflowSpec):
+                raise ValueError("loaded workflow object must be doeff_conductor.dsl.WorkflowSpec")
             if workflow_func is None:
-                raise ValueError(
-                    f"No 'workflow' or 'main' function found in {template_or_file}"
-                )
+                if workflow_spec is None:
+                    raise ValueError(
+                        f"No 'workflow', 'main', 'WORKFLOW', or 'build_workflow' found in "
+                        f"{template_or_file}"
+                    )
+                workflow_name = workflow_spec.name
 
         # Create workflow handle
         now = datetime.now(timezone.utc)
@@ -142,12 +180,24 @@ class ConductorAPI:
                 kwargs["issue"] = issue
 
             # Get the program
-            program = workflow_func(**kwargs)
+            if workflow_spec is None:
+                if workflow_func is None:
+                    raise ValueError("workflow function was not loaded")
+                program = workflow_func(**kwargs)
+            else:
+                from doeff_conductor.workflow_runtime import workflow_spec_to_program
+
+                program = workflow_spec_to_program(
+                    workflow_spec,
+                    run_id=workflow_id,
+                    params=kwargs,
+                    issue=issue,
+                )
 
             # Run with conductor handlers
-            from .handlers import production_handlers
+            import doeff_conductor.handlers as handlers_module
 
-            conductor_handler = production_handlers(
+            conductor_handler = handlers_module.production_handlers(
                 journal_state_dir=self.state_dir,
                 journal_run_id=workflow_id,
                 agent_backend=agent_backend,
@@ -174,6 +224,7 @@ class ConductorAPI:
                 created_at=now,
                 updated_at=datetime.now(timezone.utc),
                 pr_url=pr_url,
+                result_payload=result_value,
             )
             self._save_workflow(handle)
 
@@ -192,6 +243,27 @@ class ConductorAPI:
             raise
 
         return handle
+
+    def resume_workflow(
+        self,
+        workflow_id: str,
+        *,
+        params: dict[str, Any] | None = None,
+        agent_backend: "AgentBackendName | str | AgentBackend | None" = None,
+    ) -> "WorkflowHandle":
+        """Resume a run from its snapshotted workflow source."""
+
+        from doeff_conductor.workflow_loader import workflow_snapshot_path
+
+        snapshot_path: Path = workflow_snapshot_path(self.state_dir, workflow_id)
+        if not snapshot_path.exists():
+            raise ValueError(f"workflow snapshot not found for run: {workflow_id}")
+        return self.run_workflow(
+            str(snapshot_path),
+            params=params,
+            run_id=workflow_id,
+            agent_backend=agent_backend,
+        )
 
     def list_workflows(
         self,

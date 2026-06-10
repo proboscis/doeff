@@ -116,13 +116,6 @@ fn get_all_rule_info() -> Vec<RuleInfo> {
             fix: "Use Safe(program) to get a Result, program.recover(fallback) for fallbacks.",
             severity: "warning",
         },
-        RuleInfo {
-            id: "DOEFF032",
-            name: "Workflow Nondeterminism",
-            description: "Workflow modules must not use raw clock, random, filesystem, subprocess, network, or non-allowlisted imports.",
-            fix: "Use time! for clock reads, random! for random values, gate! for filesystem/subprocess/network work, or pass external inputs through :params.",
-            severity: "error",
-        },
     ]
 }
 
