@@ -114,14 +114,20 @@ adapter+model and the user env completes it with auth. `stub` is NOT a
 profile but an interpreter choice reachable only via the `validate` verb
 and tests), workspace, label/phase, and the
 **verification class** (required, always explicit, never inherited or
-defaulted). The handler (doeff-agents `LaunchConfig`
-sessions in tmux) launches the worker, obtains the worker's result through
-a **handler-private result channel** — e.g. an in-workdir result file as
-agentd's `await_result` already does (`.agentd-result.json`), native
-structured output (`codex exec --output-last-message`, `claude -p
---output-format json`), or an MCP result tool. The mechanism is NEVER part
-of the contract and MUST work inside the worker's sandbox boundary (no
-out-of-workspace writes). The handler validates the result against the
+defaulted). The handler launches the worker **only as a
+doeff-agentd-supervised session** (tmux: observable via attach/capture,
+steerable, durable across conductor restarts — D6). **doeff-agentd is the
+only route for the handler.** Direct subprocess execution of a worker
+(e.g. invoking `codex exec` from the handler) is FORBIDDEN: an
+unsupervised worker is invisible (no attach/capture/steer) and dies with
+its parent — violating the maintainer's observability rule and the
+durable-sessions contract. If agentd is unreachable, the handler fails
+loudly with start instructions; it never falls back to a subprocess. The
+result is obtained through a **handler-private result channel operating
+inside the supervised session** — e.g. the in-workdir result file agentd's
+`await_result` validates (`.agentd-result.json`) or an MCP result tool.
+The mechanism is NEVER part of the contract and MUST work inside the
+worker's sandbox boundary (no out-of-workspace writes). The handler validates the result against the
 schema and **retries with the validation error appended** (bounded, e.g. 3)
 before failing typed. The validated object is the effect's return value:
 `agent!` awaits the worker and returns the artifact — there is no separate
@@ -483,6 +489,19 @@ workflow-facing truth: a session's terminal fact is `exited` (+ exit code
 where available); **success is decided solely by the result artifact**
 (present + schema-valid). Text heuristics survive only inside the L1 tmux
 adapter for liveness/awaiting-input detection.
+
+### D. Unsupervised worker subprocesses (delete; added 2026-06-10 post-C8)
+
+| Where | What |
+|---|---|
+| `doeff-conductor/.../handlers/agent_handler.py` `CodexExecAgentBackend` + `_handle_codex_exec` | worker spawned as a direct `codex exec` subprocess — invisible (no attach/capture/steer), dies with conductor, bypasses the entire doeff-agents session layer (a parallel re-implementation of launch + result retrieval) |
+| `doeff-conductor/.../cli.py` `--agent-mode` flag + `CONDUCTOR_AGENT_MODE` env handling; `make_agent_backend` selection | backend selection must not exist: **doeff-agentd is the only route for the handler** |
+
+Root cause that motivated the bypass: `LazyAgentdClient` socket discovery
+failed to find a running daemon (default-path mismatch). The fix is to
+repair discovery — one canonical socket convention shared by the daemon
+launcher and the client, with a loud actionable error when no daemon is
+reachable — never to route around supervision.
 
 ## Non-goals / cautions
 
