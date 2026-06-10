@@ -221,6 +221,7 @@ def validate_cmd(
 @click.argument("template_or_file")
 @click.option("--issue", "-i", type=click.Path(exists=True), help="Issue file")
 @click.option("--params", "-p", help="Parameters as JSON")
+@click.option("--run-id", help="Use a stable workflow id for replay/resume measurements")
 @click.option("--watch", "-w", is_flag=True, help="Watch workflow progress")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
 @click.pass_context
@@ -229,6 +230,7 @@ def run(
     template_or_file: str,
     issue: str | None,
     params: str | None,
+    run_id: str | None,
     watch: bool,
     output_json: bool,
 ) -> None:
@@ -269,7 +271,12 @@ def run(
                     )
 
         # Run workflow
-        workflow = api.run_workflow(template_or_file, issue=issue_obj, params=parsed_params)
+        workflow = api.run_workflow(
+            template_or_file,
+            issue=issue_obj,
+            params=parsed_params,
+            run_id=run_id,
+        )
 
         if output_json:
             click.echo(json.dumps(workflow.to_dict(), indent=2))
