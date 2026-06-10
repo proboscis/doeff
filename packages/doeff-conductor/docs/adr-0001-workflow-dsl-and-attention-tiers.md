@@ -307,6 +307,29 @@ deferred reviews) always surfaces in the run report. The closure law is
 what bounds the overseer's load: no silently-wedged state exists to hunt
 for.
 
+**Supervision policy** — how much the overseer is *in the loop* is a
+run-scoped dial the overseer owns, set at plan approval, and never
+written in the workflow text (where to pause is a trust/stakes judgment,
+extrinsic to the task; authors may declare intrinsic `:stakes` on phases,
+which the policy maps to checkpoint defaults):
+
+```
+:supervision  autonomous                  ;; default: gates/escalations only
+            | (checkpoints [PhaseName …]) ;; checkpoint gates after named phases
+            | phase-checkpoints           ;; every phase boundary
+            | step                        ;; every node (debugging)
+```
+
+A checkpoint is an ordinary gate — closure-law compliant, auto-inserted at
+the phase boundary, blocking only the dependent subtree — presenting the
+phase's **artifact summaries and binding deltas, not diffs** (if the
+overseer must read a diff, that is an escalation and tier economics
+apply). Options: proceed / redirect (edit-and-resume) / abort. Reviewing
+every boundary by default would resurrect the very cost problem the tiers
+exist to solve, so supervision is a **trust dial**: first runs of a new
+workflow run supervised; the dial relaxes toward `autonomous` as
+calibration escape rates earn it.
+
 ## Implementation plan (stages; each lands with tests)
 
 - **C1 — agent boundary (L2 core + `agent!`)**: implement the D6 algebra
