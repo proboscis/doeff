@@ -14,7 +14,7 @@
 (import doeff_agents.adapters.codex [CodexAdapter])
 (import doeff_agents.session-backend [SessionBackend])
 (import doeff_agents.monitor [MonitorState SessionStatus
-  detect-status hash-content is-waiting-for-input detect-pr-url])
+  detect-status hash-content is-waiting-for-input])
 (import doeff_agents.shell [wrap-with-shell-exports])
 (import doeff_agents [tmux])
 
@@ -47,25 +47,26 @@
       (.send-keys active-backend session-info.pane-id
         (wrap-with-shell-exports (shlex.join argv) session-env)
         :literal False)
-      (setv handle (SessionHandle
-        :session-name session-name
-        :pane-id session-info.pane-id
-        :agent-type AgentType.CODEX
-        :work-dir work-dir))
+      (setv handle (SessionHandle :session-id session-name))
       (set! sessions (| sessions {session-name
-        {"handle" handle "monitor" (MonitorState) "status" SessionStatus.BOOTING "pr-url" None}}))
+        {"handle" handle
+         "pane-id" session-info.pane-id
+         "agent-type" AgentType.CODEX
+         "monitor" (MonitorState)
+         "status" SessionStatus.BOOTING}}))
       (resume handle))
 
     (MonitorEffect [handle]
-      :when (= handle.agent-type AgentType.CODEX)
       (setv active-backend backend)
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
-      (setv sname handle.session-name)
+      (setv sname handle.session-id)
+      (setv session-data (.get sessions sname))
+      (when (is session-data None)
+        (reperform effect))
       (when (not (.has-session active-backend sname))
         (resume (Observation :status SessionStatus.EXITED)))
-      (setv output (.capture-pane active-backend handle.pane-id 100))
-      (setv session-data (.get sessions sname {}))
+      (setv output (.capture-pane active-backend (.get session-data "pane-id") 100))
       (setv mon (.get session-data "monitor" (MonitorState)))
       (setv skip-lines 3)
       (setv content-hash (hash-content output skip-lines))
@@ -74,43 +75,42 @@
       (when output-changed
         (setv mon.output-hash content-hash)
         (setv mon.last-output output))
-      (setv pr-url None)
-      (when (not (.get session-data "pr-url"))
-        (setv detected (detect-pr-url output))
-        (when detected
-          (setv (get session-data "pr-url") detected)
-          (setv pr-url detected)))
       (setv new-status (detect-status output mon output-changed has-prompt))
       (when new-status
         (setv (get session-data "status") new-status))
       (resume (Observation
         :status (.get session-data "status" SessionStatus.RUNNING)
         :output-changed output-changed
-        :pr-url pr-url
         :output-snippet (when output (cut output -500 None)))))
 
     (CaptureEffect [handle lines]
-      :when (= handle.agent-type AgentType.CODEX)
       (setv active-backend backend)
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
-      (resume (.capture-pane active-backend handle.pane-id lines)))
+      (setv session-data (.get sessions handle.session-id))
+      (when (is session-data None)
+        (reperform effect))
+      (resume (.capture-pane active-backend (.get session-data "pane-id") lines)))
 
     (SendEffect [handle message literal enter]
-      :when (= handle.agent-type AgentType.CODEX)
       (setv active-backend backend)
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
-      (.send-keys active-backend handle.pane-id message :literal literal :enter enter)
+      (setv session-data (.get sessions handle.session-id))
+      (when (is session-data None)
+        (reperform effect))
+      (.send-keys active-backend (.get session-data "pane-id") message :literal literal :enter enter)
       (resume None))
 
     (StopEffect [handle]
-      :when (= handle.agent-type AgentType.CODEX)
       (setv active-backend backend)
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
-      (when (.has-session active-backend handle.session-name)
-        (.kill-session active-backend handle.session-name))
+      (setv session-data (.get sessions handle.session-id))
+      (when (is session-data None)
+        (reperform effect))
+      (when (.has-session active-backend handle.session-id)
+        (.kill-session active-backend handle.session-id))
       (resume None)))
 
   _handler)

@@ -115,7 +115,7 @@ class FakeBackend(SessionBackend):
         self.created.append(cfg)
         self.sessions.add(cfg.session_name)
         pane_id = f"%{cfg.session_name}"
-        self.captures[pane_id] = "Goodbye!"
+        self.captures[pane_id] = "$ "
         return SessionInfo(
             session_name=cfg.session_name,
             pane_id=pane_id,
@@ -179,7 +179,7 @@ def test_tmux_agent_handler_uses_injected_backend(monkeypatch) -> None:
     assert backend.created[0].session_name == "worker"
     assert backend.created[0].env is not None
     assert backend.created[0].env["PATH"] == "/agent/bin"
-    assert backend.sent[0][0] == handle.pane_id
+    assert backend.sent[0][0] == "%worker"
     # handle_launch wraps the command with HOME/CLAUDE_HOME exports for
     # AgentType.CLAUDE so the launched agent's `.claude.json` is isolated
     # from any concurrently-running Claude Code instance on the host.
@@ -190,10 +190,10 @@ def test_tmux_agent_handler_uses_injected_backend(monkeypatch) -> None:
     assert "export CLAUDE_HOME=" in sent_command
 
     observation = handler.handle_monitor(MonitorEffect(handle=handle))
-    assert observation.status == SessionStatus.DONE
+    assert observation.status == SessionStatus.EXITED
 
     captured = handler.handle_capture(CaptureEffect(handle=handle, lines=25))
-    assert captured == "Goodbye!"
+    assert captured == "$ "
 
     handler.handle_send(SendEffect(handle=handle, message="continue", enter=True))
     assert backend.sent[-1][1] == "continue"
@@ -221,14 +221,14 @@ def test_tmux_agent_handler_persists_session_state(monkeypatch) -> None:
 
     assert snapshot is not None
     assert snapshot.session_id == "persistent-worker"
-    assert snapshot.pane_id == handle.pane_id
+    assert not hasattr(handle, "pane_id")
     assert snapshot.status == SessionStatus.BOOTING
 
     observed = handler.handle_observe_session(ObserveAgentSession("persistent-worker"))
 
-    assert observed.status == SessionStatus.DONE
+    assert observed.status == SessionStatus.EXITED
     assert observed.finished_at is not None
-    assert observed.output_snippet == "Goodbye!"
+    assert observed.output_snippet == "$ "
     assert [
         session.session_id
         for session in handler.handle_list_sessions(ListAgentSessions())
@@ -309,12 +309,12 @@ def test_imperative_session_api_accepts_injected_backend(monkeypatch) -> None:
 
     assert backend.created[0].env == {"PATH": "/agent/bin"}
     assert "export PATH=/agent/bin;" in backend.sent[0][1]
-    assert status == SessionStatus.DONE
+    assert status == SessionStatus.EXITED
 
     send_message(session, "ship it")
     assert backend.sent[-1][1] == "ship it"
 
-    assert capture_output(session, 10) == "Goodbye!"
+    assert capture_output(session, 10) == "$ "
 
     stop_session(session)
     assert backend.killed == ["worker"]
@@ -344,7 +344,7 @@ def test_agent_effectful_handler_asks_for_backend(monkeypatch) -> None:
         )
     )
 
-    assert result == SessionStatus.DONE
+    assert result == SessionStatus.EXITED
     assert backend.created[0].session_name == "worker"
     assert backend.killed == ["worker"]
 

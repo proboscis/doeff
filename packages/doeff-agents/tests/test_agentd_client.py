@@ -247,7 +247,7 @@ def test_daemon_handler_launch_delegates_lifecycle_to_client(monkeypatch, tmp_pa
         )
     )
 
-    assert handle.session_name == "s2"
+    assert handle.session_id == "s2"
     assert adapter.params is not None
     assert adapter.params.prompt == "review this"
     assert fake_client.launches[0]["session_id"] == "s2"
@@ -307,7 +307,6 @@ def _snapshot_payload(
         "last_observed_at": "2026-05-25T00:00:01+00:00",
         "finished_at": None,
         "cleaned_at": None,
-        "pr_url": None,
         "output_snippet": "running",
     }
 

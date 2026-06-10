@@ -4,7 +4,7 @@ import asyncio
 import re
 import shlex
 import time
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -19,7 +19,6 @@ from .monitor import (
     MonitorState,
     OnStatusChange,
     SessionStatus,
-    detect_pr_url,
     detect_status,
     hash_content,
     is_waiting_for_input,
@@ -216,14 +215,12 @@ def monitor_session(
     session: AgentSession,
     *,
     on_status_change: OnStatusChange | None = None,
-    on_pr_detected: Callable[[str], None] | None = None,
 ) -> SessionStatus | None:
     """Check session status and update if changed.
 
     Args:
         session: The session to monitor
         on_status_change: Callback(old_status, new_status, output)
-        on_pr_detected: Callback(pr_url) when PR URL is detected
 
     Returns:
         New status if changed, None otherwise
@@ -253,13 +250,6 @@ def monitor_session(
         session._monitor_state.output_hash = content_hash
         session._monitor_state.last_output = output
         session._monitor_state.last_output_at = datetime.now(timezone.utc)
-
-    # Detect PR URL
-    if on_pr_detected and not session._monitor_state.pr_url:
-        pr_url = detect_pr_url(output)
-        if pr_url:
-            session._monitor_state.pr_url = pr_url
-            on_pr_detected(pr_url)
 
     new_status = detect_status(output, session._monitor_state, output_changed, has_prompt)
 
@@ -434,7 +424,6 @@ async def async_monitor_session(
     *,
     poll_interval: float = 1.0,
     on_status_change: OnStatusChange | None = None,
-    on_pr_detected: Callable[[str], None] | None = None,
 ) -> SessionStatus:
     """Async monitor that yields when status changes.
 
@@ -442,13 +431,12 @@ async def async_monitor_session(
         session: The session to monitor
         poll_interval: Seconds between status checks
         on_status_change: Callback for status changes
-        on_pr_detected: Callback for PR detection
 
     Returns:
         Final terminal status
     """
     while not session.is_terminal:
-        monitor_session(session, on_status_change=on_status_change, on_pr_detected=on_pr_detected)
+        monitor_session(session, on_status_change=on_status_change)
         await asyncio.sleep(poll_interval)
     return session.status
 
