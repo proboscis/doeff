@@ -150,10 +150,18 @@ This is what makes the DSL writable by LLM authors and totally checkable.
 **Glue purity by construction:** glue runs as plain (non-kleisli)
 functions, so it structurally cannot launch agents or touch the
 environment. The residual hole — raw Python nondeterminism that is not an
-effect — is closed by a **validator** (doeff-linter, ERROR severity, no
-baselines) banning `datetime.now`/`random`/`open`/network/subprocess/
-non-allowlisted imports in workflow modules, each diagnostic naming the
-replacement (`time!`, `random!`, `gate!`, a `:params` entry).
+effect — is closed by the **workflow loader itself**: conductor AST-walks
+every workflow module at load time, banning `datetime.now`/`random`/
+`open`/network/subprocess/non-allowlisted imports, each diagnostic naming
+the replacement (`time!`, `random!`, `gate!`, a `:params` entry). Because
+the check lives in the loader, `plan`/`validate`/`run` all inherit it and
+no module marker is needed (the loader knows what it loads). A
+separately-run linter is NOT an acceptable enforcement point: workflows
+are ephemeral request artifacts (D10) that no CI will ever see — a gate
+that depends on a tool the author might run is a prompt promise, not an
+invariant. (This amends the original C2v placement in doeff-linter; the
+rule logic and fixtures move into conductor and the linter rule is
+deleted — no parallel implementations.)
 
 Macros compile to a static DAG of doeff Programs. Expansion-time checks
 (all free, before any token is spent):
@@ -172,7 +180,8 @@ Macros compile to a static DAG of doeff Programs. Expansion-time checks
   tolerated losses are journaled and surfaced, never silent;
 - dataflow well-formedness (references defined; unconsumed results
   flagged); budget annotations parse and sum;
-- the nondeterminism validator passes on the containing module.
+- the loader's nondeterminism check passes on the workflow module
+  (enforced at load time, so `plan`/`validate`/`run` cannot skip it).
 
 Keep the JS tool's load-bearing constraints: static graph skeleton, pure
 metadata, effect-boundary caching for replay resume — with the cache key
@@ -329,6 +338,33 @@ exist to solve, so supervision is a **trust dial**: first runs of a new
 workflow run supervised; the dial relaxes toward `autonomous` as
 calibration escape rates earn it.
 
+### D10 — Workflows are ephemeral request artifacts, never version-controlled code
+
+A workflow encodes ONE request ("implement these four features in
+parallel") — it is kin to a prompt, not to code. It is authored on demand
+(typically by an agent), used once, and discarded. **Committing a
+per-request workflow to a repository is an anti-pattern**: it references
+branches/issues/files that stop existing, becoming exactly the
+unowned-state rot this design bans elsewhere. (The doeff
+"committed Program constants" philosophy deliberately does NOT apply
+here.) The Claude Code Workflow tool being replaced already implements
+the correct lifecycle: scripts persist under the session directory and
+resume by run id — never in the target repo.
+
+Contract:
+- `conductor plan`/`run` **snapshot the workflow source into the run
+  state directory** (next to the journal). Resume — including
+  edit-and-resume — operates on the snapshot; the original path (`/tmp`,
+  a session dir) may vanish freely.
+- Durable workflow-shaped artifacts exist only as **named, parameterized
+  templates** (library code, `:params`-instantiated); the instantiation
+  is still snapshotted per run.
+- What stays version-controlled: ADR/spec, env config (profiles, router
+  policy), templates, and each run's state dir (journal + snapshot) as
+  audit record.
+- Corollary: no CI can ever see these files, which is why the
+  nondeterminism gate must live in the loader (D2) and nowhere else.
+
 ## Implementation plan (stages; each lands with tests)
 
 - **C1 — agent boundary (L2 core + `agent!`)**: implement the D6 algebra
@@ -381,6 +417,18 @@ calibration escape rates earn it.
   workers against a scratch repo. Measure: (a) fraction of items
   terminating at tier ≤1, (b) tier-2 token spend vs an all-Claude
   baseline, (c) calibration escape rate. Notes into `docs/pilot-k2-k3.md`.
+- **C8 — single-file run hardening** (from C7's honest deltas + the
+  2026-06-10 follow-up design session): (1) native `WorkflowSpec`
+  production interpreter — `conductor run <workflow.py>` executes a
+  DSL-only file; the hand-written `main` Program requirement is deleted;
+  (2) loader-enforced nondeterminism check per amended D2 — port the
+  DOEFF032 fixtures into conductor tests, delete the doeff-linter rule;
+  (3) workflow source snapshot into the run state dir per D10 — resume
+  reads the snapshot; (4) run return payload exposure — the `report_path`
+  workaround is deleted. Done: a DSL-only ephemeral file under `/tmp`
+  plans, validates, runs, and resumes with journaled results; a workflow
+  containing `datetime.now()` fails at plan time naming `time!` as the
+  replacement.
 
 ## Condemned existing code — mark-for-fix (delete outright, no deprecation)
 
