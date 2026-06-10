@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
+import shlex
 import socket
-import subprocess
 import threading
-import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +34,21 @@ class AgentdClientError(RuntimeError):
 
 class AgentdProtocolError(AgentdClientError):
     """Raised when doeff-agentd returns an invalid response."""
+
+
+class AgentdUnavailableError(AgentdClientError):
+    """Raised when no doeff-agentd daemon is reachable at the expected socket."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        socket_path: Path,
+        start_command: tuple[str, ...],
+    ) -> None:
+        self.socket_path = socket_path
+        self.start_command = start_command
+        super().__init__(message)
 
 
 @dataclass(frozen=True)
@@ -207,7 +220,7 @@ class AgentdClient:
 
 
 class LazyAgentdClient:
-    """Client proxy that starts doeff-agentd only when an agent effect needs it."""
+    """Client proxy that resolves doeff-agentd only when an agent effect needs it."""
 
     def __init__(
         self,
@@ -340,34 +353,29 @@ def ensure_agentd(
     client_timeout: float = 1.0,
     max_running: int = 10,
 ) -> AgentdClient:
-    """Return a client, starting doeff-agentd if its socket is not already live."""
+    """Return a client for the canonical daemon, failing loudly if unreachable."""
     paths = default_agentd_paths()
     active_db_path = Path(db_path) if db_path is not None else paths.db_path
     active_socket_path = Path(socket_path) if socket_path is not None else paths.socket_path
-    active_log_path = active_db_path.parent / "agentd.log"
     client = AgentdClient(active_socket_path, timeout=client_timeout)
     if _agentd_is_ready(client):
         return client
 
-    active_db_path.parent.mkdir(parents=True, exist_ok=True)
-    active_socket_path.parent.mkdir(parents=True, exist_ok=True)
-    active_log_path.parent.mkdir(parents=True, exist_ok=True)
     command = _agentd_command(
         daemon_bin=daemon_bin,
         db_path=active_db_path,
         socket_path=active_socket_path,
         max_running=max_running,
     )
-    with active_log_path.open("ab") as log_file:
-        process = subprocess.Popen(
-            command,
-            stdin=subprocess.DEVNULL,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-    _wait_for_agentd(client, process=process, timeout=timeout)
-    return client
+    command_text = shlex.join(command)
+    raise AgentdUnavailableError(
+        "doeff-agentd is not reachable at the expected socket "
+        f"{active_socket_path}. Start it with:\n"
+        f"  {command_text}\n"
+        f"Expected socket path: {active_socket_path}",
+        socket_path=active_socket_path,
+        start_command=tuple(command),
+    )
 
 
 def _agentd_is_ready(client: AgentdClient) -> bool:
@@ -380,23 +388,6 @@ def _agentd_is_ready(client: AgentdClient) -> bool:
     return True
 
 
-def _wait_for_agentd(
-    client: AgentdClient,
-    *,
-    process: subprocess.Popen[Any],
-    timeout: float,
-) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if _agentd_is_ready(client):
-            return
-        returncode = process.poll()
-        if returncode is not None:
-            raise AgentdClientError(f"doeff-agentd exited during startup: {returncode}")
-        time.sleep(0.05)
-    raise AgentdClientError("timed out waiting for doeff-agentd startup")
-
-
 def _agentd_command(
     *,
     daemon_bin: str | Path | None,
@@ -405,24 +396,11 @@ def _agentd_command(
     max_running: int,
 ) -> list[str]:
     if daemon_bin is not None:
-        executable = str(daemon_bin)
-        prefix = [executable]
+        prefix = [str(daemon_bin)]
     elif env_bin := os.environ.get("DOEFF_AGENTD_BIN"):
         prefix = [env_bin]
-    elif path_bin := shutil.which("doeff-agentd"):
-        prefix = [path_bin]
     else:
-        cargo_manifest = _repo_agentd_manifest()
-        if cargo_manifest is None:
-            raise AgentdClientError("doeff-agentd binary was not found")
-        prefix = [
-            "cargo",
-            "run",
-            "--quiet",
-            "--manifest-path",
-            str(cargo_manifest),
-            "--",
-        ]
+        prefix = ["doeff-agentd"]
     return [
         *prefix,
         "--db",
@@ -433,17 +411,6 @@ def _agentd_command(
         str(max_running),
         "serve",
     ]
-
-
-def _repo_agentd_manifest() -> Path | None:
-    source_path = Path(__file__).resolve()
-    for parent in source_path.parents:
-        candidate = parent / "packages" / "doeff-agentd" / "Cargo.toml"
-        if candidate.exists():
-            return candidate
-    return None
-
-
 def _query_to_params(query: AgentSessionQuery | None) -> dict[str, Any]:
     if query is None:
         return {}
@@ -505,6 +472,7 @@ __all__ = [
     "AgentdClientError",
     "AgentdPaths",
     "AgentdProtocolError",
+    "AgentdUnavailableError",
     "LazyAgentdClient",
     "default_agentd_paths",
     "ensure_agentd",

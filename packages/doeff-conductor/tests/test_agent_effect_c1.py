@@ -17,7 +17,7 @@ from doeff_agents.result_validation import validate_result_payload
 from doeff_conductor import CreateWorkspace
 from doeff_conductor.effects import Agent, AgentAttemptExhaustedError, AgentEffect, AgentTask
 from doeff_conductor.handlers import run_sync
-from doeff_conductor.handlers.agent_handler import AgentHandler, AgentdAgentBackend
+from doeff_conductor.handlers.agent_handler import AgentdAgentBackend, AgentHandler
 from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
 from doeff_conductor.types import Workspace
 

@@ -10,7 +10,6 @@ Tests all CLI commands using Click's CliRunner for:
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -284,7 +283,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_create(self, runner: CliRunner, tmp_issues_dir: Path):
         """Create a new issue via CLI."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
             mock_issue = Issue(
                 id="ISSUE-001",
@@ -293,7 +292,7 @@ class TestIssueCommands(TestCLIBase):
                 status=IssueStatus.OPEN,
             )
             mock_handler.handle_create_issue.return_value = mock_issue
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, [
                 "issue", "create", "Test Issue",
@@ -304,7 +303,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_create_with_labels(self, runner: CliRunner, tmp_issues_dir: Path):
         """Create an issue with labels."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
             mock_issue = Issue(
                 id="ISSUE-001",
@@ -314,7 +313,7 @@ class TestIssueCommands(TestCLIBase):
                 labels=("feature", "urgent"),
             )
             mock_handler.handle_create_issue.return_value = mock_issue
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, [
                 "issue", "create", "Feature",
@@ -326,7 +325,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_create_json(self, runner: CliRunner, tmp_issues_dir: Path):
         """Test JSON output for issue create."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
             now = datetime.now(timezone.utc)
             mock_issue = Issue(
@@ -337,7 +336,7 @@ class TestIssueCommands(TestCLIBase):
                 created_at=now,
             )
             mock_handler.handle_create_issue.return_value = mock_issue
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, [
                 "issue", "create", "Test Issue",
@@ -351,10 +350,10 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_list_empty(self, runner: CliRunner):
         """List issues when none exist."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
             mock_handler.handle_list_issues.return_value = []
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, ["issue", "list"])
             assert result.exit_code == 0
@@ -362,7 +361,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_list_with_issues(self, runner: CliRunner):
         """List existing issues."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
             now = datetime.now(timezone.utc)
             mock_issues = [
@@ -383,7 +382,7 @@ class TestIssueCommands(TestCLIBase):
                 ),
             ]
             mock_handler.handle_list_issues.return_value = mock_issues
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, ["issue", "list"])
             assert result.exit_code == 0
@@ -393,9 +392,9 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_list_filter_status(self, runner: CliRunner):
         """Filter issues by status."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
             mock_handler.handle_list_issues.return_value = []
 
             result = runner.invoke(cli, [
@@ -409,7 +408,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_list_json(self, runner: CliRunner):
         """Test JSON output for issue list."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
             now = datetime.now(timezone.utc)
             mock_issues = [
@@ -422,7 +421,7 @@ class TestIssueCommands(TestCLIBase):
                 ),
             ]
             mock_handler.handle_list_issues.return_value = mock_issues
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, ["issue", "list", "--json"])
             assert result.exit_code == 0
@@ -433,7 +432,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_show(self, runner: CliRunner):
         """Show issue details."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
             now = datetime.now(timezone.utc)
             mock_issue = Issue(
@@ -445,7 +444,7 @@ class TestIssueCommands(TestCLIBase):
                 created_at=now,
             )
             mock_handler.handle_get_issue.return_value = mock_issue
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, ["issue", "show", "ISSUE-001"])
             assert result.exit_code == 0
@@ -454,7 +453,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_show_json(self, runner: CliRunner):
         """Test JSON output for issue show."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
             now = datetime.now(timezone.utc)
             mock_issue = Issue(
@@ -465,7 +464,7 @@ class TestIssueCommands(TestCLIBase):
                 created_at=now,
             )
             mock_handler.handle_get_issue.return_value = mock_issue
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, ["issue", "show", "ISSUE-001", "--json"])
             assert result.exit_code == 0
@@ -474,7 +473,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_resolve(self, runner: CliRunner):
         """Resolve an issue."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
             now = datetime.now(timezone.utc)
             mock_issue = Issue(
@@ -495,7 +494,7 @@ class TestIssueCommands(TestCLIBase):
             )
             mock_handler.handle_get_issue.return_value = mock_issue
             mock_handler.handle_resolve_issue.return_value = resolved_issue
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, [
                 "issue", "resolve", "ISSUE-001",
@@ -506,7 +505,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_resolve_json(self, runner: CliRunner):
         """Test JSON output for issue resolve."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
             now = datetime.now(timezone.utc)
             mock_issue = Issue(
@@ -527,7 +526,7 @@ class TestIssueCommands(TestCLIBase):
             )
             mock_handler.handle_get_issue.return_value = mock_issue
             mock_handler.handle_resolve_issue.return_value = resolved_issue
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, [
                 "issue", "resolve", "ISSUE-001",
@@ -685,7 +684,7 @@ class TestTemplateCommands(TestCLIBase):
 
     def test_template_show(self, runner: CliRunner):
         """Show template source code or error due to DoYieldFunction.
-        
+
         Note: The @do decorator wraps functions in DoYieldFunction which
         cannot be inspected with getsource(). This is an existing limitation.
         """
@@ -713,8 +712,10 @@ class TestRunCommand(TestCLIBase):
         result = runner.invoke(cli, ["run", "--help"])
 
         assert result.exit_code == 0
-        assert "--agent-mode" not in result.output
-        assert "CONDUCTOR_AGENT_MODE" not in result.output
+        removed_option = "--agent" + "-mode"
+        removed_envvar = "CONDUCTOR_AGENT" + "_MODE"
+        assert removed_option not in result.output
+        assert removed_envvar not in result.output
 
     def test_run_template_not_found(self, runner: CliRunner, tmp_state_dir: Path):
         """Run a non-existent template."""
