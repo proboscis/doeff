@@ -13,7 +13,7 @@ def _workflow_path() -> Path:
     return (
         Path(__file__).parents[1]
         / "examples"
-        / "k2_k3_pilot_workflow.py"
+        / "k2_k3_pilot_workflow.hy"
     )
 
 
@@ -65,7 +65,7 @@ def test_c7_pilot_workflow_validates_closure_scenarios() -> None:
 def test_c8_pilot_workflow_is_dsl_only() -> None:
     source = _workflow_path().read_text(encoding="utf-8")
 
-    assert "def main" not in source
+    assert "(defn main" not in source
     assert "report_path" not in source
 
 

@@ -283,6 +283,15 @@ class WorkflowSpec:
             phases=phases,
             workflow_budget_limit=budget_limit,
         )
+        # :params entries are launch-time inputs: referenceable like bindings,
+        # but pre-consumed because an unused param is not a closure violation.
+        for param_name in self.params:
+            state.bindings[param_name] = BindingInfo(
+                name=param_name,
+                node_id=f"param:{param_name}",
+                source_kind="param",
+                consumed=True,
+            )
         _expand_forms(self.body, state, current_phase=None, path_prefix="")
         _validate_required_merges(state)
         _validate_unconsumed_bindings(state)

@@ -729,7 +729,7 @@ class TestRunCommand(TestCLIBase):
     def test_run_file_not_found(self, runner: CliRunner, tmp_state_dir: Path):
         """Run a non-existent workflow file."""
         result = runner.invoke(
-            cli, ["--state-dir", str(tmp_state_dir), "run", "/nonexistent/workflow.py"]
+            cli, ["--state-dir", str(tmp_state_dir), "run", "/nonexistent/workflow.hy"]
         )
         assert result.exit_code == 1
 

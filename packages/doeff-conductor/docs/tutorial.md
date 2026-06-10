@@ -189,7 +189,7 @@ conductor run basic_pr --issue ISSUE-001.md
 conductor run basic_pr --issue ISSUE-001.md --watch
 
 # Run custom workflow file
-conductor run ./my_workflow.py --params '{"max_retries": 3}'
+conductor run ./my_workflow.hy --params '{"max_retries": 3}'
 ```
 
 ### Monitor Workflows
