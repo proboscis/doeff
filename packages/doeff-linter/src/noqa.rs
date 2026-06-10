@@ -169,12 +169,6 @@ impl NoqaDirectives {
 
     /// Check if a rule is suppressed at a given line
     pub fn is_suppressed(&self, line: usize, rule_id: &str) -> bool {
-        // Workflow nondeterminism is a replay-safety invariant from ADR 0001.
-        // It intentionally has no baseline or per-file allowlist mechanism.
-        if rule_id == "DOEFF032" {
-            return false;
-        }
-
         // Check file-level suppressions first
         if self.file_suppress_all {
             return true;
@@ -693,5 +687,4 @@ line4
         assert_eq!(directives.warnings[0].line, 3);
     }
 }
-
 
