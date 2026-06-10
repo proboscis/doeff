@@ -108,6 +108,7 @@ def test_two_node_workflow_runs_on_scenario_stubs(tmp_path: Path) -> None:
                 prompt="implement feature",
                 result_schema=IMPLEMENT_SCHEMA,
                 verification_class="test-verifiable",
+                agent_type="codex",
             )
         )
         review = yield Agent(
@@ -119,6 +120,7 @@ def test_two_node_workflow_runs_on_scenario_stubs(tmp_path: Path) -> None:
                 prompt=f"review {implementation['summary']}",
                 result_schema=REVIEW_SCHEMA,
                 verification_class="review",
+                agent_type="codex",
             )
         )
         return implementation, review
@@ -154,6 +156,7 @@ def test_schema_invalid_retry_exhaustion_fails_typed(tmp_path: Path) -> None:
                     prompt="implement feature",
                     result_schema=IMPLEMENT_SCHEMA,
                     verification_class="test-verifiable",
+                    agent_type="codex",
                     max_retries=1,
                 )
             )
@@ -183,6 +186,7 @@ def test_real_codex_worker_returns_schema_valid_json_through_agent(tmp_path: Pat
                     prompt="return a minimal implementation artifact",
                     result_schema=IMPLEMENT_SCHEMA,
                     verification_class="test-verifiable",
+                    agent_type="codex",
                     max_retries=0,
                 )
             )

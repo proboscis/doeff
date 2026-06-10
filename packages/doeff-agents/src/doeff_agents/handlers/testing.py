@@ -160,7 +160,7 @@ class MockAgentHandler(AgentHandler):
 
     def handle_monitor(self, effect: MonitorEffect) -> Observation:
         """Return next observation from script."""
-        session_name = effect.handle.session_name
+        session_name = effect.handle.session_id
 
         if session_name not in self._handles:
             return Observation(status=SessionStatus.EXITED)
@@ -196,7 +196,7 @@ class MockAgentHandler(AgentHandler):
 
     def handle_capture(self, effect: CaptureEffect) -> str:
         """Return captured output."""
-        session_name = effect.handle.session_name
+        session_name = effect.handle.session_id
         if session_name not in self._handles:
             raise SessionNotFoundError(f"Session {session_name} does not exist")
         output = self._outputs.get(session_name, "")
@@ -210,14 +210,14 @@ class MockAgentHandler(AgentHandler):
 
     def handle_send(self, effect: SendEffect) -> None:
         """Record sent message."""
-        session_name = effect.handle.session_name
+        session_name = effect.handle.session_id
         if session_name not in self._handles:
             raise SessionNotFoundError(f"Session {session_name} does not exist")
         self._sends.append((session_name, effect.message))
 
     def handle_stop(self, effect: StopEffect) -> None:
         """Mark session as stopped and shut down MCP server (if any)."""
-        session_name = effect.handle.session_name
+        session_name = effect.handle.session_id
         server = self._mcp_servers.pop(session_name, None)
         if server is not None:
             server.shutdown()
@@ -314,11 +314,11 @@ class MockAgentHandler(AgentHandler):
             handle,
             status=status,
             backend_ref={
-                "session_name": handle.session_name,
-                "agent_type": self._agent_types.get(handle.session_name, AgentType.CUSTOM).value,
-                "work_dir": str(self._work_dirs.get(handle.session_name, ".")),
+                "session_name": handle.session_id,
+                "agent_type": self._agent_types.get(handle.session_id, AgentType.CUSTOM).value,
+                "work_dir": str(self._work_dirs.get(handle.session_id, ".")),
             },
-            lifecycle=self._lifecycles.get(handle.session_name),
+            lifecycle=self._lifecycles.get(handle.session_id),
             last_observed_at=now,
             finished_at=finished_at,
             cleaned_at=previous.cleaned_at if previous is not None else None,

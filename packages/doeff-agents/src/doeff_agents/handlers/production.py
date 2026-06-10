@@ -535,12 +535,12 @@ class TmuxAgentHandler(AgentHandler):
         state = self._state_for_handle(handle)
 
         if state is None:
-            if not self._backend.has_session(handle.session_name):
+            if not self._backend.has_session(handle.session_id):
                 self._record_snapshot("session_exited", handle, SessionStatus.EXITED)
                 return Observation(status=SessionStatus.EXITED)
-            raise SessionNotFoundError(f"Session {handle.session_name} is not registered")
+            raise SessionNotFoundError(f"Session {handle.session_id} is not registered")
 
-        if not self._backend.has_session(handle.session_name):
+        if not self._backend.has_session(handle.session_id):
             state.status = SessionStatus.EXITED
             self._record_snapshot("session_exited", handle, SessionStatus.EXITED)
             return Observation(status=SessionStatus.EXITED)
@@ -582,9 +582,9 @@ class TmuxAgentHandler(AgentHandler):
         handle = effect.handle
         state = self._state_for_handle(handle)
         if state is None:
-            raise SessionNotFoundError(f"Session {handle.session_name} is not registered")
-        if not self._backend.has_session(handle.session_name):
-            raise SessionNotFoundError(f"Session {handle.session_name} does not exist")
+            raise SessionNotFoundError(f"Session {handle.session_id} is not registered")
+        if not self._backend.has_session(handle.session_id):
+            raise SessionNotFoundError(f"Session {handle.session_id} does not exist")
         output = self._backend.capture_pane(state.pane_id, effect.lines)
         self._record_snapshot(
             "session_captured",
@@ -599,9 +599,9 @@ class TmuxAgentHandler(AgentHandler):
         handle = effect.handle
         state = self._state_for_handle(handle)
         if state is None:
-            raise SessionNotFoundError(f"Session {handle.session_name} is not registered")
-        if not self._backend.has_session(handle.session_name):
-            raise SessionNotFoundError(f"Session {handle.session_name} does not exist")
+            raise SessionNotFoundError(f"Session {handle.session_id} is not registered")
+        if not self._backend.has_session(handle.session_id):
+            raise SessionNotFoundError(f"Session {handle.session_id} does not exist")
         self._backend.send_keys(
             state.pane_id,
             effect.message,
@@ -612,10 +612,10 @@ class TmuxAgentHandler(AgentHandler):
     def handle_stop(self, effect: StopEffect) -> None:
         """Stop session and its MCP server (if any)."""
         handle = effect.handle
-        self._stop_mcp_server(handle.session_name)
-        if self._backend.has_session(handle.session_name):
-            self._backend.kill_session(handle.session_name)
-        state = self._sessions.get(handle.session_name)
+        self._stop_mcp_server(handle.session_id)
+        if self._backend.has_session(handle.session_id):
+            self._backend.kill_session(handle.session_id)
+        state = self._sessions.get(handle.session_id)
         if state:
             state.status = SessionStatus.STOPPED
         self._record_snapshot("session_stopped", handle, SessionStatus.STOPPED)
@@ -674,16 +674,16 @@ class TmuxAgentHandler(AgentHandler):
         """Clean up a session by persisted id."""
         snapshot = self._require_snapshot(effect.session_id)
         handle = snapshot.to_handle()
-        self._stop_mcp_server(handle.session_name)
-        if self._backend.has_session(handle.session_name):
-            self._backend.kill_session(handle.session_name)
+        self._stop_mcp_server(handle.session_id)
+        if self._backend.has_session(handle.session_id):
+            self._backend.kill_session(handle.session_id)
         now = datetime.now(timezone.utc)
         cleaned = snapshot.with_update(
             status=SessionStatus.STOPPED,
             cleaned_at=now,
             last_observed_at=now,
         )
-        self._sessions.pop(handle.session_name, None)
+        self._sessions.pop(handle.session_id, None)
         return self._session_repository.record_snapshot(
             "session_cleaned",
             cleaned,
@@ -801,7 +801,7 @@ class TmuxAgentHandler(AgentHandler):
         if state is not None:
             backend_ref.update(
                 {
-                    "session_name": handle.session_name,
+                    "session_name": handle.session_id,
                     "pane_id": state.pane_id,
                     "agent_type": state.agent_type.value,
                     "work_dir": str(state.work_dir),
@@ -843,7 +843,7 @@ class TmuxAgentHandler(AgentHandler):
         return self._session_repository.record_snapshot(event_type, snapshot)
 
     def _state_for_handle(self, handle: SessionHandle) -> SessionState | None:
-        state = self._sessions.get(handle.session_name)
+        state = self._sessions.get(handle.session_id)
         if state is not None:
             return state
         snapshot = self._session_repository.get_session(handle.session_id)
@@ -867,7 +867,7 @@ class TmuxAgentHandler(AgentHandler):
                 else None
             ),
         )
-        self._sessions[handle.session_name] = state
+        self._sessions[handle.session_id] = state
         return state
 
     # -- MCP server lifecycle -------------------------------------------------

@@ -4,7 +4,7 @@ Effect definitions for doeff-conductor.
 All effects for conductor orchestration:
 - Worktree: CreateWorktree, MergeBranches, DeleteWorktree
 - Issue: CreateIssue, ListIssues, GetIssue, ResolveIssue
-- Agent: RunAgent, SpawnAgent, SendMessage, WaitForStatus, CaptureOutput
+- Agent: Agent, AgentTask
 - Git: Commit, Push, CreatePR, MergePR
 """
 
@@ -15,11 +15,6 @@ from .agent import (
     AgentTask,
     AgentValidationErrorKind,
     AgentValidationFailure,
-    CaptureOutput,
-    RunAgent,
-    SendMessage,
-    SpawnAgent,
-    WaitForStatus,
 )
 from .base import ConductorEffectBase
 from .git import (
@@ -53,7 +48,6 @@ __all__ = [
     "AgentTask",
     "AgentValidationErrorKind",
     "AgentValidationFailure",
-    "CaptureOutput",
     # Git
     "Commit",
     # Base
@@ -76,9 +70,4 @@ __all__ = [
     "MergePR",
     "Push",
     "ResolveIssue",
-    # Agent
-    "RunAgent",
-    "SendMessage",
-    "SpawnAgent",
-    "WaitForStatus",
 ]

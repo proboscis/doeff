@@ -128,7 +128,7 @@ def test_handle_claude_launch_materializes_workspace_and_uses_runtime_env(
 
     handle = handler.handle_claude_launch(effect)
 
-    assert handle.session_name == "worker"
+    assert handle.session_id == "worker"
     assert not hasattr(handle, "agent_type")
     assert backend.created[0].work_dir == work_dir
     sent = backend.sent[0][1]
