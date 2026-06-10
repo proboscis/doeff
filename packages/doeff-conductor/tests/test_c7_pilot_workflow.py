@@ -13,7 +13,7 @@ def _workflow_path() -> Path:
     return (
         Path(__file__).parents[1]
         / "examples"
-        / "k2_k3_pilot_workflow.py"
+        / "k2_k3_pilot_workflow.hy"
     )
 
 

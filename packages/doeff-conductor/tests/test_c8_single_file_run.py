@@ -25,54 +25,35 @@ FIXTURES = Path(__file__).parent / "fixtures" / "workflow_nondeterminism"
 def _write_single_file_workflow(path: Path) -> None:
     path.write_text(
         """
-from doeff_conductor.dsl import (
-    agent_bang,
-    artifact,
-    bind,
-    defworkflow,
-    prompt,
-    ref,
-    workspace_bang,
-)
+(require doeff-hy.conductor [defworkflow agent! workspace! <-])
+(import doeff_conductor.dsl [artifact prompt ref])
 
-RESULT_SCHEMA = {
-    "type": "object",
-    "required": ["summary"],
-    "properties": {"summary": {"type": "string"}},
-    "additionalProperties": False,
-}
+(setv RESULT-SCHEMA {"type" "object"
+                     "required" ["summary"]
+                     "properties" {"summary" {"type" "string"}}
+                     "additionalProperties" False})
 
-WORKFLOW = defworkflow(
-    "single-file",
-    params={},
-    roles={"implementer": {"profile": "cheap-coder", "retry": 0}},
-    body=[
-        bind("workspace", workspace_bang(from_="main")),
-        bind(
-            "first",
-            agent_bang(
-                role="implementer",
-                verification_class="test-verifiable",
-                prompt=prompt("first"),
-                schema=RESULT_SCHEMA,
-                workspace=ref("workspace"),
-                label="first",
-            ),
-        ),
-        bind(
-            "second",
-            agent_bang(
-                role="implementer",
-                verification_class="test-verifiable",
-                prompt=prompt("second after ", ref("first")),
-                schema=RESULT_SCHEMA,
-                workspace=ref("workspace"),
-                label="second",
-            ),
-        ),
-        artifact(ref("second")),
-    ],
-)
+(defworkflow single-file
+  :params {}
+  :roles {"implementer" {"profile" "cheap-coder" "retry" 0}}
+  (<- workspace (workspace! :from "main"))
+  (<- first
+      (agent! :role "implementer"
+              :class "test-verifiable"
+              :prompt (prompt "first")
+              :schema RESULT-SCHEMA
+              :workspace (ref "workspace")
+              :label "first"))
+  (<- second
+      (agent! :role "implementer"
+              :class "test-verifiable"
+              :prompt (prompt "second after " (ref "first"))
+              :schema RESULT-SCHEMA
+              :workspace (ref "workspace")
+              :label "second"))
+  (artifact (ref "second")))
+
+(setv WORKFLOW single-file)
 """.lstrip(),
         encoding="utf-8",
     )
@@ -102,21 +83,21 @@ def _install_mock_production_handlers(
 @pytest.mark.parametrize(
     ("fixture_name", "replacement"),
     [
-        ("datetime_now.py", "time!"),
-        ("datetime_today.py", "time!"),
-        ("time_time.py", "time!"),
-        ("time_monotonic.py", "time!"),
-        ("random_call.py", "random!"),
-        ("open_call.py", "gate!"),
-        ("pathlib_write.py", "gate!"),
-        ("subprocess_call.py", "gate!"),
-        ("requests_import.py", "gate!"),
-        ("httpx_import.py", "gate!"),
-        ("socket_import.py", "gate!"),
-        ("urllib_import.py", "gate!"),
-        ("non_allowlisted_import.py", ":params"),
-        ("file_noqa_workflow.py", "random!"),
-        ("plain_module_with_random.py", "random!"),
+        ("datetime_now.hy", "time!"),
+        ("datetime_today.hy", "time!"),
+        ("time_time.hy", "time!"),
+        ("time_monotonic.hy", "time!"),
+        ("random_call.hy", "random!"),
+        ("open_call.hy", "gate!"),
+        ("pathlib_write.hy", "gate!"),
+        ("subprocess_call.hy", "gate!"),
+        ("requests_import.hy", "gate!"),
+        ("httpx_import.hy", "gate!"),
+        ("socket_import.hy", "gate!"),
+        ("urllib_import.hy", "gate!"),
+        ("non_allowlisted_import.hy", ":params"),
+        ("file_noqa_workflow.hy", "random!"),
+        ("plain_module_with_random.hy", "random!"),
     ],
 )
 def test_loader_nondeterminism_fixtures_fail_loudly(
@@ -130,13 +111,21 @@ def test_loader_nondeterminism_fixtures_fail_loudly(
 
 
 def test_clean_workflow_fixture_loads() -> None:
-    workflow = load_workflow_spec(str(FIXTURES / "clean_workflow.py"))
+    workflow = load_workflow_spec(str(FIXTURES / "clean_workflow.hy"))
 
     assert workflow.name == "clean-workflow"
 
 
+def test_loader_rejects_python_workflow_surface(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "user_workflow.py"
+    workflow_path.write_text("WORKFLOW = object()\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"\.hy.*Hy macro DSL"):
+        load_workflow_spec(str(workflow_path))
+
+
 def test_plan_snapshots_ephemeral_workflow_source(tmp_path: Path) -> None:
-    workflow_path = tmp_path / "ephemeral_workflow.py"
+    workflow_path = tmp_path / "ephemeral_workflow.hy"
     state_dir = tmp_path / "state"
     _write_single_file_workflow(workflow_path)
 
@@ -154,7 +143,7 @@ def test_plan_snapshots_ephemeral_workflow_source(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    assert (state_dir / "workflows" / "plan-c8" / "workflow.py").read_text(
+    assert (state_dir / "workflows" / "plan-c8" / "workflow.hy").read_text(
         encoding="utf-8"
     ) == workflow_path.read_text(encoding="utf-8")
 
@@ -163,7 +152,7 @@ def test_single_file_dsl_run_returns_payload_and_resumes_from_snapshot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    workflow_path = tmp_path / "ephemeral_workflow.py"
+    workflow_path = tmp_path / "ephemeral_workflow.hy"
     state_dir = tmp_path / "state"
     run_id = "c8-resume"
     _write_single_file_workflow(workflow_path)
@@ -190,7 +179,7 @@ def test_single_file_dsl_run_returns_payload_and_resumes_from_snapshot(
     failed_handle = api.get_workflow(run_id)
     assert failed_handle is not None
     assert failed_handle.status == WorkflowStatus.ERROR
-    assert (state_dir / "workflows" / run_id / "workflow.py").exists()
+    assert (state_dir / "workflows" / run_id / "workflow.hy").exists()
 
     workflow_path.unlink()
     runtime.configure_agent_script(second_session_id, [{"summary": "second"}])
@@ -206,7 +195,7 @@ def test_cli_run_json_includes_workflow_return_payload(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    workflow_path = tmp_path / "ephemeral_workflow.py"
+    workflow_path = tmp_path / "ephemeral_workflow.hy"
     state_dir = tmp_path / "state"
     run_id = "c8-json"
     _write_single_file_workflow(workflow_path)

@@ -145,6 +145,24 @@ rules:
       exclude:
         - /packages/doeff-conductor/src/doeff_conductor/handlers/exec_handler.py
 
+  - id: conductor-c10-no-python-workflow-authoring-surface
+    languages: [python]
+    severity: ERROR
+    message: >
+      conductor-c10-hy-only-loader: user-authored workflows are exclusively
+      `.hy` Hy DSL files. Loader, API, and CLI code must not accept `.py`
+      workflow sources or snapshot them as workflow.py.
+    pattern-either:
+      - pattern: $PATH.suffix != ".py"
+      - pattern: $PATH.suffix == ".py"
+      - pattern: $PATH.endswith(".py")
+      - pattern: WORKFLOW_SNAPSHOT_FILENAME = "workflow.py"
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/workflow_loader.py
+        - /packages/doeff-conductor/src/doeff_conductor/api.py
+        - /packages/doeff-conductor/src/doeff_conductor/cli.py
+
   - id: http-request-handlers-use-defhandler
     languages: [python]
     severity: ERROR

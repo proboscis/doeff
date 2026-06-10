@@ -26,6 +26,23 @@ from doeff_conductor.types import (
 )
 
 
+def _write_artifact_workflow(path: Path, *, name: str, artifact: str) -> None:
+    path.write_text(
+        f"""
+(require doeff-hy.conductor [defworkflow])
+(import doeff_conductor.dsl [artifact])
+
+(defworkflow {name}
+  :params {{}}
+  :roles {{}}
+  (artifact {artifact}))
+
+(setv WORKFLOW {name})
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+
 class TestConductorAPIInit:
     """Tests for ConductorAPI initialization."""
 
@@ -394,7 +411,7 @@ class TestRunWorkflow:
     def test_run_workflow_file_not_found(self, api: ConductorAPI):
         """run_workflow raises error for non-existent file."""
         with pytest.raises(ValueError) as exc_info:
-            api.run_workflow("/nonexistent/workflow.py")
+            api.run_workflow("/nonexistent/workflow.hy")
         assert "not found" in str(exc_info.value)
 
     def test_run_workflow_creates_workflow_record(
@@ -404,78 +421,56 @@ class TestRunWorkflow:
         tmp_path: Path,
     ):
         """run_workflow creates workflow in state directory.
-        
-        Note: This test uses a custom workflow file to avoid patching complexities.
         """
-        workflow_file = tmp_path / "test_workflow.py"
-        workflow_file.write_text("""
-from doeff import do, Program
+        workflow_file = tmp_path / "test_workflow.hy"
+        _write_artifact_workflow(workflow_file, name="test-workflow", artifact='"done"')
 
-@do
-def workflow(issue):
-    return Program.pure("done")
-""")
+        handle = api.run_workflow(str(workflow_file), issue=mock_issue)
 
-        try:
-            handle = api.run_workflow(str(workflow_file), issue=mock_issue)
-            assert handle.id is not None
-            assert handle.issue_id == "ISSUE-001"
-        except Exception:
-            pass
+        assert handle.id is not None
+        assert handle.issue_id == "ISSUE-001"
 
     def test_run_workflow_with_params(self, api: ConductorAPI, mock_issue: Issue, tmp_path: Path):
-        """run_workflow passes params to workflow function.
-        
-        Note: This test uses a custom workflow file to avoid patching complexities.
-        """
-        workflow_file = tmp_path / "param_workflow.py"
-        workflow_file.write_text("""
-from doeff import do, Program
+        """run_workflow accepts params while loading a Hy workflow spec."""
+        workflow_file = tmp_path / "param_workflow.hy"
+        _write_artifact_workflow(workflow_file, name="param-workflow", artifact='"ok"')
 
-@do
-def workflow(issue, custom_param=None):
-    return Program.pure(custom_param)
-""")
+        handle = api.run_workflow(
+            str(workflow_file),
+            issue=mock_issue,
+            params={"custom_param": "test_value"},
+        )
 
-        try:
-            handle = api.run_workflow(
-                str(workflow_file),
-                issue=mock_issue,
-                params={"custom_param": "test_value"},
-            )
-            assert handle is not None
-        except Exception:
-            pass
+        assert handle is not None
+        assert handle.status == WorkflowStatus.DONE
 
-    def test_run_workflow_extracts_pr_url_from_real_run_result(self, api: ConductorAPI, tmp_path: Path):
-        workflow_file = tmp_path / "pr_url_workflow.py"
-        workflow_file.write_text("""
-from types import SimpleNamespace
+    def test_run_workflow_rejects_python_program_file(self, api: ConductorAPI, tmp_path: Path):
+        workflow_file = tmp_path / "program_workflow.py"
+        workflow_file.write_text(
+            """
 from doeff import Pure, do
 
 @do
 def workflow():
-    return (yield Pure(SimpleNamespace(url="runresult-url")))
-""")
+    return (yield Pure("old surface"))
+""".lstrip(),
+            encoding="utf-8",
+        )
 
-        handle = api.run_workflow(str(workflow_file))
+        with pytest.raises(ValueError, match=r"\.hy.*Hy macro DSL"):
+            api.run_workflow(str(workflow_file))
 
-        assert handle.status == WorkflowStatus.DONE
-        assert handle.pr_url == "runresult-url"
-
-    def test_run_workflow_accepts_dict_result_without_pr_handle_name_error(
+    def test_run_workflow_accepts_dict_artifact_without_pr_handle_name_error(
         self,
         api: ConductorAPI,
         tmp_path: Path,
     ):
-        workflow_file = tmp_path / "dict_result_workflow.py"
-        workflow_file.write_text("""
-from doeff import Pure, do
-
-@do
-def workflow():
-    return (yield Pure({"status": "ok"}))
-""")
+        workflow_file = tmp_path / "dict_result_workflow.hy"
+        _write_artifact_workflow(
+            workflow_file,
+            name="dict-result-workflow",
+            artifact='{"status" "ok"}',
+        )
 
         handle = api.run_workflow(str(workflow_file), run_id="stable-run")
 
@@ -494,40 +489,19 @@ def workflow():
         tmp_path: Path,
     ):
         workflow_file = tmp_path / "spawn_workflow.py"
-        workflow_file.write_text("""
-from doeff import Gather, Pure, Spawn, do
+        workflow_file.write_text("WORKFLOW = object()\n", encoding="utf-8")
 
-@do
-def child(value):
-    return (yield Pure(value))
+        with pytest.raises(ValueError, match=r"\.hy.*Hy macro DSL"):
+            api.run_workflow(str(workflow_file), run_id="spawn-run")
 
-@do
-def workflow():
-    left = yield Spawn(child("left"))
-    right = yield Spawn(child("right"))
-    values = yield Gather(left, right)
-    return {"values": list(values)}
-""")
-
-        handle = api.run_workflow(str(workflow_file), run_id="spawn-run")
-
-        assert handle.id == "spawn-run"
-        assert handle.status == WorkflowStatus.DONE
-
-    def test_run_workflow_does_not_unwrap_non_run_result_value_objects(
+    def test_run_workflow_does_not_unwrap_non_run_result_value_objects_from_hy_specs(
         self,
         api: ConductorAPI,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        workflow_file = tmp_path / "non_run_result_workflow.py"
-        workflow_file.write_text("""
-from doeff import Program, do
-
-@do
-def workflow():
-    return Program.pure("ignored")
-""")
+        workflow_file = tmp_path / "non_run_result_workflow.hy"
+        _write_artifact_workflow(workflow_file, name="non-run-result-workflow", artifact='"ignored"')
 
         class NonRunResultWithValue:
             def __init__(self) -> None:
