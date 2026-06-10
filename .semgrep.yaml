@@ -114,6 +114,37 @@ rules:
         - /packages/doeff-agents/src/doeff_agents/monitor.py
         - /packages/doeff-agents/src/doeff_agents/session.py
 
+  - id: adr0001-d1-agentd-only-worker-route
+    languages: [python]
+    severity: ERROR
+    message: >
+      ADR 0001 D1 + Condemned class D: doeff-conductor handlers must not launch
+      or discover worker binaries through subprocess, os.exec*, or shutil.which.
+      Workers may only launch through doeff_agents session APIs supervised by doeff-agentd.
+    pattern-either:
+      - pattern: import subprocess
+      - pattern: from subprocess import $NAME
+      - pattern: subprocess.$CALL(...)
+      - pattern: os.execl(...)
+      - pattern: os.execle(...)
+      - pattern: os.execlp(...)
+      - pattern: os.execlpe(...)
+      - pattern: os.execv(...)
+      - pattern: os.execve(...)
+      - pattern: os.execvp(...)
+      - pattern: os.execvpe(...)
+      - pattern: shutil.which("codex")
+      - pattern: shutil.which("claude")
+      - pattern: shutil.which("gemini")
+      - pattern: which("codex")
+      - pattern: which("claude")
+      - pattern: which("gemini")
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/handlers/**
+      exclude:
+        - /packages/doeff-conductor/src/doeff_conductor/handlers/exec_handler.py
+
   - id: http-request-handlers-use-defhandler
     languages: [python]
     severity: ERROR

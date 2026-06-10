@@ -51,7 +51,22 @@ Observed:
 - `validate`: all built-in scenarios closed: `all-pass`,
   `schema-invalid-then-pass`, `retry-exhaustion`, `quorum-shortfall`.
 
-Production run used real Codex workers via explicit native structured output:
+Production run uses real Codex workers through doeff-agentd-supervised
+sessions. Start the daemon on the canonical socket first:
+
+```bash
+AGENTD_DB="${XDG_STATE_HOME:-$HOME/.local/state}/doeff/agentd.sqlite"
+if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+  AGENTD_SOCKET="$XDG_RUNTIME_DIR/doeff/agentd.sock"
+else
+  AGENTD_SOCKET="/tmp/doeff-agentd-${USER:-unknown}.sock"
+fi
+doeff-agentd --db "$AGENTD_DB" --socket "$AGENTD_SOCKET" --max-running 10 serve \
+  2>&1 | tee /tmp/c7-agentd.log
+```
+
+Then run conductor normally; the production handler has no worker backend
+selector and fails loudly if that daemon is not reachable:
 
 ```bash
 CONDUCTOR_STATE_DIR=/tmp/c7-conductor-state \
@@ -59,7 +74,6 @@ PYTHONUNBUFFERED=1 \
 /path/to/.venv/bin/conductor --state-dir /tmp/c7-conductor-state run \
   packages/doeff-conductor/examples/k2_k3_pilot_workflow.py \
   --run-id c7-replay2 \
-  --agent-mode codex-exec \
   --params '{"run_id":"c7-replay2","base_ref":"main","effort":"low"}' \
   --json 2>&1 | tee /tmp/c7-full-run.log
 ```
@@ -129,7 +143,7 @@ Cost notes:
   tree.
 - C8 exposes the workflow return payload through `conductor run --json`, so the
   old `report_path` workaround is gone.
-- The local environment did not have a reachable `doeff-agentd`; the pilot used
-  explicit `--agent-mode codex-exec`, which still runs real Codex workers
-  through the production conductor handler but bypasses agentd session
-  supervision.
+- C9 deletes the original pilot's direct worker bypass. Production worker
+  sessions now go through doeff-agentd supervision only; if agentd is not
+  reachable at the canonical socket, conductor reports the exact start command
+  instead of falling back.
