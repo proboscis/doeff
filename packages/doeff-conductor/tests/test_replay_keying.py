@@ -68,6 +68,23 @@ def test_identity_fingerprint_is_canonical() -> None:
     assert resolved_identity_fingerprint(first) == resolved_identity_fingerprint(second)
 
 
+def test_identity_fingerprint_includes_effort() -> None:
+    """Effort affects the result distribution, so it enters the fingerprint (ADR D7)."""
+    xhigh = ResolvedIdentity(adapter="codex", model="gpt-5", identity="company", effort="xhigh")
+    low = ResolvedIdentity(adapter="codex", model="gpt-5", identity="company", effort="low")
+    unset = ResolvedIdentity(adapter="codex", model="gpt-5", identity="company")
+
+    assert resolved_identity_fingerprint(xhigh) != resolved_identity_fingerprint(low)
+    assert resolved_identity_fingerprint(xhigh) != resolved_identity_fingerprint(unset)
+
+
+def test_identity_fingerprint_is_stable_for_equal_effort() -> None:
+    first = ResolvedIdentity(adapter="codex", model="gpt-5", identity="company", effort="xhigh")
+    second = ResolvedIdentity(effort="xhigh", model="gpt-5", adapter="codex", identity="company")
+
+    assert resolved_identity_fingerprint(first) == resolved_identity_fingerprint(second)
+
+
 def test_node_identity_fingerprint_includes_static_path_and_loop_iteration() -> None:
     base = node_identity_fingerprint(
         workflow_name="wf",

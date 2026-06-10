@@ -74,7 +74,7 @@ PYTHONUNBUFFERED=1 \
 /path/to/.venv/bin/conductor --state-dir /tmp/c7-conductor-state run \
   packages/doeff-conductor/examples/k2_k3_pilot_workflow.hy \
   --run-id c7-replay2 \
-  --params '{"run_id":"c7-replay2","base_ref":"main","effort":"low"}' \
+  --params '{"run_id":"c7-replay2","base_ref":"main"}' \
   --json 2>&1 | tee /tmp/c7-full-run.log
 ```
 
