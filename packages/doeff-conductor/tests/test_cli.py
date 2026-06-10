@@ -543,9 +543,10 @@ class TestWorkspaceCommands(TestCLIBase):
 
     def test_workspace_list_empty(self, runner: CliRunner, tmp_state_dir: Path):
         """List workspaces when none exist."""
-        result = runner.invoke(
-            cli, ["--state-dir", str(tmp_state_dir), "workspace", "list"]
-        )
+        with patch("doeff_conductor.api.ConductorAPI.list_workspaces", return_value=[]):
+            result = runner.invoke(
+                cli, ["--state-dir", str(tmp_state_dir), "workspace", "list"]
+            )
         assert result.exit_code == 0
         assert "No workspaces found" in result.output
 
