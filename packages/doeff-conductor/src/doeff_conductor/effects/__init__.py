@@ -9,6 +9,12 @@ All effects for conductor orchestration:
 """
 
 from .agent import (
+    Agent,
+    AgentAttemptExhaustedError,
+    AgentEffect,
+    AgentTask,
+    AgentValidationErrorKind,
+    AgentValidationFailure,
     CaptureOutput,
     RunAgent,
     SendMessage,
@@ -41,6 +47,12 @@ from .worktree import (
 )
 
 __all__ = [
+    "Agent",
+    "AgentAttemptExhaustedError",
+    "AgentEffect",
+    "AgentTask",
+    "AgentValidationErrorKind",
+    "AgentValidationFailure",
     "CaptureOutput",
     # Git
     "Commit",

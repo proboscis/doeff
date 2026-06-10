@@ -23,6 +23,7 @@ classifiers = [
 dependencies = [
     "doeff>=0.1.9",
     "doeff-git>=0.1.0",
+    "doeff-agents>=0.1.1",
     "doeff-agentic>=0.1.0",
     "doeff-flow>=0.1.0",
     "click>=8.0.0",
@@ -56,6 +57,7 @@ packages = ["src/doeff_conductor"]
 [tool.uv.sources]
 doeff = { workspace = true }
 doeff-git = { workspace = true }
+doeff-agents = { workspace = true }
 doeff-agentic = { workspace = true }
 doeff-flow = { workspace = true }
 doeff-preset = { workspace = true }

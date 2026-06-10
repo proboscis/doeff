@@ -11,7 +11,17 @@ The simplest workflow for implementing an issue:
 """
 
 from doeff import EffectGenerator, do
+
 from ..types import Issue, PRHandle
+
+IMPLEMENT_SCHEMA = {
+    "type": "object",
+    "required": ["summary"],
+    "properties": {
+        "summary": {"type": "string"},
+        "files_changed": {"type": "array", "items": {"type": "string"}},
+    },
+}
 
 
 @do
@@ -24,7 +34,7 @@ def basic_pr(issue: Issue) -> EffectGenerator[PRHandle]:
     Returns:
         PRHandle for the created PR
     """
-    from ..effects import Commit, CreatePR, CreateWorktree, Push, ResolveIssue, RunAgent
+    from ..effects import Agent, AgentTask, Commit, CreatePR, CreateWorktree, Push, ResolveIssue
 
     # Step 1: Create isolated worktree
     env = yield CreateWorktree(issue=issue)
@@ -40,7 +50,17 @@ Implement the following issue:
 Please implement the changes needed to resolve this issue.
 When done, make sure all changes are complete and working.
 """
-    yield RunAgent(env=env, prompt=prompt)
+    yield Agent(
+        AgentTask(
+            run_id=issue.id,
+            node_id="implement",
+            attempt=0,
+            env=env,
+            prompt=prompt,
+            result_schema=IMPLEMENT_SCHEMA,
+            verification_class="test-verifiable",
+        )
+    )
 
     # Step 3: Commit and push changes
     commit_msg = f"feat: {issue.title}\n\nResolves: {issue.id}"

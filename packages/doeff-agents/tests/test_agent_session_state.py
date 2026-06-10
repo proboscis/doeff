@@ -92,7 +92,7 @@ def test_launch_records_queryable_session_state(tmp_path: Path) -> None:
     assert snapshot is not None
     assert snapshot.session_id == session_name
     assert snapshot.session_name == handle.session_name
-    assert snapshot.pane_id == handle.pane_id
+    assert not hasattr(handle, "pane_id")
     assert snapshot.agent_type == AgentType.CLAUDE
     assert snapshot.work_dir == tmp_path
     assert snapshot.status == SessionStatus.BOOTING

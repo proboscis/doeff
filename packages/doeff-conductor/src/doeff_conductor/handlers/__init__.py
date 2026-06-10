@@ -17,9 +17,10 @@ Execution utilities:
 """
 
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from doeff import default_handlers, run
+from doeff import WithHandler, run
 
 from .agent_handler import AgentHandler
 from .git_handler import GitHandler
@@ -40,6 +41,33 @@ if TYPE_CHECKING:
 
 
 HandlerProtocol = Callable[..., Any]
+
+
+class _ResultFlag:
+    def __init__(self, value: bool) -> None:
+        self._value = value
+
+    def __bool__(self) -> bool:
+        return self._value
+
+    def __call__(self) -> bool:
+        return self._value
+
+
+@dataclass(frozen=True)
+class RunSyncResult:
+    """Small compatibility wrapper for conductor tests and callers."""
+
+    value: Any = None
+    error: BaseException | None = None
+
+    @property
+    def is_ok(self) -> _ResultFlag:
+        return _ResultFlag(self.error is None)
+
+    @property
+    def is_err(self) -> _ResultFlag:
+        return _ResultFlag(self.error is not None)
 
 
 def production_handlers(
@@ -89,8 +117,15 @@ def run_sync(
         else:
             protocol_handlers = list(scheduled_handlers)
 
-    handlers = [*protocol_handlers, *default_handlers()]
-    return run(program, handlers=handlers, env=env, store=store)
+    if env is not None or store is not None:
+        raise NotImplementedError("run_sync no longer accepts env/store with explicit handlers")
+    wrapped = program
+    for handler in reversed(protocol_handlers):
+        wrapped = WithHandler(handler, wrapped)
+    try:
+        return RunSyncResult(value=run(wrapped))
+    except Exception as exc:
+        return RunSyncResult(error=exc)
 
 
 __all__ = [

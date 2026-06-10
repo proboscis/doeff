@@ -12,7 +12,27 @@ A workflow with code review:
 """
 
 from doeff import EffectGenerator, do
+
 from ..types import Issue, PRHandle
+
+IMPLEMENT_SCHEMA = {
+    "type": "object",
+    "required": ["summary"],
+    "properties": {
+        "summary": {"type": "string"},
+        "files_changed": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
+REVIEW_SCHEMA = {
+    "type": "object",
+    "required": ["verdict", "findings"],
+    "properties": {
+        "verdict": {"enum": ["PASS", "CHANGES_REQUESTED"]},
+        "findings": {"type": "array"},
+        "summary": {"type": "string"},
+    },
+}
 
 
 @do
@@ -29,7 +49,7 @@ def reviewed_pr(
     Returns:
         PRHandle for the created PR
     """
-    from ..effects import Commit, CreatePR, CreateWorktree, Push, ResolveIssue, RunAgent
+    from ..effects import Agent, AgentTask, Commit, CreatePR, CreateWorktree, Push, ResolveIssue
 
     # Step 1: Create isolated worktree
     env = yield CreateWorktree(issue=issue)
@@ -45,11 +65,21 @@ Implement the following issue:
 Please implement the changes needed to resolve this issue.
 Write clean, well-documented code following best practices.
 """
-    yield RunAgent(env=env, prompt=implement_prompt, name="implementer")
+    yield Agent(
+        AgentTask(
+            run_id=issue.id,
+            node_id="implement",
+            attempt=0,
+            env=env,
+            prompt=implement_prompt,
+            result_schema=IMPLEMENT_SCHEMA,
+            verification_class="test-verifiable",
+        )
+    )
 
     # Step 3: Review loop
     review_approved = False
-    last_review = ""
+    last_review: dict | None = None
 
     for iteration in range(max_reviews + 1):
         # Run review agent
@@ -69,10 +99,20 @@ Please review the implementation for:
 If you find issues, list them clearly.
 If the implementation is good, say "APPROVED" and explain why it's acceptable.
 """
-        review_result = yield RunAgent(env=env, prompt=review_prompt, name="reviewer")
+        review_result = yield Agent(
+            AgentTask(
+                run_id=issue.id,
+                node_id="review",
+                attempt=iteration,
+                env=env,
+                prompt=review_prompt,
+                result_schema=REVIEW_SCHEMA,
+                verification_class="review",
+            )
+        )
         last_review = review_result
 
-        if "approved" in review_result.lower():
+        if review_result["verdict"] == "PASS":
             review_approved = True
             break
 
@@ -81,11 +121,21 @@ If the implementation is good, say "APPROVED" and explain why it's acceptable.
             fix_prompt = f"""
 A code review found the following issues:
 
-{review_result}
+{review_result["findings"]}
 
 Please address these review comments and improve the implementation.
 """
-            yield RunAgent(env=env, prompt=fix_prompt, name="implementer")
+            yield Agent(
+                AgentTask(
+                    run_id=issue.id,
+                    node_id="fix",
+                    attempt=iteration,
+                    env=env,
+                    prompt=fix_prompt,
+                    result_schema=IMPLEMENT_SCHEMA,
+                    verification_class="test-verifiable",
+                )
+            )
 
     # Step 4: Commit and push
     commit_msg = f"feat: {issue.title}\n\nResolves: {issue.id}"
