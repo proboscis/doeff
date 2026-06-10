@@ -63,13 +63,18 @@ class AgentdPaths:
 # RPC read-timeout contract.  The daemon BLOCKS on these methods by design:
 # `session.launch` waits for agent readiness (daemon LAUNCH_TIMEOUT_SECONDS,
 # 60s) and `session.await_result` waits up to its caller-supplied budget
-# (daemon default 600s, clamp [1, 3600]).  The client socket timeout must
-# therefore cover the daemon-side budget plus a margin — a short default
-# here silently breaks the protocol (observed live: 10s client timeout vs
-# 60s launch budget -> client disconnect, daemon Broken pipe).
+# (clamp [1, 3600]).  The client socket timeout must therefore cover the
+# daemon-side budget plus a margin — a short default here silently breaks
+# the protocol (observed live: 10s client timeout vs 60s launch budget ->
+# client disconnect, daemon Broken pipe).
 RPC_TIMEOUT_MARGIN_SECONDS: float = 15.0
 LAUNCH_RPC_TIMEOUT_SECONDS: float = 60.0 + RPC_TIMEOUT_MARGIN_SECONDS
-DEFAULT_AWAIT_BUDGET_SECONDS: float = 600.0
+# One real frontier-agent turn under run_to_completion routinely takes
+# 20-40 minutes; a 600s await burned the launcher's whole retry budget on
+# a worker that was still healthily working (observed live).  A long await
+# is free in the failure case: the daemon monitor resolves the await early
+# the moment a session turns terminal.  3600 = the daemon-side clamp max.
+DEFAULT_AWAIT_BUDGET_SECONDS: float = 3600.0
 
 
 class AgentdClient:
@@ -133,12 +138,16 @@ class AgentdClient:
         *,
         timeout_seconds: float | None = None,
     ) -> AwaitOutcome:
-        params: dict[str, Any] = {"session_id": session_id}
-        if timeout_seconds is not None:
-            params["timeout_seconds"] = timeout_seconds
+        # Always send the budget explicitly: the client is the single
+        # authority for the await budget.  Relying on the daemon-side
+        # default left two constants that could (and did) drift apart.
         await_budget = (
             timeout_seconds if timeout_seconds is not None else DEFAULT_AWAIT_BUDGET_SECONDS
         )
+        params: dict[str, Any] = {
+            "session_id": session_id,
+            "timeout_seconds": await_budget,
+        }
         try:
             result = self.request(
                 "session.await_result",
