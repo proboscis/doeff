@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import shutil
 import socket
 import sys
 import tempfile
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,16 @@ from doeff_agents import (
     default_agentd_paths,
     ensure_agentd,
 )
+
+
+@pytest.fixture
+def short_runtime_dir() -> Iterator[Path]:
+    """Return a short runtime dir so AF_UNIX socket paths fit on macOS."""
+    runtime_dir = Path(tempfile.mkdtemp(prefix="agentd-runtime-", dir="/tmp"))
+    try:
+        yield runtime_dir
+    finally:
+        shutil.rmtree(runtime_dir, ignore_errors=True)
 
 
 class OneShotAgentdServer:
@@ -153,14 +164,14 @@ def test_default_agentd_paths_use_xdg(monkeypatch, tmp_path: Path) -> None:
 def test_ensure_agentd_uses_reachable_canonical_socket(
     monkeypatch,
     tmp_path: Path,
+    short_runtime_dir: Path,
 ) -> None:
     def handle(request: Mapping[str, Any]) -> Mapping[str, Any]:
         return {"id": request["id"], "ok": True, "result": {"state": "running"}}
 
     state_home = tmp_path / "state"
-    runtime_dir = tmp_path / "runtime"
     monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
     paths = default_agentd_paths()
     paths.socket_path.parent.mkdir(parents=True)
 
@@ -174,11 +185,11 @@ def test_ensure_agentd_uses_reachable_canonical_socket(
 def test_ensure_agentd_fails_loudly_when_canonical_socket_unreachable(
     monkeypatch,
     tmp_path: Path,
+    short_runtime_dir: Path,
 ) -> None:
     state_home = tmp_path / "state"
-    runtime_dir = tmp_path / "runtime"
     monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
     paths = default_agentd_paths()
 
     with pytest.raises(AgentdUnavailableError) as error:
