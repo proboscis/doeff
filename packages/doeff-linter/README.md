@@ -4,7 +4,7 @@ A high-performance linter for enforcing code quality and immutability patterns i
 
 ## Features
 
-- **14 specialized rules** for code quality and immutability
+- **27 specialized rules** for code quality, immutability, and workflow replay safety
 - **Configurable via pyproject.toml**
 - **noqa comments** for per-line rule suppression
 - **Fast** - written in Rust for maximum performance
@@ -81,6 +81,22 @@ skip_test_functions = true
 | DOEFF012 | No Append Loop Pattern | Use list comprehension instead of empty list + for loop append |
 | DOEFF013 | Prefer Maybe Monad | Use `Maybe[T]` instead of `Optional[T]` or `T \| None` |
 | DOEFF014 | No Try-Except Blocks | Use doeff's error handling effects instead of try-except |
+| DOEFF032 | Workflow Nondeterminism | Workflow modules must use `time!`, `random!`, `gate!`, or `:params` instead of raw nondeterminism |
+
+## Workflow Modules
+
+`DOEFF032` applies only to workflow modules. Prefer marking those files with a
+top-level pragma:
+
+```python
+# doeff: workflow
+```
+
+Files under a `workflows/` path component and files named `*_workflow.py` are
+also treated as workflow modules. In those modules, raw clock reads,
+`random.*`, `open`, pathlib writes, subprocess/network access, and
+non-allowlisted imports are ERROR diagnostics. The rule intentionally has no
+baseline or per-file allowlist; `noqa` does not suppress `DOEFF032`.
 
 ## Inline Suppression
 
@@ -334,4 +350,3 @@ When violations are found, the hook outputs:
 ## License
 
 MIT License - see LICENSE file for details.
-
