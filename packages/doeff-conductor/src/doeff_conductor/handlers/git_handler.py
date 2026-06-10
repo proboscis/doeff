@@ -25,6 +25,8 @@ from doeff_git.types import PRHandle as GitPRHandle
 from doeff_conductor.exceptions import GitCommandError
 from doeff_conductor.types import MergeStrategy
 
+from doeff_conductor.git_workspace import get_current_commit, run_git
+
 if TYPE_CHECKING:
     from doeff_conductor.effects.git import Commit, CreatePR, MergePR, Push
     from doeff_conductor.types import PRHandle, Workspace
@@ -79,6 +81,10 @@ class GitHandler:
     def handle_commit(self, effect: "Commit") -> str:
         """Stage changes and create a commit. Returns commit SHA."""
         work_dir = self._resolve_workspace_path(effect.workspace)
+        if effect.skip_if_clean:
+            status = run_git(["git", "status", "--porcelain"], cwd=work_dir)
+            if not status.stdout.strip():
+                return get_current_commit(work_dir)
         git_effect = GitCommit(
             work_dir=work_dir,
             message=effect.message,
