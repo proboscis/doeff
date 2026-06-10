@@ -10,7 +10,7 @@ Commands:
     logs        View session logs
     stop        Stop workflow
     issue       Issue management (create, list, show, resolve)
-    env         Environment management (list, cleanup)
+    workspace   Workspace management (list, cleanup)
     template    Template management (list, show, new)
 """
 
@@ -252,8 +252,8 @@ def show_cmd(
             lines.append(f"[bold]Created:[/bold] {workflow.created_at.isoformat()}")
             lines.append(f"[bold]Updated:[/bold] {workflow.updated_at.isoformat()}")
 
-            if workflow.environments:
-                lines.append(f"\n[bold]Environments:[/bold] {', '.join(workflow.environments)}")
+            if workflow.workspaces:
+                lines.append(f"\n[bold]Workspaces:[/bold] {', '.join(workflow.workspaces)}")
             if workflow.agents:
                 lines.append(f"[bold]Agents:[/bold] {', '.join(workflow.agents)}")
             if workflow.pr_url:
@@ -539,59 +539,54 @@ def issue_resolve(
 
 
 # =============================================================================
-# Environment Commands
+# Workspace Commands
 # =============================================================================
 
 
 @cli.group()
-def env() -> None:
-    """Environment management commands."""
+def workspace() -> None:
+    """Workspace management commands."""
 
 
-@env.command("list")
+@workspace.command("list")
 @click.option("--workflow", "-w", help="Filter by workflow ID")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
 @click.pass_context
-def env_list(
+def workspace_list(
     ctx: click.Context,
     workflow: str | None,
     output_json: bool,
 ) -> None:
-    """List worktree environments."""
+    """List materialized workspaces."""
     from .api import ConductorAPI
 
     api = ConductorAPI(ctx.obj.get("state_dir"))
 
     try:
-        environments = api.list_environments(workflow_id=workflow)
+        workspaces = api.list_workspaces(workflow_id=workflow)
 
         if output_json:
-            click.echo(json.dumps([e.to_dict() for e in environments], indent=2))
+            click.echo(json.dumps([item.to_dict() for item in workspaces], indent=2))
             return
 
-        if not environments:
-            console.print("[dim]No environments found[/dim]")
+        if not workspaces:
+            console.print("[dim]No workspaces found[/dim]")
             return
 
         table = Table(show_header=True, header_style="bold")
         table.add_column("ID", style="cyan")
-        table.add_column("BRANCH")
-        table.add_column("PATH")
+        table.add_column("REPO")
+        table.add_column("REF")
         table.add_column("ISSUE")
         table.add_column("CREATED")
 
-        for env_obj in environments:
-            # Truncate path if too long
-            path_str = str(env_obj.path)
-            if len(path_str) > 40:
-                path_str = "..." + path_str[-37:]
-
+        for workspace_obj in workspaces:
             table.add_row(
-                env_obj.id[:8],
-                env_obj.branch,
-                path_str,
-                env_obj.issue_id or "-",
-                _format_duration(env_obj.created_at),
+                workspace_obj.id[:12],
+                workspace_obj.repo,
+                workspace_obj.ref,
+                workspace_obj.issue_id or "-",
+                _format_duration(workspace_obj.created_at),
             )
 
         console.print(table)
@@ -601,24 +596,24 @@ def env_list(
         sys.exit(1)
 
 
-@env.command("cleanup")
+@workspace.command("cleanup")
 @click.option("--dry-run", is_flag=True, help="Show what would be cleaned up")
-@click.option("--older-than", type=int, help="Only cleanup envs older than N days")
+@click.option("--older-than", type=int, help="Only cleanup workspaces older than N days")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
 @click.pass_context
-def env_cleanup(
+def workspace_cleanup(
     ctx: click.Context,
     dry_run: bool,
     older_than: int | None,
     output_json: bool,
 ) -> None:
-    """Cleanup orphaned worktree environments."""
+    """Cleanup orphaned workspace materializations."""
     from .api import ConductorAPI
 
     api = ConductorAPI(ctx.obj.get("state_dir"))
 
     try:
-        cleaned = api.cleanup_environments(
+        cleaned = api.cleanup_workspaces(
             dry_run=dry_run,
             older_than_days=older_than,
         )
@@ -634,7 +629,7 @@ def env_cleanup(
             for path in cleaned:
                 console.print(f"  {path}")
         else:
-            console.print("[dim]No orphaned environments found[/dim]")
+            console.print("[dim]No orphaned workspaces found[/dim]")
 
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")

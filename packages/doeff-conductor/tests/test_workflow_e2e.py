@@ -7,11 +7,12 @@ from typing import Any
 from doeff_conductor import (
     Commit,
     CreateIssue,
-    CreateWorktree,
-    DeleteWorktree,
+    CreateWorkspace,
+    DeleteWorkspace,
+    Exec,
     GetIssue,
     IssueStatus,
-    MergeBranches,
+    MergeWorkspaces,
     Push,
     ResolveIssue,
 )
@@ -59,37 +60,38 @@ class TestWorkflowE2E:
         assert resolved_issue.pr_url == "https://github.com/test/repo/pull/1"
         assert len(list(runtime.issues_dir.glob("*.md"))) == 1
 
-    def test_worktree_create_and_delete(self, tmp_path: Path):
+    def test_workspace_create_and_delete(self, tmp_path: Path):
         runtime = MockConductorRuntime(tmp_path)
 
         @do
-        def worktree_workflow():
-            env = yield CreateWorktree(suffix="test")
-            assert env.path.exists()
-            assert (env.path / ".git").exists()
+        def workspace_workflow():
+            workspace = yield CreateWorkspace(suffix="test")
+            workspace_path = runtime.resolve_path(workspace)
+            assert workspace_path.exists()
+            assert (workspace_path / ".git").exists()
 
-            deleted = yield DeleteWorktree(env=env, force=True)
+            deleted = yield DeleteWorkspace(workspace=workspace, force=True)
             assert deleted
 
-            return env.id
+            return workspace.id
 
-        result = _run_with_mock_handlers(worktree_workflow(), runtime)
+        result = _run_with_mock_handlers(workspace_workflow(), runtime)
 
         assert result.is_ok
-        assert result.value.startswith("env-")
+        assert result.value.startswith("workspace-")
 
-    def test_worktree_with_commit(self, tmp_path: Path):
+    def test_workspace_with_commit(self, tmp_path: Path):
         runtime = MockConductorRuntime(tmp_path)
 
         @do
         def commit_workflow():
-            env = yield CreateWorktree(suffix="feature")
-            (env.path / "feature.py").write_text("# New feature\n")
+            workspace = yield CreateWorkspace(suffix="feature")
+            (runtime.resolve_path(workspace) / "feature.py").write_text("# New feature\n")
 
-            sha = yield Commit(env=env, message="feat: add new feature")
+            sha = yield Commit(workspace=workspace, message="feat: add new feature")
             assert len(sha) == 40
 
-            yield DeleteWorktree(env=env, force=True)
+            yield DeleteWorkspace(workspace=workspace, force=True)
             return sha
 
         result = _run_with_mock_handlers(commit_workflow(), runtime)
@@ -108,10 +110,10 @@ class TestWorkflowE2E:
                 labels=("feature",),
             )
 
-            env = yield CreateWorktree(issue=issue, suffix="impl")
-            (env.path / "hello.py").write_text('print("Hello World")\n')
+            workspace = yield CreateWorkspace(issue=issue, suffix="impl")
+            (runtime.resolve_path(workspace) / "hello.py").write_text('print("Hello World")\n')
 
-            sha = yield Commit(env=env, message=f"feat: {issue.title}")
+            sha = yield Commit(workspace=workspace, message=f"feat: {issue.title}")
 
             resolved = yield ResolveIssue(
                 issue=issue,
@@ -119,7 +121,7 @@ class TestWorkflowE2E:
                 result=f"Implemented in commit {sha[:7]}",
             )
 
-            yield DeleteWorktree(env=env, force=True)
+            yield DeleteWorkspace(workspace=workspace, force=True)
 
             return {
                 "issue_id": issue.id,
@@ -135,29 +137,45 @@ class TestWorkflowE2E:
         assert len(workflow_result["commit_sha"]) == 40
         assert workflow_result["resolved"] is True
 
-    def test_merge_branches_workflow(self, tmp_path: Path):
+    def test_three_task_merge_demo_runs_green_exec_gate(self, tmp_path: Path):
         runtime = MockConductorRuntime(tmp_path)
 
         @do
         def merge_workflow():
-            env1 = yield CreateWorktree(suffix="feature1")
-            (env1.path / "feature1.py").write_text("# Feature 1\n")
-            yield Commit(env=env1, message="feat: add feature1")
+            workspace1 = yield CreateWorkspace(suffix="feature1")
+            (runtime.resolve_path(workspace1) / "feature1.py").write_text("# Feature 1\n")
+            yield Commit(workspace=workspace1, message="feat: add feature1")
 
-            env2 = yield CreateWorktree(suffix="feature2")
-            (env2.path / "feature2.py").write_text("# Feature 2\n")
-            yield Commit(env=env2, message="feat: add feature2")
+            workspace2 = yield CreateWorkspace(suffix="feature2")
+            (runtime.resolve_path(workspace2) / "feature2.py").write_text("# Feature 2\n")
+            yield Commit(workspace=workspace2, message="feat: add feature2")
 
-            merged = yield MergeBranches(envs=[env1, env2])
+            workspace3 = yield CreateWorkspace(suffix="feature3")
+            (runtime.resolve_path(workspace3) / "feature3.py").write_text("# Feature 3\n")
+            yield Commit(workspace=workspace3, message="feat: add feature3")
 
-            assert (merged.path / "feature1.py").exists()
-            assert (merged.path / "feature2.py").exists()
+            merge_result = yield MergeWorkspaces(workspaces=(workspace1, workspace2, workspace3))
+            assert merge_result.workspace is not None
+            merged = merge_result.workspace
+            merged_path = runtime.resolve_path(merged)
 
-            yield DeleteWorktree(env=env1, force=True)
-            yield DeleteWorktree(env=env2, force=True)
-            yield DeleteWorktree(env=merged, force=True)
+            assert (merged_path / "feature1.py").exists()
+            assert (merged_path / "feature2.py").exists()
+            assert (merged_path / "feature3.py").exists()
 
-            return merged.branch
+            gate = yield Exec(
+                cmd="test -f feature1.py && test -f feature2.py && test -f feature3.py",
+                workspace=merged,
+            )
+            assert gate.passed
+            assert Path(gate.log_path).exists()
+
+            yield DeleteWorkspace(workspace=workspace1, force=True)
+            yield DeleteWorkspace(workspace=workspace2, force=True)
+            yield DeleteWorkspace(workspace=workspace3, force=True)
+            yield DeleteWorkspace(workspace=merged, force=True)
+
+            return merged.ref
 
         result = _run_with_mock_handlers(merge_workflow(), runtime)
 
@@ -169,12 +187,12 @@ class TestWorkflowE2E:
 
         @do
         def push_workflow():
-            env = yield CreateWorktree(suffix="push-test")
-            (env.path / "pushed.py").write_text("# Pushed\n")
-            yield Commit(env=env, message="feat: push test")
-            yield Push(env=env, set_upstream=True)
-            yield DeleteWorktree(env=env, force=True)
-            return env.branch
+            workspace = yield CreateWorkspace(suffix="push-test")
+            (runtime.resolve_path(workspace) / "pushed.py").write_text("# Pushed\n")
+            yield Commit(workspace=workspace, message="feat: push test")
+            yield Push(workspace=workspace, set_upstream=True)
+            yield DeleteWorkspace(workspace=workspace, force=True)
+            return workspace.ref
 
         result = _run_with_mock_handlers(push_workflow(), runtime)
 

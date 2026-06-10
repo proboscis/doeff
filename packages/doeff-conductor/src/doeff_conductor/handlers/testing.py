@@ -1,6 +1,5 @@
 """Testing helpers and mock handlers for doeff-conductor effects."""
 
-
 import hashlib
 import inspect
 import shutil
@@ -20,15 +19,19 @@ from doeff_conductor.effects.agent import (
     AgentValidationErrorKind,
     AgentValidationFailure,
 )
+from doeff_conductor.effects.exec import Exec
 from doeff_conductor.effects.git import Commit, CreatePR, MergePR, Push
 from doeff_conductor.effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
-from doeff_conductor.effects.worktree import CreateWorktree, DeleteWorktree, MergeBranches
+from doeff_conductor.effects.workspace import CreateWorkspace, DeleteWorkspace, MergeWorkspaces
 from doeff_conductor.exceptions import IssueNotFoundError
+from doeff_conductor.handlers.exec_handler import ExecHandler
 from doeff_conductor.types import (
     Issue,
     IssueStatus,
+    MergeStatus,
+    MergeWorkspacesResult,
     PRHandle,
-    WorktreeEnv,
+    Workspace,
 )
 
 from .utils import make_scheduled_handler
@@ -72,21 +75,22 @@ class MockConductorRuntime:
 
         self.workflow_id = workflow_id
 
-        self.worktree_base = self.root / "worktrees"
-        self.worktree_base.mkdir(parents=True, exist_ok=True)
+        self.workspace_base = self.root / "workspaces"
+        self.workspace_base.mkdir(parents=True, exist_ok=True)
 
         self.issues_dir = self.root / "issues"
         self.issues_dir.mkdir(parents=True, exist_ok=True)
 
         self._issues: dict[str, Issue] = {}
-        self._worktrees: dict[str, WorktreeEnv] = {}
+        self._workspaces: dict[str, Workspace] = {}
+        self._workspace_paths: dict[str, Path] = {}
         self._agent_scripts: dict[str, list[Any]] = {}
         self._agent_script_indices: dict[str, int] = {}
         self._agent_follow_ups: dict[str, list[str]] = {}
         self._prs: dict[int, PRHandle] = {}
 
         self._issue_counter = 0
-        self._worktree_counter = 0
+        self._workspace_counter = 0
         self._merge_counter = 0
         self._pr_counter = 0
         self.pushed_branches: list[str] = []
@@ -115,23 +119,37 @@ class MockConductorRuntime:
             )
         )
 
-    def _new_worktree(self, branch: str, issue_id: str | None = None) -> WorktreeEnv:
-        self._worktree_counter += 1
-        env_id = f"env-{self._worktree_counter:03d}"
-        worktree_path = self.worktree_base / f"{env_id}-{branch}"
-        worktree_path.mkdir(parents=True, exist_ok=True)
-        (worktree_path / ".git").mkdir(exist_ok=True)
+    def _new_workspace(
+        self,
+        ref: str,
+        *,
+        repo: str = "default",
+        base_ref: str = "main",
+        issue_id: str | None = None,
+    ) -> Workspace:
+        self._workspace_counter += 1
+        workspace_id = f"workspace-{self._workspace_counter:03d}"
+        workspace_path = self.workspace_base / repo / f"{workspace_id}-{ref}"
+        workspace_path.mkdir(parents=True, exist_ok=True)
+        (workspace_path / ".git").mkdir(exist_ok=True)
 
-        env = WorktreeEnv(
-            id=env_id,
-            path=worktree_path,
-            branch=branch,
-            base_commit="a" * 40,
+        workspace = Workspace(
+            id=workspace_id,
+            repo=repo,
+            ref=ref,
+            base_ref=base_ref,
             issue_id=issue_id,
             created_at=datetime.now(timezone.utc),
         )
-        self._worktrees[env_id] = env
-        return env
+        self._workspaces[workspace_id] = workspace
+        self._workspace_paths[workspace_id] = workspace_path
+        return workspace
+
+    def resolve_path(self, workspace: Workspace) -> Path:
+        path = self._workspace_paths.get(workspace.id)
+        if path is None:
+            raise ValueError(f"Workspace is not materialized: {workspace.id}")
+        return path
 
     def configure_agent_script(self, session_id: str, script: list[Any]) -> None:
         """Configure deterministic artifacts for the schema-validated Agent effect."""
@@ -197,37 +215,57 @@ class MockConductorRuntime:
         self._write_issue_file(resolved)
         return resolved
 
-    def handle_create_worktree(self, effect: CreateWorktree) -> WorktreeEnv:
-        suffix = effect.name or effect.suffix or f"wt-{self._worktree_counter + 1}"
-        branch = effect.name or f"conductor-{suffix}"
+    def handle_create_workspace(self, effect: CreateWorkspace) -> Workspace:
+        suffix = effect.name or effect.suffix or f"workspace-{self._workspace_counter + 1}"
+        ref = effect.name or f"conductor-{suffix}"
         issue_id = effect.issue.id if effect.issue else None
-        return self._new_worktree(branch=branch, issue_id=issue_id)
+        return self._new_workspace(
+            ref=ref,
+            repo=effect.repo,
+            base_ref=effect.from_ref or "main",
+            issue_id=issue_id,
+        )
 
-    def handle_merge_branches(self, effect: MergeBranches) -> WorktreeEnv:
-        if not effect.envs:
-            raise ValueError("No environments to merge")
+    def handle_merge_workspaces(self, effect: MergeWorkspaces) -> MergeWorkspacesResult:
+        if not effect.workspaces:
+            raise ValueError("No workspaces to merge")
 
         self._merge_counter += 1
-        merged_branch = effect.name or f"conductor-merged-{self._merge_counter}"
-        merged_env = self._new_worktree(branch=merged_branch)
+        merged_ref = effect.name or f"conductor-merged-{self._merge_counter}"
+        merged_workspace = self._new_workspace(
+            ref=merged_ref,
+            repo=effect.workspaces[0].repo,
+            base_ref=effect.workspaces[0].ref,
+        )
+        merged_path = self.resolve_path(merged_workspace)
 
-        for env in effect.envs:
-            for source in env.path.iterdir():
+        for workspace in effect.workspaces:
+            for source in self.resolve_path(workspace).iterdir():
                 if source.name == ".git":
                     continue
 
-                target = merged_env.path / source.name
+                target = merged_path / source.name
                 if source.is_dir():
                     shutil.copytree(source, target, dirs_exist_ok=True)
                 else:
                     target.write_bytes(source.read_bytes())
 
-        return merged_env
+        return MergeWorkspacesResult(status=MergeStatus.MERGED, workspace=merged_workspace)
 
-    def handle_delete_worktree(self, effect: DeleteWorktree) -> bool:
-        shutil.rmtree(effect.env.path, ignore_errors=True)
-        self._worktrees.pop(effect.env.id, None)
+    def handle_delete_workspace(self, effect: DeleteWorkspace) -> bool:
+        path = self._workspace_paths.pop(effect.workspace.id, None)
+        if path is None:
+            return False
+        shutil.rmtree(path, ignore_errors=True)
+        self._workspaces.pop(effect.workspace.id, None)
         return True
+
+    def handle_exec(self, effect: Exec):
+        handler = ExecHandler(
+            workspace_resolver=self.resolve_path,
+            log_dir=self.root / "exec-logs",
+        )
+        return handler.handle_exec(effect)
 
     def handle_agent(self, effect: AgentEffect) -> object:
         session_id = effect.task.session_id
@@ -281,11 +319,11 @@ class MockConductorRuntime:
         )
 
     def handle_commit(self, effect: Commit) -> str:
-        payload = f"{effect.env.id}:{effect.env.branch}:{effect.message}"
+        payload = f"{effect.workspace.id}:{effect.workspace.ref}:{effect.message}"
         return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
     def handle_push(self, effect: Push) -> None:
-        self.pushed_branches.append(effect.env.branch)
+        self.pushed_branches.append(effect.workspace.ref)
 
     def handle_create_pr(self, effect: CreatePR) -> PRHandle:
         self._pr_counter += 1
@@ -293,7 +331,7 @@ class MockConductorRuntime:
             url=f"https://github.com/mock/repo/pull/{self._pr_counter}",
             number=self._pr_counter,
             title=effect.title,
-            branch=effect.env.branch,
+            branch=effect.workspace.ref,
             target=effect.target,
             status="open",
             created_at=datetime.now(timezone.utc),
@@ -323,20 +361,14 @@ def mock_handlers(
     root: Path | None = None,
     workflow_id: str = "mock-workflow",
 ) -> ScheduledHandler:
-    """Build a complete mock protocol handler for all conductor effects.
-
-    Args:
-        runtime: Optional runtime instance to keep state between invocations.
-        overrides: Optional per-effect handlers to replace defaults.
-        root: Optional root directory for created mock runtime state.
-        workflow_id: Workflow ID for mock runtime bookkeeping.
-    """
+    """Build a complete mock protocol handler for all conductor effects."""
     active_runtime = runtime or MockConductorRuntime(root=root, workflow_id=workflow_id)
 
     handlers: list[tuple[type[Any], ScheduledHandler]] = [
-        (CreateWorktree, make_scheduled_handler(active_runtime.handle_create_worktree)),
-        (MergeBranches, make_scheduled_handler(active_runtime.handle_merge_branches)),
-        (DeleteWorktree, make_scheduled_handler(active_runtime.handle_delete_worktree)),
+        (CreateWorkspace, make_scheduled_handler(active_runtime.handle_create_workspace)),
+        (MergeWorkspaces, make_scheduled_handler(active_runtime.handle_merge_workspaces)),
+        (DeleteWorkspace, make_scheduled_handler(active_runtime.handle_delete_workspace)),
+        (Exec, make_scheduled_handler(active_runtime.handle_exec)),
         (CreateIssue, make_scheduled_handler(active_runtime.handle_create_issue)),
         (ListIssues, make_scheduled_handler(active_runtime.handle_list_issues)),
         (GetIssue, make_scheduled_handler(active_runtime.handle_get_issue)),

@@ -9,9 +9,7 @@ Tests workflow templates with mocked handlers:
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -19,8 +17,8 @@ from doeff_conductor import (
     AgentEffect,
     Commit,
     CreatePR,
-    CreateWorktree,
-    MergeBranches,
+    CreateWorkspace,
+    MergeWorkspaces,
     Push,
     ResolveIssue,
 )
@@ -29,12 +27,17 @@ from doeff_conductor.handlers import run_sync
 from doeff_conductor.types import (
     Issue,
     IssueStatus,
+    MergeStatus,
+    MergeWorkspacesResult,
     PRHandle,
-    WorktreeEnv,
+    Workspace,
 )
 
 
-def _run_with_effect_handlers(program: Any, handlers: dict[type, Callable[[Any], Any]]):
+HandlerMap = dict[type[Any], object]
+
+
+def _run_with_effect_handlers(program: Any, handlers: HandlerMap):
     return run_sync(program, scheduled_handlers=build_mock_handlers(overrides=handlers))
 
 
@@ -130,7 +133,7 @@ class TestTemplateRegistry:
         assert source is not None
         assert "@do" in source
         assert "def basic_pr" in source
-        assert "CreateWorktree" in source
+        assert "CreateWorkspace" in source
 
     def test_get_template_source_invalid(self):
         """Test get_template_source raises KeyError for invalid templates."""
@@ -161,15 +164,13 @@ class MockHandlerFixtures:
         )
 
     @pytest.fixture
-    def mock_worktree_env(self, tmp_path: Path) -> WorktreeEnv:
-        """Create a mock worktree environment."""
-        env_path = tmp_path / "worktrees" / "env-test"
-        env_path.mkdir(parents=True)
-        return WorktreeEnv(
-            id="env-test",
-            path=env_path,
-            branch="feature/issue-001",
-            base_commit="abc123def456",
+    def mock_workspace(self) -> Workspace:
+        """Create a mock workspace."""
+        return Workspace(
+            id="workspace-test",
+            repo="default",
+            ref="feature/issue-001",
+            base_ref="main",
             issue_id="ISSUE-001",
             created_at=datetime.now(timezone.utc),
         )
@@ -190,17 +191,17 @@ class MockHandlerFixtures:
     @pytest.fixture
     def mock_handlers(
         self,
-        mock_worktree_env: WorktreeEnv,
+        mock_workspace: Workspace,
         mock_pr: PRHandle,
         mock_issue: Issue,
-    ) -> dict[type, Callable[[Any], Any]]:
+    ) -> HandlerMap:
         """Create mock handlers for all effects."""
 
-        def handle_create_worktree(effect: CreateWorktree) -> WorktreeEnv:
-            return mock_worktree_env
+        def handle_create_workspace(effect: CreateWorkspace) -> Workspace:
+            return mock_workspace
 
-        def handle_merge_branches(effect: MergeBranches) -> WorktreeEnv:
-            return mock_worktree_env
+        def handle_merge_workspaces(effect: MergeWorkspaces) -> MergeWorkspacesResult:
+            return MergeWorkspacesResult(status=MergeStatus.MERGED, workspace=mock_workspace)
 
         def handle_agent(effect: AgentEffect) -> dict[str, Any]:
             return _valid_agent_artifact(effect, summary="All tests passed successfully")
@@ -226,8 +227,8 @@ class MockHandlerFixtures:
             )
 
         return {
-            CreateWorktree: handle_create_worktree,
-            MergeBranches: handle_merge_branches,
+            CreateWorkspace: handle_create_workspace,
+            MergeWorkspaces: handle_merge_workspaces,
             AgentEffect: handle_agent,
             Commit: handle_commit,
             Push: handle_push,
@@ -270,13 +271,13 @@ class TestBasicPRTemplate(MockHandlerFixtures):
         """Verify basic_pr executes expected high-level step order."""
         calls: list[str] = []
 
-        def handle_create_worktree(effect: CreateWorktree) -> WorktreeEnv:
-            calls.append("create_worktree")
-            return WorktreeEnv(
-                id="env-test",
-                path=Path("/tmp/env-test"),
-                branch="feature/issue-001",
-                base_commit="abc123",
+        def handle_create_workspace(effect: CreateWorkspace) -> Workspace:
+            calls.append("create_workspace")
+            return Workspace(
+                id="workspace-test",
+                repo="default",
+                ref="feature/issue-001",
+                base_ref="main",
                 issue_id=mock_issue.id,
                 created_at=datetime.now(timezone.utc),
             )
@@ -317,7 +318,7 @@ class TestBasicPRTemplate(MockHandlerFixtures):
             )
 
         handlers = {
-            CreateWorktree: handle_create_worktree,
+            CreateWorkspace: handle_create_workspace,
             AgentEffect: handle_agent,
             Commit: handle_commit,
             Push: handle_push,
@@ -327,7 +328,7 @@ class TestBasicPRTemplate(MockHandlerFixtures):
         result = _run_with_effect_handlers(_templates_module().basic_pr(mock_issue), handlers)
         assert result.is_ok()
         assert calls == [
-            "create_worktree",
+            "create_workspace",
             "agent",
             "commit",
             "push",
@@ -362,7 +363,7 @@ class TestEnforcedPRTemplate(MockHandlerFixtures):
     def test_template_with_failing_tests(
         self,
         mock_issue: Issue,
-        mock_worktree_env: WorktreeEnv,
+        mock_workspace: Workspace,
         mock_pr: PRHandle,
     ):
         """Test enforced_pr handles test failures correctly."""
@@ -378,8 +379,8 @@ class TestEnforcedPRTemplate(MockHandlerFixtures):
                 )
             return _valid_agent_artifact(effect, summary="Implementation complete")
 
-        def handle_create_worktree(e):
-            return mock_worktree_env
+        def handle_create_workspace(e):
+            return mock_workspace
 
         def handle_commit(e):
             return "abc123"
@@ -399,7 +400,7 @@ class TestEnforcedPRTemplate(MockHandlerFixtures):
             )
 
         handlers = {
-            CreateWorktree: handle_create_worktree,
+            CreateWorkspace: handle_create_workspace,
             AgentEffect: handle_agent,
             Commit: handle_commit,
             Push: handle_push,
@@ -413,7 +414,7 @@ class TestEnforcedPRTemplate(MockHandlerFixtures):
     def test_template_fails_after_max_retries(
         self,
         mock_issue: Issue,
-        mock_worktree_env: WorktreeEnv,
+        mock_workspace: Workspace,
     ):
         """Test enforced_pr raises error after max retries."""
 
@@ -422,11 +423,11 @@ class TestEnforcedPRTemplate(MockHandlerFixtures):
                 return _valid_agent_artifact(effect, passed=False, summary="tests failed")
             return _valid_agent_artifact(effect, summary="Implementation complete")
 
-        def handle_create_worktree(e):
-            return mock_worktree_env
+        def handle_create_workspace(e):
+            return mock_workspace
 
         handlers = {
-            CreateWorktree: handle_create_worktree,
+            CreateWorkspace: handle_create_workspace,
             AgentEffect: handle_agent,
         }
 
@@ -462,7 +463,7 @@ class TestReviewedPRTemplate(MockHandlerFixtures):
     def test_template_with_mock_handlers_approved(
         self,
         mock_issue: Issue,
-        mock_worktree_env: WorktreeEnv,
+        mock_workspace: Workspace,
         mock_pr: PRHandle,
     ):
         """Run reviewed_pr with review that approves on first try."""
@@ -476,8 +477,8 @@ class TestReviewedPRTemplate(MockHandlerFixtures):
                 )
             return _valid_agent_artifact(effect, summary="Implementation complete")
 
-        def handle_create_worktree(e):
-            return mock_worktree_env
+        def handle_create_workspace(e):
+            return mock_workspace
 
         def handle_commit(e):
             return "abc123"
@@ -497,7 +498,7 @@ class TestReviewedPRTemplate(MockHandlerFixtures):
             )
 
         handlers = {
-            CreateWorktree: handle_create_worktree,
+            CreateWorkspace: handle_create_workspace,
             AgentEffect: handle_agent,
             Commit: handle_commit,
             Push: handle_push,
@@ -511,7 +512,7 @@ class TestReviewedPRTemplate(MockHandlerFixtures):
     def test_template_with_review_feedback(
         self,
         mock_issue: Issue,
-        mock_worktree_env: WorktreeEnv,
+        mock_workspace: Workspace,
         mock_pr: PRHandle,
     ):
         """Test reviewed_pr handles review feedback correctly."""
@@ -534,8 +535,8 @@ class TestReviewedPRTemplate(MockHandlerFixtures):
                 )
             return _valid_agent_artifact(effect, summary="Implementation complete")
 
-        def handle_create_worktree(e):
-            return mock_worktree_env
+        def handle_create_workspace(e):
+            return mock_workspace
 
         def handle_commit(e):
             return "abc123"
@@ -555,7 +556,7 @@ class TestReviewedPRTemplate(MockHandlerFixtures):
             )
 
         handlers = {
-            CreateWorktree: handle_create_worktree,
+            CreateWorkspace: handle_create_workspace,
             AgentEffect: handle_agent,
             Commit: handle_commit,
             Push: handle_push,
@@ -588,27 +589,28 @@ class TestMultiAgentTemplate(MockHandlerFixtures):
         """Verify multi_agent executes both parallel branches and merge path."""
         calls: list[str] = []
 
-        def handle_create_worktree(effect: CreateWorktree) -> WorktreeEnv:
-            calls.append(f"create_worktree:{effect.suffix}")
-            return WorktreeEnv(
-                id=f"env-{effect.suffix}",
-                path=Path(f"/tmp/{effect.suffix}"),
-                branch=f"feature/{effect.suffix}",
-                base_commit="abc123",
+        def handle_create_workspace(effect: CreateWorkspace) -> Workspace:
+            calls.append(f"create_workspace:{effect.suffix}")
+            return Workspace(
+                id=f"workspace-{effect.suffix}",
+                repo="default",
+                ref=f"feature/{effect.suffix}",
+                base_ref="main",
                 issue_id=mock_issue.id,
                 created_at=datetime.now(timezone.utc),
             )
 
-        def handle_merge_branches(effect: MergeBranches) -> WorktreeEnv:
-            calls.append("merge_branches")
-            return WorktreeEnv(
-                id="env-merged",
-                path=Path("/tmp/merged"),
-                branch="feature/merged",
-                base_commit="abc123",
+        def handle_merge_workspaces(effect: MergeWorkspaces) -> MergeWorkspacesResult:
+            calls.append("merge_workspaces")
+            workspace = Workspace(
+                id="workspace-merged",
+                repo="default",
+                ref="feature/merged",
+                base_ref="main",
                 issue_id=mock_issue.id,
                 created_at=datetime.now(timezone.utc),
             )
+            return MergeWorkspacesResult(status=MergeStatus.MERGED, workspace=workspace)
 
         def handle_agent(effect: AgentEffect) -> dict[str, Any]:
             calls.append(f"agent:{effect.task.node_id}")
@@ -646,8 +648,8 @@ class TestMultiAgentTemplate(MockHandlerFixtures):
             )
 
         handlers = {
-            CreateWorktree: handle_create_worktree,
-            MergeBranches: handle_merge_branches,
+            CreateWorkspace: handle_create_workspace,
+            MergeWorkspaces: handle_merge_workspaces,
             AgentEffect: handle_agent,
             Commit: handle_commit,
             Push: handle_push,
@@ -658,13 +660,13 @@ class TestMultiAgentTemplate(MockHandlerFixtures):
         result = _run_with_effect_handlers(_templates_module().multi_agent(mock_issue), handlers)
         assert result.is_ok()
         assert calls.count("create_pr") == 1
-        assert calls.count("merge_branches") == 1
+        assert calls.count("merge_workspaces") == 1
         assert calls.count("resolve_issue") == 1
 
     def test_template_with_mock_handlers(
         self,
         mock_issue: Issue,
-        mock_worktree_env: WorktreeEnv,
+        mock_workspace: Workspace,
         mock_pr: PRHandle,
     ):
         """Run multi_agent template with mocked effects.
@@ -672,11 +674,11 @@ class TestMultiAgentTemplate(MockHandlerFixtures):
         Gather/Spawn are handled by the local test harness.
         """
 
-        def handle_create_worktree(e):
-            return mock_worktree_env
+        def handle_create_workspace(e):
+            return mock_workspace
 
-        def handle_merge_branches(e):
-            return mock_worktree_env
+        def handle_merge_workspaces(e):
+            return MergeWorkspacesResult(status=MergeStatus.MERGED, workspace=mock_workspace)
 
         def handle_agent(e):
             return _valid_agent_artifact(e, summary="Done")
@@ -699,8 +701,8 @@ class TestMultiAgentTemplate(MockHandlerFixtures):
             )
 
         handlers = {
-            CreateWorktree: handle_create_worktree,
-            MergeBranches: handle_merge_branches,
+            CreateWorkspace: handle_create_workspace,
+            MergeWorkspaces: handle_merge_workspaces,
             AgentEffect: handle_agent,
             Commit: handle_commit,
             Push: handle_push,
@@ -748,18 +750,18 @@ class TestTemplateDocumentation:
 class TestTemplateErrorHandling(MockHandlerFixtures):
     """Tests for template error handling."""
 
-    def test_basic_pr_propagates_worktree_error(
+    def test_basic_pr_propagates_workspace_error(
         self,
         mock_issue: Issue,
     ):
-        """Test that basic_pr propagates worktree creation errors."""
-        from doeff_conductor.exceptions import WorktreeError
+        """Test that basic_pr propagates workspace creation errors."""
+        from doeff_conductor.exceptions import WorkspaceError
 
-        def handle_create_worktree(e):
-            raise WorktreeError(operation="create", message="Failed to create worktree")
+        def handle_create_workspace(e):
+            raise WorkspaceError(operation="create", message="Failed to create workspace")
 
         handlers = {
-            CreateWorktree: handle_create_worktree,
+            CreateWorkspace: handle_create_workspace,
         }
 
         result = _run_with_effect_handlers(_templates_module().basic_pr(mock_issue), handlers)
@@ -768,19 +770,19 @@ class TestTemplateErrorHandling(MockHandlerFixtures):
     def test_basic_pr_propagates_agent_error(
         self,
         mock_issue: Issue,
-        mock_worktree_env: WorktreeEnv,
+        mock_workspace: Workspace,
     ):
         """Test that basic_pr propagates agent errors."""
         from doeff_conductor.exceptions import AgentError
 
-        def handle_create_worktree(e):
-            return mock_worktree_env
+        def handle_create_workspace(e):
+            return mock_workspace
 
         def handle_agent(e):
             raise AgentError(operation="run", message="Agent crashed")
 
         handlers = {
-            CreateWorktree: handle_create_worktree,
+            CreateWorkspace: handle_create_workspace,
             AgentEffect: handle_agent,
         }
 
@@ -790,13 +792,13 @@ class TestTemplateErrorHandling(MockHandlerFixtures):
     def test_basic_pr_propagates_pr_error(
         self,
         mock_issue: Issue,
-        mock_worktree_env: WorktreeEnv,
+        mock_workspace: Workspace,
     ):
         """Test that basic_pr propagates PR creation errors."""
         from doeff_conductor.exceptions import PRError
 
-        def handle_create_worktree(e):
-            return mock_worktree_env
+        def handle_create_workspace(e):
+            return mock_workspace
 
         def handle_agent(e):
             return _valid_agent_artifact(e, summary="Done")
@@ -811,7 +813,7 @@ class TestTemplateErrorHandling(MockHandlerFixtures):
             raise PRError(operation="create", message="PR creation failed")
 
         handlers = {
-            CreateWorktree: handle_create_worktree,
+            CreateWorkspace: handle_create_workspace,
             AgentEffect: handle_agent,
             Commit: handle_commit,
             Push: handle_push,

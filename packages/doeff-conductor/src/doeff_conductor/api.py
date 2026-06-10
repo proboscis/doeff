@@ -5,7 +5,7 @@ Provides programmatic access to conductor functionality:
 - Run workflows
 - List/get workflows
 - Watch workflow progress
-- Manage environments
+- Manage workspaces
 """
 
 import json
@@ -14,10 +14,11 @@ import secrets
 from collections.abc import Generator
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .types import Issue, WorkflowHandle, WorkflowStatus, WorktreeEnv
+    from .types import Issue, WorkflowHandle, WorkflowStatus, Workspace
 
 
 def _get_state_dir() -> Path:
@@ -88,7 +89,11 @@ class ConductorAPI:
             spec.loader.exec_module(module)
 
             # Look for workflow function (named 'workflow' or 'main')
-            workflow_func = getattr(module, "workflow", None) or getattr(module, "main", None)
+            workflow_func = None
+            if "workflow" in module.__dict__:
+                workflow_func = module.__dict__["workflow"]
+            elif "main" in module.__dict__:
+                workflow_func = module.__dict__["main"]
             if workflow_func is None:
                 raise ValueError(
                     f"No 'workflow' or 'main' function found in {template_or_file}"
@@ -137,36 +142,52 @@ class ConductorAPI:
             # Run with conductor handlers
             from .handlers import (
                 AgentHandler,
+                ExecHandler,
                 GitHandler,
                 IssueHandler,
-                WorktreeHandler,
+                WorkspaceHandler,
                 make_scheduled_handler,
             )
 
-            worktree_handler = WorktreeHandler()
+            workspace_handler = WorkspaceHandler()
             issue_handler = IssueHandler()
-            agent_handler = AgentHandler(workflow_id=workflow_id)
-            git_handler = GitHandler()
+            agent_handler = AgentHandler(
+                workflow_id=workflow_id,
+                workspace_resolver=workspace_handler.resolve_path,
+            )
+            git_handler = GitHandler(workspace_resolver=workspace_handler.resolve_path)
+            exec_handler = ExecHandler(workspace_resolver=workspace_handler.resolve_path)
 
             from .effects import (
                 AgentEffect,
                 Commit,
+                CreateWorkspace,
+                DeleteWorkspace,
+                Exec,
                 CreateIssue,
                 CreatePR,
-                CreateWorktree,
-                DeleteWorktree,
                 GetIssue,
                 ListIssues,
-                MergeBranches,
+                MergeWorkspaces,
                 MergePR,
                 Push,
                 ResolveIssue,
             )
 
             handlers = (
-                (CreateWorktree, make_scheduled_handler(worktree_handler.handle_create_worktree)),
-                (MergeBranches, make_scheduled_handler(worktree_handler.handle_merge_branches)),
-                (DeleteWorktree, make_scheduled_handler(worktree_handler.handle_delete_worktree)),
+                (
+                    CreateWorkspace,
+                    make_scheduled_handler(workspace_handler.handle_create_workspace),
+                ),
+                (
+                    MergeWorkspaces,
+                    make_scheduled_handler(workspace_handler.handle_merge_workspaces),
+                ),
+                (
+                    DeleteWorkspace,
+                    make_scheduled_handler(workspace_handler.handle_delete_workspace),
+                ),
+                (Exec, make_scheduled_handler(exec_handler.handle_exec)),
                 (CreateIssue, make_scheduled_handler(issue_handler.handle_create_issue)),
                 (ListIssues, make_scheduled_handler(issue_handler.handle_list_issues)),
                 (GetIssue, make_scheduled_handler(issue_handler.handle_get_issue)),
@@ -186,7 +207,15 @@ class ConductorAPI:
                 yield Pass(effect, k)
 
             result = run(WithHandler(conductor_handler, program))
-            result_value = result.value if result.__class__.__name__ == "RunResult" else result
+            result_value = result.value if type(result).__name__ == "RunResult" else result
+            pr_url = None
+            if isinstance(result_value, PRHandle):
+                pr_url = result_value.url
+            elif isinstance(result_value, SimpleNamespace):
+                if "url" in vars(result_value):
+                    pr_url = vars(result_value)["url"]
+            elif hasattr(result_value, "__dict__") and "url" in vars(result_value):
+                pr_url = vars(result_value)["url"]
 
             # Update workflow status
             handle = WorkflowHandle(
@@ -197,7 +226,7 @@ class ConductorAPI:
                 issue_id=issue.id if issue else None,
                 created_at=now,
                 updated_at=datetime.now(timezone.utc),
-                pr_url=getattr(result_value, "url", None),
+                pr_url=pr_url,
             )
             self._save_workflow(handle)
 
@@ -242,7 +271,7 @@ class ConductorAPI:
                     continue
 
                 workflows.append(handle)
-            except Exception:
+            except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
                 continue
 
         # Sort by updated_at descending
@@ -353,114 +382,111 @@ class ConductorAPI:
 
         return stopped
 
-    def list_environments(
+    def list_workspaces(
         self,
         workflow_id: str | None = None,
-    ) -> "list[WorktreeEnv]":
-        """List worktree environments."""
-        from .handlers.worktree_handler import _get_worktree_base_dir
-        from .types import WorktreeEnv
+    ) -> "list[Workspace]":
+        """List materialized workspaces."""
+        from .handlers.workspace_handler import _get_workspace_base_dir
+        from .types import Workspace
 
-        environments = []
-        worktree_base = _get_worktree_base_dir()
+        workspaces = []
+        workspace_base = _get_workspace_base_dir()
 
-        if not worktree_base.exists():
+        if not workspace_base.exists():
             return []
 
-        for env_dir in worktree_base.iterdir():
-            if not env_dir.is_dir():
+        for repo_dir in workspace_base.iterdir():
+            if not repo_dir.is_dir() or repo_dir.name == "logs":
                 continue
+            for workspace_dir in repo_dir.iterdir():
+                if not workspace_dir.is_dir():
+                    continue
+                git_dir = workspace_dir / ".git"
+                if not git_dir.exists():
+                    continue
+                try:
+                    import subprocess
 
-            # Check if it's a git worktree
-            git_dir = env_dir / ".git"
-            if not git_dir.exists():
-                continue
+                    result = subprocess.run(
+                        ["git", "branch", "--show-current"],
+                        cwd=workspace_dir,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    ref = result.stdout.strip()
+                    workspace = Workspace(
+                        id=workspace_dir.name,
+                        repo=repo_dir.name,
+                        ref=ref,
+                        base_ref=ref,
+                        created_at=datetime.fromtimestamp(
+                            workspace_dir.stat().st_ctime,
+                            tz=timezone.utc,
+                        ),
+                    )
+                    workspaces.append(workspace)
+                except (OSError, TypeError, ValueError):
+                    continue
 
-            # Get branch name
-            try:
-                import subprocess
+        return workspaces
 
-                result = subprocess.run(
-                    ["git", "branch", "--show-current"],
-                    cwd=env_dir,
-                    capture_output=True,
-                    text=True, check=False,
-                )
-                branch = result.stdout.strip()
-
-                # Get base commit
-                result = subprocess.run(
-                    ["git", "rev-parse", "HEAD"],
-                    cwd=env_dir,
-                    capture_output=True,
-                    text=True, check=False,
-                )
-                commit = result.stdout.strip()
-
-                env = WorktreeEnv(
-                    id=env_dir.name,
-                    path=env_dir,
-                    branch=branch,
-                    base_commit=commit,
-                    created_at=datetime.fromtimestamp(
-                        env_dir.stat().st_ctime, tz=timezone.utc
-                    ),
-                )
-                environments.append(env)
-            except Exception:
-                continue
-
-        return environments
-
-    def cleanup_environments(
+    def cleanup_workspaces(
         self,
         dry_run: bool = False,
         older_than_days: int | None = None,
     ) -> list[Path]:
-        """Cleanup orphaned worktree environments.
+        """Cleanup orphaned workspace materializations.
 
         Returns list of cleaned paths.
         """
         import shutil
 
-        from .handlers.worktree_handler import _get_worktree_base_dir
+        from .handlers.workspace_handler import _get_workspace_base_dir
 
         cleaned = []
-        worktree_base = _get_worktree_base_dir()
+        workspace_base = _get_workspace_base_dir()
 
-        if not worktree_base.exists():
+        if not workspace_base.exists():
             return []
 
         now = datetime.now(timezone.utc)
 
-        for env_dir in worktree_base.iterdir():
-            if not env_dir.is_dir():
+        for repo_dir in workspace_base.iterdir():
+            if not repo_dir.is_dir() or repo_dir.name == "logs":
                 continue
-
-            # Check age if specified
-            if older_than_days is not None:
-                created = datetime.fromtimestamp(env_dir.stat().st_ctime, tz=timezone.utc)
-                age_days = (now - created).days
-                if age_days < older_than_days:
+            for workspace_dir in repo_dir.iterdir():
+                if not workspace_dir.is_dir():
                     continue
 
-            if dry_run:
-                cleaned.append(env_dir)
-            else:
-                try:
-                    import subprocess
-
-                    # Remove worktree from git
-                    subprocess.run(
-                        ["git", "worktree", "remove", "--force", str(env_dir)],
-                        capture_output=True, check=False,
+                if older_than_days is not None:
+                    created = datetime.fromtimestamp(
+                        workspace_dir.stat().st_ctime,
+                        tz=timezone.utc,
                     )
-                    # Ensure directory is removed
-                    if env_dir.exists():
-                        shutil.rmtree(env_dir, ignore_errors=True)
-                    cleaned.append(env_dir)
-                except Exception:
-                    pass
+                    age_days = (now - created).days
+                    if age_days < older_than_days:
+                        continue
+
+                if dry_run:
+                    cleaned.append(workspace_dir)
+                else:
+                    try:
+                        import subprocess
+
+                        subprocess.run(
+                            ["git", "worktree", "remove", "--force", str(workspace_dir)],
+                            capture_output=True,
+                            check=False,
+                        )
+                        if workspace_dir.exists():
+                            shutil.rmtree(workspace_dir, ignore_errors=True)
+                        cleaned.append(workspace_dir)
+                    except OSError as error:
+                        raise RuntimeError(
+                            f"Failed to remove workspace materialization: {workspace_dir}"
+                        ) from error
 
         return cleaned
 
@@ -474,6 +500,6 @@ class ConductorAPI:
 
 
 # Import WorkflowHandle for type hints
-from .types import WorkflowHandle  # noqa: E402
+from .types import PRHandle, WorkflowHandle  # noqa: E402
 
 __all__ = ["ConductorAPI"]

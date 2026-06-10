@@ -2,7 +2,8 @@
 Effect definitions for doeff-conductor.
 
 All effects for conductor orchestration:
-- Worktree: CreateWorktree, MergeBranches, DeleteWorktree
+- Exec: Exec
+- Workspace: CreateWorkspace, MergeWorkspaces, DeleteWorkspace
 - Issue: CreateIssue, ListIssues, GetIssue, ResolveIssue
 - Agent: Agent, AgentTask
 - Git: Commit, Push, CreatePR, MergePR
@@ -71,6 +72,7 @@ from .dsl import (
     TimeCall,
     WorkspaceCall,
 )
+from .exec import Exec
 from .git import (
     Commit,
     CreatePR,
@@ -89,10 +91,10 @@ from .issue import (
     ListIssues,
     ResolveIssue,
 )
-from .worktree import (
-    CreateWorktree,
-    DeleteWorktree,
-    MergeBranches,
+from .workspace import (
+    CreateWorkspace,
+    DeleteWorkspace,
+    MergeWorkspaces,
 )
 
 __all__ = [
@@ -121,13 +123,15 @@ __all__ = [
     "Commit",
     # Base
     "ConductorEffectBase",
+    # Exec
+    "Exec",
     # Issue
     "CreateIssue",
     "CreatePR",
-    # Worktree
-    "CreateWorktree",
+    # Workspace
+    "CreateWorkspace",
     "DefaultReviewRouter",
-    "DeleteWorktree",
+    "DeleteWorkspace",
     "DurableReviewBudget",
     "GateCall",
     "GateOption",
@@ -139,8 +143,8 @@ __all__ = [
     "GitPullEffect",
     "GitPushEffect",
     "ListIssues",
-    "MergeBranches",
     "MergeCall",
+    "MergeWorkspaces",
     "MergePR",
     "OpenGate",
     "OpenGateReason",

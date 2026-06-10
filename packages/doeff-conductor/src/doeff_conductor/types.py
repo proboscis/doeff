@@ -3,7 +3,7 @@ Type definitions for doeff-conductor.
 
 This module defines the core data types for conductor orchestration:
 - Issue: Issue from vault with YAML frontmatter
-- WorktreeEnv: Git worktree environment handle
+- Workspace: Logical mutable state handle
 - WorkflowHandle: Workflow instance handle
 - AgentRef: Reference to a running agent
 - PRHandle: Pull request handle
@@ -13,7 +13,6 @@ This module defines the core data types for conductor orchestration:
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from pathlib import Path
 from typing import Any
 
 # =============================================================================
@@ -55,6 +54,32 @@ class MergeStrategy(Enum):
     MERGE = "merge"  # Standard merge commit
     REBASE = "rebase"  # Rebase onto target
     SQUASH = "squash"  # Squash all commits
+
+
+class MergeStatus(Enum):
+    """Structured outcome for workspace reconciliation."""
+
+    MERGED = "merged"
+    CONFLICT = "conflict"
+
+
+# =============================================================================
+# Gate Types
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class ExecResult:
+    """Structured result from a deterministic gate command."""
+
+    exit_code: int
+    log_path: str
+    timed_out: bool = False
+
+    @property
+    def passed(self) -> bool:
+        """Return True when the command completed successfully."""
+        return self.exit_code == 0 and not self.timed_out
 
 
 # =============================================================================
@@ -134,22 +159,23 @@ class Issue:
 
 
 # =============================================================================
-# Environment Types
+# Workspace Types
 # =============================================================================
 
 
-@dataclass
-class WorktreeEnv:
-    """Handle to a git worktree environment.
+@dataclass(frozen=True)
+class Workspace:
+    """Logical unit of mutable state for a workflow.
 
-    Represents an isolated working directory created from a git worktree.
-    Each agent can work in its own worktree without conflicts.
+    For the git medium family, the portable identity is ``(repo, ref)``.
+    Site-local materialization paths are handler-private and intentionally
+    absent from this value.
     """
 
-    id: str  # Unique environment ID
-    path: Path  # Absolute path to worktree directory
-    branch: str  # Branch name for this worktree
-    base_commit: str  # Commit SHA the worktree was created from
+    id: str  # Unique workspace ID
+    repo: str  # Repository name resolved by the handler environment
+    ref: str  # Portable git ref for this workspace
+    base_ref: str  # Ref this workspace was created from
     issue_id: str | None = None  # Associated issue ID
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -157,24 +183,48 @@ class WorktreeEnv:
         """Convert to dictionary for JSON serialization."""
         return {
             "id": self.id,
-            "path": str(self.path),
-            "branch": self.branch,
-            "base_commit": self.base_commit,
+            "repo": self.repo,
+            "ref": self.ref,
+            "base_ref": self.base_ref,
             "issue_id": self.issue_id,
             "created_at": self.created_at.isoformat(),
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "WorktreeEnv":
+    def from_dict(cls, data: dict[str, Any]) -> "Workspace":
         """Create from dictionary."""
         return cls(
             id=data["id"],
-            path=Path(data["path"]),
-            branch=data["branch"],
-            base_commit=data["base_commit"],
+            repo=data["repo"],
+            ref=data["ref"],
+            base_ref=data["base_ref"],
             issue_id=data.get("issue_id"),
             created_at=datetime.fromisoformat(data["created_at"]),
         )
+
+
+@dataclass(frozen=True)
+class MergeConflict:
+    """Details for one workspace that could not be reconciled cleanly."""
+
+    workspace: Workspace
+    files: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class MergeWorkspacesResult:
+    """Structured result from a deterministic workspace reconciliation."""
+
+    status: MergeStatus
+    workspace: Workspace | None
+    conflicts: tuple[MergeConflict, ...] = ()
+    log_path: str | None = None
+    message: str | None = None
+
+    @property
+    def merged(self) -> bool:
+        """Return True when reconciliation produced a clean workspace."""
+        return self.status is MergeStatus.MERGED
 
 
 # =============================================================================
@@ -192,7 +242,7 @@ class AgentRef:
     id: str  # Agent session ID
     name: str  # Human-readable name
     workflow_id: str  # Parent workflow ID
-    env_id: str  # Environment the agent runs in
+    workspace_id: str  # Workspace the agent runs in
     agent_type: str = "claude"  # Agent type (claude, codex, gemini)
 
     def to_dict(self) -> dict[str, Any]:
@@ -201,7 +251,7 @@ class AgentRef:
             "id": self.id,
             "name": self.name,
             "workflow_id": self.workflow_id,
-            "env_id": self.env_id,
+            "workspace_id": self.workspace_id,
             "agent_type": self.agent_type,
         }
 
@@ -212,7 +262,7 @@ class AgentRef:
             id=data["id"],
             name=data["name"],
             workflow_id=data["workflow_id"],
-            env_id=data["env_id"],
+            workspace_id=data["workspace_id"],
             agent_type=data.get("agent_type", "claude"),
         )
 
@@ -276,7 +326,7 @@ class WorkflowHandle:
     issue_id: str | None = None  # Associated issue ID
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    environments: tuple[str, ...] = ()  # Environment IDs
+    workspaces: tuple[str, ...] = ()  # Workspace IDs
     agents: tuple[str, ...] = ()  # Agent session IDs
     pr_url: str | None = None  # Resulting PR URL
     error: str | None = None  # Error message if failed
@@ -291,7 +341,7 @@ class WorkflowHandle:
             "issue_id": self.issue_id,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
-            "environments": list(self.environments),
+            "workspaces": list(self.workspaces),
             "agents": list(self.agents),
             "pr_url": self.pr_url,
             "error": self.error,
@@ -308,7 +358,7 @@ class WorkflowHandle:
             issue_id=data.get("issue_id"),
             created_at=datetime.fromisoformat(data["created_at"]),
             updated_at=datetime.fromisoformat(data["updated_at"]),
-            environments=tuple(data.get("environments", [])),
+            workspaces=tuple(data.get("workspaces", [])),
             agents=tuple(data.get("agents", [])),
             pr_url=data.get("pr_url"),
             error=data.get("error"),
@@ -318,16 +368,19 @@ class WorkflowHandle:
 __all__ = [
     # Agent types
     "AgentRef",
+    "ExecResult",
     # Issue types
     "Issue",
     # Enums
     "IssueStatus",
+    "MergeConflict",
     "MergeStrategy",
+    "MergeStatus",
+    "MergeWorkspacesResult",
     # Git types
     "PRHandle",
+    "Workspace",
     # Workflow types
     "WorkflowHandle",
     "WorkflowStatus",
-    # Environment types
-    "WorktreeEnv",
 ]

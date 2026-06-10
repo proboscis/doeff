@@ -17,7 +17,7 @@ none may reach below it:
 
 | Party | Surface | Never sees |
 |---|---|---|
-| **Author** — an LLM agent writing a workflow on demand | the DSL (closed vocabulary, §4); expansion/validation errors; `conductor env describe` output | effects machinery, handler stacks, interpreters, account names, substrate names, filesystem paths |
+| **Author** — an LLM agent writing a workflow on demand | the DSL (closed vocabulary, §4); expansion/validation errors; `conductor workspace describe` output | effects machinery, handler stacks, interpreters, account names, substrate names, filesystem paths |
 | **Overseer** — the agent or human responsible for a run | verbs: `plan` (binding table, budget, capability check) → approve; the supervision policy (§8.1); progress views; the gate queue; `resume` | interpreter names, session internals (except via capability-gated ops escape hatches: attach/transcript/steer) |
 | **System** — conductor runtime + environment config | everything: interpreter constants, profile registry, substrate handlers, stub scenarios, calibration state | — |
 
@@ -51,7 +51,7 @@ Five configuration axes, and where each binds:
 | (D) execution substrate / site | runtime — one site per run (v1) | interpreter composition, system-side |
 | (E) persona (role prompt) | task | `:persona` field, intent-side |
 
-The word **profile** is reserved for (B)+(C). The old `RunAgent.profile`
+The word **profile** is reserved for (B)+(C). The old agent-effect `profile`
 (persona) meaning is renamed. Call-site defaults for agent kind (e.g.
 `agent_type: str = "claude"`) are abolished — identity comes only from
 profile resolution; defaulting at a call site is a fail-fast violation.
@@ -396,8 +396,8 @@ families with their own checks — added by system designers, never by
 authors. **v1 implements the git family only** (a scope decision, not a
 structural constraint).
 
-The current `CreateWorktree` effect name leaks the materialization noun and
-is renamed into the workspace vocabulary during stage C4.
+Stage C4 uses public workspace vocabulary; site-local materialization nouns
+remain handler-private.
 
 ## 7. Verbs and interpreters
 
