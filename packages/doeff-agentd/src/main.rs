@@ -1997,7 +1997,7 @@ fn observed_status_for_snapshot(snapshot: &SessionSnapshot, output: &str) -> &'s
 /// keep serving turns indefinitely.  We only graduate to a terminal
 /// status when (a) Kind 2 and (b) the contract validates.
 fn output_indicates_turn_end(snapshot: &SessionSnapshot, output: &str) -> bool {
-    let idle = output_has_codex_idle_prompt(output) && !output_has_codex_active_marker(output);
+    let idle = output_has_agent_idle_prompt(output) && !output_has_codex_active_marker(output);
     let stable = output_is_stable(snapshot, output);
     idle && stable
 }
@@ -2152,8 +2152,21 @@ fn output_has_waiting_marker(output: &str) -> bool {
         || output.contains("to show all projects")
 }
 
-fn output_has_codex_idle_prompt(output: &str) -> bool {
-    output.starts_with("› ") || output.contains("\n› ")
+fn output_has_agent_idle_prompt(output: &str) -> bool {
+    // `› ` is codex's REPL prompt; `❯` is Claude Code's input box.  The
+    // claude prompt is visible even DURING active work (the input box sits
+    // below the spinner), so idle detection for claude leans entirely on
+    // the stability guard in `output_indicates_turn_end`: the spinner's
+    // per-second timer tick keeps a working pane unstable.
+    //
+    // Claude separates `❯` from typed text with a NO-BREAK SPACE (U+00A0),
+    // not an ASCII space (observed live: '❯\u{00A0}text'), and an empty
+    // input box may render `❯` with nothing after it — so match the glyph
+    // at line start alone, never the two-char `❯ `.
+    if output.starts_with("› ") || output.contains("\n› ") {
+        return true;
+    }
+    output.lines().any(|line| line.starts_with('❯'))
 }
 
 /// True while codex is still booting its MCP servers, e.g.
@@ -2434,8 +2447,22 @@ fn monitor_once(config: &Config) -> Result<()> {
             // First, clear the awaiting-response latch once we see the
             // agent's "active" marker — that confirms the prompt landed
             // in the REPL and the agent is actually working on it.
+            //
+            // The marker alone is codex-specific ("Working (" / "esc to
+            // interrupt"); claude's working pane shows neither, so a
+            // marker-only latch never clears for claude and validation is
+            // suppressed forever (observed live: a claude session with a
+            // valid result file sat "blocked" while the launcher's awaits
+            // exhausted).  Pane INSTABILITY is the agent-agnostic pickup
+            // signal: a working agent redraws its spinner every second,
+            // while the stale pre-pickup pane stays byte-identical.  Worst
+            // case of clearing early (agent never picked up the prompt) is
+            // one duplicate retry prompt, bounded by max_retries — strictly
+            // better than the unbounded hang.
             let active_marker_seen = output_has_codex_active_marker(&output);
-            if snapshot.awaiting_response && active_marker_seen {
+            if snapshot.awaiting_response
+                && (active_marker_seen || !output_is_stable(&snapshot, &output))
+            {
                 snapshot.awaiting_response = false;
             }
             // Record the first time the agent's active marker appeared.
@@ -2817,7 +2844,7 @@ fn wait_for_repl_idle(config: &Config, pane_id: &str, max_wait: Duration) -> Res
         // `npm install -g @openai/codex` and stalls the agent for the
         // whole upgrade (and may fail in a sandboxed workspace). The
         // dialog also renders the `›` selection marker, so
-        // 'output_has_codex_idle_prompt' would mistake it for a ready
+        // 'output_has_agent_idle_prompt' would mistake it for a ready
         // REPL and we'd send the prompt straight into the menu.
         // Detect and dismiss it BEFORE the idle check.
         if output_has_codex_update_dialog(&output) {
@@ -2829,7 +2856,7 @@ fn wait_for_repl_idle(config: &Config, pane_id: &str, max_wait: Duration) -> Res
             thread::sleep(Duration::from_millis(800));
             continue;
         }
-        if output_has_codex_idle_prompt(&output) {
+        if output_has_agent_idle_prompt(&output) {
             return Ok(());
         }
         thread::sleep(poll_interval);
@@ -3507,6 +3534,42 @@ mod tests {
         let cycle_n_plus_1 = "  doing stuff\n› ";
         snapshot.output_snippet = Some(cycle_n.to_string());
         assert!(!output_indicates_turn_end(&snapshot, cycle_n_plus_1));
+    }
+
+    #[test]
+    fn output_indicates_turn_end_recognizes_claude_idle_pane() {
+        // Claude Code's input box uses `❯ `, not codex's `› `.  A
+        // monitor that only knows the codex prompt never fires turn-end
+        // for claude sessions, so their result contracts are never
+        // validated (observed live: a finished claude worker with a
+        // valid result file sat "blocked" until the launcher's awaits
+        // exhausted).
+        let mut snapshot = snapshot_for_lifecycle("run_to_completion", "running");
+        let claude_idle = "  done. result written.\n\n❯\u{00A0}\n  🏢 ca  Fable 5 XHI";
+        snapshot.output_snippet = Some(claude_idle.to_string());
+        assert!(output_indicates_turn_end(&snapshot, claude_idle));
+
+        // While claude is WORKING the `❯` input box is still visible
+        // below the spinner, so idle-prompt detection alone would
+        // misfire; the per-second spinner tick keeps the pane unstable,
+        // and the stability guard must hold the turn-end back.
+        let working_t1 = "✢ Swooping… (37s · ↓ 1.1k tokens)\n\n❯\u{00A0}";
+        let working_t2 = "✢ Swooping… (38s · ↓ 1.2k tokens)\n\n❯\u{00A0}";
+        snapshot.output_snippet = Some(working_t1.to_string());
+        assert!(!output_indicates_turn_end(&snapshot, working_t2));
+    }
+
+    #[test]
+    fn agent_idle_prompt_accepts_codex_and_claude_prompts() {
+        assert!(output_has_agent_idle_prompt("› "));
+        assert!(output_has_agent_idle_prompt("some scroll\n› "));
+        // Real claude capture: the glyph is followed by U+00A0, not an
+        // ASCII space, and may carry typed-but-unsubmitted text.
+        assert!(output_has_agent_idle_prompt("❯\u{00A0}monitor-nudge"));
+        assert!(output_has_agent_idle_prompt("scroll\n❯\u{00A0}\n  statusline"));
+        assert!(output_has_agent_idle_prompt("❯"));
+        assert!(!output_has_agent_idle_prompt("plain shell $ "));
+        assert!(!output_has_agent_idle_prompt("  quoted mid-line ❯ glyph"));
     }
 
     /// A spec carrying just a schema, as the single-protocol launcher
