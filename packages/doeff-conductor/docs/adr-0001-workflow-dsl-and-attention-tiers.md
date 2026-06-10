@@ -149,6 +149,17 @@ concept: kleisli args → `:params`; effect payloads → form fields;
 `Local` → the flat `:roles` table + call-site overrides; interpreter env →
 system-side verbs; `ask` → name references resolved by the environment.
 
+**The authoring surface is exclusively the Hy macro DSL.** Workflows are
+authored as `.hy` files using the `defworkflow`/`agent!`/... macros. The
+Python spec IR those macros expand into is an internal compilation target
+— it is NEVER written by an author (human or agent), and the loader does
+not accept user-supplied `.py` workflow files. (Amends the C8 stage text,
+which wired and documented `.py` as the runnable surface — that was an
+implementation expedient that leaked into the contract; the snapshot,
+examples, and loader move to `.hy`.) The loader's nondeterminism check is
+unchanged in substance: Hy compiles to Python AST, so the same AST walk
+runs on the compiled module.
+
 **Binding locality (no dynamic scoping):** every `agent!`'s binding is
 derivable from its call site plus the flat top-of-file `:roles` table.
 This is what makes the DSL writable by LLM authors and totally checkable.
@@ -425,8 +436,8 @@ Contract:
   baseline, (c) calibration escape rate. Notes into `docs/pilot-k2-k3.md`.
 - **C8 — single-file run hardening** (from C7's honest deltas + the
   2026-06-10 follow-up design session): (1) native `WorkflowSpec`
-  production interpreter — `conductor run <workflow.py>` executes a
-  DSL-only file; the hand-written `main` Program requirement is deleted;
+  production interpreter — `conductor run <workflow.hy>` executes a
+  DSL-only file (authoring surface amended to Hy-only; see D2); the hand-written `main` Program requirement is deleted;
   (2) loader-enforced nondeterminism check per amended D2 — port the
   DOEFF032 fixtures into conductor tests, delete the doeff-linter rule;
   (3) workflow source snapshot into the run state dir per D10 — resume
