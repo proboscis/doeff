@@ -97,6 +97,7 @@ def cli(ctx: click.Context, state_dir: str | None) -> None:
 @cli.command("plan")
 @click.argument("workflow_file")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@click.option("--run-id", help="Snapshot the workflow source under this run id")
 @click.option(
     "--supervision",
     type=click.Choice(["autonomous", "phase-checkpoints"]),
@@ -104,13 +105,32 @@ def cli(ctx: click.Context, state_dir: str | None) -> None:
     show_default=True,
     help="Run-scoped supervision policy for the approval artifact",
 )
-def plan_cmd(workflow_file: str, output_json: bool, supervision: str) -> None:
+@click.pass_context
+def plan_cmd(
+    ctx: click.Context,
+    workflow_file: str,
+    output_json: bool,
+    run_id: str | None,
+    supervision: str,
+) -> None:
     """Produce the overseer binding plan for a workflow."""
     from doeff_conductor.verbs import plan_workflow
-    from doeff_conductor.workflow_loader import load_workflow_spec
+    from doeff_conductor.workflow_loader import load_workflow_spec, snapshot_workflow_source
 
     try:
-        workflow = load_workflow_spec(workflow_file)
+        workflow_source = workflow_file
+        if run_id is not None:
+            from doeff_conductor.api import ConductorAPI
+
+            state_dir = ConductorAPI(ctx.obj.get("state_dir")).state_dir
+            workflow_source = str(
+                snapshot_workflow_source(
+                    workflow_file,
+                    state_dir=state_dir,
+                    run_id=run_id,
+                )
+            )
+        workflow = load_workflow_spec(workflow_source)
         plan = plan_workflow(workflow, supervision=supervision)
         if output_json:
             click.echo(json.dumps(plan.to_dict(), indent=2))
@@ -301,6 +321,54 @@ def run(
             # Watch workflow
             ctx.invoke(watch_cmd, workflow_id=workflow.id)
 
+    except _CLI_USER_ERROR_TYPES as e:
+        if output_json:
+            click.echo(json.dumps({"error": str(e)}))
+        else:
+            console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
+@cli.command("resume")
+@click.argument("workflow_id")
+@click.option("--params", "-p", help="Parameters as JSON")
+@click.option(
+    "--agent-mode",
+    type=click.Choice(["agentd", "codex-exec"]),
+    default="agentd",
+    envvar="CONDUCTOR_AGENT_MODE",
+    show_default=True,
+    show_envvar=True,
+    help="Agent backend to use for production agent effects",
+)
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def resume_cmd(
+    ctx: click.Context,
+    workflow_id: str,
+    params: str | None,
+    agent_mode: str,
+    output_json: bool,
+) -> None:
+    """Resume a workflow from its snapshotted source."""
+    from .api import ConductorAPI
+
+    api = ConductorAPI(ctx.obj.get("state_dir"))
+
+    try:
+        parsed_params = {}
+        if params:
+            parsed_params = json.loads(params)
+        workflow = api.resume_workflow(
+            workflow_id,
+            params=parsed_params,
+            agent_backend=agent_mode,
+        )
+        if output_json:
+            click.echo(json.dumps(workflow.to_dict(), indent=2))
+        else:
+            console.print(f"[green]Resumed workflow:[/green] {workflow.id}")
+            console.print(f"  Status: {workflow.status.value}")
     except _CLI_USER_ERROR_TYPES as e:
         if output_json:
             click.echo(json.dumps({"error": str(e)}))

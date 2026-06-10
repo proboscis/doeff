@@ -41,6 +41,12 @@ class TestGitHandler:
             check=True,
             capture_output=True,
         )
+        subprocess.run(
+            ["git", "branch", "-M", "main"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+        )
 
         return repo_path
 
