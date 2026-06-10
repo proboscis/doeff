@@ -34,6 +34,19 @@ def test_agent_cache_key_excludes_substrate() -> None:
     assert tmux_key == headless_key
 
 
+def test_agent_cache_key_changes_when_only_effort_differs() -> None:
+    """Effort affects the result distribution, so it must vary the cache key
+    directly — not only via the fingerprint helper (pins the property against
+    future restructuring of the key payload)."""
+    xhigh = ResolvedIdentity(adapter="codex", model="gpt-5", identity="company", effort="xhigh")
+    low = ResolvedIdentity(adapter="codex", model="gpt-5", identity="company", effort="low")
+
+    xhigh_key = agent_cache_key(prompt="p", schema=SCHEMA, resolved_identity=xhigh)
+    low_key = agent_cache_key(prompt="p", schema=SCHEMA, resolved_identity=low)
+
+    assert xhigh_key != low_key
+
+
 def test_agent_cache_key_changes_when_result_distribution_changes() -> None:
     codex = ResolvedIdentity(adapter="codex", model="gpt-5", identity="company")
     frontier = ResolvedIdentity(adapter="claude", model="opus-5", identity="company")

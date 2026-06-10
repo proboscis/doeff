@@ -100,9 +100,9 @@ Rules:
 - Resolution happens in ONE function. No ask-with-default fallbacks
   sprinkled at call sites or in handlers.
 - The **resolved fingerprint** (the result-distribution-affecting subset:
-  adapter kind, model, schema, prompt) is recorded in the effect journal.
-  Cache hits on resume require fingerprint match — a profile *name* whose
-  definition changed does not produce stale hits (§9).
+  adapter kind, model, effort, schema, prompt) is recorded in the effect
+  journal. Cache hits on resume require fingerprint match — a profile
+  *name* whose definition changed does not produce stale hits (§9).
 - **Verification class is never resolved** — it is task-intrinsic, required
   and explicit on every `agent!`, never inherited from a role, never
   defaulted. (Misclassification is audited by calibration sampling, ADR D4.)
@@ -520,7 +520,7 @@ because where to pause is a trust/stakes judgment extrinsic to the task:
   (author prompt, schema, resolved identity fingerprint) and L2 entries as
   handler-internal detail. Cache identity lives at L3.
 - **Cache-key criterion.** A field enters the cache key iff it affects the
-  result distribution: prompt, schema, adapter kind, model/identity
+  result distribution: prompt, schema, adapter kind, model/identity/effort
   fingerprint. **Substrate never enters** — a run started on a laptop
   (tmux) resumes in CI (headless) with caches intact. If a cache key ever
   *needs* a substrate noun, a layer has leaked.
