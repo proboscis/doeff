@@ -6,6 +6,7 @@ Provides a hierarchy of exceptions for specific error handling in workflows.
 
 
 from dataclasses import dataclass
+from pathlib import Path
 from subprocess import CalledProcessError
 
 
@@ -176,6 +177,18 @@ class AgentTimeoutError(AgentError):
         super().__init__(agent_id=agent_id, operation="wait", message=message)
 
 
+class JournalCorruptionError(ConductorError):
+    """Raised when a persisted effect journal is malformed or inconsistent."""
+
+    def __init__(self, path: str | Path | None = None, message: str | None = None):
+        self.path = path
+        if message is None:
+            message = "Effect journal is corrupt"
+        if path is not None:
+            message = f"{message}: {path}"
+        super().__init__(message)
+
+
 class PRError(ConductorError):
     """Raised when a PR operation fails.
 
@@ -210,6 +223,7 @@ __all__ = [
     "GitCommandError",
     "IssueAlreadyExistsError",
     "IssueNotFoundError",
+    "JournalCorruptionError",
     "PRError",
     "WorkspaceError",
 ]

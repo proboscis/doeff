@@ -15,10 +15,11 @@ from doeff_agents.effects import (  # re-exported for conductor callers
     deterministic_session_id,
 )
 
-from .base import ConductorEffectBase
+from doeff_conductor.effects.base import ConductorEffectBase
+from doeff_conductor.replay_keying import ResolvedIdentity
 
 if TYPE_CHECKING:
-    from ..types import Workspace
+    from doeff_conductor.types import Workspace
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -37,6 +38,7 @@ class AgentTask:
     profile: str | None = None
     model: str | None = None
     effort: str | None = None
+    resolved_identity: ResolvedIdentity | None = None
     max_retries: int = 2
     timeout_seconds: float | None = None
 
