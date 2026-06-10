@@ -12,8 +12,17 @@ A workflow with code review:
 """
 
 from doeff import EffectGenerator, do
-
-from ..types import Issue, PRHandle
+from doeff_conductor.effects import (
+    REVIEW_VERDICT_RESULT_SCHEMA,
+    Agent,
+    AgentTask,
+    Commit,
+    CreatePR,
+    CreateWorktree,
+    Push,
+    ResolveIssue,
+)
+from doeff_conductor.types import Issue, PRHandle
 
 IMPLEMENT_SCHEMA = {
     "type": "object",
@@ -24,15 +33,7 @@ IMPLEMENT_SCHEMA = {
     },
 }
 
-REVIEW_SCHEMA = {
-    "type": "object",
-    "required": ["verdict", "findings"],
-    "properties": {
-        "verdict": {"enum": ["PASS", "CHANGES_REQUESTED"]},
-        "findings": {"type": "array"},
-        "summary": {"type": "string"},
-    },
-}
+REVIEW_SCHEMA = REVIEW_VERDICT_RESULT_SCHEMA
 
 
 @do
@@ -49,8 +50,6 @@ def reviewed_pr(
     Returns:
         PRHandle for the created PR
     """
-    from ..effects import Agent, AgentTask, Commit, CreatePR, CreateWorktree, Push, ResolveIssue
-
     # Step 1: Create isolated worktree
     env = yield CreateWorktree(issue=issue)
 
