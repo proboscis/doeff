@@ -1989,7 +1989,7 @@ fn observed_status_for_snapshot(snapshot: &SessionSnapshot, output: &str) -> &'s
 /// keep serving turns indefinitely.  We only graduate to a terminal
 /// status when (a) Kind 2 and (b) the contract validates.
 fn output_indicates_turn_end(snapshot: &SessionSnapshot, output: &str) -> bool {
-    let idle = output_has_agent_idle_prompt(output) && !output_has_codex_active_marker(output);
+    let idle = output_has_agent_idle_prompt(output) && !output_has_agent_active_marker(output);
     let stable = output_is_stable(snapshot, output);
     idle && stable
 }
@@ -2206,6 +2206,20 @@ fn output_has_codex_active_marker(output: &str) -> bool {
     // it would make turn-end detection impossible on any pane that
     // has carried more than a couple of turns.
     text.contains("working (") || text.contains("esc to interrupt")
+}
+
+/// Active-work marker across supported agents.  Codex: see
+/// `output_has_codex_active_marker`.  Claude Code: the working spinner
+/// line, e.g. `✢ Swooping… (37s · ↓ 1.1k tokens · thinking…)` — the
+/// `… (` sequence (ellipsis + space + open-paren) appears only on the
+/// live spinner row; idle panes (input box, statusline, tips,
+/// collapsed-turn hints) never render it.
+fn output_has_agent_active_marker(output: &str) -> bool {
+    if output_has_codex_active_marker(output) {
+        return true;
+    }
+    let text = output_tail_lower(output, 30);
+    text.contains("… (")
 }
 
 /// Detect codex's interactive "Update available!" version-check dialog,
@@ -2454,21 +2468,15 @@ fn monitor_once(config: &Config) -> Result<()> {
             // agent's "active" marker — that confirms the prompt landed
             // in the REPL and the agent is actually working on it.
             //
-            // The marker alone is codex-specific ("Working (" / "esc to
-            // interrupt"); claude's working pane shows neither, so a
-            // marker-only latch never clears for claude and validation is
-            // suppressed forever (observed live: a claude session with a
-            // valid result file sat "blocked" while the launcher's awaits
-            // exhausted).  Pane INSTABILITY is the agent-agnostic pickup
-            // signal: a working agent redraws its spinner every second,
-            // while the stale pre-pickup pane stays byte-identical.  Worst
-            // case of clearing early (agent never picked up the prompt) is
-            // one duplicate retry prompt, bounded by max_retries — strictly
-            // better than the unbounded hang.
-            let active_marker_seen = output_has_codex_active_marker(&output);
-            if snapshot.awaiting_response
-                && (active_marker_seen || !output_is_stable(&snapshot, &output))
-            {
+            // The marker must be POSITIVE work evidence (codex's status
+            // row, claude's spinner line).  An earlier revision cleared
+            // the latch on mere pane instability; that re-armed turn-end
+            // inside the submit→spinner gap (a second or two of static
+            // pane right after the prompt is sent), fired validation
+            // before the agent had done anything, and burned the whole
+            // retry budget on a healthy worker (observed live).
+            let active_marker_seen = output_has_agent_active_marker(&output);
+            if snapshot.awaiting_response && active_marker_seen {
                 snapshot.awaiting_response = false;
             }
             // Record the first time the agent visibly finished startup.
@@ -2521,20 +2529,43 @@ fn monitor_once(config: &Config) -> Result<()> {
 
             let mut observed_status = raw_status;
 
-            if turn_ended && is_run_to_completion_lifecycle(&snapshot.lifecycle) {
+            // ARTIFACT-FIRST: for contract sessions, a result file that
+            // validates IS completion — accept it on any cycle, without
+            // waiting for turn-end.  Truth is the artifact, never the
+            // transcript: the pane heuristics below (turn-end, latch)
+            // exist only to drive the RETRY path, and misreading them
+            // must never delay or fail work whose artifact is already
+            // valid (observed live: a finished claude worker hung, then
+            // a healthy one failed, purely on pane-state misreads).
+            // An invalid or missing file on this path is NOT punished;
+            // retry feedback stays gated on turn-end.
+            let mut artifact_accepted = false;
+            if is_run_to_completion_lifecycle(&snapshot.lifecycle) {
+                if let Some(spec) = snapshot.expected_result.clone() {
+                    if let Ok(payload) = validate_expected_result(&snapshot.work_dir, &spec) {
+                        observed_status = "done";
+                        snapshot.last_validation_error = None;
+                        // Persist the validated payload NOW, on the same
+                        // tick that flips the session to "done" — the
+                        // worktree (and the result file inside it) is
+                        // reaped milliseconds later when cleanup runs, so
+                        // a payload kept only on disk is lost before the
+                        // launcher can await it.  build_await_response
+                        // serves this stored copy, decoupling result
+                        // delivery from the worktree's lifetime.
+                        snapshot.result_payload = serde_json::to_string(&payload).ok();
+                        artifact_accepted = true;
+                    }
+                }
+            }
+
+            if !artifact_accepted && turn_ended && is_run_to_completion_lifecycle(&snapshot.lifecycle)
+            {
                 match snapshot.expected_result.clone() {
                     Some(spec) => match validate_expected_result(&snapshot.work_dir, &spec) {
                         Ok(payload) => {
                             observed_status = "done";
                             snapshot.last_validation_error = None;
-                            // Persist the validated payload NOW, on the same
-                            // tick that flips the session to "done" — the
-                            // worktree (and the result file inside it) is
-                            // reaped milliseconds later when cleanup runs, so
-                            // a payload kept only on disk is lost before the
-                            // launcher can await it.  build_await_response
-                            // serves this stored copy, decoupling result
-                            // delivery from the worktree's lifetime.
                             snapshot.result_payload = serde_json::to_string(&payload).ok();
                         }
                         Err(reason) => {
@@ -3573,6 +3604,27 @@ mod tests {
         let working_t2 = "✢ Swooping… (38s · ↓ 1.2k tokens)\n\n❯\u{00A0}";
         snapshot.output_snippet = Some(working_t1.to_string());
         assert!(!output_indicates_turn_end(&snapshot, working_t2));
+    }
+
+    #[test]
+    fn agent_active_marker_recognizes_claude_spinner() {
+        // Live claude working pane: spinner verb + `… (` + tick timer.
+        assert!(output_has_agent_active_marker(
+            "✢ Swooping… (37s · ↓ 1.1k tokens · thinking)\n\n❯\u{00A0}"
+        ));
+        // Idle claude pane: input box + statusline, no spinner row.
+        assert!(!output_has_agent_active_marker(
+            "  done.\n\n❯\u{00A0}\n  🏢 ca  Fable 5 XHI\n  $9.55 │ ⏱ 21m44s(api 10m30s)"
+        ));
+        // Codex collapsed-turn hint must not read as active (the `… +9
+        // lines (` form has text between the ellipsis and the paren).
+        assert!(!output_has_agent_active_marker(
+            "… +9 lines (ctrl + t to view transcript)\n› "
+        ));
+        // Codex working row still counts.
+        assert!(output_has_agent_active_marker(
+            "Working (12s • esc to interrupt)"
+        ));
     }
 
     #[test]
