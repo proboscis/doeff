@@ -458,6 +458,52 @@ def workflow():
         assert handle.status == WorkflowStatus.DONE
         assert handle.pr_url == "runresult-url"
 
+    def test_run_workflow_accepts_dict_result_without_pr_handle_name_error(
+        self,
+        api: ConductorAPI,
+        tmp_path: Path,
+    ):
+        workflow_file = tmp_path / "dict_result_workflow.py"
+        workflow_file.write_text("""
+from doeff import Pure, do
+
+@do
+def workflow():
+    return (yield Pure({"status": "ok"}))
+""")
+
+        handle = api.run_workflow(str(workflow_file), run_id="stable-run")
+
+        assert handle.id == "stable-run"
+        assert handle.status == WorkflowStatus.DONE
+        assert handle.pr_url is None
+
+    def test_run_workflow_installs_scheduler_for_spawn_gather(
+        self,
+        api: ConductorAPI,
+        tmp_path: Path,
+    ):
+        workflow_file = tmp_path / "spawn_workflow.py"
+        workflow_file.write_text("""
+from doeff import Gather, Pure, Spawn, do
+
+@do
+def child(value):
+    return (yield Pure(value))
+
+@do
+def workflow():
+    left = yield Spawn(child("left"))
+    right = yield Spawn(child("right"))
+    values = yield Gather(left, right)
+    return {"values": list(values)}
+""")
+
+        handle = api.run_workflow(str(workflow_file), run_id="spawn-run")
+
+        assert handle.id == "spawn-run"
+        assert handle.status == WorkflowStatus.DONE
+
     def test_run_workflow_does_not_unwrap_non_run_result_value_objects(
         self,
         api: ConductorAPI,
