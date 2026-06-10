@@ -557,3 +557,27 @@ because where to pause is a trust/stakes judgment extrinsic to the task:
 4. **Calibration state store** — cross-run, level-triggered; v1 ships
    manual sampling rates + escape recording only (no autonomous rate
    adjustment).
+5. **Workspace effects are not journaled — resume divergence (CRITICAL,
+   observed live 2026-06-11).** Re-running a run-id re-creates fresh
+   worktrees (`workspace!` re-executes) while agent sessions re-adopt
+   their deterministic names: the re-adopted result points at work in the
+   ORIGINAL worktree, and downstream gates/reviews silently run against an
+   empty workspace — a false-positive green. `CreateWorkspace`/`Merge`
+   results must enter the replay journal under the same keying discipline
+   as agent calls (§9).
+6. **Runtime auto-commit captures session state.** The worker's agent
+   home lives inside the worktree as tracked files (`.agent-home/`), so
+   the post-agent-node `Commit` stages session-state mutations into work
+   commits. Either agent homes move outside the worktree or the
+   auto-commit excludes session-state paths (same class as the result
+   file's `info/exclude` treatment).
+7. **Await budget has no owning axis.** `AgentTask.timeout_seconds`
+   exists but nothing sets it; the effective default lives in L1
+   (3600s after the 2026-06-11 correction; was 600s, which burned a
+   healthy frontier worker's whole retry budget). Decide the owning
+   axis — profile tier, node, or stakes — and bind it explicitly like
+   effort.
+8. **agentd raw status misreads working claude sessions as `blocked`**
+   (the `❯` input box is visible mid-work). Cosmetic — contract
+   validation, not status labels, decides completion — but operators and
+   tooling read it; consider the activity signal for `running`.
