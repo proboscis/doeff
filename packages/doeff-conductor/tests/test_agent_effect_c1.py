@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,9 @@ from doeff_agents.result_validation import validate_result_payload
 from doeff_conductor import CreateWorkspace
 from doeff_conductor.effects import Agent, AgentAttemptExhaustedError, AgentEffect, AgentTask
 from doeff_conductor.handlers import run_sync
+from doeff_conductor.handlers.agent_handler import AgentHandler, CodexExecAgentBackend
 from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
+from doeff_conductor.types import Workspace
 
 from doeff import do
 
@@ -208,3 +211,53 @@ def test_real_codex_worker_returns_schema_valid_json_through_agent(tmp_path: Pat
 
     assert result.is_ok()
     assert result.value == {"summary": "codex schema ok", "files_changed": []}
+
+
+def test_agent_handler_codex_exec_mode_uses_native_structured_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = Workspace(
+        id="workspace-1",
+        repo="default",
+        ref="main",
+        base_ref="main",
+        created_at=datetime.now(timezone.utc),
+    )
+    def resolve_workspace(_workspace: Workspace) -> Path:
+        return tmp_path
+
+    handler = AgentHandler(
+        workspace_resolver=resolve_workspace,
+        backend=CodexExecAgentBackend(codex_home=tmp_path / "codex-home"),
+    )
+    task = AgentTask(
+        run_id="run-codex-exec",
+        node_id="implement",
+        attempt=0,
+        env=workspace,
+        prompt="return JSON",
+        result_schema=IMPLEMENT_SCHEMA,
+        verification_class="test-verifiable",
+        agent_type="codex",
+        max_retries=0,
+    )
+
+    def fake_run(
+        args: list[str],
+        **_kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        output_index = args.index("--output-last-message") + 1
+        output_path = Path(args[output_index])
+        output_path.write_text(
+            json.dumps({"summary": "ok", "files_changed": []}),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("doeff_conductor.handlers.agent_handler.shutil.which", lambda _: "codex")
+    monkeypatch.setattr("doeff_conductor.handlers.agent_handler.subprocess.run", fake_run)
+
+    result = handler.handle_agent(AgentEffect(task=task))
+
+    assert result == {"summary": "ok", "files_changed": []}

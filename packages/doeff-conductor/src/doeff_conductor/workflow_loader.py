@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import ModuleType
@@ -32,6 +33,7 @@ def load_workflow_spec(workflow_path_text: str) -> WorkflowSpec:
         raise ValueError(f"cannot load workflow: {workflow_path_text}")
 
     module: ModuleType = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
 
     candidate: Any

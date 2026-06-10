@@ -1,6 +1,5 @@
 """Workspace handler for the git medium family."""
 
-import os
 import secrets
 import shutil
 import subprocess
@@ -35,8 +34,7 @@ class _WorkspaceMaterialization:
 
 def _get_workspace_base_dir() -> Path:
     """Get the base directory for site-local workspace materializations."""
-    xdg_data = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
-    return Path(xdg_data) / "doeff-conductor" / "workspaces"
+    return Path.home() / ".local" / "share" / "doeff-conductor" / "workspaces"
 
 
 def _get_default_branch(repo_path: Path) -> str:
@@ -125,6 +123,7 @@ class WorkspaceHandler:
         repo_path: Path | None = None,
         *,
         repo_paths: "Mapping[str, Path] | None" = None,
+        workspace_base: Path | None = None,
     ) -> None:
         default_repo_path: Path = repo_path or _get_repo_root()
         resolved_repo_paths: dict[str, Path] = {"default": default_repo_path}
@@ -133,7 +132,7 @@ class WorkspaceHandler:
                 resolved_repo_paths[repo_name] = candidate_path
 
         self.repo_paths = resolved_repo_paths
-        self.workspace_base = _get_workspace_base_dir()
+        self.workspace_base = workspace_base or _get_workspace_base_dir()
         self.workspace_base.mkdir(parents=True, exist_ok=True)
         self.logs_dir = self.workspace_base / "logs"
         self.logs_dir.mkdir(parents=True, exist_ok=True)
@@ -312,4 +311,3 @@ class WorkspaceHandler:
 
         self._materializations.pop(effect.workspace.id, None)
         return True
-
