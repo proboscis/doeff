@@ -30,7 +30,7 @@ from doeff_conductor.dsl import (
     WorkflowSpec,
     WorkspaceSpec,
 )
-from doeff_conductor.effects import Agent, AgentTask, CreateWorkspace, Exec, MergeWorkspaces
+from doeff_conductor.effects import Agent, AgentTask, Commit, CreateWorkspace, Exec, MergeWorkspaces
 from doeff_conductor.environment import (
     ProfileBinding,
     ProfileRegistry,
@@ -314,7 +314,27 @@ def _execute_agent(
             max_retries=max_retries,
         )
     )
+    if workspace is not None:
+        # D5 mechanized: a worker's output exists only once it is on the
+        # workspace branch. Workers cannot be trusted to commit (prompt
+        # promises are banned), so the runtime commits the workspace after
+        # every successful agent node. Without this, merge! reconciles
+        # branches identical to base and silently merges nothing (observed
+        # live in the first end-to-end sample run).
+        yield _commit_agent_workspace(workspace, node_id)
     return result
+
+
+@do
+def _commit_agent_workspace(workspace: Workspace, node_id: str) -> Any:
+    """Commit a completed agent node's workspace changes, if any."""
+    return (
+        yield Commit(
+            workspace=workspace,
+            message=f"conductor: {node_id}",
+            skip_if_clean=True,
+        )
+    )
 
 
 @do
