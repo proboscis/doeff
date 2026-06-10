@@ -67,6 +67,7 @@ from .api import ConductorAPI
 from .effects import (
     Agent,
     AgentAttemptExhaustedError,
+    AgentCall,
     AgentEffect,
     AgentTask,
     AgentValidationErrorKind,
@@ -81,12 +82,24 @@ from .effects import (
     # Worktree
     CreateWorktree,
     DeleteWorktree,
+    GateCall,
     GetIssue,
     ListIssues,
+    MergeCall,
     MergeBranches,
     MergePR,
     Push,
+    RandomCall,
     ResolveIssue,
+    TimeCall,
+    WorkspaceCall,
+)
+from .replay_keying import (
+    ResolvedIdentity,
+    agent_cache_key,
+    longest_valid_prefix,
+    node_identity_fingerprint,
+    resolved_identity_fingerprint,
 )
 
 # Exceptions
@@ -152,6 +165,7 @@ __all__ = [
     "AgentAttemptExhaustedError",
     "AgentEffect",
     "AgentError",
+    "AgentCall",
     "AgentHandler",
     "AgentRef",
     "AgentTask",
@@ -169,6 +183,7 @@ __all__ = [
     # Effects - Issue
     "CreateIssue",
     "CreatePR",
+    "GateCall",
     # Effects - Worktree
     "CreateWorktree",
     "DeleteWorktree",
@@ -184,13 +199,18 @@ __all__ = [
     "IssueStatus",
     "ListIssues",
     "MergeBranches",
+    "MergeCall",
     "MergePR",
     "MergeStrategy",
     "MockConductorRuntime",
     "PRError",
     "PRHandle",
     "Push",
+    "RandomCall",
+    "ResolvedIdentity",
     "ResolveIssue",
+    "TimeCall",
+    "WorkspaceCall",
     "WorkflowHandle",
     "WorkflowStatus",
     "WorktreeEnv",
@@ -214,5 +234,9 @@ __all__ = [
     "mock_handlers",
     "multi_agent",
     "production_handlers",
+    "agent_cache_key",
+    "longest_valid_prefix",
+    "node_identity_fingerprint",
+    "resolved_identity_fingerprint",
     "reviewed_pr",
 ]
