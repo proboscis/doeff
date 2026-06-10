@@ -113,8 +113,8 @@ def multi_agent_pr(issue):
 ## CLI Commands
 
 ```bash
-# Workflow execution
-conductor run <template|file> [--issue FILE] [--params JSON] [--watch]
+# Workflow execution (workflow files are .hy modules in the Hy macro DSL)
+conductor run <template|file.hy> [--issue FILE] [--params JSON] [--watch]
 conductor ps [--status running|blocked|done]
 conductor show <workflow-id>
 conductor watch <workflow-id> [--agent NAME]
@@ -274,6 +274,7 @@ Workflow state is stored at `~/.local/state/doeff-conductor/`:
 
 | Example | Description |
 |---------|-------------|
+| [k2_k3_pilot_workflow.hy](./examples/k2_k3_pilot_workflow.hy) | Canonical Hy DSL workflow for `conductor plan/validate/run` |
 | [01_hello_workflow.py](./examples/01_hello_workflow.py) | Minimal workflow |
 | [02_issue_lifecycle.py](./examples/02_issue_lifecycle.py) | Issue management |
 | [03_basic_pr_workflow.py](./examples/03_basic_pr_workflow.py) | Complete PR workflow |
