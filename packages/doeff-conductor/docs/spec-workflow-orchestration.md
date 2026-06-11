@@ -576,12 +576,11 @@ because where to pause is a trust/stakes judgment extrinsic to the task:
 4. **Calibration state store** — cross-run, level-triggered; v1 ships
    manual sampling rates + escape recording only (no autonomous rate
    adjustment).
-5. **Runtime auto-commit captures session state.** The worker's agent
-   home lives inside the worktree as tracked files (`.agent-home/`), so
-   the post-agent-node `Commit` stages session-state mutations into work
-   commits. Either agent homes move outside the worktree or the
-   auto-commit excludes session-state paths (same class as the result
-   file's `info/exclude` treatment).
+5. **Runtime auto-commit captures session state — fixed e206be17.**
+   Conductor-created workspaces now install workspace-level `.gitignore`
+   entries for in-worktree runtime state (`.agent-home/`). The ignore lives
+   at workspace initialization, so post-agent-node `Commit`, manual
+   `git add -A`, and future workspace consumers all share the same behavior.
 6. **Await budget has no owning axis.** `AgentTask.timeout_seconds`
    exists but nothing sets it; the effective default lives in L1
    (3600s after the 2026-06-11 correction; was 600s, which burned a
@@ -605,4 +604,3 @@ because where to pause is a trust/stakes judgment extrinsic to the task:
 11. **`doeff-agents` CLI is blind to agentd sessions** (it reads the
    local-handler store) and `doeff-agentd` has no client subcommands;
    session-level monitoring currently requires reading agentd's sqlite.
-
