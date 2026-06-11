@@ -226,7 +226,7 @@ class TestGetWorkflow:
                 "updated_at": now.isoformat(),
             }))
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="Ambiguous") as exc_info:
             api.get_workflow("abc")
         assert "Ambiguous" in str(exc_info.value)
 
@@ -272,7 +272,7 @@ class TestStopWorkflow:
 
     def test_stop_nonexistent_workflow(self, api: ConductorAPI):
         """stop_workflow raises error for non-existent workflow."""
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="not found") as exc_info:
             api.stop_workflow("nonexistent")
         assert "not found" in str(exc_info.value)
 
@@ -393,7 +393,7 @@ class TestRunWorkflow:
 
     def test_run_workflow_file_not_found(self, api: ConductorAPI):
         """run_workflow raises error for non-existent file."""
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="not found") as exc_info:
             api.run_workflow("/nonexistent/workflow.hy")
         assert "not found" in str(exc_info.value)
 
@@ -554,7 +554,7 @@ class TestRunWorkflow:
                 self.value = SimpleNamespace(url="inner-url")
                 self.url = "outer-url"
 
-        monkeypatch.setattr("doeff.run", lambda *args, **kwargs: NonRunResultWithValue())
+        monkeypatch.setattr("doeff.run", lambda *_args, **_kwargs: NonRunResultWithValue())
 
         handle = api.run_workflow(str(workflow_file))
 
