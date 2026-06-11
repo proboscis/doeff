@@ -126,6 +126,64 @@ rules:
         - /packages/doeff-agents/src/doeff_agents/monitor.py
         - /packages/doeff-agents/src/doeff_agents/session.py
 
+  - id: doeff-agents-agentd-request-requires-result-key
+    languages: [python]
+    severity: ERROR
+    message: >
+      agents-fail-fast-protocol: successful doeff-agentd responses must validate
+      that the result key exists. Do not use response.get("result"), which turns
+      malformed ok=true payloads into None.
+    patterns:
+      - pattern-inside: |
+          def request(...):
+              ...
+      - pattern: return $RESPONSE.get("result")
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/agentd_client.py
+
+  - id: doeff-agents-await-result-requires-protocol-fields
+    languages: [python]
+    severity: ERROR
+    message: >
+      agents-fail-fast-protocol: session.await_result must validate required
+      payload fields explicitly. Do not use dict.get() for session or result,
+      because missing or malformed daemon fields must raise AgentdProtocolError.
+    patterns:
+      - pattern-inside: |
+          def _await_outcome_from_result(...):
+              ...
+      - pattern-either:
+          - pattern: $RESULT.get("session")
+          - pattern: $RESULT.get("result")
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/agentd_client.py
+
+  - id: doeff-agents-ready-promise-fail-fast
+    languages: [generic]
+    severity: ERROR
+    message: >
+      agents-fail-fast-protocol: MCP server startup must abort if ready_promise
+      completion fails. Logging and continuing into serve_forever leaves callers
+      waiting forever for readiness.
+    pattern-regex: 'except\s+Exception:\s*\n\s+log\.exception\("Failed to complete ready_promise"\)\s*\n\s*self\.serve_forever\(\)'
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/mcp_server.py
+
+  - id: doeff-agents-mcp-loop-catches-only-queue-empty
+    languages: [generic]
+    severity: ERROR
+    message: >
+      agents-fail-fast-protocol: mcp-server-loop may catch only queue.Empty when
+      draining request_queue. Catching Exception drops poisoned requests without
+      an error response.
+    pattern-regex: '\(except\s+\[[^\]]*\bException\b[^\]]*\]\s*\(setv\s+req\s+None\)\)'
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/handlers/mcp_server_loop.hy
+
   - id: adr0001-d1-agentd-only-worker-route
     languages: [python]
     severity: ERROR
