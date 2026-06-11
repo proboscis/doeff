@@ -84,16 +84,18 @@ state dirs, pane captures, or plan/validate outputs. ✅ = validated live,
 | Layer | Tool | Status |
 |---|---|---|
 | L3 workflows | `conductor ps / show [--since] / watch / stop / resume` | ✅ works (live-tested ps, show, show --json) |
-| L2 sessions | `doeff-agents ps / watch / output / send / attach` | ❌ reads local-handler store; BLIND to agentd sessions (conductor's only route) |
+| L2 sessions | `doeff-agents ps / watch / output / send / attach` | ❌→✅ now query `doeff-agentd` RPC (`session.list/get/capture/send`) as SSOT; daemon-down path is explicit fail-fast |
 | L1 daemon | `doeff-agentd` | serve only — no client subcommands; session table reachable only via sqlite |
 
-Gap: the L2 CLI predates the agentd-only ruling; it should query the
-daemon (single authority). Candidate follow-up issue.
+Resolved: L2 monitoring commands now query the daemon (single authority)
+instead of local tmux/session state. Follow-up cleanup candidate: decide
+whether legacy local tmux helpers for `run`/`stop` should remain in
+`doeff-agents` CLI scope.
 
 ## Open defects (spec §11)
 
 5. Workspace resume divergence — ✅ fixed b5854d60 (+ occurrence identity, F1/F2 review fixes)
-6. Auto-commit captures .agent-home session state — open
+6. Auto-commit captures .agent-home session state — ✅ fixed e206be17
 7. Await budget owning axis — open
 8. blocked-status cosmetic misread — open
 9. (candidate) doeff-agents CLI blind to agentd sessions — monitoring gap
