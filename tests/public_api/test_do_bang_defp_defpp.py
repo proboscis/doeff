@@ -179,8 +179,8 @@ class TestImportInsideDefpDefk:
         import os
         import sys
 
-        import doeff_hy  # noqa: F401
-        import hy  # noqa: F401
+        import doeff_hy  # noqa: F401 - registers Hy macro/import hooks for fixture import
+        import hy  # noqa: F401 - activates Hy reader for fixture import
 
         sys.path.insert(0, os.path.join(os.getcwd(), "tests"))
         sys.modules.pop("fixtures.repro_388", None)
