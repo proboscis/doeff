@@ -14,14 +14,14 @@ SECRET_PACKAGE_ROOT = Path(__file__).resolve().parents[3] / "doeff-secret" / "sr
 if str(SECRET_PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(SECRET_PACKAGE_ROOT))
 
-from doeff_core_effects.effects import EffectBase as Effect  # noqa: E402
+from doeff_core_effects.effects import EffectBase as Effect  # noqa: E402 - late import follows sys.path fixture setup
 from doeff_google_secret_manager import (  # noqa: E402
     SecretManagerClient,
     access_secret,
     get_secret_manager_client,
 )
 
-from doeff import (  # noqa: E402 - late import preserves existing import/setup order  # noqa: E402
+from doeff import (  # noqa: E402 - late import preserves existing import/setup order
     AskEffect,
     Pass,
     Resume,
@@ -30,7 +30,7 @@ from doeff import (  # noqa: E402 - late import preserves existing import/setup 
     do,
     run,
 )
-from doeff import Get as StateGetEffect  # noqa: E402
+from doeff import Get as StateGetEffect  # noqa: E402 - late import follows sys.path fixture setup
 from doeff import (  # noqa: E402 - late import preserves existing import/setup order
     Put as StatePutEffect,
 )
