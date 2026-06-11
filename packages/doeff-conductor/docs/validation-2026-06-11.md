@@ -16,7 +16,7 @@ state dirs, pane captures, or plan/validate outputs. ✅ = validated live,
 | `run` end-to-end real workers | ✅ | sample-hardening (run 6), effort-axis-review3 |
 | Profile semantic names → adapter binding | ✅ | frontier→claude, cheap→codex observed |
 | model=None → CLI default | ✅ | Fable 5 via baked agent-home settings |
-| effort = profile axis → fingerprint | ✅ | effort-axis merge c37f5534; live argv pending daemon rebuild |
+| effort = profile axis → fingerprint | 🧪 | effort-axis merge c37f5534; live argv delivery was pending for this §1 check |
 | Routing discipline (frontier for invariants) | ✅ | A/B evidence + tonight's runs |
 
 ## §4 DSL + loader
@@ -83,7 +83,8 @@ state dirs, pane captures, or plan/validate outputs. ✅ = validated live,
 
 | Layer | Tool | Status |
 |---|---|---|
-| L3 workflows | `conductor ps / show [--since] / watch / stop / resume` | ✅ works (live-tested ps, show, show --json) |
+| L3 workflows (live-tested) | `conductor ps / show / show --json` | ✅ works (live-tested ps, show, show --json) |
+| L3 workflows (implemented; live probe pending) | `conductor show --since / watch / stop / resume` | ⬜ CLI surface exists; no live workflow probe recorded in this matrix |
 | L2 sessions | `doeff-agents ps / watch / output / send / attach` | ❌→✅ now query `doeff-agentd` RPC (`session.list/get/capture/send`) as SSOT; daemon-down path is explicit fail-fast |
 | L1 daemon | `doeff-agentd` | serve only — no client subcommands; session table reachable only via sqlite |
 
