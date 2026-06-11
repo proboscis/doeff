@@ -235,7 +235,15 @@ def _execute_loop(
     for iteration_index in range(spec.max_iterations):
         body_bindings_before_iteration: set[str] = set(context.bindings)
         for form_index, form in enumerate(spec.body):
-            form_path: str = _path_join(_path_join(path, "loop"), str(form_index))
+            # The iteration index is part of every body node's identity
+            # (mirroring node_identity_fingerprint's loop_indices): agent
+            # sessions are re-adopted by deterministic name, so a path
+            # without the iteration made round 2 re-adopt round 1's DONE
+            # session and return its stale result instead of doing new
+            # work (observed live: a fix loop that never converged).
+            form_path: str = _path_join(
+                _path_join(path, f"loop[{iteration_index}]"), str(form_index)
+            )
             last_value = yield _execute_form(
                 form,
                 context,

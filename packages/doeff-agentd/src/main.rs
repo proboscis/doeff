@@ -217,7 +217,7 @@ struct SessionSnapshot {
     /// startup spinner.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     observed_active_at: Option<String>,
-    /// The validated result payload, captured from `DEFAULT_RESULT_FILE`
+    /// The validated result payload, captured from the per-session result file
     /// at the moment the monitor accepted it (status → `done`).  Stored as
     /// the serialized JSON object the agent wrote.  This is the durable
     /// copy `session.await_result` returns: the result file lives in the
@@ -271,7 +271,7 @@ struct ExpectedResultSpec {
     /// `validate_against_schema`) the agent's result must satisfy.  This
     /// is the ONLY thing the launcher supplies.  agentd owns the entire
     /// transmission contract: it picks the result file path
-    /// (`DEFAULT_RESULT_FILE`), injects the how/where instruction into
+    /// (per-session `result_file_name`), injects the how/where instruction into
     /// the agent (`result_protocol_instruction`), reads the file and
     /// validates its content directly against this schema, and re-prompts
     /// on violation.  The schema is opaque to agentd — it enforces
@@ -291,25 +291,36 @@ struct ExpectedResultSpec {
     max_retries: u32,
 }
 
-/// Default result-file name agentd uses when the launcher does not name
-/// one.  Dot-prefixed so it stays out of the way; agentd also adds it to
-/// `.git/info/exclude` (see `ignore_result_file`) so a result written
-/// into the agent's git worktree never dirties `git status` or lands in
-/// a commit.  The name is agentd's own — the launcher (e.g. ACP) never
-/// learns it, keeping the transmission contract entirely inside agentd.
-const DEFAULT_RESULT_FILE: &str = ".agentd-result.json";
+/// Glob registered in `.git/info/exclude` (see `ignore_result_file`) so
+/// per-session result files written into the agent's git worktree never
+/// dirty `git status` or land in a commit.
+const RESULT_FILE_EXCLUDE_GLOB: &str = ".agentd-result-*.json";
+
+/// Per-SESSION result-file name.  The name is agentd's own — the launcher
+/// never learns it, keeping the transmission contract entirely inside
+/// agentd.  It must be per-session, not per-workdir: several sessions can
+/// share one workdir (conductor's shared-workspace workflows), and a fixed
+/// name let a later agent's contract validate against an EARLIER agent's
+/// stale result — the second agent was marked done (and its pane reaped
+/// mid-work) without doing anything (observed live: a fan-out where only
+/// the first writer's work existed, and a fix loop that never converged
+/// because each fixer was instantly 'done' with its predecessor's result).
+fn result_file_name(session_id: &str) -> String {
+    format!(".agentd-result-{session_id}.json")
+}
 
 /// The instruction agentd injects into the agent's first prompt telling
 /// it HOW and WHERE to emit its result.  This is agentd's transmission
 /// contract with the tmux agent — the launcher never authors it, so a
 /// launcher that knows only the data schema still gets a working result
 /// channel.  The agent writes the result object directly; agentd reads
-/// it from `DEFAULT_RESULT_FILE` and validates it against the launcher's
-/// `payload_schema`.
-fn result_protocol_instruction() -> String {
+/// it from the session's `result_file_name` and validates it against the
+/// launcher's `payload_schema`.
+fn result_protocol_instruction(session_id: &str) -> String {
+    let file_name = result_file_name(session_id);
     format!(
         "\n\n---\nWhen you have finished the task, WRITE your result as a single JSON \
-         object to the file '{DEFAULT_RESULT_FILE}' in your current working directory.  \
+         object to the file '{file_name}' in your current working directory.  \
          agentd reads that file, validates it, and — if it is missing or does not \
          satisfy the contract — sends the reason back so you can fix it; rewrite the \
          file and do NOT exit until it is accepted.  Write only the result object \
@@ -1176,7 +1187,7 @@ fn session_launch(
     // commits from never dirties `git status` or lands in a PR.  Local
     // (`.git/info/exclude`) so no tracked `.gitignore` is touched.
     if params.expected_result.is_some() {
-        if let Err(err) = ignore_result_file(&params.work_dir, DEFAULT_RESULT_FILE) {
+        if let Err(err) = ignore_result_file(&params.work_dir, RESULT_FILE_EXCLUDE_GLOB) {
             eprintln!(
                 "doeff-agentd: warning: could not register result file in git exclude for {}: {err:#}",
                 params.work_dir
@@ -1210,7 +1221,7 @@ fn session_launch(
                 // describes WHAT data to report; agentd adds where to
                 // put it and how it is validated.
                 let full_prompt = if params.expected_result.is_some() {
-                    format!("{prompt}{}", result_protocol_instruction())
+                    format!("{prompt}{}", result_protocol_instruction(&params.session_id))
                 } else {
                     prompt.clone()
                 };
@@ -1571,7 +1582,7 @@ fn build_await_response(snapshot: &SessionSnapshot) -> Value {
                     result_value = Value::Object(result_obj);
                     validation_error = None;
                 }
-                None => match validate_expected_result(&snapshot.work_dir, spec) {
+                None => match validate_expected_result(&snapshot.work_dir, &snapshot.session_id, spec) {
                     Ok(parsed) => {
                         // The file content IS the payload — no envelope.
                         // Hand it back under `payload` so the caller's await
@@ -2550,7 +2561,7 @@ fn monitor_once(config: &Config) -> Result<()> {
             let mut artifact_accepted = false;
             if is_run_to_completion_lifecycle(&snapshot.lifecycle) {
                 if let Some(spec) = snapshot.expected_result.clone() {
-                    if let Ok(payload) = validate_expected_result(&snapshot.work_dir, &spec) {
+                    if let Ok(payload) = validate_expected_result(&snapshot.work_dir, &snapshot.session_id, &spec) {
                         observed_status = "done";
                         snapshot.last_validation_error = None;
                         // Persist the validated payload NOW, on the same
@@ -2570,7 +2581,7 @@ fn monitor_once(config: &Config) -> Result<()> {
             if !artifact_accepted && turn_ended && is_run_to_completion_lifecycle(&snapshot.lifecycle)
             {
                 match snapshot.expected_result.clone() {
-                    Some(spec) => match validate_expected_result(&snapshot.work_dir, &spec) {
+                    Some(spec) => match validate_expected_result(&snapshot.work_dir, &snapshot.session_id, &spec) {
                         Ok(payload) => {
                             observed_status = "done";
                             snapshot.last_validation_error = None;
@@ -2670,7 +2681,7 @@ fn monitor_once(config: &Config) -> Result<()> {
 /// success return the parsed payload.  `Ok(value)` when the file exists,
 /// parses as JSON, and satisfies `payload_schema`.  The file content IS
 /// the result — there is no envelope and agentd owns the path
-/// (`DEFAULT_RESULT_FILE`).  The `Err(String)` carries a one-line
+/// (the per-session `result_file_name`).  The `Err(String)` carries a one-line
 /// explanation suitable for the retry prompt and the session's
 /// `last_validation_error` audit field.
 ///
@@ -2683,9 +2694,10 @@ fn monitor_once(config: &Config) -> Result<()> {
 /// between them.
 fn validate_expected_result(
     work_dir: &str,
+    session_id: &str,
     spec: &ExpectedResultSpec,
 ) -> std::result::Result<serde_json::Value, String> {
-    let path = Path::new(work_dir).join(DEFAULT_RESULT_FILE);
+    let path = Path::new(work_dir).join(result_file_name(session_id));
     let raw = match fs::read_to_string(&path) {
         Ok(contents) => contents,
         Err(err) => {
@@ -3672,7 +3684,7 @@ mod tests {
     }
 
     /// A spec carrying just a schema, as the single-protocol launcher
-    /// sends it: agentd owns the path (`DEFAULT_RESULT_FILE`) and the
+    /// sends it: agentd owns the path (per-session `result_file_name`) and the
     /// retry policy; the launcher supplies only `payload_schema`.
     fn schema_only_spec(schema: Value) -> ExpectedResultSpec {
         ExpectedResultSpec {
@@ -3689,19 +3701,19 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let work_dir = tmp.path().to_path_buf();
         fs::write(
-            work_dir.join(DEFAULT_RESULT_FILE),
+            work_dir.join(result_file_name("test-session")),
             r#"{"pr_url":"https://x","pr_head_sha":"abc123","branch":"feat/x"}"#,
         )
         .expect("write result");
         let spec = schema_only_spec(impl_result_payload_schema());
-        assert!(validate_expected_result(work_dir.to_str().unwrap(), &spec).is_ok());
+        assert!(validate_expected_result(work_dir.to_str().unwrap(), "test-session", &spec).is_ok());
     }
 
     #[test]
     fn validate_expected_result_rejects_missing_file() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let spec = schema_only_spec(impl_result_payload_schema());
-        let err = validate_expected_result(tmp.path().to_str().unwrap(), &spec)
+        let err = validate_expected_result(tmp.path().to_str().unwrap(), "test-session", &spec)
             .expect_err("missing file should reject");
         assert!(err.contains("not readable"), "got: {err}");
     }
@@ -3710,10 +3722,10 @@ mod tests {
     fn validate_expected_result_rejects_result_not_satisfying_schema() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let work_dir = tmp.path().to_path_buf();
-        fs::write(work_dir.join(DEFAULT_RESULT_FILE), r#"{"pr_url":""}"#)
+        fs::write(work_dir.join(result_file_name("test-session")), r#"{"pr_url":""}"#)
             .expect("write bad result");
         let spec = schema_only_spec(impl_result_payload_schema());
-        let err = validate_expected_result(work_dir.to_str().unwrap(), &spec)
+        let err = validate_expected_result(work_dir.to_str().unwrap(), "test-session", &spec)
             .expect_err("empty pr_url should fail the schema");
         assert!(err.contains("does not satisfy"), "got: {err}");
     }
@@ -3723,22 +3735,22 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let work_dir = tmp.path().to_path_buf();
         fs::create_dir_all(work_dir.join(".git")).expect("fake .git");
-        ignore_result_file(work_dir.to_str().unwrap(), DEFAULT_RESULT_FILE)
+        ignore_result_file(work_dir.to_str().unwrap(), RESULT_FILE_EXCLUDE_GLOB)
             .expect("register exclude");
         let exclude = fs::read_to_string(work_dir.join(".git").join("info").join("exclude"))
             .expect("exclude file written");
         assert!(
-            exclude.lines().any(|l| l.trim() == format!("/{DEFAULT_RESULT_FILE}")),
+            exclude.lines().any(|l| l.trim() == format!("/{RESULT_FILE_EXCLUDE_GLOB}")),
             "exclude should contain the result file, got: {exclude}"
         );
         // Idempotent: a second call does not duplicate the entry.
-        ignore_result_file(work_dir.to_str().unwrap(), DEFAULT_RESULT_FILE)
+        ignore_result_file(work_dir.to_str().unwrap(), RESULT_FILE_EXCLUDE_GLOB)
             .expect("register exclude again");
         let exclude2 = fs::read_to_string(work_dir.join(".git").join("info").join("exclude"))
             .expect("exclude file still there");
         let count = exclude2
             .lines()
-            .filter(|l| l.trim() == format!("/{DEFAULT_RESULT_FILE}"))
+            .filter(|l| l.trim() == format!("/{RESULT_FILE_EXCLUDE_GLOB}"))
             .count();
         assert_eq!(count, 1, "entry must not be duplicated, got: {exclude2}");
     }
@@ -3766,13 +3778,13 @@ mod tests {
         )
         .expect("write .git pointer file");
 
-        ignore_result_file(work_dir.to_str().unwrap(), DEFAULT_RESULT_FILE)
+        ignore_result_file(work_dir.to_str().unwrap(), RESULT_FILE_EXCLUDE_GLOB)
             .expect("register exclude via worktree common dir");
 
         let common_exclude = fs::read_to_string(common_git.join("info").join("exclude"))
             .expect("exclude written into the COMMON git dir");
         assert!(
-            common_exclude.lines().any(|l| l.trim() == format!("/{DEFAULT_RESULT_FILE}")),
+            common_exclude.lines().any(|l| l.trim() == format!("/{RESULT_FILE_EXCLUDE_GLOB}")),
             "common exclude should contain the result file, got: {common_exclude}"
         );
         // It must NOT have been written into the per-worktree gitdir,
@@ -3884,12 +3896,12 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let work_dir = tmp.path().to_path_buf();
         fs::write(
-            work_dir.join(DEFAULT_RESULT_FILE),
+            work_dir.join(result_file_name("test-session")),
             r#"{"pr_url":"","pr_head_sha":"","branch":""}"#,
         )
         .expect("write result");
         let spec = schema_only_spec(impl_result_payload_schema());
-        let err = validate_expected_result(work_dir.to_str().unwrap(), &spec)
+        let err = validate_expected_result(work_dir.to_str().unwrap(), "test-session", &spec)
             .expect_err("blank identity must fail the contract");
         assert!(err.contains("result does not satisfy its schema"), "got: {err}");
     }
@@ -4157,7 +4169,7 @@ mod tests {
         let work_dir = tmp.path().join("work");
         fs::create_dir_all(&work_dir).expect("mkdir work_dir");
         fs::write(
-            work_dir.join(DEFAULT_RESULT_FILE),
+            work_dir.join(result_file_name("await-with-contract")),
             r#"{"verdict":"ok","notes":"clean"}"#,
         )
         .expect("write result");
