@@ -1,6 +1,7 @@
 """Tests for the cooperative scheduler."""
 
 import sys
+import threading
 from types import FrameType
 from typing import Any
 
@@ -8,8 +9,10 @@ from doeff_core_effects.scheduler import (
     PRIORITY_IDLE,
     Cancel,
     CompletePromise,
+    CreateExternalPromise,
     CreatePromise,
     Gather,
+    Race,
     Spawn,
     Task,
     TaskCancelledError,
@@ -19,6 +22,29 @@ from doeff_core_effects.scheduler import (
 
 from doeff import EffectBase, Pass, Resume, do
 from doeff import run as doeff_run
+
+RACE_TIMEOUT_SECONDS = 2
+
+
+def _run_race_with_timeout(program: Any) -> Any:
+    result: dict[str, Any] = {}
+    error: dict[str, BaseException] = {}
+
+    def _worker() -> None:
+        try:
+            result["value"] = doeff_run(scheduled(program))
+        except BaseException as exc:  # pragma: no cover - test helper
+            error["value"] = exc
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+    thread.join(timeout=RACE_TIMEOUT_SECONDS)
+    assert not thread.is_alive(), f"Race did not complete within {RACE_TIMEOUT_SECONDS}s"
+
+    if "value" in error:
+        raise error["value"]
+
+    return result["value"]
 
 
 def _count_waitable_status_calls_for_gather(total: int) -> int:
@@ -212,6 +238,157 @@ class TestGather:
                 return "cancelled"
 
         assert doeff_run(scheduled(body())) == "cancelled"
+
+
+# ---------------------------------------------------------------------------
+# Race
+# ---------------------------------------------------------------------------
+
+class TestRace:
+    def test_race_wakes_when_second_pending_task_completes(self):
+        """Race wakes on the winning pending task even when it is not first."""
+        @do
+        def blocked(gate: Any):
+            return (yield Wait(gate.future))
+
+        @do
+        def worker(gate: Any, value: str):
+            _ = yield Wait(gate.future)
+            return value
+
+        @do
+        def release_fast(gate: Any):
+            yield CompletePromise(gate, None)
+
+        @do
+        def body():
+            blocked_gate = yield CreatePromise()
+            fast_gate = yield CreatePromise()
+            blocked_task = yield Spawn(blocked(blocked_gate))
+            fast_task = yield Spawn(worker(fast_gate, "fast"))
+            _ = yield Spawn(release_fast(fast_gate), priority=PRIORITY_IDLE)
+            return (yield Race(blocked_task, fast_task))
+
+        assert _run_race_with_timeout(body()) == "fast"
+
+    def test_race_wakes_when_third_pending_task_completes(self):
+        @do
+        def blocked(gate: Any):
+            return (yield Wait(gate.future))
+
+        @do
+        def worker(gate: Any, value: str):
+            _ = yield Wait(gate.future)
+            return value
+
+        @do
+        def release_winner(gate: Any):
+            yield CompletePromise(gate, None)
+
+        @do
+        def body():
+            first_gate = yield CreatePromise()
+            second_gate = yield CreatePromise()
+            third_gate = yield CreatePromise()
+            first_task = yield Spawn(blocked(first_gate))
+            second_task = yield Spawn(blocked(second_gate))
+            third_task = yield Spawn(worker(third_gate, "third"))
+            _ = yield Spawn(release_winner(third_gate), priority=PRIORITY_IDLE)
+            return (yield Race(first_task, second_task, third_task))
+
+        assert _run_race_with_timeout(body()) == "third"
+
+    def test_race_raises_when_pending_winner_fails(self):
+        @do
+        def blocked(gate: Any):
+            return (yield Wait(gate.future))
+
+        @do
+        def failing(gate: Any):
+            _ = yield Wait(gate.future)
+            raise RuntimeError("race failure")
+            yield
+
+        @do
+        def release_failure(gate: Any):
+            yield CompletePromise(gate, None)
+
+        @do
+        def body():
+            blocked_gate = yield CreatePromise()
+            failure_gate = yield CreatePromise()
+            blocked_task = yield Spawn(blocked(blocked_gate))
+            failing_task = yield Spawn(failing(failure_gate))
+            _ = yield Spawn(release_failure(failure_gate), priority=PRIORITY_IDLE)
+            try:
+                yield Race(blocked_task, failing_task)
+                return "should not reach"
+            except RuntimeError as error:
+                return str(error)
+
+        assert _run_race_with_timeout(body()) == "race failure"
+
+    def test_race_raises_when_pending_winner_is_cancelled(self):
+        @do
+        def blocked(gate: Any):
+            return (yield Wait(gate.future))
+
+        @do
+        def cancel_task(task: Any):
+            yield Cancel(task)
+
+        @do
+        def body():
+            blocked_gate = yield CreatePromise()
+            cancelled_gate = yield CreatePromise()
+            blocked_task = yield Spawn(blocked(blocked_gate))
+            cancelled_task = yield Spawn(blocked(cancelled_gate))
+            _ = yield Spawn(cancel_task(cancelled_task), priority=PRIORITY_IDLE)
+            try:
+                yield Race(blocked_task, cancelled_task)
+                return "should not reach"
+            except TaskCancelledError:
+                return "cancelled"
+
+        assert _run_race_with_timeout(body()) == "cancelled"
+
+    def test_race_duplicate_waitable_resolves_once(self):
+        @do
+        def worker(gate: Any):
+            _ = yield Wait(gate.future)
+            return "duplicate"
+
+        @do
+        def release_gate(gate: Any):
+            yield CompletePromise(gate, None)
+
+        @do
+        def body():
+            gate = yield CreatePromise()
+            task = yield Spawn(worker(gate))
+            _ = yield Spawn(release_gate(gate), priority=PRIORITY_IDLE)
+            return (yield Race(task, task))
+
+        assert _run_race_with_timeout(body()) == "duplicate"
+
+    def test_race_resolves_once_when_waitables_complete_back_to_back(self):
+        events: list[str] = []
+
+        @do
+        def complete_both(first: Any, second: Any):
+            first.complete("first")
+            second.complete("second")
+
+        @do
+        def body():
+            first = yield CreateExternalPromise()
+            second = yield CreateExternalPromise()
+            _ = yield Spawn(complete_both(first, second), priority=PRIORITY_IDLE)
+            winner = yield Race(first.future, second.future)
+            events.append(f"winner:{winner}")
+            return list(events)
+
+        assert _run_race_with_timeout(body()) == ["winner:first"]
 
 
 # ---------------------------------------------------------------------------

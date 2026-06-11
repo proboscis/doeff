@@ -221,6 +221,18 @@ rules:
         - /packages/doeff-conductor/src/doeff_conductor/handlers/git_handler.py
         - /packages/doeff-conductor/src/doeff_conductor/effects/git.py
 
+  - id: conductor-workspace-runtime-exclude-not-gitignore
+    languages: [generic]
+    severity: ERROR
+    message: >
+      conductor-workspace-exclude-not-gitignore: workspace runtime state must be
+      excluded via `git rev-parse --git-path info/exclude` from the worktree.
+      Never mutate the tracked workspace .gitignore during materialization.
+    pattern-regex: '\.gitignore'
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/handlers/workspace_handler.py
+
   - id: http-request-handlers-use-defhandler
     languages: [python]
     severity: ERROR
@@ -3714,3 +3726,40 @@ rules:
       include:
         - "**/packages/doeff-vm-core/src/**/*.rs"
     pattern-regex: 'Continuation::(?:new|single)\([^;\n]*orphan_queue'
+
+  # ---------------------------------------------------------------------------
+  # K4 PARALLEL-AWAIT BRIDGE (ADR D11, L-K4-1)
+  # ---------------------------------------------------------------------------
+
+  - id: k4-no-blocking-agent-handler
+    languages: [python]
+    severity: ERROR
+    message: >
+      ADR D11 / L-K4-1: AgentEffect must not use make_blocking_scheduled_handler.
+      The agent handler performs unbounded blocking I/O (agentd await_result RPC)
+      that freezes the cooperative scheduler and serialises parallel branches.
+      Use make_offloaded_scheduled_handler instead, which bridges the blocking
+      call through ExternalPromise + daemon thread.
+    pattern: |
+      (AgentEffect, make_blocking_scheduled_handler($HANDLER))
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/handlers/**
+
+  - id: k4-no-sync-await-result-in-scheduled-handler
+    languages: [python]
+    severity: ERROR
+    message: >
+      ADR D11 / L-K4-1: do not call await_result() synchronously inside a
+      make_scheduled_handler or make_blocking_scheduled_handler wrapper.
+      Unbounded blocking I/O in a handler freezes the cooperative scheduler.
+      Use make_offloaded_scheduled_handler to bridge the call through
+      ExternalPromise + daemon thread.
+    patterns:
+      - pattern-inside: |
+          make_blocking_scheduled_handler($HANDLER)
+      - pattern: $OBJ.await_result(...)
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/handlers/**
+        - /packages/doeff-agents/src/doeff_agents/handlers/**
