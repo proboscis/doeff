@@ -267,9 +267,11 @@ workspace, `merge!`) derives its workspace id — hence its branch and
 worktree — deterministically from `(run-id, workspace-node identity)`, and
 materialization is idempotent ensure-style (re-adopt when present,
 re-materialize from the branch when the worktree is missing, create from
-the base ref exactly once per identity lifetime). This mirrors D6's
-deterministic session names and keeps workspace effects out of the replay
-journal.
+the base ref exactly once per identity lifetime). For explicit
+`workspace!`, the node identity is the EXPRESSION's source-order
+occurrence, never the evaluation site: one `workspace!` value shared by
+several nodes is one workspace. This mirrors D6's deterministic session
+names and keeps workspace effects out of the replay journal.
 
 ### D6 — Layer boundaries and the L2 session algebra
 

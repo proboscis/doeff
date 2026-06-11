@@ -139,3 +139,83 @@ def test_different_run_id_binds_different_workspace_identity(
 
     assert len(captured_runs) == 2
     assert set(captured_runs[0]).isdisjoint(set(captured_runs[1]))
+
+
+SHARED_SETV_SOURCE = """
+(require doeff-hy.conductor [defworkflow agent! workspace! <-])
+(import doeff_conductor.dsl [artifact prompt ref])
+
+(setv RESULT-SCHEMA {"type" "object"
+                     "required" ["summary"]
+                     "properties" {"summary" {"type" "string"}}
+                     "additionalProperties" False})
+
+(setv ws (workspace! :from "main"))
+
+(defworkflow shared-setv-workflow
+  :params {}
+  :roles {"implementer" {"profile" "cheap-coder" "retry" 0}}
+  (<- a (agent! :role "implementer"
+                :class "test-verifiable"
+                :prompt (prompt "write on the shared workspace")
+                :schema RESULT-SCHEMA
+                :workspace ws
+                :label "a"))
+  (<- b (agent! :role "implementer"
+                :class "test-verifiable"
+                :prompt (prompt "gate on the same shared workspace")
+                :schema RESULT-SCHEMA
+                :workspace ws
+                :label "b"))
+  (artifact [(ref "a") (ref "b")]))
+
+(setv WORKFLOW shared-setv-workflow)
+""".lstrip()
+
+
+def test_module_level_setv_workspace_is_one_workspace_and_resume_stable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Identity belongs to the workspace EXPRESSION, not the evaluation site.
+
+    The dominant authoring pattern binds one module-level
+    ``(setv ws (workspace! ...))`` and shares it across nodes; that is ONE
+    workspace.  Keying identity by evaluation site instead silently gave
+    every consumer a fresh worktree — so a gate tested a different tree
+    than the implementer wrote to (caught live, 2026-06-11).
+    """
+    workflow_path = tmp_path / "shared_setv.hy"
+    workflow_path.write_text(SHARED_SETV_SOURCE, encoding="utf-8")
+
+    captured_runs: list[list[str]] = []
+
+    import doeff_conductor.handlers as handlers_module
+
+    def production_handlers(**_: object):
+        runtime = MockConductorRuntime(tmp_path / f"runtime-{len(captured_runs)}")
+        run_capture: list[str] = []
+        captured_runs.append(run_capture)
+
+        def capture_create_workspace(effect: CreateWorkspace) -> Workspace:
+            run_capture.append(effect.workspace_id)
+            return runtime.handle_create_workspace(effect)
+
+        return mock_handlers(
+            runtime=runtime,
+            overrides={CreateWorkspace: capture_create_workspace},
+        )
+
+    monkeypatch.setattr(handlers_module, "production_handlers", production_handlers)
+
+    api = ConductorAPI(state_dir=tmp_path / "state")
+    first = api.run_workflow(str(workflow_path), run_id="shared-run")
+    second = api.run_workflow(str(workflow_path), run_id="shared-run")
+
+    assert first.status == WorkflowStatus.DONE
+    assert second.status == WorkflowStatus.DONE
+
+    # Both consumers materialize the SAME workspace exactly once.
+    assert len(captured_runs[0]) == 1
+    # ...and re-running the same run id re-binds the same identity.
+    assert captured_runs[1] == captured_runs[0]
