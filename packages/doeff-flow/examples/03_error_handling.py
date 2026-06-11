@@ -70,7 +70,7 @@ def process_user_data(user_id: int):
 
     # Step 1: Fetch user
     user = yield fetch_user(user_id)
-    yield slog(step="data", status="got_user", name=user['name'])
+    yield slog(step="data", status="got_user", name=user["name"])
 
     # Step 2: Fetch orders
     orders = yield fetch_orders(user_id)
