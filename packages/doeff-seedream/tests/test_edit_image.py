@@ -16,6 +16,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
+from doeff_core_effects.effects import EffectBase as Effect
 from doeff_seedream import SeedreamClient, edit_image__seedream4, get_seedream_client
 
 from doeff import (
@@ -29,7 +30,6 @@ from doeff import (
     default_handlers,
     do,
 )
-from doeff_core_effects.effects import EffectBase as Effect
 
 
 class RecordingSeedreamClient(SeedreamClient):
