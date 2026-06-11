@@ -18,6 +18,7 @@ from doeff_conductor.cli import cli
 from doeff_conductor.types import (
     Issue,
     IssueStatus,
+    WorkflowStatus,
     Workspace,
 )
 
@@ -47,6 +48,59 @@ class TestCLIBase:
 
 class TestWorkflowCommands(TestCLIBase):
     """Tests for workflow-related CLI commands."""
+
+    def _write_workflow_meta(
+        self,
+        state_dir: Path,
+        workflow_id: str,
+        status: WorkflowStatus,
+    ) -> None:
+        workflow_dir = state_dir / "workflows" / workflow_id
+        workflow_dir.mkdir(parents=True)
+        now = datetime.now(timezone.utc)
+        workflow_data = {
+            "id": workflow_id,
+            "name": f"{workflow_id}-workflow",
+            "status": status.value,
+            "created_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+            "workspaces": [],
+            "agents": [],
+        }
+        (workflow_dir / "meta.json").write_text(json.dumps(workflow_data))
+
+    def _write_open_gate(self, state_dir: Path, workflow_id: str) -> None:
+        run_state = {
+            "workflow_id": workflow_id,
+            "workflow_name": f"{workflow_id}-workflow",
+            "supervision": "autonomous",
+            "events": [],
+            "open_gates": [
+                {
+                    "gate_id": "gate-review",
+                    "workflow_id": workflow_id,
+                    "node_id": "review",
+                    "phase": None,
+                    "reason": "review required",
+                    "stakes": {},
+                    "options": [
+                        {
+                            "name": "proceed",
+                            "outcome": "resume",
+                            "description": "continue the run",
+                        },
+                        {
+                            "name": "abort",
+                            "outcome": "stop",
+                            "description": "stop the run",
+                        },
+                    ],
+                }
+            ],
+            "answered_gates": {},
+        }
+        run_state_path = state_dir / "workflows" / workflow_id / "run-state.json"
+        run_state_path.write_text(json.dumps(run_state))
 
     def test_ps_empty(self, runner: CliRunner, tmp_state_dir: Path):
         """List workflows when none exist."""
@@ -226,6 +280,119 @@ class TestWorkflowCommands(TestCLIBase):
         )
         assert result.exit_code == 0
         assert "abc12345" in result.output
+
+    def test_wait_done_exits_zero_with_json(self, runner: CliRunner, tmp_state_dir: Path):
+        """Wait returns success when the workflow is done."""
+        self._write_workflow_meta(tmp_state_dir, "done1234", WorkflowStatus.DONE)
+
+        result = runner.invoke(
+            cli, ["--state-dir", str(tmp_state_dir), "wait", "done1234", "--json"]
+        )
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["status"] == "done"
+        assert data["gates"] == []
+        assert data["waited_seconds"] >= 0
+
+    def test_wait_error_exits_one_with_json(self, runner: CliRunner, tmp_state_dir: Path):
+        """Wait returns failure when the workflow errors."""
+        self._write_workflow_meta(tmp_state_dir, "err12345", WorkflowStatus.ERROR)
+
+        result = runner.invoke(
+            cli, ["--state-dir", str(tmp_state_dir), "wait", "err12345", "--json"]
+        )
+
+        assert result.exit_code == 1
+        data = json.loads(result.output)
+        assert data["status"] == "error"
+        assert data["gates"] == []
+
+    def test_wait_stopped_exits_one_with_json(self, runner: CliRunner, tmp_state_dir: Path):
+        """Wait returns failure when the workflow is stopped."""
+        self._write_workflow_meta(tmp_state_dir, "stop1234", WorkflowStatus.STOPPED)
+
+        result = runner.invoke(
+            cli, ["--state-dir", str(tmp_state_dir), "wait", "stop1234", "--json"]
+        )
+
+        assert result.exit_code == 1
+        data = json.loads(result.output)
+        assert data["status"] == "stopped"
+        assert data["gates"] == []
+
+    def test_wait_aborted_exposes_stopped_with_json(
+        self,
+        runner: CliRunner,
+        tmp_state_dir: Path,
+    ):
+        """Wait preserves compatibility with legacy aborted workflow metadata."""
+        self._write_workflow_meta(tmp_state_dir, "abort123", WorkflowStatus.ABORTED)
+
+        result = runner.invoke(
+            cli, ["--state-dir", str(tmp_state_dir), "wait", "abort123", "--json"]
+        )
+
+        assert result.exit_code == 1
+        data = json.loads(result.output)
+        assert data["status"] == "stopped"
+        assert data["gates"] == []
+
+    def test_wait_parked_exits_two_with_gate_payload(
+        self,
+        runner: CliRunner,
+        tmp_state_dir: Path,
+    ):
+        """Wait returns attention-needed when the workflow has an open gate."""
+        self._write_workflow_meta(tmp_state_dir, "gate1234", WorkflowStatus.BLOCKED)
+        self._write_open_gate(tmp_state_dir, "gate1234")
+
+        result = runner.invoke(
+            cli, ["--state-dir", str(tmp_state_dir), "wait", "gate1234", "--json"]
+        )
+
+        assert result.exit_code == 2
+        data = json.loads(result.output)
+        assert data["status"] == "blocked"
+        assert data["gates"] == [
+            {"gate_id": "gate-review", "options": ["proceed", "abort"]}
+        ]
+
+    def test_wait_timeout_exits_three_with_json(self, runner: CliRunner, tmp_state_dir: Path):
+        """Wait returns timeout when no terminal or parked state arrives in time."""
+        self._write_workflow_meta(tmp_state_dir, "run12345", WorkflowStatus.RUNNING)
+
+        result = runner.invoke(
+            cli,
+            [
+                "--state-dir",
+                str(tmp_state_dir),
+                "wait",
+                "run12345",
+                "--timeout",
+                "0",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 3
+        data = json.loads(result.output)
+        assert data["status"] == "running"
+        assert data["gates"] == []
+
+    def test_wait_unknown_workflow_names_state_dir(
+        self,
+        runner: CliRunner,
+        tmp_state_dir: Path,
+    ):
+        """Wait fails loudly for unknown workflow ids and names the consulted state dir."""
+        result = runner.invoke(
+            cli, ["--state-dir", str(tmp_state_dir), "wait", "missing-workflow"]
+        )
+
+        assert result.exit_code == 1
+        assert "missing-workflow" in result.output
+        assert str(tmp_state_dir) in result.output
 
     def test_stop_workflow(self, runner: CliRunner, tmp_state_dir: Path):
         """Stop a workflow."""
