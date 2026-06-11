@@ -590,11 +590,11 @@ class TestMultiAgentTemplate(MockHandlerFixtures):
         calls: list[str] = []
 
         def handle_create_workspace(effect: CreateWorkspace) -> Workspace:
-            calls.append(f"create_workspace:{effect.suffix}")
+            calls.append(f"create_workspace:{effect.workspace_id}")
             return Workspace(
-                id=f"workspace-{effect.suffix}",
+                id=effect.workspace_id,
                 repo="default",
-                ref=f"feature/{effect.suffix}",
+                ref=f"conductor/{effect.workspace_id}",
                 base_ref="main",
                 issue_id=mock_issue.id,
                 created_at=datetime.now(timezone.utc),

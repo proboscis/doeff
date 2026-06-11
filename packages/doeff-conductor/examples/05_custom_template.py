@@ -31,7 +31,10 @@ CUSTOM_TEMPLATE_SCHEMA = {
 
 @do
 def quality_assured_pr(issue: Issue) -> EffectGenerator[PRHandle]:
-    workspace: Workspace = yield CreateWorkspace(issue=issue)
+    workspace: Workspace = yield CreateWorkspace(
+        issue=issue,
+        workspace_id=f"{issue.id.lower()}-quality-assured-pr",
+    )
     yield Agent(
         AgentTask(
             run_id=issue.id,

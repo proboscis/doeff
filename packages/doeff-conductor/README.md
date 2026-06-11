@@ -32,7 +32,7 @@ AGENT_SCHEMA = {"type": "object", "required": ["summary"], "properties": {"summa
 @do
 def basic_pr(issue):
     # Create isolated workspace for the issue
-    workspace = yield CreateWorkspace(issue=issue)
+    workspace = yield CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-impl")
     
     # Run agent to implement the issue
     yield Agent(AgentTask(
@@ -63,8 +63,8 @@ AGENT_SCHEMA = {"type": "object", "required": ["summary"], "properties": {"summa
 def multi_agent_pr(issue):
     # Create parallel workspaces
     impl_workspace, test_workspace = yield Gather(
-        CreateWorkspace(issue=issue, suffix="impl"),
-        CreateWorkspace(issue=issue, suffix="tests"),
+        CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-impl"),
+        CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-tests"),
     )
     
     # Run agents in parallel
@@ -92,7 +92,10 @@ def multi_agent_pr(issue):
     )
     
     # Reconcile workspaces
-    merge_result = yield MergeWorkspaces(workspaces=(impl_workspace, test_workspace))
+    merge_result = yield MergeWorkspaces(
+        workspace_id=f"{issue.id.lower()}-merged",
+        workspaces=(impl_workspace, test_workspace),
+    )
     if not merge_result.merged or merge_result.workspace is None:
         raise RuntimeError(merge_result.message)
     merged_workspace = merge_result.workspace
@@ -145,8 +148,8 @@ conductor template new <name>
 
 | Effect | Description |
 |--------|-------------|
-| `CreateWorkspace(issue?, from_ref?, suffix?)` | Create git workspace |
-| `MergeWorkspaces(workspaces, strategy?)` | Reconcile multiple workspaces |
+| `CreateWorkspace(workspace_id, issue?, from_ref?)` | Ensure identity-bound git workspace |
+| `MergeWorkspaces(workspace_id, workspaces, strategy?)` | Reconcile multiple workspaces |
 | `DeleteWorkspace(workspace)` | Cleanup workspace |
 
 ### Issue Effects
