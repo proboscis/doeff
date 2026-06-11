@@ -356,6 +356,7 @@ class ScenarioStep:
     status: AwaitStatus
     payload: object | None = None
     validation_error: str | None = None
+    continuable: bool = True
 
     @classmethod
     def success(cls, payload: object) -> "ScenarioStep":
@@ -367,6 +368,19 @@ class ScenarioStep:
             status=AwaitStatus.EXITED,
             payload=payload,
             validation_error=validation_error,
+        )
+
+    @classmethod
+    def terminal_invalid(cls, *, validation_error: str) -> "ScenarioStep":
+        """A failure from a TERMINAL (supervisor-reaped) session.
+
+        Models the agentd route: the supervisor spent the contract
+        retries and cleaned the pane — no follow-up can reach it.
+        """
+        return cls(
+            status=AwaitStatus.EXITED,
+            validation_error=validation_error,
+            continuable=False,
         )
 
     @classmethod
@@ -447,6 +461,7 @@ class ScenarioAgentHandler(MockAgentHandler):
             status=step.status,
             result=step.payload,
             validation_error=step.validation_error,
+            continuable=step.continuable,
         )
 
     def handle_follow_up(self, effect: FollowUpEffect) -> L2SessionHandle:

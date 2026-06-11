@@ -77,12 +77,21 @@ class AgentValidationFailure:
 
 @dataclass(frozen=True)
 class AwaitOutcome:
-    """Result of awaiting an L2 session result channel."""
+    """Result of awaiting an L2 session result channel.
+
+    ``continuable`` declares whether the session can still accept a
+    corrective follow-up after a failure outcome.  Supervised (agentd)
+    sessions resolve their await only on TERMINAL states — the supervisor
+    has already spent the contract retries and reaped the pane, so a
+    failure is final and ``continuable`` is False.  Local/scenario
+    sessions stay alive across an invalid result, so the default holds.
+    """
 
     status: AwaitStatus
     result: Any | None = None
     validation_error: str | None = None
     exit_code: int | None = None
+    continuable: bool = True
 
 
 @dataclass(frozen=True, kw_only=True)
