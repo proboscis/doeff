@@ -576,7 +576,7 @@ because where to pause is a trust/stakes judgment extrinsic to the task:
 4. **Calibration state store** — cross-run, level-triggered; v1 ships
    manual sampling rates + escape recording only (no autonomous rate
    adjustment).
-5. **Runtime auto-commit captures session state — fixed 913149d1.**
+5. **Runtime auto-commit captures session state — fixed e206be17.**
    Conductor-created workspaces now install workspace-level `.gitignore`
    entries for in-worktree runtime state (`.agent-home/`). The ignore lives
    at workspace initialization, so post-agent-node `Commit`, manual
