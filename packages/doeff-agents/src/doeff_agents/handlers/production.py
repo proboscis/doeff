@@ -208,7 +208,25 @@ def get_adapter(agent_type: AgentType) -> AgentAdapter:
 
 
 def _run_agent_task(handler: AgentHandler, task: AgentTask) -> object:
-    """Run Launch → AwaitResult → validate/retry → Release for ``agent``."""
+    """Run Launch → AwaitResult → validate/retry → Release for ``agent``.
+
+    Retry authority is SINGLE: result-contract retries belong to the
+    session supervisor (agentd's ``expected_result.max_retries`` — it
+    feeds the agent corrective prompts while the session is alive).  This
+    loop never re-litigates them:
+
+    - a TERMINAL failure (the await resolved on a failed/exited session)
+      is already final — the supervisor exhausted its retries and cleaned
+      the session, so a follow-up here lands on a dead pane.  Observed
+      live four times: the crash ("tmux send-keys failed") replaced a
+      clean exhaustion error with a raw transport exception.
+    - a TIMED_OUT await means the session is alive and still working —
+      re-await it; injecting "you exited without producing..." into a
+      healthily working agent was pure noise (also observed live).
+    - AWAITING_INPUT is the one outcome where a follow-up is the designed
+      continuation (local-handler sessions have no supervisor-side
+      retries); ``task.max_retries`` bounds those nudges.
+    """
     handle = handler.handle_launch_session(LaunchSessionEffect(spec=task))
     attempts = 0
     last_error: AgentValidationFailure | None = None
@@ -220,6 +238,29 @@ def _run_agent_task(handler: AgentHandler, task: AgentTask) -> object:
             last_error = _validation_failure_from_outcome(outcome, task.result_schema)
             if last_error is None:
                 return outcome.result
+
+            if last_error.kind == AgentValidationErrorKind.TIMED_OUT:
+                # Session alive, work in progress: burn an attempt and
+                # await again — never interrupt it with a retry prompt.
+                if attempts >= task.max_retries:
+                    raise AgentAttemptExhaustedError(
+                        session_id=handle.session_id,
+                        attempts=attempts + 1,
+                        last_error=last_error,
+                    )
+                attempts += 1
+                continue
+
+            if not outcome.continuable:
+                # The outcome came from a TERMINAL session: the
+                # supervisor already exhausted the contract retries and
+                # reaped the pane. A follow-up here lands on a dead
+                # session — the failure is final.
+                raise AgentAttemptExhaustedError(
+                    session_id=handle.session_id,
+                    attempts=attempts + 1,
+                    last_error=last_error,
+                )
 
             if attempts >= task.max_retries:
                 raise AgentAttemptExhaustedError(

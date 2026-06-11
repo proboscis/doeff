@@ -486,10 +486,14 @@ def _await_outcome_from_result(result: Mapping[str, Any]) -> AwaitOutcome:
     if validation_error is not None and not isinstance(validation_error, str):
         raise AgentdProtocolError("session.await_result validation_error was not a string")
 
+    # The daemon resolves an await only on TERMINAL session states: the
+    # supervisor has already spent the result-contract retries and reaped
+    # the pane, so no outcome from this mapping can accept a follow-up.
     if status in ("blocked", "blocked_api"):
         return AwaitOutcome(
             status=AwaitStatus.AWAITING_INPUT,
             validation_error=validation_error or status,
+            continuable=False,
         )
 
     payload = None
@@ -501,6 +505,7 @@ def _await_outcome_from_result(result: Mapping[str, Any]) -> AwaitOutcome:
         status=AwaitStatus.EXITED,
         result=payload,
         validation_error=validation_error,
+        continuable=False,
     )
 
 

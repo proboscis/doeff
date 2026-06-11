@@ -209,6 +209,54 @@ def test_agent_treats_awaiting_input_as_typed_failure(tmp_path: Path) -> None:
     assert "needs human confirmation" in exc_info.value.last_error.message
 
 
+def test_agent_never_follows_up_a_terminal_failure(tmp_path: Path) -> None:
+    """Single retry authority: a failure from a TERMINAL session is final.
+
+    The supervisor (agentd) spent the result-contract retries and reaped
+    the pane before the await resolved — a follow-up would land on a dead
+    session. Observed live four times as 'tmux send-keys failed' replacing
+    the clean exhaustion error.
+    """
+    handler = ScenarioAgentHandler(
+        scripts={
+            "run-001-node-c-0": [
+                ScenarioStep.terminal_invalid(
+                    validation_error="output validation exhausted after 2 retries: bad schema",
+                ),
+            ]
+        }
+    )
+
+    with pytest.raises(AgentAttemptExhaustedError) as exc_info:
+        run(handler.wrap(_agent_task(tmp_path)))
+
+    assert exc_info.value.last_error.kind == AgentValidationErrorKind.INVALID
+    assert "exhausted after 2 retries" in exc_info.value.last_error.message
+    # The defining assertion: no follow-up was sent to the dead session.
+    assert handler.follow_up_messages("run-001-node-c-0") == []
+
+
+def test_agent_reawaits_on_timeout_without_follow_up(tmp_path: Path) -> None:
+    """A timed-out await means the session is alive and still working.
+
+    Re-await it; injecting a retry prompt into a healthily working agent
+    is noise (observed live) and must not happen.
+    """
+    handler = ScenarioAgentHandler(
+        scripts={
+            "run-001-node-c-0": [
+                ScenarioStep.timeout(),
+                ScenarioStep.success({"summary": "finished late", "ok": True}),
+            ]
+        }
+    )
+
+    result = run(handler.wrap(_agent_task(tmp_path)))
+
+    assert result == {"summary": "finished late", "ok": True}
+    assert handler.follow_up_messages("run-001-node-c-0") == []
+
+
 def test_scenario_handler_supports_timeout_outcome(tmp_path: Path) -> None:
     handler = ScenarioAgentHandler(
         scripts={"run-001-node-b-0": [ScenarioStep.timeout()]},
