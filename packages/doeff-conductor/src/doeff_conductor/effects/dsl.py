@@ -1,7 +1,5 @@
 """L3 workflow DSL effects for doeff-conductor."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -56,6 +54,8 @@ class TimeCall(ConductorEffectBase):
     """Explicit clock effect emitted by ``time!``."""
 
     label: str | None = None
+    run_id: str | None = None
+    node_id: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -64,3 +64,5 @@ class RandomCall(ConductorEffectBase):
 
     spec: Any
     label: str | None = None
+    run_id: str | None = None
+    node_id: str | None = None

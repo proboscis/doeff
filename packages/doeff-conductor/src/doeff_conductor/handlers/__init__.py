@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from doeff import WithHandler, run
+from doeff_conductor.workflow_effect_journal import JournaledWorkflowEffectHandler
 
 from .agent_handler import (
     AgentBackend,
@@ -90,12 +91,17 @@ def production_handlers(
             state_dir=journal_state_dir,
             run_id=journal_run_id,
         )
+    workflow_effect_handler = JournaledWorkflowEffectHandler(
+        state_dir=journal_state_dir,
+        run_id=journal_run_id,
+    )
     return default_scheduled_handlers(
         workspace_handler=active_workspace_handler,
         issue_handler=issue_handler,
         agent_handler=resolved_agent_handler,
         git_handler=git_handler,
         exec_handler=exec_handler,
+        workflow_effect_handler=workflow_effect_handler,
     )
 
 
@@ -134,6 +140,7 @@ __all__ = [
     "GitHandler",
     "IssueHandler",
     "JournaledAgentHandler",
+    "JournaledWorkflowEffectHandler",
     "MockConductorRuntime",
     "RunSyncResult",
     "WorkspaceHandler",

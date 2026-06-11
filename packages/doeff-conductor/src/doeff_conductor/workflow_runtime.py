@@ -1,14 +1,10 @@
 """Production interpreter for ``WorkflowSpec`` request artifacts."""
 
-from __future__ import annotations
-
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, is_dataclass
 from dataclasses import field as dataclass_field
-from datetime import datetime, timezone
-from random import Random
 from typing import Any, cast
 
 from doeff import Gather, Spawn, do
@@ -31,7 +27,16 @@ from doeff_conductor.dsl import (
     WorkflowSpec,
     WorkspaceSpec,
 )
-from doeff_conductor.effects import Agent, AgentTask, Commit, CreateWorkspace, Exec, MergeWorkspaces
+from doeff_conductor.effects import (
+    Agent,
+    AgentTask,
+    Commit,
+    CreateWorkspace,
+    Exec,
+    MergeWorkspaces,
+    RandomCall,
+    TimeCall,
+)
 from doeff_conductor.environment import (
     ProfileBinding,
     ProfileRegistry,
@@ -158,9 +163,23 @@ def _execute_expr(  # noqa: PLR0911
     if isinstance(expr, MergeSpec):
         return (yield _execute_merge(expr, context, path=path))
     if isinstance(expr, TimeSpec):
-        return datetime.now(timezone.utc).isoformat()
+        node_id: str = _node_id(context.workflow.name, path, "time")
+        return (yield TimeCall(label=expr.label, run_id=context.run_id, node_id=node_id))
     if isinstance(expr, RandomSpec):
-        return _evaluate_random(expr)
+        node_id = _node_id(context.workflow.name, path, "random")
+        random_spec: Any = yield _evaluate_value(
+            expr.spec,
+            context,
+            path=_path_join(path, "spec"),
+        )
+        return (
+            yield RandomCall(
+                spec=random_spec,
+                label=expr.label,
+                run_id=context.run_id,
+                node_id=node_id,
+            )
+        )
     if isinstance(expr, WorkspaceSpec):
         return (yield _materialize_workspace(expr, context, path=path))
     if isinstance(expr, ParallelSpec):
@@ -538,18 +557,6 @@ def _evaluate_until(predicate: Any, context: _RuntimeContext, *, path: str) -> A
             return _value_passed(binding_value)
         return bool(context.bindings.get(predicate))
     return bool(predicate)
-
-
-def _evaluate_random(spec: RandomSpec) -> Any:
-    random_source = Random(0)
-    if isinstance(spec.spec, Mapping):
-        kind: object | None = spec.spec.get("kind")
-        if kind == "choice":
-            values: object | None = spec.spec.get("values")
-            if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
-                raise TypeError("random! choice requires a non-string sequence of values")
-            return random_source.choice(list(values))
-    return random_source.random()
 
 
 def _bind_runtime_value(target: str | Sequence[str], value: Any, context: _RuntimeContext) -> None:
