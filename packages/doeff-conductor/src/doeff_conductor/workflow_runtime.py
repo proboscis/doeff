@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, is_dataclass
@@ -49,7 +50,10 @@ class _RuntimeContext:
     registry: ProfileRegistry
     issue: Issue | None
     bindings: dict[str, Any] = dataclass_field(default_factory=dict)
-    workspace_cache: dict[int, Workspace] = dataclass_field(default_factory=dict)
+    # Keyed by the workspace node's stable identity (its expansion-time node
+    # path), NOT by Python object id — the same occurrence must bind the same
+    # workspace across process restarts (resume stability).
+    workspace_cache: dict[str, Workspace] = dataclass_field(default_factory=dict)
 
 
 def workflow_spec_to_program(
@@ -119,7 +123,7 @@ def _execute_form(
         return value
 
     if isinstance(form, ArtifactSpec):
-        return (yield _evaluate_value(form.value, context))
+        return (yield _evaluate_value(form.value, context, path=_path_join(path, "artifact")))
 
     return (
         yield _execute_expr(
@@ -149,15 +153,15 @@ def _execute_expr(  # noqa: PLR0911
             )
         )
     if isinstance(expr, GateSpec):
-        return (yield _execute_gate(expr, context))
+        return (yield _execute_gate(expr, context, path=path))
     if isinstance(expr, MergeSpec):
-        return (yield _execute_merge(expr, context))
+        return (yield _execute_merge(expr, context, path=path))
     if isinstance(expr, TimeSpec):
         return datetime.now(timezone.utc).isoformat()
     if isinstance(expr, RandomSpec):
         return _evaluate_random(expr)
     if isinstance(expr, WorkspaceSpec):
-        return (yield _materialize_workspace(expr, context))
+        return (yield _materialize_workspace(expr, context, path=path))
     if isinstance(expr, ParallelSpec):
         return (
             yield _execute_parallel(
@@ -188,7 +192,7 @@ def _execute_expr(  # noqa: PLR0911
             )
         )
     if isinstance(expr, (Ref, FieldRef, OksProjection, PromptExpr)):
-        return (yield _evaluate_value(expr, context))
+        return (yield _evaluate_value(expr, context, path=path))
     raise TypeError(f"unsupported workflow runtime form: {type(expr).__name__}")
 
 
@@ -237,7 +241,10 @@ def _execute_loop(
                 current_phase=current_phase,
                 path=form_path,
             )
-            predicate_result = cast(bool, (yield _evaluate_until(spec.until, context)))
+            predicate_result = cast(
+                bool,
+                (yield _evaluate_until(spec.until, context, path=_path_join(path, "until"))),
+            )
             if predicate_result:
                 _restore_loop_bindings(context, outer_bindings)
                 return last_value
@@ -264,23 +271,30 @@ def _execute_agent(
     effect = spec.to_effect(current_phase)
     node_id: str = _node_id(context.workflow.name, path, "agent")
     prompt_text: str = _stringify_prompt_value(
-        (yield _evaluate_value(effect.prompt, context))
+        (yield _evaluate_value(effect.prompt, context, path=_path_join(path, "prompt")))
     )
     schema: dict[str, Any] = _schema_to_dict(effect.schema)
     workspace: Workspace
     if effect.workspace is None:
+        # The implicit per-agent workspace binds the same resume-stable
+        # identity discipline as explicit workspace! nodes: derived from
+        # (run_id, agent node identity), never random.
         workspace = cast(
             Workspace,
             (
                 yield CreateWorkspace(
                     from_ref=_param_as_str(context.params.get("base_ref")),
                     issue=context.issue,
-                    suffix=_safe_suffix(node_id),
+                    workspace_id=_workspace_identity(context.run_id, f"{node_id}/workspace"),
                 )
             ),
         )
     else:
-        workspace_value: Any = yield _evaluate_value(effect.workspace, context)
+        workspace_value: Any = yield _evaluate_value(
+            effect.workspace,
+            context,
+            path=_path_join(path, "workspace"),
+        )
         if not isinstance(workspace_value, Workspace):
             raise TypeError(f"agent workspace for {node_id} did not evaluate to Workspace")
         workspace = workspace_value
@@ -341,10 +355,14 @@ def _commit_agent_workspace(workspace: Workspace, node_id: str) -> Any:
 
 
 @do
-def _execute_gate(spec: GateSpec, context: _RuntimeContext) -> Any:
+def _execute_gate(spec: GateSpec, context: _RuntimeContext, *, path: str) -> Any:
     workspace: Workspace | None = None
     if spec.workspace is not None:
-        workspace_value: Any = yield _evaluate_value(spec.workspace, context)
+        workspace_value: Any = yield _evaluate_value(
+            spec.workspace,
+            context,
+            path=_path_join(path, "workspace"),
+        )
         if not isinstance(workspace_value, Workspace):
             raise TypeError("gate workspace did not evaluate to Workspace")
         workspace = workspace_value
@@ -352,10 +370,15 @@ def _execute_gate(spec: GateSpec, context: _RuntimeContext) -> Any:
 
 
 @do
-def _execute_merge(spec: MergeSpec, context: _RuntimeContext) -> Any:
+def _execute_merge(spec: MergeSpec, context: _RuntimeContext, *, path: str) -> Any:
+    node_id: str = _node_id(context.workflow.name, path, "merge")
     workspaces: list[Workspace] = []
-    for workspace_expr in spec.workspaces:
-        workspace_value: Any = yield _evaluate_value(workspace_expr, context)
+    for workspace_index, workspace_expr in enumerate(spec.workspaces):
+        workspace_value: Any = yield _evaluate_value(
+            workspace_expr,
+            context,
+            path=_path_join(path, f"workspaces[{workspace_index}]"),
+        )
         if not isinstance(workspace_value, Workspace):
             raise TypeError("merge! workspaces must evaluate to Workspace values")
         workspaces.append(workspace_value)
@@ -363,6 +386,7 @@ def _execute_merge(spec: MergeSpec, context: _RuntimeContext) -> Any:
         MergeWorkspacesResult,
         (
             yield MergeWorkspaces(
+                workspace_id=_workspace_identity(context.run_id, node_id),
                 workspaces=tuple(workspaces),
                 strategy=MergeStrategy(spec.strategy),
             )
@@ -377,26 +401,33 @@ def _execute_merge(spec: MergeSpec, context: _RuntimeContext) -> Any:
 def _materialize_workspace(
     spec: WorkspaceSpec,
     context: _RuntimeContext,
+    *,
+    path: str,
 ) -> Any:
-    cache_key: int = id(spec)
-    cached_workspace: Workspace | None = context.workspace_cache.get(cache_key)
+    node_id: str = _node_id(context.workflow.name, path, "workspace")
+    cached_workspace: Workspace | None = context.workspace_cache.get(node_id)
     if cached_workspace is not None:
         return cached_workspace
 
     from_ref_value: Any = None
     if spec.from_ref is not None:
-        from_ref_value = yield _evaluate_value(spec.from_ref, context)
+        from_ref_value = yield _evaluate_value(
+            spec.from_ref,
+            context,
+            path=_path_join(path, "from"),
+        )
     workspace = cast(
         Workspace,
         (
             yield CreateWorkspace(
+                workspace_id=_workspace_identity(context.run_id, node_id),
                 repo=spec.repo or "default",
                 from_ref=_param_as_str(from_ref_value),
                 issue=context.issue,
             )
         ),
     )
-    context.workspace_cache[cache_key] = workspace
+    context.workspace_cache[node_id] = workspace
     return workspace
 
 
@@ -404,6 +435,8 @@ def _materialize_workspace(
 def _evaluate_value(  # noqa: PLR0911, PLR0912
     value: Any,
     context: _RuntimeContext,
+    *,
+    path: str,
 ) -> Any:
     if isinstance(value, Ref):
         if value.name in context.bindings:
@@ -412,53 +445,74 @@ def _evaluate_value(  # noqa: PLR0911, PLR0912
             return context.params[value.name]
         raise KeyError(f"undefined runtime reference: {value.name}")
     if isinstance(value, FieldRef):
-        source_value: Any = yield _evaluate_value(value.source, context)
+        source_value: Any = yield _evaluate_value(
+            value.source,
+            context,
+            path=_path_join(path, "source"),
+        )
         return _read_field(source_value, value.field_name)
     if isinstance(value, OksProjection):
-        return (yield _evaluate_value(value.source, context))
+        return (yield _evaluate_value(value.source, context, path=_path_join(path, "source")))
     if isinstance(value, PromptExpr):
         parts: list[str] = []
-        for part in value.parts:
-            parts.append(_stringify_prompt_value((yield _evaluate_value(part, context))))
+        for part_index, part in enumerate(value.parts):
+            part_value: Any = yield _evaluate_value(
+                part,
+                context,
+                path=_path_join(path, f"[{part_index}]"),
+            )
+            parts.append(_stringify_prompt_value(part_value))
         return "".join(parts)
     if isinstance(value, WorkspaceSpec):
-        return (yield _materialize_workspace(value, context))
+        return (yield _materialize_workspace(value, context, path=path))
     if isinstance(value, tuple):
         items: list[Any] = []
-        for item in value:
-            items.append((yield _evaluate_value(item, context)))
+        for item_index, item in enumerate(value):
+            items.append(
+                (yield _evaluate_value(item, context, path=_path_join(path, f"[{item_index}]")))
+            )
         return tuple(items)
     if isinstance(value, list):
         items = []
-        for item in value:
-            items.append((yield _evaluate_value(item, context)))
+        for item_index, item in enumerate(value):
+            items.append(
+                (yield _evaluate_value(item, context, path=_path_join(path, f"[{item_index}]")))
+            )
         return items
     if isinstance(value, dict):
         evaluated: dict[Any, Any] = {}
-        for key, item in value.items():
-            evaluated_key: Any = yield _evaluate_value(key, context)
-            evaluated[evaluated_key] = yield _evaluate_value(item, context)
+        for entry_index, (key, item) in enumerate(value.items()):
+            evaluated_key: Any = yield _evaluate_value(
+                key,
+                context,
+                path=_path_join(path, f"key[{entry_index}]"),
+            )
+            evaluated[evaluated_key] = yield _evaluate_value(
+                item,
+                context,
+                path=_path_join(path, f"value[{entry_index}]"),
+            )
         return evaluated
     if isinstance(value, set):
         items = []
         for item in value:
-            items.append((yield _evaluate_value(item, context)))
+            items.append((yield _evaluate_value(item, context, path=path)))
         return set(items)
     if isinstance(value, frozenset):
         items = []
         for item in value:
-            items.append((yield _evaluate_value(item, context)))
+            items.append((yield _evaluate_value(item, context, path=path)))
         return frozenset(items)
     return value
 
 
 @do
-def _evaluate_until(predicate: Any, context: _RuntimeContext) -> Any:
+def _evaluate_until(predicate: Any, context: _RuntimeContext, *, path: str) -> Any:
     if callable(predicate):
         result: object = predicate(dict(context.bindings))
         return bool(result)
     if isinstance(predicate, Ref):
-        return bool((yield _evaluate_value(predicate, context)))
+        return bool((yield _evaluate_value(predicate, context, path=path)))
     if isinstance(predicate, str):
         if predicate.endswith("_passed"):
             binding_name: str = predicate.removesuffix("_passed")
@@ -584,8 +638,20 @@ def _param_as_str(value: Any) -> str | None:
     return value
 
 
-def _safe_suffix(node_id: str) -> str:
-    return "".join(character if character.isalnum() else "-" for character in node_id)
+def _workspace_identity(run_id: str, node_key: str) -> str:
+    """Derive the resume-stable workspace identity for one workspace node.
+
+    Deterministic in ``(run_id, node_key)`` so re-running the same run id
+    re-binds the same branch and worktree; the digest disambiguates node keys
+    that collapse to the same slug.
+    """
+    digest: str = hashlib.sha256(node_key.encode("utf-8")).hexdigest()[:8]
+    slug: str = _slugify(node_key)[-48:].strip("-")
+    return f"{_slugify(run_id)}-{slug}-{digest}"
+
+
+def _slugify(text: str) -> str:
+    return "".join(character if character.isalnum() else "-" for character in text)
 
 
 def _node_id(workflow_name: str, path: str, kind: str) -> str:
