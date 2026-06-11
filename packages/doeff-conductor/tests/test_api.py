@@ -302,6 +302,7 @@ class TestStopWorkflow:
         assert "agent-2" in stopped
 
         workflow = api.get_workflow(running_workflow)
+        assert workflow is not None
         assert workflow.status == WorkflowStatus.ABORTED
 
     def test_stop_specific_agent(self, api: ConductorAPI, running_workflow: str):
@@ -624,7 +625,9 @@ class TestRunWorkflow:
 
         assert handle.id == "spawn-run"
         assert handle.status == WorkflowStatus.DONE
-        assert list(handle.result_payload) == ["left", "right"]
+        result_payload = handle.result_payload
+        assert result_payload is not None
+        assert list(result_payload) == ["left", "right"]
 
     def test_run_workflow_does_not_unwrap_non_run_result_value_objects(
         self,
@@ -744,6 +747,10 @@ class TestWorkflowStatusHelpers:
     def test_is_terminal_error(self):
         """ERROR is a terminal status."""
         assert WorkflowStatus.ERROR.is_terminal()
+
+    def test_is_terminal_stopped(self):
+        """STOPPED is a terminal status."""
+        assert WorkflowStatus.STOPPED.is_terminal()
 
     def test_is_terminal_aborted(self):
         """ABORTED is a terminal status."""

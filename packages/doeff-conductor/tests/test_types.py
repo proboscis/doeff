@@ -125,6 +125,7 @@ class TestWorkflowHandle:
         """Test terminal status detection."""
         assert WorkflowStatus.DONE.is_terminal()
         assert WorkflowStatus.ERROR.is_terminal()
+        assert WorkflowStatus.STOPPED.is_terminal()
         assert WorkflowStatus.ABORTED.is_terminal()
         assert not WorkflowStatus.RUNNING.is_terminal()
         assert not WorkflowStatus.PENDING.is_terminal()
