@@ -12,21 +12,22 @@ the VM rejects it as a non-Effect yielded value.
 from dataclasses import dataclass
 from typing import Any
 
+from doeff_core_effects.effects import EffectBase
+
 from doeff import (
-    CreateSemaphore,
     AcquireSemaphore,
-    ReleaseSemaphore,
+    CreateSemaphore,
     Effect,
     EffectGenerator,
     Gather,
     Pass,
+    ReleaseSemaphore,
     Resume,
     Spawn,
     Try,
     WithHandler,
     do,
 )
-from doeff_core_effects.effects import EffectBase
 from tests._run_helpers import run_with_defaults
 
 ProgramLike = Any  # removed API shim

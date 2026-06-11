@@ -6,11 +6,11 @@ must be accessible after yield.
 """
 
 import hy  # noqa: F401
-
-from doeff import WithHandler, do, run
 from doeff_core_effects import slog
 from doeff_core_effects.handlers import lazy_ask, writer
 from doeff_core_effects.scheduler import scheduled
+
+from doeff import WithHandler, do, run
 
 
 def _run_program(program):

@@ -13,10 +13,9 @@ type-filtered inner handler stops being dispatched.
 from dataclasses import dataclass
 
 import doeff_vm
-import pytest
+from doeff_vm import WithHandler
 
 from doeff import Effect, EffectBase, EffectGenerator, do
-from doeff_vm import WithHandler
 from tests._run_helpers import run_with_defaults
 
 

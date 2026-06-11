@@ -16,32 +16,31 @@ Reproduction conditions:
 """
 import asyncio
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Dict, List
+from typing import Any
 
-import pytest
+from doeff_core_effects.effects import EffectBase
 
 from doeff import (
+    AcquireSemaphore,
     Ask,
     Await,
     CreateSemaphore,
-    AcquireSemaphore,
     Effect,
-    ReleaseSemaphore,
     EffectGenerator,
     Gather,
     Local,
     Pass,
+    ReleaseSemaphore,
     Resume,
     Spawn,
     Try,
     WithHandler,
     do,
 )
-from doeff_core_effects.effects import EffectBase
 from tests._run_helpers import run_with_defaults
-
 
 # --- Custom effect (simulates HistoricalPriceEffect) ---
 
@@ -57,7 +56,7 @@ class FetchEffect(EffectBase):
 @do
 def _query_fn(
     *, ticker: str, start_time: datetime, end_time: datetime
-) -> EffectGenerator[List[Dict]]:
+) -> EffectGenerator[list[dict]]:
     result = yield Await(asyncio.to_thread(lambda: [{"t": ticker, "v": 42}]))
     return result
 
@@ -65,7 +64,7 @@ def _query_fn(
 @do
 def _sync_fn(
     *, ticker: str, start_time: datetime, end_time: datetime
-) -> EffectGenerator[List[Dict]]:
+) -> EffectGenerator[list[dict]]:
     return []
 
 
@@ -77,7 +76,7 @@ class CacheStrategy:
     @do
     def get_cached(
         self, ticker: str, start: datetime, end: datetime
-    ) -> EffectGenerator[List[Dict]]:
+    ) -> EffectGenerator[list[dict]]:
         raw = yield self.query_fn(
             ticker=ticker, start_time=start, end_time=end
         )
@@ -94,7 +93,7 @@ class PriceService:
     @do
     def fetch(
         self, ticker: str, start: datetime, end: datetime
-    ) -> EffectGenerator[List[Dict]]:
+    ) -> EffectGenerator[list[dict]]:
         cached = yield self.cache.get_cached(ticker, start, end)
         if cached:
             return cached
@@ -131,7 +130,7 @@ def fetch_series(
 
 @do
 def compute_movement(ticker: str) -> EffectGenerator[Any]:
-    now = datetime.now()
+    now = datetime.now()  # noqa: DTZ005 - existing local wall-clock behavior is intentionally unchanged
     df_result = yield Try(fetch_series(ticker, now, now))
     if df_result.is_err():
         raise RuntimeError(f"compute failed: {df_result.error}")
@@ -190,7 +189,7 @@ def _build_program(n: int = 5, concurrency: int = 3, with_intercept: bool = Fals
         make_handler(),
     )
     if with_intercept:
-        wrapped = WithIntercept(passthrough_interceptor, wrapped)
+        wrapped = WithIntercept(passthrough_interceptor, wrapped)  # noqa: F821 - legacy removed API reference is intentionally preserved
     return Local(env, wrapped)
 
 

@@ -7,20 +7,18 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from doeff import (
     Ask,
     Effect,
     EffectBase,
     Get,
     Pass,
-    Put,
     Pure,
+    Put,
     Resume,
     WithHandler,
     do,
-    run,)
+)
 from tests._run_helpers import run_with_defaults
 
 

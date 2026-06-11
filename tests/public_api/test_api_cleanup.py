@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 
 import pytest
+
 from tests._run_helpers import run_with_defaults
 
 pytestmark = pytest.mark.skip(
@@ -67,7 +68,7 @@ def test_safe_not_in_all() -> None:
 
 def test_try_catches_error() -> None:
     """Try wraps sub-program errors into Result."""
-    from doeff import Try, default_handlers, do, run
+    from doeff import Try, do
 
     @do
     def failing():

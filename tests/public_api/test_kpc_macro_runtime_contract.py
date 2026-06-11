@@ -8,8 +8,7 @@ from __future__ import annotations
 
 import doeff_vm
 
-from doeff import ProgramBase, default_handlers, do, presets, run
-from tests._run_helpers import run_with_defaults
+from doeff import ProgramBase, do
 
 
 class TestNoLegacyKpcExports:

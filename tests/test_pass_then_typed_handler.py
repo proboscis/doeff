@@ -18,7 +18,7 @@ exists on ReplaceFx.
 from dataclasses import dataclass
 
 import doeff_vm
-import pytest
+from doeff_vm import WithHandler
 
 from doeff import (
     Effect,
@@ -27,11 +27,9 @@ from doeff import (
     WriterTellEffect,
     do,
     run,
+    slog,
 )
-from doeff import slog
-from doeff_vm import WithHandler
-from tests._run_helpers import run_with_defaults, wrap_with_defaults
-
+from tests._run_helpers import run_with_defaults
 
 # -- Effects -----------------------------------------------------------------
 
@@ -124,14 +122,14 @@ def _mediagen_stack(program):
 
     Effect path for slog: program → WithIntercept → memo_rewriter(Pass) → replace_handler
     """
-    intercepted = WithIntercept(
+    intercepted = WithIntercept(  # noqa: F821 - legacy removed API reference is intentionally preserved
         slog_interceptor, program, types=(WriterTellEffect,), mode="include"
     )
     wrapped = intercepted
     # memo_rewriter first (innermost), replace_handler wraps it (outer)
     for h in [memo_rewriter, replace_handler]:
         wrapped = WithHandler(h, wrapped)
-    return run(wrapped, handlers=[*default_handlers()])
+    return run(wrapped, handlers=[*default_handlers()])  # noqa: F821 - legacy removed API reference is intentionally preserved
 
 
 def _no_intercept_stack(program):

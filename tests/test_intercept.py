@@ -1,8 +1,10 @@
 """Tests for WithObserve — effect observation."""
 
-from doeff import do, run as doeff_run, WithHandler, WithObserve
-from doeff_vm import EffectBase, Callable
-from doeff.program import Resume, Pass
+from doeff_vm import Callable, EffectBase
+
+from doeff import WithHandler, WithObserve, do
+from doeff import run as doeff_run
+from doeff.program import Resume
 
 
 class TestObserve:

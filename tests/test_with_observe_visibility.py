@@ -7,16 +7,17 @@ before reaching the observer.
 Expected: WithObserve observes every effect that passes through the VM,
 regardless of whether it's yielded from the main program or from a handler body.
 """
-from doeff import do, run, WithHandler, WithObserve, Resume, Pass
-from doeff_core_effects import Ask, Try, slog, Tell
+from doeff_core_effects import Tell, slog
 from doeff_core_effects.handlers import (
-    reader, state, writer, try_handler, slog_handler,
+    slog_handler,
+    state,
+    try_handler,
+    writer,
 )
-from doeff_core_effects.memo_effects import MemoExists, MemoGet, MemoPut, MemoExistsEffect, MemoGetEffect, MemoPutEffect
-from doeff_core_effects.memo_handlers import (
-    memo_handler, make_memo_rewriter, in_memory_memo_handler,
-)
-from doeff_vm import EffectBase, Callable as VMCallable
+from doeff_vm import Callable as VMCallable
+from doeff_vm import EffectBase
+
+from doeff import Pass, Resume, WithHandler, WithObserve, do, run
 
 
 class CustomQuery(EffectBase):
@@ -66,7 +67,7 @@ def test_observe_sees_handler_body_effects():
     observed = []
 
     def observer(effect):
-        if hasattr(effect, 'msg'):
+        if hasattr(effect, "msg"):
             observed.append(f"{type(effect).__name__}:{effect.msg}")
         else:
             observed.append(type(effect).__name__)
