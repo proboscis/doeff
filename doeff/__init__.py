@@ -69,9 +69,11 @@ from doeff_core_effects.scheduler import Gather as Gather
 from doeff_core_effects.scheduler import Promise as Promise
 from doeff_core_effects.scheduler import Race as Race
 from doeff_core_effects.scheduler import ReleaseSemaphore as ReleaseSemaphore
+from doeff_core_effects.scheduler import SchedulerDeadlockError as SchedulerDeadlockError
 from doeff_core_effects.scheduler import Semaphore as Semaphore
 from doeff_core_effects.scheduler import Spawn as Spawn
 from doeff_core_effects.scheduler import Task as Task
+from doeff_core_effects.scheduler import TaskCancelledError as TaskCancelledError
 from doeff_core_effects.scheduler import Wait as Wait
 
 

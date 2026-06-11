@@ -126,6 +126,64 @@ rules:
         - /packages/doeff-agents/src/doeff_agents/monitor.py
         - /packages/doeff-agents/src/doeff_agents/session.py
 
+  - id: doeff-agents-agentd-request-requires-result-key
+    languages: [python]
+    severity: ERROR
+    message: >
+      agents-fail-fast-protocol: successful doeff-agentd responses must validate
+      that the result key exists. Do not use response.get("result"), which turns
+      malformed ok=true payloads into None.
+    patterns:
+      - pattern-inside: |
+          def request(...):
+              ...
+      - pattern: return $RESPONSE.get("result")
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/agentd_client.py
+
+  - id: doeff-agents-await-result-requires-protocol-fields
+    languages: [python]
+    severity: ERROR
+    message: >
+      agents-fail-fast-protocol: session.await_result must validate required
+      payload fields explicitly. Do not use dict.get() for session or result,
+      because missing or malformed daemon fields must raise AgentdProtocolError.
+    patterns:
+      - pattern-inside: |
+          def _await_outcome_from_result(...):
+              ...
+      - pattern-either:
+          - pattern: $RESULT.get("session")
+          - pattern: $RESULT.get("result")
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/agentd_client.py
+
+  - id: doeff-agents-ready-promise-fail-fast
+    languages: [generic]
+    severity: ERROR
+    message: >
+      agents-fail-fast-protocol: MCP server startup must abort if ready_promise
+      completion fails. Logging and continuing into serve_forever leaves callers
+      waiting forever for readiness.
+    pattern-regex: 'except\s+Exception:\s*\n\s+log\.exception\("Failed to complete ready_promise"\)\s*\n\s*self\.serve_forever\(\)'
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/mcp_server.py
+
+  - id: doeff-agents-mcp-loop-catches-only-queue-empty
+    languages: [generic]
+    severity: ERROR
+    message: >
+      agents-fail-fast-protocol: mcp-server-loop may catch only queue.Empty when
+      draining request_queue. Catching Exception drops poisoned requests without
+      an error response.
+    pattern-regex: '\(except\s+\[[^\]]*\bException\b[^\]]*\]\s*\(setv\s+req\s+None\)\)'
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/handlers/mcp_server_loop.hy
+
   - id: adr0001-d1-agentd-only-worker-route
     languages: [python]
     severity: ERROR
@@ -220,6 +278,18 @@ rules:
       include:
         - /packages/doeff-conductor/src/doeff_conductor/handlers/git_handler.py
         - /packages/doeff-conductor/src/doeff_conductor/effects/git.py
+
+  - id: conductor-workspace-runtime-exclude-not-gitignore
+    languages: [generic]
+    severity: ERROR
+    message: >
+      conductor-workspace-exclude-not-gitignore: workspace runtime state must be
+      excluded via `git rev-parse --git-path info/exclude` from the worktree.
+      Never mutate the tracked workspace .gitignore during materialization.
+    pattern-regex: '\.gitignore'
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/handlers/workspace_handler.py
 
   - id: http-request-handlers-use-defhandler
     languages: [python]
@@ -1420,6 +1490,119 @@ rules:
     severity: WARNING
     metadata:
       spec: VM-FAILFAST-001C
+      category: fail-fast
+
+  - id: conductor-no-silent-corrupt-workflow-list
+    languages: [generic]
+    severity: ERROR
+    message: >
+      conductor-fail-fast-swallows: list_workflows must warn with path + reason
+      for corrupt meta.json entries while listing good workflows. Do not restore
+      the old except/continue swallow.
+    pattern-regex: 'except \(OSError, json\.JSONDecodeError, KeyError, TypeError, ValueError\):\s*\n\s*continue'
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/api.py
+    metadata:
+      issue: conductor-fail-fast-swallows
+      category: fail-fast
+
+  - id: conductor-no-unchecked-workspace-branch-lookup
+    languages: [generic]
+    severity: ERROR
+    message: >
+      conductor-fail-fast-swallows: list_workspaces must check the git branch
+      lookup returncode and warn with path + reason before reading stdout.
+    pattern-regex: 'result = subprocess\.run\([\s\S]*?\["git", "branch", "--show-current"\][\s\S]*?check=False,[\s\S]*?\)\s*\n\s*ref = result\.stdout\.strip\(\)'
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/api.py
+    metadata:
+      issue: conductor-fail-fast-swallows
+      category: fail-fast
+
+  - id: conductor-no-silent-workspace-list-conversion-skip
+    languages: [generic]
+    severity: ERROR
+    message: >
+      conductor-fail-fast-swallows: list_workspaces conversion errors must warn
+      with the workspace path and reason; do not silently continue.
+    pattern-regex: 'except \(OSError, TypeError, ValueError\):\s*\n\s*continue'
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/api.py
+    metadata:
+      issue: conductor-fail-fast-swallows
+      category: fail-fast
+
+  - id: conductor-no-yaml-frontmatter-default-on-error
+    languages: [generic]
+    severity: ERROR
+    message: >
+      conductor-fail-fast-swallows: corrupt issue YAML must raise
+      IssueFileCorruptError, never become empty frontmatter.
+    pattern-regex: 'except yaml\.YAMLError:\s*\n\s*frontmatter = \{\}'
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/handlers/issue_handler.py
+    metadata:
+      issue: conductor-fail-fast-swallows
+      category: fail-fast
+
+  - id: conductor-no-silent-issue-list-skip
+    languages: [generic]
+    severity: ERROR
+    message: >
+      conductor-fail-fast-swallows: issue list parsing failures must emit a
+      typed warning with file path + reason; do not silently skip malformed files.
+    pattern-regex: 'except \(OSError, KeyError, TypeError, ValueError\):\s*\n\s*# Skip malformed files\s*\n\s*continue'
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/handlers/issue_handler.py
+    metadata:
+      issue: conductor-fail-fast-swallows
+      category: fail-fast
+
+  - id: conductor-no-created-date-suppress
+    languages: [generic]
+    severity: ERROR
+    message: >
+      conductor-fail-fast-swallows: malformed created frontmatter must raise
+      IssueFileCorruptError naming the file and raw value; do not suppress it.
+    pattern-regex: 'with contextlib\.suppress\(ValueError, TypeError\):'
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/handlers/issue_handler.py
+    metadata:
+      issue: conductor-fail-fast-swallows
+      category: fail-fast
+
+  - id: conductor-no-force-delete-ignore-errors
+    languages: [generic]
+    severity: ERROR
+    message: >
+      conductor-fail-fast-swallows: force delete must verify workspace removal;
+      do not use shutil.rmtree(ignore_errors=True) on the materialized worktree.
+    pattern-regex: 'shutil\.rmtree\(materialization\.path,\s*ignore_errors=True\)'
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/handlers/workspace_handler.py
+    metadata:
+      issue: conductor-fail-fast-swallows
+      category: fail-fast
+
+  - id: conductor-no-unchecked-worktree-prune
+    languages: [generic]
+    severity: ERROR
+    message: >
+      conductor-fail-fast-swallows: force delete must not hide git worktree
+      prune failures with check=False.
+    pattern-regex: 'run_git\(\s*\n\s*\["git", "worktree", "prune"\],[\s\S]*?check=False'
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/handlers/workspace_handler.py
+    metadata:
+      issue: conductor-fail-fast-swallows
       category: fail-fast
 
   - id: no-string-match-error-detection
@@ -3601,3 +3784,40 @@ rules:
       include:
         - "**/packages/doeff-vm-core/src/**/*.rs"
     pattern-regex: 'Continuation::(?:new|single)\([^;\n]*orphan_queue'
+
+  # ---------------------------------------------------------------------------
+  # K4 PARALLEL-AWAIT BRIDGE (ADR D11, L-K4-1)
+  # ---------------------------------------------------------------------------
+
+  - id: k4-no-blocking-agent-handler
+    languages: [python]
+    severity: ERROR
+    message: >
+      ADR D11 / L-K4-1: AgentEffect must not use make_blocking_scheduled_handler.
+      The agent handler performs unbounded blocking I/O (agentd await_result RPC)
+      that freezes the cooperative scheduler and serialises parallel branches.
+      Use make_offloaded_scheduled_handler instead, which bridges the blocking
+      call through ExternalPromise + daemon thread.
+    pattern: |
+      (AgentEffect, make_blocking_scheduled_handler($HANDLER))
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/handlers/**
+
+  - id: k4-no-sync-await-result-in-scheduled-handler
+    languages: [python]
+    severity: ERROR
+    message: >
+      ADR D11 / L-K4-1: do not call await_result() synchronously inside a
+      make_scheduled_handler or make_blocking_scheduled_handler wrapper.
+      Unbounded blocking I/O in a handler freezes the cooperative scheduler.
+      Use make_offloaded_scheduled_handler to bridge the call through
+      ExternalPromise + daemon thread.
+    patterns:
+      - pattern-inside: |
+          make_blocking_scheduled_handler($HANDLER)
+      - pattern: $OBJ.await_result(...)
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/handlers/**
+        - /packages/doeff-agents/src/doeff_agents/handlers/**

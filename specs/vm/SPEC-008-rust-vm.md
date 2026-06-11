@@ -1,6 +1,17 @@
 # SPEC-008: Rust VM for Algebraic Effects
 
-## Status: Draft (Revision 18)
+## Status: Draft (Revision 18); mixed implementation status
+
+Current implementation status as of 2026-06-12:
+
+| Area | Status | Current implementation |
+|------|--------|------------------------|
+| Core VM wrapper | Implemented | `doeff_vm.PyVM().run(doexpr)` is the exposed VM entrypoint. |
+| Top-level Python entrypoint | Implemented | `doeff.run(doexpr)` creates `PyVM` and returns the plain program value or raises. |
+| Module-level `doeff_vm.run` / `doeff_vm.async_run` | Design, never shipped | Not exported by `doeff_vm/__init__.py` or `__init__.pyi`. |
+| `RunResult` / `PyRunResult` public return | Design, never shipped | Not exported by `doeff_vm`; `run()` returns the plain value. |
+| `handlers=`, `env=`, `store=` kwargs on `run()` | Superseded by explicit composition | Compose handlers around the program before calling `run(doexpr)`. Core handler factories are `Program -> Program` installers such as `state(initial=...)(program)` and `reader(env=...)(program)`. |
+| Async entrypoint | Superseded by `scheduled()` | Top-level `doeff.async_run` is a removed placeholder: use `run()` with `scheduled()`. |
 
 ### Revision 18 Changelog
 
@@ -233,36 +244,45 @@ path (one vtable call + one match arm).
 
 **Handler Installation** (all handlers are explicit, no defaults):
 ```python
-from doeff import run, WithHandler
-from doeff.handlers import state, reader, writer
+from doeff import Ask, Get, Put, do, run
+from doeff_core_effects.handlers import reader, state, writer
 
-# Standard handlers are just handlers — no special treatment
-result = run(
-    my_program(),
-    handlers=[state, reader, writer],
-    store={"x": 0},
-)
-
-# User can replace any standard handler with custom implementation
-result = run(
-    my_program(),
-    handlers=[my_persistent_state, reader, writer],
-)
-
-# Handlers composable via WithHandler anywhere
 @do
 def my_program():
-    result = yield WithHandler(
-        handler=cache_handler,
-        expr=sub_program(),
-    )
-    return result
+    current = yield Get("x")
+    greeting = yield Ask("greeting")
+    yield Put("x", current + 1)
+    return f"{greeting}: {current + 1}"
+
+
+program = my_program()
+program = writer()(program)
+program = state(initial={"x": 0})(program)
+program = reader(env={"greeting": "hello"})(program)
+result = run(program)
+assert result == "hello: 1"
 ```
 
 **Built-in Scheduler (Explicit, see SPEC-SCHED-001)**:
 ```python
-from doeff.handlers import scheduler
-result = run(my_program(), handlers=[scheduler, state, reader, writer])
+from doeff import Gather, Pure, Spawn, do, run
+from doeff_core_effects.scheduler import scheduled
+
+
+@do
+def child(value):
+    return (yield Pure(value))
+
+
+@do
+def main():
+    left = yield Spawn(child(1))
+    right = yield Spawn(child(2))
+    return (yield Gather(left, right))
+
+
+result = run(scheduled(main()))
+assert result == [1, 2]
 ```
 
 ### ADR-3: GIL Release Strategy
@@ -291,7 +311,12 @@ Python runtime layer.
 - Rust `async` would complicate lifetime management with PyO3
 - Can add async Rust later if needed
 
-### ADR-4a: Asyncio Integration (Reference)
+### ADR-4a: Asyncio Integration (Historical Reference)
+
+**Status: Design, never shipped as public API; superseded by `run(scheduled(...))`.**
+The current top-level `doeff.async_run` export is a removed placeholder whose
+replacement message is "use run() with scheduled()". `doeff_vm` does not expose
+module-level `async_run` or `PyVM.run_async`.
 
 **Decision**: Provide a Python-level async driver (`async_run` / `VM.run_async`) and the
 `PythonAsyncSyntaxEscape` DoCtrl for handlers that need `await`.
@@ -402,6 +427,11 @@ to `run()` or `WithHandler`, at `id()` level.
 
 ### ADR-11: Store/Env Initialization and Extraction [R8-E]
 
+**Status: Design, never shipped.** Current `PyVM` does not expose these
+lifecycle helpers, and current `doeff.run()` does not accept `env=` or
+`store=`. Seed reader/state data by composing handler factories before calling
+`run(doexpr)`, for example `reader(env={...})(state(initial={...})(program))`.
+
 **Decision**: PyVM exposes `put_state()`, `put_env()`, `env_items()` for the
 `run()` function to seed initial state and read back results.
 
@@ -414,10 +444,10 @@ to `run()` or `WithHandler`, at `id()` level.
 - `state_items() -> dict` — returns `RustStore.state` as Python dict
 - `logs() -> list` — returns `RustStore.log` as Python list
 
-**Rationale**:
-- The `run()` function (SPEC-009) takes `env={}` and `store={}` parameters
-- It needs to seed the VM before running and extract results after
-- These methods are implementation details — users never call them directly
+**Historical rationale**:
+- The old SPEC-009 design had `run(..., env={}, store={})` parameters.
+- It needed to seed the VM before running and extract results after.
+- These methods would have been implementation details.
 
 ### ADR-15: Explicit Perform Boundary (EffectValue vs DoExpr) [R14-A, R14-B]
 
@@ -1030,7 +1060,7 @@ They subclass `EffectBase` (Python) and flow through dispatch as `Py<PyAny>`
 like everything else. Python handlers receive them and read attributes
 with normal Python attribute access.
 
-```python
+```text
 class MyDatabaseQuery(EffectBase):
     def __init__(self, sql: str):
         self.sql = sql
@@ -1223,8 +1253,8 @@ unsafe fn read_do_expr_tag(obj: &Py<PyAny>) -> DoExprTag {
 
 Python user-defined types extend the same bases:
 
-```python
-from doeff_vm import EffectBase, DoCtrlBase
+```text
+from doeff_vm import EffectBase
 
 # User effect — isinstance(obj, EffectBase) works
 class MyDatabaseQuery(EffectBase):
@@ -1714,44 +1744,36 @@ implementation details are defined in SPEC-SCHED-001.
 
 ### Python API for Standard Handlers [R8-H]
 
-Users install standard handlers via `run()` or `WithHandler` (see SPEC-009):
+**Status: Implemented with explicit handler factory composition.** Users install
+standard handlers by wrapping the program before calling `run(doexpr)`.
+High-level handler factories from `doeff_core_effects.handlers` are
+`Program -> Program` installers.
 
 ```python
-from doeff import run, WithHandler
-from doeff.handlers import state, reader, writer
+from doeff import Ask, Get, Put, do, run
+from doeff_core_effects.handlers import reader, state, writer
 
-# Install standard handlers explicitly
-result = run(
-    user_program(),
-    handlers=[state, reader, writer],
-    store={"x": 0},
-    env={"key": "val"},
-)
 
-# Observe state after execution
-print(result.raw_store)    # Dict of state key-value pairs
-
-# Users can replace standard handlers with custom ones
 @do
-def my_persistent_state(effect, k):
-    if isinstance(effect, Get):
-        value = db.get(effect.key)
-        result = yield Resume(k, value)
-        return result
-    elif isinstance(effect, Put):
-        db.put(effect.key, effect.value)
-        result = yield Resume(k, None)
-        return result
-    else:
-        yield Pass()
+def user_program():
+    value = yield Get("x")
+    prefix = yield Ask("prefix")
+    yield Put("x", value + 1)
+    return f"{prefix}:{value + 1}"
 
-# Custom handler intercepts state effects instead of standard state handler
-result = run(
-    user_program(),
-    handlers=[my_persistent_state, reader, writer],
-    env={"key": "val"},
-)
+
+program = user_program()
+program = writer()(program)
+program = state(initial={"x": 0})(program)
+program = reader(env={"prefix": "count"})(program)
+
+result = run(program)
+assert result == "count:1"
 ```
+
+Custom handlers replace standard handlers by exposing the same installer shape:
+a callable that accepts a program and returns a wrapped program. At VM level the
+underlying composition primitive is still `WithHandler`.
 
 ### PythonCall and PendingPython (Purpose-Tagged Calls)
 
@@ -2270,7 +2292,7 @@ pub struct DebugConfig {
 
 ### Python API for Debug
 
-```python
+```text
 vm = doeff.VM(debug=True)  # Steps level
 vm.set_debug(DebugConfig(level="trace", show_frames=True, show_dispatch=True))
 result = vm.run(program)
@@ -2982,7 +3004,7 @@ Notes:
 
 **Pass/Delegate/Resume Pseudocode** [R15-A]:
 
-```python
+```text
 @do
 def user():
     x = yield SomeEffect()
@@ -3269,7 +3291,11 @@ impl PyVM {
 
 ---
 
-## Asyncio Integration (Reference)
+## Asyncio Integration (Historical Reference)
+
+**Status: Design, never shipped as public API; superseded by
+`run(scheduled(program))`.** Current `doeff_vm` exposes only synchronous
+`PyVM.run()`, and top-level `doeff.async_run` raises a removed-API error.
 
 This section mirrors legacy SPEC-006's asyncio bridge [Deprecated], adapted to the Rust VM.
 The VM core remains synchronous; async integration is implemented by a driver
@@ -3280,7 +3306,7 @@ wrapper and a handler that yields `PythonAsyncSyntaxEscape`.
 `async_run` uses the same step loop but awaits `PythonCall::CallAsync` events.
 All other PythonCall variants are handled synchronously via `execute_python_call`.
 
-```python
+```text
 async def async_run(vm, program):
     # [R13-A] classify_program_input extracts the generator (lazy AST) from program
     vm_input = vm.classify_program_input(program)
@@ -3303,7 +3329,7 @@ async def async_run(vm, program):
 
 `execute_python_call_async` is a thin wrapper:
 
-```python
+```text
 async def execute_python_call_async(call):
     py_args = to_py_args(call.args)
     awaitable = call.func(*py_args)
@@ -3324,7 +3350,7 @@ Two reference handlers are provided:
 - `async_await_handler`: yields `PythonAsyncSyntaxEscape` so
   `async_run` can await in the event loop.
 
-```python
+```text
 @do
 def sync_await_handler(effect, k):
     if isinstance(effect, Await):
@@ -3334,7 +3360,7 @@ def sync_await_handler(effect, k):
     yield Pass(effect)
 ```
 
-```python
+```text
 @do
 def async_await_handler(effect, k):
     if isinstance(effect, Await):
@@ -3352,81 +3378,98 @@ def async_await_handler(effect, k):
     yield Pass(effect)
 ```
 
-`async_await_handler` must only be used with `async_run`;
-the sync driver raises `TypeError` if it sees `CallAsync`.
+Historical design: `async_await_handler` would only be used with `async_run`;
+the sync driver would raise `TypeError` if it saw `CallAsync`.
 
-`run()` and `async_run()` must pass handler lists through unchanged. Handler
-selection is user responsibility; no handler swapping or thread-offload
-detection is allowed in VM wrappers.
+Current replacement: compose concurrency with `scheduled(program)` and call
+`run()` on the scheduled program. Handler selection remains user responsibility.
 
 **Usage**:
-- Sync: `vm.run(with_handler(sync_await_handler, program))`
-- Async: `await vm.run_async(with_handler(async_await_handler, program))`
+- Current: `run(scheduled(program))`
+- Historical async design: `await vm.run_async(with_handler(async_await_handler, program))`
 
 ---
 
 ## Public API Contract (SPEC-009 Support) [R8-J]
 
-This section specifies the user-facing types and contracts that the VM must
-expose to satisfy SPEC-009. Everything in this section is part of the
-**public boundary** — the layer between user code and VM internals.
+**Status: Partially implemented; stale contract superseded.** This section was
+originally written for an older SPEC-009 API that included `RunResult`,
+`async_run`, and `run(..., handlers=..., env=..., store=...)`. Those APIs were
+not shipped in the current package. The implemented public boundary is:
 
-### run() and async_run() — Entrypoint Contract
+- `doeff.run(doexpr) -> Any`
+- `doeff_vm.PyVM().run(doexpr) -> Any`
+- explicit handler composition before `run(doexpr)`
+- concurrency via `doeff_core_effects.scheduler.scheduled(program)`
+
+### Current Entrypoint Contract
 
 ```python
-def run(
-    program: Program[T],
-    handlers: list[Handler] = [],
-    env: dict[str, Any] = {},
-    store: dict[str, Any] = {},
-) -> RunResult[T]: ...
+from typing import Any
 
-async def async_run(
-    program: Program[T],
-    handlers: list[Handler] = [],
-    env: dict[str, Any] = {},
-    store: dict[str, Any] = {},
-) -> RunResult[T]: ...
+
+def run(doexpr: Any) -> Any: ...
 ```
 
-These are **Python-side** functions that wrap `PyVM`. They are NOT methods on
-PyVM — they create and configure a PyVM internally.
+`doeff.run()` is a Python-side wrapper that creates `PyVM` internally and
+returns the plain program value. On error it enriches the exception with
+`__doeff_traceback__`, prints a formatted doeff traceback to stderr when
+available, and re-raises.
 
-#### Implementation Contract
+#### Current Implementation Contract
 
-`run(program, handlers, env, store)` does the following in order:
+`run(doexpr)` does the following:
 
 ```
 1. Create PyVM instance
        vm = PyVM::new()
 
-2. Initialize store (SPEC-009 API-6)
-       for key, value in store.items():
-           vm.put_state(key, Value::from_pyobject(value))
+2. Execute via driver loop
+       value = vm.run(doexpr)
 
-3. Initialize environment (SPEC-009 API-5)
-       for key, value in env.items():
-           vm.put_env(key, Value::from_pyobject(value))
-
-4. Wrap program with handlers (nesting order — see below)
-       wrapped = program
-       for h in reversed(handlers):
-           wrapped = WithHandler(handler=h, expr=wrapped)
-
-5. Execute via driver loop
-       final_value_or_error = vm.run(wrapped)   # driver loop from §Driver Loop
-
-6. Extract results into RunResult
-       raw_store = {k: v.to_pyobject() for k, v in vm.state_items()}
-       result = Ok(final_value) or Err(exception)
-       return RunResult(result=result, raw_store=raw_store)
+3. Return plain value or re-raise enriched exception
 ```
 
-`async_run` is identical except step 5 uses the async driver loop (§Async Driver).
+There is no public `async_run` in the current API. Use `run(scheduled(program))`
+for cooperative concurrency.
 
-#### Handler Nesting Order
+#### Current Handler Composition
 
-`handlers=[h0, h1, h2]` produces:
+Handlers are composed before calling `run(doexpr)`. High-level core handlers are
+`Program -> Program` installers:
+
+```python
+from doeff import Get, Put, do, run
+from doeff_core_effects.handlers import state
+
+
+@do
+def increment():
+    value = yield Get("x")
+    yield Put("x", value + 1)
+    return value + 1
+
+
+program = state(initial={"x": 0})(increment())
+assert run(program) == 1
+```
+
+At VM level the underlying composition primitive remains `WithHandler`. The
+current reader-facing handler factories call that primitive for callers.
+
+**No default handlers.** If the program yields an effect with no matching
+handler in scope, the VM raises `UnhandledEffect`.
+
+#### Historical `handlers=` Design
+
+The following older contract did not ship:
+
+```text
+run(program, handlers=[h0, h1, h2], env={...}, store={...}) -> RunResult
+async_run(program, handlers=[...]) -> RunResult
+```
+
+Historical nesting order for that design was:
 
 ```
 WithHandler(h0,           ← outermost, sees effects LAST
@@ -3435,30 +3478,11 @@ WithHandler(h0,           ← outermost, sees effects LAST
       program)))
 ```
 
-`h2` is closest to the program — it sees effects first. `h0` is outermost —
-it sees effects that `h1` and `h2` delegate. This matches `reversed(handlers)`.
+### RunResult — Historical Design [R8-J]
 
-**No default handlers** (SPEC-009 API-1). If `handlers=[]`, the program runs
-with zero handlers. Yielding any effect raises `UnhandledEffect`.
-
-#### NestingStep / NestingGenerator (ADR-13) [Q7]
-
-The `WithHandler(h0, WithHandler(h1, WithHandler(h2, program)))` nesting is
-implemented via a synthetic generator (`NestingGenerator`) that yields one
-`WithHandler` DoCtrl at a time. The driver steps this generator through:
-
-1. `run(program, handlers=[h0, h1, h2])` creates a `NestingGenerator` that
-   will yield `WithHandler(h2, program)`, then `WithHandler(h1, ...)`,
-   then `WithHandler(h0, ...)`.
-2. Each `WithHandler` yield installs the handler and creates a new prompt
-   segment. The NestingGenerator resumes with the next handler.
-3. Once all handlers are installed, the innermost body (the user program)
-   starts executing.
-
-This avoids recursion or special-case nesting in the VM — the handler
-installation loop is just normal generator stepping.
-
-### RunResult — Execution Output [R8-J]
+**Status: Design, never shipped.** `RunResult` and `PyRunResult` are not
+exported by `doeff_vm` or `doeff`. The current `run()` returns the plain value
+and raises exceptions on failure.
 
 ```rust
 /// The public result of a run()/async_run() call.
@@ -3559,7 +3583,7 @@ in the `doeff` Python package. SPEC-008 defines how the VM processes its output.
 
 #### What @do Does [R13-E]
 
-```python
+```text
 def do(fn):
     """Convert a generator function into a DoExpr factory.
 

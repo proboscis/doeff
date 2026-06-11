@@ -5,6 +5,7 @@ Commands:
     run         Execute a workflow template or file
     ps          List running workflows
     show        Show workflow details
+    wait        Block until a workflow terminates or parks
     watch       Monitor workflow progress
     attach      Attach to agent session
     logs        View session logs
@@ -14,9 +15,9 @@ Commands:
     template    Template management (list, show, new)
 """
 
-
 import json
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -27,10 +28,12 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from .exceptions import ConductorError
 from .types import IssueStatus, WorkflowStatus
 
 console = Console()
 _CLI_USER_ERROR_TYPES: tuple[type[BaseException], ...] = (
+    ConductorError,
     FileNotFoundError,
     OSError,
     ValueError,
@@ -64,6 +67,7 @@ def _status_color(status: WorkflowStatus | IssueStatus | str) -> str:
             WorkflowStatus.BLOCKED: "yellow",
             WorkflowStatus.DONE: "blue",
             WorkflowStatus.ERROR: "red",
+            WorkflowStatus.STOPPED: "magenta",
             WorkflowStatus.ABORTED: "magenta",
         }.get(status, "white")
     if isinstance(status, IssueStatus):
@@ -295,9 +299,7 @@ def run(
                 from .effects.issue import GetIssue
 
                 if frontmatter.get("id"):
-                    issue_obj = handler.handle_get_issue(
-                        GetIssue(id=frontmatter["id"])
-                    )
+                    issue_obj = handler.handle_get_issue(GetIssue(id=frontmatter["id"]))
 
         # Run workflow
         workflow = api.run_workflow(
@@ -384,9 +386,7 @@ def ps_cmd(
 
     api = ConductorAPI(ctx.obj.get("state_dir"))
 
-    workflows = api.list_workflows(
-        status=[WorkflowStatus(s) for s in status] if status else None
-    )
+    workflows = api.list_workflows(status=[WorkflowStatus(s) for s in status] if status else None)
 
     if output_json:
         click.echo(json.dumps([w.to_dict() for w in workflows], indent=2))
@@ -467,9 +467,7 @@ def _workflow_detail_panel(workflow: object) -> Panel:
     status_color = _status_color(workflow_status)
     lines.append(f"[bold]ID:[/bold] {workflow_vars['id']}")
     lines.append(f"[bold]Name:[/bold] {workflow_vars['name']}")
-    lines.append(
-        f"[bold]Status:[/bold] [{status_color}]{workflow_status.value}[/{status_color}]"
-    )
+    lines.append(f"[bold]Status:[/bold] [{status_color}]{workflow_status.value}[/{status_color}]")
     _append_optional_line(
         lines,
         workflow_vars["template"] is not None,
@@ -569,6 +567,146 @@ def show_cmd(
         return
 
     _show_workflow_details(ctx, workflow_id, output_json)
+
+
+def _wait_status_value(status: WorkflowStatus) -> str:
+    if status in (WorkflowStatus.STOPPED, WorkflowStatus.ABORTED):
+        return "stopped"
+    return status.value
+
+
+def _wait_gate_payload(gates: list[dict[str, object]]) -> list[dict[str, object]]:
+    payload: list[dict[str, object]] = []
+    for gate in gates:
+        raw_options = gate["options"]
+        if not isinstance(raw_options, list):
+            raise ValueError("open gate options must be a list")
+        option_names: list[str] = []
+        for option in raw_options:
+            if not isinstance(option, dict):
+                raise ValueError("open gate option must be an object")
+            option_names.append(str(option["name"]))
+        payload.append(
+            {
+                "gate_id": str(gate["gate_id"]),
+                "options": option_names,
+            }
+        )
+    return payload
+
+
+def _wait_summary(payload: dict[str, object]) -> str:
+    status = str(payload["status"])
+    raw_waited_seconds = payload["waited_seconds"]
+    if not isinstance(raw_waited_seconds, (int, float)):
+        raise ValueError("wait payload waited_seconds must be numeric")
+    waited_seconds = float(raw_waited_seconds)
+    gates = payload["gates"]
+    if not isinstance(gates, list):
+        raise ValueError("wait payload gates must be a list")
+    if not gates:
+        return f"status={status} waited_seconds={waited_seconds:.3f}"
+
+    gate_parts: list[str] = []
+    for gate in gates:
+        if not isinstance(gate, dict):
+            raise ValueError("wait payload gate must be an object")
+        raw_options = gate["options"]
+        if not isinstance(raw_options, list):
+            raise ValueError("wait payload gate options must be a list")
+        option_text = ", ".join(str(option) for option in raw_options)
+        gate_parts.append(f"{gate['gate_id']}({option_text})")
+    return f"status={status} gates={'; '.join(gate_parts)} waited_seconds={waited_seconds:.3f}"
+
+
+def _wait_for_workflow(
+    *,
+    state_dir: str | None,
+    workflow_id: str,
+    timeout: float | None,
+    poll_interval: float,
+) -> tuple[int, dict[str, object]]:
+    from doeff_conductor.api import ConductorAPI
+    from doeff_conductor.overseer import list_open_gates
+
+    api = ConductorAPI(state_dir)
+    started_at = time.monotonic()
+
+    while True:
+        handle = api.get_workflow(workflow_id)
+        waited_seconds = time.monotonic() - started_at
+        if handle is None:
+            raise ValueError(
+                f"Workflow not found: {workflow_id} (state dir: {api.state_dir})"
+            )
+
+        status_value = _wait_status_value(handle.status)
+        gate_payload = _wait_gate_payload(list_open_gates(api.state_dir, handle.id))
+        payload = {
+            "status": status_value,
+            "gates": gate_payload,
+            "waited_seconds": round(waited_seconds, 3),
+        }
+
+        if handle.status is WorkflowStatus.DONE:
+            return 0, payload
+        if handle.status in (
+            WorkflowStatus.ERROR,
+            WorkflowStatus.STOPPED,
+            WorkflowStatus.ABORTED,
+        ):
+            return 1, payload
+        if gate_payload:
+            return 2, payload
+        if timeout is not None and waited_seconds >= timeout:
+            return 3, payload
+
+        sleep_seconds = poll_interval
+        if timeout is not None:
+            remaining_seconds = timeout - waited_seconds
+            sleep_seconds = min(poll_interval, remaining_seconds)
+        if sleep_seconds > 0:
+            time.sleep(sleep_seconds)
+
+
+@cli.command("wait")
+@click.argument("workflow_id")
+@click.option("--timeout", type=click.FloatRange(min=0.0), help="Maximum seconds to wait")
+@click.option(
+    "--poll-interval",
+    type=click.FloatRange(min=0.001),
+    default=2.0,
+    show_default=True,
+    help="Seconds between state polls",
+)
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def wait_cmd(
+    ctx: click.Context,
+    workflow_id: str,
+    timeout: float | None,
+    poll_interval: float,
+    output_json: bool,
+) -> None:
+    """Wait until a workflow terminates or parks on an open gate."""
+    try:
+        exit_code, payload = _wait_for_workflow(
+            state_dir=ctx.obj.get("state_dir"),
+            workflow_id=workflow_id,
+            timeout=timeout,
+            poll_interval=poll_interval,
+        )
+        if output_json:
+            click.echo(json.dumps(payload))
+        else:
+            click.echo(_wait_summary(payload))
+        sys.exit(exit_code)
+    except _CLI_USER_ERROR_TYPES as e:
+        if output_json:
+            click.echo(json.dumps({"error": str(e)}))
+        else:
+            click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
 
 @cli.command("watch")
@@ -681,9 +819,7 @@ def env_describe(output_json: bool) -> None:
         for verification_class, profile in description["router_default_policy"].items():
             router_table.add_row(verification_class, profile)
         console.print(router_table)
-        console.print(
-            f"Available capabilities: {', '.join(description['available_capabilities'])}"
-        )
+        console.print(f"Available capabilities: {', '.join(description['available_capabilities'])}")
     except _CLI_USER_ERROR_TYPES as e:
         if output_json:
             click.echo(json.dumps({"error": str(e)}))
@@ -1034,9 +1170,7 @@ def issue_resolve(
 
     try:
         issue_obj = handler.handle_get_issue(GetIssue(id=issue_id))
-        resolved = handler.handle_resolve_issue(
-            ResolveIssue(issue=issue_obj, pr_url=pr)
-        )
+        resolved = handler.handle_resolve_issue(ResolveIssue(issue=issue_obj, pr_url=pr))
 
         if output_json:
             click.echo(json.dumps(resolved.to_dict(), indent=2))
@@ -1131,10 +1265,14 @@ def workspace_cleanup(
         )
 
         if output_json:
-            click.echo(json.dumps({
-                "dry_run": dry_run,
-                "cleaned": [str(p) for p in cleaned],
-            }))
+            click.echo(
+                json.dumps(
+                    {
+                        "dry_run": dry_run,
+                        "cleaned": [str(p) for p in cleaned],
+                    }
+                )
+            )
         elif cleaned:
             action = "Would clean" if dry_run else "Cleaned"
             console.print(f"[green]{action}:[/green]")

@@ -51,10 +51,11 @@ VMから見える全DetachedFiberChain(pending_handler_chain_backup、Frame::Pro
 arena内fiberの`EvalReturn{ResumeToContinuation|ReturnToContinuation|EvalInScopeReturn}`フレームが参照する`head_fiber`は、arena内またはVM可視の分離鎖内に存在する。
 **根拠**: `vm/var_store.rs:31-41`がこの参照を辿ってスコープを解決するが、欠損時は黙ってスキップする(=静かにスコープが欠ける)。
 
-### I8. Varセル所有者の生存(**tension** — 既知の緊張B14)
+### I8. Varセル所有者の生存(**tension** — 既知の緊張B14)— 決着済み、撤去予定
 `var_store.cells`の各VarIdの`owner_segment`は解放(VacantFree)されていない。
 **現実**: **既存テスト`test_alloc_read_write_var`で発火する**(fiber完了後もセルが生存)。`read_scoped_var_from`(vm/var_store.rs:144)の無条件フォールバックが吸収するため本番では不可視。
-**意味**: SPEC-VM-020:191「VarId.owner_segmentは存在しないべき(セルはポインタで指す)」とSPEC-VM-019 Rev 2「segments are the scope」の矛盾(constraint-graph.md §4-④)が**実行時に観測可能な形で実在する**ことの証明。owner解放後のVarIdは事実上「グローバルヒープセルのキー」に退化しており、スコープ意味論はlaw未確定。Task 4のlaw議論(Var/Get/Putの意味論)で決着すべき。
+**意味**: SPEC-VM-020:191「VarId.owner_segmentは存在しないべき(セルはポインタで指す)」とSPEC-VM-019 Rev 2「segments are the scope」の矛盾(constraint-graph.md §4-④)が**実行時に観測可能な形で実在する**ことの証明。
+**決着(2026-06-12、D15)**: Var一式は死設備と判明し全削除が確定(Python API削除済み・ブリッジ公開なし・使用者はRustテスト1本)。tensionは主体の消滅で解消する。I8チェッカーは削除issue(constraint-graph.md §4-④)の一部として撤去予定 — それまでは現状の「報告のみ」を維持。
 
 ## チェッカーの観測範囲の限界
 
