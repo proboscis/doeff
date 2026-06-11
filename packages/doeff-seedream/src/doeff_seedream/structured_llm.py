@@ -128,7 +128,7 @@ def _decode_images(
         results.append(
             SeedreamImage(
                 image_bytes=image_bytes,
-                mime_type="image/jpeg" if expected_format == "b64_json" else "image/jpeg",
+                mime_type="image/jpeg",
                 url=url_value if isinstance(url_value, str) else None,
                 size=size_value,
             )
@@ -139,7 +139,7 @@ def _decode_images(
 
 
 @do
-def _edit_image__seedream4_impl(
+def _edit_image__seedream4_impl(  # noqa: PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
     prompt: str,
     model: str = DEFAULT_MODEL,
     images: list[Image.Image] | None = None,
@@ -260,11 +260,7 @@ def _edit_image__seedream4_impl(
     response_format = str(payload.get("response_format", DEFAULT_RESPONSE_FORMAT))
 
     yield Tell(
-        "Preparing Seedream image request using model=%s with %d reference image(s)"
-        % (
-            model,
-            len(images) if images else 0,
-        )
+        f"Preparing Seedream image request using model={model} with {len(images) if images else 0} reference image(s)"
     )
 
     client = yield get_seedream_client()
@@ -392,13 +388,7 @@ def _edit_image__seedream4_impl(
         yield Put("seedream_api_calls", entries)
 
         yield Tell(
-            "Seedream estimated cost $%.4f for %d image(s) (%s); cumulative total $%.4f"
-            % (
-                cost_estimate.total_cost,
-                cost_estimate.generated_images,
-                cost_estimate.source,
-                new_total,
-            )
+            f"Seedream estimated cost ${cost_estimate.total_cost:.4f} for {cost_estimate.generated_images} image(s) ({cost_estimate.source}); cumulative total ${new_total:.4f}"
         )
 
     return result
