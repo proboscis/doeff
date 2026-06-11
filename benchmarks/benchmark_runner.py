@@ -195,11 +195,11 @@ def _run_trivial() -> Any:
 
 
 def _run_state_get_put_loop(iterations: int) -> Any:
-    return run(VMWithHandler(state({"counter": 0}), _state_get_put_loop(iterations)))
+    return run(state({"counter": 0})(_state_get_put_loop(iterations)))
 
 
 def _run_reader_ask_loop(iterations: int) -> Any:
-    return run(VMWithHandler(reader({"value": 1}), _reader_ask_loop(iterations)))
+    return run(reader({"value": 1})(_reader_ask_loop(iterations)))
 
 
 def _run_spawn_gather(task_count: int) -> Any:
@@ -207,7 +207,7 @@ def _run_spawn_gather(task_count: int) -> Any:
 
 
 def _run_await_round_trip(iterations: int, handler: Callable[..., Any]) -> Any:
-    return run(scheduled(VMWithHandler(handler, _await_loop(iterations))))
+    return run(scheduled(handler(_await_loop(iterations))))
 
 
 def _run_python_callable_boundary(iterations: int, callback: VmCallable) -> Any:
