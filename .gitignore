@@ -62,6 +62,35 @@ uv.lock
 .dmypy.json
 dmypy.json
 
+# Generated logs, traces, and local databases
+.doeff-lint.jsonl
+.doeff-flow/
+*.jsonl
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-shm
+*.sqlite3-wal
+None
+Untitled
+
+# Local agent and browser automation state
+.agent-home/
+.playwright-mcp/
+.claude/settings.local.json
+.claude/skills/install-vscode-plugin/
+.agents/skills/install-vscode-plugin/
+
+# Accidental desktop helper bundle captured at repository root
+/server.js
+
 # Rust build artifacts
 rust/**/target/
 packages/**/target/
