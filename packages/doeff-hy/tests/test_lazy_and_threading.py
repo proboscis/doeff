@@ -5,14 +5,15 @@ Tests:
   2. lazy clause in defk — same mechanism
   3. <-> effectful threading macro
 """
-import pytest
-
-from doeff import do, run as doeff_run, WithHandler, EffectBase, Some, Nothing
-from doeff_core_effects.effects import Ask, Get, Put
-from doeff_core_effects.handlers import state, lazy_ask
-from doeff_core_effects.scheduler import scheduled
 from dataclasses import dataclass
 
+import pytest
+from doeff_core_effects.effects import Get, Put
+from doeff_core_effects.handlers import lazy_ask, state
+from doeff_core_effects.scheduler import scheduled
+
+from doeff import EffectBase, Some, WithHandler, do
+from doeff import run as doeff_run
 
 # ── Test effects ──────────────────────────────────────────────────
 
@@ -51,8 +52,8 @@ class TestLazyHandlerMacro:
 
     def test_lazy_handler_basic(self):
         """Lazy init runs on first effect, uses cached value on second."""
-        import hy  # noqa: F401
         import doeff_hy  # noqa: F401
+        import hy
 
         # This Hy code uses the lazy clause in defhandler
         code = """
@@ -94,14 +95,14 @@ class TestLazyHandlerMacro:
 
     def test_lazy_handler_runs_once(self):
         """Lazy init should execute only once even with multiple effect invocations."""
-        import hy  # noqa: F401
         import doeff_hy  # noqa: F401
+        import hy  # noqa: F401
 
         # We test by checking state key contains Some after first init
         @do
         def handler_with_lazy(effect, k):
             """Simulates what the lazy macro should expand to."""
-            from doeff.program import Resume, Pass
+            from doeff.program import Pass, Resume
             if isinstance(effect, FetchData):
                 # --- This is what lazy macro should generate ---
                 cached = yield Get(f"{__name__}/handler_with_lazy/client")
@@ -133,7 +134,7 @@ class TestLazyHandlerMacro:
 
         @do
         def handler_with_lazy_none(effect, k):
-            from doeff.program import Resume, Pass
+            from doeff.program import Pass, Resume
             if isinstance(effect, FetchData):
                 cached = yield Get(f"{__name__}/handler/val")
                 if isinstance(cached, Some):
@@ -168,8 +169,8 @@ class TestLazyHandlerHyIntegration:
 
     def test_defhandler_lazy_compiles(self):
         """(defhandler name (lazy x ...) (Effect [f] ...)) should compile."""
-        import hy
         import doeff_hy  # noqa: F401
+        import hy
 
         # This should NOT raise a SyntaxError once implemented
         code = """
@@ -187,8 +188,8 @@ class TestLazyHandlerHyIntegration:
 
     def test_defhandler_lazy_with_effects(self):
         """Lazy init body can perform effects (Ask) for config."""
-        import hy
         import doeff_hy  # noqa: F401
+        import hy
 
         code = """
 (require doeff-hy.macros [defp <-])
@@ -234,16 +235,17 @@ class TestLazyHandlerHyIntegration:
 
     def test_defhandler_lazy_key_contains_module(self):
         """Lazy state key should be prefixed with module name."""
-        import hy
-        import doeff_hy  # noqa: F401
         import types
+
+        import doeff_hy  # noqa: F401
+        import hy
 
         observed_keys = []
 
         # Create a spy state handler that records Get keys
         @do
         def spy_state(effect, k):
-            from doeff.program import Resume, Pass
+            from doeff.program import Pass, Resume
             if isinstance(effect, Get):
                 observed_keys.append(effect.key)
                 result = yield Resume(k, None)
@@ -303,9 +305,10 @@ class TestLazyDefk:
 
     def test_defk_lazy_basic(self):
         """(defk name [x] (lazy val ...) body) should compile and run."""
-        import hy
-        import doeff_hy  # noqa: F401
         import types
+
+        import doeff_hy  # noqa: F401
+        import hy
 
         code = """
 (require doeff-hy.macros [defk defp <-])
@@ -352,9 +355,10 @@ class TestThreadingMacro:
 
     def test_threading_expands_correctly(self):
         """(<-> (f) (g :k v) (h)) should thread first-arg through pipeline."""
-        import hy
-        import doeff_hy  # noqa: F401
         import types
+
+        import doeff_hy  # noqa: F401
+        import hy
 
         code = """
 (require doeff-hy.macros [defk defp <- <->])
@@ -401,9 +405,10 @@ class TestThreadingMacro:
 
     def test_threading_single_form(self):
         """(<-> (f x)) with one form is just (<- _t0 (f x)), _t0."""
-        import hy
-        import doeff_hy  # noqa: F401
         import types
+
+        import doeff_hy  # noqa: F401
+        import hy
 
         code = """
 (require doeff-hy.macros [defk defp <- <->])
@@ -432,9 +437,10 @@ class TestThreadingMacro:
 
     def test_threading_two_forms(self):
         """(<-> (f) (g)) threads result of f as first arg to g."""
-        import hy
-        import doeff_hy  # noqa: F401
         import types
+
+        import doeff_hy  # noqa: F401
+        import hy
 
         code = """
 (require doeff-hy.macros [defk defp <- <->])
@@ -473,10 +479,11 @@ class TestThreadingMacro:
 
 def _hy_eval_in_module(code, mod_name):
     """Helper: eval Hy code in a fresh module, return the module."""
-    import hy
-    import doeff_hy  # noqa: F401
-    import types
     import sys
+    import types
+
+    import doeff_hy  # noqa: F401
+    import hy
 
     mod = types.ModuleType(mod_name)
     mod.__file__ = "<test>"
@@ -491,24 +498,6 @@ class TestLazyValVar:
     def test_lazy_val_is_alias_for_lazy(self):
         """(lazy-val name body) should work identically to (lazy name body)."""
         import sys
-        code = """
-(require doeff-hy.macros [defp <-])
-(require doeff-hy.handle [defhandler])
-(import doeff [do :as _doeff-do EffectBase WithHandler run :as doeff-run])
-(import doeff_core_effects [Ask Get Put state])
-(import doeff_core_effects.handlers [lazy-ask])
-(import doeff_core_effects.scheduler [scheduled])
-(import dataclasses [dataclass])
-
-(defclass [(dataclass :frozen True)] Ping [EffectBase])
-
-(defhandler ping-handler
-  (lazy-val greeting "hello")
-  (Ping [] (resume greeting)))
-
-(setv wrapped (WithHandler ping-handler
-                (WithHandler (state) body)))
-"""
         # Build body separately to avoid defp issues
         code2 = """
 (require doeff-hy.macros [defp <-])
@@ -623,8 +612,8 @@ class TestLazyValVar:
 
     def test_lazy_val_set_bang_compile_error(self):
         """set! on lazy-val should raise SyntaxError at compile time."""
-        import hy
         import doeff_hy  # noqa: F401
+        import hy
 
         code = """
 (require doeff-hy.macros [set!])
@@ -640,7 +629,7 @@ class TestLazyValVar:
     (set! x 1)
     (resume x)))
 """
-        with pytest.raises(Exception, match="lazy-val.*immutable|set!.*lazy-val"):
+        with pytest.raises(Exception, match=r"lazy-val.*immutable|set!.*lazy-val"):
             hy.eval(hy.read_many(code))
 
     def test_lazy_var_in_defk(self):

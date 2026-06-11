@@ -12,7 +12,7 @@ File extensions:
 import importlib.machinery
 import os
 
-import hy.importer  # noqa: F401 — activates Hy import hooks
+import hy.importer
 
 # Register .hyk and .hyp as Hy source extensions
 for _ext in (".hyk", ".hyp"):
