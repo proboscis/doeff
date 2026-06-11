@@ -545,11 +545,7 @@ from doeff_conductor import AgentHandler
 handler = AgentHandler()
 
 # Methods
-handler.handle_run_agent(effect)
-handler.handle_spawn_agent(effect)
-handler.handle_send_message(effect)
-handler.handle_wait_for_status(effect)
-handler.handle_capture_output(effect)
+handler.handle_agent(effect)
 ```
 
 #### `GitHandler`
