@@ -242,6 +242,13 @@ def validate_cmd(
 @click.option("--issue", "-i", type=click.Path(exists=True), help="Issue file")
 @click.option("--params", "-p", help="Parameters as JSON")
 @click.option("--run-id", help="Use a stable workflow id for replay/resume measurements")
+@click.option(
+    "--supervision",
+    type=click.Choice(["autonomous", "phase-checkpoints"]),
+    default="autonomous",
+    show_default=True,
+    help="Run-scoped supervision policy",
+)
 @click.option("--watch", "-w", is_flag=True, help="Watch workflow progress")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
 @click.pass_context
@@ -251,6 +258,7 @@ def run(
     issue: str | None,
     params: str | None,
     run_id: str | None,
+    supervision: str,
     watch: bool,
     output_json: bool,
 ) -> None:
@@ -296,6 +304,7 @@ def run(
             issue=issue_obj,
             params=parsed_params,
             run_id=run_id,
+            supervision=supervision,
         )
 
         if output_json:
@@ -514,10 +523,29 @@ def _show_workflow_details(
             sys.exit(1)
 
         if output_json:
-            click.echo(json.dumps(workflow.to_dict(), indent=2))
+            payload = workflow.to_dict()
+            from doeff_conductor.overseer import list_open_gates
+
+            payload["open_gates"] = list_open_gates(api.state_dir, workflow.id)
+            click.echo(json.dumps(payload, indent=2))
             return
 
         console.print(_workflow_detail_panel(workflow))
+        from doeff_conductor.overseer import list_open_gates
+
+        gates = list_open_gates(api.state_dir, workflow.id)
+        if gates:
+            table = Table(show_header=True, header_style="bold")
+            table.add_column("GATE", style="cyan")
+            table.add_column("REASON")
+            table.add_column("OPTIONS")
+            for gate in gates:
+                table.add_row(
+                    gate["gate_id"],
+                    gate["reason"],
+                    ", ".join(option["name"] for option in gate["options"]),
+                )
+            console.print(table)
     except _CLI_USER_ERROR_TYPES as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
@@ -679,6 +707,61 @@ def gate_group() -> None:
 @click.pass_context
 def gate_list(ctx: click.Context, workflow_id: str | None, output_json: bool) -> None:
     """List open gates with stakes metadata and closure-preserving options."""
+    _list_gates(ctx, workflow_id, output_json)
+
+
+@cli.command("gates")
+@click.argument("workflow_id", required=False)
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def gates_cmd(ctx: click.Context, workflow_id: str | None, output_json: bool) -> None:
+    """List open gates with stakes metadata and closure-preserving options."""
+    _list_gates(ctx, workflow_id, output_json)
+
+
+@cli.command("answer")
+@click.argument("workflow_id")
+@click.argument("gate_id")
+@click.argument("option", type=click.Choice(["proceed", "redirect", "abort"]))
+@click.option("--params", "-p", help="Resume parameters as JSON")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def answer_cmd(
+    ctx: click.Context,
+    workflow_id: str,
+    gate_id: str,
+    option: str,
+    params: str | None,
+    output_json: bool,
+) -> None:
+    """Answer an open gate and apply proceed, redirect, or abort."""
+    from doeff_conductor.api import ConductorAPI
+
+    try:
+        parsed_params = {}
+        if params:
+            parsed_params = json.loads(params)
+        workflow = ConductorAPI(ctx.obj.get("state_dir")).answer_gate(
+            workflow_id,
+            gate_id,
+            option,
+            params=parsed_params,
+        )
+        if output_json:
+            click.echo(json.dumps(workflow.to_dict(), indent=2))
+            return
+        console.print(f"[green]Answered gate:[/green] {gate_id}")
+        console.print(f"  Option: {option}")
+        console.print(f"  Status: {workflow.status.value}")
+    except _CLI_USER_ERROR_TYPES as e:
+        if output_json:
+            click.echo(json.dumps({"error": str(e)}))
+        else:
+            console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
+def _list_gates(ctx: click.Context, workflow_id: str | None, output_json: bool) -> None:
     from doeff_conductor.api import ConductorAPI
     from doeff_conductor.overseer import list_open_gates
 

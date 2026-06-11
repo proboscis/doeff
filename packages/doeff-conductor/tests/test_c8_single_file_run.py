@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from click.testing import CliRunner
-from doeff_agents.effects.agent import AgentAttemptExhaustedError
 from doeff_conductor.api import ConductorAPI
 from doeff_conductor.cli import cli
 from doeff_conductor.effects import AgentEffect, AgentTask
 from doeff_conductor.handlers.journaled_agent import JournaledAgentHandler
 from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
+from doeff_conductor.overseer import list_open_gates
 from doeff_conductor.replay_keying import ResolvedIdentity
 from doeff_conductor.types import WorkflowStatus
 from doeff_conductor.workflow_loader import (
@@ -30,13 +30,13 @@ def _cheap_session_id(run_id: str, node_id: str) -> str:
         run_id=run_id,
         node_id=node_id,
         attempt=0,
-        env=None,
+        env=cast(Any, None),
         prompt="",
         result_schema={},
         verification_class="mechanical",
         agent_type="codex",
         resolved_identity=ResolvedIdentity(
-            adapter="codex", model=None, identity=None, effort="xhigh"
+            adapter="codex", model="", identity=None, effort="xhigh"
         ),
     ).session_id
 
@@ -223,17 +223,16 @@ def test_single_file_dsl_run_returns_payload_and_resumes_from_snapshot(
     _install_mock_production_handlers(monkeypatch=monkeypatch, runtime=runtime)
 
     api = ConductorAPI(state_dir=state_dir)
-    with pytest.raises(AgentAttemptExhaustedError):
-        api.run_workflow(str(workflow_path), run_id=run_id)
+    blocked_handle = api.run_workflow(str(workflow_path), run_id=run_id)
 
-    failed_handle = api.get_workflow(run_id)
-    assert failed_handle is not None
-    assert failed_handle.status == WorkflowStatus.ERROR
+    assert blocked_handle.status == WorkflowStatus.BLOCKED
+    assert list_open_gates(state_dir, run_id)
     assert (state_dir / "workflows" / run_id / "workflow.hy").exists()
 
     workflow_path.unlink()
     runtime.configure_agent_script(second_session_id, [{"summary": "second"}])
-    resumed_handle = api.resume_workflow(run_id)
+    gate_id = list_open_gates(state_dir, run_id)[0]["gate_id"]
+    resumed_handle = api.answer_gate(run_id, gate_id, "proceed")
 
     assert resumed_handle.status == WorkflowStatus.DONE
     assert resumed_handle.result_payload == {"summary": "second"}
