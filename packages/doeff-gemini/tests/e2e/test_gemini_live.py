@@ -21,7 +21,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from doeff_core_effects.effects import EffectBase as Effect  # noqa: E402
+from doeff_core_effects.effects import EffectBase as Effect  # noqa: E402 - late import follows sys.path fixture setup
 from doeff_gemini import edit_image__gemini, structured_llm__gemini  # noqa: E402
 from doeff_gemini.handlers import default_gemini_cost_handler  # noqa: E402
 
