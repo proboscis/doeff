@@ -41,6 +41,14 @@ jobs:
       - name: Run test suite
         run: uv run --package doeff --python ${{ matrix.python-version }} pytest -q
 
+      - name: Run benchmark smoke checks
+        if: matrix.python-version == '3.12'
+        run: |
+          uv run --package doeff --python ${{ matrix.python-version }} python benchmarks/benchmark_runner.py --smoke --no-output
+          export PYO3_PYTHON="$(uv run --package doeff --python ${{ matrix.python-version }} python -c 'import sys; print(sys.executable)')"
+          cd packages/doeff-vm-core
+          cargo bench --features python_bridge --bench dispatch -- --test
+
   version-probe:
     runs-on: ubuntu-latest
     steps:
