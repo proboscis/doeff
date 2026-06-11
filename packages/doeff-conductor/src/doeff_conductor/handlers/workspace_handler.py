@@ -1,6 +1,12 @@
-"""Workspace handler for the git medium family."""
+"""Workspace handler for the git medium family.
 
-import secrets
+Materialization is idempotent ensure-style: a workspace's branch and worktree
+path derive deterministically from its ``workspace_id``, so re-emitting the
+same effect after a process restart re-binds the same state instead of
+creating a fresh worktree (the resume-divergence defect observed live on
+2026-06-11).
+"""
+
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -33,6 +39,10 @@ if TYPE_CHECKING:
     )
 
 
+class WorkspaceStateError(RuntimeError):
+    """Raised when on-disk workspace state contradicts its identity."""
+
+
 @dataclass(frozen=True)
 class _WorkspaceMaterialization:
     workspace: Workspace
@@ -43,6 +53,11 @@ class _WorkspaceMaterialization:
 def _get_workspace_base_dir() -> Path:
     """Get the base directory for site-local workspace materializations."""
     return Path.home() / ".local" / "share" / "doeff-conductor" / "workspaces"
+
+
+def _branch_for(workspace_id: str) -> str:
+    """Derive the deterministic branch name for a workspace identity."""
+    return f"conductor/{workspace_id}"
 
 
 class WorkspaceHandler:
@@ -66,7 +81,9 @@ class WorkspaceHandler:
         self.workspace_base.mkdir(parents=True, exist_ok=True)
         self.logs_dir = self.workspace_base / "logs"
         self.logs_dir.mkdir(parents=True, exist_ok=True)
-        self._materializations: dict[str, _WorkspaceMaterialization] = {}
+        # Workspace identity is scoped per repo: branch and worktree both live
+        # inside one repository.
+        self._materializations: dict[tuple[str, str], _WorkspaceMaterialization] = {}
 
     def repo_path(self, repo: str) -> Path:
         """Resolve a workflow repo name to a local repository path."""
@@ -76,7 +93,7 @@ class WorkspaceHandler:
 
     def resolve_path(self, workspace: Workspace) -> Path:
         """Resolve a workspace to its handler-private materialization path."""
-        materialization = self._materializations.get(workspace.id)
+        materialization = self._materializations.get((workspace.repo, workspace.id))
         if materialization is None:
             raise ValueError(f"Workspace is not materialized on this site: {workspace.id}")
         return materialization.path
@@ -89,51 +106,107 @@ class WorkspaceHandler:
         base_commit: str | None = None,
     ) -> None:
         """Register an existing path for tests or system-side adapters."""
-        self._materializations[workspace.id] = _WorkspaceMaterialization(
+        self._materializations[(workspace.repo, workspace.id)] = _WorkspaceMaterialization(
             workspace=workspace,
             path=path,
             base_commit=base_commit or get_current_commit(path),
         )
 
-    def handle_create_workspace(self, effect: "CreateWorkspace") -> Workspace:
-        """Create a logical workspace from a git ref."""
-        repo_path: Path = self.repo_path(effect.repo)
-        workspace_id: str = secrets.token_hex(4)
-        base_ref: str = effect.from_ref or get_default_branch(repo_path)
+    def _ensure_materialized(
+        self,
+        *,
+        repo: str,
+        workspace_id: str,
+        base_ref: str,
+        issue_id: str | None = None,
+        log_path: Path | None = None,
+    ) -> Workspace:
+        """Idempotently bind ``workspace_id`` to its branch and worktree.
 
-        branch_parts: list[str] = ["conductor"]
-        if effect.issue is not None:
-            branch_parts.append(effect.issue.id.lower().replace("-", "_"))
-        if effect.suffix is not None:
-            branch_parts.append(effect.suffix)
-        branch_parts.append(workspace_id[:7])
-        ref: str = effect.name or "-".join(branch_parts)
-        materialized_path: Path = self.workspace_base / effect.repo / workspace_id
+        - branch + worktree both present: re-adopt as-is (uncommitted changes
+          preserved);
+        - branch present, worktree missing: re-materialize from the branch,
+          never from ``base_ref``;
+        - neither present: create branch + worktree from ``base_ref`` — this
+          happens exactly once per identity lifetime;
+        - worktree present without its branch: corrupt state, fail loudly.
+        """
+        if not workspace_id:
+            raise ValueError("workspace effects require a non-empty workspace_id")
+
+        repo_path: Path = self.repo_path(repo)
+        ref: str = _branch_for(workspace_id)
+        materialized_path: Path = self.workspace_base / repo / workspace_id
         materialized_path.parent.mkdir(parents=True, exist_ok=True)
-        base_commit: str = get_current_commit(repo_path)
 
-        run_git(
-            ["git", "worktree", "add", "-b", ref, str(materialized_path), base_ref],
-            cwd=repo_path,
+        branch_exists: bool = (
+            run_git(
+                ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{ref}"],
+                cwd=repo_path,
+                check=False,
+            ).returncode
+            == 0
         )
+
+        if materialized_path.exists():
+            if not branch_exists:
+                raise WorkspaceStateError(
+                    f"workspace {workspace_id}: worktree {materialized_path} exists "
+                    f"but branch {ref} does not; refusing to guess"
+                )
+            current_branch: str = run_git(
+                ["git", "branch", "--show-current"],
+                cwd=materialized_path,
+            ).stdout.strip()
+            if current_branch != ref:
+                raise WorkspaceStateError(
+                    f"workspace {workspace_id}: worktree {materialized_path} is on "
+                    f"branch {current_branch!r}, expected {ref!r}"
+                )
+        elif branch_exists:
+            # The worktree was deleted (e.g. host cleanup) but the branch — the
+            # workspace's portable identity — survives. Re-materialize from it.
+            run_git(["git", "worktree", "prune"], cwd=repo_path, log_path=log_path)
+            run_git(
+                ["git", "worktree", "add", str(materialized_path), ref],
+                cwd=repo_path,
+                log_path=log_path,
+            )
+        else:
+            run_git(
+                ["git", "worktree", "add", "-b", ref, str(materialized_path), base_ref],
+                cwd=repo_path,
+                log_path=log_path,
+            )
 
         workspace = Workspace(
             id=workspace_id,
-            repo=effect.repo,
+            repo=repo,
             ref=ref,
             base_ref=base_ref,
-            issue_id=effect.issue.id if effect.issue is not None else None,
+            issue_id=issue_id,
             created_at=datetime.now(timezone.utc),
         )
-        self._materializations[workspace_id] = _WorkspaceMaterialization(
+        self._materializations[(repo, workspace_id)] = _WorkspaceMaterialization(
             workspace=workspace,
             path=materialized_path,
-            base_commit=base_commit,
+            base_commit=get_current_commit(materialized_path),
         )
         return workspace
 
+    def handle_create_workspace(self, effect: "CreateWorkspace") -> Workspace:
+        """Ensure the logical workspace bound to the effect's identity."""
+        repo_path: Path = self.repo_path(effect.repo)
+        base_ref: str = effect.from_ref or get_default_branch(repo_path)
+        return self._ensure_materialized(
+            repo=effect.repo,
+            workspace_id=effect.workspace_id,
+            base_ref=base_ref,
+            issue_id=effect.issue.id if effect.issue is not None else None,
+        )
+
     def handle_merge_workspaces(self, effect: "MergeWorkspaces") -> MergeWorkspacesResult:
-        """Merge several workspaces into a new workspace."""
+        """Merge several workspaces into the identity-bound merge workspace."""
         from doeff_conductor.types import MergeStrategy
 
         if not effect.workspaces:
@@ -144,30 +217,14 @@ class WorkspaceHandler:
             raise ValueError("Cannot merge workspaces from different repos")
 
         base_workspace: Workspace = effect.workspaces[0]
-        repo_path: Path = self.repo_path(base_workspace.repo)
-        workspace_id: str = secrets.token_hex(4)
-        ref: str = effect.name or f"conductor-merged-{workspace_id[:7]}"
-        materialized_path: Path = self.workspace_base / base_workspace.repo / f"merged-{workspace_id}"
-        materialized_path.parent.mkdir(parents=True, exist_ok=True)
-        log_path: Path = self.logs_dir / f"merge-{workspace_id}.log"
-
-        run_git(
-            ["git", "worktree", "add", "-b", ref, str(materialized_path), base_workspace.ref],
-            cwd=repo_path,
+        log_path: Path = self.logs_dir / f"merge-{effect.workspace_id}.log"
+        workspace: Workspace = self._ensure_materialized(
+            repo=base_workspace.repo,
+            workspace_id=effect.workspace_id,
+            base_ref=base_workspace.ref,
             log_path=log_path,
         )
-        workspace = Workspace(
-            id=workspace_id,
-            repo=base_workspace.repo,
-            ref=ref,
-            base_ref=base_workspace.ref,
-            created_at=datetime.now(timezone.utc),
-        )
-        self._materializations[workspace_id] = _WorkspaceMaterialization(
-            workspace=workspace,
-            path=materialized_path,
-            base_commit=get_current_commit(materialized_path),
-        )
+        materialized_path: Path = self.resolve_path(workspace)
 
         strategy: MergeStrategy = effect.strategy or MergeStrategy.MERGE
         for source_workspace in effect.workspaces[1:]:
@@ -181,11 +238,22 @@ class WorkspaceHandler:
             try:
                 run_git(args, cwd=materialized_path, log_path=log_path)
                 if strategy is MergeStrategy.SQUASH:
-                    run_git(
-                        ["git", "commit", "-m", f"Merge {source_workspace.ref}"],
-                        cwd=materialized_path,
-                        log_path=log_path,
+                    # Re-running an already-applied squash merge stages
+                    # nothing; committing then would fail spuriously.
+                    staged_changes = (
+                        run_git(
+                            ["git", "diff", "--cached", "--quiet"],
+                            cwd=materialized_path,
+                            check=False,
+                        ).returncode
+                        != 0
                     )
+                    if staged_changes:
+                        run_git(
+                            ["git", "commit", "-m", f"Merge {source_workspace.ref}"],
+                            cwd=materialized_path,
+                            log_path=log_path,
+                        )
             except GitCommandError as error:
                 append_git_output(log_path, error.result)
                 conflict = MergeConflict(
@@ -208,7 +276,9 @@ class WorkspaceHandler:
 
     def handle_delete_workspace(self, effect: "DeleteWorkspace") -> bool:
         """Remove a workspace materialization from this site."""
-        materialization = self._materializations.get(effect.workspace.id)
+        materialization = self._materializations.get(
+            (effect.workspace.repo, effect.workspace.id)
+        )
         if materialization is None:
             return False
 
@@ -232,5 +302,5 @@ class WorkspaceHandler:
                 check=False,
             )
 
-        self._materializations.pop(effect.workspace.id, None)
+        self._materializations.pop((effect.workspace.repo, effect.workspace.id), None)
         return True

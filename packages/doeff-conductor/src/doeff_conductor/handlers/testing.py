@@ -82,8 +82,9 @@ class MockConductorRuntime:
         self.issues_dir.mkdir(parents=True, exist_ok=True)
 
         self._issues: dict[str, Issue] = {}
-        self._workspaces: dict[str, Workspace] = {}
-        self._workspace_paths: dict[str, Path] = {}
+        # Workspace identity is scoped per repo, mirroring the git handler.
+        self._workspaces: dict[tuple[str, str], Workspace] = {}
+        self._workspace_paths: dict[tuple[str, str], Path] = {}
         self._agent_scripts: dict[str, list[Any]] = {}
         self._agent_script_indices: dict[str, int] = {}
         self._agent_invocation_counts: dict[str, int] = {}
@@ -91,8 +92,6 @@ class MockConductorRuntime:
         self._prs: dict[int, PRHandle] = {}
 
         self._issue_counter = 0
-        self._workspace_counter = 0
-        self._merge_counter = 0
         self._pr_counter = 0
         self.pushed_branches: list[str] = []
 
@@ -120,34 +119,39 @@ class MockConductorRuntime:
             )
         )
 
-    def _new_workspace(
+    def _ensure_workspace(
         self,
-        ref: str,
+        workspace_id: str,
         *,
         repo: str = "default",
         base_ref: str = "main",
         issue_id: str | None = None,
     ) -> Workspace:
-        self._workspace_counter += 1
-        workspace_id = f"workspace-{self._workspace_counter:03d}"
-        workspace_path = self.workspace_base / repo / f"{workspace_id}-{ref}"
+        """Idempotently bind a workspace identity, mirroring the git handler."""
+        if not workspace_id:
+            raise ValueError("workspace effects require a non-empty workspace_id")
+        existing = self._workspaces.get((repo, workspace_id))
+        if existing is not None:
+            return existing
+
+        workspace_path = self.workspace_base / repo / workspace_id
         workspace_path.mkdir(parents=True, exist_ok=True)
         (workspace_path / ".git").mkdir(exist_ok=True)
 
         workspace = Workspace(
             id=workspace_id,
             repo=repo,
-            ref=ref,
+            ref=f"conductor/{workspace_id}",
             base_ref=base_ref,
             issue_id=issue_id,
             created_at=datetime.now(timezone.utc),
         )
-        self._workspaces[workspace_id] = workspace
-        self._workspace_paths[workspace_id] = workspace_path
+        self._workspaces[(repo, workspace_id)] = workspace
+        self._workspace_paths[(repo, workspace_id)] = workspace_path
         return workspace
 
     def resolve_path(self, workspace: Workspace) -> Path:
-        path = self._workspace_paths.get(workspace.id)
+        path = self._workspace_paths.get((workspace.repo, workspace.id))
         if path is None:
             raise ValueError(f"Workspace is not materialized: {workspace.id}")
         return path
@@ -221,24 +225,19 @@ class MockConductorRuntime:
         return resolved
 
     def handle_create_workspace(self, effect: CreateWorkspace) -> Workspace:
-        suffix = effect.name or effect.suffix or f"workspace-{self._workspace_counter + 1}"
-        ref = effect.name or f"conductor-{suffix}"
-        issue_id = effect.issue.id if effect.issue else None
-        return self._new_workspace(
-            ref=ref,
+        return self._ensure_workspace(
+            effect.workspace_id,
             repo=effect.repo,
             base_ref=effect.from_ref or "main",
-            issue_id=issue_id,
+            issue_id=effect.issue.id if effect.issue else None,
         )
 
     def handle_merge_workspaces(self, effect: MergeWorkspaces) -> MergeWorkspacesResult:
         if not effect.workspaces:
             raise ValueError("No workspaces to merge")
 
-        self._merge_counter += 1
-        merged_ref = effect.name or f"conductor-merged-{self._merge_counter}"
-        merged_workspace = self._new_workspace(
-            ref=merged_ref,
+        merged_workspace = self._ensure_workspace(
+            effect.workspace_id,
             repo=effect.workspaces[0].repo,
             base_ref=effect.workspaces[0].ref,
         )
@@ -258,11 +257,12 @@ class MockConductorRuntime:
         return MergeWorkspacesResult(status=MergeStatus.MERGED, workspace=merged_workspace)
 
     def handle_delete_workspace(self, effect: DeleteWorkspace) -> bool:
-        path = self._workspace_paths.pop(effect.workspace.id, None)
+        workspace_key = (effect.workspace.repo, effect.workspace.id)
+        path = self._workspace_paths.pop(workspace_key, None)
         if path is None:
             return False
         shutil.rmtree(path, ignore_errors=True)
-        self._workspaces.pop(effect.workspace.id, None)
+        self._workspaces.pop(workspace_key, None)
         return True
 
     def handle_exec(self, effect: Exec):

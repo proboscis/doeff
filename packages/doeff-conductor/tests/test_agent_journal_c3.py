@@ -90,7 +90,7 @@ def test_kill_and_resume_replays_longest_valid_prefix_under_stubs(tmp_path: Path
 
     @do
     def workflow(*, crash_after_second: bool):
-        env = yield CreateWorkspace(suffix="c3")
+        env = yield CreateWorkspace(workspace_id="ws-c3")
         first = yield Agent(
             _agent_task(
                 run_id=run_id,
@@ -169,7 +169,7 @@ def test_fingerprint_mismatch_invalidates_cached_agent_result(tmp_path: Path) ->
 
     @do
     def workflow(identity: ResolvedIdentity):
-        env = yield CreateWorkspace(suffix="fingerprint")
+        env = yield CreateWorkspace(workspace_id="ws-fingerprint")
         return (
             yield Agent(
                 _agent_task(
@@ -215,7 +215,7 @@ def test_corrupt_agent_journal_fails_with_typed_error(tmp_path: Path) -> None:
 
     @do
     def workflow():
-        env = yield CreateWorkspace(suffix="corrupt")
+        env = yield CreateWorkspace(workspace_id="ws-corrupt")
         return (
             yield Agent(
                 _agent_task(

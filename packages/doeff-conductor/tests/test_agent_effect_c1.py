@@ -108,7 +108,7 @@ def test_two_node_workflow_runs_on_scenario_stubs(tmp_path: Path) -> None:
 
     @do
     def workflow():
-        env = yield CreateWorkspace(suffix="impl")
+        env = yield CreateWorkspace(workspace_id="ws-impl")
         implementation = yield Agent(
             AgentTask(
                 run_id="run-001",
@@ -155,7 +155,7 @@ def test_schema_invalid_retry_exhaustion_fails_typed(tmp_path: Path) -> None:
 
     @do
     def workflow():
-        env = yield CreateWorkspace(suffix="impl")
+        env = yield CreateWorkspace(workspace_id="ws-impl")
         return (
             yield Agent(
                 AgentTask(
@@ -185,7 +185,7 @@ def test_real_codex_worker_returns_schema_valid_json_through_agent(tmp_path: Pat
 
     @do
     def workflow():
-        env = yield CreateWorkspace(suffix="codex-real")
+        env = yield CreateWorkspace(workspace_id="ws-codex-real")
         return (
             yield Agent(
                 AgentTask(
