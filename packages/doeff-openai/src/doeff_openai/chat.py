@@ -4,16 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterator
-from typing import Any, Generator
+from collections.abc import AsyncIterator, Generator
+from typing import Any
 
+from doeff_core_effects import Await, Tell, Try
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
 
 from doeff import do
-from doeff_core_effects import Await, Tell, Try
-
-EffectGenerator = Generator
 from doeff_openai.client import get_openai_client, track_api_call
 from doeff_openai.costs import (
     calculate_cost,
@@ -25,9 +23,10 @@ from doeff_openai.types import (
     TokenUsage,
 )
 
+EffectGenerator = Generator
 
 @do
-def chat_completion(
+def chat_completion(  # noqa: PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
     messages: list[dict[str, Any] | ChatCompletionMessageParam],
     model: str = "gpt-3.5-turbo",
     temperature: float | None = None,
@@ -122,7 +121,7 @@ def chat_completion(
                 yield Tell("Started streaming chat completion")
 
                 # Track the streaming request (no immediate response data)
-                metadata = yield track_api_call(
+                yield track_api_call(
                     operation="chat.completion",
                     model=model,
                     request_payload=request_data,
@@ -138,7 +137,7 @@ def chat_completion(
                 response = yield Await(client.async_client.chat.completions.create(**request_data))
 
                 # Track successful API call
-                metadata = yield track_api_call(
+                yield track_api_call(
                     operation="chat.completion",
                     model=model,
                     request_payload=request_data,
@@ -162,7 +161,7 @@ def chat_completion(
         if safe_result.is_err():
             # Track failed API call attempt (tracking will log the error)
             e = safe_result.error
-            metadata = yield track_api_call(
+            yield track_api_call(
                 operation="chat.completion",
                 model=model,
                 request_payload=request_data,
@@ -238,7 +237,7 @@ def chat_completion_async(
         response = yield Await(create_completion())
 
         # Track the API call with full metadata
-        metadata = yield track_api_call(
+        yield track_api_call(
             operation="chat.completion",
             model=model,
             request_payload=request_data,
@@ -254,7 +253,7 @@ def chat_completion_async(
     if safe_result.is_err():
         # Track error
         e = safe_result.error
-        metadata = yield track_api_call(
+        yield track_api_call(
             operation="chat.completion",
             model=model,
             request_payload=request_data,

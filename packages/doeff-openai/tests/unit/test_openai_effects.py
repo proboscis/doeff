@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
+from _runner import run_program
 from doeff_openai import (
     OpenAIClient,
     TokenUsage,
@@ -28,8 +29,6 @@ from doeff import (
     Tell,
     do,
 )
-
-from _runner import run_program
 
 
 @pytest.fixture

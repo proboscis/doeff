@@ -4,24 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Generator, Literal
+from collections.abc import Generator
+from typing import Any, Literal
 
+from doeff_core_effects import Await, Tell, Try
+from doeff_core_effects.scheduler import Gather
 from openai.types import CreateEmbeddingResponse
 
 from doeff import do
-from doeff_core_effects import Await, Tell, Try
-from doeff_core_effects.scheduler import Gather
-
-EffectGenerator = Generator
 from doeff_openai.client import get_openai_client, track_api_call
 from doeff_openai.costs import (
     count_embedding_tokens,
 )
 
+EffectGenerator = Generator
 
 @do
 def create_embedding(
-    input: str | list[str],
+    input: str | list[str],  # noqa: A002 - public API parameter name is intentionally stable
     model: str = "text-embedding-3-small",
     encoding_format: Literal["float", "base64"] | None = None,
     dimensions: int | None = None,
@@ -74,7 +74,7 @@ def create_embedding(
             response = yield Await(client.async_client.embeddings.create(**request_data))
 
             # Track successful API call
-            metadata = yield track_api_call(
+            yield track_api_call(
                 operation="embedding",
                 model=model,
                 request_payload=request_data,
@@ -95,7 +95,7 @@ def create_embedding(
         if safe_result.is_err():
             # Track failed API call attempt (tracking will log the error)
             e = safe_result.error
-            metadata = yield track_api_call(
+            yield track_api_call(
                 operation="embedding",
                 model=model,
                 request_payload=request_data,
@@ -130,7 +130,7 @@ def create_embedding(
 
 @do
 def create_embedding_async(
-    input: str | list[str],
+    input: str | list[str],  # noqa: A002 - public API parameter name is intentionally stable
     model: str = "text-embedding-3-small",
     **kwargs: Any,
 ) -> EffectGenerator[CreateEmbeddingResponse]:
@@ -164,7 +164,7 @@ def create_embedding_async(
         response = yield Await(create_embeddings())
 
         # Track the API call with full metadata
-        metadata = yield track_api_call(
+        yield track_api_call(
             operation="embedding",
             model=model,
             request_payload=request_data,
@@ -180,7 +180,7 @@ def create_embedding_async(
     if safe_result.is_err():
         # Track error
         e = safe_result.error
-        metadata = yield track_api_call(
+        yield track_api_call(
             operation="embedding",
             model=model,
             request_payload=request_data,
@@ -275,10 +275,7 @@ def cosine_similarity(
     norm1 = sum(a * a for a in embedding1) ** 0.5
     norm2 = sum(b * b for b in embedding2) ** 0.5
 
-    if norm1 == 0 or norm2 == 0:
-        similarity = 0.0
-    else:
-        similarity = dot_product / (norm1 * norm2)
+    similarity = 0.0 if norm1 == 0 or norm2 == 0 else dot_product / (norm1 * norm2)
 
     yield Tell(f"Cosine similarity: {similarity:.4f}")
 
@@ -315,10 +312,7 @@ def semantic_search(
         norm1 = sum(a * a for a in query_embedding) ** 0.5
         norm2 = sum(b * b for b in doc_embedding) ** 0.5
 
-        if norm1 > 0 and norm2 > 0:
-            similarity = dot_product / (norm1 * norm2)
-        else:
-            similarity = 0.0
+        similarity = dot_product / (norm1 * norm2) if norm1 > 0 and norm2 > 0 else 0.0
 
         similarities.append((i, similarity, documents[i]))
 
