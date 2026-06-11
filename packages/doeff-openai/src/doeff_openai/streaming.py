@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncIterator, Callable
-from typing import Any, Generator
+from collections.abc import AsyncIterator, Callable, Generator
+from typing import Any
 
+from doeff_core_effects import Await, Get, Put, Tell, Try
 from openai.types.chat import ChatCompletionChunk
 
 from doeff import do
-from doeff_core_effects import Await, Get, Put, Tell, Try
-
-EffectGenerator = Generator
 from doeff_openai.costs import (
     calculate_cost,
     count_tokens,
@@ -21,6 +19,7 @@ from doeff_openai.types import (
     TokenUsage,
 )
 
+EffectGenerator = Generator
 
 @do
 def process_stream(
