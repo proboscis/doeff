@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from doeff import (
     Ask,
     Gather,
@@ -13,8 +11,6 @@ from doeff import (
     Wait,
     do,
 )
-from doeff_core_effects.handlers import lazy_ask, reader, state
-from doeff_core_effects.scheduler import scheduled as scheduler
 from tests._run_helpers import run_with_defaults
 
 ROOT = Path(__file__).resolve().parents[2]

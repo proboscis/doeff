@@ -13,20 +13,20 @@ Composition Rules Tested:
 Reference: gh#177
 """
 
-import pytest
-
-from doeff import Program, Spawn, WithIntercept, do
-from tests._run_helpers import run_with_defaults
 from doeff import (
     Ask,
     Gather,
     Get,
     Local,
+    Program,
     Pure,
     Put,
+    Spawn,
     Try,
+    WithIntercept,
+    do,
 )
-from doeff_core_effects.effects import Ask
+from tests._run_helpers import run_with_defaults
 
 
 def _with_legacy_intercept_chain(program: Program, *transforms):

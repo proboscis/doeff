@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 VM_PYVM = ROOT / "packages" / "doeff-vm" / "src" / "pyvm.rs"
 VM_CORE_PYVM = ROOT / "packages" / "doeff-vm-core" / "src" / "pyvm.rs"

@@ -9,7 +9,6 @@ import pickle
 import cloudpickle
 from doeff_vm.doeff_vm import Err, Ok
 
-
 # ---------------------------------------------------------------------------
 # Ok / Err  (core Result types — used by cache)
 # ---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 """Run services — symbol resolution, interpreter discovery, program execution."""
 
+import contextlib
 import importlib
 import importlib.util
 import sys
@@ -12,10 +13,8 @@ from typing import Any
 # Without this, importlib.import_module for a .hy module silently creates an
 # empty entry in sys.modules, and subsequent getattr(mod, name) fails with
 # "module '<parent>' has no attribute '<child>'".
-try:
+with contextlib.suppress(ImportError):
     import hy.importer  # noqa: F401 — registers sys.meta_path hook
-except ImportError:
-    pass
 
 from doeff.cli.profiling import profile
 
@@ -173,12 +172,18 @@ def resolve_context(ctx: RunContext) -> ResolvedRunContext:
 
 def default_interpreter(program: Any) -> Any:
     """Default interpreter: run with standard handlers + scheduler."""
-    from doeff import run, WithHandler
     from doeff_core_effects.handlers import (
-        lazy_ask, state, writer, try_handler, slog_handler,
-        listen_handler, await_handler,
+        await_handler,
+        lazy_ask,
+        listen_handler,
+        slog_handler,
+        state,
+        try_handler,
+        writer,
     )
     from doeff_core_effects.scheduler import scheduled
+
+    from doeff import WithHandler, run
 
     handlers = [
         lazy_ask(), state(), writer(), try_handler, slog_handler(),

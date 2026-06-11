@@ -4,9 +4,10 @@ When a handler calls a nested @do helper that emits effects,
 do those effects reach the outer handler stack?
 """
 
-from doeff import do, WithHandler, run
-from doeff_vm import EffectBase, Resume, Pass
 from doeff_core_effects.scheduler import scheduled
+from doeff_vm import EffectBase, Pass, Resume
+
+from doeff import WithHandler, do, run
 
 
 class EffectA(EffectBase):

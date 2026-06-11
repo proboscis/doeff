@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from tests._run_helpers import run_with_defaults
 from doeff import (
     Ask,
     AskEffect,
@@ -11,6 +10,7 @@ from doeff import (
     WithHandler,
     do,
 )
+from tests._run_helpers import run_with_defaults
 
 
 class _ProbeEffect(EffectBase):

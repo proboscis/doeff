@@ -7,7 +7,7 @@ Uses doeff-indexer to find `# doeff: interpreter, default` and
 import importlib
 import inspect
 import logging
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from doeff.cli.profiling import profile
 
@@ -54,8 +54,8 @@ class IndexerBasedDiscovery:
     def __init__(self, symbol_loader: SymbolLoader | None = None):
         with profile("Import doeff_indexer", indent=1):
             try:
-                from doeff_indexer import Indexer
-                self.indexer_class = Indexer
+                indexer_module = cast(Any, importlib.import_module("doeff_indexer"))
+                self.indexer_class = indexer_module.Indexer
             except ImportError as e:
                 raise ImportError(
                     "doeff-indexer not found. Install with: pip install doeff-indexer"

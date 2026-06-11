@@ -2,13 +2,8 @@ from __future__ import annotations
 
 import inspect
 
-import pytest
-
-from doeff import Ask, Effect, Pass, Program, Resume, WithHandler, default_handlers, do, run
-from doeff import Put
-from doeff_core_effects.scheduler import Gather
-from doeff_core_effects.scheduler import Spawn
 from tests._run_helpers import run_with_defaults
+
 # REMOVED: from doeff.traceback import attach_doeff_traceback
 
 _DEFAULT_HANDLER_NAMES = (
@@ -105,6 +100,6 @@ def _render_failure(
 ) -> str:
     result = run_with_defaults(program, env=env, store=store)
     assert result.is_err()
-    doeff_tb = attach_doeff_traceback(result.error, traceback_data=result.traceback_data)
+    doeff_tb = attach_doeff_traceback(result.error, traceback_data=result.traceback_data)  # noqa: F821 - legacy removed API reference is intentionally preserved
     assert doeff_tb is not None
     return doeff_tb.format_default()
