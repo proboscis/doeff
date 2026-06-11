@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 """Example 02: issue lifecycle."""
 
-from doeff import EffectGenerator, do
-
 from doeff_conductor import CreateIssue, GetIssue, Issue, IssueStatus, ListIssues, ResolveIssue
 from doeff_conductor.handlers import mock_handlers, run_sync
+
+from doeff import EffectGenerator, do
 
 
 @do

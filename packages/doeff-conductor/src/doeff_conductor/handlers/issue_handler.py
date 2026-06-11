@@ -2,6 +2,7 @@
 Issue handler for doeff-conductor.
 """
 
+import contextlib
 import re
 import secrets
 from datetime import datetime, timezone
@@ -10,11 +11,11 @@ from typing import TYPE_CHECKING
 
 import yaml
 
-from ..exceptions import IssueNotFoundError
+from doeff_conductor.exceptions import IssueNotFoundError
 
 if TYPE_CHECKING:
-    from ..effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
-    from ..types import Issue
+    from doeff_conductor.effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
+    from doeff_conductor.types import Issue
 
 
 def _get_issues_dir() -> Path:
@@ -89,7 +90,7 @@ class IssueHandler:
 
         Creates a new issue file with YAML frontmatter.
         """
-        from ..types import Issue, IssueStatus
+        from doeff_conductor.types import Issue, IssueStatus
 
         # Generate ID
         issue_id = _generate_issue_id()
@@ -131,7 +132,7 @@ class IssueHandler:
 
         Lists issues from the issues directory with optional filters.
         """
-        from ..types import Issue, IssueStatus
+        from doeff_conductor.types import Issue, IssueStatus
 
         issues = []
 
@@ -153,18 +154,16 @@ class IssueHandler:
                 labels = tuple(frontmatter.get("labels", []))
 
                 # Apply labels filter (any match)
-                if effect.labels and not any(l in labels for l in effect.labels):
+                if effect.labels and not any(label in labels for label in effect.labels):
                     continue
 
                 # Parse dates
                 created_at = datetime.now(timezone.utc)
                 if frontmatter.get("created"):
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         created_at = datetime.fromisoformat(
                             str(frontmatter["created"])
                         ).replace(tzinfo=timezone.utc)
-                    except (ValueError, TypeError):
-                        pass
 
                 issue = Issue(
                     id=frontmatter["id"],
@@ -199,7 +198,7 @@ class IssueHandler:
 
         Gets an issue by ID.
         """
-        from ..types import Issue, IssueStatus
+        from doeff_conductor.types import Issue, IssueStatus
 
         file_path = self.issues_dir / f"{effect.id}.md"
 
@@ -215,12 +214,10 @@ class IssueHandler:
         # Parse dates
         created_at = datetime.now(timezone.utc)
         if frontmatter.get("created"):
-            try:
+            with contextlib.suppress(ValueError, TypeError):
                 created_at = datetime.fromisoformat(str(frontmatter["created"])).replace(
                     tzinfo=timezone.utc
                 )
-            except (ValueError, TypeError):
-                pass
 
         return Issue(
             id=frontmatter["id"],
@@ -242,7 +239,7 @@ class IssueHandler:
 
         Updates an issue's status to resolved.
         """
-        from ..types import Issue, IssueStatus
+        from doeff_conductor.types import Issue, IssueStatus
 
         file_path = self.issues_dir / f"{effect.issue.id}.md"
 
