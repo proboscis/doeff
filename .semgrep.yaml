@@ -221,6 +221,18 @@ rules:
         - /packages/doeff-conductor/src/doeff_conductor/handlers/git_handler.py
         - /packages/doeff-conductor/src/doeff_conductor/effects/git.py
 
+  - id: conductor-workspace-runtime-exclude-not-gitignore
+    languages: [generic]
+    severity: ERROR
+    message: >
+      conductor-workspace-exclude-not-gitignore: workspace runtime state must be
+      excluded via `git rev-parse --git-path info/exclude` from the worktree.
+      Never mutate the tracked workspace .gitignore during materialization.
+    pattern-regex: '\.gitignore'
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/handlers/workspace_handler.py
+
   - id: http-request-handlers-use-defhandler
     languages: [python]
     severity: ERROR

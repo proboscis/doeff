@@ -43,7 +43,7 @@ class WorkspaceStateError(RuntimeError):
     """Raised when on-disk workspace state contradicts its identity."""
 
 
-WORKSPACE_RUNTIME_STATE_GITIGNORE_ENTRIES: tuple[str, ...] = (
+WORKSPACE_RUNTIME_STATE_EXCLUDE_ENTRIES: tuple[str, ...] = (
     ".agent-home/",
 )
 
@@ -53,7 +53,6 @@ class _WorkspaceMaterialization:
     workspace: Workspace
     path: Path
     base_commit: str
-    runtime_ignore_snapshot: str | None = None
 
 
 def _get_workspace_base_dir() -> Path:
@@ -66,11 +65,24 @@ def _branch_for(workspace_id: str) -> str:
     return f"conductor/{workspace_id}"
 
 
-def _ensure_runtime_state_ignored(materialized_path: Path) -> str | None:
+def _git_metadata_path(materialized_path: Path, pathspec: str) -> Path:
+    """Resolve a git metadata path from the worktree that owns it."""
+    result = run_git(
+        ["git", "rev-parse", "--git-path", pathspec],
+        cwd=materialized_path,
+    )
+    metadata_path = Path(result.stdout.strip())
+    if metadata_path.is_absolute():
+        return metadata_path
+    return materialized_path / metadata_path
+
+
+def _ensure_runtime_state_ignored(materialized_path: Path) -> None:
     """Ensure conductor-created workspaces ignore in-worktree runtime state."""
-    gitignore_path: Path = materialized_path / ".gitignore"
+    exclude_path: Path = _git_metadata_path(materialized_path, "info/exclude")
+    exclude_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        existing_text: str = gitignore_path.read_text(encoding="utf-8")
+        existing_text: str = exclude_path.read_text(encoding="utf-8")
     except FileNotFoundError:
         existing_text = ""
 
@@ -81,19 +93,18 @@ def _ensure_runtime_state_ignored(materialized_path: Path) -> str | None:
     }
     missing_entries: list[str] = [
         entry
-        for entry in WORKSPACE_RUNTIME_STATE_GITIGNORE_ENTRIES
+        for entry in WORKSPACE_RUNTIME_STATE_EXCLUDE_ENTRIES
         if entry not in existing_entries and f"/{entry}" not in existing_entries
     ]
     if not missing_entries:
-        return None
+        return
 
     updated_text: str = existing_text
     if updated_text and not updated_text.endswith("\n"):
         updated_text += "\n"
     for entry in missing_entries:
         updated_text += f"{entry}\n"
-    gitignore_path.write_text(updated_text, encoding="utf-8")
-    return updated_text
+    exclude_path.write_text(updated_text, encoding="utf-8")
 
 
 def _status_path_from_porcelain_line(line: str) -> str:
@@ -104,34 +115,29 @@ def _status_path_from_porcelain_line(line: str) -> str:
     return path
 
 
-def _has_only_recorded_runtime_ignore_changes(
-    materialization: _WorkspaceMaterialization,
-) -> bool:
-    """Return true when the only dirty file is our own workspace ignore write."""
-    if materialization.runtime_ignore_snapshot is None:
-        return False
+def _is_runtime_state_path(path: str) -> bool:
+    """Return true when a git status path belongs to conductor runtime state."""
+    return any(
+        path == entry.rstrip("/") or path.startswith(entry)
+        for entry in WORKSPACE_RUNTIME_STATE_EXCLUDE_ENTRIES
+    )
 
+
+def _has_only_ignored_runtime_state(materialized_path: Path) -> bool:
+    """Return true when only conductor runtime state is hidden from porcelain."""
     status_result = run_git(
-        ["git", "status", "--porcelain"],
-        cwd=materialization.path,
+        ["git", "status", "--porcelain", "--ignored"],
+        cwd=materialized_path,
     )
     status_lines: list[str] = [
         line
         for line in status_result.stdout.splitlines()
         if line
     ]
-    if not status_lines:
-        return False
-    if any(_status_path_from_porcelain_line(line) != ".gitignore" for line in status_lines):
-        return False
-
-    try:
-        current_gitignore: str = (materialization.path / ".gitignore").read_text(
-            encoding="utf-8"
-        )
-    except FileNotFoundError:
-        return False
-    return current_gitignore == materialization.runtime_ignore_snapshot
+    return all(
+        line[:2] == "!!" and _is_runtime_state_path(_status_path_from_porcelain_line(line))
+        for line in status_lines
+    )
 
 
 class WorkspaceHandler:
@@ -253,7 +259,7 @@ class WorkspaceHandler:
                 log_path=log_path,
             )
 
-        runtime_ignore_snapshot: str | None = _ensure_runtime_state_ignored(materialized_path)
+        _ensure_runtime_state_ignored(materialized_path)
 
         workspace = Workspace(
             id=workspace_id,
@@ -267,7 +273,6 @@ class WorkspaceHandler:
             workspace=workspace,
             path=materialized_path,
             base_commit=get_current_commit(materialized_path),
-            runtime_ignore_snapshot=runtime_ignore_snapshot,
         )
         return workspace
 
@@ -366,8 +371,8 @@ class WorkspaceHandler:
             return False
 
         args: list[str] = ["git", "worktree", "remove"]
-        force_remove: bool = effect.force or _has_only_recorded_runtime_ignore_changes(
-            materialization
+        force_remove: bool = effect.force or _has_only_ignored_runtime_state(
+            materialization.path
         )
         if force_remove:
             args.append("--force")
