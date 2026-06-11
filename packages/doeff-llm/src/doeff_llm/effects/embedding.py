@@ -6,7 +6,7 @@ from doeff import EffectBase
 class LLMEmbedding(EffectBase):
     """Request provider-agnostic embeddings."""
 
-    def __init__(self, *, input: str | list[str], model: str):
+    def __init__(self, *, input: str | list[str], model: str):  # noqa: A002 - public API parameter name is intentionally stable
         super().__init__()
         self.input = input
         self.model = model
