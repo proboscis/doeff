@@ -157,6 +157,13 @@ def test_agentd_client_list_sessions_accepts_agentd_generic_rows() -> None:
     assert server.requests[0]["method"] == "session.list"
 
 
+def test_generic_agent_type_has_no_registered_adapter() -> None:
+    from doeff_agents.session import get_adapter
+
+    with pytest.raises(ValueError, match="No adapter registered"):
+        get_adapter(AgentType.GENERIC)
+
+
 def test_agentd_client_list_sessions_with_warnings_skips_unknown_agent_type() -> None:
     def handle(request: Mapping[str, Any]) -> Mapping[str, Any]:
         return {

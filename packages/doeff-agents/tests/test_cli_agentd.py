@@ -12,8 +12,8 @@ from click.testing import CliRunner
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from doeff_agents import AgentdUnavailableError, AgentSessionSnapshot, AgentType, SessionStatus
-from doeff_agents.agentd_client import AgentdSessionList, AgentdSessionParseWarning
 from doeff_agents import cli as cli_module
+from doeff_agents.agentd_client import AgentdSessionList, AgentdSessionParseWarning
 from doeff_agents.cli import cli
 
 

@@ -11,6 +11,7 @@ from rich.table import Table
 from doeff_agents.agentd_client import (
     AgentdClient,
     AgentdClientError,
+    AgentdSessionParseWarning,
     AgentdUnavailableError,
     ensure_agentd,
 )
@@ -72,6 +73,15 @@ def _print_agentd_request_error(error: AgentdClientError | OSError) -> None:
         console.print(f"[dim]{error}[/dim]")
         return
     console.print(f"[red]Error:[/red] {error}")
+
+
+def _print_agentd_parse_warnings(warnings: tuple[AgentdSessionParseWarning, ...]) -> None:
+    for warning in warnings:
+        click.echo(
+            "Warning: Skipping unparseable agentd session "
+            f"{warning.session_name}: {warning.field}={warning.raw_value!r}",
+            err=True,
+        )
 
 
 def _resolve_agentd_session(
@@ -237,10 +247,13 @@ def ps_command(show_all: bool) -> None:
     """List doeff-agents sessions."""
     client = _agentd_client_or_exit()
     try:
-        sessions = client.list_sessions()
+        session_list = client.list_sessions_with_warnings()
     except (AgentdClientError, OSError) as error:
         _print_agentd_request_error(error)
         sys.exit(1)
+
+    _print_agentd_parse_warnings(session_list.warnings)
+    sessions = session_list.snapshots
 
     if not sessions:
         console.print("No agentd sessions found.")
