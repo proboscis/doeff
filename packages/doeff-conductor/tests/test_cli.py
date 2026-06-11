@@ -91,7 +91,7 @@ class TestWorkflowCommands(TestCLIBase):
                         },
                         {
                             "name": "abort",
-                            "outcome": "stop",
+                            "outcome": "abort",
                             "description": "stop the run",
                         },
                     ],
