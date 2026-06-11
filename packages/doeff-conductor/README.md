@@ -9,7 +9,7 @@ doeff-conductor provides a unified orchestration layer combining:
 - **Issue-driven agent workflows**: Create issues, dispatch agents, track progress
 - **Git workspace management**: Isolated workspaces for each agent
 - **Multi-agent DAG execution**: Parallel agents with merge points
-- **Full CLI for monitoring and control**: run, ps, watch, attach, logs, stop
+- **Full CLI for monitoring and control**: run, ps, show, watch, stop, resume
 
 ## Installation
 
@@ -119,16 +119,14 @@ def multi_agent_pr(issue):
 # Workflow execution (workflow files are .hy modules in the Hy macro DSL)
 conductor run <template|file.hy> [--issue FILE] [--params JSON] [--watch]
 conductor ps [--status running|blocked|done]
-conductor show <workflow-id>
-conductor watch <workflow-id> [--agent NAME]
-conductor attach <workflow-id>[:<agent>]
-conductor send <workflow-id>:<agent> <message>
+conductor show <workflow-id> [--since SEQ] [--json]
+conductor watch <workflow-id> [--json]
 conductor stop <workflow-id> [--agent NAME]
-conductor logs <workflow-id>[:<agent>] [-f] [-n LINES]
+conductor resume <workflow-id> [--params JSON] [--json]
 
 # Issue management  
 conductor issue create <title> [--body FILE|STRING] [--labels L1,L2]
-conductor issue list [--status open|resolved|all]
+conductor issue list [--status open|in_progress|resolved|closed]
 conductor issue show <id>
 conductor issue resolve <id> [--pr URL]
 
@@ -139,7 +137,6 @@ conductor workspace cleanup [--dry-run] [--older-than DAYS]
 # Templates
 conductor template list
 conductor template show <name>
-conductor template new <name>
 ```
 
 ## Effects Catalog
@@ -194,17 +191,17 @@ Pre-built workflow templates:
 |                         doeff-conductor                              |
 +---------------------------------------------------------------------+
 |  CLI Layer                                                           |
-|  - run, ps, show, watch, attach, stop, logs                         |
+|  - run, ps, show, watch, stop, resume                              |
 |  - issue create/list/show/resolve                                   |
 |  - workspace list/cleanup                                           |
-|  - template list/show/run                                           |
+|  - template list/show                                               |
 +---------------------------------------------------------------------+
 |  Effects                                                             |
 |  +----------+ +----------+ +----------+ +----------+                |
 |  | Workspace | |  Issue   | |  Agent   | |   Git    |                |
 |  | Create   | | Create   | | Agent    | | Commit   |                |
-|  | Merge    | | List     | | Send     | | Push     |                |
-|  | Delete   | | Resolve  | | Capture  | | CreatePR |                |
+|  | Merge    | | List     | |AgentTask | | Push     |                |
+|  | Delete   | | Resolve  | |AgentEffect| |CreatePR |                |
 |  +----------+ +----------+ +----------+ +----------+                |
 +---------------------------------------------------------------------+
 |  Dependencies                                                        |

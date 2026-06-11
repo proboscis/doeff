@@ -136,8 +136,8 @@ conductor template show basic_pr
 ### Using a Template Programmatically
 
 ```python
-from doeff import production_handlers, run
 from doeff_conductor import Issue, IssueStatus, basic_pr
+from doeff_conductor.handlers import mock_handlers, run_sync
 
 # Create an issue
 issue = Issue(
@@ -147,16 +147,10 @@ issue = Issue(
     status=IssueStatus.OPEN,
 )
 
-# Use the template
-program = basic_pr(issue)
-
-# Run with handlers (see full handler setup in examples)
-# workflow_handler = ...  # @do handler with isinstance branches
-# preset_handler = preset_handlers()
-result = run(
-    program,
-    handlers=[preset_handler, workflow_handler, *production_handlers()],
-)
+# Run with mock handlers (see examples for production handler setup)
+result = run_sync(basic_pr(issue), scheduled_handlers=mock_handlers())
+if result.is_err:
+    raise result.error
 print(f"Created PR: {result.value.url}")
 ```
 
@@ -204,8 +198,8 @@ conductor show abc123
 # Watch real-time progress
 conductor watch abc123
 
-# View logs
-conductor logs abc123
+# Show progress events after a known sequence number
+conductor show abc123 --since 10
 ```
 
 ### Manage Issues
@@ -224,7 +218,7 @@ conductor issue resolve ISSUE-001 --pr https://github.com/.../pull/42
 ### JSON Output for Scripting
 
 ```bash
-# All commands support --json
+# JSON-capable commands include ps, show, watch, issue list, and template list
 conductor ps --json | jq '.[] | select(.status == "running")'
 conductor issue list --json | jq 'length'
 ```
