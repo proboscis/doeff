@@ -1,7 +1,8 @@
-# doeff エフェクト代数 第一稿(結晶化議論用ドラフト)
+# doeff エフェクト代数 第二稿(反例攻撃済み)
 
 作成: 2026-06-11。事後検死(postmortem.md)・制約グラフ(constraint-graph.md)・現行語彙の棚卸し(45エフェクト型)に基づく。
-**用途**: フロンティア級セッションでの結晶化議論(反例攻撃→law確定)の入力。等式は候補であり確定ではない。
+**改訂: 2026-06-12 反例攻撃セッション** — G6決着(死設備→全削除、D15)、共有規範確定(D16)、AW2条件付き化(D17)、lawの地位確定(D18)、C系→CC系改名、基盤law CS1/CC5追加。
+**用途**: law確定版。生成元はG1〜G5で閉じた。残る保留は§6。
 規格: プリミティブ5〜10個(直交+完全)/合成則の層明示/law(等式)/インタプリタ分離。
 
 ---
@@ -23,7 +24,7 @@ OCaml 5から輸入: `perform` / `match_with`(WithHandler) / `resume`(non-tail) 
 - Ask/Get/Put/Tell の正統ハンドラは**Pythonクロージャ実装**(doeff-core-effects/handlers.py:27,49,71)。VMの状態設備を使わない
 - スケジューラ全族(Spawn/Wait/Gather/Race/Cancel/Promise/Semaphore)は再帰WithHandlerのライブラリ(scheduler.py)
 - VMの`global_state`/`writer_log`(var_store.rs:10,12)は**呼び出し元ゼロの死設備**(v1時代の残骸。grep検証済み: ブリッジ・vm-core実装に参照なし)
-- VMが提供する生きた状態設備は **cells(Var: DoCtrl AllocVar/ReadVar/WriteVar、do_ctrl.rs:105-111)とスコープ束縛のみ**
+- ~~VMが提供する生きた状態設備はcells(Var)とスコープ束縛のみ~~ **2026-06-12訂正: cells(Var)もスコープ束縛も死設備だった**(§3 G6 — Python到達経路なし、使用者はRustテスト1本)。**VM特権状態は文字通りゼロ**
 - 例外は2つ: **Await**(ドライバ協調が要る外界橋)と**GetHandlers**(イントロスペクションDoCtrl — schedulerとLocal/Listenが依存)
 
 したがってプリミティブの地位は「VM特権の有無」では与えられない。**「独立なlaw系を持つ意味論単位」**として与える(§2)。
@@ -79,14 +80,14 @@ OCaml 5から輸入: `perform` / `match_with`(WithHandler) / `resume`(non-tail) 
 | G3 | **Tell**(Writer) | 追記専用出力。Get/Putで模倣すると非可換追記lawを失う | 候補確定 |
 | G4 | **Await** | 外界(async)への唯一の橋。law最薄だが境界として正当(§4) | 候補確定 |
 | G5 | **Spawn/Wait**(並行性、1ペアで1生成元) | 制御コアだけでは並行性は出ない(逐次deep handlerのみ)。Gather/Race/Promise/Semaphore/Cancelは導出 | 候補確定 |
-| G6? | **Var**(AllocVar/ReadVar/WriteVar) | スコープ付き可変セル。**唯一のVM特権状態** | **保留**(law未確定 — §4-1) |
+| ~~G6~~ | ~~**Var**(AllocVar/ReadVar/WriteVar)~~ | 「唯一のVM特権状態」は誤認 — **死設備と判明、削除決定**(§3 G6、D15) | **決着: 削除**(2026-06-12) |
 
-制御コア5 + 生成元5〜6 = 規格(5〜10個)内。
+制御コア5 + 生成元5 = 規格(5〜10個)内。**生成元集合はG1〜G5で閉じた。VM特権状態はゼロ — 「コアエフェクトは空集合」が完全に成立。**
 
 ### 導出物(ライブラリ)の導出経路
 
 - `Try` = エラーチャネル(コア)上のハンドラ
-- `Local(e, p)` = `WithHandler(reader(e ⊕ outer_env), p)` + 内側ハンドラ再設置
+- `Local(e, p)` = `reader(e ⊕ outer_env)(p)` + 内側ハンドラ再設置
 - `Listen(p, T)` = ローカルWithHandlerで型Tを横取り+Pass
 - `Gather(ts)` = `traverse Wait ts`(scheduler内部で導出済み)
 - `Race/Cancel/Promise/Semaphore` = Spawn/Wait+キュー状態(scheduler.pyで実証)
@@ -94,7 +95,19 @@ OCaml 5から輸入: `perform` / `match_with`(WithHandler) / `resume`(non-tail) 
 - `Traverse族` = applicative合成則の具現(§5)
 - `Time/HTTP/domain` = 外界エフェクトのパラメトリックな族(Awaitと同格の橋、コア外)
 
-## 3. law候補(生成元ごと)
+## 3. law(生成元ごと)
+
+### lawの地位: ハンドラ契約(D18 — 2026-06-12確定)
+
+lawは「全ハンドラについての定理」ではなく**ハンドラ契約**である(代数的エフェクトの標準観: 生成元+law=理論T、ハンドラ=Tのモデル/T-代数)。A1〜A4を満たすハンドラだけが「Readerハンドラ」を名乗れる。「Askを数えてTellするハンドラ」はA1の反例ではなく、Readerインタプリタの資格を持たないだけである。この再解釈により、A系・S系・W系への「効果的ハンドラ」型の見かけ反例は全てハンドラ側の義務に転化する。**等式変形(人・codexによるリファクタリング)は、設置されているハンドラが契約準拠であることを前提に正当化される。**
+
+### 基盤law: 協調実行(2026-06-12追加 — scheduler実装から逆算)
+
+- **CS1(協調原子性)**: インターリーブは**scheduler効果・外界効果の発行点でのみ**起こる。スケジューラは単一スレッド協調式(Transfer/ResumeThrowベース — scheduler.py:312-341)で、2つのyield点の間のエフェクト列はアトミック。S1〜S4・W1が「タスク内で」無条件成立する根拠
+- **CC5(決定論)**: readyキューはpriority heap+挿入順tie-break(scheduler.py:229,258-262)= FIFO within priority。外界の非決定性は`external_queue`(scheduler.py:235)の1箇所に隔離されており、**外部promise不在ならスケジューリングは入力の決定論的関数**。→ 決定論的シミュレータ(戦略優先3)の存在証明: 外界橋の差し替えのみで決定論実行が得られる
+- **yield点の微細構造**(2026-06-12テストで確定): (a) **Spawn自体がyield点で、子がspawner再開より先に走る**(両者NORMALでenqueue、子が先=FIFO — scheduler.py:466-468)。(b) CompletePromise/FailPromiseは起床側をNORMAL・完了側をIDLEで再enqueue=**被起床側が先に走る**(scheduler.py:593-597)。(c) CreatePromise/Cancelはyield点ではない(直接Resume)。等式変形時のスケジュール推論はこの3点を前提にできる
+
+**機械化(2026-06-12)**: 本節の等式は `tests/laws/test_generator_laws.py` として実行可能化済み(21 passed / 1 skipped)。内訳: A1〜A4、S1〜S5、W1〜W2、W3(**不等式ロック** — 反例が消えたらテストが落ちて法の昇格を通知)、AW1、AW2単一タスク、CC1、CC2、CC4(順序可換両側)、CS1×2(yield点の有無で観測が変わることの両側固定)、Spawn子先行、CC5決定論(2回実行一致)。AW2複数タスク反例はreal-clockでは再現が不安定なためsimドライバ待ちでskip(理由がskip文に記載)。S6は既存`tests/effects/test_effect_combinations.py::TestSafeNonRollbackLaw`が被覆。**残: hypothesis乱択化(プログラム生成)とsimドライバ — ハーネスが存在する今、どちらもcodex委譲候補**
 
 ### G1 Ask
 - A1(重複律): `ask k >>= λx. ask k >>= λy. f(x,y) ≡ ask k >>= λx. f(x,x)`
@@ -117,19 +130,31 @@ OCaml 5から輸入: `perform` / `match_with`(WithHandler) / `resume`(non-tail) 
 
 ### G4 Await
 - AW1(単位律): `Await(coro_pure(x)) ≡ pure x`
-- AW2(逐次律): `Await(c₁) >>= λx. Await(c₂(x)) ≡ Await(c₁ >>= c₂)`(コルーチンbindとの準同型)
+- AW2(逐次律・**条件付き** — D17): `Await(c₁) >>= λx. Await(c₂(x)) ≡ Await(c₁ >>= c₂)` — **干渉自由の文脈でのみ成立**。
+  - **反例(2026-06-12確定)**: LHSはyield点2つ、RHSは1つ。asyncドライバ×複数タスク下では、c₁完了とc₂開始の間に他タスクが割り込めるか否かが観測可能に異なり、CC5(決定論)の下で**確定的に異なる結果**を生む入力が構成できる
+  - 成立範囲: syncドライバ(無条件)/単一タスク(無条件)/複数タスクでも当該区間が干渉自由(共有規範D16準拠)なら成立。**await融合最適化の正当性条件**として保持
 - 注: これ以上のlawは書けない(外界の非決定性)。**外界橋はlawの境界**であり、law-poorはここでは設計曖昧のシグナルでなく境界宣言である
 
-### G5 Spawn/Wait
-- C1(往復律・条件付き): `Wait(Spawn(p)) ≡ p` — **ただしpが共有Var/外界に触れない場合に限る**。共有状態下では交換則が成立せず、成立条件の明文化が必要(⚠§4-2)
-- C2(Gather導出): `Gather(t₁..tₙ) ≡ traverse Wait [t₁..tₙ]`(完了順序によらず結果順序はインデックス順)
-- C3(ハンドラ継承): `Spawn`されたタスクはspawn地点の内側ハンドラ連鎖を観測する(GetHandlersによる再設置 — scheduler.pyの実装が定義)
-- C4(Promise単位律): `CreatePromise >>= λp. CompletePromise(p,v); WaitPromise(p) ≡ pure v`
+### G5 Spawn/Wait(C系→**CC系**に改名 — クラスタC1〜C5との衝突解消)
+- **共有規範(D16 — 2026-06-12オーナー確定)**: タスク間の通信・同期は**Promise/Semaphore/Waitの結果値経由のみ**。タスクを跨ぐGet/Put共有はlaw保証外(ハンドラクロージャは共有されるため動作はするが、等式変形の前提にしてはならない)
+- CC1(往復律): `Wait(Spawn(p)) ≡ p` — **干渉自由の仮定下で成立**。共有規範に従うプログラムでは干渉自由が構成的に保証されるため、規範準拠コードではCC1は適用可能
+- CC2(Gather導出): `Gather(t₁..tₙ) ≡ traverse Wait [t₁..tₙ]`(完了順序によらず結果順序はインデックス順)
+- CC3(ハンドラ継承): `Spawn`されたタスクはspawn地点の内側ハンドラ連鎖を観測する(scheduler.py:324-327の再設置で実装確認)。**注意: 「再設置」は同一クロージャの共有であって複製ではない** — stateハンドラのstore dictはタスク間共有メモリになる(CC1に条件が要る根本原因。D9の共有意味論と整合)
+- CC4(Promise律): `WaitPromise`という効果は存在しない — 実体は`Wait(promise.future)`(waitable_keyがTask|Future両対応、scheduler.py:242-248)。law: `CreatePromise >>= λp. (CompletePromise(p,v) との任意順序で) Wait(p.future) ≡ pure v` — **CompleteとWaitは順序可換**(waiters機構が先行Waitを保留し、完了時にwakeする)。単位律より強いこの順序可換性が本当の内容
 
-### G6? Var(保留)
-- V1(セルとしてはS1〜S4と同型)
-- **V2(スコープ律): 書けない** — owner fiber解放後のVarの意味論が未定(invariants.md I8で実行時に観測: owner解放後のVarIdはグローバルヒープキーに退化し、`read_scoped_var_from`のフォールバック(vm/var_store.rs:144)が暗黙に「Var ≡ グローバルセル+スコープオーバーライド」の2層意味論を定義している)。SPEC-VM-020:191(ヒープセル化)とSPEC-VM-019 Rev 2(segments are the scope)の矛盾も未決着
-- → **law不能フラグ: 設計曖昧シグナル**。結晶化議論の最優先議題
+### ~~G6 Var~~ — 決着: 全削除(D15 — 2026-06-12オーナー確定)
+
+反例攻撃の第一歩(使用者の確認)で前提が崩壊: **Varは「law未確定の生成元候補」ではなく死設備だった**。
+- Python API削除済み: `doeff/__init__.py:163,168` — `AllocVar`/`ReadVar`は`_Removed`スタブ
+- PyO3ブリッジ公開なし: `packages/doeff-vm/src`にAllocVar/ReadVar/WriteVarの言及ゼロ → **Pythonから到達不能**
+- 生きた使用者はRustユニットテスト1本のみ(vm_tests.rs:174-226)
+- 周辺機構も全死: `write_scoped_var_nonlocal`・`read_scope_binding_from`・`root_scope_bindings`は呼び出し元ゼロ、`Frame::LexicalScope`は到達不能経路でのみ生成(step.rs:92-95はskipするだけ)、`EvalReturnContinuation::EvalInScopeReturn`は構築箇所ゼロ
+
+帰結:
+- **B14 spec矛盾とI8 tensionは主体の消滅で解消**(SPEC-VM-020:191「owner_segmentは存在すべきでない」が削除により自動成立)
+- V2スコープ律問題は消滅(lawを書く対象がない)
+- owner_segmentは検死の一般化パターンの再演だった: VarId×owner×override×fallbackの4点補償子セットが、削除で一斉に溶ける
+- 削除issue仕様: constraint-graph.md §4-④。将来Rust製ハンドラが状態置き場を要する場合は「**ownerなし純ヒープセル**」として再導入(SPEC-VM-020:191準拠)— issueにADRとして明記
 
 ### 観測子(WithObserve/Intercept — 生成元ではなく様相)
 - O1(非干渉律): `observe(o, p) ≡_値 p` — 観測子は値意味論で恒等。**この等式が書けることが「観測子」と「ハンドラ」の境界定義**(書けなければそれはハンドラ)
@@ -138,8 +163,8 @@ OCaml 5から輸入: `perform` / `match_with`(WithHandler) / `resume`(non-tail) 
 
 | # | 項目 | 症状 | 提案 |
 |---|---|---|---|
-| 1 | **Var/cells**(G6) | スコープ律が書けない。B14スペック間矛盾+I8実行時観測 | ヒープセル化(owner廃止)か、スコープ律の等式化かを決める。最優先 |
-| 2 | **Spawn/Wait×共有状態** | C1往復律が条件付きでしか書けない。条件(「共有に触れない」)の判定法が未定義 | 共有Varの並行アクセス意味論を等式化 or 「タスク間共有はPromise経由のみ」を規範化 |
+| 1 | ~~**Var/cells**(G6)~~ | **決着(2026-06-12 D15)**: 死設備と判明 | 全削除(constraint-graph §4-④の削除issue) |
+| 2 | ~~**Spawn/Wait×共有状態**~~ | **決着(2026-06-12 D16)**: 規範化 | タスク間共有はPromise/Semaphore経由のみ。CC1は干渉自由仮定下で成立と明記 |
 | 3 | **Skip**(_SKIPPEDセンチネル) | `is _SKIPPED`の同一性チェックはlaw化不能のad hoc | Selective functor(When/Skip)として§5のselective層に再定式化 |
 | 4 | **SetTime** | sim実装は動作、real実装はno-op — ハンドラ間でlawが割れる(静かな違反) | realでは明示エラーにする(no-op禁止) |
 | 5 | **Cancel** | キャンセル点の意味論(どこで停止が観測されるか)が等式で書けない | キャンセルは「次のscheduler効果で観測」等の規範を等式化 |
@@ -156,16 +181,19 @@ OCaml 5から輸入: `perform` / `match_with`(WithHandler) / `resume`(non-tail) 
 
 宣言: パイプラインはapplicativeで書けるものをmonadicに落とさない(静的検査可能性の保存)。
 
-## 6. 判定保留リスト(次セッションの議題、優先順)
+## 6. 判定保留リスト(優先順 — 2026-06-12改訂)
 
-1. Var意味論の決着(§4-1 — B14+I8。最優先)
-2. Spawn/Wait×共有状態の交換則条件(§4-2 — C4×C5の再来)
-3. GetHandlersのコア公認とlaw(§4-6)
-4. Skipのselective層への再定式化(§4-3)
-5. Traverse並列意味論(applicative層の実装充足)
-6. 残骸削除issue群: global_state/writer_log、PromptBoundary.types、MaskSpec(constraint-graph §4)
-7. **カバレッジ実測**: 過去タスク20個をこの生成元集合で書き直し、7割未満なら切り口を疑う(戦略文書の基準 — 本セッション外)
+~~1. Var意味論の決着~~ → **決着(D15: 全削除)**
+~~2. Spawn/Wait×共有状態の交換則条件~~ → **決着(D16: Promise/Semaphore経由のみ規範化)**
+
+残り:
+1. GetHandlersのコア公認とlaw(§4-6)
+2. Skipのselective層への再定式化(§4-3)
+3. Traverse並列意味論(applicative層の実装充足)
+4. ~~残骸削除issue群~~ → **issue化完了(2026-06-12)**: VarStore一式 [#461](https://github.com/proboscis/doeff/issues/461)、PromptBoundary.types [#464](https://github.com/proboscis/doeff/issues/464)、MaskSpec [#465](https://github.com/proboscis/doeff/issues/465)、SPEC-EFF-002更新 [#466](https://github.com/proboscis/doeff/issues/466)
+5. **カバレッジ実測**: 過去タスク20個をこの生成元集合(G1〜G5)で書き直し、7割未満なら切り口を疑う(戦略文書の基準 — 本セッション外)
+6. ~~CS1/CC5のproperty test化~~ → **第一段完了(2026-06-12)**: `tests/laws/test_generator_laws.py`(21 passed)。残のissue化完了: hypothesis乱択化 [#462](https://github.com/proboscis/doeff/issues/462)、simドライバ(AW2反例の決定論的再現)[#463](https://github.com/proboscis/doeff/issues/463)
 
 ## 7. インタプリタ分離の現状
 
-項=データ(DoCtrl/Program)、実行=ハンドラ選択は達成済み。複数意味論の実例: doeff-time(sync/async/sim 3実装)、scheduler(priority/realtime)。決定論的シミュレータ(戦略文書の優先3)はsim-timeハンドラ+決定論schedulerの合成として構成可能 — 生成元がG1〜G6に閉じていれば、シミュレータは「全外界橋(G4+Time+HTTP)のsim実装差し替え」で得られる。これが本代数の完全性の実用的判定式である。
+項=データ(DoCtrl/Program)、実行=ハンドラ選択は達成済み。複数意味論の実例: doeff-time(sync/async/sim 3実装)、scheduler(priority/realtime)。決定論的シミュレータ(戦略文書の優先3)はsim-timeハンドラ+決定論schedulerの合成として構成可能 — 生成元がG1〜G5に閉じた今、シミュレータは「全外界橋(G4+Time+HTTP)のsim実装差し替え」で得られる。**CC5(決定論law)がこの構成の存在証明である**: スケジューラ自体は既に決定論的で、非決定性はexternal_queue 1箇所に隔離済み。これが本代数の完全性の実用的判定式である。

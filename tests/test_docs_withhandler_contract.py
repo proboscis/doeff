@@ -13,6 +13,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ARCHIVAL_DOC_DIRS = {
     Path("docs/proposals"),
     Path("docs/specs"),
+    # Forensic/design records that quote code verbatim (postmortems,
+    # constraint graphs, algebra drafts) — not reader-facing tutorials.
+    Path("docs/crystallization"),
 }
 ARCHIVAL_DOC_FILES = {
     Path("docs/MILESTONES.md"),
