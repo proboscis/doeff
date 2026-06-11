@@ -5,12 +5,15 @@ import threading
 from types import FrameType
 from typing import Any
 
+import pytest
 from doeff_core_effects.scheduler import (
     PRIORITY_IDLE,
+    AcquireSemaphore,
     Cancel,
     CompletePromise,
     CreateExternalPromise,
     CreatePromise,
+    CreateSemaphore,
     Gather,
     Race,
     Spawn,
@@ -90,6 +93,27 @@ def _count_waitable_status_calls_for_gather(total: int) -> int:
 
     assert result == list(range(total))
     return calls
+
+
+def _run_scheduled_with_timeout(program: Any, timeout: float = 0.5) -> Any:
+    result: dict[str, Any] = {}
+    error: dict[str, BaseException] = {}
+
+    def worker() -> None:
+        try:
+            result["value"] = doeff_run(scheduled(program))
+        except BaseException as exc:  # pragma: no cover - helper re-raises in caller
+            error["value"] = exc
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout)
+    assert not thread.is_alive(), "scheduler blocked after cancelled external wait"
+
+    if "value" in error:
+        raise error["value"]
+
+    return result["value"]
 
 
 # ---------------------------------------------------------------------------
@@ -737,6 +761,66 @@ class TestCancel:
 
         assert doeff_run(scheduled(body())) == "cancelled"
 
+    def test_cancelled_promise_waiter_does_not_resume_when_promise_completes(self):
+        """Cancelled tasks parked on a promise must not resume later."""
+        events: list[str] = []
+
+        @do
+        def blocked_task(gate: Any):
+            events.append("waiting")
+            _ = yield Wait(gate.future)
+            events.append("resumed")
+            return "resumed"
+
+        @do
+        def body():
+            gate = yield CreatePromise()
+            task = yield Spawn(blocked_task(gate))
+
+            yield Cancel(task)
+            yield CompletePromise(gate, "late")
+
+            try:
+                yield Wait(task)
+                return ("completed", list(events))
+            except TaskCancelledError:
+                return ("cancelled", list(events))
+
+        assert doeff_run(scheduled(body())) == ("cancelled", ["waiting"])
+
+    def test_cancelled_external_waiter_does_not_block_scheduler(self):
+        """A cancelled external wait entry must not block later scheduler progress."""
+        events: list[str] = []
+
+        @do
+        def blocked_task(external_promise: Any):
+            events.append("waiting")
+            _ = yield Wait(external_promise.future)
+            events.append("resumed")
+            return "resumed"
+
+        @do
+        def release_gate(gate: Any):
+            yield CompletePromise(gate, "released")
+
+        @do
+        def body():
+            external_promise = yield CreateExternalPromise()
+            gate = yield CreatePromise()
+            task = yield Spawn(blocked_task(external_promise))
+
+            yield Cancel(task)
+            _ = yield Spawn(release_gate(gate), priority=PRIORITY_IDLE)
+            gate_value = yield Wait(gate.future)
+
+            try:
+                yield Wait(task)
+                return ("completed", gate_value, list(events))
+            except TaskCancelledError:
+                return ("cancelled", gate_value, list(events))
+
+        assert _run_scheduled_with_timeout(body()) == ("cancelled", "released", ["waiting"])
+
     def test_cancel_does_not_affect_completed(self):
         """Cancelling an already-completed task is a no-op."""
         from doeff_core_effects.scheduler import Cancel
@@ -885,3 +969,29 @@ class TestSemaphore:
                 return str(e)
 
         assert "too many" in doeff_run(scheduled(body()))
+
+    def test_semaphore_only_deadlock_raises_scheduler_deadlock_error(self):
+        """Semaphore waiters must keep the scheduler from silently returning None."""
+        from doeff_core_effects.scheduler import SchedulerDeadlockError
+
+        @do
+        def waiter(sem: Any):
+            yield AcquireSemaphore(sem)
+            return "acquired"
+
+        @do
+        def body():
+            sem = yield CreateSemaphore(1)
+            yield AcquireSemaphore(sem)
+            _ = yield Spawn(waiter(sem))
+            _ = yield Spawn(waiter(sem))
+            yield AcquireSemaphore(sem)
+            return "should not reach"
+
+        with pytest.raises(SchedulerDeadlockError) as exc_info:
+            doeff_run(scheduled(body()))
+
+        error = exc_info.value
+        assert error.semaphore_waiters == {0: [1, 2]}
+        assert "semaphore 0" in str(error)
+        assert "tasks 1, 2" in str(error)

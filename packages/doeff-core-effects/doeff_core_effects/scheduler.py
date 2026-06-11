@@ -105,6 +105,27 @@ class TaskCancelledError(Exception):
     """Raised when waiting on a cancelled task."""
 
 
+class SchedulerDeadlockError(RuntimeError):
+    """Raised when the scheduler has parked work that cannot make progress."""
+
+    def __init__(self, semaphore_waiters):
+        self.semaphore_waiters = {
+            sem_id: list(task_ids)
+            for sem_id, task_ids in semaphore_waiters.items()
+        }
+        details = []
+        for sem_id, task_ids in self.semaphore_waiters.items():
+            if task_ids:
+                task_list = ", ".join(str(task_id) for task_id in task_ids)
+                details.append(f"semaphore {sem_id}: tasks {task_list}")
+            else:
+                details.append(f"semaphore {sem_id}: root continuation")
+        super().__init__(
+            "scheduler deadlock: semaphore waiters remain with no runnable tasks "
+            f"({'; '.join(details)})"
+        )
+
+
 class Race(EffectBase):
     def __init__(self, *tasks):
         super().__init__()
@@ -229,8 +250,8 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
     insertion_seq = [0]  # tie-breaker for priority queue (FIFO within same priority)
     tasks = {}           # tid → {status, result, program, priority}
     promises = {}        # pid → {status, result}
-    semaphores = {}      # sid → {permits, max_permits, waiters: deque of k}
-    waiters = {}         # waitable_key → [(type, k, ...)] or gather/race-state refs
+    semaphores = {}      # sid → {permits, max_permits, waiters: deque of (owner_tid, k)}
+    waiters = {}         # waitable_key → [(type, owner_tid, k/state, ...)]
     ready = []           # heapq: (-priority, seq, entry)
     external_queue = queue_mod.Queue()  # thread-safe, blocking get()
 
@@ -267,6 +288,18 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             _, _, entry = heapq.heappop(ready)
             return entry
         return None
+
+    def is_owner_cancelled(owner_tid):
+        return (
+            owner_tid is not None
+            and tasks.get(owner_tid, {}).get("status") == "cancelled"
+        )
+
+    def enqueue_resume(owner_tid, cont, value, priority=PRIORITY_NORMAL):
+        enqueue(("resume", owner_tid, cont, value), priority)
+
+    def enqueue_raise(owner_tid, cont, error, priority=PRIORITY_NORMAL):
+        enqueue(("raise", owner_tid, cont, error), priority)
 
     def alloc_task(program, priority=PRIORITY_NORMAL, inner_handlers=None):
         tid = fresh_id()
@@ -309,7 +342,41 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             promises[pid]["result"] = value
             wake_waiters(("promise", pid))
 
-    def pick_next():
+    def live_semaphore_waiters():
+        """Return live semaphore waiters, pruning cancelled task continuations."""
+        blocked = {}
+        for sid, sem in semaphores.items():
+            original_waiters = list(sem["waiters"])
+            live_waiters = [
+                waiter
+                for waiter in original_waiters
+                if not is_owner_cancelled(waiter[0])
+            ]
+            if len(live_waiters) != len(original_waiters):
+                sem["waiters"].clear()
+                sem["waiters"].extend(live_waiters)
+            if live_waiters:
+                blocked[sid] = [
+                    owner_tid
+                    for owner_tid, _waiter_k in live_waiters
+                    if owner_tid is not None
+                ]
+        return blocked
+
+    def has_pending_external_waiters():
+        for key, entries in waiters.items():
+            kind, wid = key
+            if kind != "promise":
+                continue
+            promise = promises.get(wid, {})
+            if not promise.get("external") or promise.get("status") in terminal_statuses:
+                continue
+            for entry in entries:
+                if len(entry) >= 2 and not is_owner_cancelled(entry[1]):
+                    return True
+        return False
+
+    def pick_next():  # noqa: PLR0912 - scheduler dispatch loop has one branch per ready entry
         from doeff.program import ResumeThrow
         while True:
             drain()
@@ -324,28 +391,37 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                     # Re-wrap task with inner handlers captured at spawn site
                     for h in tasks[tid].pop("inner_handlers", []):
                         prog = WithHandler(h, prog)
-                    return WithHandler(handler, wrap_task(tid, prog))
+                    return WithHandler(make_handler(tid), wrap_task(tid, prog))
                 if entry[0] == "resume":
-                    _, cont, value = entry
+                    _, owner_tid, cont, value = entry
+                    if is_owner_cancelled(owner_tid):
+                        continue
                     return Transfer(cont, value)
                 if entry[0] == "raise":
-                    _, cont, error = entry
+                    _, owner_tid, cont, error = entry
+                    if is_owner_cancelled(owner_tid):
+                        continue
                     return ResumeThrow(cont, error)
                 if entry[0] == "wait_external":
                     # Task waiting for external promise at NORMAL priority.
                     # Keeps IDLE tasks (clock driver) from running.
-                    _, cont, wk = entry
+                    _, owner_tid, cont, wk = entry
+                    if is_owner_cancelled(owner_tid):
+                        continue
                     if waitable_status(wk)[0] in terminal_statuses:
-                        resume_with_waitable_result(cont, wk)
+                        resume_with_waitable_result(owner_tid, cont, wk)
                         continue
                     # Not yet resolved — block for one completion, drain rest
                     _drain_one_external()
                     drain()
                     if waitable_status(wk)[0] in terminal_statuses:
-                        resume_with_waitable_result(cont, wk)
+                        resume_with_waitable_result(owner_tid, cont, wk)
                     else:
                         enqueue(entry, PRIORITY_EXTERNAL_WAIT)
                     continue
+            blocked_semaphore_waiters = live_semaphore_waiters()
+            if blocked_semaphore_waiters and not has_pending_external_waiters():
+                raise SchedulerDeadlockError(blocked_semaphore_waiters)
             if not waiters:
                 return Pure(None)
             # All tasks blocked — block for one external completion
@@ -367,16 +443,16 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         t.pop("inner_handlers", None)
         t.pop("spawn_site", None)
 
-    def resume_with_waitable_result(waiter_k, key):
+    def resume_with_waitable_result(owner_tid, waiter_k, key):
         """Add a ready entry that resumes waiter with the waitable's result.
         For failed/cancelled, uses ("raise", k, error) so handler can throw."""
         status, result = waitable_status(key)
         if status == "completed":
-            enqueue(("resume", waiter_k, result))
+            enqueue_resume(owner_tid, waiter_k, result)
         elif status == "failed":
-            enqueue(("raise", waiter_k, result))
+            enqueue_raise(owner_tid, waiter_k, result)
         elif status == "cancelled":
-            enqueue(("raise", waiter_k, TaskCancelledError()))
+            enqueue_raise(owner_tid, waiter_k, TaskCancelledError())
 
     def remove_gather_waiters(gather_state):
         """Remove unresolved waiter refs for a fail-fast Gather resolution."""
@@ -387,7 +463,7 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             remaining_entries = [
                 entry
                 for entry in entries
-                if not (entry[0] == "gather" and entry[1] is gather_state)
+                if not (entry[0] == "gather" and entry[2] is gather_state)
             ]
             if remaining_entries:
                 waiters[wk] = remaining_entries
@@ -400,7 +476,7 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         gather_state["resolved"] = True
         gather_state["failure"] = error
         remove_gather_waiters(gather_state)
-        enqueue(("raise", gather_state["waiter_k"], error))
+        enqueue_raise(gather_state["owner_tid"], gather_state["waiter_k"], error)
 
     def wake_gather_waiter(gather_state, completed_key):
         if gather_state["resolved"]:
@@ -421,7 +497,7 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         if gather_state["remaining"] == 0:
             gather_state["resolved"] = True
             results = [waitable_status(wk)[1] for wk in gather_state["keys"]]
-            enqueue(("resume", gather_state["waiter_k"], results))
+            enqueue_resume(gather_state["owner_tid"], gather_state["waiter_k"], results)
 
     def remove_race_waiters(race_state):
         """Remove unresolved sibling waiter refs after Race has a winner."""
@@ -432,7 +508,7 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             remaining_entries = [
                 entry
                 for entry in entries
-                if not (entry[0] == "race" and entry[1] is race_state)
+                if not (entry[0] == "race" and entry[2] is race_state)
             ]
             if remaining_entries:
                 waiters[wk] = remaining_entries
@@ -450,23 +526,23 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         race_state["resolved"] = True
         remove_race_waiters(race_state)
         if status == "completed":
-            enqueue(("resume", race_state["waiter_k"], result))
+            enqueue_resume(race_state["owner_tid"], race_state["waiter_k"], result)
         elif status == "failed":
-            enqueue(("raise", race_state["waiter_k"], result))
+            enqueue_raise(race_state["owner_tid"], race_state["waiter_k"], result)
         elif status == "cancelled":
-            enqueue(("raise", race_state["waiter_k"], TaskCancelledError()))
+            enqueue_raise(race_state["owner_tid"], race_state["waiter_k"], TaskCancelledError())
 
     def wake_waiters(completed_key):
         ws = waiters.pop(completed_key, [])
         for w in ws:
             if w[0] == "wait":
-                _, waiter_k = w
-                resume_with_waitable_result(waiter_k, completed_key)
+                _, owner_tid, waiter_k = w
+                resume_with_waitable_result(owner_tid, waiter_k, completed_key)
             elif w[0] == "gather":
-                _, gather_state = w
+                _, _owner_tid, gather_state = w
                 wake_gather_waiter(gather_state, completed_key)
             elif w[0] == "race":
-                _, race_state = w
+                _, _owner_tid, race_state = w
                 wake_race_waiter(race_state, completed_key)
 
     def drain():
@@ -478,8 +554,22 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 promises[pid]["result"] = value
                 wake_waiters(("promise", pid))
 
+    def pop_live_semaphore_waiter(sem):
+        while sem["waiters"]:
+            owner_tid, waiter_k = sem["waiters"].popleft()
+            if is_owner_cancelled(owner_tid):
+                continue
+            return owner_tid, waiter_k
+        return None
+
+    def make_handler(current_tid):
+        @do
+        def handler(effect, k):
+            return (yield TailEval(handle_scheduler_effect(current_tid, effect, k)))
+        return handler
+
     @do
-    def handler(effect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
+    def handle_scheduler_effect(current_tid, effect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
         drain()
         if isinstance(effect, Spawn):
             # Capture inner handlers from continuation (between yield site and scheduler).
@@ -497,28 +587,31 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             tid = alloc_task(effect.program, effect.priority, inner_handlers=inner_handlers)
             tasks[tid]["spawn_site"] = spawn_site
             enqueue(("new", tid), effect.priority)
-            enqueue(("resume", k, Task(tid)))  # spawner resumes at normal priority
+            enqueue_resume(current_tid, k, Task(tid))  # spawner resumes at normal priority
             yield TailEval(pick_next())
 
         elif isinstance(effect, TaskCompleted):
             tid = effect.task_id
             r = effect.result
-            if hasattr(r, "is_ok") and r.is_ok():
-                tasks[tid]["status"] = "completed"
-                tasks[tid]["result"] = r.value
+            if tasks[tid]["status"] == "cancelled":
+                _release_task_refs(tid)
             else:
-                tasks[tid]["status"] = "failed"
-                error = r.error if hasattr(r, "error") else r
-                # Add spawn boundary to traceback
-                if isinstance(error, BaseException) and hasattr(error, "__doeff_traceback__"):
-                    error.__doeff_traceback__.insert(0, {
-                        "kind": "spawn_boundary",
-                        "task_id": tid,
-                        "spawn_site": tasks[tid].get("spawn_site", ""),
-                    })
-                tasks[tid]["result"] = error
-            wake_waiters(("task", tid))
-            _release_task_refs(tid)
+                if hasattr(r, "is_ok") and r.is_ok():
+                    tasks[tid]["status"] = "completed"
+                    tasks[tid]["result"] = r.value
+                else:
+                    tasks[tid]["status"] = "failed"
+                    error = r.error if hasattr(r, "error") else r
+                    # Add spawn boundary to traceback
+                    if isinstance(error, BaseException) and hasattr(error, "__doeff_traceback__"):
+                        error.__doeff_traceback__.insert(0, {
+                            "kind": "spawn_boundary",
+                            "task_id": tid,
+                            "spawn_site": tasks[tid].get("spawn_site", ""),
+                        })
+                    tasks[tid]["result"] = error
+                wake_waiters(("task", tid))
+                _release_task_refs(tid)
             yield TailEval(pick_next())
 
         elif isinstance(effect, Wait):
@@ -544,12 +637,12 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                     # promise — drain() wakes it when the promise resolves,
                     # and the clock driver is free to advance sim time.
                     if effect.priority == PRIORITY_IDLE:
-                        waiters.setdefault(wk, []).append(("wait", k))
+                        waiters.setdefault(wk, []).append(("wait", current_tid, k))
                     else:
-                        enqueue(("wait_external", k, wk), PRIORITY_EXTERNAL_WAIT)
+                        enqueue(("wait_external", current_tid, k, wk), PRIORITY_EXTERNAL_WAIT)
                 else:
                     # Internal promise: use waiters (resolved by other tasks)
-                    waiters.setdefault(wk, []).append(("wait", k))
+                    waiters.setdefault(wk, []).append(("wait", current_tid, k))
                 yield TailEval(pick_next())
 
         elif isinstance(effect, Gather):
@@ -572,6 +665,7 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 return r
 
             gather_state = {
+                "owner_tid": current_tid,
                 "waiter_k": k,
                 "keys": wks,
                 "pending_keys": pending_wks,
@@ -580,7 +674,7 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 "resolved": False,
             }
             for wk in pending_wks:
-                waiters.setdefault(wk, []).append(("gather", gather_state))
+                waiters.setdefault(wk, []).append(("gather", current_tid, gather_state))
             yield TailEval(pick_next())
 
         elif isinstance(effect, Race):
@@ -602,12 +696,13 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                     pending_wks.append(wk)
             if pending_wks:
                 race_state = {
+                    "owner_tid": current_tid,
                     "waiter_k": k,
                     "pending_keys": pending_wks,
                     "resolved": False,
                 }
                 for wk in pending_wks:
-                    waiters.setdefault(wk, []).append(("race", race_state))
+                    waiters.setdefault(wk, []).append(("race", current_tid, race_state))
             yield TailEval(pick_next())
 
         elif isinstance(effect, Cancel):
@@ -635,7 +730,7 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             # run first.  The main user is the sim clock driver which is
             # Spawned at IDLE — without this it would be promoted to
             # NORMAL and race with the tasks it just woke.
-            enqueue(("resume", k, None), PRIORITY_IDLE)
+            enqueue_resume(current_tid, k, None, PRIORITY_IDLE)
             yield TailEval(pick_next())
 
         elif isinstance(effect, FailPromise):
@@ -643,7 +738,7 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             promises[pid]["status"] = "failed"
             promises[pid]["result"] = effect.error
             wake_waiters(("promise", pid))
-            enqueue(("resume", k, None), PRIORITY_IDLE)
+            enqueue_resume(current_tid, k, None, PRIORITY_IDLE)
             yield TailEval(pick_next())
 
         elif isinstance(effect, CreateExternalPromise):
@@ -676,16 +771,17 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 return r
             else:
                 # Park — FIFO queue
-                sem["waiters"].append(k)
+                sem["waiters"].append((current_tid, k))
                 yield TailEval(pick_next())
 
         elif isinstance(effect, ReleaseSemaphore):
             sid = effect.semaphore.sem_id
             sem = semaphores[sid]
-            if sem["waiters"]:
+            waiter = pop_live_semaphore_waiter(sem)
+            if waiter is not None:
                 # Transfer permit directly to first waiter
-                waiter_k = sem["waiters"].popleft()
-                enqueue(("resume", waiter_k, None))
+                owner_tid, waiter_k = waiter
+                enqueue_resume(owner_tid, waiter_k, None)
             else:
                 if sem["permits"] >= sem["max_permits"]:
                     from doeff.program import ResumeThrow
@@ -697,4 +793,4 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         else:
             yield Pass(effect, k)
 
-    return WithHandler(handler, body_program)
+    return WithHandler(make_handler(None), body_program)
