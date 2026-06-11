@@ -14,7 +14,6 @@ Run:
 
 import sys
 
-from doeff import WithHandler, default_handlers, do, run
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticGetMessages,
@@ -22,6 +21,8 @@ from doeff_agentic import (
     AgenticSendMessage,
 )
 from doeff_agentic.handlers.testing import MockAgenticHandler, mock_handlers
+
+from doeff import WithHandler, default_handlers, do, run
 
 
 @do

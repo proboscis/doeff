@@ -1,6 +1,7 @@
 """Agent adapters for different coding agents."""
 
-from .base import AgentAdapter, AgentType, InjectionMethod, LaunchConfig, LaunchParams
+from .base import AgentAdapter, AgentType, InjectionMethod, LaunchParams
+from .base import LaunchConfig as LaunchConfig
 from .claude import ClaudeAdapter
 from .codex import CodexAdapter
 from .gemini import GeminiAdapter
@@ -12,5 +13,6 @@ __all__ = [
     "CodexAdapter",
     "GeminiAdapter",
     "InjectionMethod",
+    "LaunchConfig",
     "LaunchParams",
 ]

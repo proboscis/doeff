@@ -1,7 +1,6 @@
 """Tests for uv-image Dockerfile generation."""
 
-import hy  # noqa: F401
-from pathlib import Path
+import hy  # noqa: F401 - activates Hy import hooks for test modules
 
 from doeff import run, WithHandler, do
 from doeff_core_effects import reader, writer, slog_handler
@@ -28,9 +27,9 @@ class TestUvImage:
         result = _run_with_handlers(test())
         lines = result.split("\n")
         assert lines[0] == "FROM python:3.13-slim"
-        assert any("uv" in l for l in lines)
-        assert any("uv sync --frozen --no-install-project" in l for l in lines)
-        assert any("uv sync --frozen" in l for l in lines)
+        assert any("uv" in line for line in lines)
+        assert any("uv sync --frozen --no-install-project" in line for line in lines)
+        assert any("uv sync --frozen" in line for line in lines)
 
     def test_gpu_image_has_nvidia_env(self):
         @do

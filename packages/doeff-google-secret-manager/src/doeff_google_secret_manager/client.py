@@ -63,7 +63,7 @@ class SecretManagerClient:
 
 
 @do
-def get_secret_manager_client() -> EffectGenerator[SecretManagerClient]:
+def get_secret_manager_client() -> EffectGenerator[SecretManagerClient]:  # noqa: PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
     """Retrieve or construct a :class:`SecretManagerClient` using ADC when available."""
 
     @do

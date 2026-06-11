@@ -8,7 +8,7 @@ def basic_interpreter(program: Program):  # doeff: interpreter
 
 def advanced_interpreter(  # doeff: interpreter
     program: Program,
-    config: dict = None
+    config: dict | None = None
 ):
     """An interpreter with marker on function definition line."""
 

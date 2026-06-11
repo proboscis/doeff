@@ -18,7 +18,7 @@ def validate_result_payload(payload: Any, schema: Mapping[str, Any]) -> str | No
     return None
 
 
-def _validate(instance: Any, schema: Mapping[str, Any], loc: str) -> None:
+def _validate(instance: Any, schema: Mapping[str, Any], loc: str) -> None:  # noqa: PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
     if not isinstance(schema, Mapping):
         raise ValueError(f"schema at '{loc}' is not an object")
 
@@ -97,7 +97,7 @@ def _validate(instance: Any, schema: Mapping[str, Any], loc: str) -> None:
             _validate(item, items, f"{loc}[{index}]")
 
 
-def _matches_type(instance: Any, expected_type: Any) -> bool:
+def _matches_type(instance: Any, expected_type: Any) -> bool:  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
     if isinstance(expected_type, Sequence) and not isinstance(expected_type, (str, bytes)):
         return any(_matches_type(instance, item) for item in expected_type)
     if expected_type == "object":

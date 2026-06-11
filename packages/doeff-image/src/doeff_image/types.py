@@ -24,7 +24,7 @@ class ImageResult:
             raise ValueError("ImageResult has no images")
         return self.images[0]
 
-    def save(self, path: str, *, format: str | None = None) -> None:
+    def save(self, path: str, *, format: str | None = None) -> None:  # noqa: A002 - public API parameter name is intentionally stable
         """Save the first image in the result."""
         self.to_pil_image().save(path, format=format)
 

@@ -5,9 +5,8 @@ Each test maps to one SA-002 gap and is expected to fail on current code.
 
 from __future__ import annotations
 
-from pathlib import Path
 import re
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 RUST_SRC = ROOT / "packages" / "doeff-vm" / "src"
@@ -48,7 +47,7 @@ def _extract_fn_body(source: str, fn_name: str) -> str:
 
 
 
-def test_SA_002_G03_no_implicit_kpc_install_in_vm_new() -> None:
+def test_SA_002_G03_no_implicit_kpc_install_in_vm_new() -> None:  # noqa: N802 - public or spec test name is intentionally stable
     src = _read(RUST_SRC / "pyvm.rs")
     body = _extract_fn_body(src, "new")
     assert "KpcHandlerFactory" not in body

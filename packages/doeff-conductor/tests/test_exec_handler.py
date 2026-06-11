@@ -53,7 +53,7 @@ def test_exec_runs_against_workspace_via_resolver(tmp_path: Path) -> None:
     (workspace_path / "input.txt").write_text("workspace-data\n")
     workspace = Workspace(id="ws-1", repo="default", ref="feature", base_ref="main")
     handler = ExecHandler(
-        workspace_resolver=lambda candidate: workspace_path,
+        workspace_resolver=lambda _candidate: workspace_path,
         log_dir=tmp_path / "logs",
     )
 

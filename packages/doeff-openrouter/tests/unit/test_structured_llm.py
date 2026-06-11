@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from doeff import EffectGenerator, default_handlers, do, run
 
 structured_llm_module = importlib.import_module("doeff_openrouter.structured_llm")
-from doeff_openrouter.structured_llm import (
+from doeff_openrouter.structured_llm import (  # noqa: E402 - late import preserves existing import/setup order
     StructuredOutputParsingError,
     build_messages,
     ensure_strict_schema,

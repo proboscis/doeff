@@ -11,13 +11,20 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, TypeVar
 
 import pytest
-
-from doeff import WithHandler, do, run
 from doeff_core_effects.handlers import (
-    reader, state, writer, try_handler, slog_handler,
-    local_handler, listen_handler, await_handler, lazy_ask,
+    await_handler,
+    lazy_ask,
+    listen_handler,
+    local_handler,
+    reader,
+    slog_handler,
+    state,
+    try_handler,
+    writer,
 )
 from doeff_core_effects.scheduler import scheduled
+
+from doeff import WithHandler, run
 
 T = TypeVar("T")
 

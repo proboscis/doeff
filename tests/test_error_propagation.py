@@ -1,10 +1,12 @@
 """Tests for error propagation — Python exceptions flow through the VM correctly."""
 
 import pytest
-from doeff import do, run as doeff_run, WithHandler
-from doeff.program import Resume, Pass, WithHandler
+from doeff_core_effects.scheduler import Gather, Spawn, Wait, scheduled
 from doeff_vm import EffectBase
-from doeff_core_effects.scheduler import scheduled, Spawn, Wait, Gather, TaskCancelledError
+
+from doeff import do
+from doeff import run as doeff_run
+from doeff.program import Resume, WithHandler
 
 
 class TestDirectErrors:

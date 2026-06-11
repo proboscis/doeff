@@ -62,7 +62,7 @@ class VisualInterceptorConfig:
 
 
 def _get_timestamp() -> str:
-    return datetime.now().strftime("%H:%M:%S")
+    return datetime.now().strftime("%H:%M:%S")  # noqa: DTZ005 - existing local wall-clock behavior is intentionally unchanged
 
 
 def _truncate(text: str, max_len: int) -> str:
@@ -71,7 +71,7 @@ def _truncate(text: str, max_len: int) -> str:
     return text[: max_len - 3] + "..."
 
 
-def _format_effect_details(effect: Any, config: VisualInterceptorConfig) -> str:
+def _format_effect_details(effect: Any, config: VisualInterceptorConfig) -> str:  # noqa: PLR0912 - baseline cleanup keeps existing control flow unchanged
     details: list[str] = []
     effect_fields = getattr(effect, "__dataclass_fields__", {})
 
@@ -188,10 +188,7 @@ def create_visual_interceptor(
         result = yield effect
         elapsed = time.time() - start_time
 
-        if cfg.show_duration:
-            duration_str = f" [dim]({elapsed:.1f}s)[/dim]"
-        else:
-            duration_str = ""
+        duration_str = f" [dim]({elapsed:.1f}s)[/dim]" if cfg.show_duration else ""
 
         result_str = _format_result(result)
         console.print(f"{timestamp}[dim {color}]<-[/dim {color}] [dim]{result_str}{duration_str}[/dim]")

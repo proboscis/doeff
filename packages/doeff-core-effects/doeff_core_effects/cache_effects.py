@@ -3,13 +3,14 @@
 from collections.abc import Mapping
 from typing import Any
 
+from doeff_vm import EffectBase
+
 from doeff_core_effects.cache_policy import (
     CacheLifecycle,
     CachePolicy,
     CacheStorage,
     ensure_cache_policy,
 )
-from doeff_vm import EffectBase
 
 
 class CacheGetEffect(EffectBase):

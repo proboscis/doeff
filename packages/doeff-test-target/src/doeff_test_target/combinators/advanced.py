@@ -1,10 +1,8 @@
-from doeff import do
-from doeff import Ask, Tell
-
-from ..core.alpha import helper_alpha
-from ..core.beta import helper_beta
-from ..core.delta import helper_delta
-from ..core.gamma import helper_gamma
+from doeff import Ask, Tell, do
+from doeff_test_target.core.alpha import helper_alpha
+from doeff_test_target.core.beta import helper_beta
+from doeff_test_target.core.delta import helper_delta
+from doeff_test_target.core.gamma import helper_gamma
 
 
 def helper_eta():

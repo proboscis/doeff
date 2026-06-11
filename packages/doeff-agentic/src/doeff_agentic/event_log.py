@@ -46,6 +46,7 @@ Event Types:
 """
 
 
+import contextlib
 import json
 import os
 import tempfile
@@ -88,10 +89,8 @@ def _atomic_write(path: Path, content: str) -> None:
         os.rename(temp_path, path)
     except Exception:
         os.close(fd)
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(temp_path)
-        except OSError:
-            pass
         raise
 
 
@@ -484,8 +483,8 @@ class EventLogReader:
             return []
         entries = []
         with open(path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
+            for raw_line in f:
+                line = raw_line.strip()
                 if line:
                     try:
                         entries.append(EventLogEntry.from_json(line))
@@ -604,9 +603,8 @@ class EventLogReader:
                     agent = entry.data.get("agent")
                     model = entry.data.get("model")
                     created_at = datetime.fromisoformat(entry.ts)
-            elif entry.event_type == "session.status":
-                if entry.data.get("name") == session_name:
-                    status = AgenticSessionStatus(entry.data["status"])
+            elif entry.event_type == "session.status" and entry.data.get("name") == session_name:
+                status = AgenticSessionStatus(entry.data["status"])
 
         if session_id is None or environment_id is None or created_at is None:
             return None

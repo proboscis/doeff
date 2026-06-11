@@ -15,6 +15,7 @@ In another terminal:
     doeff-agentic watch <workflow-id>
 """
 
+from doeff.effects.writer import slog
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticGetMessages,
@@ -25,7 +26,6 @@ from doeff_agentic.opencode_handler import opencode_handler
 from doeff_preset import preset_handlers
 
 from doeff import do
-from doeff.effects.writer import slog
 
 
 def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
@@ -61,6 +61,7 @@ def agent_with_status():
 
 if __name__ == "__main__":
     import asyncio
+
     from doeff import WithHandler, async_run, default_handlers
 
     async def main():

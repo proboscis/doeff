@@ -1,5 +1,4 @@
-from doeff import do
-from doeff import Ask, Tell
+from doeff import Ask, Tell, do
 
 
 def helper_beta():

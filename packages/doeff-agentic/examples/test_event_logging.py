@@ -27,7 +27,7 @@ from doeff_agentic import (
 )
 
 
-def test_event_logging():
+def test_event_logging():  # noqa: PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
     """Test the event logging system end-to-end."""
     print("=" * 60)
     print("Testing Event Logging System")

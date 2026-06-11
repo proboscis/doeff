@@ -7,24 +7,21 @@ Verifies:
   - defhandler inside defn factory does not leak yield (#387)
 """
 
-import importlib
 import inspect
 import sys
-import textwrap
-
-import pytest
-import hy
-import hy.compiler
-import hy.reader
-import hy.macros
-
-import doeff_hy  # noqa — registers extensions
-from doeff import DoExpr, WithHandler, Resume, Transfer, Pass, run, do as _doeff_do
-from doeff import EffectBase
-from doeff_core_effects.scheduler import scheduled
-from doeff_core_effects.handlers import await_handler
 from dataclasses import dataclass
 
+import doeff_hy  # noqa — registers extensions
+import hy
+import hy.compiler
+import hy.macros
+import hy.reader
+import pytest
+from doeff_core_effects.handlers import await_handler
+from doeff_core_effects.scheduler import scheduled
+
+from doeff import EffectBase, Pass, Resume, Transfer, WithHandler, run
+from doeff import do as _doeff_do
 
 # ---------------------------------------------------------------------------
 # Test effects

@@ -27,7 +27,8 @@ from __future__ import annotations
 
 import os
 
-import pytest
+from doeff_core_effects.handlers import lazy_ask
+from doeff_core_effects.scheduler import scheduled
 
 from doeff import (
     Ask,
@@ -37,9 +38,6 @@ from doeff import (
     do,
     run,
 )
-from doeff_core_effects.handlers import lazy_ask
-from doeff_core_effects.scheduler import scheduled
-
 
 # --- env_var_fallback_handler: resolves Ask from os.environ, passes otherwise ---
 

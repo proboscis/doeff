@@ -12,7 +12,6 @@ and an unhandled effect becomes a loud ``RuntimeError``.
 from dataclasses import dataclass
 
 from doeff import EffectBase
-
 from doeff_openai.types import TokenUsage
 
 

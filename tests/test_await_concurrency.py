@@ -8,25 +8,18 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any
-
-import pytest
 
 from doeff import (
     AcquireSemaphore,
+    Await,
     CreateSemaphore,
     Gather,
     ReleaseSemaphore,
     Spawn,
-    default_handlers,
     do,
-    run,
 )
-from doeff import Await
-
-
-from doeff import cache, WithHandler
 from tests._run_helpers import run_with_defaults
+
 # REMOVED: from doeff_core_effects.handlers import sqlite_cache_handler
 
 

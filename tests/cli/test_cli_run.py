@@ -6,7 +6,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from tests._run_helpers import run_with_defaults
 
 pytestmark = [
     pytest.mark.cli,

@@ -7,6 +7,7 @@ Replaces the old cache_handlers module with cost-aware routing:
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import hashlib
 import json
@@ -60,7 +61,7 @@ def _dumps(value: object) -> bytes:
     return serializer.dumps(value)
 
 
-def _normalize_for_hash(value: object) -> object:
+def _normalize_for_hash(value: object) -> object:  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return {
             "__type__": f"{type(value).__module__}.{type(value).__qualname__}",
@@ -69,27 +70,27 @@ def _normalize_for_hash(value: object) -> object:
                 for field in dataclasses.fields(value)
             },
         }
-    elif isinstance(value, Mapping):
+    if isinstance(value, Mapping):
         return {
             str(key): _normalize_for_hash(item)
             for key, item in sorted(value.items(), key=lambda item: str(item[0]))
         }
-    elif isinstance(value, tuple):
+    if isinstance(value, tuple):
         return {"__tuple__": [_normalize_for_hash(item) for item in value]}
-    elif isinstance(value, list):
+    if isinstance(value, list):
         return [_normalize_for_hash(item) for item in value]
-    elif isinstance(value, Set) and not isinstance(value, (str, bytes, bytearray)):
+    if isinstance(value, Set) and not isinstance(value, (str, bytes, bytearray)):
         normalized = [_normalize_for_hash(item) for item in value]
         return {
             "__set__": sorted(normalized, key=lambda item: json.dumps(item, sort_keys=True))
         }
-    elif isinstance(value, Path):
+    if isinstance(value, Path):
         return {"__path__": str(value)}
-    elif isinstance(value, bytes):
+    if isinstance(value, bytes):
         return {"__bytes__": value.hex()}
-    elif isinstance(value, type):
+    if isinstance(value, type):
         return f"{value.__module__}.{value.__qualname__}"
-    elif hasattr(value, "__dict__") and not isinstance(value, type):
+    if hasattr(value, "__dict__") and not isinstance(value, type):
         return {
             "__type__": f"{type(value).__module__}.{type(value).__qualname__}",
             **{
@@ -167,7 +168,7 @@ def memo_handler(
     from doeff_core_effects.effects import WriterTellEffect as Slog
 
     @do
-    def handler(effect, k):
+    def handler(effect, k):  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
         if not isinstance(effect, (MemoGetEffect, MemoExistsEffect, MemoPutEffect)):
             yield Pass(effect, k)
             return
@@ -207,8 +208,8 @@ def memo_handler(
             yield Slog(f"[memo-layer:{label}] MISS key={key[:16]}... → re-performing")
             try:
                 outer_value = yield effect
-            except UnhandledEffect:
-                raise KeyError(effect.key)
+            except UnhandledEffect as exc:
+                raise KeyError(effect.key) from exc
             yield storage.put(key, outer_value)
             yield Slog(f"[memo-layer:{label}] WRITE-THROUGH key={key[:16]}...")
             result = yield Resume(k, outer_value)
@@ -221,10 +222,8 @@ def memo_handler(
         # when all storage layers successfully stored.
         yield storage.put(key, effect.value)
         yield Slog(f"[memo-layer:{label}] PUT key={key[:16]}...")
-        try:
+        with contextlib.suppress(UnhandledEffect):
             yield effect  # re-perform → outer handlers also store
-        except UnhandledEffect:
-            pass  # no further outer = broadcast complete
         result = yield Resume(k, None)
         return result
 
@@ -275,8 +274,8 @@ def make_memo_rewriter(
         key = key_fn(effect)
         yield Slog(f"[memo] checking {effect_type.__name__} key={key[:16]}...")
 
-        _MISS = object()
-        cached = _MISS
+        miss_sentinel = object()
+        cached = miss_sentinel
         # Memo storage absent or reports miss -> fall through to compute. The
         # yield effect compute path below is intentionally NOT wrapped: an
         # UnhandledEffect there is a real bug (no handler can produce the
@@ -286,11 +285,11 @@ def make_memo_rewriter(
                 try:
                     cached = yield MemoGet(key, recompute_cost=recompute_cost)
                 except KeyError:
-                    cached = _MISS
+                    cached = miss_sentinel
         except UnhandledEffect:
-            cached = _MISS
+            cached = miss_sentinel
 
-        if cached is not _MISS:
+        if cached is not miss_sentinel:
             yield Slog(f"[memo] HIT {effect_type.__name__} key={key[:16]}...")
             result = yield Resume(k, cached)
             return result

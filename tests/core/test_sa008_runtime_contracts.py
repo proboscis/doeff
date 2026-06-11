@@ -7,18 +7,11 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
-from doeff import Await, Gather, Modify, Spawn, async_run, default_async_handlers, default_handlers, do, run
-from doeff_core_effects.effects import Get, Put
+from doeff import (
+    Await,
+    do,
+)
 from tests._run_helpers import run_with_defaults
-
-
-
-
-
-
-
 
 
 def test_sa008_sync_await_runs_in_default_handlers() -> None:

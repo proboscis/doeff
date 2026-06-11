@@ -15,11 +15,10 @@ Contract:
 from __future__ import annotations
 
 import pytest
+from doeff_core_effects.handlers import env_var_ask, lazy_ask
+from doeff_core_effects.scheduler import Gather, Spawn, scheduled
 
 from doeff import Ask, Pass, Resume, WithHandler, do, run
-from doeff_core_effects.handlers import env_var_ask, lazy_ask
-from doeff_core_effects.scheduler import Gather, Spawn, Wait, scheduled
-
 
 # --- Plain string values ---------------------------------------------------
 

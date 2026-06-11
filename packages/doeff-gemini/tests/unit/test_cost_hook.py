@@ -68,8 +68,7 @@ from doeff_gemini.client import track_api_call
 from doeff_gemini.effects import GeminiCalculateCost
 from doeff_gemini.handlers import default_gemini_cost_handler
 
-from doeff import Pass, Resume, async_run, default_handlers, do
-from doeff_core_effects.effects import EffectBase
+from doeff import Effect, Pass, Resume, async_run, default_handlers, do
 
 
 def _fake_response(usage: dict[str, int]) -> Any:

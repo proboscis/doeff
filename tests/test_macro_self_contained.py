@@ -7,18 +7,16 @@ only need (require doeff-hy.macros [...]) without manual
 
 import sys
 import types
-
-import pytest
-import hy
-import hy.macros
+from dataclasses import dataclass
 
 import doeff_hy  # noqa — registers extensions
-from doeff import run, WithHandler
-from doeff import EffectBase
+import hy
+import hy.macros
 from doeff_core_effects import Ask
 from doeff_core_effects.handlers import await_handler, lazy_ask
 from doeff_core_effects.scheduler import scheduled
-from dataclasses import dataclass
+
+from doeff import EffectBase, WithHandler, run
 
 
 @dataclass(frozen=True)

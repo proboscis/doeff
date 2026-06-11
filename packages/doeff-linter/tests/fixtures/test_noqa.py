@@ -4,7 +4,7 @@ import os
 
 
 # This should NOT trigger because of noqa
-def dict():
+def dict():  # noqa: A001 - fixture intentionally uses builtin shadowing sample
     return {}
 
 
@@ -14,7 +14,7 @@ def list():  # noqa
 
 
 # This should still trigger DOEFF009 (no return type)
-def set():
+def set():  # noqa: A001 - fixture intentionally uses builtin shadowing sample
     return set()
 
 

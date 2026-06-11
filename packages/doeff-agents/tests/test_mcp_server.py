@@ -1,16 +1,13 @@
 """Tests for MCP SSE server and Launch integration."""
 
-import json
 import http.client
-import threading
+import json
 
-import pytest
-
-from doeff import do, run, WithHandler, Resume
-from doeff.mcp import McpToolDef, McpParamSchema
-from doeff_agents.mcp_server import McpToolServer
 from doeff_agents.handlers import _make_run_tool
+from doeff_agents.mcp_server import McpToolServer
 
+from doeff import Resume, do, run
+from doeff.mcp import McpParamSchema, McpToolDef
 
 # -- Helpers -----------------------------------------------------------------
 
@@ -258,8 +255,9 @@ class TestRunToolWithHandlers:
 
     def test_make_run_tool_with_handler(self):
         """run_tool wraps program with captured handlers."""
-        from doeff import EffectBase, do, Perform
         from dataclasses import dataclass
+
+        from doeff import EffectBase, Perform, do
 
         @dataclass(frozen=True)
         class PrefixEffect(EffectBase):

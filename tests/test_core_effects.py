@@ -1,8 +1,10 @@
 """Tests for core effects — Ask, Get, Put, Tell."""
 
-from doeff import do, run as doeff_run, WithHandler, Pure
-from doeff_core_effects.effects import Ask, Get, Put, Tell, Try, Slog
-from doeff_core_effects.handlers import reader, state, writer, try_handler, slog_handler
+from doeff_core_effects.effects import Ask, Get, Put, Slog, Tell, Try
+from doeff_core_effects.handlers import reader, slog_handler, state, try_handler, writer
+
+from doeff import Pure, WithHandler, do
+from doeff import run as doeff_run
 
 
 class TestReader:
@@ -124,7 +126,7 @@ class TestTry:
 
         from doeff_vm import Ok
         result = doeff_run(WithHandler(try_handler, body()))
-        assert isinstance(result, Ok.__class__) or (hasattr(result, 'is_ok') and result.is_ok())
+        assert isinstance(result, Ok.__class__) or (hasattr(result, "is_ok") and result.is_ok())
         assert result.value == 42
 
     def test_try_failure(self):
@@ -138,9 +140,9 @@ class TestTry:
             result = yield Try(failing())
             return result
 
-        from doeff_vm import Err
         result = doeff_run(WithHandler(try_handler, body()))
-        assert hasattr(result, 'is_err') and result.is_err()
+        assert hasattr(result, "is_err")
+        assert result.is_err()
         assert isinstance(result.error, ValueError)
 
     def test_try_does_not_propagate(self):
@@ -152,7 +154,7 @@ class TestTry:
 
         @do
         def body():
-            result = yield Try(failing())
+            yield Try(failing())
             return "safe"
 
         assert doeff_run(WithHandler(try_handler, body())) == "safe"
@@ -179,6 +181,7 @@ class TestAwait:
     def test_await_coroutine(self):
         """Await bridges async coroutines into doeff."""
         import asyncio
+
         from doeff_core_effects import Await, await_handler
         from doeff_core_effects.scheduler import scheduled
 
@@ -197,6 +200,7 @@ class TestAwait:
     def test_await_multiple(self):
         """Multiple Awaits in sequence."""
         import asyncio
+
         from doeff_core_effects import Await, await_handler
         from doeff_core_effects.scheduler import scheduled
 
@@ -217,8 +221,9 @@ class TestAwait:
         """100 spawned tasks each awaiting 100ms sleep — must finish in <2s."""
         import asyncio
         import time
+
         from doeff_core_effects import Await, await_handler
-        from doeff_core_effects.scheduler import scheduled, Spawn, Gather
+        from doeff_core_effects.scheduler import Gather, Spawn, scheduled
 
         async def fetch(x):
             await asyncio.sleep(0.1)
@@ -241,7 +246,7 @@ class TestAwait:
         result = doeff_run(scheduled(body()))
         elapsed = time.time() - start
         assert result == list(range(100))
-        # 100 tasks × 0.1s sleep = should be ~0.1s if concurrent, not 10s
+        # 100 tasks x 0.1s sleep = should be ~0.1s if concurrent, not 10s
         assert elapsed < 2.0, f"took {elapsed:.1f}s — not concurrent!"
 
 
