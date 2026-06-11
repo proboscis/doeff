@@ -345,6 +345,38 @@ Terminal-text heuristics survive only inside the L1 tmux adapter for
 liveness/awaiting-input detection, and never produce domain facts or
 workflow-facing results (see ADR 0001 "Condemned existing code").
 
+### 5.1.1 Handler composition law (L-K4-1/L-K4-2)
+
+The runtime executes as `run(scheduled(WithHandler(conductor_handler,
+program)))` — a cooperative scheduler that yields between tasks only when
+a handler returns or yields a scheduler effect. Two laws constrain how
+handlers interact with the scheduler:
+
+- **L-K4-1 (non-blocking handler):** An effect handler must not perform
+  unbounded blocking I/O synchronously. Unbounded waits enter ONLY via
+  the scheduler's external-completion path (`CreateExternalPromise` +
+  daemon thread + `Wait(promise.future)`). Bounded fast RPCs (e.g.
+  `Launch`, `FollowUp`, `Send`) may remain synchronous. This ensures the
+  cooperative scheduler keeps dispatching sibling tasks while any single
+  handler waits for an external result.
+
+- **L-K4-2 (overlap observable):** For pending parallel agent nodes a, b:
+  session lifetimes must intersect, and
+  `wall_clock(parallel(a, b)) < wall_clock(a) + wall_clock(b)`. This is
+  a direct consequence of L-K4-1 applied to the `agent!` handler's
+  `AwaitResult` calls: since they yield to the scheduler rather than
+  blocking, sibling branches' launches and awaits can interleave.
+
+The `agent!` handler bridges its `AwaitResult` RPC through
+`make_offloaded_scheduled_handler` (a `CreateExternalPromise` + daemon
+thread pattern), while `Launch`, `FollowUp`, and `Release` remain
+synchronous (all are bounded fast RPCs).
+
+**Await budget axis owner (resolves §11 item 6):** The L2 attempt loop
+(`_run_agent_task`) is the SINGLE timeout/retry authority.
+`timeout_seconds` flows to agentd unchanged; the bridge introduces no
+second timeout.
+
 ### 5.2 The `agent!` handler is the composition proof
 
 ```
@@ -581,12 +613,12 @@ because where to pause is a trust/stakes judgment extrinsic to the task:
    entries for in-worktree runtime state (`.agent-home/`). The ignore lives
    at workspace initialization, so post-agent-node `Commit`, manual
    `git add -A`, and future workspace consumers all share the same behavior.
-6. **Await budget has no owning axis.** `AgentTask.timeout_seconds`
-   exists but nothing sets it; the effective default lives in L1
-   (3600s after the 2026-06-11 correction; was 600s, which burned a
-   healthy frontier worker's whole retry budget). Decide the owning
-   axis — profile tier, node, or stakes — and bind it explicitly like
-   effort.
+6. **Await budget axis — resolved (§5.1.1, ADR D11).** The L2 attempt
+   loop is the SINGLE timeout/retry authority. `timeout_seconds` flows
+   to agentd unchanged; the `make_offloaded_scheduled_handler` bridge
+   introduces no second timeout. The effective default (3600s) lives
+   in L1; future work may bind it to a profile-tier or node-level axis
+   like effort.
 7. **agentd raw status misreads working claude sessions as `blocked`**
    (the `❯` input box is visible mid-work). Cosmetic — contract
    validation, not status labels, decides completion — but operators and
