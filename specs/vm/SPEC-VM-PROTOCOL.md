@@ -1,8 +1,19 @@
 # SPEC-VM-PROTOCOL: VM↔Python Typed Protocol
 
-## Status: Implemented
+## Status: Partially implemented; historical design sections marked inline
 
 Implementation plan: [IMPL-VM-PROTOCOL.md](IMPL-VM-PROTOCOL.md)
+
+Current implementation status as of 2026-06-12:
+
+| Section | Status | Current implementation |
+|---------|--------|------------------------|
+| §1 DoCtrl as VM vocabulary | Implemented | `PyVM.run()` classifies `DoExpr` pyclasses and `EffectBase` values through `classify_python_object`. |
+| §2 Design constraints | Partially implemented | The VM still uses selected Python object/attribute access at the bridge boundary; see the notes below rather than treating every C-rule as satisfied. |
+| §3 `DoeffGenerator` typed wrapper | Design, never shipped | `doeff_vm` does not export `DoeffGenerator`. The current bridge steps `IRStream`/generator objects and reads `gi_code`, `gi_frame.f_lineno`, and related generator attributes in `python_generator_stream.rs`. |
+| §4 `DoeffTracebackData` via `RunResult` | Superseded by exception attribute mechanism | `doeff_vm` does not export `DoeffTracebackData`, `PyRunResult`, or `RunResult`. Traceback data is attached to Python exceptions as `__doeff_traceback__` in `pyvm.rs` and enriched by `doeff.run`. |
+| §5 Call metadata protocol | Partially implemented | Frame/source metadata exists, but the `DoeffGenerator` source-of-truth design did not ship. |
+| §7 Protocol surface summary | Partially implemented | The actual public VM package exports `PyVM`, DoExpr pyclasses, `EffectBase`, `Ok`, `Err`, `K`, `Callable`, `IRStream`, `UnhandledEffect`, and `vm_live_counts`. |
 
 ---
 
@@ -40,17 +51,21 @@ These are the exhaustive list of things the VM makes decisions on:
 |------|---------------|-------------|
 | **DoCtrl variant** | `classify_yielded()` reads tag from `PyDoCtrlBase` | Branch on variant (Pure, Call, Perform, Resume, Transfer, WithHandler, Delegate, Pass, etc.) |
 | **Generator stepping** | `step_generator()` calls `send()`/`__next__()` on the generator object | Branch on outcome (yield / return / error) |
-| **Generator location** | `DoeffGenerator.get_frame` callback (see §3.4) | Used in trace assembly to supplement frame line numbers |
+| **Generator location** | Current bridge reads generator attributes (`gi_code`, `gi_frame.f_lineno`) in `python_generator_stream.rs`; §3 records a never-shipped typed-wrapper design | Used in trace assembly to supplement frame line numbers |
 | **Call metadata** | `CallMetadata` on `DoCtrl::Call` (already typed) | Stored on `Frame::PythonGenerator`, emitted in trace events |
 | **Exception propagation** | `pyerr_to_exception()` converts `PyErr` → internal `PyException` | Stack unwinding, dispatch completion |
-| **Traceback data attachment** | `DoeffTracebackData` PyClass on `RunResult` (see §4) | Output enrichment before returning to Python |
+| **Traceback data attachment** | `__doeff_traceback__` attribute on Python exceptions (see §4 current status) | Error enrichment before re-raising to Python |
 | **Handler chain matching** | `can_handle()` on `Handler::RustProgram` / `Handler::Python` | Finding which handler to dispatch to |
 | **Continuation state** | `Continuation` struct (already typed) | Resume, Transfer, dispatch completion |
 
 **Key protocol mechanisms for the two non-trivial items:**
 
-1. **Generator location** — user-provided `get_frame` callback on `DoeffGenerator` (§3). VM never touches generator internals.
-2. **Traceback data** — `DoeffTracebackData` PyClass delivered via `RunResult` (§4). VM never sets attributes on exception objects.
+1. **Generator location** — implemented by direct generator attribute reads in
+   `python_generator_stream.rs`. The `DoeffGenerator.get_frame` design in §3
+   was never shipped.
+2. **Traceback data** — implemented by attaching `__doeff_traceback__` to
+   exception objects in `pyvm.rs`. The `DoeffTracebackData`/`RunResult` design
+   in §4 was never shipped.
 
 All other items are already typed: DoCtrl arrives via tagged PyClasses, CallMetadata is a typed Rust struct, continuations are typed, handler matching uses `can_handle()`.
 
@@ -62,7 +77,10 @@ These are non-negotiable invariants for all VM↔Python communication:
 
 ### C1: Zero Dunder Attributes
 
-No `__doeff_*` attributes shall be read from or written to Python objects by the VM. See [IMPL-VM-PROTOCOL.md §1.1](IMPL-VM-PROTOCOL.md#11-dunder-attribute-violations-spec-c1) for current violations.
+**Status: Design invariant, not current behavior.** The shipped VM writes
+`__doeff_traceback__` onto exception objects when surfacing VM trace data.
+Treat this constraint as historical design intent until the typed traceback
+surface is implemented.
 
 ### C2: All VM↔Python Data-Bearing Types Are Rust PyClasses
 
@@ -105,13 +123,36 @@ See [IMPL-VM-PROTOCOL.md §1.4](IMPL-VM-PROTOCOL.md#14-silent-fallback-violation
 
 ### C8: VM Entry Accepts DoExpr
 
-The VM's `run()` / `async_run()` interface accepts all `DoExpr` types (Pure, Call, Map, FlatMap, Perform, WithHandler, etc.). `DoeffGenerator` is not an entry-point type — it is the typed wrapper for generators that appear during DoExpr evaluation.
+**Status: Partially implemented.** The shipped entrypoints are
+`doeff.run(doexpr)` and `doeff_vm.PyVM().run(doexpr)`. There is no public
+module-level `doeff_vm.run()` or `doeff_vm.async_run()`, and top-level
+`doeff.async_run` is a removed placeholder whose replacement message is
+"use run() with scheduled()".
 
-When a DoExpr evaluates to a Python generator (via `to_generator_strict`, `Call` result, handler invocation), that generator must be a `DoeffGenerator`. The VM does not accept raw Python generators at any frame push site.
+The VM accepts current `DoExpr` pyclasses and `EffectBase` values. The
+`DoeffGenerator` wrapper described below is not an entry-point type because it
+was never shipped.
+
+Historical design: when a DoExpr evaluated to a Python generator, that generator
+would have been required to be a `DoeffGenerator`. The shipped bridge instead
+uses `IRStream`/generator objects and classifies yielded `DoExpr` or
+`EffectBase` values directly.
 
 ---
 
 ## 3. DoeffGenerator: Typed Generator Wrapper
+
+**Status: Design, never shipped.** `packages/doeff-vm/doeff_vm/__init__.pyi`
+does not expose `DoeffGenerator`, and the Rust extension does not register a
+`DoeffGenerator` pyclass. The current implementation uses `IRStream` and reads
+generator attributes directly:
+
+- `gi_code.co_qualname` / `gi_code.co_name`
+- `gi_code.co_filename`
+- `gi_frame.f_lineno`, falling back to `co_firstlineno` when no live frame is available
+
+The remainder of this section is retained as historical design context and must
+not be read as implemented behavior.
 
 ### 3.1 Problem
 
@@ -157,7 +198,7 @@ There is no generic "detect-and-wrap" function. Each construction site knows its
 
 #### Default callback (plain generators, no bridge):
 
-```python
+```text
 def _default_get_frame(gen):
     """Return the generator's own frame."""
     return gen.gi_frame  # None if exhausted
@@ -167,7 +208,7 @@ def _default_get_frame(gen):
 
 The `@do` bridge generator holds the user's generator as a local variable (`gen`). The callback navigates from the bridge's frame to find the user generator's frame:
 
-```python
+```text
 def _do_get_frame(bridge_gen):
     """Navigate bridge locals to return user generator's frame."""
     if bridge_gen.gi_frame is not None:
@@ -179,7 +220,7 @@ def _do_get_frame(bridge_gen):
 
 No structural changes to `generator_wrapper` are needed. The callback runs at probe time, when the bridge has already started and the user gen exists in its locals.
 
-```python
+```text
 DoeffGenerator(
     generator=bridge_gen,
     function_name=func.__name__,
@@ -191,7 +232,7 @@ DoeffGenerator(
 
 #### `WithHandler` wrapping — single generator (no bridge):
 
-```python
+```text
 DoeffGenerator(
     generator=handler_gen,
     function_name=handler_fn.__code__.co_name,
@@ -203,7 +244,7 @@ DoeffGenerator(
 
 #### `ProgramBase.to_generator()` — implementor's responsibility:
 
-```python
+```text
 DoeffGenerator(
     generator=gen,
     function_name=...,
@@ -231,7 +272,7 @@ See §3.8 for the complete list of construction sites and their responsibilities
 
 ### 3.4 VM Behavior
 
-When the VM receives a `DoeffGenerator`, it:
+Historical design: when the VM received a `DoeffGenerator`, it would have:
 
 1. **Extracts `generator`** for stepping (`send()` / `__next__()` / `throw()`)
 2. **Stores `get_frame`** callback on the frame for later invocation
@@ -247,7 +288,8 @@ if let Some(f) = frame {
 }
 ```
 
-The VM never reads `gi_frame` directly from the generator. The callback encapsulates all generator-structure knowledge. This replaces the current `generator_current_line()` function entirely.
+This design was not implemented. The current bridge does read `gi_frame`
+directly from generator objects to recover live line numbers.
 
 The frame object is opaque to the VM — it reads standard Python frame attributes (`f_lineno`, `f_code`). The VM doesn't need to know whether the frame came from a bridge generator, a user generator, or something else entirely.
 
@@ -368,7 +410,16 @@ See [IMPL-VM-PROTOCOL.md §3.2](IMPL-VM-PROTOCOL.md#32-effect-created_at--effect
 
 When the VM encounters an uncaught exception, it assembles trace data (`Vec<TraceEntry>`) and needs to deliver it to Python. The delivery mechanism must not use dunder attributes on exception objects.
 
-### 4.2 Solution: `DoeffTracebackData` PyClass via RunResult
+### 4.2 Current Solution: `__doeff_traceback__` on Exceptions
+
+**Status: Superseded implementation.** The shipped VM attaches traceback data
+to raised Python exceptions as `__doeff_traceback__`. `doeff.run` preserves and
+enriches that attribute before re-raising and rendering.
+
+The typed `DoeffTracebackData`/`RunResult.traceback_data` design below never
+shipped and remains historical design context.
+
+### 4.3 Historical Design: `DoeffTracebackData` PyClass via RunResult
 
 **`DoeffTracebackData`** is a frozen Rust PyClass that carries the trace entries as a typed object:
 
@@ -376,11 +427,12 @@ When the VM encounters an uncaught exception, it assembles trace data (`Vec<Trac
 |-------|------|---------|
 | `entries` | `Py<PyAny>` (Python list of trace entry tuples) | The assembled active-chain trace data |
 
-The VM delivers `DoeffTracebackData` as a field on `PyRunResult`, not as an attribute on the exception object.
+Historical design: the VM would deliver `DoeffTracebackData` as a field on
+`PyRunResult`, not as an attribute on the exception object.
 
-### 4.3 RunResult Shape
+### 4.4 Historical RunResult Shape
 
-`PyRunResult` gains a `traceback_data` field:
+Historical design: `PyRunResult` would gain a `traceback_data` field:
 
 | Field | Type | Purpose |
 |-------|------|---------|
@@ -389,15 +441,20 @@ The VM delivers `DoeffTracebackData` as a field on `PyRunResult`, not as an attr
 | `trace` | `Option<Py<PyAny>>` | Full chronological trace (when `trace=True`) |
 | `traceback_data` | `Option<Py<PyAny>>` | `DoeffTracebackData` for error cases |
 
-### 4.4 Invariants
+### 4.5 Historical Invariants
 
-- The VM never sets attributes on exception objects. Trace data is delivered via `RunResult.traceback_data`.
+- Superseded by current behavior: the VM does set `__doeff_traceback__` on
+  exception objects. The `RunResult.traceback_data` surface was never shipped.
 - The VM never imports `doeff.traceback`. Traceback projection (building `DoeffTraceback` from raw data) is a Python-side concern performed by the `RunResult` consumer.
 - The VM never reads `__doeff_traceback__` from exceptions. Display/rendering is Python-side.
 
 ---
 
 ## 5. Call Metadata Protocol
+
+**Status: Partially implemented; `DoeffGenerator` references are historical.**
+The shipped bridge records source locations from direct generator attributes,
+not from a `DoeffGenerator` wrapper.
 
 ### 5.1 CallMetadata Fields
 
@@ -493,19 +550,19 @@ The `__doeff_scheduler_*` class attributes on effect PyClasses (in effect.rs) ar
 
 | Data | Type | Delivery |
 |------|------|----------|
-| Run result | `PyRunResult` PyClass | `run()` / `async_run()` return value |
-| Trace data | `DoeffTracebackData` PyClass | Field on `PyRunResult` |
+| Run result | Plain Python value | `doeff.run(doexpr)` / `PyVM.run(doexpr)` return value |
+| Trace data | Python exception attribute | `__doeff_traceback__` attached before re-raising |
 | DoCtrl primitives | `PyDoCtrlBase` subclasses | Yielded by Python generators |
 | Continuations | `PyContinuation` PyClass | Passed to handlers |
-| Ok/Err wrappers | `PyResultOk` / `PyResultErr` PyClasses | On `PyRunResult.result` |
+| Ok/Err wrappers | `Ok` / `Err` PyClasses | Public result helpers and handler-level result values |
 
 ### Python → VM (typed inputs)
 
 | Data | Type | Delivery |
 |------|------|----------|
-| Program (entry) | Any `DoExpr` | Entry to `run()` / `async_run()` |
-| Generator (any frame push) | `DoeffGenerator` PyClass | Result of DoExpr evaluation, handler calls, `to_generator()` |
-| `get_frame` callback | `Callable[[generator], Optional[FrameType]]` | Field on `DoeffGenerator`; VM invokes on cold paths (trace assembly, error) to get live location |
+| Program (entry) | Any current `DoExpr` pyclass or `EffectBase` value | Entry to `doeff.run(doexpr)` / `PyVM.run(doexpr)` |
+| Generator stream | `IRStream` / generator object | Result of `@do` expansion and handler calls |
+| Generator location | Direct generator attribute reads | `python_generator_stream.rs` reads `gi_code` and `gi_frame.f_lineno` |
 | DoCtrl instructions | `PyDoCtrlBase` subclasses | Yielded from generators |
 | Effects | `PyEffectBase` subclasses | Yielded via `DoCtrl::Perform` |
 | Handlers | `PyRustHandlerSentinel` or raw Python callable | In `WithHandler` / handler list |
@@ -587,25 +644,34 @@ None of the handler/decorator-level `__doeff_*` dunders are read by the VM. They
 
 All silent fallbacks in VM runtime paths are prohibited. See C7. `PyCall.meta` is mandatory. `CallMetadata::anonymous()` is not used in user-facing runtime paths.
 
-### Q4: VM entry interface — RESOLVED
+### Q4: VM entry interface — CURRENT
 
-`run()` / `async_run()` accepts DoExpr, not DoeffGenerator. See C8. DoeffGenerator is the wrapper for generators produced during DoExpr evaluation, not an entry-point type.
+`doeff.run(doexpr)` and `PyVM.run(doexpr)` accept current DoExpr pyclasses and
+`EffectBase` values. `async_run` was removed; use `run(scheduled(program))`.
+`DoeffGenerator` was never shipped.
 
-### Q5: Handler generators need DoeffGenerator — RESOLVED
+### Q5: Handler generators need DoeffGenerator — HISTORICAL DESIGN, NEVER SHIPPED
 
-Handler generators must be wrapped in DoeffGenerator because they appear in the active-chain traceback. Wrapping happens at `WithHandler` registration time — the handler function is wrapped so its generator result is automatically a DoeffGenerator. See §3.8.
+Historical design: handler generators would have been wrapped in
+`DoeffGenerator` because they appear in active-chain tracebacks. The shipped
+bridge does not expose or require `DoeffGenerator`.
 
 ---
 
 ## 10. Resolved Design Questions
 
-### D1: Handler generator wrapping mechanism — RESOLVED
+### D1: Handler generator wrapping mechanism — HISTORICAL DESIGN, NEVER SHIPPED
 
-`WithHandler` wraps handler functions at registration time. When the VM calls the wrapped handler with `(effect, k)`, it receives `DoeffGenerator` directly. The VM never sees raw handler generators. See §3.8.
+Historical design: `WithHandler` would wrap handler functions at registration
+time so the VM received `DoeffGenerator` directly. The shipped bridge invokes
+handler callables and processes their `IRStream`/generator results without a
+public `DoeffGenerator` wrapper.
 
-### D2: `to_generator_strict` accepted types — RESOLVED
+### D2: `to_generator_strict` accepted types — HISTORICAL DESIGN, NEVER SHIPPED
 
-`to_generator()` is a Python-side method. It is the responsibility of `ProgramBase` implementations to return `DoeffGenerator`. The VM's `to_generator_strict` checks that the result is `DoeffGenerator`; if not, it raises an error. See §3.7 (no silent fallbacks).
+Historical design: Python-side `to_generator()` implementations would return
+`DoeffGenerator`. Current `@do` code produces `Expand(Apply(...))` with
+`IRStream`, and the VM classifies yielded values through the current bridge.
 
 ### D3: Continuation frame snapshots with `get_frame` — RESOLVED
 

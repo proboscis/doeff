@@ -1,6 +1,65 @@
 # SPEC-009: Rust VM Public API
 
-## Status: Draft (Revision 8)
+## Status: Superseded draft; current implemented API documented below
+
+This file is retained as migration/design history. The current package does not
+ship the original Revision 8/9 public API exactly as written. When the
+historical sections below disagree with this status block, this block is the
+source of truth for the implementation as of 2026-06-12.
+
+| API or concept | Status | Current replacement |
+|----------------|--------|---------------------|
+| `run(program, handlers=..., env=..., store=...) -> RunResult` | Superseded | `run(doexpr) -> Any`; compose handlers before calling `run`. |
+| `async_run(...)` | Removed | `run(scheduled(program))`. The `_Removed` placeholder says "use run() with scheduled()". |
+| `default_handlers()` | Removed | Compose handlers by calling each handler installer with the program. |
+| `doeff.presets` | Removed | Compose the handler stack explicitly in application/test helpers. |
+| `RunResult` / `PyRunResult` | Design, never shipped | `run()` returns the plain value and raises exceptions on failure. Use `Ok`/`Err` explicitly only where a handler or helper returns them. |
+| `Modify` | Removed | Use `Get` plus `Put`. |
+| `Delegate` | Removed from top-level `doeff` | Re-perform/pass through effects with the current handler protocol (`Pass(effect, k)` in implemented handlers). |
+
+## Current Implemented Contract
+
+```python
+from doeff import Ask, Get, Put, do, run
+from doeff_core_effects.handlers import reader, state
+
+
+@do
+def program():
+    value = yield Get("x")
+    label = yield Ask("label")
+    yield Put("x", value + 1)
+    return f"{label}:{value + 1}"
+
+
+wrapped = state(initial={"x": 0})(program())
+wrapped = reader(env={"label": "count"})(wrapped)
+assert run(wrapped) == "count:1"
+```
+
+Concurrency is explicit handler composition too:
+
+```python
+from doeff import Gather, Pure, Spawn, do, run
+from doeff_core_effects.scheduler import scheduled
+
+
+@do
+def child(value):
+    return (yield Pure(value))
+
+
+@do
+def main():
+    left = yield Spawn(child(1))
+    right = yield Spawn(child(2))
+    return (yield Gather(left, right))
+
+
+assert run(scheduled(main())) == [1, 2]
+```
+
+## Historical Revision Notes
 
 ### Revision 8 Changelog
 
@@ -66,12 +125,14 @@
 | **R3-C** | §6 WithHandler | Strengthened: `run()` is defined in terms of WithHandler (not independent). |
 | **R3-D** | §11 Invariants | Added API-9 through API-12: structural equivalence, sentinel handlers, classify completeness, async semantics. |
 
-## Summary
+## Historical Summary (Superseded)
 
 Define the public API that the Rust VM (SPEC-008) must expose so that
 doeff subpackages can migrate from the legacy Python v3 interpreter [Deprecated].
 
-This spec defines **what users import and call** — not VM internals.
+This historical section defined **what users would import and call** under the
+unshipped `RunResult`/`async_run`/`handlers=` API. Use the current implemented
+contract at the top of this file for shipped behavior.
 
 ```
 ┌───────────────────────────────────────────────────────┐
@@ -175,7 +236,7 @@ will silently break.
 
 ### run
 
-```python
+```text
 def run(
     program: DoExpr[T] | EffectValue[T],
     handlers: list[Handler] = [],
@@ -213,7 +274,7 @@ body segments with correct `scope_chain`, and deterministic handler ordering.
 
 ### async_run
 
-```python
+```text
 async def async_run(
     program: DoExpr[T] | EffectValue[T],
     handlers: list[Handler] = [],
@@ -252,7 +313,7 @@ an informative message that includes:
 2. What types are accepted (DoExpr control or EffectValue)
 3. A hint if the input looks like a common mistake
 
-```python
+```text
 # GOOD — accepted inputs:
 run(my_do_func(1))                  # Call DoCtrl [R9-A: __call__() returns Call directly]
 run(Ask("key"))                      # EffectValue, boundary-normalized to Perform
@@ -275,7 +336,7 @@ passthrough except for one normalization rule: raw effect values are wrapped as
 and raises `TypeError` for unsupported inputs. The Rust VM evaluates DoExpr
 control nodes directly.
 
-```python
+```text
 # Python run() implementation (conceptual):
 def run(program, handlers=(), env=None, store=None):
     if isinstance(program, EffectValue):
@@ -292,7 +353,7 @@ def run(program, handlers=(), env=None, store=None):
 
 ## 2. RunResult
 
-```python
+```text
 class RunResult(Protocol[T_co]):
     @property
     def result(self) -> Result[T_co]:
@@ -307,7 +368,7 @@ class RunResult(Protocol[T_co]):
 
 Convenience accessors:
 
-```python
+```text
     @property
     def value(self) -> T_co:
         """Unwrap Ok or raise the Err."""
@@ -328,7 +389,7 @@ Convenience accessors:
 
 `Result[T]` is a sum type from `doeff`:
 
-```python
+```text
 from doeff import Ok, Err
 
 result.result  # Ok(1) or Err(ValueError("..."))
@@ -344,7 +405,7 @@ This is the doeff `Result` type, not a Rust `Result`.
 `raw_store` contains **only state entries** — the key-value pairs managed by
 the `state` handler via `Get`/`Put`/`Modify`.
 
-```python
+```text
 result = run(program, handlers=[state, reader, writer],
              store={"x": 0}, env={"key": "val"})
 
@@ -367,7 +428,7 @@ A `Program[T]` is a value that, when executed, yields effects and returns `T`.
 
 ### Writing a Program
 
-```python
+```text
 @do
 def counter():
     x = yield Get("count")
@@ -385,7 +446,7 @@ def counter():
 `@do` converts a generator function into a `Program` factory. Calling the
 factory does NOT execute the body — it creates a deferred program descriptor:
 
-```python
+```text
 @do
 def my_func(a: int, b: str):
     ...
@@ -422,7 +483,7 @@ execution. See SPEC-KPC-001.
 `@do` requires a **generator function** (`def` with `yield`). Applying `@do` to
 an `async def` is **always a bug** — there is no "async kleisli" concept.
 
-```python
+```text
 # CORRECT — generator function, uses yield for effects and Await for async I/O:
 @do
 def fetch_data(url: str):
@@ -500,7 +561,7 @@ the corresponding handler is installed.
 
 Any class can be an effect:
 
-```python
+```text
 @dataclass
 class MyEffect:
     payload: str
@@ -520,7 +581,7 @@ it.  If no handler handles it → `UnhandledEffect` error.
 
 ### Protocol
 
-```python
+```text
 Handler = Callable[[EffectValue, K], DoExpr[T]]
 ```
 
@@ -581,7 +642,7 @@ Transfer(k, value)     Resume caller with value.      NO — handler is done.
 Both resume the caller's continuation with a value. The difference is what
 happens to the handler afterward:
 
-```python
+```text
 # Resume: handler CONTINUES after the continuation completes
 @do
 def my_handler(effect, k):
@@ -618,7 +679,7 @@ swap. See SPEC-VM-010 for the full mechanism.
 
 ### Example: Custom Handler
 
-```python
+```text
 @do
 def cache_handler(effect, k):
     if isinstance(effect, CacheGet):
@@ -673,7 +734,7 @@ Source-level effect yields (`yield Tell(...)`) are lowered to
 Effects yielded by a handler are dispatched to handlers **outside** the
 current handler's scope — never to the handler itself.
 
-```python
+```text
 @do
 def logging_handler(effect, k):
     if isinstance(effect, MyEffect):
@@ -689,7 +750,7 @@ def logging_handler(effect, k):
 Since `WithHandler` is a composition primitive (not a dispatch primitive),
 handlers can install sub-handlers:
 
-```python
+```text
 @do
 def outer_handler(effect, k):
     if isinstance(effect, ComplexEffect):
@@ -707,7 +768,7 @@ def outer_handler(effect, k):
 
 ## 6. Composition: WithHandler
 
-```python
+```text
 WithHandler(handler: Handler, expr: DoExpr[T])
 ```
 
@@ -720,7 +781,7 @@ Usable from **any** `Program`:
 - Inside handlers
 - Arbitrarily nested
 
-```python
+```text
 @do
 def my_program():
     # Install a handler around a sub-program
@@ -765,7 +826,7 @@ Handles: `Get`, `Put`, `Modify`
 
 Provides mutable key-value state.
 
-```python
+```text
 from doeff.handlers import state
 
 result = run(my_program(), handlers=[state], store={"x": 0})
@@ -786,7 +847,7 @@ Handles: `Ask`
 
 Provides read-only environment.
 
-```python
+```text
 from doeff.handlers import reader
 
 result = run(my_program(), handlers=[reader], env={"key": "value"})
@@ -802,7 +863,7 @@ Handles: `Tell`
 
 Provides append-only log.
 
-```python
+```text
 from doeff.handlers import writer
 
 result = run(my_program(), handlers=[state, writer], store={"x": 0})
@@ -830,7 +891,7 @@ Note: `Await` is a Python-level asyncio bridge effect (see SPEC-EFF-005), NOT a
 scheduler effect. It is handled by the `sync_await_handler` or
 `python_async_syntax_escape_handler`, not by the scheduler.
 
-```python
+```text
 from doeff.handlers import scheduler
 ```
 
@@ -849,7 +910,7 @@ is removed. Programs using `@do` no longer require a KPC handler — the VM eval
 
 Convenience bundles for common configurations:
 
-```python
+```text
 from doeff.presets import sync_preset, async_preset
 
 # sync_preset = [state, reader, writer]  [R9-A: kpc removed]
@@ -864,7 +925,7 @@ Public convenience function returning the standard handler bundle
 `[state, reader, writer]`. Available as `from doeff import default_handlers`.
 [R9-A: `kpc` removed — KPC is a call-time macro, no handler needed.]
 
-```python
+```text
 from doeff import run, default_handlers
 
 # Explicit handler installation (required — run() defaults to handlers=[])
@@ -880,7 +941,7 @@ pass `default_handlers()` or construct their own handler list.
 
 ### User Code
 
-```python
+```text
 # Entrypoints
 from doeff import run, async_run
 
@@ -910,7 +971,7 @@ from doeff import RunResult
 
 ### Handler Authors
 
-```python
+```text
 # Everything above, plus dispatch primitives:
 from doeff import Resume, Delegate, Pass, Transfer
 ```
@@ -975,7 +1036,7 @@ framework-internal.
 
 The handler protocol changes:
 
-```python
+```text
 # BEFORE (Legacy Python interpreter [Deprecated]):
 # Handler = Callable[[EffectBase, HandlerContext], Program[LegacyState | ResumeK]]
 
