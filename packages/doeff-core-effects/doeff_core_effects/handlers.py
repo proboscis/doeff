@@ -1,16 +1,16 @@
 """
 Core handlers — reader, state, writer.
 
-Each is a function that takes config and returns a @do handler function.
-Use with WithHandler:
+Handler factories return Program -> Program installers. Compose them by calling
+the returned handler with the program to wrap:
 
-    run(WithHandler(reader(env={"key": "value"}),
-        WithHandler(state(initial={"count": 0}),
-            body())))
+    prog = state(initial={"count": 0})(body())
+    prog = reader(env={"key": "value"})(prog)
+    run(prog)
 """
 
 from doeff import do
-from doeff.program import Pass, Resume
+from doeff.program import Pass, Resume, WithHandlerType
 from doeff_core_effects.effects import (
     Ask,
     Await,
@@ -22,6 +22,20 @@ from doeff_core_effects.effects import (
     Try,
     WriterTellEffect,
 )
+
+
+def _program_handler(raw_handler):
+    """Wrap a raw dispatcher as the current Program -> Program handler shape."""
+
+    def install(body):
+        return WithHandlerType(raw_handler, body)
+
+    install.__name__ = raw_handler.__name__
+    install.__qualname__ = raw_handler.__qualname__
+    install.__doc__ = raw_handler.__doc__
+    install._doeff_is_handler_fn = True
+    install.__doeff_handler_data__ = raw_handler
+    return install
 
 
 def reader(env=None):
@@ -43,7 +57,7 @@ def reader(env=None):
             return (yield ResumeThrow(k, KeyError(_missing_key_message(effect.key))))
         yield Pass(effect, k)
 
-    return handler
+    return _program_handler(handler)
 
 
 def state(initial=None):
@@ -65,7 +79,7 @@ def state(initial=None):
             return result
         yield Pass(effect, k)
 
-    return handler
+    return _program_handler(handler)
 
 
 def writer():
@@ -84,8 +98,9 @@ def writer():
             return result
         yield Pass(effect, k)
 
-    handler.log = log  # expose for inspection
-    return handler
+    install = _program_handler(handler)
+    install.log = log  # expose for inspection
+    return install
 
 
 @do
@@ -145,8 +160,9 @@ def slog_handler():
             return result
         yield Pass(effect, k)
 
-    handler.log = log
-    return handler
+    install = _program_handler(handler)
+    install.log = log
+    return install
 
 
 @do
@@ -274,7 +290,7 @@ def await_handler():
             return result
         yield Pass(effect, k)
 
-    return handler
+    return _program_handler(handler)
 
 
 def _missing_key_message(key):
@@ -469,7 +485,7 @@ def lazy_ask(env=None, *, strict=False):  # noqa: PLR0915 - baseline cleanup kee
 
         return handler
 
-    return _make_handler(dict(env))
+    return _program_handler(_make_handler(dict(env)))
 
 
 def env_var_ask(*, prefix="DOEFF_"):
@@ -579,5 +595,4 @@ def env_var_ask(*, prefix="DOEFF_"):
         yield ReleaseSemaphore(sems[effect.key])
         return (yield Resume(k, resolved))
 
-    return handler
-
+    return _program_handler(handler)

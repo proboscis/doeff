@@ -12,8 +12,8 @@ pip install doeff
 ## Quick Start
 
 ```python
-from doeff import do, run, WithHandler
-from doeff_core_effects import Ask, Get, Put, Tell
+from doeff import do, run
+from doeff_core_effects import Get, Put, Tell
 from doeff_core_effects.handlers import reader, state, writer
 from doeff_core_effects.scheduler import scheduled
 
@@ -25,11 +25,11 @@ def counter_program():
     yield Put("counter", count + 1)
     return count + 1
 
-# Compose handlers explicitly with WithHandler
+# Compose handlers explicitly by calling each handler installer.
 prog = counter_program()
-prog = WithHandler(writer(), prog)
-prog = WithHandler(state(), prog)
-prog = WithHandler(reader(env={"greeting": "hello"}), prog)
+prog = writer()(prog)
+prog = state()(prog)
+prog = reader(env={"greeting": "hello"})(prog)
 result = run(scheduled(prog))
 print(result)  # 1
 ```
@@ -41,35 +41,41 @@ print(result)  # 1
 | `run` | `run(doexpr)` | Execute a DoExpr program to completion |
 
 `run()` takes a single DoExpr (program node) and returns the result value directly.
-Handlers are composed explicitly using `WithHandler(handler, body)`.
+Handlers are composed explicitly by calling a Program -> Program handler installer.
 Use `scheduled(prog)` to wrap with the scheduler for concurrency effects.
 
 ## Handler Composition
 
-Handlers are installed with `WithHandler(handler, body)`. Stack multiple handlers by nesting:
+Handlers are installed by direct call. Stack multiple handlers by wrapping the program:
 
 ```python
-from doeff import do, run, WithHandler, Resume, Pass
+from doeff import do, run
 from doeff_core_effects import Ask
-
-@do
-def my_handler(effect, k):
-    if isinstance(effect, Ask):
-        return (yield Resume(k, "hello"))
-    yield Pass(effect, k)
+from doeff_core_effects.handlers import reader
 
 @do
 def prog():
     return (yield Ask("greeting"))
 
-result = run(WithHandler(my_handler, prog()))
+result = run(reader(env={"greeting": "hello"})(prog()))
 print(result)  # hello
 ```
 
-Handlers are `@do` functions that receive `(effect, k)`. They can:
-- `yield Resume(k, value)` — resume the continuation with a value
-- `yield Pass(effect, k)` — forward the effect to outer handlers
-- `yield Transfer(k, value)` — tail-resume (handler done after this)
+Reusable custom handlers should expose the same Program -> Program shape. In Hy, `defhandler`
+creates that shape directly:
+
+```hy
+(import doeff [Ask])
+
+(defhandler ask-env
+  (Ask [key]
+    (resume (get {"greeting" "hello"} key))))
+
+(ask-env
+  (do!
+    (<- greeting (Ask "greeting"))
+    greeting))
+```
 
 ## Effect Surface
 
@@ -108,7 +114,7 @@ Built-in handlers (from `doeff_core_effects.handlers`):
 ## Scheduler and Concurrency
 
 ```python
-from doeff import do, run, WithHandler
+from doeff import do, run
 from doeff_core_effects import Tell
 from doeff_core_effects.handlers import writer
 from doeff_core_effects.scheduler import scheduled, Spawn, Wait, Gather
@@ -125,7 +131,7 @@ def main():
     results = yield Gather(t1, t2)
     return results
 
-result = run(scheduled(WithHandler(writer(), main())))
+result = run(scheduled(writer()(main())))
 print(result)  # ['a', 'b']
 ```
 
