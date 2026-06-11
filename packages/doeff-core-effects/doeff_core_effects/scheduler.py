@@ -230,7 +230,7 @@ def scheduled(body_program):
     tasks = {}           # tid → {status, result, program, priority}
     promises = {}        # pid → {status, result}
     semaphores = {}      # sid → {permits, max_permits, waiters: deque of k}
-    waiters = {}         # waitable_key → [(type, k, ...)]
+    waiters = {}         # waitable_key → [(type, k, ...)] or gather-state refs
     ready = []           # heapq: (-priority, seq, entry)
     cancel_requested = set()  # task ids pending cancellation
     external_queue = queue_mod.Queue()  # thread-safe, blocking get()
@@ -379,6 +379,51 @@ def scheduled(body_program):
         elif status == "cancelled":
             enqueue(("raise", waiter_k, TaskCancelledError()))
 
+    def remove_gather_waiters(gather_state):
+        """Remove unresolved waiter refs for a fail-fast Gather resolution."""
+        for wk in set(gather_state["pending_keys"]):
+            entries = waiters.get(wk)
+            if not entries:
+                continue
+            remaining_entries = [
+                entry
+                for entry in entries
+                if not (entry[0] == "gather" and entry[1] is gather_state)
+            ]
+            if remaining_entries:
+                waiters[wk] = remaining_entries
+            else:
+                waiters.pop(wk, None)
+
+    def resolve_gather_with_error(gather_state, error):
+        if gather_state["resolved"]:
+            return
+        gather_state["resolved"] = True
+        gather_state["failure"] = error
+        remove_gather_waiters(gather_state)
+        enqueue(("raise", gather_state["waiter_k"], error))
+
+    def wake_gather_waiter(gather_state, completed_key):
+        if gather_state["resolved"]:
+            return
+
+        status, result = waitable_status(completed_key)
+        if status == "failed":
+            resolve_gather_with_error(gather_state, result)
+            return
+        if status == "cancelled":
+            resolve_gather_with_error(gather_state, TaskCancelledError())
+            return
+
+        if status != "completed":
+            return
+
+        gather_state["remaining"] -= 1
+        if gather_state["remaining"] == 0:
+            gather_state["resolved"] = True
+            results = [waitable_status(wk)[1] for wk in gather_state["keys"]]
+            enqueue(("resume", gather_state["waiter_k"], results))
+
     def wake_waiters(completed_key):
         ws = waiters.pop(completed_key, [])
         for w in ws:
@@ -386,41 +431,8 @@ def scheduled(body_program):
                 _, waiter_k = w
                 resume_with_waitable_result(waiter_k, completed_key)
             elif w[0] == "gather":
-                _, waiter_k, gather_waitables = w
-                all_done = all(
-                    waitable_status(waitable_key(t))[0] in TERMINAL
-                    for t in gather_waitables
-                )
-                if all_done:
-                    # Fail-fast: check for first error
-                    for t in gather_waitables:
-                        s, r = waitable_status(waitable_key(t))
-                        if s == "failed":
-                            enqueue(("raise", waiter_k, r))
-                            break
-                        if s == "cancelled":
-                            enqueue(("raise", waiter_k, TaskCancelledError()))
-                            break
-                    else:
-                        # All completed successfully
-                        results = [waitable_status(waitable_key(t))[1] for t in gather_waitables]
-                        enqueue(("resume", waiter_k, results))
-                else:
-                    # Fail-fast: check if any already failed/cancelled
-                    for t in gather_waitables:
-                        s, r = waitable_status(waitable_key(t))
-                        if s == "failed":
-                            enqueue(("raise", waiter_k, r))
-                            return
-                        if s == "cancelled":
-                            enqueue(("raise", waiter_k, TaskCancelledError()))
-                            return
-                    # Re-register for next incomplete
-                    for t in gather_waitables:
-                        wk = waitable_key(t)
-                        if waitable_status(wk)[0] not in TERMINAL:
-                            waiters.setdefault(wk, []).append(("gather", waiter_k, gather_waitables))
-                            break
+                _, gather_state = w
+                wake_gather_waiter(gather_state, completed_key)
             elif w[0] == "race":
                 _, waiter_k, _race_waitables = w
                 resume_with_waitable_result(waiter_k, completed_key)
@@ -510,7 +522,7 @@ def scheduled(body_program):
 
         elif isinstance(effect, Gather):
             wks = [waitable_key(t) for t in effect.tasks]
-            # Fail-fast: check for first error/cancelled
+            pending_wks = []
             for wk in wks:
                 s, r = waitable_status(wk)
                 if s == "failed":
@@ -519,17 +531,25 @@ def scheduled(body_program):
                 if s == "cancelled":
                     from doeff.program import ResumeThrow
                     return (yield ResumeThrow(k, TaskCancelledError()))
-            all_done = all(waitable_status(wk)[0] in TERMINAL for wk in wks)
-            if all_done:
+                if s not in TERMINAL:
+                    pending_wks.append(wk)
+
+            if not pending_wks:
                 results = [waitable_status(wk)[1] for wk in wks]
                 r = yield Resume(k, results)
                 return r
-            else:
-                for wk in wks:
-                    if waitable_status(wk)[0] not in TERMINAL:
-                        waiters.setdefault(wk, []).append(("gather", k, effect.tasks))
-                        break
-                yield TailEval(pick_next())
+
+            gather_state = {
+                "waiter_k": k,
+                "keys": wks,
+                "pending_keys": pending_wks,
+                "remaining": len(pending_wks),
+                "failure": None,
+                "resolved": False,
+            }
+            for wk in pending_wks:
+                waiters.setdefault(wk, []).append(("gather", gather_state))
+            yield TailEval(pick_next())
 
         elif isinstance(effect, Race):
             for t in effect.tasks:
