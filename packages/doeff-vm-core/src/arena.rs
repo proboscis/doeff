@@ -185,6 +185,58 @@ impl FiberArena {
     }
 }
 
+/// Status of an arena slot, as observed by the invariant checker.
+#[cfg(feature = "invariant-checks")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SlotStatus {
+    /// Slot holds a live fiber.
+    Live,
+    /// Slot is empty but NOT on the free list — reserved for a detached fiber
+    /// currently owned by a continuation (single-location law).
+    VacantReserved,
+    /// Slot is empty and on the free list — fiber was freed.
+    VacantFree,
+    /// Index was never allocated.
+    OutOfRange,
+}
+
+#[cfg(feature = "invariant-checks")]
+impl FiberArena {
+    pub(crate) fn slot_status(&self, id: FiberId) -> SlotStatus {
+        let idx = id.index();
+        match self.fibers.get(idx) {
+            None => SlotStatus::OutOfRange,
+            Some(Some(_)) => SlotStatus::Live,
+            Some(None) => {
+                if self.free_list.contains(&idx) {
+                    SlotStatus::VacantFree
+                } else {
+                    SlotStatus::VacantReserved
+                }
+            }
+        }
+    }
+
+    /// Free-list hygiene: in-bounds, no duplicates, every entry vacant.
+    pub(crate) fn free_list_violations(&self) -> Vec<String> {
+        let mut violations = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for &idx in &self.free_list {
+            if !seen.insert(idx) {
+                violations.push(format!("arena: free_list contains duplicate index {idx}"));
+            }
+            match self.fibers.get(idx) {
+                None => violations.push(format!("arena: free_list index {idx} out of range")),
+                Some(Some(_)) => violations.push(format!(
+                    "arena: free_list index {idx} points at a live fiber"
+                )),
+                Some(None) => {}
+            }
+        }
+        violations
+    }
+}
+
 impl Default for FiberArena {
     fn default() -> Self {
         Self::new()

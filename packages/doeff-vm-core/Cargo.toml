@@ -15,6 +15,9 @@ crate-type = ["rlib"]
 default = []
 python_bridge = ["dep:pyo3"]
 vm_debug_logs = []
+# Runtime invariant checks after every VM step (debug/reference builds only).
+# See docs/crystallization/invariants.md for the conditions.
+invariant-checks = []
 
 [dependencies]
 pyo3 = { version = "0.28", features = ["py-clone"], optional = true }
