@@ -196,6 +196,19 @@ rules:
       include:
         - /packages/doeff-agents/src/doeff_agents/cli.py
 
+  - id: conductor-runtime-state-ignores-live-in-workspace-init
+    languages: [generic]
+    severity: ERROR
+    message: >
+      spec §11-6: conductor runtime session-state ignores belong in workspace
+      initialization, not Commit/Git effect staging. Keep git add -A generic so
+      manual git commands and future commit consumers get the same behavior.
+    pattern-regex: '\.agent-home/?'
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/handlers/git_handler.py
+        - /packages/doeff-conductor/src/doeff_conductor/effects/git.py
+
   - id: http-request-handlers-use-defhandler
     languages: [python]
     severity: ERROR
