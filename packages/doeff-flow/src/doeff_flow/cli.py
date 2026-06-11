@@ -107,19 +107,18 @@ def _watch_single(
         while True:
             if trace_file.exists():
                 lines = trace_file.read_text().strip().split("\n")
-                if lines and lines[0]:
-                    if len(lines) > last_line_count:
-                        last_line_count = len(lines)
-                        data = json.loads(lines[-1])
-                        live.update(_render_trace_panel(data, status_only=status_only))
+                if lines and lines[0] and len(lines) > last_line_count:
+                    last_line_count = len(lines)
+                    data = json.loads(lines[-1])
+                    live.update(_render_trace_panel(data, status_only=status_only))
 
-                        if exit_on_complete and data["status"] in ("completed", "failed"):
-                            console.print(
-                                f"\n[bold]Workflow {workflow_id} finished:[/bold] "
-                                f"[{'green' if data['status'] == 'completed' else 'red'}]"
-                                f"{data['status']}[/]"
-                            )
-                            return
+                    if exit_on_complete and data["status"] in ("completed", "failed"):
+                        console.print(
+                            f"\n[bold]Workflow {workflow_id} finished:[/bold] "
+                            f"[{'green' if data['status'] == 'completed' else 'red'}]"
+                            f"{data['status']}[/]"
+                        )
+                        return
             else:
                 live.update(
                     Panel(
@@ -131,7 +130,7 @@ def _watch_single(
             time.sleep(poll_interval)
 
 
-def _render_trace_panel(data: dict, status_only: bool = False) -> Panel:
+def _render_trace_panel(data: dict, status_only: bool = False) -> Panel:  # noqa: PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
     """Render a single workflow trace as a rich Panel with call tree.
 
     Args:
@@ -182,10 +181,7 @@ def _render_trace_panel(data: dict, status_only: bool = False) -> Panel:
 
         # Use different style for deepest frame (current position or error location)
         if i == len(trace_frames) - 1:
-            if is_failed:
-                label = f"[red bold]✗[/] {label}"
-            else:
-                label = f"[yellow]→[/] {label}"
+            label = f"[red bold]✗[/] {label}" if is_failed else f"[yellow]→[/] {label}"
 
         current = current.add(label)
 
