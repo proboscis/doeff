@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, is_dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime, timezone
@@ -31,12 +31,21 @@ from doeff_conductor.dsl import (
     WorkflowSpec,
     WorkspaceSpec,
 )
-from doeff_conductor.effects import Agent, AgentTask, Commit, CreateWorkspace, Exec, MergeWorkspaces
+from doeff_conductor.effects import (
+    Agent,
+    AgentAttemptExhaustedError,
+    AgentTask,
+    Commit,
+    CreateWorkspace,
+    Exec,
+    MergeWorkspaces,
+)
 from doeff_conductor.environment import (
     ProfileBinding,
     ProfileRegistry,
     load_profile_registry_from_env,
 )
+from doeff_conductor.overseer import GateOption, OpenGateView
 from doeff_conductor.replay_keying import ResolvedIdentity
 from doeff_conductor.types import ExecResult, Issue, MergeStrategy, MergeWorkspacesResult, Workspace
 from doeff_conductor.verbs import resolve_agent_profile
@@ -49,12 +58,31 @@ class _RuntimeContext:
     params: Mapping[str, Any]
     registry: ProfileRegistry
     issue: Issue | None
+    supervision: str
+    answered_gate_options: Mapping[str, str]
     bindings: dict[str, Any] = dataclass_field(default_factory=dict)
+    open_gates: dict[str, OpenGateView] = dataclass_field(default_factory=dict)
     # Keyed by the workspace EXPRESSION's source-order occurrence, NOT by
     # Python object id and NOT by evaluation site — one workspace! value
     # shared by several nodes must bind one workspace, identically across
     # process restarts (resume stability).
     workspace_cache: dict[str, Workspace] = dataclass_field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ParkedValue:
+    """Runtime marker for a subtree parked behind one or more open gates."""
+
+    gates: tuple[OpenGateView, ...]
+    halt_run: bool = False
+
+
+@dataclass(frozen=True)
+class WorkflowRuntimeResult:
+    """Runtime result plus any open overseer gates materialized by live execution."""
+
+    value: Any
+    open_gates: tuple[OpenGateView, ...]
 
 
 def workflow_spec_to_program(
@@ -64,12 +92,16 @@ def workflow_spec_to_program(
     params: Mapping[str, Any] | None = None,
     issue: Issue | None = None,
     registry: ProfileRegistry | None = None,
+    supervision: str = "autonomous",
+    answered_gate_options: Mapping[str, str] | None = None,
 ) -> Any:
     """Compile a ``WorkflowSpec`` into a production doeff Program."""
 
     workflow.expand()
     active_params: Mapping[str, Any] = params or {}
     active_registry: ProfileRegistry = registry or load_profile_registry_from_env()
+    if supervision not in {"autonomous", "phase-checkpoints"}:
+        raise ValueError(f"unsupported supervision policy: {supervision}")
 
     @do
     def program() -> Any:
@@ -79,6 +111,8 @@ def workflow_spec_to_program(
             params=active_params,
             registry=active_registry,
             issue=issue,
+            supervision=supervision,
+            answered_gate_options=answered_gate_options or {},
         )
         result: Any = None
         for index, form in enumerate(workflow.body):
@@ -88,7 +122,12 @@ def workflow_spec_to_program(
                 current_phase=None,
                 path=str(index),
             )
-        return result
+            if isinstance(result, ParkedValue) and result.halt_run:
+                break
+        return WorkflowRuntimeResult(
+            value=result,
+            open_gates=tuple(context.open_gates.values()),
+        )
 
     return program()
 
@@ -102,6 +141,7 @@ def _execute_form(
     path: str,
 ) -> Any:
     if isinstance(form, PhaseSpec):
+        bindings_before_phase: dict[str, Any] = dict(context.bindings)
         result: Any = None
         for index, child_form in enumerate(form.body):
             child_path: str = _path_join(_path_join(path, form.name), str(index))
@@ -111,6 +151,15 @@ def _execute_form(
                 current_phase=form.name,
                 path=child_path,
             )
+            if isinstance(result, ParkedValue):
+                return result
+        checkpoint = _checkpoint_gate_for_phase(
+            context=context,
+            phase=form,
+            bindings_before_phase=bindings_before_phase,
+        )
+        if checkpoint is not None:
+            return _park(context, checkpoint, halt_run=True)
         return result
 
     if isinstance(form, BindSpec):
@@ -120,7 +169,10 @@ def _execute_form(
             current_phase=current_phase,
             path=path,
         )
-        _bind_runtime_value(form.target, value, context)
+        if isinstance(value, ParkedValue):
+            _bind_parked_runtime_value(form.target, value, context)
+        else:
+            _bind_runtime_value(form.target, value, context)
         return value
 
     if isinstance(form, ArtifactSpec):
@@ -219,6 +271,9 @@ def _execute_parallel(
         )
         tasks.append(task)
     results = cast(tuple[Any, ...], (yield Gather(*tasks)))
+    parked = _combine_parked_values(results)
+    if parked is not None:
+        return parked
     return results
 
 
@@ -250,6 +305,9 @@ def _execute_loop(
                 current_phase=current_phase,
                 path=form_path,
             )
+            if isinstance(last_value, ParkedValue):
+                _restore_loop_bindings(context, outer_bindings)
+                return last_value
             predicate_result = cast(
                 bool,
                 (yield _evaluate_until(spec.until, context, path=_path_join(path, "until"))),
@@ -279,9 +337,10 @@ def _execute_agent(
 ) -> Any:
     effect = spec.to_effect(current_phase)
     node_id: str = _node_id(context.workflow.name, path, "agent")
-    prompt_text: str = _stringify_prompt_value(
-        (yield _evaluate_value(effect.prompt, context, path=_path_join(path, "prompt")))
-    )
+    prompt_value = yield _evaluate_value(effect.prompt, context, path=_path_join(path, "prompt"))
+    if isinstance(prompt_value, ParkedValue):
+        return prompt_value
+    prompt_text: str = _stringify_prompt_value(prompt_value)
     schema: dict[str, Any] = _schema_to_dict(effect.schema)
     workspace: Workspace
     if effect.workspace is None:
@@ -304,6 +363,8 @@ def _execute_agent(
             context,
             path=_path_join(path, "workspace"),
         )
+        if isinstance(workspace_value, ParkedValue):
+            return workspace_value
         if not isinstance(workspace_value, Workspace):
             raise TypeError(f"agent workspace for {node_id} did not evaluate to Workspace")
         workspace = workspace_value
@@ -315,31 +376,41 @@ def _execute_agent(
     )
     profile: ProfileBinding = context.registry.resolve(profile_name)
     max_retries: int = _resolve_retry(effect.retry, effect.role, context.workflow.roles)
-    result = yield Agent(
-        AgentTask(
-            run_id=context.run_id,
-            node_id=node_id,
-            attempt=0,
-            env=workspace,
-            prompt=prompt_text,
-            result_schema=schema,
-            verification_class=effect.verification_class,
-            agent_type=profile.adapter,
-            name=effect.label,
-            profile=profile_name,
-            model=profile.model,
-            # Effort is an axis of the profile binding (L0 identity), never a
-            # workflow/run parameter (ADR D7).
+    task = AgentTask(
+        run_id=context.run_id,
+        node_id=node_id,
+        attempt=0,
+        env=workspace,
+        prompt=prompt_text,
+        result_schema=schema,
+        verification_class=effect.verification_class,
+        agent_type=profile.adapter,
+        name=effect.label,
+        profile=profile_name,
+        model=profile.model,
+        # Effort is an axis of the profile binding (L0 identity), never a
+        # workflow/run parameter (ADR D7).
+        effort=profile.effort,
+        resolved_identity=ResolvedIdentity(
+            adapter=profile.adapter,
+            model=profile.model or "",
+            identity=None,
             effort=profile.effort,
-            resolved_identity=ResolvedIdentity(
-                adapter=profile.adapter,
-                model=profile.model,
-                identity=None,
-                effort=profile.effort,
-            ),
-            max_retries=max_retries,
-        )
+        ),
+        max_retries=max_retries,
     )
+    try:
+        result = yield Agent(task)
+    except AgentAttemptExhaustedError as error:
+        return _park(
+            context,
+            _agent_budget_exhausted_gate(
+                context=context,
+                task=task,
+                phase=current_phase,
+                error=error,
+            ),
+        )
     if workspace is not None:
         # D5 mechanized: a worker's output exists only once it is on the
         # workspace branch. Workers cannot be trusted to commit (prompt
@@ -372,6 +443,8 @@ def _execute_gate(spec: GateSpec, context: _RuntimeContext, *, path: str) -> Any
             context,
             path=_path_join(path, "workspace"),
         )
+        if isinstance(workspace_value, ParkedValue):
+            return workspace_value
         if not isinstance(workspace_value, Workspace):
             raise TypeError("gate workspace did not evaluate to Workspace")
         workspace = workspace_value
@@ -388,6 +461,8 @@ def _execute_merge(spec: MergeSpec, context: _RuntimeContext, *, path: str) -> A
             context,
             path=_path_join(path, f"workspaces[{workspace_index}]"),
         )
+        if isinstance(workspace_value, ParkedValue):
+            return workspace_value
         if not isinstance(workspace_value, Workspace):
             raise TypeError("merge! workspaces must evaluate to Workspace values")
         workspaces.append(workspace_value)
@@ -450,7 +525,7 @@ def _materialize_workspace(
 
 
 @do
-def _evaluate_value(  # noqa: PLR0911, PLR0912
+def _evaluate_value(  # noqa: PLR0911, PLR0912, PLR0915
     value: Any,
     context: _RuntimeContext,
     *,
@@ -468,18 +543,27 @@ def _evaluate_value(  # noqa: PLR0911, PLR0912
             context,
             path=_path_join(path, "source"),
         )
+        if isinstance(source_value, ParkedValue):
+            return source_value
         return _read_field(source_value, value.field_name)
     if isinstance(value, OksProjection):
         return (yield _evaluate_value(value.source, context, path=_path_join(path, "source")))
     if isinstance(value, PromptExpr):
         parts: list[str] = []
+        parked_values: list[ParkedValue] = []
         for part_index, part in enumerate(value.parts):
             part_value: Any = yield _evaluate_value(
                 part,
                 context,
                 path=_path_join(path, f"[{part_index}]"),
             )
+            if isinstance(part_value, ParkedValue):
+                parked_values.append(part_value)
+                continue
             parts.append(_stringify_prompt_value(part_value))
+        parked = _combine_parked_values(parked_values)
+        if parked is not None:
+            return parked
         return "".join(parts)
     if isinstance(value, WorkspaceSpec):
         return (yield _materialize_workspace(value, context, path=path))
@@ -489,6 +573,9 @@ def _evaluate_value(  # noqa: PLR0911, PLR0912
             items.append(
                 (yield _evaluate_value(item, context, path=_path_join(path, f"[{item_index}]")))
             )
+        parked = _combine_parked_values(items)
+        if parked is not None:
+            return parked
         return tuple(items)
     if isinstance(value, list):
         items = []
@@ -496,30 +583,50 @@ def _evaluate_value(  # noqa: PLR0911, PLR0912
             items.append(
                 (yield _evaluate_value(item, context, path=_path_join(path, f"[{item_index}]")))
             )
+        parked = _combine_parked_values(items)
+        if parked is not None:
+            return parked
         return items
     if isinstance(value, dict):
         evaluated: dict[Any, Any] = {}
+        parked_values: list[ParkedValue] = []
         for entry_index, (key, item) in enumerate(value.items()):
             evaluated_key: Any = yield _evaluate_value(
                 key,
                 context,
                 path=_path_join(path, f"key[{entry_index}]"),
             )
-            evaluated[evaluated_key] = yield _evaluate_value(
+            evaluated_value: Any = yield _evaluate_value(
                 item,
                 context,
                 path=_path_join(path, f"value[{entry_index}]"),
             )
+            if isinstance(evaluated_key, ParkedValue):
+                parked_values.append(evaluated_key)
+                continue
+            if isinstance(evaluated_value, ParkedValue):
+                parked_values.append(evaluated_value)
+                continue
+            evaluated[evaluated_key] = evaluated_value
+        parked = _combine_parked_values(parked_values)
+        if parked is not None:
+            return parked
         return evaluated
     if isinstance(value, set):
         items = []
         for item in value:
             items.append((yield _evaluate_value(item, context, path=path)))
+        parked = _combine_parked_values(items)
+        if parked is not None:
+            return parked
         return set(items)
     if isinstance(value, frozenset):
         items = []
         for item in value:
             items.append((yield _evaluate_value(item, context, path=path)))
+        parked = _combine_parked_values(items)
+        if parked is not None:
+            return parked
         return frozenset(items)
     return value
 
@@ -564,12 +671,153 @@ def _bind_runtime_value(target: str | Sequence[str], value: Any, context: _Runti
         context.bindings[str(name)] = value[index]
 
 
+def _bind_parked_runtime_value(
+    target: str | Sequence[str],
+    value: ParkedValue,
+    context: _RuntimeContext,
+) -> None:
+    if isinstance(target, str):
+        context.bindings[target] = value
+        return
+    for name in target:
+        context.bindings[str(name)] = value
+
+
 def _restore_loop_bindings(
     context: _RuntimeContext,
     outer_bindings: Mapping[str, Any],
 ) -> None:
     context.bindings.clear()
     context.bindings.update(outer_bindings)
+
+
+def _park(
+    context: _RuntimeContext,
+    gate: OpenGateView,
+    *,
+    halt_run: bool = False,
+) -> ParkedValue:
+    context.open_gates[gate.gate_id] = gate
+    return ParkedValue(gates=(gate,), halt_run=halt_run)
+
+
+def _combine_parked_values(values: Iterable[Any]) -> ParkedValue | None:
+    gates_by_id: dict[str, OpenGateView] = {}
+    halt_run = False
+    for value in values:
+        if not isinstance(value, ParkedValue):
+            continue
+        halt_run = halt_run or value.halt_run
+        for gate in value.gates:
+            gates_by_id[gate.gate_id] = gate
+    if not gates_by_id:
+        return None
+    return ParkedValue(gates=tuple(gates_by_id.values()), halt_run=halt_run)
+
+
+def _agent_budget_exhausted_gate(
+    *,
+    context: _RuntimeContext,
+    task: AgentTask,
+    phase: str | None,
+    error: AgentAttemptExhaustedError,
+) -> OpenGateView:
+    return OpenGateView(
+        gate_id=f"{context.run_id}:{task.node_id}:budget-exhausted",
+        workflow_id=context.run_id,
+        node_id=task.node_id,
+        phase=phase,
+        reason="budget exhausted",
+        stakes={
+            "verification_class": task.verification_class,
+            "blast_radius": "dependent-subtree",
+            "reversibility": "retryable",
+            "profile": task.profile,
+            "attempts": error.attempts,
+            "session_id": task.session_id,
+        },
+        options=_gate_options(),
+    )
+
+
+def _checkpoint_gate_for_phase(
+    *,
+    context: _RuntimeContext,
+    phase: PhaseSpec,
+    bindings_before_phase: Mapping[str, Any],
+) -> OpenGateView | None:
+    if context.supervision != "phase-checkpoints":
+        return None
+    gate_id = f"{context.run_id}:checkpoint:{phase.name}"
+    if context.answered_gate_options.get(gate_id) in {"proceed", "redirect"}:
+        return None
+
+    binding_deltas = _binding_deltas(bindings_before_phase, context.bindings)
+    artifact_summaries = {
+        name: _summarize_artifact(context.bindings[name])
+        for name in binding_deltas
+        if name in context.bindings
+    }
+    return OpenGateView(
+        gate_id=gate_id,
+        workflow_id=context.run_id,
+        node_id=f"checkpoint:{phase.name}",
+        phase=phase.name,
+        reason="phase checkpoint",
+        stakes={
+            "phase": phase.name,
+            "level": phase.stakes,
+            "verification_class": "checkpoint",
+            "blast_radius": "dependent-subtree",
+            "reversibility": "abortable",
+            "binding_deltas": binding_deltas,
+            "artifact_summaries": artifact_summaries,
+        },
+        options=_gate_options(),
+    )
+
+
+def _binding_deltas(
+    before: Mapping[str, Any],
+    after: Mapping[str, Any],
+) -> list[str]:
+    changed: list[str] = []
+    for name in sorted(after):
+        if name not in before:
+            changed.append(name)
+            continue
+        if _jsonable(before[name]) != _jsonable(after[name]):
+            changed.append(name)
+    return changed
+
+
+def _summarize_artifact(value: Any) -> str:
+    if isinstance(value, ParkedValue):
+        return "parked behind open gate"
+    encoded = json.dumps(_jsonable(value), sort_keys=True, ensure_ascii=True)
+    if len(encoded) <= 160:
+        return encoded
+    return f"{encoded[:157]}..."
+
+
+def _gate_options() -> tuple[GateOption, ...]:
+    return (
+        GateOption(
+            name="proceed",
+            outcome="resume",
+            description="Resume the parked subtree after the blocking condition is cleared.",
+        ),
+        GateOption(
+            name="redirect",
+            outcome="resume",
+            description="Edit workflow state or inputs, then resume from the journal prefix.",
+        ),
+        GateOption(
+            name="abort",
+            outcome="abort",
+            description="Abort the dependent subtree and preserve the gate outcome.",
+        ),
+    )
 
 
 def _resolve_retry(
@@ -613,6 +861,8 @@ def _read_field(source_value: Any, field_name: str) -> Any:
 
 
 def _value_passed(value: Any) -> bool:
+    if isinstance(value, ParkedValue):
+        return False
     if isinstance(value, ExecResult):
         return value.passed
     if isinstance(value, Mapping):

@@ -780,11 +780,11 @@ def _open_gate_result(
         detail=detail,
         options=(
             GateOption(
-                name="retry-with-feedback",
-                outcome="retry the blocked review step with overseer feedback",
+                name="proceed",
+                outcome="resume the blocked review step after the condition is cleared",
             ),
             GateOption(
-                name="edit-and-resume",
+                name="redirect",
                 outcome="resume after the overseer edits workflow state or budget",
             ),
             GateOption(name="abort", outcome="abort the dependent review subtree"),

@@ -38,12 +38,13 @@ class ConductorAPI:
         self.workflows_dir = self.state_dir / "workflows"
         self.workflows_dir.mkdir(parents=True, exist_ok=True)
 
-    def run_workflow(  # noqa: PLR0915
+    def run_workflow(  # noqa: PLR0912, PLR0915
         self,
         template_or_file: str,
         issue: "Issue | None" = None,
         params: dict[str, Any] | None = None,
         run_id: str | None = None,
+        supervision: str = "autonomous",
     ) -> "WorkflowHandle":
         """Run a workflow template or file.
 
@@ -52,6 +53,7 @@ class ConductorAPI:
             issue: Issue to pass to workflow
             params: Additional parameters
             run_id: Optional caller-supplied workflow id for resume/replay runs
+            supervision: Run-scoped overseer supervision policy
 
         Returns:
             WorkflowHandle for the started workflow
@@ -132,6 +134,7 @@ class ConductorAPI:
                     raise ValueError("workflow function was not loaded")
                 program = workflow_func(**kwargs)
             else:
+                from doeff_conductor.overseer import answered_gate_options
                 from doeff_conductor.workflow_runtime import workflow_spec_to_program
 
                 program = workflow_spec_to_program(
@@ -139,6 +142,8 @@ class ConductorAPI:
                     run_id=workflow_id,
                     params=kwargs,
                     issue=issue,
+                    supervision=supervision,
+                    answered_gate_options=answered_gate_options(self.state_dir, workflow_id),
                 )
 
             # Run with conductor handlers
@@ -151,6 +156,37 @@ class ConductorAPI:
 
             result = run(scheduled(WithHandler(conductor_handler, program)))
             result_value = result.value if type(result).__name__ == "RunResult" else result
+            open_gates = ()
+            from doeff_conductor.workflow_runtime import ParkedValue, WorkflowRuntimeResult
+
+            if isinstance(result_value, WorkflowRuntimeResult):
+                open_gates = result_value.open_gates
+                result_value = result_value.value
+            result_payload = None if isinstance(result_value, ParkedValue) else result_value
+
+            if open_gates:
+                from doeff_conductor.overseer import record_open_gates
+
+                record_open_gates(
+                    self.state_dir,
+                    workflow_id=workflow_id,
+                    workflow_name=handle.name,
+                    open_gates=open_gates,
+                    supervision=supervision,
+                )
+                handle = WorkflowHandle(
+                    id=workflow_id,
+                    name=handle.name,
+                    status=WorkflowStatus.BLOCKED,
+                    template=template_name,
+                    issue_id=issue.id if issue else None,
+                    created_at=now,
+                    updated_at=datetime.now(timezone.utc),
+                    result_payload=result_payload,
+                )
+                self._save_workflow(handle)
+                return handle
+
             pr_url = None
             if isinstance(result_value, PRHandle):
                 pr_url = result_value.url
@@ -170,7 +206,7 @@ class ConductorAPI:
                 created_at=now,
                 updated_at=datetime.now(timezone.utc),
                 pr_url=pr_url,
-                result_payload=result_value,
+                result_payload=result_payload,
             )
             self._save_workflow(handle)
 
@@ -195,6 +231,7 @@ class ConductorAPI:
         workflow_id: str,
         *,
         params: dict[str, Any] | None = None,
+        supervision: str | None = None,
     ) -> "WorkflowHandle":
         """Resume a run from its snapshotted workflow source."""
 
@@ -203,11 +240,67 @@ class ConductorAPI:
         snapshot_path: Path = workflow_snapshot_path(self.state_dir, workflow_id)
         if not snapshot_path.exists():
             raise ValueError(f"workflow snapshot not found for run: {workflow_id}")
+        active_supervision = supervision
+        if active_supervision is None:
+            from doeff_conductor.overseer import load_run_state
+
+            try:
+                active_supervision = load_run_state(self.state_dir, workflow_id).supervision
+            except FileNotFoundError:
+                active_supervision = "autonomous"
         return self.run_workflow(
             str(snapshot_path),
             params=params,
             run_id=workflow_id,
+            supervision=active_supervision,
         )
+
+    def answer_gate(
+        self,
+        workflow_id: str,
+        gate_id: str,
+        option: str,
+        *,
+        params: dict[str, Any] | None = None,
+    ) -> "WorkflowHandle":
+        """Record an overseer gate answer and apply its closure-preserving verb."""
+
+        from doeff_conductor.overseer import record_gate_answer
+        from doeff_conductor.types import WorkflowStatus
+
+        run_state = record_gate_answer(
+            self.state_dir,
+            workflow_id=workflow_id,
+            gate_id=gate_id,
+            option=option,
+        )
+        if option == "abort":
+            handle = self.get_workflow(workflow_id)
+            if handle is None:
+                raise ValueError(f"Workflow not found: {workflow_id}")
+            aborted = WorkflowHandle(
+                id=handle.id,
+                name=handle.name,
+                status=WorkflowStatus.ABORTED,
+                template=handle.template,
+                issue_id=handle.issue_id,
+                created_at=handle.created_at,
+                updated_at=datetime.now(timezone.utc),
+                workspaces=handle.workspaces,
+                agents=handle.agents,
+                pr_url=handle.pr_url,
+                error=f"aborted at gate {gate_id}",
+                result_payload=handle.result_payload,
+            )
+            self._save_workflow(aborted)
+            return aborted
+        if option in {"proceed", "redirect"}:
+            return self.resume_workflow(
+                workflow_id,
+                params=params,
+                supervision=run_state.supervision,
+            )
+        raise ValueError(f"unsupported gate answer option: {option}")
 
     def list_workflows(
         self,

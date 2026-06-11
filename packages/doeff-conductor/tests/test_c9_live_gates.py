@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from click.testing import CliRunner
@@ -21,14 +21,14 @@ def _cheap_session_id(run_id: str, node_id: str) -> str:
         run_id=run_id,
         node_id=node_id,
         attempt=0,
-        env=None,
+        env=cast(Any, None),
         prompt="",
         result_schema={},
         verification_class="test-verifiable",
         agent_type="codex",
         resolved_identity=ResolvedIdentity(
             adapter="codex",
-            model=None,
+            model="",
             identity=None,
             effort="xhigh",
         ),
@@ -94,14 +94,14 @@ def _write_checkpoint_workflow(path: Path) -> None:
     path.write_text(
         """
 (require doeff-hy.conductor [defworkflow defphase <-])
-(import doeff_conductor.dsl [artifact ref])
+(import doeff_conductor.dsl [artifact prompt ref])
 
 (defworkflow checkpoint-live
   :params {}
   :roles {}
   (defphase Build
-    :stakes high
-    (<- built (artifact "built")))
+    :stakes "high"
+    (<- built (prompt "built")))
   (artifact (ref "built")))
 
 (setv WORKFLOW checkpoint-live)
