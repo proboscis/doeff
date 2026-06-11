@@ -14,15 +14,10 @@ from completed traverse items, preventing Python GC from reclaiming them.
 
 import resource
 import sys
+from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import pytest
-
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-
-from doeff import EffectBase, Pass, Program, Resume, do, run, slog
-from doeff_vm import WithHandler
-from doeff_core_effects import Ask
 from doeff_core_effects.handlers import (
     await_handler,
     lazy_ask,
@@ -34,10 +29,12 @@ from doeff_core_effects.handlers import (
     writer,
 )
 from doeff_core_effects.scheduler import scheduled
-from doeff_time import GetTime, WaitUntil
 from doeff_time.handlers import sim_time_handler
 from doeff_traverse.effects import Inspect, Traverse
-from doeff_traverse.handlers import parallel, fail_handler
+from doeff_traverse.handlers import fail_handler, parallel
+from doeff_vm import WithHandler
+
+from doeff import EffectBase, Pass, Program, Resume, do, run, slog
 
 SIM_EPOCH = datetime(2025, 1, 1, tzinfo=timezone.utc)
 
@@ -86,7 +83,7 @@ def _single_item_program(item_id: int) -> Program[dict]:
 def _daily_traverse(n_items: int) -> Program[list]:
     """Simulates one day's factor computation via traverse.
 
-    Production: traverse over 95 days × 24 symbols = many items.
+    Production: traverse over 95 days x 24 symbols = many items.
     Each item triggers memo-HIT LLM query.
     """
     collection = yield Traverse(_single_item_program, range(n_items), label="daily_factor")
@@ -99,7 +96,7 @@ def _daily_traverse(n_items: int) -> Program[list]:
 def _multi_day_program(n_days: int, n_items_per_day: int) -> Program[int]:
     """Simulates multi-day pipeline: loop over days, each running traverse.
 
-    Production: 60 days × traverse(95 items × 24 symbols).
+    Production: 60 days x traverse(95 items x 24 symbols).
     This is where memory grows unbounded.
     """
     for day in range(n_days):
@@ -151,7 +148,7 @@ def test_multi_day_traverse_memory_constant():
     If memory leaks, RSS will grow significantly per day.
 
     Pass criteria: RSS growth < 50MB over 10 days.
-    (With leak: ~280MB/day × 10 = 2.8GB growth)
+    (With leak: ~280MB/day x 10 = 2.8GB growth)
     """
     import gc
 
@@ -174,9 +171,9 @@ def test_multi_day_traverse_memory_constant():
 
 
 def test_multi_day_traverse_30_days():
-    """30 days × 100 items — matches production scale.
+    """30 days x 100 items — matches production scale.
 
-    Production: 30 days × 95 factor days × 24 symbols ≈ 30 × 100.
+    Production: 30 days x 95 factor days x 24 symbols ≈ 30 x 100.
     Should complete without OOM on a 16GB machine.
     """
     import gc
@@ -200,7 +197,7 @@ def test_multi_day_traverse_30_days():
 
 @pytest.mark.slow
 def test_multi_day_traverse_60_days_stress():
-    """60 days × 200 items — stress test matching production failure.
+    """60 days x 200 items — stress test matching production failure.
 
     Production OOMs at day 53 with 17GB RSS.
     This test uses 200 items/day to amplify the leak.
@@ -218,6 +215,6 @@ def test_multi_day_traverse_60_days_stress():
     growth = rss_after - rss_before
 
     assert growth < 300, (
-        f"Memory grew {growth:.0f}MB over 60 days × 200 items. "
+        f"Memory grew {growth:.0f}MB over 60 days x 200 items. "
         f"Expected < 300MB. Production OOMs at ~17GB after 53 days."
     )

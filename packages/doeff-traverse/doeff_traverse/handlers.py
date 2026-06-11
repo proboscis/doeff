@@ -6,16 +6,15 @@ normalize_to_none(): Fail handler — resumes with None at fail site.
 """
 
 from doeff import do
-from doeff.program import Resume, Pass, ResumeThrow
-
-from doeff_traverse.effects import Fail, Traverse, Reduce, Zip, Inspect, Skip, SortBy, Take
+from doeff.program import Pass, Resume, ResumeThrow
+from doeff_traverse.collection import Collection, HistoryEntry, ItemResult
+from doeff_traverse.effects import Fail, Inspect, Reduce, Skip, SortBy, Take, Traverse, Zip
 
 # Sentinel for Skip — traverse handler checks identity
 _SKIPPED = object()
-from doeff_traverse.collection import Collection, ItemResult, HistoryEntry
 
 
-def sequential():
+def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
     """Sequential handler for Traverse/Reduce/Zip/Inspect.
 
     Traverse: runs f(item) sequentially for each item.
@@ -26,13 +25,16 @@ def sequential():
 
     Unhandled Fail inside Traverse marks the item as failed.
     """
-    from doeff.program import WithHandler as WH
-    from doeff.handler_utils import get_inner_handlers
     from doeff_core_effects.effects import Try
-    from doeff_vm import Ok, Err
+    from doeff_vm import Err, Ok
+
+    from doeff.handler_utils import get_inner_handlers
+    from doeff.program import (
+        WithHandler as WH,  # noqa: N817 - existing local alias keeps handler code compact
+    )
 
     @do
-    def handler(effect, k):
+    def handler(effect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
         if isinstance(effect, Skip):
             return _SKIPPED
 
@@ -64,7 +66,7 @@ def sequential():
 
                 # Wrap in Try to catch unhandled failures per item
                 @do
-                def attempt():
+                def attempt(prog=prog):
                     from doeff_core_effects.handlers import try_handler
                     value = yield WH(try_handler, Try(prog))
                     return value
@@ -118,7 +120,7 @@ def sequential():
             a = Collection.from_iterable(effect.a)
             b = Collection.from_iterable(effect.b)
             results = []
-            for item_a, item_b in zip(a.all_items, b.all_items):
+            for item_a, item_b in zip(a.all_items, b.all_items, strict=False):
                 failed = item_a.failed or item_b.failed
                 value = (item_a.value if item_a.failed else item_b.value) if failed else (item_a.value, item_b.value)
                 history = item_a.history + item_b.history
@@ -170,7 +172,7 @@ def sequential():
     return handler
 
 
-def parallel(concurrency=10):
+def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
     """Parallel handler for Traverse/Reduce/Zip/Inspect.
 
     Traverse: spawns up to `concurrency` tasks concurrently via Spawn/Gather.
@@ -178,17 +180,23 @@ def parallel(concurrency=10):
 
     Items from generators are materialized before spawning.
     """
-    from doeff.program import WithHandler as WH
-    from doeff.handler_utils import get_inner_handlers
     from doeff_core_effects.effects import Try
-    from doeff_core_effects.scheduler import Spawn, Gather
     from doeff_core_effects.scheduler import (
-        CreateSemaphore, AcquireSemaphore, ReleaseSemaphore,
+        AcquireSemaphore,
+        CreateSemaphore,
+        Gather,
+        ReleaseSemaphore,
+        Spawn,
     )
-    from doeff_vm import Ok, Err
+    from doeff_vm import Err, Ok
+
+    from doeff.handler_utils import get_inner_handlers
+    from doeff.program import (
+        WithHandler as WH,  # noqa: N817 - existing local alias keeps handler code compact
+    )
 
     @do
-    def handler(effect, k):
+    def handler(effect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
         if isinstance(effect, Skip):
             return _SKIPPED
 
@@ -291,7 +299,7 @@ def parallel(concurrency=10):
             a = Collection.from_iterable(effect.a)
             b = Collection.from_iterable(effect.b)
             results = []
-            for item_a, item_b in zip(a.all_items, b.all_items):
+            for item_a, item_b in zip(a.all_items, b.all_items, strict=False):
                 failed = item_a.failed or item_b.failed
                 value = (item_a.value if item_a.failed else item_b.value) if failed else (item_a.value, item_b.value)
                 history = item_a.history + item_b.history
@@ -341,7 +349,7 @@ def parallel(concurrency=10):
     return handler
 
 
-def parallel_fail_fast(concurrency=10):
+def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
     """Parallel handler that aborts on first failure.
 
     Same interface as parallel(), but does NOT wrap items in Try.
@@ -351,15 +359,21 @@ def parallel_fail_fast(concurrency=10):
     Use this instead of parallel() when silent failure collection is unacceptable.
     Swap in the interpreter: (parallel :concurrency 40) → (parallel-fail-fast :concurrency 40)
     """
-    from doeff.program import WithHandler as WH
-    from doeff.handler_utils import get_inner_handlers
-    from doeff_core_effects.scheduler import Spawn, Gather
     from doeff_core_effects.scheduler import (
-        CreateSemaphore, AcquireSemaphore, ReleaseSemaphore,
+        AcquireSemaphore,
+        CreateSemaphore,
+        Gather,
+        ReleaseSemaphore,
+        Spawn,
+    )
+
+    from doeff.handler_utils import get_inner_handlers
+    from doeff.program import (
+        WithHandler as WH,  # noqa: N817 - existing local alias keeps handler code compact
     )
 
     @do
-    def handler(effect, k):
+    def handler(effect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
         if isinstance(effect, Skip):
             return _SKIPPED
 
@@ -446,7 +460,7 @@ def parallel_fail_fast(concurrency=10):
             a = Collection.from_iterable(effect.a)
             b = Collection.from_iterable(effect.b)
             results = []
-            for item_a, item_b in zip(a.all_items, b.all_items):
+            for item_a, item_b in zip(a.all_items, b.all_items, strict=False):
                 failed = item_a.failed or item_b.failed
                 if failed:
                     cause = item_a.value if item_a.failed else item_b.value
