@@ -42,10 +42,39 @@ class PromptExpr:
     parts: tuple[Any, ...]
 
 
+def _next_workspace_occurrence() -> int:
+    """Source-order occurrence index for ``workspace!`` expressions.
+
+    Workspace identity belongs to the workspace EXPRESSION, not to the
+    site that happens to evaluate it: a module-level ``(setv ws
+    (workspace! ...))`` shared by several nodes is ONE workspace.  Keying
+    identity by evaluation path instead silently gave every consumer its
+    own fresh worktree — a gate would then test a different tree than the
+    implementer wrote to (the same false-positive class the resume fix
+    exists to kill).  The loader resets this counter before executing a
+    workflow module, so identical source yields identical occurrence
+    numbers across processes — the property resume stability needs.
+    """
+    global _WORKSPACE_OCCURRENCE
+    value = _WORKSPACE_OCCURRENCE
+    _WORKSPACE_OCCURRENCE += 1
+    return value
+
+
+_WORKSPACE_OCCURRENCE: int = 0
+
+
+def reset_workspace_occurrences() -> None:
+    """Reset the occurrence counter; called by the loader per module exec."""
+    global _WORKSPACE_OCCURRENCE
+    _WORKSPACE_OCCURRENCE = 0
+
+
 @dataclass(frozen=True)
 class WorkspaceSpec:
     repo: str | None = None
     from_ref: Any | None = None
+    occurrence: int = dataclass_field(default_factory=_next_workspace_occurrence)
 
     def to_effect(self) -> WorkspaceCall:
         return WorkspaceCall(repo=self.repo, from_ref=self.from_ref)

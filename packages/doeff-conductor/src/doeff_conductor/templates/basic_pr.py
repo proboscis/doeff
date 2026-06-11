@@ -36,8 +36,8 @@ def basic_pr(issue: Issue) -> EffectGenerator[PRHandle]:
     """
     from ..effects import Agent, AgentTask, Commit, CreatePR, CreateWorkspace, Push, ResolveIssue
 
-    # Step 1: Create isolated worktree
-    env = yield CreateWorkspace(issue=issue)
+    # Step 1: Create isolated worktree (identity is resume-stable per issue)
+    env = yield CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-basic-pr")
 
     # Step 2: Run agent to implement the issue
     prompt = f"""

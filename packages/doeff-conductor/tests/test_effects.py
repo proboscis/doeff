@@ -24,7 +24,7 @@ class TestEffectBase:
 
     def test_effect_base_protocol(self):
         """Test that effects follow the protocol."""
-        effect = CreateWorkspace()
+        effect = CreateWorkspace(workspace_id="ws-protocol")
 
         # Should have intercept method (no nested programs for conductor effects).
         intercepted = effect.intercept(lambda x: x)
@@ -41,21 +41,30 @@ class TestWorkspaceEffects:
 
     def test_create_workspace_defaults(self):
         """Test CreateWorkspace with defaults."""
-        effect = CreateWorkspace()
+        effect = CreateWorkspace(workspace_id="ws-defaults")
 
+        assert effect.workspace_id == "ws-defaults"
+        assert effect.repo == "default"
         assert effect.issue is None
         assert effect.from_ref is None
-        assert effect.suffix is None
-        assert effect.name is None
 
-    def test_create_workspace_with_suffix(self):
-        """Test CreateWorkspace with suffix."""
-        effect = CreateWorkspace(suffix="impl")
-        assert effect.suffix == "impl"
+    def test_create_workspace_requires_identity(self):
+        """Workspace identity is mandatory — there is no random fallback."""
+        import pytest
+
+        with pytest.raises(TypeError):
+            CreateWorkspace()  # type: ignore[call-arg]
 
     def test_merge_workspaces_requires_workspaces(self):
-        effect = MergeWorkspaces(workspaces=())
+        effect = MergeWorkspaces(workspace_id="ws-merged", workspaces=())
         assert effect.workspaces == ()
+        assert effect.workspace_id == "ws-merged"
+
+    def test_merge_workspaces_requires_identity(self):
+        import pytest
+
+        with pytest.raises(TypeError):
+            MergeWorkspaces(workspaces=())  # type: ignore[call-arg]
 
     def test_delete_workspace(self):
         from doeff_conductor.types import Workspace
