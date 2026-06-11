@@ -7,14 +7,18 @@ Bug: `RuntimeError: VM error (non-exception value in Raise):
 "generator yielded non-DoExpr: <class 'doeff.program.WithHandler'>."`
 when a spawned task performs effects that require handlers.
 """
-from doeff import do, run, WithHandler, Resume, Pass
-from doeff_core_effects import Ask, Try, slog, Tell
+from doeff_core_effects import Ask, Tell, Try
 from doeff_core_effects.handlers import (
-    reader, state, writer, try_handler, slog_handler, await_handler,
+    reader,
+    slog_handler,
+    state,
+    try_handler,
+    writer,
 )
-from doeff_core_effects.scheduler import Spawn, Wait, Gather, scheduled
+from doeff_core_effects.scheduler import Gather, Spawn, Wait, scheduled
 from doeff_vm import EffectBase, Ok
 
+from doeff import Pass, Resume, WithHandler, do, run
 
 # --- Custom effect + handler (mimics LLMStructuredQuery + openai_handler) ---
 

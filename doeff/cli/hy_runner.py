@@ -16,7 +16,6 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-
 _REQUIRE_PRELUDE = (
     "(require doeff-hy.macros [do! <-])\n"
     "(require doeff-hy.handle [defhandler handle])"

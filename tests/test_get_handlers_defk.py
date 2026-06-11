@@ -11,19 +11,6 @@ See: ISSUE-INF-023 (proboscis-ema)
 """
 from __future__ import annotations
 
-import pytest
-
-from doeff import (
-    EffectBase,
-    EffectGenerator,
-    Pass,
-    Resume,
-    WithHandler,
-    do,
-    run,
-)
-from doeff.handler_utils import get_inner_handlers
-from doeff_core_effects import slog
 from doeff_core_effects.handlers import (
     await_handler,
     slog_handler,
@@ -31,9 +18,17 @@ from doeff_core_effects.handlers import (
     try_handler,
     writer,
 )
-from doeff_core_effects.scheduler import Spawn, Wait, Gather, scheduled
-from doeff_vm import EffectBase as VMEffectBase, Ok, Err
+from doeff_core_effects.scheduler import Spawn, Wait, scheduled
+from doeff_vm import EffectBase as VMEffectBase
 
+from doeff import (
+    Pass,
+    Resume,
+    WithHandler,
+    do,
+    run,
+)
+from doeff.handler_utils import get_inner_handlers
 
 # --- Effects ---
 
@@ -44,7 +39,6 @@ class FetchData(VMEffectBase):
 
 class MarkerEffect(VMEffectBase):
     """Marker effect to test handler visibility."""
-    pass
 
 
 # --- Handlers ---

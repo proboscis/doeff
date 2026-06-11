@@ -6,10 +6,11 @@ propagate to outer handlers in the chain.
 Bug: openai_production_handler yields Try(try_ask_client()) inside its
 handler body, but Try is not caught by try_handler (which is outer).
 """
-from doeff import do, run, WithHandler, Resume, Pass
 from doeff_core_effects import Ask, Try
 from doeff_core_effects.handlers import reader, try_handler
-from doeff_vm import EffectBase, Ok, Err
+from doeff_vm import EffectBase
+
+from doeff import Pass, Resume, WithHandler, do, run
 
 
 class LLMQuery(EffectBase):

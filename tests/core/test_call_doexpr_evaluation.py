@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import doeff_vm
-
-from doeff import Apply, Ask, Effect, Get, KleisliProgram, Program, Pure, default_handlers, do, run
-from doeff import ProgramBase
+from doeff import (
+    do,
+)
 from tests._run_helpers import run_with_defaults
 
 

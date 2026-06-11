@@ -11,12 +11,11 @@ from doeff import (
     ReleaseSemaphore,
     Semaphore,
     Spawn,
-    Try,
     Wait,
     do,
 )
-from doeff_core_effects.scheduler import TaskCancelledError
 from tests._run_helpers import run_with_defaults
+
 
 def test_semaphore_public_handle_has_no_runtime_cleanup_surface() -> None:
     import doeff_vm

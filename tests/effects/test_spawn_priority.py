@@ -3,8 +3,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-import pytest
-
 import doeff
 from doeff import (
     PRIORITY_HIGH,

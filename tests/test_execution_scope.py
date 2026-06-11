@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from doeff_core_effects.effects import EffectBase
+
 from doeff import (
     Effect,
     EffectGenerator,
@@ -13,7 +15,6 @@ from doeff import (
     WithHandler,
     do,
 )
-from doeff_core_effects.effects import EffectBase
 from tests._run_helpers import run_with_defaults
 
 

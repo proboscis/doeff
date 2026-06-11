@@ -12,17 +12,15 @@ import asyncio
 import signal
 from typing import Any
 
-import pytest
-
 from doeff import (
     AcquireSemaphore,
+    Await,
     CreateSemaphore,
     Gather,
     ReleaseSemaphore,
     Spawn,
     do,
 )
-from doeff import Await
 from tests._run_helpers import run_with_defaults
 
 DEADLOCK_TIMEOUT_SECONDS = 5

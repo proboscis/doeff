@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
 import re
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 VM_CORE_CARGO = ROOT / "packages" / "doeff-vm-core" / "Cargo.toml"
@@ -22,7 +21,7 @@ def _runtime_source(path: Path) -> str:
 
 def test_vm_core_pyo3_dependency_is_optional() -> None:
     cargo = VM_CORE_CARGO.read_text(encoding="utf-8")
-    assert re.search(r'^pyo3\s*=\s*\{[^\n}]*optional\s*=\s*true', cargo, re.MULTILINE), (
+    assert re.search(r"^pyo3\s*=\s*\{[^\n}]*optional\s*=\s*true", cargo, re.MULTILINE), (
         "doeff-vm-core must make pyo3 optional so --no-default-features builds stay GIL-free"
     )
 

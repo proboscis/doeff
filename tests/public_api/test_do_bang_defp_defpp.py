@@ -11,10 +11,9 @@ import inspect
 from typing import Any
 
 import pytest
-
-from doeff import Ask, WithHandler, do, run
 from doeff_core_effects import reader
 
+from doeff import Ask, WithHandler, do, run
 
 # ---------------------------------------------------------------------------
 # do! — returns a Program (generator), usable anywhere
@@ -81,7 +80,7 @@ class TestDefpRejectsProgram:
         def make_bad_program():
             """A program whose return value is itself a generator."""
             x = yield Ask("key")
-            return (y for y in [x])  # noqa: C400 — intentional generator
+            return (y for y in [x])
 
         result = run(WithHandler(reader(env={"key": "v"}), make_bad_program()))
         # The return value IS a generator — defp's guard would catch this
@@ -177,8 +176,8 @@ class TestImportInsideDefpDefk:
 
     @pytest.fixture(autouse=True)
     def _import_repro(self) -> None:
-        import sys
         import os
+        import sys
 
         import doeff_hy  # noqa: F401
         import hy  # noqa: F401
