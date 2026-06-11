@@ -279,7 +279,7 @@ def _run_agent_task(handler: AgentHandler, task: AgentTask) -> object:
     raise AssertionError("unreachable agent retry state")
 
 
-def _validation_failure_from_outcome(
+def _validation_failure_from_outcome(  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
     outcome: AwaitOutcome,
     schema: dict[str, object],
 ) -> AgentValidationFailure | None:

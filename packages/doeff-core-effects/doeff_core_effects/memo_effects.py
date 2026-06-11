@@ -7,13 +7,14 @@ The recompute_cost field drives routing: cheap→ephemeral storage, expensive→
 from collections.abc import Mapping
 from typing import Any
 
+from doeff_vm import EffectBase
+
 from doeff_core_effects.memo_policy import (
     Lifecycle,
     MemoPolicy,
     RecomputeCost,
     ensure_memo_policy,
 )
-from doeff_vm import EffectBase
 
 
 class MemoGetEffect(EffectBase):
@@ -66,13 +67,13 @@ class MemoExistsEffect(EffectBase):
 
 # Convenience constructors
 
-def MemoGet(key: Any, *, recompute_cost: RecomputeCost | str = RecomputeCost.CHEAP) -> MemoGetEffect:
+def MemoGet(key: Any, *, recompute_cost: RecomputeCost | str = RecomputeCost.CHEAP) -> MemoGetEffect:  # noqa: N802 - public or spec test name is intentionally stable
     if isinstance(recompute_cost, str):
         recompute_cost = RecomputeCost(recompute_cost)
     return MemoGetEffect(key=key, recompute_cost=recompute_cost)
 
 
-def MemoPut(
+def MemoPut(  # noqa: N802 - public or spec test name is intentionally stable
     key: Any,
     value: Any,
     ttl: float | None = None,
@@ -93,13 +94,13 @@ def MemoPut(
     return MemoPutEffect(key=key, value=value, policy=memo_policy, source_effect=source_effect)
 
 
-def MemoDelete(key: Any, *, recompute_cost: RecomputeCost | str = RecomputeCost.CHEAP) -> MemoDeleteEffect:
+def MemoDelete(key: Any, *, recompute_cost: RecomputeCost | str = RecomputeCost.CHEAP) -> MemoDeleteEffect:  # noqa: N802 - public or spec test name is intentionally stable
     if isinstance(recompute_cost, str):
         recompute_cost = RecomputeCost(recompute_cost)
     return MemoDeleteEffect(key=key, recompute_cost=recompute_cost)
 
 
-def MemoExists(key: Any, *, recompute_cost: RecomputeCost | str = RecomputeCost.CHEAP) -> MemoExistsEffect:
+def MemoExists(key: Any, *, recompute_cost: RecomputeCost | str = RecomputeCost.CHEAP) -> MemoExistsEffect:  # noqa: N802 - public or spec test name is intentionally stable
     if isinstance(recompute_cost, str):
         recompute_cost = RecomputeCost(recompute_cost)
     return MemoExistsEffect(key=key, recompute_cost=recompute_cost)

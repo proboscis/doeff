@@ -55,7 +55,7 @@ def _next_workspace_occurrence() -> int:
     workflow module, so identical source yields identical occurrence
     numbers across processes — the property resume stability needs.
     """
-    global _WORKSPACE_OCCURRENCE
+    global _WORKSPACE_OCCURRENCE  # noqa: PLW0603 - module-level counter is the existing state model
     value = _WORKSPACE_OCCURRENCE
     _WORKSPACE_OCCURRENCE += 1
     return value
@@ -66,7 +66,7 @@ _WORKSPACE_OCCURRENCE: int = 0
 
 def reset_workspace_occurrences() -> None:
     """Reset the occurrence counter; called by the loader per module exec."""
-    global _WORKSPACE_OCCURRENCE
+    global _WORKSPACE_OCCURRENCE  # noqa: PLW0603 - module-level counter is the existing state model
     _WORKSPACE_OCCURRENCE = 0
 
 

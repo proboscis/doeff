@@ -667,7 +667,7 @@ def _workspace_identity(run_id: str, node_key: str) -> str:
     re-adopted the first run's branch including its commits (review
     finding F1, reproduced live).
     """
-    digest: str = hashlib.sha256(f"{run_id}\n{node_key}".encode("utf-8")).hexdigest()[:8]
+    digest: str = hashlib.sha256(f"{run_id}\n{node_key}".encode()).hexdigest()[:8]
     slug: str = _slugify(node_key)[-48:].strip("-")
     return f"{_slugify(run_id)}-{slug}-{digest}"
 

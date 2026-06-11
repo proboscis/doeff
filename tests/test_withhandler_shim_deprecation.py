@@ -17,9 +17,7 @@ from __future__ import annotations
 
 import warnings
 
-import pytest
-
-from doeff import Pure, Resume, Pass, WithHandler, WithHandlerType, do, run
+from doeff import Pass, Pure, WithHandler, WithHandlerType, do, run
 from doeff.program import _WithHandlerNode
 
 

@@ -1,8 +1,6 @@
 #!/usr/bin/env python
 """Example 05: custom PR workflow with deterministic Exec gates."""
 
-from doeff import EffectGenerator, do
-
 from doeff_conductor import (
     Agent,
     AgentTask,
@@ -18,6 +16,8 @@ from doeff_conductor import (
     Workspace,
 )
 from doeff_conductor.handlers import mock_handlers, run_sync
+
+from doeff import EffectGenerator, do
 
 CUSTOM_TEMPLATE_SCHEMA = {
     "type": "object",

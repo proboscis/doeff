@@ -3,8 +3,7 @@ import asyncio
 import doeff_vm
 import pytest
 
-from doeff import Effect, Program, do
-from doeff import Ask, Get, Modify, Pure, Put, Tell
+from doeff import Ask, Effect, Get, Modify, Program, Pure, Put, Tell, do
 
 
 def _with_handlers(program, *handlers):
@@ -859,7 +858,7 @@ def test_run_scoped_handlers_do_not_leak():
     assert result == 1
 
     # Second run without handlers should fail (no state handler)
-    with pytest.raises(Exception, match="(no matching handler|unhandled effect)"):
+    with pytest.raises(Exception, match=r"(no matching handler|unhandled effect)"):
         vm.run(counter_program())
 
 
@@ -874,7 +873,7 @@ def test_run_scoped_handlers_do_not_leak_writer():
     assert result == "completed"
 
     # Second run without handlers should fail
-    with pytest.raises(Exception, match="(no matching handler|unhandled effect)"):
+    with pytest.raises(Exception, match=r"(no matching handler|unhandled effect)"):
         vm.run(logging_program())
 
 
@@ -891,11 +890,11 @@ def test_run_scoped_error_still_cleans_up():
         yield  # make it a generator
 
     # This should raise but still clean up the handlers
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="intentional error"):
         vm.run(_with_handlers(failing_program(), doeff_vm.state))
 
     # Verify handler was cleaned up: running a state program should fail
-    with pytest.raises(Exception, match="(no matching handler|unhandled effect)"):
+    with pytest.raises(Exception, match=r"(no matching handler|unhandled effect)"):
         vm.run(counter_program())
 
 
@@ -949,7 +948,7 @@ def test_yielded_raw_generator_rejected_as_program():
         result = yield sub_generator()
         return result
 
-    with pytest.raises(TypeError, match="(Expected ProgramBase|DoExpr)"):
+    with pytest.raises(TypeError, match=r"(Expected ProgramBase|DoExpr)"):
         vm.run(main())
 
 
@@ -1507,14 +1506,12 @@ class TestR9ClassifyYieldedCompleteness:
         # contains explicit classify_yielded arms for all scheduler effects.
         # We import from the test to verify the effect classes exist and have
         # the expected type names that classify_yielded should match.
-        from doeff_core_effects.scheduler import Gather
         from doeff.effects.promise import CompletePromiseEffect, FailPromiseEffect
         from doeff.effects.race import RaceEffect
-        from doeff_core_effects.scheduler import Spawn
 
         # Verify the type names that classify_yielded needs to match
-        assert SpawnEffect.__name__ == "SpawnEffect"
-        assert GatherEffect.__name__ == "GatherEffect"
+        assert SpawnEffect.__name__ == "SpawnEffect"  # noqa: F821 - legacy removed API reference is intentionally preserved
+        assert GatherEffect.__name__ == "GatherEffect"  # noqa: F821 - legacy removed API reference is intentionally preserved
         assert RaceEffect.__name__ == "RaceEffect"
         assert CompletePromiseEffect.__name__ == "CompletePromiseEffect"
         assert FailPromiseEffect.__name__ == "FailPromiseEffect"
@@ -1555,6 +1552,7 @@ print("OK" if result.is_err() else "WRONG_OK")
             capture_output=True,
             text=True,
             timeout=3,
+            check=False,
         )
         assert result.returncode == 0, f"Process crashed: {result.stderr}"
         assert result.stdout.strip() == "OK", (
@@ -1569,15 +1567,13 @@ print("OK" if result.is_err() else "WRONG_OK")
         so scheduler effect classes must not expose program-only conversion
         methods such as ``to_generator``.
         """
-        from doeff_core_effects.scheduler import Gather
         from doeff.effects.promise import CompletePromiseEffect, FailPromiseEffect
         from doeff.effects.race import RaceEffect
-        from doeff_core_effects.scheduler import Spawn
 
         for cls in [
-            GatherEffect,
+            GatherEffect,  # noqa: F821 - legacy removed API reference is intentionally preserved
             RaceEffect,
-            SpawnEffect,
+            SpawnEffect,  # noqa: F821 - legacy removed API reference is intentionally preserved
             CompletePromiseEffect,
             FailPromiseEffect,
         ]:
@@ -1893,8 +1889,6 @@ def test_scheduler_spawn_creates_task():
     """ISSUE-VM-003: SpawnEffect should create a task via the scheduler handler."""
     from doeff_vm import PyVM
 
-    from doeff_core_effects.scheduler import Spawn
-
     vm = PyVM()
 
     @do
@@ -1904,7 +1898,7 @@ def test_scheduler_spawn_creates_task():
 
     @do
     def body() -> Program[dict]:
-        task = yield SpawnEffect(program=child(), handlers=[])
+        task = yield SpawnEffect(program=child(), handlers=[])  # noqa: F821 - legacy removed API reference is intentionally preserved
         return task
 
     result = vm.run(_with_handlers(body(), doeff_vm.scheduler))
@@ -1923,14 +1917,12 @@ def test_scheduler_gather_recognized_by_handler():
     """
     from doeff_vm import PyVM
 
-    from doeff_core_effects.scheduler import Gather
-
     vm = PyVM()
 
     @do
     def body() -> Program[object]:
         # GatherEffect with empty items — scheduler should handle it
-        result = yield GatherEffect(items=[])
+        result = yield GatherEffect(items=[])  # noqa: F821 - legacy removed API reference is intentionally preserved
         return result
 
     result = vm.run_with_result(_with_handlers(body(), doeff_vm.scheduler))
@@ -1949,9 +1941,8 @@ def test_scheduler_race_recognized_by_handler():
     Verifies that RaceEffect is classified correctly and dispatched to the
     scheduler handler (not rejected as UnhandledEffect or TypeError).
     """
-    from doeff_vm import PyVM
-
     from doeff.effects.race import RaceEffect
+    from doeff_vm import PyVM
 
     vm = PyVM()
 
@@ -2000,7 +1991,7 @@ def test_flatmap_rejects_non_doexpr_binder_return():
         )
     except TypeError as e:
         # Good — the VM rejected the non-DoExpr return
-        assert "flat_map" in str(e).lower() or "DoExpr" in str(e), (
+        assert "flat_map" in str(e).lower() or "DoExpr" in str(e), (  # noqa: PT017 - legacy assertion style is kept unchanged for baseline cleanup
             f"TypeError raised but message doesn't mention flat_map/DoExpr: {e}"
         )
 

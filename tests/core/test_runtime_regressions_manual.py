@@ -1,18 +1,15 @@
 from __future__ import annotations
 
 import doeff_vm
-import pytest
 
 from doeff import (
     Ask,
     Effect,
     EffectBase,
-    Err,
     Gather,
     Get,
     Local,
     MissingEnvKeyError,
-    Ok,
     Pass,
     Program,
     Put,
@@ -21,11 +18,8 @@ from doeff import (
     Try,
     WithHandler,
     do,
-    run,
 )
-from doeff_core_effects.handlers import state as state_handler
-from doeff_core_effects.scheduler import TaskCompleted
-from tests._run_helpers import default_handlers, run_with_defaults, wrap_with_defaults
+from tests._run_helpers import run_with_defaults
 
 
 def _rust_ok_err_classes() -> tuple[type, type]:

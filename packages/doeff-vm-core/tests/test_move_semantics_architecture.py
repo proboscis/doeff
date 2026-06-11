@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 CORE_ROOT = Path(__file__).resolve().parents[1]
 CONTINUATION_RS = CORE_ROOT / "src/continuation.rs"
 VM_DISPATCH_RS = CORE_ROOT / "src/vm/dispatch.rs"

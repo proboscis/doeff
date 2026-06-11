@@ -4,23 +4,22 @@ from __future__ import annotations
 
 import copy
 import time
+from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Generator
+from typing import Any
 
+from doeff_core_effects import Ask, Get, Put, Tell, Try
 from openai import AsyncOpenAI, OpenAI
 from openai.types import CreateEmbeddingResponse
 from openai.types.chat import ChatCompletion
 
 from doeff import do
-from doeff_core_effects import Ask, Get, Put, Tell, Try
-
-EffectGenerator = Generator
 from doeff_openai.effects.cost import CalculateCost
 from doeff_openai.types import APICallMetadata, TokenUsage
 
 
-def _prepare_prompt_details(
+def _prepare_prompt_details(  # noqa: PLR0912 - baseline cleanup keeps existing control flow unchanged
     request_payload: dict[str, Any],
 ) -> tuple[dict[str, Any], str | None, list[dict[str, Any]], list[dict[str, Any]] | None]:
     """Create a sanitized payload and extract prompt text/images/messages."""
@@ -137,6 +136,8 @@ class OpenAIClient:
             )
         return self._mut_clients.async_
 
+
+EffectGenerator = Generator
 
 @do
 def _get_state_or_none(key: str) -> EffectGenerator[Any | None]:

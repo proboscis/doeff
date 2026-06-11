@@ -3,10 +3,12 @@ Comprehensive test suite for doeff type detection.
 Each section tests specific detection rules.
 """
 
+from __future__ import annotations
+
 from collections.abc import Iterable
 from typing import Any, Generic, TypeVar
 
-from doeff import Effect, Program, do
+from doeff import Effect, Program, Tell, do
 
 # ===========================================================================
 # SECTION 1: INTERPRETERS (Program[T] -> Any where Any != Program)
@@ -195,7 +197,7 @@ class Controller:
 # ===========================================================================
 
 class User:
-    def __init__(self, id: str): self.id = id
+    def __init__(self, id: str): self.id = id  # noqa: A002 - public API parameter name is intentionally stable
 
 class Result:
     def __init__(self, data: Any): self.data = data
@@ -206,7 +208,7 @@ class Data:
 class LogEffect(Effect):
     def __init__(self, message: str): self.message = message
 
-def Log(msg: str): return LogEffect(msg)
+def Log(msg: str): return LogEffect(msg)  # noqa: N802 - public or spec test name is intentionally stable
 
 T = TypeVar("T")
 

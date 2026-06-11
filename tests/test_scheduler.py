@@ -432,7 +432,7 @@ class TestConcurrency:
 class TestPromise:
     def test_create_and_complete_promise(self):
         """Internal promise: create, complete, wait."""
-        from doeff_core_effects.scheduler import CreatePromise, CompletePromise
+        from doeff_core_effects.scheduler import CompletePromise, CreatePromise
 
         @do
         def body():
@@ -444,7 +444,7 @@ class TestPromise:
 
     def test_promise_across_tasks(self):
         """One task creates promise, another waits, first completes."""
-        from doeff_core_effects.scheduler import CreatePromise, CompletePromise
+        from doeff_core_effects.scheduler import CompletePromise, CreatePromise
 
         @do
         def body():
@@ -504,6 +504,7 @@ class TestExternalPromise:
         """100 tasks each sleeping 0.1s in threads. Must finish in <2s, not 10s."""
         import threading
         import time
+
         from doeff_core_effects.scheduler import CreateExternalPromise
 
         @do
@@ -539,7 +540,7 @@ class TestExternalPromise:
 class TestCancel:
     def test_cancel_blocked_task(self):
         """Cancel a task that's blocked waiting on a promise."""
-        from doeff_core_effects.scheduler import Cancel, TaskCancelledError, CreateExternalPromise
+        from doeff_core_effects.scheduler import Cancel, CreateExternalPromise, TaskCancelledError
 
         @do
         def body():
@@ -646,7 +647,7 @@ class TestErrorPropagation:
 class TestSemaphore:
     def test_binary_semaphore_mutual_exclusion(self):
         """Binary semaphore (permits=1) ensures mutual exclusion."""
-        from doeff_core_effects.scheduler import CreateSemaphore, AcquireSemaphore, ReleaseSemaphore
+        from doeff_core_effects.scheduler import AcquireSemaphore, CreateSemaphore, ReleaseSemaphore
 
         log = []
 
@@ -669,12 +670,11 @@ class TestSemaphore:
         assert result == ["A", "B"]
         # Mutual exclusion: no interleaving of enter/exit
         # Either [A_enter, A_exit, B_enter, B_exit] or [B_enter, B_exit, A_enter, A_exit]
-        assert (log == ["A_enter", "A_exit", "B_enter", "B_exit"] or
-                log == ["B_enter", "B_exit", "A_enter", "A_exit"])
+        assert (log in (["A_enter", "A_exit", "B_enter", "B_exit"], ["B_enter", "B_exit", "A_enter", "A_exit"]))
 
     def test_counting_semaphore(self):
         """Counting semaphore allows N concurrent accessors."""
-        from doeff_core_effects.scheduler import CreateSemaphore, AcquireSemaphore, ReleaseSemaphore
+        from doeff_core_effects.scheduler import AcquireSemaphore, CreateSemaphore, ReleaseSemaphore
 
         @do
         def worker(sem, i):

@@ -7,12 +7,10 @@ with :class:`doeff.WithHandler`, mirroring the supported usage pattern.
 """
 
 import pytest
-
-from doeff import Pass, Resume, WithHandler, do, run
 from doeff_openai import (
+    MODEL_PRICING,
     CalculateCost,
     CostInfo,
-    MODEL_PRICING,
     MissingCachedPricingError,
     TokenUsage,
     UnknownModelPricingError,
@@ -20,6 +18,7 @@ from doeff_openai import (
 )
 from doeff_openai.handlers.production import openai_production_handler
 
+from doeff import Pass, Resume, WithHandler, do, run
 
 # ---------------------------------------------------------------------------
 # Pricing table — GPT-5 family exists and matches published rates

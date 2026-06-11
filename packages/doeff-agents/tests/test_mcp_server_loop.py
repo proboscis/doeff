@@ -10,19 +10,14 @@ scheduler state, and Ask-resolution shared across pipeline + tool calls.
 from __future__ import annotations
 
 import threading
-import time
 
 import hy  # noqa: F401  (enable .hy imports)
-import pytest
-
-from doeff import EffectBase, Pass, Perform, Pure, Resume, WithHandler, do, run
-from doeff_core_effects.handlers import state
-from doeff_core_effects.scheduler import Spawn, Wait, scheduled
-from doeff.mcp import McpParamSchema, McpToolDef
-
 from doeff_agents.handlers.mcp_server_loop import mcp_server_loop
 from doeff_agents.mcp_server import McpToolRequest, McpToolServer
+from doeff_core_effects.scheduler import scheduled
 
+from doeff import EffectBase, Pass, Perform, Pure, Resume, do, run
+from doeff.mcp import McpParamSchema, McpToolDef
 
 # ---------------------------------------------------------------------------
 # Test fixtures
@@ -114,7 +109,6 @@ class TestMcpServerLoopDispatch:
         @do
         def main():
             yield mcp_server_loop(server, [])
-            return None
 
         run(scheduled(main()))
         assert captured == [(True, "echo: hi")]
@@ -141,7 +135,6 @@ class TestMcpServerLoopDispatch:
         @do
         def main():
             yield mcp_server_loop(server, full_stack)
-            return None
 
         run(scheduled(main()))
         assert driver_result == [(True, "Hello, World!")]
@@ -167,7 +160,6 @@ class TestMcpServerLoopDispatch:
         @do
         def main():
             yield mcp_server_loop(server, [])
-            return None
 
         run(scheduled(main()))
         ok, value = driver_result[0]
@@ -205,7 +197,6 @@ class TestMcpServerLoopDispatch:
         @do
         def main():
             yield mcp_server_loop(server, [])
-            return None
 
         run(scheduled(main()))
         ok, value = driver_result[0]
@@ -239,7 +230,6 @@ class TestMcpServerLoopMultiple:
         @do
         def main():
             yield mcp_server_loop(server, [])
-            return None
 
         run(scheduled(main()))
         assert results == [(True, "echo: one"), (True, "echo: two")]
@@ -259,6 +249,5 @@ class TestMcpServerLoopMultiple:
         @do
         def main():
             yield mcp_server_loop(server, [])
-            return None
 
         run(scheduled(main()))  # should return, not hang

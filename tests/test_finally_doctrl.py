@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from doeff import Get, Pure, Put, Try, do
+from doeff import Get, Put, Try, do
 from tests._run_helpers import run_with_defaults
 
 

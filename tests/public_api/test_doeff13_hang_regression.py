@@ -20,11 +20,10 @@ import pytest
 from doeff import (
     Effect,
     EffectBase,
-    Pass,
     Resume,
     WithHandler,
     do,
-    run,)
+)
 from tests._run_helpers import run_with_defaults
 
 # ---------------------------------------------------------------------------

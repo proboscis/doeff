@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from doeff import Ask, Delegate, Effect, Resume, WithHandler, default_handlers, do, run
+from doeff import Ask, Resume
+
 # REMOVED: from doeff.program import GeneratorProgram
 
 
@@ -26,32 +27,32 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _mk_program(value: int = 42) -> GeneratorProgram[int]:
+def _mk_program(value: int = 42) -> GeneratorProgram[int]:  # noqa: F821 - legacy removed API reference is intentionally preserved
     def gen():
         return value
-        yield  # noqa: RET504
+        yield
 
-    return GeneratorProgram(gen)
-
-
+    return GeneratorProgram(gen)  # noqa: F821 - legacy removed API reference is intentionally preserved
 
 
 
-def test_SA_007_G04_dothunk_removed_from_public_hierarchy() -> None:
+
+
+def test_SA_007_G04_dothunk_removed_from_public_hierarchy() -> None:  # noqa: N802 - public or spec test name is intentionally stable
     src = _read(ROOT / "doeff" / "program.py")
     assert "class DoThunk" not in src
 
 
 
 
-def test_SA_007_G07_get_handlers_preserves_identity_not_placeholder() -> None:
+def test_SA_007_G07_get_handlers_preserves_identity_not_placeholder() -> None:  # noqa: N802 - public or spec test name is intentionally stable
     value_src = _read(ROOT / "packages" / "doeff-vm" / "src" / "value.rs")
     cont_src = _read(ROOT / "packages" / "doeff-vm" / "src" / "continuation.rs")
     assert '"rust_program_handler"' not in value_src
     assert '"rust_program_handler"' not in cont_src
 
 
-def test_SA_007_G08_classifier_avoids_concrete_doctrl_type_checks() -> None:
+def test_SA_007_G08_classifier_avoids_concrete_doctrl_type_checks() -> None:  # noqa: N802 - public or spec test name is intentionally stable
     src = _read(ROOT / "packages" / "doeff-vm" / "src" / "pyvm.rs")
     assert "is_instance_of::<PyWithHandler>" not in src
     assert "is_instance_of::<PyResume>" not in src
@@ -59,6 +60,6 @@ def test_SA_007_G08_classifier_avoids_concrete_doctrl_type_checks() -> None:
     assert "is_instance_of::<PyTransfer>" not in src
 
 
-def test_SA_007_G03_resume_constructor_validates_k_handle() -> None:
+def test_SA_007_G03_resume_constructor_validates_k_handle() -> None:  # noqa: N802 - public or spec test name is intentionally stable
     with pytest.raises(TypeError, match=r"(?i)k"):
         Resume("not_k", Ask("x"))

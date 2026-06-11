@@ -1,6 +1,5 @@
 from typing import Any
 
-
 def http_get(
     url: str,
     *,

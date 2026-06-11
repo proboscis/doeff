@@ -6,22 +6,20 @@ Tests isolate individual effects used by cache() to find the culprit.
 from __future__ import annotations
 
 import asyncio
-import os
 import signal
 from typing import Any
 
-import pytest
+from doeff_core_effects.cache import FrozenDict
+from doeff_vm import GetExecutionContext
 
 from doeff import (
+    Await,
     Gather,
     Spawn,
+    Try,
     do,
     slog,
 )
-from doeff import Await
-from doeff_vm import GetExecutionContext
-from doeff import Try
-from doeff_core_effects.cache import FrozenDict
 from tests._run_helpers import run_with_defaults
 
 TIMEOUT_SECONDS = 60
@@ -128,9 +126,9 @@ def _cache_like_depth(i: int):
         yield Await(asyncio.sleep(0.001))
         return f"done-{i}"
 
-    context = yield GetExecutionContext()
+    yield GetExecutionContext()
     key = yield build_key()
-    miss = yield try_get(key)
+    yield try_get(key)
     return (yield compute(key))
 
 

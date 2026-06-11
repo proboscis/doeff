@@ -54,7 +54,7 @@ class TestRunAgentEffect:
         effect = RunAgent(config)
 
         with pytest.raises(AttributeError):
-            setattr(effect, "poll_interval", 5.0)
+            effect.poll_interval = 5.0
 
 
 class TestSendMessageEffect:

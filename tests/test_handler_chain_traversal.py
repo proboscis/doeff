@@ -7,19 +7,18 @@ handlers. But with many handlers, it appears to skip some.
 Works with 3 handlers, fails with 29.
 """
 
-from doeff import do, WithHandler, run
-from doeff_vm import EffectBase, Resume, Pass
 from doeff_core_effects.scheduler import scheduled
+from doeff_vm import EffectBase, Pass, Resume
+
+from doeff import WithHandler, do, run
 
 
 class EffectA(EffectBase):
     """Handled by handler at position 9."""
-    pass
 
 
 class EffectB(EffectBase):
     """Emitted by handler_a, should be caught by handler at position 18."""
-    pass
 
 
 @do

@@ -12,8 +12,8 @@ from doeff_conductor.effects import (
     DeleteWorkspace,
     GetIssue,
     ListIssues,
-    MergeWorkspaces,
     MergePR,
+    MergeWorkspaces,
     Push,
     ResolveIssue,
 )

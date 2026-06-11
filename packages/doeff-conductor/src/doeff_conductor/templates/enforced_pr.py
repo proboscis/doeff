@@ -13,8 +13,7 @@ A workflow with quality gates:
 
 
 from doeff import EffectGenerator, do
-
-from ..types import Issue, PRHandle
+from doeff_conductor.types import Issue, PRHandle
 
 IMPLEMENT_SCHEMA = {
     "type": "object",
@@ -55,7 +54,15 @@ def enforced_pr(
     Raises:
         RuntimeError: If tests still fail after max_retries
     """
-    from ..effects import Agent, AgentTask, Commit, CreatePR, CreateWorkspace, Push, ResolveIssue
+    from doeff_conductor.effects import (
+        Agent,
+        AgentTask,
+        Commit,
+        CreatePR,
+        CreateWorkspace,
+        Push,
+        ResolveIssue,
+    )
 
     # Step 1: Create isolated worktree (identity is resume-stable per issue)
     env = yield CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-enforced-pr")

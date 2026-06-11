@@ -58,6 +58,7 @@ except ModuleNotFoundError:
 from pydantic import BaseModel
 
 from doeff import (
+    Effect,
     Delegate,
     EffectGenerator,
     Resume,
@@ -66,7 +67,6 @@ from doeff import (
     do,
     run,
 )
-from doeff_core_effects.effects import EffectBase
 from doeff_image.effects import ImageEdit
 from doeff_image.effects import ImageEdit as UnifiedImageEdit
 from doeff_image.effects import ImageGenerate as UnifiedImageGenerate
