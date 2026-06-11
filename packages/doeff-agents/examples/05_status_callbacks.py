@@ -7,7 +7,7 @@ session events instead of traditional callbacks.
 
 With the effects-based approach:
 - Status changes are logged via slog effects
-- PR URL detection is logged via slog effects  
+- PR URL detection is logged via slog effects
 - Event collection is done through the runtime's log accumulation
 - All events are structured and queryable
 
@@ -24,12 +24,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from doeff import do
-from doeff.effects.writer import slog
-from doeff_time import Delay
-from doeff_preset import preset_handlers
-
 from _runtime import run_program
+from doeff.effects.writer import slog
 from doeff_agents import (
     AgentType,
     Capture,
@@ -45,7 +41,10 @@ from doeff_agents import (
     configure_mock_session,
     mock_agent_handlers,
 )
+from doeff_preset import preset_handlers
+from doeff_time import Delay
 
+from doeff import do
 
 # =============================================================================
 # Event Types for Structured Logging
@@ -72,25 +71,25 @@ class SessionEvent:
 @do
 def monitored_session_workflow(session_name: str, config: LaunchConfig):
     """Run a session with comprehensive slog-based monitoring.
-    
+
     Instead of callbacks, we yield slog effects for every event.
     The runtime accumulates these logs for later analysis.
     """
     yield slog(step="session_start", session_name=session_name, timestamp=datetime.now(timezone.utc).isoformat())
-    
+
     handle: SessionHandle = yield Launch(session_name, config)
     yield slog(step="launched", pane_id=handle.pane_id)
-    
+
     previous_status = SessionStatus.PENDING
     final_status = SessionStatus.PENDING
     pr_url: str | None = None
     iteration = 0
-    
+
     try:
         for iteration in range(60):
             observation: Observation = yield Monitor(handle)
             final_status = observation.status
-            
+
             # Log status changes (equivalent to on_status_change callback)
             if observation.status != previous_status:
                 yield slog(
@@ -100,7 +99,7 @@ def monitored_session_workflow(session_name: str, config: LaunchConfig):
                     new_status=observation.status.value,
                     timestamp=datetime.now(timezone.utc).isoformat(),
                 )
-                
+
                 # Log specific status events
                 if observation.status == SessionStatus.BLOCKED:
                     yield slog(
@@ -130,9 +129,9 @@ def monitored_session_workflow(session_name: str, config: LaunchConfig):
                         event_type="completed",
                         msg=f"Session completed ({iteration}s)",
                     )
-                
+
                 previous_status = observation.status
-            
+
             # Log PR detection (equivalent to on_pr_detected callback)
             if observation.pr_url and not pr_url:
                 pr_url = observation.pr_url
@@ -142,12 +141,12 @@ def monitored_session_workflow(session_name: str, config: LaunchConfig):
                     pr_url=pr_url,
                     timestamp=datetime.now(timezone.utc).isoformat(),
                 )
-            
+
             if observation.is_terminal:
                 break
-            
+
             yield Delay(1.0)
-        
+
         # Final output capture
         output = yield Capture(handle, lines=50)
         yield slog(
@@ -157,7 +156,7 @@ def monitored_session_workflow(session_name: str, config: LaunchConfig):
             pr_url=pr_url,
             duration_iterations=iteration,
         )
-        
+
         return {
             "session_name": session_name,
             "final_status": final_status.value,
@@ -165,7 +164,7 @@ def monitored_session_workflow(session_name: str, config: LaunchConfig):
             "output": output,
             "iterations": iteration,
         }
-    
+
     finally:
         yield Stop(handle)
 
@@ -173,7 +172,7 @@ def monitored_session_workflow(session_name: str, config: LaunchConfig):
 @do
 def event_collecting_workflow(session_name: str, config: LaunchConfig):
     """Workflow that collects events for post-run analysis.
-    
+
     Uses slog with structured data that can be extracted from
     the runtime's accumulated log.
     """
@@ -182,45 +181,45 @@ def event_collecting_workflow(session_name: str, config: LaunchConfig):
         event_type="collection_started",
         session_name=session_name,
     )
-    
+
     result = yield from monitored_session_workflow(session_name, config)
-    
+
     yield slog(
         step="collector_end",
         event_type="collection_complete",
         total_events="see_accumulated_log",
         final_status=result["final_status"],
     )
-    
+
     return result
 
 
 @do
 def notification_workflow(session_name: str, config: LaunchConfig):
     """Workflow demonstrating notification-style events.
-    
+
     In production, these slogs could be processed by a handler
     that sends actual notifications (Slack, email, etc.).
     """
     start_time = time.time()
-    
+
     yield slog(
         step="notifier_start",
         event_type="notification",
         channel="monitoring",
         msg=f"Starting session: {session_name}",
     )
-    
+
     handle: SessionHandle = yield Launch(session_name, config)
     previous_status = SessionStatus.PENDING
     final_status = SessionStatus.PENDING
-    
+
     try:
-        for iteration in range(60):
+        for _iteration in range(60):
             observation = yield Monitor(handle)
             final_status = observation.status
             elapsed = time.time() - start_time
-            
+
             if observation.status != previous_status:
                 # Notification-style logging
                 if observation.status == SessionStatus.BLOCKED:
@@ -253,9 +252,9 @@ def notification_workflow(session_name: str, config: LaunchConfig):
                         severity="info",
                         msg=f"[{session_name}] Session completed ({elapsed:.0f}s)",
                     )
-                
+
                 previous_status = observation.status
-            
+
             if observation.pr_url:
                 yield slog(
                     step="notification",
@@ -263,19 +262,19 @@ def notification_workflow(session_name: str, config: LaunchConfig):
                     severity="info",
                     msg=f"[{session_name}] PR Created: {observation.pr_url}",
                 )
-            
+
             if observation.is_terminal:
                 break
-            
+
             yield Delay(1.0)
-        
+
         output = yield Capture(handle, lines=30)
         return {
             "session_name": session_name,
             "final_status": final_status.value,
             "output": output,
         }
-    
+
     finally:
         yield Stop(handle)
 
