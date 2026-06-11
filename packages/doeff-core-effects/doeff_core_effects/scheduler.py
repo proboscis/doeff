@@ -230,7 +230,7 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
     tasks = {}           # tid → {status, result, program, priority}
     promises = {}        # pid → {status, result}
     semaphores = {}      # sid → {permits, max_permits, waiters: deque of k}
-    waiters = {}         # waitable_key → [(type, k, ...)] or gather-state refs
+    waiters = {}         # waitable_key → [(type, k, ...)] or gather/race-state refs
     ready = []           # heapq: (-priority, seq, entry)
     external_queue = queue_mod.Queue()  # thread-safe, blocking get()
 
@@ -423,6 +423,39 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             results = [waitable_status(wk)[1] for wk in gather_state["keys"]]
             enqueue(("resume", gather_state["waiter_k"], results))
 
+    def remove_race_waiters(race_state):
+        """Remove unresolved sibling waiter refs after Race has a winner."""
+        for wk in set(race_state["pending_keys"]):
+            entries = waiters.get(wk)
+            if not entries:
+                continue
+            remaining_entries = [
+                entry
+                for entry in entries
+                if not (entry[0] == "race" and entry[1] is race_state)
+            ]
+            if remaining_entries:
+                waiters[wk] = remaining_entries
+            else:
+                waiters.pop(wk, None)
+
+    def wake_race_waiter(race_state, completed_key):
+        if race_state["resolved"]:
+            return
+
+        status, result = waitable_status(completed_key)
+        if status not in terminal_statuses:
+            return
+
+        race_state["resolved"] = True
+        remove_race_waiters(race_state)
+        if status == "completed":
+            enqueue(("resume", race_state["waiter_k"], result))
+        elif status == "failed":
+            enqueue(("raise", race_state["waiter_k"], result))
+        elif status == "cancelled":
+            enqueue(("raise", race_state["waiter_k"], TaskCancelledError()))
+
     def wake_waiters(completed_key):
         ws = waiters.pop(completed_key, [])
         for w in ws:
@@ -433,8 +466,8 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 _, gather_state = w
                 wake_gather_waiter(gather_state, completed_key)
             elif w[0] == "race":
-                _, waiter_k, _race_waitables = w
-                resume_with_waitable_result(waiter_k, completed_key)
+                _, race_state = w
+                wake_race_waiter(race_state, completed_key)
 
     def drain():
         """Drain all pending external completions into promise state."""
@@ -562,11 +595,19 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                     err = result if status == "failed" else TaskCancelledError()
                     return (yield ResumeThrow(k, err))
             # All pending
+            pending_wks = []
             for t in effect.tasks:
                 wk = waitable_key(t)
                 if waitable_status(wk)[0] not in terminal_statuses:
-                    waiters.setdefault(wk, []).append(("race", k, effect.tasks))
-                    break
+                    pending_wks.append(wk)
+            if pending_wks:
+                race_state = {
+                    "waiter_k": k,
+                    "pending_keys": pending_wks,
+                    "resolved": False,
+                }
+                for wk in pending_wks:
+                    waiters.setdefault(wk, []).append(("race", race_state))
             yield TailEval(pick_next())
 
         elif isinstance(effect, Cancel):
