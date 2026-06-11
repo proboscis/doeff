@@ -468,9 +468,14 @@ def _phase_stakes(expanded: ExpandedWorkflow, phase_name: str | None) -> str:
 def _failure_gate_options() -> tuple[GateOption, ...]:
     return (
         GateOption(
-            name="retry-with-feedback",
+            name="proceed",
             outcome="resume",
-            description="Retry the blocked node with overseer feedback.",
+            description="Resume the parked subtree after the blocking condition is cleared.",
+        ),
+        GateOption(
+            name="redirect",
+            outcome="resume",
+            description="Edit workflow state or inputs, then resume from the journal prefix.",
         ),
         GateOption(
             name="abort",
@@ -486,6 +491,11 @@ def _checkpoint_options() -> tuple[GateOption, ...]:
             name="proceed",
             outcome="resume",
             description="Accept the phase artifact summaries and continue.",
+        ),
+        GateOption(
+            name="redirect",
+            outcome="resume",
+            description="Edit workflow state or inputs, then resume from the checkpoint.",
         ),
         GateOption(
             name="abort",

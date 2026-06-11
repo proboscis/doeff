@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -131,6 +131,7 @@ class RunStateView:
     events: tuple[ProgressEvent, ...]
     open_gates: tuple[OpenGateView, ...]
     supervision: str = "autonomous"
+    answered_gates: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -139,6 +140,7 @@ class RunStateView:
             "supervision": self.supervision,
             "events": [event.to_dict() for event in self.events],
             "open_gates": [gate.to_dict() for gate in self.open_gates],
+            "answered_gates": dict(self.answered_gates),
         }
 
     @classmethod
@@ -149,6 +151,9 @@ class RunStateView:
             raise ValueError("run-state events must be a list")
         if not isinstance(raw_gates, list):
             raise ValueError("run-state open_gates must be a list")
+        raw_answered: object = data.get("answered_gates", {})
+        if not isinstance(raw_answered, dict):
+            raise ValueError("run-state answered_gates must be an object")
         events: tuple[ProgressEvent, ...] = tuple(
             ProgressEvent.from_dict(event)
             for event in raw_events
@@ -165,6 +170,7 @@ class RunStateView:
             supervision=str(data.get("supervision", "autonomous")),
             events=events,
             open_gates=gates,
+            answered_gates={str(key): str(value) for key, value in raw_answered.items()},
         )
 
 
@@ -203,7 +209,11 @@ def progress_since(state_dir: str | Path, workflow_id: str, since_sequence: int)
 def list_open_gates(state_dir: str | Path, workflow_id: str | None = None) -> list[dict[str, Any]]:
     base_dir: Path = Path(state_dir) / "workflows"
     if workflow_id is not None:
-        return [gate.to_dict() for gate in load_run_state(state_dir, workflow_id).open_gates]
+        try:
+            run_state = load_run_state(state_dir, workflow_id)
+        except FileNotFoundError:
+            return []
+        return [gate.to_dict() for gate in run_state.open_gates]
 
     gates: list[dict[str, Any]] = []
     if not base_dir.exists():
@@ -217,6 +227,115 @@ def list_open_gates(state_dir: str | Path, workflow_id: str | None = None) -> li
         run_state: RunStateView = load_run_state(state_dir, workflow_dir.name)
         gates.extend(gate.to_dict() for gate in run_state.open_gates)
     return gates
+
+
+def answered_gate_options(state_dir: str | Path, workflow_id: str) -> dict[str, str]:
+    try:
+        run_state: RunStateView = load_run_state(state_dir, workflow_id)
+    except FileNotFoundError:
+        return {}
+    return dict(run_state.answered_gates)
+
+
+def record_open_gates(
+    state_dir: str | Path,
+    *,
+    workflow_id: str,
+    workflow_name: str,
+    open_gates: tuple[OpenGateView, ...],
+    supervision: str,
+) -> RunStateView:
+    try:
+        existing: RunStateView = load_run_state(state_dir, workflow_id)
+    except FileNotFoundError:
+        existing = RunStateView(
+            workflow_id=workflow_id,
+            workflow_name=workflow_name,
+            events=(),
+            open_gates=(),
+            supervision=supervision,
+        )
+
+    events: list[ProgressEvent] = list(existing.events)
+    gates_by_id: dict[str, OpenGateView] = {
+        gate.gate_id: gate for gate in existing.open_gates
+    }
+    sequence = _last_sequence(existing.events)
+    for gate in open_gates:
+        if gate.gate_id not in gates_by_id:
+            sequence += 1
+            events.append(
+                make_progress_event(
+                    sequence=sequence,
+                    workflow_id=workflow_id,
+                    node_id=gate.node_id,
+                    phase=gate.phase,
+                    status="open",
+                    message=f"{gate.reason}: {gate.gate_id}",
+                    terminal_kind="gate",
+                )
+            )
+        gates_by_id[gate.gate_id] = gate
+
+    updated = RunStateView(
+        workflow_id=workflow_id,
+        workflow_name=workflow_name,
+        events=tuple(events),
+        open_gates=tuple(gates_by_id.values()),
+        supervision=supervision,
+        answered_gates=dict(existing.answered_gates),
+    )
+    save_run_state(state_dir, updated)
+    return updated
+
+
+def record_gate_answer(
+    state_dir: str | Path,
+    *,
+    workflow_id: str,
+    gate_id: str,
+    option: str,
+) -> RunStateView:
+    existing: RunStateView = load_run_state(state_dir, workflow_id)
+    target_gate: OpenGateView | None = None
+    remaining_gates: list[OpenGateView] = []
+    for gate in existing.open_gates:
+        if gate.gate_id == gate_id:
+            target_gate = gate
+        else:
+            remaining_gates.append(gate)
+    if target_gate is None:
+        raise ValueError(f"open gate not found: {gate_id}")
+
+    valid_options = {gate_option.name for gate_option in target_gate.options}
+    if option not in valid_options:
+        raise ValueError(f"gate {gate_id!r} does not support option {option!r}")
+
+    sequence = _last_sequence(existing.events) + 1
+    events = (
+        *existing.events,
+        make_progress_event(
+            sequence=sequence,
+            workflow_id=workflow_id,
+            node_id=target_gate.node_id,
+            phase=target_gate.phase,
+            status="answered",
+            message=f"{gate_id} answered with {option}",
+            terminal_kind="gate-answer",
+        ),
+    )
+    answered_gates = dict(existing.answered_gates)
+    answered_gates[gate_id] = option
+    updated = RunStateView(
+        workflow_id=workflow_id,
+        workflow_name=existing.workflow_name,
+        events=events,
+        open_gates=tuple(remaining_gates),
+        supervision=existing.supervision,
+        answered_gates=answered_gates,
+    )
+    save_run_state(state_dir, updated)
+    return updated
 
 
 def make_progress_event(
@@ -239,3 +358,9 @@ def make_progress_event(
         terminal_kind=terminal_kind,
         at=datetime.now(timezone.utc).isoformat(),
     )
+
+
+def _last_sequence(events: tuple[ProgressEvent, ...]) -> int:
+    if not events:
+        return 0
+    return max(event.sequence for event in events)
