@@ -76,6 +76,13 @@ def _run_with_journal(
     )
 
 
+
+def _session_id(run_id: str, node_id: str, identity: ResolvedIdentity) -> str:
+    """Derive the session id exactly as the runtime does (incl. fingerprint)."""
+    return _agent_task(
+        run_id=run_id, node_id=node_id, env=None, prompt="", identity=identity
+    ).session_id
+
 def test_kill_and_resume_replays_longest_valid_prefix_under_stubs(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     runtime = MockConductorRuntime(tmp_path / "runtime")
@@ -84,7 +91,7 @@ def test_kill_and_resume_replays_longest_valid_prefix_under_stubs(tmp_path: Path
 
     for node_id in ("node-1", "node-2", "node-3"):
         runtime.configure_agent_script(
-            f"{run_id}-{node_id}-0",
+            _session_id(run_id, node_id, identity),
             [{"summary": f"{node_id} executed"}],
         )
 
@@ -129,9 +136,9 @@ def test_kill_and_resume_replays_longest_valid_prefix_under_stubs(tmp_path: Path
     )
 
     assert first_result.is_err()
-    assert runtime.agent_invocation_count(f"{run_id}-node-1-0") == 1
-    assert runtime.agent_invocation_count(f"{run_id}-node-2-0") == 1
-    assert runtime.agent_invocation_count(f"{run_id}-node-3-0") == 0
+    assert runtime.agent_invocation_count(_session_id(run_id, "node-1", identity)) == 1
+    assert runtime.agent_invocation_count(_session_id(run_id, "node-2", identity)) == 1
+    assert runtime.agent_invocation_count(_session_id(run_id, "node-3", identity)) == 0
 
     journal = AgentJournal.for_run(run_id, state_dir=state_dir)
     assert journal.path == state_dir / "workflows" / run_id / "agent-journal.jsonl"
@@ -152,20 +159,15 @@ def test_kill_and_resume_replays_longest_valid_prefix_under_stubs(tmp_path: Path
         "node-2 executed",
         "node-3 executed",
     ]
-    assert runtime.agent_invocation_count(f"{run_id}-node-1-0") == 1
-    assert runtime.agent_invocation_count(f"{run_id}-node-2-0") == 1
-    assert runtime.agent_invocation_count(f"{run_id}-node-3-0") == 1
+    assert runtime.agent_invocation_count(_session_id(run_id, "node-1", identity)) == 1
+    assert runtime.agent_invocation_count(_session_id(run_id, "node-2", identity)) == 1
+    assert runtime.agent_invocation_count(_session_id(run_id, "node-3", identity)) == 1
 
 
 def test_fingerprint_mismatch_invalidates_cached_agent_result(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     runtime = MockConductorRuntime(tmp_path / "runtime")
     run_id = "run-fingerprint"
-    session_id = f"{run_id}-node-1-0"
-    runtime.configure_agent_script(
-        session_id,
-        [{"summary": "old profile result"}, {"summary": "new profile result"}],
-    )
 
     @do
     def workflow(identity: ResolvedIdentity):
@@ -184,6 +186,15 @@ def test_fingerprint_mismatch_invalidates_cached_agent_result(tmp_path: Path) ->
 
     old_identity = ResolvedIdentity(adapter="codex", model="gpt-5", identity="company-v1")
     new_identity = ResolvedIdentity(adapter="codex", model="gpt-5", identity="company-v2")
+    # A changed resolved identity is a DIFFERENT session, not a re-prompt
+    # of the old one: name-only re-adoption used to serve the stale
+    # payload after the journal had correctly invalidated (observed live).
+    runtime.configure_agent_script(
+        _session_id(run_id, "node-1", old_identity), [{"summary": "old profile result"}]
+    )
+    runtime.configure_agent_script(
+        _session_id(run_id, "node-1", new_identity), [{"summary": "new profile result"}]
+    )
 
     first_result = _run_with_journal(
         workflow(old_identity),
@@ -198,7 +209,8 @@ def test_fingerprint_mismatch_invalidates_cached_agent_result(tmp_path: Path) ->
 
     assert first_result.value == {"summary": "old profile result"}
     assert second_result.value == {"summary": "new profile result"}
-    assert runtime.agent_invocation_count(session_id) == 2
+    assert runtime.agent_invocation_count(_session_id(run_id, "node-1", old_identity)) == 1
+    assert runtime.agent_invocation_count(_session_id(run_id, "node-1", new_identity)) == 1
 
     latest_entries = AgentJournal.for_run(run_id, state_dir=state_dir).latest_generation_entries()
     assert len(latest_entries) == 1

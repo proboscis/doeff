@@ -6,7 +6,8 @@ from typing import cast
 
 import pytest
 from click.testing import CliRunner
-from doeff_agents.effects import deterministic_session_id
+from doeff_conductor.effects import AgentTask
+from doeff_conductor.replay_keying import ResolvedIdentity
 from doeff_agents.effects.agent import AgentAttemptExhaustedError
 from doeff_conductor.api import ConductorAPI
 from doeff_conductor.cli import cli
@@ -22,6 +23,23 @@ from doeff_conductor.workflow_loader import (
 
 FIXTURES = Path(__file__).parent / "fixtures" / "workflow_nondeterminism"
 
+
+
+def _cheap_session_id(run_id: str, node_id: str) -> str:
+    """Session id as the runtime derives it for the default cheap-coder profile."""
+    return AgentTask(
+        run_id=run_id,
+        node_id=node_id,
+        attempt=0,
+        env=None,
+        prompt="",
+        result_schema={},
+        verification_class="mechanical",
+        agent_type="codex",
+        resolved_identity=ResolvedIdentity(
+            adapter="codex", model=None, identity=None, effort="xhigh"
+        ),
+    ).session_id
 
 def _write_single_file_workflow(path: Path) -> None:
     path.write_text(
@@ -199,16 +217,8 @@ def test_single_file_dsl_run_returns_payload_and_resumes_from_snapshot(
     _write_single_file_workflow(workflow_path)
 
     runtime = MockConductorRuntime(tmp_path / "runtime")
-    first_session_id = deterministic_session_id(
-        run_id=run_id,
-        node_id="single-file/1/agent",
-        attempt=0,
-    )
-    second_session_id = deterministic_session_id(
-        run_id=run_id,
-        node_id="single-file/2/agent",
-        attempt=0,
-    )
+    first_session_id = _cheap_session_id(run_id, "single-file/1/agent")
+    second_session_id = _cheap_session_id(run_id, "single-file/2/agent")
     runtime.configure_agent_script(first_session_id, [{"summary": "first"}])
     runtime.configure_agent_script(second_session_id, [None])
     _install_mock_production_handlers(monkeypatch=monkeypatch, runtime=runtime)
@@ -242,16 +252,8 @@ def test_cli_run_json_includes_workflow_return_payload(
     _write_single_file_workflow(workflow_path)
 
     runtime = MockConductorRuntime(tmp_path / "runtime")
-    first_session_id = deterministic_session_id(
-        run_id=run_id,
-        node_id="single-file/1/agent",
-        attempt=0,
-    )
-    second_session_id = deterministic_session_id(
-        run_id=run_id,
-        node_id="single-file/2/agent",
-        attempt=0,
-    )
+    first_session_id = _cheap_session_id(run_id, "single-file/1/agent")
+    second_session_id = _cheap_session_id(run_id, "single-file/2/agent")
     runtime.configure_agent_script(first_session_id, [{"summary": "first"}])
     runtime.configure_agent_script(second_session_id, [{"summary": "json-result"}])
     _install_mock_production_handlers(monkeypatch=monkeypatch, runtime=runtime)

@@ -115,3 +115,33 @@ def test_workflow_runtime_passes_profile_effort_into_agent_task(
     assert task.effort == "xhigh"
     assert task.resolved_identity is not None
     assert task.resolved_identity.effort == "xhigh"
+
+
+def test_session_id_carries_resolved_identity_fingerprint() -> None:
+    """A profile edit must yield a NEW session, not re-adopt the old one.
+
+    The journal invalidates on fingerprint change (new generation), but
+    session launch is idempotent by name — without the fingerprint in the
+    name, the re-dispatched agent re-adopted the stale DONE session and
+    returned its old payload (observed live), defeating D7 end to end.
+    """
+    from doeff_conductor.effects import AgentTask
+    from doeff_conductor.replay_keying import ResolvedIdentity
+
+    def task(effort: str) -> AgentTask:
+        return AgentTask(
+            run_id="run-1",
+            node_id="wf/0/agent",
+            attempt=0,
+            env=None,  # type: ignore[arg-type]
+            prompt="p",
+            result_schema={},
+            verification_class="mechanical",
+            agent_type="codex",
+            resolved_identity=ResolvedIdentity(
+                adapter="codex", model="gpt-5", identity=None, effort=effort
+            ),
+        )
+
+    assert task("xhigh").session_id == task("xhigh").session_id
+    assert task("xhigh").session_id != task("high").session_id
