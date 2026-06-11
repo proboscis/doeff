@@ -71,7 +71,7 @@ AGENT_EFFECT_TYPES = (
 )
 
 
-def dispatch_effect(handler: AgentHandler, effect: Any) -> Any:
+def dispatch_effect(handler: AgentHandler, effect: Any) -> Any:  # noqa: PLR0912 - baseline cleanup keeps existing control flow unchanged
     """Dispatch an effect to the appropriate handler method."""
     result = None
     if isinstance(effect, AgentEffect):

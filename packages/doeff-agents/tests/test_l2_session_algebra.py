@@ -5,8 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from doeff import do, run
-
 from doeff_agents import AgentType
 from doeff_agents.effects import (
     AgentAttemptExhaustedError,
@@ -18,9 +16,9 @@ from doeff_agents.effects import (
     AwaitStatus,
     FollowUp,
     FollowUpEffect,
+    L2SessionHandle,
     LaunchSession,
     LaunchSessionEffect,
-    L2SessionHandle,
     ReleaseSession,
     ReleaseSessionEffect,
     StopSession,
@@ -29,6 +27,7 @@ from doeff_agents.effects import (
 )
 from doeff_agents.handlers.testing import ScenarioAgentHandler, ScenarioStep
 
+from doeff import do, run
 
 ARTIFACT_SCHEMA = {
     "type": "object",
