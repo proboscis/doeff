@@ -608,11 +608,12 @@ because where to pause is a trust/stakes judgment extrinsic to the task:
 4. **Calibration state store** — cross-run, level-triggered; v1 ships
    manual sampling rates + escape recording only (no autonomous rate
    adjustment).
-5. **Runtime auto-commit captures session state — fixed e206be17.**
-   Conductor-created workspaces now install workspace-level `.gitignore`
-   entries for in-worktree runtime state (`.agent-home/`). The ignore lives
-   at workspace initialization, so post-agent-node `Commit`, manual
-   `git add -A`, and future workspace consumers all share the same behavior.
+5. **Runtime auto-commit captures session state — fixed e206be17 and
+   conductor-workspace-exclude-not-gitignore.** Conductor-created workspaces
+   now install repository-local `info/exclude` entries for in-worktree runtime
+   state (`.agent-home/`). The exclude lives at workspace initialization, so
+   post-agent-node `Commit`, manual `git add -A`, and future workspace
+   consumers all share the same behavior without dirtying tracked files.
 6. **Await budget axis — resolved (§5.1.1, ADR D11).** The L2 attempt
    loop is the SINGLE timeout/retry authority. `timeout_seconds` flows
    to agentd unchanged; the `make_offloaded_scheduled_handler` bridge
