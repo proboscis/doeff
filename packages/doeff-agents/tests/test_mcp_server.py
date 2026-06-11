@@ -3,6 +3,8 @@
 import http.client
 import json
 
+import pytest
+
 from doeff_agents.handlers import _make_run_tool
 from doeff_agents.mcp_server import McpToolServer
 
@@ -134,6 +136,24 @@ class TestServerLifecycle:
         server.start()
         assert server.port > 0
         server.shutdown()
+
+    def test_ready_signal_completion_failure_aborts_startup(self):
+        class FailingReadyPromise:
+            def complete(self, _value):
+                raise RuntimeError("ready already completed")
+
+        server = McpToolServer(tools=(), run_tool=_simple_run_tool, port=0)
+        server._ready_promise = FailingReadyPromise()
+
+        def serve_forever():
+            raise AssertionError("serve_forever should not start after ready failure")
+
+        server.serve_forever = serve_forever
+        try:
+            with pytest.raises(RuntimeError, match="ready already completed"):
+                server._serve_with_ready_signal()
+        finally:
+            server.server_close()
 
 
 # -- SSE HTTP transport tests ------------------------------------------------
