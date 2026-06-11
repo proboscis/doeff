@@ -1,27 +1,25 @@
 from __future__ import annotations
 
-import asyncio
 import inspect
-import warnings
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import doeff_vm
-import pytest
-
-from doeff import Await, Effect, Gather, Program, Spawn, async_run, default_async_handlers, do
-from doeff import EffectBase
-# REMOVED: from doeff import ProgramCallStack
-from doeff import Delegate, default_handlers, run
 from doeff_vm import (
     GetExecutionContext,
-    GetTraceback,
     Pass,
     Resume,
     WithHandler,
 )
+
+# REMOVED: from doeff import ProgramCallStack
+from doeff import (
+    Delegate,
+    Effect,
+    Program,
+    do,
+)
 from tests._run_helpers import run_with_defaults
+
 # REMOVED: from doeff.traceback import build_doeff_traceback
 
 ROOT = Path(__file__).resolve().parents[2]

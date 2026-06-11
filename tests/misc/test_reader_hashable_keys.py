@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from doeff import Ask, do
 from tests._run_helpers import run_with_defaults
 

@@ -1,9 +1,9 @@
 """Tests for Pure - the immediate value effect (Pure case of Free monad)."""
 
 import pytest
+from doeff_vm import Pure
 
 from doeff import Program, do
-from doeff_vm import Pure
 from tests._run_helpers import run_with_defaults
 
 

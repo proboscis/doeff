@@ -7,12 +7,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
-from doeff import run
-from doeff import EffectBase
-
-
 ROOT = Path(__file__).resolve().parents[2]
 RUST_SRC = ROOT / "packages" / "doeff-vm" / "src"
 RUST_CORE_SRC = ROOT / "packages" / "doeff-vm-core" / "src"
@@ -32,35 +26,35 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_SA_008_G01_no_yielded_unknown_variant() -> None:
+def test_SA_008_G01_no_yielded_unknown_variant() -> None:  # noqa: N802 - public or spec test name is intentionally stable
     src_dir = ROOT / "packages" / "doeff-vm" / "src"
     assert not (src_dir / "yielded.rs").exists()
 
 
-def test_SA_008_G02_classifier_no_unknown_fallback_branch() -> None:
+def test_SA_008_G02_classifier_no_unknown_fallback_branch() -> None:  # noqa: N802 - public or spec test name is intentionally stable
     src = _read(ROOT / "packages" / "doeff-vm" / "src" / "pyvm.rs")
     legacy_enum_prefix = "Yield" + "ed::"
     assert legacy_enum_prefix not in src
 
 
-def test_SA_008_G03_no_dothunk_export_alias() -> None:
+def test_SA_008_G03_no_dothunk_export_alias() -> None:  # noqa: N802 - public or spec test name is intentionally stable
     src = _read(ROOT / "doeff" / "program.py")
     assert "DoThunk =" not in src
 
 
-def test_SA_008_G04_map_flatmap_not_generator_wrapped() -> None:
+def test_SA_008_G04_map_flatmap_not_generator_wrapped() -> None:  # noqa: N802 - public or spec test name is intentionally stable
     src = _read(ROOT / "doeff" / "program.py")
     assert "GeneratorProgram(" not in src
 
 
-def test_SA_008_G05_map_flatmap_runtime_not_unimplemented() -> None:
+def test_SA_008_G05_map_flatmap_runtime_not_unimplemented() -> None:  # noqa: N802 - public or spec test name is intentionally stable
     src = _read(ROOT / "packages" / "doeff-vm" / "src" / "vm.rs")
     assert "Map/FlatMap DoCtrl runtime evaluation is not implemented yet" not in src
 
 
 
 
-def test_SA_008_G08_kpc_parse_not_shape_attribute_driven() -> None:
+def test_SA_008_G08_kpc_parse_not_shape_attribute_driven() -> None:  # noqa: N802 - public or spec test name is intentionally stable
     src = _read(ROOT / "doeff" / "program.py")
     assert "_annotation_is_program" not in src
     assert "_annotation_is_effect" not in src
@@ -68,6 +62,6 @@ def test_SA_008_G08_kpc_parse_not_shape_attribute_driven() -> None:
 
 
 
-def test_SA_008_G11_no_public_runtime_internal_export() -> None:
+def test_SA_008_G11_no_public_runtime_internal_export() -> None:  # noqa: N802 - public or spec test name is intentionally stable
     src = _read(ROOT / "packages" / "doeff-vm" / "doeff_vm" / "__init__.py")
     assert "PyVM" in src

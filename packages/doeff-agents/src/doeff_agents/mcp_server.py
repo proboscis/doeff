@@ -35,10 +35,11 @@ import logging
 import queue
 import threading
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from doeff.mcp import McpToolDef
@@ -85,7 +86,7 @@ class _McpHandler(BaseHTTPRequestHandler):
     server: McpToolServer  # type narrowing
 
     # Suppress per-request logging
-    def log_message(self, format: str, *args: Any) -> None:
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 - public API parameter name is intentionally stable
         log.debug("MCP %s", format % args)
 
     def do_GET(self) -> None:
@@ -327,7 +328,7 @@ class McpToolServer(_ThreadingHTTPServer):
 
         return _jsonrpc_error(msg_id, -32601, f"Method not found: {method}")
 
-    def _handle_tool_call(self, msg_id: Any, params: dict) -> dict:
+    def _handle_tool_call(self, msg_id: Any, params: dict) -> dict:  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
         tool_name = params.get("name", "")
         arguments = params.get("arguments", {})
 

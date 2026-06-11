@@ -2,12 +2,12 @@
 import asyncio
 from dataclasses import dataclass
 
+from doeff_core_effects import Await
+from doeff_core_effects.scheduler import Spawn, Wait
 from doeff_events.effects import Publish, WaitForEvent
 from doeff_events.handlers import event_handler
 
 from doeff import WithHandler, do, run
-from doeff_core_effects.scheduler import Spawn, Wait, scheduled
-from doeff_core_effects import Await
 
 
 @dataclass(frozen=True)
@@ -29,7 +29,7 @@ def test_publish_with_no_listeners_is_noop() -> None:
 
     result = run(
         WithHandler(event_handler(), program()),
-        handlers=default_handlers(),
+        handlers=default_handlers(),  # noqa: F821 - legacy removed API reference is intentionally preserved
     )
 
     assert result.is_ok()
@@ -60,7 +60,7 @@ def test_composes_with_spawn_producer_consumer_pattern() -> None:
 
     result = run(
         WithHandler(event_handler(), program()),
-        handlers=default_handlers(),
+        handlers=default_handlers(),  # noqa: F821 - legacy removed API reference is intentionally preserved
     )
 
     assert result.is_ok()

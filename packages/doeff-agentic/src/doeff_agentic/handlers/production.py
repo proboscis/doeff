@@ -11,13 +11,13 @@ The handler:
 """
 
 
+import contextlib
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from doeff import Effect, Pass, Resume, WithHandler, do
 from doeff_agents import (
     AgentType,
     Capture,
@@ -31,9 +31,17 @@ from doeff_agents import (
     Stop,
     TmuxAgentHandler,
 )
-from doeff_agents.effects import CaptureEffect, LaunchEffect, MonitorEffect, SendEffect, SleepEffect, StopEffect
+from doeff_agents.effects import (
+    CaptureEffect,
+    LaunchEffect,
+    MonitorEffect,
+    SendEffect,
+    SleepEffect,
+    StopEffect,
+)
 
-from ..effects import (
+from doeff import Effect, Pass, Resume, WithHandler, do
+from doeff_agentic.effects import (
     AgentNotRunningError,
     CaptureOutputEffect,
     RunAgentEffect,
@@ -43,8 +51,8 @@ from ..effects import (
     WaitForStatusEffect,
     WaitForUserInputEffect,
 )
-from ..state import StateManager, generate_workflow_id
-from ..types import AgentInfo, AgentStatus, WorkflowInfo, WorkflowStatus
+from doeff_agentic.state import StateManager, generate_workflow_id
+from doeff_agentic.types import AgentInfo, AgentStatus, WorkflowInfo, WorkflowStatus
 
 
 def _agent_type_from_str(s: str) -> AgentType:
@@ -241,7 +249,6 @@ class AgenticHandler:
             effect.message,
             enter=effect.enter,
         )
-        return None
 
     @do
     def wait_for_status_program(self, effect: WaitForStatusEffect) -> AgentStatus:
@@ -304,7 +311,7 @@ class AgenticHandler:
             return handle
 
         for name, candidate in self._context.sessions.items():
-            if candidate.session_name == session_name or name == session_name:
+            if session_name in (candidate.session_name, name):
                 return candidate
 
         raise AgentNotRunningError(session_name, "not_found")
@@ -379,7 +386,7 @@ class AgenticHandler:
         handle = self._context.sessions.get(effect.session_name)
         if handle is None:
             # Try full session name lookup
-            for name, h in self._context.sessions.items():
+            for _name, h in self._context.sessions.items():
                 if h.session_name == effect.session_name:
                     handle = h
                     break
@@ -528,14 +535,12 @@ class AgenticHandler:
         """Clean up all agent sessions."""
         for name in list(self._context.sessions.keys()):
             handle = self._context.sessions[name]
-            try:
+            with contextlib.suppress(Exception):
                 self.tmux_handler.handle_stop(Stop(handle))
-            except Exception:
-                pass
             del self._context.sessions[name]
 
 
-def agentic_effectful_handlers(
+def agentic_effectful_handlers(  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
     workflow_id: str | None = None,
     workflow_name: str | None = None,
     state_dir: Path | str | None = None,
@@ -557,7 +562,7 @@ def agentic_effectful_handlers(
     )
 
     @do
-    def _handle(effect: Effect, k: Any):
+    def _handle(effect: Effect, k: Any):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
         if isinstance(effect, LaunchEffect):
             return (yield Resume(k, handler.tmux_handler.handle_launch(effect)))
         if isinstance(effect, MonitorEffect):

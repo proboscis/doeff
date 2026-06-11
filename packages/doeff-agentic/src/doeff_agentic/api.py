@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 High-level API for doeff-agentic.
 
@@ -26,6 +24,8 @@ Usage:
     api.send_message("a3f", "continue")
     api.stop("a3f")
 """
+
+from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path

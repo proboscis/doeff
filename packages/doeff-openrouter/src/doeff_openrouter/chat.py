@@ -32,11 +32,7 @@ class OpenRouterResponseError(RuntimeError):
 def _requires_max_completion_tokens(model: str) -> bool:
     model_lower = model.lower()
     return (
-        "gpt-5" in model_lower
-        or "gpt5" in model_lower
-        or model_lower.startswith("o1")
-        or model_lower.startswith("o3")
-        or model_lower.startswith("o4")
+        "gpt-5" in model_lower or "gpt5" in model_lower or model_lower.startswith(("o1", "o3", "o4"))
     )
 
 
@@ -100,7 +96,7 @@ def chat_completion(
         start_time = time.time()
 
         @do
-        def perform() -> EffectGenerator[dict[str, Any]]:
+        def perform(start_time: float = start_time) -> EffectGenerator[dict[str, Any]]:
             response_data, response_headers = yield Await(
                 client.a_chat_completions(
                     request_data,

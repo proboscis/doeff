@@ -5,15 +5,16 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from doeff import Pass, Resume, Transfer, do
 from doeff_core_effects import WriterTellEffect
 from doeff_core_effects.scheduler import (
+    PRIORITY_IDLE,
     CompletePromise,
     CreatePromise,
-    PRIORITY_IDLE,
     Spawn,
     Wait,
 )
+
+from doeff import Pass, Resume, Transfer, do
 from doeff_time._internals import SimClock, TimeQueue
 from doeff_time.effects import (
     DelayEffect,

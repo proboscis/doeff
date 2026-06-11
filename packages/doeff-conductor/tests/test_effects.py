@@ -1,23 +1,21 @@
 """Tests for doeff-conductor effects."""
 
-import pytest
+import dataclasses
+
 from doeff_conductor.effects import (
-    CaptureOutput,
+    Agent,
+    AgentTask,
     Commit,
     CreateIssue,
     CreatePR,
-    CreateWorktree,
-    DeleteWorktree,
+    CreateWorkspace,
+    DeleteWorkspace,
     GetIssue,
     ListIssues,
-    MergeBranches,
     MergePR,
+    MergeWorkspaces,
     Push,
     ResolveIssue,
-    RunAgent,
-    SendMessage,
-    SpawnAgent,
-    WaitForStatus,
 )
 
 
@@ -26,7 +24,7 @@ class TestEffectBase:
 
     def test_effect_base_protocol(self):
         """Test that effects follow the protocol."""
-        effect = CreateWorktree()
+        effect = CreateWorkspace(workspace_id="ws-protocol")
 
         # Should have intercept method (no nested programs for conductor effects).
         intercepted = effect.intercept(lambda x: x)
@@ -38,56 +36,61 @@ class TestEffectBase:
         assert isinstance(effect, EffectBase)
 
 
-class TestWorktreeEffects:
-    """Tests for worktree effects."""
+class TestWorkspaceEffects:
+    """Tests for workspace effects."""
 
-    def test_create_worktree_defaults(self):
-        """Test CreateWorktree with defaults."""
-        effect = CreateWorktree()
+    def test_create_workspace_defaults(self):
+        """Test CreateWorkspace with defaults."""
+        effect = CreateWorkspace(workspace_id="ws-defaults")
 
+        assert effect.workspace_id == "ws-defaults"
+        assert effect.repo == "default"
         assert effect.issue is None
-        assert effect.base_branch is None
-        assert effect.suffix is None
-        assert effect.name is None
+        assert effect.from_ref is None
 
-    def test_create_worktree_with_suffix(self):
-        """Test CreateWorktree with suffix."""
-        effect = CreateWorktree(suffix="impl")
-        assert effect.suffix == "impl"
+    def test_create_workspace_requires_identity(self):
+        """Workspace identity is mandatory — there is no random fallback."""
+        import pytest
 
-    def test_merge_branches_requires_envs(self):
-        effect = MergeBranches(envs=())
-        assert effect.envs == ()
+        with pytest.raises(TypeError):
+            CreateWorkspace()  # type: ignore[call-arg]
 
-    def test_delete_worktree(self):
-        from pathlib import Path
+    def test_merge_workspaces_requires_workspaces(self):
+        effect = MergeWorkspaces(workspace_id="ws-merged", workspaces=())
+        assert effect.workspaces == ()
+        assert effect.workspace_id == "ws-merged"
 
-        from doeff_conductor.types import WorktreeEnv
+    def test_merge_workspaces_requires_identity(self):
+        import pytest
 
-        env = WorktreeEnv(
+        with pytest.raises(TypeError):
+            MergeWorkspaces(workspaces=())  # type: ignore[call-arg]
+
+    def test_delete_workspace(self):
+        from doeff_conductor.types import Workspace
+
+        env = Workspace(
             id="test",
-            path=Path("/tmp/worktree"),
-            branch="test-branch",
-            base_commit="abc123",
+            repo="default",
+            ref="test-branch",
+            base_ref="main",
         )
 
-        effect = DeleteWorktree(env=env)
-        assert effect.env == env
+        effect = DeleteWorkspace(workspace=env)
+        assert effect.workspace == env
         assert effect.force is False
 
-    def test_delete_worktree_force(self):
-        from pathlib import Path
+    def test_delete_workspace_force(self):
+        from doeff_conductor.types import Workspace
 
-        from doeff_conductor.types import WorktreeEnv
-
-        env = WorktreeEnv(
+        env = Workspace(
             id="test",
-            path=Path("/tmp/worktree"),
-            branch="test-branch",
-            base_commit="abc123",
+            repo="default",
+            ref="test-branch",
+            base_ref="main",
         )
 
-        effect = DeleteWorktree(env=env, force=True)
+        effect = DeleteWorkspace(workspace=env, force=True)
         assert effect.force is True
 
 
@@ -162,133 +165,37 @@ class TestIssueEffects:
 class TestAgentEffects:
     """Tests for agent effects."""
 
-    def test_run_agent_required_fields(self):
-        """Test RunAgent required fields."""
-        from pathlib import Path
+    def test_agent_task_requires_explicit_agent_type(self):
+        """AgentTask has no worker identity default at call sites."""
+        assert "agent_type" in AgentTask.__dataclass_fields__
+        assert AgentTask.__dataclass_fields__["agent_type"].default is dataclasses.MISSING
 
-        from doeff_conductor.types import WorktreeEnv
+    def test_agent_effect_wraps_task(self):
+        """Test schema-validated Agent effect construction."""
+        from doeff_conductor.types import Workspace
 
-        env = WorktreeEnv(
+        env = Workspace(
             id="test",
-            path=Path("/tmp"),
-            branch="test",
-            base_commit="abc",
+            repo="default",
+            ref="test",
+            base_ref="main",
         )
 
-        effect = RunAgent(env=env, prompt="Do the thing")
-        assert effect.prompt == "Do the thing"
-        assert effect.agent_type == "claude"  # default
-
-    def test_spawn_agent_name(self):
-        from pathlib import Path
-
-        from doeff_conductor.types import WorktreeEnv
-
-        env = WorktreeEnv(
-            id="test",
-            path=Path("/tmp"),
-            branch="test",
-            base_commit="abc",
+        task = AgentTask(
+            run_id="run-001",
+            node_id="implement",
+            attempt=0,
+            env=env,
+            prompt="Do the thing",
+            result_schema={"type": "object"},
+            verification_class="test-verifiable",
+            agent_type="codex",
         )
+        effect = Agent(task)
 
-        effect = SpawnAgent(env=env, prompt="Start task", name="worker-1")
-        assert effect.name == "worker-1"
-
-    def test_send_message(self):
-        from doeff_conductor.types import AgentRef
-
-        agent_ref = AgentRef(
-            id="session-001",
-            name="agent-1",
-            workflow_id="wf-001",
-            env_id="env-001",
-            agent_type="claude",
-        )
-
-        effect = SendMessage(agent_ref=agent_ref, message="Continue")
-        assert effect.agent_ref == agent_ref
-        assert effect.message == "Continue"
-        assert effect.wait is False  # default is False
-
-    def test_send_message_no_wait(self):
-        from doeff_conductor.types import AgentRef
-
-        agent_ref = AgentRef(
-            id="session-001",
-            name="agent-1",
-            workflow_id="wf-001",
-            env_id="env-001",
-            agent_type="claude",
-        )
-
-        effect = SendMessage(agent_ref=agent_ref, message="Fire and forget", wait=False)
-        assert effect.wait is False
-
-    def test_wait_for_status(self):
-        from doeff_agentic import AgenticSessionStatus
-        from doeff_conductor.types import AgentRef
-
-        agent_ref = AgentRef(
-            id="session-001",
-            name="agent-1",
-            workflow_id="wf-001",
-            env_id="env-001",
-            agent_type="claude",
-        )
-
-        effect = WaitForStatus(
-            agent_ref=agent_ref,
-            target=AgenticSessionStatus.DONE,
-            timeout=60.0,
-        )
-        assert effect.agent_ref == agent_ref
-        assert effect.target == AgenticSessionStatus.DONE
-        assert effect.timeout == 60.0
-
-    def test_wait_for_status_defaults(self):
-        from doeff_agentic import AgenticSessionStatus
-        from doeff_conductor.types import AgentRef
-
-        agent_ref = AgentRef(
-            id="session-001",
-            name="agent-1",
-            workflow_id="wf-001",
-            env_id="env-001",
-            agent_type="claude",
-        )
-
-        effect = WaitForStatus(agent_ref=agent_ref, target=AgenticSessionStatus.DONE)
-        assert effect.timeout is None
-        assert effect.poll_interval == 1.0
-
-    def test_capture_output(self):
-        from doeff_conductor.types import AgentRef
-
-        agent_ref = AgentRef(
-            id="session-001",
-            name="agent-1",
-            workflow_id="wf-001",
-            env_id="env-001",
-            agent_type="claude",
-        )
-
-        effect = CaptureOutput(agent_ref=agent_ref, lines=50)
-        assert effect.agent_ref == agent_ref
-        assert effect.lines == 50
-
-    def test_capture_output_defaults(self):
-        from doeff_conductor.types import AgentRef
-
-        agent_ref = AgentRef(
-            id="session-001",
-            name="agent-1",
-            workflow_id="wf-001",
-            env_id="env-001",
-            agent_type="claude",
-        )
-
-        effect = CaptureOutput(agent_ref=agent_ref)
-        assert effect.lines == 500  # default is 500
+        assert effect.task is task
+        assert task.agent_type == "codex"
+        assert task.session_id == "run-001-implement-0"
 
 
 class TestGitEffects:
@@ -296,53 +203,47 @@ class TestGitEffects:
 
     def test_commit_defaults(self):
         """Test Commit effect defaults."""
-        from pathlib import Path
+        from doeff_conductor.types import Workspace
 
-        from doeff_conductor.types import WorktreeEnv
-
-        env = WorktreeEnv(
+        env = Workspace(
             id="test",
-            path=Path("/tmp"),
-            branch="test",
-            base_commit="abc",
+            repo="default",
+            ref="test",
+            base_ref="main",
         )
 
-        effect = Commit(env=env, message="feat: add feature")
+        effect = Commit(workspace=env, message="feat: add feature")
         assert effect.message == "feat: add feature"
         assert effect.all is True  # default
 
     def test_push_defaults(self):
         """Test Push effect defaults."""
-        from pathlib import Path
+        from doeff_conductor.types import Workspace
 
-        from doeff_conductor.types import WorktreeEnv
-
-        env = WorktreeEnv(
+        env = Workspace(
             id="test",
-            path=Path("/tmp"),
-            branch="test",
-            base_commit="abc",
+            repo="default",
+            ref="test",
+            base_ref="main",
         )
 
-        effect = Push(env=env)
+        effect = Push(workspace=env)
         assert effect.remote == "origin"
         assert effect.force is False
         assert effect.set_upstream is True
 
     def test_create_pr_required_fields(self):
         """Test CreatePR required fields."""
-        from pathlib import Path
+        from doeff_conductor.types import Workspace
 
-        from doeff_conductor.types import WorktreeEnv
-
-        env = WorktreeEnv(
+        env = Workspace(
             id="test",
-            path=Path("/tmp"),
-            branch="test",
-            base_commit="abc",
+            repo="default",
+            ref="test",
+            base_ref="main",
         )
 
-        effect = CreatePR(env=env, title="Add feature")
+        effect = CreatePR(workspace=env, title="Add feature")
         assert effect.title == "Add feature"
         assert effect.target == "main"
         assert effect.draft is False
@@ -386,24 +287,6 @@ class TestGitEffects:
         assert effect.strategy == MergeStrategy.SQUASH
         assert effect.delete_branch is True
 
-    def test_legacy_git_effects_are_deprecated(self):
-        from pathlib import Path
-
-        from doeff_conductor.types import WorktreeEnv
-
-        env = WorktreeEnv(
-            id="test",
-            path=Path("/tmp"),
-            branch="test",
-            base_commit="abc",
-        )
-
-        with pytest.warns(
-            DeprecationWarning,
-            match="doeff_conductor\\.effects\\.git\\.Commit",
-        ):
-            _ = Commit(env=env, message="feat: deprecated")
-
     def test_generic_git_aliases_are_exported(self):
         from doeff_conductor.effects.git import (
             GitCommitEffect,
@@ -430,18 +313,16 @@ class TestModuleExports:
 
         expected_names = {
             "ConductorEffectBase",
-            "CreateWorktree",
-            "MergeBranches",
-            "DeleteWorktree",
+            "CreateWorkspace",
+            "MergeWorkspaces",
+            "DeleteWorkspace",
             "CreateIssue",
             "ListIssues",
             "GetIssue",
             "ResolveIssue",
-            "RunAgent",
-            "SpawnAgent",
-            "SendMessage",
-            "WaitForStatus",
-            "CaptureOutput",
+            "Agent",
+            "AgentEffect",
+            "AgentTask",
             "Commit",
             "Push",
             "CreatePR",
@@ -459,10 +340,11 @@ class TestModuleExports:
         runtime = MockConductorRuntime(tmp_path)
 
         production = production_handlers(
-            worktree_handler=runtime,
+            workspace_handler=runtime,
             issue_handler=runtime,
             agent_handler=runtime,
             git_handler=runtime,
+            exec_handler=runtime,
         )
         mocked = mock_handlers(runtime=runtime)
 

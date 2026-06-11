@@ -21,10 +21,11 @@ Usage:
     run(scheduled(main()))
 """
 
-from doeff_vm import EffectBase, Ok, Err, TailEval
+from doeff_vm import EffectBase, Err, Ok, TailEval
+
 from doeff.do import do
-from doeff.program import Pure, Resume, Transfer, Pass, Perform, WithHandler
 from doeff.handler_utils import get_inner_handlers
+from doeff.program import Pass, Perform, Pure, Resume, Transfer, WithHandler
 
 
 def _enrich_exception_traceback(exc, task_meta=None, vm_ctx=None):
@@ -46,13 +47,13 @@ def _enrich_exception_traceback(exc, task_meta=None, vm_ctx=None):
         if tb is not None:
             for fs in tb_mod.extract_tb(tb):
                 fn = fs.filename
-                if any(p in fn for p in ('/doeff_vm/', '/doeff/do.py', '/doeff/run.py',
-                                          '/doeff_core_effects/')):
+                if any(p in fn for p in ("/doeff_vm/", "/doeff/do.py", "/doeff/run.py",
+                                          "/doeff_core_effects/")):
                     continue
                 entries.append(["frame", fs.name, fs.filename, fs.lineno])
 
     if entries:
-        existing = getattr(exc, '__doeff_traceback__', None) or []
+        existing = getattr(exc, "__doeff_traceback__", None) or []
         exc.__doeff_traceback__ = entries + existing
 
 
@@ -102,7 +103,6 @@ class Cancel(EffectBase):
 
 class TaskCancelledError(Exception):
     """Raised when waiting on a cancelled task."""
-    pass
 
 
 class Race(EffectBase):
@@ -219,10 +219,10 @@ class ExternalPromise:
 # Scheduler
 # ---------------------------------------------------------------------------
 
-def scheduled(body_program):
+def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
     """Wrap a program with the scheduler. Returns a DoExpr."""
-    import queue as queue_mod
     import heapq
+    import queue as queue_mod
 
     # --- State ---
     next_id = [0]
@@ -230,9 +230,8 @@ def scheduled(body_program):
     tasks = {}           # tid → {status, result, program, priority}
     promises = {}        # pid → {status, result}
     semaphores = {}      # sid → {permits, max_permits, waiters: deque of k}
-    waiters = {}         # waitable_key → [(type, k, ...)]
+    waiters = {}         # waitable_key → [(type, k, ...)] or gather-state refs
     ready = []           # heapq: (-priority, seq, entry)
-    cancel_requested = set()  # task ids pending cancellation
     external_queue = queue_mod.Queue()  # thread-safe, blocking get()
 
     def fresh_id():
@@ -244,7 +243,7 @@ def scheduled(body_program):
         """Convert Task or Future to a dict key."""
         if isinstance(obj, Task):
             return ("task", obj.task_id)
-        elif isinstance(obj, Future):
+        if isinstance(obj, Future):
             return ("promise", obj.promise_id)
         raise TypeError(f"expected Task or Future, got {type(obj).__name__}")
 
@@ -252,7 +251,7 @@ def scheduled(body_program):
         kind, wid = key
         if kind == "task":
             return tasks[wid]["status"], tasks[wid].get("result")
-        elif kind == "promise":
+        if kind == "promise":
             return promises[wid]["status"], promises[wid].get("result")
         return "unknown", None
 
@@ -326,23 +325,23 @@ def scheduled(body_program):
                     for h in tasks[tid].pop("inner_handlers", []):
                         prog = WithHandler(h, prog)
                     return WithHandler(handler, wrap_task(tid, prog))
-                elif entry[0] == "resume":
+                if entry[0] == "resume":
                     _, cont, value = entry
                     return Transfer(cont, value)
-                elif entry[0] == "raise":
+                if entry[0] == "raise":
                     _, cont, error = entry
                     return ResumeThrow(cont, error)
-                elif entry[0] == "wait_external":
+                if entry[0] == "wait_external":
                     # Task waiting for external promise at NORMAL priority.
                     # Keeps IDLE tasks (clock driver) from running.
                     _, cont, wk = entry
-                    if waitable_status(wk)[0] in TERMINAL:
+                    if waitable_status(wk)[0] in terminal_statuses:
                         resume_with_waitable_result(cont, wk)
                         continue
                     # Not yet resolved — block for one completion, drain rest
                     _drain_one_external()
                     drain()
-                    if waitable_status(wk)[0] in TERMINAL:
+                    if waitable_status(wk)[0] in terminal_statuses:
                         resume_with_waitable_result(cont, wk)
                     else:
                         enqueue(entry, PRIORITY_EXTERNAL_WAIT)
@@ -352,7 +351,7 @@ def scheduled(body_program):
             # All tasks blocked — block for one external completion
             _drain_one_external()
 
-    TERMINAL = ("completed", "failed", "cancelled")
+    terminal_statuses = ("completed", "failed", "cancelled")
 
     def _release_task_refs(tid):
         """Drop heavy references from a terminal task.
@@ -379,6 +378,51 @@ def scheduled(body_program):
         elif status == "cancelled":
             enqueue(("raise", waiter_k, TaskCancelledError()))
 
+    def remove_gather_waiters(gather_state):
+        """Remove unresolved waiter refs for a fail-fast Gather resolution."""
+        for wk in set(gather_state["pending_keys"]):
+            entries = waiters.get(wk)
+            if not entries:
+                continue
+            remaining_entries = [
+                entry
+                for entry in entries
+                if not (entry[0] == "gather" and entry[1] is gather_state)
+            ]
+            if remaining_entries:
+                waiters[wk] = remaining_entries
+            else:
+                waiters.pop(wk, None)
+
+    def resolve_gather_with_error(gather_state, error):
+        if gather_state["resolved"]:
+            return
+        gather_state["resolved"] = True
+        gather_state["failure"] = error
+        remove_gather_waiters(gather_state)
+        enqueue(("raise", gather_state["waiter_k"], error))
+
+    def wake_gather_waiter(gather_state, completed_key):
+        if gather_state["resolved"]:
+            return
+
+        status, result = waitable_status(completed_key)
+        if status == "failed":
+            resolve_gather_with_error(gather_state, result)
+            return
+        if status == "cancelled":
+            resolve_gather_with_error(gather_state, TaskCancelledError())
+            return
+
+        if status != "completed":
+            return
+
+        gather_state["remaining"] -= 1
+        if gather_state["remaining"] == 0:
+            gather_state["resolved"] = True
+            results = [waitable_status(wk)[1] for wk in gather_state["keys"]]
+            enqueue(("resume", gather_state["waiter_k"], results))
+
     def wake_waiters(completed_key):
         ws = waiters.pop(completed_key, [])
         for w in ws:
@@ -386,41 +430,8 @@ def scheduled(body_program):
                 _, waiter_k = w
                 resume_with_waitable_result(waiter_k, completed_key)
             elif w[0] == "gather":
-                _, waiter_k, gather_waitables = w
-                all_done = all(
-                    waitable_status(waitable_key(t))[0] in TERMINAL
-                    for t in gather_waitables
-                )
-                if all_done:
-                    # Fail-fast: check for first error
-                    for t in gather_waitables:
-                        s, r = waitable_status(waitable_key(t))
-                        if s == "failed":
-                            enqueue(("raise", waiter_k, r))
-                            break
-                        if s == "cancelled":
-                            enqueue(("raise", waiter_k, TaskCancelledError()))
-                            break
-                    else:
-                        # All completed successfully
-                        results = [waitable_status(waitable_key(t))[1] for t in gather_waitables]
-                        enqueue(("resume", waiter_k, results))
-                else:
-                    # Fail-fast: check if any already failed/cancelled
-                    for t in gather_waitables:
-                        s, r = waitable_status(waitable_key(t))
-                        if s == "failed":
-                            enqueue(("raise", waiter_k, r))
-                            return
-                        if s == "cancelled":
-                            enqueue(("raise", waiter_k, TaskCancelledError()))
-                            return
-                    # Re-register for next incomplete
-                    for t in gather_waitables:
-                        wk = waitable_key(t)
-                        if waitable_status(wk)[0] not in TERMINAL:
-                            waiters.setdefault(wk, []).append(("gather", waiter_k, gather_waitables))
-                            break
+                _, gather_state = w
+                wake_gather_waiter(gather_state, completed_key)
             elif w[0] == "race":
                 _, waiter_k, _race_waitables = w
                 resume_with_waitable_result(waiter_k, completed_key)
@@ -435,7 +446,7 @@ def scheduled(body_program):
                 wake_waiters(("promise", pid))
 
     @do
-    def handler(effect, k):
+    def handler(effect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
         drain()
         if isinstance(effect, Spawn):
             # Capture inner handlers from continuation (between yield site and scheduler).
@@ -459,14 +470,14 @@ def scheduled(body_program):
         elif isinstance(effect, TaskCompleted):
             tid = effect.task_id
             r = effect.result
-            if hasattr(r, 'is_ok') and r.is_ok():
+            if hasattr(r, "is_ok") and r.is_ok():
                 tasks[tid]["status"] = "completed"
                 tasks[tid]["result"] = r.value
             else:
                 tasks[tid]["status"] = "failed"
-                error = r.error if hasattr(r, 'error') else r
+                error = r.error if hasattr(r, "error") else r
                 # Add spawn boundary to traceback
-                if isinstance(error, BaseException) and hasattr(error, '__doeff_traceback__'):
+                if isinstance(error, BaseException) and hasattr(error, "__doeff_traceback__"):
                     error.__doeff_traceback__.insert(0, {
                         "kind": "spawn_boundary",
                         "task_id": tid,
@@ -510,7 +521,7 @@ def scheduled(body_program):
 
         elif isinstance(effect, Gather):
             wks = [waitable_key(t) for t in effect.tasks]
-            # Fail-fast: check for first error/cancelled
+            pending_wks = []
             for wk in wks:
                 s, r = waitable_status(wk)
                 if s == "failed":
@@ -519,17 +530,25 @@ def scheduled(body_program):
                 if s == "cancelled":
                     from doeff.program import ResumeThrow
                     return (yield ResumeThrow(k, TaskCancelledError()))
-            all_done = all(waitable_status(wk)[0] in TERMINAL for wk in wks)
-            if all_done:
+                if s not in terminal_statuses:
+                    pending_wks.append(wk)
+
+            if not pending_wks:
                 results = [waitable_status(wk)[1] for wk in wks]
                 r = yield Resume(k, results)
                 return r
-            else:
-                for wk in wks:
-                    if waitable_status(wk)[0] not in TERMINAL:
-                        waiters.setdefault(wk, []).append(("gather", k, effect.tasks))
-                        break
-                yield TailEval(pick_next())
+
+            gather_state = {
+                "waiter_k": k,
+                "keys": wks,
+                "pending_keys": pending_wks,
+                "remaining": len(pending_wks),
+                "failure": None,
+                "resolved": False,
+            }
+            for wk in pending_wks:
+                waiters.setdefault(wk, []).append(("gather", gather_state))
+            yield TailEval(pick_next())
 
         elif isinstance(effect, Race):
             for t in effect.tasks:
@@ -545,7 +564,7 @@ def scheduled(body_program):
             # All pending
             for t in effect.tasks:
                 wk = waitable_key(t)
-                if waitable_status(wk)[0] not in TERMINAL:
+                if waitable_status(wk)[0] not in terminal_statuses:
                     waiters.setdefault(wk, []).append(("race", k, effect.tasks))
                     break
             yield TailEval(pick_next())

@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from doeff import WithHandler, default_handlers, do, run
+from doeff import WithHandler, do, run
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
@@ -25,11 +25,19 @@ from doeff_git.handlers import (
 from doeff_git.types import MergeStrategy, PRHandle
 
 
+class _SuccessResult:
+    def __init__(self, value):
+        self.value = value
+
+    def is_ok(self) -> bool:
+        return True
+
+
 def _run_with_handler(program, handler):
-    return run(
-        WithHandler(handler, program),
-        handlers=default_handlers(),
-    )
+    result = run(WithHandler(handler, program))
+    if hasattr(result, "is_ok"):
+        return result
+    return _SuccessResult(result)
 
 
 @do

@@ -31,8 +31,30 @@ jobs:
       publish: true
     secrets: inherit
 
-  build-dist:
+  build-python-release-dists:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: doeff-hy
+            artifact: doeff-hy-dist
+            out-dir: dist-doeff-hy
+          - package: doeff-core-effects
+            artifact: doeff-core-effects-dist
+            out-dir: dist-doeff-core-effects
+          - package: doeff
+            artifact: doeff-dist
+            out-dir: dist-doeff
+          - package: doeff-time
+            artifact: doeff-time-dist
+            out-dir: dist-doeff-time
+          - package: doeff-preset
+            artifact: doeff-preset-dist
+            out-dir: dist-doeff-preset
+          - package: doeff-agents
+            artifact: doeff-agents-dist
+            out-dir: dist-doeff-agents
     steps:
       - uses: actions/checkout@v4
 
@@ -45,70 +67,42 @@ jobs:
         uses: astral-sh/setup-uv@v4
 
       - name: Build wheel and sdist
-        run: uv build --wheel --sdist
+        run: uv build --package ${{ matrix.package }} --wheel --sdist --out-dir ${{ matrix.out-dir }}
 
       - name: Verify built metadata
-        run: uv run python tools/verify_dist_metadata.py dist/*.whl dist/*.tar.gz
+        run: uv run python tools/verify_dist_metadata.py ${{ matrix.out-dir }}/*.whl ${{ matrix.out-dir }}/*.tar.gz
 
       - name: Upload distribution artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: doeff-dist
-          path: dist/*
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.out-dir }}/*
 
-  build-doeff-agents-dist:
+  publish-doeff-hy:
+    name: Publish doeff-hy to PyPI
+    needs: [build-python-release-dists, publish-doeff-vm, publish-doeff-indexer]
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Download doeff-hy dist artifacts
+        uses: actions/download-artifact@v4
         with:
-          python-version: "3.12"
+          name: doeff-hy-dist
+          path: dist-doeff-hy
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - name: List doeff-hy artifacts
+        run: ls -la dist-doeff-hy/
 
-      - name: Build doeff-agents wheel and sdist
-        run: uv build --package doeff-agents --wheel --sdist --out-dir dist-doeff-agents
-
-      - name: Verify built metadata
-        run: uv run python tools/verify_dist_metadata.py dist-doeff-agents/*.whl dist-doeff-agents/*.tar.gz
-
-      - name: Upload doeff-agents distribution artifacts
-        uses: actions/upload-artifact@v4
+      - name: Publish doeff-hy to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          name: doeff-agents-dist
-          path: dist-doeff-agents/*
-
-  build-doeff-core-effects-dist:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Build doeff-core-effects wheel and sdist
-        run: uv build --package doeff-core-effects --wheel --sdist --out-dir dist-doeff-core-effects
-
-      - name: Verify built metadata
-        run: uv run python tools/verify_dist_metadata.py dist-doeff-core-effects/*.whl dist-doeff-core-effects/*.tar.gz
-
-      - name: Upload doeff-core-effects distribution artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: doeff-core-effects-dist
-          path: dist-doeff-core-effects/*
+          packages-dir: dist-doeff-hy/
+          skip-existing: true
+          password: ${{ secrets.PYPI_API_TOKEN }}
 
   publish-doeff-core-effects:
     name: Publish doeff-core-effects to PyPI
-    needs: [build-doeff-core-effects-dist, publish-doeff-vm, publish-doeff-indexer]
+    needs: [build-python-release-dists, publish-doeff-hy]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     steps:
@@ -128,9 +122,9 @@ jobs:
           skip-existing: true
           password: ${{ secrets.PYPI_API_TOKEN }}
 
-  publish:
-    name: Publish to PyPI
-    needs: [build-dist, publish-doeff-core-effects]
+  publish-doeff:
+    name: Publish doeff to PyPI
+    needs: [build-python-release-dists, publish-doeff-core-effects]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     steps:
@@ -138,21 +132,65 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: doeff-dist
-          path: dist
+          path: dist-doeff
 
       - name: List artifacts
-        run: ls -la dist/
+        run: ls -la dist-doeff/
 
-      - name: Publish to PyPI
+      - name: Publish doeff to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: dist/
+          packages-dir: dist-doeff/
+          skip-existing: true
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
+  publish-doeff-time:
+    name: Publish doeff-time to PyPI
+    needs: [build-python-release-dists, publish-doeff]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    steps:
+      - name: Download doeff-time dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: doeff-time-dist
+          path: dist-doeff-time
+
+      - name: List doeff-time artifacts
+        run: ls -la dist-doeff-time/
+
+      - name: Publish doeff-time to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-doeff-time/
+          skip-existing: true
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
+  publish-doeff-preset:
+    name: Publish doeff-preset to PyPI
+    needs: [build-python-release-dists, publish-doeff]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    steps:
+      - name: Download doeff-preset dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: doeff-preset-dist
+          path: dist-doeff-preset
+
+      - name: List doeff-preset artifacts
+        run: ls -la dist-doeff-preset/
+
+      - name: Publish doeff-preset to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-doeff-preset/
           skip-existing: true
           password: ${{ secrets.PYPI_API_TOKEN }}
 
   publish-doeff-agents:
     name: Publish doeff-agents to PyPI
-    needs: [build-doeff-agents-dist, publish]
+    needs: [build-python-release-dists, publish-doeff-time, publish-doeff-preset]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     steps:

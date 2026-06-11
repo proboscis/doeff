@@ -3,8 +3,8 @@
 # Centralized commands for development, testing, and linting.
 
 .PHONY: help install sync lint lint-ruff lint-pyright lint-semgrep lint-semgrep-docs lint-doeff lint-packages \
-        test test-unit test-e2e test-packages test-all test-spec-audit-sa002 format check pre-commit-install clean \
-        install-opencode-spec-gap-tdd
+        test test-unit test-e2e test-packages test-all test-spec-audit-sa002 bench-smoke format check check-repo-hygiene \
+        pre-commit-install clean install-opencode-spec-gap-tdd
 
 # Default target
 help:
@@ -32,10 +32,12 @@ help:
 	@echo "  make test-packages     Run tests in all subpackages"
 	@echo "  make test-all          Run ALL tests (core + packages)"
 	@echo "  make test-spec-audit-sa002 Run SA-002 pytest + semgrep checks"
+	@echo "  make bench-smoke       Run benchmark smoke checks without performance gating"
 	@echo ""
 	@echo "Formatting:"
 	@echo "  make format            Format code with ruff"
 	@echo "  make check             Run format check without modifying files"
+	@echo "  make check-repo-hygiene Check generated artifacts are not tracked"
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make clean             Remove build artifacts and caches"
@@ -62,7 +64,7 @@ pre-commit-install:
 # =============================================================================
 
 # Run ALL linters (core + packages)
-lint: lint-pyright lint-semgrep lint-doeff lint-packages
+lint: lint-ruff lint-pyright lint-semgrep lint-doeff lint-packages
 	@echo ""
 	@echo "All linters passed!"
 
@@ -101,7 +103,7 @@ lint-semgrep-docs:
 lint-doeff:
 	@echo "Running doeff-linter..."
 	@if command -v doeff-linter >/dev/null 2>&1; then \
-		doeff-linter doeff/ packages/; \
+		doeff-linter --no-log doeff/ packages/; \
 	else \
 		echo "Warning: doeff-linter not installed."; \
 		echo "Build with: cd packages/doeff-linter && cargo install --path ."; \
@@ -127,7 +129,7 @@ PYTEST_MEM_GUARD_POLL_INTERVAL ?= 1.0
 PYTEST_MEMORY_ENV := PYTEST_MEM_GUARD_MB=$(PYTEST_MEM_GUARD_MB) \
 	PYTEST_MEM_GUARD_POLL_INTERVAL=$(PYTEST_MEM_GUARD_POLL_INTERVAL)
 
-test:
+test: bench-smoke
 	$(PYTEST_MEMORY_ENV) uv run pytest
 
 test-unit:
@@ -161,6 +163,10 @@ test-spec-audit-sa002:
 		exit 1; \
 	fi
 
+bench-smoke:
+	uv run python benchmarks/benchmark_runner.py --smoke --no-output
+	cd packages/doeff-vm-core && PYO3_PYTHON="$$(cd ../.. && uv run python -c 'import sys; print(sys.executable)')" cargo bench --features python_bridge --bench dispatch -- --test
+
 # =============================================================================
 # Formatting
 # =============================================================================
@@ -169,9 +175,12 @@ format:
 	uv run ruff format doeff/ tests/ packages/
 	uv run ruff check --fix doeff/ tests/ packages/
 
-check:
+check: check-repo-hygiene
 	uv run ruff format --check doeff/ tests/ packages/
 	uv run ruff check doeff/ tests/ packages/
+
+check-repo-hygiene:
+	bash scripts/check-repo-hygiene.sh
 
 # =============================================================================
 # Utilities

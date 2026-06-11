@@ -12,10 +12,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
-
-from doeff import Ask, Get, Put, Tell, default_handlers, run
-from tests._run_helpers import run_with_defaults
 # REMOVED: from doeff.program import GeneratorProgram
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -37,7 +33,7 @@ def _read_vm_or_core_effects(filename: str) -> str:
 
 def _prog(gen_factory):
     """Wrap a generator factory into a GeneratorProgram (has to_generator)."""
-    return GeneratorProgram(gen_factory)
+    return GeneratorProgram(gen_factory)  # noqa: F821 - legacy removed API reference is intentionally preserved
 
 
 # ---------------------------------------------------------------------------
@@ -52,31 +48,31 @@ class TestG8ImportPaths:
 
     def test_import_with_handler(self) -> None:
         """from doeff import WithHandler must succeed."""
-        from doeff import WithHandler  # noqa: F401
+        from doeff import WithHandler
 
         assert WithHandler is not None
 
     def test_import_resume(self) -> None:
         """from doeff import Resume must succeed."""
-        from doeff import Resume  # noqa: F401
+        from doeff import Resume
 
         assert Resume is not None
 
     def test_import_delegate(self) -> None:
         """from doeff import Delegate must succeed."""
-        from doeff import Delegate  # noqa: F401
+        from doeff import Delegate
 
         assert Delegate is not None
 
     def test_import_transfer(self) -> None:
         """from doeff import Transfer must succeed."""
-        from doeff import Transfer  # noqa: F401
+        from doeff import Transfer
 
         assert Transfer is not None
 
     def test_import_k(self) -> None:
         """from doeff import K must succeed."""
-        from doeff import K  # noqa: F401
+        from doeff import K
 
         assert K is not None
 
@@ -93,19 +89,19 @@ class TestG9HandlersModule:
 
     def test_import_state(self) -> None:
         """from doeff.handlers import state must succeed."""
-        from doeff_core_effects.handlers import state  # noqa: F401
+        from doeff_core_effects.handlers import state
 
         assert state is not None
 
     def test_import_reader(self) -> None:
         """from doeff.handlers import reader must succeed."""
-        from doeff_core_effects.handlers import reader  # noqa: F401
+        from doeff_core_effects.handlers import reader
 
         assert reader is not None
 
     def test_import_writer(self) -> None:
         """from doeff.handlers import writer must succeed."""
-        from doeff_core_effects.handlers import writer  # noqa: F401
+        from doeff_core_effects.handlers import writer
 
         assert writer is not None
 

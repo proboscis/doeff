@@ -4,7 +4,7 @@ Reviewed PR workflow template.
 Workflow: issue -> agent -> review -> PR
 
 A workflow with code review:
-1. Create a worktree for the issue
+1. Create a workspace for the issue
 2. Run an agent to implement the issue
 3. Run a review agent to check the implementation
 4. If issues found, have implementer fix them
@@ -12,7 +12,28 @@ A workflow with code review:
 """
 
 from doeff import EffectGenerator, do
-from ..types import Issue, PRHandle
+from doeff_conductor.effects import (
+    REVIEW_VERDICT_RESULT_SCHEMA,
+    Agent,
+    AgentTask,
+    Commit,
+    CreatePR,
+    CreateWorkspace,
+    Push,
+    ResolveIssue,
+)
+from doeff_conductor.types import Issue, PRHandle
+
+IMPLEMENT_SCHEMA = {
+    "type": "object",
+    "required": ["summary"],
+    "properties": {
+        "summary": {"type": "string"},
+        "files_changed": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
+REVIEW_SCHEMA = REVIEW_VERDICT_RESULT_SCHEMA
 
 
 @do
@@ -29,10 +50,8 @@ def reviewed_pr(
     Returns:
         PRHandle for the created PR
     """
-    from ..effects import Commit, CreatePR, CreateWorktree, Push, ResolveIssue, RunAgent
-
-    # Step 1: Create isolated worktree
-    env = yield CreateWorktree(issue=issue)
+    # Step 1: Create isolated workspace (identity is resume-stable per issue)
+    env = yield CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-reviewed-pr")
 
     # Step 2: Run agent to implement the issue
     implement_prompt = f"""
@@ -45,11 +64,22 @@ Implement the following issue:
 Please implement the changes needed to resolve this issue.
 Write clean, well-documented code following best practices.
 """
-    yield RunAgent(env=env, prompt=implement_prompt, name="implementer")
+    yield Agent(
+        AgentTask(
+            run_id=issue.id,
+            node_id="implement",
+            attempt=0,
+            env=env,
+            prompt=implement_prompt,
+            result_schema=IMPLEMENT_SCHEMA,
+            verification_class="test-verifiable",
+            agent_type="codex",
+        )
+    )
 
     # Step 3: Review loop
     review_approved = False
-    last_review = ""
+    last_review: dict | None = None
 
     for iteration in range(max_reviews + 1):
         # Run review agent
@@ -69,10 +99,21 @@ Please review the implementation for:
 If you find issues, list them clearly.
 If the implementation is good, say "APPROVED" and explain why it's acceptable.
 """
-        review_result = yield RunAgent(env=env, prompt=review_prompt, name="reviewer")
+        review_result = yield Agent(
+            AgentTask(
+                run_id=issue.id,
+                node_id="review",
+                attempt=iteration,
+                env=env,
+                prompt=review_prompt,
+                result_schema=REVIEW_SCHEMA,
+                verification_class="review",
+                agent_type="codex",
+            )
+        )
         last_review = review_result
 
-        if "approved" in review_result.lower():
+        if review_result["verdict"] == "PASS":
             review_approved = True
             break
 
@@ -81,22 +122,33 @@ If the implementation is good, say "APPROVED" and explain why it's acceptable.
             fix_prompt = f"""
 A code review found the following issues:
 
-{review_result}
+{review_result["findings"]}
 
 Please address these review comments and improve the implementation.
 """
-            yield RunAgent(env=env, prompt=fix_prompt, name="implementer")
+            yield Agent(
+                AgentTask(
+                    run_id=issue.id,
+                    node_id="fix",
+                    attempt=iteration,
+                    env=env,
+                    prompt=fix_prompt,
+                    result_schema=IMPLEMENT_SCHEMA,
+                    verification_class="test-verifiable",
+                    agent_type="codex",
+                )
+            )
 
     # Step 4: Commit and push
     commit_msg = f"feat: {issue.title}\n\nResolves: {issue.id}"
-    yield Commit(env=env, message=commit_msg)
-    yield Push(env=env)
+    yield Commit(workspace=env, message=commit_msg)
+    yield Push(workspace=env)
 
     # Step 5: Create PR
     review_status = "approved" if review_approved else f"after {max_reviews + 1} reviews"
 
     pr = yield CreatePR(
-        env=env,
+        workspace=env,
         title=issue.title,
         body=f"""
 ## Summary

@@ -49,10 +49,7 @@ def get_default_trace_dir() -> Path:
 
     # Use XDG_STATE_HOME or default
     xdg_state_home = os.environ.get("XDG_STATE_HOME")
-    if xdg_state_home:
-        base = Path(xdg_state_home)
-    else:
-        base = Path.home() / ".local" / "state"
+    base = Path(xdg_state_home) if xdg_state_home else Path.home() / ".local" / "state"
 
     return base / "doeff-flow"
 
@@ -201,7 +198,7 @@ def write_terminal_trace(
     trace_file = trace_dir / workflow_id / "trace.jsonl"
     trace_file.parent.mkdir(parents=True, exist_ok=True)
 
-    now = datetime.now().isoformat()
+    now = datetime.now().isoformat()  # noqa: DTZ005 - existing local wall-clock behavior is intentionally unchanged
     error = None
     result_repr = None
 
@@ -273,7 +270,7 @@ def trace_observer(
     trace_file = trace_dir / workflow_id / "trace.jsonl"
     trace_file.parent.mkdir(parents=True, exist_ok=True)
 
-    started_at = datetime.now().isoformat()
+    started_at = datetime.now().isoformat()  # noqa: DTZ005 - existing local wall-clock behavior is intentionally unchanged
 
     def on_step(snapshot: Any) -> None:
         # For error cases, use the captured effect trace and error location
@@ -372,7 +369,7 @@ def trace_observer(
             ),
             trace=frames,
             started_at=started_at,
-            updated_at=datetime.now().isoformat(),
+            updated_at=datetime.now().isoformat(),  # noqa: DTZ005 - existing local wall-clock behavior is intentionally unchanged
             error=error_msg,
             result=snapshot.result,
             gather=gather_state,

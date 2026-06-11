@@ -4,23 +4,21 @@ DoExpr nodes — Rust pyclasses re-exported for Python use.
 The VM classifies them via downcast (not tag-based getattr).
 """
 
-from doeff_vm import (
-    Pure,
-    Perform,
-    Resume,
-    Transfer,
-    Apply,
-    Expand,
-    Pass,
-    WithHandler as _WithHandlerNode,
-    ResumeThrow,
-    TransferThrow,
-    WithObserve,
-    GetTraceback,
-    GetExecutionContext,
-    GetHandlers,
-    GetOuterHandlers,
-)
+from doeff_vm import Apply as Apply
+from doeff_vm import Expand as Expand
+from doeff_vm import GetExecutionContext as GetExecutionContext
+from doeff_vm import GetHandlers as GetHandlers
+from doeff_vm import GetOuterHandlers as GetOuterHandlers
+from doeff_vm import GetTraceback as GetTraceback
+from doeff_vm import Pass as Pass
+from doeff_vm import Perform as Perform
+from doeff_vm import Pure as Pure
+from doeff_vm import Resume as Resume
+from doeff_vm import ResumeThrow as ResumeThrow
+from doeff_vm import Transfer as Transfer
+from doeff_vm import TransferThrow as TransferThrow
+from doeff_vm import WithHandler as _WithHandlerNode
+from doeff_vm import WithObserve as WithObserve
 
 WithHandlerType = _WithHandlerNode
 
@@ -41,7 +39,7 @@ _LEGACY_DEPRECATION_MSG = (
 )
 
 
-def WithHandler(h, body, *args, **kwargs):
+def WithHandler(h, body, *args, **kwargs):  # noqa: N802 - public compatibility constructor
     """Install handler ``h`` around ``body`` — **deprecated**.
 
     New-style handlers built with ``defhandler`` are already Program →
@@ -78,7 +76,8 @@ def program(gen_fn, *args):
 
     The factory calls gen_fn and wraps the generator as IRStream explicitly.
     """
-    from doeff_vm import Callable as VmCallable, IRStream
+    from doeff_vm import Callable as VmCallable
+    from doeff_vm import IRStream
 
     def factory(*inner_args):
         gen = gen_fn(*inner_args)

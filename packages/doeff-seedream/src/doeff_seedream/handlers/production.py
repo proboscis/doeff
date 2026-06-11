@@ -4,11 +4,11 @@
 from collections.abc import Callable
 from typing import Any
 
+from doeff_core_effects.effects import EffectBase as Effect
 from doeff_image.effects import ImageEdit, ImageGenerate
 from doeff_image.types import ImageResult
 
 from doeff import EffectGenerator, Pass, Resume, do
-from doeff_core_effects.effects import EffectBase as Effect
 from doeff_seedream.effects import SeedreamGenerate, SeedreamStructuredOutput
 from doeff_seedream.structured_llm import _edit_image__seedream4_impl
 from doeff_seedream.types import SeedreamImageEditResult
@@ -109,7 +109,7 @@ def _image_edit_impl(effect: ImageEdit) -> EffectGenerator[ImageResult]:
 
 
 @do
-def seedream_image_handler(effect: Effect, k: Any):  # noqa: PLR0911
+def seedream_image_handler(effect: Effect, k: Any):
     """Protocol handler with model routing for unified image effects."""
     if isinstance(effect, SeedreamGenerate):
         if not _is_seedream_model(effect.model):

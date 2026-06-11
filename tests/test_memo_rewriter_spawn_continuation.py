@@ -14,6 +14,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from doeff_core_effects import Try, slog
+from doeff_core_effects.handlers import (
+    await_handler,
+    slog_handler,
+    state,
+    try_handler,
+    writer,
+)
+from doeff_core_effects.scheduler import Spawn, Wait, scheduled
+
 from doeff import (
     EffectBase,
     EffectGenerator,
@@ -23,23 +33,6 @@ from doeff import (
     do,
     run,
 )
-from doeff_core_effects import slog, Try
-from doeff_core_effects.memo_handlers import (
-    in_memory_memo_handler,
-    make_memo_rewriter,
-)
-from doeff_core_effects.handlers import (
-    await_handler,
-    slog_handler,
-    state,
-    try_handler,
-    writer,
-)
-from doeff_core_effects.scheduler import Spawn, Wait, scheduled
-from doeff_time import GetTime
-from doeff_time.handlers import sim_time_handler
-from doeff_traverse.handlers import parallel, fail_handler
-
 
 # --- Custom effect (analogous to HistoricalPriceQuery) ---
 
@@ -144,7 +137,7 @@ class TestMemoRewriterSpawnContinuation:
 
 
 # Additional import for nested handler tests
-from dataclasses import dataclass as _dc_import_check  # noqa: F401
+from dataclasses import dataclass as _dc_import_check  # noqa: E402, F401 - late import fixture
 
 
 class TestMemoRewriterWithSimTime:

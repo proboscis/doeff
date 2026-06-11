@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from .base import ConductorEffectBase
 
 if TYPE_CHECKING:
-    from ..types import Issue, IssueStatus
+    from doeff_conductor.types import Issue, IssueStatus
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -13,7 +13,26 @@ A workflow with quality gates:
 
 
 from doeff import EffectGenerator, do
-from ..types import Issue, PRHandle
+from doeff_conductor.types import Issue, PRHandle
+
+IMPLEMENT_SCHEMA = {
+    "type": "object",
+    "required": ["summary"],
+    "properties": {
+        "summary": {"type": "string"},
+        "files_changed": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
+TEST_SCHEMA = {
+    "type": "object",
+    "required": ["passed", "summary"],
+    "properties": {
+        "passed": {"type": "boolean"},
+        "summary": {"type": "string"},
+        "failures": {"type": "array"},
+    },
+}
 
 
 @do
@@ -35,10 +54,18 @@ def enforced_pr(
     Raises:
         RuntimeError: If tests still fail after max_retries
     """
-    from ..effects import Commit, CreatePR, CreateWorktree, Push, ResolveIssue, RunAgent
+    from doeff_conductor.effects import (
+        Agent,
+        AgentTask,
+        Commit,
+        CreatePR,
+        CreateWorkspace,
+        Push,
+        ResolveIssue,
+    )
 
-    # Step 1: Create isolated worktree
-    env = yield CreateWorktree(issue=issue)
+    # Step 1: Create isolated worktree (identity is resume-stable per issue)
+    env = yield CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-enforced-pr")
 
     # Step 2: Run agent to implement the issue
     implement_prompt = f"""
@@ -54,7 +81,18 @@ Make sure to:
 2. Follow existing code patterns
 3. Consider edge cases
 """
-    yield RunAgent(env=env, prompt=implement_prompt)
+    yield Agent(
+        AgentTask(
+            run_id=issue.id,
+            node_id="implement",
+            attempt=0,
+            env=env,
+            prompt=implement_prompt,
+            result_schema=IMPLEMENT_SCHEMA,
+            verification_class="test-verifiable",
+            agent_type="codex",
+        )
+    )
 
     # Step 3: Test and fix loop
     tests_passed = False
@@ -72,10 +110,20 @@ Run the test suite to verify the implementation:
 Report the test results. If tests fail, describe what failed.
 If tests pass, confirm that all tests are passing.
 """
-        test_result = yield RunAgent(env=env, prompt=test_prompt)
+        test_result = yield Agent(
+            AgentTask(
+                run_id=issue.id,
+                node_id="test",
+                attempt=attempt,
+                env=env,
+                prompt=test_prompt,
+                result_schema=TEST_SCHEMA,
+                verification_class="test-verifiable",
+                agent_type="codex",
+            )
+        )
 
-        # Check if tests passed (simple heuristic)
-        if "passed" in test_result.lower() and "failed" not in test_result.lower():
+        if test_result["passed"]:
             tests_passed = True
             break
 
@@ -92,10 +140,21 @@ Focus on:
 2. Making targeted fixes
 3. Not breaking other functionality
 """
-            yield RunAgent(env=env, prompt=fix_prompt)
-            last_failure = test_result
+            yield Agent(
+                AgentTask(
+                    run_id=issue.id,
+                    node_id="fix",
+                    attempt=attempt,
+                    env=env,
+                    prompt=fix_prompt,
+                    result_schema=IMPLEMENT_SCHEMA,
+                    verification_class="test-verifiable",
+                    agent_type="codex",
+                )
+            )
+            last_failure = str(test_result)
         else:
-            last_failure = test_result
+            last_failure = str(test_result)
 
     if not tests_passed:
         raise RuntimeError(
@@ -104,12 +163,12 @@ Focus on:
 
     # Step 4: Commit and push changes
     commit_msg = f"feat: {issue.title}\n\nResolves: {issue.id}\n\nAll tests passing."
-    yield Commit(env=env, message=commit_msg)
-    yield Push(env=env)
+    yield Commit(workspace=env, message=commit_msg)
+    yield Push(workspace=env)
 
     # Step 5: Create PR
     pr = yield CreatePR(
-        env=env,
+        workspace=env,
         title=issue.title,
         body=f"""
 ## Summary
