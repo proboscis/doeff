@@ -3,7 +3,7 @@
 # Centralized commands for development, testing, and linting.
 
 .PHONY: help install sync lint lint-ruff lint-pyright lint-semgrep lint-semgrep-docs lint-doeff lint-packages \
-        test test-unit test-e2e test-packages test-all test-spec-audit-sa002 format check check-repo-hygiene \
+        test test-unit test-e2e test-packages test-all test-spec-audit-sa002 bench-smoke format check check-repo-hygiene \
         pre-commit-install clean install-opencode-spec-gap-tdd
 
 # Default target
@@ -32,6 +32,7 @@ help:
 	@echo "  make test-packages     Run tests in all subpackages"
 	@echo "  make test-all          Run ALL tests (core + packages)"
 	@echo "  make test-spec-audit-sa002 Run SA-002 pytest + semgrep checks"
+	@echo "  make bench-smoke       Run benchmark smoke checks without performance gating"
 	@echo ""
 	@echo "Formatting:"
 	@echo "  make format            Format code with ruff"
@@ -128,7 +129,7 @@ PYTEST_MEM_GUARD_POLL_INTERVAL ?= 1.0
 PYTEST_MEMORY_ENV := PYTEST_MEM_GUARD_MB=$(PYTEST_MEM_GUARD_MB) \
 	PYTEST_MEM_GUARD_POLL_INTERVAL=$(PYTEST_MEM_GUARD_POLL_INTERVAL)
 
-test:
+test: bench-smoke
 	$(PYTEST_MEMORY_ENV) uv run pytest
 
 test-unit:
@@ -161,6 +162,10 @@ test-spec-audit-sa002:
 		echo "Warning: semgrep not installed. Install with: uv tool install semgrep"; \
 		exit 1; \
 	fi
+
+bench-smoke:
+	uv run python benchmarks/benchmark_runner.py --smoke --no-output
+	cd packages/doeff-vm-core && PYO3_PYTHON="$$(cd ../.. && uv run python -c 'import sys; print(sys.executable)')" cargo bench --features python_bridge --bench dispatch -- --test
 
 # =============================================================================
 # Formatting

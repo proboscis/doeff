@@ -8,18 +8,24 @@
 
 (import doeff [Ask GetHandlers WithHandler run])
 (import doeff_agents.effects [
+  AgentEffect
   AttachAgentSessionEffect
+  AwaitResultEffect
   CancelAgentSessionEffect
   CaptureEffect
   ClaudeLaunchEffect
   CleanupAgentSessionEffect
+  FollowUpEffect
   GetAgentSessionEffect
   LaunchEffect
+  LaunchSessionEffect
   ListAgentSessionsEffect
   MonitorEffect
   ObserveAgentSessionEffect
+  ReleaseSessionEffect
   SendEffect
-  StopEffect])
+  StopEffect
+  StopSessionEffect])
 (import doeff_agents.session-backend [SessionBackend])
 (import doeff_agents.handlers.production [TmuxAgentHandler])
 
@@ -48,6 +54,26 @@
 (defn agent-handler-defhandler [agent-handler]
   "Wrap an AgentHandler object with a Hy defhandler boundary."
   (defhandler _handler
+    (AgentEffect [task]
+      (resume (.handle-agent agent-handler effect)))
+
+    (LaunchSessionEffect [spec]
+      (resume (.handle-launch-session agent-handler effect)))
+
+    (AwaitResultEffect [handle timeout-seconds]
+      (resume (.handle-await-result agent-handler effect)))
+
+    (FollowUpEffect [handle message]
+      (resume (.handle-follow-up agent-handler effect)))
+
+    (StopSessionEffect [handle reason]
+      (.handle-stop-session agent-handler effect)
+      (resume None))
+
+    (ReleaseSessionEffect [handle]
+      (.handle-release-session agent-handler effect)
+      (resume None))
+
     (LaunchEffect [session-name agent-type work-dir prompt model mcp-tools mcp-server-name effort bare ready-timeout session-env]
       (if mcp-tools
           (do
@@ -102,6 +128,56 @@
   "
   (setv handler-ref {})
   (defhandler _handler
+    (AgentEffect [task]
+      (setv active-backend backend)
+      (when (is active-backend None)
+        (<- active-backend (Ask SessionBackend)))
+      (setv agent-handler
+        (_cached-tmux-handler handler-ref active-backend session-repository))
+      (resume (.handle-agent agent-handler effect)))
+
+    (LaunchSessionEffect [spec]
+      (setv active-backend backend)
+      (when (is active-backend None)
+        (<- active-backend (Ask SessionBackend)))
+      (setv agent-handler
+        (_cached-tmux-handler handler-ref active-backend session-repository))
+      (resume (.handle-launch-session agent-handler effect)))
+
+    (AwaitResultEffect [handle timeout-seconds]
+      (setv active-backend backend)
+      (when (is active-backend None)
+        (<- active-backend (Ask SessionBackend)))
+      (setv agent-handler
+        (_cached-tmux-handler handler-ref active-backend session-repository))
+      (resume (.handle-await-result agent-handler effect)))
+
+    (FollowUpEffect [handle message]
+      (setv active-backend backend)
+      (when (is active-backend None)
+        (<- active-backend (Ask SessionBackend)))
+      (setv agent-handler
+        (_cached-tmux-handler handler-ref active-backend session-repository))
+      (resume (.handle-follow-up agent-handler effect)))
+
+    (StopSessionEffect [handle reason]
+      (setv active-backend backend)
+      (when (is active-backend None)
+        (<- active-backend (Ask SessionBackend)))
+      (setv agent-handler
+        (_cached-tmux-handler handler-ref active-backend session-repository))
+      (.handle-stop-session agent-handler effect)
+      (resume None))
+
+    (ReleaseSessionEffect [handle]
+      (setv active-backend backend)
+      (when (is active-backend None)
+        (<- active-backend (Ask SessionBackend)))
+      (setv agent-handler
+        (_cached-tmux-handler handler-ref active-backend session-repository))
+      (.handle-release-session agent-handler effect)
+      (resume None))
+
     (LaunchEffect [session-name agent-type work-dir prompt model mcp-tools mcp-server-name effort bare ready-timeout session-env]
       (setv active-backend backend)
       (when (is active-backend None)

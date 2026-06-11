@@ -5,10 +5,11 @@ Tests the ConductorAPI Python interface:
 - get_workflow(id) - get workflow by ID
 - stop_workflow(id) - stop a workflow
 - run_workflow() - run workflow templates
-- list_environments() - list worktree environments
-- cleanup_environments() - cleanup orphaned environments
+- list_workspaces() - list materialized workspaces
+- cleanup_workspaces() - cleanup orphaned workspaces
 """
 
+import inspect
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -29,7 +30,7 @@ class TestConductorAPIInit:
     """Tests for ConductorAPI initialization."""
 
     def test_init_with_default_state_dir(self):
-        """API uses XDG default state directory."""
+        """API uses default state directory."""
         api = ConductorAPI()
         assert api.state_dir.name == "doeff-conductor"
 
@@ -184,7 +185,7 @@ class TestGetWorkflow:
             "issue_id": "ISSUE-001",
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
-            "environments": ["env-1"],
+            "workspaces": ["env-1"],
             "agents": ["agent-1"],
         }
         (wf_dir / "meta.json").write_text(json.dumps(data))
@@ -310,56 +311,61 @@ class TestWatchWorkflow:
         assert updates[0]["terminal"] is True
 
 
-class TestListEnvironments:
-    """Tests for list_environments API method."""
+class TestListWorkspaces:
+    """Tests for list_workspaces API method."""
 
     @pytest.fixture
     def api(self, tmp_path: Path) -> ConductorAPI:
         """Create API with temporary state directory."""
         return ConductorAPI(state_dir=tmp_path / "state")
 
-    def test_list_environments_empty(self, api: ConductorAPI):
-        """list_environments returns empty list when no worktrees exist."""
-        envs = api.list_environments()
-        assert envs == []
+    def test_list_workspaces_empty(self, api: ConductorAPI, tmp_path: Path):
+        """list_workspaces returns empty list when no workspaces exist."""
+        with patch("doeff_conductor.handlers.workspace_handler._get_workspace_base_dir") as mock_base:
+            mock_base.return_value = tmp_path / "empty-workspaces"
+            workspaces = api.list_workspaces()
+        assert workspaces == []
 
-    def test_list_environments_with_mock(self, api: ConductorAPI, tmp_path: Path):
-        """list_environments returns worktree environments."""
-        with patch("doeff_conductor.handlers.worktree_handler._get_worktree_base_dir") as mock_base:
-            worktree_base = tmp_path / "worktrees"
-            worktree_base.mkdir()
-            mock_base.return_value = worktree_base
+    def test_list_workspaces_with_mock(self, api: ConductorAPI, tmp_path: Path):
+        """list_workspaces returns workspace objects."""
+        with patch("doeff_conductor.handlers.workspace_handler._get_workspace_base_dir") as mock_base:
+            workspace_base = tmp_path / "workspaces"
+            workspace_base.mkdir()
+            mock_base.return_value = workspace_base
 
-            envs = api.list_environments()
-            assert isinstance(envs, list)
+            workspaces = api.list_workspaces()
+            assert isinstance(workspaces, list)
 
 
-class TestCleanupEnvironments:
-    """Tests for cleanup_environments API method."""
+class TestCleanupWorkspaces:
+    """Tests for cleanup_workspaces API method."""
 
     @pytest.fixture
     def api(self, tmp_path: Path) -> ConductorAPI:
         """Create API with temporary state directory."""
         return ConductorAPI(state_dir=tmp_path / "state")
 
-    def test_cleanup_environments_empty(self, api: ConductorAPI):
-        """cleanup_environments returns empty list when no worktrees exist."""
-        cleaned = api.cleanup_environments()
+    def test_cleanup_workspaces_empty(self, api: ConductorAPI, tmp_path: Path):
+        """cleanup_workspaces returns empty list when no workspaces exist."""
+        with patch("doeff_conductor.handlers.workspace_handler._get_workspace_base_dir") as mock_base:
+            mock_base.return_value = tmp_path / "empty-workspaces"
+            cleaned = api.cleanup_workspaces()
         assert cleaned == []
 
-    def test_cleanup_environments_dry_run(self, api: ConductorAPI, tmp_path: Path):
-        """cleanup_environments dry_run doesn't delete."""
-        with patch("doeff_conductor.handlers.worktree_handler._get_worktree_base_dir") as mock_base:
-            worktree_base = tmp_path / "worktrees"
-            worktree_base.mkdir()
+    def test_cleanup_workspaces_dry_run(self, api: ConductorAPI, tmp_path: Path):
+        """cleanup_workspaces dry_run doesn't delete."""
+        with patch("doeff_conductor.handlers.workspace_handler._get_workspace_base_dir") as mock_base:
+            workspace_base = tmp_path / "workspaces"
+            repo_base = workspace_base / "default"
+            repo_base.mkdir(parents=True)
 
-            old_env = worktree_base / "old-env"
-            old_env.mkdir()
+            old_workspace = repo_base / "old-workspace"
+            old_workspace.mkdir()
 
-            mock_base.return_value = worktree_base
+            mock_base.return_value = workspace_base
 
-            cleaned = api.cleanup_environments(dry_run=True)
-            assert old_env in cleaned or len(cleaned) >= 0
+            cleaned = api.cleanup_workspaces(dry_run=True)
+            assert old_workspace in cleaned
 
 
 class TestRunWorkflow:
@@ -388,8 +394,16 @@ class TestRunWorkflow:
     def test_run_workflow_file_not_found(self, api: ConductorAPI):
         """run_workflow raises error for non-existent file."""
         with pytest.raises(ValueError) as exc_info:
-            api.run_workflow("/nonexistent/workflow.py")
+            api.run_workflow("/nonexistent/workflow.hy")
         assert "not found" in str(exc_info.value)
+
+    def test_run_workflow_rejects_user_python_workflow(self, api: ConductorAPI, tmp_path: Path):
+        """run_workflow rejects .py workflow files, naming the Hy surface."""
+        workflow_file = tmp_path / "test_workflow.py"
+        workflow_file.write_text("WORKFLOW = None\n")
+
+        with pytest.raises(ValueError, match=r"Hy macro DSL"):
+            api.run_workflow(str(workflow_file))
 
     def test_run_workflow_creates_workflow_record(
         self,
@@ -397,59 +411,63 @@ class TestRunWorkflow:
         mock_issue: Issue,
         tmp_path: Path,
     ):
-        """run_workflow creates workflow in state directory.
-        
-        Note: This test uses a custom workflow file to avoid patching complexities.
-        """
-        workflow_file = tmp_path / "test_workflow.py"
+        """run_workflow creates workflow in state directory."""
+        workflow_file = tmp_path / "test_workflow.hy"
         workflow_file.write_text("""
-from doeff import do, Program
+(require doeff-hy.conductor [defworkflow])
+(import doeff_conductor.dsl [artifact])
 
-@do
-def workflow(issue):
-    return Program.pure("done")
+(defworkflow record-workflow
+  :params {}
+  :roles {}
+  (artifact "done"))
+
+(setv WORKFLOW record-workflow)
 """)
 
-        try:
-            handle = api.run_workflow(str(workflow_file), issue=mock_issue)
-            assert handle.id is not None
-            assert handle.issue_id == "ISSUE-001"
-        except Exception:
-            pass
+        handle = api.run_workflow(str(workflow_file), issue=mock_issue)
+
+        assert handle.id is not None
+        assert handle.issue_id == "ISSUE-001"
+        assert handle.status == WorkflowStatus.DONE
 
     def test_run_workflow_with_params(self, api: ConductorAPI, mock_issue: Issue, tmp_path: Path):
-        """run_workflow passes params to workflow function.
-        
-        Note: This test uses a custom workflow file to avoid patching complexities.
-        """
-        workflow_file = tmp_path / "param_workflow.py"
+        """run_workflow passes params through to workflow refs."""
+        workflow_file = tmp_path / "param_workflow.hy"
         workflow_file.write_text("""
-from doeff import do, Program
+(require doeff-hy.conductor [defworkflow])
+(import doeff_conductor.dsl [artifact ref])
 
-@do
-def workflow(issue, custom_param=None):
-    return Program.pure(custom_param)
+(defworkflow param-workflow
+  :params {"custom_param" str}
+  :roles {}
+  (artifact (ref "custom_param")))
+
+(setv WORKFLOW param-workflow)
 """)
 
-        try:
-            handle = api.run_workflow(
-                str(workflow_file),
-                issue=mock_issue,
-                params={"custom_param": "test_value"},
-            )
-            assert handle is not None
-        except Exception:
-            pass
+        handle = api.run_workflow(
+            str(workflow_file),
+            issue=mock_issue,
+            params={"custom_param": "test_value"},
+        )
+
+        assert handle.status == WorkflowStatus.DONE
+        assert handle.result_payload == "test_value"
 
     def test_run_workflow_extracts_pr_url_from_real_run_result(self, api: ConductorAPI, tmp_path: Path):
-        workflow_file = tmp_path / "pr_url_workflow.py"
+        workflow_file = tmp_path / "pr_url_workflow.hy"
         workflow_file.write_text("""
-from types import SimpleNamespace
-from doeff import Pure, do
+(require doeff-hy.conductor [defworkflow])
+(import types [SimpleNamespace])
+(import doeff_conductor.dsl [artifact])
 
-@do
-def workflow():
-    return (yield Pure(SimpleNamespace(url="runresult-url")))
+(defworkflow pr-url-workflow
+  :params {}
+  :roles {}
+  (artifact (SimpleNamespace :url "runresult-url")))
+
+(setv WORKFLOW pr-url-workflow)
 """)
 
         handle = api.run_workflow(str(workflow_file))
@@ -457,19 +475,78 @@ def workflow():
         assert handle.status == WorkflowStatus.DONE
         assert handle.pr_url == "runresult-url"
 
+    def test_run_workflow_accepts_dict_result_without_pr_handle_name_error(
+        self,
+        api: ConductorAPI,
+        tmp_path: Path,
+    ):
+        workflow_file = tmp_path / "dict_result_workflow.hy"
+        workflow_file.write_text("""
+(require doeff-hy.conductor [defworkflow])
+(import doeff_conductor.dsl [artifact])
+
+(defworkflow dict-result-workflow
+  :params {}
+  :roles {}
+  (artifact {"status" "ok"}))
+
+(setv WORKFLOW dict-result-workflow)
+""")
+
+        handle = api.run_workflow(str(workflow_file), run_id="stable-run")
+
+        assert handle.id == "stable-run"
+        assert handle.status == WorkflowStatus.DONE
+        assert handle.pr_url is None
+
+    def test_workflow_api_exposes_no_agent_backend_selector(self):
+        """Production workflows always use the agentd-backed handler."""
+        assert "agent_backend" not in inspect.signature(ConductorAPI.run_workflow).parameters
+        assert "agent_backend" not in inspect.signature(ConductorAPI.resume_workflow).parameters
+
+    def test_run_workflow_installs_scheduler_for_spawn_gather(
+        self,
+        api: ConductorAPI,
+        tmp_path: Path,
+    ):
+        """parallel compiles to Spawn/Gather, so the run must install a scheduler."""
+        workflow_file = tmp_path / "spawn_workflow.hy"
+        workflow_file.write_text("""
+(require doeff-hy.conductor [defworkflow parallel <-])
+(import doeff_conductor.dsl [artifact prompt ref])
+
+(defworkflow spawn-workflow
+  :params {}
+  :roles {}
+  (<- values (parallel (prompt "left") (prompt "right")))
+  (artifact (ref "values")))
+
+(setv WORKFLOW spawn-workflow)
+""")
+
+        handle = api.run_workflow(str(workflow_file), run_id="spawn-run")
+
+        assert handle.id == "spawn-run"
+        assert handle.status == WorkflowStatus.DONE
+        assert list(handle.result_payload) == ["left", "right"]
+
     def test_run_workflow_does_not_unwrap_non_run_result_value_objects(
         self,
         api: ConductorAPI,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        workflow_file = tmp_path / "non_run_result_workflow.py"
+        workflow_file = tmp_path / "non_run_result_workflow.hy"
         workflow_file.write_text("""
-from doeff import Program, do
+(require doeff-hy.conductor [defworkflow])
+(import doeff_conductor.dsl [artifact])
 
-@do
-def workflow():
-    return Program.pure("ignored")
+(defworkflow non-run-result-workflow
+  :params {}
+  :roles {}
+  (artifact "ignored"))
+
+(setv WORKFLOW non-run-result-workflow)
 """)
 
         class NonRunResultWithValue:
@@ -499,7 +576,7 @@ class TestWorkflowHandleSerialization:
             issue_id="ISSUE-001",
             created_at=now,
             updated_at=now,
-            environments=("env-1", "env-2"),
+            workspaces=("env-1", "env-2"),
             agents=("agent-1",),
             pr_url="https://github.com/test/repo/pull/1",
         )
@@ -510,7 +587,7 @@ class TestWorkflowHandleSerialization:
         assert data["status"] == "running"
         assert data["template"] == "basic_pr"
         assert data["issue_id"] == "ISSUE-001"
-        assert data["environments"] == ["env-1", "env-2"]
+        assert data["workspaces"] == ["env-1", "env-2"]
         assert data["agents"] == ["agent-1"]
         assert data["pr_url"] == "https://github.com/test/repo/pull/1"
 
@@ -525,7 +602,7 @@ class TestWorkflowHandleSerialization:
             "issue_id": "ISSUE-001",
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
-            "environments": ["env-1"],
+            "workspaces": ["env-1"],
             "agents": ["agent-1"],
             "pr_url": "https://github.com/test/repo/pull/1",
             "error": None,

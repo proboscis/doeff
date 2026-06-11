@@ -77,6 +77,74 @@ rules:
       include:
         - /packages/doeff-agents/**
 
+  - id: doeff-agents-no-pr-url-session-sniffing
+    languages: [generic]
+    severity: ERROR
+    message: >
+      ADR 0001 C1: doeff-agents must not infer workflow success or PR links from
+      captured terminal text. The agent boundary returns schema-validated artifacts;
+      PR URL ownership belongs to conductor/git issue layers, not session algebra.
+    pattern-regex: '\b(pr_url|detect_pr_url|PR_URL_PATTERN)\b'
+    paths:
+      include:
+        - /packages/doeff-agents/src/**
+
+  - id: doeff-agents-no-terminal-text-success-status
+    languages: [python]
+    severity: ERROR
+    message: >
+      ADR 0001 C1: doeff-agents must not derive DONE/FAILED workflow truth from
+      terminal output. Success is decided solely by the schema-validated result artifact.
+    pattern-either:
+      - pattern: |
+          if "worked for" in $OUTPUT:
+              ...
+      - pattern: |
+          if "Done" in $OUTPUT:
+              ...
+      - pattern: |
+          if "DONE" in $OUTPUT:
+              ...
+      - pattern: |
+          if "FAILED" in $OUTPUT:
+              ...
+      - pattern-regex: '\b(is_completed|is_failed)\s*\('
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/monitor.py
+        - /packages/doeff-agents/src/doeff_agents/session.py
+
+  - id: adr0001-d1-agentd-only-worker-route
+    languages: [python]
+    severity: ERROR
+    message: >
+      ADR 0001 D1 + Condemned class D: doeff-conductor handlers must not launch
+      or discover worker binaries through subprocess, os.exec*, or shutil.which.
+      Workers may only launch through doeff_agents session APIs supervised by doeff-agentd.
+    pattern-either:
+      - pattern: import subprocess
+      - pattern: from subprocess import $NAME
+      - pattern: subprocess.$CALL(...)
+      - pattern: os.execl(...)
+      - pattern: os.execle(...)
+      - pattern: os.execlp(...)
+      - pattern: os.execlpe(...)
+      - pattern: os.execv(...)
+      - pattern: os.execve(...)
+      - pattern: os.execvp(...)
+      - pattern: os.execvpe(...)
+      - pattern: shutil.which("codex")
+      - pattern: shutil.which("claude")
+      - pattern: shutil.which("gemini")
+      - pattern: which("codex")
+      - pattern: which("claude")
+      - pattern: which("gemini")
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/handlers/**
+      exclude:
+        - /packages/doeff-conductor/src/doeff_conductor/handlers/exec_handler.py
+
   - id: http-request-handlers-use-defhandler
     languages: [python]
     severity: ERROR
@@ -1842,11 +1910,13 @@ rules:
       rationale: "canonical WithHandler signature is (handler, expr: DoExpr)"
 
   - id: doeff-withhandler-no-return-clause
-    pattern-either:
-      - pattern: WithHandler(..., return_clause=$RETURN, ...)
-      - pattern: WithHandler($HANDLER, $EXPR, $RETURN, ...)
-      - pattern: $VM.WithHandler(..., return_clause=$RETURN, ...)
-      - pattern: $VM.WithHandler($HANDLER, $EXPR, $RETURN, ...)
+    patterns:
+      - pattern-either:
+          - pattern: WithHandler(..., return_clause=$RETURN, ...)
+          - pattern: WithHandler($HANDLER, $EXPR, $RETURN, ...)
+          - pattern: $VM.WithHandler(..., return_clause=$RETURN, ...)
+          - pattern: $VM.WithHandler($HANDLER, $EXPR, $RETURN, ...)
+      - pattern-not: _WithHandlerNode(h, body, *args, **kwargs)
     paths:
       include:
         - "**/doeff/**/*.py"
