@@ -123,8 +123,6 @@ __all__ = [
     "Commit",
     # Base
     "ConductorEffectBase",
-    # Exec
-    "Exec",
     # Issue
     "CreateIssue",
     "CreatePR",
@@ -133,6 +131,8 @@ __all__ = [
     "DefaultReviewRouter",
     "DeleteWorkspace",
     "DurableReviewBudget",
+    # Exec
+    "Exec",
     "GateCall",
     "GateOption",
     "GetIssue",
@@ -144,8 +144,8 @@ __all__ = [
     "GitPushEffect",
     "ListIssues",
     "MergeCall",
-    "MergeWorkspaces",
     "MergePR",
+    "MergeWorkspaces",
     "OpenGate",
     "OpenGateReason",
     "Push",

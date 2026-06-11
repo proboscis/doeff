@@ -23,9 +23,8 @@ from doeff_git.handlers import GitHubHandler, GitLocalHandler
 from doeff_git.types import PRHandle as GitPRHandle
 
 from doeff_conductor.exceptions import GitCommandError
-from doeff_conductor.types import MergeStrategy
-
 from doeff_conductor.git_workspace import get_current_commit, run_git
+from doeff_conductor.types import MergeStrategy
 
 if TYPE_CHECKING:
     from doeff_conductor.effects.git import Commit, CreatePR, MergePR, Push

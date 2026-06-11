@@ -11,8 +11,7 @@ The simplest workflow for implementing an issue:
 """
 
 from doeff import EffectGenerator, do
-
-from ..types import Issue, PRHandle
+from doeff_conductor.types import Issue, PRHandle
 
 IMPLEMENT_SCHEMA = {
     "type": "object",
@@ -34,7 +33,15 @@ def basic_pr(issue: Issue) -> EffectGenerator[PRHandle]:
     Returns:
         PRHandle for the created PR
     """
-    from ..effects import Agent, AgentTask, Commit, CreatePR, CreateWorkspace, Push, ResolveIssue
+    from doeff_conductor.effects import (
+        Agent,
+        AgentTask,
+        Commit,
+        CreatePR,
+        CreateWorkspace,
+        Push,
+        ResolveIssue,
+    )
 
     # Step 1: Create isolated worktree (identity is resume-stable per issue)
     env = yield CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-basic-pr")
