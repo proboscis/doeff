@@ -709,7 +709,7 @@ def wait_cmd(
         if output_json:
             click.echo(json.dumps({"error": str(e)}))
         else:
-            console.print(f"[red]Error:[/red] {e}")
+            click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
