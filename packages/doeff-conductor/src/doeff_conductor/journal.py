@@ -11,7 +11,7 @@ from typing import Any
 
 from doeff_agents.result_validation import validate_result_payload
 
-from doeff_conductor.effects.agent import AgentEffect, AgentTask
+from doeff_conductor.effects.agent import AgentAttemptExhaustedError, AgentEffect, AgentTask
 from doeff_conductor.exceptions import AgentError, JournalCorruptionError
 from doeff_conductor.replay_keying import (
     ResolvedIdentity,
@@ -24,6 +24,7 @@ from doeff_conductor.replay_keying import (
 JOURNAL_VERSION = 1
 AGENT_JOURNAL_FILENAME = "agent-journal.jsonl"
 TERMINAL_KIND_SUCCEEDED = "succeeded"
+TERMINAL_KIND_OPEN_GATE = "open-gate"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -179,14 +180,48 @@ class AgentReplaySession:
 
         if entry_index < valid_prefix:
             previous_entry = self.previous_entries[entry_index]
+            if previous_entry.terminal_kind != TERMINAL_KIND_SUCCEEDED:
+                self._start_new_generation()
+                return self._run_delegate_and_append(effect, delegate, decision, entry_index)
             self._validate_replay_entry(previous_entry, effect, decision)
             self.replayed_prefix_entries.append(previous_entry)
+            if self.started_new_generation:
+                self._append_replayed_entry(previous_entry)
             return previous_entry.result_artifact
 
         if entry_index < len(self.previous_entries):
             self._start_new_generation()
 
-        result = delegate(effect)
+        return self._run_delegate_and_append(effect, delegate, decision, entry_index)
+
+    def _run_delegate_and_append(
+        self,
+        effect: AgentEffect,
+        delegate: Callable[[AgentEffect], object],
+        decision: AgentReplayDecision,
+        entry_index: int,
+    ) -> object:
+        try:
+            result = delegate(effect)
+        except AgentAttemptExhaustedError as error:
+            self.journal.append_entry(
+                AgentJournalEntry(
+                    generation=self.current_generation,
+                    entry_index=entry_index,
+                    cache_key=decision.cache_key,
+                    resolved_identity_fingerprint=decision.resolved_identity_fingerprint,
+                    node_identity=decision.node_identity,
+                    result_artifact={
+                        "session_id": error.session_id,
+                        "attempts": error.attempts,
+                        "last_error_kind": error.last_error.kind.value,
+                        "last_error_message": error.last_error.message,
+                    },
+                    terminal_kind=TERMINAL_KIND_OPEN_GATE,
+                )
+            )
+            raise
+
         _validate_delegate_result(effect, result)
         self.journal.append_entry(
             AgentJournalEntry(
@@ -206,18 +241,26 @@ class AgentReplaySession:
             return
         self.current_generation = self.previous_generation + 1
         for entry_index, previous_entry in enumerate(self.replayed_prefix_entries):
-            self.journal.append_entry(
-                AgentJournalEntry(
-                    generation=self.current_generation,
-                    entry_index=entry_index,
-                    cache_key=previous_entry.cache_key,
-                    resolved_identity_fingerprint=previous_entry.resolved_identity_fingerprint,
-                    node_identity=previous_entry.node_identity,
-                    result_artifact=previous_entry.result_artifact,
-                    terminal_kind=previous_entry.terminal_kind,
-                )
-            )
+            self._append_replayed_entry(previous_entry, entry_index=entry_index)
         self.started_new_generation = True
+
+    def _append_replayed_entry(
+        self,
+        previous_entry: AgentJournalEntry,
+        *,
+        entry_index: int | None = None,
+    ) -> None:
+        self.journal.append_entry(
+            AgentJournalEntry(
+                generation=self.current_generation,
+                entry_index=previous_entry.entry_index if entry_index is None else entry_index,
+                cache_key=previous_entry.cache_key,
+                resolved_identity_fingerprint=previous_entry.resolved_identity_fingerprint,
+                node_identity=previous_entry.node_identity,
+                result_artifact=previous_entry.result_artifact,
+                terminal_kind=previous_entry.terminal_kind,
+            )
+        )
 
     def _validate_replay_entry(
         self,

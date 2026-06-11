@@ -591,13 +591,13 @@ because where to pause is a trust/stakes judgment extrinsic to the task:
    (the `❯` input box is visible mid-work). Cosmetic — contract
    validation, not status labels, decides completion — but operators and
    tooling read it; consider the activity signal for `running`.
-9. **§8 attention-tier machinery is not live (validated 2026-06-11).**
-   Gates exist in the validate interpreter, the run-state schema, and
-   `conductor gate list` — but a live retry exhaustion raises a terminal
-   error instead of parking a gate, `--supervision phase-checkpoints` has
-   no live effect, and no closure verb exists (`gate list` only; no
-   proceed/redirect/abort). The overseer contract (§8) is currently
-   stub-only; wiring it live is the next major stage.
+9. **§8 attention-tier live machinery — resolved 2026-06-11.**
+   Live retry-budget exhaustion parks an open gate with stakes metadata
+   instead of raising a terminal workflow error; `conductor gates` lists
+   open gates; `conductor answer RUN GATE_ID proceed|redirect|abort`
+   records the answer and uses the §9 journal/snapshot resume path; and
+   `--supervision phase-checkpoints` inserts live checkpoint gates with
+   artifact summaries and binding deltas rather than diffs.
 10. **`random!` true randomness + journal replay fixed `bc48f890`**:
    `random!` now emits a workflow effect handled through
    `effect-journal.jsonl`; first execution draws from OS entropy and replay
