@@ -427,7 +427,10 @@ mirroring deterministic session names (§5.1). Materialization is idempotent
 ensure-style: branch and worktree both present ⇒ re-adopted as-is
 (uncommitted changes preserved); worktree missing but branch present ⇒
 re-materialized from the branch, never from the base ref; creation from the
-base ref happens exactly once per `(run-id, node)` lifetime.
+base ref happens exactly once per `(run-id, node)` lifetime. For explicit
+`workspace!`, node identity is the expression's source-order occurrence
+(loader-reset per module), never the evaluation site — one `workspace!`
+value shared by several nodes is ONE workspace.
 
 Multi-repo is a v1 requirement (the k2-k3 reference's TASK D edits a second
 repository): `(workspace! :repo "name" :from ref)`, with repo names

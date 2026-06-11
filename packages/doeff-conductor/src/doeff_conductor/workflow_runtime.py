@@ -404,7 +404,16 @@ def _materialize_workspace(
     *,
     path: str,
 ) -> Any:
-    node_id: str = _node_id(context.workflow.name, path, "workspace")
+    # Identity belongs to the workspace EXPRESSION (its source-order
+    # occurrence), never to the evaluation site: a module-level
+    # `(setv ws (workspace! ...))` shared by several nodes is ONE
+    # workspace.  Keying by evaluation path gave every consumer its own
+    # fresh worktree — a gate then tested a different tree than the
+    # implementer wrote to, the exact false-positive class this module's
+    # resume-stability discipline exists to kill.  Occurrence numbers are
+    # loader-reset per module exec, so identical source yields identical
+    # identities across processes.
+    node_id: str = _node_id(context.workflow.name, f"workspace!{spec.occurrence}", "workspace")
     cached_workspace: Workspace | None = context.workspace_cache.get(node_id)
     if cached_workspace is not None:
         return cached_workspace

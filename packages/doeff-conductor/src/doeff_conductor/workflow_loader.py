@@ -24,7 +24,7 @@ from hy.errors import HyError
 from hy.importer import HyLoader
 from hy.reader import read_many
 
-from doeff_conductor.dsl import WorkflowSpec
+from doeff_conductor.dsl import WorkflowSpec, reset_workspace_occurrences
 
 WORKFLOW_SNAPSHOT_FILENAME = "workflow.hy"
 
@@ -153,6 +153,10 @@ def load_workflow_spec(workflow_path_text: str) -> WorkflowSpec:
 
     module: ModuleType = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
+    # Workspace identity is keyed by source-order occurrence; identical
+    # source must yield identical occurrence numbers on every load (resume
+    # stability across processes), so the counter starts fresh per module.
+    reset_workspace_occurrences()
     spec.loader.exec_module(module)
 
     candidate: Any
