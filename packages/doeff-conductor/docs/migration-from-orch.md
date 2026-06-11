@@ -36,12 +36,12 @@ This guide helps users of the Go `orch` CLI migrate to `doeff-conductor`.
 | `orch issue open <id>` | `conductor issue show <id>` | Renamed to `show` |
 | `orch issue resolve <id>` | `conductor issue resolve <id>` | Same syntax |
 
-### Environment Management
+### Workspace Management
 
 | orch | conductor | Notes |
 |------|-----------|-------|
-| `orch env list` | `conductor env list` | Same syntax |
-| `orch env cleanup` | `conductor env cleanup` | Same syntax |
+| `orch env list` | `conductor workspace list` | Same syntax |
+| `orch env cleanup` | `conductor workspace cleanup` | Same syntax |
 
 ### Template Management
 
@@ -111,15 +111,30 @@ steps:
 ```python
 # my_workflow.py
 from doeff import do
-from doeff_conductor import CreateWorktree, RunAgent, Commit, Push, CreatePR
+from doeff_conductor import Agent, AgentTask, CreateWorkspace, Commit, Push, CreatePR
+
+AGENT_SCHEMA = {
+    "type": "object",
+    "required": ["summary"],
+    "properties": {"summary": {"type": "string"}},
+}
 
 @do
 def my_workflow(issue):
-    env = yield CreateWorktree(issue=issue)
-    yield RunAgent(env=env, prompt=issue.body)
-    yield Commit(env=env, message=f"feat: {issue.title}")
-    yield Push(env=env)
-    pr = yield CreatePR(env=env, title=issue.title)
+    env = yield CreateWorkspace(issue=issue)
+    yield Agent(AgentTask(
+        run_id=issue.id,
+        node_id="implement",
+        attempt=0,
+        env=env,
+        prompt=issue.body,
+        result_schema=AGENT_SCHEMA,
+        verification_class="test-verifiable",
+        agent_type="codex",
+    ))
+    yield Commit(workspace=env, message=f"feat: {issue.title}")
+    yield Push(workspace=env)
+    pr = yield CreatePR(workspace=env, title=issue.title)
     return pr
 ```
 
@@ -196,10 +211,10 @@ from doeff_conductor import Issue, PRHandle
 
 @do
 def typed_workflow(issue: Issue) -> EffectGenerator[PRHandle]:
-    # Type checker knows env is WorktreeEnv
-    env = yield CreateWorktree(issue=issue)
+    # Type checker knows env is Workspace
+    env = yield CreateWorkspace(issue=issue)
     # Type checker knows pr is PRHandle
-    pr = yield CreatePR(env=env, title=issue.title)
+    pr = yield CreatePR(workspace=env, title=issue.title)
     return pr
 ```
 
@@ -212,9 +227,9 @@ from doeff import Gather
 def parallel_work():
     # Run multiple effects in parallel
     results = yield Gather(
-        CreateWorktree(suffix="a"),
-        CreateWorktree(suffix="b"),
-        CreateWorktree(suffix="c"),
+        CreateWorkspace(workspace_id="run1-a"),
+        CreateWorkspace(workspace_id="run1-b"),
+        CreateWorkspace(workspace_id="run1-c"),
     )
 ```
 
@@ -240,12 +255,21 @@ def parallel_work():
 ```python
 # orch (Go library)
 wf := orch.NewWorkflow()
-wf.RunAgent(prompt)
+wf.Agent(prompt)
 
 # conductor (Python)
 @do
 def workflow():
-    yield RunAgent(env=env, prompt=prompt)
+    yield Agent(AgentTask(
+        run_id=issue.id,
+        node_id="implement",
+        attempt=0,
+        env=env,
+        prompt=prompt,
+        result_schema=AGENT_SCHEMA,
+        verification_class="test-verifiable",
+        agent_type="codex",
+    ))
 ```
 
 ## Performance Considerations

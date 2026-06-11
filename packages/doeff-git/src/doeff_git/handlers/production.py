@@ -59,7 +59,7 @@ def _normalize_strategy(strategy: MergeStrategy | str | Any | None) -> MergeStra
     if isinstance(strategy, MergeStrategy):
         return strategy
 
-    raw_value = getattr(strategy, "value", strategy)
+    raw_value = strategy.value if hasattr(strategy, "value") else strategy
     if isinstance(raw_value, str):
         normalized = raw_value.strip().lower()
         for candidate in MergeStrategy:
@@ -201,7 +201,7 @@ def production_handlers(
         if isinstance(effect, MergePR):
             hosting.handle_merge_pr(effect)
             return (yield Resume(k, None))
-        return (yield Pass())
+        return (yield Pass(effect, k))
 
     return handler
 

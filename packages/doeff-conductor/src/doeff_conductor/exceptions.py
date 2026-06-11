@@ -6,6 +6,7 @@ Provides a hierarchy of exceptions for specific error handling in workflows.
 
 
 from dataclasses import dataclass
+from pathlib import Path
 from subprocess import CalledProcessError
 
 
@@ -99,30 +100,30 @@ class GitCommandError(ConductorError):
         )
 
 
-class WorktreeError(ConductorError):
-    """Raised when a worktree operation fails.
+class WorkspaceError(ConductorError):
+    """Raised when a workspace operation fails.
 
     Attributes:
-        worktree_id: The ID of the worktree involved.
+        workspace_id: The ID of the workspace involved.
         operation: The operation that failed (create, delete, merge).
     """
 
     def __init__(
         self,
-        worktree_id: str | None = None,
+        workspace_id: str | None = None,
         operation: str | None = None,
         message: str | None = None,
     ):
-        self.worktree_id = worktree_id
+        self.workspace_id = workspace_id
         self.operation = operation
         if message:
             super().__init__(message)
         else:
-            parts = ["Worktree operation failed"]
+            parts = ["Workspace operation failed"]
             if operation:
-                parts[0] = f"Worktree {operation} failed"
-            if worktree_id:
-                parts.append(f"worktree_id={worktree_id}")
+                parts[0] = f"Workspace {operation} failed"
+            if workspace_id:
+                parts.append(f"workspace_id={workspace_id}")
             super().__init__(": ".join(parts))
 
 
@@ -176,6 +177,18 @@ class AgentTimeoutError(AgentError):
         super().__init__(agent_id=agent_id, operation="wait", message=message)
 
 
+class JournalCorruptionError(ConductorError):
+    """Raised when a persisted effect journal is malformed or inconsistent."""
+
+    def __init__(self, path: str | Path | None = None, message: str | None = None):
+        self.path = path
+        if message is None:
+            message = "Effect journal is corrupt"
+        if path is not None:
+            message = f"{message}: {path}"
+        super().__init__(message)
+
+
 class PRError(ConductorError):
     """Raised when a PR operation fails.
 
@@ -210,6 +223,7 @@ __all__ = [
     "GitCommandError",
     "IssueAlreadyExistsError",
     "IssueNotFoundError",
+    "JournalCorruptionError",
     "PRError",
-    "WorktreeError",
+    "WorkspaceError",
 ]

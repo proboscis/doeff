@@ -3,7 +3,7 @@ use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
@@ -18,6 +18,83 @@ const DEFAULT_MONITOR_INTERVAL_MS: u64 = 1000;
 const DEFAULT_MAX_RUNNING_SESSIONS: usize = 10;
 const LEASE_NAME: &str = "doeff-agentd";
 const LEASE_TTL_SECONDS: i64 = 10;
+/// Wait up to 30s for sqlite write locks. The default `busy_timeout = 0`
+/// causes silent monitor-loop death: with multiple connections (serve
+/// thread + monitor thread) writing to a delete-journal database, any
+/// momentary write conflict returns `SQLITE_BUSY` immediately, `?`
+/// bubbles it out, and the eprintln goes to an orphaned PIPE when
+/// agentd runs under launchd. Set globally so every connection retries.
+const SQLITE_BUSY_TIMEOUT_MS: u32 = 30_000;
+/// Force a running session to `exited` once its last_observed_at is
+/// older than this threshold. Guards against tmux probes that hang
+/// or DB write paths that silently fail: the watchdog touches only
+/// the database, so even if the rest of the monitor pipeline is
+/// broken the session can no longer occupy a concurrency slot
+/// forever. Real codex sessions refresh `last_observed_at` every
+/// monitor_interval (~1s), so 5 minutes is two orders of magnitude
+/// above the noise floor.
+const STALE_OBSERVATION_THRESHOLD_SECONDS: i64 = 300;
+/// Force a `running` session to `failed` if it has never reached
+/// the agent's "active" marker (= still inside startup) for this
+/// long.  Distinct from the stale-observation watchdog: the startup
+/// spinner ticks the wall-clock every second so the tmux capture
+/// keeps changing and `last_observed_at` keeps refreshing — the
+/// agent is "live" by every external measure but never actually
+/// starts work.  Past incident: an MCP server with an expired
+/// refresh token blocked codex's initialisation for 8+ hours on
+/// every launch, eventually filling the concurrency cap with
+/// sessions that produced no output beyond the startup banner.
+/// That incident went uncaught because codex's MCP-startup spinner
+/// shows the same "(… • esc to interrupt)" marker as active work,
+/// which set `observed_active_at` and DISABLED this watchdog — see
+/// `output_has_codex_active_marker`, now fixed to ignore the
+/// "Starting MCP servers" phase so a startup hang keeps
+/// `observed_active_at` unset and is reaped here.
+///
+/// Default 60s: codex's normal cold-start (incl. healthy MCP fleet)
+/// fits in tens of seconds, so 60s catches a hung MCP server quickly
+/// without rip-cording a transiently slow but recoverable launch.
+/// Override with the `DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS` env var.
+const LAUNCH_TIMEOUT_SECONDS: i64 = 60;
+
+/// Effective launch/MCP-startup timeout: the `LAUNCH_TIMEOUT_SECONDS`
+/// default, overridable at runtime via the
+/// `DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS` env var (positive integer
+/// seconds). Read at use-site so an operator can retune without a
+/// rebuild.
+fn effective_launch_timeout_seconds() -> i64 {
+    env::var("DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.trim().parse::<i64>().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(LAUNCH_TIMEOUT_SECONDS)
+}
+const LIFECYCLE_RUN_TO_COMPLETION: &str = "run_to_completion";
+const LIFECYCLE_INTERACTIVE: &str = "interactive";
+
+/// Default cap on how long `session.await_result` blocks before
+/// returning a timeout error.  10 minutes matches the typical upper
+/// bound of a single agent turn under `run_to_completion`.
+const DEFAULT_AWAIT_TIMEOUT_SECONDS: f64 = 600.0;
+/// Lower bound for the await_result timeout.  Below 1s the polling
+/// loop has no useful work to do and the connection thrashes.
+const MIN_AWAIT_TIMEOUT_SECONDS: f64 = 1.0;
+/// Upper bound for the await_result timeout.  Keeps a misbehaving
+/// client from parking an agentd thread for an unbounded time.
+const MAX_AWAIT_TIMEOUT_SECONDS: f64 = 3600.0;
+/// Cadence at which the await loop re-reads the session row.  500ms
+/// is well below the monitor loop's own cadence (~1s) so callers see
+/// terminal transitions promptly without putting noticeable load on
+/// sqlite.
+const AWAIT_POLL_INTERVAL_MS: u64 = 500;
+/// JSON-RPC error code returned when `session.await_result` exceeds
+/// its caller-supplied timeout.  Inside the JSON-RPC 2.0 reserved
+/// "server error" range (-32000..-32099).
+const RPC_ERR_AWAIT_TIMEOUT: i32 = -32000;
+/// JSON-RPC error code returned when `session.await_result` targets a
+/// session id that does not exist (or has been deleted during the
+/// wait).
+const RPC_ERR_NO_SUCH_SESSION: i32 = -32001;
 
 #[derive(Debug, Clone)]
 struct Config {
@@ -52,7 +129,34 @@ struct RpcResponse {
     result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    /// Structured JSON-RPC 2.0 style error code.  Present only on
+    /// failure responses raised through `RpcError`; preserved alongside
+    /// the human-readable `error` string for back-compat with existing
+    /// clients (notably the Python client which only reads `error`).
+    /// New methods such as `session.await_result` use this so callers
+    /// can distinguish e.g. "no such session" (-32001) from "timeout"
+    /// (-32000) without parsing the error message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_code: Option<i32>,
 }
+
+/// Structured error carrying a JSON-RPC 2.0 style error code.  Used by
+/// handlers that need to differentiate failure modes on the wire — the
+/// dispatch wrapper downcasts the inner `anyhow::Error` and forwards
+/// both the code and the message into the response.
+#[derive(Debug, Clone)]
+struct RpcError {
+    code: i32,
+    message: String,
+}
+
+impl std::fmt::Display for RpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for RpcError {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SessionSnapshot {
@@ -61,6 +165,7 @@ struct SessionSnapshot {
     pane_id: String,
     agent_type: String,
     work_dir: String,
+    lifecycle: String,
     status: String,
     backend_kind: String,
     backend_ref: BTreeMap<String, String>,
@@ -70,6 +175,169 @@ struct SessionSnapshot {
     cleaned_at: Option<String>,
     pr_url: Option<String>,
     output_snippet: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    terminal_cause: Option<TerminalCause>,
+    /// Optional output-file contract.  When set, the monitor refuses to
+    /// finalise the session as terminal until the named file exists and
+    /// (when configured) matches the declared schema.  Missing or
+    /// invalid output triggers an auto-retry up to `max_retries`
+    /// times; exhausting retries marks the session as failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expected_result: Option<ExpectedResultSpec>,
+    /// How many retries the monitor has issued so far for this session.
+    /// Used together with `expected_result.max_retries` to decide
+    /// whether the next validation failure triggers another retry or
+    /// finalises as failed.
+    #[serde(default)]
+    retries_used: u32,
+    /// Most recent validation reason — surfaced in events so callers
+    /// can see *why* the monitor retried (or gave up).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_validation_error: Option<String>,
+    /// True while the monitor is waiting for the agent to acknowledge
+    /// a freshly-sent prompt (initial launch message or a retry).  The
+    /// monitor flips this back to false the first time it observes the
+    /// agent's "active" marker (e.g. codex's "Working ...").  Without
+    /// this latch a freshly-launched interactive agent that is briefly
+    /// idle while booting would be misclassified as "done" before it
+    /// even processed the message.
+    #[serde(default)]
+    awaiting_response: bool,
+    /// Wall-clock timestamp of the first observation where the agent's
+    /// active marker appeared in the tmux capture.  None for sessions
+    /// that have not yet completed startup; once set, never cleared.
+    ///
+    /// The `LAUNCH_TIMEOUT_SECONDS` watchdog uses this to distinguish
+    /// "agent is taking a while" from "agent never got past startup":
+    /// the latter is the failure mode we hit when a hung MCP server
+    /// (e.g. one with an invalid auth token) blocks codex's
+    /// initialisation forever.  Without this field every such session
+    /// pinned a concurrency slot until manual operator cleanup, since
+    /// the existing zombie reaper looks for idle shell — not idle
+    /// startup spinner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    observed_active_at: Option<String>,
+    /// The validated result payload, captured from the per-session result file
+    /// at the moment the monitor accepted it (status → `done`).  Stored as
+    /// the serialized JSON object the agent wrote.  This is the durable
+    /// copy `session.await_result` returns: the result file lives in the
+    /// agent's git worktree, which is reaped on the terminal transition, so
+    /// without this field a successfully-produced result is lost before the
+    /// launcher can read it back.  `None` for non-contract sessions and for
+    /// rows written by an agentd predating this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    result_payload: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum TerminalCauseCategory {
+    RateLimited,
+    TimedOut,
+    Cancelled,
+    Lost,
+    ProtocolError,
+    RunnerUnavailable,
+    RunFailed,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TerminalCause {
+    category: TerminalCauseCategory,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+    retryable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retry_after_seconds: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    backend_error_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    signal: Option<String>,
+    observed_at: String,
+}
+
+/// Contract the launcher attaches to a session to enforce input→output
+/// semantics on top of doeff-agentd's existing terminal-detection
+/// heuristics.  When set, the monitor validates the agent's output on
+/// every transition to "done" before letting the session enter a
+/// terminal state — and auto-prompts the agent to fix forgotten or
+/// malformed outputs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ExpectedResultSpec {
+    /// The JSON-Schema (a constrained subset agentd enforces — see
+    /// `validate_against_schema`) the agent's result must satisfy.  This
+    /// is the ONLY thing the launcher supplies.  agentd owns the entire
+    /// transmission contract: it picks the result file path
+    /// (per-session `result_file_name`), injects the how/where instruction into
+    /// the agent (`result_protocol_instruction`), reads the file and
+    /// validates its content directly against this schema, and re-prompts
+    /// on violation.  The schema is opaque to agentd — it enforces
+    /// structure, it does not know what any field means — so the daemon
+    /// stays domain-agnostic.
+    payload_schema: serde_json::Value,
+    /// Message sent back to the agent when its result is missing or does
+    /// not satisfy the schema.  `%REASON%` is replaced with the
+    /// validator's explanation so the agent has actionable feedback.
+    /// agentd policy — launchers leave it at the default.
+    #[serde(default = "default_retry_prompt")]
+    retry_prompt: String,
+    /// Maximum number of times the monitor re-prompts the agent before
+    /// finalising the session as failed.  Counts retries only, not the
+    /// initial run, so total attempts = max_retries + 1.
+    #[serde(default = "default_max_retries")]
+    max_retries: u32,
+}
+
+/// Glob registered in `.git/info/exclude` (see `ignore_result_file`) so
+/// per-session result files written into the agent's git worktree never
+/// dirty `git status` or land in a commit.
+const RESULT_FILE_EXCLUDE_GLOB: &str = ".agentd-result-*.json";
+
+/// Per-SESSION result-file name.  The name is agentd's own — the launcher
+/// never learns it, keeping the transmission contract entirely inside
+/// agentd.  It must be per-session, not per-workdir: several sessions can
+/// share one workdir (conductor's shared-workspace workflows), and a fixed
+/// name let a later agent's contract validate against an EARLIER agent's
+/// stale result — the second agent was marked done (and its pane reaped
+/// mid-work) without doing anything (observed live: a fan-out where only
+/// the first writer's work existed, and a fix loop that never converged
+/// because each fixer was instantly 'done' with its predecessor's result).
+fn result_file_name(session_id: &str) -> String {
+    format!(".agentd-result-{session_id}.json")
+}
+
+/// The instruction agentd injects into the agent's first prompt telling
+/// it HOW and WHERE to emit its result.  This is agentd's transmission
+/// contract with the tmux agent — the launcher never authors it, so a
+/// launcher that knows only the data schema still gets a working result
+/// channel.  The agent writes the result object directly; agentd reads
+/// it from the session's `result_file_name` and validates it against the
+/// launcher's `payload_schema`.
+fn result_protocol_instruction(session_id: &str) -> String {
+    let file_name = result_file_name(session_id);
+    format!(
+        "\n\n---\nWhen you have finished the task, WRITE your result as a single JSON \
+         object to the file '{file_name}' in your current working directory.  \
+         agentd reads that file, validates it, and — if it is missing or does not \
+         satisfy the contract — sends the reason back so you can fix it; rewrite the \
+         file and do NOT exit until it is accepted.  Write only the result object \
+         itself; the required fields are described in the task above.",
+    )
+}
+
+fn default_retry_prompt() -> String {
+    String::from(
+        "You exited without producing the required output file: %REASON%. \
+         Re-read your previous instructions, write the file at the expected path \
+         with the exact schema declared, and do not exit until the file is valid.",
+    )
+}
+
+fn default_max_retries() -> u32 {
+    2
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,14 +346,51 @@ struct LaunchParams {
     session_name: String,
     agent_type: String,
     work_dir: String,
-    command: String,
+    /// Optional explicit command override.  When provided, agentd sends this
+    /// string verbatim to the new tmux pane and skips the agent-type-aware
+    /// argv builder.  Required when agent_type is "generic" or unrecognized.
+    #[serde(default)]
+    command: Option<String>,
+    #[serde(default)]
+    prompt: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
+    /// Map of MCP server name → URL passed to the agent.  Caller owns the
+    /// MCP server lifecycle; agentd only forwards URLs into the agent argv.
+    #[serde(default)]
+    mcp_servers: BTreeMap<String, String>,
+    /// When true, skip agent-specific pre-launch setup such as Codex's
+    /// workspace trust file.  Use for sandboxed test invocations.
+    #[serde(default)]
+    skip_trust_setup: bool,
+    #[serde(default = "default_session_lifecycle")]
+    lifecycle: String,
     #[serde(default)]
     session_env: BTreeMap<String, String>,
+    /// Optional output-file contract.  See 'ExpectedResultSpec' for the
+    /// semantics; persisted with the session so the monitor can enforce
+    /// it after the agent appears to finish.
+    #[serde(default)]
+    expected_result: Option<ExpectedResultSpec>,
 }
 
 #[derive(Debug, Deserialize)]
 struct SessionIdParams {
     session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AwaitResultParams {
+    session_id: String,
+    /// Maximum number of seconds to block before returning a timeout
+    /// error.  Defaults to `DEFAULT_AWAIT_TIMEOUT_SECONDS` (10 min) and
+    /// is clamped into `[MIN_AWAIT_TIMEOUT_SECONDS, MAX_AWAIT_TIMEOUT_SECONDS]`
+    /// inside the handler so misbehaving clients cannot park threads
+    /// for arbitrarily long.
+    #[serde(default)]
+    timeout_seconds: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -110,6 +415,7 @@ struct ListParams {
     status: Option<Vec<String>>,
     agent_type: Option<String>,
     backend_kind: Option<String>,
+    lifecycle: Option<String>,
 }
 
 fn default_capture_lines() -> i64 {
@@ -120,8 +426,47 @@ fn default_true() -> bool {
     true
 }
 
+fn default_session_lifecycle() -> String {
+    String::from(LIFECYCLE_RUN_TO_COMPLETION)
+}
+
+fn validate_session_lifecycle(lifecycle: &str) -> Result<()> {
+    if lifecycle == LIFECYCLE_RUN_TO_COMPLETION || lifecycle == LIFECYCLE_INTERACTIVE {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "unsupported session lifecycle: {} (expected {} or {})",
+        lifecycle,
+        LIFECYCLE_RUN_TO_COMPLETION,
+        LIFECYCLE_INTERACTIVE
+    ))
+}
+
+fn is_run_to_completion_lifecycle(lifecycle: &str) -> bool {
+    lifecycle == LIFECYCLE_RUN_TO_COMPLETION
+}
+
 fn now_iso() -> String {
     Utc::now().to_rfc3339()
+}
+
+/// Open a sqlite connection with a non-zero busy timeout. Always use
+/// this instead of `Connection::open` so the monitor thread does not
+/// silently die the first time it races the serve thread for a write
+/// lock.
+fn open_conn(path: &Path) -> Result<Connection> {
+    let conn = Connection::open(path)?;
+    conn.busy_timeout(Duration::from_millis(u64::from(SQLITE_BUSY_TIMEOUT_MS)))?;
+    Ok(conn)
+}
+
+/// Parse an ISO-8601 / RFC-3339 timestamp from the agent_sessions table
+/// into UTC. Returns `None` for missing or malformed values; callers
+/// treat that as "watchdog cannot evaluate this row" and fall through
+/// to the regular tmux probe.
+fn parse_iso_timestamp(raw: Option<&str>) -> Option<DateTime<Utc>> {
+    raw.and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&Utc))
 }
 
 fn main() -> Result<()> {
@@ -132,9 +477,22 @@ fn main() -> Result<()> {
     if let Some(parent) = config.socket_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let conn = Connection::open(&config.db_path)?;
+    let conn = open_conn(&config.db_path)?;
     migrate(&conn)?;
     acquire_lease(&conn)?;
+    // A fresh agentd has no way to verify what the previous instance
+    // was waiting on — any 'awaiting_response' latches in the
+    // session table refer to retry prompts the previous process sent
+    // and that nobody is monitoring anymore.  Clear the latches so
+    // the new monitor loop is free to re-evaluate turn-end on the
+    // next stable observation instead of sitting on stale state
+    // forever.
+    conn.execute(
+        "UPDATE agent_sessions SET awaiting_response = 0 \
+         WHERE awaiting_response = 1 \
+           AND status NOT IN ('done','failed','exited','stopped','cancelled')",
+        [],
+    )?;
     serve(config)
 }
 
@@ -234,7 +592,8 @@ fn migrate(conn: &Connection) -> Result<()> {
           finished_at TEXT,
           cleaned_at TEXT,
           pr_url TEXT,
-          output_snippet TEXT
+          output_snippet TEXT,
+          terminal_cause_json TEXT
         );
 
         CREATE TABLE IF NOT EXISTS agent_session_events (
@@ -268,6 +627,44 @@ fn migrate(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
           ON agent_session_events(session_id, id);
         "#,
+    )?;
+    ensure_column(
+        conn,
+        "agent_sessions",
+        "lifecycle",
+        "TEXT NOT NULL DEFAULT 'run_to_completion'",
+    )?;
+    ensure_column(conn, "agent_sessions", "expected_result_json", "TEXT")?;
+    ensure_column(
+        conn,
+        "agent_sessions",
+        "retries_used",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column(conn, "agent_sessions", "last_validation_error", "TEXT")?;
+    ensure_column(
+        conn,
+        "agent_sessions",
+        "awaiting_response",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column(conn, "agent_sessions", "observed_active_at", "TEXT")?;
+    ensure_column(conn, "agent_sessions", "terminal_cause_json", "TEXT")?;
+    ensure_column(conn, "agent_sessions", "result_payload_json", "TEXT")?;
+    Ok(())
+}
+
+fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str) -> Result<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    for row in rows {
+        if row? == column {
+            return Ok(());
+        }
+    }
+    conn.execute(
+        &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+        [],
     )?;
     Ok(())
 }
@@ -379,7 +776,7 @@ fn handle_stream(stream: UnixStream, config: Config) -> Result<()> {
     let reader_stream = stream.try_clone()?;
     let mut reader = BufReader::new(reader_stream);
     let mut writer = stream;
-    let conn = Connection::open(&config.db_path)?;
+    let conn = open_conn(&config.db_path)?;
     migrate(&conn)?;
     loop {
         let mut line = String::new();
@@ -397,6 +794,7 @@ fn handle_stream(stream: UnixStream, config: Config) -> Result<()> {
                 ok: false,
                 result: None,
                 error: Some(format!("invalid request: {err}")),
+                error_code: None,
             },
         };
         let encoded = serde_json::to_string(&response)?;
@@ -416,13 +814,26 @@ fn dispatch_request(conn: &Connection, config: &Config, request: RpcRequest) -> 
             ok: true,
             result: Some(value),
             error: None,
+            error_code: None,
         },
-        Err(err) => RpcResponse {
-            id,
-            ok: false,
-            result: None,
-            error: Some(format!("{err:#}")),
-        },
+        Err(err) => {
+            // If the handler raised a structured RpcError, surface its
+            // code on the wire so callers (notably session.await_result
+            // clients) can distinguish failure modes without parsing
+            // the message.  Fall back to the legacy plain-string error
+            // for handlers that haven't migrated.
+            let (message, code) = match err.downcast_ref::<RpcError>() {
+                Some(rpc_err) => (rpc_err.message.clone(), Some(rpc_err.code)),
+                None => (format!("{err:#}"), None),
+            };
+            RpcResponse {
+                id,
+                ok: false,
+                result: None,
+                error: Some(message),
+                error_code: code,
+            }
+        }
     }
 }
 
@@ -471,8 +882,274 @@ fn dispatch_request_result(
         let params: SessionIdParams = serde_json::from_value(request.params)?;
         let snapshot = session_cleanup(conn, config, &params.session_id)?;
         Ok(serde_json::to_value(snapshot)?)
+    } else if request.method == "session.await_result" {
+        let params: AwaitResultParams = serde_json::from_value(request.params)?;
+        session_await_result(conn, params)
     } else {
         Err(anyhow!("unknown method: {}", request.method))
+    }
+}
+
+/// Build the shell command line that tmux runs in the new pane.  Per-agent
+/// adapters (codex, claude) own the argv shape; callers passing
+/// `agent_type=generic` (or any unknown type) must provide `command`
+/// explicitly as an escape hatch.
+fn resolve_launch_command(params: &LaunchParams) -> Result<String> {
+    if let Some(explicit) = params.command.as_ref() {
+        if !explicit.trim().is_empty() {
+            return Ok(explicit.clone());
+        }
+    }
+    match params.agent_type.as_str() {
+        "codex" => Ok(shell_join(build_codex_argv(params))),
+        "claude" => Ok(shell_join(build_claude_argv(params))),
+        "generic" | "" => Err(anyhow!(
+            "session.launch: agent_type='{}' requires an explicit `command`",
+            params.agent_type
+        )),
+        other => Err(anyhow!(
+            "session.launch: unknown agent_type '{}'; pass `command` to use generic launch",
+            other
+        )),
+    }
+}
+
+/// True when 'session_launch' should hand the prompt to the running
+/// agent as an interactive message instead of baking it into the argv.
+/// Currently codex and claude are the supported interactive agents;
+/// callers using `agent_type=generic` (or anything else) opt out by
+/// passing their own command + prompt argv explicitly.
+fn uses_interactive_prompt(params: &LaunchParams) -> bool {
+    if let Some(cmd) = params.command.as_ref() {
+        if !cmd.trim().is_empty() {
+            return false;
+        }
+    }
+    matches!(params.agent_type.as_str(), "codex" | "claude")
+}
+
+fn build_codex_argv(params: &LaunchParams) -> Vec<String> {
+    let mut args: Vec<String> = vec![String::from("codex"), String::from("--yolo")];
+    if let Some(effort) = params.effort.as_ref() {
+        if !effort.is_empty() {
+            args.push(String::from("-c"));
+            args.push(format!(
+                "model_reasoning_effort={}",
+                toml_quoted_string(effort)
+            ));
+        }
+    }
+    for (name, url) in &params.mcp_servers {
+        args.push(String::from("-c"));
+        args.push(format!(
+            "mcp_servers.{}.url={}",
+            toml_quoted_key(name),
+            toml_quoted_string(url)
+        ));
+    }
+    if let Some(model) = params.model.as_ref() {
+        if !model.is_empty() {
+            args.push(String::from("--model"));
+            args.push(model.clone());
+        }
+    }
+    // Intentionally do NOT pass the prompt as a positional argument.
+    // Codex would treat that as a single-shot invocation and exit when
+    // the task completed, which destroys the agent process before the
+    // monitor can validate output or send follow-up feedback.
+    //
+    // Instead we leave codex in its interactive REPL and 'session_launch'
+    // sends the prompt as the first message into the live session via
+    // 'tmux_send_keys', keeping codex alive for retries with full
+    // conversation context.
+    args
+}
+
+fn build_claude_argv(params: &LaunchParams) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        String::from("claude"),
+        String::from("--dangerously-skip-permissions"),
+    ];
+    // Effort delivery, symmetric with build_codex_argv's
+    // model_reasoning_effort: the claude CLI has a real --effort flag.
+    if let Some(effort) = params.effort.as_ref() {
+        if !effort.is_empty() {
+            args.push(String::from("--effort"));
+            args.push(effort.clone());
+        }
+    }
+    if let Some(model) = params.model.as_ref() {
+        if !model.is_empty() {
+            args.push(String::from("--model"));
+            args.push(model.clone());
+        }
+    }
+    // Same rationale as 'build_codex_argv': the prompt is sent as a
+    // message into the running agent (not as a positional argv) so the
+    // session stays alive past task completion and can be re-prompted.
+    args
+}
+
+/// Add `file_name` to the git repo's local `info/exclude` so a result
+/// file agentd reads from a git worktree stays invisible to `git status`
+/// and can never be `git add`-ed into a commit.  No-op when work_dir is
+/// not a git work tree.  Uses the local exclude (not the tracked
+/// `.gitignore`) so the agent's PR is unaffected.  Idempotent.
+///
+/// Resolves the real git directory: in a plain checkout `.git` is a
+/// directory; in a linked worktree (what ACP uses) `.git` is a FILE
+/// holding `gitdir: <path>` pointing at `…/.git/worktrees/<name>`, whose
+/// own `info/exclude` is the per-worktree exclude.
+fn ignore_result_file(work_dir: &str, file_name: &str) -> Result<()> {
+    let dot_git = Path::new(work_dir).join(".git");
+    let git_dir: std::path::PathBuf = if dot_git.is_dir() {
+        dot_git
+    } else if dot_git.is_file() {
+        let contents = fs::read_to_string(&dot_git)?;
+        match contents
+            .lines()
+            .find_map(|l| l.strip_prefix("gitdir:").map(|p| p.trim().to_string()))
+        {
+            Some(p) => std::path::PathBuf::from(p),
+            None => return Ok(()),
+        }
+    } else {
+        return Ok(());
+    };
+    // `info/exclude` lives in the COMMON git dir, shared across all
+    // worktrees — NOT the per-worktree gitdir.  A linked worktree's
+    // gitdir carries a `commondir` file pointing at the common dir;
+    // follow it so a single exclude entry covers every worktree.  A
+    // plain checkout has no `commondir` and is its own common dir.
+    let common_dir = match fs::read_to_string(git_dir.join("commondir")) {
+        Ok(rel) => {
+            let joined = git_dir.join(rel.trim());
+            joined.canonicalize().unwrap_or(joined)
+        }
+        Err(_) => git_dir.clone(),
+    };
+    let info_dir = common_dir.join("info");
+    fs::create_dir_all(&info_dir)?;
+    let exclude_path = info_dir.join("exclude");
+    let existing = fs::read_to_string(&exclude_path).unwrap_or_default();
+    let entry = format!("/{file_name}");
+    if existing.lines().any(|line| line.trim() == entry || line.trim() == file_name) {
+        return Ok(());
+    }
+    let mut contents = existing;
+    if !contents.is_empty() && !contents.ends_with('\n') {
+        contents.push('\n');
+    }
+    contents.push_str(&entry);
+    contents.push('\n');
+    fs::write(&exclude_path, contents)?;
+    Ok(())
+}
+
+fn run_pre_launch_setup(params: &LaunchParams) -> Result<()> {
+    if params.agent_type == "codex" {
+        if let Err(err) = trust_codex_workspace(&params.work_dir) {
+            eprintln!(
+                "doeff-agentd: warning: failed to persist Codex workspace trust for {}: {err:#}",
+                params.work_dir
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Persist Codex's per-workspace trust in `~/.codex/config.toml` so launching
+/// without `--yolo` (or after a Codex update that drops `--yolo`) still skips
+/// the "Do you trust this directory?" prompt.  Mirrors the helper in
+/// doeff-agents/adapters/codex.py.
+fn trust_codex_workspace(work_dir: &str) -> Result<()> {
+    let codex_home = env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join(".codex"));
+    fs::create_dir_all(&codex_home)
+        .with_context(|| format!("creating codex home: {}", codex_home.display()))?;
+    let config_path = codex_home.join("config.toml");
+    let existing = if config_path.exists() {
+        fs::read_to_string(&config_path)
+            .with_context(|| format!("reading codex config: {}", config_path.display()))?
+    } else {
+        String::new()
+    };
+    let header = format!("[projects.{}]", toml_quoted_key(work_dir));
+    let trust_line = String::from("trust_level = \"trusted\"");
+    let mut lines: Vec<String> = existing.lines().map(|s| s.to_string()).collect();
+    let mut replaced = false;
+    let mut header_index: Option<usize> = None;
+    for (index, line) in lines.iter().enumerate() {
+        if line.trim() == header {
+            header_index = Some(index);
+            break;
+        }
+    }
+    if let Some(start) = header_index {
+        let mut end = start + 1;
+        while end < lines.len() && !lines[end].starts_with('[') {
+            end += 1;
+        }
+        for line in lines.iter_mut().take(end).skip(start + 1) {
+            if line.trim_start().starts_with("trust_level") {
+                *line = trust_line.clone();
+                replaced = true;
+                break;
+            }
+        }
+        if !replaced {
+            lines.insert(start + 1, trust_line.clone());
+            replaced = true;
+        }
+    } else {
+        if !lines.is_empty() && !lines.last().map(|s| s.is_empty()).unwrap_or(true) {
+            lines.push(String::new());
+        }
+        lines.push(header);
+        lines.push(trust_line);
+        replaced = true;
+    }
+    if replaced {
+        let mut output = lines.join("\n");
+        if !output.ends_with('\n') {
+            output.push('\n');
+        }
+        fs::write(&config_path, output)
+            .with_context(|| format!("writing codex config: {}", config_path.display()))?;
+    }
+    Ok(())
+}
+
+fn toml_quoted_key(value: &str) -> String {
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
+}
+
+fn toml_quoted_string(value: &str) -> String {
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
+}
+
+fn shell_join(args: Vec<String>) -> String {
+    args.into_iter()
+        .map(shell_quote)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn shell_quote(value: String) -> String {
+    if value.is_empty() {
+        return String::from("''");
+    }
+    let safe = value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "-_./:=@,%+".contains(c));
+    if safe {
+        value
+    } else {
+        let escaped = value.replace('\'', "'\\''");
+        format!("'{escaped}'")
     }
 }
 
@@ -481,6 +1158,7 @@ fn session_launch(
     config: &Config,
     params: LaunchParams,
 ) -> Result<SessionSnapshot> {
+    validate_session_lifecycle(&params.lifecycle)?;
     if session_get(conn, &params.session_id)?.is_some() {
         return Err(anyhow!(
             "session is already registered: {}",
@@ -500,18 +1178,71 @@ fn session_launch(
             params.session_name
         ));
     }
+    let command_line = resolve_launch_command(&params)?;
+    if !params.skip_trust_setup {
+        run_pre_launch_setup(&params)?;
+    }
+    // Keep the result file agentd will read from out of the agent's git
+    // worktree status, so a result written into a checkout the agent
+    // commits from never dirties `git status` or lands in a PR.  Local
+    // (`.git/info/exclude`) so no tracked `.gitignore` is touched.
+    if params.expected_result.is_some() {
+        if let Err(err) = ignore_result_file(&params.work_dir, RESULT_FILE_EXCLUDE_GLOB) {
+            eprintln!(
+                "doeff-agentd: warning: could not register result file in git exclude for {}: {err:#}",
+                params.work_dir
+            );
+        }
+    }
     let pane_id = tmux_new_session(
         config,
         &params.session_name,
         &params.work_dir,
         &params.session_env,
     )?;
-    if !params.command.trim().is_empty() {
-        tmux_send_keys(config, &pane_id, &params.command, true, true)?;
+    if !command_line.trim().is_empty() {
+        tmux_send_keys(config, &pane_id, &command_line, true, true)?;
+    }
+    // For interactive agents (codex / claude), the prompt is sent as a
+    // message INTO the running agent's REPL — not as a positional argv —
+    // so the session survives task completion and the monitor can
+    // re-prompt the still-alive agent when the output contract is
+    // violated.  Agents launched via an explicit `command` keep the
+    // legacy behaviour: callers that hand over their own argv are
+    // responsible for including a prompt if they want one.
+    let mut awaiting_response = false;
+    if uses_interactive_prompt(&params) {
+        if let Some(prompt) = params.prompt.as_ref() {
+            if !prompt.trim().is_empty() {
+                // agentd owns the result transmission contract: when an
+                // `expected_result` is attached, append the HOW/WHERE
+                // instruction here so the launcher never has to author
+                // file/path/envelope prose.  The launcher's prompt
+                // describes WHAT data to report; agentd adds where to
+                // put it and how it is validated.
+                let full_prompt = if params.expected_result.is_some() {
+                    format!("{prompt}{}", result_protocol_instruction(&params.session_id))
+                } else {
+                    prompt.clone()
+                };
+                // Wait for the agent's REPL to actually be ready for
+                // input before sending the prompt + Enter.  Codex (and
+                // similar) print their banner, load MCP servers, and
+                // only then enter the input loop.  Sending keys before
+                // that race lets the text queue up while the Enter is
+                // eaten by the loading screen — the visible symptom
+                // was a prompt sitting in codex's input box that was
+                // never submitted.
+                wait_for_repl_idle(config, &pane_id, Duration::from_secs(20))?;
+                tmux_send_keys(config, &pane_id, &full_prompt, true, true)?;
+                awaiting_response = true;
+            }
+        }
     }
     let mut backend_ref = BTreeMap::new();
     backend_ref.insert(String::from("session_name"), params.session_name.clone());
     backend_ref.insert(String::from("pane_id"), pane_id.clone());
+    backend_ref.insert(String::from("command"), command_line.clone());
     let started_at = now_iso();
     let snapshot = SessionSnapshot {
         session_id: params.session_id.clone(),
@@ -519,6 +1250,7 @@ fn session_launch(
         pane_id,
         agent_type: params.agent_type,
         work_dir: params.work_dir,
+        lifecycle: params.lifecycle,
         status: String::from("booting"),
         backend_kind: String::from("tmux"),
         backend_ref,
@@ -528,6 +1260,13 @@ fn session_launch(
         cleaned_at: None,
         pr_url: None,
         output_snippet: None,
+        terminal_cause: None,
+        expected_result: params.expected_result,
+        retries_used: 0,
+        last_validation_error: None,
+        awaiting_response,
+        observed_active_at: None,
+        result_payload: None,
     };
     record_command(
         conn,
@@ -544,9 +1283,11 @@ fn session_launch(
 
 fn session_get(conn: &Connection, session_id: &str) -> Result<Option<SessionSnapshot>> {
     conn.query_row(
-        "SELECT session_id, session_name, pane_id, agent_type, work_dir, status,
+        "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status,
                 backend_kind, backend_ref_json, started_at, last_observed_at,
-                finished_at, cleaned_at, pr_url, output_snippet
+                finished_at, cleaned_at, pr_url, output_snippet,
+                terminal_cause_json, expected_result_json, retries_used, last_validation_error,
+                awaiting_response, observed_active_at, result_payload_json
          FROM agent_sessions WHERE session_id = ?1",
         params![session_id],
         row_to_snapshot,
@@ -557,9 +1298,11 @@ fn session_get(conn: &Connection, session_id: &str) -> Result<Option<SessionSnap
 
 fn session_list(conn: &Connection, query: ListParams) -> Result<Vec<SessionSnapshot>> {
     let mut stmt = conn.prepare(
-        "SELECT session_id, session_name, pane_id, agent_type, work_dir, status,
+        "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status,
                 backend_kind, backend_ref_json, started_at, last_observed_at,
-                finished_at, cleaned_at, pr_url, output_snippet
+                finished_at, cleaned_at, pr_url, output_snippet,
+                terminal_cause_json, expected_result_json, retries_used, last_validation_error,
+                awaiting_response, observed_active_at, result_payload_json
          FROM agent_sessions
          ORDER BY started_at DESC, session_id ASC",
     )?;
@@ -590,6 +1333,11 @@ fn list_query_matches(snapshot: &SessionSnapshot, query: &ListParams) -> bool {
             return false;
         }
     }
+    if let Some(lifecycle) = &query.lifecycle {
+        if lifecycle != &snapshot.lifecycle {
+            return false;
+        }
+    }
     true
 }
 
@@ -600,6 +1348,7 @@ fn count_active_sessions(conn: &Connection) -> Result<usize> {
             status: Some(active_statuses()),
             agent_type: None,
             backend_kind: None,
+            lifecycle: None,
         },
     )?;
     Ok(active.len())
@@ -656,7 +1405,14 @@ fn session_cancel(conn: &Connection, config: &Config, session_id: &str) -> Resul
     let now = now_iso();
     snapshot.status = String::from("stopped");
     snapshot.finished_at = Some(now.clone());
-    snapshot.last_observed_at = Some(now);
+    snapshot.last_observed_at = Some(now.clone());
+    set_terminal_cause_if_absent(
+        &mut snapshot,
+        TerminalCauseCategory::Cancelled,
+        "session.cancel requested",
+        false,
+        &now,
+    );
     upsert_snapshot(conn, &snapshot)?;
     record_command(
         conn,
@@ -680,7 +1436,16 @@ fn session_cleanup(
         tmux_kill_session(config, &snapshot.session_name)?;
     }
     let now = now_iso();
-    snapshot.status = String::from("stopped");
+    if !is_terminal_status(&snapshot.status) {
+        snapshot.status = String::from("stopped");
+        set_terminal_cause_if_absent(
+            &mut snapshot,
+            TerminalCauseCategory::Cancelled,
+            "session.cleanup stopped a non-terminal session",
+            false,
+            &now,
+        );
+    }
     snapshot.finished_at.get_or_insert_with(|| now.clone());
     snapshot.cleaned_at = Some(now.clone());
     snapshot.last_observed_at = Some(now);
@@ -697,47 +1462,238 @@ fn session_cleanup(
     Ok(snapshot)
 }
 
+/// Block until the named session reaches a terminal status (or the
+/// caller-supplied timeout elapses).  Built for the Haskell agent-
+/// control-plane daemon: clients used to poll `session.get` and then
+/// read the result file directly off disk, which bypassed agentd's
+/// `validate_expected_result` contract.  This RPC consolidates the
+/// wait + validation handoff into a single response so the daemon
+/// never sees an unvalidated payload.
+///
+/// Threading note: each agentd connection runs in its own thread (see
+/// `serve` / `handle_stream`), so blocking the calling thread here
+/// does not stall the rest of the daemon — other RPCs continue to be
+/// served concurrently.
+fn session_await_result(
+    conn: &Connection,
+    params: AwaitResultParams,
+) -> Result<Value> {
+    session_await_result_with_interval(
+        conn,
+        params,
+        Duration::from_millis(AWAIT_POLL_INTERVAL_MS),
+    )
+}
+
+/// Test-friendly variant of `session_await_result` that exposes the
+/// polling cadence.  Production code uses `AWAIT_POLL_INTERVAL_MS`;
+/// tests override it to keep total runtime small.
+fn session_await_result_with_interval(
+    conn: &Connection,
+    params: AwaitResultParams,
+    poll_interval: Duration,
+) -> Result<Value> {
+    let timeout_seconds = params
+        .timeout_seconds
+        .unwrap_or(DEFAULT_AWAIT_TIMEOUT_SECONDS)
+        .clamp(MIN_AWAIT_TIMEOUT_SECONDS, MAX_AWAIT_TIMEOUT_SECONDS);
+    let timeout = Duration::from_secs_f64(timeout_seconds);
+    let started = std::time::Instant::now();
+
+    // Probe once up front so a missing session fails fast with the
+    // dedicated -32001 code instead of waiting for the timeout.
+    let initial = session_get(conn, &params.session_id)?;
+    let mut snapshot = match initial {
+        Some(snap) => snap,
+        None => {
+            return Err(anyhow::Error::new(RpcError {
+                code: RPC_ERR_NO_SUCH_SESSION,
+                message: format!("no session with id '{}'", params.session_id),
+            }));
+        }
+    };
+
+    loop {
+        if is_await_terminal_status(&snapshot.status) {
+            return Ok(build_await_response(&snapshot));
+        }
+        if started.elapsed() >= timeout {
+            return Err(anyhow::Error::new(RpcError {
+                code: RPC_ERR_AWAIT_TIMEOUT,
+                message: format!(
+                    "session.await_result timed out after {}s for session '{}'",
+                    timeout_seconds as u64, params.session_id
+                ),
+            }));
+        }
+        thread::sleep(poll_interval);
+        snapshot = match session_get(conn, &params.session_id)? {
+            Some(snap) => snap,
+            None => {
+                // The session row vanished mid-wait — surface the same
+                // dedicated error code as the initial-not-found case
+                // so the Haskell client can branch identically.
+                return Err(anyhow::Error::new(RpcError {
+                    code: RPC_ERR_NO_SUCH_SESSION,
+                    message: format!("no session with id '{}'", params.session_id),
+                }));
+            }
+        };
+    }
+}
+
+/// Assemble the success response for `session.await_result`.  The
+/// `result` field is `Some(...)` only when the session reached `done`
+/// AND its `expected_result` contract revalidates successfully; in
+/// every other terminal state (including `failed` due to validation
+/// timeout) `result` is null and `validation_error` carries whichever
+/// reason the monitor recorded.
+fn build_await_response(snapshot: &SessionSnapshot) -> Value {
+    let mut response = serde_json::Map::new();
+    response.insert(
+        String::from("session"),
+        serde_json::to_value(snapshot).unwrap_or(Value::Null),
+    );
+
+    let mut result_value: Value = Value::Null;
+    let mut validation_error: Option<String> = snapshot.last_validation_error.clone();
+
+    if snapshot.status == "done" {
+        if let Some(spec) = snapshot.expected_result.as_ref() {
+            // Prefer the payload the monitor persisted at validation time.
+            // It was captured from the result file the instant the session
+            // went `done`, BEFORE the worktree was reaped — so it survives
+            // cleanup, whereas the on-disk file almost never does (the
+            // worktree is removed milliseconds after the terminal
+            // transition).  Re-reading the file is only a fallback for
+            // sessions validated by an older agentd that stored no payload
+            // and whose worktree happens to still exist; since
+            // `validate_expected_result` now returns the parsed value, that
+            // path captures the payload in the same read that validates it,
+            // so there is no longer a "disappeared after validation" race.
+            let stored = snapshot
+                .result_payload
+                .as_ref()
+                .and_then(|raw| serde_json::from_str::<Value>(raw).ok());
+            match stored {
+                Some(parsed) => {
+                    let mut result_obj = serde_json::Map::new();
+                    result_obj.insert(String::from("payload"), parsed);
+                    result_value = Value::Object(result_obj);
+                    validation_error = None;
+                }
+                None => match validate_expected_result(&snapshot.work_dir, &snapshot.session_id, spec) {
+                    Ok(parsed) => {
+                        // The file content IS the payload — no envelope.
+                        // Hand it back under `payload` so the caller's await
+                        // shape stays stable.
+                        let mut result_obj = serde_json::Map::new();
+                        result_obj.insert(String::from("payload"), parsed);
+                        result_value = Value::Object(result_obj);
+                        validation_error = None;
+                    }
+                    Err(reason) => {
+                        validation_error = Some(reason);
+                    }
+                },
+            }
+        }
+    }
+
+    response.insert(String::from("result"), result_value);
+    if let Some(reason) = validation_error {
+        response.insert(
+            String::from("validation_error"),
+            Value::String(reason),
+        );
+    }
+    Value::Object(response)
+}
+
 fn require_session(conn: &Connection, session_id: &str) -> Result<SessionSnapshot> {
     session_get(conn, session_id)?.ok_or_else(|| anyhow!("session is not registered: {session_id}"))
 }
 
 fn row_to_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSnapshot> {
-    let backend_ref_json: String = row.get(7)?;
+    let backend_ref_json: String = row.get(8)?;
     let backend_ref =
         serde_json::from_str::<BTreeMap<String, String>>(&backend_ref_json).map_err(|err| {
-            rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(err))
+            rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(err))
         })?;
+    let terminal_cause_json: Option<String> = row.get(15)?;
+    let terminal_cause = match terminal_cause_json {
+        Some(json) => Some(serde_json::from_str::<TerminalCause>(&json).map_err(|err| {
+            rusqlite::Error::FromSqlConversionFailure(
+                15,
+                rusqlite::types::Type::Text,
+                Box::new(err),
+            )
+        })?),
+        None => None,
+    };
+    let expected_result_json: Option<String> = row.get(16)?;
+    let expected_result = match expected_result_json {
+        Some(json) => Some(
+            serde_json::from_str::<ExpectedResultSpec>(&json).map_err(|err| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    16,
+                    rusqlite::types::Type::Text,
+                    Box::new(err),
+                )
+            })?,
+        ),
+        None => None,
+    };
     Ok(SessionSnapshot {
         session_id: row.get(0)?,
         session_name: row.get(1)?,
         pane_id: row.get(2)?,
         agent_type: row.get(3)?,
         work_dir: row.get(4)?,
-        status: row.get(5)?,
-        backend_kind: row.get(6)?,
+        lifecycle: row.get(5)?,
+        status: row.get(6)?,
+        backend_kind: row.get(7)?,
         backend_ref,
-        started_at: row.get(8)?,
-        last_observed_at: row.get(9)?,
-        finished_at: row.get(10)?,
-        cleaned_at: row.get(11)?,
-        pr_url: row.get(12)?,
-        output_snippet: row.get(13)?,
+        started_at: row.get(9)?,
+        last_observed_at: row.get(10)?,
+        finished_at: row.get(11)?,
+        cleaned_at: row.get(12)?,
+        pr_url: row.get(13)?,
+        output_snippet: row.get(14)?,
+        terminal_cause,
+        expected_result,
+        retries_used: row.get::<_, i64>(17)? as u32,
+        last_validation_error: row.get(18)?,
+        awaiting_response: row.get::<_, i64>(19)? != 0,
+        observed_active_at: row.get(20)?,
+        result_payload: row.get(21)?,
     })
 }
 
 fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> {
     let backend_ref_json = serde_json::to_string(&snapshot.backend_ref)?;
+    let terminal_cause_json = match &snapshot.terminal_cause {
+        Some(cause) => Some(serde_json::to_string(cause)?),
+        None => None,
+    };
+    let expected_result_json = match &snapshot.expected_result {
+        Some(spec) => Some(serde_json::to_string(spec)?),
+        None => None,
+    };
     conn.execute(
         "INSERT INTO agent_sessions (
-            session_id, session_name, pane_id, agent_type, work_dir, status,
+            session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status,
             backend_kind, backend_ref_json, started_at, last_observed_at,
-            finished_at, cleaned_at, pr_url, output_snippet
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+            finished_at, cleaned_at, pr_url, output_snippet,
+            terminal_cause_json, expected_result_json, retries_used, last_validation_error,
+            awaiting_response, observed_active_at, result_payload_json
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
          ON CONFLICT(session_id) DO UPDATE SET
             session_name = excluded.session_name,
             pane_id = excluded.pane_id,
             agent_type = excluded.agent_type,
             work_dir = excluded.work_dir,
+            lifecycle = excluded.lifecycle,
             status = excluded.status,
             backend_kind = excluded.backend_kind,
             backend_ref_json = excluded.backend_ref_json,
@@ -746,13 +1702,21 @@ fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> 
             finished_at = excluded.finished_at,
             cleaned_at = excluded.cleaned_at,
             pr_url = excluded.pr_url,
-            output_snippet = excluded.output_snippet",
+            output_snippet = excluded.output_snippet,
+            terminal_cause_json = COALESCE(agent_sessions.terminal_cause_json, excluded.terminal_cause_json),
+            expected_result_json = excluded.expected_result_json,
+            retries_used = excluded.retries_used,
+            last_validation_error = excluded.last_validation_error,
+            awaiting_response = excluded.awaiting_response,
+            observed_active_at = excluded.observed_active_at,
+            result_payload_json = COALESCE(agent_sessions.result_payload_json, excluded.result_payload_json)",
         params![
             snapshot.session_id,
             snapshot.session_name,
             snapshot.pane_id,
             snapshot.agent_type,
             snapshot.work_dir,
+            snapshot.lifecycle,
             snapshot.status,
             snapshot.backend_kind,
             backend_ref_json,
@@ -762,6 +1726,13 @@ fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> 
             snapshot.cleaned_at,
             snapshot.pr_url,
             snapshot.output_snippet,
+            terminal_cause_json,
+            expected_result_json,
+            i64::from(snapshot.retries_used),
+            snapshot.last_validation_error,
+            i64::from(snapshot.awaiting_response),
+            snapshot.observed_active_at,
+            snapshot.result_payload,
         ],
     )?;
     Ok(())
@@ -813,6 +1784,43 @@ fn record_command<T: Serialize>(
     Ok(())
 }
 
+/// Baseline environment injected into every agent tmux session so an
+/// interactive shell-STARTUP prompt cannot derail the agent we are about to
+/// drive with `send-keys`.  These vars are set in the tmux session environment
+/// (via `new-session -e`), so the spawned shell inherits them BEFORE it sources
+/// its rc — that is the only point early enough to suppress a prompt that fires
+/// during shell init.  A blocked `[y/N]` at startup eats the launch keystrokes
+/// (the agent command is typed into the prompt, not the shell) and the session
+/// never starts; agentd cannot answer it (its only channel is `send-keys`,
+/// which is what the prompt is stealing).  Each var is harmless on shells /
+/// frameworks that don't recognise it (just an unused export).  Caller-supplied
+/// `session_env` overrides any key here.
+///   * DISABLE_AUTO_UPDATE / DISABLE_UPDATE_PROMPT — oh-my-zsh's "[oh-my-zsh]
+///     Would you like to update? [Y/n]" auto-update reminder at shell startup.
+/// (The agent's OWN update dialog — e.g. codex's "Update available!" — is a
+/// separate, in-app prompt handled after launch by `dismiss_codex_update_dialog`.)
+const SHELL_PROMPT_SUPPRESSING_ENV: &[(&str, &str)] = &[
+    ("DISABLE_AUTO_UPDATE", "true"),
+    ("DISABLE_UPDATE_PROMPT", "true"),
+];
+
+/// The ordered `KEY=VALUE` env entries to set on a new agent session: the
+/// baseline prompt-suppressors first (skipped when the caller overrides that
+/// key), then the caller's own `session_env`.  Pure so the merge/override
+/// behaviour is unit-tested without a live tmux.
+fn session_env_entries(env_vars: &BTreeMap<String, String>) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for (key, value) in SHELL_PROMPT_SUPPRESSING_ENV {
+        if !env_vars.contains_key(*key) {
+            out.push(((*key).to_string(), (*value).to_string()));
+        }
+    }
+    for (key, value) in env_vars {
+        out.push((key.clone(), value.clone()));
+    }
+    out
+}
+
 fn tmux_new_session(
     config: &Config,
     session_name: &str,
@@ -822,7 +1830,7 @@ fn tmux_new_session(
     let mut command = Command::new(&config.tmux_bin);
     command.args(["new-session", "-d", "-s", session_name, "-P", "-F", "#D"]);
     command.args(["-c", work_dir]);
-    for (key, value) in env_vars {
+    for (key, value) in session_env_entries(env_vars) {
         command.args(["-e", &format!("{key}={value}")]);
     }
     let output = command.output().context("tmux new-session failed to run")?;
@@ -862,6 +1870,14 @@ fn tmux_send_keys(
         return Err(anyhow!("tmux send-keys failed"));
     }
     if enter {
+        // codex renders the input box character-by-character; if we
+        // press Enter the same millisecond the last byte of the
+        // prompt lands, the keystroke can arrive while the UI is
+        // still in a transient state and get silently dropped, leaving
+        // the text sitting in the input forever.  A short pause gives
+        // codex time to settle into the "prompt ready, awaiting
+        // submit" state before the Enter is delivered.
+        thread::sleep(Duration::from_millis(200));
         let enter_status = Command::new(&config.tmux_bin)
             .args(["send-keys", "-t", target, "Enter"])
             .status()
@@ -899,11 +1915,419 @@ fn tmux_kill_session(config: &Config, session_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Read tmux's `pane_current_command` for a pane.  Returns `Ok(None)`
+/// when the pane is missing (tmux exits non-zero) — callers treat that
+/// the same as "session went away".
+fn tmux_pane_current_command(config: &Config, pane_id: &str) -> Result<Option<String>> {
+    let output = Command::new(&config.tmux_bin)
+        .args([
+            "display-message",
+            "-p",
+            "-t",
+            pane_id,
+            "#{pane_current_command}",
+        ])
+        .output()
+        .context("tmux display-message failed to run")?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    Ok(Some(
+        String::from_utf8_lossy(&output.stdout).trim().to_string(),
+    ))
+}
+
+/// Names of interactive shells we treat as "no agent is currently
+/// running in this pane".  When the pane's foreground process drops
+/// back to one of these, the codex / claude binary the launcher
+/// originally started has exited and tmux is just keeping the pane
+/// alive against its parent shell.  See 'pane_looks_like_idle_shell'.
+const IDLE_SHELL_COMMANDS: &[&str] = &["zsh", "bash", "sh", "dash", "fish", "ksh"];
+
+/// True when the pane's foreground process is one of the interactive
+/// shells we recognise as "no agent here anymore".  We deliberately
+/// list shells explicitly rather than blacklisting known agent
+/// commands: codex / claude may legitimately fork short-lived helpers
+/// (git, gh, jq, etc.) that briefly become the pane's current
+/// command — those must not be misclassified as "agent gone".
+fn pane_looks_like_idle_shell(current_command: &str) -> bool {
+    IDLE_SHELL_COMMANDS
+        .iter()
+        .any(|shell| current_command == *shell)
+}
+
+/// Classify the agent's output into a coarse status.
+///
+/// This function never returns @done@ from a heuristic — work-end is
+/// decided in 'monitor_once' after the input→output contract has been
+/// validated.  The signals that this function *does* return are:
+///
+/// * @failed@ — output contains a hard-failure marker we recognise.
+/// * @blocked_api@ — provider rate-limit / quota message.
+/// * @blocked@ — agent is asking the user a question or waiting on
+///   interactive permission.
+/// * @running@ — anything else, including codex's per-turn "Worked
+///   for X" status display.  That marker is a *turn-end* signal, not
+///   a work-end signal: see 'output_indicates_turn_end' and the
+///   monitor's contract-validation block.
+fn observed_status_for_snapshot(snapshot: &SessionSnapshot, output: &str) -> &'static str {
+    if output_has_failure_marker(output) {
+        return "failed";
+    }
+    if output_has_api_limit_marker(output) {
+        return "blocked_api";
+    }
+    if output_has_waiting_marker(output) {
+        return "blocked";
+    }
+    // For Kind 1 (Interactive) the agent simply sits at the idle
+    // prompt between turns; for Kind 2 (RunToCompletion) the turn
+    // end is interpreted by 'monitor_once' against the contract.
+    // Either way the *status* the snapshot carries until that
+    // decision is "running".
+    let _ = snapshot;
+    "running"
+}
+
+/// True when codex has visibly finished one turn — the idle @›@
+/// prompt is showing, the agent is not currently working, and the
+/// pane content is stable since the last observation.  Used by
+/// 'monitor_once' as a trigger to evaluate the input→output
+/// contract for Kind 2 sessions.
+///
+/// We deliberately do *not* require the "Worked for X" status line
+/// to be visible: that text scrolls out of the pane on long
+/// sessions, so a session that genuinely finished a turn hours ago
+/// would otherwise sit forever in "running" even though it is
+/// clearly parked at the idle prompt.  False positives at launch
+/// are caught by the stability check — codex's banner and MCP
+/// loading produce non-stable output for the first few polls.
+///
+/// A turn ending is **not** the same as the work ending: a single
+/// prompt may take several turns to complete, and Kind 1 sessions
+/// keep serving turns indefinitely.  We only graduate to a terminal
+/// status when (a) Kind 2 and (b) the contract validates.
+fn output_indicates_turn_end(snapshot: &SessionSnapshot, output: &str) -> bool {
+    let idle = output_has_agent_idle_prompt(output) && !output_has_agent_active_marker(output);
+    let stable = output_is_stable(snapshot, output);
+    idle && stable
+}
+
+fn should_cleanup_after_observed_status(snapshot: &SessionSnapshot, status: &str) -> bool {
+    is_run_to_completion_lifecycle(&snapshot.lifecycle) && (status == "done" || status == "failed")
+}
+
+fn is_terminal_status(status: &str) -> bool {
+    status == "done"
+        || status == "failed"
+        || status == "exited"
+        || status == "stopped"
+        || status == "cancelled"
+}
+
+fn set_terminal_cause_if_absent(
+    snapshot: &mut SessionSnapshot,
+    category: TerminalCauseCategory,
+    reason: impl Into<String>,
+    retryable: bool,
+    observed_at: &str,
+) {
+    if snapshot.terminal_cause.is_some() {
+        return;
+    }
+    snapshot.terminal_cause = Some(TerminalCause {
+        category,
+        reason: Some(reason.into()),
+        retryable,
+        retry_after_seconds: None,
+        backend_error_code: None,
+        exit_code: None,
+        signal: None,
+        observed_at: observed_at.to_string(),
+    });
+}
+
+fn set_failed_output_cause_if_absent(
+    snapshot: &mut SessionSnapshot,
+    output: &str,
+    observed_at: &str,
+) {
+    if snapshot.terminal_cause.is_some() {
+        return;
+    }
+    let lower = output_tail_lower(output, 30);
+    let (category, retryable) = if output_has_api_limit_marker(output) {
+        (TerminalCauseCategory::RateLimited, true)
+    } else if lower.contains("timeout") || lower.contains("timed out") || lower.contains("deadline")
+    {
+        (TerminalCauseCategory::TimedOut, true)
+    } else if lower.contains("authentication failed") {
+        (TerminalCauseCategory::RunnerUnavailable, false)
+    } else if lower.contains("invalid json") || lower.contains("protocol error") {
+        (TerminalCauseCategory::ProtocolError, false)
+    } else {
+        (TerminalCauseCategory::RunFailed, false)
+    };
+    let reason = tail_chars(output.trim(), 500);
+    set_terminal_cause_if_absent(
+        snapshot,
+        category,
+        if reason.is_empty() {
+            String::from("agent output indicated failure")
+        } else {
+            reason
+        },
+        retryable,
+        observed_at,
+    );
+}
+
+/// Terminal-status check used by `session.await_result`.  Wider than
+/// `is_terminal_status` because the await contract documents that a
+/// session reaching `cancelled` or `lost` is also a final, no-more-
+/// transitions state from the caller's point of view — there is no
+/// useful reason to keep blocking once one of those is observed.
+fn is_await_terminal_status(status: &str) -> bool {
+    matches!(
+        status,
+        "done" | "failed" | "cancelled" | "exited" | "stopped" | "lost"
+    )
+}
+
+fn event_type_for_observed_status(status: &str) -> &'static str {
+    if status == "done" {
+        return "session_done";
+    }
+    if status == "failed" {
+        return "session_failed";
+    }
+    if status == "blocked" || status == "blocked_api" {
+        return "session_blocked";
+    }
+    "session_observed"
+}
+
+fn output_is_stable(snapshot: &SessionSnapshot, output: &str) -> bool {
+    if let Some(previous) = &snapshot.output_snippet {
+        return previous == &tail_chars(output, 500);
+    }
+    false
+}
+
+fn output_tail_lower(output: &str, max_lines: usize) -> String {
+    let lines: Vec<&str> = output.lines().collect();
+    let start = lines.len().saturating_sub(max_lines);
+    lines[start..].join("\n").to_lowercase()
+}
+
+// The previous 'output_has_completion_marker' heuristic was deleted
+// because every marker it recognised was either:
+//   * a turn-end signal that codex shows after *every* prompt
+//     ("worked for"), or
+//   * an agent-authored claim of completion that has no relationship
+//     to whether the input→output contract has actually been met
+//     ("task completed successfully", "goodbye", …).
+// Both classes routinely fired before the work was actually done and
+// triggered premature cleanup.  Work-end is now decided exclusively
+// by 'validate_expected_result' inside 'monitor_once'.
+
+fn output_has_failure_marker(output: &str) -> bool {
+    let text = output_tail_lower(output, 10);
+    text.contains("fatal error")
+        || text.contains("unrecoverable error")
+        || text.contains("agent crashed")
+        || text.contains("session terminated")
+        || text.contains("authentication failed")
+}
+
+fn output_has_api_limit_marker(output: &str) -> bool {
+    let text = output_tail_lower(output, 30);
+    text.contains("cost limit reached")
+        || text.contains("rate limit exceeded")
+        || text.contains("rate limit reached")
+        || text.contains("quota exceeded")
+        || text.contains("insufficient quota")
+        || text.contains("resource exhausted")
+        || text.contains("you've hit your limit")
+        || text.contains("/rate-limit-options")
+        || text.contains("stop and wait for limit to reset")
+}
+
+fn output_has_waiting_marker(output: &str) -> bool {
+    output.contains("tell Claude what to do differently")
+        || output.contains("Type your message")
+        || output.contains("accept edits")
+        || output.contains("bypass permissions")
+        || output.contains("shift+tab to cycle")
+        || output.contains("Esc to cancel")
+        || output.contains("to show all projects")
+}
+
+fn output_has_agent_idle_prompt(output: &str) -> bool {
+    // `› ` is codex's REPL prompt; `❯` is Claude Code's input box.  The
+    // claude prompt is visible even DURING active work (the input box sits
+    // below the spinner), so idle detection for claude leans entirely on
+    // the stability guard in `output_indicates_turn_end`: the spinner's
+    // per-second timer tick keeps a working pane unstable.
+    //
+    // Claude separates `❯` from typed text with a NO-BREAK SPACE (U+00A0),
+    // not an ASCII space (observed live: '❯\u{00A0}text'), and an empty
+    // input box may render `❯` with nothing after it — so match the glyph
+    // at line start alone, never the two-char `❯ `.
+    if output.starts_with("› ") || output.contains("\n› ") {
+        return true;
+    }
+    output.lines().any(|line| line.starts_with('❯'))
+}
+
+/// "Startup finished" signal for the launch-timeout watchdog: the REPL
+/// input box (`› ` for codex, `❯` for claude) renders only once the agent
+/// is initialised, and the codex active-work marker implies the same.
+/// MCP-boot and update-dialog screens are excluded — those are exactly
+/// the stuck-in-startup states the watchdog must keep reaping (the
+/// update dialog also renders a `›` selection marker that would
+/// otherwise read as a ready REPL).
+fn output_indicates_startup_finished(output: &str) -> bool {
+    if output_is_starting_mcp_servers(output) || output_has_codex_update_dialog(output) {
+        return false;
+    }
+    output_has_codex_active_marker(output) || output_has_agent_idle_prompt(output)
+}
+
+/// True while codex is still booting its MCP servers, e.g.
+/// "Starting MCP servers (4/5): playwright (16h 25m • esc to interrupt)".
+/// This boot phase reuses the active-work spinner, so it must NOT be
+/// treated as the agent doing work.
+fn output_is_starting_mcp_servers(output: &str) -> bool {
+    output_tail_lower(output, 30).contains("starting mcp servers")
+}
+
+fn output_has_codex_active_marker(output: &str) -> bool {
+    let text = output_tail_lower(output, 30);
+    // MCP startup shows the same "(… • esc to interrupt)" spinner as
+    // active work.  Counting it as active would set 'observed_active_at'
+    // during boot and DISABLE the launch-timeout watchdog, letting a
+    // hung MCP server pin the session at "running" indefinitely (the
+    // 16h-stuck incident).  Boot is not work.
+    if output_is_starting_mcp_servers(output) {
+        return false;
+    }
+    // We only count markers that codex shows *during* active work.
+    //
+    // The status row ("Working (12s • esc to interrupt)") is the
+    // reliable signal — both substrings only appear while the agent
+    // is producing tokens.
+    //
+    // We deliberately do NOT match "ctrl + t to view transcript":
+    // codex renders that hint next to collapsed historical turns
+    // (e.g. "… +9 lines (ctrl + t to view transcript)") which stay
+    // on screen indefinitely while the agent sits idle, so matching
+    // it would make turn-end detection impossible on any pane that
+    // has carried more than a couple of turns.
+    text.contains("working (") || text.contains("esc to interrupt")
+}
+
+/// Active-work marker across supported agents.  Codex: see
+/// `output_has_codex_active_marker`.  Claude Code: the working spinner
+/// line, e.g. `✢ Swooping… (37s · ↓ 1.1k tokens · thinking…)` — the
+/// `… (` sequence (ellipsis + space + open-paren) appears only on the
+/// live spinner row; idle panes (input box, statusline, tips,
+/// collapsed-turn hints) never render it.
+fn output_has_agent_active_marker(output: &str) -> bool {
+    if output_has_codex_active_marker(output) {
+        return true;
+    }
+    let text = output_tail_lower(output, 30);
+    text.contains("… (")
+}
+
+/// Detect codex's interactive "Update available!" version-check dialog,
+/// e.g.
+///
+/// ```text
+///   ✨ Update available! 0.134.0 -> 0.135.0
+///   › 1. Update now (runs `npm install -g @openai/codex`)
+///     2. Skip
+///     3. Skip until next version
+///   Press enter to continue
+/// ```
+///
+/// Matches on the actionable MENU OPTIONS ("Update now" + "Skip until
+/// next version") rather than the "Update available!" headline: the
+/// headline can scroll out of the capture window above a long codex
+/// banner, but the menu (next to "Press enter to continue") is on screen
+/// exactly while the dialog is blocking input. Requiring both option
+/// labels keeps ordinary agent output (which never contains both of
+/// these exact phrases) from triggering a stray keystroke.
+fn output_has_codex_update_dialog(output: &str) -> bool {
+    let lower = output.to_lowercase();
+    lower.contains("update now") && lower.contains("skip until next version")
+}
+
+/// Dismiss the codex update dialog by selecting "Skip until next version"
+/// (the last option) so it does not re-prompt for the same release.
+///
+/// The default highlight is "1. Update now", so we move DOWN twice and
+/// then confirm with Enter. Using arrow keys (never Enter on the default
+/// selection, never a bare digit that some menu layouts ignore)
+/// guarantees we can never accidentally trigger the "Update now" upgrade.
+fn dismiss_codex_update_dialog(config: &Config, pane_id: &str) -> Result<()> {
+    tmux_send_keys(config, pane_id, "Down", false, false)?;
+    thread::sleep(Duration::from_millis(120));
+    tmux_send_keys(config, pane_id, "Down", false, false)?;
+    thread::sleep(Duration::from_millis(120));
+    tmux_send_keys(config, pane_id, "Enter", false, false)?;
+    Ok(())
+}
+
+/// Extract a human-readable message from a `catch_unwind` panic payload.
+fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        String::from("<non-string panic payload>")
+    }
+}
+
+/// Run one tick of a critical background worker with panic isolation.
+///
+/// A worker loop (`monitor_loop` / `heartbeat_loop`) runs forever on its
+/// own thread.  Before this wrapper a *panic* inside the tick body
+/// unwound straight out of the loop and killed the thread permanently —
+/// with no supervision the worker never came back, yet the accept loop on
+/// the main thread kept the daemon looking healthy.  The monitor is the
+/// ONLY code that advances a session past `booting`, so a dead monitor
+/// pins every session at `booting` (surfaced upstream as `AgentStarting`)
+/// for the entire life of the process.  This is exactly what a disk-full
+/// storm triggered: both workers panicked, and the panic messages were
+/// lost because stderr (a log file on the full disk) could not be
+/// written, so the death was completely silent.
+///
+/// Treat a panic the same way the loop already treats an `Err`: log it
+/// and let the loop proceed to the next tick.  The tick body opens its
+/// own sqlite connection per call, so unwinding drops that connection and
+/// rolls back any in-flight transaction — there is no shared mutable
+/// state left poisoned across ticks.  Once the transient condition (full
+/// disk, locked db, flaky tmux) clears, the worker resumes on its own.
+fn run_worker_tick<F>(worker: &str, tick: F)
+where
+    F: FnOnce() -> Result<()>,
+{
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(tick)) {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => eprintln!("doeff-agentd {worker} error: {err:#}"),
+        Err(payload) => eprintln!(
+            "doeff-agentd {worker} PANIC recovered (worker continues): {}",
+            panic_payload_message(payload.as_ref())
+        ),
+    }
+}
+
 fn monitor_loop(config: Config) {
     loop {
-        if let Err(err) = monitor_once(&config) {
-            eprintln!("doeff-agentd monitor error: {err:#}");
-        }
+        run_worker_tick("monitor", || monitor_once(&config));
         thread::sleep(config.monitor_interval);
     }
 }
@@ -911,15 +2335,13 @@ fn monitor_loop(config: Config) {
 fn heartbeat_loop(config: Config) {
     let interval = Duration::from_secs((LEASE_TTL_SECONDS as u64 / 3).max(1));
     loop {
-        if let Err(err) = heartbeat_once(&config) {
-            eprintln!("doeff-agentd heartbeat error: {err:#}");
-        }
+        run_worker_tick("heartbeat", || heartbeat_once(&config));
         thread::sleep(interval);
     }
 }
 
 fn heartbeat_once(config: &Config) -> Result<()> {
-    let conn = Connection::open(&config.db_path)?;
+    let conn = open_conn(&config.db_path)?;
     migrate(&conn)?;
     let current = read_lease(&conn)?
         .ok_or_else(|| anyhow!("doeff-agentd lease disappeared while daemon was running"))?;
@@ -935,7 +2357,7 @@ fn heartbeat_once(config: &Config) -> Result<()> {
 }
 
 fn monitor_once(config: &Config) -> Result<()> {
-    let conn = Connection::open(&config.db_path)?;
+    let conn = open_conn(&config.db_path)?;
     migrate(&conn)?;
     let active = session_list(
         &conn,
@@ -943,25 +2365,568 @@ fn monitor_once(config: &Config) -> Result<()> {
             status: Some(active_statuses()),
             agent_type: None,
             backend_kind: Some(String::from("tmux")),
+            lifecycle: None,
         },
     )?;
+    let now = Utc::now();
     for mut snapshot in active {
+        // Stale-observation watchdog. Runs BEFORE any tmux probe so a
+        // hung or misbehaving tmux call cannot prevent the watchdog
+        // from firing. Past incident: monitor_loop appeared live in
+        // stack samples but DB writes stopped silently for ~11 hours,
+        // pinning four sessions in `running` with no one driving them.
+        // Touching only sqlite (with the global busy_timeout) ensures
+        // this branch makes progress even if the rest of the pipeline
+        // is broken.
+        if let Some(last) = parse_iso_timestamp(snapshot.last_observed_at.as_deref()) {
+            let age = now.signed_duration_since(last);
+            if age > ChronoDuration::seconds(STALE_OBSERVATION_THRESHOLD_SECONDS) {
+                snapshot.status = String::from("exited");
+                let observed = now_iso();
+                snapshot.last_observed_at = Some(observed.clone());
+                snapshot.finished_at.get_or_insert(observed.clone());
+                set_terminal_cause_if_absent(
+                    &mut snapshot,
+                    TerminalCauseCategory::Lost,
+                    format!(
+                        "no monitor observation for more than {}s",
+                        STALE_OBSERVATION_THRESHOLD_SECONDS
+                    ),
+                    true,
+                    &observed,
+                );
+                upsert_snapshot(&conn, &snapshot)?;
+                record_event(
+                    &conn,
+                    &snapshot.session_id,
+                    "session_stale_reaped",
+                    &snapshot,
+                )?;
+                continue;
+            }
+        }
+        // Launch-timeout watchdog: a session that has been at status
+        // `running` for longer than `LAUNCH_TIMEOUT_SECONDS` without
+        // ever showing the agent's "active" marker is stuck inside
+        // startup (typical cause: a hung MCP server holding codex's
+        // initialisation loop indefinitely).  The stale-observation
+        // watchdog above does not catch this because the startup
+        // spinner ticks the wall-clock every second, so the tmux
+        // capture keeps changing and `last_observed_at` keeps
+        // refreshing.  Reap directly via SQL so a misbehaving tmux
+        // child cannot itself block the watchdog.
+        if snapshot.status == "running" && snapshot.observed_active_at.is_none() {
+            if let Some(started) = parse_iso_timestamp(Some(snapshot.started_at.as_str())) {
+                let age = now.signed_duration_since(started);
+                let launch_timeout = effective_launch_timeout_seconds();
+                if age > ChronoDuration::seconds(launch_timeout) {
+                    snapshot.status = String::from("failed");
+                    let observed = now_iso();
+                    snapshot.last_observed_at = Some(observed.clone());
+                    snapshot.finished_at.get_or_insert(observed.clone());
+                    let reason = format!(
+                        "launch timeout: never reached active state within {}s (stuck in startup — likely a hung MCP server)",
+                        launch_timeout
+                    );
+                    snapshot.last_validation_error = Some(reason.clone());
+                    set_terminal_cause_if_absent(
+                        &mut snapshot,
+                        TerminalCauseCategory::TimedOut,
+                        reason,
+                        true,
+                        &observed,
+                    );
+                    upsert_snapshot(&conn, &snapshot)?;
+                    record_event(
+                        &conn,
+                        &snapshot.session_id,
+                        "session_launch_timeout",
+                        &snapshot,
+                    )?;
+                    continue;
+                }
+            }
+        }
         let exists = tmux_has_session(config, &snapshot.session_name)?;
         let observed_at = now_iso();
         if exists {
+            // Zombie reaper: tmux session still exists but the
+            // agent process inside the pane has exited and left
+            // tmux at its parent shell.  Without this branch the
+            // monitor sees a live tmux session, captures the
+            // long-stale agent output, fails the turn-end stability
+            // check forever (the output never changes), and the
+            // session sits at @running@ holding a slot in the
+            // concurrency cap.  Limit the check to sessions whose
+            // status is already @running@ so we do not race against
+            // the early-boot moment where the pane is briefly at
+            // @zsh@ before the launcher's @send-keys@ actually
+            // starts codex.
+            if snapshot.status == "running" {
+                if let Some(current_command) = tmux_pane_current_command(config, &snapshot.pane_id)?
+                {
+                    if pane_looks_like_idle_shell(&current_command) {
+                        snapshot.status = String::from("exited");
+                        snapshot.last_observed_at = Some(observed_at.clone());
+                        snapshot.finished_at.get_or_insert_with(now_iso);
+                        set_terminal_cause_if_absent(
+                            &mut snapshot,
+                            TerminalCauseCategory::Lost,
+                            format!("tmux pane returned to idle shell: {current_command}"),
+                            true,
+                            &observed_at,
+                        );
+                        upsert_snapshot(&conn, &snapshot)?;
+                        record_event(&conn, &snapshot.session_id, "session_exited", &snapshot)?;
+                        continue;
+                    }
+                }
+            }
             let output = tmux_capture(config, &snapshot.pane_id, 100)?;
-            snapshot.status = String::from("running");
-            snapshot.last_observed_at = Some(observed_at);
+            // First, clear the awaiting-response latch once we see the
+            // agent's "active" marker — that confirms the prompt landed
+            // in the REPL and the agent is actually working on it.
+            //
+            // The marker must be POSITIVE work evidence (codex's status
+            // row, claude's spinner line).  An earlier revision cleared
+            // the latch on mere pane instability; that re-armed turn-end
+            // inside the submit→spinner gap (a second or two of static
+            // pane right after the prompt is sent), fired validation
+            // before the agent had done anything, and burned the whole
+            // retry budget on a healthy worker (observed live).
+            let active_marker_seen = output_has_agent_active_marker(&output);
+            if snapshot.awaiting_response && active_marker_seen {
+                snapshot.awaiting_response = false;
+            }
+            // Record the first time the agent visibly finished startup.
+            // This is the signal the launch-timeout watchdog uses to
+            // distinguish "agent finished startup" from "agent stuck
+            // in startup": once set, the session is past the boot
+            // phase and watchdog stops considering it for reaping.
+            //
+            // The codex active marker alone is NOT enough: claude never
+            // shows it, so the watchdog reaped a healthy claude worker
+            // mid-review as "stuck in startup" (observed live).  The
+            // agent-agnostic startup-finished signal is the REPL input
+            // box itself (`› ` / `❯`) — boot screens render it only once
+            // initialisation is done.  MCP-boot and update-dialog panes
+            // are explicitly excluded so the watchdog stays armed through
+            // the hung-MCP startup it exists to catch.
+            if snapshot.observed_active_at.is_none() && output_indicates_startup_finished(&output)
+            {
+                snapshot.observed_active_at = Some(observed_at.clone());
+            }
+            let raw_status = observed_status_for_snapshot(&snapshot, &output);
+            snapshot.last_observed_at = Some(observed_at.clone());
+
+            // Turn-end is the agent's "I finished one ply, what's
+            // next" signal.  We use it for two things:
+            //
+            //  * Kind 2 (RunToCompletion): trigger contract
+            //    validation.  Until the contract passes the work is
+            //    not done — we either retry or fail.
+            //  * Kind 1 (Interactive): nothing.  The session just
+            //    sits at the idle prompt awaiting the next user
+            //    input; cleanup is the client's responsibility.
+            //
+            // 'awaiting_response' is the latch that ignores turn-end
+            // events between the moment we inject a retry prompt and
+            // the moment the agent visibly picks it up; that prevents
+            // us re-validating against the same "Worked for" line
+            // we already reacted to one cycle earlier.
+            //
+            // CRITICAL: 'output_indicates_turn_end' compares the
+            // current output against 'snapshot.output_snippet' to
+            // decide stability.  We must therefore evaluate it
+            // BEFORE writing the fresh snippet back into the
+            // snapshot, otherwise the comparison degenerates into
+            // "current == current" and every observation looks
+            // stable, firing the turn-end branch prematurely.
+            let turn_ended =
+                !snapshot.awaiting_response && output_indicates_turn_end(&snapshot, &output);
             snapshot.output_snippet = Some(tail_chars(&output, 500));
+
+            let mut observed_status = raw_status;
+
+            // ARTIFACT-FIRST: for contract sessions, a result file that
+            // validates IS completion — accept it on any cycle, without
+            // waiting for turn-end.  Truth is the artifact, never the
+            // transcript: the pane heuristics below (turn-end, latch)
+            // exist only to drive the RETRY path, and misreading them
+            // must never delay or fail work whose artifact is already
+            // valid (observed live: a finished claude worker hung, then
+            // a healthy one failed, purely on pane-state misreads).
+            // An invalid or missing file on this path is NOT punished;
+            // retry feedback stays gated on turn-end.
+            let mut artifact_accepted = false;
+            if is_run_to_completion_lifecycle(&snapshot.lifecycle) {
+                if let Some(spec) = snapshot.expected_result.clone() {
+                    if let Ok(payload) = validate_expected_result(&snapshot.work_dir, &snapshot.session_id, &spec) {
+                        observed_status = "done";
+                        snapshot.last_validation_error = None;
+                        // Persist the validated payload NOW, on the same
+                        // tick that flips the session to "done" — the
+                        // worktree (and the result file inside it) is
+                        // reaped milliseconds later when cleanup runs, so
+                        // a payload kept only on disk is lost before the
+                        // launcher can await it.  build_await_response
+                        // serves this stored copy, decoupling result
+                        // delivery from the worktree's lifetime.
+                        snapshot.result_payload = serde_json::to_string(&payload).ok();
+                        artifact_accepted = true;
+                    }
+                }
+            }
+
+            if !artifact_accepted && turn_ended && is_run_to_completion_lifecycle(&snapshot.lifecycle)
+            {
+                match snapshot.expected_result.clone() {
+                    Some(spec) => match validate_expected_result(&snapshot.work_dir, &snapshot.session_id, &spec) {
+                        Ok(payload) => {
+                            observed_status = "done";
+                            snapshot.last_validation_error = None;
+                            snapshot.result_payload = serde_json::to_string(&payload).ok();
+                        }
+                        Err(reason) => {
+                            if snapshot.retries_used < spec.max_retries {
+                                send_retry_prompt(config, &snapshot, &spec, &reason)?;
+                                snapshot.retries_used += 1;
+                                snapshot.last_validation_error = Some(reason.clone());
+                                snapshot.status = String::from("running");
+                                snapshot.finished_at = None;
+                                snapshot.awaiting_response = true;
+                                upsert_snapshot(&conn, &snapshot)?;
+                                record_event(
+                                    &conn,
+                                    &snapshot.session_id,
+                                    "session_output_retry",
+                                    &snapshot,
+                                )?;
+                                continue;
+                            } else {
+                                observed_status = "failed";
+                                let reason = format!(
+                                    "output validation exhausted after {} retries: {}",
+                                    spec.max_retries, reason
+                                );
+                                snapshot.last_validation_error = Some(reason.clone());
+                                set_terminal_cause_if_absent(
+                                    &mut snapshot,
+                                    TerminalCauseCategory::RunFailed,
+                                    reason,
+                                    false,
+                                    &observed_at,
+                                );
+                            }
+                        }
+                    },
+                    None => {
+                        // RunToCompletion without an explicit contract
+                        // means the launcher trusts the turn-end signal
+                        // as work-end.  Mark done and let cleanup run.
+                        observed_status = "done";
+                    }
+                }
+            }
+
+            snapshot.status = String::from(observed_status);
+            if is_terminal_status(observed_status) {
+                if observed_status == "failed" {
+                    if let Some(reason) = snapshot.last_validation_error.clone() {
+                        set_terminal_cause_if_absent(
+                            &mut snapshot,
+                            TerminalCauseCategory::RunFailed,
+                            reason,
+                            false,
+                            &observed_at,
+                        );
+                    } else {
+                        set_failed_output_cause_if_absent(&mut snapshot, &output, &observed_at);
+                    }
+                }
+                snapshot.finished_at.get_or_insert_with(now_iso);
+            }
+            if should_cleanup_after_observed_status(&snapshot, observed_status)
+                && tmux_has_session(config, &snapshot.session_name)?
+            {
+                tmux_kill_session(config, &snapshot.session_name)?;
+                snapshot.cleaned_at.get_or_insert_with(now_iso);
+            }
             upsert_snapshot(&conn, &snapshot)?;
-            record_event(&conn, &snapshot.session_id, "session_observed", &snapshot)?;
+            record_event(
+                &conn,
+                &snapshot.session_id,
+                event_type_for_observed_status(observed_status),
+                &snapshot,
+            )?;
         } else {
             snapshot.status = String::from("exited");
             snapshot.last_observed_at = Some(observed_at.clone());
-            snapshot.finished_at = Some(observed_at);
+            snapshot.finished_at = Some(observed_at.clone());
+            set_terminal_cause_if_absent(
+                &mut snapshot,
+                TerminalCauseCategory::Lost,
+                "tmux session disappeared",
+                true,
+                &observed_at,
+            );
             upsert_snapshot(&conn, &snapshot)?;
             record_event(&conn, &snapshot.session_id, "session_exited", &snapshot)?;
         }
+    }
+    Ok(())
+}
+
+/// Validate the result file the agent was instructed to produce, and on
+/// success return the parsed payload.  `Ok(value)` when the file exists,
+/// parses as JSON, and satisfies `payload_schema`.  The file content IS
+/// the result — there is no envelope and agentd owns the path
+/// (the per-session `result_file_name`).  The `Err(String)` carries a one-line
+/// explanation suitable for the retry prompt and the session's
+/// `last_validation_error` audit field.
+///
+/// Returning the parsed value (rather than `()`) lets the caller PERSIST
+/// the validated payload at validation time — the file lives in the
+/// agent's git worktree, which agentd reaps the instant the session goes
+/// terminal, so a result delivered only via on-disk re-read is lost the
+/// moment the worktree is cleaned.  Validation and capture must be a
+/// single read so there is no window for the file to change or vanish
+/// between them.
+fn validate_expected_result(
+    work_dir: &str,
+    session_id: &str,
+    spec: &ExpectedResultSpec,
+) -> std::result::Result<serde_json::Value, String> {
+    let path = Path::new(work_dir).join(result_file_name(session_id));
+    let raw = match fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(err) => {
+            return Err(format!(
+                "expected result file not readable at {}: {}",
+                path.display(),
+                err
+            ));
+        }
+    };
+    let value: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(err) => {
+            return Err(format!(
+                "expected result file at {} is not valid JSON: {}",
+                path.display(),
+                err
+            ));
+        }
+    };
+    if let Err(reason) = validate_against_schema(&value, &spec.payload_schema, "result") {
+        return Err(format!(
+            "result does not satisfy its schema in {}: {}",
+            path.display(),
+            reason
+        ));
+    }
+    Ok(value)
+}
+
+/// Validate `instance` against a constrained subset of JSON Schema.
+///
+/// Supported keywords: `type`, `const`, `minLength`, `required`,
+/// `properties`, `oneOf`.  This is intentionally NOT a full JSON-Schema
+/// implementation — it covers exactly what the launcher-supplied
+/// contracts need (discriminated unions via `oneOf` + `const`, presence
+/// via `required`, and non-empty strings via `minLength`) so the daemon
+/// stays free of a heavyweight schema dependency and, more importantly,
+/// can phrase violations as actionable feedback the agent can act on.
+///
+/// `loc` is a dotted breadcrumb (e.g. `payload.pr_url`) woven into the
+/// error message so the agent knows which field to fix.
+fn validate_against_schema(
+    instance: &Value,
+    schema: &Value,
+    loc: &str,
+) -> std::result::Result<(), String> {
+    let obj = match schema.as_object() {
+        Some(o) => o,
+        None => return Err(format!("schema at '{loc}' is not a JSON object")),
+    };
+
+    // oneOf: exactly one branch must match.  Reported as an aggregate so
+    // the agent sees why every variant was rejected.
+    if let Some(one_of) = obj.get("oneOf") {
+        let branches = one_of
+            .as_array()
+            .ok_or_else(|| format!("'oneOf' at '{loc}' must be an array"))?;
+        let mut matched = 0usize;
+        let mut branch_errors = Vec::new();
+        for (i, branch) in branches.iter().enumerate() {
+            match validate_against_schema(instance, branch, loc) {
+                Ok(()) => matched += 1,
+                Err(e) => branch_errors.push(format!("  variant {i}: {e}")),
+            }
+        }
+        match matched {
+            1 => {}
+            0 => {
+                return Err(format!(
+                    "value at '{loc}' matched none of the {} allowed variants:\n{}",
+                    branches.len(),
+                    branch_errors.join("\n")
+                ));
+            }
+            n => {
+                return Err(format!(
+                    "value at '{loc}' matched {n} variants but exactly one is allowed"
+                ));
+            }
+        }
+    }
+
+    // const: exact value equality.
+    if let Some(expected) = obj.get("const") {
+        if instance != expected {
+            return Err(format!("'{loc}' must equal {expected}"));
+        }
+    }
+
+    // type: JSON type tag.
+    if let Some(ty) = obj.get("type").and_then(|v| v.as_str()) {
+        let ok = match ty {
+            "object" => instance.is_object(),
+            "array" => instance.is_array(),
+            "string" => instance.is_string(),
+            "number" => instance.is_number(),
+            "integer" => instance.is_i64() || instance.is_u64(),
+            "boolean" => instance.is_boolean(),
+            "null" => instance.is_null(),
+            other => {
+                return Err(format!(
+                    "schema at '{loc}' uses unsupported type '{other}'"
+                ));
+            }
+        };
+        if !ok {
+            return Err(format!("'{loc}' must be of type {ty}"));
+        }
+    }
+
+    // minLength: non-empty / minimum-length strings.
+    if let Some(min) = obj.get("minLength").and_then(|v| v.as_u64()) {
+        if let Some(s) = instance.as_str() {
+            if (s.chars().count() as u64) < min {
+                return Err(format!(
+                    "'{loc}' must be a string of at least length {min} (got {} chars)",
+                    s.chars().count()
+                ));
+            }
+        }
+    }
+
+    // required: named fields must be present on an object.
+    if let Some(req) = obj.get("required").and_then(|v| v.as_array()) {
+        let map = instance.as_object();
+        for key in req {
+            if let Some(k) = key.as_str() {
+                let present = map.map(|m| m.contains_key(k)).unwrap_or(false);
+                if !present {
+                    return Err(format!("'{loc}' is missing required field '{k}'"));
+                }
+            }
+        }
+    }
+
+    // properties: recurse into present children only (absence is governed
+    // by `required`, mirroring JSON-Schema semantics).
+    if let Some(props) = obj.get("properties").and_then(|v| v.as_object()) {
+        if let Some(map) = instance.as_object() {
+            for (key, subschema) in props {
+                if let Some(child) = map.get(key) {
+                    validate_against_schema(child, subschema, &format!("{loc}.{key}"))?;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Send the validator's feedback into the still-alive agent session as
+/// the next message in its REPL.  Crucially we do NOT re-run a fresh
+/// agent invocation — the agent process is the same one that just
+/// finished the task, so it has the full conversation context and can
+/// act on the feedback the way a human user would by typing follow-up
+/// instructions.  The prompt template's `%REASON%` placeholder is
+/// substituted with the validator's explanation so the agent knows
+/// what to fix.
+///
+/// Supported agents are the ones that own an interactive REPL we can
+/// drive via tmux keystrokes; for everything else we cannot auto-retry
+/// reliably and the caller surfaces the failure instead.
+fn send_retry_prompt(
+    config: &Config,
+    snapshot: &SessionSnapshot,
+    spec: &ExpectedResultSpec,
+    reason: &str,
+) -> Result<()> {
+    if !is_interactive_agent_type(&snapshot.agent_type) {
+        return Err(anyhow!(
+            "cannot auto-retry agent_type '{}': only codex and claude are supported",
+            snapshot.agent_type
+        ));
+    }
+    // Make sure codex is parked at the idle prompt before we type
+    // anything — otherwise the message lands in an unrelated UI
+    // state (banner, MCP loader, modal) and the Enter that follows
+    // can be eaten.  We tolerate a missing idle marker because the
+    // caller already concluded the agent reached turn-end; this
+    // poll just absorbs the small window between turn-end detection
+    // and the input box becoming receptive.
+    wait_for_repl_idle(config, &snapshot.pane_id, Duration::from_secs(5))?;
+    let prompt = spec.retry_prompt.replace("%REASON%", reason);
+    tmux_send_keys(config, &snapshot.pane_id, &prompt, true, true)?;
+    Ok(())
+}
+
+fn is_interactive_agent_type(agent_type: &str) -> bool {
+    matches!(agent_type, "codex" | "claude")
+}
+
+/// Poll the tmux pane until the agent's REPL is in a state where it is
+/// ready to receive a user message — concretely, the codex / claude
+/// idle prompt marker (`›`) is visible.  Codex prints a banner and
+/// loads MCP servers before its input loop is wired up; sending keys
+/// during that window queues the text in the pty but lets the Enter
+/// get eaten by the loading UI, leaving the prompt sitting in the
+/// input box without ever being submitted.  Returns once the marker
+/// appears or after `max_wait`, whichever comes first; the caller is
+/// expected to send the keys regardless so a stuck startup at least
+/// fails the normal validation path instead of hanging the RPC.
+fn wait_for_repl_idle(config: &Config, pane_id: &str, max_wait: Duration) -> Result<()> {
+    let start = std::time::Instant::now();
+    let poll_interval = Duration::from_millis(300);
+    while start.elapsed() < max_wait {
+        let output = tmux_capture(config, pane_id, 60)?;
+        // Codex can interrupt startup with an interactive "Update
+        // available!" version-check dialog whose DEFAULT highlight is
+        // "1. Update now" — pressing Enter there runs
+        // `npm install -g @openai/codex` and stalls the agent for the
+        // whole upgrade (and may fail in a sandboxed workspace). The
+        // dialog also renders the `›` selection marker, so
+        // 'output_has_agent_idle_prompt' would mistake it for a ready
+        // REPL and we'd send the prompt straight into the menu.
+        // Detect and dismiss it BEFORE the idle check.
+        if output_has_codex_update_dialog(&output) {
+            dismiss_codex_update_dialog(config, pane_id)?;
+            // Give codex time to process the selection and redraw the
+            // REPL before the next capture, so we don't re-detect a
+            // half-cleared dialog and send another Down/Down/Enter into
+            // what is by then the input box.
+            thread::sleep(Duration::from_millis(800));
+            continue;
+        }
+        if output_has_agent_idle_prompt(&output) {
+            return Ok(());
+        }
+        thread::sleep(poll_interval);
     }
     Ok(())
 }
@@ -983,6 +2948,91 @@ fn parse_datetime(value: &str) -> Result<DateTime<Utc>> {
 mod tests {
     use super::*;
     use std::path::Path;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn run_worker_tick_isolates_panics_and_errors() {
+        // A worker tick that panics must NOT unwind out of run_worker_tick;
+        // if it did, the real worker loop's thread would die permanently and
+        // the daemon would silently stop monitoring (the booting-freeze bug).
+        // Silence the default panic hook so the deliberate panic below does
+        // not spam the test output, then restore it.
+        let previous_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+
+        run_worker_tick("test", || panic!("boom"));
+        run_worker_tick("test", || Err(anyhow!("transient failure")));
+
+        std::panic::set_hook(previous_hook);
+
+        // A tick that succeeds runs to completion and its side effect is
+        // observed — proving run_worker_tick actually invokes the body.
+        let ran = AtomicUsize::new(0);
+        run_worker_tick("test", || {
+            ran.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+        assert_eq!(ran.load(Ordering::SeqCst), 1);
+        // Reaching here at all means neither the panic nor the Err propagated.
+    }
+
+    #[test]
+    fn detects_codex_update_dialog() {
+        let dialog = "\
+  ✨ Update available! 0.134.0 -> 0.135.0\n\
+\n\
+  Release notes: https://github.com/openai/codex/releases/latest\n\
+\n\
+› 1. Update now (runs `npm install -g @openai/codex`)\n\
+  2. Skip\n\
+  3. Skip until next version\n\
+\n\
+  Press enter to continue\n";
+        assert!(output_has_codex_update_dialog(dialog));
+    }
+
+    #[test]
+    fn update_dialog_detector_ignores_ordinary_output() {
+        // The idle REPL prompt must not look like the update dialog.
+        assert!(!output_has_codex_update_dialog("› \n"));
+        // A passing mention of "update" must not trigger a keystroke
+        // without the menu options present.
+        assert!(!output_has_codex_update_dialog(
+            "I checked for an update available in the changelog.\n"
+        ));
+        // The update dialog must not be mistaken for an idle prompt path
+        // even though it contains the `›` marker.
+        let dialog = "› 1. Update now\n  3. Skip until next version\n";
+        assert!(output_has_codex_update_dialog(dialog));
+    }
+
+    #[test]
+    fn active_marker_ignores_mcp_startup_spinner() {
+        // The 16h-stuck incident: codex's MCP-startup line reuses the
+        // "esc to interrupt" spinner. It must NOT count as active work,
+        // else observed_active_at gets set during boot and the
+        // launch-timeout watchdog never reaps a hung MCP startup.
+        let booting = "• Starting MCP servers (4/5): playwright (16h 25m 27s • esc to interrupt)\n";
+        assert!(output_is_starting_mcp_servers(booting));
+        assert!(!output_has_codex_active_marker(booting));
+    }
+
+    #[test]
+    fn active_marker_true_for_real_work() {
+        // Genuine mid-turn work (no MCP-startup line) still counts.
+        assert!(output_has_codex_active_marker("Working (12s • esc to interrupt)\n"));
+        assert!(output_has_codex_active_marker("foo\nbar (3s • esc to interrupt)\n"));
+        assert!(!output_is_starting_mcp_servers(
+            "Working (12s • esc to interrupt)\n"
+        ));
+    }
+
+    #[test]
+    fn launch_timeout_default_is_60s() {
+        // The MCP/launch-startup wait defaults to 60s (overridable via
+        // the DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS env var at runtime).
+        assert_eq!(LAUNCH_TIMEOUT_SECONDS, 60);
+    }
 
     #[test]
     fn list_query_filters_snapshot() {
@@ -992,6 +3042,7 @@ mod tests {
             pane_id: String::from("%1"),
             agent_type: String::from("codex"),
             work_dir: String::from("/tmp"),
+            lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
             status: String::from("running"),
             backend_kind: String::from("tmux"),
             backend_ref: BTreeMap::new(),
@@ -1001,6 +3052,13 @@ mod tests {
             cleaned_at: None,
             pr_url: None,
             output_snippet: None,
+            terminal_cause: None,
+            expected_result: None,
+            retries_used: 0,
+            last_validation_error: None,
+            awaiting_response: false,
+            observed_active_at: None,
+            result_payload: None,
         };
         assert!(list_query_matches(
             &snapshot,
@@ -1008,6 +3066,7 @@ mod tests {
                 status: Some(vec![String::from("running")]),
                 agent_type: Some(String::from("codex")),
                 backend_kind: Some(String::from("tmux")),
+                lifecycle: Some(String::from(LIFECYCLE_RUN_TO_COMPLETION)),
             },
         ));
         assert!(!list_query_matches(
@@ -1016,6 +3075,7 @@ mod tests {
                 status: Some(vec![String::from("failed")]),
                 agent_type: None,
                 backend_kind: None,
+                lifecycle: None,
             },
         ));
     }
@@ -1040,6 +3100,33 @@ mod tests {
             )
             .expect("table count");
         assert_eq!(count, 4);
+    }
+
+    #[test]
+    fn terminal_cause_round_trips_through_store() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        let mut snapshot = snapshot_for_lifecycle(LIFECYCLE_RUN_TO_COMPLETION, "failed");
+        let observed_at = now_iso();
+        set_terminal_cause_if_absent(
+            &mut snapshot,
+            TerminalCauseCategory::TimedOut,
+            "launch timeout",
+            true,
+            &observed_at,
+        );
+        upsert_snapshot(&conn, &snapshot).expect("upsert snapshot");
+
+        let loaded = session_get(&conn, &snapshot.session_id)
+            .expect("session_get")
+            .expect("snapshot exists");
+        let cause = loaded.terminal_cause.expect("terminal cause");
+        assert!(matches!(cause.category, TerminalCauseCategory::TimedOut));
+        assert_eq!(cause.reason.as_deref(), Some("launch timeout"));
+        assert!(cause.retryable);
+        assert_eq!(cause.observed_at, observed_at);
     }
 
     #[test]
@@ -1112,15 +3199,23 @@ mod tests {
                 pane_id: String::from("%1"),
                 agent_type: String::from("codex"),
                 work_dir: String::from("/tmp"),
+                lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
                 status: String::from("running"),
                 backend_kind: String::from("tmux"),
                 backend_ref: BTreeMap::new(),
                 started_at: now_iso(),
+                expected_result: None,
+                retries_used: 0,
+                last_validation_error: None,
+                awaiting_response: false,
+                observed_active_at: None,
+                result_payload: None,
                 last_observed_at: None,
                 finished_at: None,
                 cleaned_at: None,
                 pr_url: None,
                 output_snippet: None,
+                terminal_cause: None,
             },
         )
         .expect("insert active session");
@@ -1139,13 +3234,1177 @@ mod tests {
                 session_name: String::from("new"),
                 agent_type: String::from("codex"),
                 work_dir: String::from("/tmp"),
-                command: String::from("true"),
+                command: Some(String::from("true")),
+                prompt: None,
+                model: None,
+                effort: None,
+                mcp_servers: BTreeMap::new(),
+                skip_trust_setup: true,
+                lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
                 session_env: BTreeMap::new(),
+                expected_result: None,
             },
         )
         .expect_err("max running should reject before tmux");
         assert!(err
             .to_string()
             .contains("max running agent sessions reached"));
+    }
+
+    #[test]
+    fn monitor_once_reaps_session_with_stale_observation() {
+        // Watchdog: a `running` session whose last_observed_at is older
+        // than STALE_OBSERVATION_THRESHOLD_SECONDS must be forced to
+        // `exited` even if tmux probes would otherwise leave it
+        // running. Touches only sqlite — no tmux binary required.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        let stale_iso = (Utc::now()
+            - ChronoDuration::seconds(STALE_OBSERVATION_THRESHOLD_SECONDS + 60))
+        .to_rfc3339();
+        upsert_snapshot(
+            &conn,
+            &SessionSnapshot {
+                session_id: String::from("stale-running"),
+                session_name: String::from("stale-running"),
+                pane_id: String::from("%1"),
+                agent_type: String::from("codex"),
+                work_dir: String::from("/tmp"),
+                lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
+                status: String::from("running"),
+                backend_kind: String::from("tmux"),
+                backend_ref: BTreeMap::new(),
+                started_at: stale_iso.clone(),
+                expected_result: None,
+                retries_used: 0,
+                last_validation_error: None,
+                awaiting_response: false,
+                observed_active_at: None,
+                result_payload: None,
+                last_observed_at: Some(stale_iso),
+                finished_at: None,
+                cleaned_at: None,
+                pr_url: None,
+                output_snippet: None,
+                terminal_cause: None,
+            },
+        )
+        .expect("insert stale session");
+        let config = Config {
+            db_path: db.clone(),
+            socket_path: tmp.path().join("agentd.sock"),
+            // Point tmux at a binary that always fails — proves the
+            // watchdog path does not invoke tmux at all on the stale
+            // row. If we ever do invoke it the test fails loudly.
+            tmux_bin: String::from("/nonexistent/tmux"),
+            monitor_interval: Duration::from_millis(1000),
+            max_running: 10,
+        };
+
+        monitor_once(&config).expect("monitor_once succeeds via watchdog");
+
+        let row: (String, Option<String>) = Connection::open(&db)
+            .expect("reopen sqlite")
+            .query_row(
+                "SELECT status, finished_at FROM agent_sessions WHERE session_id = ?1",
+                params!["stale-running"],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("session row");
+        assert_eq!(row.0, "exited");
+        assert!(row.1.is_some(), "finished_at must be stamped on reap");
+        let event: String = Connection::open(&db)
+            .expect("reopen sqlite")
+            .query_row(
+                "SELECT event_type FROM agent_session_events \
+                 WHERE session_id = ?1 ORDER BY id DESC LIMIT 1",
+                params!["stale-running"],
+                |r| r.get(0),
+            )
+            .expect("event row");
+        assert_eq!(event, "session_stale_reaped");
+    }
+
+    #[test]
+    fn monitor_once_fails_session_stuck_in_startup_past_launch_timeout() {
+        // Launch-timeout watchdog: a session whose start time is past
+        // 'LAUNCH_TIMEOUT_SECONDS' AND that has never recorded an
+        // 'observed_active_at' is stuck inside startup (typical
+        // cause: a hung MCP server blocking codex's initialisation).
+        // The stale-observation watchdog above does NOT catch this
+        // case because the startup spinner ticks the wall-clock
+        // every second so the tmux capture changes and
+        // 'last_observed_at' keeps refreshing.  This test pins the
+        // distinction by keeping 'last_observed_at' very recent
+        // while 'started_at' is well past the timeout and
+        // 'observed_active_at' is None.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        let started =
+            (Utc::now() - ChronoDuration::seconds(LAUNCH_TIMEOUT_SECONDS + 120)).to_rfc3339();
+        let fresh_observation = Utc::now().to_rfc3339();
+        upsert_snapshot(
+            &conn,
+            &SessionSnapshot {
+                session_id: String::from("startup-hang"),
+                session_name: String::from("startup-hang"),
+                pane_id: String::from("%1"),
+                agent_type: String::from("codex"),
+                work_dir: String::from("/tmp"),
+                lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
+                status: String::from("running"),
+                backend_kind: String::from("tmux"),
+                backend_ref: BTreeMap::new(),
+                started_at: started,
+                expected_result: None,
+                retries_used: 0,
+                last_validation_error: None,
+                awaiting_response: false,
+                last_observed_at: Some(fresh_observation),
+                finished_at: None,
+                cleaned_at: None,
+                pr_url: None,
+                output_snippet: None,
+                terminal_cause: None,
+                observed_active_at: None,
+                result_payload: None,
+            },
+        )
+        .expect("insert hung-startup session");
+        let config = Config {
+            db_path: db.clone(),
+            socket_path: tmp.path().join("agentd.sock"),
+            tmux_bin: String::from("/nonexistent/tmux"),
+            monitor_interval: Duration::from_millis(1000),
+            max_running: 10,
+        };
+
+        monitor_once(&config).expect("monitor_once via launch-timeout watchdog");
+
+        let row: (String, Option<String>) = Connection::open(&db)
+            .expect("reopen sqlite")
+            .query_row(
+                "SELECT status, last_validation_error FROM agent_sessions WHERE session_id = ?1",
+                params!["startup-hang"],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("session row");
+        assert_eq!(row.0, "failed");
+        assert!(
+            row.1
+                .as_deref()
+                .map(|s| s.starts_with("launch timeout:"))
+                .unwrap_or(false),
+            "expected launch-timeout reason, got {:?}",
+            row.1
+        );
+        let event: String = Connection::open(&db)
+            .expect("reopen sqlite")
+            .query_row(
+                "SELECT event_type FROM agent_session_events \
+                 WHERE session_id = ?1 ORDER BY id DESC LIMIT 1",
+                params!["startup-hang"],
+                |r| r.get(0),
+            )
+            .expect("event row");
+        assert_eq!(event, "session_launch_timeout");
+    }
+
+    #[test]
+    fn monitor_once_leaves_session_alone_once_active_marker_was_seen() {
+        // Counterpart: a session that DID reach the active marker
+        // before the timeout (= got past startup) must not be reaped
+        // by the launch-timeout watchdog even if it has been
+        // running for far longer than 'LAUNCH_TIMEOUT_SECONDS'.
+        // Long-running agent work must not look like a startup hang.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        let started =
+            (Utc::now() - ChronoDuration::seconds(LAUNCH_TIMEOUT_SECONDS * 2)).to_rfc3339();
+        let active_at =
+            (Utc::now() - ChronoDuration::seconds(LAUNCH_TIMEOUT_SECONDS * 2 - 30)).to_rfc3339();
+        let fresh_observation = Utc::now().to_rfc3339();
+        upsert_snapshot(
+            &conn,
+            &SessionSnapshot {
+                session_id: String::from("long-running-but-active"),
+                session_name: String::from("doeff-agentd-launch-test-absent"),
+                pane_id: String::from("%1"),
+                agent_type: String::from("codex"),
+                work_dir: String::from("/tmp"),
+                lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
+                status: String::from("running"),
+                backend_kind: String::from("tmux"),
+                backend_ref: BTreeMap::new(),
+                started_at: started,
+                expected_result: None,
+                retries_used: 0,
+                last_validation_error: None,
+                awaiting_response: false,
+                last_observed_at: Some(fresh_observation),
+                finished_at: None,
+                cleaned_at: None,
+                pr_url: None,
+                output_snippet: None,
+                terminal_cause: None,
+                observed_active_at: Some(active_at),
+                result_payload: None,
+            },
+        )
+        .expect("insert long-running active session");
+        let config = Config {
+            db_path: db.clone(),
+            socket_path: tmp.path().join("agentd.sock"),
+            tmux_bin: String::from("tmux"),
+            monitor_interval: Duration::from_millis(1000),
+            max_running: 10,
+        };
+
+        monitor_once(&config).expect("monitor_once succeeds");
+
+        let count: i64 = Connection::open(&db)
+            .expect("reopen sqlite")
+            .query_row(
+                "SELECT COUNT(*) FROM agent_session_events \
+                 WHERE session_id = ?1 AND event_type = 'session_launch_timeout'",
+                params!["long-running-but-active"],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn monitor_once_leaves_recently_observed_session_alone() {
+        // Inverse of the watchdog test: a session whose last_observed_at
+        // is fresh must not be reaped, even if everything else about it
+        // looks identical. The fall-through path then exercises tmux,
+        // which we let succeed (the session is absent ⇒ status=exited
+        // via the existing "no tmux session" branch). The point of this
+        // test is that the stale watchdog itself stays off.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        let fresh_iso = Utc::now().to_rfc3339();
+        upsert_snapshot(
+            &conn,
+            &SessionSnapshot {
+                session_id: String::from("fresh-running"),
+                session_name: String::from("doeff-agentd-monitor-test-absent"),
+                pane_id: String::from("%1"),
+                agent_type: String::from("codex"),
+                work_dir: String::from("/tmp"),
+                lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
+                status: String::from("running"),
+                backend_kind: String::from("tmux"),
+                backend_ref: BTreeMap::new(),
+                started_at: fresh_iso.clone(),
+                expected_result: None,
+                retries_used: 0,
+                last_validation_error: None,
+                awaiting_response: false,
+                observed_active_at: None,
+                result_payload: None,
+                last_observed_at: Some(fresh_iso),
+                finished_at: None,
+                cleaned_at: None,
+                pr_url: None,
+                output_snippet: None,
+                terminal_cause: None,
+            },
+        )
+        .expect("insert fresh session");
+        let config = Config {
+            db_path: db.clone(),
+            socket_path: tmp.path().join("agentd.sock"),
+            tmux_bin: String::from("tmux"),
+            monitor_interval: Duration::from_millis(1000),
+            max_running: 10,
+        };
+
+        monitor_once(&config).expect("monitor_once succeeds");
+
+        // No `session_stale_reaped` event should have been recorded for
+        // this row — the watchdog path must stay silent on fresh data.
+        let reaped_count: i64 = Connection::open(&db)
+            .expect("reopen sqlite")
+            .query_row(
+                "SELECT COUNT(*) FROM agent_session_events \
+                 WHERE session_id = ?1 AND event_type = 'session_stale_reaped'",
+                params!["fresh-running"],
+                |r| r.get(0),
+            )
+            .expect("count rows");
+        assert_eq!(reaped_count, 0);
+    }
+
+    #[test]
+    fn turn_end_signal_does_not_mark_session_done_without_contract_check() {
+        // Codex always shows "Worked for X" between turns, even when
+        // the larger task is unfinished.  observed_status_for_snapshot
+        // must keep the session "running" — the work-end decision
+        // belongs to monitor_once's contract-validation pass.
+        let snapshot = snapshot_for_lifecycle("run_to_completion", "running");
+        let output = "task completed successfully\nworked for 1m 2s\n› ";
+
+        let status = observed_status_for_snapshot(&snapshot, output);
+
+        assert_eq!(status, "running");
+        assert!(!should_cleanup_after_observed_status(&snapshot, status));
+    }
+
+    #[test]
+    fn interactive_output_remains_available_for_more_input() {
+        // For Kind 1 sessions, turn-end never changes status either:
+        // the session keeps serving prompts until the client cancels.
+        let snapshot = snapshot_for_lifecycle("interactive", "running");
+        let output = "task completed successfully\nworked for 1m 2s\n› ";
+
+        let status = observed_status_for_snapshot(&snapshot, output);
+
+        assert_eq!(status, "running");
+        assert!(!should_cleanup_after_observed_status(&snapshot, status));
+    }
+
+    #[test]
+    fn output_indicates_turn_end_requires_idle_prompt_and_stable_output() {
+        // Turn-end needs the idle prompt visible, no active marker,
+        // and an output that matches the previous observation (the
+        // stability guard absorbs codex's banner / streaming state).
+        let mut snapshot = snapshot_for_lifecycle("run_to_completion", "running");
+        let stable_tail = "› ";
+        snapshot.output_snippet = Some(stable_tail.to_string());
+        assert!(output_indicates_turn_end(&snapshot, stable_tail));
+
+        // The "Worked for" line is NOT required: a long-running
+        // session whose status line has scrolled out of view is
+        // still parked at the idle prompt.
+        let scrolled_tail = "  feat/some-branch · ~/some/dir\n› ";
+        snapshot.output_snippet = Some(scrolled_tail.to_string());
+        assert!(output_indicates_turn_end(&snapshot, scrolled_tail));
+
+        // Active marker present → agent is still working, not a
+        // turn end yet.
+        let working = "Working (10s • esc to interrupt)\n› ";
+        snapshot.output_snippet = Some(working.to_string());
+        assert!(!output_indicates_turn_end(&snapshot, working));
+
+        // Pane unstable → wait one more cycle before deciding.
+        let cycle_n = "› ";
+        let cycle_n_plus_1 = "  doing stuff\n› ";
+        snapshot.output_snippet = Some(cycle_n.to_string());
+        assert!(!output_indicates_turn_end(&snapshot, cycle_n_plus_1));
+    }
+
+    #[test]
+    fn output_indicates_turn_end_recognizes_claude_idle_pane() {
+        // Claude Code's input box uses `❯ `, not codex's `› `.  A
+        // monitor that only knows the codex prompt never fires turn-end
+        // for claude sessions, so their result contracts are never
+        // validated (observed live: a finished claude worker with a
+        // valid result file sat "blocked" until the launcher's awaits
+        // exhausted).
+        let mut snapshot = snapshot_for_lifecycle("run_to_completion", "running");
+        let claude_idle = "  done. result written.\n\n❯\u{00A0}\n  🏢 ca  Fable 5 XHI";
+        snapshot.output_snippet = Some(claude_idle.to_string());
+        assert!(output_indicates_turn_end(&snapshot, claude_idle));
+
+        // While claude is WORKING the `❯` input box is still visible
+        // below the spinner, so idle-prompt detection alone would
+        // misfire; the per-second spinner tick keeps the pane unstable,
+        // and the stability guard must hold the turn-end back.
+        let working_t1 = "✢ Swooping… (37s · ↓ 1.1k tokens)\n\n❯\u{00A0}";
+        let working_t2 = "✢ Swooping… (38s · ↓ 1.2k tokens)\n\n❯\u{00A0}";
+        snapshot.output_snippet = Some(working_t1.to_string());
+        assert!(!output_indicates_turn_end(&snapshot, working_t2));
+    }
+
+    #[test]
+    fn agent_active_marker_recognizes_claude_spinner() {
+        // Live claude working pane: spinner verb + `… (` + tick timer.
+        assert!(output_has_agent_active_marker(
+            "✢ Swooping… (37s · ↓ 1.1k tokens · thinking)\n\n❯\u{00A0}"
+        ));
+        // Idle claude pane: input box + statusline, no spinner row.
+        assert!(!output_has_agent_active_marker(
+            "  done.\n\n❯\u{00A0}\n  🏢 ca  Fable 5 XHI\n  $9.55 │ ⏱ 21m44s(api 10m30s)"
+        ));
+        // Codex collapsed-turn hint must not read as active (the `… +9
+        // lines (` form has text between the ellipsis and the paren).
+        assert!(!output_has_agent_active_marker(
+            "… +9 lines (ctrl + t to view transcript)\n› "
+        ));
+        // Codex working row still counts.
+        assert!(output_has_agent_active_marker(
+            "Working (12s • esc to interrupt)"
+        ));
+    }
+
+    #[test]
+    fn startup_finished_signal_is_agent_agnostic_but_boot_safe() {
+        // The watchdog disarms once the REPL input box is visible —
+        // codex `› ` or claude `❯` — or codex shows its work marker.
+        assert!(output_indicates_startup_finished("banner\n❯\u{00A0}"));
+        assert!(output_indicates_startup_finished("banner\n› "));
+        assert!(output_indicates_startup_finished(
+            "Working (10s • esc to interrupt)\n› "
+        ));
+        // Still booting (no input box yet): watchdog stays armed.
+        assert!(!output_indicates_startup_finished("Loading…"));
+        // Hung MCP startup is the case the watchdog exists for — the
+        // spinner and even a visible prompt must not disarm it.
+        assert!(!output_indicates_startup_finished(
+            "Starting MCP servers (4/5): playwright (16h 25m • esc to interrupt)\n› "
+        ));
+        // The update dialog renders a `›` selection marker that must
+        // not read as a ready REPL.
+        assert!(!output_indicates_startup_finished(
+            "✨ Update available!\n› 1. Update now\n  3. Skip until next version"
+        ));
+    }
+
+    #[test]
+    fn agent_idle_prompt_accepts_codex_and_claude_prompts() {
+        assert!(output_has_agent_idle_prompt("› "));
+        assert!(output_has_agent_idle_prompt("some scroll\n› "));
+        // Real claude capture: the glyph is followed by U+00A0, not an
+        // ASCII space, and may carry typed-but-unsubmitted text.
+        assert!(output_has_agent_idle_prompt("❯\u{00A0}monitor-nudge"));
+        assert!(output_has_agent_idle_prompt("scroll\n❯\u{00A0}\n  statusline"));
+        assert!(output_has_agent_idle_prompt("❯"));
+        assert!(!output_has_agent_idle_prompt("plain shell $ "));
+        assert!(!output_has_agent_idle_prompt("  quoted mid-line ❯ glyph"));
+    }
+
+    /// A spec carrying just a schema, as the single-protocol launcher
+    /// sends it: agentd owns the path (per-session `result_file_name`) and the
+    /// retry policy; the launcher supplies only `payload_schema`.
+    fn schema_only_spec(schema: Value) -> ExpectedResultSpec {
+        ExpectedResultSpec {
+            payload_schema: schema,
+            retry_prompt: default_retry_prompt(),
+            max_retries: 2,
+        }
+    }
+
+    #[test]
+    fn validate_expected_result_accepts_well_formed_result() {
+        // The file content IS the result (no envelope), written to the
+        // agentd-owned default path and validated against payload_schema.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let work_dir = tmp.path().to_path_buf();
+        fs::write(
+            work_dir.join(result_file_name("test-session")),
+            r#"{"pr_url":"https://x","pr_head_sha":"abc123","branch":"feat/x"}"#,
+        )
+        .expect("write result");
+        let spec = schema_only_spec(impl_result_payload_schema());
+        assert!(validate_expected_result(work_dir.to_str().unwrap(), "test-session", &spec).is_ok());
+    }
+
+    #[test]
+    fn validate_expected_result_rejects_missing_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let spec = schema_only_spec(impl_result_payload_schema());
+        let err = validate_expected_result(tmp.path().to_str().unwrap(), "test-session", &spec)
+            .expect_err("missing file should reject");
+        assert!(err.contains("not readable"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_expected_result_rejects_result_not_satisfying_schema() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let work_dir = tmp.path().to_path_buf();
+        fs::write(work_dir.join(result_file_name("test-session")), r#"{"pr_url":""}"#)
+            .expect("write bad result");
+        let spec = schema_only_spec(impl_result_payload_schema());
+        let err = validate_expected_result(work_dir.to_str().unwrap(), "test-session", &spec)
+            .expect_err("empty pr_url should fail the schema");
+        assert!(err.contains("does not satisfy"), "got: {err}");
+    }
+
+    #[test]
+    fn ignore_result_file_registers_default_in_git_info_exclude() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let work_dir = tmp.path().to_path_buf();
+        fs::create_dir_all(work_dir.join(".git")).expect("fake .git");
+        ignore_result_file(work_dir.to_str().unwrap(), RESULT_FILE_EXCLUDE_GLOB)
+            .expect("register exclude");
+        let exclude = fs::read_to_string(work_dir.join(".git").join("info").join("exclude"))
+            .expect("exclude file written");
+        assert!(
+            exclude.lines().any(|l| l.trim() == format!("/{RESULT_FILE_EXCLUDE_GLOB}")),
+            "exclude should contain the result file, got: {exclude}"
+        );
+        // Idempotent: a second call does not duplicate the entry.
+        ignore_result_file(work_dir.to_str().unwrap(), RESULT_FILE_EXCLUDE_GLOB)
+            .expect("register exclude again");
+        let exclude2 = fs::read_to_string(work_dir.join(".git").join("info").join("exclude"))
+            .expect("exclude file still there");
+        let count = exclude2
+            .lines()
+            .filter(|l| l.trim() == format!("/{RESULT_FILE_EXCLUDE_GLOB}"))
+            .count();
+        assert_eq!(count, 1, "entry must not be duplicated, got: {exclude2}");
+    }
+
+    #[test]
+    fn ignore_result_file_writes_to_worktree_common_dir_exclude() {
+        // ACP runs agents in linked worktrees, where `.git` is a FILE
+        // ("gitdir: <path>") and excludes live in the SHARED common git
+        // dir (located via the gitdir's `commondir` file), NOT the
+        // per-worktree gitdir.  The exclude must land in the common
+        // dir's info/exclude — that is the only one git consults.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let common_git = tmp.path().join("mainrepo/.git");
+        let worktree_gitdir = common_git.join("worktrees/wt");
+        fs::create_dir_all(&worktree_gitdir).expect("mkdir worktree gitdir");
+        // commondir points from the per-worktree gitdir back to the
+        // shared .git (../.. from .git/worktrees/wt).
+        fs::write(worktree_gitdir.join("commondir"), "../..\n").expect("write commondir");
+
+        let work_dir = tmp.path().join("wt");
+        fs::create_dir_all(&work_dir).expect("mkdir worktree");
+        fs::write(
+            work_dir.join(".git"),
+            format!("gitdir: {}\n", worktree_gitdir.display()),
+        )
+        .expect("write .git pointer file");
+
+        ignore_result_file(work_dir.to_str().unwrap(), RESULT_FILE_EXCLUDE_GLOB)
+            .expect("register exclude via worktree common dir");
+
+        let common_exclude = fs::read_to_string(common_git.join("info").join("exclude"))
+            .expect("exclude written into the COMMON git dir");
+        assert!(
+            common_exclude.lines().any(|l| l.trim() == format!("/{RESULT_FILE_EXCLUDE_GLOB}")),
+            "common exclude should contain the result file, got: {common_exclude}"
+        );
+        // It must NOT have been written into the per-worktree gitdir,
+        // which git does not consult for excludes.
+        assert!(
+            !worktree_gitdir.join("info").join("exclude").exists(),
+            "exclude must not be written into the per-worktree gitdir"
+        );
+    }
+
+    // ---- validate_against_schema: the JSON-Schema subset ----
+
+    /// The discriminated-union schema the impl launcher attaches: either
+    /// a succeeded result with non-empty PR identity, or a blocked result
+    /// that explains why no PR was produced.
+    fn impl_result_payload_schema() -> Value {
+        serde_json::json!({
+            "oneOf": [
+                {
+                    "type": "object",
+                    "required": ["pr_url", "pr_head_sha", "branch"],
+                    "properties": {
+                        "status": {"const": "succeeded"},
+                        "pr_url": {"type": "string", "minLength": 1},
+                        "pr_head_sha": {"type": "string", "minLength": 1},
+                        "branch": {"type": "string", "minLength": 1}
+                    }
+                },
+                {
+                    "type": "object",
+                    "required": ["status", "reason"],
+                    "properties": {
+                        "status": {"const": "blocked"},
+                        "reason": {"type": "string", "minLength": 1}
+                    }
+                }
+            ]
+        })
+    }
+
+    #[test]
+    fn schema_accepts_succeeded_payload_without_status() {
+        // Backward compatibility: a legacy agent emits no `status` and
+        // still matches the succeeded branch.
+        let payload = serde_json::json!({
+            "pr_url": "https://github.com/o/r/pull/1",
+            "pr_head_sha": "abc123",
+            "branch": "feat/x"
+        });
+        assert!(
+            validate_against_schema(&payload, &impl_result_payload_schema(), "payload").is_ok()
+        );
+    }
+
+    #[test]
+    fn schema_accepts_blocked_payload() {
+        let payload = serde_json::json!({
+            "status": "blocked",
+            "reason": "workspace allocation failed; no PR was produced"
+        });
+        assert!(
+            validate_against_schema(&payload, &impl_result_payload_schema(), "payload").is_ok()
+        );
+    }
+
+    #[test]
+    fn schema_rejects_blank_pr_identity_masquerading_as_success() {
+        // The exact bug this feature exists to catch: a blocked agent
+        // wrote a "success" payload with empty identity strings.
+        let payload = serde_json::json!({
+            "pr_url": "",
+            "pr_head_sha": "",
+            "branch": ""
+        });
+        let err = validate_against_schema(&payload, &impl_result_payload_schema(), "payload")
+            .expect_err("blank identity must be rejected");
+        assert!(err.contains("matched none"), "got: {err}");
+        // The aggregate must mention the minLength failure so the agent
+        // knows the field is empty rather than absent.
+        assert!(err.contains("length"), "got: {err}");
+    }
+
+    #[test]
+    fn schema_rejects_blocked_without_reason() {
+        let payload = serde_json::json!({"status": "blocked"});
+        let err = validate_against_schema(&payload, &impl_result_payload_schema(), "payload")
+            .expect_err("blocked without reason must be rejected");
+        assert!(err.contains("matched none"), "got: {err}");
+    }
+
+    #[test]
+    fn schema_const_and_type_and_required_report_field_path() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["k"],
+            "properties": {"k": {"type": "string", "minLength": 2}}
+        });
+        let missing = validate_against_schema(&serde_json::json!({}), &schema, "payload")
+            .expect_err("missing required");
+        assert!(missing.contains("required field 'k'"), "got: {missing}");
+        let wrong_type = validate_against_schema(&serde_json::json!({"k": 5}), &schema, "payload")
+            .expect_err("wrong type");
+        assert!(wrong_type.contains("payload.k"), "got: {wrong_type}");
+        assert!(wrong_type.contains("type string"), "got: {wrong_type}");
+    }
+
+    #[test]
+    fn validate_expected_result_enforces_payload_schema() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let work_dir = tmp.path().to_path_buf();
+        fs::write(
+            work_dir.join(result_file_name("test-session")),
+            r#"{"pr_url":"","pr_head_sha":"","branch":""}"#,
+        )
+        .expect("write result");
+        let spec = schema_only_spec(impl_result_payload_schema());
+        let err = validate_expected_result(work_dir.to_str().unwrap(), "test-session", &spec)
+            .expect_err("blank identity must fail the contract");
+        assert!(err.contains("result does not satisfy its schema"), "got: {err}");
+    }
+
+    #[test]
+    fn interactive_agent_types_are_codex_and_claude() {
+        assert!(is_interactive_agent_type("codex"));
+        assert!(is_interactive_agent_type("claude"));
+        assert!(!is_interactive_agent_type("generic"));
+        assert!(!is_interactive_agent_type(""));
+    }
+
+    #[test]
+    fn session_env_injects_prompt_suppressors_and_lets_caller_override() {
+        // A launch with no caller env still gets the baseline prompt-suppressors
+        // so an interactive shell-startup prompt (e.g. oh-my-zsh's update [Y/n])
+        // can never derail the agent we drive via send-keys.
+        let entries = session_env_entries(&BTreeMap::new());
+        assert!(entries.contains(&(String::from("DISABLE_AUTO_UPDATE"), String::from("true"))));
+        assert!(entries.contains(&(String::from("DISABLE_UPDATE_PROMPT"), String::from("true"))));
+
+        // A caller key passes through alongside the baseline.
+        let mut caller = BTreeMap::new();
+        caller.insert(String::from("CODEX_HOME"), String::from("/x/agent"));
+        let entries = session_env_entries(&caller);
+        assert!(entries.contains(&(String::from("CODEX_HOME"), String::from("/x/agent"))));
+        assert!(entries.contains(&(String::from("DISABLE_AUTO_UPDATE"), String::from("true"))));
+
+        // A caller override of a baseline key wins (baseline value not duplicated).
+        let mut override_env = BTreeMap::new();
+        override_env.insert(String::from("DISABLE_AUTO_UPDATE"), String::from("false"));
+        let entries = session_env_entries(&override_env);
+        let auto_update: Vec<_> = entries
+            .iter()
+            .filter(|(k, _)| k == "DISABLE_AUTO_UPDATE")
+            .collect();
+        assert_eq!(auto_update, vec![&(String::from("DISABLE_AUTO_UPDATE"), String::from("false"))]);
+    }
+
+    fn launch_params_for(agent_type: &str, effort: Option<&str>) -> LaunchParams {
+        LaunchParams {
+            session_id: String::from("s"),
+            session_name: String::from("s"),
+            agent_type: String::from(agent_type),
+            work_dir: String::from("/tmp"),
+            command: None,
+            prompt: Some(String::from("hello world")),
+            model: None,
+            effort: effort.map(String::from),
+            mcp_servers: BTreeMap::new(),
+            skip_trust_setup: true,
+            lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
+            session_env: BTreeMap::new(),
+            expected_result: None,
+        }
+    }
+
+    #[test]
+    fn build_codex_argv_does_not_include_prompt_as_argument() {
+        let params = launch_params_for("codex", None);
+        let argv = build_codex_argv(&params);
+        assert!(
+            !argv.iter().any(|arg| arg == "hello world"),
+            "prompt must not appear in codex argv (it is sent via send-keys instead): {argv:?}"
+        );
+        assert_eq!(argv[0], "codex");
+        assert!(argv.contains(&String::from("--yolo")));
+    }
+
+    #[test]
+    fn build_codex_argv_delivers_effort_as_model_reasoning_effort() {
+        let params = launch_params_for("codex", Some("xhigh"));
+        let argv = build_codex_argv(&params);
+        let position = argv
+            .iter()
+            .position(|arg| arg == "model_reasoning_effort=\"xhigh\"")
+            .expect("effort config must appear in codex argv");
+        assert_eq!(argv[position - 1], "-c");
+    }
+
+    #[test]
+    fn build_codex_argv_omits_effort_when_absent_or_empty() {
+        for effort in [None, Some("")] {
+            let params = launch_params_for("codex", effort);
+            let argv = build_codex_argv(&params);
+            assert!(
+                !argv.iter().any(|arg| arg.contains("model_reasoning_effort")),
+                "no effort config expected for effort={effort:?}: {argv:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn build_claude_argv_delivers_effort_flag() {
+        let params = launch_params_for("claude", Some("xhigh"));
+        let argv = build_claude_argv(&params);
+        let position = argv
+            .iter()
+            .position(|arg| arg == "--effort")
+            .expect("--effort must appear in claude argv");
+        assert_eq!(argv[position + 1], "xhigh");
+    }
+
+    #[test]
+    fn build_claude_argv_omits_effort_when_absent_or_empty() {
+        for effort in [None, Some("")] {
+            let params = launch_params_for("claude", effort);
+            let argv = build_claude_argv(&params);
+            assert!(
+                !argv.iter().any(|arg| arg == "--effort"),
+                "no --effort expected for effort={effort:?}: {argv:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn uses_interactive_prompt_is_true_for_codex_without_command() {
+        let params = LaunchParams {
+            session_id: String::from("s"),
+            session_name: String::from("s"),
+            agent_type: String::from("codex"),
+            work_dir: String::from("/tmp"),
+            command: None,
+            prompt: Some(String::from("p")),
+            model: None,
+            effort: None,
+            mcp_servers: BTreeMap::new(),
+            skip_trust_setup: true,
+            lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
+            session_env: BTreeMap::new(),
+            expected_result: None,
+        };
+        assert!(uses_interactive_prompt(&params));
+    }
+
+    #[test]
+    fn uses_interactive_prompt_is_false_for_explicit_command_override() {
+        let params = LaunchParams {
+            session_id: String::from("s"),
+            session_name: String::from("s"),
+            agent_type: String::from("codex"),
+            work_dir: String::from("/tmp"),
+            command: Some(String::from("./run.sh")),
+            prompt: Some(String::from("p")),
+            model: None,
+            effort: None,
+            mcp_servers: BTreeMap::new(),
+            skip_trust_setup: true,
+            lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
+            session_env: BTreeMap::new(),
+            expected_result: None,
+        };
+        assert!(!uses_interactive_prompt(&params));
+    }
+
+    fn snapshot_for_lifecycle(lifecycle: &str, status: &str) -> SessionSnapshot {
+        SessionSnapshot {
+            session_id: String::from("s1"),
+            session_name: String::from("s1"),
+            pane_id: String::from("%1"),
+            agent_type: String::from("codex"),
+            work_dir: String::from("/tmp"),
+            lifecycle: String::from(lifecycle),
+            status: String::from(status),
+            backend_kind: String::from("tmux"),
+            backend_ref: BTreeMap::new(),
+            started_at: now_iso(),
+            last_observed_at: None,
+            finished_at: None,
+            cleaned_at: None,
+            pr_url: None,
+            output_snippet: None,
+            terminal_cause: None,
+            expected_result: None,
+            retries_used: 0,
+            last_validation_error: None,
+            awaiting_response: false,
+            observed_active_at: None,
+            result_payload: None,
+        }
+    }
+
+    /// Build an `agent_sessions` row directly via `upsert_snapshot`,
+    /// bypassing tmux.  Tests for `session.await_result` need to flip
+    /// the status field without going through the launch pathway,
+    /// which would require a live tmux server.
+    fn insert_test_snapshot(
+        conn: &Connection,
+        session_id: &str,
+        status: &str,
+        work_dir: &str,
+        expected_result: Option<ExpectedResultSpec>,
+        last_validation_error: Option<String>,
+    ) {
+        let snapshot = SessionSnapshot {
+            session_id: String::from(session_id),
+            session_name: String::from(session_id),
+            pane_id: String::from("%1"),
+            agent_type: String::from("codex"),
+            work_dir: String::from(work_dir),
+            lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
+            status: String::from(status),
+            backend_kind: String::from("tmux"),
+            backend_ref: BTreeMap::new(),
+            started_at: now_iso(),
+            last_observed_at: None,
+            finished_at: None,
+            cleaned_at: None,
+            pr_url: None,
+            output_snippet: None,
+            terminal_cause: None,
+            expected_result,
+            retries_used: 0,
+            last_validation_error,
+            awaiting_response: false,
+            observed_active_at: None,
+            result_payload: None,
+        };
+        upsert_snapshot(conn, &snapshot).expect("upsert test snapshot");
+    }
+
+    #[test]
+    fn await_result_returns_terminal_session_with_null_result_when_no_contract() {
+        // Spec test #1: a session that exits cleanly with no
+        // expected_result contract must return `result: null` and the
+        // snapshot in a terminal state.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        insert_test_snapshot(&conn, "await-no-contract", "exited", "/tmp", None, None);
+
+        let value = session_await_result_with_interval(
+            &conn,
+            AwaitResultParams {
+                session_id: String::from("await-no-contract"),
+                timeout_seconds: Some(2.0),
+            },
+            Duration::from_millis(50),
+        )
+        .expect("await_result should succeed");
+
+        assert_eq!(value.get("result"), Some(&Value::Null));
+        let session = value.get("session").expect("session field");
+        assert_eq!(
+            session.get("status").and_then(|v| v.as_str()),
+            Some("exited")
+        );
+        assert!(
+            value.get("validation_error").is_none(),
+            "no contract ⇒ no validation_error: got {value:?}"
+        );
+    }
+
+    #[test]
+    fn await_result_returns_parsed_payload_when_contract_validates() {
+        // Spec test #2: contract present, file valid → response carries
+        // the parsed result under `payload` (the file content IS the
+        // payload — there is no envelope).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+
+        let work_dir = tmp.path().join("work");
+        fs::create_dir_all(&work_dir).expect("mkdir work_dir");
+        fs::write(
+            work_dir.join(result_file_name("await-with-contract")),
+            r#"{"verdict":"ok","notes":"clean"}"#,
+        )
+        .expect("write result");
+
+        let verdict_schema = serde_json::json!({
+            "type": "object",
+            "required": ["verdict"],
+            "properties": {"verdict": {"type": "string", "minLength": 1}}
+        });
+        let spec = schema_only_spec(verdict_schema);
+        insert_test_snapshot(
+            &conn,
+            "await-with-contract",
+            "done",
+            work_dir.to_str().unwrap(),
+            Some(spec),
+            None,
+        );
+
+        let value = session_await_result_with_interval(
+            &conn,
+            AwaitResultParams {
+                session_id: String::from("await-with-contract"),
+                timeout_seconds: Some(2.0),
+            },
+            Duration::from_millis(50),
+        )
+        .expect("await_result should succeed");
+
+        let result = value.get("result").expect("result field");
+        assert!(result.is_object(), "result must be an object: {value:?}");
+        assert_eq!(
+            result
+                .get("payload")
+                .and_then(|v| v.get("verdict"))
+                .and_then(|v| v.as_str()),
+            Some("ok")
+        );
+        assert!(value.get("validation_error").is_none());
+    }
+
+    #[test]
+    fn await_result_serves_persisted_payload_after_worktree_reaped() {
+        // Regression (result-payload loss): the monitor validates the
+        // result file and persists the payload, then cleanup reaps the
+        // agent's git worktree — so by the time the launcher awaits, the
+        // file is GONE.  await must serve the PERSISTED payload rather than
+        // fail with "expected result file not readable".  Before the fix
+        // the validated result was discarded and await re-read a deleted
+        // file, losing the agent's work forever.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+
+        // A work_dir that does NOT exist on disk — the worktree was reaped.
+        let reaped_work_dir = tmp.path().join("reaped-worktree");
+        assert!(!reaped_work_dir.exists());
+
+        let verdict_schema = serde_json::json!({
+            "type": "object",
+            "required": ["verdict"],
+            "properties": {"verdict": {"type": "string", "minLength": 1}}
+        });
+        let snapshot = SessionSnapshot {
+            session_id: String::from("await-reaped"),
+            session_name: String::from("await-reaped"),
+            pane_id: String::from("%1"),
+            agent_type: String::from("codex"),
+            work_dir: reaped_work_dir.to_string_lossy().into_owned(),
+            lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
+            status: String::from("done"),
+            backend_kind: String::from("tmux"),
+            backend_ref: BTreeMap::new(),
+            started_at: now_iso(),
+            last_observed_at: None,
+            finished_at: Some(now_iso()),
+            cleaned_at: Some(now_iso()),
+            pr_url: None,
+            output_snippet: None,
+            terminal_cause: None,
+            expected_result: Some(schema_only_spec(verdict_schema)),
+            retries_used: 0,
+            last_validation_error: None,
+            awaiting_response: false,
+            observed_active_at: None,
+            result_payload: Some(String::from(r#"{"verdict":"ok","notes":"clean"}"#)),
+        };
+        // Round-trips through the DB: upsert → session_get → row_to_snapshot
+        // → build_await_response, so it also exercises the new column.
+        upsert_snapshot(&conn, &snapshot).expect("upsert reaped snapshot");
+
+        let value = session_await_result_with_interval(
+            &conn,
+            AwaitResultParams {
+                session_id: String::from("await-reaped"),
+                timeout_seconds: Some(2.0),
+            },
+            Duration::from_millis(50),
+        )
+        .expect("await_result should succeed");
+
+        let result = value.get("result").expect("result field");
+        assert_eq!(
+            result
+                .get("payload")
+                .and_then(|v| v.get("verdict"))
+                .and_then(|v| v.as_str()),
+            Some("ok"),
+            "persisted payload must be served even though work_dir is gone: {value:?}"
+        );
+        assert!(
+            value.get("validation_error").is_none(),
+            "persisted payload ⇒ no validation_error: {value:?}"
+        );
+    }
+
+    #[test]
+    fn await_result_returns_timeout_error_when_session_never_reaches_terminal() {
+        // Spec test #3: contract present, session stays non-terminal,
+        // await must return a -32000 timeout error.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+
+        let spec = schema_only_spec(serde_json::json!({"type": "object"}));
+        insert_test_snapshot(
+            &conn,
+            "await-timeout",
+            "running",
+            "/tmp",
+            Some(spec),
+            None,
+        );
+
+        let err = session_await_result_with_interval(
+            &conn,
+            AwaitResultParams {
+                session_id: String::from("await-timeout"),
+                // Below the documented minimum, gets clamped up to 1s.
+                timeout_seconds: Some(0.5),
+            },
+            Duration::from_millis(50),
+        )
+        .expect_err("await_result must time out");
+
+        let rpc_err = err
+            .downcast_ref::<RpcError>()
+            .expect("must be an RpcError, got plain anyhow");
+        assert_eq!(rpc_err.code, RPC_ERR_AWAIT_TIMEOUT);
+        assert!(
+            rpc_err.message.contains("timed out"),
+            "unexpected message: {}",
+            rpc_err.message
+        );
+        assert!(
+            rpc_err.message.contains("await-timeout"),
+            "message must include the session id: {}",
+            rpc_err.message
+        );
+    }
+
+    #[test]
+    fn await_result_returns_no_such_session_for_unknown_id() {
+        // Spec test #4: unknown session id → -32001 error, fast path
+        // (no polling).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+
+        let err = session_await_result_with_interval(
+            &conn,
+            AwaitResultParams {
+                session_id: String::from("does-not-exist"),
+                timeout_seconds: Some(2.0),
+            },
+            Duration::from_millis(50),
+        )
+        .expect_err("await_result on missing session must error");
+
+        let rpc_err = err
+            .downcast_ref::<RpcError>()
+            .expect("must be an RpcError, got plain anyhow");
+        assert_eq!(rpc_err.code, RPC_ERR_NO_SUCH_SESSION);
+        assert!(
+            rpc_err.message.contains("does-not-exist"),
+            "message must include the session id: {}",
+            rpc_err.message
+        );
+    }
+
+    #[test]
+    fn await_result_surfaces_validation_error_when_contract_fails_post_done() {
+        // Cross-cutting check: a session that landed in `done` but
+        // whose expected_result file is missing should yield
+        // result: null AND surface the validation reason so the
+        // Haskell client can branch on it.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+
+        let work_dir = tmp.path().join("work");
+        fs::create_dir_all(&work_dir).expect("mkdir work_dir");
+        // Intentionally do NOT write the result file.
+        let spec = schema_only_spec(serde_json::json!({"type": "object"}));
+        insert_test_snapshot(
+            &conn,
+            "await-bad-file",
+            "done",
+            work_dir.to_str().unwrap(),
+            Some(spec),
+            None,
+        );
+
+        let value = session_await_result_with_interval(
+            &conn,
+            AwaitResultParams {
+                session_id: String::from("await-bad-file"),
+                timeout_seconds: Some(2.0),
+            },
+            Duration::from_millis(50),
+        )
+        .expect("await_result returns ok-with-null even on contract failure");
+
+        assert_eq!(value.get("result"), Some(&Value::Null));
+        let reason = value
+            .get("validation_error")
+            .and_then(|v| v.as_str())
+            .expect("validation_error string must be present");
+        assert!(
+            reason.contains("not readable"),
+            "expected file-not-readable reason, got: {reason}"
+        );
     }
 }

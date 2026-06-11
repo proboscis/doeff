@@ -154,6 +154,47 @@ doeff run --program myapp.program --format json
 The CLI supports automatic interpreter/environment discovery via `doeff-indexer`.
 See `docs/14-cli-auto-discovery.md` for marker syntax and hierarchy rules.
 
+## Performance Benchmarks
+
+Rust VM dispatch micro-benchmarks live in `packages/doeff-vm-core/benches/` and
+use Criterion. Run them from the VM core crate with the VM feature enabled:
+
+```bash
+cd packages/doeff-vm-core
+cargo bench --features python_bridge
+```
+
+If PyO3 selects the wrong Python installation on macOS, pin it to the uv
+environment:
+
+```bash
+cd packages/doeff-vm-core
+PYO3_PYTHON="$(cd ../.. && uv run python -c 'import sys; print(sys.executable)')" \
+  cargo bench --features python_bridge
+```
+
+Python end-to-end benchmarks live in `benchmarks/benchmark_runner.py`. A normal
+run writes JSON to `benchmarks/results/<yyyymmdd>-<hostname>.json`:
+
+```bash
+uv run python benchmarks/benchmark_runner.py --runs 20
+```
+
+Compare a fresh run against a committed baseline with:
+
+```bash
+uv run python benchmarks/benchmark_runner.py \
+  --compare benchmarks/results/<baseline>.json
+```
+
+CI uses smoke mode only. It runs one iteration with the smallest N values and
+checks that the benchmark entrypoints still execute; it does not gate on
+performance:
+
+```bash
+make bench-smoke
+```
+
 ## Development
 
 ```bash
