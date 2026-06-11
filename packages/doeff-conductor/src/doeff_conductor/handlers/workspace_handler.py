@@ -43,6 +43,11 @@ class WorkspaceStateError(RuntimeError):
     """Raised when on-disk workspace state contradicts its identity."""
 
 
+WORKSPACE_RUNTIME_STATE_GITIGNORE_ENTRIES: tuple[str, ...] = (
+    ".agent-home/",
+)
+
+
 @dataclass(frozen=True)
 class _WorkspaceMaterialization:
     workspace: Workspace
@@ -58,6 +63,35 @@ def _get_workspace_base_dir() -> Path:
 def _branch_for(workspace_id: str) -> str:
     """Derive the deterministic branch name for a workspace identity."""
     return f"conductor/{workspace_id}"
+
+
+def _ensure_runtime_state_ignored(materialized_path: Path) -> None:
+    """Ensure conductor-created workspaces ignore in-worktree runtime state."""
+    gitignore_path: Path = materialized_path / ".gitignore"
+    try:
+        existing_text: str = gitignore_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        existing_text = ""
+
+    existing_entries: set[str] = {
+        line.strip()
+        for line in existing_text.splitlines()
+        if line.strip()
+    }
+    missing_entries: list[str] = [
+        entry
+        for entry in WORKSPACE_RUNTIME_STATE_GITIGNORE_ENTRIES
+        if entry not in existing_entries and f"/{entry}" not in existing_entries
+    ]
+    if not missing_entries:
+        return
+
+    updated_text: str = existing_text
+    if updated_text and not updated_text.endswith("\n"):
+        updated_text += "\n"
+    for entry in missing_entries:
+        updated_text += f"{entry}\n"
+    gitignore_path.write_text(updated_text, encoding="utf-8")
 
 
 class WorkspaceHandler:
@@ -178,6 +212,8 @@ class WorkspaceHandler:
                 cwd=repo_path,
                 log_path=log_path,
             )
+
+        _ensure_runtime_state_ignored(materialized_path)
 
         workspace = Workspace(
             id=workspace_id,
