@@ -10,6 +10,7 @@ Provides programmatic access to conductor functionality:
 
 import json
 import secrets
+import warnings
 from collections.abc import Generator
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,17 @@ if TYPE_CHECKING:
 def _get_state_dir() -> Path:
     """Get the state directory for conductor."""
     return Path.home() / ".local" / "state" / "doeff-conductor"
+
+
+def _warn_corrupt_persistent_state(path: Path, reason: object) -> None:
+    """Warn about one corrupt persisted entry while allowing list verbs to continue."""
+    from doeff_conductor.exceptions import ConductorStateWarning
+
+    warnings.warn(
+        f"Corrupt persistent state skipped: {path}: {reason}",
+        ConductorStateWarning,
+        stacklevel=2,
+    )
 
 
 class ConductorAPI:
@@ -327,7 +339,8 @@ class ConductorAPI:
                     continue
 
                 workflows.append(handle)
-            except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+            except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+                _warn_corrupt_persistent_state(meta_file, error)
                 continue
 
         # Sort by updated_at descending
@@ -359,8 +372,7 @@ class ConductorAPI:
                 return WorkflowHandle.from_dict(data)
         elif len(matches) > 1:
             raise ValueError(
-                f"Ambiguous workflow ID '{workflow_id}': "
-                f"matches {[d.name for d in matches]}"
+                f"Ambiguous workflow ID '{workflow_id}': matches {[d.name for d in matches]}"
             )
 
         return None
@@ -375,7 +387,6 @@ class ConductorAPI:
         Yields status updates as dictionaries.
         """
         import time
-
 
         last_status = None
 
@@ -471,7 +482,17 @@ class ConductorAPI:
                         text=True,
                         check=False,
                     )
+                    if result.returncode != 0:
+                        reason = (
+                            result.stderr.strip()
+                            or result.stdout.strip()
+                            or f"git branch --show-current exited {result.returncode}"
+                        )
+                        _warn_corrupt_persistent_state(workspace_dir, reason)
+                        continue
                     ref = result.stdout.strip()
+                    if not ref:
+                        raise ValueError("git branch --show-current returned an empty ref")
                     workspace = Workspace(
                         id=workspace_dir.name,
                         repo=repo_dir.name,
@@ -483,7 +504,8 @@ class ConductorAPI:
                         ),
                     )
                     workspaces.append(workspace)
-                except (OSError, TypeError, ValueError):
+                except (OSError, TypeError, ValueError) as error:
+                    _warn_corrupt_persistent_state(workspace_dir, error)
                     continue
 
         return workspaces
