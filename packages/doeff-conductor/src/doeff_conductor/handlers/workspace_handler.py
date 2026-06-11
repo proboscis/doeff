@@ -43,9 +43,7 @@ class WorkspaceStateError(RuntimeError):
     """Raised when on-disk workspace state contradicts its identity."""
 
 
-WORKSPACE_RUNTIME_STATE_GITIGNORE_ENTRIES: tuple[str, ...] = (
-    ".agent-home/",
-)
+WORKSPACE_RUNTIME_STATE_GITIGNORE_ENTRIES: tuple[str, ...] = (".agent-home/",)
 
 
 @dataclass(frozen=True)
@@ -75,9 +73,7 @@ def _ensure_runtime_state_ignored(materialized_path: Path) -> str | None:
         existing_text = ""
 
     existing_entries: set[str] = {
-        line.strip()
-        for line in existing_text.splitlines()
-        if line.strip()
+        line.strip() for line in existing_text.splitlines() if line.strip()
     }
     missing_entries: list[str] = [
         entry
@@ -115,20 +111,14 @@ def _has_only_recorded_runtime_ignore_changes(
         ["git", "status", "--porcelain"],
         cwd=materialization.path,
     )
-    status_lines: list[str] = [
-        line
-        for line in status_result.stdout.splitlines()
-        if line
-    ]
+    status_lines: list[str] = [line for line in status_result.stdout.splitlines() if line]
     if not status_lines:
         return False
     if any(_status_path_from_porcelain_line(line) != ".gitignore" for line in status_lines):
         return False
 
     try:
-        current_gitignore: str = (materialization.path / ".gitignore").read_text(
-            encoding="utf-8"
-        )
+        current_gitignore: str = (materialization.path / ".gitignore").read_text(encoding="utf-8")
     except FileNotFoundError:
         return False
     return current_gitignore == materialization.runtime_ignore_snapshot
@@ -359,9 +349,7 @@ class WorkspaceHandler:
 
     def handle_delete_workspace(self, effect: "DeleteWorkspace") -> bool:
         """Remove a workspace materialization from this site."""
-        materialization = self._materializations.get(
-            (effect.workspace.repo, effect.workspace.id)
-        )
+        materialization = self._materializations.get((effect.workspace.repo, effect.workspace.id))
         if materialization is None:
             return False
 
@@ -381,11 +369,16 @@ class WorkspaceHandler:
         except GitCommandError:
             if not effect.force:
                 return False
-            shutil.rmtree(materialization.path, ignore_errors=True)
+            shutil.rmtree(materialization.path)
             run_git(
                 ["git", "worktree", "prune"],
                 cwd=self.repo_path(effect.workspace.repo),
-                check=False,
+            )
+
+        if materialization.path.exists():
+            raise WorkspaceStateError(
+                f"workspace {effect.workspace.id}: materialization "
+                f"{materialization.path} still exists after delete"
             )
 
         self._materializations.pop((effect.workspace.repo, effect.workspace.id), None)
