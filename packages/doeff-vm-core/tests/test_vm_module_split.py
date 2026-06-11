@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 CORE_ROOT = Path(__file__).resolve().parents[1]
 VM_RS = CORE_ROOT / "src" / "vm.rs"
 VM_STEP_RS = CORE_ROOT / "src" / "vm" / "step.rs"
