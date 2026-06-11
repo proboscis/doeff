@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from doeff_conductor.handlers.issue_handler import IssueHandler
     from doeff_conductor.handlers.journaled_agent import JournaledAgentHandler
     from doeff_conductor.handlers.workspace_handler import WorkspaceHandler
+    from doeff_conductor.workflow_effect_journal import JournaledWorkflowEffectHandler
 
 SimpleHandler = Callable[[Any], Any]
 
@@ -61,6 +62,7 @@ def default_scheduled_handlers(
     agent_handler: "AgentHandler | JournaledAgentHandler | None" = None,
     git_handler: "GitHandler | None" = None,
     exec_handler: "ExecHandler | None" = None,
+    workflow_effect_handler: "JournaledWorkflowEffectHandler | None" = None,
 ) -> Callable[..., Any]:
     """Build a complete protocol handler for all conductor effects.
 
@@ -70,11 +72,13 @@ def default_scheduled_handlers(
         agent_handler: Custom AgentHandler, or None to create default
         git_handler: Custom GitHandler, or None to create default
         exec_handler: Custom ExecHandler, or None to create default
+        workflow_effect_handler: Custom time!/random! journal handler, or None for default
 
     Returns:
         Handler-protocol callable for all conductor effects.
     """
     from doeff_conductor.effects.agent import AgentEffect
+    from doeff_conductor.effects.dsl import RandomCall, TimeCall
     from doeff_conductor.effects.exec import Exec
     from doeff_conductor.effects.git import Commit, CreatePR, MergePR, Push
     from doeff_conductor.effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
@@ -84,12 +88,14 @@ def default_scheduled_handlers(
     from doeff_conductor.handlers.git_handler import GitHandler
     from doeff_conductor.handlers.issue_handler import IssueHandler
     from doeff_conductor.handlers.workspace_handler import WorkspaceHandler
+    from doeff_conductor.workflow_effect_journal import JournaledWorkflowEffectHandler
 
     workspace = workspace_handler or WorkspaceHandler()
     iss = issue_handler or IssueHandler()
     agent = agent_handler or AgentHandler(workspace_resolver=workspace.resolve_path)
     git = git_handler or GitHandler(workspace_resolver=workspace.resolve_path)
     exec_gate = exec_handler or ExecHandler(workspace_resolver=workspace.resolve_path)
+    workflow_effect = workflow_effect_handler or JournaledWorkflowEffectHandler()
 
     handlers: tuple[tuple[type[Any], Callable[..., Any]], ...] = (
         (CreateWorkspace, make_blocking_scheduled_handler(workspace.handle_create_workspace)),
@@ -101,6 +107,8 @@ def default_scheduled_handlers(
         (GetIssue, make_blocking_scheduled_handler(iss.handle_get_issue)),
         (ResolveIssue, make_blocking_scheduled_handler(iss.handle_resolve_issue)),
         (AgentEffect, make_blocking_scheduled_handler(agent.handle_agent)),
+        (TimeCall, make_blocking_scheduled_handler(workflow_effect.handle_time)),
+        (RandomCall, make_blocking_scheduled_handler(workflow_effect.handle_random)),
         (Commit, make_blocking_scheduled_handler(git.handle_commit)),
         (Push, make_blocking_scheduled_handler(git.handle_push)),
         (CreatePR, make_blocking_scheduled_handler(git.handle_create_pr)),
