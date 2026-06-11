@@ -21,6 +21,7 @@ Usage:
 """
 
 
+import contextlib
 import hashlib
 import inspect
 import re
@@ -34,10 +35,10 @@ from pathlib import Path
 from typing import Any
 
 from doeff import Effect, Pass, Resume, do
+
 # REMOVED: make_doeff_generator no longer exists in doeff.do
 # from doeff.do import make_doeff_generator
-
-from ..effects import (
+from doeff_agentic.effects import (
     AgenticAbortSession,
     AgenticCreateEnvironment,
     AgenticCreateSession,
@@ -54,8 +55,8 @@ from ..effects import (
     AgenticSendMessage,
     AgenticSupportsCapability,
 )
-from ..event_log import EventLogWriter, WorkflowIndex
-from ..exceptions import (
+from doeff_agentic.event_log import EventLogWriter, WorkflowIndex
+from doeff_agentic.exceptions import (
     AgenticDuplicateNameError,
     AgenticEnvironmentInUseError,
     AgenticEnvironmentNotFoundError,
@@ -65,7 +66,7 @@ from ..exceptions import (
     AgenticTimeoutError,
     AgenticUnsupportedOperationError,
 )
-from ..types import (
+from doeff_agentic.types import (
     AgenticEndOfEvents,
     AgenticEnvironmentHandle,
     AgenticEnvironmentType,
@@ -298,10 +299,8 @@ class TmuxHandler:
         # Kill all sessions
         if self._workflow:
             for state in self._workflow.sessions.values():
-                try:
+                with contextlib.suppress(Exception):
                     self._backend.kill_session(f"doeff-{self._workflow.id}-{state.handle.name}")
-                except Exception:
-                    pass
 
     # -------------------------------------------------------------------------
     # Workflow Effects
@@ -475,7 +474,7 @@ class TmuxHandler:
                 _session_config(session_name=session_name, work_dir=work_dir)
             ).pane_id
         except Exception as e:
-            raise AgenticServerError(f"Failed to create tmux session: {e}")
+            raise AgenticServerError(f"Failed to create tmux session: {e}") from e
 
         handle = AgenticSessionHandle(
             id=session_id,
@@ -541,10 +540,8 @@ class TmuxHandler:
         session_name = f"doeff-{self._workflow.id}-{name}"
 
         # Send Ctrl+C to abort
-        try:
+        with contextlib.suppress(Exception):
             send_keys(state.pane_id, "C-c", literal=False, enter=False)
-        except Exception:
-            pass
 
         # Kill the tmux session
         self._backend.kill_session(session_name)
@@ -932,7 +929,7 @@ def _as_protocol_handler(
         result = handler_fn(effect)
 
         if inspect.isgenerator(result):
-            resolved = yield make_doeff_generator(result)
+            resolved = yield make_doeff_generator(result)  # noqa: F821 - legacy removed API reference is intentionally preserved
             return (yield Resume(k, resolved))
 
         if _is_lazy_program_value(result):

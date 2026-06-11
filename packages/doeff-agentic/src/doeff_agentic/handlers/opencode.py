@@ -31,10 +31,10 @@ from pathlib import Path
 from typing import Any
 
 from doeff import Await, Effect, Pass, Resume, do, slog
+
 # REMOVED: make_doeff_generator no longer exists in doeff.do
 # from doeff.do import make_doeff_generator
-
-from ..effects import (
+from doeff_agentic.effects import (
     AgenticAbortSession,
     AgenticCreateEnvironment,
     AgenticCreateSession,
@@ -51,8 +51,8 @@ from ..effects import (
     AgenticSendMessage,
     AgenticSupportsCapability,
 )
-from ..event_log import EventLogWriter, WorkflowIndex
-from ..exceptions import (
+from doeff_agentic.event_log import EventLogWriter, WorkflowIndex
+from doeff_agentic.exceptions import (
     AgenticDuplicateNameError,
     AgenticEnvironmentInUseError,
     AgenticEnvironmentNotFoundError,
@@ -60,7 +60,7 @@ from ..exceptions import (
     AgenticSessionNotFoundError,
     AgenticTimeoutError,
 )
-from ..types import (
+from doeff_agentic.types import (
     AgenticEndOfEvents,
     AgenticEnvironmentHandle,
     AgenticEnvironmentType,
@@ -126,7 +126,6 @@ class AsyncHttpClient:
     def close(self):
         """Close client, returning Program[..., None]."""
         yield Await(self._client.aclose())
-        return None
 
 
 # =============================================================================
@@ -252,7 +251,7 @@ class OpenCodeHandler:
 
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(self._client._client.aclose())
+                self._close_task = loop.create_task(self._client._client.aclose())
             except RuntimeError:
                 # No running loop, create one for cleanup
                 asyncio.run(self._client._client.aclose())
@@ -635,7 +634,6 @@ class OpenCodeHandler:
                     model=session.model,
                 )
 
-            return None
 
         return _abort_session()
 
@@ -827,17 +825,16 @@ class OpenCodeHandler:
                     continue
 
                 # Map to our event types
-                if event_type == "session.updated":
-                    if isinstance(props, dict):
-                        status = props.get("status")
-                        if status in ("done", "error", "aborted"):
-                            self._close_sse(effect.session_id)
-                            final_status = self._map_status(status)
-                            result: AgenticEvent | AgenticEndOfEvents = AgenticEndOfEvents(
-                                reason=f"session_{status}",
-                                final_status=final_status,
-                            )
-                            return result
+                if event_type == "session.updated" and isinstance(props, dict):
+                    status = props.get("status")
+                    if status in ("done", "error", "aborted"):
+                        self._close_sse(effect.session_id)
+                        final_status = self._map_status(status)
+                        result: AgenticEvent | AgenticEndOfEvents = AgenticEndOfEvents(
+                            reason=f"session_{status}",
+                            final_status=final_status,
+                        )
+                        return result
 
                 result = AgenticEvent(
                     event_type=event_type,
@@ -991,7 +988,6 @@ class OpenCodeHandler:
             self._update_session_status(session_id, status)
         except Exception:
             pass
-        return None
 
     def _map_status(self, status: str) -> AgenticSessionStatus:
         """Map OpenCode status to AgenticSessionStatus."""
@@ -1027,7 +1023,7 @@ def _as_protocol_handler(
         result = handler_fn(effect)
 
         if inspect.isgenerator(result):
-            resolved = yield make_doeff_generator(result)
+            resolved = yield make_doeff_generator(result)  # noqa: F821 - legacy removed API reference is intentionally preserved
             return (yield Resume(k, resolved))
 
         if _is_lazy_program_value(result):
