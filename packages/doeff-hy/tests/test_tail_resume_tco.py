@@ -9,7 +9,7 @@ Test levels:
 """
 
 import doeff_hy  # noqa: F401 — registers macros/extensions
-import hy  # noqa: F401
+import hy  # noqa: F401 - activates Hy reader for macro tests
 from doeff_hy.handle import _build_clause
 from hy.models import Expression, Symbol
 from hy.models import List as HyList

@@ -439,7 +439,7 @@ class TestThreadingMacro:
         """(<-> (f) (g)) threads result of f as first arg to g."""
         import types
 
-        import doeff_hy  # noqa: F401
+        import doeff_hy  # noqa: F401 - registers Hy macros/import hooks for inline eval
         import hy
 
         code = """
