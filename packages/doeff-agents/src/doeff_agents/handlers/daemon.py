@@ -10,28 +10,37 @@ from typing import Protocol
 
 from doeff_agents.adapters.base import AgentType, LaunchParams
 from doeff_agents.adapters.codex import trust_workspace_in_codex_home
+from doeff_agents.agentd_client import RPC_ERR_NO_SUCH_SESSION, AgentdClientError
 from doeff_agents.claude_home import prepare_claude_home
 from doeff_agents.effects import (
     AgentError,
     AgentLaunchError,
     AgentNotAvailableError,
+    AgentSessionLifecycle,
     AgentSessionSnapshot,
     AttachAgentSessionEffect,
+    AwaitOutcome,
+    AwaitResultEffect,
     CancelAgentSessionEffect,
     CaptureEffect,
     ClaudeLaunchEffect,
     CleanupAgentSessionEffect,
+    FollowUpEffect,
     GetAgentSessionEffect,
+    L2SessionHandle,
     LaunchEffect,
+    LaunchSessionEffect,
     LaunchTaskEffect,
     ListAgentSessionsEffect,
     MonitorEffect,
     Observation,
     ObserveAgentSessionEffect,
+    ReleaseSessionEffect,
     SendEffect,
     SessionHandle,
     SessionNotFoundError,
     StopEffect,
+    StopSessionEffect,
 )
 from doeff_agents.mcp_server import RunToolFn
 from doeff_agents.runtime import ClaudeRuntimePolicy
@@ -50,9 +59,21 @@ class AgentdSessionClient(Protocol):
         session_name: str,
         agent_type: str,
         work_dir: Path,
-        command: str,
+        command: str | None = None,
+        prompt: str | None = None,
+        model: str | None = None,
+        effort: str | None = None,
+        lifecycle: AgentSessionLifecycle,
         session_env: Mapping[str, str] | None = None,
+        expected_result: Mapping[str, object] | None = None,
     ) -> AgentSessionSnapshot: ...
+
+    def await_result(
+        self,
+        session_id: str,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> AwaitOutcome: ...
 
     def get_session(self, session_id: str) -> AgentSessionSnapshot | None: ...
 
@@ -107,6 +128,7 @@ class DaemonAgentHandler(AgentHandler):
             model=effect.model,
             effort=effect.effort,
             bare=effect.bare,
+            lifecycle=effect.lifecycle,
             session_env=effect.session_env,
         )
 
@@ -128,6 +150,7 @@ class DaemonAgentHandler(AgentHandler):
             model=effect.model,
             effort=effect.effort,
             bare=effect.bare,
+            lifecycle=effect.lifecycle,
             session_env=effect.session_env,
         )
 
@@ -137,7 +160,6 @@ class DaemonAgentHandler(AgentHandler):
         return Observation(
             status=snapshot.status,
             output_changed=False,
-            pr_url=snapshot.pr_url,
             output_snippet=snapshot.output_snippet,
         )
 
@@ -207,6 +229,7 @@ class DaemonAgentHandler(AgentHandler):
         model: str | None,
         effort: str | None,
         bare: bool,
+        lifecycle: AgentSessionLifecycle,
         session_env: Mapping[str, str] | None,
     ) -> SessionHandle:
         adapter = get_adapter(agent_type)
@@ -233,9 +256,69 @@ class DaemonAgentHandler(AgentHandler):
             agent_type=agent_type.value,
             work_dir=work_dir,
             command=command,
+            lifecycle=lifecycle,
             session_env=tmux_env,
         )
         return snapshot.to_handle()
+
+    def handle_launch_session(self, effect: LaunchSessionEffect) -> L2SessionHandle:
+        """Idempotently launch or re-adopt an agentd session."""
+        session_id = effect.spec.session_id
+        existing = self._client.get_session(session_id)
+        if existing is not None:
+            return L2SessionHandle(session_id=session_id)
+
+        adapter = get_adapter(effect.spec.agent_type)
+        if not adapter.is_available():
+            raise AgentNotAvailableError(f"{effect.spec.agent_type.value} CLI is not available")
+
+        tmux_env: dict[str, str] = dict(effect.spec.session_env or {})
+        command_env: dict[str, str] = dict(effect.spec.session_env or {})
+        self._prepare_agent_environment(effect.spec.agent_type, effect.spec.work_dir, tmux_env, command_env)
+
+        # agentd owns the concrete result-file contract.  The Python layer
+        # supplies only the schema and retry budget.
+        self._client.launch_session(
+            session_id=session_id,
+            session_name=session_id,
+            agent_type=effect.spec.agent_type.value,
+            work_dir=effect.spec.work_dir,
+            prompt=effect.spec.prompt,
+            model=effect.spec.model,
+            effort=effect.spec.effort,
+            lifecycle=effect.spec.lifecycle,
+            session_env=tmux_env,
+            expected_result={
+                "payload_schema": effect.spec.result_schema,
+                "max_retries": effect.spec.max_retries,
+            },
+        )
+        return L2SessionHandle(session_id=session_id)
+
+    def handle_await_result(self, effect: AwaitResultEffect) -> AwaitOutcome:
+        """Await agentd's single await_result handoff."""
+        try:
+            return self._client.await_result(
+                effect.handle.session_id,
+                timeout_seconds=effect.timeout_seconds,
+            )
+        except AgentdClientError as exc:
+            if exc.error_code == RPC_ERR_NO_SUCH_SESSION:
+                raise SessionNotFoundError(effect.handle.session_id) from exc
+            raise
+
+    def handle_follow_up(self, effect: FollowUpEffect) -> L2SessionHandle:
+        """Continue a daemon-owned session."""
+        self._client.send_session(effect.handle.session_id, effect.message)
+        return effect.handle
+
+    def handle_stop_session(self, effect: StopSessionEffect) -> None:
+        """Stop a daemon-owned L2 session."""
+        self._client.cancel_session(effect.handle.session_id)
+
+    def handle_release_session(self, effect: ReleaseSessionEffect) -> None:
+        """Release is a no-op for daemon-owned durable sessions."""
+        return
 
     def _prepare_agent_environment(
         self,

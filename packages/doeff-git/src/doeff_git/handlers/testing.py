@@ -109,7 +109,7 @@ def mock_handlers(
         if isinstance(effect, MergePR):
             active_runtime.handle_merge_pr(effect)
             return (yield Resume(k, None))
-        return (yield Pass())
+        return (yield Pass(effect, k))
 
     return handler
 
