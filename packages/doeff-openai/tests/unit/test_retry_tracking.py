@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from _runner import run_program
 from doeff_openai import get_api_calls, structured_llm__openai
 from doeff_openai.client import OpenAIClient
 
@@ -12,8 +13,6 @@ from doeff import (
     EffectGenerator,
     do,
 )
-
-from _runner import run_program
 
 
 @pytest.mark.asyncio

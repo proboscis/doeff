@@ -12,7 +12,7 @@ enabling full observability through Graph and Log effects for:
 Example:
     >>> from doeff import do, run
     >>> from doeff_openai import chat_completion, get_total_cost
-    >>> 
+    >>>
     >>> @do
     >>> def my_ai_workflow():
     >>>     # API key provided via Reader environment
@@ -20,13 +20,13 @@ Example:
     >>>         messages=[{"role": "user", "content": "Hello!"}],
     >>>         model="gpt-3.5-turbo"
     >>>     )
-    >>>     
+    >>>
     >>>     # Check accumulated cost
     >>>     total_cost = yield get_total_cost()
     >>>     print(f"Total cost: ${total_cost:.4f}")
-    >>>     
+    >>>
     >>>     return response
-    >>> 
+    >>>
     >>> # Run with API key in environment
     >>> result = run(
     >>>     my_ai_workflow(),
@@ -167,9 +167,9 @@ __all__ = [
     "estimate_max_cost",
     "extract_request_id",
     "extract_token_usage",
+    "get_api_calls",
     # Cost calculation
     "get_encoding",
-    "get_api_calls",
     "get_model_cost",
     "get_model_pricing",
     "get_openai_client",

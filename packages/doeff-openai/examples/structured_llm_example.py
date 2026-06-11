@@ -119,7 +119,7 @@ def example_gpt5_reasoning() -> EffectGenerator[MathProblem]:
     yield slog(step="example3", model=model_name)
 
     problem_text = """Solve this problem step by step:
-    
+
     A train leaves Station A at 10:00 AM traveling at 60 mph.
     Another train leaves Station B at 10:30 AM traveling at 80 mph toward Station A.
     The stations are 280 miles apart.
@@ -285,11 +285,11 @@ async def a_run_all_examples(
 ) -> None:
     """
     Run all structured LLM examples.
-    
+
     Args:
         openai_api_key: Your OpenAI API key
         gpt5_available: Whether GPT-5 models are available
-    
+
     Usage:
         python -m pinjected run doeff_openai.examples.structured_llm_example.a_run_all_examples \
             --openai-api-key "sk-..." \
