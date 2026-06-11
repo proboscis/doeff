@@ -84,24 +84,24 @@ issue.to_dict()  # -> dict
 Issue.from_dict(data)  # -> Issue
 ```
 
-#### `WorktreeEnv`
+#### `Workspace`
 
-Handle to a git worktree environment.
+Portable handle to a logical git workspace.
 
 ```python
-from doeff_conductor import WorktreeEnv
+from doeff_conductor import Workspace
 
-env = WorktreeEnv(
-    id="wt-001",
-    path=Path("/path/to/worktree"),
-    branch="feat/issue-001",
-    base_commit="abc1234",
+workspace = Workspace(
+    id="workspace-001",
+    repo="default",
+    ref="feat/issue-001",
+    base_ref="main",
     issue_id="ISSUE-001",
 )
-
-# Access path for file operations
-file_path = env.path / "src" / "file.py"
 ```
+
+Workspace materialization paths are handler-private. Use `Exec(workspace=...)` or
+handler-specific APIs for filesystem work.
 
 #### `AgentRef`
 
@@ -114,7 +114,7 @@ ref = AgentRef(
     id="session-abc123",
     name="implementer",
     workflow_id="wf-001",
-    env_id="wt-001",
+    workspace_id="wt-001",
     agent_type="claude",
 )
 ```
@@ -149,7 +149,7 @@ handle = WorkflowHandle(
     status=WorkflowStatus.RUNNING,
     template="basic_pr",
     issue_id="ISSUE-001",
-    environments=("wt-001", "wt-002"),
+    workspaces=("wt-001", "wt-002"),
     agents=("implementer", "reviewer"),
 )
 ```
@@ -158,52 +158,60 @@ handle = WorkflowHandle(
 
 ## Effects
 
-### Worktree Effects
+### Workspace Effects
 
-#### `CreateWorktree`
+#### `CreateWorkspace`
 
-Create a new git worktree environment.
+Ensure the git workspace bound to a resume-stable identity exists.
+Idempotent: re-emitting the same `workspace_id` re-adopts the existing
+branch and worktree (uncommitted changes preserved); a missing worktree
+whose branch exists is re-materialized from the branch; creation from the
+base ref happens exactly once per identity lifetime.
 
 ```python
-from doeff_conductor import CreateWorktree
+from doeff_conductor import CreateWorkspace
 
 # Basic usage
-env = yield CreateWorktree()
+workspace = yield CreateWorkspace(workspace_id="issue-123-impl")
 
 # With issue
-env = yield CreateWorktree(issue=issue)
+workspace = yield CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-impl")
 
-# With custom branch suffix
-env = yield CreateWorktree(issue=issue, suffix="impl")
-
-# With specific base branch
-env = yield CreateWorktree(base_branch="develop")
+# With specific base ref
+workspace = yield CreateWorkspace(workspace_id="feature-x", from_ref="develop")
 ```
 
 **Parameters:**
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
-| `issue` | `Issue \| None` | `None` | Issue to create worktree for |
-| `base_branch` | `str \| None` | `None` | Base branch (default: main/master) |
-| `suffix` | `str \| None` | `None` | Branch suffix for parallel worktrees |
-| `name` | `str \| None` | `None` | Custom worktree name |
+| `workspace_id` | `str` | Required | Resume-stable identity; determines branch and worktree |
+| `issue` | `Issue \| None` | `None` | Issue to create workspace for |
+| `from_ref` | `str \| None` | `None` | Base ref (default: main/master) |
 
-**Returns:** `WorktreeEnv`
+**Returns:** `Workspace`
 
-#### `MergeBranches`
+#### `MergeWorkspaces`
 
-Merge multiple worktree branches together.
+Reconcile multiple workspaces. The merged workspace carries the same
+resume-stable identity discipline as `CreateWorkspace`.
 
 ```python
-from doeff_conductor import MergeBranches, MergeStrategy
+from doeff_conductor import MergeWorkspaces, MergeStrategy
 
 # Basic merge
-merged = yield MergeBranches(envs=(env1, env2))
+merge_result = yield MergeWorkspaces(
+    workspace_id="issue-123-merged",
+    workspaces=(workspace1, workspace2),
+)
+if not merge_result.merged:
+    raise RuntimeError(merge_result.message)
+merged = merge_result.workspace
 
 # With strategy
-merged = yield MergeBranches(
-    envs=(env1, env2, env3),
+merged = yield MergeWorkspaces(
+    workspace_id="issue-123-merged",
+    workspaces=(workspace1, workspace2, workspace3),
     strategy=MergeStrategy.SQUASH,
 )
 ```
@@ -212,31 +220,31 @@ merged = yield MergeBranches(
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
-| `envs` | `tuple[WorktreeEnv, ...]` | Required | Worktrees to merge |
+| `workspace_id` | `str` | Required | Resume-stable identity for the merged workspace |
+| `workspaces` | `tuple[Workspace, ...]` | Required | Workspaces to reconcile |
 | `strategy` | `MergeStrategy \| None` | `None` | Merge strategy |
-| `name` | `str \| None` | `None` | Name for merged worktree |
 
-**Returns:** `WorktreeEnv`
+**Returns:** `MergeWorkspacesResult`
 
-#### `DeleteWorktree`
+#### `DeleteWorkspace`
 
-Delete a worktree and clean up resources.
+Delete a workspace and clean up resources.
 
 ```python
-from doeff_conductor import DeleteWorktree
+from doeff_conductor import DeleteWorkspace
 
 # Normal cleanup
-yield DeleteWorktree(env=env)
+yield DeleteWorkspace(workspace=workspace)
 
 # Force delete (ignores uncommitted changes)
-yield DeleteWorktree(env=env, force=True)
+yield DeleteWorkspace(workspace=workspace, force=True)
 ```
 
 **Parameters:**
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
-| `env` | `WorktreeEnv` | Required | Worktree to delete |
+| `workspace` | `Workspace` | Required | Workspace to delete |
 | `force` | `bool` | `False` | Force delete even if uncommitted |
 
 **Returns:** `bool`
@@ -345,19 +353,32 @@ resolved = yield ResolveIssue(
 
 ### Agent Effects
 
-#### `RunAgent`
+#### `Agent`
 
-Run an agent to completion.
+Run an agent to completion and return a schema-validated artifact.
 
 ```python
-from doeff_conductor import RunAgent
+from doeff_conductor import Agent, AgentTask
 
-output = yield RunAgent(
-    env=env,
-    prompt="Implement the login feature",
-    agent_type="claude",
-    name="implementer",
-    timeout=300,
+schema = {
+    "type": "object",
+    "required": ["summary"],
+    "properties": {"summary": {"type": "string"}},
+}
+
+artifact = yield Agent(
+    AgentTask(
+        run_id=issue.id,
+        node_id="implement",
+        attempt=0,
+        env=workspace,
+        prompt="Implement the login feature",
+        result_schema=schema,
+        verification_class="test-verifiable",
+        agent_type="codex",
+        name="implementer",
+        timeout_seconds=300,
+    )
 )
 ```
 
@@ -365,113 +386,11 @@ output = yield RunAgent(
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
-| `env` | `WorktreeEnv` | Required | Environment to run in |
-| `prompt` | `str` | Required | Initial prompt |
-| `agent_type` | `str` | `"claude"` | Agent type |
-| `name` | `str \| None` | `None` | Session name |
-| `profile` | `str \| None` | `None` | Agent profile |
-| `timeout` | `float \| None` | `None` | Timeout in seconds |
+| `task` | `AgentTask` | Required | Schema-validated task descriptor |
 
-**Returns:** `str` (agent output)
+`AgentTask.env` is a logical `Workspace`. The handler materializes it through the workspace handler and keeps filesystem paths out of the effect payload.
 
-#### `SpawnAgent`
-
-Start an agent without waiting for completion.
-
-```python
-from doeff_conductor import SpawnAgent
-
-ref = yield SpawnAgent(
-    env=env,
-    prompt="Review the code",
-    name="reviewer",
-)
-# Continue immediately, agent runs in background
-```
-
-**Parameters:**
-
-| Name | Type | Default | Description |
-|------|------|---------|-------------|
-| `env` | `WorktreeEnv` | Required | Environment to run in |
-| `prompt` | `str` | Required | Initial prompt |
-| `agent_type` | `str` | `"claude"` | Agent type |
-| `name` | `str \| None` | `None` | Session name |
-| `profile` | `str \| None` | `None` | Agent profile |
-
-**Returns:** `AgentRef`
-
-#### `SendMessage`
-
-Send a message to a running agent.
-
-```python
-from doeff_conductor import SendMessage
-
-yield SendMessage(
-    agent_ref=ref,
-    message="Continue with step 2",
-    wait=True,  # Wait for response
-)
-```
-
-**Parameters:**
-
-| Name | Type | Default | Description |
-|------|------|---------|-------------|
-| `agent_ref` | `AgentRef` | Required | Agent to message |
-| `message` | `str` | Required | Message content |
-| `wait` | `bool` | `False` | Wait for response |
-
-**Returns:** `None`
-
-#### `WaitForStatus`
-
-Wait for an agent to reach a specific status.
-
-```python
-from doeff_conductor import WaitForStatus
-from doeff_agentic import AgenticSessionStatus
-
-status = yield WaitForStatus(
-    agent_ref=ref,
-    target=AgenticSessionStatus.DONE,
-    timeout=300,
-)
-```
-
-**Parameters:**
-
-| Name | Type | Default | Description |
-|------|------|---------|-------------|
-| `agent_ref` | `AgentRef` | Required | Agent to wait for |
-| `target` | `Status \| tuple[Status]` | Required | Target status(es) |
-| `timeout` | `float \| None` | `None` | Timeout in seconds |
-| `poll_interval` | `float` | `1.0` | Poll interval |
-
-**Returns:** `AgenticSessionStatus`
-
-#### `CaptureOutput`
-
-Capture output from an agent session.
-
-```python
-from doeff_conductor import CaptureOutput
-
-output = yield CaptureOutput(
-    agent_ref=ref,
-    lines=500,
-)
-```
-
-**Parameters:**
-
-| Name | Type | Default | Description |
-|------|------|---------|-------------|
-| `agent_ref` | `AgentRef` | Required | Agent to capture from |
-| `lines` | `int` | `500` | Number of lines |
-
-**Returns:** `str`
+**Returns:** `dict[str, object]` or another artifact object accepted by `result_schema`
 
 ---
 
@@ -479,13 +398,13 @@ output = yield CaptureOutput(
 
 #### `Commit`
 
-Create a commit in the worktree.
+Create a commit in the workspace.
 
 ```python
 from doeff_conductor import Commit
 
 sha = yield Commit(
-    env=env,
+    workspace=workspace,
     message="feat: add login feature",
     all=True,  # Stage all changes
 )
@@ -495,7 +414,7 @@ sha = yield Commit(
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
-| `env` | `WorktreeEnv` | Required | Worktree to commit in |
+| `workspace` | `Workspace` | Required | Workspace to commit in |
 | `message` | `str` | Required | Commit message |
 | `all` | `bool` | `True` | Stage all changes |
 
@@ -509,7 +428,7 @@ Push branch to remote.
 from doeff_conductor import Push
 
 yield Push(
-    env=env,
+    workspace=workspace,
     remote="origin",
     force=False,
     set_upstream=True,
@@ -520,7 +439,7 @@ yield Push(
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
-| `env` | `WorktreeEnv` | Required | Worktree to push |
+| `workspace` | `Workspace` | Required | Workspace to push |
 | `remote` | `str` | `"origin"` | Remote name |
 | `force` | `bool` | `False` | Force push |
 | `set_upstream` | `bool` | `True` | Set upstream |
@@ -535,7 +454,7 @@ Create a pull request.
 from doeff_conductor import CreatePR
 
 pr = yield CreatePR(
-    env=env,
+    workspace=workspace,
     title="Add login feature",
     body="Implements OAuth2 login",
     target="main",
@@ -547,7 +466,7 @@ pr = yield CreatePR(
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
-| `env` | `WorktreeEnv` | Required | Worktree with changes |
+| `workspace` | `Workspace` | Required | Workspace with changes |
 | `title` | `str` | Required | PR title |
 | `body` | `str \| None` | `None` | PR body |
 | `target` | `str` | `"main"` | Target branch |
@@ -585,19 +504,19 @@ yield MergePR(
 
 ### Handler Classes
 
-#### `WorktreeHandler`
+#### `WorkspaceHandler`
 
-Handles worktree effects.
+Handles workspace effects.
 
 ```python
-from doeff_conductor import WorktreeHandler
+from doeff_conductor import WorkspaceHandler
 
-handler = WorktreeHandler(base_path=Path("/path/to/repo"))
+handler = WorkspaceHandler(repo_path=Path("/path/to/repo"))
 
 # Methods
-handler.handle_create_worktree(effect)
-handler.handle_merge_branches(effect)
-handler.handle_delete_worktree(effect)
+handler.handle_create_workspace(effect)
+handler.handle_merge_workspaces(effect)
+handler.handle_delete_workspace(effect)
 ```
 
 #### `IssueHandler`
@@ -778,26 +697,26 @@ stopped = api.stop_workflow("abc123")
 stopped = api.stop_workflow("abc123", agent="implementer")
 ```
 
-#### `list_environments`
+#### `list_workspaces`
 
-List worktree environments.
+List workspace workspaces.
 
 ```python
-environments = api.list_environments()
+workspaces = api.list_workspaces()
 # Filter by workflow
-environments = api.list_environments(workflow_id="abc123")
+workspaces = api.list_workspaces(workflow_id="abc123")
 ```
 
-#### `cleanup_environments`
+#### `cleanup_workspaces`
 
-Cleanup orphaned worktree environments.
+Cleanup orphaned workspace workspaces.
 
 ```python
 # Dry run
-would_clean = api.cleanup_environments(dry_run=True)
+would_clean = api.cleanup_workspaces(dry_run=True)
 
 # Actually clean
-cleaned = api.cleanup_environments(older_than_days=7)
+cleaned = api.cleanup_workspaces(older_than_days=7)
 ```
 
 ---
@@ -839,14 +758,14 @@ conductor issue show <id> [--json]
 conductor issue resolve <id> [--pr URL] [--json]
 ```
 
-### Environment Commands
+### Workspace Commands
 
 ```bash
-# List environments
-conductor env list [--workflow ID] [--json]
+# List workspaces
+conductor workspace list [--workflow ID] [--json]
 
-# Cleanup environments
-conductor env cleanup [--dry-run] [--older-than DAYS] [--json]
+# Cleanup workspaces
+conductor workspace cleanup [--dry-run] [--older-than DAYS] [--json]
 ```
 
 ### Template Commands

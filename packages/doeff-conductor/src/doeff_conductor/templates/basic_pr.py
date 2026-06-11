@@ -11,7 +11,17 @@ The simplest workflow for implementing an issue:
 """
 
 from doeff import EffectGenerator, do
+
 from ..types import Issue, PRHandle
+
+IMPLEMENT_SCHEMA = {
+    "type": "object",
+    "required": ["summary"],
+    "properties": {
+        "summary": {"type": "string"},
+        "files_changed": {"type": "array", "items": {"type": "string"}},
+    },
+}
 
 
 @do
@@ -24,10 +34,10 @@ def basic_pr(issue: Issue) -> EffectGenerator[PRHandle]:
     Returns:
         PRHandle for the created PR
     """
-    from ..effects import Commit, CreatePR, CreateWorktree, Push, ResolveIssue, RunAgent
+    from ..effects import Agent, AgentTask, Commit, CreatePR, CreateWorkspace, Push, ResolveIssue
 
-    # Step 1: Create isolated worktree
-    env = yield CreateWorktree(issue=issue)
+    # Step 1: Create isolated worktree (identity is resume-stable per issue)
+    env = yield CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-basic-pr")
 
     # Step 2: Run agent to implement the issue
     prompt = f"""
@@ -40,16 +50,27 @@ Implement the following issue:
 Please implement the changes needed to resolve this issue.
 When done, make sure all changes are complete and working.
 """
-    yield RunAgent(env=env, prompt=prompt)
+    yield Agent(
+        AgentTask(
+            run_id=issue.id,
+            node_id="implement",
+            attempt=0,
+            env=env,
+            prompt=prompt,
+            result_schema=IMPLEMENT_SCHEMA,
+            verification_class="test-verifiable",
+            agent_type="codex",
+        )
+    )
 
     # Step 3: Commit and push changes
     commit_msg = f"feat: {issue.title}\n\nResolves: {issue.id}"
-    yield Commit(env=env, message=commit_msg)
-    yield Push(env=env)
+    yield Commit(workspace=env, message=commit_msg)
+    yield Push(workspace=env)
 
     # Step 4: Create PR
     pr = yield CreatePR(
-        env=env,
+        workspace=env,
         title=issue.title,
         body=f"""
 ## Summary
