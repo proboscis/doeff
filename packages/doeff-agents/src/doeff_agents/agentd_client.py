@@ -1,7 +1,5 @@
 """JSON-line client for the doeff-agentd Unix socket API."""
 
-from __future__ import annotations
-
 import json
 import os
 import shlex
@@ -250,7 +248,12 @@ class AgentdClient:
             if error_code is not None and not isinstance(error_code, int):
                 raise AgentdProtocolError("doeff-agentd error_code was not an integer")
             raise AgentdClientError(error, error_code=error_code)
-        return response.get("result")
+        if "result" not in response:
+            raise AgentdProtocolError(
+                f"{method} response is missing result "
+                f"(response shape: {_mapping_shape(response)})"
+            )
+        return response["result"]
 
     def _next_request_id(self) -> int:
         with self._request_lock:
@@ -478,10 +481,29 @@ def _snapshot_from_result(result: Any) -> AgentSessionSnapshot:
 
 
 def _await_outcome_from_result(result: Mapping[str, Any]) -> AwaitOutcome:
-    session = result.get("session")
-    status = "exited"
-    if isinstance(session, Mapping):
-        status = str(session.get("status", "exited"))
+    if "session" not in result:
+        raise AgentdProtocolError(
+            "session.await_result payload is missing session "
+            f"(payload shape: {_mapping_shape(result)})"
+        )
+    session = result["session"]
+    if not isinstance(session, Mapping):
+        raise AgentdProtocolError(
+            "session.await_result session was non-object "
+            f"(session type: {type(session).__name__})"
+        )
+    if "status" not in session:
+        raise AgentdProtocolError(
+            "session.await_result session is missing status "
+            f"(session shape: {_mapping_shape(session)})"
+        )
+    status_value = session["status"]
+    if not isinstance(status_value, str):
+        raise AgentdProtocolError(
+            "session.await_result session status was not a string "
+            f"(status type: {type(status_value).__name__})"
+        )
+    status = status_value
     validation_error = result.get("validation_error")
     if validation_error is not None and not isinstance(validation_error, str):
         raise AgentdProtocolError("session.await_result validation_error was not a string")
@@ -496,10 +518,23 @@ def _await_outcome_from_result(result: Mapping[str, Any]) -> AwaitOutcome:
             continuable=False,
         )
 
-    payload = None
-    response_result = result.get("result")
-    if isinstance(response_result, Mapping):
-        payload = response_result.get("payload")
+    if "result" not in result:
+        raise AgentdProtocolError(
+            "session.await_result payload is missing result "
+            f"(payload shape: {_mapping_shape(result)})"
+        )
+    response_result = result["result"]
+    if not isinstance(response_result, Mapping):
+        raise AgentdProtocolError(
+            "session.await_result result was non-object "
+            f"(result type: {type(response_result).__name__})"
+        )
+    if "payload" not in response_result:
+        raise AgentdProtocolError(
+            "session.await_result result is missing payload "
+            f"(result shape: {_mapping_shape(response_result)})"
+        )
+    payload = response_result["payload"]
 
     return AwaitOutcome(
         status=AwaitStatus.EXITED,
@@ -507,6 +542,11 @@ def _await_outcome_from_result(result: Mapping[str, Any]) -> AwaitOutcome:
         validation_error=validation_error,
         continuable=False,
     )
+
+
+def _mapping_shape(mapping: Mapping[str, Any]) -> str:
+    fields = ", ".join(f"{key}: {type(value).__name__}" for key, value in mapping.items())
+    return f"{{{fields}}}"
 
 
 __all__ = [
