@@ -10,11 +10,17 @@ Use with WithHandler:
 """
 
 from doeff import do
-from doeff.program import Resume, Pass
-
+from doeff.program import Pass, Resume
 from doeff_core_effects.effects import (
-    Ask, Get, Put, Tell, Try, Slog, WriterTellEffect,
-    Local, Listen, Await,
+    Ask,
+    Await,
+    Get,
+    Listen,
+    Local,
+    Put,
+    Slog,
+    Try,
+    WriterTellEffect,
 )
 
 
@@ -95,9 +101,12 @@ def try_handler(effect, k):
         result = yield Try(some_program)  # Ok(value) or Err(error)
     """
     if isinstance(effect, Try):
-        from doeff_vm import Ok, Err
-        from doeff.program import WithHandler as WH
+        from doeff_vm import Err, Ok
+
         from doeff.handler_utils import get_inner_handlers
+        from doeff.program import (
+            WithHandler as WH,  # noqa: N817 - existing local alias keeps handler code compact
+        )
 
         inner_hs = yield get_inner_handlers(k)
 
@@ -156,8 +165,10 @@ def local_handler(effect, k):
         WithHandler(local_handler, body)
     """
     if isinstance(effect, Local):
-        from doeff.program import WithHandler as WH
         from doeff.handler_utils import get_inner_handlers
+        from doeff.program import (
+            WithHandler as WH,  # noqa: N817 - existing local alias keeps handler code compact
+        )
         overrides = effect.env
 
         # Capture inner handlers from continuation (between Local site
@@ -194,8 +205,10 @@ def listen_handler(effect, k):
         WithHandler(listen_handler, body)
     """
     if isinstance(effect, Listen):
-        from doeff.program import WithHandler as WH
         from doeff.handler_utils import get_inner_handlers
+        from doeff.program import (
+            WithHandler as WH,  # noqa: N817 - existing local alias keeps handler code compact
+        )
         collected = []
         types_to_collect = effect.types or (WriterTellEffect,)
 
@@ -224,9 +237,10 @@ def await_handler():
     Uses ExternalPromise to bridge async into the scheduler.
     Requires scheduler to be installed.
     """
-    from doeff_core_effects.scheduler import CreateExternalPromise, Wait
     import asyncio
     import threading
+
+    from doeff_core_effects.scheduler import CreateExternalPromise, Wait
 
     # Shared event loop running in a background thread
     _loop = [None]
@@ -279,7 +293,7 @@ def _missing_key_message(key):
     )
 
 
-def lazy_ask(env=None, *, strict=False):
+def lazy_ask(env=None, *, strict=False):  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
     """Lazy Ask handler — replaces reader per SPEC-EFF-001.
 
     Handles Ask, Local, and lazy program evaluation. Takes env directly —
@@ -312,11 +326,16 @@ def lazy_ask(env=None, *, strict=False):
     if env is None:
         env = {}
 
-    from doeff.program import Expand, ResumeThrow, WithHandler as WH
     from doeff import Program
     from doeff.handler_utils import get_inner_handlers
+    from doeff.program import ResumeThrow
+    from doeff.program import (
+        WithHandler as WH,  # noqa: N817 - existing local alias keeps handler code compact
+    )
     from doeff_core_effects.scheduler import (
-        CreateSemaphore, AcquireSemaphore, ReleaseSemaphore,
+        AcquireSemaphore,
+        CreateSemaphore,
+        ReleaseSemaphore,
     )
 
     shared_cache = {}       # key → value (override-independent entries)
@@ -324,7 +343,7 @@ def lazy_ask(env=None, *, strict=False):
     eval_stack = []         # stack of dep-tracking sets for nested evals
     sems = {}               # key → Semaphore handle
 
-    def _make_handler(effective_env, override_keys=frozenset()):
+    def _make_handler(effective_env, override_keys=frozenset()):  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
         """Create a handler with the given effective env (base + overrides)."""
         scope_cache = {}    # key → value (override-dependent, isolated per scope)
         scope_deps = {}     # key → frozenset of dep keys
@@ -349,7 +368,7 @@ def lazy_ask(env=None, *, strict=False):
                 shared_deps[key] = deps
 
         @do
-        def handler(effect, k):
+        def handler(effect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
             if isinstance(effect, Ask):
                 # Track as dependency if inside a lazy evaluation
                 if eval_stack:
@@ -478,12 +497,17 @@ def env_var_ask(*, prefix="DOEFF_"):
     always flow through to outer handlers (or Unhandled).
     """
     import os
+
     from doeff import Program
-    from doeff.program import WithHandler as WH
-    from doeff.handler_utils import get_inner_handlers
     from doeff.cli.run_services import import_symbol
+    from doeff.handler_utils import get_inner_handlers
+    from doeff.program import (
+        WithHandler as WH,  # noqa: N817 - existing local alias keeps handler code compact
+    )
     from doeff_core_effects.scheduler import (
-        AcquireSemaphore, CreateSemaphore, ReleaseSemaphore,
+        AcquireSemaphore,
+        CreateSemaphore,
+        ReleaseSemaphore,
     )
 
     # cache[key] = (raw_env_value, resolved_value)
@@ -491,7 +515,7 @@ def env_var_ask(*, prefix="DOEFF_"):
     sems: dict = {}
 
     @do
-    def handler(effect, k):
+    def handler(effect, k):  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
         if not isinstance(effect, Ask):
             yield Pass(effect, k)
             return
@@ -537,10 +561,7 @@ def env_var_ask(*, prefix="DOEFF_"):
                     maybe_program = value()
                 except TypeError:
                     maybe_program = value
-                if isinstance(maybe_program, Program):
-                    value = maybe_program
-                else:
-                    value = maybe_program  # keep the callable's return value
+                value = maybe_program
             if isinstance(value, Program):
                 inner_hs = yield get_inner_handlers(k)
                 wrapped = value
@@ -559,5 +580,4 @@ def env_var_ask(*, prefix="DOEFF_"):
         return (yield Resume(k, resolved))
 
     return handler
-
 
