@@ -87,7 +87,7 @@ OCaml 5から輸入: `perform` / `match_with`(WithHandler) / `resume`(non-tail) 
 ### 導出物(ライブラリ)の導出経路
 
 - `Try` = エラーチャネル(コア)上のハンドラ
-- `Local(e, p)` = `WithHandler(reader(e ⊕ outer_env), p)` + 内側ハンドラ再設置
+- `Local(e, p)` = `reader(e ⊕ outer_env)(p)` + 内側ハンドラ再設置
 - `Listen(p, T)` = ローカルWithHandlerで型Tを横取り+Pass
 - `Gather(ts)` = `traverse Wait ts`(scheduler内部で導出済み)
 - `Race/Cancel/Promise/Semaphore` = Spawn/Wait+キュー状態(scheduler.pyで実証)
