@@ -1,5 +1,4 @@
-from doeff import Program, do
-from doeff import Tell
+from doeff import Program, Tell, do
 
 from .combinators.advanced import (
     helper_eta,
