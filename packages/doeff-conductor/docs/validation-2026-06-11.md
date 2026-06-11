@@ -93,7 +93,7 @@ daemon (single authority). Candidate follow-up issue.
 ## Open defects (spec §11)
 
 5. Workspace resume divergence — ✅ fixed b5854d60 (+ occurrence identity, F1/F2 review fixes)
-6. Auto-commit captures .agent-home session state — ✅ fixed 913149d1
+6. Auto-commit captures .agent-home session state — ✅ fixed e206be17
 7. Await budget owning axis — open
 8. blocked-status cosmetic misread — open
 9. (candidate) doeff-agents CLI blind to agentd sessions — monitoring gap
