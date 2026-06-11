@@ -23,7 +23,7 @@ from doeff import (
 from .types import APICallMetadata, CostInfo, TokenUsage
 
 
-def _prepare_prompt_details(
+def _prepare_prompt_details(  # noqa: PLR0912 - baseline cleanup keeps existing control flow unchanged
     request_payload: dict[str, Any],
 ) -> tuple[dict[str, Any], str | None, list[dict[str, Any]], list[dict[str, Any]] | None]:
     """Return sanitized payload plus extracted text/images/messages."""
