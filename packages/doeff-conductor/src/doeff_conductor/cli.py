@@ -14,7 +14,6 @@ Commands:
     template    Template management (list, show, new)
 """
 
-
 import json
 import sys
 from datetime import datetime, timezone
@@ -26,10 +25,12 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from .exceptions import ConductorError
 from .types import IssueStatus, WorkflowStatus
 
 console = Console()
 _CLI_USER_ERROR_TYPES: tuple[type[BaseException], ...] = (
+    ConductorError,
     FileNotFoundError,
     OSError,
     ValueError,
@@ -294,9 +295,7 @@ def run(
                 from .effects.issue import GetIssue
 
                 if frontmatter.get("id"):
-                    issue_obj = handler.handle_get_issue(
-                        GetIssue(id=frontmatter["id"])
-                    )
+                    issue_obj = handler.handle_get_issue(GetIssue(id=frontmatter["id"]))
 
         # Run workflow
         workflow = api.run_workflow(
@@ -383,9 +382,7 @@ def ps_cmd(
 
     api = ConductorAPI(ctx.obj.get("state_dir"))
 
-    workflows = api.list_workflows(
-        status=[WorkflowStatus(s) for s in status] if status else None
-    )
+    workflows = api.list_workflows(status=[WorkflowStatus(s) for s in status] if status else None)
 
     if output_json:
         click.echo(json.dumps([w.to_dict() for w in workflows], indent=2))
@@ -466,9 +463,7 @@ def _workflow_detail_panel(workflow: object) -> Panel:
     status_color = _status_color(workflow_status)
     lines.append(f"[bold]ID:[/bold] {workflow_vars['id']}")
     lines.append(f"[bold]Name:[/bold] {workflow_vars['name']}")
-    lines.append(
-        f"[bold]Status:[/bold] [{status_color}]{workflow_status.value}[/{status_color}]"
-    )
+    lines.append(f"[bold]Status:[/bold] [{status_color}]{workflow_status.value}[/{status_color}]")
     _append_optional_line(
         lines,
         workflow_vars["template"] is not None,
@@ -680,9 +675,7 @@ def env_describe(output_json: bool) -> None:
         for verification_class, profile in description["router_default_policy"].items():
             router_table.add_row(verification_class, profile)
         console.print(router_table)
-        console.print(
-            f"Available capabilities: {', '.join(description['available_capabilities'])}"
-        )
+        console.print(f"Available capabilities: {', '.join(description['available_capabilities'])}")
     except _CLI_USER_ERROR_TYPES as e:
         if output_json:
             click.echo(json.dumps({"error": str(e)}))
@@ -980,9 +973,7 @@ def issue_resolve(
 
     try:
         issue_obj = handler.handle_get_issue(GetIssue(id=issue_id))
-        resolved = handler.handle_resolve_issue(
-            ResolveIssue(issue=issue_obj, pr_url=pr)
-        )
+        resolved = handler.handle_resolve_issue(ResolveIssue(issue=issue_obj, pr_url=pr))
 
         if output_json:
             click.echo(json.dumps(resolved.to_dict(), indent=2))
@@ -1077,10 +1068,14 @@ def workspace_cleanup(
         )
 
         if output_json:
-            click.echo(json.dumps({
-                "dry_run": dry_run,
-                "cleaned": [str(p) for p in cleaned],
-            }))
+            click.echo(
+                json.dumps(
+                    {
+                        "dry_run": dry_run,
+                        "cleaned": [str(p) for p in cleaned],
+                    }
+                )
+            )
         elif cleaned:
             action = "Would clean" if dry_run else "Cleaned"
             console.print(f"[green]{action}:[/green]")
