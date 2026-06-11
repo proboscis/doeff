@@ -1,8 +1,7 @@
 from dataclasses import dataclass
 
 from doeff import do
-
-from ..core.alpha import helper_alpha
+from doeff_test_target.core.alpha import helper_alpha
 
 
 @dataclass
