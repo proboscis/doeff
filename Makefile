@@ -64,7 +64,7 @@ pre-commit-install:
 # =============================================================================
 
 # Run ALL linters (core + packages)
-lint: lint-pyright lint-semgrep lint-doeff lint-packages
+lint: lint-ruff lint-pyright lint-semgrep lint-doeff lint-packages
 	@echo ""
 	@echo "All linters passed!"
 
