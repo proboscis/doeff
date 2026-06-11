@@ -1,7 +1,5 @@
 """Pure replay identity and cache-key helpers for conductor workflows."""
 
-from __future__ import annotations
-
 import hashlib
 import json
 from dataclasses import asdict, dataclass, is_dataclass
@@ -13,13 +11,15 @@ class ResolvedIdentity:
     """Result-distribution-affecting identity resolved from a profile."""
 
     adapter: str
-    model: str
+    model: str | None
     identity: str | None = None
     effort: str | None = None
 
 
 def _canonical_payload(value: Any) -> Any:
-    canonical_source = asdict(value) if is_dataclass(value) and not isinstance(value, type) else value
+    canonical_source = (
+        asdict(value) if is_dataclass(value) and not isinstance(value, type) else value
+    )
     if isinstance(canonical_source, dict):
         return {
             str(key): _canonical_payload(canonical_source[key])
@@ -84,6 +84,25 @@ def agent_cache_key(
             "prompt": prompt,
             "schema": schema,
             "resolved_identity": resolved_identity_fingerprint(resolved_identity),
+        }
+    )
+
+
+def workflow_effect_cache_key(
+    *,
+    effect_kind: str,
+    node_id: str,
+    label: str | None,
+    spec: Any,
+) -> str:
+    """Return the replay cache key for journaled workflow effects."""
+
+    return _sha256_payload(
+        {
+            "effect_kind": effect_kind,
+            "node_id": node_id,
+            "label": label,
+            "spec": spec,
         }
     )
 

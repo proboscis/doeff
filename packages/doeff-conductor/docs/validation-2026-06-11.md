@@ -66,9 +66,9 @@ state dirs, pane captures, or plan/validate outputs. ✅ = validated live,
 | Feature | Status | Evidence |
 |---|---|---|
 | Supervision: autonomous | ✅ | all runs |
-| Supervision: phase-checkpoints + gate adjudication | ✅ | live ephemeral Hy probe: `uv run pytest packages/doeff-conductor/tests/test_c9_live_gates.py` |
-| Parked gate closure options (proceed/redirect/abort) | ✅ | `conductor answer RUN GATE_ID proceed` resumes; redirect/abort validated as gate options |
-| Resume: journal replay of completed agents | ✅ | c3 replay tests + live gate proceed keeps completed sibling journal hit |
+| Supervision: phase-checkpoints + gate adjudication | 🧪 | MockConductorRuntime regression only: `uv run pytest packages/doeff-conductor/tests/test_c9_live_gates.py`; live probe pending |
+| Parked gate closure options (proceed/redirect/abort) | 🧪 | MockConductorRuntime regression only, including `effect-journal.jsonl` + open-gate state co-location; live `conductor answer` probe pending |
+| Resume: journal replay of completed agents | ✅ | prior live replay evidence + c3 tests; gate-proceed path is 🧪 pending live probe |
 | Fingerprint-gated cache invalidation (profile edit) | 🧪 | unit tests only |
 | State dir as audit record | ✅ | journals inspected during incidents |
 
@@ -84,19 +84,21 @@ state dirs, pane captures, or plan/validate outputs. ✅ = validated live,
 | Layer | Tool | Status |
 |---|---|---|
 | L3 workflows | `conductor ps / show [--since] / watch / stop / resume` | ✅ works (live-tested ps, show, show --json) |
-| L2 sessions | `doeff-agents ps / watch / output / send / attach` | ❌ reads local-handler store; BLIND to agentd sessions (conductor's only route) |
+| L2 sessions | `doeff-agents ps / watch / output / send / attach` | ❌→✅ now query `doeff-agentd` RPC (`session.list/get/capture/send`) as SSOT; daemon-down path is explicit fail-fast |
 | L1 daemon | `doeff-agentd` | serve only — no client subcommands; session table reachable only via sqlite |
 
-Gap: the L2 CLI predates the agentd-only ruling; it should query the
-daemon (single authority). Candidate follow-up issue.
+Resolved: L2 monitoring commands now query the daemon (single authority)
+instead of local tmux/session state. Follow-up cleanup candidate: decide
+whether legacy local tmux helpers for `run`/`stop` should remain in
+`doeff-agents` CLI scope.
 
 ## Open defects (spec §11)
 
 5. Workspace resume divergence — ✅ fixed b5854d60 (+ occurrence identity, F1/F2 review fixes)
-6. Auto-commit captures .agent-home session state — open
+6. Auto-commit captures .agent-home session state — ✅ fixed e206be17
 7. Await budget owning axis — open
 8. blocked-status cosmetic misread — open
-9. §8 attention tiers live gap — ✅ fixed: open gates, closure verbs, phase-checkpoints live
+9. §8 attention tiers live gap — 🧪 implementation fixed; MockConductorRuntime coverage green; live probe pending
 10. (candidate) doeff-agents CLI blind to agentd sessions — monitoring gap
 
 
@@ -109,7 +111,7 @@ daemon (single authority). Candidate follow-up issue.
 | Fingerprint invalidation END-TO-END | ❌→✅ | two defects: session name lacked identity digest, then digest not threaded to L2 (journal poisoning); fixed 3d765cac + 7th commit; live: same run-id re-launched `…-84716d3a-0` with effort="medium" argv |
 | Result channel per-session | ❌→✅ | shared-workspace collision (stale acceptance); fixed 0ad2c7b4 |
 | Loop iteration in node identity | ❌→✅ | round 2 re-adopted round 1's session; fixed 0ad2c7b4 |
-| §8 attention tiers LIVE | ❌→✅ | live retry-budget exhaustion parks an open gate; `conductor answer ... proceed` resumes via journal; `--supervision phase-checkpoints` inserts checkpoint gates with artifact summaries/binding deltas |
-| `random!` true randomness | ❌ | Random(0) constant-seed placeholder (§11-10) |
+| §8 attention tiers LIVE | 🧪 | implementation landed with MockConductorRuntime coverage for open gates, `answer proceed`, and phase checkpoints; live probe pending |
+| `random!` true randomness | ❌→✅ | fixed `bc48f890`: OS entropy on first run, `effect-journal.jsonl` value on replay (§11-10) |
 | quorum/oks Try-bindings | ⬜ | not yet probed live |
 | merge-conflict structured bounce | ⬜ | not yet probed live |
