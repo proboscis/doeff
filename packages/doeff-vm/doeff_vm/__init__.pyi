@@ -6,7 +6,7 @@ _T = TypeVar("_T")
 
 # --- VM ---
 
-class UnhandledEffect(RuntimeError): ...
+class UnhandledEffect(RuntimeError): ...  # noqa: N818 - public or fixture exception name is intentionally stable
 
 class PyVM:
     def __init__(self) -> None: ...
