@@ -1,15 +1,21 @@
 """Tests for the cooperative scheduler."""
 
 import sys
+import threading
 from types import FrameType
 from typing import Any
 
+import pytest
 from doeff_core_effects.scheduler import (
     PRIORITY_IDLE,
+    AcquireSemaphore,
     Cancel,
     CompletePromise,
+    CreateExternalPromise,
     CreatePromise,
+    CreateSemaphore,
     Gather,
+    Race,
     Spawn,
     Task,
     TaskCancelledError,
@@ -19,6 +25,29 @@ from doeff_core_effects.scheduler import (
 
 from doeff import EffectBase, Pass, Resume, do
 from doeff import run as doeff_run
+
+RACE_TIMEOUT_SECONDS = 2
+
+
+def _run_race_with_timeout(program: Any) -> Any:
+    result: dict[str, Any] = {}
+    error: dict[str, BaseException] = {}
+
+    def _worker() -> None:
+        try:
+            result["value"] = doeff_run(scheduled(program))
+        except BaseException as exc:  # pragma: no cover - test helper
+            error["value"] = exc
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+    thread.join(timeout=RACE_TIMEOUT_SECONDS)
+    assert not thread.is_alive(), f"Race did not complete within {RACE_TIMEOUT_SECONDS}s"
+
+    if "value" in error:
+        raise error["value"]
+
+    return result["value"]
 
 
 def _count_waitable_status_calls_for_gather(total: int) -> int:
@@ -64,6 +93,27 @@ def _count_waitable_status_calls_for_gather(total: int) -> int:
 
     assert result == list(range(total))
     return calls
+
+
+def _run_scheduled_with_timeout(program: Any, timeout: float = 0.5) -> Any:
+    result: dict[str, Any] = {}
+    error: dict[str, BaseException] = {}
+
+    def worker() -> None:
+        try:
+            result["value"] = doeff_run(scheduled(program))
+        except BaseException as exc:  # pragma: no cover - helper re-raises in caller
+            error["value"] = exc
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout)
+    assert not thread.is_alive(), "scheduler blocked after cancelled external wait"
+
+    if "value" in error:
+        raise error["value"]
+
+    return result["value"]
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +262,157 @@ class TestGather:
                 return "cancelled"
 
         assert doeff_run(scheduled(body())) == "cancelled"
+
+
+# ---------------------------------------------------------------------------
+# Race
+# ---------------------------------------------------------------------------
+
+class TestRace:
+    def test_race_wakes_when_second_pending_task_completes(self):
+        """Race wakes on the winning pending task even when it is not first."""
+        @do
+        def blocked(gate: Any):
+            return (yield Wait(gate.future))
+
+        @do
+        def worker(gate: Any, value: str):
+            _ = yield Wait(gate.future)
+            return value
+
+        @do
+        def release_fast(gate: Any):
+            yield CompletePromise(gate, None)
+
+        @do
+        def body():
+            blocked_gate = yield CreatePromise()
+            fast_gate = yield CreatePromise()
+            blocked_task = yield Spawn(blocked(blocked_gate))
+            fast_task = yield Spawn(worker(fast_gate, "fast"))
+            _ = yield Spawn(release_fast(fast_gate), priority=PRIORITY_IDLE)
+            return (yield Race(blocked_task, fast_task))
+
+        assert _run_race_with_timeout(body()) == "fast"
+
+    def test_race_wakes_when_third_pending_task_completes(self):
+        @do
+        def blocked(gate: Any):
+            return (yield Wait(gate.future))
+
+        @do
+        def worker(gate: Any, value: str):
+            _ = yield Wait(gate.future)
+            return value
+
+        @do
+        def release_winner(gate: Any):
+            yield CompletePromise(gate, None)
+
+        @do
+        def body():
+            first_gate = yield CreatePromise()
+            second_gate = yield CreatePromise()
+            third_gate = yield CreatePromise()
+            first_task = yield Spawn(blocked(first_gate))
+            second_task = yield Spawn(blocked(second_gate))
+            third_task = yield Spawn(worker(third_gate, "third"))
+            _ = yield Spawn(release_winner(third_gate), priority=PRIORITY_IDLE)
+            return (yield Race(first_task, second_task, third_task))
+
+        assert _run_race_with_timeout(body()) == "third"
+
+    def test_race_raises_when_pending_winner_fails(self):
+        @do
+        def blocked(gate: Any):
+            return (yield Wait(gate.future))
+
+        @do
+        def failing(gate: Any):
+            _ = yield Wait(gate.future)
+            raise RuntimeError("race failure")
+            yield
+
+        @do
+        def release_failure(gate: Any):
+            yield CompletePromise(gate, None)
+
+        @do
+        def body():
+            blocked_gate = yield CreatePromise()
+            failure_gate = yield CreatePromise()
+            blocked_task = yield Spawn(blocked(blocked_gate))
+            failing_task = yield Spawn(failing(failure_gate))
+            _ = yield Spawn(release_failure(failure_gate), priority=PRIORITY_IDLE)
+            try:
+                yield Race(blocked_task, failing_task)
+                return "should not reach"
+            except RuntimeError as error:
+                return str(error)
+
+        assert _run_race_with_timeout(body()) == "race failure"
+
+    def test_race_raises_when_pending_winner_is_cancelled(self):
+        @do
+        def blocked(gate: Any):
+            return (yield Wait(gate.future))
+
+        @do
+        def cancel_task(task: Any):
+            yield Cancel(task)
+
+        @do
+        def body():
+            blocked_gate = yield CreatePromise()
+            cancelled_gate = yield CreatePromise()
+            blocked_task = yield Spawn(blocked(blocked_gate))
+            cancelled_task = yield Spawn(blocked(cancelled_gate))
+            _ = yield Spawn(cancel_task(cancelled_task), priority=PRIORITY_IDLE)
+            try:
+                yield Race(blocked_task, cancelled_task)
+                return "should not reach"
+            except TaskCancelledError:
+                return "cancelled"
+
+        assert _run_race_with_timeout(body()) == "cancelled"
+
+    def test_race_duplicate_waitable_resolves_once(self):
+        @do
+        def worker(gate: Any):
+            _ = yield Wait(gate.future)
+            return "duplicate"
+
+        @do
+        def release_gate(gate: Any):
+            yield CompletePromise(gate, None)
+
+        @do
+        def body():
+            gate = yield CreatePromise()
+            task = yield Spawn(worker(gate))
+            _ = yield Spawn(release_gate(gate), priority=PRIORITY_IDLE)
+            return (yield Race(task, task))
+
+        assert _run_race_with_timeout(body()) == "duplicate"
+
+    def test_race_resolves_once_when_waitables_complete_back_to_back(self):
+        events: list[str] = []
+
+        @do
+        def complete_both(first: Any, second: Any):
+            first.complete("first")
+            second.complete("second")
+
+        @do
+        def body():
+            first = yield CreateExternalPromise()
+            second = yield CreateExternalPromise()
+            _ = yield Spawn(complete_both(first, second), priority=PRIORITY_IDLE)
+            winner = yield Race(first.future, second.future)
+            events.append(f"winner:{winner}")
+            return list(events)
+
+        assert _run_race_with_timeout(body()) == ["winner:first"]
 
 
 # ---------------------------------------------------------------------------
@@ -560,6 +761,66 @@ class TestCancel:
 
         assert doeff_run(scheduled(body())) == "cancelled"
 
+    def test_cancelled_promise_waiter_does_not_resume_when_promise_completes(self):
+        """Cancelled tasks parked on a promise must not resume later."""
+        events: list[str] = []
+
+        @do
+        def blocked_task(gate: Any):
+            events.append("waiting")
+            _ = yield Wait(gate.future)
+            events.append("resumed")
+            return "resumed"
+
+        @do
+        def body():
+            gate = yield CreatePromise()
+            task = yield Spawn(blocked_task(gate))
+
+            yield Cancel(task)
+            yield CompletePromise(gate, "late")
+
+            try:
+                yield Wait(task)
+                return ("completed", list(events))
+            except TaskCancelledError:
+                return ("cancelled", list(events))
+
+        assert doeff_run(scheduled(body())) == ("cancelled", ["waiting"])
+
+    def test_cancelled_external_waiter_does_not_block_scheduler(self):
+        """A cancelled external wait entry must not block later scheduler progress."""
+        events: list[str] = []
+
+        @do
+        def blocked_task(external_promise: Any):
+            events.append("waiting")
+            _ = yield Wait(external_promise.future)
+            events.append("resumed")
+            return "resumed"
+
+        @do
+        def release_gate(gate: Any):
+            yield CompletePromise(gate, "released")
+
+        @do
+        def body():
+            external_promise = yield CreateExternalPromise()
+            gate = yield CreatePromise()
+            task = yield Spawn(blocked_task(external_promise))
+
+            yield Cancel(task)
+            _ = yield Spawn(release_gate(gate), priority=PRIORITY_IDLE)
+            gate_value = yield Wait(gate.future)
+
+            try:
+                yield Wait(task)
+                return ("completed", gate_value, list(events))
+            except TaskCancelledError:
+                return ("cancelled", gate_value, list(events))
+
+        assert _run_scheduled_with_timeout(body()) == ("cancelled", "released", ["waiting"])
+
     def test_cancel_does_not_affect_completed(self):
         """Cancelling an already-completed task is a no-op."""
         from doeff_core_effects.scheduler import Cancel
@@ -708,3 +969,29 @@ class TestSemaphore:
                 return str(e)
 
         assert "too many" in doeff_run(scheduled(body()))
+
+    def test_semaphore_only_deadlock_raises_scheduler_deadlock_error(self):
+        """Semaphore waiters must keep the scheduler from silently returning None."""
+        from doeff_core_effects.scheduler import SchedulerDeadlockError
+
+        @do
+        def waiter(sem: Any):
+            yield AcquireSemaphore(sem)
+            return "acquired"
+
+        @do
+        def body():
+            sem = yield CreateSemaphore(1)
+            yield AcquireSemaphore(sem)
+            _ = yield Spawn(waiter(sem))
+            _ = yield Spawn(waiter(sem))
+            yield AcquireSemaphore(sem)
+            return "should not reach"
+
+        with pytest.raises(SchedulerDeadlockError) as exc_info:
+            doeff_run(scheduled(body()))
+
+        error = exc_info.value
+        assert error.semaphore_waiters == {0: [1, 2]}
+        assert "semaphore 0" in str(error)
+        assert "tasks 1, 2" in str(error)

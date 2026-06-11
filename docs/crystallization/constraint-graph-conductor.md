@@ -48,7 +48,7 @@ workspace識別(C8) <──同型── 「識別は式座標の純関数」 ─
 
 ### 核K4: await×並行性核 — C6 ⇔ C1 ⇔ 本体B10(スケジューラ=ハンドラ)
 
-- D1が「並行性は構造的」と宣言し(C6)、D1/D6がワーカー待ちをagentd RPCにし(C1)、スケジューラは協調的ハンドラである(本体B10)。**3つの選択は個々に正しいが、「RPC待ちは協調スケジューラとどう合成するか」だけが決められなかった**: `DaemonAgentHandler.handle_await_result`(doeff-agents handlers/daemon.py:298)→ `AgentdClient.await_result`(agentd_client.py:135)が同期ブロックし、`run(scheduled(WithHandler(conductor_handler, program)))`(api.py:152)のループごと止める
+- D1が「並行性は構造的」と宣言し(C6)、D1/D6がワーカー待ちをagentd RPCにし(C1)、スケジューラは協調的ハンドラである(本体B10)。**3つの選択は個々に正しいが、「RPC待ちは協調スケジューラとどう合成するか」だけが決められなかった**: `DaemonAgentHandler.handle_await_result`(doeff-agents handlers/daemon.py:298)→ `AgentdClient.await_result`(agentd_client.py:135)が同期ブロックし、`run(scheduled(conductor_handler(program)))`(api.py:152)のループごと止める
 - 帰結: **parallelは形だけで実行は直列** — live実証 2026-06-12、run `doeff-review-20260612-1`(6-branch parallel、起動5分後もセッション1個。兄弟branchはlaunchすら起きない=スケジューラ飢餓)。conductor srcに`Await`/スレッド退避は0箇所(唯一の言及はutils.py:51の深層皮肉「use Await effects in programs」)
 - **law候補**:
   - **L-K4-1(非ブロックハンドラ)**: エフェクトハンドラは無制限ブロッキングI/Oを同期実行しない。無制限待ちはスケジューラのAwait/external completion経路(scheduler.pyのexternal_queueが既に受け皿)からのみ入る
@@ -82,7 +82,7 @@ workspace識別(C8) <──同型── 「識別は式座標の純関数」 ─
 | 欠陥 | 核 | 破れているlaw | 状態 |
 |---|---|---|---|
 | workspace! がresume非安定(偽green) | K3 | L-K3-3 | 既知(検証台帳・スキル記録済み) |
-| parallel直列化(ハンドラ内同期RPC) | K4 | L-K4-1/2 | **live実証 2026-06-12** run `doeff-review-20260612-1` |
+| parallel直列化(ハンドラ内同期RPC) | K4 | L-K4-1/2 | **fixed** — `make_offloaded_scheduled_handler` bridges the blocking RPC through ExternalPromise+daemon thread (law ratified, integration test + semgrep rule shipped) |
 | gate answerの書き側不在 | K5 | L-K5-1 | **解決済み** gate-answer-journal.jsonl + `conductor gate answer` CLI |
 | await budget所有軸が未決(検証台帳 §11-7) | K4の縁 | L-K4-1の系(budget更新は誰の決定か) | open |
 | `conductor wait` verb不在 | 独立 | — | issue候補(codex可) |

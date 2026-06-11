@@ -56,6 +56,7 @@ from doeff_core_effects.scheduler import (  # noqa: F401
     Promise,
     Race,
     ReleaseSemaphore,
+    SchedulerDeadlockError,
     Semaphore,
     Spawn,
     Task,
