@@ -1,147 +1,90 @@
 """
 Agent effects for doeff-conductor.
 
-Effects for managing agent sessions:
-- RunAgent: Run agent to completion
-- SpawnAgent: Start agent without waiting
-- SendMessage: Send message to running agent
-- WaitForStatus: Wait for agent status
-- CaptureOutput: Get agent output
+Workflow-facing agent effects return schema-validated artifacts. Interactive
+session controls live below this boundary and are not conductor workflow effects.
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from .base import ConductorEffectBase
+from doeff_agents.effects import (  # re-exported for conductor callers
+    AgentAttemptExhaustedError,
+    AgentValidationErrorKind,
+    AgentValidationFailure,
+    deterministic_session_id,
+)
+
+from doeff_conductor.effects.base import ConductorEffectBase
+from doeff_conductor.replay_keying import ResolvedIdentity, resolved_identity_fingerprint
 
 if TYPE_CHECKING:
-    from doeff_agentic import AgenticSessionStatus
-
-    from ..types import AgentRef, WorktreeEnv
+    from doeff_conductor.types import Workspace
 
 
 @dataclass(frozen=True, kw_only=True)
-class RunAgent(ConductorEffectBase):
-    """Run an agent to completion.
+class AgentTask:
+    """Schema-validated conductor worker task."""
 
-    Spawns an agent in the specified environment, sends the prompt,
-    and waits for it to finish.
+    run_id: str
+    node_id: str
+    attempt: int
+    env: "Workspace"
+    prompt: str
+    result_schema: dict[str, Any]
+    verification_class: str
+    agent_type: str
+    name: str | None = None
+    profile: str | None = None
+    model: str | None = None
+    effort: str | None = None
+    resolved_identity: ResolvedIdentity | None = None
+    max_retries: int = 2
+    timeout_seconds: float | None = None
 
-    Yields: str (agent output)
+    @property
+    def session_node_key(self) -> str:
+        """Identity-qualified node key for session naming.
 
-    Example:
-        @do
-        def implement_feature(issue):
-            env = yield CreateWorktree(issue=issue)
-            output = yield RunAgent(env=env, prompt=issue.body)
-            return output
-    """
+        A session is one execution of (run, node, attempt, RESOLVED
+        IDENTITY): the fingerprint digest must enter the name, or a
+        profile edit between resumes is invalidated by the journal
+        (new generation, correct) but then served the STALE result by
+        name-only idempotent re-adoption at L2 — and the stale artifact
+        is then re-journaled under the NEW fingerprint, poisoning every
+        later replay (observed live, twice). L3 owns this policy; the
+        L2 task receives the qualified key as its node id.
+        """
+        if self.resolved_identity is None:
+            return self.node_id
+        digest = resolved_identity_fingerprint(self.resolved_identity)[:8]
+        return f"{self.node_id}-{digest}"
 
-    env: "WorktreeEnv"  # Environment to run agent in
-    prompt: str  # Initial prompt for the agent
-    agent_type: str = "claude"  # Agent type (claude, codex, gemini)
-    name: str | None = None  # Session name
-    profile: str | None = None  # Agent profile/persona
-    timeout: float | None = None  # Timeout in seconds
-
-
-@dataclass(frozen=True, kw_only=True)
-class SpawnAgent(ConductorEffectBase):
-    """Start an agent without waiting for completion.
-
-    Returns immediately with an AgentRef for later interaction.
-
-    Yields: AgentRef
-
-    Example:
-        @do
-        def spawn_reviewers():
-            ref1 = yield SpawnAgent(env=env, prompt="Review code quality")
-            ref2 = yield SpawnAgent(env=env, prompt="Review security")
-            # Both agents run in parallel
-            yield WaitForStatus(ref1, AgenticSessionStatus.DONE)
-            yield WaitForStatus(ref2, AgenticSessionStatus.DONE)
-    """
-
-    env: "WorktreeEnv"  # Environment to run agent in
-    prompt: str  # Initial prompt for the agent
-    agent_type: str = "claude"  # Agent type
-    name: str | None = None  # Session name
-    profile: str | None = None  # Agent profile/persona
+    @property
+    def session_id(self) -> str:
+        return deterministic_session_id(
+            run_id=self.run_id,
+            node_id=self.session_node_key,
+            attempt=self.attempt,
+        )
 
 
-@dataclass(frozen=True, kw_only=True)
-class SendMessage(ConductorEffectBase):
-    """Send a message to a running agent.
+@dataclass(frozen=True)
+class AgentEffect(ConductorEffectBase):
+    """Run an agent and return its validated artifact object."""
 
-    Sends additional input to an agent that was spawned with SpawnAgent.
-
-    Yields: None
-
-    Example:
-        @do
-        def guide_agent():
-            ref = yield SpawnAgent(env=env, prompt="Start task")
-            yield WaitForStatus(ref, AgenticSessionStatus.BLOCKED)
-            yield SendMessage(ref, "Continue with step 2")
-    """
-
-    agent_ref: "AgentRef"  # Agent to send message to
-    message: str  # Message content
-    wait: bool = False  # Wait for response to complete
+    task: AgentTask
 
 
-@dataclass(frozen=True, kw_only=True)
-class WaitForStatus(ConductorEffectBase):
-    """Wait for an agent to reach a specific status.
-
-    Blocks until the agent reaches one of the target statuses.
-
-    Yields: AgenticSessionStatus (final status)
-
-    Example:
-        @do
-        def wait_for_completion():
-            ref = yield SpawnAgent(...)
-            status = yield WaitForStatus(
-                ref,
-                target=(AgenticSessionStatus.DONE, AgenticSessionStatus.ERROR),
-                timeout=300,
-            )
-            return status
-    """
-
-    agent_ref: "AgentRef"  # Agent to wait for
-    target: "AgenticSessionStatus | tuple[AgenticSessionStatus, ...]"  # Target status(es)
-    timeout: float | None = None  # Timeout in seconds
-    poll_interval: float = 1.0  # Poll interval
-
-
-@dataclass(frozen=True, kw_only=True)
-class CaptureOutput(ConductorEffectBase):
-    """Capture output from an agent session.
-
-    Gets the current or final output from an agent.
-
-    Yields: str (output text)
-
-    Example:
-        @do
-        def get_review():
-            ref = yield SpawnAgent(env=env, prompt="Review the code")
-            yield WaitForStatus(ref, AgenticSessionStatus.DONE)
-            review = yield CaptureOutput(ref)
-            return review
-    """
-
-    agent_ref: "AgentRef"  # Agent to capture from
-    lines: int = 500  # Number of lines to capture
+def Agent(task: AgentTask) -> AgentEffect:  # noqa: N802
+    return AgentEffect(task=task)
 
 
 __all__ = [
-    "CaptureOutput",
-    "RunAgent",
-    "SendMessage",
-    "SpawnAgent",
-    "WaitForStatus",
+    "Agent",
+    "AgentAttemptExhaustedError",
+    "AgentEffect",
+    "AgentTask",
+    "AgentValidationErrorKind",
+    "AgentValidationFailure",
 ]

@@ -1,0 +1,8 @@
+- generic [ref=e5]:
+  - paragraph [ref=e6]: Link opened in the Linear app
+  - paragraph [ref=e7]:
+    - text: Your browser will ask for permission to open future links in the desktop app faster.
+    - link "Learn more" [ref=e8] [cursor=pointer]:
+      - /url: https://linear.app/docs/get-the-app?noRedirect=1#collapsible-59bc5eaf9fe7
+    - text: .
+  - button "Open here instead" [ref=e10]

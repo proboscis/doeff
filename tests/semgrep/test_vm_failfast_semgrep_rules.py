@@ -95,3 +95,14 @@ def test_withhandler_return_clause_rule_detects_external_legacy_calls() -> None:
     )
 
     assert _rule_start_lines(results, "doeff-withhandler-no-return-clause") == {20, 21, 22, 23}
+
+
+def test_agentd_only_worker_route_rule_detects_conductor_handler_bypass() -> None:
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    check_ids = _semgrep_rule_ids(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-conductor/src/doeff_conductor/handlers/agent_handler.py",
+        cwd=fixture_root,
+    )
+
+    assert _has_rule(check_ids, "adr0001-d1-agentd-only-worker-route")

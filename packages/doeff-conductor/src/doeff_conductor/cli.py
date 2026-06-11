@@ -10,7 +10,7 @@ Commands:
     logs        View session logs
     stop        Stop workflow
     issue       Issue management (create, list, show, resolve)
-    env         Environment management (list, cleanup)
+    workspace   Workspace management (list, cleanup)
     template    Template management (list, show, new)
 """
 
@@ -29,6 +29,12 @@ from rich.text import Text
 from .types import IssueStatus, WorkflowStatus
 
 console = Console()
+_CLI_USER_ERROR_TYPES: tuple[type[BaseException], ...] = (
+    FileNotFoundError,
+    OSError,
+    ValueError,
+    json.JSONDecodeError,
+)
 
 
 def _format_duration(dt: datetime) -> str:
@@ -88,10 +94,154 @@ def cli(ctx: click.Context, state_dir: str | None) -> None:
 # =============================================================================
 
 
+@cli.command("plan")
+@click.argument("workflow_file")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@click.option("--run-id", help="Snapshot the workflow source under this run id")
+@click.option(
+    "--supervision",
+    type=click.Choice(["autonomous", "phase-checkpoints"]),
+    default="autonomous",
+    show_default=True,
+    help="Run-scoped supervision policy for the approval artifact",
+)
+@click.pass_context
+def plan_cmd(
+    ctx: click.Context,
+    workflow_file: str,
+    output_json: bool,
+    run_id: str | None,
+    supervision: str,
+) -> None:
+    """Produce the overseer binding plan for a workflow."""
+    from doeff_conductor.verbs import plan_workflow
+    from doeff_conductor.workflow_loader import load_workflow_spec, snapshot_workflow_source
+
+    try:
+        workflow_source = workflow_file
+        if run_id is not None:
+            from doeff_conductor.api import ConductorAPI
+
+            state_dir = ConductorAPI(ctx.obj.get("state_dir")).state_dir
+            workflow_source = str(
+                snapshot_workflow_source(
+                    workflow_file,
+                    state_dir=state_dir,
+                    run_id=run_id,
+                )
+            )
+        workflow = load_workflow_spec(workflow_source)
+        plan = plan_workflow(workflow, supervision=supervision)
+        if output_json:
+            click.echo(json.dumps(plan.to_dict(), indent=2))
+            return
+
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("NODE", style="cyan")
+        table.add_column("PHASE")
+        table.add_column("ROLE")
+        table.add_column("PROFILE")
+        table.add_column("CLASS")
+        table.add_column("BUDGET")
+        table.add_column("FINGERPRINT")
+        for row in plan.rows:
+            table.add_row(
+                row.node_id,
+                row.phase or "-",
+                row.role,
+                row.profile,
+                row.verification_class,
+                str(row.estimated_budget_units),
+                row.fingerprint[:12],
+            )
+        console.print(table)
+        console.print(f"Estimated budget units: {plan.estimated_budget_units}")
+        console.print(f"Capabilities satisfied: {plan.capabilities_satisfied}")
+        if plan.missing_capabilities:
+            console.print(f"Missing capabilities: {', '.join(plan.missing_capabilities)}")
+    except _CLI_USER_ERROR_TYPES as e:
+        if output_json:
+            click.echo(json.dumps({"error": str(e)}))
+        else:
+            console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
+@cli.command("validate")
+@click.argument("workflow_file")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@click.option(
+    "--scenario",
+    "scenarios",
+    multiple=True,
+    help="Scenario to run; defaults to the built-in C6 suite",
+)
+@click.option("--run-id", help="Persist overseer state under this workflow id")
+@click.option(
+    "--supervision",
+    type=click.Choice(["autonomous", "phase-checkpoints"]),
+    default="autonomous",
+    show_default=True,
+    help="Run-scoped supervision policy consumed by validation launch",
+)
+@click.pass_context
+def validate_cmd(
+    ctx: click.Context,
+    workflow_file: str,
+    output_json: bool,
+    scenarios: tuple[str, ...],
+    run_id: str | None,
+    supervision: str,
+) -> None:
+    """Validate workflow control flow under scenario-driven stubs."""
+    from doeff_conductor.verbs import validate_workflow
+    from doeff_conductor.workflow_loader import load_workflow_spec
+
+    try:
+        workflow = load_workflow_spec(workflow_file)
+        state_dir_for_run = None
+        if run_id:
+            from doeff_conductor.api import ConductorAPI
+
+            state_dir_for_run = str(ConductorAPI(ctx.obj.get("state_dir")).state_dir)
+        report = validate_workflow(
+            workflow,
+            scenarios=scenarios or None,
+            supervision=supervision,
+            state_dir=state_dir_for_run,
+            run_id=run_id,
+        )
+        if output_json:
+            click.echo(json.dumps(report.to_dict(), indent=2))
+            return
+
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("SCENARIO", style="cyan")
+        table.add_column("TERMINALS")
+        table.add_column("OPEN GATES")
+        for scenario_report in report.scenarios:
+            table.add_row(
+                scenario_report.scenario,
+                str(len(scenario_report.terminals)),
+                str(len(scenario_report.open_gates)),
+            )
+        console.print(table)
+        console.print("Closure: ok")
+        if run_id:
+            console.print(f"Persisted overseer state for run: {run_id}")
+    except _CLI_USER_ERROR_TYPES as e:
+        if output_json:
+            click.echo(json.dumps({"error": str(e)}))
+        else:
+            console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
 @cli.command()
 @click.argument("template_or_file")
 @click.option("--issue", "-i", type=click.Path(exists=True), help="Issue file")
 @click.option("--params", "-p", help="Parameters as JSON")
+@click.option("--run-id", help="Use a stable workflow id for replay/resume measurements")
 @click.option("--watch", "-w", is_flag=True, help="Watch workflow progress")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
 @click.pass_context
@@ -100,6 +250,7 @@ def run(
     template_or_file: str,
     issue: str | None,
     params: str | None,
+    run_id: str | None,
     watch: bool,
     output_json: bool,
 ) -> None:
@@ -108,7 +259,7 @@ def run(
     Examples:
         conductor run basic_pr --issue ISSUE-001.md
         conductor run enforced_pr --issue /path/to/issue.md --watch
-        conductor run ./my_workflow.py --params '{"key": "value"}'
+        conductor run ./my_workflow.hy --params '{"key": "value"}'
     """
     from .api import ConductorAPI
 
@@ -131,7 +282,7 @@ def run(
                 content = issue_path.read_text()
                 from .handlers.issue_handler import _parse_frontmatter
 
-                frontmatter, body = _parse_frontmatter(content)
+                frontmatter, _body = _parse_frontmatter(content)
                 from .effects.issue import GetIssue
 
                 if frontmatter.get("id"):
@@ -140,7 +291,12 @@ def run(
                     )
 
         # Run workflow
-        workflow = api.run_workflow(template_or_file, issue=issue_obj, params=parsed_params)
+        workflow = api.run_workflow(
+            template_or_file,
+            issue=issue_obj,
+            params=parsed_params,
+            run_id=run_id,
+        )
 
         if output_json:
             click.echo(json.dumps(workflow.to_dict(), indent=2))
@@ -154,7 +310,44 @@ def run(
             # Watch workflow
             ctx.invoke(watch_cmd, workflow_id=workflow.id)
 
-    except Exception as e:
+    except _CLI_USER_ERROR_TYPES as e:
+        if output_json:
+            click.echo(json.dumps({"error": str(e)}))
+        else:
+            console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
+@cli.command("resume")
+@click.argument("workflow_id")
+@click.option("--params", "-p", help="Parameters as JSON")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def resume_cmd(
+    ctx: click.Context,
+    workflow_id: str,
+    params: str | None,
+    output_json: bool,
+) -> None:
+    """Resume a workflow from its snapshotted source."""
+    from .api import ConductorAPI
+
+    api = ConductorAPI(ctx.obj.get("state_dir"))
+
+    try:
+        parsed_params = {}
+        if params:
+            parsed_params = json.loads(params)
+        workflow = api.resume_workflow(
+            workflow_id,
+            params=parsed_params,
+        )
+        if output_json:
+            click.echo(json.dumps(workflow.to_dict(), indent=2))
+        else:
+            console.print(f"[green]Resumed workflow:[/green] {workflow.id}")
+            console.print(f"  Status: {workflow.status.value}")
+    except _CLI_USER_ERROR_TYPES as e:
         if output_json:
             click.echo(json.dumps({"error": str(e)}))
         else:
@@ -213,16 +406,100 @@ def ps_cmd(
     console.print(table)
 
 
-@cli.command("show")
-@click.argument("workflow_id")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-@click.pass_context
-def show_cmd(
+def _show_progress_since(
+    ctx: click.Context,
+    workflow_id: str,
+    output_json: bool,
+    since: int,
+) -> None:
+    from doeff_conductor.api import ConductorAPI
+    from doeff_conductor.overseer import progress_since
+
+    try:
+        state_dir = ConductorAPI(ctx.obj.get("state_dir")).state_dir
+        events = progress_since(state_dir, workflow_id, since)
+        if output_json:
+            click.echo(json.dumps(events, indent=2))
+            return
+
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("SEQ", style="cyan")
+        table.add_column("STATUS")
+        table.add_column("PHASE")
+        table.add_column("NODE")
+        table.add_column("MESSAGE")
+        for event in events:
+            table.add_row(
+                str(event["sequence"]),
+                event["status"],
+                event["phase"] or "-",
+                event["node_id"],
+                event["message"],
+            )
+        console.print(table)
+    except _CLI_USER_ERROR_TYPES as e:
+        if output_json:
+            click.echo(json.dumps({"error": str(e)}))
+        else:
+            console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
+def _append_optional_line(lines: list[str], condition: bool, line: str) -> None:
+    if condition:
+        lines.append(line)
+
+
+def _workflow_detail_panel(workflow: object) -> Panel:
+    lines: list[str] = []
+    workflow_vars = vars(workflow)
+    workflow_status = workflow_vars["status"]
+    status_color = _status_color(workflow_status)
+    lines.append(f"[bold]ID:[/bold] {workflow_vars['id']}")
+    lines.append(f"[bold]Name:[/bold] {workflow_vars['name']}")
+    lines.append(
+        f"[bold]Status:[/bold] [{status_color}]{workflow_status.value}[/{status_color}]"
+    )
+    _append_optional_line(
+        lines,
+        workflow_vars["template"] is not None,
+        f"[bold]Template:[/bold] {workflow_vars['template']}",
+    )
+    _append_optional_line(
+        lines,
+        workflow_vars["issue_id"] is not None,
+        f"[bold]Issue:[/bold] {workflow_vars['issue_id']}",
+    )
+    lines.append(f"[bold]Created:[/bold] {workflow_vars['created_at'].isoformat()}")
+    lines.append(f"[bold]Updated:[/bold] {workflow_vars['updated_at'].isoformat()}")
+    _append_optional_line(
+        lines,
+        bool(workflow_vars["workspaces"]),
+        f"\n[bold]Workspaces:[/bold] {', '.join(workflow_vars['workspaces'])}",
+    )
+    _append_optional_line(
+        lines,
+        bool(workflow_vars["agents"]),
+        f"[bold]Agents:[/bold] {', '.join(workflow_vars['agents'])}",
+    )
+    _append_optional_line(
+        lines,
+        workflow_vars["pr_url"] is not None,
+        f"\n[bold]PR:[/bold] {workflow_vars['pr_url']}",
+    )
+    _append_optional_line(
+        lines,
+        workflow_vars["error"] is not None,
+        f"\n[red]Error:[/red] {workflow_vars['error']}",
+    )
+    return Panel("\n".join(lines), title=f"Workflow: {workflow_vars['id']}")
+
+
+def _show_workflow_details(
     ctx: click.Context,
     workflow_id: str,
     output_json: bool,
 ) -> None:
-    """Show workflow details."""
     from .api import ConductorAPI
 
     api = ConductorAPI(ctx.obj.get("state_dir"))
@@ -238,34 +515,31 @@ def show_cmd(
 
         if output_json:
             click.echo(json.dumps(workflow.to_dict(), indent=2))
-        else:
-            lines = []
-            lines.append(f"[bold]ID:[/bold] {workflow.id}")
-            lines.append(f"[bold]Name:[/bold] {workflow.name}")
-            lines.append(
-                f"[bold]Status:[/bold] [{_status_color(workflow.status)}]{workflow.status.value}[/{_status_color(workflow.status)}]"
-            )
-            if workflow.template:
-                lines.append(f"[bold]Template:[/bold] {workflow.template}")
-            if workflow.issue_id:
-                lines.append(f"[bold]Issue:[/bold] {workflow.issue_id}")
-            lines.append(f"[bold]Created:[/bold] {workflow.created_at.isoformat()}")
-            lines.append(f"[bold]Updated:[/bold] {workflow.updated_at.isoformat()}")
+            return
 
-            if workflow.environments:
-                lines.append(f"\n[bold]Environments:[/bold] {', '.join(workflow.environments)}")
-            if workflow.agents:
-                lines.append(f"[bold]Agents:[/bold] {', '.join(workflow.agents)}")
-            if workflow.pr_url:
-                lines.append(f"\n[bold]PR:[/bold] {workflow.pr_url}")
-            if workflow.error:
-                lines.append(f"\n[red]Error:[/red] {workflow.error}")
-
-            console.print(Panel("\n".join(lines), title=f"Workflow: {workflow.id}"))
-
-    except Exception as e:
+        console.print(_workflow_detail_panel(workflow))
+    except _CLI_USER_ERROR_TYPES as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
+
+
+@cli.command("show")
+@click.argument("workflow_id")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@click.option("--since", type=int, help="Show progress events after this sequence")
+@click.pass_context
+def show_cmd(
+    ctx: click.Context,
+    workflow_id: str,
+    output_json: bool,
+    since: int | None,
+) -> None:
+    """Show workflow details."""
+    if since is not None:
+        _show_progress_since(ctx, workflow_id, output_json, since)
+        return
+
+    _show_workflow_details(ctx, workflow_id, output_json)
 
 
 @cli.command("watch")
@@ -299,7 +573,7 @@ def watch_cmd(
 
     except KeyboardInterrupt:
         console.print("\n[dim]Watch stopped[/dim]")
-    except Exception as e:
+    except _CLI_USER_ERROR_TYPES as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
 
@@ -330,9 +604,113 @@ def stop_cmd(
         else:
             console.print("[dim]Nothing to stop[/dim]")
 
-    except Exception as e:
+    except _CLI_USER_ERROR_TYPES as e:
         if output_json:
             click.echo(json.dumps({"ok": False, "error": str(e)}))
+        else:
+            console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
+# =============================================================================
+# Environment Commands
+# =============================================================================
+
+
+@cli.group("env")
+def env_group() -> None:
+    """Author-facing environment vocabulary."""
+
+
+@env_group.command("describe")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+def env_describe(output_json: bool) -> None:
+    """Describe profiles, role conventions, router policy, and capabilities."""
+    from doeff_conductor.verbs import describe_environment
+
+    try:
+        description = describe_environment()
+        if output_json:
+            click.echo(json.dumps(description, indent=2))
+            return
+
+        profile_table = Table(show_header=True, header_style="bold")
+        profile_table.add_column("PROFILE", style="cyan")
+        profile_table.add_column("BUDGET")
+        profile_table.add_column("CAPABILITIES")
+        for profile in description["profiles"]:
+            profile_table.add_row(
+                profile["name"],
+                str(profile["budget_units"]),
+                ", ".join(profile["capabilities"]),
+            )
+        console.print(profile_table)
+
+        router_table = Table(show_header=True, header_style="bold")
+        router_table.add_column("CLASS", style="cyan")
+        router_table.add_column("DEFAULT PROFILE")
+        for verification_class, profile in description["router_default_policy"].items():
+            router_table.add_row(verification_class, profile)
+        console.print(router_table)
+        console.print(
+            f"Available capabilities: {', '.join(description['available_capabilities'])}"
+        )
+    except _CLI_USER_ERROR_TYPES as e:
+        if output_json:
+            click.echo(json.dumps({"error": str(e)}))
+        else:
+            console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
+# =============================================================================
+# Gate Queue Commands
+# =============================================================================
+
+
+@cli.group("gate")
+def gate_group() -> None:
+    """Overseer gate queue commands."""
+
+
+@gate_group.command("list")
+@click.argument("workflow_id", required=False)
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def gate_list(ctx: click.Context, workflow_id: str | None, output_json: bool) -> None:
+    """List open gates with stakes metadata and closure-preserving options."""
+    from doeff_conductor.api import ConductorAPI
+    from doeff_conductor.overseer import list_open_gates
+
+    try:
+        state_dir = ConductorAPI(ctx.obj.get("state_dir")).state_dir
+        gates = list_open_gates(state_dir, workflow_id)
+        if output_json:
+            click.echo(json.dumps(gates, indent=2))
+            return
+
+        if not gates:
+            console.print("[dim]No open gates found[/dim]")
+            return
+
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("GATE", style="cyan")
+        table.add_column("WORKFLOW")
+        table.add_column("PHASE")
+        table.add_column("REASON")
+        table.add_column("OPTIONS")
+        for gate in gates:
+            table.add_row(
+                gate["gate_id"],
+                gate["workflow_id"],
+                gate["phase"] or "-",
+                gate["reason"],
+                ", ".join(option["name"] for option in gate["options"]),
+            )
+        console.print(table)
+    except _CLI_USER_ERROR_TYPES as e:
+        if output_json:
+            click.echo(json.dumps({"error": str(e)}))
         else:
             console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
@@ -376,10 +754,7 @@ def issue_create(
     # Handle body from file
     body_text = ""
     if body:
-        if body.startswith("@"):
-            body_text = Path(body[1:]).read_text()
-        else:
-            body_text = body
+        body_text = Path(body[1:]).read_text() if body.startswith("@") else body
 
     try:
         issue_obj = handler.handle_create_issue(
@@ -539,59 +914,54 @@ def issue_resolve(
 
 
 # =============================================================================
-# Environment Commands
+# Workspace Commands
 # =============================================================================
 
 
 @cli.group()
-def env() -> None:
-    """Environment management commands."""
+def workspace() -> None:
+    """Workspace management commands."""
 
 
-@env.command("list")
+@workspace.command("list")
 @click.option("--workflow", "-w", help="Filter by workflow ID")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
 @click.pass_context
-def env_list(
+def workspace_list(
     ctx: click.Context,
     workflow: str | None,
     output_json: bool,
 ) -> None:
-    """List worktree environments."""
+    """List materialized workspaces."""
     from .api import ConductorAPI
 
     api = ConductorAPI(ctx.obj.get("state_dir"))
 
     try:
-        environments = api.list_environments(workflow_id=workflow)
+        workspaces = api.list_workspaces(workflow_id=workflow)
 
         if output_json:
-            click.echo(json.dumps([e.to_dict() for e in environments], indent=2))
+            click.echo(json.dumps([item.to_dict() for item in workspaces], indent=2))
             return
 
-        if not environments:
-            console.print("[dim]No environments found[/dim]")
+        if not workspaces:
+            console.print("[dim]No workspaces found[/dim]")
             return
 
         table = Table(show_header=True, header_style="bold")
         table.add_column("ID", style="cyan")
-        table.add_column("BRANCH")
-        table.add_column("PATH")
+        table.add_column("REPO")
+        table.add_column("REF")
         table.add_column("ISSUE")
         table.add_column("CREATED")
 
-        for env_obj in environments:
-            # Truncate path if too long
-            path_str = str(env_obj.path)
-            if len(path_str) > 40:
-                path_str = "..." + path_str[-37:]
-
+        for workspace_obj in workspaces:
             table.add_row(
-                env_obj.id[:8],
-                env_obj.branch,
-                path_str,
-                env_obj.issue_id or "-",
-                _format_duration(env_obj.created_at),
+                workspace_obj.id[:12],
+                workspace_obj.repo,
+                workspace_obj.ref,
+                workspace_obj.issue_id or "-",
+                _format_duration(workspace_obj.created_at),
             )
 
         console.print(table)
@@ -601,24 +971,24 @@ def env_list(
         sys.exit(1)
 
 
-@env.command("cleanup")
+@workspace.command("cleanup")
 @click.option("--dry-run", is_flag=True, help="Show what would be cleaned up")
-@click.option("--older-than", type=int, help="Only cleanup envs older than N days")
+@click.option("--older-than", type=int, help="Only cleanup workspaces older than N days")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
 @click.pass_context
-def env_cleanup(
+def workspace_cleanup(
     ctx: click.Context,
     dry_run: bool,
     older_than: int | None,
     output_json: bool,
 ) -> None:
-    """Cleanup orphaned worktree environments."""
+    """Cleanup orphaned workspace materializations."""
     from .api import ConductorAPI
 
     api = ConductorAPI(ctx.obj.get("state_dir"))
 
     try:
-        cleaned = api.cleanup_environments(
+        cleaned = api.cleanup_workspaces(
             dry_run=dry_run,
             older_than_days=older_than,
         )
@@ -634,7 +1004,7 @@ def env_cleanup(
             for path in cleaned:
                 console.print(f"  {path}")
         else:
-            console.print("[dim]No orphaned environments found[/dim]")
+            console.print("[dim]No orphaned workspaces found[/dim]")
 
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")

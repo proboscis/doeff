@@ -1,7 +1,6 @@
 """Status monitoring and detection logic for agent sessions."""
 
 import hashlib
-import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -15,8 +14,6 @@ class SessionStatus(Enum):
     - PENDING → BOOTING → RUNNING
     - RUNNING ↔ BLOCKED (waiting for input)
     - RUNNING → BLOCKED_API (rate limited)
-    - RUNNING → DONE (completed successfully)
-    - RUNNING → FAILED (error)
     - RUNNING → EXITED (agent process ended, shell prompt showing)
     - Any → STOPPED (explicitly killed by user)
     """
@@ -39,11 +36,13 @@ class MonitorState:
     output_hash: str = ""
     last_output: str = ""
     last_output_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    pr_url: str | None = None
 
 
 # Callback type for status change events
 OnStatusChange = Callable[[SessionStatus, SessionStatus, str | None], None]
+
+
+CODEX_IDLE_DONE_SECONDS = 2.0
 
 
 def hash_content(output: str, skip_lines: int = 5) -> str:
@@ -115,17 +114,47 @@ def is_agent_exited(output: str, ui_patterns: list[str] | None = None) -> bool:
     return any(last_line.endswith(e) or last_line.rstrip().endswith(e[0]) for e in shell_endings)
 
 
-def is_completed(output: str) -> bool:
-    """Check if agent completed successfully."""
-    # Check last 10 lines instead of 5 to account for UI chrome after completion
-    lines = "\n".join(output.split("\n")[-10:]).lower()
+def has_codex_active_marker(output: str) -> bool:
+    """Return True when Codex is visibly inside an active turn."""
+    lines = "\n".join(output.split("\n")[-30:]).lower()
     patterns = [
-        "task completed successfully",
-        "all tasks completed",
-        "session ended",
-        "goodbye",
+        "working (",
+        "thinking",
+        "esc to interrupt",
+        "ctrl + t to view transcript",
     ]
     return any(p in lines for p in patterns)
+
+
+def has_codex_idle_prompt(output: str) -> bool:
+    """Return True when Codex shows its idle prompt/status footer."""
+    has_prompt = any(line.startswith("› ") for line in output.splitlines())  # noqa: RUF001
+    has_model_status = any("gpt-" in line and "·" in line for line in output.splitlines())
+    return bool(has_prompt and has_model_status)
+
+
+def is_codex_turn_complete(
+    output: str,
+    state: MonitorState,
+    *,
+    output_changed: bool,
+    idle_done_seconds: float = CODEX_IDLE_DONE_SECONDS,
+) -> bool:
+    """Detect Codex's normal post-turn idle screen.
+
+    Codex often finishes a turn and returns to its interactive prompt without
+    printing generic phrases like "task completed successfully". In tmux the
+    process is still alive, so process-exit detection is not enough. Treat a
+    stable Codex prompt with no active-turn marker as a completed turn.
+    """
+    if not has_codex_idle_prompt(output):
+        return False
+    if has_codex_active_marker(output):
+        return False
+    if output_changed:
+        return False
+    idle_seconds = (datetime.now(timezone.utc) - state.last_output_at).total_seconds()
+    return idle_seconds >= idle_done_seconds
 
 
 def is_api_limited(output: str) -> bool:
@@ -145,20 +174,7 @@ def is_api_limited(output: str) -> bool:
     return any(p in lines for p in patterns)
 
 
-def is_failed(output: str) -> bool:
-    """Check if agent failed."""
-    lines = "\n".join(output.split("\n")[-10:]).lower()
-    patterns = [
-        "fatal error",
-        "unrecoverable error",
-        "agent crashed",
-        "session terminated",
-        "authentication failed",
-    ]
-    return any(p in lines for p in patterns)
-
-
-def detect_status(  # noqa: PLR0911
+def detect_status(
     output: str,
     state: MonitorState,
     output_changed: bool,
@@ -166,26 +182,22 @@ def detect_status(  # noqa: PLR0911
 ) -> SessionStatus | None:
     """Detect session status from output.
 
-    Detection order (IMPORTANT: completion before exit check):
-    1. Completion patterns → Done (even if shell prompt is visible)
-    2. API limit patterns → BlockedAPI
-    3. Error patterns → Failed
-    4. Agent exited → Exited (shell prompt showing)
-    5. Output changing → Running
-    6. Output stable + prompt → Blocked
-    7. Otherwise → None (no change)
-    """
-    # Check terminal states first (completion before exit!)
-    if is_completed(output):
-        return SessionStatus.DONE
+    Detection order:
+    1. API limit patterns → BlockedAPI
+    2. Agent exited → Exited (shell prompt showing)
+    3. Output changing → Running
+    4. Output stable + prompt → Blocked
+    5. Otherwise → None (no change)
 
+    This function deliberately does not derive DONE/FAILED from terminal text.
+    Workflow success is decided by the schema-validated result artifact.
+    """
     if is_api_limited(output):
         return SessionStatus.BLOCKED_API
 
-    if is_failed(output):
-        return SessionStatus.FAILED
+    if is_codex_turn_complete(output, state, output_changed=output_changed):
+        return SessionStatus.BLOCKED
 
-    # Agent exited AFTER completion check (agent may show shell after saying goodbye)
     if is_agent_exited(output):
         return SessionStatus.EXITED
 
@@ -196,15 +208,3 @@ def detect_status(  # noqa: PLR0911
         return SessionStatus.BLOCKED
 
     return None
-
-
-# PR URL detection
-PR_URL_PATTERN = re.compile(
-    r"https://(?:github\.com|gitlab\.com)/[^\s]+/(?:pull|merge_requests)/\d+"
-)
-
-
-def detect_pr_url(output: str) -> str | None:
-    """Detect PR creation URL in output."""
-    match = PR_URL_PATTERN.search(output)
-    return match.group(0) if match else None

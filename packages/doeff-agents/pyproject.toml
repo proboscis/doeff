@@ -22,6 +22,7 @@ classifiers = [
 
 dependencies = [
     "doeff>=0.1.0",
+    "doeff-time",
     "click>=8.0.0",
     "rich>=13.0.0",
 ]

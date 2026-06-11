@@ -1,6 +1,5 @@
 """Testing helpers and mock handlers for doeff-conductor effects."""
 
-
 import hashlib
 import inspect
 import shutil
@@ -11,24 +10,28 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from doeff import Effect, Pass, do
+from doeff_agents.result_validation import validate_result_payload
+
+from doeff import Effect, Gather, Pass, Resume, Spawn, WithHandler, do
 from doeff_conductor.effects.agent import (
-    CaptureOutput,
-    RunAgent,
-    SendMessage,
-    SpawnAgent,
-    WaitForStatus,
+    AgentAttemptExhaustedError,
+    AgentEffect,
+    AgentValidationErrorKind,
+    AgentValidationFailure,
 )
+from doeff_conductor.effects.exec import Exec
 from doeff_conductor.effects.git import Commit, CreatePR, MergePR, Push
 from doeff_conductor.effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
-from doeff_conductor.effects.worktree import CreateWorktree, DeleteWorktree, MergeBranches
+from doeff_conductor.effects.workspace import CreateWorkspace, DeleteWorkspace, MergeWorkspaces
 from doeff_conductor.exceptions import IssueNotFoundError
+from doeff_conductor.handlers.exec_handler import ExecHandler
 from doeff_conductor.types import (
-    AgentRef,
     Issue,
     IssueStatus,
+    MergeStatus,
+    MergeWorkspacesResult,
     PRHandle,
-    WorktreeEnv,
+    Workspace,
 )
 
 from .utils import make_scheduled_handler
@@ -55,15 +58,6 @@ def _supports_continuation(handler: Callable[..., Any]) -> bool:
     ]
     return len(positional) >= 2
 
-def _done_status() -> Any:
-    """Return AgenticSessionStatus.DONE when available, otherwise string fallback."""
-    try:
-        from doeff_agentic import AgenticSessionStatus
-
-        return AgenticSessionStatus.DONE
-    except Exception:
-        return "done"
-
 
 class MockConductorRuntime:
     """In-memory + filesystem-backed mock runtime for conductor tests."""
@@ -81,23 +75,23 @@ class MockConductorRuntime:
 
         self.workflow_id = workflow_id
 
-        self.worktree_base = self.root / "worktrees"
-        self.worktree_base.mkdir(parents=True, exist_ok=True)
+        self.workspace_base = self.root / "workspaces"
+        self.workspace_base.mkdir(parents=True, exist_ok=True)
 
         self.issues_dir = self.root / "issues"
         self.issues_dir.mkdir(parents=True, exist_ok=True)
 
         self._issues: dict[str, Issue] = {}
-        self._worktrees: dict[str, WorktreeEnv] = {}
-        self._agents: dict[str, AgentRef] = {}
-        self._agent_statuses: dict[str, Any] = {}
-        self._agent_messages: dict[str, list[tuple[str, str]]] = {}
+        # Workspace identity is scoped per repo, mirroring the git handler.
+        self._workspaces: dict[tuple[str, str], Workspace] = {}
+        self._workspace_paths: dict[tuple[str, str], Path] = {}
+        self._agent_scripts: dict[str, list[Any]] = {}
+        self._agent_script_indices: dict[str, int] = {}
+        self._agent_invocation_counts: dict[str, int] = {}
+        self._agent_follow_ups: dict[str, list[str]] = {}
         self._prs: dict[int, PRHandle] = {}
 
         self._issue_counter = 0
-        self._worktree_counter = 0
-        self._merge_counter = 0
-        self._agent_counter = 0
         self._pr_counter = 0
         self.pushed_branches: list[str] = []
 
@@ -125,35 +119,55 @@ class MockConductorRuntime:
             )
         )
 
-    def _new_worktree(self, branch: str, issue_id: str | None = None) -> WorktreeEnv:
-        self._worktree_counter += 1
-        env_id = f"env-{self._worktree_counter:03d}"
-        worktree_path = self.worktree_base / f"{env_id}-{branch}"
-        worktree_path.mkdir(parents=True, exist_ok=True)
-        (worktree_path / ".git").mkdir(exist_ok=True)
+    def _ensure_workspace(
+        self,
+        workspace_id: str,
+        *,
+        repo: str = "default",
+        base_ref: str = "main",
+        issue_id: str | None = None,
+    ) -> Workspace:
+        """Idempotently bind a workspace identity, mirroring the git handler."""
+        if not workspace_id:
+            raise ValueError("workspace effects require a non-empty workspace_id")
+        existing = self._workspaces.get((repo, workspace_id))
+        if existing is not None:
+            return existing
 
-        env = WorktreeEnv(
-            id=env_id,
-            path=worktree_path,
-            branch=branch,
-            base_commit="a" * 40,
+        workspace_path = self.workspace_base / repo / workspace_id
+        workspace_path.mkdir(parents=True, exist_ok=True)
+        (workspace_path / ".git").mkdir(exist_ok=True)
+
+        workspace = Workspace(
+            id=workspace_id,
+            repo=repo,
+            ref=f"conductor/{workspace_id}",
+            base_ref=base_ref,
             issue_id=issue_id,
             created_at=datetime.now(timezone.utc),
         )
-        self._worktrees[env_id] = env
-        return env
+        self._workspaces[(repo, workspace_id)] = workspace
+        self._workspace_paths[(repo, workspace_id)] = workspace_path
+        return workspace
 
-    def _agent_response(self, prompt: str) -> str:
-        prompt_lower = prompt.lower()
-        if "fix" in prompt_lower:
-            return "Applied fixes and validated updates."
-        if "review" in prompt_lower:
-            return "Review complete: identified and documented findings."
-        if "test" in prompt_lower:
-            return "All tests passed successfully."
-        if "implement" in prompt_lower:
-            return "Implementation complete with requested changes."
-        return f"Mock response: {prompt[:80]}"
+    def resolve_path(self, workspace: Workspace) -> Path:
+        path = self._workspace_paths.get((workspace.repo, workspace.id))
+        if path is None:
+            raise ValueError(f"Workspace is not materialized: {workspace.id}")
+        return path
+
+    def configure_agent_script(self, session_id: str, script: list[Any]) -> None:
+        """Configure deterministic artifacts for the schema-validated Agent effect."""
+        self._agent_scripts[session_id] = list(script)
+        self._agent_script_indices[session_id] = 0
+
+    def agent_follow_ups(self, session_id: str) -> list[str]:
+        """Return validation follow-up messages sent for a scripted agent."""
+        return list(self._agent_follow_ups.get(session_id, []))
+
+    def agent_invocation_count(self, session_id: str) -> int:
+        """Return how many times the stub AgentEffect handler ran."""
+        return self._agent_invocation_counts.get(session_id, 0)
 
     def handle_create_issue(self, effect: CreateIssue) -> Issue:
         self._issue_counter += 1
@@ -210,83 +224,114 @@ class MockConductorRuntime:
         self._write_issue_file(resolved)
         return resolved
 
-    def handle_create_worktree(self, effect: CreateWorktree) -> WorktreeEnv:
-        suffix = effect.name or effect.suffix or f"wt-{self._worktree_counter + 1}"
-        branch = effect.name or f"conductor-{suffix}"
-        issue_id = effect.issue.id if effect.issue else None
-        return self._new_worktree(branch=branch, issue_id=issue_id)
+    def handle_create_workspace(self, effect: CreateWorkspace) -> Workspace:
+        return self._ensure_workspace(
+            effect.workspace_id,
+            repo=effect.repo,
+            base_ref=effect.from_ref or "main",
+            issue_id=effect.issue.id if effect.issue else None,
+        )
 
-    def handle_merge_branches(self, effect: MergeBranches) -> WorktreeEnv:
-        if not effect.envs:
-            raise ValueError("No environments to merge")
+    def handle_merge_workspaces(self, effect: MergeWorkspaces) -> MergeWorkspacesResult:
+        if not effect.workspaces:
+            raise ValueError("No workspaces to merge")
 
-        self._merge_counter += 1
-        merged_branch = effect.name or f"conductor-merged-{self._merge_counter}"
-        merged_env = self._new_worktree(branch=merged_branch)
+        merged_workspace = self._ensure_workspace(
+            effect.workspace_id,
+            repo=effect.workspaces[0].repo,
+            base_ref=effect.workspaces[0].ref,
+        )
+        merged_path = self.resolve_path(merged_workspace)
 
-        for env in effect.envs:
-            for source in env.path.iterdir():
+        for workspace in effect.workspaces:
+            for source in self.resolve_path(workspace).iterdir():
                 if source.name == ".git":
                     continue
 
-                target = merged_env.path / source.name
+                target = merged_path / source.name
                 if source.is_dir():
                     shutil.copytree(source, target, dirs_exist_ok=True)
                 else:
                     target.write_bytes(source.read_bytes())
 
-        return merged_env
+        return MergeWorkspacesResult(status=MergeStatus.MERGED, workspace=merged_workspace)
 
-    def handle_delete_worktree(self, effect: DeleteWorktree) -> bool:
-        shutil.rmtree(effect.env.path, ignore_errors=True)
-        self._worktrees.pop(effect.env.id, None)
+    def handle_delete_workspace(self, effect: DeleteWorkspace) -> bool:
+        workspace_key = (effect.workspace.repo, effect.workspace.id)
+        path = self._workspace_paths.pop(workspace_key, None)
+        if path is None:
+            return False
+        shutil.rmtree(path, ignore_errors=True)
+        self._workspaces.pop(workspace_key, None)
         return True
 
-    def handle_run_agent(self, effect: RunAgent) -> str:
-        return self._agent_response(effect.prompt)
-
-    def handle_spawn_agent(self, effect: SpawnAgent) -> AgentRef:
-        self._agent_counter += 1
-        session_id = f"session-{self._agent_counter:03d}"
-        name = effect.name or f"agent-{self._agent_counter:03d}"
-        output = self._agent_response(effect.prompt)
-
-        agent_ref = AgentRef(
-            id=session_id,
-            name=name,
-            workflow_id=self.workflow_id,
-            env_id=effect.env.id,
-            agent_type=effect.agent_type,
+    def handle_exec(self, effect: Exec):
+        handler = ExecHandler(
+            workspace_resolver=self.resolve_path,
+            log_dir=self.root / "exec-logs",
         )
-        self._agents[session_id] = agent_ref
-        self._agent_statuses[session_id] = _done_status()
-        self._agent_messages[session_id] = [("user", effect.prompt), ("assistant", output)]
-        return agent_ref
+        return handler.handle_exec(effect)
 
-    def handle_send_message(self, effect: SendMessage) -> None:
-        session_id = effect.agent_ref.id
-        response = self._agent_response(effect.message)
-        messages = self._agent_messages.setdefault(session_id, [])
-        messages.append(("user", effect.message))
-        messages.append(("assistant", response))
-        self._agent_statuses[session_id] = _done_status()
+    def handle_agent(self, effect: AgentEffect) -> object:
+        session_id = effect.task.session_id
+        self._agent_invocation_counts[session_id] = (
+            self._agent_invocation_counts.get(session_id, 0) + 1
+        )
+        attempts = 0
+        while attempts <= effect.task.max_retries:
+            payload = self._next_agent_payload(session_id)
+            if payload is None:
+                failure = AgentValidationFailure(
+                    kind=AgentValidationErrorKind.ABSENT,
+                    message="result artifact is absent",
+                )
+            else:
+                validation_error = validate_result_payload(payload, effect.task.result_schema)
+                if validation_error is None:
+                    return payload
+                failure = AgentValidationFailure(
+                    kind=AgentValidationErrorKind.INVALID,
+                    message=validation_error,
+                )
 
-    def handle_wait_for_status(self, effect: WaitForStatus) -> Any:
-        return self._agent_statuses.get(effect.agent_ref.id, _done_status())
+            if attempts >= effect.task.max_retries:
+                raise AgentAttemptExhaustedError(
+                    session_id=session_id,
+                    attempts=attempts + 1,
+                    last_error=failure,
+                )
 
-    def handle_capture_output(self, effect: CaptureOutput) -> str:
-        messages = self._agent_messages.get(effect.agent_ref.id, [])
-        if effect.lines <= 0:
-            return ""
-        limited_messages = messages[-effect.lines :]
-        return "\n\n".join(f"[{role}] {content}" for role, content in limited_messages)
+            self._agent_follow_ups.setdefault(session_id, []).append(
+                self._agent_retry_message(failure)
+            )
+            attempts += 1
+
+        raise AssertionError("unreachable agent retry state")
+
+    def _next_agent_payload(self, session_id: str) -> object | None:
+        script = self._agent_scripts.get(session_id)
+        if not script:
+            return {"summary": "mock artifact"}
+        index = self._agent_script_indices.get(session_id, 0)
+        if index >= len(script):
+            return script[-1]
+        self._agent_script_indices[session_id] = index + 1
+        return script[index]
+
+    def _agent_retry_message(self, failure: AgentValidationFailure) -> str:
+        if failure.kind == AgentValidationErrorKind.ABSENT:
+            return "No result artifact was produced. Return the required result artifact as JSON."
+        return (
+            f"The result artifact was invalid: {failure.message}. "
+            "Return a corrected result artifact that satisfies the schema."
+        )
 
     def handle_commit(self, effect: Commit) -> str:
-        payload = f"{effect.env.id}:{effect.env.branch}:{effect.message}"
+        payload = f"{effect.workspace.id}:{effect.workspace.ref}:{effect.message}"
         return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
     def handle_push(self, effect: Push) -> None:
-        self.pushed_branches.append(effect.env.branch)
+        self.pushed_branches.append(effect.workspace.ref)
 
     def handle_create_pr(self, effect: CreatePR) -> PRHandle:
         self._pr_counter += 1
@@ -294,7 +339,7 @@ class MockConductorRuntime:
             url=f"https://github.com/mock/repo/pull/{self._pr_counter}",
             number=self._pr_counter,
             title=effect.title,
-            branch=effect.env.branch,
+            branch=effect.workspace.ref,
             target=effect.target,
             status="open",
             created_at=datetime.now(timezone.utc),
@@ -324,29 +369,19 @@ def mock_handlers(
     root: Path | None = None,
     workflow_id: str = "mock-workflow",
 ) -> ScheduledHandler:
-    """Build a complete mock protocol handler for all conductor effects.
-
-    Args:
-        runtime: Optional runtime instance to keep state between invocations.
-        overrides: Optional per-effect handlers to replace defaults.
-        root: Optional root directory for created mock runtime state.
-        workflow_id: Workflow ID for mock agent references.
-    """
+    """Build a complete mock protocol handler for all conductor effects."""
     active_runtime = runtime or MockConductorRuntime(root=root, workflow_id=workflow_id)
 
     handlers: list[tuple[type[Any], ScheduledHandler]] = [
-        (CreateWorktree, make_scheduled_handler(active_runtime.handle_create_worktree)),
-        (MergeBranches, make_scheduled_handler(active_runtime.handle_merge_branches)),
-        (DeleteWorktree, make_scheduled_handler(active_runtime.handle_delete_worktree)),
+        (CreateWorkspace, make_scheduled_handler(active_runtime.handle_create_workspace)),
+        (MergeWorkspaces, make_scheduled_handler(active_runtime.handle_merge_workspaces)),
+        (DeleteWorkspace, make_scheduled_handler(active_runtime.handle_delete_workspace)),
+        (Exec, make_scheduled_handler(active_runtime.handle_exec)),
         (CreateIssue, make_scheduled_handler(active_runtime.handle_create_issue)),
         (ListIssues, make_scheduled_handler(active_runtime.handle_list_issues)),
         (GetIssue, make_scheduled_handler(active_runtime.handle_get_issue)),
         (ResolveIssue, make_scheduled_handler(active_runtime.handle_resolve_issue)),
-        (RunAgent, make_scheduled_handler(active_runtime.handle_run_agent)),
-        (SpawnAgent, make_scheduled_handler(active_runtime.handle_spawn_agent)),
-        (SendMessage, make_scheduled_handler(active_runtime.handle_send_message)),
-        (WaitForStatus, make_scheduled_handler(active_runtime.handle_wait_for_status)),
-        (CaptureOutput, make_scheduled_handler(active_runtime.handle_capture_output)),
+        (AgentEffect, make_scheduled_handler(active_runtime.handle_agent)),
         (Commit, make_scheduled_handler(active_runtime.handle_commit)),
         (Push, make_scheduled_handler(active_runtime.handle_push)),
         (CreatePR, make_scheduled_handler(active_runtime.handle_create_pr)),
@@ -361,12 +396,27 @@ def mock_handlers(
         )
         handlers.insert(0, (effect_type, normalized))
 
+    spawn_results: dict[str, Any] = {}
+    spawn_counter = 0
+
     @do
     def handler(effect: Effect, k: Any):
+        nonlocal spawn_counter
+        if isinstance(effect, Spawn):
+            spawn_counter += 1
+            task_id = f"mock-spawn-{spawn_counter}"
+            result = yield WithHandler(handler, effect.program)
+            spawn_results[task_id] = result
+            return (yield Resume(k, task_id))
+
+        if isinstance(effect, Gather):
+            results = tuple(spawn_results[task] for task in effect.tasks)
+            return (yield Resume(k, results))
+
         for effect_type, effect_handler in handlers:
             if isinstance(effect, effect_type):
                 return (yield effect_handler(effect, k))
-        yield Pass()
+        yield Pass(effect, k)
 
     return handler
 
