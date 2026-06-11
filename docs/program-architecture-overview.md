@@ -55,18 +55,16 @@ value = yield Perform(Ask("key"))
 
 ## Handler Stack Model
 
-`run(..., handlers=[h0, h1, h2])` is a low-level convenience that installs nested handler scopes:
+Handler installers are Program -> Program functions. Calling them nests handler scopes:
 
 ```text
-WithHandler(handler=h0,
-  expr=WithHandler(handler=h1,
-    expr=WithHandler(handler=h2, expr=program)))
+h0(h1(h2(program)))
 ```
 
 - `h2` is innermost and sees effects first.
 - `h0` is outermost and sees effects delegated outward.
 - Handler contract is `(effect, k) -> DoExpr`.
-- For user-facing custom composition, prefer explicit `WithHandler(handler=..., expr=...)`.
+- User-facing custom composition should call handler installers directly.
 
 ## Rust VM Stepping Engine
 
@@ -79,7 +77,7 @@ flowchart TD
     B -->|DoExpr| C[Use as root control node]
     B -->|EffectValue| D[Normalize to Perform(effect)]
     D --> C
-    C --> E[Install handler stack as nested WithHandler]
+    C --> E[Install handler stack from handler installers]
     E --> F[VM step loop]
 
     F --> G{Yield classification}
@@ -149,5 +147,5 @@ during stepping.
 - `Program[T] = DoExpr[T]`.
 - Control and effect payloads are separated.
 - `Perform(effect)` is the sole dispatch boundary.
-- Handlers are a nested stack (`WithHandler`) with deterministic inner-to-outer dispatch.
+- Handlers are a nested stack with deterministic inner-to-outer dispatch.
 - Rust VM stepping is the execution core for both sync and async runners.

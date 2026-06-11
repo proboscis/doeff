@@ -21,7 +21,7 @@ Use the CLI when you need discovery-oriented behavior:
 
 - Replace `run_program(...)` usage in Python code with direct `run(...)` / `async_run(...)`
   execution.
-- Prefer explicit `WithHandler(handler=..., expr=...)` for custom handler composition.
+- Prefer direct `handler(program)` calls for custom handler composition.
 - Treat the `handlers=` argument on `run()` / `async_run()` as a low-level runner input rather than
   the primary way to express custom handler structure.
 

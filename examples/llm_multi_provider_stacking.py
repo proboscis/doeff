@@ -14,7 +14,7 @@ from doeff_openai.handlers import (
 from doeff_openrouter.handlers import MockOpenRouterRuntime, openrouter_mock_handler
 from pydantic import BaseModel
 
-from doeff import EffectGenerator, WithHandler, default_handlers, do, run
+from doeff import EffectGenerator, WithHandlerType, default_handlers, do, run
 
 
 class AnalysisResult(BaseModel):
@@ -78,13 +78,17 @@ def main() -> None:
     def router_handler(effect: Any, k: Any):
         return (yield from openrouter_mock_handler(effect, k, runtime=router_runtime))
 
+    def install_raw_handler(raw_handler: Any):
+        def install(program: Any):
+            return WithHandlerType(raw_handler, program)
+
+        return install
+
     result = run(
-        WithHandler(
-            router_handler,  # catch-all fallback
-            WithHandler(
-                gemini_handler,
-                WithHandler(openai_handler, workflow()),
-            ),
+        install_raw_handler(router_handler)(  # catch-all fallback
+            install_raw_handler(gemini_handler)(
+                install_raw_handler(openai_handler)(workflow()),
+            )
         ),
         handlers=default_handlers(),
     )

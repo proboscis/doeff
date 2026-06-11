@@ -20,7 +20,7 @@ Provider packages implement protocol handlers and route by model prefix.
 ## Multi-provider workflow
 
 ```python
-from doeff import WithHandler, do, run
+from doeff import do, run
 from doeff_image.effects import ImageEdit, ImageGenerate
 from doeff_gemini.handlers import gemini_image_handler
 from doeff_seedream.handlers import seedream_image_handler
@@ -44,9 +44,8 @@ def workflow():
 
 
 result = run(
-    WithHandler(
-        handler=seedream_image_handler,
-        expr=WithHandler(handler=gemini_image_handler, expr=workflow()),
+    seedream_image_handler(
+        gemini_image_handler(workflow()),
     ),
 )
 ```

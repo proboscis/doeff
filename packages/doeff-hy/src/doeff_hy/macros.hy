@@ -140,8 +140,6 @@
   Use defhandler instead of defk for effect handlers:
 
     (require doeff-hy.macros [defk <- defhandler])
-    (import doeff [WithHandler])
-
     ;; Simple handler — pattern match on effects, unmatched auto-Pass
     (defhandler my-handler
       (MyEffect [field1 field2]
@@ -173,9 +171,9 @@
         (<- base-result (MyEffect :field field))
         (resume (* base-result 2))))
 
-    ;; Install with WithHandler
-    (WithHandler my-handler body)
-    (WithHandler (my-handler config) body)
+    ;; Install by direct Program -> Program call
+    (my-handler body)
+    ((my-handler config) body)
 ")
 
 (defn _reject-handler-signature [fn-name params]

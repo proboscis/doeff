@@ -35,7 +35,7 @@ program (domain handlers installed)
   │     On tool call from agent:
   │          POST /message → JSON-RPC tools/call
   │          → tool.handler(*args) → Expand[T]
-  │          → WithHandler(h, program) for each captured handler
+  │          → reinstall each captured handler scope around the tool program
   │          → doeff.run(program) → result
   │          → SSE response to agent
   │
@@ -142,10 +142,10 @@ This allows `GetHandlers(k)` inside the handler to capture domain handlers from 
 continuation chain.
 
 ```
-WithHandler(claude_handler,      ← outermost: catches Launch, captures inner handlers
-  WithHandler(domain_handler_1,  ← captured via GetHandlers(k)
-    WithHandler(domain_handler_2,← captured via GetHandlers(k)
-      program)))                 ← performs Launch effect
+claude_handler(                 ← outermost: catches Launch, captures inner handlers
+  domain_handler_1(             ← captured via GetHandlers(k)
+    domain_handler_2(           ← captured via GetHandlers(k)
+      program)))                ← performs Launch effect
 ```
 
 If the Claude handler is innermost, `GetHandlers(k)` will not see domain handlers,
@@ -154,11 +154,11 @@ and tool calls will fail with "no handler found for effect."
 The new canonical entry point:
 
 ```python
-from doeff import WithHandler, run
+from doeff import run
 from doeff_agents.handlers import claude_agent_handler
 
 agent = claude_agent_handler()
-wrapped = WithHandler(agent, WithHandler(nak_handler, program))
+wrapped = agent(nak_handler(program))
 result = run(wrapped)
 ```
 
@@ -171,7 +171,7 @@ result = run(wrapped)
 3. **`claude_handler` (Hy defhandler)** catches `LaunchEffect` when `agent_type=CLAUDE`:
    - Calls `_trust-workdir` to mark the workspace as trusted in `~/.claude.json`
    - When `mcp_tools` is non-empty: yields `GetHandlers(k)` to capture the handler stack
-   - Creates a `run_tool` closure that wraps tool programs with `WithHandler`
+   - Creates a `run_tool` closure that reinstalls captured handler scopes around tool programs
    - Starts an `McpToolServer` and writes `.mcp.json` to `work_dir`
    - Creates the tmux session and launches `claude --dangerously-skip-permissions ...`
    - Stores session + server in `lazy-var sessions` / `lazy-var mcp-servers`
@@ -194,7 +194,7 @@ result = run(wrapped)
 
 ```python
 from pathlib import Path
-from doeff import do, run, Perform, WithHandler
+from doeff import do, run, Perform
 from doeff.mcp import McpToolDef, McpParamSchema
 from doeff_agents.adapters.base import AgentType
 from doeff_agents.effects import LaunchEffect, Monitor, Sleep, Capture, Stop
@@ -235,7 +235,7 @@ def main():
     return output
 
 # 3. Run with claude handler (it catches Launch and manages MCP)
-result = run(WithHandler(claude_agent_handler(), main()))
+result = run(claude_agent_handler()(main()))
 print(result)
 ```
 
@@ -243,7 +243,7 @@ print(result)
 
 ```hy
 (require doeff-hy.macros [defmcp-tool defp <- defhandler])
-(import doeff [WithHandler run])
+(import doeff [run])
 (import doeff_agents.effects [Launch Monitor Sleep Capture Stop])
 (import doeff_agents.handlers [claude-agent-handler])
 (import doeff_agents.adapters.base [AgentType])
@@ -285,9 +285,8 @@ print(result)
 
 ;; Run: claude-agent-handler outermost, nak handlers inner
 (run
-  (WithHandler (claude-agent-handler)
-    (WithHandler nak-handler
-      trading-agent)))
+  ((claude-agent-handler)
+    (nak-handler trading-agent)))
 ```
 
 ## API Reference
