@@ -12,6 +12,7 @@ from __future__ import annotations
 import threading
 
 import hy  # noqa: F401  (enable .hy imports)
+import pytest
 from doeff_agents.handlers.mcp_server_loop import mcp_server_loop
 from doeff_agents.mcp_server import McpToolRequest, McpToolServer
 from doeff_core_effects.scheduler import scheduled
@@ -251,3 +252,36 @@ class TestMcpServerLoopMultiple:
             yield mcp_server_loop(server, [])
 
         run(scheduled(main()))  # should return, not hang
+
+
+class TestMcpServerLoopProtocolFailures:
+    def test_request_queue_unexpected_error_propagates(self):
+        """Only queue.Empty is a benign drain race; other queue errors are fatal."""
+        server = McpToolServer(tools=(_echo_tool(),))
+
+        class PoisonedQueue:
+            def __init__(self) -> None:
+                self.raised = False
+
+            def empty(self) -> bool:
+                return self.raised
+
+            def get_nowait(self):
+                self.raised = True
+                server.shutting_down = True
+                raise RuntimeError("request queue poisoned")
+
+        server.request_queue = PoisonedQueue()
+
+        def driver():
+            ep = server.wakeup_mailbox.get(timeout=5.0)
+            ep.complete(None)
+
+        threading.Thread(target=driver, daemon=True).start()
+
+        @do
+        def main():
+            yield mcp_server_loop(server, [])
+
+        with pytest.raises(RuntimeError, match="request queue poisoned"):
+            run(scheduled(main()))
