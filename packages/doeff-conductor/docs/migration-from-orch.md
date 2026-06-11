@@ -227,9 +227,9 @@ from doeff import Gather
 def parallel_work():
     # Run multiple effects in parallel
     results = yield Gather(
-        CreateWorkspace(suffix="a"),
-        CreateWorkspace(suffix="b"),
-        CreateWorkspace(suffix="c"),
+        CreateWorkspace(workspace_id="run1-a"),
+        CreateWorkspace(workspace_id="run1-b"),
+        CreateWorkspace(workspace_id="run1-c"),
     )
 ```
 

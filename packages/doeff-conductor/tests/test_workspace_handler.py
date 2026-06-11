@@ -335,3 +335,48 @@ class TestWorkspaceResumeStability:
         # re-applying the merges is a no-op.
         assert (resumed_merged_path / "left.txt").exists()
         assert (resumed_merged_path / "right.txt").exists()
+
+    def test_merge_rerun_picks_up_new_commits_on_every_source(
+        self, git_repo: Path, workspace_base: Path
+    ) -> None:
+        """Review finding F2: re-merging must re-apply ALL sources.
+
+        The merge branch is created from source[0]'s tip on the first run;
+        on resume it is re-adopted frozen at that old tip. A merge loop
+        that skips source[0] silently drops its newer commits, so the
+        resumed merged tree diverges from what a fresh run would produce.
+        """
+        first_handler = self._handler(git_repo, workspace_base)
+        left = first_handler.handle_create_workspace(CreateWorkspace(workspace_id="run-left"))
+        _commit_file(first_handler.resolve_path(left), "left.txt", "left\n", "left")
+        right = first_handler.handle_create_workspace(CreateWorkspace(workspace_id="run-right"))
+        _commit_file(first_handler.resolve_path(right), "right.txt", "right\n", "right")
+
+        first_result = first_handler.handle_merge_workspaces(
+            MergeWorkspaces(workspace_id="run-merged", workspaces=(left, right))
+        )
+        assert first_result.status is MergeStatus.MERGED
+
+        # AFTER the first merge, both sources gain new commits (e.g. a
+        # resumed agent node re-ran on a journal cache miss).
+        _commit_file(first_handler.resolve_path(left), "left2.txt", "left2\n", "left2")
+        _commit_file(first_handler.resolve_path(right), "right2.txt", "right2\n", "right2")
+
+        resumed_handler = self._handler(git_repo, workspace_base)
+        resumed_left = resumed_handler.handle_create_workspace(
+            CreateWorkspace(workspace_id="run-left")
+        )
+        resumed_right = resumed_handler.handle_create_workspace(
+            CreateWorkspace(workspace_id="run-right")
+        )
+        second_result = resumed_handler.handle_merge_workspaces(
+            MergeWorkspaces(workspace_id="run-merged", workspaces=(resumed_left, resumed_right))
+        )
+
+        assert second_result.status is MergeStatus.MERGED
+        assert second_result.workspace is not None
+        merged_path = resumed_handler.resolve_path(second_result.workspace)
+        # BOTH sources' newer commits are in the resumed merged tree —
+        # source[0] must not be frozen at its first-merge tip.
+        assert (merged_path / "left2.txt").exists()
+        assert (merged_path / "right2.txt").exists()
