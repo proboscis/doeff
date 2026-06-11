@@ -256,6 +256,21 @@ rules:
         - "**/tests/**"
         - "**/docs/**"
 
+  - id: no-legacy-defk-handler-signatures
+    languages: [generic]
+    severity: ERROR
+    message: >
+      HYP-197: production Hy effect handlers must use defhandler. Do not write
+      legacy defk handlers with effect, eff, or k parameters because doeff-hy
+      rejects those signatures at import time.
+    pattern-regex: '(?m)^\s*\(defk\s+[^\s\[]+\s+\[[^\]\n]*(?:\beffect\b|\beff\b|\bk\b)[^\]\n]*\]'
+    paths:
+      include:
+        - "/packages/**/src/**/*.hy"
+      exclude:
+        - "**/tests/**"
+        - "**/examples/**"
+
   - id: cache-handler-no-result-duck-typing
     languages: [python]
     severity: ERROR
