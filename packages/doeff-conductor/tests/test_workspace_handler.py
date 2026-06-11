@@ -177,6 +177,21 @@ class TestWorkspaceHandler:
         assert result is True
         assert not materialized_path.exists()
 
+    def test_delete_workspace_preserves_uncommitted_user_changes(
+        self,
+        handler: WorkspaceHandler,
+    ) -> None:
+        workspace: Workspace = handler.handle_create_workspace(
+            CreateWorkspace(workspace_id="ws-delete-dirty")
+        )
+        materialized_path: Path = handler.resolve_path(workspace)
+        (materialized_path / "wip.txt").write_text("keep me\n")
+
+        result: bool = handler.handle_delete_workspace(DeleteWorkspace(workspace=workspace))
+
+        assert result is False
+        assert materialized_path.exists()
+
     def test_delete_workspace_nonexistent(self, handler: WorkspaceHandler) -> None:
         workspace = Workspace(id="missing", repo="default", ref="missing", base_ref="main")
 
