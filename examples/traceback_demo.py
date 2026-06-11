@@ -21,7 +21,7 @@ from doeff import (
     Put,
     Resume,
     Tell,
-    WithHandler,
+    WithHandlerType,
     default_handlers,
     do,
     run,
@@ -63,6 +63,13 @@ def batch_pipeline():
 # -- custom handler -----------------------------------------------------------
 
 
+def install_raw_handler(raw_handler):
+    def install(program):
+        return WithHandlerType(raw_handler, program)
+
+    return install
+
+
 def auth_handler(effect, k):
     if isinstance(effect, AskEffect) and effect.key == "auth_token":
         return (yield Resume(k, "Bearer sk-demo-1234"))
@@ -73,7 +80,7 @@ def auth_handler(effect, k):
 
 
 def demo_error_trace():
-    prog = WithHandler(auth_handler, batch_pipeline())
+    prog = install_raw_handler(auth_handler)(batch_pipeline())
     result = run(
         prog,
         handlers=default_handlers(),
@@ -140,7 +147,7 @@ def demo_handler_delegation_chain():
             raise ValueError(f"Cannot run dangerous operation in {mode} mode")
         return f"Running in {mode}"
 
-    prog = WithHandler(layer_2, WithHandler(layer_1, check_mode()))
+    prog = install_raw_handler(layer_2)(install_raw_handler(layer_1)(check_mode()))
     result = run(prog, handlers=default_handlers())
 
     if result.is_err():

@@ -20,7 +20,7 @@ Handlers inspect `effect.model`:
 2. If not, it yields `Pass()` so the next outer handler can try.
 
 When a handler uses a narrow effect annotation such as `effect: LLMChat` or
-`effect: LLMStructuredOutput`, `WithHandler(...)` also installs a runtime type filter so
+`effect: LLMStructuredOutput`, the installed handler scope also carries a runtime type filter so
 non-matching effects skip the handler entirely.
 
 This enables a single program to call multiple providers by model name.
@@ -30,7 +30,7 @@ This enables a single program to call multiple providers by model name.
 ```python
 from pydantic import BaseModel
 
-from doeff import WithHandler, do, run
+from doeff import do, run
 from doeff_llm.effects import LLMChat, LLMStructuredOutput
 from doeff_gemini.handlers import gemini_production_handler
 from doeff_openai.handlers import openai_production_handler
@@ -61,11 +61,9 @@ def workflow():
 
 
 result = run(
-    WithHandler(
-        handler=openrouter_production_handler,  # fallback / catch-all
-        expr=WithHandler(
-            handler=gemini_production_handler,
-            expr=WithHandler(handler=openai_production_handler, expr=workflow()),
+    openrouter_production_handler(  # fallback / catch-all
+        gemini_production_handler(
+            openai_production_handler(workflow()),
         ),
     ),
     env={
