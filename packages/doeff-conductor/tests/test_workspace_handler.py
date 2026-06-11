@@ -57,6 +57,20 @@ def _branches(repo_path: Path) -> set[str]:
     return {line for line in result.stdout.splitlines() if line}
 
 
+def _git_exclude_path(worktree_path: Path) -> Path:
+    result = subprocess.run(
+        ["git", "rev-parse", "--git-path", "info/exclude"],
+        cwd=worktree_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    exclude_path = Path(result.stdout.strip())
+    if exclude_path.is_absolute():
+        return exclude_path
+    return worktree_path / exclude_path
+
+
 class TestWorkspaceHandler:
     @pytest.fixture
     def git_repo(self, tmp_path: Path) -> Path:
@@ -89,7 +103,7 @@ class TestWorkspaceHandler:
         assert "path" not in workspace.to_dict()
         assert handler.resolve_path(workspace).exists()
 
-    def test_create_workspace_installs_runtime_state_gitignore(
+    def test_create_workspace_installs_runtime_state_exclude_idempotently(
         self,
         handler: WorkspaceHandler,
     ) -> None:
@@ -98,8 +112,26 @@ class TestWorkspaceHandler:
         )
         materialized_path: Path = handler.resolve_path(workspace)
 
-        gitignore_lines: list[str] = (materialized_path / ".gitignore").read_text().splitlines()
-        assert ".agent-home/" in gitignore_lines
+        status_before_runtime_state: subprocess.CompletedProcess[str] = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=materialized_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert status_before_runtime_state.stdout == ""
+        assert not (materialized_path / ".gitignore").exists()
+
+        exclude_path: Path = _git_exclude_path(materialized_path)
+        exclude_lines: list[str] = exclude_path.read_text().splitlines()
+        assert exclude_lines.count(".agent-home/") == 1
+
+        same_workspace: Workspace = handler.handle_create_workspace(
+            CreateWorkspace(workspace_id="ws-ignore")
+        )
+        assert handler.resolve_path(same_workspace) == materialized_path
+        exclude_lines_after_second_init: list[str] = exclude_path.read_text().splitlines()
+        assert exclude_lines_after_second_init.count(".agent-home/") == 1
 
         agent_state_path: Path = materialized_path / ".agent-home" / "session.json"
         agent_state_path.parent.mkdir()
@@ -146,6 +178,7 @@ class TestWorkspaceHandler:
         )
         committed_paths: list[str] = show_result.stdout.splitlines()
         assert "feature.txt" in committed_paths
+        assert ".gitignore" not in committed_paths
         assert ".agent-home/session.json" not in committed_paths
 
     def test_create_workspace_requires_identity(self, handler: WorkspaceHandler) -> None:
