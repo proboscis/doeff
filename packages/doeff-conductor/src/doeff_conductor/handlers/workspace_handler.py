@@ -87,9 +87,7 @@ def _ensure_runtime_state_ignored(materialized_path: Path) -> None:
         existing_text = ""
 
     existing_entries: set[str] = {
-        line.strip()
-        for line in existing_text.splitlines()
-        if line.strip()
+        line.strip() for line in existing_text.splitlines() if line.strip()
     }
     missing_entries: list[str] = [
         entry
@@ -129,11 +127,9 @@ def _has_only_ignored_runtime_state(materialized_path: Path) -> bool:
         ["git", "status", "--porcelain", "--ignored"],
         cwd=materialized_path,
     )
-    status_lines: list[str] = [
-        line
-        for line in status_result.stdout.splitlines()
-        if line
-    ]
+    status_lines: list[str] = [line for line in status_result.stdout.splitlines() if line]
+    if not status_lines:
+        return False
     return all(
         line[:2] == "!!" and _is_runtime_state_path(_status_path_from_porcelain_line(line))
         for line in status_lines
@@ -364,9 +360,7 @@ class WorkspaceHandler:
 
     def handle_delete_workspace(self, effect: "DeleteWorkspace") -> bool:
         """Remove a workspace materialization from this site."""
-        materialization = self._materializations.get(
-            (effect.workspace.repo, effect.workspace.id)
-        )
+        materialization = self._materializations.get((effect.workspace.repo, effect.workspace.id))
         if materialization is None:
             return False
 
@@ -386,11 +380,16 @@ class WorkspaceHandler:
         except GitCommandError:
             if not effect.force:
                 return False
-            shutil.rmtree(materialization.path, ignore_errors=True)
+            shutil.rmtree(materialization.path)
             run_git(
                 ["git", "worktree", "prune"],
                 cwd=self.repo_path(effect.workspace.repo),
-                check=False,
+            )
+
+        if materialization.path.exists():
+            raise WorkspaceStateError(
+                f"workspace {effect.workspace.id}: materialization "
+                f"{materialization.path} still exists after delete"
             )
 
         self._materializations.pop((effect.workspace.repo, effect.workspace.id), None)
