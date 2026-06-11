@@ -61,7 +61,11 @@ class AgentdAgentBackend:
             AgentsAgentEffect(
                 task=AgentsAgentTask(
                     run_id=effect.task.run_id,
-                    node_id=effect.task.node_id,
+                    # The identity-qualified key, NOT the bare node id: the
+                    # L2 task derives the session name from this, and the
+                    # name must change when the resolved identity does
+                    # (see AgentTask.session_node_key).
+                    node_id=effect.task.session_node_key,
                     attempt=effect.task.attempt,
                     agent_type=agent_type,
                     work_dir=workspace_resolver(effect.task.env),
