@@ -16,6 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import doeff_conductor.exceptions as conductor_exceptions
 import pytest
 from doeff_conductor.api import ConductorAPI
 from doeff_conductor.types import (
@@ -24,6 +25,10 @@ from doeff_conductor.types import (
     WorkflowHandle,
     WorkflowStatus,
 )
+
+
+def _state_warning_type() -> type[Warning]:
+    return getattr(conductor_exceptions, "ConductorStateWarning", Warning)
 
 
 class TestConductorAPIInit:
@@ -70,23 +75,31 @@ class TestListWorkflows:
 
         workflow1_dir = api.workflows_dir / "abc12345"
         workflow1_dir.mkdir()
-        (workflow1_dir / "meta.json").write_text(json.dumps({
-            "id": "abc12345",
-            "name": "workflow-1",
-            "status": "running",
-            "created_at": now.isoformat(),
-            "updated_at": now.isoformat(),
-        }))
+        (workflow1_dir / "meta.json").write_text(
+            json.dumps(
+                {
+                    "id": "abc12345",
+                    "name": "workflow-1",
+                    "status": "running",
+                    "created_at": now.isoformat(),
+                    "updated_at": now.isoformat(),
+                }
+            )
+        )
 
         workflow2_dir = api.workflows_dir / "def67890"
         workflow2_dir.mkdir()
-        (workflow2_dir / "meta.json").write_text(json.dumps({
-            "id": "def67890",
-            "name": "workflow-2",
-            "status": "done",
-            "created_at": now.isoformat(),
-            "updated_at": now.isoformat(),
-        }))
+        (workflow2_dir / "meta.json").write_text(
+            json.dumps(
+                {
+                    "id": "def67890",
+                    "name": "workflow-2",
+                    "status": "done",
+                    "created_at": now.isoformat(),
+                    "updated_at": now.isoformat(),
+                }
+            )
+        )
 
         workflows = api.list_workflows()
         assert len(workflows) == 2
@@ -100,13 +113,17 @@ class TestListWorkflows:
         for wf_id, status in [("run1", "running"), ("run2", "running"), ("done1", "done")]:
             wf_dir = api.workflows_dir / wf_id
             wf_dir.mkdir()
-            (wf_dir / "meta.json").write_text(json.dumps({
-                "id": wf_id,
-                "name": f"workflow-{wf_id}",
-                "status": status,
-                "created_at": now.isoformat(),
-                "updated_at": now.isoformat(),
-            }))
+            (wf_dir / "meta.json").write_text(
+                json.dumps(
+                    {
+                        "id": wf_id,
+                        "name": f"workflow-{wf_id}",
+                        "status": status,
+                        "created_at": now.isoformat(),
+                        "updated_at": now.isoformat(),
+                    }
+                )
+            )
 
         running = api.list_workflows(status=[WorkflowStatus.RUNNING])
         assert len(running) == 2
@@ -124,32 +141,40 @@ class TestListWorkflows:
             wf_dir = api.workflows_dir / wf_id
             wf_dir.mkdir()
             updated_at = base_time + timedelta(hours=i)
-            (wf_dir / "meta.json").write_text(json.dumps({
-                "id": wf_id,
-                "name": f"workflow-{wf_id}",
-                "status": "running",
-                "created_at": base_time.isoformat(),
-                "updated_at": updated_at.isoformat(),
-            }))
+            (wf_dir / "meta.json").write_text(
+                json.dumps(
+                    {
+                        "id": wf_id,
+                        "name": f"workflow-{wf_id}",
+                        "status": "running",
+                        "created_at": base_time.isoformat(),
+                        "updated_at": updated_at.isoformat(),
+                    }
+                )
+            )
 
         workflows = api.list_workflows()
         assert workflows[0].id == "newest"
         assert workflows[1].id == "middle"
         assert workflows[2].id == "oldest"
 
-    def test_list_workflows_ignores_invalid_meta(self, api: ConductorAPI):
-        """list_workflows skips workflows with invalid meta.json."""
+    def test_list_workflows_warns_about_invalid_meta(self, api: ConductorAPI):
+        """list_workflows keeps good entries and warns about corrupt meta.json."""
         now = datetime.now(timezone.utc)
 
         valid_dir = api.workflows_dir / "valid123"
         valid_dir.mkdir()
-        (valid_dir / "meta.json").write_text(json.dumps({
-            "id": "valid123",
-            "name": "valid",
-            "status": "running",
-            "created_at": now.isoformat(),
-            "updated_at": now.isoformat(),
-        }))
+        (valid_dir / "meta.json").write_text(
+            json.dumps(
+                {
+                    "id": "valid123",
+                    "name": "valid",
+                    "status": "running",
+                    "created_at": now.isoformat(),
+                    "updated_at": now.isoformat(),
+                }
+            )
+        )
 
         invalid_dir = api.workflows_dir / "invalid"
         invalid_dir.mkdir()
@@ -158,9 +183,15 @@ class TestListWorkflows:
         missing_dir = api.workflows_dir / "missing"
         missing_dir.mkdir()
 
-        workflows = api.list_workflows()
+        with pytest.warns(_state_warning_type()) as warning_records:
+            workflows = api.list_workflows()
+
         assert len(workflows) == 1
         assert workflows[0].id == "valid123"
+        warning = warning_records[0]
+        assert warning.category.__name__ == "ConductorStateWarning"
+        assert str(invalid_dir / "meta.json") in str(warning.message)
+        assert "Expecting value" in str(warning.message)
 
 
 class TestGetWorkflow:
@@ -218,13 +249,17 @@ class TestGetWorkflow:
         for wf_id in ["abc12345", "abc67890"]:
             wf_dir = api.workflows_dir / wf_id
             wf_dir.mkdir()
-            (wf_dir / "meta.json").write_text(json.dumps({
-                "id": wf_id,
-                "name": f"workflow-{wf_id}",
-                "status": "running",
-                "created_at": now.isoformat(),
-                "updated_at": now.isoformat(),
-            }))
+            (wf_dir / "meta.json").write_text(
+                json.dumps(
+                    {
+                        "id": wf_id,
+                        "name": f"workflow-{wf_id}",
+                        "status": "running",
+                        "created_at": now.isoformat(),
+                        "updated_at": now.isoformat(),
+                    }
+                )
+            )
 
         with pytest.raises(ValueError, match="Ambiguous") as exc_info:
             api.get_workflow("abc")
@@ -246,14 +281,18 @@ class TestStopWorkflow:
         wf_id = "run12345"
         wf_dir = api.workflows_dir / wf_id
         wf_dir.mkdir()
-        (wf_dir / "meta.json").write_text(json.dumps({
-            "id": wf_id,
-            "name": "running-workflow",
-            "status": "running",
-            "created_at": now.isoformat(),
-            "updated_at": now.isoformat(),
-            "agents": ["agent-1", "agent-2"],
-        }))
+        (wf_dir / "meta.json").write_text(
+            json.dumps(
+                {
+                    "id": wf_id,
+                    "name": "running-workflow",
+                    "status": "running",
+                    "created_at": now.isoformat(),
+                    "updated_at": now.isoformat(),
+                    "agents": ["agent-1", "agent-2"],
+                }
+            )
+        )
         return wf_id
 
     def test_stop_workflow(self, api: ConductorAPI, running_workflow: str):
@@ -297,13 +336,17 @@ class TestWatchWorkflow:
         now = datetime.now(timezone.utc)
         wf_dir = api.workflows_dir / "done1234"
         wf_dir.mkdir()
-        (wf_dir / "meta.json").write_text(json.dumps({
-            "id": "done1234",
-            "name": "done-workflow",
-            "status": "done",
-            "created_at": now.isoformat(),
-            "updated_at": now.isoformat(),
-        }))
+        (wf_dir / "meta.json").write_text(
+            json.dumps(
+                {
+                    "id": "done1234",
+                    "name": "done-workflow",
+                    "status": "done",
+                    "created_at": now.isoformat(),
+                    "updated_at": now.isoformat(),
+                }
+            )
+        )
 
         updates = list(api.watch_workflow("done1234", poll_interval=0.01))
         assert len(updates) == 1
@@ -321,20 +364,67 @@ class TestListWorkspaces:
 
     def test_list_workspaces_empty(self, api: ConductorAPI, tmp_path: Path):
         """list_workspaces returns empty list when no workspaces exist."""
-        with patch("doeff_conductor.handlers.workspace_handler._get_workspace_base_dir") as mock_base:
+        with patch(
+            "doeff_conductor.handlers.workspace_handler._get_workspace_base_dir"
+        ) as mock_base:
             mock_base.return_value = tmp_path / "empty-workspaces"
             workspaces = api.list_workspaces()
         assert workspaces == []
 
     def test_list_workspaces_with_mock(self, api: ConductorAPI, tmp_path: Path):
         """list_workspaces returns workspace objects."""
-        with patch("doeff_conductor.handlers.workspace_handler._get_workspace_base_dir") as mock_base:
+        with patch(
+            "doeff_conductor.handlers.workspace_handler._get_workspace_base_dir"
+        ) as mock_base:
             workspace_base = tmp_path / "workspaces"
             workspace_base.mkdir()
             mock_base.return_value = workspace_base
 
             workspaces = api.list_workspaces()
             assert isinstance(workspaces, list)
+
+    def test_list_workspaces_warns_when_git_branch_lookup_fails(
+        self,
+        api: ConductorAPI,
+        tmp_path: Path,
+    ):
+        """list_workspaces reports unreadable worktrees without dropping good ones."""
+        with patch(
+            "doeff_conductor.handlers.workspace_handler._get_workspace_base_dir"
+        ) as mock_base:
+            workspace_base = tmp_path / "workspaces"
+            repo_base = workspace_base / "default"
+            good_workspace = repo_base / "good"
+            bad_workspace = repo_base / "bad"
+            (good_workspace / ".git").mkdir(parents=True)
+            (bad_workspace / ".git").mkdir(parents=True)
+            mock_base.return_value = workspace_base
+
+            def fake_run(*args, **kwargs):
+                cwd = Path(kwargs["cwd"])
+                if cwd.name == "bad":
+                    return SimpleNamespace(
+                        returncode=128,
+                        stdout="",
+                        stderr="fatal: invalid worktree",
+                    )
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout="conductor/good\n",
+                    stderr="",
+                )
+
+            with (
+                patch("subprocess.run", side_effect=fake_run),
+                pytest.warns(_state_warning_type()) as warning_records,
+            ):
+                workspaces = api.list_workspaces()
+
+        assert [workspace.id for workspace in workspaces] == ["good"]
+        warning = warning_records[0]
+        assert warning.category.__name__ == "ConductorStateWarning"
+        assert str(bad_workspace) in str(warning.message)
+        assert "fatal: invalid worktree" in str(warning.message)
 
 
 class TestCleanupWorkspaces:
@@ -347,14 +437,18 @@ class TestCleanupWorkspaces:
 
     def test_cleanup_workspaces_empty(self, api: ConductorAPI, tmp_path: Path):
         """cleanup_workspaces returns empty list when no workspaces exist."""
-        with patch("doeff_conductor.handlers.workspace_handler._get_workspace_base_dir") as mock_base:
+        with patch(
+            "doeff_conductor.handlers.workspace_handler._get_workspace_base_dir"
+        ) as mock_base:
             mock_base.return_value = tmp_path / "empty-workspaces"
             cleaned = api.cleanup_workspaces()
         assert cleaned == []
 
     def test_cleanup_workspaces_dry_run(self, api: ConductorAPI, tmp_path: Path):
         """cleanup_workspaces dry_run doesn't delete."""
-        with patch("doeff_conductor.handlers.workspace_handler._get_workspace_base_dir") as mock_base:
+        with patch(
+            "doeff_conductor.handlers.workspace_handler._get_workspace_base_dir"
+        ) as mock_base:
             workspace_base = tmp_path / "workspaces"
             repo_base = workspace_base / "default"
             repo_base.mkdir(parents=True)
@@ -455,7 +549,9 @@ class TestRunWorkflow:
         assert handle.status == WorkflowStatus.DONE
         assert handle.result_payload == "test_value"
 
-    def test_run_workflow_extracts_pr_url_from_real_run_result(self, api: ConductorAPI, tmp_path: Path):
+    def test_run_workflow_extracts_pr_url_from_real_run_result(
+        self, api: ConductorAPI, tmp_path: Path
+    ):
         workflow_file = tmp_path / "pr_url_workflow.hy"
         workflow_file.write_text("""
 (require doeff-hy.conductor [defworkflow])
