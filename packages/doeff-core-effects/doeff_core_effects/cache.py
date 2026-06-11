@@ -9,13 +9,16 @@ is not yet ported. This module provides the core cache helpers and a simplified
 @cache decorator.
 """
 
+import contextlib
 import os
 import tempfile
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, TypeVar
 
-from frozendict import frozendict as FrozenDict
+from frozendict import (
+    frozendict as FrozenDict,  # noqa: N812 - public FrozenDict alias is intentionally stable
+)
 
 from doeff import UnhandledEffect, do
 from doeff_core_effects.memo_effects import MemoExists, MemoGet, MemoPut
@@ -131,20 +134,16 @@ def cache(
 
             # Best-effort store: if no memo handler is installed, swallow. The
             # compute result returned above is authoritative.
-            try:
+            with contextlib.suppress(UnhandledEffect):
                 yield MemoPut(cache_key_obj, result, policy=memo_policy)
-            except UnhandledEffect:
-                pass
             return result
 
         # Preserve metadata
         for attr in ("__name__", "__qualname__", "__doc__", "__module__"):
             val = getattr(func, attr, None)
             if val is not None:
-                try:
+                with contextlib.suppress(AttributeError, TypeError):
                     setattr(cached_fn, attr, val)
-                except (AttributeError, TypeError):
-                    pass
 
         return cached_fn
 
