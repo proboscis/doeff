@@ -190,9 +190,9 @@ lawは「全ハンドラについての定理」ではなく**ハンドラ契約
 1. GetHandlersのコア公認とlaw(§4-6)
 2. Skipのselective層への再定式化(§4-3)
 3. Traverse並列意味論(applicative層の実装充足)
-4. 残骸削除issue群: VarStore一式(④に統合 — global_state/writer_log含む)、PromptBoundary.types、MaskSpec(constraint-graph §4)
+4. ~~残骸削除issue群~~ → **issue化完了(2026-06-12)**: VarStore一式 [#461](https://github.com/proboscis/doeff/issues/461)、PromptBoundary.types [#464](https://github.com/proboscis/doeff/issues/464)、MaskSpec [#465](https://github.com/proboscis/doeff/issues/465)、SPEC-EFF-002更新 [#466](https://github.com/proboscis/doeff/issues/466)
 5. **カバレッジ実測**: 過去タスク20個をこの生成元集合(G1〜G5)で書き直し、7割未満なら切り口を疑う(戦略文書の基準 — 本セッション外)
-6. ~~CS1/CC5のproperty test化~~ → **第一段完了(2026-06-12)**: `tests/laws/test_generator_laws.py`(21 passed)。残: hypothesis乱択化+simドライバ(AW2反例の決定論的再現に必要 — codex委譲候補)
+6. ~~CS1/CC5のproperty test化~~ → **第一段完了(2026-06-12)**: `tests/laws/test_generator_laws.py`(21 passed)。残のissue化完了: hypothesis乱択化 [#462](https://github.com/proboscis/doeff/issues/462)、simドライバ(AW2反例の決定論的再現)[#463](https://github.com/proboscis/doeff/issues/463)
 
 ## 7. インタプリタ分離の現状
 
