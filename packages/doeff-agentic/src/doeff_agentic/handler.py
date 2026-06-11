@@ -1,6 +1,6 @@
 """Backward-compatible re-export for legacy handler imports."""
 
-from .handlers.production import (  # noqa: F401
+from .handlers.production import (
     AgenticHandler,
     WorkflowContext,
     agent_handler,

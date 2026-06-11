@@ -1,7 +1,6 @@
 """Tests for uv dependency detection and rewriting."""
 
-import hy  # noqa: F401
-import tempfile
+import hy  # noqa: F401 - activates Hy import hooks for test modules
 from pathlib import Path
 
 from doeff_ml_nexus.uv_deps import (

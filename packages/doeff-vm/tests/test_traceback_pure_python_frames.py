@@ -29,10 +29,9 @@ Example from production:
 """
 
 import pytest
-
-from doeff import Program, do, run
 from doeff_vm import WithHandler
 
+from doeff import Program, do, run
 
 # --- Pure Python function that raises ---
 
@@ -85,7 +84,7 @@ def test_pure_python_frames_in_traceback():
         run(program)
 
     exc = exc_info.value
-    tb_data = getattr(exc, '__doeff_traceback__', None)
+    tb_data = getattr(exc, "__doeff_traceback__", None)
 
     # The traceback data should exist
     assert tb_data is not None, (
@@ -122,7 +121,7 @@ def test_pure_python_frames_without_handler():
         run(program_calling_pure_function())
 
     exc = exc_info.value
-    tb_data = getattr(exc, '__doeff_traceback__', None)
+    tb_data = getattr(exc, "__doeff_traceback__", None)
 
     # Even without handlers, the pure Python frames should be captured
     if tb_data is not None:
@@ -165,7 +164,7 @@ def test_deep_handler_chain_preserves_python_frames():
         run(program)
 
     exc = exc_info.value
-    tb_data = getattr(exc, '__doeff_traceback__', None)
+    tb_data = getattr(exc, "__doeff_traceback__", None)
     assert tb_data is not None
 
     frame_names = []

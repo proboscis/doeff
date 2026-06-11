@@ -3,7 +3,7 @@ Pytest configuration and fixtures for doeff-conductor tests.
 
 This module provides:
 - Custom markers for E2E and OpenCode-dependent tests
-- Fixtures for test repositories and worktrees
+- Fixtures for test repositories and workspaces
 - Detection functions for external dependencies
 """
 
@@ -172,11 +172,11 @@ def test_repo(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def worktree_base(tmp_path: Path) -> Path:
-    """Fixture providing a temporary directory for worktrees."""
-    worktrees = tmp_path / "worktrees"
-    worktrees.mkdir()
-    return worktrees
+def workspace_base(tmp_path: Path) -> Path:
+    """Fixture providing a temporary directory for workspace materializations."""
+    workspaces = tmp_path / "workspaces"
+    workspaces.mkdir()
+    return workspaces
 
 
 @pytest.fixture
@@ -253,23 +253,21 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     """Auto-skip tests based on markers and environment."""
     for item in items:
         # Skip requires_opencode tests if OpenCode not available
-        if "requires_opencode" in item.keywords:
-            if not is_opencode_available():
-                item.add_marker(
-                    pytest.mark.skip(reason="OpenCode not available. Start server or install CLI.")
-                )
+        if "requires_opencode" in item.keywords and not is_opencode_available():
+            item.add_marker(
+                pytest.mark.skip(reason="OpenCode not available. Start server or install CLI.")
+            )
 
         # Skip e2e tests if not enabled (unless running with -m e2e)
-        if "e2e" in item.keywords:
-            if not is_e2e_enabled():
-                # Check if running with explicit e2e marker
-                markexpr = config.getoption("-m", default=None)
-                if markexpr is None or "e2e" not in str(markexpr):
-                    item.add_marker(
-                        pytest.mark.skip(
-                            reason="E2E tests disabled. Set CONDUCTOR_E2E=1 or use -m e2e"
-                        )
+        if "e2e" in item.keywords and not is_e2e_enabled():
+            # Check if running with explicit e2e marker
+            markexpr = config.getoption("-m", default=None)
+            if markexpr is None or "e2e" not in str(markexpr):
+                item.add_marker(
+                    pytest.mark.skip(
+                        reason="E2E tests disabled. Set CONDUCTOR_E2E=1 or use -m e2e"
                     )
+                )
 
 
 __all__ = [

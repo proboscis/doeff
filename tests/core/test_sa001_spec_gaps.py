@@ -14,14 +14,9 @@ Spec references:
 
 from __future__ import annotations
 
-import inspect
 import pathlib
 import re
 
-import pytest
-
-from doeff import Get, Put, default_handlers, run
-from tests._run_helpers import run_with_defaults
 # REMOVED: from doeff.program import GeneratorProgram
 
 RUST_SRC = pathlib.Path(__file__).resolve().parents[2] / "packages" / "doeff-vm" / "src"
@@ -30,7 +25,7 @@ CORE_EFFECTS_SRC = pathlib.Path(__file__).resolve().parents[2] / "packages" / "d
 
 def _prog(gen_factory):
     """Wrap a generator factory into a GeneratorProgram (has to_generator)."""
-    return GeneratorProgram(gen_factory)
+    return GeneratorProgram(gen_factory)  # noqa: F821 - legacy removed API reference is intentionally preserved
 
 
 def _read_rust(filename: str) -> str:
@@ -93,6 +88,7 @@ class TestSA001G07BasesWired:
     def test_python_effectbase_extends_rust(self):
         """Python EffectBase must be isinstance-compatible with Rust PyEffectBase."""
         from doeff_vm import EffectBase as RustEffectBase
+
         from doeff import EffectBase
 
         assert issubclass(EffectBase, RustEffectBase), (
@@ -141,8 +137,7 @@ class TestSA001G12BaseClasses:
 
     def test_do_call_result_is_not_effectbase(self):
         """@do call results should be DoCtrl, not EffectBase values."""
-        from doeff import do
-        from doeff import EffectBase
+        from doeff import EffectBase, do
 
         @do
         def identity(x: int):

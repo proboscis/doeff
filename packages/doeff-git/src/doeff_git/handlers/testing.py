@@ -93,7 +93,7 @@ def mock_handlers(
     active_runtime = runtime or MockGitRuntime()
 
     @do
-    def handler(effect: Effect, k: Any):
+    def handler(effect: Effect, k: Any):  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
         if isinstance(effect, GitCommit):
             return (yield Resume(k, active_runtime.handle_commit(effect)))
         if isinstance(effect, GitDiff):
@@ -109,7 +109,7 @@ def mock_handlers(
         if isinstance(effect, MergePR):
             active_runtime.handle_merge_pr(effect)
             return (yield Resume(k, None))
-        return (yield Pass())
+        return (yield Pass(effect, k))
 
     return handler
 

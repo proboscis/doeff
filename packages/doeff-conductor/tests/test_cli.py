@@ -3,7 +3,7 @@
 Tests all CLI commands using Click's CliRunner for:
 - Workflow commands: run, ps, show, watch, stop
 - Issue commands: create, list, show, resolve
-- Environment commands: list, cleanup
+- Workspace commands: list, cleanup
 - Template commands: list, show
 """
 
@@ -18,7 +18,7 @@ from doeff_conductor.cli import cli
 from doeff_conductor.types import (
     Issue,
     IssueStatus,
-    WorktreeEnv,
+    Workspace,
 )
 
 
@@ -71,7 +71,7 @@ class TestWorkflowCommands(TestCLIBase):
             "issue_id": "ISSUE-001",
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
-            "environments": [],
+            "workspaces": [],
             "agents": [],
         }
         (workflow_dir / "meta.json").write_text(json.dumps(workflow_data))
@@ -160,7 +160,7 @@ class TestWorkflowCommands(TestCLIBase):
             "issue_id": "ISSUE-001",
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
-            "environments": ["env-1"],
+            "workspaces": ["env-1"],
             "agents": ["agent-1"],
         }
         (workflow_dir / "meta.json").write_text(json.dumps(workflow_data))
@@ -283,7 +283,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_create(self, runner: CliRunner, tmp_issues_dir: Path):
         """Create a new issue via CLI."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
             mock_issue = Issue(
                 id="ISSUE-001",
@@ -292,7 +292,7 @@ class TestIssueCommands(TestCLIBase):
                 status=IssueStatus.OPEN,
             )
             mock_handler.handle_create_issue.return_value = mock_issue
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, [
                 "issue", "create", "Test Issue",
@@ -303,7 +303,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_create_with_labels(self, runner: CliRunner, tmp_issues_dir: Path):
         """Create an issue with labels."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
             mock_issue = Issue(
                 id="ISSUE-001",
@@ -313,7 +313,7 @@ class TestIssueCommands(TestCLIBase):
                 labels=("feature", "urgent"),
             )
             mock_handler.handle_create_issue.return_value = mock_issue
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, [
                 "issue", "create", "Feature",
@@ -325,7 +325,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_create_json(self, runner: CliRunner, tmp_issues_dir: Path):
         """Test JSON output for issue create."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
             now = datetime.now(timezone.utc)
             mock_issue = Issue(
@@ -336,7 +336,7 @@ class TestIssueCommands(TestCLIBase):
                 created_at=now,
             )
             mock_handler.handle_create_issue.return_value = mock_issue
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, [
                 "issue", "create", "Test Issue",
@@ -350,10 +350,10 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_list_empty(self, runner: CliRunner):
         """List issues when none exist."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
             mock_handler.handle_list_issues.return_value = []
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, ["issue", "list"])
             assert result.exit_code == 0
@@ -361,7 +361,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_list_with_issues(self, runner: CliRunner):
         """List existing issues."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
             now = datetime.now(timezone.utc)
             mock_issues = [
@@ -382,7 +382,7 @@ class TestIssueCommands(TestCLIBase):
                 ),
             ]
             mock_handler.handle_list_issues.return_value = mock_issues
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, ["issue", "list"])
             assert result.exit_code == 0
@@ -392,9 +392,9 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_list_filter_status(self, runner: CliRunner):
         """Filter issues by status."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
             mock_handler.handle_list_issues.return_value = []
 
             result = runner.invoke(cli, [
@@ -408,7 +408,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_list_json(self, runner: CliRunner):
         """Test JSON output for issue list."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
             now = datetime.now(timezone.utc)
             mock_issues = [
@@ -421,7 +421,7 @@ class TestIssueCommands(TestCLIBase):
                 ),
             ]
             mock_handler.handle_list_issues.return_value = mock_issues
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, ["issue", "list", "--json"])
             assert result.exit_code == 0
@@ -432,7 +432,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_show(self, runner: CliRunner):
         """Show issue details."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
             now = datetime.now(timezone.utc)
             mock_issue = Issue(
@@ -444,7 +444,7 @@ class TestIssueCommands(TestCLIBase):
                 created_at=now,
             )
             mock_handler.handle_get_issue.return_value = mock_issue
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, ["issue", "show", "ISSUE-001"])
             assert result.exit_code == 0
@@ -453,7 +453,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_show_json(self, runner: CliRunner):
         """Test JSON output for issue show."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
             now = datetime.now(timezone.utc)
             mock_issue = Issue(
@@ -464,7 +464,7 @@ class TestIssueCommands(TestCLIBase):
                 created_at=now,
             )
             mock_handler.handle_get_issue.return_value = mock_issue
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, ["issue", "show", "ISSUE-001", "--json"])
             assert result.exit_code == 0
@@ -473,7 +473,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_resolve(self, runner: CliRunner):
         """Resolve an issue."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
             now = datetime.now(timezone.utc)
             mock_issue = Issue(
@@ -494,7 +494,7 @@ class TestIssueCommands(TestCLIBase):
             )
             mock_handler.handle_get_issue.return_value = mock_issue
             mock_handler.handle_resolve_issue.return_value = resolved_issue
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, [
                 "issue", "resolve", "ISSUE-001",
@@ -505,7 +505,7 @@ class TestIssueCommands(TestCLIBase):
 
     def test_issue_resolve_json(self, runner: CliRunner):
         """Test JSON output for issue resolve."""
-        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as MockHandler:
+        with patch("doeff_conductor.handlers.issue_handler.IssueHandler") as mock_handler_class:
             mock_handler = MagicMock()
             now = datetime.now(timezone.utc)
             mock_issue = Issue(
@@ -526,7 +526,7 @@ class TestIssueCommands(TestCLIBase):
             )
             mock_handler.handle_get_issue.return_value = mock_issue
             mock_handler.handle_resolve_issue.return_value = resolved_issue
-            MockHandler.return_value = mock_handler
+            mock_handler_class.return_value = mock_handler
 
             result = runner.invoke(cli, [
                 "issue", "resolve", "ISSUE-001",
@@ -538,121 +538,125 @@ class TestIssueCommands(TestCLIBase):
             assert data["status"] == "resolved"
 
 
-class TestEnvironmentCommands(TestCLIBase):
-    """Tests for environment-related CLI commands."""
+class TestWorkspaceCommands(TestCLIBase):
+    """Tests for workspace-related CLI commands."""
 
-    def test_env_list_empty(self, runner: CliRunner, tmp_state_dir: Path):
-        """List environments when none exist."""
-        result = runner.invoke(
-            cli, ["--state-dir", str(tmp_state_dir), "env", "list"]
-        )
+    def test_workspace_list_empty(self, runner: CliRunner, tmp_state_dir: Path):
+        """List workspaces when none exist."""
+        with patch("doeff_conductor.api.ConductorAPI.list_workspaces", return_value=[]):
+            result = runner.invoke(
+                cli, ["--state-dir", str(tmp_state_dir), "workspace", "list"]
+            )
         assert result.exit_code == 0
-        assert "No environments found" in result.output
+        assert "No workspaces found" in result.output
 
-    def test_env_list_with_envs(self, runner: CliRunner, tmp_state_dir: Path):
-        """List existing environments."""
-        with patch("doeff_conductor.api.ConductorAPI.list_environments") as mock_list:
+    def test_workspace_list_with_items(self, runner: CliRunner, tmp_state_dir: Path):
+        """List existing workspaces."""
+        with patch("doeff_conductor.api.ConductorAPI.list_workspaces") as mock_list:
             now = datetime.now(timezone.utc)
-            mock_envs = [
-                WorktreeEnv(
-                    id="env-abc123",
-                    path=Path("/tmp/worktrees/env-abc123"),
-                    branch="feature/issue-001",
-                    base_commit="abc123def456",
+            mock_workspaces = [
+                Workspace(
+                    id="workspace-abc123",
+                    repo="default",
+                    ref="feature/issue-001",
+                    base_ref="main",
                     issue_id="ISSUE-001",
                     created_at=now,
                 ),
             ]
-            mock_list.return_value = mock_envs
+            mock_list.return_value = mock_workspaces
 
             result = runner.invoke(
-                cli, ["--state-dir", str(tmp_state_dir), "env", "list"]
+                cli, ["--state-dir", str(tmp_state_dir), "workspace", "list"]
             )
             assert result.exit_code == 0
-            assert "env-abc1" in result.output  # Truncated ID
+            assert "workspace-ab" in result.output  # Truncated ID
+            assert "default" in result.output
             assert "feature/issue-001" in result.output
 
-    def test_env_list_json(self, runner: CliRunner, tmp_state_dir: Path):
-        """Test JSON output for env list."""
-        with patch("doeff_conductor.api.ConductorAPI.list_environments") as mock_list:
+    def test_workspace_list_json(self, runner: CliRunner, tmp_state_dir: Path):
+        """Test JSON output for workspace list."""
+        with patch("doeff_conductor.api.ConductorAPI.list_workspaces") as mock_list:
             now = datetime.now(timezone.utc)
-            mock_envs = [
-                WorktreeEnv(
-                    id="env-abc123",
-                    path=Path("/tmp/worktrees/env-abc123"),
-                    branch="feature/issue-001",
-                    base_commit="abc123",
+            mock_workspaces = [
+                Workspace(
+                    id="workspace-abc123",
+                    repo="default",
+                    ref="feature/issue-001",
+                    base_ref="main",
                     created_at=now,
                 ),
             ]
-            mock_list.return_value = mock_envs
+            mock_list.return_value = mock_workspaces
 
             result = runner.invoke(
-                cli, ["--state-dir", str(tmp_state_dir), "env", "list", "--json"]
+                cli, ["--state-dir", str(tmp_state_dir), "workspace", "list", "--json"]
             )
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert isinstance(data, list)
             assert len(data) == 1
-            assert data[0]["id"] == "env-abc123"
+            assert data[0]["id"] == "workspace-abc123"
+            assert "path" not in data[0]
 
-    def test_env_cleanup_dry_run(self, runner: CliRunner, tmp_state_dir: Path):
-        """Test environment cleanup with dry run."""
-        with patch("doeff_conductor.api.ConductorAPI.cleanup_environments") as mock_cleanup:
+    def test_workspace_cleanup_dry_run(self, runner: CliRunner, tmp_state_dir: Path):
+        """Test workspace cleanup with dry run."""
+        with patch("doeff_conductor.api.ConductorAPI.cleanup_workspaces") as mock_cleanup:
             mock_cleanup.return_value = [
-                Path("/tmp/worktrees/old-env-1"),
-                Path("/tmp/worktrees/old-env-2"),
+                Path("/tmp/workspaces/old-workspace-1"),
+                Path("/tmp/workspaces/old-workspace-2"),
             ]
 
             result = runner.invoke(
-                cli, ["--state-dir", str(tmp_state_dir), "env", "cleanup", "--dry-run"]
+                cli, ["--state-dir", str(tmp_state_dir), "workspace", "cleanup", "--dry-run"]
             )
             assert result.exit_code == 0
             assert "Would clean" in result.output
             mock_cleanup.assert_called_once_with(dry_run=True, older_than_days=None)
 
-    def test_env_cleanup_actual(self, runner: CliRunner, tmp_state_dir: Path):
-        """Test actual environment cleanup."""
-        with patch("doeff_conductor.api.ConductorAPI.cleanup_environments") as mock_cleanup:
-            mock_cleanup.return_value = [Path("/tmp/worktrees/old-env")]
+    def test_workspace_cleanup_actual(self, runner: CliRunner, tmp_state_dir: Path):
+        """Test actual workspace cleanup."""
+        with patch("doeff_conductor.api.ConductorAPI.cleanup_workspaces") as mock_cleanup:
+            mock_cleanup.return_value = [Path("/tmp/workspaces/old-workspace")]
 
             result = runner.invoke(
-                cli, ["--state-dir", str(tmp_state_dir), "env", "cleanup"]
+                cli, ["--state-dir", str(tmp_state_dir), "workspace", "cleanup"]
             )
             assert result.exit_code == 0
             assert "Cleaned" in result.output
 
-    def test_env_cleanup_empty(self, runner: CliRunner, tmp_state_dir: Path):
-        """Test cleanup when no orphaned environments."""
-        with patch("doeff_conductor.api.ConductorAPI.cleanup_environments") as mock_cleanup:
+    def test_workspace_cleanup_empty(self, runner: CliRunner, tmp_state_dir: Path):
+        """Test cleanup when no orphaned workspaces."""
+        with patch("doeff_conductor.api.ConductorAPI.cleanup_workspaces") as mock_cleanup:
             mock_cleanup.return_value = []
 
             result = runner.invoke(
-                cli, ["--state-dir", str(tmp_state_dir), "env", "cleanup"]
+                cli, ["--state-dir", str(tmp_state_dir), "workspace", "cleanup"]
             )
             assert result.exit_code == 0
-            assert "No orphaned environments found" in result.output
+            assert "No orphaned workspaces found" in result.output
 
-    def test_env_cleanup_json(self, runner: CliRunner, tmp_state_dir: Path):
-        """Test JSON output for env cleanup."""
-        with patch("doeff_conductor.api.ConductorAPI.cleanup_environments") as mock_cleanup:
-            mock_cleanup.return_value = [Path("/tmp/worktrees/old-env")]
+    def test_workspace_cleanup_json(self, runner: CliRunner, tmp_state_dir: Path):
+        """Test JSON output for workspace cleanup."""
+        with patch("doeff_conductor.api.ConductorAPI.cleanup_workspaces") as mock_cleanup:
+            mock_cleanup.return_value = [Path("/tmp/workspaces/old-workspace")]
 
             result = runner.invoke(
-                cli, ["--state-dir", str(tmp_state_dir), "env", "cleanup", "--json"]
+                cli, ["--state-dir", str(tmp_state_dir), "workspace", "cleanup", "--json"]
             )
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert "cleaned" in data
             assert len(data["cleaned"]) == 1
 
-    def test_env_cleanup_older_than(self, runner: CliRunner, tmp_state_dir: Path):
+    def test_workspace_cleanup_older_than(self, runner: CliRunner, tmp_state_dir: Path):
         """Test cleanup with age filter."""
-        with patch("doeff_conductor.api.ConductorAPI.cleanup_environments") as mock_cleanup:
+        with patch("doeff_conductor.api.ConductorAPI.cleanup_workspaces") as mock_cleanup:
             mock_cleanup.return_value = []
 
             result = runner.invoke(
-                cli, ["--state-dir", str(tmp_state_dir), "env", "cleanup", "--older-than", "7"]
+                cli,
+                ["--state-dir", str(tmp_state_dir), "workspace", "cleanup", "--older-than", "7"],
             )
             assert result.exit_code == 0
             mock_cleanup.assert_called_once_with(dry_run=False, older_than_days=7)
@@ -681,7 +685,7 @@ class TestTemplateCommands(TestCLIBase):
 
     def test_template_show(self, runner: CliRunner):
         """Show template source code or error due to DoYieldFunction.
-        
+
         Note: The @do decorator wraps functions in DoYieldFunction which
         cannot be inspected with getsource(). This is an existing limitation.
         """
@@ -701,6 +705,19 @@ class TestTemplateCommands(TestCLIBase):
 class TestRunCommand(TestCLIBase):
     """Tests for the run command."""
 
+    def test_run_command_has_no_agent_mode_option(
+        self,
+        runner: CliRunner,
+    ):
+        """Run command exposes no worker backend selector."""
+        result = runner.invoke(cli, ["run", "--help"])
+
+        assert result.exit_code == 0
+        removed_option = "--agent" + "-mode"
+        removed_envvar = "CONDUCTOR_AGENT" + "_MODE"
+        assert removed_option not in result.output
+        assert removed_envvar not in result.output
+
     def test_run_template_not_found(self, runner: CliRunner, tmp_state_dir: Path):
         """Run a non-existent template."""
         result = runner.invoke(
@@ -712,7 +729,7 @@ class TestRunCommand(TestCLIBase):
     def test_run_file_not_found(self, runner: CliRunner, tmp_state_dir: Path):
         """Run a non-existent workflow file."""
         result = runner.invoke(
-            cli, ["--state-dir", str(tmp_state_dir), "run", "/nonexistent/workflow.py"]
+            cli, ["--state-dir", str(tmp_state_dir), "run", "/nonexistent/workflow.hy"]
         )
         assert result.exit_code == 1
 
@@ -728,7 +745,7 @@ class TestHelpOutput(TestCLIBase):
         assert "run" in result.output
         assert "ps" in result.output
         assert "issue" in result.output
-        assert "env" in result.output
+        assert "workspace" in result.output
         assert "template" in result.output
 
     def test_issue_help(self, runner: CliRunner):
@@ -740,9 +757,9 @@ class TestHelpOutput(TestCLIBase):
         assert "show" in result.output
         assert "resolve" in result.output
 
-    def test_env_help(self, runner: CliRunner):
-        """Test env subcommand help."""
-        result = runner.invoke(cli, ["env", "--help"])
+    def test_workspace_help(self, runner: CliRunner):
+        """Test workspace subcommand help."""
+        result = runner.invoke(cli, ["workspace", "--help"])
         assert result.exit_code == 0
         assert "list" in result.output
         assert "cleanup" in result.output

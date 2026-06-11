@@ -16,6 +16,7 @@ Run:
 
 import time
 
+from doeff.effects.writer import slog
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticEndOfEvents,
@@ -29,7 +30,6 @@ from doeff_agentic.opencode_handler import opencode_handler
 from doeff_preset import preset_handlers
 
 from doeff import do
-from doeff.effects.writer import slog
 
 
 def get_last_assistant_message(messages: list[AgenticMessage]) -> str:

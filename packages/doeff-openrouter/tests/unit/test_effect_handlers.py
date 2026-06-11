@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 import pytest
+from doeff_core_effects.effects import EffectBase as Effect
 from doeff_llm.effects import (
     LLMChat,
     LLMEmbedding,
@@ -27,7 +28,6 @@ from doeff_openrouter.handlers import (
 from pydantic import BaseModel
 
 from doeff import Delegate, Resume, WithHandler, default_handlers, do, run
-from doeff_core_effects.effects import EffectBase as Effect
 
 
 class StructuredPayload(BaseModel):

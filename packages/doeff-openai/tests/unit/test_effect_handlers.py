@@ -4,6 +4,8 @@
 from typing import Any
 
 import pytest
+from _runner import run_program
+from doeff_core_effects.effects import EffectBase
 from doeff_llm.effects import (
     LLMChat,
     LLMEmbedding,
@@ -37,9 +39,6 @@ from doeff import (
     WithHandler,
     do,
 )
-from doeff_core_effects.effects import EffectBase
-
-from _runner import run_program
 
 
 class StructuredAnswer(BaseModel):

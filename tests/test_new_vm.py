@@ -5,8 +5,10 @@ Raw generators are NOT accepted by the VM — use @do or DoExpr wrappers.
 """
 
 import pytest
-from doeff_vm import PyVM, K, Callable, EffectBase, IRStream
-from doeff import Pass, do, run as doeff_run, WithHandler
+from doeff_vm import EffectBase, PyVM
+
+from doeff import Pass, WithHandler, do
+from doeff import run as doeff_run
 from doeff.program import program
 
 
@@ -82,7 +84,7 @@ class TestBasicPrograms:
         assert vm.run(Pure(None)) is None
 
     def test_pure_bool(self, vm):
-        assert vm.run(Pure(True)) == True
+        assert vm.run(Pure(True))
 
     def test_run_rejects_raw_generator(self, vm):
         """Raw generators must not be accepted — use DoExpr."""
@@ -268,7 +270,7 @@ class TestErrors:
             yield Perform(None)
 
         with pytest.raises(RuntimeError):
-            doeff_run(WithHandler(lambda e, k: Pure(None), program(body)))
+            doeff_run(WithHandler(lambda _e, _k: Pure(None), program(body)))
 
     def test_no_handler_error(self):
         """Performing without a handler raises an error."""
@@ -285,7 +287,7 @@ class TestErrors:
         # To test no-handler, we need a body that performs inside run_with_handler
         # but with a handler that doesn't exist... or no handler at all.
         # For now, just test that the error is raised properly.
-        pass  # TODO: once Pass is tested from Python
+        # TODO: once Pass is tested from Python
 
 
 # ---------------------------------------------------------------------------

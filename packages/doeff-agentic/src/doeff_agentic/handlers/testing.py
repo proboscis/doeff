@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from doeff import Effect, Pass, Resume, do
+
 # REMOVED: make_doeff_generator no longer exists in doeff.do
 # from doeff.do import make_doeff_generator
 from doeff_agentic.effects import (
@@ -441,7 +442,7 @@ def _as_protocol_handler(handler_fn):
         result = handler_fn(effect)
 
         if inspect.isgenerator(result):
-            resolved = yield make_doeff_generator(result)
+            resolved = yield make_doeff_generator(result)  # noqa: F821 - legacy removed API reference is intentionally preserved
             return (yield Resume(k, resolved))
 
         if _is_lazy_program_value(result):

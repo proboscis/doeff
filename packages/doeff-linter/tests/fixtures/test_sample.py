@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 
 # DOEFF001: Builtin shadowing
-def dict():  # Should trigger DOEFF001
+def dict():  # Should trigger DOEFF001  # noqa: A001 - fixture intentionally uses builtin shadowing sample
     return {}
 
 

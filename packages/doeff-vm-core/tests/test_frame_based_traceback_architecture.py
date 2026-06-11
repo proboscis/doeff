@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 CORE_ROOT = Path(__file__).resolve().parents[1]
 TRACE_STATE_RS = CORE_ROOT / "src/trace_state.rs"
 CAPTURE_RS = CORE_ROOT / "src/capture.rs"

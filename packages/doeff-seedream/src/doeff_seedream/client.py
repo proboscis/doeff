@@ -54,7 +54,7 @@ class SeedreamClient:
     The client is intentionally lightweight: it only knows how to POST JSON
     payloads to ``/images/generations`` and leaves retry, logging, and
     higher-level orchestration to ``structured_llm``. Instances can be reused
-    safely across requests – every method is stateless and builds up the
+    safely across requests - every method is stateless and builds up the
     payload for each call.
     """
 
@@ -129,11 +129,11 @@ def get_seedream_client() -> EffectGenerator[SeedreamClient]:
     The resolver checks the following keys (in order) before falling back to
     constructing a new client:
 
-    - ``seedream_client`` – expected to be a ready-to-use :class:`SeedreamClient`
+    - ``seedream_client`` - expected to be a ready-to-use :class:`SeedreamClient`
       instance.
-    - ``seedream_api_key`` – string API key used to authorise requests.
-    - ``seedream_base_url`` – override for self-hosted or staging Ark endpoints.
-    - ``seedream_default_headers`` – additional HTTP headers to merge into each
+    - ``seedream_api_key`` - string API key used to authorise requests.
+    - ``seedream_base_url`` - override for self-hosted or staging Ark endpoints.
+    - ``seedream_default_headers`` - additional HTTP headers to merge into each
       request (for example to set ``X-Volc-Region``).
     """
 
@@ -237,8 +237,7 @@ def track_api_call(
         meta["error"] = repr(error)
 
     yield Tell(
-        "Seedream %s %s in %.0f ms"
-        % (
+        "Seedream {} {} in {:.0f} ms".format(
             operation,
             "failed" if error else "succeeded",
             latency_ms,

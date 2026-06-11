@@ -11,13 +11,10 @@ repeated handler frames, suggesting O(N) nested handler invocations.
 Expected: traverse over 300+ items should work without deep recursion.
 """
 
-import pytest
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from doeff import EffectBase, Pass, Program, Resume, do, run, slog
-from doeff_vm import WithHandler
 from doeff_core_effects import Ask, Get, Put
 from doeff_core_effects.handlers import (
     await_handler,
@@ -30,9 +27,12 @@ from doeff_core_effects.handlers import (
     writer,
 )
 from doeff_core_effects.scheduler import scheduled
-from doeff_traverse.effects import Inspect, Traverse
-from doeff_traverse.handlers import parallel, sequential, fail_handler
 from doeff_time import GetTime, WaitUntil, sim_time_handler
+from doeff_traverse.effects import Inspect, Traverse
+from doeff_traverse.handlers import fail_handler, parallel
+from doeff_vm import WithHandler
+
+from doeff import EffectBase, Pass, Program, Resume, do, run, slog
 
 
 @do
@@ -247,7 +247,7 @@ def test_traverse_300_with_sim_time():
 
 
 def test_traverse_300_multi_effect_with_sim_time():
-    """300 items × 3+ effects each + sim_time_handler.
+    """300 items x 3+ effects each + sim_time_handler.
 
     Closest reproduction of production: each traverse item performs
     GetTime + Ask + slog effects with sim_time_handler active.
@@ -273,7 +273,7 @@ def test_traverse_100_waituntil_with_sim_time():
 
 
 def test_traverse_300_waituntil_with_sim_time():
-    """300 items × WaitUntil — stress test for sim_time + traverse.
+    """300 items x WaitUntil — stress test for sim_time + traverse.
 
     This is the most demanding test: 300 concurrent traverse items,
     each issuing WaitUntil to different sim times, forcing the
@@ -289,8 +289,8 @@ def test_traverse_300_waituntil_with_sim_time():
 #
 # Production handler stack has 15+ handlers between the program and the
 # scheduler. Each effect round-trip traverses the full handler chain.
-# With N items × M effects/item × D handler depth, the total continuation
-# depth grows as O(N × M × D), eventually causing stack overflow.
+# With N items x M effects/item x D handler depth, the total continuation
+# depth grows as O(N x M x D), eventually causing stack overflow.
 
 
 def _make_passthrough_handler(tag: str):
@@ -316,7 +316,7 @@ def _run_deep_stack(program, n_extra_handlers=15, concurrency=40):
       → sim_time
       → sqlite_cache → openai → yahoo_finance → news_minio → news_polygon
       → sim_exchange → margin → cache → slack → parallel → fail → slog
-      → memo_rewriters (×4)
+      → memo_rewriters (x4)
 
     That's ~20+ handlers. Each effect in a traverse item must traverse
     the full chain on every yield. This test simulates that depth.
@@ -341,7 +341,7 @@ def _run_deep_stack(program, n_extra_handlers=15, concurrency=40):
 
 
 def test_traverse_100_deep_stack():
-    """100 items × GetTime + deep handler stack (15 extra handlers)."""
+    """100 items x GetTime + deep handler stack (15 extra handlers)."""
     result = _run_deep_stack(
         _make_traverse_program(100, process_item_with_time),
         n_extra_handlers=15,
@@ -350,7 +350,7 @@ def test_traverse_100_deep_stack():
 
 
 def test_traverse_300_deep_stack():
-    """300 items × GetTime + deep handler stack (15 extra handlers).
+    """300 items x GetTime + deep handler stack (15 extra handlers).
 
     This is the closest reproduction of the production failure:
     - 300 items (= 300 trading days in compute_rolling_factors)
@@ -366,10 +366,10 @@ def test_traverse_300_deep_stack():
 
 
 def test_traverse_300_multi_effect_deep_stack():
-    """300 items × 3+ effects × deep handler stack.
+    """300 items x 3+ effects x deep handler stack.
 
-    Each item does GetTime + Ask + 2×slog = 4 effect round-trips,
-    each traversing 20+ handlers. Total continuation depth ~ 300 × 4 × 20.
+    Each item does GetTime + Ask + 2xslog = 4 effect round-trips,
+    each traversing 20+ handlers. Total continuation depth ~ 300 x 4 x 20.
     """
     result = _run_deep_stack(
         _make_traverse_program(300, process_item_time_multi_effect),
@@ -380,7 +380,7 @@ def test_traverse_300_multi_effect_deep_stack():
 
 
 def test_traverse_500_multi_effect_deep_stack():
-    """500 items × 3+ effects × deep handler stack — stress test."""
+    """500 items x 3+ effects x deep handler stack — stress test."""
     result = _run_deep_stack(
         _make_traverse_program(500, process_item_time_multi_effect),
         n_extra_handlers=15,
@@ -389,7 +389,7 @@ def test_traverse_500_multi_effect_deep_stack():
 
 
 def test_traverse_300_very_deep_stack():
-    """300 items × GetTime + 30 extra handlers — extreme depth.
+    """300 items x GetTime + 30 extra handlers — extreme depth.
 
     Tests whether handler chain depth alone causes issues at scale.
     """
@@ -430,9 +430,9 @@ def process_item_domain(i: int) -> Program[int]:
     3. DomainQuery (handled by domain handler — Resume)
     4. slog (handled by slog handler)
 
-    4 effects × handler catching = deeper continuation chain per item.
+    4 effects x handler catching = deeper continuation chain per item.
     """
-    now = yield GetTime()
+    yield GetTime()
     cached = yield CacheCheckEffect(key=f"item_{i}")
     if cached is None:
         result = yield DomainQueryEffect(key=f"item_{i}")
@@ -468,7 +468,7 @@ def _run_deep_catching_stack(program, concurrency=40):
     - 10 passthrough handlers for additional depth
     """
     cache_handler = _make_catching_handler(
-        CacheCheckEffect, lambda e: None  # always cache miss
+        CacheCheckEffect, lambda _e: None  # always cache miss
     )
     domain_handler = _make_catching_handler(
         DomainQueryEffect, lambda e: hash(e.key) % 100  # deterministic result
@@ -496,7 +496,7 @@ def _run_deep_catching_stack(program, concurrency=40):
 
 
 def test_traverse_100_catching_handlers():
-    """100 items × domain effects + catching handlers."""
+    """100 items x domain effects + catching handlers."""
     result = _run_deep_catching_stack(
         _make_traverse_program(100, process_item_domain)
     )
@@ -504,7 +504,7 @@ def test_traverse_100_catching_handlers():
 
 
 def test_traverse_300_catching_handlers():
-    """300 items × domain effects + catching handlers.
+    """300 items x domain effects + catching handlers.
 
     Closest to production: 300 items each performing 4 effects
     (GetTime, CacheCheck, DomainQuery, slog) with handlers that
@@ -517,7 +517,7 @@ def test_traverse_300_catching_handlers():
 
 
 def test_traverse_500_catching_handlers():
-    """500 items × domain effects + catching handlers — stress test."""
+    """500 items x domain effects + catching handlers — stress test."""
     result = _run_deep_catching_stack(
         _make_traverse_program(500, process_item_domain)
     )

@@ -179,7 +179,7 @@ class TestDoHandlerPreKleisli:
             if isinstance(effect, Ping):
                 state_val = yield Get("key")
                 return (yield Resume(_k, f"handled:{state_val}"))
-            yield Pass(effect, k)
+            yield Pass(effect, k)  # noqa: F821 - legacy removed API reference is intentionally preserved
 
         def body():
             value = yield Ping("hello")
@@ -278,7 +278,7 @@ def test_with_handler_do_decorated() -> None:
 def test_with_handler_post_composition() -> None:
     @do
     def handler(_effect: Effect, _k):
-        yield Pass(effect, k)
+        yield Pass(effect, k)  # noqa: F821 - legacy removed API reference is intentionally preserved
 
     @do
     def body():

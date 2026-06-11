@@ -13,18 +13,13 @@ Verifies:
 import importlib
 import sys
 import textwrap
-
-import pytest
-
-import hy
-import hy.compiler
-import hy.reader
-
-import doeff_hy  # noqa — registers extensions
-from doeff import DoExpr, WithHandler, Resume, Pass, run, do as _doeff_do
-from doeff import EffectBase
 from dataclasses import dataclass
 
+import doeff_hy  # noqa — registers extensions
+import pytest
+
+from doeff import EffectBase, Pass, Resume, WithHandler, run
+from doeff import do as _doeff_do
 
 # ---------------------------------------------------------------------------
 # Test effect + handler for use in deftest tests
@@ -40,7 +35,7 @@ def stub_handler():
     def _handler(effect, k):
         if isinstance(effect, GetValue):
             values = {"price": 100.0, "name": "TestCo"}
-            yield Resume(k, values.get(effect.key, None))
+            yield Resume(k, values.get(effect.key))
         else:
             yield Pass(effect, k)
     return _handler

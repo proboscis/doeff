@@ -8,12 +8,12 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, get_args, get_origin
 
+from doeff_core_effects.effects import EffectBase as Effect
 from doeff_image.effects import ImageEdit, ImageGenerate
 from doeff_image.types import ImageResult
 from PIL import Image as PILImage
 
 from doeff import Delegate, Resume, do
-from doeff_core_effects.effects import EffectBase as Effect
 from doeff_seedream.effects import SeedreamGenerate, SeedreamStructuredOutput
 from doeff_seedream.types import SeedreamImage, SeedreamImageEditResult
 

@@ -5,8 +5,8 @@ so the e2e suite can import it via a relative path too. We insert the
 parent ``tests/`` dir on ``sys.path`` so ``import _runner`` works from any
 test under this package.
 """
-from pathlib import Path
 import sys
+from pathlib import Path
 
 TESTS_DIR = Path(__file__).resolve().parent.parent
 if str(TESTS_DIR) not in sys.path:

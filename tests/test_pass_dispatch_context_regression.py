@@ -12,15 +12,10 @@ fails to find the dispatch context in certain handler nesting patterns.
 
 from __future__ import annotations
 
-import pytest
-
 import doeff
-from doeff import WithHandler, do
-from doeff import EffectBase
+
 # REMOVED: from doeff_core_effects.cache import in_memory_cache_handler, memo_rewriters
-from doeff import default_handlers, run
-from doeff import EffectGenerator
-from tests._run_helpers import run_with_defaults
+from doeff import EffectBase, WithHandler, do
 
 
 class EffectA(EffectBase):

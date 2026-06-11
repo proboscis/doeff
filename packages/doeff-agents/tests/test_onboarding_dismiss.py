@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from doeff_agents.session import _dismiss_onboarding_dialogs  # noqa: E402
+from doeff_agents.session import _dismiss_onboarding_dialogs
 
 
 class FakeBackend:
@@ -35,8 +35,8 @@ class FakeBackend:
 def test_dismiss_onboarding_does_not_treat_theme_prompt_as_ready() -> None:
     backend = FakeBackend(
         [
-            "Choose the text style that looks best with your terminal\n❯ 1. Dark mode",
-            "❯ Ready for input",
+            "Choose the text style that looks best with your terminal\n❯ 1. Dark mode",  # noqa: RUF001 - test fixture intentionally matches the literal rendered glyph
+            "❯ Ready for input",  # noqa: RUF001 - test fixture intentionally matches the literal rendered glyph
         ]
     )
 

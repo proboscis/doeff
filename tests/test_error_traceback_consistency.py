@@ -3,8 +3,9 @@
 Tests cover all user-facing error paths to ensure consistent visualization.
 """
 import pytest
-from doeff import do, run, WithHandler, Resume, Pass
 from doeff_vm import EffectBase
+
+from doeff import Pass, WithHandler, do, run
 
 
 class Unhandled(EffectBase):
@@ -123,6 +124,6 @@ def test_chained_pass_traceback():
     tb = getattr(exc_info.value, "__doeff_traceback__", None)
     assert tb is not None
     # Should have handler chain entries
-    handler_entries = [e for e in tb if isinstance(e, list) and len(e) >= 2 and e[0] == "handler"]
+    [e for e in tb if isinstance(e, list) and len(e) >= 2 and e[0] == "handler"]
     # At minimum, should have frame entries
     assert_has_doeff_traceback(exc_info.value)

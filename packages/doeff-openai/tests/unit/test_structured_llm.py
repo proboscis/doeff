@@ -6,6 +6,7 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from _runner import run_program
 from doeff_openai import (
     get_api_calls,
     gpt5_structured,
@@ -32,8 +33,6 @@ from doeff import (
     WithHandler,
     do,
 )
-
-from _runner import run_program
 
 
 # Test models for structured output

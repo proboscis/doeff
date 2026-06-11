@@ -2,12 +2,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import doeff_vm
-from doeff import Gather, Pass, Resume, Spawn, WithHandler, do
 from doeff_core_effects.effects import EffectBase
+
+from doeff import Gather, Pass, Resume, Spawn, WithHandler, do
+from doeff import run as vm_run
+
 Effect = EffectBase
 # REMOVED: from doeff_core_effects.cache_handlers import memo_rewriters, sqlite_cache_handler
 # REMOVED: from doeff_vm import default_handlers
-from doeff import run as vm_run
 
 
 def test_memory_stats_exported_with_expected_keys():
@@ -72,20 +74,19 @@ def test_memory_stats_counts_return_to_baseline_after_deep_handler_spawn_chain(
             values = yield Gather(*tasks)
             if len(values) != 20:
                 raise AssertionError(f"expected 20 values, got {len(values)}")
-        return None
 
     wrapped = scenario()
     for handler in reversed(
         (
             synthetic_query_handler(),
-            *memo_rewriters(SyntheticQuery),
-            sqlite_cache_handler(cache_path),
+            *memo_rewriters(SyntheticQuery),  # noqa: F821 - legacy removed API reference is intentionally preserved
+            sqlite_cache_handler(cache_path),  # noqa: F821 - legacy removed API reference is intentionally preserved
         )
     ):
         wrapped = WithHandler(handler, wrapped)
 
     before = doeff_vm.memory_stats()
-    result = vm_run(wrapped, handlers=default_handlers())
+    result = vm_run(wrapped, handlers=default_handlers())  # noqa: F821 - legacy removed API reference is intentionally preserved
     after = doeff_vm.memory_stats()
 
     assert result.is_ok()
@@ -128,13 +129,12 @@ def test_pyvm_run_releases_internal_vm_capacities_after_deep_handler_spawn_chain
             values = yield Gather(*tasks)
             if len(values) != 20:
                 raise AssertionError(f"expected 20 values, got {len(values)}")
-        return None
 
     program = scenario()
     for handler in reversed(
         (
             synthetic_query_handler(),
-            *default_handlers(),
+            *default_handlers(),  # noqa: F821 - legacy removed API reference is intentionally preserved
         )
     ):
         program = WithHandler(handler, program)
