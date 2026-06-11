@@ -50,8 +50,8 @@ def reviewed_pr(
     Returns:
         PRHandle for the created PR
     """
-    # Step 1: Create isolated workspace
-    env = yield CreateWorkspace(issue=issue)
+    # Step 1: Create isolated workspace (identity is resume-stable per issue)
+    env = yield CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-reviewed-pr")
 
     # Step 2: Run agent to implement the issue
     implement_prompt = f"""

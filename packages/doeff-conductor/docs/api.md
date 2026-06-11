@@ -162,50 +162,55 @@ handle = WorkflowHandle(
 
 #### `CreateWorkspace`
 
-Create a new git workspace environment.
+Ensure the git workspace bound to a resume-stable identity exists.
+Idempotent: re-emitting the same `workspace_id` re-adopts the existing
+branch and worktree (uncommitted changes preserved); a missing worktree
+whose branch exists is re-materialized from the branch; creation from the
+base ref happens exactly once per identity lifetime.
 
 ```python
 from doeff_conductor import CreateWorkspace
 
 # Basic usage
-workspace = yield CreateWorkspace()
+workspace = yield CreateWorkspace(workspace_id="issue-123-impl")
 
 # With issue
-workspace = yield CreateWorkspace(issue=issue)
-
-# With custom branch suffix
-workspace = yield CreateWorkspace(issue=issue, suffix="impl")
+workspace = yield CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-impl")
 
 # With specific base ref
-workspace = yield CreateWorkspace(from_ref="develop")
+workspace = yield CreateWorkspace(workspace_id="feature-x", from_ref="develop")
 ```
 
 **Parameters:**
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
+| `workspace_id` | `str` | Required | Resume-stable identity; determines branch and worktree |
 | `issue` | `Issue \| None` | `None` | Issue to create workspace for |
 | `from_ref` | `str \| None` | `None` | Base ref (default: main/master) |
-| `suffix` | `str \| None` | `None` | Branch suffix for parallel workspaces |
-| `name` | `str \| None` | `None` | Custom workspace name |
 
 **Returns:** `Workspace`
 
 #### `MergeWorkspaces`
 
-Reconcile multiple workspaces.
+Reconcile multiple workspaces. The merged workspace carries the same
+resume-stable identity discipline as `CreateWorkspace`.
 
 ```python
 from doeff_conductor import MergeWorkspaces, MergeStrategy
 
 # Basic merge
-merge_result = yield MergeWorkspaces(workspaces=(workspace1, workspace2))
+merge_result = yield MergeWorkspaces(
+    workspace_id="issue-123-merged",
+    workspaces=(workspace1, workspace2),
+)
 if not merge_result.merged:
     raise RuntimeError(merge_result.message)
 merged = merge_result.workspace
 
 # With strategy
 merged = yield MergeWorkspaces(
+    workspace_id="issue-123-merged",
     workspaces=(workspace1, workspace2, workspace3),
     strategy=MergeStrategy.SQUASH,
 )
@@ -215,9 +220,9 @@ merged = yield MergeWorkspaces(
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
+| `workspace_id` | `str` | Required | Resume-stable identity for the merged workspace |
 | `workspaces` | `tuple[Workspace, ...]` | Required | Workspaces to reconcile |
 | `strategy` | `MergeStrategy \| None` | `None` | Merge strategy |
-| `name` | `str \| None` | `None` | Name for merged workspace |
 
 **Returns:** `MergeWorkspacesResult`
 

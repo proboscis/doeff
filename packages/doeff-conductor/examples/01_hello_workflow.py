@@ -10,7 +10,7 @@ from doeff_conductor.handlers import mock_handlers, run_sync
 @do
 def hello_workflow() -> EffectGenerator[str]:
     """Create a workspace, write a file through Exec, commit, and clean up."""
-    workspace: Workspace = yield CreateWorkspace(suffix="hello")
+    workspace: Workspace = yield CreateWorkspace(workspace_id="example-hello")
 
     result = yield Exec(
         cmd="printf '%s\n' 'Hello from doeff-conductor!' > hello.txt",
