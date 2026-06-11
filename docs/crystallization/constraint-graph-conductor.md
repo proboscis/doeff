@@ -82,7 +82,7 @@ workspace識別(C8) <──同型── 「識別は式座標の純関数」 ─
 | 欠陥 | 核 | 破れているlaw | 状態 |
 |---|---|---|---|
 | workspace! がresume非安定(偽green) | K3 | L-K3-3 | 既知(検証台帳・スキル記録済み) |
-| parallel直列化(ハンドラ内同期RPC) | K4 | L-K4-1/2 | **live実証 2026-06-12** run `doeff-review-20260612-1` |
+| parallel直列化(ハンドラ内同期RPC) | K4 | L-K4-1/2 | **fixed** — `make_offloaded_scheduled_handler` bridges the blocking RPC through ExternalPromise+daemon thread (law ratified, integration test + semgrep rule shipped) |
 | gate answerの書き側不在 | K5 | L-K5-1 | **live probe発見 2026-06-12**(grep "answer" = src 0件) |
 | await budget所有軸が未決(検証台帳 §11-7) | K4の縁 | L-K4-1の系(budget更新は誰の決定か) | open |
 | `conductor wait` verb不在 | 独立 | — | issue候補(codex可) |

@@ -23,6 +23,7 @@
 (import doeff [WithHandler])
 (import doeff_core_effects.scheduler [CreateExternalPromise Wait Spawn PRIORITY_IDLE])
 (import doeff_agents.mcp-server [McpToolServer McpToolRequest])
+(import queue [Empty])
 
 
 (defk run-tool-with-stack [server full-stack req]
@@ -84,7 +85,7 @@
       (setv req None)
       (try
         (setv req (.get-nowait server.request-queue))
-        (except [_ Exception]
+        (except [_ Empty]
           (setv req None)))
       (when (is-not req None)
         (<- _ (Spawn (run-tool-with-stack server full-stack req))))))
