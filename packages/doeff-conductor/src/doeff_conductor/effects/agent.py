@@ -16,7 +16,7 @@ from doeff_agents.effects import (  # re-exported for conductor callers
 )
 
 from doeff_conductor.effects.base import ConductorEffectBase
-from doeff_conductor.replay_keying import ResolvedIdentity
+from doeff_conductor.replay_keying import ResolvedIdentity, resolved_identity_fingerprint
 
 if TYPE_CHECKING:
     from doeff_conductor.types import Workspace
@@ -44,9 +44,20 @@ class AgentTask:
 
     @property
     def session_id(self) -> str:
+        # A session is one execution of (run, node, attempt, RESOLVED
+        # IDENTITY): the fingerprint digest must enter the name, or a
+        # profile edit between resumes is invalidated by the journal
+        # (new generation, correct) but then served the STALE result by
+        # name-only idempotent re-adoption at L2 (observed live: an
+        # effort change re-dispatched every agent and got the old
+        # sessions' payloads back in seconds, defeating D7 end to end).
+        node_key = self.node_id
+        if self.resolved_identity is not None:
+            digest = resolved_identity_fingerprint(self.resolved_identity)[:8]
+            node_key = f"{self.node_id}-{digest}"
         return deterministic_session_id(
             run_id=self.run_id,
-            node_id=self.node_id,
+            node_id=node_key,
             attempt=self.attempt,
         )
 
