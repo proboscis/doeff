@@ -26,11 +26,14 @@ impl VM {
             action,
             error_context,
         } = signal;
-        match action {
+        let result = match action {
             SignalAction::Eval(doctrl) => self.step_eval(doctrl, error_context),
             SignalAction::Send(value) => self.step_send(value, error_context),
             SignalAction::Raise(error) => self.step_raise(error, error_context),
-        }
+        };
+        #[cfg(feature = "invariant-checks")]
+        self.assert_invariants_after_step();
+        result
     }
 
     // -------------------------------------------------------------------

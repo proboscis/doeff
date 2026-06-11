@@ -381,6 +381,25 @@ impl Continuation {
     }
 }
 
+#[cfg(feature = "invariant-checks")]
+impl Continuation {
+    /// Pointer identity of the shared chain cell. Backup handles created via
+    /// `share_handle` report the same address — used by the invariant checker
+    /// to deduplicate cells before locking (avoids double-count and re-lock).
+    pub(crate) fn cell_addr(&self) -> usize {
+        Arc::as_ptr(&self.chain) as usize
+    }
+
+    /// Inspect the current chain contents without consuming (None = consumed).
+    pub(crate) fn inspect_chain<R>(&self, f: impl FnOnce(Option<&DetachedFiberChain>) -> R) -> R {
+        let guard = self
+            .chain
+            .lock()
+            .expect("Continuation chain mutex poisoned");
+        f(guard.as_ref())
+    }
+}
+
 impl Drop for Continuation {
     fn drop(&mut self) {
         memory_stats::unregister_continuation();
