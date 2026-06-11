@@ -1,6 +1,6 @@
 """Tests for uv-image Dockerfile generation."""
 
-import hy  # noqa: F401
+import hy  # noqa: F401 - activates Hy import hooks for test modules
 
 from doeff import run, WithHandler, do
 from doeff_core_effects import reader, writer, slog_handler
