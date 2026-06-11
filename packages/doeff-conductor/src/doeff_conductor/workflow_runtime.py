@@ -50,9 +50,10 @@ class _RuntimeContext:
     registry: ProfileRegistry
     issue: Issue | None
     bindings: dict[str, Any] = dataclass_field(default_factory=dict)
-    # Keyed by the workspace node's stable identity (its expansion-time node
-    # path), NOT by Python object id — the same occurrence must bind the same
-    # workspace across process restarts (resume stability).
+    # Keyed by the workspace EXPRESSION's source-order occurrence, NOT by
+    # Python object id and NOT by evaluation site — one workspace! value
+    # shared by several nodes must bind one workspace, identically across
+    # process restarts (resume stability).
     workspace_cache: dict[str, Workspace] = dataclass_field(default_factory=dict)
 
 
@@ -651,10 +652,14 @@ def _workspace_identity(run_id: str, node_key: str) -> str:
     """Derive the resume-stable workspace identity for one workspace node.
 
     Deterministic in ``(run_id, node_key)`` so re-running the same run id
-    re-binds the same branch and worktree; the digest disambiguates node keys
-    that collapse to the same slug.
+    re-binds the same branch and worktree. The digest must cover BOTH
+    inputs: slugs are lossy (every punctuation character collapses to
+    ``-``), so a node-key-only digest let run ids differing only in
+    punctuation collide into one identity — the second run then silently
+    re-adopted the first run's branch including its commits (review
+    finding F1, reproduced live).
     """
-    digest: str = hashlib.sha256(node_key.encode("utf-8")).hexdigest()[:8]
+    digest: str = hashlib.sha256(f"{run_id}\n{node_key}".encode("utf-8")).hexdigest()[:8]
     slug: str = _slugify(node_key)[-48:].strip("-")
     return f"{_slugify(run_id)}-{slug}-{digest}"
 
