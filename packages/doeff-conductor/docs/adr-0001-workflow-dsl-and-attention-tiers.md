@@ -400,6 +400,53 @@ Contract:
 - Corollary: no CI can ever see these files, which is why the
   nondeterminism gate must live in the loader (D2) and nowhere else.
 
+### D11 — Non-blocking handler composition and the await budget axis (K4 laws)
+
+**Context:** D1 declares "concurrency is structural" (parallel/pipeline
+compile to Spawn/Gather), D1/D6 make worker waiting an agentd RPC
+(`await_result`), and the runtime uses a cooperative scheduler
+(`run(scheduled(WithHandler(conductor_handler, program)))`). The three
+decisions individually are correct, but their **composition** was
+under-specified: `DaemonAgentHandler.handle_await_result` blocked
+synchronously inside the handler, freezing the scheduler's dispatch loop
+and preventing sibling parallel branches from launching (live-proven
+2026-06-12, run `doeff-review-20260612-1`: 6-branch parallel, only 1
+session after 5 minutes). The fix bridges unbounded handler I/O through
+the scheduler's `ExternalPromise` mechanism.
+
+**Laws ratified:**
+
+- **L-K4-1 (non-blocking handler):** An effect handler must not perform
+  unbounded blocking I/O synchronously. Unbounded waits enter ONLY via
+  the scheduler's Await / external-completion path
+  (`scheduler.py:CreateExternalPromise` + daemon thread + `Wait`).
+  Bounded fast RPCs (e.g. `launch_session`, `send_session`) may remain
+  synchronous.
+
+- **L-K4-2 (overlap observable):** For pending parallel agent nodes a, b:
+  session lifetimes intersect, and
+  `wall_clock(parallel(a, b)) < wall_clock(a) + wall_clock(b)`.
+  Enforced by integration test (stub agentd sessions with controlled
+  delay, asserting overlap and sub-additive wall time).
+
+**Await budget axis owner:** The L2 attempt loop (`_run_agent_task` in
+`doeff-agents/handlers/production.py`) is the SINGLE authority for
+timeout/retry budgets. `timeout_seconds` flows to agentd exactly as
+before; validation-failure retries stay in L2. The bridge must not
+introduce a second timeout authority. This bounds the open defect §11-7
+from the validation campaign.
+
+**Cancellation contract:** When a Gather fails fast (sibling error), the
+still-pending offload threads are daemon threads bounded by the
+server-side `await_budget + RPC_TIMEOUT_MARGIN_SECONDS`. No client-side
+polling loops or cancellation tokens are introduced; the server-side
+budget is the backstop.
+
+**Static enforcement:** A semgrep rule forbids synchronous
+`await_result()` calls inside `handle_*` methods of effect handlers in
+`packages/doeff-conductor` and `packages/doeff-agents`, allowing only
+the bridged/offloaded form.
+
 ## Implementation plan (stages; each lands with tests)
 
 - **C1 — agent boundary (L2 core + `agent!`)**: implement the D6 algebra
