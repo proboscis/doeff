@@ -37,6 +37,7 @@ class WorkflowStatus(Enum):
     BLOCKED = "blocked"
     DONE = "done"
     ERROR = "error"
+    STOPPED = "stopped"
     ABORTED = "aborted"
 
     def is_terminal(self) -> bool:
@@ -44,6 +45,7 @@ class WorkflowStatus(Enum):
         return self in (
             WorkflowStatus.DONE,
             WorkflowStatus.ERROR,
+            WorkflowStatus.STOPPED,
             WorkflowStatus.ABORTED,
         )
 
