@@ -373,6 +373,18 @@ exist to solve, so supervision is a **trust dial**: first runs of a new
 workflow run supervised; the dial relaxes toward `autonomous` as
 calibration escape rates earn it.
 
+**Laws (K5 — closure/adjudication core):**
+
+- **L-K5-1 (operational closure):** for every open gate *g*, there exists
+  `answer(g, o)` with `o ∈ options(g)`, recorded in the gate answer
+  journal (`gate-answer-journal.jsonl`), consumed by `resume`, after
+  which the run leaves the parked state. "For every read verb there is a
+  write verb."
+- **L-K5-2 (adjudication determinism):** answers are part of replay
+  identity — `resume` after an answer replays the same decision.
+  Re-adjudication is a NEW appended journal entry, never an in-place
+  edit of a previous answer.
+
 ### D10 — Workflows are ephemeral request artifacts, never version-controlled code
 
 A workflow encodes ONE request ("implement these four features in
