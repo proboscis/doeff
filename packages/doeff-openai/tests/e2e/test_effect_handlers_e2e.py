@@ -4,18 +4,17 @@
 import os  # noqa: PINJ050 — only for the RUN_OPENAI_E2E gate; the API key itself flows through a handler below
 
 import pytest
+from _runner import (
+    doeff_py_has_openai_key,
+    openai_api_key_from_doeff_py_handler,
+    run_program,
+)
 from doeff_openai.effects import ChatCompletion as ChatCompletionEffect
 from doeff_openai.effects import StructuredOutput
 from doeff_openai.handlers import production_handlers
 from pydantic import BaseModel
 
 from doeff import EffectGenerator, WithHandler, do
-
-from _runner import (
-    doeff_py_has_openai_key,
-    openai_api_key_from_doeff_py_handler,
-    run_program,
-)
 
 pytestmark = pytest.mark.e2e
 

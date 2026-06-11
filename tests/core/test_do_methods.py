@@ -3,10 +3,7 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
-import doeff_vm
-import pytest
-
-from doeff import Program, default_handlers, do, run
+from doeff import Program, do
 from tests._run_helpers import run_with_defaults
 
 

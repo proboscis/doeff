@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 """Example 01: minimal workspace workflow."""
 
-from doeff import EffectGenerator, do
-
 from doeff_conductor import Commit, CreateWorkspace, DeleteWorkspace, Exec, Workspace
 from doeff_conductor.handlers import mock_handlers, run_sync
+
+from doeff import EffectGenerator, do
 
 
 @do

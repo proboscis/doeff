@@ -1,15 +1,14 @@
 """Tests for doeff-traverse: Fail, Traverse, Reduce, Zip, Inspect, Skip, SortBy, Take."""
 
-from doeff import do, run
-from doeff.program import WithHandler
-
 from doeff_core_effects.handlers import try_handler
 from doeff_core_effects.scheduler import scheduled
-
-from doeff_traverse.effects import Fail, Traverse, Reduce, Zip, Inspect, Skip, SortBy, Take
-from doeff_traverse.handlers import sequential, normalize_to_none, fail_handler
-from doeff_traverse.helpers import try_call
 from doeff_traverse.collection import Collection
+from doeff_traverse.effects import Fail, Inspect, Reduce, Skip, SortBy, Take, Traverse, Zip
+from doeff_traverse.handlers import fail_handler, normalize_to_none, sequential
+from doeff_traverse.helpers import try_call
+
+from doeff import do, run
+from doeff.program import WithHandler
 
 
 def run_with(program, handlers=None):
@@ -88,7 +87,7 @@ class TestTryCall:
             return (yield try_call(int, "not_a_number"))
 
         import pytest
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="invalid literal"):
             run_with(program())
 
     def test_try_call_failure_normalized(self):
@@ -263,7 +262,7 @@ class TestZip:
         """Zip combines two collections by index."""
         @do
         def program():
-            a = yield Traverse(lambda x: _pure(x), [1, 2, 3])
+            a = yield Traverse(_pure, [1, 2, 3])
             b = yield Traverse(lambda x: _pure(x * 10), [1, 2, 3])
             return (yield Zip(a, b))
 
@@ -488,7 +487,7 @@ class TestSortBy:
         """SortBy sorts valid items by key."""
         @do
         def program():
-            col = yield Traverse(lambda x: _pure(x), [3, 1, 4, 1, 5])
+            col = yield Traverse(_pure, [3, 1, 4, 1, 5])
             return (yield SortBy(lambda x: x, col))
 
         col = run_with(program())
@@ -498,7 +497,7 @@ class TestSortBy:
         """SortBy with reverse=True sorts descending."""
         @do
         def program():
-            col = yield Traverse(lambda x: _pure(x), [3, 1, 4, 1, 5])
+            col = yield Traverse(_pure, [3, 1, 4, 1, 5])
             return (yield SortBy(lambda x: x, col, reverse=True))
 
         col = run_with(program())
@@ -527,7 +526,7 @@ class TestSortBy:
         """SortBy with a key function."""
         @do
         def program():
-            col = yield Traverse(lambda x: _pure(x), ["banana", "apple", "cherry"])
+            col = yield Traverse(_pure, ["banana", "apple", "cherry"])
             return (yield SortBy(len, col))
 
         col = run_with(program())
@@ -543,7 +542,7 @@ class TestTake:
         """Take returns first n valid items."""
         @do
         def program():
-            col = yield Traverse(lambda x: _pure(x), [10, 20, 30, 40, 50])
+            col = yield Traverse(_pure, [10, 20, 30, 40, 50])
             return (yield Take(3, col))
 
         col = run_with(program())
@@ -554,7 +553,7 @@ class TestTake:
         """Take with n > len returns all items."""
         @do
         def program():
-            col = yield Traverse(lambda x: _pure(x), [1, 2])
+            col = yield Traverse(_pure, [1, 2])
             return (yield Take(10, col))
 
         col = run_with(program())
@@ -603,7 +602,7 @@ class TestTake:
         """SortBy + Take composes: top-N pattern."""
         @do
         def program():
-            col = yield Traverse(lambda x: _pure(x), [5, 3, 8, 1, 9, 2])
+            col = yield Traverse(_pure, [5, 3, 8, 1, 9, 2])
             sorted_col = yield SortBy(lambda x: x, col, reverse=True)
             return (yield Take(3, sorted_col))
 

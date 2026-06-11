@@ -1,5 +1,4 @@
-from doeff import do
-from doeff import Ask
+from doeff import Ask, do
 
 
 def helper_alpha():

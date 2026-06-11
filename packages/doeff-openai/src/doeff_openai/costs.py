@@ -34,13 +34,13 @@ def count_tokens(text: str, model: str = "gpt-3.5-turbo") -> int:
     return len(encoding.encode(text))
 
 
-def count_message_tokens(
+def count_message_tokens(  # noqa: PLR0912 - baseline cleanup keeps existing control flow unchanged
     messages: list[dict[str, Any]],
     model: str = "gpt-3.5-turbo"
 ) -> int:
     """
     Count tokens in a list of messages for chat completion.
-    
+
     Based on OpenAI's guidelines for counting tokens in chat messages.
     """
     encoding = get_encoding(model)
@@ -78,20 +78,20 @@ def count_message_tokens(
                                 num_tokens += 85  # Base cost for an image
             elif key == "name":
                 num_tokens += tokens_per_name + len(encoding.encode(value))
-            elif key == "function_call" or key == "tool_calls":
+            elif key in {"function_call", "tool_calls"}:
                 # Function calls and tool calls
                 if isinstance(value, dict):
-                    for k, v in value.items():
+                    for _k, v in value.items():
                         if isinstance(v, str):
                             num_tokens += len(encoding.encode(v))
                 elif isinstance(value, list):
                     for item in value:
                         if isinstance(item, dict):
-                            for k, v in item.items():
+                            for _k, v in item.items():
                                 if isinstance(v, str):
                                     num_tokens += len(encoding.encode(v))
                                 elif isinstance(v, dict):
-                                    for kk, vv in v.items():
+                                    for _kk, vv in v.items():
                                         if isinstance(vv, str):
                                             num_tokens += len(encoding.encode(vv))
 
@@ -102,7 +102,7 @@ def count_message_tokens(
 
 
 def count_embedding_tokens(
-    input: str | list[str],
+    input: str | list[str],  # noqa: A002 - public API parameter name is intentionally stable
     model: str = "text-embedding-3-small"
 ) -> int:
     """Count tokens for embedding input."""
@@ -195,7 +195,7 @@ def estimate_cost(
 ) -> CostInfo:
     """
     Estimate the cost of an API call.
-    
+
     Can provide either:
     - input_text and output_text for simple text
     - messages for chat completion
@@ -211,10 +211,7 @@ def estimate_cost(
             input_tokens = 0
 
     if output_tokens is None:
-        if output_text:
-            output_tokens = count_tokens(output_text, model)
-        else:
-            output_tokens = 0
+        output_tokens = count_tokens(output_text, model) if output_text else 0
 
     token_usage = TokenUsage(
         prompt_tokens=input_tokens,
@@ -250,10 +247,7 @@ def estimate_max_cost(
     if pricing is None:
         raise UnknownModelPricingError(model)
 
-    if messages:
-        input_tokens = count_message_tokens(messages, model)
-    else:
-        input_tokens = 0
+    input_tokens = count_message_tokens(messages, model) if messages else 0
 
     if max_tokens is None:
         max_tokens = pricing.max_output_tokens or 4096

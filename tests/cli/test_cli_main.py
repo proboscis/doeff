@@ -5,10 +5,9 @@ from __future__ import annotations
 import json
 
 import pytest
-from doeff import Program, run
 
 from doeff import __main__ as cli
-from tests._run_helpers import run_with_defaults
+from doeff import run
 
 pytestmark = pytest.mark.cli
 
@@ -59,17 +58,24 @@ _TEST_SYMBOL = {"imported": True}
 
 def _env_interpreter(program, env=None):
     """Interpreter for tests that resolves Ask from env dict."""
-    from doeff import WithHandler
     from doeff_core_effects.handlers import (
-        reader, state, writer, try_handler, slog_handler,
-        local_handler, listen_handler, await_handler,
+        await_handler,
+        listen_handler,
+        local_handler,
+        reader,
+        slog_handler,
+        state,
+        try_handler,
+        writer,
     )
     from doeff_core_effects.scheduler import scheduled
+
+    from doeff import WithHandler
 
     env_dict = {}
     if env is not None:
         result = run(env)
-        env_dict = result.value if hasattr(result, 'value') else result
+        env_dict = result.value if hasattr(result, "value") else result
 
     handlers = [
         reader(env_dict), state(), writer(), try_handler, slog_handler(),

@@ -7,14 +7,14 @@ It should include:
   - Which effect was not handled (type name + repr)
   - Where in user code the effect was performed (file, line, function)
 """
-from doeff import do, run, WithHandler, Resume, Pass
-from doeff_vm import EffectBase
 import pytest
+from doeff_vm import EffectBase
+
+from doeff import Pass, Resume, WithHandler, do, run
 
 
 class Handled(EffectBase):
     """An effect that WILL be handled."""
-    pass
 
 
 class Unhandled(EffectBase):

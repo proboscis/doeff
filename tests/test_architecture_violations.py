@@ -8,8 +8,8 @@ The principle: "the fiber chain IS the state."
 No accumulated state, no identity tracking, no stored fiber ID lists.
 """
 
-import subprocess
 import os
+import subprocess
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VM_CORE_SRC = os.path.join(REPO_ROOT, "packages", "doeff-vm-core", "src")
@@ -27,6 +27,7 @@ def _grep_rust(pattern: str, dirs: list[str] | None = None) -> list[str]:
     result = subprocess.run(
         ["rg", "--no-heading", "-n", "--type", "rs", pattern] + existing,
         capture_output=True, text=True,
+        check=False,
     )
     return [line for line in result.stdout.strip().split("\n") if line]
 
@@ -42,7 +43,7 @@ def _filter_non_test_non_comment(lines: list[str]) -> list[str]:
         parts = line.split(":", 2)
         if len(parts) >= 3:
             code = parts[2].strip()
-            if code.startswith("//") or code.startswith("///"):
+            if code.startswith(("//", "///")):
                 continue
         filtered.append(line)
     return filtered
@@ -54,14 +55,14 @@ class TestNoContId:
     def test_no_cont_id_struct(self):
         matches = _grep_rust(r"struct ContId")
         matches = _filter_non_test_non_comment(matches)
-        assert matches == [], f"ContId struct found:\n" + "\n".join(matches)
+        assert matches == [], "ContId struct found:\n" + "\n".join(matches)
 
     def test_no_cont_id_usage(self):
         matches = _grep_rust(r"ContId(?!.*removed)")
         matches = _filter_non_test_non_comment(matches)
         # Filter out the "// ContId removed" comments
         matches = [m for m in matches if "removed" not in m and "ContId" in m.split(":", 2)[-1]]
-        assert matches == [], f"ContId usage found:\n" + "\n".join(matches)
+        assert matches == [], "ContId usage found:\n" + "\n".join(matches)
 
 
 class TestNoCopyMachine:
@@ -70,17 +71,17 @@ class TestNoCopyMachine:
     def test_no_clone_handle(self):
         matches = _grep_rust(r"clone_handle\(\)")
         matches = _filter_non_test_non_comment(matches)
-        assert matches == [], f"clone_handle() found:\n" + "\n".join(matches)
+        assert matches == [], "clone_handle() found:\n" + "\n".join(matches)
 
     def test_no_capture_from_fiber_ids(self):
         matches = _grep_rust(r"capture_from_fiber_ids")
         matches = _filter_non_test_non_comment(matches)
-        assert matches == [], f"capture_from_fiber_ids found:\n" + "\n".join(matches)
+        assert matches == [], "capture_from_fiber_ids found:\n" + "\n".join(matches)
 
     def test_no_continuation_from_topology(self):
         matches = _grep_rust(r"continuation_from_topology")
         matches = _filter_non_test_non_comment(matches)
-        assert matches == [], f"continuation_from_topology found:\n" + "\n".join(matches)
+        assert matches == [], "continuation_from_topology found:\n" + "\n".join(matches)
 
 
 class TestNoSharedOwnership:
@@ -90,14 +91,14 @@ class TestNoSharedOwnership:
         matches = _grep_rust(r"Arc.*AtomicBool", dirs=[VM_CORE_SRC])
         # Only check continuation.rs
         matches = [m for m in matches if "continuation.rs" in m]
-        assert matches == [], f"Arc<AtomicBool> in continuation:\n" + "\n".join(matches)
+        assert matches == [], "Arc<AtomicBool> in continuation:\n" + "\n".join(matches)
 
     def test_continuation_not_clone(self):
         """Continuation must not derive or implement Clone."""
         matches = _grep_rust(r"impl Clone for Continuation", dirs=[VM_CORE_SRC])
         matches += _grep_rust(r"derive.*Clone.*Continuation|Continuation.*derive.*Clone", dirs=[VM_CORE_SRC])
         matches = _filter_non_test_non_comment(matches)
-        assert matches == [], f"Continuation implements Clone:\n" + "\n".join(matches)
+        assert matches == [], "Continuation implements Clone:\n" + "\n".join(matches)
 
 
 class TestNoStoredFiberIdLists:
@@ -123,7 +124,7 @@ class TestNoStoredFiberIdLists:
                 continue
             violations.append(m)
         assert violations == [], (
-            f"Vec<FiberId> stored on struct (should use FiberId head + parent walk):\n"
+            "Vec<FiberId> stored on struct (should use FiberId head + parent walk):\n"
             + "\n".join(violations)
         )
 
@@ -134,7 +135,7 @@ class TestNoProgramDispatch:
     def test_no_program_dispatch_struct(self):
         matches = _grep_rust(r"struct ProgramDispatch")
         matches = _filter_non_test_non_comment(matches)
-        assert matches == [], f"ProgramDispatch struct found:\n" + "\n".join(matches)
+        assert matches == [], "ProgramDispatch struct found:\n" + "\n".join(matches)
 
 
 class TestNoAccumulatedTraceState:
@@ -143,12 +144,12 @@ class TestNoAccumulatedTraceState:
     def test_no_trace_state(self):
         matches = _grep_rust(r"TraceState", dirs=[VM_CORE_SRC])
         matches = _filter_non_test_non_comment(matches)
-        assert matches == [], f"TraceState found:\n" + "\n".join(matches)
+        assert matches == [], "TraceState found:\n" + "\n".join(matches)
 
     def test_no_debug_state_on_vm(self):
         matches = _grep_rust(r"debug.*DebugState|DebugState.*debug", dirs=[VM_CORE_SRC])
         matches = _filter_non_test_non_comment(matches)
-        assert matches == [], f"DebugState on VM found:\n" + "\n".join(matches)
+        assert matches == [], "DebugState on VM found:\n" + "\n".join(matches)
 
 
 class TestFiberThreeFields:
@@ -160,11 +161,11 @@ class TestFiberThreeFields:
         # Only check segment.rs (Fiber definition)
         matches = [m for m in matches if "segment.rs" in m]
         matches = _filter_non_test_non_comment(matches)
-        assert matches == [], f"pending_* fields on Fiber:\n" + "\n".join(matches)
+        assert matches == [], "pending_* fields on Fiber:\n" + "\n".join(matches)
 
     def test_no_interceptor_fields_on_fiber(self):
         """Fiber must not have interceptor_* fields."""
         matches = _grep_rust(r"interceptor_", dirs=[VM_CORE_SRC])
         matches = [m for m in matches if "segment.rs" in m]
         matches = _filter_non_test_non_comment(matches)
-        assert matches == [], f"interceptor_* fields on Fiber:\n" + "\n".join(matches)
+        assert matches == [], "interceptor_* fields on Fiber:\n" + "\n".join(matches)

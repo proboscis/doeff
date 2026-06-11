@@ -3,8 +3,6 @@
 from io import StringIO
 
 import doeff_vm
-
-from doeff import Effect, WithHandler, default_handlers, do, run, slog
 from doeff_agentic.effects import AgenticSupportsCapability
 from doeff_agentic.visual_interceptor import (
     VisualInterceptorConfig,
@@ -12,6 +10,8 @@ from doeff_agentic.visual_interceptor import (
     with_visual_logging,
 )
 from rich.console import Console
+
+from doeff import Effect, WithHandler, default_handlers, do, run, slog
 
 
 @do

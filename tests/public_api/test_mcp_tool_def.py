@@ -1,11 +1,11 @@
 """Tests for McpToolDef and McpParamSchema dataclasses."""
 
-from doeff.mcp import McpParamSchema, McpToolDef, _MISSING
+from doeff.mcp import _MISSING, McpParamSchema, McpToolDef
 
 
 def _dummy_handler(x, y):
     """Placeholder handler for testing."""
-    return None
+    return
 
 
 class TestMcpParamSchema:
@@ -58,7 +58,7 @@ class TestMcpParamSchema:
         p = McpParamSchema(name="x", type="string", description="test")
         try:
             p.name = "y"
-            assert False, "should be frozen"
+            raise AssertionError("should be frozen")
         except AttributeError:
             pass
 
@@ -123,7 +123,7 @@ class TestMcpToolDef:
         tool = self._make_tool()
         try:
             tool.name = "x"
-            assert False, "should be frozen"
+            raise AssertionError("should be frozen")
         except AttributeError:
             pass
 

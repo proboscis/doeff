@@ -1,9 +1,9 @@
 """In-memory publish/subscribe handler."""
 
-from typing import Any
+
+from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Wait
 
 from doeff import Pass, Resume, do
-from doeff_core_effects.scheduler import CreatePromise, CompletePromise, Wait
 from doeff_events.effects import PublishEffect, WaitForEventEffect
 
 

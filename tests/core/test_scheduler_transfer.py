@@ -14,8 +14,8 @@ from doeff import (
     do,
     race,
 )
-from doeff_core_effects.scheduler import TaskCancelledError
 from tests._run_helpers import run_with_defaults
+
 # REMOVED: from doeff.traceback import attach_doeff_traceback
 
 
@@ -91,7 +91,7 @@ def test_many_task_switches_no_crash() -> None:
 def test_many_concurrent_tasks_with_error_propagation() -> None:
     """Stress test: many tasks doing many yields, one crashes mid-execution.
     Verifies Transfer-based task switching doesn't corrupt error propagation
-    even under heavy concurrency (10 healthy × 20 yields + 1 crasher × 20 yields
+    even under heavy concurrency (10 healthy x 20 yields + 1 crasher x 20 yields
     = 220 total task switches).
     """
 

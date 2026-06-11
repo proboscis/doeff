@@ -7,14 +7,12 @@ Test levels:
   1. Macro-level: _build_clause output contains Transfer, not Resume
   2. Integration: handler with many Resume-loop effects doesn't accumulate frames
 """
-import pytest
 
-import hy  # noqa: F401
 import doeff_hy  # noqa: F401 — registers macros/extensions
-from hy.models import Expression, Symbol, List as HyList, Integer as HyInt
-
+import hy  # noqa: F401 - activates Hy reader for macro tests
 from doeff_hy.handle import _build_clause
-
+from hy.models import Expression, Symbol
+from hy.models import List as HyList
 
 # ---------------------------------------------------------------------------
 # Helpers

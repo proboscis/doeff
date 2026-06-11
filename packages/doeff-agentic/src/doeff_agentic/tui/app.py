@@ -5,7 +5,8 @@ Main Textual application for doeff-agentic TUI.
 from textual.app import App
 from textual.binding import Binding
 
-from ..api import AgenticAPI
+from doeff_agentic.api import AgenticAPI
+
 from .screens import WorkflowListScreen
 
 
@@ -19,7 +20,7 @@ class AgenticTUI(App[None]):
     }
     """
 
-    BINDINGS = [
+    BINDINGS = [  # noqa: RUF012 - framework class attribute is intentionally static metadata
         Binding("q", "quit", "Quit", show=True),
     ]
 

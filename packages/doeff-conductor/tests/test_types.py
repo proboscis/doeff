@@ -11,9 +11,9 @@ from doeff_conductor.types import (
     MergeStrategy,
     MergeWorkspacesResult,
     PRHandle,
-    Workspace,
     WorkflowHandle,
     WorkflowStatus,
+    Workspace,
 )
 
 

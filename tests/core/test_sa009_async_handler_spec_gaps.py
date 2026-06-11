@@ -2,29 +2,17 @@
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from pathlib import Path
-import threading
-import time
 from typing import Any
 
-import pytest
 import doeff_vm
 
 from doeff import (
-    Await,
     Effect,
     EffectBase,
-    Gather,
-    Spawn,
-    async_run,
-    default_async_handlers,
-    default_handlers,
     do,
-    run,
 )
-
 
 ROOT = Path(__file__).resolve().parents[2]
 RUST_SRC = ROOT / "packages" / "doeff-vm" / "src"
@@ -56,10 +44,10 @@ def _result_is_ok(run_result: object) -> bool:
 
 def _result_value(run_result: object) -> object:
     if hasattr(run_result, "value"):
-        return getattr(run_result, "value")
+        return run_result.value
     inner = getattr(run_result, "result", None)
     if inner is not None and hasattr(inner, "value"):
-        return getattr(inner, "value")
+        return inner.value
     raise AssertionError("RunResult does not expose value")
 
 
@@ -76,7 +64,7 @@ def _assert_vm_handler_stack_matches_passed_handlers(
     """
     expected_stack = [handler if callable(handler) else None for handler in reversed(passed_handlers)]
     assert len(vm_handler_stack) == len(expected_stack)
-    for expected, seen in zip(expected_stack, vm_handler_stack):
+    for expected, seen in zip(expected_stack, vm_handler_stack, strict=False):
         if expected is None:
             assert seen is None, f"Expected Rust sentinel identity placeholder None, got {seen!r}"
         else:
@@ -106,7 +94,7 @@ class TestHandlerImmutabilityContract:
 
     @staticmethod
     @do
-    def _passthrough_handler(effect: Effect, k):
+    def _passthrough_handler(_effect: Effect, _k):
         yield doeff_vm.Delegate()
 
     @staticmethod

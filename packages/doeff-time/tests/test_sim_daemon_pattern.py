@@ -6,12 +6,12 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
-from conftest import SIM_TIME_EPOCH, run_with_handlers, sim_time
+from doeff_core_effects.scheduler import Gather, Spawn, Wait
 from doeff_events import Publish, WaitForEvent, event_handler
 from doeff_time import Delay, GetTime, ScheduleAt, WaitUntil, sim_time_handler
 
+from conftest import SIM_TIME_EPOCH, run_with_handlers, sim_time
 from doeff import WithHandler, do
-from doeff_core_effects.scheduler import Gather, Spawn, Wait
 
 
 def _run_sim(

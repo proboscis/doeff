@@ -64,7 +64,7 @@ def demo_api_workflow_management():
     print(f"Using state directory: {state_dir}\n")
 
     # Create sample issue
-    issue = Issue(
+    Issue(
         id="ISSUE-API-001",
         title="Demo API workflow",
         body="This is a demo issue for API usage example",

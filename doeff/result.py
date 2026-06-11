@@ -16,7 +16,7 @@ Usage:
         case Nothing: ...
 """
 
-from doeff_vm import Ok, Err  # noqa: F401 — re-export Rust types
+from doeff_vm import Err, Ok  # noqa: F401 — re-export Rust types
 
 
 class Some:
@@ -91,5 +91,4 @@ def _get_nothing():
 
 
 # Maybe is the union type (for type hints)
-from typing import Union
-Maybe = Union[Some, _NothingType]
+Maybe = Some | _NothingType

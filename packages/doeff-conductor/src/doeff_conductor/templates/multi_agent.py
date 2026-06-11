@@ -12,8 +12,7 @@ A workflow with parallel agents:
 """
 
 from doeff import EffectGenerator, Gather, Spawn, do
-
-from ..types import Issue, PRHandle, Workspace
+from doeff_conductor.types import Issue, PRHandle, Workspace
 
 ARTIFACT_SCHEMA = {
     "type": "object",
@@ -29,7 +28,7 @@ ARTIFACT_SCHEMA = {
 @do
 def _create_workspace(issue: Issue, suffix: str) -> EffectGenerator[Workspace]:
     """Create a worktree (wrapper for Spawn compatibility)."""
-    from ..effects import CreateWorkspace
+    from doeff_conductor.effects import CreateWorkspace
     return (
         yield CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-{suffix}")
     )
@@ -43,7 +42,7 @@ def _run_agent(
     node_id: str,
 ) -> EffectGenerator[dict]:
     """Run an agent (wrapper for Spawn compatibility)."""
-    from ..effects import Agent, AgentTask
+    from doeff_conductor.effects import Agent, AgentTask
     return (
         yield Agent(
             AgentTask(
@@ -63,7 +62,7 @@ def _run_agent(
 @do
 def _commit(env: Workspace, message: str) -> EffectGenerator[str]:
     """Create a commit (wrapper for Spawn compatibility)."""
-    from ..effects import Commit
+    from doeff_conductor.effects import Commit
     return (yield Commit(workspace=env, message=message))
 
 
@@ -77,7 +76,7 @@ def multi_agent(issue: Issue) -> EffectGenerator[PRHandle]:
     Returns:
         PRHandle for the created PR
     """
-    from ..effects import (
+    from doeff_conductor.effects import (
         Agent,
         AgentTask,
         Commit,

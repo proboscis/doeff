@@ -23,12 +23,8 @@ import asyncio
 import time
 from pathlib import Path
 
-from doeff import do
-from doeff.effects.writer import slog
-from doeff_time import Delay
-from doeff_preset import preset_handlers
-
 from _runtime import run_program
+from doeff.effects.writer import slog
 from doeff_agents import (
     # Types
     AgentType,
@@ -51,7 +47,10 @@ from doeff_agents import (
     run_agent_to_completion,
     with_session,
 )
+from doeff_preset import preset_handlers
+from doeff_time import Delay
 
+from doeff import do
 
 # =============================================================================
 # Example 1: Direct Effect Usage with @do
@@ -61,39 +60,39 @@ from doeff_agents import (
 @do
 def direct_effects_workflow(session_name: str, config: LaunchConfig):
     """Demonstrate using effects directly with @do decorator.
-    
+
     Each yield is an effect that gets interpreted by the runtime's handlers.
     """
     yield slog(step="example1", msg="Direct Effect Usage")
-    
+
     # Launch effect
     handle: SessionHandle = yield Launch(session_name, config)
     yield slog(step="launched", session_name=session_name, pane_id=handle.pane_id)
-    
+
     final_status = SessionStatus.PENDING
-    
+
     # Monitor until terminal
     try:
         for iteration in range(10):
             observation: Observation = yield Monitor(handle)
             final_status = observation.status
             yield slog(step="monitor", iteration=iteration, status=observation.status.value)
-            
+
             if observation.is_terminal:
                 break
-            
+
             # Delay between polls
             yield Delay(1.0)
-        
+
         # Capture final output
         output: str = yield Capture(handle, lines=50)
         yield slog(step="captured", output_length=len(output))
-        
+
         return {
             "status": final_status.value,
             "output": output,
         }
-    
+
     finally:
         # Stop session
         yield Stop(handle)
@@ -108,12 +107,12 @@ def direct_effects_workflow(session_name: str, config: LaunchConfig):
 @do
 def high_level_programs_workflow(session_name: str, config: LaunchConfig):
     """Demonstrate using high-level Programs with @do.
-    
+
     Programs like run_agent_to_completion compose fine-grained effects
     into reusable workflows.
     """
     yield slog(step="example2", msg="High-Level Programs")
-    
+
     # run_agent_to_completion is a generator that yields effects
     # We use yield from to delegate to it
     result = yield from run_agent_to_completion(
@@ -121,14 +120,14 @@ def high_level_programs_workflow(session_name: str, config: LaunchConfig):
         config,
         poll_interval=0.5,
     )
-    
+
     yield slog(
         step="complete",
         succeeded=result.succeeded,
         status=result.final_status.value,
         iterations=result.iterations,
     )
-    
+
     return {
         "succeeded": result.succeeded,
         "status": result.final_status.value,
@@ -145,35 +144,35 @@ def high_level_programs_workflow(session_name: str, config: LaunchConfig):
 @do
 def bracket_pattern_workflow(session_name: str, config: LaunchConfig):
     """Demonstrate the with_session bracket pattern.
-    
+
     with_session ensures Stop is called even on exceptions.
     """
     yield slog(step="example3", msg="Bracket Pattern (with_session)")
-    
+
     def use_session(handle: SessionHandle):
         """Custom logic to run within the session."""
         # Monitor once
         obs = yield Monitor(handle)
         yield slog(step="initial_status", status=obs.status.value)
-        
+
         # Wait for BLOCKED status
         while obs.status != SessionStatus.BLOCKED:
             yield Delay(0.5)
             obs = yield Monitor(handle)
-        
+
         # Send a follow-up message
         yield Send(handle, "Thanks, that's helpful!")
         yield slog(step="sent_followup")
-        
+
         # Capture output
         output = yield Capture(handle, lines=20)
         return output
-    
+
     # with_session ensures Stop is called even on error
     output = yield from with_session(session_name, config, use_session)
-    
+
     yield slog(step="bracket_complete", output_length=len(output) if output else 0)
-    
+
     return {"output": output}
 
 
@@ -185,37 +184,37 @@ def bracket_pattern_workflow(session_name: str, config: LaunchConfig):
 @do
 def testable_workflow(session_name: str, config: LaunchConfig):
     """A workflow designed for easy testing.
-    
+
     mock_agent_handlers allows deterministic testing without real tmux.
     """
     yield slog(step="example4", msg="Testing with mock handlers")
-    
+
     handle = yield Launch(session_name, config)
-    
+
     observations = []
     final_status = SessionStatus.PENDING
-    
+
     try:
         for _ in range(10):
             obs = yield Monitor(handle)
             observations.append(obs.status)
             final_status = obs.status
-            
+
             yield slog(step="observed", status=obs.status.value)
-            
+
             if obs.is_terminal:
                 break
-            
+
             yield Delay(0.5)
-        
+
         output = yield Capture(handle, lines=50)
-        
+
         return {
             "observations": [s.value for s in observations],
             "final_status": final_status.value,
             "output": output,
         }
-    
+
     finally:
         yield Stop(handle)
 
@@ -230,7 +229,7 @@ async def run_direct_effects_example() -> None:
     print("=" * 60)
     print("Example 1: Direct Effect Usage")
     print("=" * 60)
-    
+
     session_name = f"demo-{int(time.time())}"
 
     configure_mock_session(
@@ -241,7 +240,7 @@ async def run_direct_effects_example() -> None:
             (SessionStatus.DONE, "Task completed!"),
         ]),
     )
-    
+
     config = LaunchConfig(
         agent_type=AgentType.CLAUDE,
         work_dir=Path.cwd(),
@@ -261,7 +260,7 @@ async def run_high_level_programs_example() -> None:
     print("\n" + "=" * 60)
     print("Example 2: High-Level Programs")
     print("=" * 60)
-    
+
     session_name = f"program-demo-{int(time.time())}"
 
     configure_mock_session(
@@ -271,7 +270,7 @@ async def run_high_level_programs_example() -> None:
             (SessionStatus.DONE, "Complete!"),
         ]),
     )
-    
+
     config = LaunchConfig(
         agent_type=AgentType.CLAUDE,
         work_dir=Path.cwd(),
@@ -291,7 +290,7 @@ async def run_bracket_pattern_example() -> None:
     print("\n" + "=" * 60)
     print("Example 3: Bracket Pattern (with_session)")
     print("=" * 60)
-    
+
     session_name = f"bracket-demo-{int(time.time())}"
 
     configure_mock_session(
@@ -301,7 +300,7 @@ async def run_bracket_pattern_example() -> None:
             (SessionStatus.BLOCKED, "Need input..."),
         ]),
     )
-    
+
     config = LaunchConfig(
         agent_type=AgentType.CLAUDE,
         work_dir=Path.cwd(),
@@ -321,7 +320,7 @@ async def run_testing_example() -> None:
     print("\n" + "=" * 60)
     print("Example 4: Testing with Mock Handlers")
     print("=" * 60)
-    
+
     session_name = f"test-{int(time.time())}"
 
     configure_mock_session(
@@ -333,7 +332,7 @@ async def run_testing_example() -> None:
             (SessionStatus.DONE, "Changes applied!"),
         ]),
     )
-    
+
     config = LaunchConfig(
         agent_type=AgentType.CLAUDE,
         work_dir=Path.cwd(),
@@ -346,10 +345,10 @@ async def run_testing_example() -> None:
         custom_handlers=mock_agent_handlers(),
     )
     result_value = result.value if hasattr(type(result), "value") else result
-    
+
     # Verify behavior
     print("\nTest assertions:")
-    expected_statuses = ['running', 'running', 'blocked', 'done']
+    expected_statuses = ["running", "running", "blocked", "done"]
     if isinstance(result_value, dict):
         print(f"  Final status is DONE: {result_value['final_status'] == 'done'}")
         print(f"  Observed expected statuses: {result_value['observations'] == expected_statuses}")
@@ -362,33 +361,33 @@ async def run_testing_example() -> None:
 async def run_with_real_tmux() -> None:
     """Run with real tmux (requires tmux + claude CLI)."""
     import shutil
-    
+
     if not shutil.which("tmux"):
         print("tmux not available, skipping")
         return
-    
+
     if not shutil.which("claude"):
         print("Claude CLI not available, skipping")
         return
-    
+
     print("\n" + "=" * 60)
     print("Example 5: Real Tmux Handler")
     print("=" * 60)
-    
+
     config = LaunchConfig(
         agent_type=AgentType.CLAUDE,
         work_dir=Path.cwd(),
         prompt="Write a hello world function",
     )
-    
+
     session_name = f"real-tmux-{int(time.time())}"
-    
+
     result = await run_program(
         direct_effects_workflow(session_name, config),
         scoped_handlers=(preset_handlers(),),
         custom_handlers=agent_effectful_handlers(),
     )
-    
+
     print(f"\nResult: {result}")
 
 
@@ -398,7 +397,7 @@ async def main() -> None:
     await run_high_level_programs_example()
     await run_bracket_pattern_example()
     await run_testing_example()
-    
+
     # Real tmux (uncomment to test)
     # await run_with_real_tmux()
 

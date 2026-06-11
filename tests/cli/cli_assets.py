@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from doeff import Ask, Program, default_handlers, do, run
+from doeff import Ask, Program, do
 from tests._run_helpers import run_with_defaults
 
 sample_program: Program[int] = Program.pure(5)

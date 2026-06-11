@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-import doeff_vm
-
-from doeff import Ask, Get, Program, default_handlers, do, run
+from doeff import Ask, Get, do
 from tests._run_helpers import run_with_defaults
 
 

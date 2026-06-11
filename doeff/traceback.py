@@ -13,12 +13,12 @@ Entries (outermost-first):
 import linecache
 import os
 
-_INTERNAL_PATHS = ('/doeff_core_effects/', '/doeff/do.py', '/doeff/run.py', '/doeff_vm/')
+_INTERNAL_PATHS = ("/doeff_core_effects/", "/doeff/do.py", "/doeff/run.py", "/doeff_vm/")
 
 
 def format_default(exception):
     """Render doeff traceback from __doeff_traceback__."""
-    tb_data = getattr(exception, '__doeff_traceback__', None)
+    tb_data = getattr(exception, "__doeff_traceback__", None)
     if not tb_data:
         return None
 
@@ -69,7 +69,7 @@ def _render_frame(func_name, source_file, source_line, count=1):
     source_text = _get_source_line(source_file, source_line)
     result = f"\n  {func_name}()  {short_file}:{source_line}"
     if count > 1:
-        result += f"  [×{count}]"
+        result += f"  [×{count}]"  # noqa: RUF001 - traceback format intentionally uses multiplication sign.
     if source_text:
         result += f"\n    {source_text}"
     return result
@@ -78,11 +78,11 @@ def _render_frame(func_name, source_file, source_line, count=1):
 def _render_handler_chain(handler_chain):
     names = []
     for name in handler_chain:
-        name = str(name)
-        if ".<locals>." in name:
-            name = name.split(".<locals>.")[0]
-        if not names or names[-1] != name:
-            names.append(name)
+        rendered_name = str(name)
+        if ".<locals>." in rendered_name:
+            rendered_name = rendered_name.split(".<locals>.")[0]
+        if not names or names[-1] != rendered_name:
+            names.append(rendered_name)
     if not names:
         return ""
     lines = ["\n    handlers:"]

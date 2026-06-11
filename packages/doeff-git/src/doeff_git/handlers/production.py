@@ -185,7 +185,7 @@ def production_handlers(
     hosting = github_handler or GitHubHandler()
 
     @do
-    def handler(effect: Effect, k: Any):
+    def handler(effect: Effect, k: Any):  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
         if isinstance(effect, GitCommit):
             return (yield Resume(k, local.handle_commit(effect)))
         if isinstance(effect, GitDiff):
