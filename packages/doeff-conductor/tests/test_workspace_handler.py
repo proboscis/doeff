@@ -91,17 +91,19 @@ class TestWorkspaceHandler:
         self,
         handler: WorkspaceHandler,
     ) -> None:
-        workspace = handler.handle_create_workspace(CreateWorkspace(workspace_id="ws-ignore"))
-        materialized_path = handler.resolve_path(workspace)
+        workspace: Workspace = handler.handle_create_workspace(
+            CreateWorkspace(workspace_id="ws-ignore")
+        )
+        materialized_path: Path = handler.resolve_path(workspace)
 
-        gitignore_lines = (materialized_path / ".gitignore").read_text().splitlines()
+        gitignore_lines: list[str] = (materialized_path / ".gitignore").read_text().splitlines()
         assert ".agent-home/" in gitignore_lines
 
-        agent_state_path = materialized_path / ".agent-home" / "session.json"
+        agent_state_path: Path = materialized_path / ".agent-home" / "session.json"
         agent_state_path.parent.mkdir()
         agent_state_path.write_text('{"session": "runtime"}')
 
-        status = subprocess.run(
+        status: subprocess.CompletedProcess[str] = subprocess.run(
             ["git", "status", "--porcelain"],
             cwd=materialized_path,
             check=True,
@@ -114,16 +116,18 @@ class TestWorkspaceHandler:
         self,
         handler: WorkspaceHandler,
     ) -> None:
-        workspace = handler.handle_create_workspace(CreateWorkspace(workspace_id="ws-autocommit"))
-        materialized_path = handler.resolve_path(workspace)
-        git_handler = GitHandler(workspace_resolver=handler.resolve_path)
+        workspace: Workspace = handler.handle_create_workspace(
+            CreateWorkspace(workspace_id="ws-autocommit")
+        )
+        materialized_path: Path = handler.resolve_path(workspace)
+        git_handler: GitHandler = GitHandler(workspace_resolver=handler.resolve_path)
 
         (materialized_path / "feature.txt").write_text("user-visible work\n")
-        agent_state_path = materialized_path / ".agent-home" / "session.json"
+        agent_state_path: Path = materialized_path / ".agent-home" / "session.json"
         agent_state_path.parent.mkdir()
         agent_state_path.write_text('{"session": "runtime"}')
 
-        commit_sha = git_handler.handle_commit(
+        commit_sha: str = git_handler.handle_commit(
             Commit(
                 workspace=workspace,
                 message="Commit workspace changes",
@@ -131,13 +135,14 @@ class TestWorkspaceHandler:
             )
         )
 
-        committed_paths = subprocess.run(
+        show_result: subprocess.CompletedProcess[str] = subprocess.run(
             ["git", "show", "--name-only", "--format=", commit_sha],
             cwd=materialized_path,
             check=True,
             capture_output=True,
             text=True,
-        ).stdout.splitlines()
+        )
+        committed_paths: list[str] = show_result.stdout.splitlines()
         assert "feature.txt" in committed_paths
         assert ".agent-home/session.json" not in committed_paths
 
