@@ -30,7 +30,9 @@ ARTIFACT_SCHEMA = {
 def _create_workspace(issue: Issue, suffix: str) -> EffectGenerator[Workspace]:
     """Create a worktree (wrapper for Spawn compatibility)."""
     from ..effects import CreateWorkspace
-    return (yield CreateWorkspace(issue=issue, suffix=suffix))
+    return (
+        yield CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-{suffix}")
+    )
 
 
 @do
@@ -127,7 +129,10 @@ Do NOT implement the feature - just write the tests.
     yield Gather(impl_commit_task, test_commit_task)
 
     # Step 4: Reconcile workspaces
-    merge_result = yield MergeWorkspaces(workspaces=(impl_env, test_env))
+    merge_result = yield MergeWorkspaces(
+        workspace_id=f"{issue.id.lower()}-merged",
+        workspaces=(impl_env, test_env),
+    )
     if not merge_result.merged or merge_result.workspace is None:
         raise RuntimeError(f"Workspace merge failed: {merge_result.message}")
     merged_env = merge_result.workspace

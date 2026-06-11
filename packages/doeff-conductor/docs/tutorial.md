@@ -64,7 +64,7 @@ from doeff_conductor.handlers import mock_handlers, run_sync
 def hello_workflow():
     """A minimal workflow that creates a file."""
     # 1. Create an isolated workspace
-    workspace = yield CreateWorkspace(suffix="hello")
+    workspace = yield CreateWorkspace(workspace_id="tutorial-hello")
     print(f"Created workspace: {workspace.ref}")
     
     # 2. Make changes through Exec
@@ -259,7 +259,7 @@ def my_custom_workflow(issue: Issue, max_attempts: int = 3):
     """Custom workflow with retry logic."""
     
     # Create workspace
-    workspace = yield CreateWorkspace(issue=issue)
+    workspace = yield CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-impl")
     
     # Implementation with retries
     for attempt in range(1, max_attempts + 1):
@@ -366,8 +366,8 @@ def parallel_implementation(issue):
     
     # Create workspaces in parallel
     impl_workspace, test_workspace = yield Gather(
-        CreateWorkspace(issue=issue, suffix="impl"),
-        CreateWorkspace(issue=issue, suffix="tests"),
+        CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-impl"),
+        CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-tests"),
     )
     
     # Run agents in parallel
@@ -395,7 +395,10 @@ def parallel_implementation(issue):
     )
     
     # Merge results
-    merge_result = yield MergeWorkspaces(workspaces=(impl_workspace, test_workspace))
+    merge_result = yield MergeWorkspaces(
+        workspace_id=f"{issue.id.lower()}-merged",
+        workspaces=(impl_workspace, test_workspace),
+    )
     if not merge_result.merged or merge_result.workspace is None:
         raise RuntimeError(merge_result.message)
     merged = merge_result.workspace
@@ -422,12 +425,12 @@ def diamond_dag(issue):
         [review]
     """
     # Start: create base workspace
-    base = yield CreateWorkspace(issue=issue)
+    base = yield CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-base")
     
     # Parallel: implementation and documentation
     impl_workspace, docs_workspace = yield Gather(
-        CreateWorkspace(issue=issue, suffix="impl"),
-        CreateWorkspace(issue=issue, suffix="docs"),
+        CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-impl"),
+        CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-docs"),
     )
     
     yield Gather(
@@ -454,7 +457,10 @@ def diamond_dag(issue):
     )
     
     # Merge point
-    merge_result = yield MergeWorkspaces(workspaces=(impl_workspace, docs_workspace))
+    merge_result = yield MergeWorkspaces(
+        workspace_id=f"{issue.id.lower()}-merged",
+        workspaces=(impl_workspace, docs_workspace),
+    )
     if not merge_result.merged or merge_result.workspace is None:
         raise RuntimeError(merge_result.message)
     merged = merge_result.workspace

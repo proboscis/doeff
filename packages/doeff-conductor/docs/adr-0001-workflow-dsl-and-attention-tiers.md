@@ -261,6 +261,18 @@ git family only — a scope decision, not a structural constraint. New media
 families added by system designers, never by authors. Stage C4 uses public
 workspace vocabulary; site-local materialization nouns remain handler-private.
 
+Workspace identity is **resume-stable by construction**: every
+workspace-producing node (explicit `workspace!`, the implicit per-`agent!`
+workspace, `merge!`) derives its workspace id — hence its branch and
+worktree — deterministically from `(run-id, workspace-node identity)`, and
+materialization is idempotent ensure-style (re-adopt when present,
+re-materialize from the branch when the worktree is missing, create from
+the base ref exactly once per identity lifetime). For explicit
+`workspace!`, the node identity is the EXPRESSION's source-order
+occurrence, never the evaluation site: one `workspace!` value shared by
+several nodes is one workspace. This mirrors D6's deterministic session
+names and keeps workspace effects out of the replay journal.
+
 ### D6 — Layer boundaries and the L2 session algebra
 
 ```
@@ -307,6 +319,9 @@ distribution, so it participates in the identity fingerprint exactly like
 adapter kind and model. Before any worker starts, the conductor produces the **binding plan**
 (all static nodes resolved: profiles exist, capabilities satisfied,
 budgets sum) for overseer approval — resolve early, execute late.
+Workspaces need no journal entries for resume: their identity is derived
+from `(run-id, workspace-node identity)`, not recorded — the same
+identity-by-construction discipline as D6's session names (see D5).
 
 ### D8 — Verbs, not interpreters
 

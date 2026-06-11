@@ -65,7 +65,7 @@ class TestWorkflowE2E:
 
         @do
         def workspace_workflow():
-            workspace = yield CreateWorkspace(suffix="test")
+            workspace = yield CreateWorkspace(workspace_id="ws-test")
             workspace_path = runtime.resolve_path(workspace)
             assert workspace_path.exists()
             assert (workspace_path / ".git").exists()
@@ -78,14 +78,14 @@ class TestWorkflowE2E:
         result = _run_with_mock_handlers(workspace_workflow(), runtime)
 
         assert result.is_ok
-        assert result.value.startswith("workspace-")
+        assert result.value == "ws-test"
 
     def test_workspace_with_commit(self, tmp_path: Path):
         runtime = MockConductorRuntime(tmp_path)
 
         @do
         def commit_workflow():
-            workspace = yield CreateWorkspace(suffix="feature")
+            workspace = yield CreateWorkspace(workspace_id="ws-feature")
             (runtime.resolve_path(workspace) / "feature.py").write_text("# New feature\n")
 
             sha = yield Commit(workspace=workspace, message="feat: add new feature")
@@ -110,7 +110,7 @@ class TestWorkflowE2E:
                 labels=("feature",),
             )
 
-            workspace = yield CreateWorkspace(issue=issue, suffix="impl")
+            workspace = yield CreateWorkspace(issue=issue, workspace_id="ws-impl")
             (runtime.resolve_path(workspace) / "hello.py").write_text('print("Hello World")\n')
 
             sha = yield Commit(workspace=workspace, message=f"feat: {issue.title}")
@@ -142,19 +142,22 @@ class TestWorkflowE2E:
 
         @do
         def merge_workflow():
-            workspace1 = yield CreateWorkspace(suffix="feature1")
+            workspace1 = yield CreateWorkspace(workspace_id="ws-feature1")
             (runtime.resolve_path(workspace1) / "feature1.py").write_text("# Feature 1\n")
             yield Commit(workspace=workspace1, message="feat: add feature1")
 
-            workspace2 = yield CreateWorkspace(suffix="feature2")
+            workspace2 = yield CreateWorkspace(workspace_id="ws-feature2")
             (runtime.resolve_path(workspace2) / "feature2.py").write_text("# Feature 2\n")
             yield Commit(workspace=workspace2, message="feat: add feature2")
 
-            workspace3 = yield CreateWorkspace(suffix="feature3")
+            workspace3 = yield CreateWorkspace(workspace_id="ws-feature3")
             (runtime.resolve_path(workspace3) / "feature3.py").write_text("# Feature 3\n")
             yield Commit(workspace=workspace3, message="feat: add feature3")
 
-            merge_result = yield MergeWorkspaces(workspaces=(workspace1, workspace2, workspace3))
+            merge_result = yield MergeWorkspaces(
+                workspace_id="ws-merged",
+                workspaces=(workspace1, workspace2, workspace3),
+            )
             assert merge_result.workspace is not None
             merged = merge_result.workspace
             merged_path = runtime.resolve_path(merged)
@@ -180,14 +183,14 @@ class TestWorkflowE2E:
         result = _run_with_mock_handlers(merge_workflow(), runtime)
 
         assert result.is_ok
-        assert result.value.startswith("conductor-merged-")
+        assert result.value == "conductor/ws-merged"
 
     def test_push_to_remote_workflow(self, tmp_path: Path):
         runtime = MockConductorRuntime(tmp_path)
 
         @do
         def push_workflow():
-            workspace = yield CreateWorkspace(suffix="push-test")
+            workspace = yield CreateWorkspace(workspace_id="ws-push-test")
             (runtime.resolve_path(workspace) / "pushed.py").write_text("# Pushed\n")
             yield Commit(workspace=workspace, message="feat: push test")
             yield Push(workspace=workspace, set_upstream=True)

@@ -34,7 +34,7 @@ The simplest possible workflow:
 ```python
 @do
 def hello_workflow():
-    workspace = yield CreateWorkspace(suffix="hello")
+    workspace = yield CreateWorkspace(workspace_id="example-hello")
     result = yield Exec(cmd="printf 'Hello!' > hello.txt", workspace=workspace)
     if not result.passed:
         raise RuntimeError(result.log_path)
@@ -121,8 +121,8 @@ from doeff import Gather
 def parallel_work():
     # Run multiple effects in parallel
     result_a, result_b = yield Gather(
-        CreateWorkspace(suffix="a"),
-        CreateWorkspace(suffix="b"),
+        CreateWorkspace(workspace_id="example-a"),
+        CreateWorkspace(workspace_id="example-b"),
     )
 ```
 
