@@ -117,6 +117,7 @@ The package includes several examples demonstrating different use cases:
 | `02_data_pipeline.py` | ETL pipeline with multiple stages |
 | `03_error_handling.py` | Error capture and failure tracing |
 | `04_concurrent_workflows.py` | Multiple concurrent workers with separate traces |
+| `05_durable_execution.py` | Durable execution with local SQLite cache under `.doeff-flow/` |
 | `06_testing_with_mocks.py` | In-memory trace assertions with mock handlers |
 | `07_workflow_status.py` | Workflow status with slog for semantic status updates |
 
