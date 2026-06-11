@@ -218,6 +218,6 @@ __all__ = [
     "UnknownModelPricingError",
     "calculate_cost",
     "calculate_known_model_cost",
-    "get_model_pricing",
     "gemini_cost_calculator__default",
+    "get_model_pricing",
 ]
