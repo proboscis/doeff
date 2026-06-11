@@ -3,9 +3,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from doeff import AskEffect, Effect, Pass, Resume, WithHandler, default_handlers, do, run
-from doeff import Ask
 
+from doeff import Ask, AskEffect, Effect, Pass, Resume, WithHandler, default_handlers, do, run
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -71,7 +70,7 @@ def test_withhandler_nesting_inner_handler_overrides_outer_handler():
 
 
 def test_withhandler_error_propagation_from_handler():
-    class HandlerFailure(RuntimeError):
+    class HandlerFailure(RuntimeError):  # noqa: N818 - public or fixture exception name is intentionally stable
         pass
 
     @do
@@ -122,7 +121,7 @@ def test_withhandler_resume_supports_various_value_types():
 
     for sample_value in sample_values:
         @do
-        def typed_mock_handler(effect: Effect, k):
+        def typed_mock_handler(effect: Effect, k, sample_value=sample_value):
             if isinstance(effect, AskEffect):
                 return (yield Resume(k, sample_value))
             return (yield Pass())
