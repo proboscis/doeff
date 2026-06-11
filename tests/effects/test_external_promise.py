@@ -8,10 +8,7 @@ import threading
 import time
 from typing import Any
 
-import pytest
-
-from doeff import Gather, Spawn, do
-from doeff import CreateExternalPromise, Wait
+from doeff import CreateExternalPromise, Gather, Spawn, Wait, do
 from tests._run_helpers import run_with_defaults
 
 

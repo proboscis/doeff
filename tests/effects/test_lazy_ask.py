@@ -1,11 +1,11 @@
 """Tests for lazy_ask handler — SPEC-EFF-001 lazy program evaluation."""
 
-from doeff import do, run
-from doeff.program import WithHandler
-
 from doeff_core_effects.effects import Ask, Local, Try
 from doeff_core_effects.handlers import lazy_ask, try_handler
-from doeff_core_effects.scheduler import scheduled, Spawn, Gather, Wait
+from doeff_core_effects.scheduler import Gather, Spawn, Wait, scheduled
+
+from doeff import do, run
+from doeff.program import WithHandler
 
 
 def run_with_lazy(program, env=None):
@@ -356,7 +356,8 @@ class TestLazyAskErrorHandling:
             return (yield Try(Ask("svc")))
 
         result = run_with_lazy(program(), env={"svc": failing_service()})
-        assert hasattr(result, "error") and isinstance(result.error, ValueError)
+        assert hasattr(result, "error")
+        assert isinstance(result.error, ValueError)
 
     def test_missing_key_error_strict(self):
         """strict=True preserves legacy KeyError-on-miss behaviour."""
@@ -367,4 +368,5 @@ class TestLazyAskErrorHandling:
         body = WithHandler(try_handler, program())
         body = WithHandler(lazy_ask(env={}, strict=True), body)
         result = run(scheduled(body))
-        assert hasattr(result, "error") and isinstance(result.error, KeyError)
+        assert hasattr(result, "error")
+        assert isinstance(result.error, KeyError)

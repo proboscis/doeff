@@ -4,7 +4,7 @@ A high-performance linter for enforcing code quality and immutability patterns i
 
 ## Features
 
-- **14 specialized rules** for code quality and immutability
+- **27 specialized rules** for code quality, immutability, and workflow replay safety
 - **Configurable via pyproject.toml**
 - **noqa comments** for per-line rule suppression
 - **Fast** - written in Rust for maximum performance
@@ -334,4 +334,3 @@ When violations are found, the hook outputs:
 ## License
 
 MIT License - see LICENSE file for details.
-

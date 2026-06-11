@@ -65,7 +65,7 @@ def worker_workflow(worker_id: str, num_tasks: int):
     Each worker runs independently and has its own trace.
     """
     yield slog(step="worker", worker_id=worker_id, status="starting", num_tasks=num_tasks)
-    start_time = datetime.now()
+    start_time = datetime.now()  # noqa: DTZ005 - existing local wall-clock behavior is intentionally unchanged
 
     completed_tasks = []
 
@@ -84,7 +84,7 @@ def worker_workflow(worker_id: str, num_tasks: int):
         completed_tasks.append(result)
         yield slog(step="worker", worker_id=worker_id, status="completed", task_id=task_id)
 
-    elapsed = (datetime.now() - start_time).total_seconds()
+    elapsed = (datetime.now() - start_time).total_seconds()  # noqa: DTZ005 - existing local wall-clock behavior is intentionally unchanged
 
     summary = {
         "worker_id": worker_id,
@@ -121,7 +121,7 @@ def run_concurrent_workers(num_workers: int, tasks_per_worker: int):
     print("=" * 60 + "\n")
 
     # Start all workers
-    start_time = datetime.now()
+    start_time = datetime.now()  # noqa: DTZ005 - existing local wall-clock behavior is intentionally unchanged
 
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
         futures = []
@@ -132,7 +132,7 @@ def run_concurrent_workers(num_workers: int, tasks_per_worker: int):
         for future in futures:
             future.result()
 
-    elapsed = (datetime.now() - start_time).total_seconds()
+    elapsed = (datetime.now() - start_time).total_seconds()  # noqa: DTZ005 - existing local wall-clock behavior is intentionally unchanged
 
     # Summarize results
     print("\n" + "=" * 60)

@@ -1,215 +1,24 @@
 #!/usr/bin/env python
-"""
-Example 03: Basic PR Workflow
+"""Example 03: basic PR workflow with mock handlers."""
 
-Demonstrates the basic_pr template workflow:
-1. Create worktree from issue
-2. Run agent to implement issue
-3. Commit and push changes
-4. Create PR
-5. Resolve issue
-
-This example uses mock handlers for demonstration.
-
-Run:
-    cd packages/doeff-conductor
-    uv run python examples/03_basic_pr_workflow.py
-"""
-
-from datetime import datetime, timezone
-from pathlib import Path
-
-from doeff_conductor import (
-    Commit,
-    CreatePR,
-    # Effects
-    CreateWorktree,
-    # Types
-    Issue,
-    IssueStatus,
-    PRHandle,
-    Push,
-    ResolveIssue,
-    RunAgent,
-    WorktreeEnv,
-    # Handler utility
-    make_scheduled_handler,
-)
-from doeff_preset import preset_handlers
-
-from doeff import Effect, EffectGenerator, Pass, default_handlers, do, run, slog
+from doeff_conductor import Issue, IssueStatus, basic_pr
+from doeff_conductor.handlers import mock_handlers, run_sync
 
 
-# Mock handlers for demonstration (no real git/agent operations)
-class MockHandlers:
-    """Mock handlers that simulate conductor operations."""
-
-    def __init__(self):
-        self._worktree_counter = 0
-        self._commit_counter = 0
-
-    def handle_create_worktree(self, effect: CreateWorktree) -> WorktreeEnv:
-        """Simulate creating a worktree."""
-        self._worktree_counter += 1
-        issue_id = effect.issue.id if effect.issue else "no-issue"
-        suffix = effect.suffix or ""
-        return WorktreeEnv(
-            id=f"wt-{self._worktree_counter:03d}",
-            path=Path(f"/tmp/mock-worktree/{issue_id}-{suffix}"),
-            branch=f"feat/{issue_id}",
-            base_commit="abc1234",
-            issue_id=issue_id,
-        )
-
-    def handle_run_agent(self, effect: RunAgent) -> str:
-        """Simulate running an agent."""
-        print(f"  [Mock Agent] Processing in {effect.env.path}")
-        print(f"  [Mock Agent] Prompt: {effect.prompt[:80]}...")
-        return "Mock agent completed implementation successfully."
-
-    def handle_commit(self, effect: Commit) -> str:
-        """Simulate creating a commit."""
-        self._commit_counter += 1
-        sha = f"commit{self._commit_counter:04d}"
-        print(f"  [Mock Git] Created commit {sha}: {effect.message}")
-        return sha
-
-    def handle_push(self, effect: Push) -> bool:
-        """Simulate pushing to remote."""
-        print(f"  [Mock Git] Pushed {effect.env.branch} to {effect.remote}")
-        return True
-
-    def handle_create_pr(self, effect: CreatePR) -> PRHandle:
-        """Simulate creating a PR."""
-        return PRHandle(
-            url="https://github.com/example/repo/pull/42",
-            number=42,
-            title=effect.title,
-            branch=effect.env.branch,
-            target=effect.target,
-        )
-
-    def handle_resolve_issue(self, effect: ResolveIssue) -> Issue:
-        """Simulate resolving an issue."""
-        return Issue(
-            id=effect.issue.id,
-            title=effect.issue.title,
-            body=effect.issue.body,
-            status=IssueStatus.RESOLVED,
-            pr_url=effect.pr_url,
-            resolved_at=datetime.now(timezone.utc),
-        )
-
-
-@do
-def basic_pr_workflow(issue: Issue) -> EffectGenerator[PRHandle]:
-    """Basic PR workflow: issue -> agent -> PR.
-    
-    Args:
-        issue: The issue to implement.
-        
-    Returns:
-        PRHandle for the created PR.
-    """
-    yield slog(step="start", msg=f"Starting basic_pr workflow for: {issue.title}")
-
-    # Step 1: Create isolated worktree
-    yield slog(step="worktree", status="creating")
-    env: WorktreeEnv = yield CreateWorktree(issue=issue)
-    yield slog(step="worktree", status="created", path=str(env.path))
-
-    # Step 2: Run agent to implement the issue
-    yield slog(step="agent", status="running")
-    prompt = f"""
-Implement the following issue:
-
-# {issue.title}
-
-{issue.body}
-
-Please implement the changes needed to resolve this issue.
-"""
-    output: str = yield RunAgent(env=env, prompt=prompt)
-    yield slog(step="agent", status="completed", output=output[:100])
-
-    # Step 3: Commit and push changes
-    yield slog(step="commit", status="committing")
-    commit_msg = f"feat: {issue.title}\n\nResolves: {issue.id}"
-    yield Commit(env=env, message=commit_msg)
-    yield Push(env=env)
-    yield slog(step="commit", status="pushed")
-
-    # Step 4: Create PR
-    yield slog(step="pr", status="creating")
-    pr: PRHandle = yield CreatePR(
-        env=env,
-        title=issue.title,
-        body=f"Implements {issue.id}",
-    )
-    yield slog(step="pr", status="created", url=pr.url)
-
-    # Step 5: Resolve the issue
-    yield slog(step="resolve", status="resolving")
-    yield ResolveIssue(issue=issue, pr_url=pr.url)
-    yield slog(step="resolve", status="done")
-
-    return pr
-
-
-def main():
-    """Run the basic PR workflow example."""
-    # Create a sample issue
+def main() -> None:
     issue = Issue(
         id="ISSUE-001",
         title="Add user authentication",
-        body="""
-## Description
-Implement user authentication with JWT tokens.
-
-## Tasks
-- Create login endpoint
-- Create logout endpoint
-- Add JWT token generation
-- Add token validation middleware
-""",
+        body="Implement user authentication with JWT tokens.",
         status=IssueStatus.OPEN,
         labels=("feature", "security"),
     )
 
-    # Set up mock handlers
-    mock = MockHandlers()
-    preset_handler = preset_handlers()
-    create_worktree_handler = make_scheduled_handler(mock.handle_create_worktree)
-    run_agent_handler = make_scheduled_handler(mock.handle_run_agent)
-    commit_handler = make_scheduled_handler(mock.handle_commit)
-    push_handler = make_scheduled_handler(mock.handle_push)
-    create_pr_handler = make_scheduled_handler(mock.handle_create_pr)
-    resolve_issue_handler = make_scheduled_handler(mock.handle_resolve_issue)
+    result = run_sync(basic_pr(issue), scheduled_handlers=mock_handlers())
+    if result.is_err():
+        raise result.error
 
-    @do
-    def workflow_handler(effect: Effect, k):
-        if isinstance(effect, CreateWorktree):
-            return (yield create_worktree_handler(effect, k))
-        if isinstance(effect, RunAgent):
-            return (yield run_agent_handler(effect, k))
-        if isinstance(effect, Commit):
-            return (yield commit_handler(effect, k))
-        if isinstance(effect, Push):
-            return (yield push_handler(effect, k))
-        if isinstance(effect, CreatePR):
-            return (yield create_pr_handler(effect, k))
-        if isinstance(effect, ResolveIssue):
-            return (yield resolve_issue_handler(effect, k))
-        yield Pass()
-
-    # Run the workflow
-    result = run(
-        basic_pr_workflow(issue),
-        handlers=[preset_handler, workflow_handler, *default_handlers()],
-    )
-
-    print(f"\n{'='*50}")
-    print(f"Workflow completed! PR: {result.value.url}")
+    print(f"Workflow completed. PR: {result.value.url}")
 
 
 if __name__ == "__main__":

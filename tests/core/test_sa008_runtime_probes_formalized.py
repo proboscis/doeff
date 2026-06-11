@@ -5,12 +5,8 @@ This file exists to ensure manual runtime investigations become repeatable tests
 
 from __future__ import annotations
 
-import doeff_vm
-
-from doeff import Ask, Get, WithHandler, default_handlers, do, run
+from doeff import Get, do
 from tests._run_helpers import run_with_defaults
-
-
 
 
 def test_probe_run_simple_program_returns_scalar() -> None:

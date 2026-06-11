@@ -5,8 +5,8 @@ from collections.abc import Callable, Mapping, MutableSequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from doeff import EffectBase as Effect, Pass, Resume, do
-from doeff import Ask, Tell
+from doeff import Ask, Pass, Resume, Tell, do
+from doeff import EffectBase as Effect
 from doeff_test_target.effects import ReadFixtureValue, RecordFixtureEvent
 
 ProtocolHandler = Callable[[Any, Any], Any]

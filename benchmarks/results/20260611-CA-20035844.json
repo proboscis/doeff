@@ -1,0 +1,125 @@
+{
+  "config": {
+    "await_iterations": 100,
+    "boundary_iterations": 1000,
+    "loop_iterations": 100,
+    "runs": 20,
+    "smoke": false,
+    "spawn_sizes": [
+      100,
+      1000
+    ]
+  },
+  "created_at": "2026-06-11T10:02:44.656529+00:00",
+  "hostname": "CA-20035844",
+  "platform": "macOS-26.3.2-arm64-arm-64bit-Mach-O",
+  "python": "3.14.3",
+  "results": [
+    {
+      "max_ms": 0.013708136975765228,
+      "mean_ms": 0.0013854354619979858,
+      "mean_unit_us": 1.3854354619979858,
+      "median_ms": 0.0003541354089975357,
+      "min_ms": 0.00024959444999694824,
+      "name": "run_trivial",
+      "parameters": {
+        "program": "Pure(1)"
+      },
+      "runs": 20,
+      "throughput_per_s": 721794.7190104867,
+      "unit": "run",
+      "units_per_run": 1
+    },
+    {
+      "max_ms": 0.6432496011257172,
+      "mean_ms": 0.561389559879899,
+      "mean_unit_us": 5.61389559879899,
+      "median_ms": 0.5423957481980324,
+      "min_ms": 0.520333182066679,
+      "name": "run_state_get_put_loop",
+      "parameters": {
+        "iterations": 100
+      },
+      "runs": 20,
+      "throughput_per_s": 178129.42588635514,
+      "unit": "iteration",
+      "units_per_run": 100
+    },
+    {
+      "max_ms": 0.3870422951877117,
+      "mean_ms": 0.3103602444753051,
+      "mean_unit_us": 3.103602444753051,
+      "median_ms": 0.3039164002984762,
+      "min_ms": 0.2922089770436287,
+      "name": "run_reader_ask_loop",
+      "parameters": {
+        "iterations": 100
+      },
+      "runs": 20,
+      "throughput_per_s": 322206.21609916555,
+      "unit": "iteration",
+      "units_per_run": 100
+    },
+    {
+      "max_ms": 17.500500194728374,
+      "mean_ms": 16.796041559427977,
+      "mean_unit_us": 167.96041559427977,
+      "median_ms": 16.684479312971234,
+      "min_ms": 16.08137506991625,
+      "name": "spawn_gather_100",
+      "parameters": {
+        "tasks": 100
+      },
+      "runs": 20,
+      "throughput_per_s": 5953.783791626061,
+      "unit": "task",
+      "units_per_run": 100
+    },
+    {
+      "max_ms": 151.6007911413908,
+      "mean_ms": 145.45743335038424,
+      "mean_unit_us": 145.45743335038424,
+      "median_ms": 144.30756284855306,
+      "min_ms": 141.23704237863421,
+      "name": "spawn_gather_1000",
+      "parameters": {
+        "tasks": 1000
+      },
+      "runs": 20,
+      "throughput_per_s": 6874.863504508266,
+      "unit": "task",
+      "units_per_run": 1000
+    },
+    {
+      "max_ms": 8.684874977916479,
+      "mean_ms": 7.819481450133026,
+      "mean_unit_us": 78.19481450133026,
+      "median_ms": 7.974062580615282,
+      "min_ms": 6.280125118792057,
+      "name": "await_sleep_0_round_trip",
+      "parameters": {
+        "iterations": 100
+      },
+      "runs": 20,
+      "throughput_per_s": 12788.57180463019,
+      "unit": "await",
+      "units_per_run": 100
+    },
+    {
+      "max_ms": 2.8018751181662083,
+      "mean_ms": 2.5952623458579183,
+      "mean_unit_us": 2.5952623458579183,
+      "median_ms": 2.5914579164236784,
+      "min_ms": 2.3624999448657036,
+      "name": "python_callable_boundary",
+      "parameters": {
+        "iterations": 1000
+      },
+      "runs": 20,
+      "throughput_per_s": 385317.5004045416,
+      "unit": "call",
+      "units_per_run": 1000
+    }
+  ],
+  "schema_version": 1
+}

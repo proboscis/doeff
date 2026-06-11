@@ -1,11 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
-import pytest
-
-from doeff import Program
-from doeff_core_effects.scheduler import Spawn
 # REMOVED: from doeff_core_effects.scheduler import spawn
 
 

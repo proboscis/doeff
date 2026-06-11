@@ -3,10 +3,11 @@
 Try(program) should be caught by try_handler and return Ok/Err.
 Currently fails because Try does not satisfy the VM effect protocol.
 """
-from doeff import do, run, WithHandler
 from doeff_core_effects import Try
 from doeff_core_effects.handlers import try_handler
-from doeff_vm import Ok, Err
+from doeff_vm import Err, Ok
+
+from doeff import WithHandler, do, run
 
 
 def test_try_catches_error():

@@ -7,12 +7,10 @@ from doeff_core_effects import reader, writer, slog_handler
 
 from doeff_docker.effects import (
     From, Run, Copy, Workdir, SetEnv, Expose,
-    DockerBuild, DockerRun, ImagePush,
+    DockerBuild, DockerRun,
 )
 from doeff_docker.handlers.dockerfile import (
     collect_dockerfile,
-    dockerfile_collector_handler,
-    render_dockerfile,
 )
 
 

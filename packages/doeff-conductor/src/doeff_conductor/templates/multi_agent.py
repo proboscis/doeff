@@ -12,29 +12,58 @@ A workflow with parallel agents:
 """
 
 from doeff import EffectGenerator, Gather, Spawn, do
-from ..types import Issue, PRHandle, WorktreeEnv
+from doeff_conductor.types import Issue, PRHandle, Workspace
+
+ARTIFACT_SCHEMA = {
+    "type": "object",
+    "required": ["summary"],
+    "properties": {
+        "summary": {"type": "string"},
+        "files_changed": {"type": "array", "items": {"type": "string"}},
+    },
+}
 
 
 # Helper functions to wrap effects as Programs for Spawn
 @do
-def _create_worktree(issue: Issue, suffix: str) -> EffectGenerator[WorktreeEnv]:
+def _create_workspace(issue: Issue, suffix: str) -> EffectGenerator[Workspace]:
     """Create a worktree (wrapper for Spawn compatibility)."""
-    from ..effects import CreateWorktree
-    return (yield CreateWorktree(issue=issue, suffix=suffix))
+    from doeff_conductor.effects import CreateWorkspace
+    return (
+        yield CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-{suffix}")
+    )
 
 
 @do
-def _run_agent(env: WorktreeEnv, prompt: str, name: str) -> EffectGenerator[str]:
+def _run_agent(
+    issue: Issue,
+    env: Workspace,
+    prompt: str,
+    node_id: str,
+) -> EffectGenerator[dict]:
     """Run an agent (wrapper for Spawn compatibility)."""
-    from ..effects import RunAgent
-    return (yield RunAgent(env=env, prompt=prompt, name=name))
+    from doeff_conductor.effects import Agent, AgentTask
+    return (
+        yield Agent(
+            AgentTask(
+                run_id=issue.id,
+                node_id=node_id,
+                attempt=0,
+                env=env,
+                prompt=prompt,
+                result_schema=ARTIFACT_SCHEMA,
+                verification_class="test-verifiable",
+                agent_type="codex",
+            )
+        )
+    )
 
 
 @do
-def _commit(env: WorktreeEnv, message: str) -> EffectGenerator[str]:
+def _commit(env: Workspace, message: str) -> EffectGenerator[str]:
     """Create a commit (wrapper for Spawn compatibility)."""
-    from ..effects import Commit
-    return (yield Commit(env=env, message=message))
+    from doeff_conductor.effects import Commit
+    return (yield Commit(workspace=env, message=message))
 
 
 @do
@@ -47,18 +76,19 @@ def multi_agent(issue: Issue) -> EffectGenerator[PRHandle]:
     Returns:
         PRHandle for the created PR
     """
-    from ..effects import (
+    from doeff_conductor.effects import (
+        Agent,
+        AgentTask,
         Commit,
         CreatePR,
-        MergeBranches,
+        MergeWorkspaces,
         Push,
         ResolveIssue,
-        RunAgent,
     )
 
     # Step 1: Create parallel worktrees (spawn to get futures, then gather)
-    impl_task = yield Spawn(_create_worktree(issue, "impl"))
-    test_task = yield Spawn(_create_worktree(issue, "tests"))
+    impl_task = yield Spawn(_create_workspace(issue, "impl"))
+    test_task = yield Spawn(_create_workspace(issue, "tests"))
     impl_env, test_env = yield Gather(impl_task, test_task)
 
     # Step 2: Run agents in parallel
@@ -88,8 +118,8 @@ Focus on writing comprehensive tests:
 Do NOT implement the feature - just write the tests.
 """
 
-    impl_agent_task = yield Spawn(_run_agent(impl_env, impl_prompt, "implementer"))
-    test_agent_task = yield Spawn(_run_agent(test_env, test_prompt, "tester"))
+    impl_agent_task = yield Spawn(_run_agent(issue, impl_env, impl_prompt, "implementer"))
+    test_agent_task = yield Spawn(_run_agent(issue, test_env, test_prompt, "tester"))
     yield Gather(impl_agent_task, test_agent_task)
 
     # Step 3: Commit changes in parallel environments
@@ -97,8 +127,14 @@ Do NOT implement the feature - just write the tests.
     test_commit_task = yield Spawn(_commit(test_env, f"test: add tests for {issue.title}"))
     yield Gather(impl_commit_task, test_commit_task)
 
-    # Step 4: Merge branches
-    merged_env = yield MergeBranches(envs=(impl_env, test_env))
+    # Step 4: Reconcile workspaces
+    merge_result = yield MergeWorkspaces(
+        workspace_id=f"{issue.id.lower()}-merged",
+        workspaces=(impl_env, test_env),
+    )
+    if not merge_result.merged or merge_result.workspace is None:
+        raise RuntimeError(f"Workspace merge failed: {merge_result.message}")
+    merged_env = merge_result.workspace
 
     # Step 5: Review and finalize
     review_prompt = f"""
@@ -115,15 +151,26 @@ Check that:
 
 If any fixes are needed, make them now.
 """
-    yield RunAgent(env=merged_env, prompt=review_prompt, name="reviewer")
+    yield Agent(
+        AgentTask(
+            run_id=issue.id,
+            node_id="reviewer",
+            attempt=0,
+            env=merged_env,
+            prompt=review_prompt,
+            result_schema=ARTIFACT_SCHEMA,
+            verification_class="review",
+            agent_type="codex",
+        )
+    )
 
     # Step 6: Final commit and push
-    yield Commit(env=merged_env, message=f"chore: finalize {issue.title}")
-    yield Push(env=merged_env)
+    yield Commit(workspace=merged_env, message=f"chore: finalize {issue.title}")
+    yield Push(workspace=merged_env)
 
     # Step 7: Create PR
     pr = yield CreatePR(
-        env=merged_env,
+        workspace=merged_env,
         title=issue.title,
         body=f"""
 ## Summary

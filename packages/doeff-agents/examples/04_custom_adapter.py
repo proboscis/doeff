@@ -17,12 +17,8 @@ import shutil
 import time
 from pathlib import Path
 
-from doeff import do
-from doeff.effects.writer import slog
-from doeff_time import Delay
-from doeff_preset import preset_handlers
-
 from _runtime import run_program
+from doeff.effects.writer import slog
 from doeff_agents import (
     AgentType,
     Capture,
@@ -38,7 +34,10 @@ from doeff_agents import (
     mock_agent_handlers,
 )
 from doeff_agents.adapters.base import AgentAdapter, InjectionMethod
+from doeff_preset import preset_handlers
+from doeff_time import Delay
 
+from doeff import do
 
 # =============================================================================
 # Example 1: Simple Custom Adapter (ARG injection)
@@ -150,13 +149,13 @@ class ContinueDevAdapter(AgentAdapter):
     """
 
     # Custom UI patterns for this specific agent
-    UI_PATTERNS: list[str] = [
+    UI_PATTERNS: list[str] = [  # noqa: RUF012 - framework class attribute is intentionally static metadata
         "Continue>",
         "Thinking...",
         "[continue]",
     ]
 
-    BLOCKED_PATTERNS: list[str] = [
+    BLOCKED_PATTERNS: list[str] = [  # noqa: RUF012 - framework class attribute is intentionally static metadata
         "Press Enter to confirm",
         "Choose an option:",
         "Continue>",
@@ -198,38 +197,38 @@ class ContinueDevAdapter(AgentAdapter):
 @do
 def custom_adapter_workflow(session_name: str, config: LaunchConfig):
     """Run a session with any adapter using effects.
-    
+
     The adapter is determined by the agent_type in the config.
     """
     yield slog(step="start", session_name=session_name, agent_type=config.agent_type.value)
-    
+
     handle: SessionHandle = yield Launch(session_name, config)
     yield slog(step="launched", pane_id=handle.pane_id)
-    
+
     final_status = SessionStatus.PENDING
-    
+
     try:
-        for iteration in range(30):
+        for _iteration in range(30):
             observation = yield Monitor(handle)
             final_status = observation.status
-            
+
             if observation.output_changed:
                 yield slog(step="status", status=observation.status.value)
-            
+
             if observation.is_terminal:
                 break
-            
+
             yield Delay(1.0)
-        
+
         output = yield Capture(handle, lines=30)
         yield slog(step="complete", status=final_status.value)
-        
+
         return {
             "session_name": session_name,
             "status": final_status.value,
             "output": output,
         }
-    
+
     finally:
         yield Stop(handle)
 

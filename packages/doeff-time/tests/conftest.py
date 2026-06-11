@@ -28,8 +28,9 @@ def listen(program, types=None):
     OCaml 5 pattern: local match_with, not an effect.
     Returns DoExpr that evaluates to (result, collected_effects).
     """
-    from doeff import WithHandler, Pass, Resume, do
     from doeff_core_effects import WriterTellEffect
+
+    from doeff import Pass, WithHandler, do
 
     types_to_collect = types or (WriterTellEffect,)
     collected = []
@@ -49,9 +50,17 @@ def listen(program, types=None):
 
 
 def run_with_handlers(program, *, env=None):
-    from doeff import WithHandler, run
-    from doeff_core_effects.handlers import writer, listen_handler, try_handler, slog_handler, reader, await_handler
+    from doeff_core_effects.handlers import (
+        await_handler,
+        listen_handler,
+        reader,
+        slog_handler,
+        try_handler,
+        writer,
+    )
     from doeff_core_effects.scheduler import scheduled
+
+    from doeff import WithHandler, run
 
     wrapped = program
     if env is not None:

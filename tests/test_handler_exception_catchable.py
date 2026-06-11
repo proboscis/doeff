@@ -17,19 +17,17 @@ the VM instead of routing through receive_external_result(Err(...)).
 
 from dataclasses import dataclass
 
-import pytest
+from doeff_core_effects.handlers import try_handler
+from doeff_vm import Err
 
 from doeff import (
     EffectBase,
     Pass,
-    Resume,
     Try,
     WithHandler,
     do,
     run,
 )
-from doeff_core_effects.handlers import try_handler
-from doeff_vm import Err, Ok
 
 
 @dataclass(frozen=True, kw_only=True)

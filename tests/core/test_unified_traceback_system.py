@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass
 
-import doeff_vm
-import pytest
-
-from doeff import Delegate, Effect, Program, default_handlers, do, run
-from doeff import EffectBase
-# REMOVED: from doeff import ProgramCallStack
-from doeff import Put
 from doeff_vm import Pass, Resume, WithHandler
+
+# REMOVED: from doeff import ProgramCallStack
+from doeff import Effect, EffectBase, Program, do
 from tests._run_helpers import run_with_defaults
+
 # REMOVED: from doeff.trace import TraceDispatch
 # REMOVED: from doeff.traceback import attach_doeff_traceback, get_attached_doeff_traceback
 

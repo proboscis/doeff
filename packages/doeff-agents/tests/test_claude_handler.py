@@ -70,8 +70,8 @@ class TestClaudeHandlerLaunch:
 
         handle = _run(program(), backend)
         assert isinstance(handle, SessionHandle)
-        assert handle.session_name == "test-launch"
-        assert handle.agent_type == AgentType.CLAUDE
+        assert handle.session_id == "test-launch"
+        assert not hasattr(handle, "agent_type")
         assert backend.has_session("test-launch")
 
     def test_launch_writes_trust(self, tmp_path, monkeypatch):

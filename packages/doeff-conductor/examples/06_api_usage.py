@@ -6,7 +6,7 @@ Demonstrates using the ConductorAPI for programmatic access:
 1. Run workflows via API
 2. List and query workflows
 3. Watch workflow progress
-4. Manage environments
+4. Manage workspaces
 
 The API provides a high-level interface for conductor operations
 without needing to set up handlers manually.
@@ -64,7 +64,7 @@ def demo_api_workflow_management():
     print(f"Using state directory: {state_dir}\n")
 
     # Create sample issue
-    issue = Issue(
+    Issue(
         id="ISSUE-API-001",
         title="Demo API workflow",
         body="This is a demo issue for API usage example",
@@ -83,8 +83,8 @@ def demo_api_workflow_management():
     print("   - api.get_workflow(workflow_id)")
     print("   - api.watch_workflow(workflow_id)")
     print("   - api.stop_workflow(workflow_id)")
-    print("   - api.list_environments()")
-    print("   - api.cleanup_environments(dry_run=True)")
+    print("   - api.list_workspaces()")
+    print("   - api.cleanup_workspaces(dry_run=True)")
 
     print("\n3. Workflow status types:")
     for status in WorkflowStatus:
@@ -93,28 +93,28 @@ def demo_api_workflow_management():
 
 
 def demo_environment_management():
-    """Demonstrate environment management."""
+    """Demonstrate workspace management."""
     print("\n" + "="*60)
-    print("Environment Management")
+    print("Workspace Management")
     print("="*60 + "\n")
 
     # Create API
-    state_dir = Path(mkdtemp(prefix="conductor-env-demo-"))
+    state_dir = Path(mkdtemp(prefix="conductor-workspace-demo-"))
     api = ConductorAPI(state_dir=state_dir)
 
-    print("1. Listing environments...")
-    environments = api.list_environments()
-    print(f"   Found {len(environments)} environments")
+    print("1. Listing workspaces...")
+    workspaces = api.list_workspaces()
+    print(f"   Found {len(workspaces)} workspaces")
 
-    print("\n2. Environment cleanup (dry run)...")
-    would_clean = api.cleanup_environments(dry_run=True, older_than_days=7)
-    print(f"   Would clean {len(would_clean)} environments older than 7 days")
+    print("\n2. Workspace cleanup (dry run)...")
+    would_clean = api.cleanup_workspaces(dry_run=True, older_than_days=7)
+    print(f"   Would clean {len(would_clean)} workspaces older than 7 days")
 
-    print("\n3. Environment attributes:")
-    print("   - id: Unique environment identifier")
-    print("   - path: Filesystem path to worktree")
-    print("   - branch: Git branch name")
-    print("   - base_commit: Commit SHA worktree was created from")
+    print("\n3. Workspace attributes:")
+    print("   - id: Unique workspace identifier")
+    print("   - repo: Repository name resolved by the handler")
+    print("   - ref: Portable git ref")
+    print("   - base_ref: Base ref workspace was created from")
     print("   - issue_id: Associated issue (optional)")
 
 

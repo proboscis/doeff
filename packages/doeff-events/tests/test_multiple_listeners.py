@@ -2,12 +2,12 @@
 import asyncio
 from dataclasses import dataclass
 
+from doeff_core_effects import Await
+from doeff_core_effects.scheduler import Spawn, Wait
 from doeff_events.effects import Publish, WaitForEvent
 from doeff_events.handlers import event_handler
 
 from doeff import WithHandler, do, run
-from doeff_core_effects.scheduler import Spawn, Wait, scheduled
-from doeff_core_effects import Await
 
 
 @dataclass(frozen=True)
@@ -40,12 +40,12 @@ def test_publish_wakes_multiple_listeners_waiting_same_type() -> None:
 
     first_result = run(
         WithHandler(event_handler(), run_listener("a")),
-        handlers=default_handlers(),
+        handlers=default_handlers(),  # noqa: F821 - legacy removed API reference is intentionally preserved
     )
 
     second_result = run(
         WithHandler(event_handler(), run_listener("b")),
-        handlers=default_handlers(),
+        handlers=default_handlers(),  # noqa: F821 - legacy removed API reference is intentionally preserved
     )
 
     assert first_result.is_ok()

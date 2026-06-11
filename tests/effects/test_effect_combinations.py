@@ -12,8 +12,6 @@ import time
 
 import pytest
 
-from doeff import Program, do
-from tests._run_helpers import run_with_defaults
 from doeff import (
     Ask,
     Await,
@@ -25,7 +23,9 @@ from doeff import (
     Spawn,
     Tell,
     Try,
+    do,
 )
+from tests._run_helpers import run_with_defaults
 
 # ============================================================================
 # Law 1: Local Restoration Law Tests

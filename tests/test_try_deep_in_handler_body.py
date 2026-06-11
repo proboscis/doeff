@@ -14,10 +14,11 @@ This mirrors:
         → yield get_openai_client()                 # @do
           → yield Try(try_ask_client())             # Try 3 levels deep
 """
-from doeff import do, run, WithHandler, Resume, Pass
-from doeff_core_effects import Ask, Try, Get, Put, Tell
-from doeff_core_effects.handlers import reader, try_handler, state, writer
-from doeff_vm import EffectBase, Ok, Err
+from doeff_core_effects import Ask, Get, Tell, Try
+from doeff_core_effects.handlers import reader, state, try_handler, writer
+from doeff_vm import EffectBase, Ok
+
+from doeff import Pass, Resume, WithHandler, do, run
 
 
 class CustomQuery(EffectBase):
@@ -191,7 +192,7 @@ def test_try_deep_in_handler_body_with_retry_loop():
                 return f"success on attempt {call_count}"
 
             last_error = None
-            for i in range(5):
+            for _i in range(5):
                 safe = yield Try(attempt())
                 if safe.is_ok():
                     return (yield Resume(k, safe.value))

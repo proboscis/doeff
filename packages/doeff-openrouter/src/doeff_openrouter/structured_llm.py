@@ -29,7 +29,7 @@ def convert_pil_to_base64(image: "PIL.Image.Image") -> str:
     return f"data:image/{image_format.lower()};base64,{encoded}"
 
 
-def _collect_message_content_parts(content: Any) -> tuple[Any | None, list[str]]:
+def _collect_message_content_parts(content: Any) -> tuple[Any | None, list[str]]:  # noqa: PLR0912 - baseline cleanup keeps existing control flow unchanged
     """Extract JSON payload (if any) and text fragments from message content."""
     if content is None:
         return None, []
@@ -136,7 +136,7 @@ def ensure_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
                 ensure_strict_schema(value)
     if schema_type == "array" and "items" in schema:
         ensure_strict_schema(schema["items"])
-    for key, value in list(schema.items()):
+    for _key, value in list(schema.items()):
         if isinstance(value, dict):
             ensure_strict_schema(value)
         elif isinstance(value, list):

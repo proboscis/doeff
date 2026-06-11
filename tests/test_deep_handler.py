@@ -6,10 +6,11 @@ resumed continuation performs another effect of the same type.
 This is the standard "deep handler" semantics from algebraic effects
 literature (OCaml 5, Koka, Effekt all use deep handlers by default).
 """
-from doeff import do, run, WithHandler, Resume, Transfer, Pass
 from doeff_core_effects import Ask
 from doeff_core_effects.handlers import reader
 from doeff_vm import EffectBase
+
+from doeff import Pass, Resume, Transfer, WithHandler, do, run
 
 
 def test_reader_handles_multiple_asks():

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import shutil
 import socket
 import sys
 import tempfile
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from doeff_agents import (
     AgentdClient,
     AgentdClientError,
+    AgentdUnavailableError,
     AgentSessionLifecycle,
     AgentType,
     DaemonAgentHandler,
@@ -29,6 +31,16 @@ from doeff_agents import (
     default_agentd_paths,
     ensure_agentd,
 )
+
+
+@pytest.fixture
+def short_runtime_dir() -> Iterator[Path]:
+    """Return a short runtime dir so AF_UNIX socket paths fit on macOS."""
+    runtime_dir = Path(tempfile.mkdtemp(prefix="agentd-runtime-", dir="/tmp"))
+    try:
+        yield runtime_dir
+    finally:
+        shutil.rmtree(runtime_dir, ignore_errors=True)
 
 
 class OneShotAgentdServer:
@@ -149,52 +161,48 @@ def test_default_agentd_paths_use_xdg(monkeypatch, tmp_path: Path) -> None:
     assert paths.log_path == state_home / "doeff" / "agentd.log"
 
 
-def test_ensure_agentd_starts_daemon_when_socket_is_not_ready(
+def test_ensure_agentd_uses_reachable_canonical_socket(
     monkeypatch,
     tmp_path: Path,
+    short_runtime_dir: Path,
 ) -> None:
-    ready_calls = 0
-    commands: list[list[str]] = []
+    def handle(request: Mapping[str, Any]) -> Mapping[str, Any]:
+        return {"id": request["id"], "ok": True, "result": {"state": "running"}}
 
-    def fake_ready(_client: AgentdClient) -> bool:
-        nonlocal ready_calls
-        ready_calls += 1
-        return ready_calls > 1
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    paths = default_agentd_paths()
+    paths.socket_path.parent.mkdir(parents=True)
 
-    class FakeProcess:
-        def poll(self) -> None:
-            return None
+    with OneShotAgentdServer(paths.socket_path, handle) as server:
+        client = ensure_agentd(client_timeout=2.0)
 
-    def fake_popen(command, **_kwargs):
-        commands.append(command)
-        return FakeProcess()
-
-    monkeypatch.setattr(agentd_client, "_agentd_is_ready", fake_ready)
-    monkeypatch.setattr(agentd_client.subprocess, "Popen", fake_popen)
-
-    client = ensure_agentd(
-        db_path=tmp_path / "agentd.sqlite",
-        socket_path=tmp_path / "agentd.sock",
-        daemon_bin="/usr/local/bin/doeff-agentd",
-        max_running=7,
-    )
-
-    assert client.socket_path == tmp_path / "agentd.sock"
-    assert commands == [
-        [
-            "/usr/local/bin/doeff-agentd",
-            "--db",
-            str(tmp_path / "agentd.sqlite"),
-            "--socket",
-            str(tmp_path / "agentd.sock"),
-            "--max-running",
-            "7",
-            "serve",
-        ]
-    ]
+    assert client.socket_path == paths.socket_path
+    assert server.requests[0]["method"] == "daemon.status"
 
 
-def test_lazy_agentd_client_starts_daemon_on_first_operation(monkeypatch, tmp_path: Path) -> None:
+def test_ensure_agentd_fails_loudly_when_canonical_socket_unreachable(
+    monkeypatch,
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    paths = default_agentd_paths()
+
+    with pytest.raises(AgentdUnavailableError) as error:
+        ensure_agentd(daemon_bin="/usr/local/bin/doeff-agentd", max_running=7)
+
+    message = str(error.value)
+    assert str(paths.socket_path) in message
+    assert "doeff-agentd --db" in message
+    assert f"--socket {paths.socket_path}" in message
+    assert "--max-running 7 serve" in message
+
+
+def test_lazy_agentd_client_resolves_daemon_on_first_operation(monkeypatch, tmp_path: Path) -> None:
     calls: list[dict[str, Any]] = []
 
     class FakeResolvedClient:
@@ -247,7 +255,7 @@ def test_daemon_handler_launch_delegates_lifecycle_to_client(monkeypatch, tmp_pa
         )
     )
 
-    assert handle.session_name == "s2"
+    assert handle.session_id == "s2"
     assert adapter.params is not None
     assert adapter.params.prompt == "review this"
     assert fake_client.launches[0]["session_id"] == "s2"
@@ -307,7 +315,6 @@ def _snapshot_payload(
         "last_observed_at": "2026-05-25T00:00:01+00:00",
         "finished_at": None,
         "cleaned_at": None,
-        "pr_url": None,
         "output_snippet": "running",
     }
 
@@ -323,3 +330,42 @@ def _snapshot_payload_obj(
     return AgentSessionSnapshot.from_dict(
         _snapshot_payload(session_id=session_id, agent_type=agent_type, work_dir=work_dir)
     )
+
+
+def _spy_client(captured: dict) -> AgentdClient:
+    class _Spy(AgentdClient):
+        def request(self, method, params=None, *, read_timeout=None):
+            captured["method"] = method
+            captured["read_timeout"] = read_timeout
+            if method == "session.launch":
+                return _snapshot_payload()
+            return {"session": _snapshot_payload(), "result": None, "validation_error": None}
+
+    return _Spy("/tmp/unused.sock")
+
+
+def test_launch_read_timeout_covers_daemon_launch_budget() -> None:
+    """session.launch blocks daemon-side up to 60s; the client socket must wait longer."""
+    captured: dict = {}
+    _spy_client(captured).launch_session(
+        session_id="s1",
+        session_name="s1",
+        agent_type="codex",
+        work_dir=Path("/tmp"),
+    )
+    assert captured["method"] == "session.launch"
+    assert captured["read_timeout"] is not None
+    assert captured["read_timeout"] > 60.0
+
+
+def test_await_result_read_timeout_covers_caller_budget() -> None:
+    captured: dict = {}
+    _spy_client(captured).await_result("s1", timeout_seconds=120.0)
+    assert captured["method"] == "session.await_result"
+    assert captured["read_timeout"] > 120.0
+
+
+def test_await_result_read_timeout_covers_default_budget() -> None:
+    captured: dict = {}
+    _spy_client(captured).await_result("s1")
+    assert captured["read_timeout"] > 600.0

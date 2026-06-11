@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from doeff import Program, default_handlers, run
+from doeff import Program
+from doeff import default_handlers as default_handlers
+from doeff import run as run
 from tests._run_helpers import run_with_defaults
 
 

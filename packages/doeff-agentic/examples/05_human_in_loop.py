@@ -20,6 +20,7 @@ In another terminal, when the workflow is waiting:
 
 import time
 
+from doeff.effects.writer import slog
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticEndOfEvents,
@@ -33,7 +34,6 @@ from doeff_agentic.opencode_handler import opencode_handler
 from doeff_preset import preset_handlers
 
 from doeff import do
-from doeff.effects.writer import slog
 
 
 def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
@@ -163,6 +163,7 @@ def draft_with_approval(task: str):
 
 if __name__ == "__main__":
     import asyncio
+
     from doeff import WithHandler, async_run, default_handlers
 
     async def main():

@@ -3,14 +3,14 @@
 import sys
 import types
 
+import doeff_hy  # noqa — registers extensions
 import hy
 import hy.macros
 import pytest
-
-import doeff_hy  # noqa — registers extensions
-from doeff import do, run
-from doeff.mcp import McpToolDef, McpParamSchema
 from doeff_vm import Expand
+
+from doeff import do, run
+from doeff.mcp import McpToolDef
 
 
 def _eval_mcp(code: str, **extra_globals):

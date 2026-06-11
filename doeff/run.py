@@ -24,7 +24,7 @@ def run(doexpr):
 def _enrich_and_print(exception):
     """Enrich exception with doeff traceback and print to stderr."""
     try:
-        if hasattr(exception, '__doeff_traceback__'):
+        if hasattr(exception, "__doeff_traceback__"):
             # VM already set __doeff_traceback__ (e.g. handler chain),
             # but pure Python frames from __traceback__ may be missing.
             _merge_python_frames(exception)
@@ -38,7 +38,7 @@ def _enrich_and_print(exception):
         pass  # don't mask the original error
 
 
-def _merge_python_frames(exc):
+def _merge_python_frames(exc):  # noqa: PLR0912 - baseline cleanup keeps existing control flow unchanged
     """Merge pure Python __traceback__ frames into existing __doeff_traceback__.
 
     When the Rust VM sets __doeff_traceback__ (e.g. handler chain entries),
@@ -52,8 +52,8 @@ def _merge_python_frames(exc):
     py_frames = []
     for fs in tb_mod.extract_tb(tb):
         fn = fs.filename
-        if any(p in fn for p in ('/doeff_vm/', '/doeff/do.py', '/doeff/run.py',
-                                  '/doeff_core_effects/')):
+        if any(p in fn for p in ("/doeff_vm/", "/doeff/do.py", "/doeff/run.py",
+                                  "/doeff_core_effects/")):
             continue
         py_frames.append([fs.name, fs.filename, fs.lineno])
     if not py_frames:
@@ -91,10 +91,9 @@ def _enrich_exception_traceback(exc):
     frames = []
     for fs in tb_mod.extract_tb(tb):
         fn = fs.filename
-        name = fs.name
         # Skip doeff VM/framework internals
-        if any(p in fn for p in ('/doeff_vm/', '/doeff/do.py', '/doeff/run.py',
-                                  '/doeff_core_effects/')):
+        if any(p in fn for p in ("/doeff_vm/", "/doeff/do.py", "/doeff/run.py",
+                                  "/doeff_core_effects/")):
             continue
         frames.append([fs.name, fs.filename, fs.lineno])
     if frames:

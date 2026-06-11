@@ -3,7 +3,6 @@
 
 import warnings
 from collections.abc import Mapping
-from typing import Any
 
 from doeff_secret.testing import (
     InMemorySecretStore,

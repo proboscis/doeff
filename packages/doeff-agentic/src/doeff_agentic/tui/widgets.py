@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from textual.app import ComposeResult
 from textual.widgets import Static
 
-from ..types import AgentInfo, AgentStatus, WorkflowInfo, WorkflowStatus
+from doeff_agentic.types import AgentInfo, AgentStatus, WorkflowInfo, WorkflowStatus
 
 
 def _format_relative_time(dt: datetime) -> str:
@@ -296,7 +296,7 @@ class WorkflowInfoPane(Static):
 
         self.update("\n".join(lines))
 
-    def _get_status_description(self, wf: WorkflowInfo) -> str:
+    def _get_status_description(self, wf: WorkflowInfo) -> str:  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
         """Get a human-readable status description."""
         if wf.status == WorkflowStatus.BLOCKED:
             return "Waiting for input"

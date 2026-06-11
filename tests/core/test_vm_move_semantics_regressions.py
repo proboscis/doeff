@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from doeff import Ask, MissingEnvKeyError, default_handlers, do, run
+from doeff import Ask, MissingEnvKeyError, do
 from tests._run_helpers import run_with_defaults
 
 

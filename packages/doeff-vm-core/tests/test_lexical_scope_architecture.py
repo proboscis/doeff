@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 CORE_ROOT = Path(__file__).resolve().parents[1]
 SEGMENT_RS = CORE_ROOT / "src" / "segment.rs"
 VAR_STORE_RS = CORE_ROOT / "src" / "var_store.rs"
@@ -76,7 +75,8 @@ def test_scheduler_spawn_path_no_longer_requests_get_handlers() -> None:
 
     start = source.find("SchedulerPhase::SpawnAwaitTraceback")
     end = source.find("SchedulerPhase::SpawnAwaitContinuation")
-    assert start != -1 and end != -1, "scheduler spawn phases must exist"
+    assert start != -1, "scheduler spawn start phase must exist"
+    assert end != -1, "scheduler spawn continuation phase must exist"
     spawn_block = source[start:end]
 
     assert "DoCtrl::GetHandlers" not in spawn_block, (

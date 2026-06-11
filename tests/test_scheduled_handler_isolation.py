@@ -5,10 +5,11 @@ inside a @do function work correctly when the body yields sub-programs
 whose handlers emit effects.
 """
 
-from doeff import do, Ask, WithHandler, Local, run
-from doeff_vm import EffectBase, Resume, Pass
-from doeff_core_effects.scheduler import scheduled
 from doeff_core_effects.handlers import lazy_ask
+from doeff_core_effects.scheduler import scheduled
+from doeff_vm import EffectBase, Pass, Resume
+
+from doeff import Ask, WithHandler, do, run
 
 
 class Transcribe(EffectBase):
@@ -19,11 +20,9 @@ class Resolve(EffectBase):
 
 class ResolveHandlerKey:
     """Ask key for resolve handler lookup."""
-    pass
 
 class TranscribeHandlerKey:
     """Ask key for transcribe handler lookup."""
-    pass
 
 
 @do

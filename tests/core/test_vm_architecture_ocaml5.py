@@ -13,15 +13,14 @@ If these tests fail, the architecture has regressed.
 from doeff import (
     Effect,
     EffectBase,
+    Gather,
     Pass,
     Resume,
     Spawn,
-    Gather,
     WithHandler,
     do,
 )
 from tests._run_helpers import run_with_defaults
-
 
 # ---------------------------------------------------------------------------
 # Continuation move semantics: a fiber is in ONE place, never both
@@ -112,7 +111,6 @@ class GetShared(SharedState):
 
 
 class PutShared(SharedState):
-    pass
 
     def __init__(self, value):
         self.value = value
@@ -217,7 +215,6 @@ def test_dispatch_does_not_corrupt_shared_handler_chain():
     class TaskEffect(EffectBase):
         pass
 
-    results = []
 
     @do
     def _handler(effect: Effect, k):

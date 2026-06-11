@@ -4,7 +4,6 @@
 from dataclasses import dataclass
 
 from doeff import EffectBase
-
 from doeff_gemini.types import GeminiCallResult
 
 

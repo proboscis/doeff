@@ -1,18 +1,24 @@
 ;;; Rsync handler
 ;;; Handles RsyncTo effect via rsync shell command.
 
-(require doeff_hy.macros [defk <-])
+(require doeff_hy.macros [defk <- defhandler])
 (import doeff [do :as _doeff-do])
-(import doeff [Resume Pass])
 (import doeff_core_effects [slog])
 
 (import subprocess)
+(import pathlib [Path])
 
 (import doeff_ml_nexus.effects [RsyncTo])
 
 
-(defn _rsync-args [src host dst-path * [excludes #()] [includes #()]]
+(defk _rsync-args [src host dst-path * [excludes #()] [includes #()]]
   "Build rsync command as list of args."
+  {:pre [(: src Path)
+         (: host str)
+         (: dst-path str)
+         (: excludes tuple)
+         (: includes tuple)]
+   :post [(: % list)]}
   (setv parts ["rsync" "-avz" "--delete"])
   ;; includes must come before excludes in rsync
   (for [i includes]
@@ -28,18 +34,16 @@
   parts)
 
 
-(defk rsync-handler [effect k]
+(defhandler rsync-handler
   "Handle RsyncTo: rsync files to destination."
-  (if (isinstance effect RsyncTo)
-      (do
-        (<- (slog :msg f"rsync: {effect.src} -> {effect.host}:{effect.dst-path}"))
-        ;; Ensure destination directory exists
-        (when (!= effect.host "localhost")
-          (subprocess.run ["ssh" effect.host f"mkdir -p {effect.dst-path}"]
-                          :check True :capture-output True))
-        (setv args (_rsync-args effect.src effect.host effect.dst-path
-                                :excludes effect.excludes
-                                :includes effect.includes))
-        (subprocess.run args :check True :capture-output True)
-        (yield (Resume k effect.dst-path)))
-      (yield (Pass effect k))))
+  (RsyncTo [src host dst-path excludes includes]
+    (<- (slog :msg f"rsync: {src} -> {host}:{dst-path}"))
+    ;; Ensure destination directory exists
+    (when (!= host "localhost")
+      (subprocess.run ["ssh" host f"mkdir -p {dst-path}"]
+                      :check True :capture-output True))
+    (<- args (_rsync-args src host dst-path
+                          :excludes excludes
+                          :includes includes))
+    (subprocess.run args :check True :capture-output True)
+    (resume dst-path)))

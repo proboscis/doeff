@@ -17,17 +17,29 @@
 
 (defk copy-from [src dst build-context-path]
   "Copy a file from outside build context: rsync to context, then COPY."
-  (<- (RsyncTo :src src :host "localhost"
-               :dst-path (str (/ build-context-path (Path src) .name))))
-  (<- (Copy :src (. (Path src) name) :dst dst)))
+  {:pre [(: src "str or Path")
+         (or (isinstance src str) (isinstance src Path))
+         (: dst str)
+         (: build-context-path Path)]
+   :post [(: % "None") (is % None)]}
+  (setv src-path (Path src))
+  (<- (RsyncTo :src src-path :host "localhost"
+               :dst-path (str (/ build-context-path src-path.name))))
+  (<- (Copy :src src-path.name :dst dst)))
 
 (defk copy-resolved [source-id dst build-context-path]
   "Resolve a source id to a path, rsync into context, then COPY."
+  {:pre [(: source-id str)
+         (: dst str)
+         (: build-context-path Path)]
+   :post [(: % "None") (is % None)]}
   (<- src-path (Resolve :target source-id :kind Path))
-  (copy-from src-path dst build-context-path))
+  (<- (copy-from src-path dst build-context-path)))
 
 (defk apt-install [#* packages]
   "RUN apt-get install."
+  {:pre [(: packages tuple)]
+   :post [(: % "None") (is % None)]}
   (<- (Run :command
         (+ "apt-get update && apt-get install -y --no-install-recommends "
            (.join " " packages)
@@ -35,11 +47,15 @@
 
 (defk install-uv []
   "Install uv into the image."
+  {:pre []
+   :post [(: % "None") (is % None)]}
   (<- (Run :command "curl -LsSf https://astral.sh/uv/install.sh | sh"))
   (<- (SetEnv :key "PATH" :value "/root/.local/bin:$PATH")))
 
 (defk install-rust []
   "Install Rust toolchain into the image."
+  {:pre []
+   :post [(: % "None") (is % None)]}
   (<- (Run :command "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y"))
   (<- (SetEnv :key "PATH" :value "/root/.cargo/bin:$PATH")))
 
@@ -51,12 +67,16 @@
 (defk copy-local-deps [deps]
   "COPY top-level local deps into container at /deps/<name>.
    Sub-deps (e.g. doeff-vm inside doeff) are included automatically."
+  {:pre [(: deps list)]
+   :post [(: % "None") (is % None)]}
   (setv top-deps (_find-top-level-deps deps))
   (for [dep top-deps]
     (<- (Copy :src f"deps/{dep.name}" :dst f"/deps/{dep.name}"))))
 
-(defn has-rust-extension [deps]
+(defk has-rust-extension [deps]
   "Check if any local dep requires Rust build (has Cargo.toml)."
+  {:pre [(: deps list)]
+   :post [(: % bool)]}
   (any (lfor dep deps (.exists (/ dep.local-path "Cargo.toml")))))
 
 
@@ -78,6 +98,11 @@
      2. Local deps COPY (if any)
      3. Dependency layer (pyproject.toml + uv.lock only)
      4. Full source + project install"
+  {:pre [(: base-image str)
+         (: project-root "Path or None")
+         (or (is project-root None) (isinstance project-root Path))
+         (: gpu bool)]
+   :post [(: % "None") (is % None)]}
   (<- (From :image base-image))
   (when gpu
     (<- (SetEnv :key "NVIDIA_VISIBLE_DEVICES" :value "all"))
@@ -87,7 +112,8 @@
 
   ;; Check for local deps and rust extensions
   (setv deps (if project-root (find-local-deps project-root) []))
-  (when (and deps (has-rust-extension deps))
+  (<- has-rust (has-rust-extension deps))
+  (when (and deps has-rust)
     (<- (install-rust)))
 
   ;; Copy local deps if any
@@ -107,8 +133,16 @@
 
 (defk uv-image [base-image * [project-root None]]
   "Standard uv project Dockerfile."
+  {:pre [(: base-image str)
+         (: project-root "Path or None")
+         (or (is project-root None) (isinstance project-root Path))]
+   :post [(: % "None") (is % None)]}
   (<- (uv-image-core base-image project-root)))
 
 (defk uv-gpu-image [base-image * [project-root None]]
   "uv project with NVIDIA GPU support."
+  {:pre [(: base-image str)
+         (: project-root "Path or None")
+         (or (is project-root None) (isinstance project-root Path))]
+   :post [(: % "None") (is % None)]}
   (<- (uv-image-core base-image project-root :gpu True)))

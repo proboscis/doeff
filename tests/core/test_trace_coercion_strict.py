@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import pytest
 
 # REMOVED: from doeff.trace import (
 #     ContextEntry,

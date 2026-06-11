@@ -2,12 +2,12 @@
 from dataclasses import dataclass
 from datetime import timedelta
 
+from doeff_core_effects.scheduler import Wait
 from doeff_time.effects import Delay, GetTime, ScheduleAt
 from doeff_time.handlers import sim_time_handler
 
 from conftest import run_with_handlers
 from doeff import Effect, EffectBase, Pass, Resume, WithHandler, do
-from doeff_core_effects.scheduler import Wait
 
 
 def _make_marker_program(marker: dict[str, bool]):

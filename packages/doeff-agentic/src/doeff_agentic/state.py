@@ -19,6 +19,7 @@ State directory structure:
 """
 
 
+import contextlib
 import hashlib
 import json
 import os
@@ -50,10 +51,8 @@ def _atomic_write(path: Path, content: str) -> None:
         os.rename(temp_path, path)
     except Exception:
         os.close(fd)
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(temp_path)
-        except OSError:
-            pass
         raise
 
 
@@ -427,8 +426,8 @@ class StateManager:
 
         entries: list[dict[str, Any]] = []
         with trace_path.open() as f:
-            for line in f:
-                line = line.strip()
+            for raw_line in f:
+                line = raw_line.strip()
                 if line:
                     entries.append(json.loads(line))
         return entries

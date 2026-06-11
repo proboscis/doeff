@@ -45,10 +45,10 @@ from doeff_gemini.structured_llm import GeminiStructuredOutputError
 from doeff_gemini.types import APICallMetadata
 
 genai_types = google_genai.types
+from doeff_core_effects.memo_effects import MemoGetEffect, MemoPutEffect
 from pydantic import BaseModel
 
 from doeff import EffectGenerator, async_run, default_handlers, do
-from doeff_core_effects.memo_effects import MemoGetEffect, MemoPut, MemoPutEffect
 
 structured_llm_module = importlib.import_module("doeff_gemini.structured_llm")
 

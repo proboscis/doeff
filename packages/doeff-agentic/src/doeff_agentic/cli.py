@@ -279,7 +279,7 @@ def attach(ctx: click.Context, target: str) -> None:
                 f"[yellow]Multiple agents in workflow {workflow.id}. Specify session:[/yellow]"
             )
             for a in workflow.agents:
-                style = _status_color(a.status)
+                _status_color(a.status)
                 console.print(f"  doeff-agentic attach {workflow.id}:{a.name}")
             sys.exit(1)
 

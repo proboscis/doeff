@@ -1,6 +1,7 @@
 """Python @do functions — no __doeff_body__."""
 from dataclasses import dataclass
-from doeff import do, EffectBase
+
+from doeff import EffectBase, do
 
 
 @dataclass(frozen=True)

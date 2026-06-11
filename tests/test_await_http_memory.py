@@ -15,23 +15,21 @@ from __future__ import annotations
 import asyncio
 import resource
 import signal
-import time
 from typing import Any
-
-import pytest
 
 from doeff import (
     AcquireSemaphore,
+    Await,
     CreateSemaphore,
     Gather,
     ReleaseSemaphore,
     Spawn,
     WithHandler,
     do,
-    run,
-    Await,
-    slog,)
+    slog,
+)
 from tests._run_helpers import run_with_defaults
+
 # REMOVED: from doeff_core_effects.handlers import sqlite_cache_handler
 
 
@@ -105,7 +103,7 @@ def _run_test(factory, n: int, conc: int = 40):
     signal.alarm(TIMEOUT_SECONDS)
     try:
         prog = WithHandler(
-            sqlite_cache_handler(None),
+            sqlite_cache_handler(None),  # noqa: F821 - legacy removed API reference is intentionally preserved
             _spawn_gather(factory, n, conc),
         )
         rss_before = _rss_mb()

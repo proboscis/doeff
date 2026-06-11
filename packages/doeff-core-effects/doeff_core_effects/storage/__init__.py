@@ -69,8 +69,12 @@ class DurableStorage(Protocol):
 
 
 # Import implementations for convenience
-from doeff_core_effects.storage.memory import InMemoryStorage
-from doeff_core_effects.storage.sqlite import SQLiteStorage
+from doeff_core_effects.storage.memory import (  # noqa: E402 - late import preserves existing import/setup order
+    InMemoryStorage,
+)
+from doeff_core_effects.storage.sqlite import (  # noqa: E402 - late import preserves existing import/setup order
+    SQLiteStorage,
+)
 
 __all__ = [
     "DurableStorage",

@@ -4,31 +4,78 @@ doeff - Algebraic Effects for Python.
 Backed by a Rust VM with OCaml 5-aligned effect handler architecture.
 """
 
+# ruff: noqa: I001 - import order avoids doeff_core_effects circular imports.
 from collections.abc import Generator
-from typing import Any, Callable, ParamSpec, TypeVar
+from typing import Any
 
-from doeff.do import do
-from doeff.program import (
-    Apply,
-    Expand,
-    GetExecutionContext,
-    GetHandlers,
-    GetOuterHandlers,
-    GetTraceback,
-    Pass,
-    Perform,
-    Pure,
-    Resume,
-    Transfer,
-    WithHandler,
-    WithHandlerType,
-    WithObserve as WithObserveRaw,
-    program,
-)
+from doeff_vm import Callable as Callable
 from doeff_vm import Callable as _VmCallable
+from doeff_vm import EffectBase
+from doeff_vm import K as K
+from doeff_vm import PyVM as PyVM
+from doeff_vm import UnhandledEffect as UnhandledEffect
+
+from doeff.cli.run_services import DoeffRunContext as DoeffRunContext
+from doeff.do import do as do
+from doeff.mcp import McpParamSchema as McpParamSchema
+from doeff.mcp import McpToolDef as McpToolDef
+from doeff.program import Apply as Apply
+from doeff.program import Expand as Expand
+from doeff.program import GetExecutionContext as GetExecutionContext
+from doeff.program import GetHandlers as GetHandlers
+from doeff.program import GetOuterHandlers as GetOuterHandlers
+from doeff.program import GetTraceback as GetTraceback
+from doeff.program import Pass as Pass
+from doeff.program import Perform as Perform
+from doeff.program import Pure as Pure
+from doeff.program import Resume as Resume
+from doeff.program import ResumeThrow as ResumeThrow
+from doeff.program import Transfer as Transfer
+from doeff.program import TransferThrow as TransferThrow
+from doeff.program import WithHandler as WithHandler
+from doeff.program import WithHandlerType as WithHandlerType
+from doeff.program import WithObserve as WithObserveRaw
+from doeff.program import program as program
+from doeff.result import Err as Err
+from doeff.result import Maybe as Maybe
+from doeff.result import Nothing as Nothing
+from doeff.result import Ok as Ok
+from doeff.result import Some as Some
+from doeff.run import run as run
+
+from doeff_core_effects.effects import Ask as Ask
+from doeff_core_effects.effects import Await as Await
+from doeff_core_effects.effects import Get as Get
+from doeff_core_effects.effects import Listen as Listen
+from doeff_core_effects.effects import Local as Local
+from doeff_core_effects.effects import Put as Put
+from doeff_core_effects.effects import Slog as Slog
+from doeff_core_effects.effects import Tell as Tell
+from doeff_core_effects.effects import Try as Try
+from doeff_core_effects.effects import WriterTellEffect as WriterTellEffect
+from doeff_core_effects.effects import slog as slog
+from doeff_core_effects.scheduler import PRIORITY_HIGH as PRIORITY_HIGH
+from doeff_core_effects.scheduler import PRIORITY_IDLE as PRIORITY_IDLE
+from doeff_core_effects.scheduler import PRIORITY_NORMAL as PRIORITY_NORMAL
+from doeff_core_effects.scheduler import AcquireSemaphore as AcquireSemaphore
+from doeff_core_effects.scheduler import Cancel as Cancel
+from doeff_core_effects.scheduler import CompletePromise as CompletePromise
+from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
+from doeff_core_effects.scheduler import CreatePromise as CreatePromise
+from doeff_core_effects.scheduler import CreateSemaphore as CreateSemaphore
+from doeff_core_effects.scheduler import FailPromise as FailPromise
+from doeff_core_effects.scheduler import Future as Future
+from doeff_core_effects.scheduler import Gather as Gather
+from doeff_core_effects.scheduler import Promise as Promise
+from doeff_core_effects.scheduler import Race as Race
+from doeff_core_effects.scheduler import ReleaseSemaphore as ReleaseSemaphore
+from doeff_core_effects.scheduler import Semaphore as Semaphore
+from doeff_core_effects.scheduler import Spawn as Spawn
+from doeff_core_effects.scheduler import Task as Task
+from doeff_core_effects.scheduler import Wait as Wait
 
 
-def WithObserve(observer, body):
+def WithObserve(observer, body):  # noqa: N802 - public compatibility constructor
     """Install observer and run body under it.
 
     Accepts a plain Python callable as observer — automatically wraps it
@@ -43,29 +90,8 @@ def WithObserve(observer, body):
             f"WithObserve: observer must be callable, got {type(observer).__name__}"
         )
     return WithObserveRaw(_VmCallable(observer), body)
-from doeff.program import ResumeThrow, TransferThrow
-from doeff.run import run
-from doeff.result import Ok, Err, Some, Nothing, Maybe  # noqa: F811
-from doeff.mcp import McpToolDef, McpParamSchema
-from doeff_vm import Callable, EffectBase, K, PyVM, UnhandledEffect
 
 Effect = EffectBase
-
-# --- Compat re-exports (old API names) ---
-# Effects (now in doeff_core_effects.effects)
-from doeff_core_effects.effects import (  # noqa: E402
-    Ask, Get, Put, Local, Listen, Await, Try,
-    WriterTellEffect, Slog, slog, Tell,
-)
-# Scheduler effects (now in doeff_core_effects.scheduler)
-from doeff_core_effects.scheduler import (  # noqa: E402
-    Spawn, Gather, Wait, Race, Cancel,
-    CreatePromise, CompletePromise, FailPromise,
-    CreateSemaphore, AcquireSemaphore, ReleaseSemaphore,
-    CreateExternalPromise,
-    Task, Future, Promise, Semaphore,
-    PRIORITY_IDLE, PRIORITY_NORMAL, PRIORITY_HIGH,
-)
 
 # DoExpr — virtual base type for all program nodes.
 # Enables isinstance(x, DoExpr) to check if a value is any program node.
@@ -152,7 +178,5 @@ async_run = _Removed("async_run", "use run() with scheduled()")
 default_async_handlers = _Removed(
     "default_async_handlers", "compose handlers by calling handler(program)"
 )
-
-from doeff.cli.run_services import DoeffRunContext
 
 __version__ = "0.4.1"

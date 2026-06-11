@@ -16,7 +16,8 @@ from textual.screen import Screen
 from textual.timer import Timer
 from textual.widgets import Footer, Header, Static
 
-from ..types import WorkflowInfo
+from doeff_agentic.types import WorkflowInfo
+
 from .widgets import (
     AgentListItem,
     CurrentActivityPane,
@@ -35,7 +36,7 @@ class WorkflowListScreen(Screen[None]):
     and actions on selected workflow.
     """
 
-    BINDINGS = [
+    BINDINGS = [  # noqa: RUF012 - framework class attribute is intentionally static metadata
         Binding("enter", "watch", "Watch", show=True),
         Binding("s", "stop", "Stop", show=True),
         Binding("r", "refresh", "Refresh", show=True),
@@ -229,7 +230,7 @@ class WorkflowWatchScreen(Screen[None]):
     └──────────────────────────────────────────────────────────────────┘
     """
 
-    BINDINGS = [
+    BINDINGS = [  # noqa: RUF012 - framework class attribute is intentionally static metadata
         Binding("a", "attach", "Attach", show=True),
         Binding("l", "logs", "Logs", show=True),
         Binding("s", "stop", "Stop", show=True),
@@ -375,7 +376,7 @@ class WorkflowWatchScreen(Screen[None]):
                         self.workflow_id, agent.name, lines=5
                     )
                     # Get last non-empty line as snippet
-                    lines = [l for l in output.strip().split("\n") if l.strip()]
+                    lines = [line for line in output.strip().split("\n") if line.strip()]
                     agent_outputs[agent.name] = lines[-1][:50] if lines else "-"
                 except Exception:
                     agent_outputs[agent.name] = "-"
@@ -515,7 +516,7 @@ class WorkflowWatchScreen(Screen[None]):
 class AgentLogsScreen(Screen[None]):
     """Full-screen view of agent logs."""
 
-    BINDINGS = [
+    BINDINGS = [  # noqa: RUF012 - framework class attribute is intentionally static metadata
         Binding("q,escape", "back", "Back", show=True),
         Binding("r", "refresh", "Refresh", show=True),
         Binding("up,k", "scroll_up", "Up", show=False),

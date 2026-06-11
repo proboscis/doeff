@@ -9,22 +9,22 @@ the same Spawn+Gather raises:
 The wrapper does nothing special — just yields slog() then delegates to async_gather.
 """
 import asyncio
-from dataclasses import dataclass, field
-from typing import Any, List
+from dataclasses import dataclass
+from typing import Any
 
-import pytest
+from doeff_core_effects.effects import EffectBase
 
 from doeff import (
+    AcquireSemaphore,
     Ask,
     Await,
     CreateSemaphore,
-    AcquireSemaphore,
     Effect,
-    ReleaseSemaphore,
     EffectGenerator,
     Gather,
     Local,
     Pass,
+    ReleaseSemaphore,
     Resume,
     Spawn,
     Try,
@@ -32,7 +32,6 @@ from doeff import (
     do,
     slog,
 )
-from doeff_core_effects.effects import EffectBase
 from tests._run_helpers import run_with_defaults
 
 ProgramLike = Any  # removed shim
@@ -105,7 +104,7 @@ def my_async_gather(*programs):
 @do
 def throttled_gather(
     *programs: ProgramLike, concurrency: int
-) -> EffectGenerator[List[Any]]:
+) -> EffectGenerator[list[Any]]:
     """Wrapper that adds slog before delegating to async_gather."""
     semaphore = yield CreateSemaphore(concurrency)
     yield slog(msg="gathering", level="debug", concurrency=concurrency, total=len(programs))
@@ -118,7 +117,7 @@ def throttled_gather(
 @do
 def throttled_gather_with_progress(
     *programs: ProgramLike, concurrency: int, description: str = ""
-) -> EffectGenerator[List[Any]]:
+) -> EffectGenerator[list[Any]]:
     """Another wrapper layer (like the real code)."""
     if description:
         yield slog(msg=description, level="info")

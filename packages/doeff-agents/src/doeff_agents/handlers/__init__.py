@@ -12,25 +12,37 @@ from doeff import Effect, Resume, WithHandler, do, run
 from doeff.mcp import McpToolDef
 from doeff_agents.agentd_client import LazyAgentdClient
 from doeff_agents.effects import (
+    AgentEffect,
     AttachAgentSessionEffect,
+    AwaitResultEffect,
     CancelAgentSessionEffect,
     CaptureEffect,
     ClaudeLaunchEffect,
     CleanupAgentSessionEffect,
+    FollowUpEffect,
     GetAgentSessionEffect,
     LaunchEffect,
+    LaunchSessionEffect,
     ListAgentSessionsEffect,
     MonitorEffect,
     ObserveAgentSessionEffect,
+    ReleaseSessionEffect,
     SendEffect,
     StopEffect,
+    StopSessionEffect,
 )
 from doeff_agents.runtime import ClaudeRuntimePolicy
 from doeff_agents.session_store import AgentSessionRepository
 
 from .daemon import AgentdSessionClient, DaemonAgentHandler
 from .production import AgentHandler, SessionState, TmuxAgentHandler, get_adapter, register_adapter
-from .testing import MockAgentHandler, MockAgentState, MockSessionScript
+from .testing import (
+    MockAgentHandler,
+    MockAgentState,
+    MockSessionScript,
+    ScenarioAgentHandler,
+    ScenarioStep,
+)
 
 # Keys kept for compatibility with persisted metadata naming.
 AGENT_SESSIONS_KEY = "__agent_sessions__"
@@ -38,6 +50,12 @@ MOCK_AGENT_STATE_KEY = "__mock_agent_state__"
 
 # Supported effect types for doeff-agents handlers.
 AGENT_EFFECT_TYPES = (
+    AgentEffect,
+    LaunchSessionEffect,
+    AwaitResultEffect,
+    FollowUpEffect,
+    StopSessionEffect,
+    ReleaseSessionEffect,
     LaunchEffect,
     ClaudeLaunchEffect,
     MonitorEffect,
@@ -53,10 +71,22 @@ AGENT_EFFECT_TYPES = (
 )
 
 
-def dispatch_effect(handler: AgentHandler, effect: Any) -> Any:
+def dispatch_effect(handler: AgentHandler, effect: Any) -> Any:  # noqa: PLR0912 - baseline cleanup keeps existing control flow unchanged
     """Dispatch an effect to the appropriate handler method."""
     result = None
-    if isinstance(effect, LaunchEffect):
+    if isinstance(effect, AgentEffect):
+        result = handler.handle_agent(effect)
+    elif isinstance(effect, LaunchSessionEffect):
+        result = handler.handle_launch_session(effect)
+    elif isinstance(effect, AwaitResultEffect):
+        result = handler.handle_await_result(effect)
+    elif isinstance(effect, FollowUpEffect):
+        result = handler.handle_follow_up(effect)
+    elif isinstance(effect, StopSessionEffect):
+        result = handler.handle_stop_session(effect)
+    elif isinstance(effect, ReleaseSessionEffect):
+        result = handler.handle_release_session(effect)
+    elif isinstance(effect, LaunchEffect):
         result = handler.handle_launch(effect)
     elif isinstance(effect, ClaudeLaunchEffect):
         result = handler.handle_claude_launch(effect)
@@ -303,6 +333,8 @@ __all__ = [  # noqa: RUF022 - grouped by category for readability
     "MOCK_AGENT_STATE_KEY",
     "MockSessionScript",
     "ProtocolHandler",
+    "ScenarioAgentHandler",
+    "ScenarioStep",
     "SessionState",
     "TmuxAgentHandler",
     "agent_effectful_handler",

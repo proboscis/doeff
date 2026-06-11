@@ -62,7 +62,7 @@ def _prepare_request_payload(
     return sanitized_payload, text, serialized_images
 
 
-def _summarize_payload_for_log(value: Any, *, max_string_length: int = 200) -> Any:
+def _summarize_payload_for_log(value: Any, *, max_string_length: int = 200) -> Any:  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
     """Produce a repr-friendly copy of payload data with bounded string lengths."""
 
     if isinstance(value, str):
@@ -205,7 +205,7 @@ def _result_err(exc: Exception) -> EffectGenerator[Any]:
 
 
 @do
-def get_gemini_client() -> EffectGenerator[GeminiClient]:
+def get_gemini_client() -> EffectGenerator[GeminiClient]:  # noqa: PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
     """Retrieve a configured :class:`GeminiClient` from Reader or State effects."""
 
     @do
@@ -385,7 +385,7 @@ def _extract_usage(response: Any) -> TokenUsage | None:
 
 
 @do
-def track_api_call(
+def track_api_call(  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
     operation: str,
     model: str,
     request_summary: dict[str, Any],

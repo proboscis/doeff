@@ -15,7 +15,6 @@ from doeff_agents.monitor import (
     has_codex_active_marker,
     has_codex_idle_prompt,
     is_codex_turn_complete,
-    is_completed,
 )
 
 CODEX_PROMPT = "\N{SINGLE RIGHT-POINTING ANGLE QUOTATION MARK}"
@@ -25,7 +24,7 @@ def _past_monitor_state() -> MonitorState:
     return MonitorState(last_output_at=datetime.now(timezone.utc) - timedelta(seconds=10))
 
 
-def test_codex_worked_for_footer_marks_completion() -> None:
+def test_codex_worked_for_footer_does_not_mark_success() -> None:
     output = (
         "作業を完了しました。\n"
         "─ Worked for 12m 09s ─────────────────────────\n"
@@ -33,16 +32,15 @@ def test_codex_worked_for_footer_marks_completion() -> None:
         "gpt-5.5 xhigh fast · ~/repo\n"
     )
 
-    assert is_completed(output)
     assert detect_status(
         output,
         _past_monitor_state(),
         output_changed=True,
         has_prompt=False,
-    ) == SessionStatus.DONE
+    ) == SessionStatus.RUNNING
 
 
-def test_stable_codex_idle_prompt_marks_turn_complete() -> None:
+def test_stable_codex_idle_prompt_marks_awaiting_input() -> None:
     output = (
         "検証結果を issue に反映しました。\n"
         f"{CODEX_PROMPT} Find and fix a bug in @filename\n"
@@ -57,7 +55,7 @@ def test_stable_codex_idle_prompt_marks_turn_complete() -> None:
         state,
         output_changed=False,
         has_prompt=False,
-    ) == SessionStatus.DONE
+    ) == SessionStatus.BLOCKED
 
 
 def test_active_codex_turn_is_not_done() -> None:

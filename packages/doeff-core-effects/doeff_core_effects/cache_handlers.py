@@ -5,20 +5,18 @@ import hashlib
 import json
 from collections.abc import Callable, Mapping, Set
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import TypeAlias
 
 from doeff import do
-from doeff.program import Resume, Pass
-
+from doeff.program import Pass, Resume
 from doeff_core_effects.cache_effects import (
-    CacheExistsEffect,
-    CacheGetEffect,
-    CachePutEffect,
-    CacheGet,
-    CachePut,
     CacheExists,
+    CacheExistsEffect,
+    CacheGet,
+    CacheGetEffect,
+    CachePut,
+    CachePutEffect,
 )
-from doeff_core_effects.effects import Try
 from doeff_core_effects.storage import DurableStorage, InMemoryStorage, SQLiteStorage
 
 MemoKeyFn: TypeAlias = Callable[[object], str]
@@ -33,7 +31,7 @@ def _dumps(value: object) -> bytes:
     return serializer.dumps(value)
 
 
-def _normalize_for_hash(value: object) -> object:
+def _normalize_for_hash(value: object) -> object:  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return {
             "__type__": f"{type(value).__module__}.{type(value).__qualname__}",
@@ -42,27 +40,27 @@ def _normalize_for_hash(value: object) -> object:
                 for field in dataclasses.fields(value)
             },
         }
-    elif isinstance(value, Mapping):
+    if isinstance(value, Mapping):
         return {
             str(key): _normalize_for_hash(item)
             for key, item in sorted(value.items(), key=lambda item: str(item[0]))
         }
-    elif isinstance(value, tuple):
+    if isinstance(value, tuple):
         return {"__tuple__": [_normalize_for_hash(item) for item in value]}
-    elif isinstance(value, list):
+    if isinstance(value, list):
         return [_normalize_for_hash(item) for item in value]
-    elif isinstance(value, Set) and not isinstance(value, (str, bytes, bytearray)):
+    if isinstance(value, Set) and not isinstance(value, (str, bytes, bytearray)):
         normalized = [_normalize_for_hash(item) for item in value]
         return {
             "__set__": sorted(normalized, key=lambda item: json.dumps(item, sort_keys=True))
         }
-    elif isinstance(value, Path):
+    if isinstance(value, Path):
         return {"__path__": str(value)}
-    elif isinstance(value, bytes):
+    if isinstance(value, bytes):
         return {"__bytes__": value.hex()}
-    elif isinstance(value, type):
+    if isinstance(value, type):
         return f"{value.__module__}.{value.__qualname__}"
-    elif hasattr(value, "__dict__") and not isinstance(value, type):
+    if hasattr(value, "__dict__") and not isinstance(value, type):
         # Generic object with __dict__ (e.g. EffectBase subclasses)
         return {
             "__type__": f"{type(value).__module__}.{type(value).__qualname__}",
@@ -177,14 +175,14 @@ def make_memo_rewriter(
         # Check cache — narrow try/except to CacheGet only.
         # Resume(k) must NOT be inside try/except: if the resumed body raises
         # KeyError, it must propagate, not fall through to the MISS path.
-        _MISS = object()  # sentinel
+        miss_sentinel = object()  # sentinel
         if (yield CacheExists(key)):
             try:
                 cached = yield CacheGet(key)
             except KeyError:
-                cached = _MISS  # race: evicted between Exists and Get
+                cached = miss_sentinel  # race: evicted between Exists and Get
 
-            if cached is not _MISS:
+            if cached is not miss_sentinel:
                 yield Slog(f"[memo] HIT {effect_type.__name__} key={key[:16]}…")
                 result = yield Resume(k, cached)
                 return result

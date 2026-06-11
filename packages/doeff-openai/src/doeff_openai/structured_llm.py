@@ -12,15 +12,14 @@ import base64
 import io
 import json
 import time
-from typing import Any, Generator
+from collections.abc import Generator
+from typing import Any
 
 import PIL.Image
+from doeff_core_effects import Await, Tell, Try
 from pydantic import BaseModel
 
 from doeff import do
-from doeff_core_effects import Await, Tell, Try
-
-EffectGenerator = Generator
 from doeff_openai.client import (
     get_openai_client,
     track_api_call,
@@ -37,15 +36,11 @@ def requires_max_completion_tokens(model: str) -> bool:
     model_lower = model.lower()
     # GPT-5 and o1/o3/o4 models require max_completion_tokens
     return (
-        "gpt-5" in model_lower
-        or "gpt5" in model_lower
-        or model_lower.startswith("o1")
-        or model_lower.startswith("o3")
-        or model_lower.startswith("o4")
+        "gpt-5" in model_lower or "gpt5" in model_lower or model_lower.startswith(("o1", "o3", "o4"))
     )
 
 
-def convert_pil_to_base64(image: "PIL.Image.Image") -> str:
+def convert_pil_to_base64(image: PIL.Image.Image) -> str:
     """Convert PIL image to base64 string for OpenAI API."""
     # Convert PIL image to bytes
     buffered = io.BytesIO()
@@ -57,7 +52,7 @@ def convert_pil_to_base64(image: "PIL.Image.Image") -> str:
     return f"data:image/png;base64,{img_base64}"
 
 
-def _collect_message_content_parts(content: Any) -> tuple[Any | None, list[str]]:
+def _collect_message_content_parts(content: Any) -> tuple[Any | None, list[str]]:  # noqa: PLR0912 - baseline cleanup keeps existing control flow unchanged
     """Extract JSON payload (if any) and text fragments from a message content."""
     if content is None:
         return None, []
@@ -74,10 +69,7 @@ def _collect_message_content_parts(content: Any) -> tuple[Any | None, list[str]]
 
             # Extract possible JSON payload
             part_json = None
-            if isinstance(part, dict):
-                part_json = part.get("json")
-            else:
-                part_json = getattr(part, "json", None)
+            part_json = part.get("json") if isinstance(part, dict) else getattr(part, "json", None)
 
             if part_json is not None and json_payload is None:
                 json_payload = part_json
@@ -194,10 +186,12 @@ def ensure_strict_schema(schema: dict) -> dict:
     return result
 
 
+EffectGenerator = Generator
+
 @do
 def build_messages(
     text: str,
-    images: list["PIL.Image.Image"] | None = None,
+    images: list[PIL.Image.Image] | None = None,
     detail: str = "auto",
 ) -> EffectGenerator[list[dict[str, Any]]]:
     """
@@ -244,7 +238,7 @@ def build_messages(
 
 
 @do
-def build_api_parameters(
+def build_api_parameters(  # noqa: PLR0912 - baseline cleanup keeps existing control flow unchanged
     model: str,
     messages: list[dict[str, Any]],
     temperature: float,
@@ -286,10 +280,7 @@ def build_api_parameters(
 
     # Handle temperature
     if (
-        is_gpt5_model(model)
-        or model_lower.startswith("o1")
-        or model_lower.startswith("o3")
-        or model_lower.startswith("o4")
+        is_gpt5_model(model) or model_lower.startswith(("o1", "o3", "o4"))
     ):
         # These models only support default temperature (1.0)
         if temperature != 1.0:
@@ -423,10 +414,7 @@ def process_structured_response(
     def parse_json():
         yield Tell(f"Parsing JSON response for {response_format.__name__}")
 
-        if isinstance(parse_source, str):
-            parsed_json = json.loads(parse_source)
-        else:
-            parsed_json = parse_source
+        parsed_json = json.loads(parse_source) if isinstance(parse_source, str) else parse_source
 
         if hasattr(response_format, "model_validate"):
             result_model = response_format.model_validate(parsed_json)  # type: ignore[attr-defined]
@@ -473,7 +461,7 @@ def process_unstructured_response(response: Any) -> EffectGenerator[str]:
 def structured_llm__openai(
     text: str,
     model: str = "gpt-4o",
-    images: list["PIL.Image.Image"] | None = None,
+    images: list[PIL.Image.Image] | None = None,
     response_format: type[BaseModel] | None = None,
     max_tokens: int = 8192,
     temperature: float = 0.7,
@@ -581,7 +569,7 @@ def structured_llm__openai(
             response = yield Await(client.async_client.chat.completions.create(**api_params))
 
             # Track successful API call
-            metadata = yield track_api_call(
+            yield track_api_call(
                 operation="structured_llm",
                 model=model,
                 request_payload=api_params,
@@ -596,7 +584,7 @@ def structured_llm__openai(
         if safe_result.is_err():
             error = safe_result.error
             # Track failed API call attempt (tracking will log the error)
-            metadata = yield track_api_call(
+            yield track_api_call(
                 operation="structured_llm",
                 model=model,
                 request_payload=api_params,
@@ -653,7 +641,7 @@ def structured_llm__openai(
 @do
 def gpt4o_structured(
     text: str,
-    images: list["PIL.Image.Image"] | None = None,
+    images: list[PIL.Image.Image] | None = None,
     response_format: type[BaseModel] | None = None,
     **kwargs,
 ) -> EffectGenerator[Any]:
@@ -672,7 +660,7 @@ def gpt4o_structured(
 @do
 def gpt5_nano_structured(
     text: str,
-    images: list["PIL.Image.Image"] | None = None,
+    images: list[PIL.Image.Image] | None = None,
     response_format: type[BaseModel] | None = None,
     reasoning_effort: str = "minimal",
     **kwargs,
@@ -697,7 +685,7 @@ def gpt5_nano_structured(
 @do
 def gpt5_structured(
     text: str,
-    images: list["PIL.Image.Image"] | None = None,
+    images: list[PIL.Image.Image] | None = None,
     response_format: type[BaseModel] | None = None,
     reasoning_effort: str = "medium",
     **kwargs,

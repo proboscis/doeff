@@ -66,8 +66,9 @@ def test_publish_workflow_releases_doeff_agents() -> None:
     workflow = ROOT / ".github" / "workflows" / "publish.yml"
     text = workflow.read_text()
 
-    assert "build-doeff-agents-dist" in text
-    assert "uv build --package doeff-agents" in text
+    assert "build-python-release-dists" in text
+    assert re.search(r"package:\s+doeff-agents\b", text)
+    assert "uv build --package ${{ matrix.package }}" in text
     assert "doeff-agents-dist" in text
     assert "publish-doeff-agents" in text
 
@@ -80,7 +81,7 @@ def test_publish_workflow_releases_root_workspace_runtime_dependencies() -> None
     runtime_workspace_deps = _dependency_names(root_pyproject["project"]["dependencies"]) & workspace_sources
 
     for package_name in runtime_workspace_deps - {"doeff-vm", "doeff-indexer"}:
-        assert f"uv build --package {package_name}" in workflow
+        assert re.search(rf"package:\s+{re.escape(package_name)}\b", workflow)
         assert f"{package_name}-dist" in workflow
         assert f"publish-{package_name}" in workflow
 

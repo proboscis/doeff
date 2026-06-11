@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-import pytest
-
 from doeff_agents.adapters.base import AgentType
 
 
@@ -31,8 +29,9 @@ class TestLaunchEffectFlattened:
         assert not hasattr(effect, "config"), "LaunchEffect must not have .config"
 
     def test_launch_effect_mcp_tools(self):
-        from doeff.mcp import McpParamSchema, McpToolDef
         from doeff_agents.effects.agent import LaunchEffect
+
+        from doeff.mcp import McpParamSchema, McpToolDef
 
         tool = McpToolDef(
             name="test-tool",

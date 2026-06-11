@@ -127,15 +127,15 @@ from .exceptions import (
     AgenticUnsupportedOperationError,
     AgenticWorkflowNotFoundError,
 )
+from .handlers import (
+    mock_handlers,
+    production_handlers,
+)
 
 # OpenCode Handler (new - primary)
 from .opencode_handler import (
     OpenCodeHandler,
     opencode_handler,
-)
-from .handlers import (
-    mock_handlers,
-    production_handlers,
 )
 
 # State management
@@ -149,12 +149,6 @@ from .state import (
 from .tmux_handler import (
     TmuxHandler,
     tmux_handler,
-)
-
-# Visual Interceptor (for examples/debugging)
-from .visual_interceptor import (
-    VisualInterceptorConfig,
-    with_visual_logging,
 )
 from .types import (
     # Legacy types (deprecated)
@@ -178,6 +172,12 @@ from .types import (
     WatchUpdate,
     WorkflowInfo,
     WorkflowStatus,
+)
+
+# Visual Interceptor (for examples/debugging)
+from .visual_interceptor import (
+    VisualInterceptorConfig,
+    with_visual_logging,
 )
 
 # Legacy Handler (deprecated - requires doeff-agents)
@@ -263,6 +263,7 @@ __all__ = [
     # Tmux Handler (legacy fallback)
     "TmuxHandler",
     "UserInputTimeoutError",
+    "VisualInterceptorConfig",
     "WaitForStatus",
     "WaitForStatusEffect",
     "WaitForUserInput",
@@ -278,10 +279,9 @@ __all__ = [
     "agentic_effectful_handlers",
     "generate_workflow_id",
     "get_default_state_dir",
+    "mock_handlers",
     "opencode_handler",
     "production_handlers",
-    "mock_handlers",
     "tmux_handler",
-    "VisualInterceptorConfig",
     "with_visual_logging",
 ]

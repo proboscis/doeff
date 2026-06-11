@@ -13,6 +13,11 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from _runner import (
+    doeff_py_has_openai_key,
+    openai_api_key_from_doeff_py_handler,
+    run_program,
+)
 from doeff_openai import (
     get_api_calls,
     gpt4o_structured,
@@ -30,12 +35,6 @@ from doeff import (
     Resume,
     WithHandler,
     do,
-)
-
-from _runner import (
-    doeff_py_has_openai_key,
-    openai_api_key_from_doeff_py_handler,
-    run_program,
 )
 
 # Mark all tests in this module as e2e

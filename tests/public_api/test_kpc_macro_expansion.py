@@ -3,8 +3,9 @@ from __future__ import annotations
 from collections.abc import Generator
 from typing import Any
 
-from doeff import Ask, Effect, Program, do
-from doeff_vm import Expand, Perform, Pure
+from doeff_vm import Expand
+
+from doeff import Effect, Program, do
 
 
 @do

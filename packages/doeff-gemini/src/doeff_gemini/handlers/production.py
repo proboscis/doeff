@@ -4,10 +4,11 @@
 import json
 import math
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from io import BytesIO
 from typing import Any, cast
 
+from doeff_core_effects import Await, Try
 from doeff_image.effects import ImageEdit, ImageGenerate
 from doeff_image.types import ImageResult
 from doeff_llm.effects import (
@@ -19,8 +20,6 @@ from doeff_llm.effects import (
 from PIL import Image
 
 from doeff import EffectBase, Pass, Resume, do
-from doeff_core_effects import Await, Try
-from typing import Generator
 from doeff_gemini.client import get_gemini_client, track_api_call
 from doeff_gemini.costs import calculate_known_model_cost
 from doeff_gemini.effects import (
@@ -429,7 +428,7 @@ def production_handlers(
     active_cost_handler = cost_handler
 
     @do
-    def handler(effect: Any, k: Any):
+    def handler(effect: Any, k: Any):  # noqa: PLR0911, PLR0912 - baseline cleanup keeps existing control flow unchanged
         if isinstance(effect, GeminiCalculateCost):
             if active_cost_handler is None:
                 yield Pass(effect, k)

@@ -18,7 +18,7 @@ A step-by-step guide to using doeff-conductor for multi-agent workflow orchestra
 ### Requirements
 
 - Python 3.10+
-- Git (for worktree management)
+- Git (for workspace management)
 - OpenCode or Claude CLI (for agent effects)
 
 ### Install
@@ -51,63 +51,46 @@ Let's create a minimal workflow that demonstrates the core concepts.
 
 ```python
 # my_first_workflow.py
-from doeff import Effect, Pass, default_handlers, do, run
+from doeff import do
 from doeff_conductor import (
-    CreateWorktree,
+    CreateWorkspace,
     Commit,
-    DeleteWorktree,
-    WorktreeHandler,
-    GitHandler,
-    make_scheduled_handler,
+    DeleteWorkspace,
+    Exec,
 )
-from doeff_preset import preset_handlers
-from pathlib import Path
+from doeff_conductor.handlers import mock_handlers, run_sync
 
 @do
 def hello_workflow():
     """A minimal workflow that creates a file."""
-    # 1. Create an isolated worktree
-    env = yield CreateWorktree(suffix="hello")
-    print(f"Created worktree: {env.path}")
+    # 1. Create an isolated workspace
+    workspace = yield CreateWorkspace(workspace_id="tutorial-hello")
+    print(f"Created workspace: {workspace.ref}")
     
-    # 2. Make changes (normal Python)
-    (env.path / "hello.txt").write_text("Hello, conductor!")
+    # 2. Make changes through Exec
+    result = yield Exec(
+        cmd="printf '%s\n' 'Hello, conductor!' > hello.txt",
+        workspace=workspace,
+    )
+    if not result.passed:
+        raise RuntimeError(result.log_path)
     
     # 3. Commit changes
-    yield Commit(env=env, message="Add hello.txt")
+    yield Commit(workspace=workspace, message="Add hello.txt")
     print("Committed changes")
     
     # 4. Cleanup
-    yield DeleteWorktree(env=env)
+    yield DeleteWorkspace(workspace=workspace)
     print("Cleaned up")
     
     return "Done!"
 
-# Set up handlers
-worktree_handler = WorktreeHandler(base_path=Path.cwd())
-git_handler = GitHandler()
-create_worktree_handler = make_scheduled_handler(worktree_handler.handle_create_worktree)
-commit_handler = make_scheduled_handler(git_handler.handle_commit)
-delete_worktree_handler = make_scheduled_handler(worktree_handler.handle_delete_worktree)
-preset_handler = preset_handlers()
-
-@do
-def workflow_handler(effect: Effect, k):
-    if isinstance(effect, CreateWorktree):
-        return (yield create_worktree_handler(effect, k))
-    if isinstance(effect, Commit):
-        return (yield commit_handler(effect, k))
-    if isinstance(effect, DeleteWorktree):
-        return (yield delete_worktree_handler(effect, k))
-    yield Pass()
-
 # Run the workflow
 if __name__ == "__main__":
-    result = run(
-        hello_workflow(),
-        handlers=[preset_handler, workflow_handler, *default_handlers()],
-    )
-    print(f"Result: {result}")
+    result = run_sync(hello_workflow(), scheduled_handlers=mock_handlers())
+    if result.is_err():
+        raise result.error
+    print(f"Result: {result.value}")
 ```
 
 ### Step 2: Run the Workflow
@@ -120,7 +103,7 @@ python my_first_workflow.py
 
 1. **`@do` decorator**: Transforms a generator function into a doeff `Program`
 2. **`yield Effect()`**: Execute an effect and get the result
-3. **`WorktreeEnv`**: Handle to an isolated git worktree
+3. **`Workspace`**: Handle to an isolated git workspace
 4. **Handlers**: Map effects to actual implementations
 
 ---
@@ -153,7 +136,7 @@ conductor template show basic_pr
 ### Using a Template Programmatically
 
 ```python
-from doeff import default_handlers, run
+from doeff import production_handlers, run
 from doeff_conductor import Issue, IssueStatus, basic_pr
 
 # Create an issue
@@ -172,7 +155,7 @@ program = basic_pr(issue)
 # preset_handler = preset_handlers()
 result = run(
     program,
-    handlers=[preset_handler, workflow_handler, *default_handlers()],
+    handlers=[preset_handler, workflow_handler, *production_handlers()],
 )
 print(f"Created PR: {result.value.url}")
 ```
@@ -206,7 +189,7 @@ conductor run basic_pr --issue ISSUE-001.md
 conductor run basic_pr --issue ISSUE-001.md --watch
 
 # Run custom workflow file
-conductor run ./my_workflow.py --params '{"max_retries": 3}'
+conductor run ./my_workflow.hy --params '{"max_retries": 3}'
 ```
 
 ### Monitor Workflows
@@ -255,64 +238,79 @@ conductor issue list --json | jq 'length'
 ```python
 from doeff import do
 from doeff_conductor import (
-    CreateWorktree,
-    RunAgent,
+    Agent,
+    AgentTask,
+    CreateWorkspace,
+    Exec,
     Commit,
     Push,
     CreatePR,
     Issue,
 )
 
+AGENT_SCHEMA = {
+    "type": "object",
+    "required": ["summary"],
+    "properties": {"summary": {"type": "string"}},
+}
+
 @do
 def my_custom_workflow(issue: Issue, max_attempts: int = 3):
     """Custom workflow with retry logic."""
     
-    # Create worktree
-    env = yield CreateWorktree(issue=issue)
+    # Create workspace
+    workspace = yield CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-impl")
     
     # Implementation with retries
     for attempt in range(1, max_attempts + 1):
         print(f"Attempt {attempt}/{max_attempts}")
         
         # Run implementation agent
-        yield RunAgent(
-            env=env,
-            prompt=f"Implement: {issue.title}\n\n{issue.body}",
-            name="implementer",
+        yield Agent(
+            AgentTask(
+                run_id=issue.id,
+                node_id="implementer",
+                attempt=attempt - 1,
+                env=workspace,
+                prompt=f"Implement: {issue.title}\n\n{issue.body}",
+                result_schema=AGENT_SCHEMA,
+                verification_class="test-verifiable",
+                agent_type="codex",
+                name="implementer",
+            )
         )
         
-        # Run tests (custom logic)
-        test_passed = run_tests(env.path)
+        # Run tests through a deterministic Exec gate
+        test_result = yield Exec(cmd="pytest --tb=short", workspace=workspace)
+        test_passed = test_result.passed
         
         if test_passed:
             break
         elif attempt < max_attempts:
             # Run fix agent
-            yield RunAgent(
-                env=env,
-                prompt="Fix the failing tests",
-                name="fixer",
+            yield Agent(
+                AgentTask(
+                    run_id=issue.id,
+                    node_id="fixer",
+                    attempt=attempt - 1,
+                    env=workspace,
+                    prompt="Fix the failing tests",
+                    result_schema=AGENT_SCHEMA,
+                    verification_class="test-verifiable",
+                    agent_type="codex",
+                    name="fixer",
+                )
             )
     
     if not test_passed:
         raise RuntimeError("Tests failed after all attempts")
     
     # Create PR
-    yield Commit(env=env, message=f"feat: {issue.title}")
-    yield Push(env=env)
-    pr = yield CreatePR(env=env, title=issue.title)
+    yield Commit(workspace=workspace, message=f"feat: {issue.title}")
+    yield Push(workspace=workspace)
+    pr = yield CreatePR(workspace=workspace, title=issue.title)
     
     return pr
-
-def run_tests(path):
-    """Run tests and return success status."""
-    import subprocess
-    result = subprocess.run(
-        ["pytest", "--tb=short"],
-        cwd=path,
-        capture_output=True,
-    )
-    return result.returncode == 0
 ```
 
 ### Adding Custom Effects
@@ -324,7 +322,7 @@ from doeff_conductor.effects.base import ConductorEffectBase
 @dataclass(frozen=True, kw_only=True)
 class RunLinter(ConductorEffectBase):
     """Custom effect to run a linter."""
-    env: WorktreeEnv
+    workspace: Workspace
     command: str = "ruff check"
 
 # Handler for custom effect
@@ -332,7 +330,7 @@ def handle_run_linter(effect: RunLinter) -> dict:
     import subprocess
     result = subprocess.run(
         effect.command.split(),
-        cwd=effect.env.path,
+        cwd=workspace_resolver(effect.workspace),
         capture_output=True,
         text=True,
     )
@@ -354,26 +352,56 @@ def handle_run_linter(effect: RunLinter) -> dict:
 
 ```python
 from doeff import do, Gather
-from doeff_conductor import CreateWorktree, RunAgent, MergeBranches
+from doeff_conductor import Agent, AgentTask, CreateWorkspace, MergeWorkspaces
+
+AGENT_SCHEMA = {
+    "type": "object",
+    "required": ["summary"],
+    "properties": {"summary": {"type": "string"}},
+}
 
 @do
 def parallel_implementation(issue):
     """Run multiple agents in parallel."""
     
-    # Create worktrees in parallel
-    impl_env, test_env = yield Gather(
-        CreateWorktree(issue=issue, suffix="impl"),
-        CreateWorktree(issue=issue, suffix="tests"),
+    # Create workspaces in parallel
+    impl_workspace, test_workspace = yield Gather(
+        CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-impl"),
+        CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-tests"),
     )
     
     # Run agents in parallel
     impl_output, test_output = yield Gather(
-        RunAgent(env=impl_env, prompt="Implement the feature"),
-        RunAgent(env=test_env, prompt="Write tests for the feature"),
+        Agent(AgentTask(
+            run_id=issue.id,
+            node_id="implement",
+            attempt=0,
+            env=impl_workspace,
+            prompt="Implement the feature",
+            result_schema=AGENT_SCHEMA,
+            verification_class="test-verifiable",
+            agent_type="codex",
+        )),
+        Agent(AgentTask(
+            run_id=issue.id,
+            node_id="tests",
+            attempt=0,
+            env=test_workspace,
+            prompt="Write tests for the feature",
+            result_schema=AGENT_SCHEMA,
+            verification_class="test-verifiable",
+            agent_type="codex",
+        )),
     )
     
     # Merge results
-    merged = yield MergeBranches(envs=(impl_env, test_env))
+    merge_result = yield MergeWorkspaces(
+        workspace_id=f"{issue.id.lower()}-merged",
+        workspaces=(impl_workspace, test_workspace),
+    )
+    if not merge_result.merged or merge_result.workspace is None:
+        raise RuntimeError(merge_result.message)
+    merged = merge_result.workspace
     
     return merged
 ```
@@ -396,71 +424,67 @@ def diamond_dag(issue):
            |
         [review]
     """
-    # Start: create base worktree
-    base = yield CreateWorktree(issue=issue)
+    # Start: create base workspace
+    base = yield CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-base")
     
     # Parallel: implementation and documentation
-    impl_env, docs_env = yield Gather(
-        CreateWorktree(issue=issue, suffix="impl"),
-        CreateWorktree(issue=issue, suffix="docs"),
+    impl_workspace, docs_workspace = yield Gather(
+        CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-impl"),
+        CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-docs"),
     )
     
     yield Gather(
-        RunAgent(env=impl_env, prompt="Implement feature"),
-        RunAgent(env=docs_env, prompt="Write documentation"),
+        Agent(AgentTask(
+            run_id=issue.id,
+            node_id="implement",
+            attempt=0,
+            env=impl_workspace,
+            prompt="Implement feature",
+            result_schema=AGENT_SCHEMA,
+            verification_class="test-verifiable",
+            agent_type="codex",
+        )),
+        Agent(AgentTask(
+            run_id=issue.id,
+            node_id="docs",
+            attempt=0,
+            env=docs_workspace,
+            prompt="Write documentation",
+            result_schema=AGENT_SCHEMA,
+            verification_class="test-verifiable",
+            agent_type="codex",
+        )),
     )
     
     # Merge point
-    merged = yield MergeBranches(envs=(impl_env, docs_env))
+    merge_result = yield MergeWorkspaces(
+        workspace_id=f"{issue.id.lower()}-merged",
+        workspaces=(impl_workspace, docs_workspace),
+    )
+    if not merge_result.merged or merge_result.workspace is None:
+        raise RuntimeError(merge_result.message)
+    merged = merge_result.workspace
     
     # Final review
-    yield RunAgent(env=merged, prompt="Final review")
+    yield Agent(AgentTask(
+        run_id=issue.id,
+        node_id="review",
+        attempt=0,
+        env=merged,
+        prompt="Final review",
+        result_schema=AGENT_SCHEMA,
+        verification_class="review",
+        agent_type="codex",
+    ))
     
     return merged
 ```
 
-### Event-Driven Patterns
+### Agent Boundary
 
-```python
-from doeff_conductor import SpawnAgent, WaitForStatus, CaptureOutput
-
-@do
-def interactive_workflow(issue):
-    """Workflow with human-in-the-loop."""
-    env = yield CreateWorktree(issue=issue)
-    
-    # Spawn agent (non-blocking)
-    ref = yield SpawnAgent(
-        env=env,
-        prompt="Start implementing, ask for clarification if needed",
-    )
-    
-    # Wait for agent to reach blocked state
-    status = yield WaitForStatus(
-        agent_ref=ref,
-        target=(AgenticSessionStatus.BLOCKED, AgenticSessionStatus.DONE),
-        timeout=300,
-    )
-    
-    if status == AgenticSessionStatus.BLOCKED:
-        # Agent needs input - could prompt human here
-        output = yield CaptureOutput(agent_ref=ref)
-        print(f"Agent needs help: {output}")
-        
-        # Continue with additional context
-        yield SendMessage(
-            agent_ref=ref,
-            message="Use OAuth2 for authentication",
-        )
-    
-    # Wait for completion
-    yield WaitForStatus(
-        agent_ref=ref,
-        target=AgenticSessionStatus.DONE,
-    )
-    
-    return env
-```
+Conductor workflows use `Agent(AgentTask(...))` as a completion boundary and
+receive a schema-validated artifact. Interactive session controls live below the
+conductor workflow effect layer.
 
 ---
 
