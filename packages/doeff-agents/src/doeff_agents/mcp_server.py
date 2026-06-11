@@ -28,8 +28,6 @@ Usage (legacy):
     server.start()
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import queue
@@ -83,7 +81,7 @@ class _SseSession:
 class _McpHandler(BaseHTTPRequestHandler):
     """HTTP request handler for MCP SSE transport."""
 
-    server: McpToolServer  # type narrowing
+    server: Any
 
     # Suppress per-request logging
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 - public API parameter name is intentionally stable
@@ -232,7 +230,8 @@ class McpToolServer(_ThreadingHTTPServer):
     @property
     def url(self) -> str:
         """SSE endpoint URL for .mcp.json configuration."""
-        host, port = self.server_address
+        host = str(self.server_address[0])
+        port = int(self.server_address[1])
         return f"http://{host}:{port}/sse"
 
     @property
@@ -265,6 +264,7 @@ class McpToolServer(_ThreadingHTTPServer):
                 self._ready_promise.complete(None)
             except Exception:
                 log.exception("Failed to complete ready_promise")
+                raise
         self.serve_forever()
 
     def shutdown(self) -> None:

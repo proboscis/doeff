@@ -10,6 +10,7 @@ scheduler state, and Ask-resolution shared across pipeline + tool calls.
 from __future__ import annotations
 
 import threading
+from typing import Any, cast
 
 import hy  # noqa: F401  (enable .hy imports)
 import pytest
@@ -271,7 +272,7 @@ class TestMcpServerLoopProtocolFailures:
                 server.shutting_down = True
                 raise RuntimeError("request queue poisoned")
 
-        server.request_queue = PoisonedQueue()
+        server.request_queue = cast(Any, PoisonedQueue())
 
         def driver():
             ep = server.wakeup_mailbox.get(timeout=5.0)

@@ -158,7 +158,7 @@ def test_agentd_client_success_response_requires_result_key() -> None:
         OneShotAgentdServer(Path(temp_dir) / "agentd.sock", handle) as server,
     ):
         client = AgentdClient(server.socket_path, timeout=2.0)
-        with pytest.raises(AgentdProtocolError, match="daemon.status.*missing result"):
+        with pytest.raises(AgentdProtocolError, match=r"daemon.status.*missing result"):
             client.status()
 
     assert server.requests[0]["method"] == "daemon.status"
@@ -385,7 +385,7 @@ def test_await_result_rejects_missing_session() -> None:
         {"result": {"payload": {"ok": True}}, "validation_error": None}
     )
 
-    with pytest.raises(AgentdProtocolError, match="session.await_result.*missing session"):
+    with pytest.raises(AgentdProtocolError, match=r"session.await_result.*missing session"):
         client.await_result("s1", timeout_seconds=1.0)
 
 
@@ -394,7 +394,7 @@ def test_await_result_rejects_non_object_result_payload() -> None:
         {"session": _snapshot_payload(), "result": "not an object", "validation_error": None}
     )
 
-    with pytest.raises(AgentdProtocolError, match="session.await_result result.*non-object"):
+    with pytest.raises(AgentdProtocolError, match=r"session.await_result result.*non-object"):
         client.await_result("s1", timeout_seconds=1.0)
 
 
