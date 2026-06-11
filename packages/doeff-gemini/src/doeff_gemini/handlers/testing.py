@@ -188,7 +188,7 @@ def mock_handlers(
     )
 
     @do
-    def handler(effect: Any, k: Any):
+    def handler(effect: Any, k: Any):  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
         if isinstance(effect, LLMStreamingChat | GeminiStreamingChat):
             if not _is_gemini_model(effect.model):
                 yield Pass(effect, k)

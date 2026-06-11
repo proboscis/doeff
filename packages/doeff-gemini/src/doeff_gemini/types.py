@@ -26,7 +26,7 @@ class GeminiImageEditResult:
             image = Image.open(buffer)
             return image.copy()
 
-    def save(self, path: str, *, format: str | None = None) -> None:
+    def save(self, path: str, *, format: str | None = None) -> None:  # noqa: A002 - public API parameter name is intentionally stable
         """Persist the edited image to disk."""
 
         image = self.to_pil_image()

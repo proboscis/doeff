@@ -23,6 +23,9 @@ try:
 except ImportError:  # pragma: no cover - Python 3.10 fallback
     from typing_extensions import NotRequired, TypedDict
 
+from doeff_core_effects.memo_effects import MemoGet, MemoPut
+from doeff_core_effects.memo_policy import Lifecycle, RecomputeCost
+
 from doeff import (
     Ask,
     Await,
@@ -32,8 +35,6 @@ from doeff import (
     do,
     slog,
 )
-from doeff_core_effects.memo_effects import MemoGet, MemoPut
-from doeff_core_effects.memo_policy import Lifecycle, RecomputeCost
 
 from .client import get_gemini_client, track_api_call
 from .types import GeminiImageEditResult
@@ -516,7 +517,7 @@ def build_generation_config(
 
 
 @do
-def process_structured_response(
+def process_structured_response(  # noqa: PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
     response: Any,
     response_format: type[BaseModel],
 ) -> EffectGenerator[Any]:
@@ -555,9 +556,8 @@ def process_structured_response(
             if stripped:
                 try:
                     payload = json.loads(stripped)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as exc:
                     preview = _stringify_for_log(stripped, limit=200)
-                    raw_content_for_error = stripped
                     yield Tell("Gemini json payload could not be decoded")
                     raise GeminiStructuredOutputError(
                         format_name=format_name,
@@ -565,7 +565,7 @@ def process_structured_response(
                         message=(
                             f"Gemini returned invalid structured payload for {format_name}: {preview}"
                         ),
-                    )
+                    ) from exc
             else:
                 payload = None
 
@@ -574,11 +574,10 @@ def process_structured_response(
             preview = _stringify_for_log(raw_text, limit=200)
             yield Tell(f"Parsing Gemini structured response fall back to text: {preview}")
             stripped = raw_text.strip()
-            raw_content_for_error = raw_text
             if stripped and stripped[0] in "[{":
                 try:
                     payload = json.loads(stripped)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as exc:
                     yield Tell("Gemini response text was not valid JSON")
                     yield Tell(f"Raw content: {preview}")
                     raise GeminiStructuredOutputError(
@@ -587,7 +586,7 @@ def process_structured_response(
                         message=(
                             f"Gemini returned non-JSON structured output for {format_name}: {preview}"
                         ),
-                    )
+                    ) from exc
             else:
                 yield Tell("Gemini response did not include JSON payload")
                 raise GeminiStructuredOutputError(
@@ -817,10 +816,7 @@ def repair_structured_response(
     elif isinstance(fixed_value, Mapping):
         payload = dict(fixed_value)
     else:
-        if not isinstance(fixed_value, str):
-            fixed_text = str(fixed_value)
-        else:
-            fixed_text = fixed_value
+        fixed_text = str(fixed_value) if not isinstance(fixed_value, str) else fixed_value
         try:
             payload = json.loads(fixed_text)
         except json.JSONDecodeError as exc:  # pragma: no cover - defensive logging
@@ -846,7 +842,7 @@ def repair_structured_response(
 
 
 @do
-def process_image_edit_response(response: Any) -> EffectGenerator[GeminiImageEditResult]:
+def process_image_edit_response(response: Any) -> EffectGenerator[GeminiImageEditResult]:  # noqa: PLR0912 - baseline cleanup keeps existing control flow unchanged
     """Extract image bytes and optional text from a Gemini response."""
 
     image_bytes: bytes | None = None
@@ -1044,7 +1040,7 @@ def structured_llm__gemini(
 
     safe_retry_result = yield Try(
         _retry_with_backoff(
-            lambda: make_api_call(),
+            make_api_call,
             max_attempts=max_retries,
             delay_strategy=_gemini_random_backoff,
         )
@@ -1249,7 +1245,7 @@ def edit_image__gemini(
 
     safe_retry_result = yield Try(
         _retry_with_backoff(
-            lambda: make_api_call(),
+            make_api_call,
             max_attempts=max_retries,
             delay_strategy=_gemini_random_backoff,
         )
