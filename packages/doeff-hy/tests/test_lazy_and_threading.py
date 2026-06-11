@@ -52,7 +52,7 @@ class TestLazyHandlerMacro:
 
     def test_lazy_handler_basic(self):
         """Lazy init runs on first effect, uses cached value on second."""
-        import doeff_hy  # noqa: F401
+        import doeff_hy  # noqa: F401 - registers Hy macros/import hooks for inline eval
         import hy
 
         # This Hy code uses the lazy clause in defhandler
@@ -95,8 +95,8 @@ class TestLazyHandlerMacro:
 
     def test_lazy_handler_runs_once(self):
         """Lazy init should execute only once even with multiple effect invocations."""
-        import doeff_hy  # noqa: F401
-        import hy  # noqa: F401
+        import doeff_hy  # noqa: F401 - registers Hy macros/import hooks for inline eval
+        import hy  # noqa: F401 - activates Hy reader for inline eval
 
         # We test by checking state key contains Some after first init
         @do
@@ -169,7 +169,7 @@ class TestLazyHandlerHyIntegration:
 
     def test_defhandler_lazy_compiles(self):
         """(defhandler name (lazy x ...) (Effect [f] ...)) should compile."""
-        import doeff_hy  # noqa: F401
+        import doeff_hy  # noqa: F401 - registers Hy macros/import hooks for inline eval
         import hy
 
         # This should NOT raise a SyntaxError once implemented
@@ -188,7 +188,7 @@ class TestLazyHandlerHyIntegration:
 
     def test_defhandler_lazy_with_effects(self):
         """Lazy init body can perform effects (Ask) for config."""
-        import doeff_hy  # noqa: F401
+        import doeff_hy  # noqa: F401 - registers Hy macros/import hooks for inline eval
         import hy
 
         code = """
@@ -237,7 +237,7 @@ class TestLazyHandlerHyIntegration:
         """Lazy state key should be prefixed with module name."""
         import types
 
-        import doeff_hy  # noqa: F401
+        import doeff_hy  # noqa: F401 - registers Hy macros/import hooks for inline eval
         import hy
 
         observed_keys = []
@@ -307,7 +307,7 @@ class TestLazyDefk:
         """(defk name [x] (lazy val ...) body) should compile and run."""
         import types
 
-        import doeff_hy  # noqa: F401
+        import doeff_hy  # noqa: F401 - registers Hy macros/import hooks for inline eval
         import hy
 
         code = """
@@ -357,7 +357,7 @@ class TestThreadingMacro:
         """(<-> (f) (g :k v) (h)) should thread first-arg through pipeline."""
         import types
 
-        import doeff_hy  # noqa: F401
+        import doeff_hy  # noqa: F401 - registers Hy macros/import hooks for inline eval
         import hy
 
         code = """
@@ -407,7 +407,7 @@ class TestThreadingMacro:
         """(<-> (f x)) with one form is just (<- _t0 (f x)), _t0."""
         import types
 
-        import doeff_hy  # noqa: F401
+        import doeff_hy  # noqa: F401 - registers Hy macros/import hooks for inline eval
         import hy
 
         code = """
@@ -482,7 +482,7 @@ def _hy_eval_in_module(code, mod_name):
     import sys
     import types
 
-    import doeff_hy  # noqa: F401
+    import doeff_hy  # noqa: F401 - registers Hy macros/import hooks for inline eval
     import hy
 
     mod = types.ModuleType(mod_name)
@@ -612,7 +612,7 @@ class TestLazyValVar:
 
     def test_lazy_val_set_bang_compile_error(self):
         """set! on lazy-val should raise SyntaxError at compile time."""
-        import doeff_hy  # noqa: F401
+        import doeff_hy  # noqa: F401 - registers Hy macros/import hooks for inline eval
         import hy
 
         code = """
