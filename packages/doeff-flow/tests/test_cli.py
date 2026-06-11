@@ -169,7 +169,7 @@ class TestHistoryCommand:
             # Step 17 should NOT be in the output
             # (we need to be careful - "17" might appear in other places)
             # Count rows in the table - with rich, data rows have │ separators
-            data_rows = [l for l in result.output.split("\n") if "running" in l]
+            data_rows = [line for line in result.output.split("\n") if "running" in line]
             assert len(data_rows) == 3
 
 
