@@ -18,8 +18,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-from doeff import Effect, Pass, Resume, Spawn, WithHandler, do, run
-from doeff_core_effects.scheduler import Gather, scheduled
 from doeff_conductor.effects.agent import AgentEffect, AgentTask
 from doeff_conductor.effects.workspace import CreateWorkspace
 from doeff_conductor.handlers.testing import MockConductorRuntime
@@ -27,7 +25,9 @@ from doeff_conductor.handlers.utils import (
     make_offloaded_scheduled_handler,
     make_scheduled_handler,
 )
+from doeff_core_effects.scheduler import Gather, scheduled
 
+from doeff import Effect, Pass, Resume, Spawn, WithHandler, do, run
 
 SIMPLE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -226,7 +226,7 @@ class TestK4ParallelOverlap:
             conductor_handler = _build_handler_with_real_scheduler(runtime, timed)
 
             @do
-            def workflow():
+            def workflow(iteration: int = iteration):
                 workspace = yield CreateWorkspace(workspace_id=f"ws-k4r{iteration}")
                 task_a = _make_agent_task(
                     f"run-k4r{iteration}", "branch-a", workspace
@@ -274,15 +274,11 @@ class TestK4ParallelOverlap:
 
         timed = _TimedAgentHandler(runtime, delay=self.BRANCH_DELAY)
 
-        # Use the OLD blocking handler (pre-fix behaviour)
-        from doeff_conductor.effects.agent import AgentEffect as AE
-        from doeff_conductor.effects.workspace import CreateWorkspace as CW
-
         @do
         def blocking_handler(effect: Effect, k: Any):
-            if isinstance(effect, AE):
+            if isinstance(effect, AgentEffect):
                 return (yield Resume(k, timed.handle_agent(effect)))
-            if isinstance(effect, CW):
+            if isinstance(effect, CreateWorkspace):
                 return (yield Resume(k, runtime.handle_create_workspace(effect)))
             yield Pass(effect, k)
 
@@ -297,7 +293,7 @@ class TestK4ParallelOverlap:
             return results
 
         wall_start = time.monotonic()
-        result = run(scheduled(WithHandler(blocking_handler, workflow())))
+        run(scheduled(WithHandler(blocking_handler, workflow())))
         wall_elapsed = time.monotonic() - wall_start
 
         # The blocking handler should take >= sum of branch delays
