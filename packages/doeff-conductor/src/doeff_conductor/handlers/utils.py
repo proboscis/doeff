@@ -1,9 +1,11 @@
 """Handler utilities for doeff-conductor."""
 
+import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from doeff import Effect, Pass, Resume, do
+from doeff_core_effects.scheduler import CreateExternalPromise, Wait
 
 if TYPE_CHECKING:
     from doeff_conductor.handlers.agent_handler import AgentHandler
@@ -30,6 +32,44 @@ def make_scheduled_handler(handler: SimpleHandler) -> Callable[..., Any]:
 def make_blocking_scheduled_handler(handler: SimpleHandler) -> Callable[..., Any]:
     """Alias for sync blocking handlers."""
     return make_scheduled_handler(handler)
+
+
+def make_offloaded_scheduled_handler(handler: SimpleHandler) -> Callable[..., Any]:
+    """Bridge a blocking handler through the scheduler's ExternalPromise.
+
+    The handler executes in a daemon thread while the cooperative
+    scheduler is free to dispatch sibling tasks.  This is the
+    **agent-await bridge** required by L-K4-1: an effect handler must
+    not perform unbounded blocking I/O synchronously; unbounded waits
+    enter only via the scheduler's Await / external-completion path.
+
+    Cancellation: the daemon thread is bounded by the server-side
+    timeout (agentd's ``await_budget + RPC_TIMEOUT_MARGIN_SECONDS``).
+    If the scheduler cancels the waiting task (e.g. Gather fail-fast),
+    the thread runs to completion and the promise completion is a
+    harmless no-op on an already-resolved promise.
+    """
+
+    @do
+    def scheduled_handler(effect: Effect, k: Any):
+        promise = yield CreateExternalPromise()
+
+        def _offload(ep=promise, eff=effect):
+            try:
+                ep.complete(handler(eff))
+            except Exception as exc:
+                ep.fail(exc)
+
+        threading.Thread(
+            target=_offload,
+            daemon=True,
+            name="agent-await-bridge",
+        ).start()
+
+        result = yield Wait(promise.future)
+        return (yield Resume(k, result))
+
+    return scheduled_handler
 
 
 def make_scheduled_handler_with_store(_handler: Callable[..., Any]) -> Callable[..., Any]:
@@ -106,7 +146,7 @@ def default_scheduled_handlers(
         (ListIssues, make_blocking_scheduled_handler(iss.handle_list_issues)),
         (GetIssue, make_blocking_scheduled_handler(iss.handle_get_issue)),
         (ResolveIssue, make_blocking_scheduled_handler(iss.handle_resolve_issue)),
-        (AgentEffect, make_blocking_scheduled_handler(agent.handle_agent)),
+        (AgentEffect, make_offloaded_scheduled_handler(agent.handle_agent)),
         (TimeCall, make_blocking_scheduled_handler(workflow_effect.handle_time)),
         (RandomCall, make_blocking_scheduled_handler(workflow_effect.handle_random)),
         (Commit, make_blocking_scheduled_handler(git.handle_commit)),
@@ -130,6 +170,7 @@ __all__ = [
     "make_async_scheduled_handler",
     "make_blocking_scheduled_handler",
     "make_blocking_scheduled_handler_with_store",
+    "make_offloaded_scheduled_handler",
     "make_scheduled_handler",
     "make_scheduled_handler_with_store",
 ]
