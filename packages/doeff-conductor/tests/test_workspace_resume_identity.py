@@ -141,6 +141,24 @@ def test_different_run_id_binds_different_workspace_identity(
     assert set(captured_runs[0]).isdisjoint(set(captured_runs[1]))
 
 
+def test_workspace_identity_distinguishes_punctuation_only_run_ids() -> None:
+    """Review finding F1: slugs are lossy, so the digest must cover run_id.
+
+    With a node-key-only digest, run ids differing only in punctuation
+    collided into one identity and the second run silently re-adopted the
+    first run's branch including its commits.
+    """
+    from doeff_conductor.workflow_runtime import _workspace_identity
+
+    node_key = "wf/workspace!0/workspace"
+    identities = {
+        _workspace_identity("run.1", node_key),
+        _workspace_identity("run-1", node_key),
+        _workspace_identity("run_1", node_key),
+    }
+    assert len(identities) == 3
+
+
 SHARED_SETV_SOURCE = """
 (require doeff-hy.conductor [defworkflow agent! workspace! <-])
 (import doeff_conductor.dsl [artifact prompt ref])

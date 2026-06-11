@@ -227,7 +227,13 @@ class WorkspaceHandler:
         materialized_path: Path = self.resolve_path(workspace)
 
         strategy: MergeStrategy = effect.strategy or MergeStrategy.MERGE
-        for source_workspace in effect.workspaces[1:]:
+        # Merge ALL sources, including workspaces[0]: the merge branch is
+        # created from source[0]'s tip on first run (merging it again is a
+        # no-op), but on RESUME the branch is re-adopted frozen at that old
+        # tip — skipping source[0] silently dropped its newer commits, so
+        # the resumed merged tree diverged from a fresh run's (review
+        # finding F2, reproduced with real git).
+        for source_workspace in effect.workspaces:
             if strategy is MergeStrategy.MERGE:
                 args = ["git", "merge", source_workspace.ref, "--no-edit"]
             elif strategy is MergeStrategy.REBASE:
