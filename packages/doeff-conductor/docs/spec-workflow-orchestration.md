@@ -599,10 +599,10 @@ because where to pause is a trust/stakes judgment extrinsic to the task:
    no live effect, and no closure verb exists (`gate list` only; no
    proceed/redirect/abort). The overseer contract (§8) is currently
    stub-only; wiring it live is the next major stage.
-10. **`random!` is a placeholder**: `_evaluate_random` uses `Random(0)` —
-   a constant seed shared by every node, so every draw is identical.
-   Per-node seeded randomness recorded for replay is the intended design.
+10. **`random!` true randomness + journal replay fixed `bc48f890`**:
+   `random!` now emits a workflow effect handled through
+   `effect-journal.jsonl`; first execution draws from OS entropy and replay
+   returns the recorded value.
 11. **`doeff-agents` CLI is blind to agentd sessions** (it reads the
    local-handler store) and `doeff-agentd` has no client subcommands;
    session-level monitoring currently requires reading agentd's sqlite.
-

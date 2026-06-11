@@ -109,6 +109,6 @@ daemon (single authority). Candidate follow-up issue.
 | Result channel per-session | ❌→✅ | shared-workspace collision (stale acceptance); fixed 0ad2c7b4 |
 | Loop iteration in node identity | ❌→✅ | round 2 re-adopted round 1's session; fixed 0ad2c7b4 |
 | §8 attention tiers LIVE | ❌ | stub-only: live exhaustion = terminal error, no parked gate, no closure verb, phase-checkpoints inert — NEXT MAJOR STAGE |
-| `random!` true randomness | ❌ | Random(0) constant-seed placeholder (§11-10) |
+| `random!` true randomness | ❌→✅ | fixed `bc48f890`: OS entropy on first run, `effect-journal.jsonl` value on replay (§11-10) |
 | quorum/oks Try-bindings | ⬜ | not yet probed live |
 | merge-conflict structured bounce | ⬜ | not yet probed live |
