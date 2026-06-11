@@ -66,9 +66,9 @@ state dirs, pane captures, or plan/validate outputs. ✅ = validated live,
 | Feature | Status | Evidence |
 |---|---|---|
 | Supervision: autonomous | ✅ | all runs |
-| Supervision: phase-checkpoints + gate adjudication | ⬜ | never exercised live |
-| Parked gate closure options (proceed/redirect/abort) | 🧪 | validate scenarios only |
-| Resume: journal replay of completed agents | ⬜ | blocked on ws-resume fix; then kill-resume E2E |
+| Supervision: phase-checkpoints + gate adjudication | 🧪 | MockConductorRuntime regression only: `uv run pytest packages/doeff-conductor/tests/test_c9_live_gates.py`; live probe pending |
+| Parked gate closure options (proceed/redirect/abort) | 🧪 | MockConductorRuntime regression only, including `effect-journal.jsonl` + open-gate state co-location; live `conductor answer` probe pending |
+| Resume: journal replay of completed agents | ✅ | prior live replay evidence + c3 tests; gate-proceed path is 🧪 pending live probe |
 | Fingerprint-gated cache invalidation (profile edit) | 🧪 | unit tests only |
 | State dir as audit record | ✅ | journals inspected during incidents |
 
@@ -98,7 +98,8 @@ whether legacy local tmux helpers for `run`/`stop` should remain in
 6. Auto-commit captures .agent-home session state — ✅ fixed e206be17
 7. Await budget owning axis — open
 8. blocked-status cosmetic misread — open
-9. (candidate) doeff-agents CLI blind to agentd sessions — monitoring gap
+9. §8 attention tiers live gap — 🧪 implementation fixed; MockConductorRuntime coverage green; live probe pending
+10. (candidate) doeff-agents CLI blind to agentd sessions — monitoring gap
 
 
 ## Late-session findings (after the first matrix cut)
@@ -110,7 +111,7 @@ whether legacy local tmux helpers for `run`/`stop` should remain in
 | Fingerprint invalidation END-TO-END | ❌→✅ | two defects: session name lacked identity digest, then digest not threaded to L2 (journal poisoning); fixed 3d765cac + 7th commit; live: same run-id re-launched `…-84716d3a-0` with effort="medium" argv |
 | Result channel per-session | ❌→✅ | shared-workspace collision (stale acceptance); fixed 0ad2c7b4 |
 | Loop iteration in node identity | ❌→✅ | round 2 re-adopted round 1's session; fixed 0ad2c7b4 |
-| §8 attention tiers LIVE | ❌ | stub-only: live exhaustion = terminal error, no parked gate, no closure verb, phase-checkpoints inert — NEXT MAJOR STAGE |
+| §8 attention tiers LIVE | 🧪 | implementation landed with MockConductorRuntime coverage for open gates, `answer proceed`, and phase checkpoints; live probe pending |
 | `random!` true randomness | ❌→✅ | fixed `bc48f890`: OS entropy on first run, `effect-journal.jsonl` value on replay (§11-10) |
 | quorum/oks Try-bindings | ⬜ | not yet probed live |
 | merge-conflict structured bounce | ⬜ | not yet probed live |
