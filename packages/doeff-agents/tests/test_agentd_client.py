@@ -32,6 +32,7 @@ from doeff_agents import (
     default_agentd_paths,
     ensure_agentd,
 )
+from doeff_agents.agentd_client import AgentdSessionList, AgentdSessionParseWarning
 
 
 @pytest.fixture
@@ -132,6 +133,69 @@ def test_agentd_client_launch_sends_interactive_lifecycle(tmp_path: Path) -> Non
     assert snapshot.lifecycle == AgentSessionLifecycle.INTERACTIVE
     assert server.requests[0]["method"] == "session.launch"
     assert server.requests[0]["params"]["lifecycle"] == "interactive"
+
+
+def test_agentd_client_list_sessions_accepts_agentd_generic_rows() -> None:
+    def handle(request: Mapping[str, Any]) -> Mapping[str, Any]:
+        return {
+            "id": request["id"],
+            "ok": True,
+            "result": [
+                _snapshot_payload(session_id="raw-command", agent_type="generic"),
+                _snapshot_payload(session_id="codex-agent", agent_type="codex"),
+            ],
+        }
+
+    with (
+        tempfile.TemporaryDirectory(prefix="agentd-", dir="/tmp") as temp_dir,
+        OneShotAgentdServer(Path(temp_dir) / "agentd.sock", handle) as server,
+    ):
+        client = AgentdClient(server.socket_path, timeout=2.0)
+        snapshots = client.list_sessions()
+
+    assert [snapshot.session_id for snapshot in snapshots] == ["raw-command", "codex-agent"]
+    assert snapshots[0].agent_type == AgentType.GENERIC
+    assert server.requests[0]["method"] == "session.list"
+
+
+def test_generic_agent_type_has_no_registered_adapter() -> None:
+    from doeff_agents.session import get_adapter
+
+    with pytest.raises(ValueError, match="No adapter registered"):
+        get_adapter(AgentType.GENERIC)
+
+
+def test_agentd_client_list_sessions_with_warnings_skips_unknown_agent_type() -> None:
+    def handle(request: Mapping[str, Any]) -> Mapping[str, Any]:
+        return {
+            "id": request["id"],
+            "ok": True,
+            "result": [
+                _snapshot_payload(session_id="good", agent_type="codex"),
+                _snapshot_payload(
+                    session_id="bad",
+                    agent_type="future-agent",
+                ),
+            ],
+        }
+
+    with (
+        tempfile.TemporaryDirectory(prefix="agentd-", dir="/tmp") as temp_dir,
+        OneShotAgentdServer(Path(temp_dir) / "agentd.sock", handle) as server,
+    ):
+        client = AgentdClient(server.socket_path, timeout=2.0)
+        result = client.list_sessions_with_warnings()
+
+    assert isinstance(result, AgentdSessionList)
+    assert [snapshot.session_id for snapshot in result.snapshots] == ["good"]
+    assert result.warnings == (
+        AgentdSessionParseWarning(
+            session_name="bad",
+            field="agent_type",
+            raw_value="future-agent",
+        ),
+    )
+    assert server.requests[0]["method"] == "session.list"
 
 
 def test_agentd_client_raises_daemon_error() -> None:
