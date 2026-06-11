@@ -9,7 +9,7 @@ Law IDs map to algebra-draft.md. Negative tests (assert_not_equiv) lock in
 refutations discovered in the 2026-06-12 adversarial-attack session — they are
 executable documentation that a tempting rewrite is ILLEGAL.
 
-S6 (state×continuation sharing) is covered by the existing
+S6 (state-continuation sharing) is covered by the existing
 tests/effects/test_effect_combinations.py::TestSafeNonRollbackLaw.
 """
 
@@ -33,7 +33,6 @@ from doeff import (
     do,
 )
 from tests._run_helpers import run_with_defaults
-
 
 # ============================================================================
 # Harness
@@ -66,7 +65,8 @@ def assert_not_equiv(lhs_thunk, rhs_thunk, *, env=None, store=None):
     """Refutation lock: the two sides MUST differ (both Ok, different values)."""
     lhs = run1(lhs_thunk, env=env, store=store)
     rhs = run1(rhs_thunk, env=env, store=store)
-    assert lhs.is_ok() and rhs.is_ok(), f"expected Ok/Ok: LHS={lhs!r} RHS={rhs!r}"
+    assert lhs.is_ok(), f"expected Ok LHS={lhs!r}"
+    assert rhs.is_ok(), f"expected Ok RHS={rhs!r}"
     assert lhs.value != rhs.value, (
         f"refutation vanished — sides now agree on {lhs.value!r}; "
         "either the law became unconditional (update algebra-draft) or "
@@ -284,7 +284,6 @@ class TestWriterLaws:
 def _tell_seq(messages):
     for m in messages:
         yield Tell(m)
-    return None
 
 
 # ============================================================================
@@ -334,7 +333,7 @@ class TestAwaitLaws:
         assert_equiv(lhs, rhs)
 
     @pytest.mark.skip(
-        reason="AW2 counterexample (async × multi-task: yield-point count is "
+        reason="AW2 counterexample (async x multi-task: yield-point count is "
         "observable) needs the deterministic sim driver to be reproducible — "
         "real-clock schedules are flaky. Blocked on strategy priority 3 "
         "(deterministic simulator). See algebra-draft.md §3 G4 / D17."
@@ -500,7 +499,8 @@ class TestConcurrencyLaws:
 
         first = run1(main, store={})
         second = run1(main, store={})
-        assert first.is_ok() and second.is_ok()
+        assert first.is_ok()
+        assert second.is_ok()
         assert first.value == second.value, (
             f"scheduler nondeterminism detected:\n{first.value}\n{second.value}"
         )
@@ -529,4 +529,3 @@ def _noop():
 @do
 def _completer(promise):
     yield CompletePromise(promise, "done")
-    return None
