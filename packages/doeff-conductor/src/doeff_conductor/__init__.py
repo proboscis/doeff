@@ -81,6 +81,7 @@ from .handlers import (
     GitHandler,
     IssueHandler,
     JournaledAgentHandler,
+    JournaledWorkflowEffectHandler,
     MockConductorRuntime,
     WorkspaceHandler,
     default_scheduled_handlers,
@@ -98,6 +99,7 @@ from .replay_keying import (
     longest_valid_prefix,
     node_identity_fingerprint,
     resolved_identity_fingerprint,
+    workflow_effect_cache_key,
 )
 from .templates import (
     basic_pr,
@@ -168,6 +170,7 @@ __all__ = [
     "IssueStatus",
     "JournalCorruptionError",
     "JournaledAgentHandler",
+    "JournaledWorkflowEffectHandler",
     "ListIssues",
     "MergeCall",
     "MergeConflict",
@@ -227,4 +230,5 @@ __all__ = [
     "reviewed_pr",
     "route_review_item",
     "run_review_routing_demo",
+    "workflow_effect_cache_key",
 ]

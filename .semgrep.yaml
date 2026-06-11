@@ -77,6 +77,18 @@ rules:
       include:
         - /packages/doeff-agents/**
 
+  - id: conductor-random-effect-no-fixed-seed
+    languages: [python]
+    severity: ERROR
+    message: >
+      conductor-random-true-randomness: random! must draw from OS entropy on
+      first execution and rely on the workflow effect journal for replay.
+      Fixed-seed Random(0) placeholders make separate workflow runs identical.
+    pattern: Random(0)
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/**
+
   - id: doeff-agents-no-pr-url-session-sniffing
     languages: [generic]
     severity: ERROR
@@ -144,6 +156,70 @@ rules:
         - /packages/doeff-conductor/src/doeff_conductor/handlers/**
       exclude:
         - /packages/doeff-conductor/src/doeff_conductor/handlers/exec_handler.py
+
+  - id: doeff-agents-cli-monitoring-uses-agentd
+    languages: [python]
+    severity: ERROR
+    message: >
+      agents-cli-query-agentd: doeff-agents ps/watch/output/send/attach must query
+      doeff-agentd as the single authority. Do not fall back to local tmux/session
+      reads for these monitoring commands.
+    pattern-either:
+      - patterns:
+          - pattern-inside: |
+              def ps_command(...):
+                  ...
+          - pattern: list_sessions(...)
+      - patterns:
+          - pattern-inside: |
+              def watch_command(...):
+                  ...
+          - pattern-either:
+              - pattern: monitor_session(...)
+              - pattern: AgentSession(...)
+              - pattern: _resolve_session(...)
+              - pattern: _resolve_tmux_session(...)
+      - patterns:
+          - pattern-inside: |
+              def output(...):
+                  ...
+          - pattern-either:
+              - pattern: capture_output(...)
+              - pattern: AgentSession(...)
+              - pattern: _resolve_session(...)
+              - pattern: _resolve_tmux_session(...)
+      - patterns:
+          - pattern-inside: |
+              def send(...):
+                  ...
+          - pattern-either:
+              - pattern: send_message(...)
+              - pattern: AgentSession(...)
+              - pattern: _resolve_session(...)
+              - pattern: _resolve_tmux_session(...)
+      - patterns:
+          - pattern-inside: |
+              def attach(...):
+                  ...
+          - pattern-either:
+              - pattern: _resolve_session(...)
+              - pattern: _resolve_tmux_session(...)
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/cli.py
+
+  - id: conductor-runtime-state-ignores-live-in-workspace-init
+    languages: [generic]
+    severity: ERROR
+    message: >
+      spec §11-6: conductor runtime session-state ignores belong in workspace
+      initialization, not Commit/Git effect staging. Keep git add -A generic so
+      manual git commands and future commit consumers get the same behavior.
+    pattern-regex: '\.agent-home/?'
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/handlers/git_handler.py
+        - /packages/doeff-conductor/src/doeff_conductor/effects/git.py
 
   - id: http-request-handlers-use-defhandler
     languages: [python]

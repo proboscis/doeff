@@ -6,7 +6,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from doeff_conductor.effects.git import Commit
 from doeff_conductor.effects.workspace import CreateWorkspace, DeleteWorkspace, MergeWorkspaces
+from doeff_conductor.handlers.git_handler import GitHandler
 from doeff_conductor.handlers.workspace_handler import WorkspaceHandler, WorkspaceStateError
 from doeff_conductor.types import Issue, IssueStatus, MergeStatus, MergeStrategy, Workspace
 
@@ -85,6 +87,65 @@ class TestWorkspaceHandler:
         assert "path" not in workspace.to_dict()
         assert handler.resolve_path(workspace).exists()
 
+    def test_create_workspace_installs_runtime_state_gitignore(
+        self,
+        handler: WorkspaceHandler,
+    ) -> None:
+        workspace: Workspace = handler.handle_create_workspace(
+            CreateWorkspace(workspace_id="ws-ignore")
+        )
+        materialized_path: Path = handler.resolve_path(workspace)
+
+        gitignore_lines: list[str] = (materialized_path / ".gitignore").read_text().splitlines()
+        assert ".agent-home/" in gitignore_lines
+
+        agent_state_path: Path = materialized_path / ".agent-home" / "session.json"
+        agent_state_path.parent.mkdir()
+        agent_state_path.write_text('{"session": "runtime"}')
+
+        status: subprocess.CompletedProcess[str] = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=materialized_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert ".agent-home" not in status.stdout
+
+    def test_workspace_auto_commit_excludes_runtime_agent_home(
+        self,
+        handler: WorkspaceHandler,
+    ) -> None:
+        workspace: Workspace = handler.handle_create_workspace(
+            CreateWorkspace(workspace_id="ws-autocommit")
+        )
+        materialized_path: Path = handler.resolve_path(workspace)
+        git_handler: GitHandler = GitHandler(workspace_resolver=handler.resolve_path)
+
+        (materialized_path / "feature.txt").write_text("user-visible work\n")
+        agent_state_path: Path = materialized_path / ".agent-home" / "session.json"
+        agent_state_path.parent.mkdir()
+        agent_state_path.write_text('{"session": "runtime"}')
+
+        commit_sha: str = git_handler.handle_commit(
+            Commit(
+                workspace=workspace,
+                message="Commit workspace changes",
+                all=True,
+            )
+        )
+
+        show_result: subprocess.CompletedProcess[str] = subprocess.run(
+            ["git", "show", "--name-only", "--format=", commit_sha],
+            cwd=materialized_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        committed_paths: list[str] = show_result.stdout.splitlines()
+        assert "feature.txt" in committed_paths
+        assert ".agent-home/session.json" not in committed_paths
+
     def test_create_workspace_requires_identity(self, handler: WorkspaceHandler) -> None:
         with pytest.raises(ValueError, match="non-empty workspace_id"):
             handler.handle_create_workspace(CreateWorkspace(workspace_id=""))
@@ -115,6 +176,21 @@ class TestWorkspaceHandler:
 
         assert result is True
         assert not materialized_path.exists()
+
+    def test_delete_workspace_preserves_uncommitted_user_changes(
+        self,
+        handler: WorkspaceHandler,
+    ) -> None:
+        workspace: Workspace = handler.handle_create_workspace(
+            CreateWorkspace(workspace_id="ws-delete-dirty")
+        )
+        materialized_path: Path = handler.resolve_path(workspace)
+        (materialized_path / "wip.txt").write_text("keep me\n")
+
+        result: bool = handler.handle_delete_workspace(DeleteWorkspace(workspace=workspace))
+
+        assert result is False
+        assert materialized_path.exists()
 
     def test_delete_workspace_nonexistent(self, handler: WorkspaceHandler) -> None:
         workspace = Workspace(id="missing", repo="default", ref="missing", base_ref="main")
