@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 CORE_ROOT = Path(__file__).resolve().parents[1]
 FRAME_RS = CORE_ROOT / "src/frame.rs"
 SEGMENT_RS = CORE_ROOT / "src/segment.rs"
