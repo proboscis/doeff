@@ -19,6 +19,7 @@ from doeff_conductor.effects.agent import (
     AgentValidationErrorKind,
     AgentValidationFailure,
 )
+from doeff_conductor.effects.dsl import RandomCall, TimeCall
 from doeff_conductor.effects.exec import Exec
 from doeff_conductor.effects.git import Commit, CreatePR, MergePR, Push
 from doeff_conductor.effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
@@ -33,6 +34,7 @@ from doeff_conductor.types import (
     PRHandle,
     Workspace,
 )
+from doeff_conductor.workflow_effect_journal import JournaledWorkflowEffectHandler
 
 from .utils import make_scheduled_handler
 
@@ -371,6 +373,9 @@ def mock_handlers(
 ) -> ScheduledHandler:
     """Build a complete mock protocol handler for all conductor effects."""
     active_runtime = runtime or MockConductorRuntime(root=root, workflow_id=workflow_id)
+    workflow_effect_handler = JournaledWorkflowEffectHandler(
+        state_dir=active_runtime.root,
+    )
 
     handlers: list[tuple[type[Any], ScheduledHandler]] = [
         (CreateWorkspace, make_scheduled_handler(active_runtime.handle_create_workspace)),
@@ -382,6 +387,8 @@ def mock_handlers(
         (GetIssue, make_scheduled_handler(active_runtime.handle_get_issue)),
         (ResolveIssue, make_scheduled_handler(active_runtime.handle_resolve_issue)),
         (AgentEffect, make_scheduled_handler(active_runtime.handle_agent)),
+        (TimeCall, make_scheduled_handler(workflow_effect_handler.handle_time)),
+        (RandomCall, make_scheduled_handler(workflow_effect_handler.handle_random)),
         (Commit, make_scheduled_handler(active_runtime.handle_commit)),
         (Push, make_scheduled_handler(active_runtime.handle_push)),
         (CreatePR, make_scheduled_handler(active_runtime.handle_create_pr)),

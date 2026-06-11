@@ -77,6 +77,18 @@ rules:
       include:
         - /packages/doeff-agents/**
 
+  - id: conductor-random-effect-no-fixed-seed
+    languages: [python]
+    severity: ERROR
+    message: >
+      conductor-random-true-randomness: random! must draw from OS entropy on
+      first execution and rely on the workflow effect journal for replay.
+      Fixed-seed Random(0) placeholders make separate workflow runs identical.
+    pattern: Random(0)
+    paths:
+      include:
+        - /packages/doeff-conductor/src/doeff_conductor/**
+
   - id: doeff-agents-no-pr-url-session-sniffing
     languages: [generic]
     severity: ERROR
