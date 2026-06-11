@@ -4,8 +4,9 @@ import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from doeff import Effect, Pass, Resume, do
 from doeff_core_effects.scheduler import CreateExternalPromise, Wait
+
+from doeff import Effect, Pass, Resume, do
 
 if TYPE_CHECKING:
     from doeff_conductor.handlers.agent_handler import AgentHandler
