@@ -14,6 +14,7 @@ class AgentType(Enum):
     CLAUDE = "claude"
     CODEX = "codex"
     GEMINI = "gemini"
+    GENERIC = "generic"
     CUSTOM = "custom"
 
 
