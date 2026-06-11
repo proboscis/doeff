@@ -11,6 +11,7 @@ Run:
     uv run python examples/03_sequential_agents.py
 """
 
+from doeff.effects.writer import slog
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticGetMessages,
@@ -21,7 +22,6 @@ from doeff_agentic.opencode_handler import opencode_handler
 from doeff_preset import preset_handlers
 
 from doeff import do
-from doeff.effects.writer import slog
 
 
 def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
@@ -67,6 +67,7 @@ def research_and_summarize(topic: str):
 
 if __name__ == "__main__":
     import asyncio
+
     from doeff import WithHandler, async_run, default_handlers
 
     async def main():
