@@ -459,6 +459,41 @@ budget is the backstop.
 `packages/doeff-conductor` and `packages/doeff-agents`, allowing only
 the bridged/offloaded form.
 
+### D12 — Workspace journal coverage (K3 law L-K3-3)
+
+**Context:** Workspace identity is deterministic from `(run_id,
+workspace-node identity)` and the handler is idempotent ensure-style
+(D10). However, workspace **creation** was not journaled: resuming a
+run created FRESH worktrees while agent sessions re-adopted their
+deterministic names. Gates and reviewers then ran against an empty
+workspace — false-positive green, the worst failure class.
+
+**Law ratified:**
+
+- **L-K3-3 (resource coverage):** Every resource materialization
+  (workspace creation) MUST be recorded in a durable journal
+  (`workspace-journal.jsonl`) before the orchestrator considers the
+  effect complete. On resume, the journal is the authoritative record
+  of which workspaces were materialized. Pre-coverage runs (agent
+  journal exists, workspace journal absent) MUST fail loudly with
+  `PreCoverageRunError`.
+
+**Implementation:**
+
+- `CreateWorkspaceJournalEntry` — frozen dataclass with `workspace_id`,
+  `repo`, `branch`, `worktree_path`, `base_ref`, `issue_id` (nullable),
+  `created_at`, `terminal_kind="workspace-created"`.
+- `WorkspaceJournal` — flat append-only JSONL with `latest_workspaces()`
+  returning last-wins-per-`workspace_id`. No generation/entry_index —
+  workspace identity is deterministic, not nondeterministic.
+- `JournaledWorkspaceHandler` — wraps the delegate workspace handler:
+  first call for a `workspace_id` delegates AND appends; subsequent
+  calls delegate but do NOT double-append. Pre-coverage detection
+  raises `PreCoverageRunError`.
+
+**Policy:** NO backward compatibility. Pre-coverage runs fail loudly.
+No shim, no dual path.
+
 ## Implementation plan (stages; each lands with tests)
 
 - **C1 — agent boundary (L2 core + `agent!`)**: implement the D6 algebra
