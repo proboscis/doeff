@@ -581,9 +581,9 @@ because where to pause is a trust/stakes judgment extrinsic to the task:
   selected `GateOption`), `note`, `answered_at`, and
   `terminal_kind="gate-answer"`. The journal is append-only; re-adjudication
   appends a new entry rather than editing in place (L-K5-2). `resume`
-  reads `latest_answers()` — the last answer per gate — as the authoritative
-  source of answered gate options, falling back to `run-state.json` for
-  backward compatibility with pre-journal runs.
+  reads `latest_answers()` — the last answer per gate — as the sole
+  authoritative source of answered gate options. Pre-journal runs are
+  dead runs; no fallback to `run-state.json`.
 - **Workspace effects are journaled for resource coverage (L-K3-3).**
   `workspace-journal.jsonl` records each workspace materialization:
   `workspace_id`, `repo`, `branch`, `worktree_path`, `base_ref`,
