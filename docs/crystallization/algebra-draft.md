@@ -1,8 +1,8 @@
-# doeff エフェクト代数 第二稿(反例攻撃済み)
+# doeff エフェクト代数 — 確定版
 
 作成: 2026-06-11。事後検死(postmortem.md)・制約グラフ(constraint-graph.md)・現行語彙の棚卸し(45エフェクト型)に基づく。
 **改訂: 2026-06-12 反例攻撃セッション** — G6決着(死設備→全削除、D15)、共有規範確定(D16)、AW2条件付き化(D17)、lawの地位確定(D18)、C系→CC系改名、基盤law CS1/CC5追加。
-**用途**: law確定版。生成元はG1〜G5で閉じた。残る保留は§6。
+**確定: 2026-06-12** — 戦略優先2の3関門(語彙抽出・反例攻撃・カバレッジ実測)をすべて通過。カバレッジ実測 **20/20タスク表現可能(100%、閾値7割)** — [coverage-report.md](coverage-report.md)。law機械化: `tests/laws/test_generator_laws.py`(21 passed — scheduler大規模改修後も継続green)。残る保留は§6(いずれもissue化済みか本代数の外)。
 規格: プリミティブ5〜10個(直交+完全)/合成則の層明示/law(等式)/インタプリタ分離。
 
 ---
@@ -191,7 +191,7 @@ lawは「全ハンドラについての定理」ではなく**ハンドラ契約
 2. Skipのselective層への再定式化(§4-3)
 3. Traverse並列意味論(applicative層の実装充足)
 4. ~~残骸削除issue群~~ → **issue化完了(2026-06-12)**: VarStore一式 [#461](https://github.com/proboscis/doeff/issues/461)、PromptBoundary.types [#464](https://github.com/proboscis/doeff/issues/464)、MaskSpec [#465](https://github.com/proboscis/doeff/issues/465)、SPEC-EFF-002更新 [#466](https://github.com/proboscis/doeff/issues/466)
-5. **カバレッジ実測**: 過去タスク20個をこの生成元集合(G1〜G5)で書き直し、7割未満なら切り口を疑う(戦略文書の基準 — 本セッション外)
+5. ~~カバレッジ実測~~ → **完了(2026-06-12)**: 20/20表現可能(100%)— [coverage-report.md](coverage-report.md)。副産物: doeff-secretのDelegate残骸バグ発見([#470](https://github.com/proboscis/doeff/issues/470))、Traverse族長尾の未使用観測(削減候補・急がない)
 6. ~~CS1/CC5のproperty test化~~ → **第一段完了(2026-06-12)**: `tests/laws/test_generator_laws.py`(21 passed)。残のissue化完了: hypothesis乱択化 [#462](https://github.com/proboscis/doeff/issues/462)、simドライバ(AW2反例の決定論的再現)[#463](https://github.com/proboscis/doeff/issues/463)
 
 ## 7. インタプリタ分離の現状

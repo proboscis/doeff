@@ -142,11 +142,15 @@ def test_validate_runs_built_in_scenarios_and_asserts_closure() -> None:
     )
     assert all(scenario.to_dict()["closure_ok"] for scenario in report.scenarios)
     # retry-exhaustion scenario produces open gates with "budget exhausted" reason
-    assert any(
-        gate.reason == "budget exhausted"
+    gate_reasons: set[str] = {
+        gate.reason
         for scenario in report.scenarios
         for gate in scenario.open_gates
-    )
+    }
+    assert "budget exhausted" in gate_reasons
+    # loop-exhaustion and merge-conflict scenarios park as K5 gates
+    assert "loop predicate exhaustion" in gate_reasons
+    assert "merge conflict" in gate_reasons
     # schema-invalid-then-pass scenario records the detail on artifact terminals
     assert any(
         terminal.detail == "schema invalid retry then pass"
@@ -173,10 +177,10 @@ def test_validate_closure_assertion_fails_loudly_for_broken_terminal() -> None:
         assert_validation_closure(broken)
 
 
-def test_validate_detects_closure_violation_from_loop_exhaustion() -> None:
-    """A loop whose predicate never passes produces a runtime-error terminal."""
+def test_validate_loop_exhaustion_parks_as_k5_gate() -> None:
+    """A loop whose predicate never passes parks behind a K5 gate."""
     workflow = defworkflow(
-        "closure_violation",
+        "loop_exhaustion_gate",
         params={},
         roles={"worker": {"profile": "cheap-coder"}},
         body=[
@@ -200,17 +204,17 @@ def test_validate_detects_closure_violation_from_loop_exhaustion() -> None:
         ],
     )
 
-    report = validate_workflow(workflow, scenarios=("all-pass",))
+    report = validate_workflow(workflow, scenarios=("loop-exhaustion",))
 
     assert report.interpreter == "validation"
     scenario = report.scenarios[0]
     closure_ok: bool = scenario.to_dict()["closure_ok"]
-    assert not closure_ok, "loop exhaustion should violate closure law"
-    runtime_error_terminals = [
-        t for t in scenario.terminals if t.terminal_kind == "runtime-error"
+    assert closure_ok, "loop exhaustion parks as gate — closure is satisfied"
+    gate_terminals = [
+        t for t in scenario.terminals if t.terminal_kind == "gate"
     ]
-    assert len(runtime_error_terminals) >= 1
-    assert "never_true" in runtime_error_terminals[0].detail
+    assert len(gate_terminals) >= 1
+    assert any(t.detail == "loop predicate exhaustion" for t in gate_terminals)
 
 
 def test_validate_materializes_gate_queue_and_progress_deltas(tmp_path: Path) -> None:

@@ -270,9 +270,9 @@ def list_gates_with_status(
 def answered_gate_options(state_dir: str | Path, workflow_id: str) -> dict[str, str]:
     """Return gate_id -> option for answered gates.
 
-    Reads from the gate answer journal as the authoritative source (L-K5-2),
-    falling back to run_state.answered_gates for backward compatibility with
-    pre-journal runs.
+    Gate-answer-journal.jsonl is the sole authoritative source (L-K5-2).
+    No backward-compat fallback to run-state.json — pre-journal runs are
+    dead runs per the no-compat policy.
     """
     from doeff_conductor.journal import GateAnswerJournal
 
@@ -280,15 +280,7 @@ def answered_gate_options(state_dir: str | Path, workflow_id: str) -> dict[str, 
         workflow_id,
         state_dir=state_dir,
     )
-    journal_answers: dict[str, str] = gate_answer_journal.latest_answers()
-    if journal_answers:
-        return journal_answers
-
-    try:
-        run_state: RunStateView = load_run_state(state_dir, workflow_id)
-    except FileNotFoundError:
-        return {}
-    return dict(run_state.answered_gates)
+    return gate_answer_journal.latest_answers()
 
 
 def record_open_gates(

@@ -3,7 +3,7 @@
 Tests the runtime enforcement of ``parallel :quorum k``:
 
 - k-of-n success → QuorumResult with Try-typed entries
-- Failure beyond tolerance → QuorumNotMetError
+- Failure beyond tolerance → open gate (closure-preserving park)
 - ``oks()`` projects successes from QuorumResult
 - Expansion rejects direct deref of Try-typed bindings (DSL layer)
 - Tolerated losses are recorded and surfaced, never silent
@@ -37,10 +37,11 @@ from doeff_conductor.dsl import (
 from doeff_conductor.handlers import mock_handlers as build_mock_handlers
 from doeff_conductor.handlers import run_sync
 from doeff_conductor.handlers.testing import MockConductorRuntime
+from doeff_conductor.overseer import OpenGateView
 from doeff_conductor.workflow_runtime import (
     ErrValue,
     OkValue,
-    QuorumNotMetError,
+    ParkedValue,
     QuorumResult,
     ToleratedLoss,
     WorkflowRuntimeResult,
@@ -171,31 +172,36 @@ class TestQuorumKOfNSuccess:
 
 
 class TestQuorumFailureBeyondTolerance:
-    """Below-quorum → typed failure (QuorumNotMetError)."""
+    """Below-quorum → open gate (closure-preserving park)."""
 
     def test_two_of_three_with_two_failures(self, tmp_path: Path) -> None:
-        """2-of-3 quorum with 2 failures → QuorumNotMetError."""
+        """2-of-3 quorum with 2 failures → parks with gate."""
         workflow: Any = _quorum_workflow(3, quorum=2, fail_indices=frozenset({0, 1}))
         result = _run_quorum_workflow(workflow, tmp_path=tmp_path)
 
-        assert result.is_err
-        error: BaseException | None = result.error
-        assert isinstance(error, QuorumNotMetError)
-        assert error.quorum == 2
-        assert error.total == 3
-        assert error.succeeded == 1
-        assert error.failed == 2
+        assert result.is_ok
+        runtime_result: WorkflowRuntimeResult = result.value
+        assert isinstance(runtime_result, WorkflowRuntimeResult)
+        assert len(runtime_result.open_gates) == 1
+
+        gate: OpenGateView = runtime_result.open_gates[0]
+        assert gate.reason == "quorum not met"
+        assert gate.stakes["quorum"] == 2
+        assert gate.stakes["total"] == 3
+        assert gate.stakes["succeeded"] == 1
+        assert gate.stakes["failed"] == 2
 
     def test_all_fail(self, tmp_path: Path) -> None:
-        """1-of-3 quorum with all failures → QuorumNotMetError."""
+        """1-of-3 quorum with all failures → parks with gate."""
         workflow: Any = _quorum_workflow(3, quorum=1, fail_indices=frozenset({0, 1, 2}))
         result = _run_quorum_workflow(workflow, tmp_path=tmp_path)
 
-        assert result.is_err
-        error = result.error
-        assert isinstance(error, QuorumNotMetError)
-        assert error.succeeded == 0
-        assert error.failed == 3
+        assert result.is_ok
+        runtime_result: WorkflowRuntimeResult = result.value
+        assert len(runtime_result.open_gates) == 1
+        gate: OpenGateView = runtime_result.open_gates[0]
+        assert gate.stakes["succeeded"] == 0
+        assert gate.stakes["failed"] == 3
 
 
 class TestOksProjection:
@@ -381,7 +387,7 @@ class TestToleratedLossJournal:
         assert len(runtime_result.tolerated_losses) == 0
 
     def test_no_losses_in_quorum_failure(self, tmp_path: Path) -> None:
-        """QuorumNotMetError means no tolerated losses (the form itself failed)."""
+        """quorum==n with n branches is plain all-must-succeed (not quorum form)."""
         workflow: Any = _quorum_workflow(3, quorum=3, fail_indices=frozenset({0}))
         result = _run_quorum_workflow(workflow, tmp_path=tmp_path)
 
@@ -537,13 +543,18 @@ class TestQuorumResultDataTypes:
         with pytest.raises(AttributeError):
             loss.path = "other"  # type: ignore[misc]
 
-    def test_quorum_not_met_error_attrs(self) -> None:
-        err: QuorumNotMetError = QuorumNotMetError(
-            quorum=3, total=5, succeeded=2, failed=3,
+    def test_parked_value_frozen(self) -> None:
+        gate: OpenGateView = OpenGateView(
+            gate_id="test:gate",
+            workflow_id="test",
+            node_id="test/node",
+            phase=None,
+            reason="test",
+            stakes={},
+            options=(),
         )
-        assert err.quorum == 3
-        assert err.total == 5
-        assert err.succeeded == 2
-        assert err.failed == 3
-        assert "3/5" in str(err)
-        assert "2" in str(err)
+        parked: ParkedValue = ParkedValue(gates=(gate,), halt_run=False)
+        assert len(parked.gates) == 1
+        assert not parked.halt_run
+        with pytest.raises(AttributeError):
+            parked.halt_run = True  # type: ignore[misc]
