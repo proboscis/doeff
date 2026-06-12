@@ -5,6 +5,8 @@
 
 **拡張**: doeff-conductor サブシステムの制約グラフは [constraint-graph-conductor.md](constraint-graph-conductor.md)(2026-06-12、核 K3/K4/K5)。核番号はこのファイルから連番 — グラフは1つの生きた成果物。
 
+**拡張(別リポジトリ)**: orch / ACP daemon の結合核watchlistは orchリポジトリ `docs/design/coupling-core-roadmap.md`(2026-06-12、/coupling-core診断産。「このファイルはwatchlistを兼ねる」)+ `docs/design/run-state-machine.md`(laws L1〜L7、不変条件I1〜I8)+ `docs/design/worker-lease.md`(LL1〜LL5ドラフト)。核命名はK連番でなくorch固有のwatchlist表(7行: run status遷移・RunState fold・worker lease・typed ID・client/daemon境界・cancellation・fail-fast append)。**状態注意(2026-06-12時点)**: Phase A〜Eの成果はPRスタック #463〜#468 が**OPENのまま** — mainに効いている柵はtyped-id・architecture semgrep・step() v1+law property testsのみで、status書き込み面の封鎖(A1)とlease柵(E3)は未マージ。
+
 意図性の判定区分: `spec`(スペック明文)/ `test`(アーキテクチャ違反テストで機械強制)/ `code`(コードコメント等のみ)/ `owner`(2026-06-11オーナー確認)/ `成り行き`(明示判断の証拠なし)。
 
 ---
