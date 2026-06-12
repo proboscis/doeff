@@ -34,6 +34,8 @@ BUILT_IN_VALIDATION_SCENARIOS: tuple[str, ...] = (
     "schema-invalid-then-pass",
     "retry-exhaustion",
     "quorum-shortfall",
+    "merge-conflict",
+    "loop-exhaustion",
 )
 SUPPORTED_SUPERVISION_POLICIES: tuple[str, ...] = ("autonomous", "phase-checkpoints")
 
@@ -454,10 +456,26 @@ def _quorum_shortfall_agent_handler(
 ) -> Callable[..., Any]:
     """Agent stub for quorum-shortfall: same as retry-exhaustion.
 
-    Agents exhaust retries and park. For quorum parallels this causes
-    QuorumNotMetError; for non-quorum parallels the workflow parks.
+    Agents exhaust retries and park. For quorum parallels the quorum
+    check finds insufficient successes and parks behind a quorum-not-met
+    gate; for non-quorum parallels the workflow parks on budget-exhausted
+    gates.
     """
     return _retry_exhaustion_agent_handler(tracker)
+
+
+def _loop_exhaustion_agent_handler(
+    tracker: _ValidationTracker,
+) -> Callable[..., Any]:
+    """Agent stub for loop-exhaustion: agents pass but gates fail."""
+    return _all_pass_agent_handler(tracker)
+
+
+def _merge_conflict_agent_handler(
+    tracker: _ValidationTracker,
+) -> Callable[..., Any]:
+    """Agent stub for merge-conflict: agents pass normally."""
+    return _all_pass_agent_handler(tracker)
 
 
 _SCENARIO_HANDLER_FACTORIES: dict[
@@ -467,6 +485,8 @@ _SCENARIO_HANDLER_FACTORIES: dict[
     "schema-invalid-then-pass": _schema_invalid_then_pass_agent_handler,
     "retry-exhaustion": _retry_exhaustion_agent_handler,
     "quorum-shortfall": _quorum_shortfall_agent_handler,
+    "merge-conflict": _merge_conflict_agent_handler,
+    "loop-exhaustion": _loop_exhaustion_agent_handler,
 }
 
 
@@ -476,6 +496,45 @@ def _validation_exec_handler() -> Callable[..., Any]:
 
     def handle(effect: Any) -> ExecResult:
         return ExecResult(exit_code=0, log_path="")
+
+    return handle
+
+
+def _validation_exec_handler_failing() -> Callable[..., Any]:
+    """Exec stub: gate that always fails (non-zero exit code).
+
+    Used by the loop-exhaustion scenario so loop predicates never pass.
+    """
+    from doeff_conductor.types import ExecResult
+
+    def handle(effect: Any) -> ExecResult:
+        return ExecResult(exit_code=1, log_path="")
+
+    return handle
+
+
+def _validation_merge_handler_conflict() -> Callable[..., Any]:
+    """Merge stub: always returns a conflict result.
+
+    Used by the merge-conflict scenario to exercise merge-conflict gate paths.
+    """
+    from doeff_conductor.types import MergeConflict, MergeStatus, MergeWorkspacesResult, Workspace
+
+    def handle(effect: Any) -> MergeWorkspacesResult:
+        conflict_workspace: Workspace = effect.workspaces[0] if effect.workspaces else Workspace(
+            id="conflict-stub", path="/tmp/conflict-stub", branch="conflict-stub",
+        )
+        return MergeWorkspacesResult(
+            status=MergeStatus.CONFLICT,
+            workspace=None,
+            conflicts=(
+                MergeConflict(
+                    workspace=conflict_workspace,
+                    files=("conflicted-file.py",),
+                ),
+            ),
+            message="validation stub: merge conflict",
+        )
 
     return handle
 
@@ -522,17 +581,23 @@ def _simulate_scenario(
     if handler_factory is None:
         raise ValueError(f"unknown validation scenario: {scenario}")
 
+    from doeff_conductor.effects.workspace import MergeWorkspaces
+
     agent_handler: Callable[..., Any] = handler_factory(tracker)
-    exec_handler: Callable[..., Any] = _validation_exec_handler()
+    overrides: dict[type, Callable[..., Any]] = {
+        AgentEffect: agent_handler,
+        Exec: _validation_exec_handler(),
+    }
+    if scenario == "loop-exhaustion":
+        overrides[Exec] = _validation_exec_handler_failing()
+    if scenario == "merge-conflict":
+        overrides[MergeWorkspaces] = _validation_merge_handler_conflict()
 
     with tempfile.TemporaryDirectory(prefix="conductor-validate-") as tmp_dir:
         runtime: MockConductorRuntime = MockConductorRuntime(Path(tmp_dir))
         handlers: Any = mock_handlers(
             runtime=runtime,
-            overrides={
-                AgentEffect: agent_handler,
-                Exec: exec_handler,
-            },
+            overrides=overrides,
         )
 
         params: dict[str, Any] = _validation_params(workflow)
@@ -638,10 +703,6 @@ def _build_scenario_report(
 
 def _error_node_id(error: BaseException, workflow_name: str) -> str:
     """Extract a node_id from a runtime error, or generate a descriptive one."""
-    from doeff_conductor.workflow_runtime import QuorumNotMetError
-
-    if isinstance(error, QuorumNotMetError) and error.node_id is not None:
-        return error.node_id
     return f"{workflow_name}/runtime-error"
 
 
