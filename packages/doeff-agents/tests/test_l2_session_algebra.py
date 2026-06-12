@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -258,7 +259,11 @@ def test_agent_reawaits_on_timeout_without_follow_up(tmp_path: Path) -> None:
 
 
 @do
-def _agent_task_with_deadline(work_dir: Path, deadline_seconds: float | None):
+def _agent_task_with_deadline(
+    work_dir: Path,
+    deadline_seconds: float | None,
+    max_retries: int = 0,
+):
     return (
         yield agent(
             AgentTask(
@@ -269,7 +274,7 @@ def _agent_task_with_deadline(work_dir: Path, deadline_seconds: float | None):
                 work_dir=work_dir,
                 prompt="return JSON",
                 result_schema=ARTIFACT_SCHEMA,
-                max_retries=0,
+                max_retries=max_retries,
                 deadline_seconds=deadline_seconds,
             )
         )
@@ -318,6 +323,64 @@ def test_agent_raises_deadline_exceeded_when_node_spec_deadline_passes(
     assert exc_info.value.session_id == "run-001-node-d-0"
     assert exc_info.value.deadline_seconds == 0.05
     assert exc_info.value.elapsed_seconds >= 0.05
+    assert handler.follow_up_messages("run-001-node-d-0") == []
+
+
+class _SlowTransportScenarioHandler(ScenarioAgentHandler):
+    """Scenario handler whose transport delivers each outcome late.
+
+    Models an await whose outcome arrives only after the node-spec
+    deadline has already passed — the window in which no new work may
+    be commissioned (L-K4-3).
+    """
+
+    def __init__(self, *, transport_delay_seconds: float, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._transport_delay_seconds = transport_delay_seconds
+
+    def handle_await_result(self, effect):
+        time.sleep(self._transport_delay_seconds)
+        return super().handle_await_result(effect)
+
+
+@pytest.mark.parametrize(
+    "max_retries",
+    [
+        pytest.param(2, id="no-follow-up-commissioned-past-deadline"),
+        pytest.param(0, id="attribution-prefers-deadline-over-exhaustion"),
+    ],
+)
+def test_agent_validation_failure_past_deadline_parks_without_follow_up(
+    tmp_path: Path,
+    max_retries: int,
+) -> None:
+    """L-K4-3: no new work past the deadline (k8s activeDeadlineSeconds).
+
+    A validation-failed outcome that arrives after the window must park
+    as the DEADLINE gate — with retries remaining (max_retries=2) the
+    pre-fix loop dispatched a follow-up retry prompt into the expired
+    window; with retries spent (max_retries=0) it misattributed the park
+    as attempt exhaustion. Both must raise the typed deadline error and
+    send NO follow-up.
+    """
+    handler = _SlowTransportScenarioHandler(
+        transport_delay_seconds=0.08,
+        scripts={
+            "run-001-node-d-0": [
+                ScenarioStep.invalid(
+                    payload={"summary": "missing ok"},
+                    validation_error="required property 'ok' is missing",
+                ),
+            ]
+        },
+    )
+
+    with pytest.raises(AgentDeadlineExceededError) as exc_info:
+        run(handler.wrap(_agent_task_with_deadline(tmp_path, 0.05, max_retries)))
+
+    assert exc_info.value.session_id == "run-001-node-d-0"
+    assert exc_info.value.elapsed_seconds >= 0.05
+    # The defining assertion: no retry prompt was commissioned past the window.
     assert handler.follow_up_messages("run-001-node-d-0") == []
 
 
