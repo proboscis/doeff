@@ -20,6 +20,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import click
 from rich.console import Console
@@ -846,6 +847,27 @@ def gate_list(ctx: click.Context, workflow_id: str | None, output_json: bool) ->
     _list_gates(ctx, workflow_id, output_json)
 
 
+@gate_group.command("answer")
+@click.argument("workflow_id")
+@click.argument("gate_id")
+@click.argument("option", type=click.Choice(["proceed", "redirect", "abort"]))
+@click.option("--params", "-p", help="Resume parameters as JSON")
+@click.option("--note", "-n", default="", help="Adjudication note for the journal")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def gate_answer_cmd(
+    ctx: click.Context,
+    workflow_id: str,
+    gate_id: str,
+    option: str,
+    params: str | None,
+    note: str,
+    output_json: bool,
+) -> None:
+    """Answer an open gate and apply proceed, redirect, or abort (with journal)."""
+    _answer_gate(ctx, workflow_id, gate_id, option, params, note, output_json)
+
+
 @cli.command("gates")
 @click.argument("workflow_id", required=False)
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
@@ -855,26 +877,20 @@ def gates_cmd(ctx: click.Context, workflow_id: str | None, output_json: bool) ->
     _list_gates(ctx, workflow_id, output_json)
 
 
-@cli.command("answer")
-@click.argument("workflow_id")
-@click.argument("gate_id")
-@click.argument("option", type=click.Choice(["proceed", "redirect", "abort"]))
-@click.option("--params", "-p", help="Resume parameters as JSON")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-@click.pass_context
-def answer_cmd(
+def _answer_gate(
     ctx: click.Context,
     workflow_id: str,
     gate_id: str,
     option: str,
     params: str | None,
+    note: str,
     output_json: bool,
 ) -> None:
-    """Answer an open gate and apply proceed, redirect, or abort."""
+    """Shared implementation for answering a gate."""
     from doeff_conductor.api import ConductorAPI
 
     try:
-        parsed_params = {}
+        parsed_params: dict[str, Any] = {}
         if params:
             parsed_params = json.loads(params)
         workflow = ConductorAPI(ctx.obj.get("state_dir")).answer_gate(
@@ -882,6 +898,7 @@ def answer_cmd(
             gate_id,
             option,
             params=parsed_params,
+            note=note,
         )
         if output_json:
             click.echo(json.dumps(workflow.to_dict(), indent=2))
@@ -889,6 +906,8 @@ def answer_cmd(
         console.print(f"[green]Answered gate:[/green] {gate_id}")
         console.print(f"  Option: {option}")
         console.print(f"  Status: {workflow.status.value}")
+        if workflow.error and option == "redirect":
+            console.print(f"  [yellow]{workflow.error}[/yellow]")
     except _CLI_USER_ERROR_TYPES as e:
         if output_json:
             click.echo(json.dumps({"error": str(e)}))
@@ -897,34 +916,69 @@ def answer_cmd(
         sys.exit(1)
 
 
+@cli.command("answer")
+@click.argument("workflow_id")
+@click.argument("gate_id")
+@click.argument("option", type=click.Choice(["proceed", "redirect", "abort"]))
+@click.option("--params", "-p", help="Resume parameters as JSON")
+@click.option("--note", "-n", default="", help="Adjudication note for the journal")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def answer_cmd(
+    ctx: click.Context,
+    workflow_id: str,
+    gate_id: str,
+    option: str,
+    params: str | None,
+    note: str,
+    output_json: bool,
+) -> None:
+    """Answer an open gate and apply proceed, redirect, or abort."""
+    _answer_gate(ctx, workflow_id, gate_id, option, params, note, output_json)
+
+
 def _list_gates(ctx: click.Context, workflow_id: str | None, output_json: bool) -> None:
     from doeff_conductor.api import ConductorAPI
-    from doeff_conductor.overseer import list_open_gates
+    from doeff_conductor.overseer import list_gates_with_status, list_open_gates
 
     try:
         state_dir = ConductorAPI(ctx.obj.get("state_dir")).state_dir
-        gates = list_open_gates(state_dir, workflow_id)
+        if workflow_id is not None:
+            gates: list[dict[str, Any]] = list_gates_with_status(state_dir, workflow_id)
+        else:
+            raw_gates: list[dict[str, Any]] = list_open_gates(state_dir)
+            gates = [{**gate, "status": "open"} for gate in raw_gates]
+
         if output_json:
             click.echo(json.dumps(gates, indent=2))
             return
 
         if not gates:
-            console.print("[dim]No open gates found[/dim]")
+            console.print("[dim]No gates found[/dim]")
             return
 
         table = Table(show_header=True, header_style="bold")
         table.add_column("GATE", style="cyan")
         table.add_column("WORKFLOW")
+        table.add_column("STATUS")
         table.add_column("PHASE")
         table.add_column("REASON")
         table.add_column("OPTIONS")
         for gate in gates:
+            status_text: str = gate.get("status", "open")
+            status_style: str = "yellow" if status_text == "open" else "green"
+            options_text: str = (
+                ", ".join(option["name"] for option in gate["options"])
+                if "options" in gate
+                else gate.get("option", "-")
+            )
             table.add_row(
                 gate["gate_id"],
-                gate["workflow_id"],
-                gate["phase"] or "-",
-                gate["reason"],
-                ", ".join(option["name"] for option in gate["options"]),
+                gate.get("workflow_id", "-"),
+                Text(status_text, style=status_style),
+                gate.get("phase") or "-",
+                gate.get("reason", "-"),
+                options_text,
             )
         console.print(table)
     except _CLI_USER_ERROR_TYPES as e:

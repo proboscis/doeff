@@ -6,6 +6,7 @@ import json
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -23,8 +24,10 @@ from doeff_conductor.replay_keying import (
 
 JOURNAL_VERSION = 1
 AGENT_JOURNAL_FILENAME = "agent-journal.jsonl"
+GATE_ANSWER_JOURNAL_FILENAME = "gate-answer-journal.jsonl"
 TERMINAL_KIND_SUCCEEDED = "succeeded"
 TERMINAL_KIND_OPEN_GATE = "open-gate"
+TERMINAL_KIND_GATE_ANSWER = "gate-answer"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -151,6 +154,115 @@ class AgentJournal:
         with self.path.open("a", encoding="utf-8") as journal_file:
             journal_file.write(entry.to_json_line())
             journal_file.write("\n")
+
+
+@dataclass(frozen=True, kw_only=True)
+class GateAnswerJournalEntry:
+    """One append-only gate answer journal record (L-K5-1)."""
+
+    gate_id: str
+    workflow_id: str
+    option: str
+    outcome: str
+    note: str
+    answered_at: str
+    terminal_kind: str = TERMINAL_KIND_GATE_ANSWER
+
+    def to_json_line(self) -> str:
+        payload: dict[str, Any] = {
+            "version": JOURNAL_VERSION,
+            "gate_id": self.gate_id,
+            "workflow_id": self.workflow_id,
+            "option": self.option,
+            "outcome": self.outcome,
+            "note": self.note,
+            "answered_at": self.answered_at,
+            "terminal_kind": self.terminal_kind,
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+    @classmethod
+    def from_json_line(cls, line: str, *, path: Path, line_number: int) -> GateAnswerJournalEntry:
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise JournalCorruptionError(
+                path=path,
+                message=f"invalid JSON on line {line_number}: {exc.msg}",
+            ) from exc
+
+        if not isinstance(payload, dict):
+            raise JournalCorruptionError(
+                path=path,
+                message=f"line {line_number} is not a JSON object",
+            )
+        version = _require_int(payload, "version", path, line_number)
+        if version != JOURNAL_VERSION:
+            raise JournalCorruptionError(
+                path=path,
+                message=f"line {line_number} has unsupported journal version {version}",
+            )
+
+        return cls(
+            gate_id=_require_str(payload, "gate_id", path, line_number),
+            workflow_id=_require_str(payload, "workflow_id", path, line_number),
+            option=_require_str(payload, "option", path, line_number),
+            outcome=_require_str(payload, "outcome", path, line_number),
+            note=_require_str(payload, "note", path, line_number),
+            answered_at=_require_str(payload, "answered_at", path, line_number),
+            terminal_kind=_require_str(payload, "terminal_kind", path, line_number),
+        )
+
+
+class GateAnswerJournal:
+    """Append-only JSONL journal of gate answers scoped to a conductor run id."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    @classmethod
+    def for_run(
+        cls,
+        run_id: str,
+        *,
+        state_dir: str | Path | None = None,
+    ) -> GateAnswerJournal:
+        run_dir: Path = _state_dir(state_dir) / "workflows" / run_id
+        return cls(run_dir / GATE_ANSWER_JOURNAL_FILENAME)
+
+    def load_entries(self) -> list[GateAnswerJournalEntry]:
+        if not self.path.exists():
+            return []
+
+        entries: list[GateAnswerJournalEntry] = []
+        for line_number, line in enumerate(self.path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line:
+                raise JournalCorruptionError(
+                    path=self.path,
+                    message=f"blank line at {line_number}",
+                )
+            entries.append(
+                GateAnswerJournalEntry.from_json_line(
+                    line,
+                    path=self.path,
+                    line_number=line_number,
+                )
+            )
+        return entries
+
+    def append_entry(self, entry: GateAnswerJournalEntry) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("a", encoding="utf-8") as journal_file:
+            journal_file.write(entry.to_json_line())
+            journal_file.write("\n")
+
+    def latest_answers(self) -> dict[str, str]:
+        """Return gate_id -> option for the latest answer per gate."""
+        entries: list[GateAnswerJournalEntry] = self.load_entries()
+        answers: dict[str, str] = {}
+        for entry in entries:
+            answers[entry.gate_id] = entry.option
+        return answers
 
 
 class AgentReplaySession:
