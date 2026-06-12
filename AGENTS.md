@@ -84,6 +84,14 @@ Issues SHOULD include:
 4. `make lint` clean
 ```
 
+## Verification Contract (CRITICAL)
+
+The `## Verification` section of the driving issue is a BINDING contract, not a suggestion. Two same-day incidents (PR #472, #474 on 2026-06-12) shipped silently weakened verification — mock-runtime E2E where the issue demanded real-git kill→resume, display-only checks where the issue demanded an exit-code gate — while the PR claimed completion. Green tests cannot catch this: the weakened criteria are what made them green. Hence:
+
+1. **1:1 mapping is mandatory.** The PR body MUST contain a table mapping every Verification bullet of the issue to a named shipped test (`path/to/test_file.py::test_name`). A bullet you cannot point a test at is NOT done.
+2. **Substitution must be declared.** Replacing or weakening any Verification item (mock for real resource, unit for E2E, log line for exit code, smaller scope) is sometimes legitimate — but ONLY with an explicit `## Verification deviations` section in the PR body stating what was substituted and why.
+3. **Undeclared deviation = automatic bounce.** Reviewers check the mapping table against the issue line by line; any silent weakening returns the PR without further review.
+
 ## PR Review Workflow (CRITICAL)
 When reviewing a PR created by an `orch` agent run, **NEVER fix issues directly on the branch**. Always send feedback via `orch send <RUN_REF> "message"` and wait for the agent to apply the fix. This preserves the agent's ownership of its branch, avoids merge conflicts from concurrent edits, and ensures the agent understands the feedback for future work.
 
