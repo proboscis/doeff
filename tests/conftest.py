@@ -24,7 +24,8 @@ from doeff_core_effects.handlers import (
 )
 from doeff_core_effects.scheduler import scheduled
 
-from doeff import WithHandler, run
+from doeff import handler as _program_handler
+from doeff import run
 
 T = TypeVar("T")
 
@@ -72,7 +73,7 @@ class RuntimeAdapter:
         handlers = default_handlers(env=env)
         wrapped = program
         for h in reversed(handlers):
-            wrapped = WithHandler(h, wrapped)
+            wrapped = _program_handler(h)(wrapped)
         # Wrap with scheduler (outermost effect handler)
         wrapped = scheduled(wrapped)
         return run(wrapped)

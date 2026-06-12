@@ -12,7 +12,8 @@ from typing import Any
 
 from doeff_agents.result_validation import validate_result_payload
 
-from doeff import Effect, Gather, Pass, Resume, Spawn, WithHandler, do
+from doeff import Effect, Gather, Pass, Resume, Spawn, do
+from doeff import handler as _install_raw_handler
 from doeff_conductor.effects.agent import (
     AgentAttemptExhaustedError,
     AgentEffect,
@@ -412,7 +413,7 @@ def mock_handlers(
         if isinstance(effect, Spawn):
             spawn_counter += 1
             task_id = f"mock-spawn-{spawn_counter}"
-            result = yield WithHandler(handler, effect.program)
+            result = yield _install_raw_handler(handler)(effect.program)
             spawn_results[task_id] = result
             return (yield Resume(k, task_id))
 
@@ -425,7 +426,7 @@ def mock_handlers(
                 return (yield effect_handler(effect, k))
         yield Pass(effect, k)
 
-    return handler
+    return _install_raw_handler(handler)
 
 
 __all__ = [

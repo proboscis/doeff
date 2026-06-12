@@ -11,6 +11,7 @@ from doeff_core_effects.scheduler import CreateExternalPromise, Spawn
 from doeff_core_effects.scheduler import Wait as WaitTask
 
 from doeff import Pass, Resume, do
+from doeff import handler as _program_handler
 from doeff_time.effects import DelayEffect, GetTimeEffect, ScheduleAtEffect, WaitUntilEffect
 
 ProtocolHandler = Callable[[Any, Any], Any]
@@ -92,7 +93,7 @@ def sync_time_handler(
     def handler(effect: Any, k: Any):
         return (yield runtime.handle(effect, k))
 
-    return handler
+    return _program_handler(handler)
 
 
 __all__ = [

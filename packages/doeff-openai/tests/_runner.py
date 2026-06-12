@@ -35,7 +35,7 @@ from doeff_core_effects.scheduler import scheduled
 from doeff_openai.handlers import calculate_cost_handler
 from doeff_vm import Err, Ok
 
-from doeff import AskEffect, Pass, Resume, WithHandler, do, run
+from doeff import AskEffect, Pass, Resume, do, run
 
 
 @dataclass
@@ -74,15 +74,15 @@ def _build_chain(program: Any, env: dict | None):
     writer_h = writer()
     slog_h = slog_handler()
     wrapped = program
-    wrapped = WithHandler(calculate_cost_handler, wrapped)
-    wrapped = WithHandler(await_handler(), wrapped)
-    wrapped = WithHandler(listen_handler, wrapped)
-    wrapped = WithHandler(local_handler, wrapped)
-    wrapped = WithHandler(state(), wrapped)
-    wrapped = WithHandler(try_handler, wrapped)
-    wrapped = WithHandler(writer_h, wrapped)
-    wrapped = WithHandler(slog_h, wrapped)
-    wrapped = WithHandler(lazy_ask(env=env or {}), wrapped)
+    wrapped = calculate_cost_handler(wrapped)
+    wrapped = await_handler()(wrapped)
+    wrapped = listen_handler(wrapped)
+    wrapped = local_handler(wrapped)
+    wrapped = state()(wrapped)
+    wrapped = try_handler(wrapped)
+    wrapped = writer_h(wrapped)
+    wrapped = slog_h(wrapped)
+    wrapped = lazy_ask(env=env or {})(wrapped)
     return scheduled(wrapped), writer_h, slog_h
 
 

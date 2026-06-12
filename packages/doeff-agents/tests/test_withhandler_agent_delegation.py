@@ -8,7 +8,8 @@ from typing import Any, cast
 
 from doeff_time import DelayEffect
 
-from doeff import Effect, Pass, Resume, WithHandler, do, run
+from doeff import Effect, Pass, Resume, do, run
+from doeff import handler as _install_raw_handler
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -166,7 +167,7 @@ def test_withhandler_delegation_returns_success() -> None:
     )
 
     result = run(
-        WithHandler(handler, _run_completion("worker", _build_config(), poll_interval=0.5)),
+        _install_raw_handler(handler)(_run_completion("worker", _build_config(), poll_interval=0.5)),
     )
 
     assert result.final_status == SessionStatus.DONE
@@ -189,7 +190,7 @@ def test_monitor_agent_to_completion_cleans_existing_session() -> None:
     handle = _session_handle("existing", AgentType.CODEX)
 
     result = run(
-        WithHandler(handler, _monitor_existing_completion(handle, poll_interval=0.5)),
+        _install_raw_handler(handler)(_monitor_existing_completion(handle, poll_interval=0.5)),
     )
 
     assert result.final_status == SessionStatus.DONE
@@ -209,7 +210,7 @@ def test_withhandler_delegation_returns_failure_status() -> None:
     )
 
     result = run(
-        WithHandler(handler, _run_completion("worker-fail", _build_config())),
+        _install_raw_handler(handler)(_run_completion("worker-fail", _build_config())),
     )
 
     assert result.final_status == SessionStatus.FAILED
@@ -228,7 +229,7 @@ def test_withhandler_multiple_agent_delegations_in_sequence() -> None:
     )
 
     result = run(
-        WithHandler(handler, _run_two_completions(_build_config())),
+        _install_raw_handler(handler)(_run_two_completions(_build_config())),
     )
 
     first, second = result
@@ -263,13 +264,7 @@ def test_withhandler_protocol_compliance_with_explicit_launch_handler() -> None:
         {"typed-flow": [(SessionStatus.DONE, "typed done")]}
     )
 
-    wrapped = WithHandler(
-        lifecycle_handler,
-        WithHandler(
-            launch_only_handler,
-            _run_completion("typed-flow", _build_config(), poll_interval=0.0),
-        ),
-    )
+    wrapped = lifecycle_handler(_install_raw_handler(launch_only_handler)(_run_completion("typed-flow", _build_config(), poll_interval=0.0)))
 
     result = run(wrapped)
 
@@ -298,17 +293,11 @@ def test_withhandler_fallback_when_primary_agent_unavailable() -> None:
         launch_agent_override=AgentType.CODEX,
     )
 
-    wrapped = WithHandler(
-        fallback_handler,
-        WithHandler(
-            primary_handler,
-            _run_completion(
+    wrapped = fallback_handler(_install_raw_handler(primary_handler)(_run_completion(
                 "fallback-agent",
                 _build_config(agent_type=AgentType.CLAUDE),
                 poll_interval=0.0,
-            ),
-        ),
-    )
+            )))
 
     result = run(wrapped)
 
@@ -330,14 +319,11 @@ def test_interactive_session_launches_with_interactive_lifecycle() -> None:
         }
     )
 
-    wrapped = WithHandler(
-        handler,
-        _run_interactive(
+    wrapped = _install_raw_handler(handler)(_run_interactive(
             "chat",
             _build_config(agent_type=AgentType.CODEX),
             ["continue"],
-        ),
-    )
+        ))
 
     result = run(wrapped)
 

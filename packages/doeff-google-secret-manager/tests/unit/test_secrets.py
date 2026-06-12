@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from doeff import handler as _install_raw_handler
+
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
@@ -27,7 +29,6 @@ from doeff import (  # noqa: E402 - late import preserves existing import/setup 
     AskEffect,
     Pass,
     Resume,
-    WithHandler,
     default_handlers,
     do,
     run,
@@ -106,7 +107,7 @@ def test_access_secret_returns_decoded_secret_with_mock_handler() -> None:
     mock_handler, _, _ = _build_handler(ask_values={"secret_manager_client": mock_client})
 
     result = run(
-        WithHandler(mock_handler, access_secret("db-password")),
+        _install_raw_handler(mock_handler)(access_secret("db-password")),
         handlers=default_handlers(),
     )
 
@@ -123,10 +124,7 @@ def test_access_secret_can_return_bytes_with_decode_false() -> None:
     mock_handler, _, _ = _build_handler(ask_values={"secret_manager_client": mock_client})
 
     result = run(
-        WithHandler(
-            mock_handler,
-            access_secret("binary-secret", decode=False, project="other-project"),
-        ),
+        _install_raw_handler(mock_handler)(access_secret("binary-secret", decode=False, project="other-project")),
         handlers=default_handlers(),
     )
 
@@ -144,7 +142,7 @@ def test_access_secret_uses_explicit_version_in_request_path() -> None:
     mock_handler, _, _ = _build_handler(ask_values={"secret_manager_client": mock_client})
 
     result = run(
-        WithHandler(mock_handler, access_secret("api-key", version="42")),
+        _install_raw_handler(mock_handler)(access_secret("api-key", version="42")),
         handlers=default_handlers(),
     )
 
@@ -160,7 +158,7 @@ def test_access_secret_propagates_not_found_error() -> None:
     mock_handler, _, _ = _build_handler(ask_values={"secret_manager_client": mock_client})
 
     result = run(
-        WithHandler(mock_handler, access_secret("missing-secret")),
+        _install_raw_handler(mock_handler)(access_secret("missing-secret")),
         handlers=default_handlers(),
     )
 
@@ -182,7 +180,7 @@ def test_get_secret_manager_client_initializes_and_caches_in_state() -> None:
     )
 
     result = run(
-        WithHandler(mock_handler, get_secret_manager_client()),
+        _install_raw_handler(mock_handler)(get_secret_manager_client()),
         handlers=default_handlers(),
     )
 
@@ -208,7 +206,7 @@ def test_get_secret_manager_client_uses_cached_state_client_without_put() -> Non
     )
 
     result = run(
-        WithHandler(mock_handler, get_secret_manager_client()),
+        _install_raw_handler(mock_handler)(get_secret_manager_client()),
         handlers=default_handlers(),
     )
 

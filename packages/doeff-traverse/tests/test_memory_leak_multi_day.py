@@ -35,6 +35,7 @@ from doeff_traverse.handlers import fail_handler, parallel
 from doeff_vm import WithHandler
 
 from doeff import EffectBase, Pass, Program, Resume, do, run, slog
+from doeff import handler as _program_handler
 
 SIM_EPOCH = datetime(2025, 1, 1, tzinfo=timezone.utc)
 
@@ -63,7 +64,7 @@ def _make_mock_handler():
             return (yield Resume(k, True))
         yield Pass(effect, k)
 
-    return _handler
+    return _program_handler(_handler)
 
 
 @do

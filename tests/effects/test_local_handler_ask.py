@@ -11,9 +11,9 @@ from doeff import (
     Pass,
     Resume,
     Tell,
-    WithHandler,
     do,
 )
+from doeff import handler as _install_raw_handler
 from tests._run_helpers import run_with_defaults
 
 
@@ -30,7 +30,7 @@ def _run_with_handlers(
 ):
     wrapped = program
     for h in extra_handlers:
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _install_raw_handler(h)(wrapped)
     return run_with_defaults(wrapped, env=env)
 
 
@@ -223,10 +223,7 @@ def test_local_eval_keeps_typed_handler_filtering() -> None:
         yield Tell({"msg": "slog"})
         return (yield ReplaceAudioTrackForLocalTypedFilter(duck_original=0.25, duck_speech=0.6))
 
-    wrapped = WithHandler(
-        replace_audio_handler,
-        WithHandler(memo_rewriter, Local({"unused": "value"}, body())),
-    )
+    wrapped = _install_raw_handler(replace_audio_handler)(_install_raw_handler(memo_rewriter)(Local({"unused": "value"}, body())))
     result = run_with_defaults(wrapped, env={})
 
     assert result.is_ok()

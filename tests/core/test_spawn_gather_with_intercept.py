@@ -37,9 +37,9 @@ from doeff import (
     Resume,
     Spawn,
     Try,
-    WithHandler,
     do,
 )
+from doeff import handler as _program_handler
 from tests._run_helpers import run_with_defaults
 
 # --- Custom effect (simulates HistoricalPriceEffect) ---
@@ -113,7 +113,7 @@ def make_handler():
         data = yield svc.fetch(effect.ticker, effect.start, effect.end)
         return (yield Resume(k, data))
 
-    return _handler
+    return _program_handler(_handler)
 
 
 # --- Pipeline: nested Try + Spawn+Gather ---
@@ -168,7 +168,7 @@ def fetch_movements(
 def compose_handlers(program, *handlers):
     result = program
     for handler in reversed(handlers):
-        result = WithHandler(handler, result)
+        result = _program_handler(handler)(result)
     return result
 
 

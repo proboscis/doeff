@@ -15,7 +15,6 @@ from doeff_preset import preset_handlers
 
 from doeff import (
     Ask,
-    WithHandler,
     async_run,
     default_async_handlers,
     default_handlers,
@@ -49,7 +48,7 @@ async def main():
     # Run with run()
     print("=== Running with run() ===\n")
     sync_result = run(
-        WithHandler(handlers, async_workflow()),
+        handlers(async_workflow()),
         handlers=default_handlers(),
     )
     print(f"\nSync result: {sync_result.value}")
@@ -58,7 +57,7 @@ async def main():
     # Run with async_run()
     print("\n=== Running with async_run() ===\n")
     async_result = await async_run(
-        WithHandler(handlers, async_workflow()),
+        handlers(async_workflow()),
         handlers=default_async_handlers(),
     )
     print(f"\nAsync result: {async_result.value}")

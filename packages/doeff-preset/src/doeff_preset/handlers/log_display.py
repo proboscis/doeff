@@ -13,6 +13,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from doeff import Effect, Pass, WriterTellEffect, do
+from doeff import handler as _program_handler
 
 # Global console for log output
 _console = Console(stderr=True)
@@ -109,7 +110,7 @@ def log_display_handlers() -> ProtocolHandler:
     def handler(effect: Effect, k: Any):
         return (yield handle_tell_with_display(effect, k))
 
-    return handler
+    return _program_handler(handler)
 
 
 __all__ = [

@@ -468,12 +468,13 @@
        :when (pred x)
        (resume (+ x 1))))
 
-   Wraps body with WithHandler. Unmatched effects auto-Pass.
+   Wraps body with the Rust handler node. Unmatched effects auto-Pass.
    Compile-time error if any clause branch lacks resume/transfer/pass."
   (setv h-expr (_build-handler-expr clauses))
   `(do
      (import doeff.do [do :as _doeff-do])
-     (import doeff [Resume Transfer Pass WithHandler])
+     (import doeff [Resume Transfer Pass])
+     (import doeff_vm [WithHandler])
      (WithHandler ~h-expr ~body)))
 
 
@@ -555,18 +556,14 @@
              (import doeff_core_effects.effects [Get Put]))
         `(do)))
 
-  ;; New-style: defhandler produces a function (Program -> Program) instead
-  ;; of a raw handler dispatcher. The inner dispatcher (handler-expr) is kept
-  ;; as handler-data and wrapped in a thin function that calls WithHandler.
-  ;;
-  ;; The function is marked with _doeff_is_handler_fn=True so the public
-  ;; WithHandler(h, body) shim (in doeff/program.py) can detect it and route
-  ;; to h(body) — letting legacy code paths using (WithHandler my-h body)
-  ;; keep working during migration.
+  ;; defhandler produces a Program -> Program function instead of exposing a
+  ;; raw handler dispatcher. The inner dispatcher is stored for introspection
+  ;; and installed with the Rust VM WithHandler node.
   (if (is params None)
       `(do
          (import doeff.do [do :as _doeff-do])
-         (import doeff [Resume Transfer Pass WithHandler])
+         (import doeff [Resume Transfer Pass])
+         (import doeff_vm [WithHandler])
          ~lazy-imports
          (setv ~name
            ((fn []
@@ -582,7 +579,8 @@
          (setv (. ~name __doeff_name__) ~(str name)))
       `(do
          (import doeff.do [do :as _doeff-do])
-         (import doeff [Resume Transfer Pass WithHandler])
+         (import doeff [Resume Transfer Pass])
+         (import doeff_vm [WithHandler])
          ~lazy-imports
          (defn ~name [~@params]
            (setv __doeff-handler-data__ ~handler-expr)

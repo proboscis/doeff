@@ -11,16 +11,16 @@ from doeff import (
     Pass,
     Resume,
     Try,
-    WithHandler,
     do,
 )
+from doeff import handler as _program_handler
 from tests._run_helpers import run_with_defaults
 
 
 def _with_handlers(program: Any, *handlers: Any) -> Any:
     wrapped = program
     for handler in handlers:
-        wrapped = WithHandler(handler, wrapped)
+        wrapped = _program_handler(handler)(wrapped)
     return wrapped
 
 

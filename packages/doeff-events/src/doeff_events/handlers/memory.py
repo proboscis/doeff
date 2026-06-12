@@ -4,6 +4,7 @@
 from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Wait
 
 from doeff import Pass, Resume, do
+from doeff import handler as _program_handler
 from doeff_events.effects import PublishEffect, WaitForEventEffect
 
 
@@ -60,7 +61,7 @@ def event_handler():
 
         yield Pass(effect, k)
 
-    return handler
+    return _program_handler(handler)
 
 
 __all__ = ["event_handler"]

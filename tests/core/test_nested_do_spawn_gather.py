@@ -28,10 +28,10 @@ from doeff import (
     Resume,
     Spawn,
     Try,
-    WithHandler,
     do,
     slog,
 )
+from doeff import handler as _program_handler
 from tests._run_helpers import run_with_defaults
 
 ProgramLike = Any  # removed shim
@@ -66,7 +66,7 @@ def make_handler():
         svc = yield Ask("service")
         data = yield svc.fetch(effect.key)
         return (yield Resume(k, data))
-    return _handler
+    return _program_handler(_handler)
 
 
 # --- Pipeline pieces ---
@@ -138,7 +138,7 @@ def test_direct_async_gather_works():
         programs = [wrap_sem(Try(fetch_one(f"k{i}")), sem) for i in range(3)]
         return (yield my_async_gather(*programs))
 
-    wrapped = WithHandler(make_handler(), test())
+    wrapped = make_handler()(test())
     wrapped = Local(_env(), wrapped)
     r = run_with_defaults(wrapped)
     assert r.is_ok(), f"Failed: {r.error}"
@@ -152,7 +152,7 @@ def test_throttled_gather_wrapper():
         programs = [Try(fetch_one(f"k{i}")) for i in range(3)]
         return (yield throttled_gather(*programs, concurrency=2))
 
-    wrapped = WithHandler(make_handler(), test())
+    wrapped = make_handler()(test())
     wrapped = Local(_env(), wrapped)
     r = run_with_defaults(wrapped)
     assert r.is_ok(), f"Failed: {r.error}"
@@ -168,7 +168,7 @@ def test_throttled_gather_with_progress_wrapper():
             *programs, concurrency=2, description="testing"
         ))
 
-    wrapped = WithHandler(make_handler(), test())
+    wrapped = make_handler()(test())
     wrapped = Local(_env(), wrapped)
     r = run_with_defaults(wrapped)
     assert r.is_ok(), f"Failed: {r.error}"

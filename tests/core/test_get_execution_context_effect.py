@@ -8,7 +8,6 @@ from doeff_vm import (
     GetExecutionContext,
     Pass,
     Resume,
-    WithHandler,
 )
 
 # REMOVED: from doeff import ProgramCallStack
@@ -18,6 +17,7 @@ from doeff import (
     Program,
     do,
 )
+from doeff import handler as _install_raw_handler
 from tests._run_helpers import run_with_defaults
 
 # REMOVED: from doeff.traceback import build_doeff_traceback
@@ -62,7 +62,7 @@ def test_base_exception_bypasses_get_execution_context_conversion() -> None:
     def failing_program() -> Program[None]:
         raise KeyboardInterrupt("stop")
 
-    wrapped = WithHandler(observer, failing_program())
+    wrapped = _install_raw_handler(observer)(failing_program())
     result = run_with_defaults(wrapped)
     assert result.is_err()
     assert isinstance(result.error, KeyboardInterrupt)

@@ -15,9 +15,9 @@ from conftest import SIM_TIME_EPOCH, listen, run_with_handlers, sim_seconds, sim
 from doeff import (
     Effect,
     Pass,
-    WithHandler,
     do,
 )
+from doeff import handler as _install_raw_handler
 
 
 def _run_with_sim(
@@ -27,10 +27,7 @@ def _run_with_sim(
     log_formatter: Callable[[datetime, Any], str] | None = None,
 ):
     return run_with_handlers(
-        WithHandler(
-            sim_time_handler(start_time=start_time, log_formatter=log_formatter),
-            program,
-        ),
+        sim_time_handler(start_time=start_time, log_formatter=log_formatter)(program),
     )
 
 
@@ -41,12 +38,7 @@ def _run_with_sim_and_events(
     log_formatter: Callable[[datetime, Any], str] | None = None,
 ):
     return run_with_handlers(
-        WithHandler(event_handler(),
-            WithHandler(
-                sim_time_handler(start_time=start_time, log_formatter=log_formatter),
-                program,
-            ),
-        ),
+        event_handler()(sim_time_handler(start_time=start_time, log_formatter=log_formatter)(program)),
     )
 
 
@@ -65,10 +57,7 @@ def _run_with_probe(
         yield Pass(effect, k)
 
     result = run_with_handlers(
-        WithHandler(
-            probe,
-            WithHandler(sim_time_handler(start_time=sim_time(0.0)), program),
-        ),
+        _install_raw_handler(probe)(sim_time_handler(start_time=sim_time(0.0))(program)),
     )
     return seen, result
 
@@ -283,7 +272,7 @@ def test_schedule_at_fires_when_clock_passes_target() -> None:
 
     # listen outside sim_time so it sees Tell from ScheduleAt's Spawn'd task
     inner_result, collected = run_with_handlers(
-        listen(WithHandler(sim_time_handler(start_time=sim_time(10.0)), _program())),
+        listen(sim_time_handler(start_time=sim_time(10.0))(_program())),
     )
     assert inner_result == sim_time(15.0)
     assert [e.msg for e in collected] == ["scheduled"]
@@ -298,7 +287,7 @@ def test_schedule_at_past_time_fires_immediately() -> None:
         return (yield GetTime())
 
     inner_result, collected = run_with_handlers(
-        listen(WithHandler(sim_time_handler(start_time=sim_time(0.0)), _program())),
+        listen(sim_time_handler(start_time=sim_time(0.0))(_program())),
     )
     assert inner_result == sim_time(10.0)
     assert [e.msg for e in collected] == ["past"]
@@ -356,13 +345,10 @@ def test_log_formatter_stamps_tell_messages() -> None:
     # listen must be OUTSIDE sim_time to see reformatted Tell messages
     inner_result, collected = run_with_handlers(
         listen(
-            WithHandler(
-                sim_time_handler(
+            sim_time_handler(
                     start_time=sim_time(7.5),
                     log_formatter=lambda current_time, msg: f"[sim:{sim_seconds(current_time):.1f}] {msg}",
-                ),
-                _program(),
-            )
+                )(_program())
         ),
     )
 

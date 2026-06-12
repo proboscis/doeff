@@ -3,7 +3,7 @@
 from doeff_core_effects.effects import Ask, Get, Put, Slog, Tell, Try
 from doeff_core_effects.handlers import reader, slog_handler, state, try_handler, writer
 
-from doeff import Pure, WithHandler, do
+from doeff import Pure, do
 from doeff import run as doeff_run
 
 
@@ -13,7 +13,7 @@ class TestReader:
         def body():
             return (yield Ask("name"))
 
-        result = doeff_run(WithHandler(reader(env={"name": "Alice"}), body()))
+        result = doeff_run(reader(env={"name": "Alice"})(body()))
         assert result == "Alice"
 
     def test_ask_missing_key_raises(self):
@@ -24,7 +24,7 @@ class TestReader:
             return (yield Ask("missing"))
 
         with pytest.raises(KeyError, match="missing"):
-            doeff_run(WithHandler(reader(env={}), body()))
+            doeff_run(reader(env={})(body()))
 
     def test_ask_multiple_keys(self):
         @do
@@ -33,7 +33,7 @@ class TestReader:
             b = yield Ask("y")
             return a + b
 
-        result = doeff_run(WithHandler(reader(env={"x": 10, "y": 20}), body()))
+        result = doeff_run(reader(env={"x": 10, "y": 20})(body()))
         assert result == 30
 
 
@@ -46,7 +46,7 @@ class TestState:
             yield Put("count", c + 1)
             return (yield Get("count"))
 
-        result = doeff_run(WithHandler(state(), body()))
+        result = doeff_run(state()(body()))
         assert result == 1
 
     def test_initial_state(self):
@@ -54,7 +54,7 @@ class TestState:
         def body():
             return (yield Get("x"))
 
-        result = doeff_run(WithHandler(state(initial={"x": 42}), body()))
+        result = doeff_run(state(initial={"x": 42})(body()))
         assert result == 42
 
     def test_get_missing_returns_none(self):
@@ -62,7 +62,7 @@ class TestState:
         def body():
             return (yield Get("missing"))
 
-        result = doeff_run(WithHandler(state(), body()))
+        result = doeff_run(state()(body()))
         assert result is None
 
 
@@ -76,7 +76,7 @@ class TestWriter:
             yield Tell("world")
             return "done"
 
-        result = doeff_run(WithHandler(w, body()))
+        result = doeff_run(w(body()))
         assert result == "done"
         assert w.log == ["hello", "world"]
 
@@ -92,10 +92,7 @@ class TestComposed:
             yield Put("total", total + 10)
             return (yield Get("total"))
 
-        prog = WithHandler(
-            reader(env={"base": 100}),
-            WithHandler(state(), body()),
-        )
+        prog = reader(env={"base": 100})(state()(body()))
         assert doeff_run(prog) == 110
 
     def test_all_three(self):
@@ -109,10 +106,7 @@ class TestComposed:
             yield Put("greeted", True)
             return (yield Get("greeted"))
 
-        prog = WithHandler(
-            reader(env={"name": "Bob"}),
-            WithHandler(state(), WithHandler(w, body())),
-        )
+        prog = reader(env={"name": "Bob"})(state()(w(body())))
         assert doeff_run(prog) is True
         assert w.log == ["hello Bob"]
 
@@ -125,7 +119,7 @@ class TestTry:
             return result
 
         from doeff_vm import Ok
-        result = doeff_run(WithHandler(try_handler, body()))
+        result = doeff_run(try_handler(body()))
         assert isinstance(result, Ok.__class__) or (hasattr(result, "is_ok") and result.is_ok())
         assert result.value == 42
 
@@ -140,7 +134,7 @@ class TestTry:
             result = yield Try(failing())
             return result
 
-        result = doeff_run(WithHandler(try_handler, body()))
+        result = doeff_run(try_handler(body()))
         assert hasattr(result, "is_err")
         assert result.is_err()
         assert isinstance(result.error, ValueError)
@@ -157,7 +151,7 @@ class TestTry:
             yield Try(failing())
             return "safe"
 
-        assert doeff_run(WithHandler(try_handler, body())) == "safe"
+        assert doeff_run(try_handler(body())) == "safe"
 
 
 class TestSlog:
@@ -170,7 +164,7 @@ class TestSlog:
             yield Slog("event", user="alice", action="login")
             return "done"
 
-        result = doeff_run(WithHandler(sh, body()))
+        result = doeff_run(sh(body()))
         assert result == "done"
         assert len(sh.log) == 2
         assert sh.log[0] == {"msg": "hello"}
@@ -194,7 +188,7 @@ class TestAwait:
             result = yield Await(async_add(3, 4))
             return result
 
-        result = doeff_run(scheduled(WithHandler(await_handler(), body())))
+        result = doeff_run(scheduled(await_handler()(body())))
         assert result == 7
 
     def test_await_multiple(self):
@@ -214,7 +208,7 @@ class TestAwait:
             b = yield Await(fetch(2))
             return a + b
 
-        result = doeff_run(scheduled(WithHandler(await_handler(), body())))
+        result = doeff_run(scheduled(await_handler()(body())))
         assert result == 30
 
     def test_await_100_concurrent_tasks(self):
@@ -239,7 +233,7 @@ class TestAwait:
         def body():
             tasks = []
             for i in range(100):
-                tasks.append((yield Spawn(WithHandler(ah, task(i)))))
+                tasks.append((yield Spawn(ah(task(i)))))
             return (yield Gather(*tasks))
 
         start = time.time()

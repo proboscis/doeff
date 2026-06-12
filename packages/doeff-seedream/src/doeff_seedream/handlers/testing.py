@@ -14,6 +14,7 @@ from doeff_image.types import ImageResult
 from PIL import Image as PILImage
 
 from doeff import Delegate, Resume, do
+from doeff import handler as _program_handler
 from doeff_seedream.effects import SeedreamGenerate, SeedreamStructuredOutput
 from doeff_seedream.types import SeedreamImage, SeedreamImageEditResult
 
@@ -205,7 +206,7 @@ def mock_handlers(
             return (yield Resume(k, active_handler.handle_structured(effect)))
         yield Delegate()
 
-    return handler
+    return _program_handler(handler)
 
 
 __all__ = [

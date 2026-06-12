@@ -25,9 +25,9 @@ from doeff import (
     Resume,
     Spawn,
     Try,
-    WithHandler,
     do,
 )
+from doeff import handler as _install_raw_handler
 from tests._run_helpers import run_with_defaults
 
 ProgramLike = Any  # removed API shim
@@ -111,7 +111,7 @@ def test_spawn_try_compute_with_handler():
         programs = [Try(compute(f"k{i}")) for i in range(3)]
         return (yield throttled_gather(*programs, concurrency=2))
 
-    wrapped = WithHandler(handler, test_program())
+    wrapped = _install_raw_handler(handler)(test_program())
     result = run_with_defaults(wrapped)
     assert result.is_ok(), f"Failed: {result.error}"
     assert len(result.value) == 3
@@ -125,7 +125,7 @@ def test_spawn_compute_without_try():
         programs = [compute(f"k{i}") for i in range(3)]
         return (yield throttled_gather(*programs, concurrency=2))
 
-    wrapped = WithHandler(handler, test_program())
+    wrapped = _install_raw_handler(handler)(test_program())
     result = run_with_defaults(wrapped)
     assert result.is_ok(), f"Failed: {result.error}"
     assert len(result.value) == 3
@@ -142,7 +142,7 @@ def test_sequential_try_compute_with_handler():
             results.append(r)
         return results
 
-    wrapped = WithHandler(handler, test_program())
+    wrapped = _install_raw_handler(handler)(test_program())
     result = run_with_defaults(wrapped)
     assert result.is_ok(), f"Failed: {result.error}"
     assert len(result.value) == 3

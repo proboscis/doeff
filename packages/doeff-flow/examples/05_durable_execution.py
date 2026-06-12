@@ -37,7 +37,6 @@ from doeff_flow import run_workflow
 from doeff import (
     Delegate,
     Resume,
-    WithHandler,
     do,
     slog,
 )
@@ -261,7 +260,7 @@ def main():
     # Run the workflow with observability and custom cache effect handling
     db_path.parent.mkdir(parents=True, exist_ok=True)
     storage = SQLiteStorage(str(db_path))
-    program = WithHandler(cache_handler(storage), durable_pipeline())
+    program = cache_handler(storage)(durable_pipeline())
     result = run_workflow(
         program,
         workflow_id="durable-demo",

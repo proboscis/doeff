@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from doeff.program import handler as _program_handler
+
 # Activate Hy's import hook so doeff run can resolve program/interpreter/env
 # paths that live in .hy files (e.g. nakagawa.live.agent_pipeline.p_agent_daily).
 # Without this, importlib.import_module for a .hy module silently creates an
@@ -183,7 +185,7 @@ def default_interpreter(program: Any) -> Any:
     )
     from doeff_core_effects.scheduler import scheduled
 
-    from doeff import WithHandler, run
+    from doeff import run
 
     handlers = [
         lazy_ask(), state(), writer(), try_handler, slog_handler(),
@@ -191,7 +193,7 @@ def default_interpreter(program: Any) -> Any:
     ]
     wrapped = program
     for h in reversed(handlers):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _program_handler(h)(wrapped)
     return run(scheduled(wrapped))
 
 

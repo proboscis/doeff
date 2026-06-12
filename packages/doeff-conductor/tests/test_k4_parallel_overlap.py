@@ -27,7 +27,8 @@ from doeff_conductor.handlers.utils import (
 )
 from doeff_core_effects.scheduler import Gather, scheduled
 
-from doeff import Effect, Pass, Resume, Spawn, WithHandler, do, run
+from doeff import Effect, Pass, Resume, Spawn, do, run
+from doeff import handler as _install_raw_handler
 
 SIMPLE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -139,7 +140,7 @@ def _build_handler_with_real_scheduler(
                 return (yield effect_handler(effect, k))
         yield Pass(effect, k)
 
-    return handler
+    return _install_raw_handler(handler)
 
 
 class TestK4ParallelOverlap:
@@ -181,7 +182,7 @@ class TestK4ParallelOverlap:
             return results
 
         wall_start = time.monotonic()
-        result = run(scheduled(WithHandler(conductor_handler, parallel_workflow())))
+        result = run(scheduled(conductor_handler(parallel_workflow())))
         wall_elapsed = time.monotonic() - wall_start
 
         # Unwrap RunResult if needed
@@ -240,7 +241,7 @@ class TestK4ParallelOverlap:
                 return results
 
             wall_start = time.monotonic()
-            result = run(scheduled(WithHandler(conductor_handler, workflow())))
+            result = run(scheduled(conductor_handler(workflow())))
             wall_elapsed = time.monotonic() - wall_start
 
             result_value = result.value if hasattr(result, "value") else result
@@ -293,7 +294,7 @@ class TestK4ParallelOverlap:
             return results
 
         wall_start = time.monotonic()
-        run(scheduled(WithHandler(blocking_handler, workflow())))
+        run(scheduled(_install_raw_handler(blocking_handler)(workflow())))
         wall_elapsed = time.monotonic() - wall_start
 
         # The blocking handler should take >= sum of branch delays

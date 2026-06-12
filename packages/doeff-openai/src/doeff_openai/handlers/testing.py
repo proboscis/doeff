@@ -14,6 +14,7 @@ from doeff_llm.effects import (
 )
 
 from doeff import Pass, Resume, do
+from doeff import handler as _program_handler
 from doeff_openai.effects import (
     ChatCompletion,
     Embedding,
@@ -425,7 +426,7 @@ def mock_handlers(
             )
         )
 
-    return handler
+    return _program_handler(handler)
 
 
 __all__ = [

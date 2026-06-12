@@ -17,7 +17,7 @@ def get_inner_handlers(k):
     Usage in a handler:
         inner_hs = yield get_inner_handlers(k)
         for h in inner_hs:
-            prog = WithHandler(h, prog)
+            prog = handler(h)(prog)
     """
     all_hs = yield GetHandlers(k)
     if all_hs:

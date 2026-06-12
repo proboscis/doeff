@@ -15,7 +15,8 @@ from doeff_flow.trace import (
     write_terminal_trace,
 )
 
-from doeff import Ask, Effect, Get, Pass, Pure, Put, Resume, WithHandler, default_handlers, do
+from doeff import Ask, Effect, Get, Pass, Pure, Put, Resume, default_handlers, do
+from doeff import handler as _install_raw_handler
 from doeff import run as run_sync
 
 
@@ -225,7 +226,7 @@ class TestWithHandlerObservability:
             return current
 
         result = run_sync(
-            WithHandler(capturing_handler, workflow()),
+            _install_raw_handler(capturing_handler)(workflow()),
             handlers=default_handlers(),
             store={},
         )
@@ -254,7 +255,7 @@ class TestWithHandlerObservability:
             return a + b
 
         result = run_sync(
-            WithHandler(override_ask_handler, workflow()),
+            _install_raw_handler(override_ask_handler)(workflow()),
             handlers=default_handlers(),
             env={"a": 1, "b": 2},
         )

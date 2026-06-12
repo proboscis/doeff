@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import pytest
 
-from doeff import EffectBase, Pass, Resume, UnhandledEffect, WithHandler, do, run
+from doeff import EffectBase, Pass, Resume, UnhandledEffect, do, run
+from doeff import handler as _program_handler
 
 
 class _MyEffect(EffectBase):
@@ -31,7 +32,7 @@ def _wrap(program, *handlers):
     """Wrap program with handlers (first handler is outermost)."""
     wrapped = program
     for h in reversed(handlers):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _program_handler(h)(wrapped)
     return wrapped
 
 

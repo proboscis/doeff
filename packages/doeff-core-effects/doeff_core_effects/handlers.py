@@ -10,7 +10,8 @@ the returned handler with the program to wrap:
 """
 
 from doeff import do
-from doeff.program import Pass, Resume, WithHandlerType
+from doeff.program import Pass, Resume
+from doeff.program import handler as _program_handler
 from doeff_core_effects.effects import (
     Ask,
     Await,
@@ -22,20 +23,6 @@ from doeff_core_effects.effects import (
     Try,
     WriterTellEffect,
 )
-
-
-def _program_handler(raw_handler):
-    """Wrap a raw dispatcher as the current Program -> Program handler shape."""
-
-    def install(body):
-        return WithHandlerType(raw_handler, body)
-
-    install.__name__ = raw_handler.__name__
-    install.__qualname__ = raw_handler.__qualname__
-    install.__doc__ = raw_handler.__doc__
-    install._doeff_is_handler_fn = True
-    install.__doeff_handler_data__ = raw_handler
-    return install
 
 
 def reader(env=None):
@@ -104,7 +91,7 @@ def writer():
 
 
 @do
-def try_handler(effect, k):
+def _try_handler(effect, k):
     """Try handler: catches errors from Try(program) and returns Ok/Err.
 
     Captures inner handlers (between body and try_handler) via GetHandlers
@@ -112,16 +99,13 @@ def try_handler(effect, k):
     can reach handlers at any position in the chain.
 
     Usage:
-        WithHandler(try_handler, body)
+        try_handler(body)
         result = yield Try(some_program)  # Ok(value) or Err(error)
     """
     if isinstance(effect, Try):
         from doeff_vm import Err, Ok
 
         from doeff.handler_utils import get_inner_handlers
-        from doeff.program import (
-            WithHandler as WH,  # noqa: N817 - existing local alias keeps handler code compact
-        )
 
         inner_hs = yield get_inner_handlers(k)
 
@@ -131,8 +115,8 @@ def try_handler(effect, k):
             # Reinstall inner handlers + try_handler itself so nested
             # Try effects and inner-handler effects are reachable.
             for h in inner_hs:
-                prog = WH(h, prog)
-            prog = WH(try_handler, prog)
+                prog = _program_handler(h)(prog)
+            prog = try_handler(prog)
             try:
                 value = yield prog
                 return Ok(value)
@@ -141,6 +125,11 @@ def try_handler(effect, k):
         result = yield Resume(k, (yield attempt()))
         return result
     yield Pass(effect, k)
+
+
+try_handler = _program_handler(_try_handler)
+try_handler.__name__ = "try_handler"
+try_handler.__qualname__ = "try_handler"
 
 
 def slog_handler():
@@ -166,7 +155,7 @@ def slog_handler():
 
 
 @do
-def local_handler(effect, k):
+def _local_handler(effect, k):
     """Local handler: scoped env override with pass-on-miss semantics.
 
     Installs a scope reader that handles Ask for overridden keys only,
@@ -178,13 +167,10 @@ def local_handler(effect, k):
     and reinstall them around the inner program.
 
     Usage:
-        WithHandler(local_handler, body)
+        local_handler(body)
     """
     if isinstance(effect, Local):
         from doeff.handler_utils import get_inner_handlers
-        from doeff.program import (
-            WithHandler as WH,  # noqa: N817 - existing local alias keeps handler code compact
-        )
         overrides = effect.env
 
         # Capture inner handlers from continuation (between Local site
@@ -201,30 +187,32 @@ def local_handler(effect, k):
         # then scope_reader innermost
         prog = effect.program
         for h in inner_handlers:
-            prog = WH(h, prog)
-        prog = WH(local_handler, prog)
-        prog = WH(scope_reader, prog)
+            prog = _program_handler(h)(prog)
+        prog = local_handler(prog)
+        prog = _program_handler(scope_reader)(prog)
 
         inner_result = yield prog
         return (yield Resume(k, inner_result))
     yield Pass(effect, k)
 
 
+local_handler = _program_handler(_local_handler)
+local_handler.__name__ = "local_handler"
+local_handler.__qualname__ = "local_handler"
+
+
 @do
-def listen_handler(effect, k):
+def _listen_handler(effect, k):
     """Listen handler: collects effects of specified types during program execution.
 
     OCaml 5 semantics: reinstall inner handlers so the inner program
     sees the same handler chain as when Listen was performed.
 
     Usage:
-        WithHandler(listen_handler, body)
+        listen_handler(body)
     """
     if isinstance(effect, Listen):
         from doeff.handler_utils import get_inner_handlers
-        from doeff.program import (
-            WithHandler as WH,  # noqa: N817 - existing local alias keeps handler code compact
-        )
         collected = []
         types_to_collect = effect.types or (WriterTellEffect,)
 
@@ -238,13 +226,18 @@ def listen_handler(effect, k):
 
         prog = effect.program
         for h in inner_handlers:
-            prog = WH(h, prog)
-        prog = WH(observer_handler, prog)
+            prog = _program_handler(h)(prog)
+        prog = _program_handler(observer_handler)(prog)
 
         inner_result = yield prog
         result = yield Resume(k, (inner_result, collected))
         return result
     yield Pass(effect, k)
+
+
+listen_handler = _program_handler(_listen_handler)
+listen_handler.__name__ = "listen_handler"
+listen_handler.__qualname__ = "listen_handler"
 
 
 def await_handler():
@@ -345,9 +338,6 @@ def lazy_ask(env=None, *, strict=False):  # noqa: PLR0915 - baseline cleanup kee
     from doeff import Program
     from doeff.handler_utils import get_inner_handlers
     from doeff.program import ResumeThrow
-    from doeff.program import (
-        WithHandler as WH,  # noqa: N817 - existing local alias keeps handler code compact
-    )
     from doeff_core_effects.scheduler import (
         AcquireSemaphore,
         CreateSemaphore,
@@ -436,12 +426,12 @@ def lazy_ask(env=None, *, strict=False):  # noqa: PLR0915 - baseline cleanup kee
                 inner_hs = yield get_inner_handlers(k)
                 wrapped = raw
                 for h in inner_hs:
-                    wrapped = WH(h, wrapped)
+                    wrapped = _program_handler(h)(wrapped)
                 eval_stack.append(set())
                 error = None
                 value = None
                 try:
-                    value = yield WH(handler, wrapped)
+                    value = yield _program_handler(handler)(wrapped)
                 except Exception as e:
                     error = e
 
@@ -468,12 +458,12 @@ def lazy_ask(env=None, *, strict=False):  # noqa: PLR0915 - baseline cleanup kee
                 inner_hs = yield get_inner_handlers(k)
                 prog = effect.program
                 for h in inner_hs:
-                    prog = WH(h, prog)
+                    prog = _program_handler(h)(prog)
 
                 error = None
                 inner_result = None
                 try:
-                    inner_result = yield WH(inner_handler, prog)
+                    inner_result = yield inner_handler(prog)
                 except Exception as e:
                     error = e
 
@@ -483,9 +473,9 @@ def lazy_ask(env=None, *, strict=False):  # noqa: PLR0915 - baseline cleanup kee
 
             yield Pass(effect, k)
 
-        return handler
+        return _program_handler(handler)
 
-    return _program_handler(_make_handler(dict(env)))
+    return _make_handler(dict(env))
 
 
 def env_var_ask(*, prefix="DOEFF_"):
@@ -517,9 +507,6 @@ def env_var_ask(*, prefix="DOEFF_"):
     from doeff import Program
     from doeff.cli.run_services import import_symbol
     from doeff.handler_utils import get_inner_handlers
-    from doeff.program import (
-        WithHandler as WH,  # noqa: N817 - existing local alias keeps handler code compact
-    )
     from doeff_core_effects.scheduler import (
         AcquireSemaphore,
         CreateSemaphore,
@@ -582,7 +569,7 @@ def env_var_ask(*, prefix="DOEFF_"):
                 inner_hs = yield get_inner_handlers(k)
                 wrapped = value
                 for h in inner_hs:
-                    wrapped = WH(h, wrapped)
+                    wrapped = _program_handler(h)(wrapped)
                 resolved = yield wrapped
             else:
                 resolved = value

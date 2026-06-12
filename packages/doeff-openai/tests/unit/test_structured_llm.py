@@ -30,9 +30,9 @@ from doeff import (
     EffectGenerator,
     Pass,
     Resume,
-    WithHandler,
     do,
 )
+from doeff import handler as _install_raw_handler
 
 
 # Test models for structured output
@@ -569,7 +569,7 @@ async def test_structured_llm_integration():
         )
         return result
 
-    result = await run_program(WithHandler(mock_openai_handler, test_flow()))
+    result = await run_program(_install_raw_handler(mock_openai_handler)(test_flow()))
 
     assert result.is_ok()
     assert isinstance(result.value, SimpleResponse)

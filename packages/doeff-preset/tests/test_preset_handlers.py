@@ -7,6 +7,8 @@ from typing import Any
 
 import pytest
 
+from doeff import handler as _install_raw_handler
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from doeff_preset import (
@@ -39,7 +41,6 @@ from doeff import (
     Pass,
     Resume,
     Tell,
-    WithHandler,
     WriterTellEffect,
     async_run,
     default_async_handlers,
@@ -54,7 +55,7 @@ HandlerFn = Callable[[Any, Any], Any]
 
 def _run_with_handler(program, handler: HandlerFn, *, env=None, store=None):
     return run(
-        WithHandler(handler, program),
+        handler(program),
         handlers=default_handlers(),
         env=env,
         store=store,
@@ -65,7 +66,7 @@ async def _async_run_with_handler(
     program, handler: HandlerFn, *, env=None, store=None
 ):
     return await async_run(
-        WithHandler(handler, program),
+        handler(program),
         handlers=default_async_handlers(),
         env=env,
         store=store,
@@ -208,7 +209,7 @@ class TestConfigHandlers:
                 return (yield Resume(k, False))
             yield Pass()
 
-        program = WithHandler(mock_preset_config, workflow())
+        program = _install_raw_handler(mock_preset_config)(workflow())
         result = _run_with_handler(program, preset_handlers())
 
         assert result.value is False
@@ -281,10 +282,7 @@ class TestPresetHandlers:
             return custom_result
 
         # Stack handlers explicitly: inner custom handler shadows outer preset handler.
-        stacked_program = WithHandler(
-            preset_handlers(),
-            WithHandler(handle_custom, workflow()),
-        )
+        stacked_program = preset_handlers()(_install_raw_handler(handle_custom)(workflow()))
         result = run(stacked_program, handlers=default_handlers())
 
         assert result.value == "handled: test"
