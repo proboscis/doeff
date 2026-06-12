@@ -149,6 +149,43 @@ def test_check_7_rejects_invalid_budget_annotation() -> None:
         workflow.expand()
 
 
+def test_deadline_rejects_negative_annotation() -> None:
+    """V4 (L-K4-3): expansion rejects a negative :deadline-seconds."""
+    workflow = valid_workflow(valid_agent(deadline_seconds=-5))
+
+    with pytest.raises(WorkflowExpansionError, match="deadline"):
+        workflow.expand()
+
+
+def test_deadline_rejects_non_numeric_annotation() -> None:
+    """V4 (L-K4-3): expansion rejects a non-numeric :deadline-seconds."""
+    workflow = valid_workflow(valid_agent(deadline_seconds="fast"))
+
+    with pytest.raises(WorkflowExpansionError, match="deadline"):
+        workflow.expand()
+
+
+def test_deadline_rejects_boolean_and_zero_annotations() -> None:
+    """V4 (L-K4-3): bool is not a duration; zero is not a window."""
+    with pytest.raises(WorkflowExpansionError, match="deadline"):
+        valid_workflow(valid_agent(deadline_seconds=True)).expand()
+
+    with pytest.raises(WorkflowExpansionError, match="deadline"):
+        valid_workflow(valid_agent(deadline_seconds=0)).expand()
+
+
+def test_deadline_accepts_positive_seconds_into_agent_call() -> None:
+    """A well-formed :deadline-seconds lands on the AgentCall effect."""
+    workflow = valid_workflow(valid_agent(deadline_seconds=90))
+
+    expanded = workflow.expand()
+
+    agent_nodes = [node for node in expanded.nodes if node.kind == "agent"]
+    assert len(agent_nodes) == 1
+    assert agent_nodes[0].effect is not None
+    assert agent_nodes[0].effect.deadline_seconds == 90.0
+
+
 def test_check_7_rejects_budget_sum_above_workflow_limit() -> None:
     workflow = defworkflow(
         "budgeted",

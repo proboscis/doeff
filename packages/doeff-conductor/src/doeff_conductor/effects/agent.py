@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from doeff_agents.effects import (  # re-exported for conductor callers
     AgentAttemptExhaustedError,
+    AgentDeadlineExceededError,
     AgentValidationErrorKind,
     AgentValidationFailure,
     deterministic_session_id,
@@ -40,7 +41,11 @@ class AgentTask:
     effort: str | None = None
     resolved_identity: ResolvedIdentity | None = None
     max_retries: int = 2
-    timeout_seconds: float | None = None
+    # Node-spec wall-clock deadline (L-K4-3): declared in the DSL
+    # (`agent! :deadline-seconds`), enforced by parking a K5 gate on
+    # exceed. Never a transport timeout — the per-await budget is the
+    # L2 keep-alive heartbeat.
+    deadline_seconds: float | None = None
 
     @property
     def session_node_key(self) -> str:
@@ -83,6 +88,7 @@ def Agent(task: AgentTask) -> AgentEffect:  # noqa: N802
 __all__ = [
     "Agent",
     "AgentAttemptExhaustedError",
+    "AgentDeadlineExceededError",
     "AgentEffect",
     "AgentTask",
     "AgentValidationErrorKind",

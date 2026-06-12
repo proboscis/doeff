@@ -58,6 +58,7 @@ from doeff_conductor.effects.review import (
 from .agent import (
     Agent,
     AgentAttemptExhaustedError,
+    AgentDeadlineExceededError,
     AgentEffect,
     AgentTask,
     AgentValidationErrorKind,
@@ -107,6 +108,7 @@ __all__ = [
     "Agent",
     "AgentAttemptExhaustedError",
     "AgentCall",
+    "AgentDeadlineExceededError",
     "AgentEffect",
     "AgentTask",
     "AgentValidationErrorKind",

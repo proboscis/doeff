@@ -45,11 +45,18 @@ def make_offloaded_scheduled_handler(handler: SimpleHandler) -> Callable[..., An
     not perform unbounded blocking I/O synchronously; unbounded waits
     enter only via the scheduler's Await / external-completion path.
 
-    Cancellation: the daemon thread is bounded by the server-side
-    timeout (agentd's ``await_budget + RPC_TIMEOUT_MARGIN_SECONDS``).
-    If the scheduler cancels the waiting task (e.g. Gather fail-fast),
-    the thread runs to completion and the promise completion is a
-    harmless no-op on an already-resolved promise.
+    Deadline semantics (L-K4-3): the offloaded agent handler re-awaits
+    in a loop until a terminal result or the node-spec wall-clock
+    deadline (``agent! :deadline-seconds``).  Each round-trip is bounded
+    by the transport keep-alive heartbeat (agentd's
+    ``DEFAULT_AWAIT_BUDGET_SECONDS + RPC_TIMEOUT_MARGIN_SECONDS``);
+    heartbeat expiry is transparent and never surfaces as a node
+    failure.
+
+    Cancellation: if the scheduler cancels the waiting task (e.g.
+    Gather fail-fast), the daemon thread runs to its own terminal/
+    deadline outcome and the promise completion is a harmless no-op on
+    an already-resolved promise.
     """
 
     @do

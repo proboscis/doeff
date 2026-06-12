@@ -2,6 +2,7 @@
 
 from .agent import (
     AgentAttemptExhaustedError,
+    AgentDeadlineExceededError,
     AgentEffect,
     AgentError,
     AgentLaunchError,
@@ -62,6 +63,7 @@ from .agent import (
 
 __all__ = [
     "AgentAttemptExhaustedError",
+    "AgentDeadlineExceededError",
     "AgentEffect",
     "AgentError",
     "AgentLaunchError",

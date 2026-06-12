@@ -32,6 +32,7 @@ from doeff_conductor.dsl import (
 from doeff_conductor.effects import (
     Agent,
     AgentAttemptExhaustedError,
+    AgentDeadlineExceededError,
     AgentTask,
     Commit,
     CreateWorkspace,
@@ -581,6 +582,10 @@ def _execute_agent(
             effort=profile.effort,
         ),
         max_retries=max_retries,
+        # L-K4-3: the wall-clock deadline travels in the node spec; the
+        # L2 loop observes it against its monotonic clock and the only
+        # decision point is the K5 gate parked below.
+        deadline_seconds=effect.deadline_seconds,
     )
     try:
         result = yield Agent(task)
@@ -588,6 +593,16 @@ def _execute_agent(
         return _park(
             context,
             _agent_budget_exhausted_gate(
+                context=context,
+                task=task,
+                phase=current_phase,
+                error=error,
+            ),
+        )
+    except AgentDeadlineExceededError as error:
+        return _park(
+            context,
+            _agent_deadline_exceeded_gate(
                 context=context,
                 task=task,
                 phase=current_phase,
@@ -925,6 +940,58 @@ def _agent_budget_exhausted_gate(
             "session_id": task.session_id,
         },
         options=_gate_options(),
+    )
+
+
+def _agent_deadline_exceeded_gate(
+    *,
+    context: _RuntimeContext,
+    task: AgentTask,
+    phase: str | None,
+    error: AgentDeadlineExceededError,
+) -> OpenGateView:
+    """K5 gate for wall-clock deadline exhaustion (L-K4-3).
+
+    Named sibling of ``budget-exhausted``: same gate family (closure
+    park + journaled answer), distinct reason and options because the
+    session may still be alive and the only forward path is RENEWING
+    the deadline window — never accepting a partial result.
+    """
+    return OpenGateView(
+        gate_id=f"{context.run_id}:{task.node_id}:deadline-exceeded",
+        workflow_id=context.run_id,
+        node_id=task.node_id,
+        phase=phase,
+        reason="wall-clock deadline exceeded",
+        stakes={
+            "verification_class": task.verification_class,
+            "blast_radius": "dependent-subtree",
+            "reversibility": "retryable",
+            "profile": task.profile,
+            "deadline_seconds": error.deadline_seconds,
+            "elapsed_seconds": error.elapsed_seconds,
+            "session_id": task.session_id,
+        },
+        options=(
+            GateOption(
+                name="extend",
+                outcome="resume",
+                description=(
+                    "Grant one more deadline window and re-await the node "
+                    "(renewal = this journaled answer; no automatic extension exists)."
+                ),
+            ),
+            GateOption(
+                name="redirect",
+                outcome="resume",
+                description="Edit workflow state or inputs, then resume from the journal prefix.",
+            ),
+            GateOption(
+                name="abort",
+                outcome="abort",
+                description="Abort the dependent subtree and preserve the gate outcome.",
+            ),
+        ),
     )
 
 

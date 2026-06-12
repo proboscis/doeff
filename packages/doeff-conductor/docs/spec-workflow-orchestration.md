@@ -175,7 +175,10 @@ internal — never authored, never accepted by the loader.
                                           ;;   with another parallel writer
         :profile NAME                     ;; optional explicit override
         :persona NAME                     ;; optional
-        :retry N)                         ;; optional override
+        :retry N                          ;; optional override
+        :deadline-seconds N)              ;; optional wall-clock deadline
+                                          ;;   (node-spec attribute, L-K4-3;
+                                          ;;   exceed parks a K5 gate)
   ;; ⇒ awaits the worker, returns the schema-validated artifact
   ;;   (plus its workspace ref when a workspace was given)
 
@@ -213,6 +216,12 @@ Typed, explicit, never silent (replaces the JS tool's `null` +
   default policy, typed worker error): parks as an overseer gate whose
   options are closure-preserving (each option states the outcome for the
   whole run; cf. agent-control-plane ADR 0008 R2b).
+- `agent!` wall-clock deadline exceeded (`:deadline-seconds`, L-K4-3):
+  parks as the `deadline-exceeded` K5 gate — a named sibling of
+  `budget-exhausted` — whose only forward option is `extend` (grant one
+  more deadline window; the journaled answer IS the renewal). Transport
+  heartbeat expiry is NOT a failure path at all: the handler re-awaits
+  transparently (§5.1.1).
 
 ### 4.4 Glue code and nondeterminism
 
@@ -372,10 +381,28 @@ The `agent!` handler bridges its `AwaitResult` RPC through
 thread pattern), while `Launch`, `FollowUp`, and `Release` remain
 synchronous (all are bounded fast RPCs).
 
-**Await budget axis owner (resolves §11 item 6):** The L2 attempt loop
-(`_run_agent_task`) is the SINGLE timeout/retry authority.
-`timeout_seconds` flows to agentd unchanged; the bridge introduces no
-second timeout.
+**Wall-clock deadline ownership (L-K4-3, ADR D13 — closes §11 item 7):**
+
+- **L-K4-3 (deadline ownership):** `deadline(agent node) ∈ node spec`;
+  `renewal(deadline) = gate answer ∈ journal`; transport await carries
+  no deadline semantics beyond keep-alive.
+
+Operationally: the workflow declares `:deadline-seconds` on the `agent!`
+node (validated at expansion: positive, finite, numeric); the L2 attempt
+loop (`_run_agent_task`) observes the clock against the node-spec
+deadline and re-awaits in heartbeat-bounded rounds
+(`DEFAULT_AWAIT_BUDGET_SECONDS`, capped to the remaining window) until a
+terminal outcome; on exceed it raises the typed
+`AgentDeadlineExceededError` and the L3 runtime parks the
+`deadline-exceeded` K5 gate. A TIMED_OUT await (heartbeat expiry) is
+transparent: never a node failure, never a retry-attempt burn. The L2
+attempt loop remains the single authority for validation-failure
+retries; there is no task-level transport timeout (the former
+`timeout_seconds` field is deleted; semgrep rule
+`k4-deadline-not-transport-timeout` bans its return). Like `budget` and
+`:retry`, the deadline does not enter the replay cache key (§9
+criterion: it bounds whether a result arrives, not the result
+distribution).
 
 ### 5.2 The `agent!` handler is the composition proof
 
@@ -575,15 +602,19 @@ because where to pause is a trust/stakes judgment extrinsic to the task:
 - **Resume.** Unfinished `Launch` at crash → idempotent re-adoption by
   deterministic session name (level-triggered, supervised by agentd on the
   tmux substrate).
-- **Gate answer journal.** Gate answers (`proceed` / `redirect` / `abort`)
-  are recorded in `gate-answer-journal.jsonl` in the run directory. Each
+- **Gate answer journal.** Gate answers (`proceed` / `extend` /
+  `redirect` / `abort`) are recorded in `gate-answer-journal.jsonl` in
+  the run directory. Each
   entry carries `gate_id`, `workflow_id`, `option`, `outcome` (from the
   selected `GateOption`), `note`, `answered_at`, and
   `terminal_kind="gate-answer"`. The journal is append-only; re-adjudication
   appends a new entry rather than editing in place (L-K5-2). `resume`
   reads `latest_answers()` — the last answer per gate — as the sole
   authoritative source of answered gate options. Pre-journal runs are
-  dead runs; no fallback to `run-state.json`.
+  dead runs; no fallback to `run-state.json`. The `extend` answer is the
+  deadline-gate renewal (L-K4-3): the journaled answer IS the grant of
+  one more deadline window — extensions are replay inputs, never an
+  automatic policy.
 - **Workspace effects are journaled for resource coverage (L-K3-3).**
   `workspace-journal.jsonl` records each workspace materialization:
   `workspace_id`, `repo`, `branch`, `worktree_path`, `base_ref`,
@@ -633,12 +664,16 @@ because where to pause is a trust/stakes judgment extrinsic to the task:
    state (`.agent-home/`). The exclude lives at workspace initialization, so
    post-agent-node `Commit`, manual `git add -A`, and future workspace
    consumers all share the same behavior without dirtying tracked files.
-6. **Await budget axis — resolved (§5.1.1, ADR D11).** The L2 attempt
-   loop is the SINGLE timeout/retry authority. `timeout_seconds` flows
-   to agentd unchanged; the `make_offloaded_scheduled_handler` bridge
-   introduces no second timeout. The effective default (3600s) lives
-   in L1; future work may bind it to a profile-tier or node-level axis
-   like effort.
+6. **Await budget axis — resolved twice; final owner ratified
+   (§5.1.1, ADR D13, L-K4-3).** The D11 resolution (L2 attempt loop as
+   single timeout/retry authority with `timeout_seconds` flowing to
+   agentd) bounded the defect but left the wall-clock axis owned by a
+   transport constant. D13 settles it: the deadline is an `agent!`
+   node-spec attribute (`:deadline-seconds`), the L3 runtime parks the
+   `deadline-exceeded` K5 gate on exceed, extension is only the
+   journaled `extend` gate answer, and the transport await budget is a
+   pure keep-alive heartbeat (the former task-level `timeout_seconds`
+   is deleted).
 7. **agentd raw status misreads working claude sessions as `blocked`**
    (the `❯` input box is visible mid-work). Cosmetic — contract
    validation, not status labels, decides completion — but operators and
