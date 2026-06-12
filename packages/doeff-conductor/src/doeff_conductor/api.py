@@ -274,17 +274,20 @@ class ConductorAPI:
         option: str,
         *,
         params: dict[str, Any] | None = None,
+        note: str = "",
     ) -> "WorkflowHandle":
         """Record an overseer gate answer and apply its closure-preserving verb."""
 
         from doeff_conductor.overseer import record_gate_answer
         from doeff_conductor.types import WorkflowStatus
+        from doeff_conductor.workflow_loader import workflow_snapshot_path
 
         run_state = record_gate_answer(
             self.state_dir,
             workflow_id=workflow_id,
             gate_id=gate_id,
             option=option,
+            note=note,
         )
         if option == "abort":
             handle = self.get_workflow(workflow_id)
@@ -306,12 +309,37 @@ class ConductorAPI:
             )
             self._save_workflow(aborted)
             return aborted
-        if option in {"proceed", "redirect"}:
+        if option == "proceed":
             return self.resume_workflow(
                 workflow_id,
                 params=params,
                 supervision=run_state.supervision,
             )
+        if option == "redirect":
+            handle = self.get_workflow(workflow_id)
+            if handle is None:
+                raise ValueError(f"Workflow not found: {workflow_id}")
+            snapshot_path: Path = workflow_snapshot_path(self.state_dir, workflow_id)
+            blocked = WorkflowHandle(
+                id=handle.id,
+                name=handle.name,
+                status=WorkflowStatus.BLOCKED,
+                template=handle.template,
+                issue_id=handle.issue_id,
+                created_at=handle.created_at,
+                updated_at=datetime.now(timezone.utc),
+                workspaces=handle.workspaces,
+                agents=handle.agents,
+                pr_url=handle.pr_url,
+                error=(
+                    f"redirect recorded for gate {gate_id}; "
+                    f"edit snapshot at {snapshot_path} then run: "
+                    f"conductor resume {workflow_id}"
+                ),
+                result_payload=handle.result_payload,
+            )
+            self._save_workflow(blocked)
+            return blocked
         raise ValueError(f"unsupported gate answer option: {option}")
 
     def list_workflows(

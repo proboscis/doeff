@@ -123,12 +123,16 @@ class ScenarioValidationReport:
     open_gates: tuple[OpenGateView, ...]
 
     def to_dict(self) -> dict[str, Any]:
+        closure_ok: bool = all(
+            terminal.terminal_kind in ALLOWED_TERMINAL_KINDS
+            for terminal in self.terminals
+        )
         return {
             "scenario": self.scenario,
             "workflow_name": self.workflow_name,
             "terminals": [terminal.to_dict() for terminal in self.terminals],
             "open_gates": [gate.to_dict() for gate in self.open_gates],
-            "closure_ok": True,
+            "closure_ok": closure_ok,
         }
 
 
@@ -142,12 +146,16 @@ class ValidationSuiteReport:
     supervision: str
 
     def to_dict(self) -> dict[str, Any]:
+        closure_ok: bool = all(
+            scenario.to_dict()["closure_ok"]
+            for scenario in self.scenarios
+        )
         return {
             "workflow_name": self.workflow_name,
             "interpreter": self.interpreter,
             "supervision": self.supervision,
             "scenarios": [scenario.to_dict() for scenario in self.scenarios],
-            "closure_ok": True,
+            "closure_ok": closure_ok,
         }
 
 

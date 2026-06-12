@@ -575,6 +575,15 @@ because where to pause is a trust/stakes judgment extrinsic to the task:
 - **Resume.** Unfinished `Launch` at crash → idempotent re-adoption by
   deterministic session name (level-triggered, supervised by agentd on the
   tmux substrate).
+- **Gate answer journal.** Gate answers (`proceed` / `redirect` / `abort`)
+  are recorded in `gate-answer-journal.jsonl` in the run directory. Each
+  entry carries `gate_id`, `workflow_id`, `option`, `outcome` (from the
+  selected `GateOption`), `note`, `answered_at`, and
+  `terminal_kind="gate-answer"`. The journal is append-only; re-adjudication
+  appends a new entry rather than editing in place (L-K5-2). `resume`
+  reads `latest_answers()` — the last answer per gate — as the authoritative
+  source of answered gate options, falling back to `run-state.json` for
+  backward compatibility with pre-journal runs.
 - **Workspace effects are not journaled — by design.** Workspace identity is
   deterministic from `(run-id, workspace-node identity)` (§6.1), so
   re-running `workspace!`/`merge!` on resume re-binds the same branch and
@@ -592,6 +601,9 @@ because where to pause is a trust/stakes judgment extrinsic to the task:
   or the profile registry (same enforcement pattern as agent-control-plane
   ADR 0005's semgrep boundary rules);
 - closure-law model check: stub scenario suite in CI (§7);
+- gate answer validation: `GateOption.outcome` must be in
+  `VALID_GATE_OUTCOMES` (`resume` | `abort`); `answer` records a durable
+  journal entry before any state transition (L-K5-1);
 - condemned-code list: ADR 0001 "Condemned existing code" — deletions, not
   deprecations.
 
