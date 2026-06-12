@@ -475,6 +475,11 @@ class ScenarioAgentHandler(MockAgentHandler):
     def handle_release_session(self, effect: ReleaseSessionEffect) -> None:
         self.released_sessions.append(effect.handle.session_id)
 
+    def configure_script(self, session_id: str, steps: list[ScenarioStep]) -> None:
+        """Replace a session's scripted outcomes (e.g. between park and resume)."""
+        self._scenario_scripts[session_id] = list(steps)
+        self._scenario_indices[session_id] = 0
+
     def launch_count(self, session_id: str) -> int:
         return self._launch_counts.get(session_id, 0)
 
