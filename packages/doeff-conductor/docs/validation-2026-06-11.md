@@ -45,7 +45,7 @@ state dirs, pane captures, or plan/validate outputs. ✅ = validated live,
 | FollowUp retry feedback | ✅ | run-1 attempts; retry path in review3 |
 | Result channel = in-workdir file, git-excluded | ✅ | .agentd-result.json + info/exclude |
 | Claude worker visibility (turn-end/latch/watchdog) | ❌→✅ | 4 defects fixed: f5a7517a, a11abb62, d47cf6c8, 06bcf25e |
-| Await budget default | ❌→✅ | 600s→3600s; owning axis still open (§11-7) |
+| Await budget default | ❌→✅ | 600s→3600s band-aid, then owning axis ratified as L-K4-3 (§11-7): per-await budget is a pure transport heartbeat; node deadlines live in `agent! :deadline-seconds` |
 | L2 single retry authority (no follow-up to terminal sessions) | ❌→✅ | killed 4 runs at completion boundaries; fixed 546d193a (AwaitOutcome.continuable) |
 | effort → worker argv delivery | ✅ | live: `codex --yolo -c 'model_reasoning_effort="xhigh"'` from profile binding |
 
@@ -97,7 +97,14 @@ whether legacy local tmux helpers for `run`/`stop` should remain in
 
 5. Workspace resume divergence — ✅ fixed b5854d60 (+ occurrence identity, F1/F2 review fixes)
 6. Auto-commit captures .agent-home session state — ✅ fixed e206be17
-7. Await budget owning axis — open
+7. Await budget owning axis — ✅ fixed: L-K4-3 ratified (ADR D13, spec
+   §5.1.1). Deadline is an `agent!` node-spec attribute
+   (`:deadline-seconds`, expansion-validated); exceed parks the
+   `deadline-exceeded` K5 gate; extension is only the journaled `extend`
+   gate answer (replay-stable, L-K5-2); `DEFAULT_AWAIT_BUDGET_SECONDS`
+   demoted to a pure transport heartbeat (task-level `timeout_seconds`
+   deleted + semgrep guard). E2E: `test_k4_deadline_owning_axis.py`
+   (park / extend-resume / replay / heartbeat transparency).
 8. blocked-status cosmetic misread — open
 9. §8 attention tiers live gap — 🧪 implementation fixed; MockConductorRuntime coverage green; live probe pending
 10. (candidate) doeff-agents CLI blind to agentd sessions — monitoring gap
