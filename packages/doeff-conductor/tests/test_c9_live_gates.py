@@ -11,7 +11,14 @@ from doeff_conductor.cli import cli
 from doeff_conductor.effects import AgentEffect, AgentTask, RandomCall, TimeCall
 from doeff_conductor.handlers.journaled_agent import JournaledAgentHandler
 from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
-from doeff_conductor.overseer import RUN_STATE_FILENAME, list_open_gates, progress_since
+from doeff_conductor.journal import GATE_ANSWER_JOURNAL_FILENAME, GateAnswerJournal
+from doeff_conductor.overseer import (
+    RUN_STATE_FILENAME,
+    VALID_GATE_OUTCOMES,
+    list_gates_with_status,
+    list_open_gates,
+    progress_since,
+)
 from doeff_conductor.replay_keying import ResolvedIdentity
 from doeff_conductor.types import WorkflowStatus
 from doeff_conductor.workflow_effect_journal import (
@@ -340,3 +347,261 @@ def test_live_phase_checkpoint_blocks_until_proceed(
     assert payload["status"] == "done"
     assert payload["result_payload"] == "built"
     assert list_open_gates(state_dir, run_id) == []
+
+
+# =========================================================================
+# K5 Gate Answer Journal Tests (L-K5-1 / L-K5-2)
+# =========================================================================
+
+
+def test_answer_abort_records_journal_and_terminates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L-K5-1: answer(abort) writes a journal entry and terminates the run."""
+    workflow_path = tmp_path / "live_gate.hy"
+    state_dir = tmp_path / "state"
+    run_id = "abort-journal"
+    _write_parallel_gate_workflow(workflow_path)
+
+    runtime = MockConductorRuntime(tmp_path / "runtime")
+    blocked_session_id = _cheap_session_id(run_id, "live-gate/0/parallel[0]/agent")
+    independent_session_id = _cheap_session_id(run_id, "live-gate/0/parallel[1]/agent")
+    runtime.configure_agent_script(blocked_session_id, [None])
+    runtime.configure_agent_script(independent_session_id, [{"summary": "independent done"}])
+    _install_mock_production_handlers(monkeypatch=monkeypatch, runtime=runtime)
+
+    first_handle = ConductorAPI(state_dir=state_dir).run_workflow(
+        str(workflow_path),
+        run_id=run_id,
+    )
+    assert first_handle.status is WorkflowStatus.BLOCKED
+    gate_id = list_open_gates(state_dir, run_id)[0]["gate_id"]
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--state-dir",
+            str(state_dir),
+            "answer",
+            run_id,
+            gate_id,
+            "abort",
+            "--note",
+            "rejected by overseer",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "aborted"
+
+    journal = GateAnswerJournal.for_run(run_id, state_dir=state_dir)
+    entries = journal.load_entries()
+    assert len(entries) == 1
+    assert entries[0].gate_id == gate_id
+    assert entries[0].option == "abort"
+    assert entries[0].outcome == "abort"
+    assert entries[0].note == "rejected by overseer"
+
+
+def test_answer_redirect_records_journal_and_stays_blocked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L-K5-1: redirect records journal, stays BLOCKED with snapshot guidance."""
+    workflow_path = tmp_path / "live_gate.hy"
+    state_dir = tmp_path / "state"
+    run_id = "redirect-journal"
+    _write_parallel_gate_workflow(workflow_path)
+
+    runtime = MockConductorRuntime(tmp_path / "runtime")
+    blocked_session_id = _cheap_session_id(run_id, "live-gate/0/parallel[0]/agent")
+    independent_session_id = _cheap_session_id(run_id, "live-gate/0/parallel[1]/agent")
+    runtime.configure_agent_script(blocked_session_id, [None])
+    runtime.configure_agent_script(independent_session_id, [{"summary": "independent done"}])
+    _install_mock_production_handlers(monkeypatch=monkeypatch, runtime=runtime)
+
+    first_handle = ConductorAPI(state_dir=state_dir).run_workflow(
+        str(workflow_path),
+        run_id=run_id,
+    )
+    assert first_handle.status is WorkflowStatus.BLOCKED
+    gate_id = list_open_gates(state_dir, run_id)[0]["gate_id"]
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--state-dir",
+            str(state_dir),
+            "answer",
+            run_id,
+            gate_id,
+            "redirect",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "blocked"
+    assert "conductor resume" in payload["error"]
+    assert "workflow.hy" in payload["error"]
+
+    journal = GateAnswerJournal.for_run(run_id, state_dir=state_dir)
+    entries = journal.load_entries()
+    assert len(entries) == 1
+    assert entries[0].option == "redirect"
+    assert entries[0].outcome == "resume"
+
+    runtime.configure_agent_script(blocked_session_id, [{"summary": "blocked recovered"}])
+    resumed_handle = ConductorAPI(state_dir=state_dir).resume_workflow(run_id)
+    assert resumed_handle.status is WorkflowStatus.DONE
+
+
+def test_answer_replay_determinism_l_k5_2(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L-K5-2: answer is part of replay identity; re-resume replays the same decision."""
+    workflow_path = tmp_path / "live_gate.hy"
+    state_dir = tmp_path / "state"
+    run_id = "replay-determinism"
+    _write_parallel_gate_workflow(workflow_path)
+
+    runtime = MockConductorRuntime(tmp_path / "runtime")
+    blocked_session_id = _cheap_session_id(run_id, "live-gate/0/parallel[0]/agent")
+    independent_session_id = _cheap_session_id(run_id, "live-gate/0/parallel[1]/agent")
+    runtime.configure_agent_script(blocked_session_id, [None])
+    runtime.configure_agent_script(independent_session_id, [{"summary": "independent done"}])
+    _install_mock_production_handlers(monkeypatch=monkeypatch, runtime=runtime)
+
+    first_handle = ConductorAPI(state_dir=state_dir).run_workflow(
+        str(workflow_path),
+        run_id=run_id,
+    )
+    assert first_handle.status is WorkflowStatus.BLOCKED
+    gate_id = list_open_gates(state_dir, run_id)[0]["gate_id"]
+
+    runtime.configure_agent_script(blocked_session_id, [{"summary": "blocked recovered"}])
+    api = ConductorAPI(state_dir=state_dir)
+    handle_1 = api.answer_gate(run_id, gate_id, "proceed")
+    assert handle_1.status is WorkflowStatus.DONE
+
+    journal = GateAnswerJournal.for_run(run_id, state_dir=state_dir)
+    answers_after_first = journal.latest_answers()
+    assert answers_after_first[gate_id] == "proceed"
+
+    handle_2 = api.resume_workflow(run_id)
+    assert handle_2.status is WorkflowStatus.DONE
+
+    answers_after_second = journal.latest_answers()
+    assert answers_after_second[gate_id] == "proceed"
+
+
+def test_gate_list_shows_answered_gates_as_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gate list shows answered gates with status=answered."""
+    workflow_path = tmp_path / "live_gate.hy"
+    state_dir = tmp_path / "state"
+    run_id = "gate-list-status"
+    _write_parallel_gate_workflow(workflow_path)
+
+    runtime = MockConductorRuntime(tmp_path / "runtime")
+    blocked_session_id = _cheap_session_id(run_id, "live-gate/0/parallel[0]/agent")
+    independent_session_id = _cheap_session_id(run_id, "live-gate/0/parallel[1]/agent")
+    runtime.configure_agent_script(blocked_session_id, [None])
+    runtime.configure_agent_script(independent_session_id, [{"summary": "independent done"}])
+    _install_mock_production_handlers(monkeypatch=monkeypatch, runtime=runtime)
+
+    ConductorAPI(state_dir=state_dir).run_workflow(
+        str(workflow_path),
+        run_id=run_id,
+    )
+    gates_before = list_gates_with_status(state_dir, run_id)
+    assert len(gates_before) == 1
+    assert gates_before[0]["status"] == "open"
+
+    gate_id = gates_before[0]["gate_id"]
+    runtime.configure_agent_script(blocked_session_id, [{"summary": "blocked recovered"}])
+    ConductorAPI(state_dir=state_dir).answer_gate(run_id, gate_id, "proceed")
+
+    gates_after = list_gates_with_status(state_dir, run_id)
+    answered_gates = [g for g in gates_after if g["status"] == "answered"]
+    assert len(answered_gates) == 1
+    assert answered_gates[0]["gate_id"] == gate_id
+    assert answered_gates[0]["option"] == "proceed"
+
+
+def test_gate_answer_cli_subcommand(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """conductor gate answer renders and works."""
+    workflow_path = tmp_path / "live_gate.hy"
+    state_dir = tmp_path / "state"
+    run_id = "gate-answer-cli"
+    _write_parallel_gate_workflow(workflow_path)
+
+    runtime = MockConductorRuntime(tmp_path / "runtime")
+    blocked_session_id = _cheap_session_id(run_id, "live-gate/0/parallel[0]/agent")
+    independent_session_id = _cheap_session_id(run_id, "live-gate/0/parallel[1]/agent")
+    runtime.configure_agent_script(blocked_session_id, [None])
+    runtime.configure_agent_script(independent_session_id, [{"summary": "independent done"}])
+    _install_mock_production_handlers(monkeypatch=monkeypatch, runtime=runtime)
+
+    ConductorAPI(state_dir=state_dir).run_workflow(
+        str(workflow_path),
+        run_id=run_id,
+    )
+    gate_id = list_open_gates(state_dir, run_id)[0]["gate_id"]
+
+    runtime.configure_agent_script(blocked_session_id, [{"summary": "blocked recovered"}])
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--state-dir",
+            str(state_dir),
+            "gate",
+            "answer",
+            run_id,
+            gate_id,
+            "proceed",
+            "--note",
+            "approved via gate subcommand",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "done"
+
+    journal = GateAnswerJournal.for_run(run_id, state_dir=state_dir)
+    entries = journal.load_entries()
+    assert len(entries) == 1
+    assert entries[0].note == "approved via gate subcommand"
+
+
+def test_gate_option_outcome_validation() -> None:
+    """Every GateOption constructed via from_dict must have outcome in VALID_GATE_OUTCOMES."""
+    from doeff_conductor.overseer import GateOption
+
+    valid_data: dict[str, str] = {
+        "name": "proceed",
+        "outcome": "resume",
+        "description": "Continue",
+    }
+    gate_option: GateOption = GateOption.from_dict(valid_data)
+    assert gate_option.outcome in VALID_GATE_OUTCOMES
+
+    invalid_data: dict[str, str] = {
+        "name": "proceed",
+        "outcome": "invalid_outcome",
+        "description": "Continue",
+    }
+    with pytest.raises(ValueError, match="not in"):
+        GateOption.from_dict(invalid_data)
