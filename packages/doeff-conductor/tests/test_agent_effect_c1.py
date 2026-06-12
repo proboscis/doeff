@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 from doeff_agents import AgentSessionLifecycle, AgentSessionSnapshot, AgentType, SessionStatus
+from doeff_agents.agentd_client import DEFAULT_AWAIT_BUDGET_SECONDS
 from doeff_agents.effects import AwaitOutcome, AwaitStatus
 from doeff_agents.result_validation import validate_result_payload
 from doeff_conductor import CreateWorkspace
@@ -265,7 +266,9 @@ def test_agent_handler_delegates_schema_agent_to_agentd_client(
         "payload_schema": IMPLEMENT_SCHEMA,
         "max_retries": 0,
     }
-    assert fake_client.awaited == [("run-agentd-implement-0", None)]
+    # The per-await budget is the transport keep-alive heartbeat (L-K4-3),
+    # never a task-level timeout field.
+    assert fake_client.awaited == [("run-agentd-implement-0", DEFAULT_AWAIT_BUDGET_SECONDS)]
 
 
 def test_agent_handler_has_no_subprocess_or_os_environ_imports() -> None:
