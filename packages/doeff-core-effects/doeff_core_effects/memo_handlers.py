@@ -7,7 +7,6 @@ Replaces the old cache_handlers module with cost-aware routing:
 
 from __future__ import annotations
 
-import contextlib
 import dataclasses
 import hashlib
 import json
@@ -160,74 +159,12 @@ def memo_handler(
         cost: Only handle effects matching this cost tier. None = handle all.
         name: Label for log messages (defaults to storage class name).
     """
-    if isinstance(cost, str):
-        cost = RecomputeCost(cost)
+    # Implementation lives in _memo_handlers_impl.hy (defhandler-based).
+    # Imported lazily: the impl module imports helpers from THIS module at
+    # its top level, so a top-level import here would be circular.
+    from doeff_core_effects._memo_handlers_impl import memo_handler as _hy_memo_handler
 
-    label = name or type(storage).__name__
-
-    from doeff_core_effects.effects import WriterTellEffect as Slog
-
-    @do
-    def handler(effect, k):  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
-        if not isinstance(effect, (MemoGetEffect, MemoExistsEffect, MemoPutEffect)):
-            yield Pass(effect, k)
-            return
-
-        if not _matches_cost(_effect_cost(effect), cost):
-            yield Pass(effect, k)
-            return
-
-        key = _storage_key(effect.key)
-
-        if isinstance(effect, MemoExistsEffect):
-            exists = yield storage.exists(key)
-            if exists:
-                result = yield Resume(k, True)
-                return result
-            # Not in this layer — re-perform to check outer layers.
-            # UnhandledEffect = no further outer storage = definitively not
-            # in any layer beyond this one, so resume with False.
-            try:
-                outer_exists = yield effect
-            except UnhandledEffect:
-                outer_exists = False
-            result = yield Resume(k, outer_exists)
-            return result
-
-        if isinstance(effect, MemoGetEffect):
-            exists = yield storage.exists(key)
-            if exists:
-                value = yield storage.get(key)
-                yield Slog(f"[memo-layer:{label}] HIT key={key[:16]}...")
-                result = yield Resume(k, value)
-                return result
-            # Miss — re-perform (outer handler resolves) → cache result.
-            # UnhandledEffect = no further outer storage AND not here →
-            # established miss signal: raise KeyError. Callers (@cache,
-            # make_memo_rewriter, sessioned-memo) catch KeyError as miss.
-            yield Slog(f"[memo-layer:{label}] MISS key={key[:16]}... → re-performing")
-            try:
-                outer_value = yield effect
-            except UnhandledEffect as exc:
-                raise KeyError(effect.key) from exc
-            yield storage.put(key, outer_value)
-            yield Slog(f"[memo-layer:{label}] WRITE-THROUGH key={key[:16]}...")
-            result = yield Resume(k, outer_value)
-            return result
-
-        # MemoPutEffect — write to this layer AND broadcast to outer layers.
-        # UnhandledEffect from re-perform = no further outer storage =
-        # broadcast complete (this layer was the outermost). Swallow and
-        # resume the caller with None — the user should not see an exception
-        # when all storage layers successfully stored.
-        yield storage.put(key, effect.value)
-        yield Slog(f"[memo-layer:{label}] PUT key={key[:16]}...")
-        with contextlib.suppress(UnhandledEffect):
-            yield effect  # re-perform → outer handlers also store
-        result = yield Resume(k, None)
-        return result
-
-    return _program_handler(handler)
+    return _hy_memo_handler(storage, cost=cost, name=name)
 
 
 def in_memory_memo_handler():
