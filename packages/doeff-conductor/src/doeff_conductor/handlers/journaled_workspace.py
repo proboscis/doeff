@@ -46,9 +46,14 @@ class JournaledWorkspaceHandler:
         delegate: Callable[[CreateWorkspace], Workspace],
         *,
         state_dir: str | Path | None = None,
-        run_id: str | None = None,
+        run_id: str,
         resolve_path: Callable[[Workspace], Path] | None = None,
     ) -> None:
+        if not run_id:
+            raise ValueError(
+                "JournaledWorkspaceHandler requires a non-empty run_id; "
+                "journaling into an unknown run directory is a silent misconfiguration"
+            )
         self._delegate = delegate
         self._state_dir = Path(state_dir) if state_dir is not None else None
         self._run_id = run_id
@@ -81,7 +86,7 @@ class JournaledWorkspaceHandler:
 
     def handle_create_workspace(self, effect: CreateWorkspace) -> Workspace:
         """Delegate to real handler, then journal if this is a new workspace_id."""
-        run_id: str = self._run_id or "unknown"
+        run_id: str = self._run_id
         journal: WorkspaceJournal = self._journal_for(run_id)
         known_workspaces: dict[str, CreateWorkspaceJournalEntry] = journal.latest_workspaces()
 

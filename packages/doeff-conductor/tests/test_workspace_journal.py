@@ -222,6 +222,28 @@ def _make_stub_delegate(
 
 
 class TestJournaledWorkspaceHandler:
+    def test_none_run_id_raises_at_construction(self, tmp_path: Path) -> None:
+        tracker: list[str] = []
+        delegate, resolve_path = _make_stub_delegate(tracker)
+        with pytest.raises(ValueError, match="non-empty run_id"):
+            JournaledWorkspaceHandler(
+                delegate,
+                state_dir=tmp_path,
+                run_id=None,  # type: ignore[arg-type]
+                resolve_path=resolve_path,
+            )
+
+    def test_empty_run_id_raises_at_construction(self, tmp_path: Path) -> None:
+        tracker: list[str] = []
+        delegate, resolve_path = _make_stub_delegate(tracker)
+        with pytest.raises(ValueError, match="non-empty run_id"):
+            JournaledWorkspaceHandler(
+                delegate,
+                state_dir=tmp_path,
+                run_id="",
+                resolve_path=resolve_path,
+            )
+
     def test_first_call_delegates_and_journals(self, tmp_path: Path) -> None:
         tracker: list[str] = []
         delegate, resolve_path = _make_stub_delegate(tracker)
