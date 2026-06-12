@@ -11,7 +11,8 @@ from doeff_core_effects import Ask, Try, slog
 from doeff_core_effects.handlers import reader, try_handler, writer
 from doeff_vm import EffectBase
 
-from doeff import Pass, Resume, WithHandler, do, run
+from doeff import Pass, Resume, do, run
+from doeff import handler as _program_handler
 
 
 class CustomEffect(EffectBase):
@@ -46,7 +47,7 @@ def test_ask_inside_try_with_reader_outer():
     env = {"llm_model": "gpt-5.4"}
     wrapped = prog()
     for h in reversed([reader(env=env), try_handler]):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _program_handler(h)(wrapped)
 
     result = run(wrapped)
     assert result.value == "model=gpt-5.4"
@@ -74,7 +75,7 @@ def test_custom_effect_inside_try_handler_inner():
     wrapped = prog()
     # reader (outer) → try_handler → custom_handler (inner)
     for h in reversed([reader(env=env), try_handler, custom_handler]):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _program_handler(h)(wrapped)
 
     result = run(wrapped)
     assert result.value == "handled:gpt-5.4"
@@ -95,7 +96,7 @@ def test_custom_effect_inside_try_handler_outer():
     wrapped = prog()
     # custom_handler (outer) → try_handler (inner)
     for h in reversed([custom_handler, try_handler]):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _program_handler(h)(wrapped)
 
     result = run(wrapped)
     assert result.value == "handled:test"
@@ -119,7 +120,7 @@ def test_multiple_effects_inside_try_mixed_handlers():
     wrapped = prog()
     # reader (outer) → writer → try_handler → custom_handler (inner)
     for h in reversed([reader(env=env), writer(), try_handler, custom_handler]):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _program_handler(h)(wrapped)
 
     result = run(wrapped)
     assert result.value == "handled:gpt-5.4"
@@ -139,7 +140,7 @@ def test_try_error_with_inner_handler():
 
     wrapped = prog()
     for h in reversed([try_handler, custom_handler]):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _program_handler(h)(wrapped)
 
     result = run(wrapped)
     assert result.is_err()

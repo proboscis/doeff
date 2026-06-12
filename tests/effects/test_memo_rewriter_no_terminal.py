@@ -4,7 +4,8 @@ from doeff_core_effects.handlers import await_handler, slog_handler
 from doeff_core_effects.memo_handlers import in_memory_memo_handler, make_memo_rewriter
 from doeff_core_effects.scheduler import scheduled
 
-from doeff import EffectBase, Pass, Resume, WithHandler, do, run
+from doeff import EffectBase, Pass, Resume, do, run
+from doeff import handler as _install_raw_handler
 
 
 @dataclass(frozen=True)
@@ -15,7 +16,7 @@ class Lookup(EffectBase):
 def _with_handlers(program, *handlers):
     wrapped = program
     for handler in reversed(handlers):
-        wrapped = WithHandler(handler, wrapped)
+        wrapped = _install_raw_handler(handler)(wrapped)
     return wrapped
 
 
@@ -29,7 +30,7 @@ def _lookup_handler(calls):
         calls["count"] += 1
         return (yield Resume(k, f"value:{effect.key}"))
 
-    return handler
+    return _install_raw_handler(handler)
 
 
 def test_memo_rewriter_uses_storage_without_terminal_and_hits_on_second_call():

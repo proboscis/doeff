@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from doeff import Effect, Pass, Resume, do
+from doeff import handler as _program_handler
 from doeff_flow.effects import TraceAnnotate, TraceCapture, TracePush, TraceSnapshot
 from doeff_flow.trace import (
     LiveTrace,
@@ -163,7 +164,7 @@ def production_handlers(
             return (yield Resume(k, captured))
         return (yield Pass())
 
-    return handler
+    return _program_handler(handler)
 
 
 __all__ = [

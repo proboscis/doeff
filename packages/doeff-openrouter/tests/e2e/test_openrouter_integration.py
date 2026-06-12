@@ -23,11 +23,11 @@ from doeff import (
     EffectGenerator,
     Pass,
     Resume,
-    WithHandler,
     default_handlers,
     do,
     run,
 )
+from doeff import handler as _program_handler
 
 MOCK_STRUCTURED_MODELS = [
     pytest.param("openai/gpt-4o-mini", True, id="openai-gpt-4o-mini"),
@@ -107,7 +107,7 @@ def _build_mock_handler(client: MockOpenRouterClient) -> Callable[..., Any]:
             return (yield Resume(k, "fake-key"))
         yield Pass()
 
-    return handler
+    return _program_handler(handler)
 
 
 @pytest.fixture(scope="module")
@@ -148,7 +148,7 @@ def test_chat_completion_and_structured_response_with_handler_mock(
         return raw_response
 
     raw_result = run(
-        WithHandler(_build_mock_handler(mock_client), flow()),
+        _build_mock_handler(mock_client)(flow()),
         handlers=handlers,
         store={"openrouter_api_calls": []},
     )

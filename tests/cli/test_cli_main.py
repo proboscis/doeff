@@ -7,6 +7,7 @@ import json
 import pytest
 
 from doeff import __main__ as cli
+from doeff import handler as _program_handler
 from doeff import run
 
 pytestmark = pytest.mark.cli
@@ -70,7 +71,6 @@ def _env_interpreter(program, env=None):
     )
     from doeff_core_effects.scheduler import scheduled
 
-    from doeff import WithHandler
 
     env_dict = {}
     if env is not None:
@@ -83,7 +83,7 @@ def _env_interpreter(program, env=None):
     ]
     wrapped = program
     for h in reversed(handlers):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _program_handler(h)(wrapped)
     return run(scheduled(wrapped))
 
 

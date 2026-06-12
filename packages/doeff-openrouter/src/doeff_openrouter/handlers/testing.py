@@ -14,6 +14,7 @@ from doeff_llm.effects import (
 )
 
 from doeff import Pass, Resume, do
+from doeff import handler as _program_handler
 from doeff_openrouter.effects import (
     RouterChat,
     RouterStreamingChat,
@@ -87,7 +88,7 @@ def mock_handlers(
     def handler(effect: Any, k: Any):
         return (yield openrouter_mock_handler(effect, k, runtime=active_runtime))
 
-    return handler
+    return _program_handler(handler)
 
 
 @do

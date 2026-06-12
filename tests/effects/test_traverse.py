@@ -8,7 +8,7 @@ from doeff_traverse.handlers import fail_handler, normalize_to_none, sequential
 from doeff_traverse.helpers import try_call
 
 from doeff import do, run
-from doeff.program import WithHandler
+from doeff import handler as _program_handler
 
 
 def run_with(program, handlers=None):
@@ -20,12 +20,12 @@ def run_with(program, handlers=None):
     Extra handlers sit between try_handler and fail_handler,
     so they intercept Fail before fail_handler raises it.
     """
-    body = WithHandler(try_handler, program)
+    body = try_handler(program)
     if handlers:
         for h in handlers:
-            body = WithHandler(h, body)
-    body = WithHandler(fail_handler, body)
-    body = WithHandler(sequential(), body)
+            body = _program_handler(h)(body)
+    body = fail_handler(body)
+    body = sequential()(body)
     body = scheduled(body)
     return run(body)
 

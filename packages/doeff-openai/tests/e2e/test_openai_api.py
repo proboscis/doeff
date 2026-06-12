@@ -33,9 +33,9 @@ from doeff import (
     EffectGenerator,
     Pass,
     Resume,
-    WithHandler,
     do,
 )
+from doeff import handler as _program_handler
 
 # Mark all tests in this module as e2e
 pytestmark = pytest.mark.e2e
@@ -128,14 +128,14 @@ def _make_mock_handler(mock_client: Mock):
             return (yield Resume(k, "sk-fake-test-key"))
         yield Pass(effect, k)
 
-    return mock_handler
+    return _program_handler(mock_handler)
 
 
 async def run_with_mock_handler(program: Any, mock_create: AsyncMock):
     """Run a program with handler-provided OpenAI client mocks."""
     mock_client = _make_mock_client(mock_create)
     result = await run_program(
-        WithHandler(_make_mock_handler(mock_client), program)
+        _make_mock_handler(mock_client)(program)
     )
     return result
 
@@ -538,7 +538,7 @@ async def test_real_api_unstructured_response():
         return result
 
     result = await run_program(
-        WithHandler(openai_api_key_from_doeff_py_handler, test_program()),
+        openai_api_key_from_doeff_py_handler(test_program()),
     )
 
     assert result.is_ok()
@@ -566,7 +566,7 @@ async def test_real_api_structured_response():
         return result
 
     result = await run_program(
-        WithHandler(openai_api_key_from_doeff_py_handler, test_program()),
+        openai_api_key_from_doeff_py_handler(test_program()),
     )
 
     assert result.is_ok()

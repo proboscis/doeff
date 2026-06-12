@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from doeff_vm import Pass, Resume, WithHandler
+from doeff_vm import Pass, Resume
 
 # REMOVED: from doeff import ProgramCallStack
 from doeff import Effect, EffectBase, Program, do
+from doeff import handler as _install_raw_handler
 from tests._run_helpers import run_with_defaults
 
 # REMOVED: from doeff.trace import TraceDispatch
@@ -45,7 +46,7 @@ def test_delegation_chain_routes_to_outer_handler() -> None:
         result = yield NeedsHandler(value=7)
         return result
 
-    wrapped = WithHandler(outer_handler, WithHandler(inner_handler, body()))
+    wrapped = _install_raw_handler(outer_handler)(_install_raw_handler(inner_handler)(body()))
     result = run_with_defaults(wrapped)
     assert result.is_ok(), result.error
     assert result.value == 7

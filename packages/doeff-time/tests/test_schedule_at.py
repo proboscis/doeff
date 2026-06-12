@@ -7,7 +7,8 @@ from doeff_time.effects import Delay, GetTime, ScheduleAt
 from doeff_time.handlers import sim_time_handler
 
 from conftest import run_with_handlers
-from doeff import Effect, EffectBase, Pass, Resume, WithHandler, do
+from doeff import Effect, EffectBase, Pass, Resume, do
+from doeff import handler as _program_handler
 
 
 def _make_marker_program(marker: dict[str, bool]):
@@ -39,7 +40,7 @@ def _outer_handler(marker: dict[str, bool]):
             return (yield Resume(k, None))
         yield Pass(effect, k)
 
-    return _handler
+    return _program_handler(_handler)
 
 
 def test_schedule_at_executes_program_when_clock_advances() -> None:
@@ -55,7 +56,7 @@ def test_schedule_at_executes_program_when_clock_advances() -> None:
         yield Wait(task)
 
     run_with_handlers(
-        WithHandler(sim_time_handler(), program()),
+        sim_time_handler()(program()),
     )
     assert marker["done"] is True
 
@@ -72,9 +73,6 @@ def test_schedule_at_preserves_outer_handler_stack() -> None:
         yield Wait(task)
 
     run_with_handlers(
-        WithHandler(
-            _outer_handler(marker),
-            WithHandler(sim_time_handler(), program()),
-        ),
+        _outer_handler(marker)(sim_time_handler()(program())),
     )
     assert marker["done"] is True

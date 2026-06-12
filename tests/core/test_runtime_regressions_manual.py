@@ -16,9 +16,9 @@ from doeff import (
     Resume,
     Spawn,
     Try,
-    WithHandler,
     do,
 )
+from doeff import handler as _install_raw_handler
 from tests._run_helpers import run_with_defaults
 
 
@@ -84,7 +84,7 @@ def test_try_wraps_handler_raised_error_as_result_value() -> None:
 
     @do
     def program():
-        return (yield Try(WithHandler(handler, inner())))
+        return (yield Try(_install_raw_handler(handler)(inner())))
 
     result = run_with_defaults(program())
     assert result.is_ok()

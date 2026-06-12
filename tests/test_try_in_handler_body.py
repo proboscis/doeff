@@ -10,7 +10,8 @@ from doeff_core_effects import Ask, Try
 from doeff_core_effects.handlers import reader, try_handler
 from doeff_vm import EffectBase
 
-from doeff import Pass, Resume, WithHandler, do, run
+from doeff import Pass, Resume, do, run
+from doeff import handler as _program_handler
 
 
 class LLMQuery(EffectBase):
@@ -53,7 +54,7 @@ def test_try_in_handler_body_reaches_outer_try_handler():
     # reader (outer) → try_handler → llm_handler (inner)
     wrapped = prog()
     for h in reversed([reader(env=env), try_handler, llm_handler_that_uses_try]):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _program_handler(h)(wrapped)
 
     result = run(wrapped)
     assert result == "response from sk-test: hello"
@@ -80,7 +81,7 @@ def test_try_in_handler_body_catches_error():
 
     wrapped = prog()
     for h in reversed([reader(env={}), try_handler, llm_handler_error]):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _program_handler(h)(wrapped)
 
     result = run(wrapped)
     assert result == "caught: True"

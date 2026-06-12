@@ -3,7 +3,7 @@
 
 (require doeff-hy.macros [defk <- defhandler])
 
-(import doeff [Pass Resume WithHandler do :as _doeff-do])
+(import doeff [Pass Resume do :as _doeff-do])
 (import doeff [EffectBase])
 (import dataclasses [dataclass])
 

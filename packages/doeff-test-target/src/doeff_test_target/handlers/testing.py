@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from doeff import Effect, Pass, Resume, do
+from doeff import handler as _program_handler
 from doeff_test_target.effects import ReadFixtureValue, RecordFixtureEvent
 
 ProtocolHandler = Callable[[Any, Any], Any]
@@ -51,7 +52,7 @@ def mock_handlers(
             return (yield from active_runtime.handle_record_event(effect, k))
         return (yield Pass())
 
-    return handler
+    return _program_handler(handler)
 
 
 __all__ = [

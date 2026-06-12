@@ -12,7 +12,7 @@ Run:
 
 from doeff_preset import preset_handlers
 
-from doeff import Ask, WithHandler, default_handlers, do, run, slog
+from doeff import Ask, default_handlers, do, run, slog
 
 
 @do
@@ -47,7 +47,7 @@ def main():
     # Example 1: Default configuration
     print("=== Default Configuration ===\n")
     result = run(
-        WithHandler(preset_handlers(), configurable_workflow()),
+        preset_handlers()(configurable_workflow()),
         handlers=default_handlers(),
     )
     print(f"\nConfig: {result.value}")
@@ -62,7 +62,7 @@ def main():
         }
     )
     result2 = run(
-        WithHandler(custom_handlers, configurable_workflow()),
+        custom_handlers(configurable_workflow()),
         handlers=default_handlers(),
     )
     print(f"\nConfig: {result2.value}")

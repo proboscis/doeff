@@ -14,7 +14,8 @@ from dataclasses import dataclass
 
 from doeff_preset import preset_handlers
 
-from doeff import Delegate, EffectBase, Resume, WithHandler, default_handlers, do, run, slog
+from doeff import Delegate, EffectBase, Resume, default_handlers, do, run, slog
+from doeff import handler as _install_raw_handler
 
 
 # Define a custom domain effect
@@ -86,16 +87,7 @@ def main():
     print("=== Merging Handlers Example ===\n")
 
     # Stack handlers explicitly: inner handlers shadow outer handlers.
-    stacked_program = WithHandler(
-        preset_handlers(),
-        WithHandler(
-            handle_fetch_user,
-            WithHandler(
-                handle_send_email,
-                notification_workflow(user_id=1, message="Hello from doeff!"),
-            ),
-        ),
-    )
+    stacked_program = preset_handlers()(_install_raw_handler(handle_fetch_user)(_install_raw_handler(handle_send_email)(notification_workflow(user_id=1, message="Hello from doeff!"))))
     result = run(
         stacked_program,
         handlers=default_handlers(),

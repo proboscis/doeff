@@ -14,7 +14,7 @@ from doeff_openai.effects import StructuredOutput
 from doeff_openai.handlers import production_handlers
 from pydantic import BaseModel
 
-from doeff import EffectGenerator, WithHandler, do
+from doeff import EffectGenerator, do
 
 pytestmark = pytest.mark.e2e
 
@@ -37,9 +37,7 @@ async def _async_run_with_handler(program, handler):
     environment variables.
     """
     return await run_program(
-        WithHandler(
-            openai_api_key_from_doeff_py_handler, WithHandler(handler, program)
-        )
+        openai_api_key_from_doeff_py_handler(handler(program))
     )
 
 

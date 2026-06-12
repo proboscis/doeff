@@ -3,13 +3,14 @@ from doeff_core_effects.handlers import await_handler, slog_handler
 from doeff_core_effects.memo_handlers import in_memory_memo_handler
 from doeff_core_effects.scheduler import scheduled
 
-from doeff import WithHandler, do, run
+from doeff import do, run
+from doeff import handler as _program_handler
 
 
 def _with_handlers(program, *handlers):
     wrapped = program
     for handler in reversed(handlers):
-        wrapped = WithHandler(handler, wrapped)
+        wrapped = _program_handler(handler)(wrapped)
     return wrapped
 
 

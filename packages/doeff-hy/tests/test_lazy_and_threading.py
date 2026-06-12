@@ -12,7 +12,8 @@ from doeff_core_effects.effects import Get, Put
 from doeff_core_effects.handlers import lazy_ask, state
 from doeff_core_effects.scheduler import scheduled
 
-from doeff import EffectBase, Some, WithHandler, do
+from doeff import EffectBase, Some, do
+from doeff import handler as _install_raw_handler
 from doeff import run as doeff_run
 
 # ── Test effects ──────────────────────────────────────────────────
@@ -38,7 +39,7 @@ def run_with(program, env=None, store=None):
         state(initial=store or {}),
     ]
     for h in reversed(handlers):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _install_raw_handler(h)(wrapped)
     wrapped = scheduled(wrapped)
     return doeff_run(wrapped)
 
@@ -59,7 +60,7 @@ class TestLazyHandlerMacro:
         code = """
 (require doeff-hy.macros [defk defp <-])
 (require doeff-hy.handle [defhandler])
-(import doeff [do :as _doeff-do EffectBase WithHandler Some Nothing run :as doeff-run])
+(import doeff [do :as _doeff-do EffectBase Some Nothing run :as doeff-run])
 (import doeff_core_effects [Ask Get Put state])
 (import doeff_core_effects.handlers [lazy-ask])
 (import doeff_core_effects.scheduler [scheduled])
@@ -82,9 +83,9 @@ class TestLazyHandlerMacro:
   [r1 r2])
 
 (setv wrapped body)
-(setv wrapped (WithHandler my-handler wrapped))
+(setv wrapped (my-handler wrapped))
 (for [h (reversed [(lazy-ask :env {"endpoint" "localhost"}) (state)])]
-  (setv wrapped (WithHandler h wrapped)))
+  (setv wrapped (h wrapped)))
 (setv wrapped (scheduled wrapped))
 (setv _result (doeff-run wrapped))
 (assert (= _result ["client:localhost:a" "client:localhost:b"]))
@@ -124,7 +125,7 @@ class TestLazyHandlerMacro:
             return [r1, r2]
 
         result = run_with(
-            WithHandler(handler_with_lazy, body()),
+            _install_raw_handler(handler_with_lazy)(body()),
         )
         assert result == ["initialized-client:a", "initialized-client:b"]
 
@@ -154,7 +155,7 @@ class TestLazyHandlerMacro:
             return [r1, r2]
 
         result = run_with(
-            WithHandler(handler_with_lazy_none, body()),
+            _install_raw_handler(handler_with_lazy_none)(body()),
         )
         assert result == [None, None]
         assert init_count[0] == 1, "Init should run exactly once, not twice"
@@ -194,7 +195,7 @@ class TestLazyHandlerHyIntegration:
         code = """
 (require doeff-hy.macros [defp <-])
 (require doeff-hy.handle [defhandler])
-(import doeff [do :as _doeff-do EffectBase WithHandler run :as doeff-run])
+(import doeff [do :as _doeff-do EffectBase run :as doeff-run])
 (import doeff_core_effects [Ask Get Put state])
 (import doeff_core_effects.handlers [lazy-ask])
 (import doeff_core_effects.scheduler [scheduled])
@@ -216,9 +217,9 @@ class TestLazyHandlerHyIntegration:
   [r1 r2])
 
 (setv wrapped body)
-(setv wrapped (WithHandler greet-handler wrapped))
+(setv wrapped (greet-handler wrapped))
 (for [h (reversed [(lazy-ask :env {"prefix" "Hi"}) (state)])]
-  (setv wrapped (WithHandler h wrapped)))
+  (setv wrapped (h wrapped)))
 (setv wrapped (scheduled wrapped))
 (setv __test_result__ (doeff-run wrapped))
 """
@@ -258,7 +259,7 @@ class TestLazyHandlerHyIntegration:
         code = """
 (require doeff-hy.macros [defp <-])
 (require doeff-hy.handle [defhandler])
-(import doeff [do :as _doeff-do EffectBase WithHandler run :as doeff-run])
+(import doeff [do :as _doeff-do EffectBase run :as doeff-run])
 (import doeff_core_effects [Ask Get Put])
 (import doeff_core_effects.handlers [lazy-ask])
 (import doeff_core_effects.scheduler [scheduled])
@@ -282,8 +283,7 @@ class TestLazyHandlerHyIntegration:
             hy.eval(hy.read_many(code), module=mod)
 
             prog = mod.body
-            wrapped = WithHandler(spy_state,
-                        WithHandler(mod.ping_handler2, prog))
+            wrapped = _install_raw_handler(spy_state)(mod.ping_handler2(prog))
             wrapped = scheduled(wrapped)
             doeff_run(wrapped)
 
@@ -312,7 +312,7 @@ class TestLazyDefk:
 
         code = """
 (require doeff-hy.macros [defk defp <-])
-(import doeff [do :as _doeff-do EffectBase WithHandler run :as doeff-run])
+(import doeff [do :as _doeff-do EffectBase run :as doeff-run])
 (import doeff_core_effects [Ask Get Put state])
 (import doeff_core_effects.handlers [lazy-ask])
 (import doeff_core_effects.scheduler [scheduled])
@@ -331,7 +331,7 @@ class TestLazyDefk:
 
 (setv wrapped body)
 (for [h (reversed [(lazy-ask :env {"prefix" "X"}) (state)])]
-  (setv wrapped (WithHandler h wrapped)))
+  (setv wrapped (h wrapped)))
 (setv wrapped (scheduled wrapped))
 (setv __test_result__ (doeff-run wrapped))
 """
@@ -362,7 +362,7 @@ class TestThreadingMacro:
 
         code = """
 (require doeff-hy.macros [defk defp <- <->])
-(import doeff [do :as _doeff-do EffectBase WithHandler run :as doeff-run])
+(import doeff [do :as _doeff-do EffectBase run :as doeff-run])
 (import doeff_core_effects [Ask])
 (import doeff_core_effects.handlers [lazy-ask])
 (import doeff_core_effects.scheduler [scheduled])
@@ -502,7 +502,7 @@ class TestLazyValVar:
         code2 = """
 (require doeff-hy.macros [defp <-])
 (require doeff-hy.handle [defhandler])
-(import doeff [do :as _doeff-do EffectBase WithHandler run :as doeff-run])
+(import doeff [do :as _doeff-do EffectBase run :as doeff-run])
 (import doeff_core_effects [Get Put state])
 (import doeff_core_effects.scheduler [scheduled])
 (import dataclasses [dataclass])
@@ -518,8 +518,8 @@ class TestLazyValVar:
   r)
 
 (setv wrapped body)
-(setv wrapped (WithHandler val-handler wrapped))
-(setv wrapped (WithHandler (state) wrapped))
+(setv wrapped (val-handler wrapped))
+(setv wrapped ((state) wrapped))
 (setv wrapped (scheduled wrapped))
 (setv __test_result__ (doeff-run wrapped))
 """
@@ -535,7 +535,7 @@ class TestLazyValVar:
         code = """
 (require doeff-hy.macros [defk defp <- set!])
 (require doeff-hy.handle [defhandler])
-(import doeff [do :as _doeff-do EffectBase WithHandler run :as doeff-run])
+(import doeff [do :as _doeff-do EffectBase run :as doeff-run])
 (import doeff_core_effects [Get Put state])
 (import doeff_core_effects.scheduler [scheduled])
 (import dataclasses [dataclass])
@@ -558,8 +558,8 @@ class TestLazyValVar:
   [c0 c1 c2 c3])
 
 (setv wrapped body)
-(setv wrapped (WithHandler counter-handler wrapped))
-(setv wrapped (WithHandler (state) wrapped))
+(setv wrapped (counter-handler wrapped))
+(setv wrapped ((state) wrapped))
 (setv wrapped (scheduled wrapped))
 (setv __test_result__ (doeff-run wrapped))
 """
@@ -575,7 +575,7 @@ class TestLazyValVar:
         code = """
 (require doeff-hy.macros [defk defp <- set!])
 (require doeff-hy.handle [defhandler])
-(import doeff [do :as _doeff-do EffectBase WithHandler run :as doeff-run Some])
+(import doeff [do :as _doeff-do EffectBase run :as doeff-run Some])
 (import doeff_core_effects [Get Put state])
 (import doeff_core_effects.scheduler [scheduled])
 (import dataclasses [dataclass])
@@ -599,8 +599,8 @@ class TestLazyValVar:
   result)
 
 (setv wrapped body)
-(setv wrapped (WithHandler bag-handler wrapped))
-(setv wrapped (WithHandler (state) wrapped))
+(setv wrapped (bag-handler wrapped))
+(setv wrapped ((state) wrapped))
 (setv wrapped (scheduled wrapped))
 (setv __test_result__ (doeff-run wrapped))
 """
@@ -637,7 +637,7 @@ class TestLazyValVar:
         import sys
         code = """
 (require doeff-hy.macros [defk defp <- set!])
-(import doeff [do :as _doeff-do EffectBase WithHandler run :as doeff-run])
+(import doeff [do :as _doeff-do EffectBase run :as doeff-run])
 (import doeff_core_effects [Get Put state])
 (import doeff_core_effects.scheduler [scheduled])
 
@@ -653,7 +653,7 @@ class TestLazyValVar:
   [r1 r2])
 
 (setv wrapped body)
-(setv wrapped (WithHandler (state) wrapped))
+(setv wrapped ((state) wrapped))
 (setv wrapped (scheduled wrapped))
 (setv __test_result__ (doeff-run wrapped))
 """
@@ -671,7 +671,7 @@ class TestLazyValVar:
         code = """
 (require doeff-hy.macros [defp <-])
 (require doeff-hy.handle [defhandler])
-(import doeff [do :as _doeff-do EffectBase WithHandler run :as doeff-run])
+(import doeff [do :as _doeff-do EffectBase run :as doeff-run])
 (import doeff_core_effects [Ask Get Put state])
 (import doeff_core_effects.handlers [lazy-ask])
 (import doeff_core_effects.scheduler [scheduled])
@@ -692,9 +692,9 @@ class TestLazyValVar:
   r)
 
 (setv wrapped body)
-(setv wrapped (WithHandler pair-handler wrapped))
+(setv wrapped (pair-handler wrapped))
 (for [h (reversed [(lazy-ask :env {"session_id" "s1"}) (state)])]
-  (setv wrapped (WithHandler h wrapped)))
+  (setv wrapped (h wrapped)))
 (setv wrapped (scheduled wrapped))
 (setv __test_result__ (doeff-run wrapped))
 """

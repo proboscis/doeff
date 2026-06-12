@@ -9,6 +9,7 @@ from doeff_image.effects import ImageEdit, ImageGenerate
 from doeff_image.types import ImageResult
 
 from doeff import EffectGenerator, Pass, Resume, do
+from doeff import handler as _program_handler
 from doeff_seedream.effects import SeedreamGenerate, SeedreamStructuredOutput
 from doeff_seedream.structured_llm import _edit_image__seedream4_impl
 from doeff_seedream.types import SeedreamImageEditResult
@@ -175,7 +176,7 @@ def production_handlers(
             return (yield Resume(k, value))
         yield Pass()
 
-    return handler
+    return _program_handler(handler)
 
 
 __all__ = [

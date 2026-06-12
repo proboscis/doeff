@@ -4,7 +4,8 @@
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from doeff import WithHandler, async_run, default_handlers
+from doeff import async_run, default_handlers
+from doeff import handler as _program_handler
 
 ProtocolHandler = Callable[[Any, Any], Any]
 
@@ -20,7 +21,7 @@ async def run_program(
     """Run a program with explicit ``WithHandler`` stacking plus runtime handlers."""
     wrapped = program
     for handler in reversed(tuple(scoped_handlers)):
-        wrapped = WithHandler(handler=handler, expr=wrapped)
+        wrapped = _program_handler(handler)(wrapped)
 
     return await async_run(
         wrapped,

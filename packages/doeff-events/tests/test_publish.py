@@ -7,7 +7,7 @@ from doeff_core_effects.scheduler import Spawn, Wait
 from doeff_events.effects import Publish, WaitForEvent
 from doeff_events.handlers import event_handler
 
-from doeff import WithHandler, do, run
+from doeff import do, run
 
 
 @dataclass(frozen=True)
@@ -28,7 +28,7 @@ def test_publish_with_no_listeners_is_noop() -> None:
         return "ok"
 
     result = run(
-        WithHandler(event_handler(), program()),
+        event_handler()(program()),
         handlers=default_handlers(),  # noqa: F821 - legacy removed API reference is intentionally preserved
     )
 
@@ -59,7 +59,7 @@ def test_composes_with_spawn_producer_consumer_pattern() -> None:
         return (processed, producer_status)
 
     result = run(
-        WithHandler(event_handler(), program()),
+        event_handler()(program()),
         handlers=default_handlers(),  # noqa: F821 - legacy removed API reference is intentionally preserved
     )
 

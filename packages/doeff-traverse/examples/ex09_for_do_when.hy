@@ -12,7 +12,6 @@
 (require doeff-hy.macros [defk <- for/do fold])
 (import doeff [do :as _doeff-do])
 (import doeff [run])
-(import doeff.program [WithHandler])
 
 (import doeff_core_effects [try-handler :as try_handler])
 (import doeff_core_effects.scheduler [scheduled])
@@ -88,7 +87,7 @@
 (defn with-stack [stack program]
   (setv body program)
   (for [h stack]
-    (setv body (WithHandler h body)))
+    (setv body (h body)))
   (scheduled body))
 
 (setv stack [try_handler fail_handler (sequential)])

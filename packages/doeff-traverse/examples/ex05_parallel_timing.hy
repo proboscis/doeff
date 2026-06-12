@@ -11,7 +11,7 @@
 (require doeff-hy.macros [defk <- traverse fnk])
 (import doeff [do :as _doeff-do])
 (import doeff [run EffectBase])
-(import doeff.program [WithHandler Resume Pass])
+(import doeff.program [Resume Pass])
 
 (import doeff_core_effects [try-handler :as try_handler Await])
 (import doeff_core_effects.handlers [await-handler :as await_handler])
@@ -94,7 +94,7 @@ async def _async_sleep_compute(x):
 (defn with-stack [stack program]
   (setv body program)
   (for [h stack]
-    (setv body (WithHandler h body)))
+    (setv body (h body)))
   (scheduled body))
 
 (defn timed-run [label stack]

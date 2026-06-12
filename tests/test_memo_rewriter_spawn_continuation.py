@@ -29,10 +29,10 @@ from doeff import (
     EffectGenerator,
     Pass,
     Resume,
-    WithHandler,
     do,
     run,
 )
+from doeff import handler as _program_handler
 
 # --- Custom effect (analogous to HistoricalPriceQuery) ---
 
@@ -88,7 +88,7 @@ def simple_fetch_handler(effect, k):
 def _compose(program, *handlers):
     wrapped = program
     for h in reversed(handlers):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _program_handler(h)(wrapped)
     return wrapped
 
 

@@ -37,7 +37,9 @@ from doeff_vm import Callable as VmCallable
 from doeff_vm import EffectBase
 
 from doeff import Apply, Pass, Pure, Resume, do, run
-from doeff.program import WithHandlerType as VMWithHandler
+from doeff.program import (
+    WithHandlerType as VMWithHandler,
+)
 
 DEFAULT_RUNS = 20
 DEFAULT_LOOP_ITERATIONS = 100

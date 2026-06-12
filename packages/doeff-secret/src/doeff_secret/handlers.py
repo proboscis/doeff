@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from doeff import Delegate, Effect, Resume, do
+from doeff import handler as _program_handler
 
 from .effects import GetSecret
 
@@ -84,7 +85,7 @@ def env_var_handler(
             return (yield handle_get_secret(effect, k))
         yield Delegate()
 
-    return handler
+    return _program_handler(handler)
 
 
 def env_var_handlers(
@@ -116,7 +117,7 @@ def env_var_handlers(
             raise KeyError(f"Secret not found in environment variables: {effect.secret_id}")
         return (yield Resume(k, value))
 
-    return handler
+    return _program_handler(handler)
 
 
 __all__ = [
