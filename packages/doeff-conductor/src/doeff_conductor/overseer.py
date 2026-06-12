@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 RUN_STATE_FILENAME = "run-state.json"
+VALID_GATE_OUTCOMES: frozenset[str] = frozenset({"resume", "abort"})
 
 
 @dataclass(frozen=True)
@@ -28,9 +29,14 @@ class GateOption:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> GateOption:
+        outcome: str = str(data["outcome"])
+        if outcome not in VALID_GATE_OUTCOMES:
+            raise ValueError(
+                f"GateOption outcome {outcome!r} not in {sorted(VALID_GATE_OUTCOMES)}"
+            )
         return cls(
             name=str(data["name"]),
-            outcome=str(data["outcome"]),
+            outcome=outcome,
             description=str(data["description"]),
         )
 
@@ -229,12 +235,52 @@ def list_open_gates(state_dir: str | Path, workflow_id: str | None = None) -> li
     return gates
 
 
-def answered_gate_options(state_dir: str | Path, workflow_id: str) -> dict[str, str]:
+def list_gates_with_status(
+    state_dir: str | Path,
+    workflow_id: str,
+) -> list[dict[str, Any]]:
+    """Return both open and answered gates with a STATUS field.
+
+    Open gates get status='open'; answered gates get status='answered'
+    with the chosen option included.
+    """
     try:
         run_state: RunStateView = load_run_state(state_dir, workflow_id)
     except FileNotFoundError:
-        return {}
-    return dict(run_state.answered_gates)
+        return []
+
+    gates: list[dict[str, Any]] = []
+    for gate in run_state.open_gates:
+        gate_dict: dict[str, Any] = gate.to_dict()
+        gate_dict["status"] = "open"
+        gates.append(gate_dict)
+
+    answered: dict[str, str] = answered_gate_options(state_dir, workflow_id)
+    for gate_id, option in answered.items():
+        gates.append({
+            "gate_id": gate_id,
+            "workflow_id": workflow_id,
+            "status": "answered",
+            "option": option,
+        })
+
+    return gates
+
+
+def answered_gate_options(state_dir: str | Path, workflow_id: str) -> dict[str, str]:
+    """Return gate_id -> option for answered gates.
+
+    Gate-answer-journal.jsonl is the sole authoritative source (L-K5-2).
+    No backward-compat fallback to run-state.json — pre-journal runs are
+    dead runs per the no-compat policy.
+    """
+    from doeff_conductor.journal import GateAnswerJournal
+
+    gate_answer_journal: GateAnswerJournal = GateAnswerJournal.for_run(
+        workflow_id,
+        state_dir=state_dir,
+    )
+    return gate_answer_journal.latest_answers()
 
 
 def record_open_gates(
@@ -295,7 +341,10 @@ def record_gate_answer(
     workflow_id: str,
     gate_id: str,
     option: str,
+    note: str = "",
 ) -> RunStateView:
+    from doeff_conductor.journal import GateAnswerJournal, GateAnswerJournalEntry
+
     existing: RunStateView = load_run_state(state_dir, workflow_id)
     target_gate: OpenGateView | None = None
     remaining_gates: list[OpenGateView] = []
@@ -310,6 +359,23 @@ def record_gate_answer(
     valid_options = {gate_option.name for gate_option in target_gate.options}
     if option not in valid_options:
         raise ValueError(f"gate {gate_id!r} does not support option {option!r}")
+
+    selected_gate_option: GateOption = _find_gate_option(target_gate, option)
+
+    gate_answer_journal: GateAnswerJournal = GateAnswerJournal.for_run(
+        workflow_id,
+        state_dir=state_dir,
+    )
+    gate_answer_journal.append_entry(
+        GateAnswerJournalEntry(
+            gate_id=gate_id,
+            workflow_id=workflow_id,
+            option=option,
+            outcome=selected_gate_option.outcome,
+            note=note,
+            answered_at=datetime.now(timezone.utc).isoformat(),
+        )
+    )
 
     sequence = _last_sequence(existing.events) + 1
     events = (
@@ -336,6 +402,13 @@ def record_gate_answer(
     )
     save_run_state(state_dir, updated)
     return updated
+
+
+def _find_gate_option(gate: OpenGateView, option_name: str) -> GateOption:
+    for gate_option in gate.options:
+        if gate_option.name == option_name:
+            return gate_option
+    raise ValueError(f"gate {gate.gate_id!r} does not have option {option_name!r}")
 
 
 def make_progress_event(

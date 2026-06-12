@@ -4,10 +4,12 @@ import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from doeff_conductor.effects.git import Commit
 from doeff_conductor.effects.workspace import CreateWorkspace, DeleteWorkspace, MergeWorkspaces
+from doeff_conductor.git_workspace import GitCommandError, GitCommandResult
 from doeff_conductor.handlers.git_handler import GitHandler
 from doeff_conductor.handlers.workspace_handler import WorkspaceHandler, WorkspaceStateError
 from doeff_conductor.types import Issue, IssueStatus, MergeStatus, MergeStrategy, Workspace
@@ -55,6 +57,20 @@ def _branches(repo_path: Path) -> set[str]:
     return {line for line in result.stdout.splitlines() if line}
 
 
+def _git_exclude_path(worktree_path: Path) -> Path:
+    result = subprocess.run(
+        ["git", "rev-parse", "--git-path", "info/exclude"],
+        cwd=worktree_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    exclude_path = Path(result.stdout.strip())
+    if exclude_path.is_absolute():
+        return exclude_path
+    return worktree_path / exclude_path
+
+
 class TestWorkspaceHandler:
     @pytest.fixture
     def git_repo(self, tmp_path: Path) -> Path:
@@ -87,7 +103,7 @@ class TestWorkspaceHandler:
         assert "path" not in workspace.to_dict()
         assert handler.resolve_path(workspace).exists()
 
-    def test_create_workspace_installs_runtime_state_gitignore(
+    def test_create_workspace_installs_runtime_state_exclude_idempotently(
         self,
         handler: WorkspaceHandler,
     ) -> None:
@@ -96,8 +112,26 @@ class TestWorkspaceHandler:
         )
         materialized_path: Path = handler.resolve_path(workspace)
 
-        gitignore_lines: list[str] = (materialized_path / ".gitignore").read_text().splitlines()
-        assert ".agent-home/" in gitignore_lines
+        status_before_runtime_state: subprocess.CompletedProcess[str] = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=materialized_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert status_before_runtime_state.stdout == ""
+        assert not (materialized_path / ".gitignore").exists()
+
+        exclude_path: Path = _git_exclude_path(materialized_path)
+        exclude_lines: list[str] = exclude_path.read_text().splitlines()
+        assert exclude_lines.count(".agent-home/") == 1
+
+        same_workspace: Workspace = handler.handle_create_workspace(
+            CreateWorkspace(workspace_id="ws-ignore")
+        )
+        assert handler.resolve_path(same_workspace) == materialized_path
+        exclude_lines_after_second_init: list[str] = exclude_path.read_text().splitlines()
+        assert exclude_lines_after_second_init.count(".agent-home/") == 1
 
         agent_state_path: Path = materialized_path / ".agent-home" / "session.json"
         agent_state_path.parent.mkdir()
@@ -144,6 +178,7 @@ class TestWorkspaceHandler:
         )
         committed_paths: list[str] = show_result.stdout.splitlines()
         assert "feature.txt" in committed_paths
+        assert ".gitignore" not in committed_paths
         assert ".agent-home/session.json" not in committed_paths
 
     def test_create_workspace_requires_identity(self, handler: WorkspaceHandler) -> None:
@@ -198,6 +233,82 @@ class TestWorkspaceHandler:
         result = handler.handle_delete_workspace(DeleteWorkspace(workspace=workspace))
 
         assert result is False
+
+    def test_force_delete_workspace_raises_when_fallback_path_remains(
+        self,
+        handler: WorkspaceHandler,
+    ) -> None:
+        workspace = handler.handle_create_workspace(
+            CreateWorkspace(workspace_id="ws-force-delete-remains")
+        )
+        materialized_path = handler.resolve_path(workspace)
+
+        def fake_run_git(args: list[str], *, cwd: Path, **kwargs) -> GitCommandResult:
+            if args[:3] == ["git", "worktree", "remove"]:
+                raise GitCommandError(
+                    args,
+                    cwd=cwd,
+                    result=GitCommandResult(
+                        returncode=1,
+                        stdout="",
+                        stderr="remove failed",
+                    ),
+                )
+            return GitCommandResult(returncode=0, stdout="", stderr="")
+
+        with (
+            patch("doeff_conductor.handlers.workspace_handler.run_git", side_effect=fake_run_git),
+            patch("doeff_conductor.handlers.workspace_handler.shutil.rmtree", return_value=None),
+            pytest.raises(WorkspaceStateError, match="still exists"),
+        ):
+            handler.handle_delete_workspace(DeleteWorkspace(workspace=workspace, force=True))
+
+        assert materialized_path.exists()
+
+    def test_force_delete_workspace_raises_when_prune_fails(
+        self,
+        handler: WorkspaceHandler,
+    ) -> None:
+        workspace = handler.handle_create_workspace(
+            CreateWorkspace(workspace_id="ws-force-delete-prune")
+        )
+        materialized_path = handler.resolve_path(workspace)
+
+        def fake_run_git(
+            args: list[str],
+            *,
+            cwd: Path,
+            check: bool = True,
+            **kwargs,
+        ) -> GitCommandResult:
+            if args[:3] == ["git", "worktree", "remove"]:
+                raise GitCommandError(
+                    args,
+                    cwd=cwd,
+                    result=GitCommandResult(
+                        returncode=1,
+                        stdout="",
+                        stderr="remove failed",
+                    ),
+                )
+            if args[:3] == ["git", "worktree", "prune"]:
+                result = GitCommandResult(
+                    returncode=1,
+                    stdout="",
+                    stderr="prune failed",
+                )
+                if check:
+                    raise GitCommandError(args, cwd=cwd, result=result)
+                return result
+            return GitCommandResult(returncode=0, stdout="", stderr="")
+
+        with (
+            patch("doeff_conductor.handlers.workspace_handler.run_git", side_effect=fake_run_git),
+            pytest.raises(GitCommandError, match="git command failed"),
+        ):
+            handler.handle_delete_workspace(DeleteWorkspace(workspace=workspace, force=True))
+
+        assert not materialized_path.exists()
 
     def test_merge_workspaces_two_branches(self, handler: WorkspaceHandler) -> None:
         workspace1 = handler.handle_create_workspace(CreateWorkspace(workspace_id="ws-feature1"))
@@ -372,9 +483,7 @@ class TestWorkspaceResumeStability:
         with pytest.raises(WorkspaceStateError, match="branch conductor/run-ws does not"):
             handler.handle_create_workspace(CreateWorkspace(workspace_id="run-ws"))
 
-    def test_merge_identity_is_resume_stable(
-        self, git_repo: Path, workspace_base: Path
-    ) -> None:
+    def test_merge_identity_is_resume_stable(self, git_repo: Path, workspace_base: Path) -> None:
         first_handler = self._handler(git_repo, workspace_base)
         left = first_handler.handle_create_workspace(CreateWorkspace(workspace_id="run-left"))
         _commit_file(first_handler.resolve_path(left), "left.txt", "left\n", "left")

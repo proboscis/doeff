@@ -1,17 +1,16 @@
 """JSON-line client for the doeff-agentd Unix socket API."""
 
-from __future__ import annotations
-
 import json
 import os
 import shlex
 import socket
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from doeff_agents.adapters.base import AgentType
 from doeff_agents.effects import (
     AgentSessionLifecycle,
     AgentSessionQuery,
@@ -19,6 +18,7 @@ from doeff_agents.effects import (
     AwaitOutcome,
     AwaitStatus,
 )
+from doeff_agents.monitor import SessionStatus
 
 RPC_ERR_AWAIT_TIMEOUT = -32000
 RPC_ERR_NO_SUCH_SESSION = -32001
@@ -58,6 +58,23 @@ class AgentdPaths:
     db_path: Path
     socket_path: Path
     log_path: Path
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentdSessionParseWarning:
+    """Details for one agentd session row that could not be parsed."""
+
+    session_name: str
+    field: str
+    raw_value: Any
+
+
+@dataclass(frozen=True)
+class AgentdSessionList:
+    """Parsed session.list result plus recoverable row parse failures."""
+
+    snapshots: tuple[AgentSessionSnapshot, ...]
+    warnings: tuple[AgentdSessionParseWarning, ...] = ()
 
 
 # RPC read-timeout contract.  The daemon BLOCKS on these methods by design:
@@ -172,10 +189,14 @@ class AgentdClient:
         self,
         query: AgentSessionQuery | None = None,
     ) -> tuple[AgentSessionSnapshot, ...]:
+        return self.list_sessions_with_warnings(query).snapshots
+
+    def list_sessions_with_warnings(
+        self,
+        query: AgentSessionQuery | None = None,
+    ) -> AgentdSessionList:
         result = self.request("session.list", _query_to_params(query))
-        if not isinstance(result, list):
-            raise AgentdProtocolError("session.list returned a non-list result")
-        return tuple(_snapshot_from_result(item) for item in result)
+        return _session_list_from_result(result)
 
     def capture_session(self, session_id: str, *, lines: int = 100) -> str:
         result = self.request("session.capture", {"session_id": session_id, "lines": lines})
@@ -250,7 +271,12 @@ class AgentdClient:
             if error_code is not None and not isinstance(error_code, int):
                 raise AgentdProtocolError("doeff-agentd error_code was not an integer")
             raise AgentdClientError(error, error_code=error_code)
-        return response.get("result")
+        if "result" not in response:
+            raise AgentdProtocolError(
+                f"{method} response is missing result "
+                f"(response shape: {_mapping_shape(response)})"
+            )
+        return response["result"]
 
     def _next_request_id(self) -> int:
         with self._request_lock:
@@ -341,6 +367,12 @@ class LazyAgentdClient:
         query: AgentSessionQuery | None = None,
     ) -> tuple[AgentSessionSnapshot, ...]:
         return self._resolve().list_sessions(query)
+
+    def list_sessions_with_warnings(
+        self,
+        query: AgentSessionQuery | None = None,
+    ) -> AgentdSessionList:
+        return self._resolve().list_sessions_with_warnings(query)
 
     def capture_session(self, session_id: str, *, lines: int = 100) -> str:
         return self._resolve().capture_session(session_id, lines=lines)
@@ -477,11 +509,132 @@ def _snapshot_from_result(result: Any) -> AgentSessionSnapshot:
     return AgentSessionSnapshot.from_dict(dict(result))
 
 
+def _session_list_from_result(result: Any) -> AgentdSessionList:
+    if not isinstance(result, list):
+        raise AgentdProtocolError("session.list returned a non-list result")
+
+    snapshots: list[AgentSessionSnapshot] = []
+    warnings: list[AgentdSessionParseWarning] = []
+    for index, item in enumerate(result):
+        warning = _snapshot_preflight_warning(item, index)
+        if warning is not None:
+            warnings.append(warning)
+            continue
+        try:
+            snapshots.append(_snapshot_from_result(item))
+        except (KeyError, TypeError, ValueError) as error:
+            warnings.append(_snapshot_parse_error_warning(item, index, error))
+    return AgentdSessionList(snapshots=tuple(snapshots), warnings=tuple(warnings))
+
+
+def _snapshot_preflight_warning(
+    item: Any,
+    index: int,
+) -> AgentdSessionParseWarning | None:
+    if not isinstance(item, Mapping):
+        return AgentdSessionParseWarning(
+            session_name=_fallback_session_name(item, index),
+            field="<row>",
+            raw_value=item,
+        )
+
+    for field, enum_value in (
+        ("agent_type", AgentType),
+        ("status", SessionStatus),
+    ):
+        warning = _enum_field_warning(item, index, field, enum_value, required=True)
+        if warning is not None:
+            return warning
+
+    return _enum_field_warning(
+        item,
+        index,
+        "lifecycle",
+        AgentSessionLifecycle,
+        required=False,
+    )
+
+
+def _enum_field_warning(
+    item: Mapping[str, Any],
+    index: int,
+    field: str,
+    enum_value: Callable[[str], object],
+    *,
+    required: bool,
+) -> AgentdSessionParseWarning | None:
+    if field not in item:
+        if required:
+            return AgentdSessionParseWarning(
+                session_name=_fallback_session_name(item, index),
+                field=field,
+                raw_value=None,
+            )
+        return None
+
+    raw_value = item[field]
+    try:
+        enum_value(str(raw_value))
+    except ValueError:
+        return AgentdSessionParseWarning(
+            session_name=_fallback_session_name(item, index),
+            field=field,
+            raw_value=raw_value,
+        )
+    return None
+
+
+def _snapshot_parse_error_warning(
+    item: Any,
+    index: int,
+    error: KeyError | TypeError | ValueError,
+) -> AgentdSessionParseWarning:
+    if isinstance(item, Mapping) and isinstance(error, KeyError):
+        field = str(error).strip("'")
+        return AgentdSessionParseWarning(
+            session_name=_fallback_session_name(item, index),
+            field=field,
+            raw_value=item.get(field),
+        )
+    return AgentdSessionParseWarning(
+        session_name=_fallback_session_name(item, index),
+        field="<snapshot>",
+        raw_value=item,
+    )
+
+
+def _fallback_session_name(item: Any, index: int) -> str:
+    if isinstance(item, Mapping):
+        session_name = item.get("session_name") or item.get("session_id")
+        if session_name is not None:
+            return str(session_name)
+    return f"<row {index}>"
+
+
 def _await_outcome_from_result(result: Mapping[str, Any]) -> AwaitOutcome:
-    session = result.get("session")
-    status = "exited"
-    if isinstance(session, Mapping):
-        status = str(session.get("status", "exited"))
+    if "session" not in result:
+        raise AgentdProtocolError(
+            "session.await_result payload is missing session "
+            f"(payload shape: {_mapping_shape(result)})"
+        )
+    session = result["session"]
+    if not isinstance(session, Mapping):
+        raise AgentdProtocolError(
+            "session.await_result session was non-object "
+            f"(session type: {type(session).__name__})"
+        )
+    if "status" not in session:
+        raise AgentdProtocolError(
+            "session.await_result session is missing status "
+            f"(session shape: {_mapping_shape(session)})"
+        )
+    status_value = session["status"]
+    if not isinstance(status_value, str):
+        raise AgentdProtocolError(
+            "session.await_result session status was not a string "
+            f"(status type: {type(status_value).__name__})"
+        )
+    status = status_value
     validation_error = result.get("validation_error")
     if validation_error is not None and not isinstance(validation_error, str):
         raise AgentdProtocolError("session.await_result validation_error was not a string")
@@ -496,10 +649,23 @@ def _await_outcome_from_result(result: Mapping[str, Any]) -> AwaitOutcome:
             continuable=False,
         )
 
-    payload = None
-    response_result = result.get("result")
-    if isinstance(response_result, Mapping):
-        payload = response_result.get("payload")
+    if "result" not in result:
+        raise AgentdProtocolError(
+            "session.await_result payload is missing result "
+            f"(payload shape: {_mapping_shape(result)})"
+        )
+    response_result = result["result"]
+    if not isinstance(response_result, Mapping):
+        raise AgentdProtocolError(
+            "session.await_result result was non-object "
+            f"(result type: {type(response_result).__name__})"
+        )
+    if "payload" not in response_result:
+        raise AgentdProtocolError(
+            "session.await_result result is missing payload "
+            f"(result shape: {_mapping_shape(response_result)})"
+        )
+    payload = response_result["payload"]
 
     return AwaitOutcome(
         status=AwaitStatus.EXITED,
@@ -509,6 +675,11 @@ def _await_outcome_from_result(result: Mapping[str, Any]) -> AwaitOutcome:
     )
 
 
+def _mapping_shape(mapping: Mapping[str, Any]) -> str:
+    fields = ", ".join(f"{key}: {type(value).__name__}" for key, value in mapping.items())
+    return f"{{{fields}}}"
+
+
 __all__ = [
     "RPC_ERR_AWAIT_TIMEOUT",
     "RPC_ERR_NO_SUCH_SESSION",
@@ -516,6 +687,8 @@ __all__ = [
     "AgentdClientError",
     "AgentdPaths",
     "AgentdProtocolError",
+    "AgentdSessionList",
+    "AgentdSessionParseWarning",
     "AgentdUnavailableError",
     "LazyAgentdClient",
     "default_agentd_paths",
