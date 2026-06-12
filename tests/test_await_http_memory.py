@@ -17,6 +17,8 @@ import resource
 import signal
 from typing import Any
 
+from doeff_core_effects.cache_handlers import sqlite_cache_handler
+
 from doeff import (
     AcquireSemaphore,
     Await,
@@ -24,14 +26,10 @@ from doeff import (
     Gather,
     ReleaseSemaphore,
     Spawn,
-    WithHandler,
     do,
     slog,
 )
 from tests._run_helpers import run_with_defaults
-
-# REMOVED: from doeff_core_effects.handlers import sqlite_cache_handler
-
 
 TIMEOUT_SECONDS = 120
 
@@ -102,10 +100,7 @@ def _run_test(factory, n: int, conc: int = 40):
     old = signal.signal(signal.SIGALRM, _timeout_handler)
     signal.alarm(TIMEOUT_SECONDS)
     try:
-        prog = WithHandler(
-            sqlite_cache_handler(None),  # noqa: F821 - legacy removed API reference is intentionally preserved
-            _spawn_gather(factory, n, conc),
-        )
+        prog = sqlite_cache_handler(None)(_spawn_gather(factory, n, conc))
         rss_before = _rss_mb()
         r = run_with_defaults(prog)
         rss_after = _rss_mb()

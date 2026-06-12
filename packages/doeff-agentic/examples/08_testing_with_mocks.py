@@ -22,7 +22,7 @@ from doeff_agentic import (
 )
 from doeff_agentic.handlers.testing import MockAgenticHandler, mock_handlers
 
-from doeff import WithHandler, default_handlers, do, run
+from doeff import default_handlers, do, run
 
 
 @do
@@ -42,7 +42,7 @@ def mock_conversation():
 def main() -> int:
     # Compose the mock protocol handler directly with WithHandler.
     handler_impl = MockAgenticHandler(workflow_name="mock-example")
-    program = WithHandler(mock_handlers(handler_impl), mock_conversation())
+    program = mock_handlers(handler_impl)(mock_conversation())
     result = run(program, handlers=default_handlers())
 
     if result.is_err():

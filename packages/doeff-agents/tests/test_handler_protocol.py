@@ -7,7 +7,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from doeff import Effect, EffectBase, Pass, Resume, WithHandler, do, run
+from doeff import Effect, EffectBase, Pass, Resume, do, run
+from doeff import handler as _install_raw_handler
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -89,10 +90,7 @@ def test_agent_handlers_are_defhandler_program_wrappers() -> None:
 
 def test_unknown_effect_delegates() -> None:
     result = run(
-        WithHandler(
-            _unknown_effect_fallback,
-            agent_effectful_handler()(_unknown_workflow()),
-        )
+        _install_raw_handler(_unknown_effect_fallback)(agent_effectful_handler()(_unknown_workflow()))
     )
     assert result == "noop"
 
@@ -124,9 +122,9 @@ def _install_handlers(handlers, program):
     wrapped = program
     for handler in reversed(handlers):
         if tuple(inspect.signature(handler).parameters) == ("__doeff_body__",):
-            wrapped = handler(wrapped)
+            wrapped = _install_raw_handler(handler)(wrapped)
         else:
-            wrapped = WithHandler(handler, wrapped)
+            wrapped = _install_raw_handler(handler)(wrapped)
     return wrapped
 
 

@@ -7,11 +7,10 @@ Usage:
     import asyncio
     from doeff import async_run, default_handlers
     from doeff_agentic.opencode_handler import opencode_handler
-    from doeff import WithHandler
 
     async def main():
         handlers = opencode_handler()
-        program = WithHandler(handlers, my_workflow())
+        program = handlers(my_workflow())
         result = await async_run(program, handlers=default_handlers())
 
     asyncio.run(main())
@@ -31,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from doeff import Await, Effect, Pass, Resume, do, slog
+from doeff import handler as _program_handler
 
 # REMOVED: make_doeff_generator no longer exists in doeff.do
 # from doeff.do import make_doeff_generator
@@ -1032,7 +1032,7 @@ def _as_protocol_handler(
 
         return (yield Resume(k, result))
 
-    return _wrapped
+    return _program_handler(_wrapped)
 
 
 def opencode_handler(
@@ -1052,17 +1052,16 @@ def opencode_handler(
         working_dir: Default working directory
 
     Returns:
-        Protocol handler for use with WithHandler composition.
+        Protocol handler for direct Program -> Program composition.
 
     Usage:
         import asyncio
         from doeff import async_run, default_handlers
         from doeff_agentic import opencode_handler
-        from doeff import WithHandler
 
         async def main():
             handlers = opencode_handler()
-            program = WithHandler(handlers, my_workflow())
+            program = handlers(my_workflow())
             result = await async_run(program, handlers=default_handlers())
 
         asyncio.run(main())
@@ -1100,7 +1099,7 @@ def opencode_handler(
                 return (yield effect_handler(effect, k))
         yield Pass()
 
-    return protocol_handler
+    return _program_handler(protocol_handler)
 
 
 __all__ = [

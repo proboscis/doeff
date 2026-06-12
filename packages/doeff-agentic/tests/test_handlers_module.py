@@ -15,7 +15,7 @@ from doeff_agentic.handlers import mock_handlers, production_handlers
 from doeff_agentic.handlers.production import agentic_effectful_handlers
 from doeff_agentic.types import AgentConfig
 
-from doeff import WithHandler, default_handlers, do, run
+from doeff import default_handlers, do, run
 
 
 def test_handlers_init_exports_required_factory_functions() -> None:
@@ -45,7 +45,7 @@ def test_mock_handlers_execute_simple_workflow() -> None:
         status = yield AgenticGetSessionStatus(session_id=session.id)
         return msg.role, messages[-1].role, status.value
 
-    program = WithHandler(mock_handlers(), workflow())
+    program = mock_handlers()(workflow())
     result = run(program, handlers=default_handlers())
 
     assert result.value == ("user", "assistant", "done")
@@ -126,14 +126,11 @@ def test_legacy_agentic_handler_accepts_injected_tmux_runtime(tmp_path: Path) ->
         )
 
     result = run(
-        WithHandler(
-            agentic_effectful_handlers(
+        agentic_effectful_handlers(
                 workflow_id="wf-test",
                 workflow_name="wf-test",
                 tmux_handler=fake,
-            ),
-            workflow(),
-        ),
+            )(workflow()),
         handlers=default_handlers(),
     )
 

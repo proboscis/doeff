@@ -4,7 +4,8 @@ import pytest
 from doeff_core_effects.handlers import slog_handler
 from doeff_core_effects.memo_handlers import make_memo_rewriter
 
-from doeff import EffectBase, UnhandledEffect, WithHandler, do, run
+from doeff import EffectBase, UnhandledEffect, do, run
+from doeff import handler as _program_handler
 
 
 @dataclass(frozen=True)
@@ -15,7 +16,7 @@ class Lookup(EffectBase):
 def _with_handlers(program, *handlers):
     wrapped = program
     for handler in reversed(handlers):
-        wrapped = WithHandler(handler, wrapped)
+        wrapped = _program_handler(handler)(wrapped)
     return wrapped
 
 

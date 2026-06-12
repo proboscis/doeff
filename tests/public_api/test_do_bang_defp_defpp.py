@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 from doeff_core_effects import reader
 
-from doeff import Ask, WithHandler, do, run
+from doeff import Ask, do, run
 
 # ---------------------------------------------------------------------------
 # do! — returns a Program (generator), usable anywhere
@@ -29,7 +29,7 @@ class TestDoBangReturnsProgram:
             x = yield Ask("key")
             return x
 
-        result = run(WithHandler(reader(env={"key": "hello"}), prog()))
+        result = run(reader(env={"key": "hello"})(prog()))
         assert result == "hello"
 
     def test_do_bang_with_bang_expansion(self) -> None:
@@ -68,7 +68,7 @@ class TestDefpRejectsProgram:
             x = yield Ask("key")
             return x
 
-        result = run(WithHandler(reader(env={"key": "hello"}), prog()))
+        result = run(reader(env={"key": "hello"})(prog()))
         assert result == "hello"
         assert not inspect.isgenerator(result)
 
@@ -82,7 +82,7 @@ class TestDefpRejectsProgram:
             x = yield Ask("key")
             return (y for y in [x])
 
-        result = run(WithHandler(reader(env={"key": "v"}), make_bad_program()))
+        result = run(reader(env={"key": "v"})(make_bad_program()))
         # The return value IS a generator — defp's guard would catch this
         assert inspect.isgenerator(result)
 
@@ -105,7 +105,7 @@ class TestDefppRequiresProgram:
             _x = yield Ask("key")
             return inner_gen()
 
-        result = run(WithHandler(reader(env={"key": "hello"}), make_pp()))
+        result = run(reader(env={"key": "hello"})(make_pp()))
         assert inspect.isgenerator(result)
 
     def test_defpp_detects_plain_return(self) -> None:
@@ -116,7 +116,7 @@ class TestDefppRequiresProgram:
             x = yield Ask("key")
             return x
 
-        result = run(WithHandler(reader(env={"key": "v"}), prog()))
+        result = run(reader(env={"key": "v"})(prog()))
         assert not inspect.isgenerator(result)
 
 
@@ -191,7 +191,7 @@ class TestImportInsideDefpDefk:
     def test_defp_import_inside(self) -> None:
         """defp with (import json) before last expression."""
         result = run(
-            WithHandler(reader(env={"test": "hello"}), self.mod.import_inside_defp)
+            reader(env={"test": "hello"})(self.mod.import_inside_defp)
         )
         assert result == '{"a": "hello"}'
 
@@ -208,7 +208,7 @@ class TestImportInsideDefpDefk:
     def test_defp_multi_import(self) -> None:
         """defp with multiple imports in body."""
         result = run(
-            WithHandler(reader(env={"key": "world"}), self.mod.multi_import_defp)
+            reader(env={"key": "world"})(self.mod.multi_import_defp)
         )
         assert result is not None
         import json

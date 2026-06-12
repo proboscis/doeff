@@ -4,14 +4,14 @@
 from collections.abc import Sequence
 from typing import Any
 
-from doeff import WithHandler
+from doeff import handler as _program_handler
 
 
 def with_handlers(program: Any, handlers: Sequence[Any]) -> Any:
     """Wrap ``program`` with handlers ordered from outer to inner."""
     wrapped = program
     for handler in reversed(tuple(handlers)):
-        wrapped = WithHandler(handler=handler, expr=wrapped)
+        wrapped = _program_handler(handler)(wrapped)
     return wrapped
 
 

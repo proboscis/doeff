@@ -13,6 +13,8 @@ import pytest
 from PIL import Image
 from pydantic import BaseModel
 
+from doeff import handler as _install_raw_handler
+
 IMAGE_PACKAGE_ROOT = Path(__file__).resolve().parents[3] / "doeff-image" / "src"
 if str(IMAGE_PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(IMAGE_PACKAGE_ROOT))
@@ -32,7 +34,6 @@ from doeff import (  # noqa: E402
     EffectGenerator,
     Pass,
     Resume,
-    WithHandler,
     async_run,
     default_handlers,
     do,
@@ -94,7 +95,7 @@ def _with_mock_gemini_handler(program: Any, *, mock_client: Any, asked_keys: lis
                 return (yield Resume(k, "fake-gemini-key"))
         yield Pass()
 
-    return WithHandler(mock_handler, program)
+    return _install_raw_handler(mock_handler)(program)
 
 
 def _get_live_gemini_env_or_skip() -> dict[str, Any]:

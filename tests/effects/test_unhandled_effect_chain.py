@@ -19,7 +19,8 @@ from __future__ import annotations
 import pytest
 from doeff_core_effects.handlers import lazy_ask, slog_handler
 
-from doeff import Ask, Pass, UnhandledEffect, WithHandler, do, run
+from doeff import Ask, Pass, UnhandledEffect, do, run
+from doeff import handler as _install_raw_handler
 
 # Module-level handlers so their qualnames don't include ``.<locals>.`` noise
 # from the enclosing test class/function.
@@ -58,7 +59,7 @@ class TestUnhandledEffectMessageIncludesChain:
             return (yield Ask("missing"))
 
         with pytest.raises(UnhandledEffect) as excinfo:
-            run(WithHandler(only_handler, prog()))
+            run(_install_raw_handler(only_handler)(prog()))
         msg = _extract_msg(excinfo.value)
         assert "only_handler" in msg
         assert "handlers in scope" in msg
@@ -71,13 +72,7 @@ class TestUnhandledEffectMessageIncludesChain:
 
         # lazy_ask defaults to Pass-on-miss (PR D), so Ask bubbles through
         # telemetry_handler → slog_handler → lazy_ask before going Unhandled.
-        composed = WithHandler(
-            lazy_ask(env={}),
-            WithHandler(
-                slog_handler(),
-                WithHandler(telemetry_handler, prog()),
-            ),
-        )
+        composed = lazy_ask(env={})(slog_handler()(_install_raw_handler(telemetry_handler)(prog())))
         with pytest.raises(UnhandledEffect) as excinfo:
             run(composed)
         msg = _extract_msg(excinfo.value)
@@ -92,10 +87,7 @@ class TestUnhandledEffectMessageIncludesChain:
         def prog():
             return (yield Ask("X"))
 
-        composed = WithHandler(
-            outer_pass_through,
-            WithHandler(inner_pass_through, prog()),
-        )
+        composed = _install_raw_handler(outer_pass_through)(_install_raw_handler(inner_pass_through)(prog()))
         with pytest.raises(UnhandledEffect) as excinfo:
             run(composed)
         msg = _extract_msg(excinfo.value)

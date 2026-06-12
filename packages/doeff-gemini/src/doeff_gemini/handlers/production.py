@@ -20,6 +20,7 @@ from doeff_llm.effects import (
 from PIL import Image
 
 from doeff import EffectBase, Pass, Resume, do
+from doeff import handler as _program_handler
 from doeff_gemini.client import get_gemini_client, track_api_call
 from doeff_gemini.costs import calculate_known_model_cost
 from doeff_gemini.effects import (
@@ -475,7 +476,7 @@ def production_handlers(
             return (yield Resume(k, value))
         yield Pass(effect, k)
 
-    return handler
+    return _program_handler(handler)
 
 
 @do

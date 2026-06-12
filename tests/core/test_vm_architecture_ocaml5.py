@@ -17,9 +17,9 @@ from doeff import (
     Pass,
     Resume,
     Spawn,
-    WithHandler,
     do,
 )
+from doeff import handler as _install_raw_handler
 from tests._run_helpers import run_with_defaults
 
 # ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ def test_resume_returns_to_same_execution_context():
         val = yield MyEffect()
         return val
 
-    result = run_with_defaults(WithHandler(_handler, _program()))
+    result = run_with_defaults(_install_raw_handler(_handler)(_program()))
     assert result.is_ok()
     assert result.value == "resumed_value"
 
@@ -89,7 +89,7 @@ def test_continuation_is_one_shot():
         return (yield MyEffect())
 
     result = run_with_defaults(
-        WithHandler(_double_resume_handler, _program()),
+        _install_raw_handler(_double_resume_handler)(_program()),
     )
     assert result.is_err()
     assert "one-shot" in str(result.error).lower() or "consumed" in str(
@@ -153,7 +153,7 @@ def test_spawned_tasks_share_handler_state():
         return result
 
     result = run_with_defaults(
-        WithHandler(_shared_handler, _program())
+        _install_raw_handler(_shared_handler)(_program())
     )
     assert result.is_ok()
     assert result.value == [42], f"Spawned task should see Put(42), got {result.value}"
@@ -192,7 +192,7 @@ def test_spawn_does_not_duplicate_handlers():
         return results
 
     result = run_with_defaults(
-        WithHandler(_counting_handler, _program())
+        _install_raw_handler(_counting_handler)(_program())
     )
     assert result.is_ok()
     # All 10 tasks should have called the SAME handler instance
@@ -236,7 +236,7 @@ def test_dispatch_does_not_corrupt_shared_handler_chain():
         return list((yield Gather(*tasks)))
 
     result = run_with_defaults(
-        WithHandler(_handler, _program())
+        _install_raw_handler(_handler)(_program())
     )
     assert result.is_ok()
     assert len(result.value) == 5
@@ -282,7 +282,7 @@ def test_handler_state_survives_across_multiple_dispatches():
         return (yield GetCount())
 
     result = run_with_defaults(
-        WithHandler(_counter_handler, _program())
+        _install_raw_handler(_counter_handler)(_program())
     )
     assert result.is_ok()
     assert result.value == 3

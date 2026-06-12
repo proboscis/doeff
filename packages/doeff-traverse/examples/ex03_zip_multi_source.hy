@@ -7,7 +7,6 @@
 (require doeff-hy.macros [defk <- do!])
 (import doeff [do :as _doeff-do])
 (import doeff [run])
-(import doeff.program [WithHandler])
 
 (import doeff_core_effects [try-handler :as try_handler])
 (import doeff_core_effects.scheduler [scheduled])
@@ -80,9 +79,7 @@
 
 (defn run-it [program]
   (run (scheduled
-    (WithHandler (sequential)
-      (WithHandler fail_handler
-        (WithHandler try_handler program))))))
+    ((sequential) (fail_handler (try_handler program))))))
 
 (setv items ["hello world"
              "error_embed here"

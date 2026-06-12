@@ -18,6 +18,7 @@ from doeff_llm.effects import (
 from PIL import Image as PILImage
 
 from doeff import Pass, Resume, do
+from doeff import handler as _program_handler
 from doeff_gemini.effects import (
     GeminiChat,
     GeminiEmbedding,
@@ -215,7 +216,7 @@ def mock_handlers(
             return (yield Resume(k, active_handler.handle_image_edit(effect)))
         yield Pass(effect, k)
 
-    return handler
+    return _program_handler(handler)
 
 
 @do

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from doeff_core_effects.handlers import lazy_ask
 
-from doeff import WithHandler, do, run
+from doeff import do, run
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -338,10 +338,7 @@ def test_agent_effectful_handler_asks_for_backend(monkeypatch) -> None:
         return observation.status
 
     result = run(
-        WithHandler(
-            lazy_ask(env={SessionBackend: backend}),
-            agent_effectful_handler()(workflow()),
-        )
+        lazy_ask(env={SessionBackend: backend})(agent_effectful_handler()(workflow()))
     )
 
     assert result == SessionStatus.EXITED

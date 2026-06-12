@@ -11,7 +11,7 @@
 (require doeff-hy.macros [defk <-])
 ;; NOTE: intentionally NOT requiring defhandler
 
-(import doeff [Pass Resume WithHandler do :as _doeff-do])
+(import doeff [Pass Resume do :as _doeff-do])
 (import doeff [EffectBase])
 (import dataclasses [dataclass])
 

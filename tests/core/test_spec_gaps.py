@@ -37,8 +37,8 @@ def _prog(gen_factory):
 
 
 # ---------------------------------------------------------------------------
-# G8: Import paths for Resume/Delegate/Transfer/WithHandler/K
-# Spec (SPEC-009 §8): from doeff import Resume, Delegate, Transfer, WithHandler, K
+# G8: Import paths for Resume/Delegate/Transfer/K
+# Spec (SPEC-009 §8): from doeff import Resume, Delegate, Transfer, K
 # Current: These are NOT re-exported from doeff/__init__.py — ImportError
 # ---------------------------------------------------------------------------
 
@@ -46,11 +46,11 @@ def _prog(gen_factory):
 class TestG8ImportPaths:
     """G8: doeff top-level must re-export VM dispatch primitives."""
 
-    def test_import_with_handler(self) -> None:
-        """from doeff import WithHandler must succeed."""
-        from doeff import WithHandler
+    def test_with_handler_public_shim_removed(self) -> None:
+        """from doeff import WithHandler must stay removed."""
+        import doeff
 
-        assert WithHandler is not None
+        assert not hasattr(doeff, "WithHandler")
 
     def test_import_resume(self) -> None:
         """from doeff import Resume must succeed."""

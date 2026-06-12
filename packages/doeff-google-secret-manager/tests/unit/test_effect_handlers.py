@@ -19,7 +19,7 @@ from doeff_google_secret_manager.client import SecretManagerClient  # noqa: E402
 from doeff_google_secret_manager.handlers import mock_handlers, production_handlers  # noqa: E402
 from doeff_secret.effects import DeleteSecret, GetSecret, ListSecrets, SetSecret  # noqa: E402
 
-from doeff import WithHandler, default_handlers, do, run  # noqa: E402
+from doeff import default_handlers, do, run  # noqa: E402
 
 
 class AlreadyExistsError(Exception):
@@ -89,7 +89,7 @@ def _is_err(run_result: Any) -> bool:
 
 def _run_with_handler(program, handler):
     return run(
-        WithHandler(handler, program),
+        handler(program),
         handlers=default_handlers(),
     )
 

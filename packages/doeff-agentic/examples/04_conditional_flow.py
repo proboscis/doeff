@@ -80,7 +80,7 @@ def review_and_maybe_fix(code: str):
 if __name__ == "__main__":
     import asyncio
 
-    from doeff import WithHandler, async_run, default_handlers
+    from doeff import async_run, default_handlers
 
     async def main():
         # Code with issues to review
@@ -101,13 +101,7 @@ def calculate_average(numbers):
         # Merge preset handlers with opencode handlers
         # Preset provides: slog display (WriterTellEffect) + config (Ask preset.*)
         # OpenCode provides: agent session management effects
-        program = WithHandler(
-            preset_handlers(),
-            WithHandler(
-                opencode_handler(),
-                review_and_maybe_fix(sample_code),
-            ),
-        )
+        program = preset_handlers()(opencode_handler()(review_and_maybe_fix(sample_code)))
         result = await async_run(program, handlers=default_handlers())
 
         if result.is_err():

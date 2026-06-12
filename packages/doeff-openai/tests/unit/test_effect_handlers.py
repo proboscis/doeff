@@ -36,9 +36,9 @@ from doeff import (
     EffectGenerator,
     Pass,
     Resume,
-    WithHandler,
     do,
 )
+from doeff import handler as _install_raw_handler
 
 
 class StructuredAnswer(BaseModel):
@@ -47,7 +47,7 @@ class StructuredAnswer(BaseModel):
 
 
 async def _async_run_with_handler(program, handler):
-    return await run_program(WithHandler(handler, program))
+    return await run_program(handler(program))
 
 
 async def _collect_stream_text(stream: Any) -> str:
@@ -209,7 +209,7 @@ async def test_openai_handler_delegates_unsupported_models() -> None:
         )
 
     result = await run_program(
-        WithHandler(fallback_handler, WithHandler(wrapped_openai_handler, flow()))
+        _install_raw_handler(fallback_handler)(_install_raw_handler(wrapped_openai_handler)(flow()))
     )
 
     assert result.is_ok()

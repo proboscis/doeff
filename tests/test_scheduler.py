@@ -24,6 +24,7 @@ from doeff_core_effects.scheduler import (
 )
 
 from doeff import EffectBase, Pass, Resume, do
+from doeff import handler as _install_raw_handler
 from doeff import run as doeff_run
 
 RACE_TIMEOUT_SECONDS = 2
@@ -546,8 +547,7 @@ class TestConcurrency:
             results = yield Gather(ta, tb)
             return results
 
-        from doeff.program import WithHandler
-        result = doeff_run(WithHandler(log_handler, scheduled(body())))
+        result = doeff_run(_install_raw_handler(log_handler)(scheduled(body())))
         assert result == ["A", "B"]
         # Both tasks ran — all log entries present
         assert "a1" in log

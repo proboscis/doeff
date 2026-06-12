@@ -21,9 +21,9 @@ from doeff import (
     Effect,
     EffectBase,
     Resume,
-    WithHandler,
     do,
 )
+from doeff import handler as _install_raw_handler
 from tests._run_helpers import run_with_defaults
 
 # ---------------------------------------------------------------------------
@@ -129,7 +129,7 @@ class TestDoeff13NegativeControl:
             return result
 
         def main():
-            result = yield WithHandler(handler, _prog(body))
+            result = yield _install_raw_handler(handler)(_prog(body))
             return result
 
         run_result = _run_with_watchdog(lambda: _prog(main))

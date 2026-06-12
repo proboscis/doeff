@@ -16,7 +16,7 @@ import pytest
 from doeff_core_effects.cache import cache
 from doeff_core_effects.memo_handlers import sqlite_memo_handler
 
-from doeff import Await, Gather, Spawn, WithHandler, do
+from doeff import Await, Gather, Spawn, do
 from tests._run_helpers import run_with_defaults
 
 
@@ -42,7 +42,7 @@ def _spawn_gather_n(factory: Callable[[int], Any], total: int) -> Any:
 
 
 def _run_cached_spawn_gather(db_path: Path, total: int) -> list[str]:
-    program: Any = WithHandler(sqlite_memo_handler(db_path), _spawn_gather_n(_cached_task, total))
+    program: Any = sqlite_memo_handler(db_path)(_spawn_gather_n(_cached_task, total))
     result: Any = run_with_defaults(program)
     if result.is_err():
         raise result.error

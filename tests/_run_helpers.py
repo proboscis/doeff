@@ -26,7 +26,8 @@ from doeff_core_effects.handlers import (
 )
 from doeff_core_effects.scheduler import scheduled
 
-from doeff import Err, Ok, WithHandler
+from doeff import Err, Ok
+from doeff import handler as _program_handler
 from doeff import run as _run
 
 
@@ -55,7 +56,7 @@ def wrap_with_defaults(program: Any, env: Any = None, store: Any = None) -> Any:
     """Wrap ``program`` with the default handler chain + scheduler."""
     wrapped = program
     for handler in reversed(default_handlers(env=env, store=store)):
-        wrapped = WithHandler(handler, wrapped)
+        wrapped = _program_handler(handler)(wrapped)
     return scheduled(wrapped)
 
 

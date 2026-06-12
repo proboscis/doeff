@@ -18,7 +18,8 @@ from doeff_core_effects import Ask, Get, Tell, Try
 from doeff_core_effects.handlers import reader, state, try_handler, writer
 from doeff_vm import EffectBase, Ok
 
-from doeff import Pass, Resume, WithHandler, do, run
+from doeff import Pass, Resume, do, run
+from doeff import handler as _program_handler
 
 
 class CustomQuery(EffectBase):
@@ -116,7 +117,7 @@ def test_try_deep_in_handler_body_happy_path():
     wrapped = prog()
     # reader(outer) → state → writer → try_handler → custom_query_handler(inner)
     for h in reversed([reader(env=env), state(), writer(), try_handler, custom_query_handler]):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _program_handler(h)(wrapped)
 
     result = run(wrapped)
     assert result == "response(prebuilt-client, hello)"
@@ -132,7 +133,7 @@ def test_try_deep_in_handler_body_no_client_in_env():
     env = {"api_key": "sk-fallback"}  # no 'client' key
     wrapped = prog()
     for h in reversed([reader(env=env), state(), writer(), try_handler, custom_query_handler]):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _program_handler(h)(wrapped)
 
     result = run(wrapped)
     assert result == "response(client(sk-fallback), hello)"
@@ -148,7 +149,7 @@ def test_try_deep_in_handler_body_no_keys():
     env = {}  # no client, no api_key
     wrapped = prog()
     for h in reversed([reader(env=env), state(), writer(), try_handler, custom_query_handler]):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _program_handler(h)(wrapped)
 
     result = run(wrapped)
     assert result == "response(client(default-key), hello)"
@@ -167,7 +168,7 @@ def test_try_deep_wrapped_in_outer_try():
     env = {"api_key": "sk-test"}
     wrapped = prog()
     for h in reversed([reader(env=env), state(), writer(), try_handler, custom_query_handler]):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _program_handler(h)(wrapped)
 
     result = run(wrapped)
     assert isinstance(result, Ok)
@@ -206,7 +207,7 @@ def test_try_deep_in_handler_body_with_retry_loop():
 
     wrapped = prog()
     for h in reversed([try_handler, flaky_handler]):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _program_handler(h)(wrapped)
 
     result = run(wrapped)
     assert result == "success on attempt 3"

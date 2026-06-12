@@ -4,7 +4,7 @@
 (require doeff_hy.macros [defk <-])
 (require doeff_docker.compose [with-handlers])
 (import doeff [do :as _doeff-do])
-(import doeff [run WithHandler])
+(import doeff [run])
 (import doeff_core_effects [reader writer slog-handler scheduled])
 
 (import doeff_ml_nexus.serializer [default-serializer])

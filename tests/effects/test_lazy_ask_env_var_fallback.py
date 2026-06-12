@@ -34,10 +34,10 @@ from doeff import (
     Ask,
     Pass,
     Resume,
-    WithHandler,
     do,
     run,
 )
+from doeff import handler as _install_raw_handler
 
 # --- env_var_fallback_handler: resolves Ask from os.environ, passes otherwise ---
 
@@ -75,13 +75,7 @@ class TestLazyAskEnvVarFallback:
 
         env = {"creds": some_program()}
 
-        composed = WithHandler(
-            lazy_ask(env=env),
-            WithHandler(
-                env_var_fallback_handler,
-                program(),
-            ),
-        )
+        composed = lazy_ask(env=env)(_install_raw_handler(env_var_fallback_handler)(program()))
         result = run(scheduled(composed))
         assert result == "Credentials(/etc/secrets/creds.json)"
 
@@ -104,13 +98,7 @@ class TestLazyAskEnvVarFallback:
             "project_id": "my-project-123",
         }
 
-        composed = WithHandler(
-            lazy_ask(env=env),
-            WithHandler(
-                env_var_fallback_handler,
-                program(),
-            ),
-        )
+        composed = lazy_ask(env=env)(_install_raw_handler(env_var_fallback_handler)(program()))
         result = run(scheduled(composed))
         assert result == "project=my-project-123"
 
@@ -134,13 +122,7 @@ class TestLazyAskEnvVarFallback:
             "api_url": "https://lazy-ask.example.com",
         }
 
-        composed = WithHandler(
-            lazy_ask(env=env),
-            WithHandler(
-                env_var_fallback_handler,
-                program(),
-            ),
-        )
+        composed = lazy_ask(env=env)(_install_raw_handler(env_var_fallback_handler)(program()))
         result = run(scheduled(composed))
         # Inner handler (env_var_fallback) is closer -> resolves from os.environ
         assert result == "url=https://env.example.com"
@@ -174,13 +156,7 @@ class TestLazyAskEnvVarFallback:
             "path_key": lazy_path(),
         }
 
-        composed = WithHandler(
-            lazy_ask(env=env),
-            WithHandler(
-                env_var_fallback_handler,
-                program(),
-            ),
-        )
+        composed = lazy_ask(env=env)(_install_raw_handler(env_var_fallback_handler)(program()))
         result = run(scheduled(composed))
         assert result == "Credentials(/opt/secrets/creds.json)"
 
@@ -210,13 +186,6 @@ class TestLazyAskEnvVarFallback:
             "name": "test-service",
         }
 
-        composed = WithHandler(
-            lazy_ask(env=env),
-            WithHandler(writer(),
-                WithHandler(try_handler,
-                    WithHandler(state(),
-                        WithHandler(env_var_fallback_handler,
-                            program())))),
-        )
+        composed = lazy_ask(env=env)(writer()(try_handler(state()(_install_raw_handler(env_var_fallback_handler)(program())))))
         result = run(scheduled(composed))
         assert result == "loaded:/run/secrets/api-key|test-service"

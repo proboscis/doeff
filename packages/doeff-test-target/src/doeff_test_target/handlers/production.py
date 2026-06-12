@@ -7,6 +7,7 @@ from typing import Any
 
 from doeff import Ask, Pass, Resume, Tell, do
 from doeff import EffectBase as Effect
+from doeff import handler as _program_handler
 from doeff_test_target.effects import ReadFixtureValue, RecordFixtureEvent
 
 ProtocolHandler = Callable[[Any, Any], Any]
@@ -53,7 +54,7 @@ def production_handlers(
             return (yield from active_runtime.handle_record_event(effect, k))
         return (yield Pass())
 
-    return handler
+    return _program_handler(handler)
 
 
 __all__ = [

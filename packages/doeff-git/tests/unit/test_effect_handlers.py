@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from doeff import WithHandler, do, run
+from doeff import do, run
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
@@ -34,7 +34,7 @@ class _SuccessResult:
 
 
 def _run_with_handler(program, handler):
-    result = run(WithHandler(handler, program))
+    result = run(handler(program))
     if hasattr(result, "is_ok"):
         return result
     return _SuccessResult(result)

@@ -6,7 +6,8 @@ import pytest
 from doeff_vm import EffectBase
 from doeff_vm import UnhandledEffect as VmUnhandledEffect
 
-from doeff import Pass, UnhandledEffect, WithHandler, do, run
+from doeff import Pass, UnhandledEffect, do, run
+from doeff import handler as _install_raw_handler
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -42,7 +43,7 @@ def test_pass_falls_off_top_raises_unhandled_effect():
         yield MissingEffect(label="pass-fallthrough")
 
     with pytest.raises(UnhandledEffect):
-        run(WithHandler(pass_through, program()))
+        run(_install_raw_handler(pass_through)(program()))
 
 
 def test_unhandled_effect_is_catchable_inside_do():
@@ -68,7 +69,7 @@ def test_pass_fallthrough_unhandled_effect_is_catchable_inside_do():
         except UnhandledEffect:
             return "fallback"
 
-    assert run(WithHandler(pass_through, program())) == "fallback"
+    assert run(_install_raw_handler(pass_through)(program())) == "fallback"
 
 
 def test_unhandled_effect_preserves_doeff_traceback():
@@ -77,7 +78,7 @@ def test_unhandled_effect_preserves_doeff_traceback():
         yield MissingEffect(label="traceback")
 
     with pytest.raises(UnhandledEffect) as exc_info:
-        run(WithHandler(pass_through, program()))
+        run(_install_raw_handler(pass_through)(program()))
 
     tb = getattr(exc_info.value, "__doeff_traceback__", None)
     assert isinstance(tb, list)

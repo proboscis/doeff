@@ -7,7 +7,7 @@ from doeff_agents.effects.agent import LaunchEffect, SessionHandle, StopEffect
 from doeff_agents.session_backend import SessionBackend
 from doeff_core_effects.handlers import lazy_ask, state
 
-from doeff import Perform, WithHandler, do, run
+from doeff import Perform, do, run
 
 
 class FakeTmuxBackend:
@@ -50,7 +50,7 @@ def _run(program, backend):
     from doeff_core_effects.scheduler import scheduled
 
     handler = codex_handler(backend=backend)
-    wrapped = WithHandler(state(), WithHandler(handler, program))
+    wrapped = state()(handler(program))
     return run(scheduled(wrapped))
 
 
@@ -89,13 +89,7 @@ def test_codex_handler_asks_for_backend(tmp_path: Path) -> None:
             prompt="hello",
         )))
 
-    wrapped = WithHandler(
-        lazy_ask(env={SessionBackend: backend}),
-        WithHandler(
-            state(),
-            WithHandler(codex_handler(), program()),
-        ),
-    )
+    wrapped = lazy_ask(env={SessionBackend: backend})(state()(codex_handler()(program())))
 
     handle = run(scheduled(wrapped))
 
