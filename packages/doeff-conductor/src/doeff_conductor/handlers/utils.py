@@ -104,6 +104,7 @@ def default_scheduled_handlers(
     git_handler: "GitHandler | None" = None,
     exec_handler: "ExecHandler | None" = None,
     workflow_effect_handler: "JournaledWorkflowEffectHandler | None" = None,
+    create_workspace_override: Callable[[Any], Any] | None = None,
 ) -> Callable[..., Any]:
     """Build a complete protocol handler for all conductor effects.
 
@@ -139,7 +140,9 @@ def default_scheduled_handlers(
     workflow_effect = workflow_effect_handler or JournaledWorkflowEffectHandler()
 
     handlers: tuple[tuple[type[Any], Callable[..., Any]], ...] = (
-        (CreateWorkspace, make_blocking_scheduled_handler(workspace.handle_create_workspace)),
+        (CreateWorkspace, make_blocking_scheduled_handler(
+            create_workspace_override or workspace.handle_create_workspace,
+        )),
         (MergeWorkspaces, make_blocking_scheduled_handler(workspace.handle_merge_workspaces)),
         (DeleteWorkspace, make_blocking_scheduled_handler(workspace.handle_delete_workspace)),
         (Exec, make_blocking_scheduled_handler(exec_gate.handle_exec)),
