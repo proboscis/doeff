@@ -441,18 +441,23 @@ the scheduler's `ExternalPromise` mechanism.
   Enforced by integration test (stub agentd sessions with controlled
   delay, asserting overlap and sub-additive wall time).
 
-**Await budget axis owner:** The L2 attempt loop (`_run_agent_task` in
-`doeff-agents/handlers/production.py`) is the SINGLE authority for
-timeout/retry budgets. `timeout_seconds` flows to agentd exactly as
-before; validation-failure retries stay in L2. The bridge must not
-introduce a second timeout authority. This bounds the open defect §11-7
-from the validation campaign.
+**Await budget axis owner** *(superseded by D13 / L-K4-3 on 2026-06-13)*:
+The L2 attempt loop (`_run_agent_task` in
+`doeff-agents/handlers/production.py`) remains the single authority for
+validation-failure retries, but the wall-clock axis it temporarily
+carried (the `timeout_seconds` task field flowing to agentd) was a
+band-aid, not an owner. D13 moves wall-clock semantics to the node spec
+(`:deadline-seconds`) and demotes the transport await budget to a pure
+keep-alive heartbeat. This closes the open defect §11-7 from the
+validation campaign.
 
-**Cancellation contract:** When a Gather fails fast (sibling error), the
-still-pending offload threads are daemon threads bounded by the
-server-side `await_budget + RPC_TIMEOUT_MARGIN_SECONDS`. No client-side
-polling loops or cancellation tokens are introduced; the server-side
-budget is the backstop.
+**Cancellation contract** *(amended by D13)*: When a Gather fails fast
+(sibling error), the still-pending offload threads are daemon threads
+that run to their own terminal outcome: each transport round-trip is
+bounded by the heartbeat (`DEFAULT_AWAIT_BUDGET_SECONDS +
+RPC_TIMEOUT_MARGIN_SECONDS`), and the re-await loop ends at the node's
+terminal result or its node-spec deadline. No client-side polling loops
+or cancellation tokens are introduced.
 
 **Static enforcement:** A semgrep rule forbids synchronous
 `await_result()` calls inside `handle_*` methods of effect handlers in
@@ -493,6 +498,67 @@ workspace — false-positive green, the worst failure class.
 
 **Policy:** NO backward compatibility. Pre-coverage runs fail loudly.
 No shim, no dual path.
+
+### D13 — Wall-clock deadline ownership (K4-edge × K5 law L-K4-3)
+
+**Context (the absent decision):** Wall-clock await semantics lived in an
+L2 client constant, `DEFAULT_AWAIT_BUDGET_SECONDS` (3600s, agentd clamp
+[1, 3600]). The 600→3600 bump during the 2026-06-11 campaign was a
+band-aid; nobody owned the axis (validation ledger §11-7). A slow agent
+either tripped an arbitrary transport constant — the L2 attempt loop
+burned a retry per timed-out await, eventually parking a misleading
+`budget-exhausted` gate on a healthily working session — or waited
+invisibly. Meanwhile the unit-budget axis already had an owner: the
+`budget` node annotation with its expansion-time check and the
+budget-exhausted K5 gate.
+
+**Decision (owner adjudication 2026-06-13, k8s `activeDeadlineSeconds`
+semantics imported — controllers never hold deadlines; deadlines belong
+to the resource spec and are observed):**
+
+1. **Declaration.** The wall-clock deadline is an `agent!` node-spec
+   attribute: `:deadline-seconds` (sibling of `budget`). The name keeps
+   the unit visible at the call site — `:deadline 600` reads as ambiguous
+   (units? iterations?) where `:deadline-seconds 600` does not — and the
+   noun mirrors its k8s ancestor. Expansion validates it (positive,
+   finite, numeric, non-bool) so malformed deadlines fail at
+   plan/validate time.
+2. **Observation/enforcement.** The L3 conductor runtime owns the
+   deadline decision: the node spec carries `deadline_seconds` into the
+   L2 attempt loop, which observes the clock against it and raises the
+   typed `AgentDeadlineExceededError`; the runtime parks the run as a K5
+   gate. The gate is a **named sibling** of `budget-exhausted`
+   (`deadline-exceeded`, reason "wall-clock deadline exceeded") rather
+   than one merged gate type: both are K5 exhaustion parks with journaled
+   answers, but their forward paths differ — unit exhaustion offers
+   `proceed` (accept the attempt history and re-run), while wall-clock
+   exhaustion's only forward path is RENEWING the window (`extend`); a
+   merged gate would make the answer vocabulary ambiguous in the journal,
+   and the journal is the adjudication record (L-K5-1/2).
+3. **Extension = adjudication.** The ONLY way to extend is a gate answer
+   (`extend`, outcome `resume`) appended to `gate-answer-journal.jsonl`.
+   Extensions are replay inputs — L-K5-2 applies automatically: replaying
+   a finished run id replays the journaled artifact without re-parking.
+   **NO auto-extension policy tier** — explicitly rejected for now;
+   revisit only with a law if attention cost proves painful in practice.
+4. **L2 demotion.** `DEFAULT_AWAIT_BUDGET_SECONDS` becomes a pure
+   transport keep-alive heartbeat. The attempt loop behind the offloaded
+   bridge (`make_offloaded_scheduled_handler`) re-awaits until a terminal
+   result or the L3 deadline; heartbeat expiry is NEVER surfaced as a
+   node failure, never burns a retry attempt, and carries no semantic
+   decision. The `timeout_seconds` task field is deleted (no-backcompat
+   policy); a semgrep rule (`k4-deadline-not-transport-timeout`) bans its
+   return.
+
+**Law ratified:**
+
+- **L-K4-3 (deadline ownership):** `deadline(agent node) ∈ node spec`;
+  `renewal(deadline) = gate answer ∈ journal`; transport await carries
+  no deadline semantics beyond keep-alive.
+
+**Cache identity:** like `budget` and `:retry`, `deadline_seconds` does
+NOT enter the replay cache key — it bounds whether a result arrives, not
+the result distribution (D7 criterion).
 
 ## Implementation plan (stages; each lands with tests)
 
