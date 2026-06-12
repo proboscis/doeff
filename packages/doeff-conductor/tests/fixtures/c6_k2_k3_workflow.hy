@@ -42,7 +42,7 @@
     :stakes "high"
     (<- fixed
         (loop :max 3
-              :until "tests_pass"
+              :until "fix_gate_passed"
               (<- fix_gate (gate! :cmd "uv run pytest" :workspace base))
               (agent! :role "fixer"
                       :class "test-verifiable"
@@ -75,7 +75,7 @@
     :stakes "high"
     (<- gated
         (loop :max 3
-              :until "gate_passed"
+              :until "test_gate_passed"
               (<- test_gate (gate! :cmd "uv run pytest" :workspace gate-workspace))
               (agent! :role "fixer"
                       :class "test-verifiable"
