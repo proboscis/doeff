@@ -8,6 +8,7 @@ import pytest
 from doeff_agents import AgentType
 from doeff_agents.effects import (
     AgentAttemptExhaustedError,
+    AgentDeadlineExceededError,
     AgentSpec,
     AgentTask,
     AgentValidationErrorKind,
@@ -254,6 +255,70 @@ def test_agent_reawaits_on_timeout_without_follow_up(tmp_path: Path) -> None:
 
     assert result == {"summary": "finished late", "ok": True}
     assert handler.follow_up_messages("run-001-node-c-0") == []
+
+
+@do
+def _agent_task_with_deadline(work_dir: Path, deadline_seconds: float | None):
+    return (
+        yield agent(
+            AgentTask(
+                run_id="run-001",
+                node_id="node-d",
+                attempt=0,
+                agent_type=AgentType.CODEX,
+                work_dir=work_dir,
+                prompt="return JSON",
+                result_schema=ARTIFACT_SCHEMA,
+                max_retries=0,
+                deadline_seconds=deadline_seconds,
+            )
+        )
+    )
+
+
+def test_agent_heartbeat_expiry_never_burns_attempts(tmp_path: Path) -> None:
+    """L-K4-3: heartbeat expiry is transport-only — no attempt burn, no failure.
+
+    With max_retries=0, the pre-demotion semantics (TIMED_OUT consumed an
+    attempt) raised AgentAttemptExhaustedError on the first expiry; the
+    demoted loop re-awaits transparently until the artifact arrives.
+    """
+    handler = ScenarioAgentHandler(
+        scripts={
+            "run-001-node-d-0": [
+                ScenarioStep.timeout(),
+                ScenarioStep.timeout(),
+                ScenarioStep.success({"summary": "finished late", "ok": True}),
+            ]
+        }
+    )
+
+    result = run(handler.wrap(_agent_task_with_deadline(tmp_path, 30.0)))
+
+    assert result == {"summary": "finished late", "ok": True}
+    assert handler.follow_up_messages("run-001-node-d-0") == []
+
+
+def test_agent_raises_deadline_exceeded_when_node_spec_deadline_passes(
+    tmp_path: Path,
+) -> None:
+    """L-K4-3: the node-spec deadline is the ONLY wall-clock authority.
+
+    A never-completing session (every await expires) raises the typed
+    deadline error — not attempt exhaustion — carrying the declared
+    window and observed elapsed time for the K5 gate.
+    """
+    handler = ScenarioAgentHandler(
+        scripts={"run-001-node-d-0": [ScenarioStep.timeout()]},
+    )
+
+    with pytest.raises(AgentDeadlineExceededError) as exc_info:
+        run(handler.wrap(_agent_task_with_deadline(tmp_path, 0.05)))
+
+    assert exc_info.value.session_id == "run-001-node-d-0"
+    assert exc_info.value.deadline_seconds == 0.05
+    assert exc_info.value.elapsed_seconds >= 0.05
+    assert handler.follow_up_messages("run-001-node-d-0") == []
 
 
 def test_scenario_handler_supports_timeout_outcome(tmp_path: Path) -> None:

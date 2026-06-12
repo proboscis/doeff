@@ -106,3 +106,16 @@ def test_agentd_only_worker_route_rule_detects_conductor_handler_bypass() -> Non
     )
 
     assert _has_rule(check_ids, "adr0001-d1-agentd-only-worker-route")
+
+
+def test_k4_deadline_rule_bans_transport_timeout_on_agent_task_specs() -> None:
+    """L-K4-3 guard: `timeout_seconds` must not return to AgentTask/AgentSpec."""
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-agents/src/doeff_agents/deadline_timeout_sample.py",
+        cwd=fixture_root,
+    )
+
+    # Both the AgentTask and the AgentSpec construction must fire.
+    assert len(_rule_start_lines(results, "k4-deadline-not-transport-timeout")) == 2
