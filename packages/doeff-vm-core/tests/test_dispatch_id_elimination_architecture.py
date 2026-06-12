@@ -3,11 +3,9 @@ from pathlib import Path
 CORE_ROOT = Path(__file__).resolve().parents[1]
 IDS_RS = CORE_ROOT / "src/ids.rs"
 FRAME_RS = CORE_ROOT / "src/frame.rs"
-TRACE_STATE_RS = CORE_ROOT / "src/trace_state.rs"
 VM_RS = CORE_ROOT / "src/vm.rs"
 VM_DISPATCH_RS = CORE_ROOT / "src/vm/dispatch.rs"
 VM_STEP_RS = CORE_ROOT / "src/vm/step.rs"
-VM_TRACE_RS = CORE_ROOT / "src/vm/vm_trace.rs"
 
 
 def _runtime_source(path: Path) -> str:
@@ -18,7 +16,7 @@ def _runtime_source(path: Path) -> str:
 def _vm_runtime_source() -> str:
     return "\n".join(
         _runtime_source(path)
-        for path in (VM_RS, VM_DISPATCH_RS, VM_STEP_RS, VM_TRACE_RS)
+        for path in (VM_RS, VM_DISPATCH_RS, VM_STEP_RS)
         if path.exists()
     )
 
@@ -47,21 +45,6 @@ def test_frame_runtime_has_no_dispatch_id_or_dispatch_trace() -> None:
     assert "parent_dispatch_id:" not in source, (
         "SPEC-VM-020 Phase 1b: nested dispatch ancestry must be derived structurally, not by id."
     )
-
-
-def test_trace_state_runtime_has_no_preserved_dispatch_side_buffers() -> None:
-    source = _runtime_source(TRACE_STATE_RS)
-
-    banned = (
-        "preserved_error_frames",
-        "preserved_thrown_dispatches",
-        "finish_dispatch(",
-    )
-    for needle in banned:
-        assert needle not in source, (
-            "SPEC-VM-020 Phase 1b: TraceState must stop accumulating dispatch/error side state; "
-            f"found `{needle}`."
-        )
 
 
 def test_vm_runtime_has_no_dispatch_id_lookup_or_completion_helpers() -> None:
