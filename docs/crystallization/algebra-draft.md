@@ -141,6 +141,12 @@ lawは「全ハンドラについての定理」ではなく**ハンドラ契約
 - CC2(Gather導出): `Gather(t₁..tₙ) ≡ traverse Wait [t₁..tₙ]`(完了順序によらず結果順序はインデックス順)
 - CC3(ハンドラ継承): `Spawn`されたタスクはspawn地点の内側ハンドラ連鎖を観測する(scheduler.py:324-327の再設置で実装確認)。**注意: 「再設置」は同一クロージャの共有であって複製ではない** — stateハンドラのstore dictはタスク間共有メモリになる(CC1に条件が要る根本原因。D9の共有意味論と整合)
 - CC4(Promise律): `WaitPromise`という効果は存在しない — 実体は`Wait(promise.future)`(waitable_keyがTask|Future両対応、scheduler.py:242-248)。law: `CreatePromise >>= λp. (CompletePromise(p,v) との任意順序で) Wait(p.future) ≡ pure v` — **CompleteとWaitは順序可換**(waiters機構が先行Waitを保留し、完了時にwakeする)。単位律より強いこの順序可換性が本当の内容
+- **Cancel規範(CAN系 — D23、2026-06-12オーナー裁可)**: キャンセルは**協調的**。
+  - CAN1(他者観測): tがcancelled済みなら `Wait(t) ≡ throw TaskCancelledError`(Gather fail-fast・Raceの観測点も同様 — scheduler.pyの観測点はちょうど4箇所)
+  - CAN2(自己観測): 被キャンセルタスク自身がキャンセルを観測するのは**次のscheduler効果のみ**。scheduler効果間の区間は不可分(協調実行の基盤lawと整合)
+  - CAN3(非先取): 実行中の外部Awaitは完走する(run-to-completion)。Promise/Semaphoreの状態遷移は遡及しない
+  - CAN4(冪等): `Cancel(t) >> Cancel(t) ≡ Cancel(t)`
+  - 棄却記録: プリエンプティブ即時キャンセル(VM先取機構が必要 — K1波及)/ structured concurrencyスコープ(再設計規模 — 将来再訪に値する)。CAN1〜3は現実装の記述であり改修ゼロ
 
 ### ~~G6 Var~~ — 決着: 全削除(D15 — 2026-06-12オーナー確定)
 
@@ -159,37 +165,56 @@ lawは「全ハンドラについての定理」ではなく**ハンドラ契約
 ### 観測子(WithObserve/Intercept — 生成元ではなく様相)
 - O1(非干渉律): `observe(o, p) ≡_値 p` — 観測子は値意味論で恒等。**この等式が書けることが「観測子」と「ハンドラ」の境界定義**(書けなければそれはハンドラ)
 
+### GetHandlers(リフレクション様相 — コア公認、D20、2026-06-12オーナー裁可)
+- 地位: 生成元ではなく**ハンドラ作者向けの様相**。コアDoCtrl(tag 26)として公認。荷重: schedulerのSpawn時ハンドラ再設置(CC3の実装、scheduler.py:453)+doeff-traverse 4箇所(handlers.py:35,145,170,256)
+- GH1(境界): `get_inner_handlers(k) ≡ kの捕獲地点からprompt境界までのハンドラ列(内側優先順)`
+- GH2(非消費): kを消費しない — 呼出後もkはresume可能(move-only規律の**明示的例外**として記録。鎖構造を読むだけで所有権を取らない)
+- GH3(観測範囲): 開示されるのはハンドラcallable列のみ。フレーム・状態・継続構造は不可視。O1と同型の非干渉: `get_inner_handlers(k) >> resume(k,v) ≡ resume(k,v)`
+- 棄却記録: 削除してschedulerにVM特権付与(コア空集合定理を自壊)/ 生成元昇格(ユーザープログラムが値のためにperformする効果ではない)
+
 ## 4. law-poorフラグ(設計曖昧のシグナル)
 
 | # | 項目 | 症状 | 提案 |
 |---|---|---|---|
 | 1 | ~~**Var/cells**(G6)~~ | **決着(2026-06-12 D15)**: 死設備と判明 | 全削除(constraint-graph §4-④の削除issue) |
 | 2 | ~~**Spawn/Wait×共有状態**~~ | **決着(2026-06-12 D16)**: 規範化 | タスク間共有はPromise/Semaphore経由のみ。CC1は干渉自由仮定下で成立と明記 |
-| 3 | **Skip**(_SKIPPEDセンチネル) | `is _SKIPPED`の同一性チェックはlaw化不能のad hoc | Selective functor(When/Skip)として§5のselective層に再定式化 |
-| 4 | **SetTime** | sim実装は動作、real実装はno-op — ハンドラ間でlawが割れる(静かな違反) | realでは明示エラーにする(no-op禁止) |
-| 5 | **Cancel** | キャンセル点の意味論(どこで停止が観測されるか)が等式で書けない | キャンセルは「次のscheduler効果で観測」等の規範を等式化 |
-| 6 | **GetHandlers** | リフレクション。「scheduler=純ライブラリ」(B10)の但し書きであり、抽象を破る観測 | コアDoCtrlとして公認し「WithHandler構造の純関数」law(GH1: `get_inner_handlers(k) ≡ kの境界からprompt境界までのハンドラ列`)を明文化 |
+| 3 | ~~**Skip**(_SKIPPEDセンチネル)~~ | **決着(2026-06-12 D21)**: selective層へ再定式化 | S1〜S4制定(§5)。実装は委譲issue `skip-selective-reformulation` |
+| 4 | ~~**SetTime**~~ | **決着(2026-06-12 D24)**: real系で即エラー化 | ST1: sync/asyncハンドラはSetTimeに即`NotImplementedError`(黙ったPass転送を廃止 — 旧記述「no-op」は不正確で実態はPassだった)。委譲issue `settime-real-handlers-fail-fast` |
+| 5 | ~~**Cancel**~~ | **決着(2026-06-12 D23)**: 協調観測規範を等式化 | CAN1〜4(§3 G5)。現実装の記述であり改修ゼロ。機械化は委譲issue `laws-gh-can-mechanization` |
+| 6 | ~~**GetHandlers**~~ | **決着(2026-06-12 D20)**: コア公認 | GH1〜3(§3観測子の隣)。機械化は委譲issue `laws-gh-can-mechanization` |
 | 7 | **global_state/writer_log** | 死設備(呼び出し元ゼロ) | 削除issue(検証条件: grep+全テスト) |
 
 ## 5. 合成則の層宣言
 
 | 層 | 合成子 | 現状 | law |
 |---|---|---|---|
-| **applicative**(構造が静的) | Traverse, Zip, Gather | traverse族は逐次実装のみ(並列化はGatherへの書き換えで可能 — 未実装) | traverse恒等・自然性・合成律、Zipのインデックス整合、失敗運搬=Either-applicativeの蓄積律 |
-| **selective**(分岐候補が静的列挙可能) | When/Skip(再定式化後)、Race? | 未整理 — Skipのad hocセンチネルが該当層の空白を示す | selective laws(Mokhov)導入候補 |
+| **applicative**(構造が静的) | Traverse, Zip, Gather | traverse族は逐次実装のみ。並列化はTR系書き換え則として制定済み(D22)— **実装は需要発生まで保留** | traverse恒等・自然性・合成律、Zipのインデックス整合、失敗運搬=Either-applicativeの蓄積律、TR1〜2(下記) |
+| **selective**(分岐候補が静的列挙可能) | When/Skip(D21で確定)、Race? | S1〜S4制定済み(下記)。実装は委譲issue `skip-selective-reformulation` | selective laws(Mokhov)— S系として導入 |
 | **monadic**(動的) | @do bind, flat_map, map | 主合成面 | 制御コアの等式に従属 |
 
 宣言: パイプラインはapplicativeで書けるものをmonadicに落とさない(静的検査可能性の保存)。
+
+### selective層のlaw(S系 — D21、2026-06-12オーナー裁可。実装は委譲issue)
+- S1(真分岐): `when(True, p) ≡ p`
+- S2(偽分岐): `when(False, p) ≡ pure Skipped` — skipは**値**であり失敗ではない
+- S3(traverse吸収): gが純粋述語のとき `traverse(λx. when(g x, f x), xs) ≡ traverse(f, filter(g, xs))` — `is _SKIPPED`センチネル同一性チェックをこの等式が置換する
+- S4(非失敗): `try(when(False, p)) ≡ when(False, p)` — Try/Failの回復は発火しない(現実装がskipを`failed=True`で運ぶ混同を禁止)
+
+### applicative層の並列書き換え則(TR系 — D22、2026-06-12オーナー裁可。実装は需要発生まで保留)
+- TR1(書き換え): `traverse_par(f, xs) ≡ Gather(map(Spawn∘f, xs))`
+- TR2(観測等価): 干渉自由(D16規範準拠)の下で `traverse_par(f, xs) ≡ traverse(f, xs)`
+- 運用: 需要発生時に本書き換え則どおり委譲実装(判断の償却)。現呼び出し元34件は実質テスト+examplesのため保留。長尾(SortBy/Take/Reduce/Zip)の削減はcoverage-reportどおり急がない
 
 ## 6. 判定保留リスト(優先順 — 2026-06-12改訂)
 
 ~~1. Var意味論の決着~~ → **決着(D15: 全削除)**
 ~~2. Spawn/Wait×共有状態の交換則条件~~ → **決着(D16: Promise/Semaphore経由のみ規範化)**
 
+~~1. GetHandlersのコア公認とlaw~~ → **決着(D20: コア公認、GH1〜3制定 — 2026-06-12オーナー裁可)**
+~~2. Skipのselective層への再定式化~~ → **決着(D21: S1〜S4制定、実装は委譲issue)**
+~~3. Traverse並列意味論~~ → **決着(D22: TR1〜2制定、実装は需要発生まで保留)**
+
 残り:
-1. GetHandlersのコア公認とlaw(§4-6)
-2. Skipのselective層への再定式化(§4-3)
-3. Traverse並列意味論(applicative層の実装充足)
 4. ~~残骸削除issue群~~ → **issue化完了(2026-06-12)**: VarStore一式 [#461](https://github.com/proboscis/doeff/issues/461)、PromptBoundary.types [#464](https://github.com/proboscis/doeff/issues/464)、MaskSpec [#465](https://github.com/proboscis/doeff/issues/465)、SPEC-EFF-002更新 [#466](https://github.com/proboscis/doeff/issues/466)
 5. ~~カバレッジ実測~~ → **完了(2026-06-12)**: 20/20表現可能(100%)— [coverage-report.md](coverage-report.md)。副産物: doeff-secretのDelegate残骸バグ発見([#470](https://github.com/proboscis/doeff/issues/470))、Traverse族長尾の未使用観測(削減候補・急がない)
 6. ~~CS1/CC5のproperty test化~~ → **第一段完了(2026-06-12)**: `tests/laws/test_generator_laws.py`(21 passed)。残のissue化完了: hypothesis乱択化 [#462](https://github.com/proboscis/doeff/issues/462)、simドライバ(AW2反例の決定論的再現)[#463](https://github.com/proboscis/doeff/issues/463)
