@@ -120,3 +120,38 @@
 - **理由**: PR #404(47d2a518, 2026-04-25)は実際の意味論バグを修正したが、選ばれた機構がSPEC-VM-021不変条件1, 2, 4に違反。share_handle()はArcの第二参照を生成、VMとFrameに`Option<Continuation>`バックアップを格納。さらにライブバグ: バックアップがone-step窓を超えて残存し、次の無関係なProgramフレームに付着(stale-backup-leak)
 - **機構**: VMは`Py<PyK>`ハンドル(continuation.rsのPyKへのPython参照)を保持。ハンドラが例外を発生させた場合、VMはハンドルを借用してPyK.take()でチェーンを取得し再接続(discontinue k exn相当)。Callable traitに`is_generator_handler()`を追加: Pythonジェネレータハンドラのみ`Py<PyK>`バックアップを使用、同期Rustハンドラは`Value::Continuation(k)`を直接受け取る
 - **検証**: #404回帰テスト6件全件green、stale-backup-leak回帰テスト追加、ガードレイヤー(test_move_semantics_architecture.py)をSPEC-VM-021不変条件に準拠するよう書き直し(6テスト全pass)、cargo test --features "python_bridge,invariant-checks" 37pass/0fail
+
+## D20. GetHandlersのコア公認 — リフレクション様相としてlawで縛る [オーナー裁可 2026-06-12]
+
+- **選択**: コアDoCtrl(tag 26)として公認し、GH1(境界: kの捕獲地点からprompt境界までのハンドラ列・内側優先順)/ GH2(非消費: kはresume可能なまま — move-only規律の明示的例外)/ GH3(観測範囲: callable列のみ、フレーム・状態・継続構造は不可視)で縛る
+- **棄却**: 削除してschedulerにVM特権付与(「コアエフェクトはほぼ空集合」定理を自壊)/ 生成元昇格(ユーザーが値のためにperformする効果ではなく、ハンドラ作者向けリフレクション=様相)
+- **理由**: 既に荷重を負う — schedulerのSpawn時ハンドラ再設置(CC3の実装、scheduler.py:453)+doeff-traverse 4箇所(handlers.py:35,145,170,256)。実装(step.rsのfiber鎖歩行)はGH1と一致、違反なし
+- **帰結**: algebra-draft §3観測子の隣に記載。機械化は委譲issue `laws-gh-can-mechanization`
+
+## D21. Skipはselective層へ再定式化 [オーナー裁可 2026-06-12]
+
+- **選択**: When/SkipをSelective functor(Mokhov)として再定式化。S1(真分岐)/ S2(偽分岐 — skipは値であり失敗ではない)/ S3(traverse吸収 — センチネル同一性チェックを等式で置換)/ S4(非失敗 — Try/Fail回復は発火しない)
+- **棄却**: 現状維持(`is _SKIPPED`はlaw化不能のまま)/ Failへの統合(skip=除外とエラーは意味論が異なる。現実装がfailed=Trueで運んでいる混同自体が再定式化の根拠)
+- **理由**: センチネルはhandlers.py内3箇所に閉じ、外部依存ゼロ — 移行コスト局所的。§5のselective層の空白がちょうど埋まる
+- **帰結**: S1〜S4をalgebra-draft §5に制定。実装は委譲issue `skip-selective-reformulation`
+
+## D22. Traverse並列はlawのみ制定、実装は需要発生まで保留 [オーナー裁可 2026-06-12]
+
+- **選択**: TR1(書き換え: `traverse_par(f,xs) ≡ Gather(map(Spawn∘f,xs))`)/ TR2(干渉自由下で逐次と観測等価 — 条件はD16/D17と同一)を制定。実装はしない
+- **棄却**: handlers.py直書きの専用並列実装(schedulerの並行性を複製する並走機械=compensator)/ law未制定のまま放置(将来の実装者が無法地帯で設計判断することになる)
+- **理由**: traverse呼び出し元34件は実質テスト+examples、実需要なし。Gather(96件)が並列の主力。lawだけ固定すれば需要発生時にcodexへ一発委譲できる(判断の償却)
+- **帰結**: algebra-draft §5にTR系として記載。委譲issueは作らない(需要発生時に起票)
+
+## D23. Cancelは協調観測規範 — CAN1〜4 [オーナー裁可 2026-06-12]
+
+- **選択**: 現実装の意味論を規範認定。CAN1(他者観測: cancelled済みtへのWait/Gather/Race ≡ TaskCancelledError throw — 観測点はscheduler.pyのちょうど4箇所)/ CAN2(自己観測: 次のscheduler効果でのみ。効果間は不可分)/ CAN3(非先取: 実行中の外部Awaitは完走、Promise/Semaphore遷移は遡及しない)/ CAN4(冪等)
+- **棄却**: プリエンプティブ即時キャンセル(VM先取機構が必要 — K1所有権コアへ波及、協調スケジューラ設計と矛盾)/ structured concurrency(nurseryスコープ — 再設計規模。**将来再訪に値する**と明記)
+- **理由**: cancellation/preemptionは結合核ホットスポット(K4隣接)であり、eef38caaのcancel lifecycle修正直後の今が固定の好機。CAN1〜3は現実装の記述で改修ゼロ
+- **帰結**: algebra-draft §3 G5に記載。機械化は委譲issue `laws-gh-can-mechanization`
+
+## D24. SetTimeはreal系ハンドラで即エラー [オーナー裁可 2026-06-12]
+
+- **選択**: sync/asyncハンドラはSetTimeに即`NotImplementedError`(どのハンドラが何故拒否したかをメッセージに明記)。ST1として記録
+- **棄却**: 現状のPass転送維持(外側の寛容なハンドラに黙って飲まれる・診断喪失)/ realで実時間変更(論外)
+- **理由**: SetTimeはシミュレーション専用効果であり、realでの使用はバグ — 正しい層でfail-fast。なお旧記述「real実装はno-op」は不正確で、実態はPass転送だった(2026-06-12調査で訂正)— いずれにせよハンドラ間でlawが割れる問題は同じ
+- **帰結**: 委譲issue `settime-real-handlers-fail-fast`(数行+テスト)
