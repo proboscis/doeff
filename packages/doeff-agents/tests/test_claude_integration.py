@@ -19,7 +19,8 @@ from doeff_agents.effects.agent import (
 from doeff_agents.session_backend import SessionBackend
 from doeff_core_effects.handlers import lazy_ask, state
 
-from doeff import EffectBase, Pass, Perform, Resume, WithHandler, do, run
+from doeff import EffectBase, Pass, Perform, Resume, do, run
+from doeff import handler as _install_raw_handler
 
 
 # Fake tmux backend (same as test_claude_handler.py)
@@ -77,13 +78,7 @@ def _run_full_stack(program, backend):
     from doeff_core_effects.scheduler import scheduled
 
     ch = claude_agent_handler(backend=backend)
-    wrapped = WithHandler(
-        state(),
-        WithHandler(
-            ch,
-            WithHandler(greet_handler, program),
-        ),
-    )
+    wrapped = state()(ch(_install_raw_handler(greet_handler)(program)))
     return run(scheduled(wrapped))
 
 
@@ -130,13 +125,7 @@ class TestFullIntegration:
             ))
             return handle
 
-        wrapped = WithHandler(
-            lazy_ask(env={SessionBackend: backend}),
-            WithHandler(
-                state(),
-                WithHandler(claude_agent_handler(), program()),
-            ),
-        )
+        wrapped = lazy_ask(env={SessionBackend: backend})(state()(claude_agent_handler()(program())))
 
         handle = run(scheduled(wrapped))
 

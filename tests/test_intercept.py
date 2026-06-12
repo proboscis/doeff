@@ -2,7 +2,8 @@
 
 from doeff_vm import Callable, EffectBase
 
-from doeff import WithHandler, WithObserve, do
+from doeff import WithObserve, do
+from doeff import handler as _install_raw_handler
 from doeff import run as doeff_run
 from doeff.program import Resume
 
@@ -31,7 +32,7 @@ class TestObserve:
             y = yield Ask("b")
             return (x, y)
 
-        result = doeff_run(WithHandler(handler, WithObserve(Callable(observer), body())))
+        result = doeff_run(_install_raw_handler(handler)(WithObserve(Callable(observer), body())))
         assert result == ("val:a", "val:b")
         assert seen == ["seen:a", "seen:b"]
 
@@ -54,7 +55,7 @@ class TestObserve:
         def body():
             return (yield Ask("original"))
 
-        result = doeff_run(WithHandler(handler, WithObserve(Callable(observer), body())))
+        result = doeff_run(_install_raw_handler(handler)(WithObserve(Callable(observer), body())))
         assert result == "original"
 
     def test_observer_with_multiple_effect_types(self):
@@ -86,7 +87,7 @@ class TestObserve:
             yield Log("world")
             return "done"
 
-        result = doeff_run(WithHandler(handler, WithObserve(Callable(observer), body())))
+        result = doeff_run(_install_raw_handler(handler)(WithObserve(Callable(observer), body())))
         assert result == "done"
         assert seen == ["Log", "Ask", "Log"]
 
@@ -116,8 +117,7 @@ class TestObserve:
             return (yield Ask("x"))
 
         result = doeff_run(
-            WithHandler(handler,
-                WithObserve(Callable(outer_obs),
+            _install_raw_handler(handler)(WithObserve(Callable(outer_obs),
                     WithObserve(Callable(inner_obs), body())))
         )
         assert result == 42
@@ -148,7 +148,7 @@ class TestObserve:
         # Observer is OUTSIDE handler — should still see the effect
         result = doeff_run(
             WithObserve(Callable(observer),
-                WithHandler(handler, body()))
+                _install_raw_handler(handler)(body()))
         )
         assert result == "handled"
         assert seen == ["observed:x"]

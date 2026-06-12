@@ -1,5 +1,4 @@
 # ruff: noqa: E402
-
 import base64
 import sys
 from pathlib import Path
@@ -7,6 +6,8 @@ from typing import Any
 
 import pytest
 from PIL import Image
+
+from doeff import handler as _program_handler
 
 IMAGE_PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "doeff-image" / "src"
 if str(IMAGE_PACKAGE_ROOT) not in sys.path:
@@ -25,7 +26,6 @@ from doeff import (
     Pass,
     Resume,
     Try,
-    WithHandler,
     async_run,
     default_handlers,
     do,
@@ -62,12 +62,12 @@ def _build_mock_seedream_handler(overrides: dict[str, Any]):
             return (yield Resume(k, overrides[effect.key]))
         yield Pass()
 
-    return _handler
+    return _program_handler(_handler)
 
 
 async def _run_with_handler(program, overrides: dict[str, Any]):
     return await async_run(
-        WithHandler(_build_mock_seedream_handler(overrides), program),
+        _build_mock_seedream_handler(overrides)(program),
         handlers=default_handlers(),
     )
 

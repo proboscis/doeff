@@ -1,7 +1,7 @@
 ;;; Test: duplicate bind names + index-based stage-of
 (require doeff-hy.macros [defk defp <-])
 (import doeff [do :as _doeff-do])
-(import doeff [EffectBase K run WithHandler Resume Pass Pure])
+(import doeff [EffectBase K run Resume Pass Pure])
 (import doeff_core_effects.scheduler [scheduled])
 (import dataclasses [dataclass])
 
@@ -29,7 +29,7 @@
       (yield (Resume k (+ "enriched:" (str effect.data))))
     True (yield (Pass effect k))))
 
-(defn run-mock [p] (run (scheduled (WithHandler mock p))))
+(defn run-mock [p] (run (scheduled (mock p))))
 
 ;; Tests
 (import doeff_hy.sexpr [list-stages stage-of])

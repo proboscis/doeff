@@ -133,7 +133,7 @@ class ConductorAPI:
             # Execute the workflow
             from doeff_core_effects.scheduler import scheduled
 
-            from doeff import WithHandler, run
+            from doeff import run
 
             # Build kwargs
             kwargs = params or {}
@@ -166,7 +166,7 @@ class ConductorAPI:
                 journal_run_id=workflow_id,
             )
 
-            result = run(scheduled(WithHandler(conductor_handler, program)))
+            result = run(scheduled(conductor_handler(program)))
             result_value = result.value if type(result).__name__ == "RunResult" else result
             open_gates = ()
             from doeff_conductor.workflow_runtime import ParkedValue, WorkflowRuntimeResult

@@ -19,7 +19,7 @@ from doeff_flow.effects import TraceAnnotate, TraceCapture, TracePush, TraceSnap
 from doeff_flow.handlers import MockTraceRecorder, mock_handlers
 from doeff_flow.trace import get_default_trace_dir
 
-from doeff import WithHandler, default_handlers, do
+from doeff import default_handlers, do
 from doeff import run as run_sync
 
 
@@ -43,7 +43,7 @@ def main():
     handlers = mock_handlers(recorder=recorder)
     trace_file = get_default_trace_dir() / workflow_id / "trace.jsonl"
 
-    wrapped = WithHandler(handlers, workflow_under_test())
+    wrapped = handlers(workflow_under_test())
     result = run_sync(wrapped, handlers=default_handlers())
     if result.is_err():
         raise RuntimeError(f"Workflow unexpectedly failed: {result.error!r}")

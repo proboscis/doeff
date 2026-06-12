@@ -10,14 +10,11 @@ from doeff_core_effects import slog
 from doeff_core_effects.handlers import lazy_ask, writer
 from doeff_core_effects.scheduler import scheduled
 
-from doeff import WithHandler, do, run
+from doeff import do, run
 
 
 def _run_program(program):
-    composed = WithHandler(
-        lazy_ask(env={}),
-        WithHandler(writer(), program),
-    )
+    composed = lazy_ask(env={})(writer()(program))
     return run(scheduled(composed))
 
 

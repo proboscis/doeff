@@ -12,7 +12,7 @@ Run:
 
 from doeff_preset import preset_handlers
 
-from doeff import WithHandler, default_handlers, do, run, slog
+from doeff import default_handlers, do, run, slog
 
 
 @do
@@ -44,7 +44,7 @@ def main():
     print("=== Basic slog Display Example ===\n")
 
     result = run(
-        WithHandler(preset_handlers(), basic_workflow()),
+        preset_handlers()(basic_workflow()),
         handlers=default_handlers(),
     )
 

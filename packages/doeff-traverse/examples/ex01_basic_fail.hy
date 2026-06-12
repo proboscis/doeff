@@ -6,7 +6,7 @@
 (require doeff-hy.macros [defk <- do!])
 (import doeff [do :as _doeff-do])
 (import doeff [run])
-(import doeff.program [WithHandler Resume Pass])
+(import doeff.program [Resume Pass])
 
 (import doeff_core_effects [try-handler :as try_handler])
 (import doeff_core_effects.scheduler [scheduled])
@@ -41,14 +41,11 @@
 
 (defn run-fail-fast [program]
   (run (scheduled
-    (WithHandler fail_handler
-      (WithHandler try_handler program)))))
+    (fail_handler (try_handler program)))))
 
 (defn run-normalize [program]
   (run (scheduled
-    (WithHandler fail_handler
-      (WithHandler normalize_to_none
-        (WithHandler try_handler program))))))
+    (fail_handler (normalize_to_none (try_handler program))))))
 
 (defk replace-with-zero [effect k]
   (if (isinstance effect Fail)
@@ -57,9 +54,7 @@
 
 (defn run-replace-zero [program]
   (run (scheduled
-    (WithHandler fail_handler
-      (WithHandler replace-with-zero
-        (WithHandler try_handler program))))))
+    (fail_handler (replace-with-zero (try_handler program))))))
 
 
 ;; ---------------------------------------------------------------------------

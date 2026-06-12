@@ -33,6 +33,7 @@ from doeff_traverse.handlers import fail_handler, parallel
 from doeff_vm import WithHandler
 
 from doeff import EffectBase, Pass, Program, Resume, do, run, slog
+from doeff import handler as _program_handler
 
 
 @do
@@ -305,7 +306,7 @@ def _make_passthrough_handler(tag: str):
     def _handler(effect, k):
         yield Pass(effect, k)
 
-    return _handler
+    return _program_handler(_handler)
 
 
 def _run_deep_stack(program, n_extra_handlers=15, concurrency=40):
@@ -456,7 +457,7 @@ def _make_catching_handler(effect_type, response_fn):
             return (yield Resume(k, result))
         yield Pass(effect, k)
 
-    return _handler
+    return _program_handler(_handler)
 
 
 def _run_deep_catching_stack(program, concurrency=40):

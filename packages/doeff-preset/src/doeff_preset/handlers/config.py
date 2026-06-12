@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import Any
 
 from doeff import AskEffect, Effect, MissingEnvKeyError, Pass, Resume, do
+from doeff import handler as _program_handler
 from doeff_preset.effects.config import is_preset_config_key
 
 ProtocolHandler = Callable[[Any, Any], Any]
@@ -63,7 +64,7 @@ def make_config_handler(
 
         yield Pass()
 
-    return handle_ask_with_config
+    return _program_handler(handle_ask_with_config)
 
 
 def config_handlers(defaults: dict[str, Any] | None = None) -> ProtocolHandler:

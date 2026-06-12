@@ -15,6 +15,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from doeff import handler as _program_handler
+
 IMAGE_PACKAGE_ROOT = Path(__file__).resolve().parents[3] / "doeff-image" / "src"
 if str(IMAGE_PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(IMAGE_PACKAGE_ROOT))
@@ -95,13 +97,12 @@ class _InMemoryTTLCache:
 
                 return (yield Resume(k, None))
 
-        return handler
+        return _program_handler(handler)
 
 
 async def _run_with_cache(program: Any, cache: _InMemoryTTLCache, *, env: dict[str, Any] | None = None):
-    from doeff import WithHandler
 
-    return await _run_with_default_cost(WithHandler(cache.make_handler(), program), env=env)
+    return await _run_with_default_cost(cache.make_handler()(program), env=env)
 
 
 def _extract_file_uri(part: Any) -> str | None:

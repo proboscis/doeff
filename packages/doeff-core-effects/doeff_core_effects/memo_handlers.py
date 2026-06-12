@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, TypeAlias
 
 from doeff import UnhandledEffect, do
+from doeff import handler as _program_handler
 from doeff.program import Pass, Resume
 from doeff_core_effects.memo_effects import (
     MemoExists,
@@ -147,10 +148,9 @@ def memo_handler(
 
     Stack multiple handlers for layered caching:
 
-        WithHandler(memo_handler(minio, cost=EXPENSIVE, name="minio"),
-          WithHandler(memo_handler(redis, cost=CHEAP, name="redis"),
-            WithHandler(memo_handler(memory, name="L1"),
-              program)))
+        memo_handler(minio, cost=EXPENSIVE, name="minio")(
+          memo_handler(redis, cost=CHEAP, name="redis")(
+            memo_handler(memory, name="L1")(program)))
 
     Each handler is a caching proxy. Position determines terminal behavior:
     the outermost handler's miss re-perform is unhandled → memo_rewriter treats as miss.
@@ -227,7 +227,7 @@ def memo_handler(
         result = yield Resume(k, None)
         return result
 
-    return handler
+    return _program_handler(handler)
 
 
 def in_memory_memo_handler():
@@ -312,7 +312,7 @@ def make_memo_rewriter(
         result = yield Resume(k, delegated)
         return result
 
-    return handler
+    return _program_handler(handler)
 
 
 def memo_rewriters(

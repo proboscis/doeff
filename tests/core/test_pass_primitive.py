@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from doeff import Effect, EffectBase, Pass, Resume, WithHandler, do
+from doeff import Effect, EffectBase, Pass, Resume, do
+from doeff import handler as _install_raw_handler
 from tests._run_helpers import run_with_defaults
 
 
@@ -37,7 +38,7 @@ def test_pass_is_terminal_passthrough() -> None:
         return value
 
     result = run_with_defaults(
-        WithHandler(outer_handler, WithHandler(inner_handler, body())),
+        _install_raw_handler(outer_handler)(_install_raw_handler(inner_handler)(body())),
     )
     assert result.value == "handled-by-outer"
     assert resumed_after_pass["value"] is False

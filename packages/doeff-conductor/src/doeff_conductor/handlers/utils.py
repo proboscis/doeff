@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from doeff_core_effects.scheduler import CreateExternalPromise, Wait
 
 from doeff import Effect, Pass, Resume, do
+from doeff import handler as _install_raw_handler
 
 if TYPE_CHECKING:
     from doeff_conductor.handlers.agent_handler import AgentHandler
@@ -166,7 +167,7 @@ def default_scheduled_handlers(
                 return (yield effect_handler(effect, k))
         yield Pass(effect, k)
 
-    return handler
+    return _install_raw_handler(handler)
 
 
 __all__ = [

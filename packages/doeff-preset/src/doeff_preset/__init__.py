@@ -6,7 +6,7 @@ experience for examples, demos, and rapid development.
 
 Example:
     >>> from doeff import do, slog
-    >>> from doeff import WithHandler, default_handlers, run
+    >>> from doeff import default_handlers, run
     >>> from doeff_preset import preset_handlers
     >>>
     >>> @do
@@ -17,7 +17,7 @@ Example:
     ...     return "success"
     >>>
     >>> result = run(
-    ...     WithHandler(preset_handlers(), my_workflow()),
+    ...     preset_handlers()(my_workflow()),
     ...     handlers=default_handlers(),
     ... )
     >>> # slog messages are displayed to console AND accumulated in log

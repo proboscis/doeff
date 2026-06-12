@@ -5,8 +5,9 @@ from doeff_core_effects.scheduler import Gather, Spawn, Wait, scheduled
 from doeff_vm import EffectBase
 
 from doeff import do
+from doeff import handler as _install_raw_handler
 from doeff import run as doeff_run
-from doeff.program import Resume, WithHandler
+from doeff.program import Resume
 
 
 class TestDirectErrors:
@@ -66,7 +67,7 @@ class TestHandlerErrors:
             yield Eff()
 
         with pytest.raises(ValueError, match="handler error"):
-            doeff_run(WithHandler(handler, body()))
+            doeff_run(_install_raw_handler(handler)(body()))
 
 
 class TestTaskErrors:

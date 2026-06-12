@@ -11,7 +11,7 @@ Actual: run(env) fails with "unhandled effect: Local".
 
 from doeff_core_effects.handlers import local_handler
 
-from doeff import Pure, WithHandler, run
+from doeff import Pure, run
 from doeff.cli.discovery import StandardEnvMerger
 
 
@@ -49,7 +49,7 @@ class TestEnvMergeWithProgram:
                 # 2. Install local_handler when running the merge program
 
                 # Demonstrate the fix: wrap with local_handler
-                result = run(WithHandler(local_handler, merged_program))
+                result = run(local_handler(merged_program))
                 assert result == {"key_a": 1, "key_b": 2}, f"Got: {result}"
 
                 raise AssertionError(

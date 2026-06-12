@@ -7,7 +7,8 @@ do those effects reach the outer handler stack?
 from doeff_core_effects.scheduler import scheduled
 from doeff_vm import EffectBase, Pass, Resume
 
-from doeff import WithHandler, do, run
+from doeff import do, run
+from doeff import handler as _install_raw_handler
 
 
 class EffectA(EffectBase):
@@ -48,16 +49,16 @@ def prog():
 def test_nested_do_in_handler():
     """Handler calls nested @do that emits effect."""
     wrapped = prog()
-    wrapped = WithHandler(handler_a, wrapped)
-    wrapped = WithHandler(handler_b, wrapped)
+    wrapped = _install_raw_handler(handler_a)(wrapped)
+    wrapped = _install_raw_handler(handler_b)(wrapped)
     assert run(wrapped) == "A(B)"
 
 
 def test_nested_do_in_handler_with_scheduled():
     """Same with scheduled."""
     wrapped = prog()
-    wrapped = WithHandler(handler_a, wrapped)
-    wrapped = WithHandler(handler_b, wrapped)
+    wrapped = _install_raw_handler(handler_a)(wrapped)
+    wrapped = _install_raw_handler(handler_b)(wrapped)
     assert run(scheduled(wrapped)) == "A(B)"
 
 
@@ -79,6 +80,6 @@ def handler_a_deep(effect, k):
 def test_deep_nested_do_in_handler():
     """Two levels of @do nesting inside handler."""
     wrapped = prog()
-    wrapped = WithHandler(handler_a_deep, wrapped)
-    wrapped = WithHandler(handler_b, wrapped)
+    wrapped = _install_raw_handler(handler_a_deep)(wrapped)
+    wrapped = _install_raw_handler(handler_b)(wrapped)
     assert run(scheduled(wrapped)) == "A(B)"

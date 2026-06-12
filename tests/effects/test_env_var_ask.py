@@ -18,7 +18,8 @@ import pytest
 from doeff_core_effects.handlers import env_var_ask, lazy_ask
 from doeff_core_effects.scheduler import Gather, Spawn, scheduled
 
-from doeff import Ask, Pass, Resume, WithHandler, do, run
+from doeff import Ask, Pass, Resume, do, run
+from doeff import handler as _install_raw_handler
 
 # --- Plain string values ---------------------------------------------------
 
@@ -31,7 +32,7 @@ class TestEnvVarAskPlain:
         def prog():
             return (yield Ask("OPENAI_API_KEY"))
 
-        result = run(scheduled(WithHandler(env_var_ask(), prog())))
+        result = run(scheduled(env_var_ask()(prog())))
         assert result == "sk-abc"
 
     def test_respects_custom_prefix(self, monkeypatch):
@@ -42,7 +43,7 @@ class TestEnvVarAskPlain:
             return (yield Ask("DB_URL"))
 
         result = run(
-            scheduled(WithHandler(env_var_ask(prefix="NAKAGAWA_"), prog()))
+            scheduled(env_var_ask(prefix="NAKAGAWA_")(prog()))
         )
         assert result == "postgres://..."
 
@@ -59,7 +60,7 @@ class TestEnvVarAskPlain:
         def prog():
             return (yield Ask("MODEL"))
 
-        composed = WithHandler(outer, WithHandler(env_var_ask(), prog()))
+        composed = _install_raw_handler(outer)(env_var_ask()(prog()))
         assert run(scheduled(composed)) == "fallback-model"
 
     def test_dynamic_recheck_on_every_ask(self, monkeypatch):
@@ -75,7 +76,7 @@ class TestEnvVarAskPlain:
             second = yield Ask("LOG_LEVEL")
             return (first, second)
 
-        result = run(scheduled(WithHandler(env_var_ask(), prog())))
+        result = run(scheduled(env_var_ask()(prog())))
         assert result == ("info", "debug")
 
 
@@ -116,7 +117,7 @@ class TestEnvVarAskLazyImport:
         def prog():
             return (yield Ask("FAVORITE_NUMBER"))
 
-        assert run(scheduled(WithHandler(env_var_ask(), prog()))) == 12345
+        assert run(scheduled(env_var_ask()(prog()))) == 12345
 
     def test_braces_import_evaluates_program(self, monkeypatch):
         monkeypatch.setenv(
@@ -129,7 +130,7 @@ class TestEnvVarAskLazyImport:
             return (yield Ask("GREETING"))
 
         assert (
-            run(scheduled(WithHandler(env_var_ask(), prog()))) == "pure-result"
+            run(scheduled(env_var_ask()(prog()))) == "pure-result"
         )
 
     def test_lazy_program_uses_inner_handler_chain(self, monkeypatch):
@@ -144,10 +145,7 @@ class TestEnvVarAskLazyImport:
         def prog():
             return (yield Ask("OUTER"))
 
-        composed = WithHandler(
-            env_var_ask(),
-            WithHandler(lazy_ask(env={"INNER_KEY": "hello"}), prog()),
-        )
+        composed = env_var_ask()(lazy_ask(env={"INNER_KEY": "hello"})(prog()))
         assert run(scheduled(composed)) == "wraps:hello"
 
     def test_program_eval_is_cached_until_raw_changes(self, monkeypatch):
@@ -166,7 +164,7 @@ class TestEnvVarAskLazyImport:
             c = yield Ask("COUNTER")
             return (a, b, c)
 
-        result = run(scheduled(WithHandler(env_var_ask(), prog())))
+        result = run(scheduled(env_var_ask()(prog())))
         assert result == (1, 1, 1)
         assert _mod._counter["n"] == 1
 
@@ -189,7 +187,7 @@ class TestEnvVarAskLazyImport:
             second = yield Ask("COUNTER")
             return (first, second)
 
-        result = run(scheduled(WithHandler(env_var_ask(), prog())))
+        result = run(scheduled(env_var_ask()(prog())))
         assert result == (1, 2)
         assert _mod._counter["n"] == 2
 
@@ -223,7 +221,7 @@ class TestEnvVarAskConcurrency:
             results = yield Gather(*tasks)
             return tuple(results)
 
-        results = run(scheduled(WithHandler(env_var_ask(), prog())))
+        results = run(scheduled(env_var_ask()(prog())))
         # Every worker resolves to some counter value, and no more than a
         # handful of them re-evaluate (caching takes over quickly).
         assert len(results) == 8
@@ -244,10 +242,7 @@ class TestLazyAskPassOnMiss:
         def prog():
             return (yield Ask("FALLBACK_KEY"))
 
-        composed = WithHandler(
-            env_var_ask(),
-            WithHandler(lazy_ask(env={}), prog()),
-        )
+        composed = env_var_ask()(lazy_ask(env={})(prog()))
         assert run(scheduled(composed)) == "fallback-value"
 
     def test_strict_mode_still_throws(self):
@@ -257,6 +252,6 @@ class TestLazyAskPassOnMiss:
         def prog():
             return (yield Ask("MISSING"))
 
-        composed = WithHandler(lazy_ask(env={}, strict=True), prog())
+        composed = lazy_ask(env={}, strict=True)(prog())
         with pytest.raises(KeyError):
             run(scheduled(composed))

@@ -22,10 +22,10 @@ from doeff import (
     EffectBase,
     Perform,
     Resume,
-    WithHandler,
     do,
     run,
 )
+from doeff import handler as _install_raw_handler
 from doeff.mcp import McpParamSchema, McpToolDef
 
 # ---------------------------------------------------------------------------
@@ -107,13 +107,7 @@ class TestMcpE2E:
         mock_handler = MockAgentHandler()
         agent_protocol = _make_protocol_handler(mock_handler)
 
-        wrapped = WithHandler(
-            agent_protocol,
-            WithHandler(
-                greet_handler,
-                WithHandler(upper_handler, program),
-            ),
-        )
+        wrapped = agent_protocol(_install_raw_handler(greet_handler)(_install_raw_handler(upper_handler)(program)))
         return run(wrapped), mock_handler
 
     def test_launch_with_mcp_creates_server_and_mcp_json(self, tmp_path):

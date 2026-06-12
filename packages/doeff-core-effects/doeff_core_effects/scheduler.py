@@ -1,7 +1,7 @@
 """
 Cooperative scheduler — OCaml 5 recursive match_with pattern.
 
-Each task gets its own WithHandler. Spawn creates a new WithHandler
+Each task gets its own handler node. Spawn creates a new handler node
 recursively. All handler instances share state via closure.
 
 No envelope needed. Task completion is caught by a @do wrapper that
@@ -25,7 +25,8 @@ from doeff_vm import EffectBase, Err, Ok, TailEval
 
 from doeff.do import do
 from doeff.handler_utils import get_inner_handlers
-from doeff.program import Pass, Perform, Pure, Resume, Transfer, WithHandler
+from doeff.program import Pass, Perform, Pure, Resume, Transfer
+from doeff.program import handler as _program_handler
 
 
 def _enrich_exception_traceback(exc, task_meta=None, vm_ctx=None):
@@ -390,8 +391,8 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                     prog = tasks[tid].pop("program")
                     # Re-wrap task with inner handlers captured at spawn site
                     for h in tasks[tid].pop("inner_handlers", []):
-                        prog = WithHandler(h, prog)
-                    return WithHandler(make_handler(tid), wrap_task(tid, prog))
+                        prog = _program_handler(h)(prog)
+                    return make_handler(tid)(wrap_task(tid, prog))
                 if entry[0] == "resume":
                     _, owner_tid, cont, value = entry
                     if is_owner_cancelled(owner_tid):
@@ -564,9 +565,9 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
 
     def make_handler(current_tid):
         @do
-        def handler(effect, k):
+        def raw_handler(effect, k):
             return (yield TailEval(handle_scheduler_effect(current_tid, effect, k)))
-        return handler
+        return _program_handler(raw_handler)
 
     @do
     def handle_scheduler_effect(current_tid, effect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
@@ -793,4 +794,4 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         else:
             yield Pass(effect, k)
 
-    return WithHandler(make_handler(None), body_program)
+    return make_handler(None)(body_program)

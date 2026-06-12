@@ -12,9 +12,9 @@ from doeff import (
     Put,
     Resume,
     Tell,
-    WithHandler,
     do,
 )
+from doeff import handler as _install_raw_handler
 from tests._run_helpers import run_with_defaults
 
 
@@ -51,7 +51,7 @@ class TestPlainGeneratorHandler:
             return value
 
         def main():
-            return (yield WithHandler(handler, _prog(body)))
+            return (yield _install_raw_handler(handler)(_prog(body)))
 
         result = run_with_defaults(_prog(main))
         assert result.value == "pong:hello"
@@ -69,7 +69,7 @@ class TestPlainGeneratorHandler:
             return value
 
         def main():
-            return (yield WithHandler(handler, _prog(body)))
+            return (yield _install_raw_handler(handler)(_prog(body)))
 
         result = run_with_defaults(_prog(main), store={"key": "magic"})
         assert result.value == "got:magic"
@@ -89,7 +89,7 @@ class TestPlainGeneratorHandler:
             return f"{first}|{second}"
 
         def main():
-            return (yield WithHandler(handler, _prog(body)))
+            return (yield _install_raw_handler(handler)(_prog(body)))
 
         result = run_with_defaults(_prog(main))
         assert result.value == "ping:a|pong:b"
@@ -147,7 +147,7 @@ class TestRustBuiltinHandlers:
             return f"{from_handler}|{current}"
 
         result = run_with_defaults(
-            WithHandler(handler, body()),
+            _install_raw_handler(handler)(body()),
             store={"counter": 10},
         )
         assert result.value == "counter:10|11"
@@ -167,7 +167,7 @@ class TestDoHandlerPreKleisli:
             return value
 
         def main():
-            return (yield WithHandler(handler, _prog(body)))
+            return (yield _install_raw_handler(handler)(_prog(body)))
 
         result = run_with_defaults(_prog(main))
         assert result.value == "handled:hello"
@@ -186,7 +186,7 @@ class TestDoHandlerPreKleisli:
             return value
 
         def main():
-            return (yield WithHandler(handler, _prog(body)))
+            return (yield _install_raw_handler(handler)(_prog(body)))
 
         result = run_with_defaults(_prog(main), store={"key": "magic"})
         assert result.value == "handled:magic"
@@ -212,7 +212,7 @@ class TestHandlerIdentity:
             return value
 
         result = run_with_defaults(
-            WithHandler(outer_handler, WithHandler(inner_handler, _prog(body))),
+            _install_raw_handler(outer_handler)(_install_raw_handler(inner_handler)(_prog(body))),
         )
         assert result.value == "inner:outer:from-inner-body"
 
@@ -235,7 +235,7 @@ class TestNestedWithHandler:
             return (yield Ping("x"))
 
         result = run_with_defaults(
-            WithHandler(outer_handler, WithHandler(inner_handler, _prog(body))),
+            _install_raw_handler(outer_handler)(_install_raw_handler(inner_handler)(_prog(body))),
         )
         assert result.value == "inner"
 
@@ -252,7 +252,7 @@ def test_with_handler_plain_generator() -> None:
     def body():
         return (yield Ping("x"))
 
-    result = run_with_defaults(WithHandler(handler, body()))
+    result = run_with_defaults(_install_raw_handler(handler)(body()))
     assert result.value == "plain:x"
 
 
@@ -268,7 +268,7 @@ def test_with_handler_do_decorated() -> None:
     def body():
         return (yield Ping("y"))
 
-    result = run_with_defaults(WithHandler(handler, body()))
+    result = run_with_defaults(_install_raw_handler(handler)(body()))
     assert result.value == "do:y"
 
 
@@ -286,7 +286,7 @@ def test_with_handler_post_composition() -> None:
 
     @do
     def combined():
-        value = yield WithHandler(handler, body())
+        value = yield _install_raw_handler(handler)(body())
         return f"ret:{value}"
 
     result = run_with_defaults(combined())

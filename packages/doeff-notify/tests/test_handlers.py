@@ -1,3 +1,5 @@
+from doeff import handler as _install_raw_handler
+
 # ruff: noqa: E402
 """Tests for doeff-notify effects and built-in handlers."""
 
@@ -22,7 +24,7 @@ from doeff_notify.handlers import (
 )
 from doeff_notify.types import Channel, NotificationResult, Urgency
 
-from doeff import Effect, Pass, Resume, WithHandler, WriterTellEffect, default_handlers, do, run
+from doeff import Effect, Pass, Resume, WriterTellEffect, default_handlers, do, run
 
 
 def _is_ok(run_result: Any) -> bool:
@@ -58,7 +60,7 @@ def _console_program():
 
 def test_console_handler_prints_and_returns_notification_result(capsys) -> None:
     result = run(
-        WithHandler(console_handler, _console_program()),
+        console_handler(_console_program()),
         handlers=default_handlers(),
     )
 
@@ -88,7 +90,7 @@ def test_testing_handler_collects_notifications_in_memory() -> None:
     handler, notifications = build_testing_handler(auto_acknowledge=True)
 
     result = run(
-        WithHandler(handler, _testing_program()),
+        handler(_testing_program()),
         handlers=default_handlers(),
     )
 
@@ -138,7 +140,7 @@ def test_log_handler_emits_tell_events() -> None:
         yield Pass()
 
     result = run(
-        WithHandler(capture_tell_handler, WithHandler(log_handler, _logging_program())),
+        _install_raw_handler(capture_tell_handler)(log_handler(_logging_program())),
         handlers=default_handlers(),
     )
 

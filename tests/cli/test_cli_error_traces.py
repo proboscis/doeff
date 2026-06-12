@@ -118,24 +118,24 @@ def test_handler_error_shows_handler_context() -> None:
         "-c",
         """
 from dataclasses import dataclass
-from doeff import Delegate, Effect, EffectBase, Program, WithHandler, do
+from doeff import Effect, EffectBase, Pass, Program, do, handler
 
 @dataclass(frozen=True, kw_only=True)
 class Boom(EffectBase):
     pass
 
 @do
-def bad_handler(effect: Effect, _k):
+def bad_handler(effect: Effect, k):
     if isinstance(effect, Boom):
         raise RuntimeError("handler exploded")
-    yield Delegate()
+    yield Pass(effect, k)
 
 @do
 def body() -> Program[int]:
     yield Boom()
     return 1
 
-WithHandler(bad_handler, body())
+handler(bad_handler)(body())
 """,
         "--interpreter",
         "tests.cli.cli_assets.sync_interpreter",
