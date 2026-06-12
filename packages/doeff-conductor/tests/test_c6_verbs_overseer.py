@@ -2,14 +2,25 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from click.testing import CliRunner
 from doeff_conductor.cli import cli
-from doeff_conductor.dsl import agent_bang, defworkflow
+from doeff_conductor.dsl import (
+    agent_bang,
+    artifact,
+    bind,
+    defworkflow,
+    loop,
+    prompt,
+    ref,
+    workspace_bang,
+)
 from doeff_conductor.environment import ProfileRegistry, load_profile_registry_from_env
 from doeff_conductor.overseer import list_open_gates, progress_since
 from doeff_conductor.verbs import (
+    ALLOWED_TERMINAL_KINDS,
     BUILT_IN_VALIDATION_SCENARIOS,
     ScenarioValidationReport,
     TerminalState,
@@ -130,11 +141,13 @@ def test_validate_runs_built_in_scenarios_and_asserts_closure() -> None:
         BUILT_IN_VALIDATION_SCENARIOS
     )
     assert all(scenario.to_dict()["closure_ok"] for scenario in report.scenarios)
+    # retry-exhaustion scenario produces open gates with "budget exhausted" reason
     assert any(
-        gate.reason == "agent retry exhaustion"
+        gate.reason == "budget exhausted"
         for scenario in report.scenarios
         for gate in scenario.open_gates
     )
+    # schema-invalid-then-pass scenario records the detail on artifact terminals
     assert any(
         terminal.detail == "schema invalid retry then pass"
         for scenario in report.scenarios
@@ -158,6 +171,46 @@ def test_validate_closure_assertion_fails_loudly_for_broken_terminal() -> None:
 
     with pytest.raises(ValueError, match="closure law violation"):
         assert_validation_closure(broken)
+
+
+def test_validate_detects_closure_violation_from_loop_exhaustion() -> None:
+    """A loop whose predicate never passes produces a runtime-error terminal."""
+    workflow = defworkflow(
+        "closure_violation",
+        params={},
+        roles={"worker": {"profile": "cheap-coder"}},
+        body=[
+            bind(
+                "result",
+                loop(
+                    max_iterations=1,
+                    until="never_true",
+                    body=[
+                        agent_bang(
+                            role="worker",
+                            verification_class="test-verifiable",
+                            prompt="work",
+                            schema=RESULT_SCHEMA,
+                            label="worker",
+                        ),
+                    ],
+                ),
+            ),
+            artifact(ref("result")),
+        ],
+    )
+
+    report = validate_workflow(workflow, scenarios=("all-pass",))
+
+    assert report.interpreter == "validation"
+    scenario = report.scenarios[0]
+    closure_ok: bool = scenario.to_dict()["closure_ok"]
+    assert not closure_ok, "loop exhaustion should violate closure law"
+    runtime_error_terminals = [
+        t for t in scenario.terminals if t.terminal_kind == "runtime-error"
+    ]
+    assert len(runtime_error_terminals) >= 1
+    assert "never_true" in runtime_error_terminals[0].detail
 
 
 def test_validate_materializes_gate_queue_and_progress_deltas(tmp_path: Path) -> None:
