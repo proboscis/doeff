@@ -79,6 +79,12 @@ impl PyVM {
         context: Option<Vec<Value>>,
     ) -> pyo3::PyErr {
         match err {
+            doeff_vm_core::VMError::OneShotViolation { fiber_id } => {
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "one-shot violation: continuation {:?} already consumed",
+                    fiber_id
+                ))
+            }
             doeff_vm_core::VMError::UncaughtException { exception } => {
                 let py_obj = value_to_python(py, exception);
                 // Attach VM-captured traceback to the exception
@@ -108,7 +114,24 @@ impl PyVM {
             doeff_vm_core::VMError::DelegateNoOuterHandler { effect } => {
                 self.make_unhandled_effect_error(py, "Pass: no outer handler", &effect, context)
             }
-            other => pyo3::exceptions::PyRuntimeError::new_err(format!("{}", other)),
+            doeff_vm_core::VMError::HandlerNotFound { marker } => {
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "handler not found for marker {}",
+                    marker.raw()
+                ))
+            }
+            doeff_vm_core::VMError::InvalidSegment { message } => {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("invalid segment: {}", message))
+            }
+            doeff_vm_core::VMError::PythonError { message } => {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("Python error: {}", message))
+            }
+            doeff_vm_core::VMError::InternalError { message } => {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("internal error: {}", message))
+            }
+            doeff_vm_core::VMError::TypeError { message } => {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("type error: {}", message))
+            }
         }
     }
 
@@ -232,7 +255,19 @@ impl PyVM {
                     format!("{} ({})", type_name, repr)
                 }
             }
-            other => format!("{:?}", other),
+            Value::Unit => "Unit".to_string(),
+            Value::Int(value) => format!("Int({})", value),
+            Value::Bool(value) => format!("Bool({})", value),
+            Value::String(value) => format!("String({:?})", value),
+            Value::None => "None".to_string(),
+            Value::Callable(callable) => callable
+                .name()
+                .map(|name| format!("Callable({})", name))
+                .unwrap_or_else(|| "Callable(<anonymous>)".to_string()),
+            Value::Stream(_) => "Stream(<opaque>)".to_string(),
+            Value::Continuation(_) => "Continuation(<detached>)".to_string(),
+            Value::Var(var) => format!("Var({:?})", var),
+            Value::List(items) => format!("List(len={})", items.len()),
         }
     }
 
@@ -276,7 +311,16 @@ impl PyVM {
                                 }
                             }
                         }
-                        _ => {
+                        Value::Unit
+                        | Value::Int(_)
+                        | Value::Bool(_)
+                        | Value::String(_)
+                        | Value::None
+                        | Value::Stream(_)
+                        | Value::Continuation(_)
+                        | Value::Var(_)
+                        | Value::List(_)
+                        | Value::Opaque(_) => {
                             return Err(pyo3::exceptions::PyRuntimeError::new_err(
                                 "external call: not callable",
                             ));
