@@ -584,11 +584,18 @@ because where to pause is a trust/stakes judgment extrinsic to the task:
   reads `latest_answers()` — the last answer per gate — as the authoritative
   source of answered gate options, falling back to `run-state.json` for
   backward compatibility with pre-journal runs.
-- **Workspace effects are not journaled — by design.** Workspace identity is
-  deterministic from `(run-id, workspace-node identity)` (§6.1), so
-  re-running `workspace!`/`merge!` on resume re-binds the same branch and
-  worktree — level-triggered ensure, the same discipline as session
-  re-adoption. There is no workspace bookkeeping to replay.
+- **Workspace effects are journaled for resource coverage (L-K3-3).**
+  `workspace-journal.jsonl` records each workspace materialization:
+  `workspace_id`, `repo`, `branch`, `worktree_path`, `base_ref`,
+  `issue_id`, `created_at`, and `terminal_kind="workspace-created"`.
+  The journal is flat append-only with last-wins-per-`workspace_id`
+  semantics — no generation/entry_index since workspace identity is
+  deterministic from `(run_id, workspace-node identity)`.
+  `JournaledWorkspaceHandler` wraps the delegate handler: first call
+  for a `workspace_id` delegates AND appends; subsequent calls (resume)
+  delegate but do NOT double-append.  Pre-coverage detection: if an
+  agent journal exists but no workspace journal does, the handler raises
+  `PreCoverageRunError` — forcing the operator to start a fresh run.
 
 ## 10. Enforcement summary
 
