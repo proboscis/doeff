@@ -116,11 +116,20 @@ class ToleratedLoss:
 class QuorumNotMetError(RuntimeError):
     """Raised when a quorum parallel form cannot meet its quorum threshold."""
 
-    def __init__(self, *, quorum: int, total: int, succeeded: int, failed: int) -> None:
+    def __init__(
+        self,
+        *,
+        quorum: int,
+        total: int,
+        succeeded: int,
+        failed: int,
+        node_id: str | None = None,
+    ) -> None:
         self.quorum = quorum
         self.total = total
         self.succeeded = succeeded
         self.failed = failed
+        self.node_id = node_id
         super().__init__(
             f"quorum not met: needed {quorum}/{total} successes, "
             f"got {succeeded} with {failed} failures"
@@ -408,6 +417,7 @@ def _resolve_quorum(
             total=total,
             succeeded=ok_count,
             failed=err_count,
+            node_id=_node_id(context.workflow.name, path, "parallel"),
         )
 
     for entry in results:
