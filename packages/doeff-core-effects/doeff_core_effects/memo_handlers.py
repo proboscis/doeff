@@ -18,9 +18,7 @@ from doeff import UnhandledEffect, do
 from doeff.program import Pass, Resume
 from doeff_core_effects.memo_effects import (
     MemoExists,
-    MemoExistsEffect,
     MemoGet,
-    MemoGetEffect,
     MemoPut,
     MemoPutEffect,
 )
@@ -159,76 +157,26 @@ def memo_handler(
         cost: Only handle effects matching this cost tier. None = handle all.
         name: Label for log messages (defaults to storage class name).
     """
-    if isinstance(cost, str):
-        cost = RecomputeCost(cost)
+    # Implementation lives in _memo_handlers_impl.hy (defhandler-based): the real
+    # MinIO/Redis/SQLite memo layer is a `defhandler`, and a Program[DurableStorage]
+    # is resolved lazily on the first memo effect (a run that never touches the
+    # tier needs no credentials). This .py `memo_handler` is a thin public-API shim
+    # that lazily imports that impl. The lazy import is a circular-import
+    # workaround: _memo_handlers_impl.hy imports helpers (_matches_cost/
+    # _storage_key/_effect_cost/serializers/content_address) from THIS module at
+    # its top level, so a top-level import here would cycle.
+    #
+    # NOTE (deferred cleanup — do on doeff main, NOT on this branch): the shim +
+    # cycle exist only because the module is split (helpers/rewriters/serializers
+    # in this .py, the handler in .hy). Consolidating the whole memo module into a
+    # single Hy module (helpers + rewriters + the defhandler + public factories)
+    # removes both the shim and the cycle. Deferred so fix/l2-mcp-tools keeps the
+    # SAME memo design as doeff main (which carries this shim) — forking the design
+    # across branches would create merge drift. Track as a doeff-main memo-module
+    # consolidation.
+    from doeff_core_effects._memo_handlers_impl import memo_handler as _hy_memo_handler
 
-    label = name or type(storage).__name__
-
-    from doeff_core_effects.effects import WriterTellEffect as Slog
-
-    @do
-    def handler(effect, k):
-        if not isinstance(effect, (MemoGetEffect, MemoExistsEffect, MemoPutEffect)):
-            yield Pass(effect, k)
-            return
-
-        if not _matches_cost(_effect_cost(effect), cost):
-            yield Pass(effect, k)
-            return
-
-        key = _storage_key(effect.key)
-
-        if isinstance(effect, MemoExistsEffect):
-            exists = yield storage.exists(key)
-            if exists:
-                result = yield Resume(k, True)
-                return result
-            # Not in this layer — re-perform to check outer layers.
-            # UnhandledEffect = no further outer storage = definitively not
-            # in any layer beyond this one, so resume with False.
-            try:
-                outer_exists = yield effect
-            except UnhandledEffect:
-                outer_exists = False
-            result = yield Resume(k, outer_exists)
-            return result
-
-        if isinstance(effect, MemoGetEffect):
-            exists = yield storage.exists(key)
-            if exists:
-                value = yield storage.get(key)
-                yield Slog(f"[memo-layer:{label}] HIT key={key[:16]}...")
-                result = yield Resume(k, value)
-                return result
-            # Miss — re-perform (outer handler resolves) → cache result.
-            # UnhandledEffect = no further outer storage AND not here →
-            # established miss signal: raise KeyError. Callers (@cache,
-            # make_memo_rewriter, sessioned-memo) catch KeyError as miss.
-            yield Slog(f"[memo-layer:{label}] MISS key={key[:16]}... → re-performing")
-            try:
-                outer_value = yield effect
-            except UnhandledEffect:
-                raise KeyError(effect.key)
-            yield storage.put(key, outer_value)
-            yield Slog(f"[memo-layer:{label}] WRITE-THROUGH key={key[:16]}...")
-            result = yield Resume(k, outer_value)
-            return result
-
-        # MemoPutEffect — write to this layer AND broadcast to outer layers.
-        # UnhandledEffect from re-perform = no further outer storage =
-        # broadcast complete (this layer was the outermost). Swallow and
-        # resume the caller with None — the user should not see an exception
-        # when all storage layers successfully stored.
-        yield storage.put(key, effect.value)
-        yield Slog(f"[memo-layer:{label}] PUT key={key[:16]}...")
-        try:
-            yield effect  # re-perform → outer handlers also store
-        except UnhandledEffect:
-            pass  # no further outer = broadcast complete
-        result = yield Resume(k, None)
-        return result
-
-    return handler
+    return _hy_memo_handler(storage, cost=cost, name=name)
 
 
 def in_memory_memo_handler():
