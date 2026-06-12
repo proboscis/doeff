@@ -13,12 +13,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from doeff_agents import AgentdUnavailableError, AgentSessionSnapshot, AgentType, SessionStatus
 from doeff_agents import cli as cli_module
+from doeff_agents.agentd_client import AgentdSessionList, AgentdSessionParseWarning
 from doeff_agents.cli import cli
 
 
 class FakeAgentdClient:
-    def __init__(self, snapshots: list[AgentSessionSnapshot]) -> None:
+    def __init__(
+        self,
+        snapshots: list[AgentSessionSnapshot],
+        *,
+        warnings: tuple[AgentdSessionParseWarning, ...] = (),
+    ) -> None:
         self.snapshots = snapshots
+        self.warnings = warnings
         self.calls: list[tuple[str, Any]] = []
         self.sent_messages: list[tuple[str, str]] = []
         self.captures: list[tuple[str, int]] = []
@@ -33,6 +40,10 @@ class FakeAgentdClient:
     def list_sessions(self, query: Any = None) -> tuple[AgentSessionSnapshot, ...]:
         self.calls.append(("list_sessions", query))
         return tuple(self.snapshots)
+
+    def list_sessions_with_warnings(self, query: Any = None) -> AgentdSessionList:
+        self.calls.append(("list_sessions_with_warnings", query))
+        return AgentdSessionList(snapshots=tuple(self.snapshots), warnings=self.warnings)
 
     def capture_session(self, session_id: str, *, lines: int = 100) -> str:
         self.captures.append((session_id, lines))
@@ -67,7 +78,32 @@ def test_ps_lists_agentd_sessions_not_tmux(
     assert "agentd-s1" in result.output
     assert "agentd-tmux" in result.output
     assert "running" in result.output
-    assert client.calls == [("list_sessions", None)]
+    assert client.calls == [("list_sessions_with_warnings", None)]
+
+
+def test_ps_warns_about_unparseable_agentd_rows(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    warning = AgentdSessionParseWarning(
+        session_name="raw-session",
+        field="agent_type",
+        raw_value="future-agent",
+    )
+    client = FakeAgentdClient(
+        [_snapshot(session_id="agentd-s1", session_name="agentd-tmux")],
+        warnings=(warning,),
+    )
+    monkeypatch.setattr(cli_module, "ensure_agentd", lambda: client)
+
+    result = runner.invoke(cli, ["ps"])
+
+    assert result.exit_code == 0
+    assert "agentd-s1" in result.output
+    warning_output = result.stderr or result.output
+    assert "raw-session" in warning_output
+    assert "agent_type" in warning_output
+    assert "future-agent" in warning_output
 
 
 def test_output_captures_via_agentd(

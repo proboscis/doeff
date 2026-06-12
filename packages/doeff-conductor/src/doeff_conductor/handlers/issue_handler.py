@@ -2,16 +2,20 @@
 Issue handler for doeff-conductor.
 """
 
-import contextlib
 import re
 import secrets
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from doeff_conductor.exceptions import IssueNotFoundError
+from doeff_conductor.exceptions import (
+    ConductorStateWarning,
+    IssueFileCorruptError,
+    IssueNotFoundError,
+)
 
 if TYPE_CHECKING:
     from doeff_conductor.effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
@@ -40,7 +44,20 @@ def _generate_issue_id() -> str:
     return f"ISSUE-{secrets.randbelow(900) + 100:03d}"
 
 
-def _parse_frontmatter(content: str) -> tuple[dict, str]:
+def _warn_corrupt_issue_file(path: Path, reason: object) -> None:
+    """Warn about one corrupt issue file while allowing issue list to continue."""
+    warnings.warn(
+        f"Corrupt issue file skipped: {path}: {reason}",
+        ConductorStateWarning,
+        stacklevel=2,
+    )
+
+
+def _parse_frontmatter(
+    content: str,
+    *,
+    path: Path | None = None,
+) -> tuple[dict[str, Any], str]:
     """Parse YAML frontmatter from markdown content.
 
     Returns:
@@ -59,10 +76,40 @@ def _parse_frontmatter(content: str) -> tuple[dict, str]:
 
     try:
         frontmatter = yaml.safe_load(frontmatter_str) or {}
-    except yaml.YAMLError:
-        frontmatter = {}
+    except yaml.YAMLError as error:
+        raise IssueFileCorruptError(
+            path,
+            f"Issue file frontmatter is invalid YAML: {error}",
+        ) from error
+    if not isinstance(frontmatter, dict):
+        raise IssueFileCorruptError(
+            path,
+            "Issue file frontmatter must be a YAML mapping",
+            raw_value=frontmatter,
+        )
 
     return frontmatter, body
+
+
+def _parse_created_at(frontmatter: dict[str, Any], *, path: Path) -> datetime:
+    """Parse created frontmatter without substituting malformed values."""
+    raw_created = frontmatter.get("created")
+    if raw_created is None:
+        return datetime.now(timezone.utc)
+
+    try:
+        created_at = datetime.fromisoformat(str(raw_created))
+    except (TypeError, ValueError) as error:
+        raise IssueFileCorruptError(
+            path,
+            "Issue file has malformed created frontmatter",
+            field="created",
+            raw_value=raw_created,
+        ) from error
+
+    if created_at.tzinfo is None:
+        return created_at.replace(tzinfo=timezone.utc)
+    return created_at.astimezone(timezone.utc)
 
 
 def _format_frontmatter(data: dict) -> str:
@@ -139,10 +186,13 @@ class IssueHandler:
         for file_path in self.issues_dir.glob("*.md"):
             try:
                 content = file_path.read_text()
-                frontmatter, body = _parse_frontmatter(content)
+                frontmatter, body = _parse_frontmatter(content, path=file_path)
 
                 if not frontmatter.get("id"):
-                    continue
+                    raise IssueFileCorruptError(
+                        file_path,
+                        "Issue file is missing required id frontmatter",
+                    )
 
                 issue_status = IssueStatus(frontmatter.get("status", "open"))
 
@@ -158,12 +208,7 @@ class IssueHandler:
                     continue
 
                 # Parse dates
-                created_at = datetime.now(timezone.utc)
-                if frontmatter.get("created"):
-                    with contextlib.suppress(ValueError, TypeError):
-                        created_at = datetime.fromisoformat(
-                            str(frontmatter["created"])
-                        ).replace(tzinfo=timezone.utc)
+                created_at = _parse_created_at(frontmatter, path=file_path)
 
                 issue = Issue(
                     id=frontmatter["id"],
@@ -180,8 +225,8 @@ class IssueHandler:
                     },
                 )
                 issues.append(issue)
-            except (OSError, KeyError, TypeError, ValueError):
-                # Skip malformed files
+            except (OSError, IssueFileCorruptError, KeyError, TypeError, ValueError) as error:
+                _warn_corrupt_issue_file(file_path, error)
                 continue
 
         # Sort by created date (newest first)
@@ -206,18 +251,15 @@ class IssueHandler:
             raise IssueNotFoundError(effect.id)
 
         content = file_path.read_text()
-        frontmatter, body = _parse_frontmatter(content)
+        frontmatter, body = _parse_frontmatter(content, path=file_path)
 
         if not frontmatter.get("id"):
-            raise IssueNotFoundError(effect.id, f"Invalid issue file (missing id): {effect.id}")
+            raise IssueFileCorruptError(
+                file_path,
+                "Issue file is missing required id frontmatter",
+            )
 
-        # Parse dates
-        created_at = datetime.now(timezone.utc)
-        if frontmatter.get("created"):
-            with contextlib.suppress(ValueError, TypeError):
-                created_at = datetime.fromisoformat(str(frontmatter["created"])).replace(
-                    tzinfo=timezone.utc
-                )
+        created_at = _parse_created_at(frontmatter, path=file_path)
 
         return Issue(
             id=frontmatter["id"],
@@ -247,7 +289,7 @@ class IssueHandler:
             raise IssueNotFoundError(effect.issue.id)
 
         content = file_path.read_text()
-        frontmatter, body = _parse_frontmatter(content)
+        frontmatter, body = _parse_frontmatter(content, path=file_path)
 
         # Update frontmatter
         frontmatter["status"] = "resolved"

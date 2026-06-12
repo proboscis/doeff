@@ -18,6 +18,7 @@ from .exec_handler import ExecHandler
 from .git_handler import GitHandler
 from .issue_handler import IssueHandler
 from .journaled_agent import JournaledAgentHandler
+from .journaled_workspace import JournaledWorkspaceHandler
 from .testing import MockConductorRuntime, mock_handlers
 from .utils import (
     default_scheduled_handlers,
@@ -85,12 +86,21 @@ def production_handlers(
         workspace_resolver=active_workspace_handler.resolve_path,
         backend=AgentdAgentBackend(),
     )
-    if journal_state_dir is not None or journal_run_id is not None:
+    journaling_active: bool = journal_state_dir is not None or journal_run_id is not None
+    create_workspace_override = None
+    if journaling_active:
         resolved_agent_handler = JournaledAgentHandler(
             resolved_agent_handler.handle_agent,
             state_dir=journal_state_dir,
             run_id=journal_run_id,
         )
+        journaled_workspace = JournaledWorkspaceHandler(
+            active_workspace_handler.handle_create_workspace,
+            state_dir=journal_state_dir,
+            run_id=journal_run_id,
+            resolve_path=active_workspace_handler.resolve_path,
+        )
+        create_workspace_override = journaled_workspace.handle_create_workspace
     workflow_effect_handler = JournaledWorkflowEffectHandler(
         state_dir=journal_state_dir,
         run_id=journal_run_id,
@@ -102,6 +112,7 @@ def production_handlers(
         git_handler=git_handler,
         exec_handler=exec_handler,
         workflow_effect_handler=workflow_effect_handler,
+        create_workspace_override=create_workspace_override,
     )
 
 
@@ -140,6 +151,7 @@ __all__ = [
     "GitHandler",
     "IssueHandler",
     "JournaledAgentHandler",
+    "JournaledWorkspaceHandler",
     "JournaledWorkflowEffectHandler",
     "MockConductorRuntime",
     "RunSyncResult",

@@ -48,7 +48,7 @@ workspace識別(C8) <──同型── 「識別は式座標の純関数」 ─
 
 ### 核K4: await×並行性核 — C6 ⇔ C1 ⇔ 本体B10(スケジューラ=ハンドラ)
 
-- D1が「並行性は構造的」と宣言し(C6)、D1/D6がワーカー待ちをagentd RPCにし(C1)、スケジューラは協調的ハンドラである(本体B10)。**3つの選択は個々に正しいが、「RPC待ちは協調スケジューラとどう合成するか」だけが決められなかった**: `DaemonAgentHandler.handle_await_result`(doeff-agents handlers/daemon.py:298)→ `AgentdClient.await_result`(agentd_client.py:135)が同期ブロックし、`run(scheduled(WithHandler(conductor_handler, program)))`(api.py:152)のループごと止める
+- D1が「並行性は構造的」と宣言し(C6)、D1/D6がワーカー待ちをagentd RPCにし(C1)、スケジューラは協調的ハンドラである(本体B10)。**3つの選択は個々に正しいが、「RPC待ちは協調スケジューラとどう合成するか」だけが決められなかった**: `DaemonAgentHandler.handle_await_result`(doeff-agents handlers/daemon.py:298)→ `AgentdClient.await_result`(agentd_client.py:135)が同期ブロックし、`run(scheduled(conductor_handler(program)))`(api.py:152)のループごと止める
 - 帰結: **parallelは形だけで実行は直列** — live実証 2026-06-12、run `doeff-review-20260612-1`(6-branch parallel、起動5分後もセッション1個。兄弟branchはlaunchすら起きない=スケジューラ飢餓)。conductor srcに`Await`/スレッド退避は0箇所(唯一の言及はutils.py:51の深層皮肉「use Await effects in programs」)
 - **law候補**:
   - **L-K4-1(非ブロックハンドラ)**: エフェクトハンドラは無制限ブロッキングI/Oを同期実行しない。無制限待ちはスケジューラのAwait/external completion経路(scheduler.pyのexternal_queueが既に受け皿)からのみ入る
@@ -64,7 +64,7 @@ workspace識別(C8) <──同型── 「識別は式座標の純関数」 ─
   - **L-K5-1(操作的閉包)**: ∀ open gate g, ∃ answer(g, o), o ∈ options(g): journalに記録され、resumeが消費し、runはparkを離脱する。「読みverbには書きverbを」
   - **L-K5-2(裁定の決定論)**: answerはreplay識別の一部 — answer後の再resumeは同じ決定を再生する(裁定のやり直しはanswerの上書きでなく新answerの追記)
 - 参照意味論の輸入: k8s では裁定=リソースへの書き込みで、controllerがそれを観測する(生きたプロセスへのRPCではない)。conductor語では「answerはjournal entry、resumeはjournal reader」 — 新機構ではなくC5の延長で実装できる(し、すべき)
-- 固定状況: ADR✓(D2/D9)/ law△(文章のみ等式なし)/ runtime△(stub validateのみ、liveのpark→離脱は未検証)/ static△(D1のsemgrepのみ)
+- 固定状況: ADR✓(D2/D9+L-K5-1/L-K5-2)/ law✓(等式明文化)/ runtime✓(gate-answer-journal.jsonl + E2Eテスト: park→answer→離脱、redirect→resume、replay決定論)/ static△(D1のsemgrepのみ)
 
 ### 独立領域(下位モデルへ委譲可能)
 
@@ -81,17 +81,17 @@ workspace識別(C8) <──同型── 「識別は式座標の純関数」 ─
 
 | 欠陥 | 核 | 破れているlaw | 状態 |
 |---|---|---|---|
-| workspace! がresume非安定(偽green) | K3 | L-K3-3 | 既知(検証台帳・スキル記録済み) |
-| parallel直列化(ハンドラ内同期RPC) | K4 | L-K4-1/2 | **live実証 2026-06-12** run `doeff-review-20260612-1` |
-| gate answerの書き側不在 | K5 | L-K5-1 | **live probe発見 2026-06-12**(grep "answer" = src 0件) |
+| workspace! がresume非安定(偽green) | K3 | L-K3-3 | **fixed** — `workspace-journal.jsonl` + `JournaledWorkspaceHandler` records workspace materializations; pre-coverage runs fail loudly |
+| parallel直列化(ハンドラ内同期RPC) | K4 | L-K4-1/2 | **fixed** — `make_offloaded_scheduled_handler` bridges the blocking RPC through ExternalPromise+daemon thread (law ratified, integration test + semgrep rule shipped) |
+| gate answerの書き側不在 | K5 | L-K5-1 | **解決済み** gate-answer-journal.jsonl + `conductor gate answer` CLI |
 | await budget所有軸が未決(検証台帳 §11-7) | K4の縁 | L-K4-1の系(budget更新は誰の決定か) | open |
-| `conductor wait` verb不在 | 独立 | — | issue候補(codex可) |
+| `conductor wait` verb不在 | 独立 | — | **fixed** — `conductor wait <run-id>` 実装済み(issue conductor-wait-verb、codex run merge済み) |
 | blocked表示のcosmetic誤読(§11-8) | 独立 | — | issue候補(codex可) |
 
 ## 5. 固定計画(4層、核ごとの次の成果物)
 
 | 核 | 1 ADR | 2 law(等式) | 3 runtime invariant | 4 static |
 |---|---|---|---|---|
-| K3 | ADR-0001にD11追記(識別の純関数性・資源被覆) | L-K3-1/2/3をspec §に等式で | journalにCreateWorkspace等の資源イベントを追加し被覆を機械検査 | semgrep: ハンドラ内でのsession名の手組み禁止(replay_keying経由を強制) |
+| K3 | ADR-0001にD12追記(workspace journal被覆) **✓済** | L-K3-1/2/3をspec §に等式で | workspace-journal.jsonl + JournaledWorkspaceHandler + E2E 3テスト **✓済** | semgrep: ハンドラ内でのsession名の手組み禁止(replay_keying経由を強制) |
 | K4 | D1に合成則を追記(handler非ブロック) | L-K4-1/2 | stub二並列で生存区間交差をassertするテスト(CI) | semgrep: handle_*内の`await_result`直呼び禁止(Awaitブリッジ強制) |
-| K5 | D9に裁定の記録義務を追記 | L-K5-1/2 | live park→answer→離脱のE2E(validateシナリオに追加) | semgrep: GateOption追加時にanswer consumerの存在を要求(または閉包テスト) |
+| K5 | D9に裁定の記録義務を追記 **✓済** | L-K5-1/2 **✓等式明文化** | gate-answer-journal.jsonl + E2E 6テスト **✓済** | semgrep: GateOption追加時にanswer consumerの存在を要求(または閉包テスト) |
