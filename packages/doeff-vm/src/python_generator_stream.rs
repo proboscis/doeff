@@ -104,6 +104,10 @@ impl doeff_vm_core::value::Callable for PythonCallable {
         })
     }
 
+    fn is_generator_handler(&self) -> bool {
+        true
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

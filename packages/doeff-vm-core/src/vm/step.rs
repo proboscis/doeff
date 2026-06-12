@@ -152,17 +152,17 @@ impl VM {
                     }
                     StreamStep::Error(error) => {
                         // Stream didn't handle — pop and propagate. If the
-                        // popped frame was a handler body that we have a
-                        // chain backup for, recover by reattaching the
-                        // perform-site chain and routing the error there.
+                        // popped frame was a handler body that carries a
+                        // k handle, recover the perform-site chain (via
+                        // PyK.take()) and route the error there.
                         let popped = seg.frames.pop();
                         if let Some(Frame::Program {
-                            chain_backup: Some(backup),
+                            handler_k_handle: Some(handle),
                             ..
                         }) = popped
                         {
-                            return self.recover_handler_chain_then_raise(
-                                backup,
+                            return self.recover_from_k_handle(
+                                handle,
                                 error,
                                 error_context,
                             );
@@ -387,15 +387,15 @@ impl VM {
 
     /// Push a Value::Stream as a new Program frame on the current fiber.
     fn push_stream_value(&mut self, value: Value, error_context: Option<Vec<Value>>) -> StepResult {
-        // Consume any backup handle stashed by eval_perform/eval_perform_with_k
+        // Consume any k handle stashed by eval_perform/eval_perform_with_k
         // so the resulting Program frame can recover the original perform-site
-        // chain when its stream raises an uncaught exception.
-        let chain_backup = self.pending_handler_chain_backup.take();
+        // chain (via PyK.take()) when its stream raises an uncaught exception.
+        let k_handle = self.pending_handler_k_handle.take();
         match value {
             Value::Stream(stream) => {
                 if let Some(seg_id) = self.current_segment {
                     if let Some(seg) = self.segments.get_mut(seg_id) {
-                        seg.push_frame(Frame::program_with_backup(stream, None, chain_backup));
+                        seg.push_frame(Frame::program_with_k_handle(stream, None, k_handle));
                         return continue_send(Value::Unit, error_context);
                     }
                 }
@@ -488,64 +488,100 @@ impl VM {
         let k = result.continuation;
         let handler_callable = result.handler_callable;
 
-        // Hold a backup handle on the chain so that, if the handler raises
-        // before consuming `k`, we can reattach the chain and route the
-        // exception to the original perform site (the inner stream's `<-`
-        // yield point), matching OCaml 5 semantics. The backup is stashed in
-        // `pending_handler_chain_backup` so `push_stream_value` can attach
-        // it to the resulting Program frame; that way the recovery fires
-        // when the handler body's stream raises (which happens after
-        // `call_handler` returns), not just when call_handler itself errors.
-        // If the handler consumes `k` (Resume/Pass/Transfer/etc.), the
-        // lock+take in `Continuation::take` empties the cell and the
-        // backup becomes a no-op.
-        let backup = k.share_handle();
-        self.pending_handler_chain_backup = Some(backup);
+        if handler_callable.is_generator_handler() {
+            // Generator handler path (Python @do generators): wrap k in a
+            // PyK Python object. The PyK is the single home for the chain
+            // (SPEC-VM-021). We keep a Py<PyK> handle so that, if the
+            // handler raises before consuming `k`, we can borrow the PyK,
+            // take() the chain, and reattach it for exception propagation
+            // (OCaml 5 semantics). The handle is stashed in
+            // `pending_handler_k_handle` so `push_stream_value` can attach
+            // it to the resulting Program frame.
+            let k_value = pyo3::Python::attach(|py| {
+                let py_k = pyo3::Py::new(
+                    py,
+                    crate::continuation::PyK::from_continuation(k),
+                )
+                .expect("failed to allocate PyK");
+                let handle = py_k.clone_ref(py);
+                self.pending_handler_k_handle = Some(handle);
+                Value::Opaque(crate::py_shared::PyShared::new(py_k.into_any()))
+            });
 
-        // 4. Call handler(effect, k) → must return a DoExpr.
-        let outcome = handler_callable.call_handler(vec![effect, Value::Continuation(k)]);
+            let outcome = handler_callable.call_handler(vec![effect, k_value]);
 
-        // If push_stream_value never ran (because outcome was Err or Pure),
-        // we must drop the backup ourselves to avoid leaking it into the
-        // next handler call.
-        let leftover_backup = self.pending_handler_chain_backup.take();
+            // If push_stream_value never ran (because outcome was Err or
+            // non-Expand), take the handle so it doesn't leak into a future
+            // handler call.
+            let leftover_handle = self.pending_handler_k_handle.take();
 
-        match outcome {
-            Ok(doctrl) => {
-                // Restore the slot so push_stream_value can pick it up.
-                self.pending_handler_chain_backup = leftover_backup;
-                continue_eval(doctrl, error_context)
+            match outcome {
+                Ok(doctrl) => {
+                    // Only restore the handle for Expand results (which will
+                    // reach push_stream_value). For Pure/other results that
+                    // bypass push_stream_value, dropping the handle prevents
+                    // the stale-backup-leak bug (the chain stays in PyK and
+                    // is freed when the Python K object is GC'd).
+                    if matches!(doctrl, DoCtrl::Expand { .. }) {
+                        self.pending_handler_k_handle = leftover_handle;
+                    }
+                    continue_eval(doctrl, error_context)
+                }
+                Err(VMError::UncaughtException { exception }) => {
+                    // Synchronous Python exception from call_handler itself
+                    // (the @do wrapper's Expand construction raised). Recover
+                    // the chain from the PyK handle.
+                    match leftover_handle {
+                        Some(handle) => {
+                            self.recover_from_k_handle(handle, exception, error_context)
+                        }
+                        None => continue_raise(exception, error_context),
+                    }
+                }
+                Err(err) => error_result(err, error_context),
             }
-            Err(VMError::UncaughtException { exception }) => {
-                // Synchronous Python exception from call_handler itself
-                // (the @do wrapper's Expand construction raised). Use the
-                // leftover backup to recover.
-                let backup = leftover_backup.unwrap_or_else(crate::continuation::Continuation::empty);
-                self.recover_handler_chain_then_raise(backup, exception, error_context)
+        } else {
+            // Synchronous handler path (Rust CallableRef): pass the
+            // continuation directly as Value::Continuation. No backup
+            // handle is needed — call_handler returns immediately, so the
+            // continuation is either consumed by the returned DoCtrl or
+            // freed on drop if the handler errors.
+            let outcome = handler_callable.call_handler(vec![effect, Value::Continuation(k)]);
+            match outcome {
+                Ok(doctrl) => continue_eval(doctrl, error_context),
+                Err(VMError::UncaughtException { exception }) => {
+                    continue_raise(exception, error_context)
+                }
+                Err(err) => error_result(err, error_context),
             }
-            Err(err) => error_result(err, error_context),
         }
     }
 
-    /// Recover from a handler-body exception by reattaching the backup
-    /// continuation (if still live) and raising the exception into the
-    /// resulting stream. This makes the inner handler's `<-` site (or the
-    /// user program's `yield` site, if no inner handler is in scope) see
+    /// Recover from a handler-body exception by borrowing the PyK handle,
+    /// taking the chain (if the handler didn't consume k), reattaching it,
+    /// and raising the exception into the resulting stream. This makes the
+    /// inner handler's `<-` site (or the user program's `yield` site) see
     /// the exception via Python's `gen.throw`, matching OCaml 5's semantics
-    /// for unhandled exceptions in handler bodies.
+    /// for unhandled exceptions in handler bodies (discontinue k exn).
     ///
     /// If the handler consumed `k` before raising (e.g. Resume followed by
-    /// a body-level raise after the resumed continuation returned), `backup`
-    /// is empty and we fall back to the legacy behavior of raising on
-    /// `current_segment`.
-    fn recover_handler_chain_then_raise(
+    /// a body-level raise after the resumed continuation returned), the
+    /// PyK is empty and we fall through to raising on `current_segment`.
+    fn recover_from_k_handle(
         &mut self,
-        mut backup: crate::continuation::Continuation,
+        handle: pyo3::Py<crate::continuation::PyK>,
         exception: Value,
         error_context: Option<Vec<Value>>,
     ) -> StepResult {
-        if backup.is_live() {
-            if let Err(error) = self.reattach_chain(&mut backup) {
+        let continuation = pyo3::Python::attach(|py| {
+            let mut k = handle.borrow_mut(py);
+            match k.take() {
+                Some(crate::continuation::OwnedControlContinuation::Started(c)) => Some(c),
+                _ => None,
+            }
+        });
+        if let Some(mut k) = continuation {
+            if let Err(error) = self.reattach_chain(&mut k) {
                 return error_result(error, error_context);
             }
         }
@@ -700,25 +736,48 @@ impl VM {
         // Switch to outer handler's parent
         self.current_segment = boundary_parent;
 
-        // Hold a backup handle and stash it for push_stream_value
-        // (see eval_perform's note for rationale).
-        let backup = k.share_handle();
-        self.pending_handler_chain_backup = Some(backup);
+        if handler_callable.is_generator_handler() {
+            // Generator handler path — see eval_perform for rationale.
+            let k_value = pyo3::Python::attach(|py| {
+                let py_k = pyo3::Py::new(
+                    py,
+                    crate::continuation::PyK::from_continuation(k),
+                )
+                .expect("failed to allocate PyK");
+                let handle = py_k.clone_ref(py);
+                self.pending_handler_k_handle = Some(handle);
+                Value::Opaque(crate::py_shared::PyShared::new(py_k.into_any()))
+            });
 
-        let outcome = handler_callable.call_handler(vec![effect, Value::Continuation(k)]);
+            let outcome = handler_callable.call_handler(vec![effect, k_value]);
+            let leftover_handle = self.pending_handler_k_handle.take();
 
-        let leftover_backup = self.pending_handler_chain_backup.take();
-
-        match outcome {
-            Ok(doctrl) => {
-                self.pending_handler_chain_backup = leftover_backup;
-                continue_eval(doctrl, error_context)
+            match outcome {
+                Ok(doctrl) => {
+                    if matches!(doctrl, DoCtrl::Expand { .. }) {
+                        self.pending_handler_k_handle = leftover_handle;
+                    }
+                    continue_eval(doctrl, error_context)
+                }
+                Err(VMError::UncaughtException { exception }) => match leftover_handle {
+                    Some(handle) => {
+                        self.recover_from_k_handle(handle, exception, error_context)
+                    }
+                    None => continue_raise(exception, error_context),
+                },
+                Err(err) => error_result(err, error_context),
             }
-            Err(VMError::UncaughtException { exception }) => {
-                let backup = leftover_backup.unwrap_or_else(crate::continuation::Continuation::empty);
-                self.recover_handler_chain_then_raise(backup, exception, error_context)
+        } else {
+            // Synchronous handler path — see eval_perform for rationale.
+            let outcome =
+                handler_callable.call_handler(vec![effect, Value::Continuation(k)]);
+            match outcome {
+                Ok(doctrl) => continue_eval(doctrl, error_context),
+                Err(VMError::UncaughtException { exception }) => {
+                    continue_raise(exception, error_context)
+                }
+                Err(err) => error_result(err, error_context),
             }
-            Err(err) => error_result(err, error_context),
         }
     }
 

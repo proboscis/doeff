@@ -15,7 +15,7 @@
 |---|---|---|---|---|---|
 | B1 | ハンドラ探索 deep / shallow | **deep**(parent鎖を全探索、再開後もハンドラ残置) | dispatch.rs find_handler_for_effect(:247-250付近) | shallowの再設置パターン、軽量一回ハンドラ | spec(SPEC-VM-020) |
 | B2 | 継続使用回数 one-shot / multi-shot | **one-shot** | continuation.rs `take()`(:284付近)、エラー "one-shot violation" | 分岐再開(amb/プロンプト再入)、リプレイ、時間旅行 | spec(SPEC-VM-021)+test |
-| B3 | one-shot強制 観測(ID+flag) / 構成(move) | **構成(move)** — `Option::take`、Clone禁止 | SPEC-VM-021:84,200、違反テスト(Clone/AtomicBool禁止) | 継続の恒等子・レジストリ・共有フラグ(=v1の補償機構) | spec+test |
+| B3 | one-shot強制 観測(ID+flag) / 構成(move) | **構成(move)** — `Option::take`、Clone禁止 | continuation.rs:252 `chain: Option<DetachedFiberChain>`, take():277, SPEC-VM-021:84,200, ガードテスト test_move_semantics_architecture.py(6件), D19 | 継続の恒等子・レジストリ・共有フラグ(=v1の補償機構)、Arc/Mutex/share_handle(=PR #404の機構、D19で除去) | spec+test |
 | B4 | エフェクト選別 ランタイム型フィルタ / ハンドラ全受け | **全受けパターンマッチ** | SPEC-VM-020:206 | ランタイム型フィルタ最適化(キャッシュ含む) | spec ※残骸あり(§4-①) |
 | B5 | ハンドラ解決 evidence passing / 動的探索 | **動的探索**(毎perform、キャッシュなし) | dispatch.rs(キャッシュ構造なし)、SPEC-VM-020:206がキャッシュ禁止 | 設置時解決、O(1)ディスパッチ | **成り行き**(evidence passingは未検討 [owner])。高速Rust化の論点として保留 |
 | B6 | 状態×継続 共有 / スナップショット | **共有**(cells捕獲時コピーなし) | src/var_store.rs、vm/var_store.rs(コピー箇所なし) | 分岐意味論、トランザクショナルロールバック、multi-shot拡張 | **owner: 意図的・確定**(one-shot前提で共有が正しい)。law未明文 → Task 4で昇格。SPEC-EFF-002のknown issue(gh#157 snapshot isolation)は本回答と矛盾、spec更新要。※追記: `global_state`/`writer_log`は呼び出し元ゼロの死設備と判明(§4-④)。**※2026-06-12訂正: cells(Var)もスコープ束縛も死設備**(D15 — Python到達経路なし)。VM特権状態はゼロで、B6の共有意味論はPythonクロージャハンドラの状態(scheduler/state/writer)についてのlawとして生きる。正統のState/Writerハンドラはクロージャ実装(algebra-draft.md §0) |

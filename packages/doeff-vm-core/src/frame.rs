@@ -183,16 +183,17 @@ pub enum Frame {
     Program {
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
-        /// Backup handle on the original perform-site continuation, used
-        /// only for handler-body program frames. If this stream raises an
-        /// uncaught exception, the VM reattaches `chain_backup`'s chain and
-        /// raises into the resulting stream so the inner handler's `<-`
-        /// site (or the user program's perform site) can `try/except` the
-        /// error. None for ordinary program frames (user body, etc.).
+        /// Reference to the PyK Python object that owns the perform-site
+        /// continuation chain, used only for handler-body program frames.
+        /// If this stream raises an uncaught exception, the VM borrows this
+        /// handle, takes the chain from the PyK (if the handler didn't
+        /// consume k), and reattaches it so the inner handler's `<-` site
+        /// (or the user program's perform site) can `try/except` the error.
+        /// None for ordinary program frames (user body, etc.).
         ///
-        /// One-shot is preserved by `Continuation::take` (lock+take); the
-        /// handler's own PyK shares the same chain cell.
-        chain_backup: Option<crate::continuation::Continuation>,
+        /// This is a Python handle (Py<PyK>), NOT a continuation. The chain
+        /// lives inside the PyK — move-only by construction (SPEC-VM-021).
+        handler_k_handle: Option<pyo3::Py<crate::continuation::PyK>>,
     },
     LexicalScope {
         bindings: HashMap<HashedPyKey, Value>,
@@ -215,19 +216,19 @@ impl Frame {
         Frame::Program {
             stream,
             metadata,
-            chain_backup: None,
+            handler_k_handle: None,
         }
     }
 
-    pub fn program_with_backup(
+    pub fn program_with_k_handle(
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
-        chain_backup: Option<crate::continuation::Continuation>,
+        handler_k_handle: Option<pyo3::Py<crate::continuation::PyK>>,
     ) -> Self {
         Frame::Program {
             stream,
             metadata,
-            chain_backup,
+            handler_k_handle,
         }
     }
 
