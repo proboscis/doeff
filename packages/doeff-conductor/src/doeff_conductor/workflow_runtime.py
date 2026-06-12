@@ -47,7 +47,14 @@ from doeff_conductor.environment import (
 )
 from doeff_conductor.overseer import GateOption, OpenGateView
 from doeff_conductor.replay_keying import ResolvedIdentity
-from doeff_conductor.types import ExecResult, Issue, MergeStrategy, MergeWorkspacesResult, Workspace
+from doeff_conductor.types import (
+    ExecResult,
+    Issue,
+    MergeConflict,
+    MergeStrategy,
+    MergeWorkspacesResult,
+    Workspace,
+)
 from doeff_conductor.verbs import resolve_agent_profile
 
 
@@ -111,20 +118,6 @@ class ToleratedLoss:
     error_type: str
     quorum: int
     total: int
-
-
-class QuorumNotMetError(RuntimeError):
-    """Raised when a quorum parallel form cannot meet its quorum threshold."""
-
-    def __init__(self, *, quorum: int, total: int, succeeded: int, failed: int) -> None:
-        self.quorum = quorum
-        self.total = total
-        self.succeeded = succeeded
-        self.failed = failed
-        super().__init__(
-            f"quorum not met: needed {quorum}/{total} successes, "
-            f"got {succeeded} with {failed} failures"
-        )
 
 
 @dataclass(frozen=True)
@@ -359,7 +352,10 @@ def _execute_parallel(
             return parked
         return results
 
-    return _resolve_quorum(results, resolved_quorum, branch_count, path, context)
+    return _resolve_quorum(
+        results, resolved_quorum, branch_count, path, context,
+        current_phase=current_phase,
+    )
 
 
 @do
@@ -394,22 +390,49 @@ def _resolve_quorum(
     total: int,
     path: str,
     context: _RuntimeContext,
-) -> QuorumResult:
+    *,
+    current_phase: str | None = None,
+) -> QuorumResult | ParkedValue:
     """Check quorum satisfaction and record tolerated losses.
 
-    Raises ``QuorumNotMetError`` when fewer than *quorum* branches succeeded.
+    Parks behind a gate when fewer than *quorum* branches succeeded.
+    If the gate was previously answered with ``proceed``, accepts partial
+    results (records all failures as tolerated losses).
     """
     ok_count: int = sum(1 for r in results if isinstance(r, OkValue))
     err_count: int = sum(1 for r in results if isinstance(r, ErrValue))
 
     if ok_count < quorum:
-        raise QuorumNotMetError(
-            quorum=quorum,
-            total=total,
-            succeeded=ok_count,
-            failed=err_count,
+        quorum_node_id: str = _node_id(context.workflow.name, path, "parallel")
+        quorum_gate_id: str = f"{context.run_id}:{quorum_node_id}:quorum-not-met"
+        if context.answered_gate_options.get(quorum_gate_id) == "proceed":
+            _record_tolerated_losses(results, quorum, total, path, context)
+            return QuorumResult(entries=tuple(results), quorum=quorum, total=total)
+        return _park(
+            context,
+            _quorum_not_met_gate(
+                context=context,
+                path=path,
+                quorum=quorum,
+                total=total,
+                succeeded=ok_count,
+                failed=err_count,
+                phase=current_phase,
+            ),
         )
 
+    _record_tolerated_losses(results, quorum, total, path, context)
+    return QuorumResult(entries=tuple(results), quorum=quorum, total=total)
+
+
+def _record_tolerated_losses(
+    results: tuple[Any, ...],
+    quorum: int,
+    total: int,
+    path: str,
+    context: _RuntimeContext,
+) -> None:
+    """Record ErrValue entries as tolerated losses in the runtime context."""
     for entry in results:
         if isinstance(entry, ErrValue):
             context.tolerated_losses.append(
@@ -422,8 +445,6 @@ def _resolve_quorum(
                     total=total,
                 )
             )
-
-    return QuorumResult(entries=tuple(results), quorum=quorum, total=total)
 
 
 @do
@@ -473,7 +494,20 @@ def _execute_loop(
             break
 
     _restore_loop_bindings(context, outer_bindings)
-    raise RuntimeError(f"loop predicate {spec.until!r} did not pass within {spec.max_iterations}")
+    loop_node_id: str = _node_id(context.workflow.name, path, "loop")
+    loop_gate_id: str = f"{context.run_id}:{loop_node_id}:loop-exhaustion"
+    if context.answered_gate_options.get(loop_gate_id) == "proceed":
+        return last_value
+    return _park(
+        context,
+        _loop_exhaustion_gate(
+            context=context,
+            node_id=loop_node_id,
+            predicate=spec.until,
+            max_iterations=spec.max_iterations,
+            phase=current_phase,
+        ),
+    )
 
 
 @do
@@ -626,7 +660,15 @@ def _execute_merge(spec: MergeSpec, context: _RuntimeContext, *, path: str) -> A
         ),
     )
     if not merge_result.merged or merge_result.workspace is None:
-        raise RuntimeError(f"workspace merge failed: {merge_result.message}")
+        return _park(
+            context,
+            _merge_conflict_gate(
+                context=context,
+                node_id=node_id,
+                merge_result=merge_result,
+                workspaces=tuple(workspaces),
+            ),
+        )
     return merge_result.workspace
 
 
@@ -883,6 +925,128 @@ def _agent_budget_exhausted_gate(
             "session_id": task.session_id,
         },
         options=_gate_options(),
+    )
+
+
+def _merge_conflict_gate(
+    *,
+    context: _RuntimeContext,
+    node_id: str,
+    merge_result: MergeWorkspacesResult,
+    workspaces: tuple[Workspace, ...],
+) -> OpenGateView:
+    """D5 closure gate: merge conflict parks the run with conflict details."""
+    conflicted_files: list[str] = []
+    source_workspace_ids: list[str] = []
+    conflict: MergeConflict
+    for conflict in merge_result.conflicts:
+        conflicted_files.extend(conflict.files)
+        source_workspace_ids.append(conflict.workspace.id)
+    return OpenGateView(
+        gate_id=f"{context.run_id}:{node_id}:merge-conflict",
+        workflow_id=context.run_id,
+        node_id=node_id,
+        phase=None,
+        reason="merge conflict",
+        stakes={
+            "conflicted_files": conflicted_files,
+            "source_workspaces": source_workspace_ids,
+            "merge_message": merge_result.message or "",
+            "verification_class": "merge",
+            "blast_radius": "dependent-subtree",
+            "reversibility": "retryable",
+        },
+        options=(
+            GateOption(
+                name="retry-merge",
+                outcome="resume",
+                description="Retry the merge after resolving conflicts in the source workspace(s).",
+            ),
+            GateOption(
+                name="abort",
+                outcome="abort",
+                description="Abort the dependent subtree and preserve the gate outcome.",
+            ),
+        ),
+    )
+
+
+def _loop_exhaustion_gate(
+    *,
+    context: _RuntimeContext,
+    node_id: str,
+    predicate: Any,
+    max_iterations: int,
+    phase: str | None,
+) -> OpenGateView:
+    """Closure gate: loop predicate exhaustion parks with last-state option."""
+    return OpenGateView(
+        gate_id=f"{context.run_id}:{node_id}:loop-exhaustion",
+        workflow_id=context.run_id,
+        node_id=node_id,
+        phase=phase,
+        reason="loop predicate exhaustion",
+        stakes={
+            "predicate": str(predicate),
+            "max_iterations": max_iterations,
+            "verification_class": "loop",
+            "blast_radius": "dependent-subtree",
+            "reversibility": "retryable",
+        },
+        options=(
+            GateOption(
+                name="proceed",
+                outcome="resume",
+                description="Accept the last loop iteration state and continue.",
+            ),
+            GateOption(
+                name="abort",
+                outcome="abort",
+                description="Abort the dependent subtree and preserve the gate outcome.",
+            ),
+        ),
+    )
+
+
+def _quorum_not_met_gate(
+    *,
+    context: _RuntimeContext,
+    path: str,
+    quorum: int,
+    total: int,
+    succeeded: int,
+    failed: int,
+    phase: str | None,
+) -> OpenGateView:
+    """Closure gate: quorum shortfall parks with partial-accept option."""
+    quorum_node_id: str = _node_id(context.workflow.name, path, "parallel")
+    return OpenGateView(
+        gate_id=f"{context.run_id}:{quorum_node_id}:quorum-not-met",
+        workflow_id=context.run_id,
+        node_id=quorum_node_id,
+        phase=phase,
+        reason="quorum not met",
+        stakes={
+            "quorum": quorum,
+            "total": total,
+            "succeeded": succeeded,
+            "failed": failed,
+            "verification_class": "quorum",
+            "blast_radius": "dependent-subtree",
+            "reversibility": "non-retryable",
+        },
+        options=(
+            GateOption(
+                name="proceed",
+                outcome="resume",
+                description="Accept partial results and continue with available successes.",
+            ),
+            GateOption(
+                name="abort",
+                outcome="abort",
+                description="Abort the dependent subtree due to insufficient quorum.",
+            ),
+        ),
     )
 
 
