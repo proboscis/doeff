@@ -35,6 +35,8 @@ BUILT_IN_VALIDATION_SCENARIOS: tuple[str, ...] = (
     "schema-invalid-then-pass",
     "retry-exhaustion",
     "quorum-shortfall",
+    "merge-conflict",
+    "loop-exhaustion",
 )
 SUPPORTED_SUPERVISION_POLICIES: tuple[str, ...] = ("autonomous", "phase-checkpoints")
 
@@ -412,6 +414,22 @@ def _terminal_for_node(node: ExpandedNode, scenario: str) -> TerminalState:
             status="open",
             phase=node.phase,
             detail="quorum shortfall",
+        )
+    if scenario == "merge-conflict" and node.kind == "merge":
+        return TerminalState(
+            node_id=node.node_id,
+            terminal_kind="gate",
+            status="open",
+            phase=node.phase,
+            detail="merge conflict",
+        )
+    if scenario == "loop-exhaustion" and node.kind == "loop":
+        return TerminalState(
+            node_id=node.node_id,
+            terminal_kind="gate",
+            status="open",
+            phase=node.phase,
+            detail="loop predicate exhaustion",
         )
     if node.kind == "agent":
         detail: str = "schema invalid retry then pass" if scenario == "schema-invalid-then-pass" else scenario
