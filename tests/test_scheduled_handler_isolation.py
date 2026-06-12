@@ -9,7 +9,8 @@ from doeff_core_effects.handlers import lazy_ask
 from doeff_core_effects.scheduler import scheduled
 from doeff_vm import EffectBase, Pass, Resume
 
-from doeff import Ask, WithHandler, do, run
+from doeff import Ask, do, run
+from doeff import handler as _install_raw_handler
 
 
 class Transcribe(EffectBase):
@@ -47,26 +48,26 @@ def dynamic_handler_wrapper(program):
     th = yield Ask(TranscribeHandlerKey)
     # Build handler chain dynamically
     wrapped = program
-    wrapped = WithHandler(rh, wrapped)  # resolve outermost
-    wrapped = WithHandler(th, wrapped)  # transcribe innermost
+    wrapped = _install_raw_handler(rh)(wrapped)  # resolve outermost
+    wrapped = _install_raw_handler(th)(wrapped)  # transcribe innermost
     return (yield wrapped)
 
 
 def test_static_handlers_with_scheduled():
     """Static handler wrapping + scheduled: works."""
-    sub = WithHandler(transcribe_handler, (lambda: (yield Transcribe()))())
+    sub = _install_raw_handler(transcribe_handler)((lambda: (yield Transcribe()))())
 
     @do
     def inner():
         return (yield Transcribe())
 
-    sub = WithHandler(transcribe_handler, inner())
+    sub = _install_raw_handler(transcribe_handler)(inner())
 
     @do
     def outer():
         return (yield sub)
 
-    composed = WithHandler(resolve_handler, outer())
+    composed = _install_raw_handler(resolve_handler)(outer())
     assert run(scheduled(composed)) == "transcribed(resolved)"
 
 
@@ -84,7 +85,7 @@ def test_dynamic_handlers_with_scheduled():
         return (yield Transcribe())
 
     # Sub-program with its own handler (like _abepura_311_transcribe)
-    sub = WithHandler(transcribe_handler, inner())
+    sub = _install_raw_handler(transcribe_handler)(inner())
 
     @do
     def outer():
@@ -96,7 +97,7 @@ def test_dynamic_handlers_with_scheduled():
     }
 
     composed = dynamic_handler_wrapper(outer())
-    composed = WithHandler(lazy_ask(env=env), composed)
+    composed = lazy_ask(env=env)(composed)
     assert run(scheduled(composed)) == "transcribed(resolved)"
 
 
@@ -110,7 +111,7 @@ def test_dynamic_handlers_sub_emits_through_stack():
     def inner():
         return (yield Transcribe())
 
-    sub = WithHandler(transcribe_handler, inner())
+    sub = _install_raw_handler(transcribe_handler)(inner())
 
     @do
     def program():
@@ -122,6 +123,6 @@ def test_dynamic_handlers_sub_emits_through_stack():
     }
 
     composed = dynamic_handler_wrapper(program())
-    composed = WithHandler(lazy_ask(env=env), composed)
+    composed = lazy_ask(env=env)(composed)
     result = run(scheduled(composed))
     assert result == "transcribed(resolved)", f"got: {result}"

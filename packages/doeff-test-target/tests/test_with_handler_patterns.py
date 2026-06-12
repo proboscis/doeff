@@ -4,7 +4,8 @@ from typing import Any
 
 import pytest
 
-from doeff import Ask, AskEffect, Effect, Pass, Resume, WithHandler, default_handlers, do, run
+from doeff import Ask, AskEffect, Effect, Pass, Resume, default_handlers, do, run
+from doeff import handler as _install_raw_handler
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -41,7 +42,7 @@ def test_withhandler_basic_effect_pipeline_with_mock_handler():
         return (yield Pass())
 
     result = run(
-        WithHandler(mock_handler, _test_target_pipeline()),
+        _install_raw_handler(mock_handler)(_test_target_pipeline()),
         handlers=default_handlers(),
     )
 
@@ -62,7 +63,7 @@ def test_withhandler_nesting_inner_handler_overrides_outer_handler():
         return (yield Pass())
 
     result = run(
-        WithHandler(outer_handler, WithHandler(inner_handler, _nested_ask_program())),
+        _install_raw_handler(outer_handler)(_install_raw_handler(inner_handler)(_nested_ask_program())),
         handlers=default_handlers(),
     )
 
@@ -80,7 +81,7 @@ def test_withhandler_error_propagation_from_handler():
         return (yield Pass())
 
     result = run(
-        WithHandler(failing_handler, _single_ask_program("explode")),
+        _install_raw_handler(failing_handler)(_single_ask_program("explode")),
         handlers=default_handlers(),
     )
 
@@ -101,7 +102,7 @@ def test_withhandler_delegate_passthrough_uses_default_reader():
         return (yield Pass())
 
     result = run(
-        WithHandler(delegating_handler, _single_ask_program("service_name")),
+        _install_raw_handler(delegating_handler)(_single_ask_program("service_name")),
         handlers=default_handlers(),
         env={"service_name": "doeff-test-target"},
     )
@@ -127,7 +128,7 @@ def test_withhandler_resume_supports_various_value_types():
             return (yield Pass())
 
         result = run(
-            WithHandler(typed_mock_handler, _single_ask_program("any-key")),
+            _install_raw_handler(typed_mock_handler)(_single_ask_program("any-key")),
             handlers=default_handlers(),
         )
 

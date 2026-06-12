@@ -5,7 +5,8 @@ Tests cover all user-facing error paths to ensure consistent visualization.
 import pytest
 from doeff_vm import EffectBase
 
-from doeff import Pass, WithHandler, do, run
+from doeff import Pass, do, run
+from doeff import handler as _install_raw_handler
 
 
 class Unhandled(EffectBase):
@@ -47,7 +48,7 @@ def test_pass_no_outer_handler():
         yield Unhandled()
 
     with pytest.raises(RuntimeError, match="Unhandled") as exc_info:
-        run(WithHandler(handler, prog()))
+        run(_install_raw_handler(handler)(prog()))
     assert_has_doeff_traceback(exc_info.value)
 
 
@@ -71,7 +72,7 @@ def test_nested_frames_in_traceback():
         return (yield middle())
 
     with pytest.raises(RuntimeError, match="Unhandled") as exc_info:
-        run(WithHandler(handler, top()))
+        run(_install_raw_handler(handler)(top()))
     assert_has_doeff_traceback(exc_info.value, min_frames=3)
 
 
@@ -101,7 +102,7 @@ def test_exception_inside_handler():
         yield Unhandled()
 
     with pytest.raises(RuntimeError, match="handler crash"):
-        run(WithHandler(bad_handler, prog()))
+        run(_install_raw_handler(bad_handler)(prog()))
 
 
 # --- 6. Multiple handlers, inner passes, outer missing ---
@@ -120,7 +121,7 @@ def test_chained_pass_traceback():
         yield Unhandled()
 
     with pytest.raises(RuntimeError, match="Unhandled") as exc_info:
-        run(WithHandler(h1, WithHandler(h2, prog())))
+        run(_install_raw_handler(h1)(_install_raw_handler(h2)(prog())))
     tb = getattr(exc_info.value, "__doeff_traceback__", None)
     assert tb is not None
     # Should have handler chain entries

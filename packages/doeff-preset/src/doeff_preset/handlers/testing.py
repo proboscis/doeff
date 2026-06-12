@@ -5,6 +5,7 @@ from collections.abc import Callable
 from typing import Any
 
 from doeff import AskEffect, Effect, Pass, WriterTellEffect, do
+from doeff import handler as _program_handler
 from doeff_preset.handlers.config import config_handlers
 
 ProtocolHandler = Callable[[Any, Any], Any]
@@ -38,7 +39,7 @@ def mock_handlers(config_defaults: dict[str, Any] | None = None) -> ProtocolHand
             return (yield ask_handler(effect, k))
         yield Pass()
 
-    return handler
+    return _program_handler(handler)
 
 
 __all__ = [

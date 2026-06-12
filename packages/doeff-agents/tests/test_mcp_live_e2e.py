@@ -26,7 +26,7 @@ from doeff_agents.handlers.production import TmuxAgentHandler
 from doeff_agents.tmux import TmuxSessionBackend
 from doeff_time import Delay, sync_time_handler
 
-from doeff import Perform, WithHandler, do, run
+from doeff import Perform, do, run
 from doeff.mcp import McpParamSchema, McpToolDef
 
 logging.basicConfig(level=logging.INFO)
@@ -100,7 +100,7 @@ class TestMcpLiveE2E:
             return output
 
         try:
-            output = run(WithHandler(sync_time_handler(), WithHandler(agent_protocol, program())))
+            output = run(sync_time_handler()(agent_protocol(program())))
 
             # Verify the tool was actually called via the in-process log
             assert len(_tool_call_log) > 0, (

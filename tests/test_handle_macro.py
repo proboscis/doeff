@@ -20,8 +20,9 @@ import pytest
 from doeff_core_effects.handlers import await_handler
 from doeff_core_effects.scheduler import scheduled
 
-from doeff import EffectBase, Pass, Resume, Transfer, WithHandler, run
+from doeff import EffectBase, Pass, Resume, Transfer, run
 from doeff import do as _doeff_do
+from doeff import handler as make_handler
 
 # ---------------------------------------------------------------------------
 # Test effects
@@ -52,7 +53,7 @@ def real_add_handler():
             yield Resume(k, effect.x + effect.y)
         else:
             yield Pass(effect, k)
-    return _handler
+    return make_handler(_handler)
 
 
 def store_handler(results_list):
@@ -63,7 +64,7 @@ def store_handler(results_list):
             yield Resume(k, None)
         else:
             yield Pass(effect, k)
-    return _handler
+    return make_handler(_handler)
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +82,6 @@ def _eval_hy(code: str, **extra_globals):
         "run": run,
         "do": _doeff_do,
         "_doeff_do": _doeff_do,
-        "WithHandler": WithHandler,
         "Resume": Resume,
         "Transfer": Transfer,
         "Pass": Pass,
@@ -125,10 +125,7 @@ class TestDefhandlerBind:
               (resume (* single 2))))
 
           (run (scheduled
-            (WithHandler (await_handler)
-              (WithHandler (store_handler results)
-                (WithHandler (real_add_handler)
-                  (WithHandler doubling-handler (add_program))))))))
+            ((await_handler) ((store_handler results) ((real_add_handler) (doubling-handler (add_program))))))))
         """, results=results)
         # Add(3,4) → doubling delegates → real_add gets 7 → doubles to 14 → Store(14)
         assert results == [14]
@@ -144,10 +141,7 @@ class TestDefhandlerBind:
                          (! (Add :x 0 :y y))))))
 
           (run (scheduled
-            (WithHandler (await_handler)
-              (WithHandler (store_handler results)
-                (WithHandler (real_add_handler)
-                  (WithHandler split-handler (add_program))))))))
+            ((await_handler) ((store_handler results) ((real_add_handler) (split-handler (add_program))))))))
         """, results=results)
         # Add(3,4) → split: Add(3,0)+Add(0,4) = 3+4 = 7 → Store(7)
         assert results == [7]
@@ -163,10 +157,7 @@ class TestDefhandlerBind:
               (resume (+ x y))))
 
           (run (scheduled
-            (WithHandler (await_handler)
-              (WithHandler (store_handler results)
-                (WithHandler (real_add_handler)
-                  (WithHandler logging-handler (add_program))))))))
+            ((await_handler) ((store_handler results) ((real_add_handler) (logging-handler (add_program))))))))
         """, results=results)
         # delegates Add(0,0) as side-effect, resumes with x+y=7 → Store(7)
         assert results == [7]
@@ -180,10 +171,7 @@ class TestInlineHandleBind:
         results = []
         _eval_hy("""
         (run (scheduled
-          (WithHandler (await_handler)
-            (WithHandler (store_handler results)
-              (WithHandler (real_add_handler)
-                (handle (add_program)
+          ((await_handler) ((store_handler results) ((real_add_handler) (handle (add_program)
                   (Add [x y]
                     (<- single (Add :x x :y y))
                     (resume (* single 3)))))))))
@@ -196,10 +184,7 @@ class TestInlineHandleBind:
         results = []
         _eval_hy("""
         (run (scheduled
-          (WithHandler (await_handler)
-            (WithHandler (store_handler results)
-              (WithHandler (real_add_handler)
-                (handle (add_program)
+          ((await_handler) ((store_handler results) ((real_add_handler) (handle (add_program)
                   (Add [x y]
                     (resume (- (! (Add :x x :y y)) 1)))))))))
         """, results=results)
@@ -215,7 +200,7 @@ def _eval_hy_minimal(code: str, **extra_globals):
     """Evaluate Hy code WITHOUT pre-injecting doeff internals.
 
     Only provides user-level imports (effect types, run, scheduled).
-    Does NOT provide: _doeff_do, Resume, Transfer, Pass, WithHandler.
+    Does NOT provide: _doeff_do, Resume, Transfer, Pass.
     """
     import types
     module_name = "test_handle_self_contained"
@@ -294,17 +279,14 @@ class TestSelfContainedMacros:
         """)
 
     def test_defhandler_end_to_end(self):
-        """defhandler + run end-to-end — user only imports WithHandler for composition."""
+        """defhandler + run end-to-end — handlers compose by direct calls."""
         results = []
         _eval_hy_minimal("""
-        (import doeff [WithHandler])
         (defhandler simple-add
           (Add [x y] (resume (+ x y))))
 
         (run (scheduled
-          (WithHandler (await_handler)
-            (WithHandler (store_handler results)
-              (WithHandler simple-add (add_program))))))
+          ((await_handler) ((store_handler results) (simple-add (add_program))))))
         """, results=results)
         assert results == [7]
 
@@ -312,14 +294,11 @@ class TestSelfContainedMacros:
         """transfer in defhandler should also work without extra imports."""
         results = []
         _eval_hy_minimal("""
-        (import doeff [WithHandler])
         (defhandler add-and-transfer
           (Add [x y] (transfer (+ x y))))
 
         (run (scheduled
-          (WithHandler (await_handler)
-            (WithHandler (store_handler results)
-              (WithHandler add-and-transfer (add_program))))))
+          ((await_handler) ((store_handler results) (add-and-transfer (add_program))))))
         """, results=results)
         # transfer removes add-and-transfer; Store still hits store_handler
         assert results == [7]
@@ -338,16 +317,12 @@ class TestSelfContainedMacros:
 
         results = []
         _eval_hy_minimal("""
-        (import doeff [WithHandler])
         ;; noop-handler only matches Unused — Add and Store pass through
         (defhandler noop-handler
           (Unused [] (resume None)))
 
         (run (scheduled
-          (WithHandler (await_handler)
-            (WithHandler (store_handler results)
-              (WithHandler (real_add_handler)
-                (WithHandler noop-handler (add_program)))))))
+          ((await_handler) ((store_handler results) ((real_add_handler) (noop-handler (add_program)))))))
         """, results=results, Unused=Unused)
         assert results == [7]
 
@@ -356,9 +331,7 @@ class TestSelfContainedMacros:
         results = []
         _eval_hy_minimal("""
         (run (scheduled
-          (WithHandler (await_handler)
-            (WithHandler (store_handler results)
-              (handle (add_program)
+          ((await_handler) ((store_handler results) (handle (add_program)
                 (Add [x y] (resume (+ x y))))))))
         """, results=results)
         assert results == [7]
@@ -384,7 +357,6 @@ def _eval_hy_with_bind(code: str, **extra_globals):
         "run": run,
         "do": _doeff_do,
         "_doeff_do": _doeff_do,
-        "WithHandler": WithHandler,
         "Resume": Resume,
         "Transfer": Transfer,
         "Pass": Pass,
@@ -513,21 +485,13 @@ class TestDefhandlerFactoryYieldLeak:
               (resume (+ x y))))
           _handler)
 
-        (defn init-handler []
+        (defhandler init-handler
           "Handle Init effects (return label as confirmation)."
-          (_doeff-do
-            (fn [effect k]
-              (if (isinstance effect Init)
-                  (yield (Resume k (. effect label)))
-                  (yield (Pass effect k))))))
+          (Init [label] (resume label)))
 
         (setv h (make-handler "http://test"))
         (run (scheduled
-          (WithHandler (await_handler)
-            (WithHandler (store_handler results)
-              (WithHandler (real_add_handler)
-                (WithHandler (init-handler)
-                  (WithHandler h (add_program))))))))
+          ((await_handler) ((store_handler results) ((real_add_handler) (init-handler (h (add_program))))))))
         """, results=results, Init=Init)
         assert results == [7]
 
@@ -650,15 +614,11 @@ class TestReperform:
         """(reperform effect) forwards effect+k to outer handler."""
         results = []
         _eval_hy("""
-        (import doeff [WithHandler])
         (defhandler passthrough
           (Add [x y] (reperform effect)))
 
         (run (scheduled
-          (WithHandler (await_handler)
-            (WithHandler (store_handler results)
-              (WithHandler (real_add_handler)
-                (WithHandler passthrough (add_program)))))))
+          ((await_handler) ((store_handler results) ((real_add_handler) (passthrough (add_program)))))))
         """, results=results)
         # passthrough reperforms Add → real_add_handler gets 7 → Store(7)
         assert results == [7]
@@ -667,7 +627,6 @@ class TestReperform:
         """(reperform effect) in if branch — the #389 pattern."""
         results = []
         _eval_hy("""
-        (import doeff [WithHandler])
         (defhandler conditional-handler
           (Add [x y]
             (if (> x 10)
@@ -675,10 +634,7 @@ class TestReperform:
                 (reperform effect))))
 
         (run (scheduled
-          (WithHandler (await_handler)
-            (WithHandler (store_handler results)
-              (WithHandler (real_add_handler)
-                (WithHandler conditional-handler (add_program)))))))
+          ((await_handler) ((store_handler results) ((real_add_handler) (conditional-handler (add_program)))))))
         """, results=results)
         # x=3, not > 10 → reperform → real_add_handler → 7
         assert results == [7]
@@ -710,15 +666,11 @@ class TestReperform:
         """(pass) should still work (backwards compat) even if deprecated."""
         results = []
         _eval_hy("""
-        (import doeff [WithHandler])
         (defhandler old-passthrough
           (Add [x y] (pass)))
 
         (run (scheduled
-          (WithHandler (await_handler)
-            (WithHandler (store_handler results)
-              (WithHandler (real_add_handler)
-                (WithHandler old-passthrough (add_program)))))))
+          ((await_handler) ((store_handler results) ((real_add_handler) (old-passthrough (add_program)))))))
         """, results=results)
         assert results == [7]
 
@@ -726,14 +678,10 @@ class TestReperform:
         """defhandler must work without _doeff-do or Resume/Pass in outer scope."""
         results = []
         _eval_hy_minimal("""
-        (import doeff [WithHandler])
         (defhandler passthrough
           (Add [x y] (reperform effect)))
 
         (run (scheduled
-          (WithHandler (await_handler)
-            (WithHandler (store_handler results)
-              (WithHandler (real_add_handler)
-                (WithHandler passthrough (add_program)))))))
+          ((await_handler) ((store_handler results) ((real_add_handler) (passthrough (add_program)))))))
         """, results=results)
         assert results == [7]

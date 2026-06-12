@@ -11,7 +11,7 @@ from doeff_events import Publish, WaitForEvent, event_handler
 from doeff_time import Delay, GetTime, ScheduleAt, WaitUntil, sim_time_handler
 
 from conftest import SIM_TIME_EPOCH, run_with_handlers, sim_time
-from doeff import WithHandler, do
+from doeff import do
 
 
 def _run_sim(
@@ -20,7 +20,7 @@ def _run_sim(
     start_time: datetime = SIM_TIME_EPOCH,
 ):
     return run_with_handlers(
-        WithHandler(sim_time_handler(start_time=start_time), program),
+        sim_time_handler(start_time=start_time)(program),
     )
 
 
@@ -30,12 +30,7 @@ def _run_sim_events(
     start_time: datetime = SIM_TIME_EPOCH,
 ):
     return run_with_handlers(
-        WithHandler(event_handler(),
-            WithHandler(
-                sim_time_handler(start_time=start_time),
-                program,
-            ),
-        ),
+        event_handler()(sim_time_handler(start_time=start_time)(program)),
     )
 
 

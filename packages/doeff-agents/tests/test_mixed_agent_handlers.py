@@ -6,7 +6,7 @@ from doeff_agents.adapters.base import AgentType
 from doeff_agents.effects.agent import LaunchEffect, StopEffect
 from doeff_core_effects.handlers import state
 
-from doeff import Perform, WithHandler, do, run
+from doeff import Perform, do, run
 
 
 class FakeTmuxBackend:
@@ -63,13 +63,7 @@ def test_codex_stop_reaches_codex_handler_when_claude_handler_is_inner(tmp_path:
         yield Perform(StopEffect(handle=handle))
         return "stopped"
 
-    wrapped = WithHandler(
-        state(),
-        WithHandler(
-            codex_handler(backend=codex_backend),
-            WithHandler(claude_handler(backend=claude_backend), program()),
-        ),
-    )
+    wrapped = state()(codex_handler(backend=codex_backend)(claude_handler(backend=claude_backend)(program())))
 
     result = run(scheduled(wrapped))
 

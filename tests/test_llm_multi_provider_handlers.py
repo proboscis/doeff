@@ -10,6 +10,7 @@ from doeff_llm.effects import LLMChat, LLMStructuredQuery
 from doeff_openrouter.handlers import MockOpenRouterRuntime, openrouter_mock_handler
 from pydantic import BaseModel
 
+from doeff import handler as _install_raw_handler
 from tests._run_helpers import run_with_defaults
 
 try:
@@ -24,7 +25,7 @@ except Exception as exc:  # pragma: no cover - interpreter/dependency compatibil
         allow_module_level=True,
     )
 
-from doeff import Effect, EffectGenerator, WithHandler, do
+from doeff import Effect, EffectGenerator, do
 
 
 class AnalysisResult(BaseModel):
@@ -76,7 +77,7 @@ def test_multi_model_workflow_routes_to_openai_then_gemini() -> None:
         }
 
     result = run_with_defaults(
-        WithHandler(gemini_handler, WithHandler(openai_handler, workflow())),
+        _install_raw_handler(gemini_handler)(_install_raw_handler(openai_handler)(workflow())),
     )
 
     assert result.is_ok()
@@ -109,7 +110,7 @@ def test_openrouter_catch_all_can_handle_unmatched_model() -> None:
         return (yield openrouter_mock_handler(effect, k))
 
     result = run_with_defaults(
-        WithHandler(catch_all_handler, workflow()),
+        _install_raw_handler(catch_all_handler)(workflow()),
     )
 
     assert result.is_ok()
@@ -121,7 +122,7 @@ def test_openrouter_catch_all_can_handle_unmatched_model() -> None:
         return (yield openrouter_mock_handler(effect, k, runtime=runtime))
 
     routed = run_with_defaults(
-        WithHandler(router_handler, workflow()),
+        _install_raw_handler(router_handler)(workflow()),
     )
 
     assert routed.is_ok()

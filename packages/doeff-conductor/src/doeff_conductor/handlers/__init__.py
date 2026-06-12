@@ -6,7 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
-from doeff import WithHandler, run
+from doeff import handler as _program_handler
+from doeff import run
 from doeff_conductor.workflow_effect_journal import JournaledWorkflowEffectHandler
 
 from .agent_handler import (
@@ -136,7 +137,7 @@ def run_sync(
 
     wrapped_program = program
     for handler in reversed(protocol_handlers):
-        wrapped_program = WithHandler(handler, wrapped_program)
+        wrapped_program = _program_handler(handler)(wrapped_program)
     try:
         return RunSyncResult(value=run(wrapped_program))
     except Exception as error:
@@ -151,8 +152,8 @@ __all__ = [
     "GitHandler",
     "IssueHandler",
     "JournaledAgentHandler",
-    "JournaledWorkspaceHandler",
     "JournaledWorkflowEffectHandler",
+    "JournaledWorkspaceHandler",
     "MockConductorRuntime",
     "RunSyncResult",
     "WorkspaceHandler",

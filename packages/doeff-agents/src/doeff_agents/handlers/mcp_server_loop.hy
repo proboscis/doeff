@@ -20,7 +20,6 @@
 ;;; WaitUntil, GetTime, and other time-sensitive effects actually work.
 
 (require doeff-hy.macros [<- defk])
-(import doeff [WithHandler])
 (import doeff_core_effects.scheduler [CreateExternalPromise Wait Spawn PRIORITY_IDLE])
 (import doeff_agents.mcp-server [McpToolServer McpToolRequest])
 (import queue [Empty])
@@ -42,7 +41,7 @@
   (setv args (lfor name (.param-names tool) (.get req.arguments name)))
   (setv program (tool.handler #* args))
   (for [h full-stack]
-    (setv program (WithHandler h program)))
+    (setv program (h program)))
   (setv ok True)
   (setv result None)
   (setv error-msg None)

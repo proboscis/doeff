@@ -32,7 +32,6 @@ from doeff_time import Delay, GetTime, ScheduleAt, SetTime, WaitUntil, sim_time_
 
 from conftest import SIM_TIME_EPOCH, listen, run_with_handlers, sim_seconds, sim_time
 from doeff import (
-    WithHandler,
     do,
 )
 
@@ -48,10 +47,7 @@ def _run_sim(
     log_formatter: Callable[[datetime, Any], str] | None = None,
 ):
     return run_with_handlers(
-        WithHandler(
-            sim_time_handler(start_time=start_time, log_formatter=log_formatter),
-            program,
-        ),
+        sim_time_handler(start_time=start_time, log_formatter=log_formatter)(program),
     )
 
 
@@ -62,12 +58,7 @@ def _run_sim_events(
     log_formatter: Callable[[datetime, Any], str] | None = None,
 ):
     return run_with_handlers(
-        WithHandler(event_handler(),
-            WithHandler(
-                sim_time_handler(start_time=start_time, log_formatter=log_formatter),
-                program,
-            ),
-        ),
+        event_handler()(sim_time_handler(start_time=start_time, log_formatter=log_formatter)(program)),
     )
 
 
@@ -650,13 +641,10 @@ class TestLogFormatterWithMultipleServices:
 
         inner_result, collected = run_with_handlers(
             listen(
-                WithHandler(
-                    sim_time_handler(
+                sim_time_handler(
                         start_time=sim_time(100.0),
                         log_formatter=lambda t, msg: f"[{sim_seconds(t):.0f}] {msg}",
-                    ),
-                    _program(),
-                ),
+                    )(_program()),
             ),
         )
         assert inner_result == "done"
@@ -753,13 +741,10 @@ class TestFullMiniBacktest:
 
         inner_result, collected = run_with_handlers(
             listen(
-                WithHandler(
-                    sim_time_handler(
+                sim_time_handler(
                         start_time=sim_time(0.0),
                         log_formatter=lambda t, msg: f"[t={sim_seconds(t):.0f}] {msg}",
-                    ),
-                    WithHandler(event_handler(), _backtest()),
-                ),
+                    )(event_handler()(_backtest())),
             ),
         )
         assert inner_result == "done"

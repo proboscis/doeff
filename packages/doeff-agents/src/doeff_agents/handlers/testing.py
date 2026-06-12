@@ -4,7 +4,8 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from doeff import Effect, Pass, Resume, WithHandler, do
+from doeff import Effect, Pass, Resume, do
+from doeff import handler as _install_raw_handler
 from doeff_agents.adapters.base import AgentType
 from doeff_agents.effects import (
     AgentEffect,
@@ -439,7 +440,7 @@ class ScenarioAgentHandler(MockAgentHandler):
                 return (yield Resume(k, None))
             yield Pass(effect, k)
 
-        return WithHandler(handler, program)
+        return _install_raw_handler(handler)(program)
 
     def handle_launch_session(self, effect: LaunchSessionEffect) -> L2SessionHandle:
         session_id = effect.spec.session_id

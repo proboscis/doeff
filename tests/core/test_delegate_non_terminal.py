@@ -7,9 +7,9 @@ from doeff import (
     EffectBase,
     Pass,
     Resume,
-    WithHandler,
     do,
 )
+from doeff import handler as _install_raw_handler
 from tests._run_helpers import run_with_defaults
 
 
@@ -38,7 +38,7 @@ def test_delegate_returns_outer_value_back_to_inner_handler() -> None:
         _ = yield _ProbeEffect()
         return -1  # unreachable (inner handler does not resume k_user)
 
-    result = run_with_defaults(WithHandler(outer_handler, WithHandler(inner_handler, body())))
+    result = run_with_defaults(_install_raw_handler(outer_handler)(_install_raw_handler(inner_handler)(body())))
     assert result.value == 42
     assert observed["raw"] == 42
 
@@ -62,7 +62,7 @@ def test_delegate_allows_transform_then_resume_original_continuation() -> None:
         x = yield _ProbeEffect()
         return x + 1
 
-    result = run_with_defaults(WithHandler(outer_handler, WithHandler(inner_handler, body())))
+    result = run_with_defaults(_install_raw_handler(outer_handler)(_install_raw_handler(inner_handler)(body())))
     assert result.value == 43
 
 
@@ -91,10 +91,7 @@ def test_nested_delegate_chain_flows_c_to_b_to_a_to_user() -> None:
     def body():
         return (yield _ProbeEffect())
 
-    result = run_with_defaults(WithHandler(
-            handler_c,
-            WithHandler(handler_b, WithHandler(handler_a, body())),
-        ))
+    result = run_with_defaults(_install_raw_handler(handler_c)(_install_raw_handler(handler_b)(_install_raw_handler(handler_a)(body()))))
     assert result.value == "c-b-a"
 
 
@@ -123,10 +120,7 @@ def test_pass_from_middle_handler_preserves_k_new_for_outer_handler() -> None:
     def body():
         return (yield _ProbeEffect())
 
-    result = run_with_defaults(WithHandler(
-            handler_c,
-            WithHandler(handler_b, WithHandler(handler_a, body())),
-        ))
+    result = run_with_defaults(_install_raw_handler(handler_c)(_install_raw_handler(handler_b)(_install_raw_handler(handler_a)(body()))))
     assert result.value == 42
 
 
@@ -152,7 +146,7 @@ def test_delegate_handler_can_return_without_resuming_k_user() -> None:
         body_resumed["value"] = True
         return "user-path"
 
-    result = run_with_defaults(WithHandler(outer_handler, WithHandler(inner_handler, body())))
+    result = run_with_defaults(_install_raw_handler(outer_handler)(_install_raw_handler(inner_handler)(body())))
     assert result.value == "inner:outer"
     assert body_resumed["value"] is False
 
@@ -176,5 +170,5 @@ def test_koka_equivalent_delegate_semantics_result_is_85() -> None:
         x = yield Ask("key")
         return x + 1
 
-    result = run_with_defaults(WithHandler(outer_handler, WithHandler(inner_handler, program())))
+    result = run_with_defaults(_install_raw_handler(outer_handler)(_install_raw_handler(inner_handler)(program())))
     assert result.value == 85

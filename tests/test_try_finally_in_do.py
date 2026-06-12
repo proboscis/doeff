@@ -17,9 +17,9 @@ from doeff import (
     Resume,
     Spawn,
     Transfer,
-    WithHandler,
     do,
 )
+from doeff import handler as _install_raw_handler
 from tests._run_helpers import run_with_defaults
 
 
@@ -87,7 +87,7 @@ def test_try_finally_with_resume() -> None:
 
     @do
     def wrapper():
-        value = yield WithHandler(_resume_handler, program())
+        value = yield _install_raw_handler(_resume_handler)(program())
         cleaned = yield Get("cleaned")
         return value, cleaned
 
@@ -107,7 +107,7 @@ def test_try_finally_with_transfer() -> None:
 
     @do
     def wrapper():
-        value = yield WithHandler(_transfer_handler, program())
+        value = yield _install_raw_handler(_transfer_handler)(program())
         cleaned = yield Get("cleaned")
         return value, cleaned
 
@@ -132,7 +132,7 @@ def test_tail_looking_resume_with_handler_finally_keeps_resume_semantics() -> No
     @do
     def wrapper():
         yield Put("handler_cleaned", False)
-        value = yield WithHandler(handler, program())
+        value = yield _install_raw_handler(handler)(program())
         cleaned = yield Get("handler_cleaned")
         return value, cleaned
 

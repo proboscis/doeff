@@ -10,7 +10,8 @@ from click.testing import CliRunner
 from doeff_flow import run_workflow
 from doeff_flow.cli import cli
 
-from doeff import Ask, Effect, Get, Pass, Pure, Put, WithHandler, async_run, default_handlers, do
+from doeff import Ask, Effect, Get, Pass, Pure, Put, async_run, default_handlers, do
+from doeff import handler as _install_raw_handler
 from doeff import run as run_sync
 
 
@@ -138,7 +139,7 @@ class TestWithHandlerTracing:
             return current + 1
 
         result = run_sync(
-            WithHandler(capturing_handler, workflow()),
+            _install_raw_handler(capturing_handler)(workflow()),
             handlers=default_handlers(),
             store={},
         )
@@ -165,7 +166,7 @@ class TestWithHandlerTracing:
             return value * 2
 
         result = await async_run(
-            WithHandler(capturing_handler, workflow()),
+            _install_raw_handler(capturing_handler)(workflow()),
             handlers=default_handlers(),
             env={"base": 15},
         )

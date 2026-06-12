@@ -24,10 +24,10 @@ from doeff import (
     EffectBase,
     Pass,
     Try,
-    WithHandler,
     do,
     run,
 )
+from doeff import handler as _install_raw_handler
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -83,10 +83,10 @@ def test_plain_handler_error_caught_by_try_effect():
 
     @do
     def program():
-        result = yield Try(WithHandler(_plain_crashing_handler, body()))
+        result = yield Try(_install_raw_handler(_plain_crashing_handler)(body()))
         return result
 
-    result = run(WithHandler(try_handler, program()))
+    result = run(try_handler(program()))
     assert isinstance(result, Err), f"Expected Err, got {result!r}"
     assert isinstance(result.error, ValueError)
     assert "handler crashed" in str(result.error)
@@ -102,10 +102,10 @@ def test_plain_handler_key_error_caught_by_try_effect():
 
     @do
     def program():
-        result = yield Try(WithHandler(_plain_key_error_handler, body()))
+        result = yield Try(_install_raw_handler(_plain_key_error_handler)(body()))
         return result
 
-    result = run(WithHandler(try_handler, program()))
+    result = run(try_handler(program()))
     assert isinstance(result, Err), f"Expected Err, got {result!r}"
     assert isinstance(result.error, KeyError)
 
@@ -126,7 +126,7 @@ def test_plain_handler_error_caught_by_try_except():
     @do
     def program():
         try:
-            result = yield WithHandler(_plain_crashing_handler, body())
+            result = yield _install_raw_handler(_plain_crashing_handler)(body())
             return result
         except ValueError as e:
             return f"caught: {e}"
@@ -150,10 +150,10 @@ def test_do_handler_body_error_caught_by_try_effect():
 
     @do
     def program():
-        result = yield Try(WithHandler(_do_crashing_handler, body()))
+        result = yield Try(_install_raw_handler(_do_crashing_handler)(body()))
         return result
 
-    result = run(WithHandler(try_handler, program()))
+    result = run(try_handler(program()))
     assert isinstance(result, Err), f"Expected Err, got {result!r}"
     assert isinstance(result.error, ValueError)
     assert "handler body crashed" in str(result.error)
@@ -170,7 +170,7 @@ def test_do_handler_body_error_caught_by_try_except():
     @do
     def program():
         try:
-            result = yield WithHandler(_do_crashing_handler, body())
+            result = yield _install_raw_handler(_do_crashing_handler)(body())
             return result
         except ValueError as e:
             return f"caught: {e}"
@@ -199,10 +199,10 @@ def test_plain_handler_error_preserves_exception_type():
 
     @do
     def program():
-        result = yield Try(WithHandler(type_error_handler, body()))
+        result = yield Try(_install_raw_handler(type_error_handler)(body()))
         return result
 
-    result = run(WithHandler(try_handler, program()))
+    result = run(try_handler(program()))
     assert isinstance(result, Err)
     assert isinstance(result.error, TypeError), (
         f"Expected TypeError, got {type(result.error).__name__}"
@@ -234,11 +234,11 @@ def test_pass_delegation_handler_error_caught():
 
     @do
     def program():
-        inner = WithHandler(inner_handler, body())
-        result = yield Try(WithHandler(outer_handler, inner))
+        inner = _install_raw_handler(inner_handler)(body())
+        result = yield Try(_install_raw_handler(outer_handler)(inner))
         return result
 
-    result = run(WithHandler(try_handler, program()))
+    result = run(try_handler(program()))
     assert isinstance(result, Err), f"Expected Err, got {result!r}"
     assert isinstance(result.error, RuntimeError)
     assert "outer handler failed" in str(result.error)

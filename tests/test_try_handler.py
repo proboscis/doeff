@@ -7,7 +7,7 @@ from doeff_core_effects import Try
 from doeff_core_effects.handlers import try_handler
 from doeff_vm import Err, Ok
 
-from doeff import WithHandler, do, run
+from doeff import do, run
 
 
 def test_try_catches_error():
@@ -22,7 +22,7 @@ def test_try_catches_error():
         result = yield Try(failing())
         return result
 
-    result = run(WithHandler(try_handler, prog()))
+    result = run(try_handler(prog()))
     assert isinstance(result, Err)
     assert isinstance(result.error, ValueError)
 
@@ -39,6 +39,6 @@ def test_try_returns_ok_on_success():
         result = yield Try(succeeding())
         return result
 
-    result = run(WithHandler(try_handler, prog()))
+    result = run(try_handler(prog()))
     assert isinstance(result, Ok)
     assert result.value == 42

@@ -24,10 +24,10 @@ from doeff_vm import EffectBase as VMEffectBase
 from doeff import (
     Pass,
     Resume,
-    WithHandler,
     do,
     run,
 )
+from doeff import handler as _install_raw_handler
 from doeff.handler_utils import get_inner_handlers
 
 # --- Effects ---
@@ -66,7 +66,7 @@ def marker_handler(effect, k):
 def _compose(program, *handlers):
     wrapped = program
     for h in reversed(handlers):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _install_raw_handler(h)(wrapped)
     return wrapped
 
 
@@ -92,8 +92,7 @@ class TestGetHandlersDirectNesting:
             return (yield FetchData("test"))
 
         # marker_handler is between prog and catching_handler
-        composed = WithHandler(catching_handler,
-                    WithHandler(marker_handler, prog()))
+        composed = _install_raw_handler(catching_handler)(_install_raw_handler(marker_handler)(prog()))
         result = run(scheduled(composed))
         assert result == "caught"
         assert seen["handlers"] == 1, f"Expected 1 inner handler (marker), got {seen['handlers']}"

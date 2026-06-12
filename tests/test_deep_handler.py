@@ -10,7 +10,8 @@ from doeff_core_effects import Ask
 from doeff_core_effects.handlers import reader
 from doeff_vm import EffectBase
 
-from doeff import Pass, Resume, Transfer, WithHandler, do, run
+from doeff import Pass, Resume, Transfer, do, run
+from doeff import handler as _install_raw_handler
 
 
 def test_reader_handles_multiple_asks():
@@ -24,7 +25,7 @@ def test_reader_handles_multiple_asks():
         return f"{a}-{b}-{c}"
 
     env = {"key_a": "hello", "key_b": "world", "key_c": "!"}
-    result = run(WithHandler(reader(env=env), prog()))
+    result = run(reader(env=env)(prog()))
     assert result == "hello-world-!"
 
 
@@ -53,7 +54,7 @@ def test_custom_handler_handles_multiple_effects():
         c = yield MyEffect(3)
         return a + b + c
 
-    result = run(WithHandler(handler, prog()))
+    result = run(_install_raw_handler(handler)(prog()))
     assert result == 60  # 10 + 20 + 30
     assert call_count == 3  # handler called 3 times
 
@@ -80,7 +81,7 @@ def test_nested_do_multiple_asks():
         return f"{g} / {f}"
 
     env = {"name": "Alice", "greeting": "Hello", "farewell": "Bye"}
-    result = run(WithHandler(reader(env=env), prog()))
+    result = run(reader(env=env)(prog()))
     assert result == "Hello, Alice / Bye, Alice"
 
 
@@ -108,6 +109,6 @@ def test_transfer_does_not_reinstall():
         a = yield Ask("x")
         return a
 
-    result = run(WithHandler(handler, prog()))
+    result = run(_install_raw_handler(handler)(prog()))
     assert result == "val_1"
     assert counter.n == 1

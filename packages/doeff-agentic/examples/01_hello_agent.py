@@ -48,7 +48,7 @@ def hello_agent():
 if __name__ == "__main__":
     import asyncio
 
-    from doeff import WithHandler, async_run, default_handlers
+    from doeff import async_run, default_handlers
 
     async def main():
         print("Starting hello_agent workflow...")
@@ -58,13 +58,7 @@ if __name__ == "__main__":
         # Merge preset handlers with opencode handlers
         # Preset provides: slog display (WriterTellEffect) + config (Ask preset.*)
         # OpenCode provides: agent session management effects
-        program = WithHandler(
-            preset_handlers(),
-            WithHandler(
-                opencode_handler(),
-                hello_agent(),
-            ),
-        )
+        program = preset_handlers()(opencode_handler()(hello_agent()))
         result = await async_run(program, handlers=default_handlers())
 
         if result.is_err():

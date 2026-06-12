@@ -18,6 +18,7 @@ def _synthetic_query_handler():
             return (yield doeff_vm.Resume(k, effect.key))
         yield doeff_vm.Pass(effect, k)
 
+    # Direct VM node test: doeff_vm.WithHandler expects the raw dispatcher.
     return handler
 
 

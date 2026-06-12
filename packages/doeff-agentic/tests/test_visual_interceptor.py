@@ -11,7 +11,8 @@ from doeff_agentic.visual_interceptor import (
 )
 from rich.console import Console
 
-from doeff import Effect, WithHandler, default_handlers, do, run, slog
+from doeff import Effect, default_handlers, do, run, slog
+from doeff import handler as _install_raw_handler
 
 
 @do
@@ -41,7 +42,7 @@ def _make_config(buffer: StringIO) -> VisualInterceptorConfig:
 def test_with_visual_logging_logs_and_preserves_result() -> None:
     buffer = StringIO()
     wrapped = with_visual_logging(_workflow(), _make_config(buffer))
-    result = run(WithHandler(_capability_handler, wrapped), handlers=default_handlers())
+    result = run(_install_raw_handler(_capability_handler)(wrapped), handlers=default_handlers())
 
     assert result.is_ok()
     assert result.value == "supported=True"
@@ -55,7 +56,7 @@ def test_with_visual_logging_logs_and_preserves_result() -> None:
 def test_visual_logging_console_wrapper_functions() -> None:
     buffer = StringIO()
     wrapper, _console = visual_logging_console(_make_config(buffer))
-    result = run(WithHandler(_capability_handler, wrapper(_workflow())), handlers=default_handlers())
+    result = run(_install_raw_handler(_capability_handler)(wrapper(_workflow())), handlers=default_handlers())
 
     assert result.is_ok()
     assert result.value == "supported=True"

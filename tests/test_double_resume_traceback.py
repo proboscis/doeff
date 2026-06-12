@@ -20,10 +20,10 @@ from doeff import (
     EffectGenerator,
     Pass,
     Resume,
-    WithHandler,
     do,
     run,
 )
+from doeff import handler as _install_raw_handler
 
 
 @dataclass(frozen=True)
@@ -49,8 +49,7 @@ def program_single_ping() -> EffectGenerator[int]:
 
 
 def _run(program):
-    wrapped = WithHandler(writer(), WithHandler(try_handler,
-             WithHandler(state(), WithHandler(double_resume_handler, program))))
+    wrapped = writer()(try_handler(state()(_install_raw_handler(double_resume_handler)(program))))
     return run(scheduled(wrapped))
 
 

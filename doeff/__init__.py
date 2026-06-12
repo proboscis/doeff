@@ -32,9 +32,11 @@ from doeff.program import Resume as Resume
 from doeff.program import ResumeThrow as ResumeThrow
 from doeff.program import Transfer as Transfer
 from doeff.program import TransferThrow as TransferThrow
-from doeff.program import WithHandler as WithHandler
-from doeff.program import WithHandlerType as WithHandlerType
+from doeff.program import (
+    WithHandlerType as WithHandlerType,
+)
 from doeff.program import WithObserve as WithObserveRaw
+from doeff.program import handler as handler
 from doeff.program import program as program
 from doeff.result import Err as Err
 from doeff.result import Maybe as Maybe
@@ -116,7 +118,7 @@ class DoExpr(metaclass=_DoExprMeta):
     """Virtual base type for all doeff program nodes.
 
     isinstance(x, DoExpr) returns True for any program node
-    (Pure, Expand, WithHandler, etc.).
+    (Pure, Expand, WithHandlerType, etc.).
     """
 
 

@@ -1,6 +1,6 @@
+import doeff_vm
 import pytest
 
-import doeff_vm
 from doeff import do
 
 

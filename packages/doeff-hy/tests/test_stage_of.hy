@@ -1,7 +1,7 @@
 ;;; Test stage-of: partial pipeline reuse
 (require doeff-hy.macros [defk defp <-])
 (import doeff [do :as _doeff-do])
-(import doeff [EffectBase K run WithHandler Resume Pass])
+(import doeff [EffectBase K run Resume Pass])
 (import doeff_core_effects.scheduler [scheduled])
 (import dataclasses [dataclass])
 
@@ -59,8 +59,7 @@
 
 (defn run-with-mocks [program]
   (run (scheduled
-    (WithHandler mock-ohlc
-      (WithHandler mock-news program)))))
+    (mock-ohlc (mock-news program)))))
 
 
 ;; === Test list-stages ===

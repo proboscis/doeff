@@ -7,7 +7,8 @@ Raw generators are NOT accepted by the VM — use @do or DoExpr wrappers.
 import pytest
 from doeff_vm import EffectBase, PyVM
 
-from doeff import Pass, WithHandler, do
+from doeff import Pass, do
+from doeff import handler as _install_raw_handler
 from doeff import run as doeff_run
 from doeff.program import program
 
@@ -118,7 +119,7 @@ class TestEffectHandlers:
             result = yield Perform(Ask())
             return result
 
-        assert doeff_run(WithHandler(handler, program(body))) == 100
+        assert doeff_run(_install_raw_handler(handler)(program(body))) == 100
 
     def test_perform_resume_body_transforms(self):
         """Body transforms the resumed value."""
@@ -134,7 +135,7 @@ class TestEffectHandlers:
             x = yield Perform(Get())
             return x * 2
 
-        assert doeff_run(WithHandler(handler, program(body))) == 20
+        assert doeff_run(_install_raw_handler(handler)(program(body))) == 20
 
     def test_perform_transfer(self):
         """Handler transfers (tail position)."""
@@ -149,7 +150,7 @@ class TestEffectHandlers:
             result = yield Perform(Get())
             return result
 
-        assert doeff_run(WithHandler(handler, program(body))) == 77
+        assert doeff_run(_install_raw_handler(handler)(program(body))) == 77
 
     def test_multiple_performs(self):
         """Body performs twice, handler handles both."""
@@ -170,7 +171,7 @@ class TestEffectHandlers:
             b = yield Perform(Get())
             return a + b
 
-        result = doeff_run(WithHandler(handler, program(body)))
+        result = doeff_run(_install_raw_handler(handler)(program(body)))
         assert result == 30  # 10 + 20
 
     def test_handler_receives_effect_object(self):
@@ -192,7 +193,7 @@ class TestEffectHandlers:
             result = yield Perform(Add(3, 4))
             return result
 
-        assert doeff_run(WithHandler(handler, program(body))) == 7
+        assert doeff_run(_install_raw_handler(handler)(program(body))) == 7
 
     def test_handler_return_value_flows_through(self):
         """After Resume, body's return value flows back to handler."""
@@ -211,7 +212,7 @@ class TestEffectHandlers:
             x = yield Perform(Get())
             return x + 1
 
-        result = doeff_run(WithHandler(handler, program(body)))
+        result = doeff_run(_install_raw_handler(handler)(program(body)))
         assert result == 43
         assert handler_saw[0] == 43
 
@@ -234,7 +235,7 @@ class TestEffectHandlers:
             result = yield Ask("config")
             return result
 
-        assert doeff_run(WithHandler(handler, program(body))) == "value_for_config"
+        assert doeff_run(_install_raw_handler(handler)(program(body))) == "value_for_config"
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +257,7 @@ class TestNestedHandlers:
             result = yield Perform(Get())
             return result
 
-        assert doeff_run(WithHandler(inner, program(body))) == 42
+        assert doeff_run(_install_raw_handler(inner)(program(body))) == 42
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +271,7 @@ class TestErrors:
             yield Perform(None)
 
         with pytest.raises(RuntimeError):
-            doeff_run(WithHandler(lambda _e, _k: Pure(None), program(body)))
+            doeff_run(_install_raw_handler(lambda _e, _k: Pure(None))(program(body)))
 
     def test_no_handler_error(self):
         """Performing without a handler raises an error."""
@@ -323,7 +324,7 @@ class TestTraceback:
         def outer():
             return (yield program(inner))
 
-        result = doeff_run(WithHandler(handler, program(outer)))
+        result = doeff_run(_install_raw_handler(handler)(program(outer)))
         assert result == "answer"
         assert captured_traceback[0] is not None
         assert isinstance(captured_traceback[0], list)
@@ -359,7 +360,7 @@ class TestTraceback:
         def root():
             return (yield program(middle))
 
-        result = doeff_run(WithHandler(handler, program(root)))
+        result = doeff_run(_install_raw_handler(handler)(program(root)))
         assert result == 42
         # Should see: leaf, middle, root (innermost first)
         func_names = [f[0] for f in captured_traceback[0]]
@@ -407,7 +408,7 @@ class TestDo:
             x = yield Ask("val")
             return x
 
-        result = doeff_run(WithHandler(handler, body()))
+        result = doeff_run(_install_raw_handler(handler)(body()))
         assert result == 99
 
 
@@ -447,7 +448,7 @@ class TestWithHandler:
         def body():
             return (yield Get())
 
-        assert doeff_run(WithHandler(handler, body())) == 42
+        assert doeff_run(_install_raw_handler(handler)(body())) == 42
 
     def test_nested_pass_to_outer(self):
         """Inner handler passes, outer handler handles."""
@@ -469,7 +470,7 @@ class TestWithHandler:
         def body():
             return (yield Ask("x"))
 
-        result = doeff_run(WithHandler(outer, WithHandler(inner, body())))
+        result = doeff_run(_install_raw_handler(outer)(_install_raw_handler(inner)(body())))
         assert result == "outer:x"
 
     def test_nested_pass_then_inner_handles(self):
@@ -502,7 +503,7 @@ class TestWithHandler:
             x = yield Ask("key")
             return x
 
-        prog = WithHandler(log_handler, WithHandler(ask_handler, body()))
+        prog = _install_raw_handler(log_handler)(_install_raw_handler(ask_handler)(body()))
         result = doeff_run(prog)
         assert result == "val:key"
 
@@ -542,7 +543,7 @@ class TestWithHandler:
             yield Log(f"got {x}")
             return x
 
-        prog = WithHandler(log_handler, WithHandler(ask_handler, body()))
+        prog = _install_raw_handler(log_handler)(_install_raw_handler(ask_handler)(body()))
         result = doeff_run(prog)
         assert result == "val:key"
         assert logged == ["starting", "got val:key"]

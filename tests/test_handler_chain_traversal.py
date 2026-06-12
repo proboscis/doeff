@@ -10,7 +10,8 @@ Works with 3 handlers, fails with 29.
 from doeff_core_effects.scheduler import scheduled
 from doeff_vm import EffectBase, Pass, Resume
 
-from doeff import WithHandler, do, run
+from doeff import do, run
+from doeff import handler as _install_raw_handler
 
 
 class EffectA(EffectBase):
@@ -52,18 +53,18 @@ def prog():
 def test_3_handlers():
     """Works: handler_a inner, noop middle, handler_b outer."""
     wrapped = prog()
-    wrapped = WithHandler(handler_a, wrapped)
-    wrapped = WithHandler(noop_handler, wrapped)
-    wrapped = WithHandler(handler_b, wrapped)
+    wrapped = _install_raw_handler(handler_a)(wrapped)
+    wrapped = _install_raw_handler(noop_handler)(wrapped)
+    wrapped = _install_raw_handler(handler_b)(wrapped)
     assert run(wrapped) == "A(B)"
 
 
 def test_3_handlers_with_scheduled():
     """Works with scheduled."""
     wrapped = prog()
-    wrapped = WithHandler(handler_a, wrapped)
-    wrapped = WithHandler(noop_handler, wrapped)
-    wrapped = WithHandler(handler_b, wrapped)
+    wrapped = _install_raw_handler(handler_a)(wrapped)
+    wrapped = _install_raw_handler(noop_handler)(wrapped)
+    wrapped = _install_raw_handler(handler_b)(wrapped)
     assert run(scheduled(wrapped)) == "A(B)"
 
 
@@ -77,11 +78,11 @@ def test_29_handlers():
     wrapped = prog()
     for i in range(29):
         if i == 9:
-            wrapped = WithHandler(handler_a, wrapped)
+            wrapped = _install_raw_handler(handler_a)(wrapped)
         elif i == 18:
-            wrapped = WithHandler(handler_b, wrapped)
+            wrapped = _install_raw_handler(handler_b)(wrapped)
         else:
-            wrapped = WithHandler(noop_handler, wrapped)
+            wrapped = _install_raw_handler(noop_handler)(wrapped)
     assert run(wrapped) == "A(B)"
 
 
@@ -90,9 +91,9 @@ def test_29_handlers_with_scheduled():
     wrapped = prog()
     for i in range(29):
         if i == 9:
-            wrapped = WithHandler(handler_a, wrapped)
+            wrapped = _install_raw_handler(handler_a)(wrapped)
         elif i == 18:
-            wrapped = WithHandler(handler_b, wrapped)
+            wrapped = _install_raw_handler(handler_b)(wrapped)
         else:
-            wrapped = WithHandler(noop_handler, wrapped)
+            wrapped = _install_raw_handler(noop_handler)(wrapped)
     assert run(scheduled(wrapped)) == "A(B)"
