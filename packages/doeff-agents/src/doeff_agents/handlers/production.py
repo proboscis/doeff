@@ -233,8 +233,11 @@ def _run_agent_task(handler: AgentHandler, task: AgentTask) -> object:
     attempt.  The loop re-awaits transparently until a terminal outcome
     or, when ``task.deadline_seconds`` is declared, until the deadline is
     exceeded — then it raises ``AgentDeadlineExceededError`` for the
-    orchestrator to park as a gate.  Extension is a gate answer; there is
-    no automatic extension policy here.
+    orchestrator to park as a gate.  The deadline also bounds NEW work:
+    a validation failure observed past the window parks as the deadline
+    gate instead of dispatching a follow-up retry prompt or claiming
+    attempt exhaustion.  Extension is a gate answer; there is no
+    automatic extension policy here.
     """
     handle = handler.handle_launch_session(LaunchSessionEffect(spec=task))
     started_at = time.monotonic()
@@ -269,6 +272,15 @@ def _run_agent_task(handler: AgentHandler, task: AgentTask) -> object:
                     attempts=attempts + 1,
                     last_error=last_error,
                 )
+
+            # L-K4-3: no new work past the deadline (k8s does not start
+            # containers past activeDeadlineSeconds). A validation
+            # failure observed after the window must park as the
+            # deadline gate — checked BEFORE the attempts check so
+            # exhaustion vs deadline attribution stays honest, and
+            # before the follow-up so no retry prompt is commissioned
+            # into an expired window.
+            _raise_if_deadline_exceeded(task, handle, started_at)
 
             if attempts >= task.max_retries:
                 raise AgentAttemptExhaustedError(
