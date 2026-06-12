@@ -181,21 +181,19 @@ impl VM {
     // I5/I6 — detached chains: integrity + single-location law
     // -----------------------------------------------------------------
     fn inv_detached_chains(&self, violations: &mut Vec<String>) -> DetachedView {
-        let mut seen_cells: HashSet<usize> = HashSet::new();
         let mut detached_ids: HashSet<FiberId> = HashSet::new();
 
-        // Roots visible from the VM itself.
-        if let Some(backup) = &self.pending_handler_chain_backup {
-            self.scan_continuation(
-                backup,
-                "VM.pending_handler_chain_backup",
-                &mut seen_cells,
+        // Roots visible from the VM itself (pending k handle).
+        if let Some(handle) = &self.pending_handler_k_handle {
+            self.scan_k_handle(
+                handle,
+                "VM.pending_handler_k_handle",
                 &mut detached_ids,
                 violations,
             );
         }
 
-        // Roots inside live arena fibers (frame backups + scope values).
+        // Roots inside live arena fibers (frame k handles + scope values).
         let live_ids: Vec<FiberId> = self.segments.iter().map(|(id, _)| id).collect();
         for id in live_ids {
             if let Some(fiber) = self.segments.get(id) {
@@ -203,7 +201,6 @@ impl VM {
                     self.scan_frame(
                         frame,
                         &format!("arena fiber {:?}", id),
-                        &mut seen_cells,
                         &mut detached_ids,
                         violations,
                     );
@@ -216,7 +213,6 @@ impl VM {
             self.scan_value(
                 value,
                 &format!("var cell {:?}", var),
-                &mut seen_cells,
                 &mut detached_ids,
                 violations,
             );
@@ -225,7 +221,6 @@ impl VM {
             self.scan_value(
                 value,
                 &format!("global_state[{key}]"),
-                &mut seen_cells,
                 &mut detached_ids,
                 violations,
             );
@@ -234,21 +229,44 @@ impl VM {
         DetachedView { detached_ids }
     }
 
+    /// Scan a PyK handle for a live continuation chain.
+    fn scan_k_handle(
+        &self,
+        handle: &pyo3::Py<crate::continuation::PyK>,
+        origin: &str,
+        detached_ids: &mut HashSet<FiberId>,
+        violations: &mut Vec<String>,
+    ) {
+        pyo3::Python::attach(|py| {
+            let k = handle.borrow(py);
+            if let Some(crate::continuation::OwnedControlContinuation::Started(ref cont)) =
+                k.continuation_ref()
+            {
+                self.scan_continuation(
+                    cont,
+                    origin,
+                    detached_ids,
+                    violations,
+                );
+            }
+        });
+    }
+
     fn scan_frame(
         &self,
         frame: &Frame,
         origin: &str,
-        seen_cells: &mut HashSet<usize>,
         detached_ids: &mut HashSet<FiberId>,
         violations: &mut Vec<String>,
     ) {
         match frame {
-            Frame::Program { chain_backup, .. } => {
-                if let Some(backup) = chain_backup {
-                    self.scan_continuation(
-                        backup,
-                        &format!("{origin} (Program.chain_backup)"),
-                        seen_cells,
+            Frame::Program {
+                handler_k_handle, ..
+            } => {
+                if let Some(handle) = handler_k_handle {
+                    self.scan_k_handle(
+                        handle,
+                        &format!("{origin} (Program.handler_k_handle)"),
                         detached_ids,
                         violations,
                     );
@@ -259,10 +277,10 @@ impl VM {
                 var_overrides,
             } => {
                 for value in bindings.values() {
-                    self.scan_value(value, origin, seen_cells, detached_ids, violations);
+                    self.scan_value(value, origin, detached_ids, violations);
                 }
                 for value in var_overrides.values() {
-                    self.scan_value(value, origin, seen_cells, detached_ids, violations);
+                    self.scan_value(value, origin, detached_ids, violations);
                 }
             }
             _ => {}
@@ -273,39 +291,31 @@ impl VM {
         &self,
         value: &Value,
         origin: &str,
-        seen_cells: &mut HashSet<usize>,
         detached_ids: &mut HashSet<FiberId>,
         violations: &mut Vec<String>,
     ) {
         match value {
             Value::Continuation(k) => {
-                self.scan_continuation(k, origin, seen_cells, detached_ids, violations);
+                self.scan_continuation(k, origin, detached_ids, violations);
             }
             Value::List(items) => {
                 for item in items {
-                    self.scan_value(item, origin, seen_cells, detached_ids, violations);
+                    self.scan_value(item, origin, detached_ids, violations);
                 }
             }
             _ => {}
         }
     }
 
-    /// Validate one continuation cell (deduplicated by cell address so shared
-    /// backup handles are counted once) and recurse into nested backups.
+    /// Validate one continuation's chain integrity and single-location law.
+    /// With move-only continuations there are no shared cells to deduplicate.
     fn scan_continuation(
         &self,
         k: &Continuation,
         origin: &str,
-        seen_cells: &mut HashSet<usize>,
         detached_ids: &mut HashSet<FiberId>,
         violations: &mut Vec<String>,
     ) {
-        if !seen_cells.insert(k.cell_addr()) {
-            return; // same cell already validated (backup handle), or cycle
-        }
-
-        // Collect nested continuations to scan after releasing this lock.
-        let mut nested_origins: Vec<String> = Vec::new();
         k.inspect_chain(|chain| {
             let Some(chain) = chain else {
                 return; // consumed — nothing to check
@@ -399,51 +409,24 @@ impl VM {
                     ));
                 }
 
-                // Recurse into frames carried by detached fibers.
+                // Recurse into frames carried by detached fibers that may
+                // carry their own handler_k_handle.
                 for frame in &entry.fiber.frames {
                     if let Frame::Program {
-                        chain_backup: Some(_),
+                        handler_k_handle: Some(nested_handle),
                         ..
                     } = frame
                     {
-                        nested_origins.push(format!(
-                            "{origin} → detached fiber {:?}",
-                            entry.id
-                        ));
+                        self.scan_k_handle(
+                            nested_handle,
+                            &format!("{origin} → detached fiber {:?}", entry.id),
+                            detached_ids,
+                            violations,
+                        );
                     }
                 }
             }
         });
-
-        // Second pass for nested backups (re-lock per nested cell; the
-        // seen_cells guard prevents re-entry and cycles).
-        if !nested_origins.is_empty() {
-            k.inspect_chain(|chain| {
-                let Some(chain) = chain else { return };
-                for entry in chain.fibers() {
-                    for frame in &entry.fiber.frames {
-                        if let Frame::Program {
-                            chain_backup: Some(nested),
-                            ..
-                        } = frame
-                        {
-                            if seen_cells.contains(&nested.cell_addr()) {
-                                continue;
-                            }
-                            // Validate only single-location facts for nested
-                            // chains; full validation happens via recursion.
-                            self.scan_continuation(
-                                nested,
-                                &format!("{origin} → detached fiber {:?}", entry.id),
-                                seen_cells,
-                                detached_ids,
-                                violations,
-                            );
-                        }
-                    }
-                }
-            });
-        }
     }
 
     // -----------------------------------------------------------------
@@ -559,18 +542,27 @@ mod tests {
 
     #[test]
     fn properly_detached_chain_holds_invariants() {
+        // Python::attach auto-initializes with the `auto-initialize` feature.
         let mut vm = VM::new();
         let boundary = vm.alloc_segment(Fiber::new(None));
         let body = vm.alloc_segment(Fiber::new(Some(boundary)));
         let chain = vm.segments.detach_chain(body, boundary).unwrap();
-        vm.pending_handler_chain_backup =
-            Some(crate::continuation::Continuation::from_chain(chain));
+        let k = crate::continuation::Continuation::from_chain(chain);
+        pyo3::Python::attach(|py| {
+            let py_k = pyo3::Py::new(
+                py,
+                crate::continuation::PyK::from_continuation(k),
+            )
+            .unwrap();
+            vm.pending_handler_k_handle = Some(py_k);
+        });
         assert!(vm.check_invariants().is_ok());
     }
 
     #[test]
     fn detects_detached_fiber_still_live_in_arena() {
         use crate::continuation::{Continuation, DetachedFiber, DetachedFiberChain};
+        // Python::attach auto-initializes with the `auto-initialize` feature.
         let mut vm = VM::new();
         // A fiber that is LIVE in the arena...
         let live = vm.alloc_segment(Fiber::new(None));
@@ -584,7 +576,15 @@ mod tests {
                 fiber: Fiber::new(None),
             }],
         );
-        vm.pending_handler_chain_backup = Some(Continuation::from_chain(fake));
+        let k = Continuation::from_chain(fake);
+        pyo3::Python::attach(|py| {
+            let py_k = pyo3::Py::new(
+                py,
+                crate::continuation::PyK::from_continuation(k),
+            )
+            .unwrap();
+            vm.pending_handler_k_handle = Some(py_k);
+        });
         let violations = vm.check_invariants().unwrap_err();
         assert!(violations
             .iter()
