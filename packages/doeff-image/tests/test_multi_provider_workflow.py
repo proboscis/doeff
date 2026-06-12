@@ -48,7 +48,7 @@ import doeff_seedream.handlers.production as seedream_production
 from doeff_image.effects import ImageEdit, ImageGenerate
 from doeff_image.types import ImageResult
 
-from doeff import Delegate, EffectGenerator, Resume, WithHandler, default_handlers, do, run
+from doeff import Delegate, EffectGenerator, Resume, default_handlers, do, run
 
 
 def _fallback_handler(value: str):
@@ -71,10 +71,7 @@ def test_seedream_handler_delegates_unsupported_model() -> None:
         )
 
     result = run(
-        WithHandler(
-            seedream_production.seedream_image_handler,
-            WithHandler(_fallback_handler("delegated"), flow()),
-        ),
+        seedream_production.seedream_image_handler(_fallback_handler("delegated")(flow())),
         handlers=default_handlers(),
     )
     assert result.is_ok()
@@ -92,10 +89,7 @@ def test_gemini_handler_delegates_unsupported_model() -> None:
         )
 
     result = run(
-        WithHandler(
-            gemini_production.gemini_image_handler,
-            WithHandler(_fallback_handler("delegated"), flow()),
-        ),
+        gemini_production.gemini_image_handler(_fallback_handler("delegated")(flow())),
         handlers=default_handlers(),
     )
     assert result.is_ok()
@@ -143,10 +137,7 @@ def test_multi_provider_workflow_with_stacked_handlers(monkeypatch) -> None:
         return base, edited
 
     result = run(
-        WithHandler(
-            seedream_production.seedream_image_handler,
-            WithHandler(gemini_production.gemini_image_handler, flow()),
-        ),
+        seedream_production.seedream_image_handler(gemini_production.gemini_image_handler(flow())),
         handlers=default_handlers(),
     )
 

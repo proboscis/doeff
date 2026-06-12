@@ -7,7 +7,7 @@ from pathlib import Path
 from doeff_flow.effects import TraceAnnotate, TraceCapture, TracePush, TraceSnapshot
 from doeff_flow.handlers import mock_handlers, production_handlers
 
-from doeff import WithHandler, default_handlers, do, run
+from doeff import default_handlers, do, run
 
 
 def _read_entries(trace_dir: Path, workflow_id: str) -> list[dict]:
@@ -18,7 +18,7 @@ def _read_entries(trace_dir: Path, workflow_id: str) -> list[dict]:
 
 def _run_with_handler(program, handler):
     return run(
-        WithHandler(handler, program),
+        handler(program),
         handlers=default_handlers(),
     )
 

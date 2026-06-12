@@ -3,6 +3,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from doeff import handler as _install_raw_handler
+
 ROOT = Path(__file__).resolve().parents[3]
 TIME_PACKAGE_ROOT = ROOT / "packages" / "doeff-time" / "src"
 EVENTS_PACKAGE_ROOT = ROOT / "packages" / "doeff-events" / "src"
@@ -30,7 +32,7 @@ def listen(program, types=None):
     """
     from doeff_core_effects import WriterTellEffect
 
-    from doeff import Pass, WithHandler, do
+    from doeff import Pass, do
 
     types_to_collect = types or (WriterTellEffect,)
     collected = []
@@ -43,7 +45,7 @@ def listen(program, types=None):
 
     @do
     def _listen():
-        result = yield WithHandler(collector, program)
+        result = yield _install_raw_handler(collector)(program)
         return (result, collected)
 
     return _listen()
@@ -60,17 +62,17 @@ def run_with_handlers(program, *, env=None):
     )
     from doeff_core_effects.scheduler import scheduled
 
-    from doeff import WithHandler, run
+    from doeff import run
 
     wrapped = program
     if env is not None:
-        wrapped = WithHandler(reader(env=env), wrapped)
+        wrapped = reader(env=env)(wrapped)
     # await_handler uses scheduler effects (CreateExternalPromise, Wait),
     # so it must be inside the scheduler.
-    wrapped = WithHandler(await_handler(), wrapped)
+    wrapped = await_handler()(wrapped)
     wrapped = scheduled(wrapped)
-    wrapped = WithHandler(slog_handler(), wrapped)
-    wrapped = WithHandler(try_handler, wrapped)
-    wrapped = WithHandler(listen_handler, wrapped)
-    wrapped = WithHandler(writer(), wrapped)
+    wrapped = slog_handler()(wrapped)
+    wrapped = try_handler(wrapped)
+    wrapped = listen_handler(wrapped)
+    wrapped = writer()(wrapped)
     return run(wrapped)

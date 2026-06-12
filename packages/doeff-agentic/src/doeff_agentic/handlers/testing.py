@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from doeff import Effect, Pass, Resume, do
+from doeff import handler as _program_handler
 
 # REMOVED: make_doeff_generator no longer exists in doeff.do
 # from doeff.do import make_doeff_generator
@@ -451,7 +452,7 @@ def _as_protocol_handler(handler_fn):
 
         return (yield Resume(k, result))
 
-    return _wrapped
+    return _program_handler(_wrapped)
 
 
 def mock_handlers(
@@ -492,7 +493,7 @@ def mock_handlers(
                 return (yield effect_handler(effect, k))
         yield Pass()
 
-    return protocol_handler
+    return _program_handler(protocol_handler)
 
 
 __all__ = [

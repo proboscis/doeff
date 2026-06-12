@@ -16,9 +16,9 @@ from doeff import (
     Pure,
     Put,
     Resume,
-    WithHandler,
     do,
 )
+from doeff import handler as _install_raw_handler
 from tests._run_helpers import run_with_defaults
 
 
@@ -59,7 +59,7 @@ class TestHP01BasicHandler:
             return result
 
         def main():
-            result = yield WithHandler(handler, _prog(body))
+            result = yield _install_raw_handler(handler)(_prog(body))
             return result
 
         result = run_with_defaults(_prog(main))
@@ -85,7 +85,7 @@ class TestHP02EffectAttributes:
             return result
 
         def main():
-            result = yield WithHandler(handler, _prog(body))
+            result = yield _install_raw_handler(handler)(_prog(body))
             return result
 
         result = run_with_defaults(_prog(main))
@@ -112,7 +112,7 @@ class TestHP03PostProcess:
             return x + 5  # body returns 15
 
         def main():
-            result = yield WithHandler(handler, _prog(body))
+            result = yield _install_raw_handler(handler)(_prog(body))
             return result
 
         result = run_with_defaults(_prog(main))
@@ -138,7 +138,7 @@ class TestHP03CReturnRawDoExpr:
             return x + 5
 
         def main():
-            result = yield WithHandler(handler, _prog(body))
+            result = yield _install_raw_handler(handler)(_prog(body))
             return result
 
         result = run_with_defaults(_prog(main))
@@ -179,11 +179,11 @@ class TestHP05Delegate:
             return result
 
         def inner():
-            result = yield WithHandler(inner_handler, _prog(body))
+            result = yield _install_raw_handler(inner_handler)(_prog(body))
             return result
 
         def main():
-            result = yield WithHandler(outer_handler, _prog(inner))
+            result = yield _install_raw_handler(outer_handler)(_prog(inner))
             return result
 
         result = run_with_defaults(_prog(main))
@@ -216,12 +216,12 @@ class TestHP06NestedHandlers:
             return val
 
         def with_inner():
-            result = yield WithHandler(inner_handler, _prog(body))
+            result = yield _install_raw_handler(inner_handler)(_prog(body))
             return result
 
         def main():
             # outer doesn't get to handle CustomEffect — inner already did
-            result = yield WithHandler(outer_handler, _prog(with_inner))
+            result = yield _install_raw_handler(outer_handler)(_prog(with_inner))
             return result
 
         result = run_with_defaults(_prog(main))
@@ -248,11 +248,11 @@ class TestHP06NestedHandlers:
             return (a, b)
 
         def with_inner():
-            result = yield WithHandler(inner_handler, _prog(body))
+            result = yield _install_raw_handler(inner_handler)(_prog(body))
             return result
 
         def main():
-            result = yield WithHandler(outer_handler, _prog(with_inner))
+            result = yield _install_raw_handler(outer_handler)(_prog(with_inner))
             return result
 
         result = run_with_defaults(_prog(main))
@@ -288,7 +288,7 @@ class TestHP07StatefulHandler:
             return [a, b, c]
 
         def main():
-            result = yield WithHandler(handler, _prog(body))
+            result = yield _install_raw_handler(handler)(_prog(body))
             return result
 
         result = run_with_defaults(_prog(main))
@@ -315,7 +315,7 @@ class TestHP08WithHandlerKeywords:
             return result
 
         def main():
-            result = yield WithHandler(handler, _prog(body))
+            result = yield _install_raw_handler(handler)(_prog(body))
             return result
 
         result = run_with_defaults(_prog(main))
@@ -346,7 +346,7 @@ class TestHP09MultipleEffects:
             return "done"
 
         def main():
-            result = yield WithHandler(handler, _prog(body))
+            result = yield _install_raw_handler(handler)(_prog(body))
             return result
 
         result = run_with_defaults(_prog(main))
@@ -379,7 +379,7 @@ class TestHP10CoexistWithBuiltins:
             return f"{custom_val}:{state_val}"
 
         def main():
-            result = yield WithHandler(handler, body())
+            result = yield _install_raw_handler(handler)(body())
             return result
 
         result = run_with_defaults(_prog(main), env={"api_key": "secret"}, store={"counter": 10})

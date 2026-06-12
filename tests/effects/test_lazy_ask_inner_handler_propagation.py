@@ -41,10 +41,10 @@ from doeff import (
     EffectBase,
     Pass,
     Resume,
-    WithHandler,
     do,
     run,
 )
+from doeff import handler as _install_raw_handler
 
 # --- Custom effects simulating GCP Secret Manager ---
 
@@ -95,13 +95,7 @@ class TestLazyAskInnerHandlerPropagation:
 
         env = {"token": _fetch_secret_program()}
 
-        composed = WithHandler(
-            lazy_ask(env=env),
-            WithHandler(
-                secret_handler,
-                program(),
-            ),
-        )
+        composed = lazy_ask(env=env)(_install_raw_handler(secret_handler)(program()))
         result = run(scheduled(composed))
         assert result == "secret:my-api-token"
 
@@ -121,14 +115,7 @@ class TestLazyAskInnerHandlerPropagation:
             "plain_value": "hello",
         }
 
-        composed = WithHandler(
-            lazy_ask(env=env),
-            WithHandler(writer(),
-                WithHandler(try_handler,
-                    WithHandler(state(),
-                        WithHandler(secret_handler,
-                            program())))),
-        )
+        composed = lazy_ask(env=env)(writer()(try_handler(state()(_install_raw_handler(secret_handler)(program())))))
         result = run(scheduled(composed))
         assert result == "secret:my-api-token|hello"
 
@@ -154,13 +141,7 @@ class TestLazyAskInnerHandlerPropagation:
             "project_id": "my-project-123",
         }
 
-        composed = WithHandler(
-            lazy_ask(env=env),
-            WithHandler(
-                secret_handler_with_ask,
-                program(),
-            ),
-        )
+        composed = lazy_ask(env=env)(_install_raw_handler(secret_handler_with_ask)(program()))
         result = run(scheduled(composed))
         assert result == "secret:my-project-123:my-api-token"
 
@@ -199,13 +180,7 @@ class TestLazyAskInnerHandlerPropagation:
             "c": lazy_c(),
         }
 
-        composed = WithHandler(
-            lazy_ask(env=env),
-            WithHandler(
-                secret_handler,
-                program(),
-            ),
-        )
+        composed = lazy_ask(env=env)(_install_raw_handler(secret_handler)(program()))
         result = run(scheduled(composed))
         assert result == "secret:deep-secret"
 
@@ -239,13 +214,7 @@ class TestLazyAskInnerHandlerPropagation:
             "plain": "hello",
         }
 
-        composed = WithHandler(
-            lazy_ask(env=env),
-            WithHandler(
-                secret_handler,
-                program(),
-            ),
-        )
+        composed = lazy_ask(env=env)(_install_raw_handler(secret_handler)(program()))
         result = run(scheduled(composed))
         assert result == "secret:mixed-secret+hello"
 
@@ -292,16 +261,7 @@ class TestLazyAskInnerHandlerPropagation:
             "c": lazy_c(),
         }
 
-        composed = WithHandler(
-            lazy_ask(env=env),
-            WithHandler(
-                secret_handler,
-                WithHandler(
-                    transform_handler,
-                    program(),
-                ),
-            ),
-        )
+        composed = lazy_ask(env=env)(_install_raw_handler(secret_handler)(_install_raw_handler(transform_handler)(program())))
         result = run(scheduled(composed))
         # GetSecret("final") → "secret:final", Transform("secret:final") → "SECRET:FINAL"
         assert result == "SECRET:FINAL"
@@ -341,13 +301,7 @@ class TestLazyAskInnerHandlerPropagation:
             "c": lazy_c(),
         }
 
-        composed = WithHandler(
-            lazy_ask(env=env),
-            WithHandler(
-                secret_handler,
-                program(),
-            ),
-        )
+        composed = lazy_ask(env=env)(_install_raw_handler(secret_handler)(program()))
         result = run(scheduled(composed))
         assert result == "a:secret:shared|b:secret:shared"
         assert eval_count["c"] == 1, f"lazy_c evaluated {eval_count['c']} times, expected 1"
@@ -365,15 +319,6 @@ class TestLazyAskInnerHandlerPropagation:
         env = {"token": _fetch_secret_program()}
 
         # Workaround: two lazy_asks with same env
-        composed = WithHandler(
-            lazy_ask(env=env),          # outer — catches secret_handler's Ask
-            WithHandler(
-                secret_handler,         # handles GetSecret from inner lazy_ask's Expand
-                WithHandler(
-                    lazy_ask(env=env),  # inner — catches program's Ask, Expands
-                    program(),
-                ),
-            ),
-        )
+        composed = lazy_ask(env=env)(_install_raw_handler(secret_handler)(lazy_ask(env=env)(program())))
         result = run(scheduled(composed))
         assert result == "secret:my-api-token"

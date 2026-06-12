@@ -10,7 +10,8 @@ It should include:
 import pytest
 from doeff_vm import EffectBase
 
-from doeff import Pass, Resume, WithHandler, do, run
+from doeff import Pass, Resume, do, run
+from doeff import handler as _install_raw_handler
 
 
 class Handled(EffectBase):
@@ -40,7 +41,7 @@ def test_pass_error_includes_effect_type():
         return "unreachable"
 
     with pytest.raises(RuntimeError, match="Unhandled"):
-        run(WithHandler(handler, prog()))
+        run(_install_raw_handler(handler)(prog()))
 
 
 def test_pass_error_after_successful_handle():
@@ -53,7 +54,7 @@ def test_pass_error_after_successful_handle():
         return x
 
     with pytest.raises(RuntimeError, match="Unhandled"):
-        run(WithHandler(handler, prog()))
+        run(_install_raw_handler(handler)(prog()))
 
 
 def test_no_handler_at_all():

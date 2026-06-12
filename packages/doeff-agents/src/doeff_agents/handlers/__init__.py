@@ -8,7 +8,8 @@ from typing import Any
 
 from doeff_time import sync_time_handler
 
-from doeff import Effect, Resume, WithHandler, do, run
+from doeff import Effect, Resume, do, run
+from doeff import handler as _program_handler
 from doeff.mcp import McpToolDef
 from doeff_agents.agentd_client import LazyAgentdClient
 from doeff_agents.effects import (
@@ -124,7 +125,7 @@ def make_scheduled_handler(handler: SimpleHandler) -> ProtocolHandler:
     def scheduled_handler(effect: Effect, k: Any):
         return (yield Resume(k, handler(effect)))
 
-    return scheduled_handler
+    return _program_handler(scheduled_handler)
 
 
 def _make_run_tool(handlers: list) -> Callable[[McpToolDef, dict], Any]:
@@ -132,7 +133,7 @@ def _make_run_tool(handlers: list) -> Callable[[McpToolDef, dict], Any]:
 
     Each MCP tool call:
       1. Builds a DoExpr program from tool.handler(*args)
-      2. Wraps it with the captured handler stack via WithHandler
+      2. Wraps it with the captured handler stack by calling each handler
       3. Runs it via doeff.run()
     """
 
@@ -140,7 +141,7 @@ def _make_run_tool(handlers: list) -> Callable[[McpToolDef, dict], Any]:
         args = [arguments.get(name) for name in tool.param_names()]
         program = tool.handler(*args)
         for h in handlers:
-            program = WithHandler(h, program)
+            program = _program_handler(h)(program)
         return run(program)
 
     return run_tool
@@ -174,7 +175,7 @@ def claude_agent_handler(*, backend=None):
 
     Usage:
         handler = claude_agent_handler()
-        wrapped = WithHandler(handler, program)
+        wrapped = handler(program)
         run(wrapped)
     """
     import hy  # noqa: F401  # activate Hy import hook

@@ -15,7 +15,8 @@ from __future__ import annotations
 import doeff
 
 # REMOVED: from doeff_core_effects.cache import in_memory_cache_handler, memo_rewriters
-from doeff import EffectBase, WithHandler, do
+from doeff import EffectBase, do
+from doeff import handler as _program_handler
 
 
 class EffectA(EffectBase):
@@ -33,5 +34,5 @@ def effect_a_handler(effect: EffectA, k: object):
 def _compose(program, *handlers):
     wrapped = program
     for handler in reversed(handlers):
-        wrapped = WithHandler(handler, wrapped)
+        wrapped = _program_handler(handler)(wrapped)
     return wrapped

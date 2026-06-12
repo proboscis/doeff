@@ -3,9 +3,8 @@
 Spawned tasks need access to the full handler chain so that effects
 (Ask, Try, cache, etc.) work inside spawned programs.
 
-Bug: `RuntimeError: VM error (non-exception value in Raise):
-"generator yielded non-DoExpr: <class 'doeff.program.WithHandler'>."`
-when a spawned task performs effects that require handlers.
+Bug: spawned task handler propagation previously raised a non-DoExpr VM error
+when a spawned task performed effects that require handlers.
 """
 from doeff_core_effects import Ask, Tell, Try
 from doeff_core_effects.handlers import (
@@ -18,7 +17,8 @@ from doeff_core_effects.handlers import (
 from doeff_core_effects.scheduler import Gather, Spawn, Wait, scheduled
 from doeff_vm import EffectBase, Ok
 
-from doeff import Pass, Resume, WithHandler, do, run
+from doeff import Pass, Resume, do, run
+from doeff import handler as _program_handler
 
 # --- Custom effect + handler (mimics LLMStructuredQuery + openai_handler) ---
 
@@ -57,7 +57,7 @@ def _run_with_handlers(program):
         custom_query_handler,
     ]
     for h in reversed(handlers):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _program_handler(h)(wrapped)
     return run(scheduled(wrapped))
 
 

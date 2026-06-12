@@ -6,7 +6,8 @@ import sys
 import time
 from pathlib import Path
 
-from doeff import WithHandler, do, run
+from doeff import do, run
+from doeff import handler as _program_handler
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -29,7 +30,7 @@ from doeff_agents import (
 def _install_handlers(handlers, program):
     wrapped = program
     for handler in reversed(handlers):
-        wrapped = WithHandler(handler, wrapped)
+        wrapped = _program_handler(handler)(wrapped)
     return wrapped
 
 

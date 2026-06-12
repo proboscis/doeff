@@ -40,7 +40,8 @@ from doeff_agents.effects import (
     StopEffect,
 )
 
-from doeff import Effect, Pass, Resume, WithHandler, do
+from doeff import Effect, Pass, Resume, do
+from doeff import handler as _program_handler
 from doeff_agentic.effects import (
     AgentNotRunningError,
     CaptureOutputEffect,
@@ -551,7 +552,7 @@ def agentic_effectful_handlers(  # noqa: PLR0915 - baseline cleanup keeps existi
     The returned handler follows doeff_vm's public handler protocol:
     `(effect, k) -> DoExpr`.
 
-    Use with `doeff.WithHandler` to scope handling to a specific program.
+    Call the returned Program -> Program handler to scope it to a specific program.
     See `with_agentic_effectful_handlers()` for the convenience wrapper.
     """
     handler = AgenticHandler(
@@ -689,7 +690,7 @@ def agentic_effectful_handlers(  # noqa: PLR0915 - baseline cleanup keeps existi
             return (yield Resume(k, value))
         yield Pass()
 
-    return _handle
+    return _program_handler(_handle)
 
 
 def with_agentic_effectful_handlers(
@@ -700,15 +701,12 @@ def with_agentic_effectful_handlers(
     tmux_handler: TmuxAgentHandler | None = None,
 ) -> Any:
     """Wrap a program with the legacy agentic effect handler."""
-    return WithHandler(
-        handler=agentic_effectful_handlers(
+    return agentic_effectful_handlers(
             workflow_id=workflow_id,
             workflow_name=workflow_name,
             state_dir=state_dir,
             tmux_handler=tmux_handler,
-        ),
-        expr=program,
-    )
+        )(program)
 
 
 def agent_handler(

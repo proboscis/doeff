@@ -27,7 +27,8 @@ from doeff_openrouter.handlers import (
 )
 from pydantic import BaseModel
 
-from doeff import Delegate, Resume, WithHandler, default_handlers, do, run
+from doeff import Delegate, Resume, default_handlers, do, run
+from doeff import handler as _install_raw_handler
 
 
 class StructuredPayload(BaseModel):
@@ -37,7 +38,7 @@ class StructuredPayload(BaseModel):
 
 def _run_with_handler(program, handler):
     return run(
-        WithHandler(handler, program),
+        handler(program),
         handlers=default_handlers(),
     )
 
@@ -213,7 +214,7 @@ def test_openrouter_handler_delegates_embedding_effects() -> None:
         return (yield LLMEmbedding(input="hello", model="text-embedding-3-small"))
 
     result = run(
-        WithHandler(fallback, WithHandler(openrouter_mock_handler, workflow())),
+        _install_raw_handler(fallback)(openrouter_mock_handler(workflow())),
         handlers=default_handlers(),
     )
 

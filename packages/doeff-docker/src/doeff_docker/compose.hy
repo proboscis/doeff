@@ -7,13 +7,10 @@
      (my-program))
 
    Expands to:
-   (WithHandler (writer)
-   (WithHandler (slog-handler)
-   (WithHandler resolve-handler
-     (my-program))))
+   ((writer) ((slog-handler) (resolve-handler (my-program))))
 
    Handlers are applied inner-first: last in list is innermost."
   (setv result body)
   (for [h (reversed handlers)]
-    (setv result `(WithHandler ~h ~result)))
+    (setv result `(~h ~result)))
   result)

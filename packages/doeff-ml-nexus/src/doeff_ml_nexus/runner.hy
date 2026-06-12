@@ -8,7 +8,7 @@
 (require doeff_hy.macros [defk defp <-])
 (require doeff_docker.compose [with-handlers])
 (import doeff [do :as _doeff-do])
-(import doeff [run WithHandler])
+(import doeff [run])
 (import doeff_core_effects [Ask reader slog-handler writer scheduled])
 
 (import pathlib [Path])

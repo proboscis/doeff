@@ -3,7 +3,7 @@ CalculateCost effect / default-handler contract.
 
 These tests do not depend on the legacy ``default_handlers`` helper
 (removed in an earlier refactor) — they compose handlers explicitly
-with :class:`doeff.WithHandler`, mirroring the supported usage pattern.
+by calling Program -> Program handlers directly.
 """
 
 import pytest
@@ -18,7 +18,8 @@ from doeff_openai import (
 )
 from doeff_openai.handlers.production import openai_production_handler
 
-from doeff import Pass, Resume, WithHandler, do, run
+from doeff import Pass, Resume, do, run
+from doeff import handler as _install_raw_handler
 
 # ---------------------------------------------------------------------------
 # Pricing table — GPT-5 family exists and matches published rates
@@ -123,7 +124,7 @@ def _ask_cost(model, usage):
 
 def test_calculate_cost_effect_known_model_resumes_with_cost_info():
     usage = TokenUsage(prompt_tokens=1000, completion_tokens=500, total_tokens=1500)
-    result = run(WithHandler(openai_production_handler, _ask_cost("gpt-5-mini", usage)))
+    result = run(openai_production_handler(_ask_cost("gpt-5-mini", usage)))
     assert isinstance(result, CostInfo)
     assert result.model == "gpt-5-mini"
     assert result.total_cost > 0
@@ -144,10 +145,7 @@ def test_calculate_cost_effect_unknown_model_passes_to_outer_handler():
 
     usage = TokenUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150)
     result = run(
-        WithHandler(
-            zero_cost_override,
-            WithHandler(openai_production_handler, _ask_cost("future-model-v9", usage)),
-        )
+        _install_raw_handler(zero_cost_override)(openai_production_handler(_ask_cost("future-model-v9", usage)))
     )
     assert result.total_cost == 0.0
     assert result.model == "future-model-v9"
@@ -159,7 +157,7 @@ def test_calculate_cost_effect_unknown_model_no_outer_handler_raises():
     # is the loud-fail property: silent fall-back is impossible.
     usage = TokenUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150)
     with pytest.raises(RuntimeError, match="no handler found for effect"):
-        run(WithHandler(openai_production_handler, _ask_cost("future-model-v9", usage)))
+        run(openai_production_handler(_ask_cost("future-model-v9", usage)))
 
 
 def test_calculate_cost_effect_cached_on_legacy_model_passes():
@@ -172,7 +170,7 @@ def test_calculate_cost_effect_cached_on_legacy_model_passes():
         cached_prompt_tokens=100,
     )
     with pytest.raises(RuntimeError, match="no handler found for effect"):
-        run(WithHandler(openai_production_handler, _ask_cost("gpt-3.5-turbo", usage)))
+        run(openai_production_handler(_ask_cost("gpt-3.5-turbo", usage)))
 
 
 # ---------------------------------------------------------------------------

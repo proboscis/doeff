@@ -1,3 +1,4 @@
+from doeff import handler as _install_raw_handler
 # ruff: noqa: E402, I001
 """Tests for Gemini effect and handler modules."""
 
@@ -62,7 +63,6 @@ from doeff import (
     Delegate,
     EffectGenerator,
     Resume,
-    WithHandler,
     default_handlers,
     do,
     run,
@@ -93,7 +93,7 @@ class FunFact(BaseModel):
 
 def _run_with_handler(program, handler):
     return run(
-        WithHandler(handler, program),
+        handler(program),
         handlers=default_handlers(),
     )
 
@@ -248,7 +248,7 @@ def test_gemini_handler_delegates_unsupported_models() -> None:
         )
 
     result = run(
-        WithHandler(fallback_handler, WithHandler(gemini_mock_handler, program())),
+        _install_raw_handler(fallback_handler)(gemini_mock_handler(program())),
         handlers=default_handlers(),
     )
 

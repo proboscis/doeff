@@ -125,7 +125,7 @@
 (print "Part 3: Compile and run transformed program")
 (print (* "=" 60))
 
-(import doeff [run WithHandler Pure Resume Pass])
+(import doeff [run Pure Resume Pass])
 (import doeff [do :as _doeff-do])
 (import doeff [EffectBase K])
 (import doeff_core_effects.scheduler [scheduled])
@@ -164,9 +164,7 @@
 
 ;; Run it with mock handlers
 (setv program
-  (WithHandler mock-price-handler
-    (WithHandler mock-news-handler
-      (compiled-fn "7203.T" "2025-11-10"))))
+  (mock-price-handler (mock-news-handler (compiled-fn "7203.T" "2025-11-10"))))
 
 (print)
 (print "--- Running transformed program ---")

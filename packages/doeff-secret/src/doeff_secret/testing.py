@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, TypeAlias
 
 from doeff import Delegate, Effect, Resume, do
+from doeff import handler as _program_handler
 
 from .effects import DeleteSecret, GetSecret, ListSecrets, SetSecret
 
@@ -110,7 +111,7 @@ def in_memory_handlers(
             return (yield Resume(k, None))
         yield Delegate()
 
-    return handler
+    return _program_handler(handler)
 
 
 def in_memory_handler(

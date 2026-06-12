@@ -7,6 +7,7 @@ normalize_to_none(): Fail handler — resumes with None at fail site.
 
 from doeff import do
 from doeff.program import Pass, Resume, ResumeThrow
+from doeff.program import handler as _program_handler
 from doeff_traverse.collection import Collection, HistoryEntry, ItemResult
 from doeff_traverse.effects import Fail, Inspect, Reduce, Skip, SortBy, Take, Traverse, Zip
 
@@ -29,10 +30,6 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
     from doeff_vm import Err, Ok
 
     from doeff.handler_utils import get_inner_handlers
-    from doeff.program import (
-        WithHandler as WH,  # noqa: N817 - existing local alias keeps handler code compact
-    )
-
     @do
     def handler(effect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
         if isinstance(effect, Skip):
@@ -61,14 +58,14 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
                 prog = effect.f(item.value)
                 # Reinstall inner handlers + this handler for nested Traverse
                 for h in inner_hs:
-                    prog = WH(h, prog)
-                prog = WH(handler, prog)
+                    prog = _program_handler(h)(prog)
+                prog = _program_handler(handler)(prog)
 
                 # Wrap in Try to catch unhandled failures per item
                 @do
                 def attempt(prog=prog):
                     from doeff_core_effects.handlers import try_handler
-                    value = yield WH(try_handler, Try(prog))
+                    value = yield try_handler(Try(prog))
                     return value
 
                 result = yield attempt()
@@ -111,8 +108,8 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
             for value in values_iter:
                 prog = effect.f(acc, value)
                 for h in inner_hs:
-                    prog = WH(h, prog)
-                prog = WH(handler, prog)
+                    prog = _program_handler(h)(prog)
+                prog = _program_handler(handler)(prog)
                 acc = yield prog
             return (yield Resume(k, acc))
 
@@ -169,7 +166,7 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
 
         yield Pass(effect, k)
 
-    return handler
+    return _program_handler(handler)
 
 
 def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
@@ -191,10 +188,6 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
     from doeff_vm import Err, Ok
 
     from doeff.handler_utils import get_inner_handlers
-    from doeff.program import (
-        WithHandler as WH,  # noqa: N817 - existing local alias keeps handler code compact
-    )
-
     @do
     def handler(effect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
         if isinstance(effect, Skip):
@@ -230,13 +223,13 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
                     yield AcquireSemaphore(sem)
                     prog = effect.f(item.value)
                     for h in inner_hs:
-                        prog = WH(h, prog)
-                    prog = WH(handler, prog)
+                        prog = _program_handler(h)(prog)
+                    prog = _program_handler(handler)(prog)
 
                     @do
                     def attempt():
                         from doeff_core_effects.handlers import try_handler
-                        value = yield WH(try_handler, Try(prog))
+                        value = yield try_handler(Try(prog))
                         return value
 
                     result = yield attempt()
@@ -290,8 +283,8 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
             for value in values_iter:
                 prog = effect.f(acc, value)
                 for h in inner_hs:
-                    prog = WH(h, prog)
-                prog = WH(handler, prog)
+                    prog = _program_handler(h)(prog)
+                prog = _program_handler(handler)(prog)
                 acc = yield prog
             return (yield Resume(k, acc))
 
@@ -346,7 +339,7 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
 
         yield Pass(effect, k)
 
-    return handler
+    return _program_handler(handler)
 
 
 def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
@@ -368,10 +361,6 @@ def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keep
     )
 
     from doeff.handler_utils import get_inner_handlers
-    from doeff.program import (
-        WithHandler as WH,  # noqa: N817 - existing local alias keeps handler code compact
-    )
-
     @do
     def handler(effect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
         if isinstance(effect, Skip):
@@ -409,8 +398,8 @@ def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keep
                     yield AcquireSemaphore(sem)
                     prog = effect.f(item.value)
                     for h in inner_hs:
-                        prog = WH(h, prog)
-                    prog = WH(handler, prog)
+                        prog = _program_handler(h)(prog)
+                    prog = _program_handler(handler)(prog)
                     # NO Try wrapper — exceptions propagate to Gather
                     result = yield prog
                     yield ReleaseSemaphore(sem)
@@ -451,8 +440,8 @@ def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keep
             for value in values_iter:
                 prog = effect.f(acc, value)
                 for h in inner_hs:
-                    prog = WH(h, prog)
-                prog = WH(handler, prog)
+                    prog = _program_handler(h)(prog)
+                prog = _program_handler(handler)(prog)
                 acc = yield prog
             return (yield Resume(k, acc))
 
@@ -507,11 +496,11 @@ def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keep
 
         yield Pass(effect, k)
 
-    return handler
+    return _program_handler(handler)
 
 
 @do
-def fail_handler(effect, k):
+def _fail_handler(effect, k):
     """Default Fail handler: raises the cause as an exception.
 
     Converts unhandled Fail effects into Python exceptions.
@@ -523,8 +512,13 @@ def fail_handler(effect, k):
     yield Pass(effect, k)
 
 
+fail_handler = _program_handler(_fail_handler)
+fail_handler.__name__ = "fail_handler"
+fail_handler.__qualname__ = "fail_handler"
+
+
 @do
-def normalize_to_none(effect, k):
+def _normalize_to_none(effect, k):
     """Fail handler: resume with None at the fail site.
 
     The computation continues with None as the substitute value.
@@ -532,3 +526,8 @@ def normalize_to_none(effect, k):
     if isinstance(effect, Fail):
         return (yield Resume(k, None))
     yield Pass(effect, k)
+
+
+normalize_to_none = _program_handler(_normalize_to_none)
+normalize_to_none.__name__ = "normalize_to_none"
+normalize_to_none.__qualname__ = "normalize_to_none"

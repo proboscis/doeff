@@ -5,7 +5,6 @@ from doeff_core_effects.handlers import lazy_ask, try_handler
 from doeff_core_effects.scheduler import Gather, Spawn, Wait, scheduled
 
 from doeff import do, run
-from doeff.program import WithHandler
 
 
 def run_with_lazy(program, env=None):
@@ -18,8 +17,8 @@ def run_with_lazy(program, env=None):
     """
     if env is None:
         env = {}
-    body = WithHandler(try_handler, program)
-    body = WithHandler(lazy_ask(env=env), body)
+    body = try_handler(program)
+    body = lazy_ask(env=env)(body)
     body = scheduled(body)
     return run(body)
 
@@ -365,8 +364,8 @@ class TestLazyAskErrorHandling:
         def program():
             return (yield Try(Ask("missing")))
 
-        body = WithHandler(try_handler, program())
-        body = WithHandler(lazy_ask(env={}, strict=True), body)
+        body = try_handler(program())
+        body = lazy_ask(env={}, strict=True)(body)
         result = run(scheduled(body))
         assert hasattr(result, "error")
         assert isinstance(result.error, KeyError)

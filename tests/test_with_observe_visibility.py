@@ -17,7 +17,8 @@ from doeff_core_effects.handlers import (
 from doeff_vm import Callable as VMCallable
 from doeff_vm import EffectBase
 
-from doeff import Pass, Resume, WithHandler, WithObserve, do, run
+from doeff import Pass, Resume, WithObserve, do, run
+from doeff import handler as _program_handler
 
 
 class CustomQuery(EffectBase):
@@ -50,7 +51,7 @@ def test_observe_sees_program_effects():
 
     wrapped = prog()
     for h in reversed([state(), writer(), slog_handler()]):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _program_handler(h)(wrapped)
     wrapped = WithObserve(VMCallable(observer), wrapped)
 
     result = run(wrapped)
@@ -79,7 +80,7 @@ def test_observe_sees_handler_body_effects():
 
     wrapped = prog()
     for h in reversed([state(), writer(), try_handler, slog_handler(), custom_handler]):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = _program_handler(h)(wrapped)
     wrapped = WithObserve(VMCallable(observer), wrapped)
 
     result = run(wrapped)

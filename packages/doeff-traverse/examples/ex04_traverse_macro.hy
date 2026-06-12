@@ -21,7 +21,7 @@
 (require doeff-hy.macros [defk <- traverse fnk fold])
 (import doeff [do :as _doeff-do])
 (import doeff [run])
-(import doeff.program [WithHandler Resume Pass])
+(import doeff.program [Resume Pass])
 
 (import doeff_core_effects [try-handler :as try_handler])
 (import doeff_core_effects.scheduler [scheduled])
@@ -123,7 +123,7 @@
   "Wrap program with handlers (innermost first). Returns a runnable program."
   (setv body program)
   (for [h stack]
-    (setv body (WithHandler h body)))
+    (setv body (h body)))
   (scheduled body))
 
 ;; base-stack: Fail → exception → per-item catch by sequential → item marked failed

@@ -21,9 +21,11 @@ from doeff import (
     Perform,
     Resume,
     Transfer,
-    WithHandler,
     do,
     run,
+)
+from doeff import (
+    handler as make_handler,
 )
 from tests._run_helpers import run_with_defaults
 
@@ -45,18 +47,18 @@ def test_run_accepts_bare_rust_effectbase() -> None:
 
 
 
-def test_withhandler_accepts_rust_effect_expr() -> None:
+def test_handler_installer_accepts_rust_effect_expr() -> None:
     @do
-    def handler(_effect: Effect, _k):
+    def raw_handler(_effect: Effect, _k):
         yield _effect
 
-    ctrl = WithHandler(handler, Perform(Ask("key")))
+    ctrl = make_handler(raw_handler)(Perform(Ask("key")))
     assert type(ctrl).__name__ == "WithHandler"
 
 
-def test_withhandler_rejects_return_clause_keyword() -> None:
+def test_handler_installer_rejects_return_clause_keyword() -> None:
     @do
-    def handler(_effect: Effect, _k):
+    def raw_handler(_effect: Effect, _k):
         yield _effect
 
     @do
@@ -64,11 +66,11 @@ def test_withhandler_rejects_return_clause_keyword() -> None:
         return "ok"
         yield
 
-    with_handler = cast(Any, WithHandler)
+    install = cast(Any, make_handler(raw_handler))
     kwargs = {"return_clause": lambda value: value}
 
     with pytest.raises(TypeError, match=r"return_clause|unexpected keyword"):
-        with_handler(handler, body(), **kwargs)
+        install(body(), **kwargs)
 
 
 def test_doeff_vm_withhandler_rejects_return_clause_keyword() -> None:
@@ -90,16 +92,16 @@ def test_doeff_vm_withhandler_rejects_return_clause_keyword() -> None:
         with_handler(handler, body(), **kwargs)
 
 
-def test_withhandler_rejects_third_positional_argument() -> None:
+def test_handler_installer_rejects_second_positional_argument() -> None:
     @do
-    def handler(_effect: Effect, _k):
+    def raw_handler(_effect: Effect, _k):
         yield _effect
 
-    args = (handler, Perform(Ask("key")), lambda value: value)
-    with_handler = cast(Any, WithHandler)
+    args = (Perform(Ask("key")), lambda value: value)
+    install = cast(Any, make_handler(raw_handler))
 
     with pytest.raises(TypeError, match=r"positional arguments|given"):
-        with_handler(*args)
+        install(*args)
 
 
 
@@ -107,12 +109,12 @@ def test_python_handler_receives_k_for_resume() -> None:
     seen: dict[str, bool] = {"is_k": False}
 
     @do
-    def handler(_effect: Effect, k):
+    def raw_handler(_effect: Effect, k):
         seen["is_k"] = isinstance(k, K)
         return (yield Resume(k, "override"))
 
     result = run_with_defaults(
-        WithHandler(handler, Perform(Ask("x"))),
+        make_handler(raw_handler)(Perform(Ask("x"))),
         env={"x": "original"},
     )
 
@@ -129,7 +131,7 @@ def test_python_handler_transfer_and_delegate_with_k() -> None:
         yield Transfer(k, "via-transfer")
 
     transfer_result = run_with_defaults(
-        WithHandler(transfer_handler, Perform(Ask("x"))),
+        make_handler(transfer_handler)(Perform(Ask("x"))),
         env={"x": "original"},
     )
 
@@ -141,7 +143,7 @@ def test_python_handler_transfer_and_delegate_with_k() -> None:
         yield Pass(_effect, k)
 
     delegate_result = run_with_defaults(
-        WithHandler(delegate_handler, Perform(Ask("x"))),
+        make_handler(delegate_handler)(Perform(Ask("x"))),
         env={"x": "original"},
     )
 

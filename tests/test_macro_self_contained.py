@@ -16,7 +16,7 @@ from doeff_core_effects import Ask
 from doeff_core_effects.handlers import await_handler, lazy_ask
 from doeff_core_effects.scheduler import scheduled
 
-from doeff import EffectBase, WithHandler, run
+from doeff import EffectBase, run
 
 
 @dataclass(frozen=True)
@@ -36,7 +36,6 @@ def _eval_no_doeff_do(code: str, **extra_globals):
 
     mod.__dict__.update({
         "run": run,
-        "WithHandler": WithHandler,
         "scheduled": scheduled,
         "await_handler": await_handler,
         "lazy_ask": lazy_ask,
@@ -93,11 +92,10 @@ class TestDoBangSelfContained:
         """do! should work without (import doeff [do :as _doeff-do])."""
         result = _eval_no_doeff_do("""
         (run (scheduled
-          (WithHandler (await_handler)
-            (WithHandler (lazy_ask :env {"key" "hello"})
+          ((await_handler) ((lazy_ask :env {"key" "hello"})
               (do!
                 (<- val (Ask "key"))
-                (+ val " world"))))))
+                (+ val " world"))) )))
         """)
         assert result == "hello world"
 
@@ -112,9 +110,8 @@ class TestDefpSelfContained:
           (+ val " world"))
 
         (run (scheduled
-          (WithHandler (await_handler)
-            (WithHandler (lazy_ask :env {"key" "hello"})
-              my-prog))))
+          ((await_handler) ((lazy_ask :env {"key" "hello"})
+              my-prog) )))
         """)
         assert result == "hello world"
 

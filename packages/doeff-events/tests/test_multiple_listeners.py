@@ -7,7 +7,7 @@ from doeff_core_effects.scheduler import Spawn, Wait
 from doeff_events.effects import Publish, WaitForEvent
 from doeff_events.handlers import event_handler
 
-from doeff import WithHandler, do, run
+from doeff import do, run
 
 
 @dataclass(frozen=True)
@@ -39,12 +39,12 @@ def test_publish_wakes_multiple_listeners_waiting_same_type() -> None:
         return (result, publish_status)
 
     first_result = run(
-        WithHandler(event_handler(), run_listener("a")),
+        event_handler()(run_listener("a")),
         handlers=default_handlers(),  # noqa: F821 - legacy removed API reference is intentionally preserved
     )
 
     second_result = run(
-        WithHandler(event_handler(), run_listener("b")),
+        event_handler()(run_listener("b")),
         handlers=default_handlers(),  # noqa: F821 - legacy removed API reference is intentionally preserved
     )
 

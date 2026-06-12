@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TypeAlias
 
 from doeff import do
+from doeff import handler as _program_handler
 from doeff.program import Pass, Resume
 from doeff_core_effects.cache_effects import (
     CacheExists,
@@ -139,7 +140,7 @@ def cache_handler(storage: DurableStorage):
         result = yield Resume(k, None)
         return result
 
-    return handler
+    return _program_handler(handler)
 
 
 def in_memory_cache_handler():
@@ -199,7 +200,7 @@ def make_memo_rewriter(
         result = yield Resume(k, delegated)
         return result
 
-    return handler
+    return _program_handler(handler)
 
 
 def memo_rewriters(

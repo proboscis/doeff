@@ -13,10 +13,9 @@ Limitations:
 Usage:
     from doeff import default_handlers, run
     from doeff_agentic.tmux_handler import tmux_handler
-    from doeff import WithHandler
 
     handlers = tmux_handler()
-    program = WithHandler(handlers, my_workflow())
+    program = handlers(my_workflow())
     result = run(program, handlers=default_handlers())
 """
 
@@ -35,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from doeff import Effect, Pass, Resume, do
+from doeff import handler as _program_handler
 
 # REMOVED: make_doeff_generator no longer exists in doeff.do
 # from doeff.do import make_doeff_generator
@@ -938,7 +938,7 @@ def _as_protocol_handler(
 
         return (yield Resume(k, result))
 
-    return _wrapped
+    return _program_handler(_wrapped)
 
 
 def tmux_handler(
@@ -952,15 +952,14 @@ def tmux_handler(
         working_dir: Default working directory
 
     Returns:
-        Protocol handler for use with WithHandler composition.
+        Protocol handler for direct Program -> Program composition.
 
     Usage:
         from doeff import default_handlers, run
         from doeff_agentic import tmux_handler
-        from doeff import WithHandler
 
         handlers = tmux_handler()
-        program = WithHandler(handlers, my_workflow())
+        program = handlers(my_workflow())
         result = run(program, handlers=default_handlers())
     """
     handler = TmuxHandler(working_dir=working_dir, backend=backend)
@@ -990,7 +989,7 @@ def tmux_handler(
                 return (yield effect_handler(effect, k))
         yield Pass()
 
-    return protocol_handler
+    return _program_handler(protocol_handler)
 
 
 __all__ = [

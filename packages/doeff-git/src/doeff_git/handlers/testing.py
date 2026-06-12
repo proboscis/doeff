@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from doeff import Effect, Pass, Resume, do
+from doeff import handler as _program_handler
 from doeff_git.effects import CreatePR, GitCommit, GitDiff, GitPull, GitPush, MergePR
 from doeff_git.types import PRHandle
 
@@ -111,7 +112,7 @@ def mock_handlers(
             return (yield Resume(k, None))
         return (yield Pass(effect, k))
 
-    return handler
+    return _program_handler(handler)
 
 
 __all__ = [
