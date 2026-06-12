@@ -309,7 +309,11 @@ class ConductorAPI:
             )
             self._save_workflow(aborted)
             return aborted
-        if option == "proceed":
+        if option in {"proceed", "extend"}:
+            # "extend" is the deadline-gate renewal answer (L-K4-3): the
+            # journaled answer IS the renewal; resume re-awaits the node
+            # with a fresh deadline window. There is no automatic
+            # extension path anywhere else.
             return self.resume_workflow(
                 workflow_id,
                 params=params,

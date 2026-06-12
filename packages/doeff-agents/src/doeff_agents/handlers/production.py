@@ -22,9 +22,11 @@ from doeff_agents.adapters.base import (
 from doeff_agents.adapters.claude import ClaudeAdapter
 from doeff_agents.adapters.codex import CodexAdapter, trust_workspace_in_codex_home
 from doeff_agents.adapters.gemini import GeminiAdapter
+from doeff_agents.agentd_client import DEFAULT_AWAIT_BUDGET_SECONDS
 from doeff_agents.claude_home import prepare_claude_home
 from doeff_agents.effects import (
     AgentAttemptExhaustedError,
+    AgentDeadlineExceededError,
     AgentEffect,
     AgentLaunchError,
     AgentNotAvailableError,
@@ -220,35 +222,41 @@ def _run_agent_task(handler: AgentHandler, task: AgentTask) -> object:
       the session, so a follow-up here lands on a dead pane.  Observed
       live four times: the crash ("tmux send-keys failed") replaced a
       clean exhaustion error with a raw transport exception.
-    - a TIMED_OUT await means the session is alive and still working —
-      re-await it; injecting "you exited without producing..." into a
-      healthily working agent was pure noise (also observed live).
     - AWAITING_INPUT is the one outcome where a follow-up is the designed
       continuation (local-handler sessions have no supervisor-side
       retries); ``task.max_retries`` bounds those nudges.
+
+    Wall-clock authority is the NODE-SPEC DEADLINE alone (L-K4-3, k8s
+    ``activeDeadlineSeconds`` semantics): a TIMED_OUT await is pure
+    transport-heartbeat expiry — the session is alive and still working —
+    so it is NEVER surfaced as a node failure and never burns a retry
+    attempt.  The loop re-awaits transparently until a terminal outcome
+    or, when ``task.deadline_seconds`` is declared, until the deadline is
+    exceeded — then it raises ``AgentDeadlineExceededError`` for the
+    orchestrator to park as a gate.  Extension is a gate answer; there is
+    no automatic extension policy here.
     """
     handle = handler.handle_launch_session(LaunchSessionEffect(spec=task))
+    started_at = time.monotonic()
     attempts = 0
-    last_error: AgentValidationFailure | None = None
     try:
-        while attempts <= task.max_retries:
+        while True:
             outcome = handler.handle_await_result(
-                AwaitResultEffect(handle=handle, timeout_seconds=task.timeout_seconds)
+                AwaitResultEffect(
+                    handle=handle,
+                    timeout_seconds=_await_heartbeat_seconds(task, started_at),
+                )
             )
             last_error = _validation_failure_from_outcome(outcome, task.result_schema)
             if last_error is None:
                 return outcome.result
 
             if last_error.kind == AgentValidationErrorKind.TIMED_OUT:
-                # Session alive, work in progress: burn an attempt and
-                # await again — never interrupt it with a retry prompt.
-                if attempts >= task.max_retries:
-                    raise AgentAttemptExhaustedError(
-                        session_id=handle.session_id,
-                        attempts=attempts + 1,
-                        last_error=last_error,
-                    )
-                attempts += 1
+                # Transport heartbeat expiry: carries no semantic
+                # decision. Re-await — never interrupt the session with a
+                # retry prompt, never burn an attempt, never fail the
+                # node. The only wall-clock bound is the node deadline.
+                _raise_if_deadline_exceeded(task, handle, started_at)
                 continue
 
             if not outcome.continuable:
@@ -276,7 +284,43 @@ def _run_agent_task(handler: AgentHandler, task: AgentTask) -> object:
     finally:
         handler.handle_release_session(ReleaseSessionEffect(handle=handle))
 
-    raise AssertionError("unreachable agent retry state")
+
+def _deadline_remaining_seconds(task: AgentTask, started_at: float) -> float | None:
+    """Seconds left in the node-spec deadline window; None when undeclared."""
+    if task.deadline_seconds is None:
+        return None
+    return task.deadline_seconds - (time.monotonic() - started_at)
+
+
+def _await_heartbeat_seconds(task: AgentTask, started_at: float) -> float:
+    """Per-await transport budget: the keep-alive heartbeat, deadline-capped.
+
+    The heartbeat bounds ONE transport round-trip and carries no node
+    semantics (L-K4-3). When the node declares a deadline, the heartbeat
+    is capped to the remaining window so the loop observes the deadline
+    promptly instead of sleeping a full heartbeat past it.
+    """
+    remaining = _deadline_remaining_seconds(task, started_at)
+    if remaining is None:
+        return DEFAULT_AWAIT_BUDGET_SECONDS
+    return min(DEFAULT_AWAIT_BUDGET_SECONDS, max(remaining, 0.0))
+
+
+def _raise_if_deadline_exceeded(
+    task: AgentTask,
+    handle: L2SessionHandle,
+    started_at: float,
+) -> None:
+    deadline_seconds = task.deadline_seconds
+    if deadline_seconds is None:
+        return
+    elapsed_seconds = time.monotonic() - started_at
+    if elapsed_seconds >= deadline_seconds:
+        raise AgentDeadlineExceededError(
+            session_id=handle.session_id,
+            deadline_seconds=deadline_seconds,
+            elapsed_seconds=elapsed_seconds,
+        )
 
 
 def _validation_failure_from_outcome(  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
@@ -742,11 +786,17 @@ class TmuxAgentHandler(AgentHandler):
         return L2SessionHandle(session_id=session_id)
 
     def handle_await_result(self, effect: AwaitResultEffect) -> AwaitOutcome:
-        """Await a result file or an awaiting-input/timeout state."""
-        # Same default contract as agentd_client.DEFAULT_AWAIT_BUDGET_SECONDS:
-        # one real agent turn routinely outlives 600s, and a long await is
-        # free in the failure case (terminal states resolve it early).
-        timeout_seconds = effect.timeout_seconds if effect.timeout_seconds is not None else 3600.0
+        """Await a result file or an awaiting-input/timeout state.
+
+        The per-await budget is the transport keep-alive heartbeat
+        (L-K4-3): expiry only hands control back to the caller's re-await
+        loop and never decides anything about the node.
+        """
+        timeout_seconds = (
+            effect.timeout_seconds
+            if effect.timeout_seconds is not None
+            else DEFAULT_AWAIT_BUDGET_SECONDS
+        )
         deadline = time.monotonic() + timeout_seconds
         while True:
             state = self._state_for_handle(effect.handle)
