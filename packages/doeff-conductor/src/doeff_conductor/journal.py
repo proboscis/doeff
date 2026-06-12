@@ -6,13 +6,17 @@ import json
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from doeff_agents.result_validation import validate_result_payload
 
-from doeff_conductor.effects.agent import AgentAttemptExhaustedError, AgentEffect, AgentTask
+from doeff_conductor.effects.agent import (
+    AgentAttemptExhaustedError,
+    AgentDeadlineExceededError,
+    AgentEffect,
+    AgentTask,
+)
 from doeff_conductor.exceptions import AgentError, JournalCorruptionError
 from doeff_conductor.replay_keying import (
     ResolvedIdentity,
@@ -432,21 +436,31 @@ class AgentReplaySession:
         try:
             result = delegate(effect)
         except AgentAttemptExhaustedError as error:
-            self.journal.append_entry(
-                AgentJournalEntry(
-                    generation=self.current_generation,
-                    entry_index=entry_index,
-                    cache_key=decision.cache_key,
-                    resolved_identity_fingerprint=decision.resolved_identity_fingerprint,
-                    node_identity=decision.node_identity,
-                    result_artifact={
-                        "session_id": error.session_id,
-                        "attempts": error.attempts,
-                        "last_error_kind": error.last_error.kind.value,
-                        "last_error_message": error.last_error.message,
-                    },
-                    terminal_kind=TERMINAL_KIND_OPEN_GATE,
-                )
+            self._append_open_gate_entry(
+                decision,
+                entry_index,
+                {
+                    "session_id": error.session_id,
+                    "attempts": error.attempts,
+                    "last_error_kind": error.last_error.kind.value,
+                    "last_error_message": error.last_error.message,
+                },
+            )
+            raise
+        except AgentDeadlineExceededError as error:
+            # L-K4-3: the deadline park is a journaled open-gate terminal,
+            # exactly like attempt exhaustion — replay treats it as a
+            # non-succeeded entry and re-runs the node (the extension
+            # window granted by the gate answer).
+            self._append_open_gate_entry(
+                decision,
+                entry_index,
+                {
+                    "session_id": error.session_id,
+                    "deadline_seconds": error.deadline_seconds,
+                    "elapsed_seconds": error.elapsed_seconds,
+                    "reason": "wall-clock deadline exceeded",
+                },
             )
             raise
 
@@ -463,6 +477,24 @@ class AgentReplaySession:
             )
         )
         return result
+
+    def _append_open_gate_entry(
+        self,
+        decision: AgentReplayDecision,
+        entry_index: int,
+        result_artifact: dict[str, Any],
+    ) -> None:
+        self.journal.append_entry(
+            AgentJournalEntry(
+                generation=self.current_generation,
+                entry_index=entry_index,
+                cache_key=decision.cache_key,
+                resolved_identity_fingerprint=decision.resolved_identity_fingerprint,
+                node_identity=decision.node_identity,
+                result_artifact=result_artifact,
+                terminal_kind=TERMINAL_KIND_OPEN_GATE,
+            )
+        )
 
     def _start_new_generation(self) -> None:
         if self.started_new_generation:

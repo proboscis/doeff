@@ -74,7 +74,7 @@ class AgentdAgentBackend:
                     model=effect.task.model,
                     effort=effect.task.effort,
                     max_retries=effect.task.max_retries,
-                    timeout_seconds=effect.task.timeout_seconds,
+                    deadline_seconds=effect.task.deadline_seconds,
                 )
             )
         )

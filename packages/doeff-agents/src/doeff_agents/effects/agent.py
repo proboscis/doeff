@@ -127,9 +127,17 @@ class AgentSpec:
 
 @dataclass(frozen=True, kw_only=True)
 class AgentTask(AgentSpec):
-    """L3-ish task shape consumed by the schema-driven ``agent`` effect."""
+    """L3-ish task shape consumed by the schema-driven ``agent`` effect.
 
-    timeout_seconds: float | None = None
+    ``deadline_seconds`` is the node-spec wall-clock deadline (L-K4-3,
+    k8s ``activeDeadlineSeconds`` semantics): declared by the workflow,
+    observed by the attempt loop, and surfaced on exceed as
+    ``AgentDeadlineExceededError`` for the orchestrator to park as a
+    gate. It is NOT a transport timeout — per-await budgets are the
+    keep-alive heartbeat (``DEFAULT_AWAIT_BUDGET_SECONDS``).
+    """
+
+    deadline_seconds: float | None = None
 
 
 def deterministic_session_id(*, run_id: str, node_id: str, attempt: int) -> str:
@@ -732,8 +740,34 @@ class AgentAttemptExhaustedError(AgentError):
         )
 
 
+class AgentDeadlineExceededError(AgentError):
+    """Raised when ``agent`` exceeds its node-spec wall-clock deadline (L-K4-3).
+
+    Distinct from ``AgentAttemptExhaustedError`` (the unit/attempt budget
+    axis): the session may still be alive and healthily working — the
+    declared wall-clock window simply ran out. The orchestrator parks
+    this as a gate; the ONLY extension path is a gate answer.
+    """
+
+    def __init__(
+        self,
+        *,
+        session_id: str,
+        deadline_seconds: float,
+        elapsed_seconds: float,
+    ) -> None:
+        self.session_id = session_id
+        self.deadline_seconds = deadline_seconds
+        self.elapsed_seconds = elapsed_seconds
+        super().__init__(
+            f"agent session {session_id} exceeded its wall-clock deadline: "
+            f"{elapsed_seconds:.1f}s elapsed against a {deadline_seconds:.1f}s deadline"
+        )
+
+
 __all__ = [
     "AgentAttemptExhaustedError",
+    "AgentDeadlineExceededError",
     "AgentEffect",
     "AgentError",
     "AgentLaunchError",

@@ -35,6 +35,10 @@ class AgentCall(ConductorEffectBase):
     profile: str | None = None
     persona: str | None = None
     retry: int | None = None
+    # Wall-clock deadline declared on the node spec (L-K4-3); the L3
+    # runtime observes it and parks a K5 gate on exceed. Never a
+    # transport timeout.
+    deadline_seconds: float | None = None
     label: str | None = None
     phase: str | None = None
 

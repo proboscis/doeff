@@ -86,11 +86,19 @@ class AgentdSessionList:
 # client disconnect, daemon Broken pipe).
 RPC_TIMEOUT_MARGIN_SECONDS: float = 15.0
 LAUNCH_RPC_TIMEOUT_SECONDS: float = 60.0 + RPC_TIMEOUT_MARGIN_SECONDS
-# One real frontier-agent turn under run_to_completion routinely takes
-# 20-40 minutes; a 600s await burned the launcher's whole retry budget on
-# a worker that was still healthily working (observed live).  A long await
-# is free in the failure case: the daemon monitor resolves the await early
-# the moment a session turns terminal.  3600 = the daemon-side clamp max.
+# PURE TRANSPORT HEARTBEAT (L-K4-3).  This constant bounds ONE
+# session.await_result round-trip and carries no node semantics: expiry
+# means "renew the keep-alive and re-await", never a node failure and
+# never a semantic decision.  Wall-clock node deadlines live in the
+# workflow node spec (`agent! :deadline-seconds`, k8s
+# activeDeadlineSeconds semantics) and are observed by the L3 runtime,
+# which parks a gate on exceed.  History: when this constant still
+# carried await semantics, a 600s value burned the launcher's whole
+# retry budget on a worker that was healthily working (observed live);
+# the 600→3600 bump was the band-aid that motivated giving the
+# wall-clock axis a real owner.  3600 = the daemon-side clamp max; a
+# long heartbeat is free in the failure case because the daemon monitor
+# resolves the await early the moment a session turns terminal.
 DEFAULT_AWAIT_BUDGET_SECONDS: float = 3600.0
 
 
