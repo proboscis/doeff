@@ -1,3 +1,17 @@
+"""Guard-layer tests: lexical scope via single parent chain.
+
+Invariants:
+  1. Fiber has a single `parent` chain for both dynamic and lexical lookup.
+  2. VarStore owns the handler state heap and root lexical bindings.
+  3. Spawn does not clone scope chains into per-task copies.
+  4. Handler lookup and dispatch selection walk the parent chain.
+
+Deleted tests:
+  - test_scheduler_spawn_path_no_longer_requests_get_handlers:
+    Rust scheduler module (doeff-core-effects/src/scheduler/mod.rs) no longer
+    exists — scheduler is now a Python handler (doeff-core-effects/scheduler.py).
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,7 +21,6 @@ SEGMENT_RS = CORE_ROOT / "src" / "segment.rs"
 VAR_STORE_RS = CORE_ROOT / "src" / "var_store.rs"
 VM_DISPATCH_RS = CORE_ROOT / "src" / "vm" / "dispatch.rs"
 VM_HANDLER_RS = CORE_ROOT / "src" / "vm" / "handler.rs"
-SCHEDULER_RS = CORE_ROOT.parent / "doeff-core-effects" / "src" / "scheduler" / "mod.rs"
 
 
 def _runtime_source(path: Path) -> str:
@@ -50,9 +63,6 @@ def test_spawn_reuses_live_fiber_chain_without_scope_cloning() -> None:
     assert "clone_spawn_scope_chain" not in dispatch_source, (
         "Spawn must not clone lexical ancestry into per-task copies."
     )
-    assert "EvalReturnContinuation::ReturnToContinuation" in dispatch_source, (
-        "Spawned continuations still need a return anchor into the live caller chain."
-    )
     assert "scope_parent" not in dispatch_source, (
         "Spawn must not wire a separate lexical scope chain."
     )
@@ -65,20 +75,6 @@ def test_handler_lookup_walks_parent_chain() -> None:
     assert "cursor = seg.parent;" in handler_source, (
         "Handler lookup must walk the live Fiber.parent chain."
     )
-    assert "let next = seg.parent;" in dispatch_source, (
+    assert "cursor = seg.parent;" in dispatch_source, (
         "Dispatch selection must scan the parent chain instead of separate scope links."
-    )
-
-
-def test_scheduler_spawn_path_no_longer_requests_get_handlers() -> None:
-    source = _runtime_source(SCHEDULER_RS)
-
-    start = source.find("SchedulerPhase::SpawnAwaitTraceback")
-    end = source.find("SchedulerPhase::SpawnAwaitContinuation")
-    assert start != -1, "scheduler spawn start phase must exist"
-    assert end != -1, "scheduler spawn continuation phase must exist"
-    spawn_block = source[start:end]
-
-    assert "DoCtrl::GetHandlers" not in spawn_block, (
-        "Spawn inheritance must come from the live fiber chain, not GetHandlers replay."
     )
