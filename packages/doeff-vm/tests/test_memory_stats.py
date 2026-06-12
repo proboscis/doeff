@@ -1,152 +1,65 @@
-from dataclasses import dataclass
-from pathlib import Path
+"""Liveness diagnostics for the current doeff-vm bridge."""
 
 import doeff_vm
-from doeff_core_effects.effects import EffectBase
+from doeff_core_effects.scheduler import scheduled
 
-from doeff import Gather, Pass, Resume, Spawn, WithHandler, do
-from doeff import run as vm_run
-
-Effect = EffectBase
-# REMOVED: from doeff_core_effects.cache_handlers import memo_rewriters, sqlite_cache_handler
-# REMOVED: from doeff_vm import default_handlers
+from doeff import Gather, Spawn, do, run
 
 
-def test_memory_stats_exported_with_expected_keys():
-    stats = doeff_vm.memory_stats()
-
-    assert callable(doeff_vm.memory_stats)
-    assert set(stats) >= {
-        "live_segments",
-        "live_continuations",
-        "live_ir_streams",
-        "rust_heap_bytes",
-    }
-    assert all(isinstance(stats[key], int) for key in stats)
+class SyntheticQuery(doeff_vm.EffectBase):
+    def __init__(self, key: str) -> None:
+        self.key = key
 
 
-def test_memory_stats_counts_return_to_baseline_after_run():
-    before = doeff_vm.memory_stats()
-
-    result = doeff_vm.run(doeff_vm.Pure(7))
-    after = doeff_vm.memory_stats()
-
-    assert result.is_ok()
-    assert result.value == 7
-    assert after["live_segments"] == before["live_segments"]
-    assert after["live_continuations"] == before["live_continuations"]
-    assert after["live_ir_streams"] == before["live_ir_streams"]
-
-
-def test_memory_stats_counts_return_to_baseline_after_deep_handler_spawn_chain(
-    tmp_path: Path,
-):
-    cache_path = tmp_path / "vm_memory_stats.sqlite3"
-
-    @dataclass(frozen=True, kw_only=True)
-    class SyntheticQuery(EffectBase):
-        key: str
-
-    def synthetic_query_handler():
-        @do
-        def _handler(effect: Effect, k):
-            if not isinstance(effect, SyntheticQuery):
-                yield Pass()
-                return
-            return (yield Resume(k, effect.key))
-
-        return _handler
-
+def _synthetic_query_handler():
     @do
-    def worker(batch_index: int, task_index: int):
-        return (yield SyntheticQuery(key=f"{batch_index}:{task_index}"))
+    def handler(effect, k):
+        if isinstance(effect, SyntheticQuery):
+            return (yield doeff_vm.Resume(k, effect.key))
+        yield doeff_vm.Pass(effect, k)
 
-    @do
-    def scenario():
-        for batch_index in range(2):
-            tasks = []
-            for task_index in range(20):
-                task = yield Spawn(
-                    worker(batch_index=batch_index, task_index=task_index),
-                    daemon=False,
-                )
-                tasks.append(task)
-            values = yield Gather(*tasks)
-            if len(values) != 20:
-                raise AssertionError(f"expected 20 values, got {len(values)}")
-
-    wrapped = scenario()
-    for handler in reversed(
-        (
-            synthetic_query_handler(),
-            *memo_rewriters(SyntheticQuery),  # noqa: F821 - legacy removed API reference is intentionally preserved
-            sqlite_cache_handler(cache_path),  # noqa: F821 - legacy removed API reference is intentionally preserved
-        )
-    ):
-        wrapped = WithHandler(handler, wrapped)
-
-    before = doeff_vm.memory_stats()
-    result = vm_run(wrapped, handlers=default_handlers())  # noqa: F821 - legacy removed API reference is intentionally preserved
-    after = doeff_vm.memory_stats()
-
-    assert result.is_ok()
-    assert after["live_segments"] == before["live_segments"]
-    assert after["live_continuations"] == before["live_continuations"]
-    assert after["live_ir_streams"] == before["live_ir_streams"]
+    return handler
 
 
-def test_pyvm_run_releases_internal_vm_capacities_after_deep_handler_spawn_chain(
-    tmp_path: Path,
-):
-    @dataclass(frozen=True, kw_only=True)
-    class SyntheticQuery(EffectBase):
-        key: str
+def test_vm_live_counts_exported_with_expected_shape() -> None:
+    live_segments, live_continuations, live_ir_streams = doeff_vm.vm_live_counts()
 
-    def synthetic_query_handler():
-        @do
-        def _handler(effect: Effect, k):
-            if not isinstance(effect, SyntheticQuery):
-                yield Pass()
-                return
-            return (yield Resume(k, effect.key))
+    assert isinstance(live_segments, int)
+    assert isinstance(live_continuations, int)
+    assert isinstance(live_ir_streams, int)
 
-        return _handler
 
-    @do
-    def worker(batch_index: int, task_index: int):
-        return (yield SyntheticQuery(key=f"{batch_index}:{task_index}"))
-
-    @do
-    def scenario():
-        for batch_index in range(2):
-            tasks = []
-            for task_index in range(20):
-                task = yield Spawn(
-                    worker(batch_index=batch_index, task_index=task_index),
-                    daemon=False,
-                )
-                tasks.append(task)
-            values = yield Gather(*tasks)
-            if len(values) != 20:
-                raise AssertionError(f"expected 20 values, got {len(values)}")
-
-    program = scenario()
-    for handler in reversed(
-        (
-            synthetic_query_handler(),
-            *default_handlers(),  # noqa: F821 - legacy removed API reference is intentionally preserved
-        )
-    ):
-        program = WithHandler(handler, program)
-
+def test_vm_live_counts_return_to_baseline_after_pyvm_run() -> None:
+    before = doeff_vm.vm_live_counts()
     vm = doeff_vm.PyVM()
-    vm.run(program)
-    after = vm.memory_stats()
 
-    assert after["arena_capacity"] == 0
-    assert after["dispatch_capacity"] == 0
-    assert after["segment_dispatch_binding_capacity"] == 0
-    assert after["scope_state_capacity"] == 0
-    assert after["scope_writer_log_capacity"] == 0
-    assert after["retired_scope_state_capacity"] == 0
-    assert after["retired_scope_writer_log_capacity"] == 0
+    assert vm.run(doeff_vm.Pure(7)) == 7
+
+    assert doeff_vm.vm_live_counts() == before
+    assert vm.arena_stats() == (0, 0, 0, 0)
+
+
+def test_vm_live_counts_return_to_baseline_after_scheduled_handler_chain() -> None:
+    @do
+    def worker(batch_index: int, task_index: int):
+        return (yield SyntheticQuery(key=f"{batch_index}:{task_index}"))
+
+    @do
+    def scenario():
+        batches: list[list[str]] = []
+        for batch_index in range(2):
+            tasks = []
+            for task_index in range(10):
+                tasks.append((yield Spawn(worker(batch_index, task_index))))
+            batches.append(list((yield Gather(*tasks))))
+        return batches
+
+    program = scheduled(doeff_vm.WithHandler(_synthetic_query_handler(), scenario()))
+    before = doeff_vm.vm_live_counts()
+
+    assert run(program) == [
+        [f"0:{task_index}" for task_index in range(10)],
+        [f"1:{task_index}" for task_index in range(10)],
+    ]
+
+    assert doeff_vm.vm_live_counts() == before

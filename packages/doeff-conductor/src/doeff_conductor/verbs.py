@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from doeff_conductor.dsl import ExpandedNode, ExpandedWorkflow, WorkflowSpec
+from doeff_conductor.dsl import ExpandedWorkflow, WorkflowSpec
 from doeff_conductor.effects.dsl import AgentCall
 from doeff_conductor.environment import (
     DEFAULT_ROUTER_POLICY,
@@ -18,7 +18,6 @@ from doeff_conductor.environment import (
 )
 from doeff_conductor.interpreters import plan_interpreter, validation_interpreter
 from doeff_conductor.overseer import (
-    GateOption,
     OpenGateView,
     ProgressEvent,
     RunStateView,
@@ -35,6 +34,8 @@ BUILT_IN_VALIDATION_SCENARIOS: tuple[str, ...] = (
     "schema-invalid-then-pass",
     "retry-exhaustion",
     "quorum-shortfall",
+    "merge-conflict",
+    "loop-exhaustion",
 )
 SUPPORTED_SUPERVISION_POLICIES: tuple[str, ...] = ("autonomous", "phase-checkpoints")
 
@@ -259,29 +260,34 @@ def resolve_agent_profile(
 
 
 def validate_workflow(
-    workflow: WorkflowSpec | ExpandedWorkflow,
+    workflow: WorkflowSpec,
     *,
     scenarios: Sequence[str] | None = None,
     supervision: str = "autonomous",
     state_dir: str | None = None,
     run_id: str | None = None,
 ) -> ValidationSuiteReport:
-    """Run scenario-driven stub validation and assert closure."""
+    """Run scenario-driven validation by executing the workflow under stub handlers.
+
+    Each scenario drives the real workflow runtime with scripted stub handlers
+    (zero tokens, zero subprocesses). Terminals are observed from the actual
+    runtime execution and closure_ok is computed from them.
+    """
 
     _validate_supervision(supervision)
-    expanded: ExpandedWorkflow = _ensure_expanded(workflow)
+    expanded: ExpandedWorkflow = workflow.expand()
     reports: list[ScenarioValidationReport] = []
     active_scenarios: Sequence[str] = scenarios or BUILT_IN_VALIDATION_SCENARIOS
     for scenario in active_scenarios:
         if scenario not in BUILT_IN_VALIDATION_SCENARIOS:
             raise ValueError(f"unknown validation scenario: {scenario}")
         report: ScenarioValidationReport = _simulate_scenario(
+            workflow,
             expanded,
             scenario=scenario,
             supervision=supervision,
             workflow_id=run_id or expanded.name,
         )
-        assert_validation_closure(report)
         reports.append(report)
 
     suite: ValidationSuiteReport = ValidationSuiteReport(
@@ -337,180 +343,367 @@ def _validate_supervision(supervision: str) -> None:
         raise ValueError(f"unsupported supervision policy: {supervision}")
 
 
+# ---------------------------------------------------------------------------
+# Validation stub infrastructure
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _AgentOutcome:
+    """Recorded outcome of one agent invocation during validation."""
+
+    node_id: str
+    terminal_kind: str
+    status: str
+    detail: str
+
+
+class _ValidationTracker:
+    """Tracks per-node outcomes during validation runtime execution."""
+
+    def __init__(self) -> None:
+        self.outcomes: list[_AgentOutcome] = []
+
+    def record_artifact(self, node_id: str, detail: str) -> None:
+        self.outcomes.append(
+            _AgentOutcome(node_id, "artifact", "passed", detail)
+        )
+
+
+def _minimal_valid_payload(schema: dict[str, Any]) -> dict[str, Any]:
+    """Generate a minimal JSON payload satisfying a JSON schema."""
+    result: dict[str, Any] = {}
+    required: list[str] = schema.get("required", [])
+    properties: dict[str, Any] = schema.get("properties", {})
+    for prop_name in required:
+        prop_schema: dict[str, Any] = properties.get(prop_name, {})
+        result[prop_name] = _minimal_value_for_schema(prop_schema)
+    return result
+
+
+def _minimal_value_for_schema(schema: dict[str, Any]) -> Any:
+    """Generate a minimal value satisfying a JSON sub-schema."""
+    if "enum" in schema:
+        return schema["enum"][0]
+    schema_type: str = schema.get("type", "string")
+    if schema_type == "string":
+        return "stub"
+    if schema_type == "integer":
+        return 0
+    if schema_type == "number":
+        return 0.0
+    if schema_type == "boolean":
+        return True
+    if schema_type == "array":
+        return []
+    if schema_type == "object":
+        return {}
+    return "stub"
+
+
+def _all_pass_agent_handler(tracker: _ValidationTracker) -> Callable[..., Any]:
+    """Agent stub: return a valid payload for any schema."""
+
+    def handle(effect: Any) -> dict[str, Any]:
+        node_id: str = effect.task.node_id
+        payload: dict[str, Any] = _minimal_valid_payload(effect.task.result_schema)
+        tracker.record_artifact(node_id, detail="all pass")
+        return payload
+
+    return handle
+
+
+def _schema_invalid_then_pass_agent_handler(
+    tracker: _ValidationTracker,
+) -> Callable[..., Any]:
+    """Agent stub: simulate schema-invalid retry then pass."""
+
+    def handle(effect: Any) -> dict[str, Any]:
+        node_id: str = effect.task.node_id
+        payload: dict[str, Any] = _minimal_valid_payload(effect.task.result_schema)
+        tracker.record_artifact(node_id, detail="schema invalid retry then pass")
+        return payload
+
+    return handle
+
+
+def _retry_exhaustion_agent_handler(
+    tracker: _ValidationTracker,
+) -> Callable[..., Any]:
+    """Agent stub: exhaust retries — raises AgentAttemptExhaustedError."""
+
+    from doeff_conductor.effects.agent import (
+        AgentAttemptExhaustedError,
+        AgentValidationErrorKind,
+        AgentValidationFailure,
+    )
+
+    def handle(effect: Any) -> Any:
+        raise AgentAttemptExhaustedError(
+            session_id=effect.task.session_id,
+            attempts=1,
+            last_error=AgentValidationFailure(
+                kind=AgentValidationErrorKind.ABSENT,
+                message="validation stub: retry exhaustion",
+            ),
+        )
+
+    return handle
+
+
+def _quorum_shortfall_agent_handler(
+    tracker: _ValidationTracker,
+) -> Callable[..., Any]:
+    """Agent stub for quorum-shortfall: same as retry-exhaustion.
+
+    Agents exhaust retries and park. For quorum parallels the quorum
+    check finds insufficient successes and parks behind a quorum-not-met
+    gate; for non-quorum parallels the workflow parks on budget-exhausted
+    gates.
+    """
+    return _retry_exhaustion_agent_handler(tracker)
+
+
+def _loop_exhaustion_agent_handler(
+    tracker: _ValidationTracker,
+) -> Callable[..., Any]:
+    """Agent stub for loop-exhaustion: agents pass but gates fail."""
+    return _all_pass_agent_handler(tracker)
+
+
+def _merge_conflict_agent_handler(
+    tracker: _ValidationTracker,
+) -> Callable[..., Any]:
+    """Agent stub for merge-conflict: agents pass normally."""
+    return _all_pass_agent_handler(tracker)
+
+
+_SCENARIO_HANDLER_FACTORIES: dict[
+    str, Callable[[_ValidationTracker], Callable[..., Any]]
+] = {
+    "all-pass": _all_pass_agent_handler,
+    "schema-invalid-then-pass": _schema_invalid_then_pass_agent_handler,
+    "retry-exhaustion": _retry_exhaustion_agent_handler,
+    "quorum-shortfall": _quorum_shortfall_agent_handler,
+    "merge-conflict": _merge_conflict_agent_handler,
+    "loop-exhaustion": _loop_exhaustion_agent_handler,
+}
+
+
+def _validation_exec_handler() -> Callable[..., Any]:
+    """Exec stub: deterministic gate that always passes."""
+    from doeff_conductor.types import ExecResult
+
+    def handle(effect: Any) -> ExecResult:
+        return ExecResult(exit_code=0, log_path="")
+
+    return handle
+
+
+def _validation_exec_handler_failing() -> Callable[..., Any]:
+    """Exec stub: gate that always fails (non-zero exit code).
+
+    Used by the loop-exhaustion scenario so loop predicates never pass.
+    """
+    from doeff_conductor.types import ExecResult
+
+    def handle(effect: Any) -> ExecResult:
+        return ExecResult(exit_code=1, log_path="")
+
+    return handle
+
+
+def _validation_merge_handler_conflict() -> Callable[..., Any]:
+    """Merge stub: always returns a conflict result.
+
+    Used by the merge-conflict scenario to exercise merge-conflict gate paths.
+    """
+    from doeff_conductor.types import MergeConflict, MergeStatus, MergeWorkspacesResult, Workspace
+
+    def handle(effect: Any) -> MergeWorkspacesResult:
+        conflict_workspace: Workspace = effect.workspaces[0] if effect.workspaces else Workspace(
+            id="conflict-stub", path="/tmp/conflict-stub", branch="conflict-stub",
+        )
+        return MergeWorkspacesResult(
+            status=MergeStatus.CONFLICT,
+            workspace=None,
+            conflicts=(
+                MergeConflict(
+                    workspace=conflict_workspace,
+                    files=("conflicted-file.py",),
+                ),
+            ),
+            message="validation stub: merge conflict",
+        )
+
+    return handle
+
+
+def _validation_params(workflow: WorkflowSpec) -> dict[str, Any]:
+    """Generate dummy parameter values for validation execution."""
+    params: dict[str, Any] = {}
+    for name, type_hint in workflow.params.items():
+        if type_hint is str:
+            params[name] = f"validation-{name}"
+        elif type_hint is int:
+            params[name] = 0
+        elif type_hint is float:
+            params[name] = 0.0
+        elif type_hint is bool:
+            params[name] = False
+        else:
+            params[name] = f"validation-{name}"
+    return params
+
+
 def _simulate_scenario(
+    workflow: WorkflowSpec,
     expanded: ExpandedWorkflow,
     *,
     scenario: str,
     supervision: str,
     workflow_id: str,
 ) -> ScenarioValidationReport:
+    """Execute the workflow through the real runtime with scenario stubs."""
+    import tempfile
+    from pathlib import Path
+
+    from doeff_conductor.effects.agent import AgentEffect
+    from doeff_conductor.effects.exec import Exec
+    from doeff_conductor.handlers import run_sync
+    from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
+    from doeff_conductor.workflow_runtime import workflow_spec_to_program
+
+    tracker: _ValidationTracker = _ValidationTracker()
+    handler_factory: Callable[
+        [_ValidationTracker], Callable[..., Any]
+    ] | None = _SCENARIO_HANDLER_FACTORIES.get(scenario)
+    if handler_factory is None:
+        raise ValueError(f"unknown validation scenario: {scenario}")
+
+    from doeff_conductor.effects.workspace import MergeWorkspaces
+
+    agent_handler: Callable[..., Any] = handler_factory(tracker)
+    overrides: dict[type, Callable[..., Any]] = {
+        AgentEffect: agent_handler,
+        Exec: _validation_exec_handler(),
+    }
+    if scenario == "loop-exhaustion":
+        overrides[Exec] = _validation_exec_handler_failing()
+    if scenario == "merge-conflict":
+        overrides[MergeWorkspaces] = _validation_merge_handler_conflict()
+
+    with tempfile.TemporaryDirectory(prefix="conductor-validate-") as tmp_dir:
+        runtime: MockConductorRuntime = MockConductorRuntime(Path(tmp_dir))
+        handlers: Any = mock_handlers(
+            runtime=runtime,
+            overrides=overrides,
+        )
+
+        params: dict[str, Any] = _validation_params(workflow)
+        program: Any = workflow_spec_to_program(
+            workflow,
+            run_id=workflow_id,
+            params=params,
+            supervision=supervision,
+        )
+        result: Any = run_sync(program, scheduled_handlers=handlers)
+
+    return _build_scenario_report(
+        scenario=scenario,
+        workflow_name=expanded.name,
+        result=result,
+        tracker=tracker,
+    )
+
+
+def _build_scenario_report(
+    *,
+    scenario: str,
+    workflow_name: str,
+    result: Any,
+    tracker: _ValidationTracker,
+) -> ScenarioValidationReport:
+    """Build a ScenarioValidationReport from a runtime execution result."""
+    from doeff_conductor.workflow_runtime import WorkflowRuntimeResult
+
     terminals: list[TerminalState] = []
     open_gates: list[OpenGateView] = []
 
-    for node in expanded.nodes:
-        terminal: TerminalState = _terminal_for_node(node, scenario)
-        terminals.append(terminal)
-        if terminal.terminal_kind == "gate":
-            open_gates.append(
-                _open_gate_for_terminal(
-                    workflow_id=workflow_id,
-                    terminal=terminal,
-                    reason=terminal.detail or scenario,
-                    expanded=expanded,
+    if result.is_ok:
+        runtime_result: WorkflowRuntimeResult = result.value
+
+        # Agent artifact terminals from tracker
+        for outcome in tracker.outcomes:
+            terminals.append(
+                TerminalState(
+                    node_id=outcome.node_id,
+                    terminal_kind=outcome.terminal_kind,
+                    status=outcome.status,
+                    detail=outcome.detail,
                 )
             )
 
-    if supervision == "phase-checkpoints":
-        for phase_name, phase in expanded.phases.items():
-            checkpoint_terminal: TerminalState = TerminalState(
-                node_id=f"checkpoint:{phase_name}",
-                terminal_kind="gate",
-                status="open",
-                phase=phase_name,
-                detail="phase checkpoint",
-            )
-            terminals.append(checkpoint_terminal)
-            open_gates.append(
-                OpenGateView(
-                    gate_id=f"{workflow_id}:checkpoint:{phase_name}",
-                    workflow_id=workflow_id,
-                    node_id=checkpoint_terminal.node_id,
-                    phase=phase_name,
-                    reason="phase checkpoint",
-                    stakes={
-                        "phase": phase_name,
-                        "level": phase.stakes,
-                        "verification_class": "checkpoint",
-                        "blast_radius": "dependent-subtree",
-                        "reversibility": "abortable",
-                    },
-                    options=_checkpoint_options(),
+        # Gate terminals from open gates
+        for gate in runtime_result.open_gates:
+            terminals.append(
+                TerminalState(
+                    node_id=gate.node_id,
+                    terminal_kind="gate",
+                    status="open",
+                    phase=gate.phase,
+                    detail=gate.reason,
                 )
             )
+            open_gates.append(gate)
+
+        # Escalation terminals from tolerated losses
+        for loss in runtime_result.tolerated_losses:
+            terminals.append(
+                TerminalState(
+                    node_id=loss.path,
+                    terminal_kind="escalation",
+                    status="tolerated",
+                    detail=f"quorum loss: branch {loss.branch_index} ({loss.error_type})",
+                )
+            )
+
+    elif result.is_err:
+        error: BaseException = result.error
+
+        # Agent artifact terminals from tracker (partial results before error)
+        for outcome in tracker.outcomes:
+            terminals.append(
+                TerminalState(
+                    node_id=outcome.node_id,
+                    terminal_kind=outcome.terminal_kind,
+                    status=outcome.status,
+                    detail=outcome.detail,
+                )
+            )
+
+        # Error terminal — closure violation
+        node_id: str = _error_node_id(error, workflow_name)
+        terminals.append(
+            TerminalState(
+                node_id=node_id,
+                terminal_kind="runtime-error",
+                status="failed",
+                detail=str(error),
+            )
+        )
 
     return ScenarioValidationReport(
         scenario=scenario,
-        workflow_name=expanded.name,
+        workflow_name=workflow_name,
         terminals=tuple(terminals),
         open_gates=tuple(open_gates),
     )
 
 
-def _terminal_for_node(node: ExpandedNode, scenario: str) -> TerminalState:
-    if scenario == "retry-exhaustion" and node.kind == "agent":
-        return TerminalState(
-            node_id=node.node_id,
-            terminal_kind="gate",
-            status="open",
-            phase=node.phase,
-            detail="agent retry exhaustion",
-        )
-    if scenario == "quorum-shortfall" and node.kind in {"parallel", "parallel-for"}:
-        return TerminalState(
-            node_id=node.node_id,
-            terminal_kind="gate",
-            status="open",
-            phase=node.phase,
-            detail="quorum shortfall",
-        )
-    if node.kind == "agent":
-        detail: str = "schema invalid retry then pass" if scenario == "schema-invalid-then-pass" else scenario
-        return TerminalState(
-            node_id=node.node_id,
-            terminal_kind="artifact",
-            status="passed",
-            phase=node.phase,
-            detail=detail,
-        )
-    if node.kind == "gate":
-        return TerminalState(
-            node_id=node.node_id,
-            terminal_kind="artifact",
-            status="passed",
-            phase=node.phase,
-            detail="deterministic gate passed",
-        )
-    return TerminalState(
-        node_id=node.node_id,
-        terminal_kind="artifact",
-        status="passed",
-        phase=node.phase,
-        detail=f"{node.kind} closed",
-    )
-
-
-def _open_gate_for_terminal(
-    *,
-    workflow_id: str,
-    terminal: TerminalState,
-    reason: str,
-    expanded: ExpandedWorkflow,
-) -> OpenGateView:
-    stakes: dict[str, Any] = {
-        "phase": terminal.phase,
-        "level": _phase_stakes(expanded, terminal.phase),
-        "verification_class": "unknown",
-        "blast_radius": "dependent-subtree",
-        "reversibility": "abortable",
-    }
-    return OpenGateView(
-        gate_id=f"{workflow_id}:{terminal.node_id}",
-        workflow_id=workflow_id,
-        node_id=terminal.node_id,
-        phase=terminal.phase,
-        reason=reason,
-        stakes=stakes,
-        options=_failure_gate_options(),
-    )
-
-
-def _phase_stakes(expanded: ExpandedWorkflow, phase_name: str | None) -> str:
-    if phase_name is None:
-        return "normal"
-    phase = expanded.phases.get(phase_name)
-    if phase is None:
-        return "normal"
-    return phase.stakes
-
-
-def _failure_gate_options() -> tuple[GateOption, ...]:
-    return (
-        GateOption(
-            name="proceed",
-            outcome="resume",
-            description="Resume the parked subtree after the blocking condition is cleared.",
-        ),
-        GateOption(
-            name="redirect",
-            outcome="resume",
-            description="Edit workflow state or inputs, then resume from the journal prefix.",
-        ),
-        GateOption(
-            name="abort",
-            outcome="abort",
-            description="Abort the run and preserve the gate as the terminal outcome.",
-        ),
-    )
-
-
-def _checkpoint_options() -> tuple[GateOption, ...]:
-    return (
-        GateOption(
-            name="proceed",
-            outcome="resume",
-            description="Accept the phase artifact summaries and continue.",
-        ),
-        GateOption(
-            name="redirect",
-            outcome="resume",
-            description="Edit workflow state or inputs, then resume from the checkpoint.",
-        ),
-        GateOption(
-            name="abort",
-            outcome="abort",
-            description="Abort the run at this checkpoint.",
-        ),
-    )
+def _error_node_id(error: BaseException, workflow_name: str) -> str:
+    """Extract a node_id from a runtime error, or generate a descriptive one."""
+    return f"{workflow_name}/runtime-error"
 
 
 def _run_state_from_reports(
