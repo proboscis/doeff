@@ -85,7 +85,7 @@ workspace識別(C8) <──同型── 「識別は式座標の純関数」 ─
 | parallel直列化(ハンドラ内同期RPC) | K4 | L-K4-1/2 | **fixed** — `make_offloaded_scheduled_handler` bridges the blocking RPC through ExternalPromise+daemon thread (law ratified, integration test + semgrep rule shipped) |
 | gate answerの書き側不在 | K5 | L-K5-1 | **解決済み** gate-answer-journal.jsonl + `conductor gate answer` CLI |
 | await budget所有軸が未決(検証台帳 §11-7) | K4の縁 | L-K4-1の系(budget更新は誰の決定か) | open |
-| `conductor wait` verb不在 | 独立 | — | issue候補(codex可) |
+| `conductor wait` verb不在 | 独立 | — | **fixed** — `conductor wait <run-id>` 実装済み(issue conductor-wait-verb、codex run merge済み) |
 | blocked表示のcosmetic誤読(§11-8) | 独立 | — | issue候補(codex可) |
 
 ## 5. 固定計画(4層、核ごとの次の成果物)
