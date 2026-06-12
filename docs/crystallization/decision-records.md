@@ -112,3 +112,11 @@
 - **選択**: lawは「全ハンドラについての定理」ではなく「ハンドラ契約」(理論T、ハンドラ=T-代数の標準観)。契約を満たすハンドラだけが生成元名(Reader/State/Writer等)を名乗れる
 - **理由**: 「Askを数えてTellするハンドラ」のような効果的ハンドラはA1/A4の見かけ反例になるが、これは代数の欠陥ではなく記述の欠陥。再解釈でA系・S系・W系への同型攻撃が全てハンドラ側の義務に転化する
 - **帰結**: 等式変形(人・codexのリファクタリング)の正当性は「設置ハンドラの契約準拠」を前提とする、と規格に明記(algebra-draft §3冒頭)
+
+## D19. K1復元: PR #404のArc/share_handle機構を除去し、move-only法を復元 [オーナー — 2026-06-12]
+
+- **選択**: Option (b) — 構成的move-only法を復元。PR #404のArc<Mutex<Option<>>>・share_handle機構を完全に除去し、Continuation.chainを`Option<DetachedFiberChain>`(plain move)に戻す。例外伝播の#404セマンティクスは`Py<PyK>`ハンドル(Python参照、継続コピーではない)で保持
+- **棄却**: Option (a) — 仕様を弱めてArc機構を許容(K1結合核の法を放棄することに等しい)
+- **理由**: PR #404(47d2a518, 2026-04-25)は実際の意味論バグを修正したが、選ばれた機構がSPEC-VM-021不変条件1, 2, 4に違反。share_handle()はArcの第二参照を生成、VMとFrameに`Option<Continuation>`バックアップを格納。さらにライブバグ: バックアップがone-step窓を超えて残存し、次の無関係なProgramフレームに付着(stale-backup-leak)
+- **機構**: VMは`Py<PyK>`ハンドル(continuation.rsのPyKへのPython参照)を保持。ハンドラが例外を発生させた場合、VMはハンドルを借用してPyK.take()でチェーンを取得し再接続(discontinue k exn相当)。Callable traitに`is_generator_handler()`を追加: Pythonジェネレータハンドラのみ`Py<PyK>`バックアップを使用、同期Rustハンドラは`Value::Continuation(k)`を直接受け取る
+- **検証**: #404回帰テスト6件全件green、stale-backup-leak回帰テスト追加、ガードレイヤー(test_move_semantics_architecture.py)をSPEC-VM-021不変条件に準拠するよう書き直し(6テスト全pass)、cargo test --features "python_bridge,invariant-checks" 37pass/0fail

@@ -32,6 +32,16 @@ pub trait Callable: Send + Sync + std::fmt::Debug + 'static {
         None
     }
 
+    /// Whether this callable runs as a multi-step generator handler.
+    /// Generator handlers (e.g., Python `@do` generators) need a `Py<PyK>`
+    /// backup handle for exception recovery across yields. Synchronous
+    /// handlers (`call_handler` returns immediately with a complete `DoCtrl`)
+    /// don't need a backup — the continuation is consumed by the returned
+    /// `DoCtrl` or freed on drop.
+    fn is_generator_handler(&self) -> bool {
+        false
+    }
+
     /// Downcast support for bridge layer (e.g., extracting PythonCallable).
     fn as_any(&self) -> &dyn std::any::Any;
 }

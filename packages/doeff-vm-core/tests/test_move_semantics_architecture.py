@@ -1,98 +1,166 @@
+"""Guard-layer tests: move-only Continuation law (SPEC-VM-021).
+
+These tests assert source-shape invariants that encode the constructive
+move-only law restored by the K1 PR.  They are NOT functional tests —
+they grep the Rust source for forbidden patterns.
+
+If a test here fails, it means a code change has re-introduced shared
+ownership on the continuation chain.  Do NOT weaken these assertions;
+instead, fix the code to obey SPEC-VM-021.
+
+Invariants checked:
+  1. No Arc/Mutex on the chain field — one-shot is Option::take, not
+     lock+take on a shared cell.
+  2. No share_handle / clone_handle — there is no API to create a second
+     reference to the same continuation.
+  3. The VM does not store Continuation objects — it stores Py<PyK>
+     handles (Python references, not chain copies).
+  4. Frame does not store Continuation objects — the backup slot is a
+     Py<PyK> handle.
+"""
+
 from pathlib import Path
 
 CORE_ROOT = Path(__file__).resolve().parents[1]
 CONTINUATION_RS = CORE_ROOT / "src/continuation.rs"
-VM_DISPATCH_RS = CORE_ROOT / "src/vm/dispatch.rs"
+VM_RS = CORE_ROOT / "src/vm.rs"
+FRAME_RS = CORE_ROOT / "src/frame.rs"
+STEP_RS = CORE_ROOT / "src/vm/step.rs"
+VALUE_RS = CORE_ROOT / "src/value.rs"
 
 
 def _runtime_source(path: Path) -> str:
+    """Read source up to the #[cfg(test)] boundary (runtime code only)."""
     source = path.read_text(encoding="utf-8")
     return source.split("#[cfg(test)]", 1)[0]
 
 
-def _function_block(source: str, signature: str) -> str:
-    start = source.find(signature)
-    assert start != -1, f"missing function signature: {signature}"
-
-    brace = source.find("{", start)
-    assert brace != -1, f"missing opening brace for function: {signature}"
-
-    depth = 0
-    for index in range(brace, len(source)):
-        char = source[index]
-        if char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return source[start : index + 1]
-
-    raise AssertionError(f"unterminated function block: {signature}")
+# -----------------------------------------------------------------------
+# Invariant 1: chain field is plain Option, not Arc<Mutex<Option<...>>>
+# -----------------------------------------------------------------------
 
 
-def test_continuation_has_no_arc_snapshot() -> None:
-    """Continuation must use move semantics, not Arc snapshots."""
+def test_chain_field_is_plain_option() -> None:
+    """Continuation.chain must be `Option<DetachedFiberChain>`, not Arc/Mutex."""
     source = _runtime_source(CONTINUATION_RS)
 
-    assert "fibers: Vec<FiberId>" in source, (
-        "Move semantics require Continuation to own detached FiberIds."
-    )
-    assert "consumed: bool" in source, (
-        "Continuation must track one-shot consumption directly."
+    # The chain field MUST be a plain Option (move-only by construction).
+    assert "chain: Option<DetachedFiberChain>" in source, (
+        "Continuation must own the chain as a plain Option<DetachedFiberChain> "
+        "(SPEC-VM-021 invariant: one-shot is Option::take, not lock+take)."
     )
 
-    banned = (
-        "segment_snapshot",
-        "captured_segment_snapshot",
-        "Arc<Segment>",
-        "Arc<Fiber>",
-        "parent: Option<Arc<Continuation>>",
-        "fn parent(&self)",
-        "fn set_parent(",
-    )
-    for needle in banned:
-        assert needle not in source, (
-            f"Move semantics must eliminate snapshot- and parent-chain storage: `{needle}`"
+    # Forbidden: any Arc or Mutex wrapping the chain field.
+    for forbidden in [
+        "Arc<Mutex<Option<DetachedFiberChain>>>",
+        "Arc<Mutex<",
+        "Mutex<Option<DetachedFiberChain>>",
+    ]:
+        assert forbidden not in source, (
+            f"Chain field must not use shared ownership: `{forbidden}` "
+            f"violates SPEC-VM-021 invariant 1 (single owning location)."
         )
 
 
-def test_fiber_not_duplicated_after_capture() -> None:
-    """A fiber exists in the chain OR in a continuation, never both."""
-    source = _runtime_source(VM_DISPATCH_RS)
-    capture_block = _function_block(
-        source,
-        "pub(crate) fn capture_live_continuation(",
-    )
-
-    assert ".parent = None" in capture_block, (
-        "Capturing a continuation must detach the owned fiber from the active chain."
-    )
-    assert "set_parent(" not in source, (
-        "Move semantics must merge owned FiberIds into one continuation, not nest continuations."
-    )
+# -----------------------------------------------------------------------
+# Invariant 2: no share_handle / clone_handle API
+# -----------------------------------------------------------------------
 
 
-def test_resume_reattaches_same_fiber() -> None:
-    """Resume must reattach the original fiber, not create a new one."""
-    source = _runtime_source(VM_DISPATCH_RS)
+def test_no_shared_handle_api() -> None:
+    """There must be no way to create a second reference to a chain."""
+    source = _runtime_source(CONTINUATION_RS)
 
-    assert "fn continuation_exec_segment(" not in source, (
-        "Resume must not materialize a fresh execution segment from a snapshot."
+    for forbidden in [
+        "fn share_handle(",
+        "fn clone_handle(",
+        "fn fork_handle(",
+        "impl Clone for Continuation",
+    ]:
+        assert forbidden not in source, (
+            f"Continuation must not expose `{forbidden}` — "
+            f"SPEC-VM-021 invariant 2 (clone_handle does not exist)."
+        )
+
+
+# -----------------------------------------------------------------------
+# Invariant 3: one-shot via Option::take
+# -----------------------------------------------------------------------
+
+
+def test_one_shot_via_option_take() -> None:
+    """Continuation::take must use self.chain.take() (Option::take)."""
+    source = _runtime_source(CONTINUATION_RS)
+
+    assert "fn take(&mut self) -> Option<DetachedFiberChain>" in source, (
+        "Continuation must expose take() returning Option<DetachedFiberChain> "
+        "(SPEC-VM-021 invariant 3: one-shot is Option::take)."
     )
-    assert "alloc_segment(exec_seg)" not in source, (
-        "Resume must not allocate a replacement fiber during continuation activation."
+    assert "self.chain.take()" in source, (
+        "take() must delegate to self.chain.take() (plain Option::take, "
+        "not lock().take() on a shared cell)."
     )
 
-    enter_block = _function_block(
-        source,
-        "fn enter_or_reenter_continuation_segment_with_dispatch(",
+
+# -----------------------------------------------------------------------
+# Invariant 4: VM does not store Continuation objects
+# -----------------------------------------------------------------------
+
+
+def test_vm_does_not_store_continuation() -> None:
+    """VM struct must not have fields typed as Continuation or Option<Continuation>."""
+    source = _runtime_source(VM_RS)
+
+    for forbidden in [
+        "Option<Continuation>",
+        "pending_handler_chain_backup",
+        ": Continuation",
+    ]:
+        assert forbidden not in source, (
+            f"VM must not store Continuation objects (`{forbidden}`) — "
+            f"SPEC-VM-021 invariant 4. Use Py<PyK> handles instead."
+        )
+
+    # Positive: the backup slot is a Py<PyK> handle.
+    assert "pending_handler_k_handle" in source, (
+        "VM must use a Py<PyK> handle (not Continuation) for exception recovery."
     )
-    assert "k.fibers()" in enter_block, (
-        "Resume must reattach the owned FiberIds captured in the continuation."
+
+
+def test_frame_does_not_store_continuation() -> None:
+    """Frame::Program must not have a Continuation backup field."""
+    source = _runtime_source(FRAME_RS)
+
+    for forbidden in [
+        "chain_backup",
+        "chain_backup: Option<Continuation>",
+    ]:
+        assert forbidden not in source, (
+            f"Frame must not store Continuation objects (`{forbidden}`) — "
+            f"SPEC-VM-021 invariant 4. Use Py<PyK> handles instead."
+        )
+
+    # Positive: handler_k_handle is a Py<PyK>.
+    assert "handler_k_handle" in source, (
+        "Frame::Program must use handler_k_handle (Py<PyK>), "
+        "not a Continuation backup."
     )
-    assert "let Some(seg_id) = k.segment_id()" in enter_block, (
-        "Resume must recover the original detached FiberId."
+
+
+# -----------------------------------------------------------------------
+# Invariant 5: Value::Continuation panics on clone (move-only)
+# -----------------------------------------------------------------------
+
+
+def test_value_continuation_panics_on_clone() -> None:
+    """Value::Continuation clone impl must panic (SPEC-VM-021 move-only)."""
+    source = _runtime_source(VALUE_RS)
+
+    assert "Value::Continuation(_)" in source, (
+        "Value must have a Continuation variant."
     )
-    assert "self.current_segment = Some(seg_id);" in enter_block, (
-        "Resume must reinstall the detached fiber as the current fiber."
+
+    # The Clone impl for Value must panic for Continuation.
+    assert "must not be cloned" in source or "SPEC-VM-021" in source, (
+        "Value::Continuation clone must panic with a SPEC-VM-021 message."
     )

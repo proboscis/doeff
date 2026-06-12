@@ -1222,4 +1222,134 @@ mod tests {
             Err(err) => panic!("expected Ok, got error: {:?}", err),
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Test 13: Stale-backup-leak regression — generator handler returning
+    // non-Expand DoCtrl must NOT leak pending_handler_k_handle
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_stale_backup_does_not_leak_for_non_expand_generator_handler() {
+        use crate::continuation::{Continuation, OwnedControlContinuation, PyK};
+
+        /// A handler that claims is_generator_handler()=true (triggering the
+        /// PyK wrapping path) but returns DoCtrl::Resume directly — NOT
+        /// DoCtrl::Expand. With the stale-backup bug, the pending_handler_k_handle
+        /// would persist and attach to the next unrelated Program frame.
+        #[derive(Debug)]
+        struct GeneratorLikeResumeHandler;
+
+        impl Callable for GeneratorLikeResumeHandler {
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+            fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
+                Err(VMError::internal("use call_handler"))
+            }
+            fn is_generator_handler(&self) -> bool {
+                true
+            }
+            fn call_handler(&self, args: Vec<Value>) -> Result<DoCtrl, VMError> {
+                // Handler receives k as Value::Opaque(PyK) because
+                // is_generator_handler()=true. Extract via pyo3.
+                let mut args = args;
+                let k = pyo3::Python::attach(|py| {
+                    match args.remove(1) {
+                        Value::Opaque(obj) => {
+                            let bound = obj.bind(py);
+                            let py_k = bound
+                                .cast::<PyK>()
+                                .expect("expected PyK");
+                            let mut k = py_k.borrow_mut();
+                            match k.take() {
+                                Some(OwnedControlContinuation::Started(c)) => c,
+                                _ => panic!("expected started continuation"),
+                            }
+                        }
+                        _ => panic!("expected Opaque(PyK)"),
+                    }
+                });
+                // Return Resume directly (NOT Expand). This exercises the
+                // fix: pending_handler_k_handle must be dropped, not restored.
+                Ok(DoCtrl::Resume {
+                    k,
+                    value: Value::Int(42),
+                })
+            }
+        }
+
+        // Body: performs once, returns whatever it gets back
+        #[derive(Debug)]
+        struct BodyStream {
+            state: u8,
+        }
+
+        impl IRStream for BodyStream {
+            fn resume(&mut self, value: Value) -> StreamStep {
+                match self.state {
+                    0 => {
+                        self.state = 1;
+                        StreamStep::Instruction(DoCtrl::Perform {
+                            effect: Value::String("test".into()),
+                        })
+                    }
+                    1 => StreamStep::Done(value),
+                    _ => StreamStep::Error(Value::String("bad".into())),
+                }
+            }
+            fn throw(&mut self, e: Value) -> StreamStep {
+                StreamStep::Error(e)
+            }
+        }
+
+        #[derive(Debug)]
+        struct Root {
+            done: bool,
+            h: Option<Value>,
+            b: Option<Box<DoCtrl>>,
+        }
+
+        impl IRStream for Root {
+            fn resume(&mut self, value: Value) -> StreamStep {
+                if !self.done {
+                    self.done = true;
+                    StreamStep::Instruction(DoCtrl::WithHandler {
+                        handler: self.h.take().unwrap(),
+                        body: self.b.take().unwrap(),
+                    })
+                } else {
+                    StreamStep::Done(value)
+                }
+            }
+            fn throw(&mut self, e: Value) -> StreamStep {
+                StreamStep::Error(e)
+            }
+        }
+
+        let mut vm = setup_vm_with_stream(Root {
+            done: false,
+            h: Some(Value::Callable(
+                Arc::new(GeneratorLikeResumeHandler) as CallableRef,
+            )),
+            b: Some(expand_stream(BodyStream { state: 0 })),
+        });
+
+        let result = run_to_completion(&mut vm);
+
+        // The handler resumed with 42 — body returns 42.
+        match result {
+            Ok(Value::Int(42)) => {}
+            Ok(other) => panic!("expected Int(42), got {:?}", other),
+            Err(err) => panic!("expected Ok, got error: {:?}", err),
+        }
+
+        // Critical assertion: pending_handler_k_handle must be None.
+        // With the stale-backup bug, the handle would persist and
+        // attach to the next unrelated Program frame.
+        assert!(
+            vm.pending_handler_k_handle.is_none(),
+            "stale-backup-leak: pending_handler_k_handle must be None \
+             after a generator handler returns a non-Expand DoCtrl"
+        );
+    }
 }
