@@ -851,7 +851,7 @@ def gate_list(ctx: click.Context, workflow_id: str | None, output_json: bool) ->
 @gate_group.command("answer")
 @click.argument("workflow_id")
 @click.argument("gate_id")
-@click.argument("option", type=click.Choice(["proceed", "redirect", "abort"]))
+@click.argument("option", type=click.Choice(["proceed", "extend", "redirect", "abort"]))
 @click.option("--params", "-p", help="Resume parameters as JSON")
 @click.option("--note", "-n", default="", help="Adjudication note for the journal")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
@@ -865,7 +865,7 @@ def gate_answer_cmd(
     note: str,
     output_json: bool,
 ) -> None:
-    """Answer an open gate and apply proceed, redirect, or abort (with journal)."""
+    """Answer an open gate and apply proceed, extend, redirect, or abort (with journal)."""
     _answer_gate(ctx, workflow_id, gate_id, option, params, note, output_json)
 
 
@@ -920,7 +920,7 @@ def _answer_gate(
 @cli.command("answer")
 @click.argument("workflow_id")
 @click.argument("gate_id")
-@click.argument("option", type=click.Choice(["proceed", "redirect", "abort"]))
+@click.argument("option", type=click.Choice(["proceed", "extend", "redirect", "abort"]))
 @click.option("--params", "-p", help="Resume parameters as JSON")
 @click.option("--note", "-n", default="", help="Adjudication note for the journal")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
@@ -934,7 +934,7 @@ def answer_cmd(
     note: str,
     output_json: bool,
 ) -> None:
-    """Answer an open gate and apply proceed, redirect, or abort."""
+    """Answer an open gate and apply proceed, extend, redirect, or abort."""
     _answer_gate(ctx, workflow_id, gate_id, option, params, note, output_json)
 
 

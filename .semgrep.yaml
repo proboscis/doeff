@@ -3851,3 +3851,24 @@ rules:
       include:
         - /packages/doeff-conductor/src/doeff_conductor/handlers/**
         - /packages/doeff-agents/src/doeff_agents/handlers/**
+
+  - id: k4-deadline-not-transport-timeout
+    languages: [python]
+    severity: ERROR
+    message: >
+      ADR D13 / L-K4-3 (deadline ownership): wall-clock deadlines belong to
+      the agent NODE SPEC (`deadline_seconds`, declared via
+      `agent! :deadline-seconds`), are observed by the L3 conductor runtime,
+      and park as a K5 gate on exceed; the only extension is a journaled
+      gate answer. The transport await budget (DEFAULT_AWAIT_BUDGET_SECONDS)
+      is a pure keep-alive heartbeat and must never be task-configurable.
+      Do not reintroduce a `timeout_seconds` field on AgentTask/AgentSpec.
+    patterns:
+      - pattern-either:
+          - pattern: AgentTask(..., timeout_seconds=$VALUE, ...)
+          - pattern: AgentSpec(..., timeout_seconds=$VALUE, ...)
+          - pattern: AgentsAgentTask(..., timeout_seconds=$VALUE, ...)
+    paths:
+      include:
+        - /packages/doeff-conductor/src/**
+        - /packages/doeff-agents/src/**

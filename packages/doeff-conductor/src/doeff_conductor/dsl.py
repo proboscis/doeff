@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -103,6 +104,7 @@ class AgentSpec:
     persona: str | None = None
     retry: int | None = None
     budget: Any | None = None
+    deadline_seconds: Any | None = None
     label: str | None = None
     phase: str | None = None
 
@@ -123,6 +125,9 @@ class AgentSpec:
             profile=self.profile,
             persona=self.persona,
             retry=self.retry,
+            deadline_seconds=_parse_deadline_annotation(
+                self.deadline_seconds, "agent! deadline-seconds"
+            ),
             label=self.label,
             phase=self.phase or phase,
         )
@@ -372,6 +377,7 @@ def agent_bang(
     persona: str | None = None,
     retry: int | None = None,
     budget: Any | None = None,
+    deadline_seconds: Any | None = None,
     label: str | None = None,
     phase: str | None = None,
     class_: str | None = None,
@@ -388,6 +394,7 @@ def agent_bang(
     persona = _pop_kw(kwargs, "persona", persona)
     retry = _pop_kw(kwargs, "retry", retry)
     budget = _pop_kw(kwargs, "budget", budget)
+    deadline_seconds = _pop_kw(kwargs, "deadline_seconds", deadline_seconds)
     label = _pop_kw(kwargs, "label", label)
     phase = _pop_kw(kwargs, "phase", phase)
     class_ = _pop_kw(kwargs, "class_", class_)
@@ -406,6 +413,7 @@ def agent_bang(
         persona=_normalize_name(persona) if persona is not None else None,
         retry=retry,
         budget=budget,
+        deadline_seconds=deadline_seconds,
         label=label,
         phase=phase,
     )
@@ -913,6 +921,7 @@ def _expand_agent(
     dependencies = _validate_expr_refs(spec.prompt, state, allow_try_ref=False)
     dependencies.update(_validate_expr_refs(spec.workspace, state, allow_try_ref=False))
     budget_units = state.add_budget(spec.budget, "agent! budget")
+    _parse_deadline_annotation(spec.deadline_seconds, "agent! deadline-seconds")
     node_id = _node_id(state.workflow_name, path, "agent")
     state.nodes.append(
         ExpandedNode(
@@ -1476,6 +1485,30 @@ def _parse_budget_annotation(budget: Any | None, context: str) -> int:
             raise WorkflowExpansionError(f"invalid budget annotation {budget!r}")
         return int(text) * multiplier
     raise WorkflowExpansionError(f"invalid budget annotation type {type(budget).__name__}")
+
+
+def _parse_deadline_annotation(deadline_seconds: Any | None, context: str) -> float | None:
+    """Validate the wall-clock deadline node-spec attribute (L-K4-3).
+
+    The deadline is declared on the node spec (k8s ``activeDeadlineSeconds``
+    semantics) and observed by the L3 runtime; expansion rejects malformed
+    annotations so a bad deadline fails at plan/validate time, never mid-run.
+    """
+    if deadline_seconds is None:
+        return None
+    if isinstance(deadline_seconds, bool) or not isinstance(deadline_seconds, (int, float)):
+        raise WorkflowExpansionError(
+            f"{context} must be a positive number of seconds, "
+            f"got {type(deadline_seconds).__name__}"
+        )
+    parsed = float(deadline_seconds)
+    if not math.isfinite(parsed):
+        raise WorkflowExpansionError(f"{context} must be finite, got {deadline_seconds!r}")
+    if parsed <= 0:
+        raise WorkflowExpansionError(
+            f"{context} must be a positive number of seconds, got {deadline_seconds!r}"
+        )
+    return parsed
 
 
 def _node_id(workflow_name: str, path: str, kind: str) -> str:

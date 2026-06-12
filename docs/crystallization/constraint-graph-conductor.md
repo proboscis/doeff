@@ -50,11 +50,12 @@ workspace識別(C8) <──同型── 「識別は式座標の純関数」 ─
 
 - D1が「並行性は構造的」と宣言し(C6)、D1/D6がワーカー待ちをagentd RPCにし(C1)、スケジューラは協調的ハンドラである(本体B10)。**3つの選択は個々に正しいが、「RPC待ちは協調スケジューラとどう合成するか」だけが決められなかった**: `DaemonAgentHandler.handle_await_result`(doeff-agents handlers/daemon.py:298)→ `AgentdClient.await_result`(agentd_client.py:135)が同期ブロックし、`run(scheduled(conductor_handler(program)))`(api.py:152)のループごと止める
 - 帰結: **parallelは形だけで実行は直列** — live実証 2026-06-12、run `doeff-review-20260612-1`(6-branch parallel、起動5分後もセッション1個。兄弟branchはlaunchすら起きない=スケジューラ飢餓)。conductor srcに`Await`/スレッド退避は0箇所(唯一の言及はutils.py:51の深層皮肉「use Await effects in programs」)
-- **law候補**:
+- **law**:
   - **L-K4-1(非ブロックハンドラ)**: エフェクトハンドラは無制限ブロッキングI/Oを同期実行しない。無制限待ちはスケジューラのAwait/external completion経路(scheduler.pyのexternal_queueが既に受け皿)からのみ入る
   - **L-K4-2(重なり観測)**: pendingな並列agentノード a,b のセッション生存区間は交差する。`wall_clock(parallel(a,b)) < wall_clock(a) + wall_clock(b)`(agentd stubのsleepで機械検証可能)
-- 参照意味論の輸入: k8s controller = level-triggered・非ブロックreconcile(「子の完了をスレッドを塞いで待つcontroller」は存在しない)。doeff語では「blockingはeffectとしてyieldせよ」 — VM側で確立済みの規律のL3への適用
-- 固定状況: **全層✗**(ADRは並行性を構造的と言うのみで合成則に触れない)
+  - **L-K4-3(deadline所有、2026-06-13批准 — K5との結合辺)**: `deadline(agent node) ∈ node spec`; `renewal(deadline) = gate answer ∈ journal`; transport await はkeep-alive以外のdeadline意味論を持たない。宣言は`agent! :deadline-seconds`(展開時検査)、超過はK5 gate(`deadline-exceeded`、budget-exhaustedの名前付き兄弟)としてpark、延長は journaled gate answer(`extend`)のみ — 自動延長tierは明示的に却下(ADR D13)
+- 参照意味論の輸入: k8s controller = level-triggered・非ブロックreconcile(「子の完了をスレッドを塞いで待つcontroller」は存在しない)。doeff語では「blockingはeffectとしてyieldせよ」 — VM側で確立済みの規律のL3への適用。L-K4-3はk8s `activeDeadlineSeconds` の輸入: deadlineはresource specに属し、controllerは観測するのみ
+- 固定状況: ADR✓(D11+D13)/ law✓(L-K4-1/2/3等式明文化)/ runtime✓(offloaded bridge + heartbeat再await + deadline gate E2E)/ static✓(semgrep `k4-no-blocking-agent-handler`・`k4-no-sync-await-result-in-scheduled-handler`・`k4-deadline-not-transport-timeout`)
 
 ### 核K5: closure・裁定核 — C7 ⇔ C10 ⇔ C5(journal経由でK3に隣接)
 
@@ -84,7 +85,7 @@ workspace識別(C8) <──同型── 「識別は式座標の純関数」 ─
 | workspace! がresume非安定(偽green) | K3 | L-K3-3 | **fixed** — `workspace-journal.jsonl` + `JournaledWorkspaceHandler` records workspace materializations; pre-coverage runs fail loudly |
 | parallel直列化(ハンドラ内同期RPC) | K4 | L-K4-1/2 | **fixed** — `make_offloaded_scheduled_handler` bridges the blocking RPC through ExternalPromise+daemon thread (law ratified, integration test + semgrep rule shipped) |
 | gate answerの書き側不在 | K5 | L-K5-1 | **解決済み** gate-answer-journal.jsonl + `conductor gate answer` CLI |
-| await budget所有軸が未決(検証台帳 §11-7) | K4の縁 | L-K4-1の系(budget更新は誰の決定か) | open |
+| await budget所有軸が未決(検証台帳 §11-7) | K4の縁 | L-K4-3(旧: L-K4-1の系) | **fixed** — L-K4-3批准(ADR D13): deadlineはnode spec(`agent! :deadline-seconds`)、超過は`deadline-exceeded` K5 gate、延長はjournaled `extend` answerのみ、`DEFAULT_AWAIT_BUDGET_SECONDS`は純粋なtransport heartbeatへ降格(タスク級`timeout_seconds`削除+semgrep guard) |
 | `conductor wait` verb不在 | 独立 | — | **fixed** — `conductor wait <run-id>` 実装済み(issue conductor-wait-verb、codex run merge済み) |
 | blocked表示のcosmetic誤読(§11-8) | 独立 | — | issue候補(codex可) |
 
@@ -93,5 +94,5 @@ workspace識別(C8) <──同型── 「識別は式座標の純関数」 ─
 | 核 | 1 ADR | 2 law(等式) | 3 runtime invariant | 4 static |
 |---|---|---|---|---|
 | K3 | ADR-0001にD12追記(workspace journal被覆) **✓済** | L-K3-1/2/3をspec §に等式で | workspace-journal.jsonl + JournaledWorkspaceHandler + E2E 3テスト **✓済** | semgrep: ハンドラ内でのsession名の手組み禁止(replay_keying経由を強制) |
-| K4 | D1に合成則を追記(handler非ブロック) | L-K4-1/2 | stub二並列で生存区間交差をassertするテスト(CI) | semgrep: handle_*内の`await_result`直呼び禁止(Awaitブリッジ強制) |
+| K4 | D1に合成則を追記(handler非ブロック)+ D13(deadline所有)**✓済** | L-K4-1/2 + L-K4-3 **✓等式明文化** | stub二並列で生存区間交差をassertするテスト(CI)+ deadline park→extend→replay E2E **✓済** | semgrep: handle_*内の`await_result`直呼び禁止(Awaitブリッジ強制)+ `k4-deadline-not-transport-timeout`(タスク級timeout再導入禁止)**✓済** |
 | K5 | D9に裁定の記録義務を追記 **✓済** | L-K5-1/2 **✓等式明文化** | gate-answer-journal.jsonl + E2E 6テスト **✓済** | semgrep: GateOption追加時にanswer consumerの存在を要求(または閉包テスト) |

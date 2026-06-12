@@ -26,6 +26,7 @@ _LAZY_EXPORTS = {
     "default_agentd_paths": ".agentd_client",
     "ensure_agentd": ".agentd_client",
     "AgentAttemptExhaustedError": ".effects",
+    "AgentDeadlineExceededError": ".effects",
     "AgentEffect": ".effects",
     "AgentError": ".effects",
     "AgentNotAvailableError": ".effects",
