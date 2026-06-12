@@ -231,7 +231,8 @@ def validate_cmd(
                 str(len(scenario_report.open_gates)),
             )
         console.print(table)
-        console.print("Closure: ok")
+        closure_ok: bool = report.to_dict()["closure_ok"]
+        console.print(f"Closure: {'ok' if closure_ok else 'FAILED'}")
         if run_id:
             console.print(f"Persisted overseer state for run: {run_id}")
     except _CLI_USER_ERROR_TYPES as e:
