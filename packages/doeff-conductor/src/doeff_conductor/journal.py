@@ -25,9 +25,11 @@ from doeff_conductor.replay_keying import (
 JOURNAL_VERSION = 1
 AGENT_JOURNAL_FILENAME = "agent-journal.jsonl"
 GATE_ANSWER_JOURNAL_FILENAME = "gate-answer-journal.jsonl"
+WORKSPACE_JOURNAL_FILENAME = "workspace-journal.jsonl"
 TERMINAL_KIND_SUCCEEDED = "succeeded"
 TERMINAL_KIND_OPEN_GATE = "open-gate"
 TERMINAL_KIND_GATE_ANSWER = "gate-answer"
+TERMINAL_KIND_WORKSPACE_CREATED = "workspace-created"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -265,6 +267,120 @@ class GateAnswerJournal:
         return answers
 
 
+@dataclass(frozen=True, kw_only=True)
+class CreateWorkspaceJournalEntry:
+    """One append-only workspace creation journal record (L-K3-3)."""
+
+    workspace_id: str
+    repo: str
+    branch: str
+    worktree_path: str
+    base_ref: str
+    issue_id: str | None
+    created_at: str
+    terminal_kind: str = TERMINAL_KIND_WORKSPACE_CREATED
+
+    def to_json_line(self) -> str:
+        payload: dict[str, Any] = {
+            "version": JOURNAL_VERSION,
+            "workspace_id": self.workspace_id,
+            "repo": self.repo,
+            "branch": self.branch,
+            "worktree_path": self.worktree_path,
+            "base_ref": self.base_ref,
+            "issue_id": self.issue_id,
+            "created_at": self.created_at,
+            "terminal_kind": self.terminal_kind,
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+    @classmethod
+    def from_json_line(
+        cls, line: str, *, path: Path, line_number: int
+    ) -> CreateWorkspaceJournalEntry:
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise JournalCorruptionError(
+                path=path,
+                message=f"invalid JSON on line {line_number}: {exc.msg}",
+            ) from exc
+
+        if not isinstance(payload, dict):
+            raise JournalCorruptionError(
+                path=path,
+                message=f"line {line_number} is not a JSON object",
+            )
+        version = _require_int(payload, "version", path, line_number)
+        if version != JOURNAL_VERSION:
+            raise JournalCorruptionError(
+                path=path,
+                message=f"line {line_number} has unsupported journal version {version}",
+            )
+
+        return cls(
+            workspace_id=_require_str(payload, "workspace_id", path, line_number),
+            repo=_require_str(payload, "repo", path, line_number),
+            branch=_require_str(payload, "branch", path, line_number),
+            worktree_path=_require_str(payload, "worktree_path", path, line_number),
+            base_ref=_require_str(payload, "base_ref", path, line_number),
+            issue_id=_optional_str(payload, "issue_id", path, line_number),
+            created_at=_require_str(payload, "created_at", path, line_number),
+            terminal_kind=_require_str(payload, "terminal_kind", path, line_number),
+        )
+
+
+class WorkspaceJournal:
+    """Append-only JSONL journal of workspace creations scoped to a conductor run id."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    @classmethod
+    def for_run(
+        cls,
+        run_id: str,
+        *,
+        state_dir: str | Path | None = None,
+    ) -> WorkspaceJournal:
+        run_dir: Path = _state_dir(state_dir) / "workflows" / run_id
+        return cls(run_dir / WORKSPACE_JOURNAL_FILENAME)
+
+    def load_entries(self) -> list[CreateWorkspaceJournalEntry]:
+        if not self.path.exists():
+            return []
+
+        entries: list[CreateWorkspaceJournalEntry] = []
+        for line_number, line in enumerate(self.path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line:
+                raise JournalCorruptionError(
+                    path=self.path,
+                    message=f"blank line at {line_number}",
+                )
+            entries.append(
+                CreateWorkspaceJournalEntry.from_json_line(
+                    line,
+                    path=self.path,
+                    line_number=line_number,
+                )
+            )
+        return entries
+
+    def append_entry(self, entry: CreateWorkspaceJournalEntry) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("a", encoding="utf-8") as journal_file:
+            journal_file.write(entry.to_json_line())
+            journal_file.write("\n")
+
+    def latest_workspaces(self) -> dict[str, CreateWorkspaceJournalEntry]:
+        """Return workspace_id -> entry for the latest entry per workspace (last-wins)."""
+        entries: list[CreateWorkspaceJournalEntry] = self.load_entries()
+        workspaces: dict[str, CreateWorkspaceJournalEntry] = {}
+        for entry in entries:
+            workspaces[entry.workspace_id] = entry
+        return workspaces
+
+
 class AgentReplaySession:
     """Stateful replay cursor for one conductor run's journal."""
 
@@ -481,6 +597,23 @@ def _require_str(
         raise JournalCorruptionError(
             path=path,
             message=f"line {line_number} field {field_name!r} is not a string",
+        )
+    return value
+
+
+def _optional_str(
+    payload: dict[str, Any],
+    field_name: str,
+    path: Path,
+    line_number: int,
+) -> str | None:
+    value = _require_field(payload, field_name, path, line_number)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise JournalCorruptionError(
+            path=path,
+            message=f"line {line_number} field {field_name!r} is not a string or null",
         )
     return value
 

@@ -81,7 +81,7 @@ workspace識別(C8) <──同型── 「識別は式座標の純関数」 ─
 
 | 欠陥 | 核 | 破れているlaw | 状態 |
 |---|---|---|---|
-| workspace! がresume非安定(偽green) | K3 | L-K3-3 | 既知(検証台帳・スキル記録済み) |
+| workspace! がresume非安定(偽green) | K3 | L-K3-3 | **fixed** — `workspace-journal.jsonl` + `JournaledWorkspaceHandler` records workspace materializations; pre-coverage runs fail loudly |
 | parallel直列化(ハンドラ内同期RPC) | K4 | L-K4-1/2 | **fixed** — `make_offloaded_scheduled_handler` bridges the blocking RPC through ExternalPromise+daemon thread (law ratified, integration test + semgrep rule shipped) |
 | gate answerの書き側不在 | K5 | L-K5-1 | **解決済み** gate-answer-journal.jsonl + `conductor gate answer` CLI |
 | await budget所有軸が未決(検証台帳 §11-7) | K4の縁 | L-K4-1の系(budget更新は誰の決定か) | open |
@@ -92,6 +92,6 @@ workspace識別(C8) <──同型── 「識別は式座標の純関数」 ─
 
 | 核 | 1 ADR | 2 law(等式) | 3 runtime invariant | 4 static |
 |---|---|---|---|---|
-| K3 | ADR-0001にD11追記(識別の純関数性・資源被覆) | L-K3-1/2/3をspec §に等式で | journalにCreateWorkspace等の資源イベントを追加し被覆を機械検査 | semgrep: ハンドラ内でのsession名の手組み禁止(replay_keying経由を強制) |
+| K3 | ADR-0001にD12追記(workspace journal被覆) **✓済** | L-K3-1/2/3をspec §に等式で | workspace-journal.jsonl + JournaledWorkspaceHandler + E2E 3テスト **✓済** | semgrep: ハンドラ内でのsession名の手組み禁止(replay_keying経由を強制) |
 | K4 | D1に合成則を追記(handler非ブロック) | L-K4-1/2 | stub二並列で生存区間交差をassertするテスト(CI) | semgrep: handle_*内の`await_result`直呼び禁止(Awaitブリッジ強制) |
 | K5 | D9に裁定の記録義務を追記 **✓済** | L-K5-1/2 **✓等式明文化** | gate-answer-journal.jsonl + E2E 6テスト **✓済** | semgrep: GateOption追加時にanswer consumerの存在を要求(または閉包テスト) |
