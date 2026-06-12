@@ -59,6 +59,8 @@ def test_c7_pilot_workflow_validates_closure_scenarios() -> None:
         "schema-invalid-then-pass",
         "retry-exhaustion",
         "quorum-shortfall",
+        "merge-conflict",
+        "loop-exhaustion",
     }
 
 

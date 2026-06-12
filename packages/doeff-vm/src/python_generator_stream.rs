@@ -657,15 +657,12 @@ fn classify_tagged_to_doctrl(
             };
             Ok(DoCtrl::Perform { effect })
         }
-        6 => extract_continuation_and_value(py, obj)
-            .map(|(k, v)| DoCtrl::Resume { k, value: v })
-            .map_err(|_| "Resume: failed to extract continuation/value".to_string()),
-        7 => extract_continuation_and_value(py, obj)
-            .map(|(k, v)| DoCtrl::Transfer { k, value: v })
-            .map_err(|_| "Transfer: failed to extract continuation/value".to_string()),
-        8 => extract_effect_and_continuation(py, obj)
-            .map(|(effect, k)| DoCtrl::Delegate { effect, k })
-            .map_err(|_| "Delegate: failed to extract effect/continuation".to_string()),
+        6 => extract_continuation_and_value(py, obj, "Resume")
+            .map(|(k, v)| DoCtrl::Resume { k, value: v }),
+        7 => extract_continuation_and_value(py, obj, "Transfer")
+            .map(|(k, v)| DoCtrl::Transfer { k, value: v }),
+        8 => extract_effect_and_continuation(py, obj, "Delegate")
+            .map(|(effect, k)| DoCtrl::Delegate { effect, k }),
         16 => {
             let f_obj = obj
                 .getattr("f")
@@ -697,9 +694,8 @@ fn classify_tagged_to_doctrl(
                 expr: Box::new(expr_doctrl),
             })
         }
-        19 => extract_effect_and_continuation(py, obj)
-            .map(|(effect, k)| DoCtrl::Pass { effect, k })
-            .map_err(|_| "Pass: failed to extract effect/continuation".to_string()),
+        19 => extract_effect_and_continuation(py, obj, "Pass")
+            .map(|(effect, k)| DoCtrl::Pass { effect, k }),
         20 => {
             let handler_obj = obj
                 .getattr("handler")
@@ -718,12 +714,10 @@ fn classify_tagged_to_doctrl(
                 body: Box::new(body_doctrl),
             })
         }
-        21 => extract_continuation_and_exception(py, obj)
-            .map(|(k, exc)| DoCtrl::ResumeThrow { k, exception: exc })
-            .map_err(|_| "ResumeThrow: failed to extract continuation/exception".to_string()),
-        22 => extract_continuation_and_exception(py, obj)
-            .map(|(k, exc)| DoCtrl::TransferThrow { k, exception: exc })
-            .map_err(|_| "TransferThrow: failed to extract continuation/exception".to_string()),
+        21 => extract_continuation_and_exception(py, obj, "ResumeThrow")
+            .map(|(k, exc)| DoCtrl::ResumeThrow { k, exception: exc }),
+        22 => extract_continuation_and_exception(py, obj, "TransferThrow")
+            .map(|(k, exc)| DoCtrl::TransferThrow { k, exception: exc }),
         23 => {
             let k_obj = obj
                 .getattr("continuation")
@@ -808,51 +802,51 @@ fn classify_tagged_to_doctrl(
 fn extract_continuation_and_value(
     py: Python<'_>,
     obj: &Bound<'_, PyAny>,
-) -> Result<(doeff_vm_core::Continuation, Value), Value> {
+    label: &str,
+) -> Result<(doeff_vm_core::Continuation, Value), String> {
     let k_obj = obj
         .getattr("continuation")
-        .map_err(|e| Value::Opaque(PyShared::new(e.value(py).clone().into_any().unbind())))?;
+        .map_err(|_| format!("{}: missing 'continuation' attribute", label))?;
     let k_ref = k_obj
         .downcast::<doeff_vm_core::continuation::PyK>()
-        .map_err(|_| Value::String("expected K".into()))?;
+        .map_err(|_| format!("{}: continuation must be K", label))?;
     let mut k_borrowed = k_ref.borrow_mut();
     let k = k_borrowed
         .take()
-        .ok_or_else(|| Value::String("continuation consumed".into()))?;
+        .ok_or_else(|| format!("{}: continuation consumed", label))?;
     let continuation = match k {
         doeff_vm_core::OwnedControlContinuation::Started(k) => k,
-        _ => return Err(Value::String("expected started continuation".into())),
+        _ => return Err(format!("{}: expected started continuation", label)),
     };
     let value = obj
         .getattr("value")
-        .ok()
-        .map(|v| python_to_value(py, &v))
-        .unwrap_or(Value::Unit);
+        .map_err(|_| format!("{}: missing 'value' attribute", label))?;
+    let value = python_to_value(py, &value);
     Ok((continuation, value))
 }
 
 fn extract_effect_and_continuation(
-    py: Python<'_>,
+    _py: Python<'_>,
     obj: &Bound<'_, PyAny>,
-) -> Result<(Value, doeff_vm_core::Continuation), Value> {
+    label: &str,
+) -> Result<(Value, doeff_vm_core::Continuation), String> {
     let effect = obj
         .getattr("effect")
-        .ok()
-        .map(|e| Value::Opaque(PyShared::new(e.unbind())))
-        .unwrap_or(Value::Unit);
+        .map_err(|_| format!("{}: missing 'effect' attribute", label))?;
+    let effect = Value::Opaque(PyShared::new(effect.unbind()));
     let k_obj = obj
         .getattr("continuation")
-        .map_err(|e| Value::Opaque(PyShared::new(e.value(py).clone().into_any().unbind())))?;
+        .map_err(|_| format!("{}: missing 'continuation' attribute", label))?;
     let k_ref = k_obj
         .downcast::<doeff_vm_core::continuation::PyK>()
-        .map_err(|_| Value::String("expected K".into()))?;
+        .map_err(|_| format!("{}: continuation must be K", label))?;
     let mut k_borrowed = k_ref.borrow_mut();
     let k = k_borrowed
         .take()
-        .ok_or_else(|| Value::String("continuation consumed".into()))?;
+        .ok_or_else(|| format!("{}: continuation consumed", label))?;
     let continuation = match k {
         doeff_vm_core::OwnedControlContinuation::Started(k) => k,
-        _ => return Err(Value::String("expected started continuation".into())),
+        _ => return Err(format!("{}: expected started continuation", label)),
     };
     Ok((effect, continuation))
 }
@@ -860,26 +854,26 @@ fn extract_effect_and_continuation(
 fn extract_continuation_and_exception(
     py: Python<'_>,
     obj: &Bound<'_, PyAny>,
-) -> Result<(doeff_vm_core::Continuation, Value), Value> {
+    label: &str,
+) -> Result<(doeff_vm_core::Continuation, Value), String> {
     let k_obj = obj
         .getattr("continuation")
-        .map_err(|e| Value::Opaque(PyShared::new(e.value(py).clone().into_any().unbind())))?;
+        .map_err(|_| format!("{}: missing 'continuation' attribute", label))?;
     let k_ref = k_obj
         .downcast::<doeff_vm_core::continuation::PyK>()
-        .map_err(|_| Value::String("expected K".into()))?;
+        .map_err(|_| format!("{}: continuation must be K", label))?;
     let mut k_borrowed = k_ref.borrow_mut();
     let k = k_borrowed
         .take()
-        .ok_or_else(|| Value::String("continuation consumed".into()))?;
+        .ok_or_else(|| format!("{}: continuation consumed", label))?;
     let continuation = match k {
         doeff_vm_core::OwnedControlContinuation::Started(k) => k,
-        _ => return Err(Value::String("expected started continuation".into())),
+        _ => return Err(format!("{}: expected started continuation", label)),
     };
     let exception = obj
         .getattr("exception")
-        .ok()
-        .map(|e| Value::Opaque(PyShared::new(e.unbind())))
-        .unwrap_or(Value::String("unknown exception".into()));
+        .map_err(|_| format!("{}: missing 'exception' attribute", label))?;
+    let exception = Value::Opaque(PyShared::new(exception.unbind()));
     Ok((continuation, exception))
 }
 

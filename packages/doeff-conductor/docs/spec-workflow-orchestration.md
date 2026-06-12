@@ -345,6 +345,38 @@ Terminal-text heuristics survive only inside the L1 tmux adapter for
 liveness/awaiting-input detection, and never produce domain facts or
 workflow-facing results (see ADR 0001 "Condemned existing code").
 
+### 5.1.1 Handler composition law (L-K4-1/L-K4-2)
+
+The runtime executes as `run(scheduled(WithHandler(conductor_handler,
+program)))` — a cooperative scheduler that yields between tasks only when
+a handler returns or yields a scheduler effect. Two laws constrain how
+handlers interact with the scheduler:
+
+- **L-K4-1 (non-blocking handler):** An effect handler must not perform
+  unbounded blocking I/O synchronously. Unbounded waits enter ONLY via
+  the scheduler's external-completion path (`CreateExternalPromise` +
+  daemon thread + `Wait(promise.future)`). Bounded fast RPCs (e.g.
+  `Launch`, `FollowUp`, `Send`) may remain synchronous. This ensures the
+  cooperative scheduler keeps dispatching sibling tasks while any single
+  handler waits for an external result.
+
+- **L-K4-2 (overlap observable):** For pending parallel agent nodes a, b:
+  session lifetimes must intersect, and
+  `wall_clock(parallel(a, b)) < wall_clock(a) + wall_clock(b)`. This is
+  a direct consequence of L-K4-1 applied to the `agent!` handler's
+  `AwaitResult` calls: since they yield to the scheduler rather than
+  blocking, sibling branches' launches and awaits can interleave.
+
+The `agent!` handler bridges its `AwaitResult` RPC through
+`make_offloaded_scheduled_handler` (a `CreateExternalPromise` + daemon
+thread pattern), while `Launch`, `FollowUp`, and `Release` remain
+synchronous (all are bounded fast RPCs).
+
+**Await budget axis owner (resolves §11 item 6):** The L2 attempt loop
+(`_run_agent_task`) is the SINGLE timeout/retry authority.
+`timeout_seconds` flows to agentd unchanged; the bridge introduces no
+second timeout.
+
 ### 5.2 The `agent!` handler is the composition proof
 
 ```
@@ -543,11 +575,27 @@ because where to pause is a trust/stakes judgment extrinsic to the task:
 - **Resume.** Unfinished `Launch` at crash → idempotent re-adoption by
   deterministic session name (level-triggered, supervised by agentd on the
   tmux substrate).
-- **Workspace effects are not journaled — by design.** Workspace identity is
-  deterministic from `(run-id, workspace-node identity)` (§6.1), so
-  re-running `workspace!`/`merge!` on resume re-binds the same branch and
-  worktree — level-triggered ensure, the same discipline as session
-  re-adoption. There is no workspace bookkeeping to replay.
+- **Gate answer journal.** Gate answers (`proceed` / `redirect` / `abort`)
+  are recorded in `gate-answer-journal.jsonl` in the run directory. Each
+  entry carries `gate_id`, `workflow_id`, `option`, `outcome` (from the
+  selected `GateOption`), `note`, `answered_at`, and
+  `terminal_kind="gate-answer"`. The journal is append-only; re-adjudication
+  appends a new entry rather than editing in place (L-K5-2). `resume`
+  reads `latest_answers()` — the last answer per gate — as the sole
+  authoritative source of answered gate options. Pre-journal runs are
+  dead runs; no fallback to `run-state.json`.
+- **Workspace effects are journaled for resource coverage (L-K3-3).**
+  `workspace-journal.jsonl` records each workspace materialization:
+  `workspace_id`, `repo`, `branch`, `worktree_path`, `base_ref`,
+  `issue_id`, `created_at`, and `terminal_kind="workspace-created"`.
+  The journal is flat append-only with last-wins-per-`workspace_id`
+  semantics — no generation/entry_index since workspace identity is
+  deterministic from `(run_id, workspace-node identity)`.
+  `JournaledWorkspaceHandler` wraps the delegate handler: first call
+  for a `workspace_id` delegates AND appends; subsequent calls (resume)
+  delegate but do NOT double-append.  Pre-coverage detection: if an
+  agent journal exists but no workspace journal does, the handler raises
+  `PreCoverageRunError` — forcing the operator to start a fresh run.
 
 ## 10. Enforcement summary
 
@@ -560,6 +608,9 @@ because where to pause is a trust/stakes judgment extrinsic to the task:
   or the profile registry (same enforcement pattern as agent-control-plane
   ADR 0005's semgrep boundary rules);
 - closure-law model check: stub scenario suite in CI (§7);
+- gate answer validation: `GateOption.outcome` must be in
+  `VALID_GATE_OUTCOMES` (`resume` | `abort`); `answer` records a durable
+  journal entry before any state transition (L-K5-1);
 - condemned-code list: ADR 0001 "Condemned existing code" — deletions, not
   deprecations.
 
@@ -576,17 +627,18 @@ because where to pause is a trust/stakes judgment extrinsic to the task:
 4. **Calibration state store** — cross-run, level-triggered; v1 ships
    manual sampling rates + escape recording only (no autonomous rate
    adjustment).
-5. **Runtime auto-commit captures session state — fixed e206be17.**
-   Conductor-created workspaces now install workspace-level `.gitignore`
-   entries for in-worktree runtime state (`.agent-home/`). The ignore lives
-   at workspace initialization, so post-agent-node `Commit`, manual
-   `git add -A`, and future workspace consumers all share the same behavior.
-6. **Await budget has no owning axis.** `AgentTask.timeout_seconds`
-   exists but nothing sets it; the effective default lives in L1
-   (3600s after the 2026-06-11 correction; was 600s, which burned a
-   healthy frontier worker's whole retry budget). Decide the owning
-   axis — profile tier, node, or stakes — and bind it explicitly like
-   effort.
+5. **Runtime auto-commit captures session state — fixed e206be17 and
+   conductor-workspace-exclude-not-gitignore.** Conductor-created workspaces
+   now install repository-local `info/exclude` entries for in-worktree runtime
+   state (`.agent-home/`). The exclude lives at workspace initialization, so
+   post-agent-node `Commit`, manual `git add -A`, and future workspace
+   consumers all share the same behavior without dirtying tracked files.
+6. **Await budget axis — resolved (§5.1.1, ADR D11).** The L2 attempt
+   loop is the SINGLE timeout/retry authority. `timeout_seconds` flows
+   to agentd unchanged; the `make_offloaded_scheduled_handler` bridge
+   introduces no second timeout. The effective default (3600s) lives
+   in L1; future work may bind it to a profile-tier or node-level axis
+   like effort.
 7. **agentd raw status misreads working claude sessions as `blocked`**
    (the `❯` input box is visible mid-work). Cosmetic — contract
    validation, not status labels, decides completion — but operators and

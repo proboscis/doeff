@@ -23,9 +23,9 @@ This guide helps users of the Go `orch` CLI migrate to `doeff-conductor`.
 | `orch ps` | `conductor ps` | Same syntax |
 | `orch show <id>` | `conductor show <id>` | Same syntax |
 | `orch watch <id>` | `conductor watch <id>` | Same syntax |
-| `orch attach <id>` | `conductor attach <id>` | Same syntax |
+| `orch attach <id>` | `conductor watch <id>` | No interactive attach command; watch is the workflow-level progress view |
 | `orch stop <id>` | `conductor stop <id>` | Same syntax |
-| `orch logs <id>` | `conductor logs <id>` | Same syntax |
+| `orch logs <id>` | `conductor show <id> --since N` | No logs command; show/watch expose workflow progress |
 
 ### Issue Management
 
@@ -62,7 +62,7 @@ This guide helps users of the Go `orch` CLI migrate to `doeff-conductor`.
 | Type checking | Runtime | Static (pyright) |
 | Parallel agents | Supported | Supported via Gather |
 | Human-in-loop | Supported | Supported |
-| JSON output | `--json` | `--json` |
+| JSON output | `--json` | Available on selected commands such as `ps`, `show`, `watch`, and `issue list` |
 | State storage | `~/.local/state/orch/` | `~/.local/state/doeff-conductor/` |
 
 ## Migration Steps
@@ -121,7 +121,7 @@ AGENT_SCHEMA = {
 
 @do
 def my_workflow(issue):
-    env = yield CreateWorkspace(issue=issue)
+    env = yield CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-impl")
     yield Agent(AgentTask(
         run_id=issue.id,
         node_id="implement",
@@ -207,12 +207,12 @@ def my_workflow():
 
 ```python
 from doeff import do, EffectGenerator
-from doeff_conductor import Issue, PRHandle
+from doeff_conductor import CreatePR, CreateWorkspace, Issue, PRHandle
 
 @do
 def typed_workflow(issue: Issue) -> EffectGenerator[PRHandle]:
     # Type checker knows env is Workspace
-    env = yield CreateWorkspace(issue=issue)
+    env = yield CreateWorkspace(issue=issue, workspace_id=f"{issue.id.lower()}-typed")
     # Type checker knows pr is PRHandle
     pr = yield CreatePR(workspace=env, title=issue.title)
     return pr

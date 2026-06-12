@@ -1,8 +1,8 @@
-# doeff エフェクト代数 第二稿(反例攻撃済み)
+# doeff エフェクト代数 — 確定版
 
 作成: 2026-06-11。事後検死(postmortem.md)・制約グラフ(constraint-graph.md)・現行語彙の棚卸し(45エフェクト型)に基づく。
 **改訂: 2026-06-12 反例攻撃セッション** — G6決着(死設備→全削除、D15)、共有規範確定(D16)、AW2条件付き化(D17)、lawの地位確定(D18)、C系→CC系改名、基盤law CS1/CC5追加。
-**用途**: law確定版。生成元はG1〜G5で閉じた。残る保留は§6。
+**確定: 2026-06-12** — 戦略優先2の3関門(語彙抽出・反例攻撃・カバレッジ実測)をすべて通過。カバレッジ実測 **20/20タスク表現可能(100%、閾値7割)** — [coverage-report.md](coverage-report.md)。law機械化: `tests/laws/test_generator_laws.py`(21 passed — scheduler大規模改修後も継続green)。残る保留は§6(いずれもissue化済みか本代数の外)。
 規格: プリミティブ5〜10個(直交+完全)/合成則の層明示/law(等式)/インタプリタ分離。
 
 ---
@@ -87,7 +87,7 @@ OCaml 5から輸入: `perform` / `match_with`(WithHandler) / `resume`(non-tail) 
 ### 導出物(ライブラリ)の導出経路
 
 - `Try` = エラーチャネル(コア)上のハンドラ
-- `Local(e, p)` = `WithHandler(reader(e ⊕ outer_env), p)` + 内側ハンドラ再設置
+- `Local(e, p)` = `reader(e ⊕ outer_env)(p)` + 内側ハンドラ再設置
 - `Listen(p, T)` = ローカルWithHandlerで型Tを横取り+Pass
 - `Gather(ts)` = `traverse Wait ts`(scheduler内部で導出済み)
 - `Race/Cancel/Promise/Semaphore` = Spawn/Wait+キュー状態(scheduler.pyで実証)
@@ -105,6 +105,9 @@ lawは「全ハンドラについての定理」ではなく**ハンドラ契約
 
 - **CS1(協調原子性)**: インターリーブは**scheduler効果・外界効果の発行点でのみ**起こる。スケジューラは単一スレッド協調式(Transfer/ResumeThrowベース — scheduler.py:312-341)で、2つのyield点の間のエフェクト列はアトミック。S1〜S4・W1が「タスク内で」無条件成立する根拠
 - **CC5(決定論)**: readyキューはpriority heap+挿入順tie-break(scheduler.py:229,258-262)= FIFO within priority。外界の非決定性は`external_queue`(scheduler.py:235)の1箇所に隔離されており、**外部promise不在ならスケジューリングは入力の決定論的関数**。→ 決定論的シミュレータ(戦略優先3)の存在証明: 外界橋の差し替えのみで決定論実行が得られる
+- **yield点の微細構造**(2026-06-12テストで確定): (a) **Spawn自体がyield点で、子がspawner再開より先に走る**(両者NORMALでenqueue、子が先=FIFO — scheduler.py:466-468)。(b) CompletePromise/FailPromiseは起床側をNORMAL・完了側をIDLEで再enqueue=**被起床側が先に走る**(scheduler.py:593-597)。(c) CreatePromise/Cancelはyield点ではない(直接Resume)。等式変形時のスケジュール推論はこの3点を前提にできる
+
+**機械化(2026-06-12)**: 本節の等式は `tests/laws/test_generator_laws.py` として実行可能化済み(21 passed / 1 skipped)。内訳: A1〜A4、S1〜S5、W1〜W2、W3(**不等式ロック** — 反例が消えたらテストが落ちて法の昇格を通知)、AW1、AW2単一タスク、CC1、CC2、CC4(順序可換両側)、CS1×2(yield点の有無で観測が変わることの両側固定)、Spawn子先行、CC5決定論(2回実行一致)。AW2複数タスク反例はreal-clockでは再現が不安定なためsimドライバ待ちでskip(理由がskip文に記載)。S6は既存`tests/effects/test_effect_combinations.py::TestSafeNonRollbackLaw`が被覆。**残: hypothesis乱択化(プログラム生成)とsimドライバ — ハーネスが存在する今、どちらもcodex委譲候補**
 
 ### G1 Ask
 - A1(重複律): `ask k >>= λx. ask k >>= λy. f(x,y) ≡ ask k >>= λx. f(x,x)`
@@ -187,9 +190,9 @@ lawは「全ハンドラについての定理」ではなく**ハンドラ契約
 1. GetHandlersのコア公認とlaw(§4-6)
 2. Skipのselective層への再定式化(§4-3)
 3. Traverse並列意味論(applicative層の実装充足)
-4. 残骸削除issue群: VarStore一式(④に統合 — global_state/writer_log含む)、PromptBoundary.types、MaskSpec(constraint-graph §4)
-5. **カバレッジ実測**: 過去タスク20個をこの生成元集合(G1〜G5)で書き直し、7割未満なら切り口を疑う(戦略文書の基準 — 本セッション外)
-6. CS1/CC5のproperty test化(決定論的シミュレータ構築=戦略優先3の入口)
+4. ~~残骸削除issue群~~ → **issue化完了(2026-06-12)**: VarStore一式 [#461](https://github.com/proboscis/doeff/issues/461)、PromptBoundary.types [#464](https://github.com/proboscis/doeff/issues/464)、MaskSpec [#465](https://github.com/proboscis/doeff/issues/465)、SPEC-EFF-002更新 [#466](https://github.com/proboscis/doeff/issues/466)
+5. ~~カバレッジ実測~~ → **完了(2026-06-12)**: 20/20表現可能(100%)— [coverage-report.md](coverage-report.md)。副産物: doeff-secretのDelegate残骸バグ発見([#470](https://github.com/proboscis/doeff/issues/470))、Traverse族長尾の未使用観測(削減候補・急がない)
+6. ~~CS1/CC5のproperty test化~~ → **第一段完了(2026-06-12)**: `tests/laws/test_generator_laws.py`(21 passed)。残のissue化完了: hypothesis乱択化 [#462](https://github.com/proboscis/doeff/issues/462)、simドライバ(AW2反例の決定論的再現)[#463](https://github.com/proboscis/doeff/issues/463)
 
 ## 7. インタプリタ分離の現状
 

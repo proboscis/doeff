@@ -10,6 +10,7 @@ Provides programmatic access to conductor functionality:
 
 import json
 import secrets
+import warnings
 from collections.abc import Generator
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,17 @@ if TYPE_CHECKING:
 def _get_state_dir() -> Path:
     """Get the state directory for conductor."""
     return Path.home() / ".local" / "state" / "doeff-conductor"
+
+
+def _warn_corrupt_persistent_state(path: Path, reason: object) -> None:
+    """Warn about one corrupt persisted entry while allowing list verbs to continue."""
+    from doeff_conductor.exceptions import ConductorStateWarning
+
+    warnings.warn(
+        f"Corrupt persistent state skipped: {path}: {reason}",
+        ConductorStateWarning,
+        stacklevel=2,
+    )
 
 
 class ConductorAPI:
@@ -262,17 +274,20 @@ class ConductorAPI:
         option: str,
         *,
         params: dict[str, Any] | None = None,
+        note: str = "",
     ) -> "WorkflowHandle":
         """Record an overseer gate answer and apply its closure-preserving verb."""
 
         from doeff_conductor.overseer import record_gate_answer
         from doeff_conductor.types import WorkflowStatus
+        from doeff_conductor.workflow_loader import workflow_snapshot_path
 
         run_state = record_gate_answer(
             self.state_dir,
             workflow_id=workflow_id,
             gate_id=gate_id,
             option=option,
+            note=note,
         )
         if option == "abort":
             handle = self.get_workflow(workflow_id)
@@ -294,12 +309,37 @@ class ConductorAPI:
             )
             self._save_workflow(aborted)
             return aborted
-        if option in {"proceed", "redirect"}:
+        if option == "proceed":
             return self.resume_workflow(
                 workflow_id,
                 params=params,
                 supervision=run_state.supervision,
             )
+        if option == "redirect":
+            handle = self.get_workflow(workflow_id)
+            if handle is None:
+                raise ValueError(f"Workflow not found: {workflow_id}")
+            snapshot_path: Path = workflow_snapshot_path(self.state_dir, workflow_id)
+            blocked = WorkflowHandle(
+                id=handle.id,
+                name=handle.name,
+                status=WorkflowStatus.BLOCKED,
+                template=handle.template,
+                issue_id=handle.issue_id,
+                created_at=handle.created_at,
+                updated_at=datetime.now(timezone.utc),
+                workspaces=handle.workspaces,
+                agents=handle.agents,
+                pr_url=handle.pr_url,
+                error=(
+                    f"redirect recorded for gate {gate_id}; "
+                    f"edit snapshot at {snapshot_path} then run: "
+                    f"conductor resume {workflow_id}"
+                ),
+                result_payload=handle.result_payload,
+            )
+            self._save_workflow(blocked)
+            return blocked
         raise ValueError(f"unsupported gate answer option: {option}")
 
     def list_workflows(
@@ -327,7 +367,8 @@ class ConductorAPI:
                     continue
 
                 workflows.append(handle)
-            except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+            except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+                _warn_corrupt_persistent_state(meta_file, error)
                 continue
 
         # Sort by updated_at descending
@@ -359,8 +400,7 @@ class ConductorAPI:
                 return WorkflowHandle.from_dict(data)
         elif len(matches) > 1:
             raise ValueError(
-                f"Ambiguous workflow ID '{workflow_id}': "
-                f"matches {[d.name for d in matches]}"
+                f"Ambiguous workflow ID '{workflow_id}': matches {[d.name for d in matches]}"
             )
 
         return None
@@ -375,7 +415,6 @@ class ConductorAPI:
         Yields status updates as dictionaries.
         """
         import time
-
 
         last_status = None
 
@@ -471,7 +510,17 @@ class ConductorAPI:
                         text=True,
                         check=False,
                     )
+                    if result.returncode != 0:
+                        reason = (
+                            result.stderr.strip()
+                            or result.stdout.strip()
+                            or f"git branch --show-current exited {result.returncode}"
+                        )
+                        _warn_corrupt_persistent_state(workspace_dir, reason)
+                        continue
                     ref = result.stdout.strip()
+                    if not ref:
+                        raise ValueError("git branch --show-current returned an empty ref")
                     workspace = Workspace(
                         id=workspace_dir.name,
                         repo=repo_dir.name,
@@ -483,7 +532,8 @@ class ConductorAPI:
                         ),
                     )
                     workspaces.append(workspace)
-                except (OSError, TypeError, ValueError):
+                except (OSError, TypeError, ValueError) as error:
+                    _warn_corrupt_persistent_state(workspace_dir, error)
                     continue
 
         return workspaces

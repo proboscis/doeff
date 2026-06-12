@@ -4,7 +4,6 @@ Domain exceptions for doeff-conductor.
 Provides a hierarchy of exceptions for specific error handling in workflows.
 """
 
-
 from dataclasses import dataclass
 from pathlib import Path
 from subprocess import CalledProcessError
@@ -17,6 +16,9 @@ class ConductorError(Exception):
     allowing workflows to catch conductor errors specifically.
     """
 
+
+class ConductorStateWarning(Warning):
+    """Warning emitted when persisted conductor state is corrupt but listing continues."""
 
 
 class IssueNotFoundError(ConductorError):
@@ -41,6 +43,30 @@ class IssueAlreadyExistsError(ConductorError):
     def __init__(self, issue_id: str, message: str | None = None):
         self.issue_id = issue_id
         super().__init__(message or f"Issue already exists: {issue_id}")
+
+
+class IssueFileCorruptError(ConductorError):
+    """Raised when a persisted markdown issue file contains corrupt metadata."""
+
+    def __init__(
+        self,
+        path: str | Path | None = None,
+        message: str | None = None,
+        *,
+        field: str | None = None,
+        raw_value: object | None = None,
+    ):
+        self.path = path
+        self.field = field
+        self.raw_value = raw_value
+        detail = message or "Issue file is corrupt"
+        if path is not None:
+            detail = f"{detail}: {path}"
+        if field is not None:
+            detail = f"{detail}: field={field}"
+        if raw_value is not None:
+            detail = f"{detail}: raw_value={raw_value!r}"
+        super().__init__(detail)
 
 
 @dataclass
@@ -94,8 +120,12 @@ class GitCommandError(ConductorError):
         return cls(
             command=list(error.cmd) if isinstance(error.cmd, (list, tuple)) else [str(error.cmd)],
             returncode=error.returncode,
-            stdout=error.stdout if isinstance(error.stdout, str) else (error.stdout.decode() if error.stdout else ""),
-            stderr=error.stderr if isinstance(error.stderr, str) else (error.stderr.decode() if error.stderr else ""),
+            stdout=error.stdout
+            if isinstance(error.stdout, str)
+            else (error.stdout.decode() if error.stdout else ""),
+            stderr=error.stderr
+            if isinstance(error.stderr, str)
+            else (error.stderr.decode() if error.stderr else ""),
             cwd=cwd,
         )
 
@@ -220,8 +250,10 @@ __all__ = [
     "AgentError",
     "AgentTimeoutError",
     "ConductorError",
+    "ConductorStateWarning",
     "GitCommandError",
     "IssueAlreadyExistsError",
+    "IssueFileCorruptError",
     "IssueNotFoundError",
     "JournalCorruptionError",
     "PRError",
