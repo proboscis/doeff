@@ -18,6 +18,7 @@ from doeff_conductor.handlers import run_sync
 from doeff_conductor.handlers.journaled_agent import JournaledAgentHandler
 from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
 from doeff_conductor.journal import (
+    PROGRESS_STATUS_PARKED,
     PROGRESS_STATUS_RUNNING,
     PROGRESS_STATUS_SUCCEEDED,
     TERMINAL_KIND_SUCCEEDED,
@@ -259,3 +260,31 @@ def test_render_run_shows_done_glyph(tmp_path: Path) -> None:
     assert "node-1" in text
     assert "Implement" in text
     assert "✓" in text  # DONE glyph (D2 precedence applied)
+
+
+def test_node_tree_falls_back_to_open_gates_without_progress_journal(tmp_path: Path) -> None:
+    """A run with parked gates but no progress journal (e.g. created before the
+    producer) still shows its parked nodes in the tree (not an empty tree)."""
+    from doeff_conductor.overseer import GateOption, OpenGateView, record_open_gates
+
+    state_dir = tmp_path / "state"
+    run_id = "run-gatefallback"
+    node = "Build/0/parallel[0]/agent"
+    record_open_gates(
+        state_dir,
+        workflow_id=run_id,
+        workflow_name="wf",
+        supervision="autonomous",
+        open_gates=(
+            OpenGateView(
+                gate_id="g0", workflow_id=run_id, node_id=node, phase="Build",
+                reason="budget-exhausted", stakes={},
+                options=(GateOption(name="proceed", outcome="resume", description="d"),),
+            ),
+        ),
+    )
+    # No progress journal exists for this run.
+    views = node_status_map(state_dir, run_id)
+    assert node in views
+    assert views[node].status == PROGRESS_STATUS_PARKED
+    assert views[node].phase == "Build"
