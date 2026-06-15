@@ -31,6 +31,7 @@ from doeff_conductor.journal import (
     ProgressJournal,
 )
 from doeff_conductor.overseer import list_open_gates
+from doeff_conductor.replay_keying import node_identity_fingerprint
 
 # Effective display status (post D2 join).
 STATUS_DONE = "done"
@@ -60,6 +61,16 @@ class NodeView:
     node_identity: str
 
 
+def _node_identity_for(run_id: str, node_id: str) -> str:
+    """Recompute a node's identity from its node_id, mirroring agent_replay_decision.
+
+    Lets the monitor join an open gate's ``node_id`` to the agent-journal's
+    ``node_identity`` for runs that have no progress journal.
+    """
+    node_path = tuple(part for part in node_id.split("/") if part)
+    return node_identity_fingerprint(workflow_name=run_id, node_path=node_path, loop_indices=())
+
+
 def _succeeded_identities(state_dir: str | Path, workflow_id: str) -> set[str]:
     """node_identity set with a validated succeeded artifact (completion truth)."""
     try:
@@ -87,6 +98,30 @@ def node_status_map(state_dir: str | Path, workflow_id: str) -> dict[str, NodeVi
             session_id=entry.session_id,
             attempt=entry.attempt,
             node_identity=entry.node_identity,
+        )
+
+    # Fallback for runs with no progress journal (e.g. created before the
+    # producer, or any run whose nodes only surface via parked gates): include
+    # open-gate nodes so the tree is not empty. The gate carries node_id; we
+    # recompute its identity to mark done-vs-parked against the agent-journal.
+    try:
+        gates = list_open_gates(state_dir, workflow_id)
+    except Exception:  # a read-only monitor degrades, never crashes
+        gates = []
+    for gate in gates:
+        node_id = str(gate.get("node_id") or "")
+        if not node_id or node_id in views:
+            continue
+        identity = _node_identity_for(workflow_id, node_id)
+        status = STATUS_DONE if identity in done else PROGRESS_STATUS_PARKED
+        phase_value = gate.get("phase")
+        views[node_id] = NodeView(
+            node_id=node_id,
+            phase=str(phase_value) if phase_value is not None else None,
+            status=status,
+            session_id="",
+            attempt=0,
+            node_identity=identity,
         )
     return views
 
