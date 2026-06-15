@@ -455,3 +455,95 @@ def render_dashboard(
     if not runs:
         return Panel(Text("No active runs.", style="dim"), title="conductor monitor")
     return Group(*runs)
+
+
+# --------------------------------------------------------------------------- #
+# Data helpers for the interactive (Textual) browser
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True, kw_only=True)
+class RunRow:
+    """One row for the interactive runs list."""
+
+    id: str
+    name: str
+    status: str
+    done: int
+    total: int
+    counts: Counter
+    gates: int
+
+
+def run_rows(state_dir: str | Path, *, only_running: bool = True) -> list[RunRow]:
+    """All runs (read-only) with their node counts and waiting-gate count."""
+    from doeff_conductor.api import ConductorAPI
+
+    api = ConductorAPI(str(state_dir))
+    rows: list[RunRow] = []
+    for handle in api.list_workflows():
+        status_value = getattr(handle.status, "value", str(handle.status))
+        if only_running and status_value not in ("running", "blocked", "pending"):
+            continue
+        views = node_status_map(state_dir, handle.id)
+        rows.append(
+            RunRow(
+                id=handle.id,
+                name=handle.name,
+                status=status_value,
+                done=sum(1 for v in views.values() if v.status == STATUS_DONE),
+                total=len(views),
+                counts=_counts(views),
+                gates=len(_open_gates(state_dir, handle.id)),
+            )
+        )
+    return rows
+
+
+def _result_for_identity(state_dir: str | Path, run_id: str, node_identity: str) -> str | None:
+    try:
+        entries = AgentJournal.for_run(run_id, state_dir=state_dir).latest_generation_entries()
+    except Exception:
+        return None
+    for entry in entries:
+        if entry.node_identity == node_identity and entry.terminal_kind == TERMINAL_KIND_SUCCEEDED:
+            import json
+
+            try:
+                text = json.dumps(entry.result_artifact, ensure_ascii=False)
+            except (TypeError, ValueError):
+                text = str(entry.result_artifact)
+            return text if len(text) <= 240 else text[:237] + "…"
+    return None
+
+
+def node_situation(state_dir: str | Path, run_id: str, view: NodeView) -> Text:
+    """The full 'situation' of one node for the detail pane (read-only)."""
+    text = Text()
+    text.append_text(_glyph(view.status))
+    text.append(f" {view.node_id}\n", style="bold")
+    text.append(f"phase: {view.phase or '—'}    ", style="dim")
+    text.append("status: ", style="dim")
+    text.append(f"{view.status}\n", style=_GLYPH.get(view.status, _GLYPH[STATUS_PENDING])[1])
+    if view.attempt:
+        text.append(f"attempt: {view.attempt}\n", style="dim")
+    if view.session_id:
+        text.append(f"session: {view.session_id}\n", style="dim")
+        text.append(f"attach:  tmux attach -r -t {view.session_id}\n", style="cyan")
+
+    gates = [g for g in _open_gates(state_dir, run_id) if str(g.get("node_id", "")) == view.node_id]
+    for gate in gates:
+        text.append("\nPARKED — adjudicate:\n", style="magenta bold")
+        summary = _stakes_summary(gate)
+        if summary:
+            text.append(f"  {summary}\n", style="dim")
+        gate_id = str(gate.get("gate_id", "?"))
+        for opt in _gate_option_names(gate):
+            text.append(f"  conductor gate answer {run_id} {gate_id} {opt}\n", style="cyan")
+
+    if view.status == STATUS_DONE:
+        result = _result_for_identity(state_dir, run_id, view.node_identity)
+        if result is not None:
+            text.append("\nresult artifact:\n", style="green")
+            text.append(f"  {result}\n", style="green")
+    return text
