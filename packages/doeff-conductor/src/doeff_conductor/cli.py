@@ -758,6 +758,14 @@ def watch_cmd(
     help="Refresh interval (seconds) in live mode",
 )
 @click.option("--all", "show_all", is_flag=True, help="Include non-running workflows")
+@click.option(
+    "--view",
+    type=click.Choice(["overview", "compact", "tree"]),
+    default=None,
+    help="Layout: overview (all-runs table), compact (per-run summary), tree "
+    "(full tree + exact gate commands). Default: overview for all runs, compact "
+    "for one run.",
+)
 @click.pass_context
 def monitor_cmd(
     ctx: click.Context,
@@ -765,6 +773,7 @@ def monitor_cmd(
     once: bool,
     interval: float,
     show_all: bool,
+    view: str | None,
 ) -> None:
     """Live read-only dashboard of runs, per-node progress, and parked gates.
 
@@ -780,7 +789,7 @@ def monitor_cmd(
     state_dir = ConductorAPI(ctx.obj.get("state_dir")).state_dir
 
     def frame() -> Any:
-        return render_dashboard(state_dir, workflow_id, only_running=not show_all)
+        return render_dashboard(state_dir, workflow_id, only_running=not show_all, view=view)
 
     try:
         if once:
