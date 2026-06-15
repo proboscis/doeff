@@ -36,6 +36,10 @@ class AgentTask:
     verification_class: str
     agent_type: str
     name: str | None = None
+    # ADR 0002: phase label threaded from the runtime for the observational
+    # progress producer (monitor grouping). Optional; template-run tasks leave
+    # it None. Not part of replay identity.
+    phase: str | None = None
     profile: str | None = None
     model: str | None = None
     effort: str | None = None
