@@ -782,11 +782,10 @@ def monitor_cmd(
     def frame() -> Any:
         return render_dashboard(state_dir, workflow_id, only_running=not show_all)
 
-    if once:
-        console.print(frame())
-        return
-
     try:
+        if once:
+            console.print(frame())
+            return
         with Live(frame(), console=console, refresh_per_second=4, screen=False) as live:
             while True:
                 time.sleep(interval)
