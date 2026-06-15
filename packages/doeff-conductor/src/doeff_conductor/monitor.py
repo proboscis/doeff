@@ -187,19 +187,31 @@ def _render_gates(state_dir: str | Path, workflow_id: str) -> RenderableType | N
     if not gates:
         return None
     body = Text()
-    for gate in gates:
+    for index, gate in enumerate(gates):
+        if index:
+            body.append("\n")
         gate_id = str(gate.get("gate_id", "?"))
-        node_id = str(gate.get("node_id", "?"))
-        body.append(f"◔ {gate_id}", style="magenta bold")
-        body.append(f"  node={node_id}  stakes={gate.get('stakes', '?')}\n")
+        stakes = gate.get("stakes") or {}
+        summary_bits: list[str] = []
+        if isinstance(stakes, dict):
+            for key in ("verification_class", "reversibility", "blast_radius"):
+                if key in stakes:
+                    summary_bits.append(str(stakes[key]))
         options = gate.get("options", []) or []
-        for opt in options:
-            opt_name = str(opt.get("name", "?")) if isinstance(opt, dict) else str(opt)
-            # ADR 0002 D4: surface the exact write command; the monitor never writes.
-            body.append(
-                f"    conductor gate answer {workflow_id} {gate_id} {opt_name}\n", style="dim"
-            )
-    return Panel(body, title="Parked gates (adjudicate)", border_style="magenta")
+        opt_names = [
+            str(opt.get("name", "?")) if isinstance(opt, dict) else str(opt) for opt in options
+        ]
+        body.append("◔ ", style="magenta bold")
+        body.append(gate_id, style="magenta")
+        if summary_bits:
+            body.append(f"   [{'  '.join(summary_bits)}]", style="dim")
+        body.append("\n")
+        # ADR 0002 D4: surface the exact write command (options inline); never write.
+        body.append(
+            f"    conductor gate answer {workflow_id} {gate_id} " + "{" + "|".join(opt_names) + "}\n",
+            style="dim",
+        )
+    return Panel(body, title=f"Parked gates ({len(gates)}) — adjudicate", border_style="magenta")
 
 
 def render_dashboard(
