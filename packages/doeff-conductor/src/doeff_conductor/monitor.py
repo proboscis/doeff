@@ -517,6 +517,41 @@ def _result_for_identity(state_dir: str | Path, run_id: str, node_identity: str)
     return None
 
 
+def capture_agent_output(session_id: str, *, lines: int = 200) -> str | None:
+    """Captured agent tmux-pane text for display (ADR 0002 D3, read-only eyeball).
+
+    Live pane via agentd's ``session.capture`` RPC; on failure (e.g. the session
+    was cleaned) falls back to the persisted ``output_snippet`` in agentd.sqlite.
+    Display only — never a status source. Fail-open: returns None on any error.
+    """
+    if not session_id:
+        return None
+    try:
+        from doeff_agents import LazyAgentdClient
+
+        return LazyAgentdClient().capture_session(session_id, lines=lines)
+    except Exception:
+        pass
+    try:
+        import os
+        import sqlite3
+
+        db = os.path.expanduser("~/.local/state/doeff/agentd.sqlite")
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            row = con.execute(
+                "select output_snippet from agent_sessions where session_id = ?",
+                (session_id,),
+            ).fetchone()
+        finally:
+            con.close()
+        if row and row[0]:
+            return str(row[0])
+    except Exception:
+        pass
+    return None
+
+
 def node_situation(state_dir: str | Path, run_id: str, view: NodeView) -> Text:
     """The full 'situation' of one node for the detail pane (read-only)."""
     text = Text()
