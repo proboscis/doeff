@@ -570,6 +570,9 @@ def _execute_agent(
         verification_class=effect.verification_class,
         agent_type=profile.adapter,
         name=effect.label,
+        # ADR 0002: carry the phase for the observational progress producer
+        # (monitor grouping). Not part of replay identity.
+        phase=current_phase,
         profile=profile_name,
         model=profile.model,
         # Effort is an axis of the profile binding (L0 identity), never a

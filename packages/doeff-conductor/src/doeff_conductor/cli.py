@@ -7,6 +7,7 @@ Commands:
     show        Show workflow details
     wait        Block until a workflow terminates or parks
     watch       Monitor workflow progress
+    monitor     Live read-only dashboard of runs/nodes/gates (ADR 0002)
     attach      Attach to agent session
     logs        View session logs
     stop        Stop workflow
@@ -741,6 +742,57 @@ def watch_cmd(
 
     except KeyboardInterrupt:
         console.print("\n[dim]Watch stopped[/dim]")
+    except _CLI_USER_ERROR_TYPES as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
+@cli.command("monitor")
+@click.argument("workflow_id", required=False)
+@click.option("--once", is_flag=True, help="Render a single frame and exit (headless-friendly)")
+@click.option(
+    "--interval",
+    type=click.FloatRange(min=0.1),
+    default=1.0,
+    show_default=True,
+    help="Refresh interval (seconds) in live mode",
+)
+@click.option("--all", "show_all", is_flag=True, help="Include non-running workflows")
+@click.pass_context
+def monitor_cmd(
+    ctx: click.Context,
+    workflow_id: str | None,
+    once: bool,
+    interval: float,
+    show_all: bool,
+) -> None:
+    """Live read-only dashboard of runs, per-node progress, and parked gates.
+
+    Reads only the observational progress journal, the agent-journal completion
+    truth, and open gates (ADR 0002); it never mutates run state and never reads
+    agentd pane status as completion.
+    """
+    from rich.live import Live
+
+    from .api import ConductorAPI
+    from .monitor import render_dashboard
+
+    state_dir = ConductorAPI(ctx.obj.get("state_dir")).state_dir
+
+    def frame() -> Any:
+        return render_dashboard(state_dir, workflow_id, only_running=not show_all)
+
+    if once:
+        console.print(frame())
+        return
+
+    try:
+        with Live(frame(), console=console, refresh_per_second=4, screen=False) as live:
+            while True:
+                time.sleep(interval)
+                live.update(frame())
+    except KeyboardInterrupt:
+        console.print("\n[dim]Monitor stopped[/dim]")
     except _CLI_USER_ERROR_TYPES as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)

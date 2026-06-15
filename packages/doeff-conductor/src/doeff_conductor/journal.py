@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +32,20 @@ JOURNAL_VERSION = 1
 AGENT_JOURNAL_FILENAME = "agent-journal.jsonl"
 GATE_ANSWER_JOURNAL_FILENAME = "gate-answer-journal.jsonl"
 WORKSPACE_JOURNAL_FILENAME = "workspace-journal.jsonl"
+# ADR 0002: write-only OBSERVATIONAL node-lifecycle stream. Resume/replay MUST
+# NOT read this file; its presence/absence changes no run outcome (it is kept
+# out of the K3/K5 store-of-record). Consumed only by the read-only monitor.
+PROGRESS_JOURNAL_FILENAME = "progress-journal.jsonl"
 TERMINAL_KIND_SUCCEEDED = "succeeded"
+
+logger = logging.getLogger(__name__)
+
+# ADR 0002 D2: node-lifecycle status vocabulary (distinct from agentd pane
+# liveness, which is never a completion/correctness source).
+PROGRESS_STATUS_RUNNING = "running"
+PROGRESS_STATUS_SUCCEEDED = "succeeded"
+PROGRESS_STATUS_FAILED = "failed"
+PROGRESS_STATUS_PARKED = "parked"
 TERMINAL_KIND_OPEN_GATE = "open-gate"
 TERMINAL_KIND_GATE_ANSWER = "gate-answer"
 TERMINAL_KIND_WORKSPACE_CREATED = "workspace-created"
@@ -160,6 +175,109 @@ class AgentJournal:
         with self.path.open("a", encoding="utf-8") as journal_file:
             journal_file.write(entry.to_json_line())
             journal_file.write("\n")
+
+
+@dataclass(frozen=True, kw_only=True)
+class ProgressJournalEntry:
+    """One append-only node-lifecycle progress record (ADR 0002, observational).
+
+    Carries the full identity tuple so the monitor joins progress ↔ agent-journal
+    (`node_identity`) ↔ tmux session (`session_id`) without reverse-engineering.
+    """
+
+    node_id: str
+    node_identity: str
+    session_node_key: str
+    session_id: str
+    attempt: int
+    phase: str | None
+    status: str
+    terminal_kind: str | None
+    at: str
+
+    def to_json_line(self) -> str:
+        payload: dict[str, Any] = {
+            "version": JOURNAL_VERSION,
+            "node_id": self.node_id,
+            "node_identity": self.node_identity,
+            "session_node_key": self.session_node_key,
+            "session_id": self.session_id,
+            "attempt": self.attempt,
+            "phase": self.phase,
+            "status": self.status,
+            "terminal_kind": self.terminal_kind,
+            "at": self.at,
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+    @classmethod
+    def from_json_line(cls, line: str) -> ProgressJournalEntry | None:
+        """Tolerant parse: a malformed observational line is skipped, never fatal."""
+        try:
+            payload = json.loads(line)
+            if not isinstance(payload, dict):
+                return None
+            return cls(
+                node_id=str(payload["node_id"]),
+                node_identity=str(payload.get("node_identity", "")),
+                session_node_key=str(payload.get("session_node_key", "")),
+                session_id=str(payload.get("session_id", "")),
+                attempt=int(payload.get("attempt", 0)),
+                phase=(None if payload.get("phase") is None else str(payload["phase"])),
+                status=str(payload["status"]),
+                terminal_kind=(
+                    None if payload.get("terminal_kind") is None else str(payload["terminal_kind"])
+                ),
+                at=str(payload.get("at", "")),
+            )
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            return None
+
+
+class ProgressJournal:
+    """Append-only JSONL observational progress stream for one run (ADR 0002).
+
+    Write-only from the run's perspective — resume/replay never reads it, so its
+    presence/absence changes no run outcome. The monitor reads it; malformed
+    lines are skipped, never fatal.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    @classmethod
+    def for_run(cls, run_id: str, *, state_dir: str | Path | None = None) -> ProgressJournal:
+        run_dir = _state_dir(state_dir) / "workflows" / run_id
+        return cls(run_dir / PROGRESS_JOURNAL_FILENAME)
+
+    @classmethod
+    def for_run_dir(cls, run_dir: Path) -> ProgressJournal:
+        return cls(run_dir / PROGRESS_JOURNAL_FILENAME)
+
+    def load_entries(self) -> list[ProgressJournalEntry]:
+        if not self.path.exists():
+            return []
+        entries: list[ProgressJournalEntry] = []
+        for line in self.path.read_text(encoding="utf-8").splitlines():
+            if not line:
+                continue
+            entry = ProgressJournalEntry.from_json_line(line)
+            if entry is not None:
+                entries.append(entry)
+        return entries
+
+    def append_entry(self, entry: ProgressJournalEntry) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("a", encoding="utf-8") as journal_file:
+            journal_file.write(entry.to_json_line())
+            journal_file.write("\n")
+
+    def latest_by_node(self) -> dict[str, ProgressJournalEntry]:
+        """node_id -> latest (file-order last) progress entry."""
+        latest: dict[str, ProgressJournalEntry] = {}
+        for entry in self.load_entries():
+            latest[entry.node_id] = entry
+        return latest
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -390,6 +508,10 @@ class AgentReplaySession:
 
     def __init__(self, journal: AgentJournal) -> None:
         self.journal = journal
+        # ADR 0002: observational progress stream sits beside the agent journal
+        # in the same run dir. Constructing it does no I/O; every write is
+        # fail-open (see _emit_progress).
+        self.progress = ProgressJournal.for_run_dir(journal.path.parent)
         self.previous_entries = journal.latest_generation_entries()
         self.previous_keys = [entry.cache_key for entry in self.previous_entries]
         self.previous_generation = (
@@ -419,6 +541,12 @@ class AgentReplaySession:
             self.replayed_prefix_entries.append(previous_entry)
             if self.started_new_generation:
                 self._append_replayed_entry(previous_entry)
+            # ADR 0002: a resumed cached-prefix node is already done — surface it
+            # so the monitor shows DONE on replay (observational; resume itself
+            # never reads this).
+            self._emit_progress(
+                effect.task, decision, PROGRESS_STATUS_SUCCEEDED, terminal_kind=TERMINAL_KIND_SUCCEEDED
+            )
             return previous_entry.result_artifact
 
         if entry_index < len(self.previous_entries):
@@ -433,6 +561,10 @@ class AgentReplaySession:
         decision: AgentReplayDecision,
         entry_index: int,
     ) -> object:
+        # ADR 0002: emit "running" at dispatch from inside the offloaded handler
+        # (not before yield Agent in the runtime, which would serialize K4
+        # sibling dispatch). Emission is fail-open and never alters the run.
+        self._emit_progress(effect.task, decision, PROGRESS_STATUS_RUNNING)
         try:
             result = delegate(effect)
         except AgentAttemptExhaustedError as error:
@@ -445,6 +577,9 @@ class AgentReplaySession:
                     "last_error_kind": error.last_error.kind.value,
                     "last_error_message": error.last_error.message,
                 },
+            )
+            self._emit_progress(
+                effect.task, decision, PROGRESS_STATUS_PARKED, terminal_kind=TERMINAL_KIND_OPEN_GATE
             )
             raise
         except AgentDeadlineExceededError as error:
@@ -462,9 +597,19 @@ class AgentReplaySession:
                     "reason": "wall-clock deadline exceeded",
                 },
             )
+            self._emit_progress(
+                effect.task, decision, PROGRESS_STATUS_PARKED, terminal_kind=TERMINAL_KIND_OPEN_GATE
+            )
+            raise
+        except Exception:
+            self._emit_progress(effect.task, decision, PROGRESS_STATUS_FAILED)
             raise
 
-        _validate_delegate_result(effect, result)
+        try:
+            _validate_delegate_result(effect, result)
+        except Exception:
+            self._emit_progress(effect.task, decision, PROGRESS_STATUS_FAILED)
+            raise
         self.journal.append_entry(
             AgentJournalEntry(
                 generation=self.current_generation,
@@ -476,7 +621,43 @@ class AgentReplaySession:
                 terminal_kind=TERMINAL_KIND_SUCCEEDED,
             )
         )
+        # "succeeded" is emitted only AFTER the validated artifact is journaled,
+        # so the progress terminal is artifact-grounded (ADR 0001 D6), never a
+        # screen/heuristic judgement.
+        self._emit_progress(
+            effect.task, decision, PROGRESS_STATUS_SUCCEEDED, terminal_kind=TERMINAL_KIND_SUCCEEDED
+        )
         return result
+
+    def _emit_progress(
+        self,
+        task: AgentTask,
+        decision: AgentReplayDecision,
+        status: str,
+        *,
+        terminal_kind: str | None = None,
+    ) -> None:
+        """ADR 0002: fail-open, non-blocking observational emit (L-K4-1).
+
+        A failed or slow write degrades monitor freshness, NEVER the run — it
+        must not raise into the orchestration.
+        """
+        try:
+            self.progress.append_entry(
+                ProgressJournalEntry(
+                    node_id=task.node_id,
+                    node_identity=decision.node_identity,
+                    session_node_key=task.session_node_key,
+                    session_id=task.session_id,
+                    attempt=task.attempt,
+                    phase=task.phase,
+                    status=status,
+                    terminal_kind=terminal_kind,
+                    at=datetime.now(timezone.utc).isoformat(),
+                )
+            )
+        except Exception:  # fail-open is the invariant (ADR 0002 D1)
+            logger.warning("progress emit failed (run unaffected)", exc_info=True)
 
     def _append_open_gate_entry(
         self,
