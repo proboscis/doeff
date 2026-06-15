@@ -775,35 +775,39 @@ def monitor_cmd(
     show_all: bool,
     view: str | None,
 ) -> None:
-    """Live read-only dashboard of runs, per-node progress, and parked gates.
+    """Interactive read-only run browser (ADR 0002).
 
-    Reads only the observational progress journal, the agent-journal completion
-    truth, and open gates (ADR 0002); it never mutates run state and never reads
-    agentd pane status as completion.
+    Default: a Textual app — browse runs (left), expand a workflow's phases/nodes
+    (center, collapsible), inspect the highlighted node's situation (bottom);
+    live-refreshing. ``--once`` instead prints a single static frame (headless;
+    honors ``--view overview|compact|tree``). Reads only the observational
+    progress journal, agent-journal completion truth, and open gates; it never
+    mutates run state and never reads agentd pane status as completion.
     """
-    from rich.live import Live
-
     from .api import ConductorAPI
-    from .monitor import render_dashboard
 
     state_dir = ConductorAPI(ctx.obj.get("state_dir")).state_dir
 
-    def frame() -> Any:
-        return render_dashboard(state_dir, workflow_id, only_running=not show_all, view=view)
+    if once:
+        from .monitor import render_dashboard
 
-    try:
-        if once:
-            console.print(frame())
-            return
-        with Live(frame(), console=console, refresh_per_second=4, screen=False) as live:
-            while True:
-                time.sleep(interval)
-                live.update(frame())
-    except KeyboardInterrupt:
-        console.print("\n[dim]Monitor stopped[/dim]")
-    except _CLI_USER_ERROR_TYPES as e:
-        console.print(f"[red]Error:[/red] {e}")
-        sys.exit(1)
+        try:
+            console.print(
+                render_dashboard(state_dir, workflow_id, only_running=not show_all, view=view)
+            )
+        except _CLI_USER_ERROR_TYPES as e:
+            console.print(f"[red]Error:[/red] {e}")
+            sys.exit(1)
+        return
+
+    from .monitor_app import MonitorApp
+
+    MonitorApp(
+        str(state_dir),
+        workflow_id=workflow_id,
+        only_running=not show_all,
+        interval=interval,
+    ).run()
 
 
 @cli.command("stop")
