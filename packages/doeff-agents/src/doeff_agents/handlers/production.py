@@ -83,7 +83,11 @@ class AgentHandler(ABC):
         """Handle the schema-validated ``agent`` effect."""
         return _run_agent_task(self, effect.task)
 
-    def handle_launch_session(self, effect: LaunchSessionEffect) -> L2SessionHandle:
+    def handle_launch_session(
+        self,
+        effect: LaunchSessionEffect,
+        run_tool: RunToolFn | None = None,
+    ) -> L2SessionHandle:
         """Handle L2 Launch."""
         raise NotImplementedError
 
@@ -296,6 +300,8 @@ def _launch_effect_from_spec(spec: AgentSpec) -> LaunchEffect:
         work_dir=spec.work_dir,
         prompt=spec.prompt,
         model=spec.model,
+        mcp_tools=spec.mcp_tools,
+        mcp_server_name=spec.mcp_server_name,
         effort=spec.effort,
         bare=spec.bare,
         lifecycle=spec.lifecycle,
@@ -689,12 +695,21 @@ class TmuxAgentHandler(AgentHandler):
             cleaned,
         )
 
-    def handle_launch_session(self, effect: LaunchSessionEffect) -> L2SessionHandle:
-        """Idempotently launch or re-adopt an L2 session."""
+    def handle_launch_session(
+        self,
+        effect: LaunchSessionEffect,
+        run_tool: RunToolFn | None = None,
+    ) -> L2SessionHandle:
+        """Idempotently launch or re-adopt an L2 session.
+
+        ``run_tool`` is threaded into the underlying ``handle_launch`` so an L2
+        session whose spec carries ``mcp_tools`` gets its MCP server started,
+        exactly like an L1 ``LaunchEffect`` (the defhandler passes the same
+        captured-handler ``run_tool``)."""
         session_id = effect.spec.session_id
         if session_id in self._sessions or self._session_repository.get_session(session_id):
             return L2SessionHandle(session_id=session_id)
-        self.handle_launch(_launch_effect_from_spec(effect.spec))
+        self.handle_launch(_launch_effect_from_spec(effect.spec), run_tool=run_tool)
         state = self._sessions[session_id]
         state.result_schema = effect.spec.result_schema
         self._record_snapshot("session_l2_launched", state.handle, state.status)

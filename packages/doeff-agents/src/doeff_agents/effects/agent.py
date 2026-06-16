@@ -111,6 +111,12 @@ class AgentSpec:
     lifecycle: AgentSessionLifecycle = AgentSessionLifecycle.RUN_TO_COMPLETION
     session_env: dict[str, str] | None = None
     max_retries: int = 2
+    # An L2/L3 agent uses the same defmcp tool surface as an L1 LaunchEffect: the
+    # session algebra is not tool-less. These thread through to the LaunchEffect
+    # built by the handler (_launch_effect_from_spec) so LaunchSession-launched
+    # agents get their MCP server exactly like Launch-launched ones.
+    mcp_tools: tuple["McpToolDef", ...] = ()
+    mcp_server_name: str = "doeff"
 
     @property
     def session_id(self) -> str:

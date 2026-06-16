@@ -41,6 +41,44 @@ ARTIFACT_SCHEMA = {
 }
 
 
+def test_agent_spec_carries_mcp_tools_into_launch_effect():
+    """An L2/L3 spec is not tool-less: its defmcp tools must reach the lowered
+    LaunchEffect so LaunchSession-launched agents get an MCP server (parity with
+    L1 Launch)."""
+    from doeff_agents.handlers.production import _launch_effect_from_spec
+
+    tools = ("sbi-query-wallet", "sbi-query-shortable-inventory")
+    spec = AgentSpec(
+        run_id="run-1",
+        node_id="recon",
+        attempt=0,
+        agent_type=AgentType.CLAUDE,
+        work_dir=Path("/tmp/x"),
+        prompt="read account",
+        result_schema=ARTIFACT_SCHEMA,
+        mcp_tools=tools,
+        mcp_server_name="sbi",
+    )
+    assert spec.mcp_tools == tools
+    launch = _launch_effect_from_spec(spec)
+    assert launch.mcp_tools == tools
+    assert launch.mcp_server_name == "sbi"
+
+
+def test_agent_spec_defaults_to_no_mcp_tools():
+    spec = AgentSpec(
+        run_id="run-1",
+        node_id="n",
+        attempt=0,
+        agent_type=AgentType.CLAUDE,
+        work_dir=Path("/tmp/x"),
+        prompt="p",
+        result_schema=ARTIFACT_SCHEMA,
+    )
+    assert spec.mcp_tools == ()
+    assert spec.mcp_server_name == "doeff"
+
+
 @do
 def _launch_twice(work_dir: Path):
     spec = AgentSpec(
