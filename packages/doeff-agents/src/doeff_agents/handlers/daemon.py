@@ -261,8 +261,15 @@ class DaemonAgentHandler(AgentHandler):
         )
         return snapshot.to_handle()
 
-    def handle_launch_session(self, effect: LaunchSessionEffect) -> L2SessionHandle:
-        """Idempotently launch or re-adopt an agentd session."""
+    def handle_launch_session(
+        self, effect: LaunchSessionEffect, run_tool=None
+    ) -> L2SessionHandle:
+        """Idempotently launch or re-adopt an agentd session.
+
+        ``run_tool`` is accepted for parity with the tmux handler (the defhandler
+        passes it when the spec carries mcp_tools). agentd owns its own MCP server
+        wiring, so per-spec defmcp tools through this backend are a follow-up; the
+        tmux backend is the one that consumes run_tool today."""
         session_id = effect.spec.session_id
         existing = self._client.get_session(session_id)
         if existing is not None:

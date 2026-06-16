@@ -427,7 +427,12 @@ class ScenarioAgentHandler(MockAgentHandler):
 
         return WithHandler(handler, program)
 
-    def handle_launch_session(self, effect: LaunchSessionEffect) -> L2SessionHandle:
+    def handle_launch_session(
+        self, effect: LaunchSessionEffect, run_tool=None
+    ) -> L2SessionHandle:
+        # run_tool accepted for parity with the real handler (the defhandler now
+        # passes it when the spec carries mcp_tools); the mock returns scripted
+        # results and needs no live MCP server.
         session_id = effect.spec.session_id
         if session_id not in self._handles:
             self._launch_counts[session_id] = self._launch_counts.get(session_id, 0) + 1

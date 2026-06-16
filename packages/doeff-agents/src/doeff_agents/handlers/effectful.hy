@@ -58,7 +58,15 @@
       (resume (.handle-agent agent-handler effect)))
 
     (LaunchSessionEffect [spec]
-      (resume (.handle-launch-session agent-handler effect)))
+      ;; Mirror the L1 LaunchEffect branch: when the spec carries defmcp tools,
+      ;; hand the captured handler stack down as run-tool so the L2 session's MCP
+      ;; server is started. Without this an L2/L3 agent would launch tool-less.
+      (if spec.mcp-tools
+          (do
+            (<- handlers (GetHandlers k))
+            (resume (.handle-launch-session agent-handler effect
+                      :run-tool (_make-run-tool handlers))))
+          (resume (.handle-launch-session agent-handler effect))))
 
     (AwaitResultEffect [handle timeout-seconds]
       (resume (.handle-await-result agent-handler effect)))
