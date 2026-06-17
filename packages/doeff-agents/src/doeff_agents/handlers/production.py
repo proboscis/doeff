@@ -75,6 +75,12 @@ from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import AgentSessionRepository, InMemoryAgentSessionRepository
 from doeff_agents.shell import wrap_with_shell_exports
 
+# An L2 AwaitResult must not abort a still-working agent on one cosmetic BLOCKED
+# frame (Claude's thinking spinner sits in the skipped status-bar lines). Require
+# the block to PERSIST this long before declaring AWAITING_INPUT; a genuine block
+# holds well past it, and the AwaitResult deadline still bounds the total wait.
+_AWAITING_INPUT_GRACE_SECONDS = 30.0
+
 
 class AgentHandler(ABC):
     """Abstract handler for agent effects."""
@@ -719,6 +725,8 @@ class TmuxAgentHandler(AgentHandler):
         """Await a result file or an awaiting-input/timeout state."""
         timeout_seconds = effect.timeout_seconds if effect.timeout_seconds is not None else 600.0
         deadline = time.monotonic() + timeout_seconds
+        blocked_since: float | None = None
+        blocked_snippet: str | None = None
         while True:
             state = self._state_for_handle(effect.handle)
             if state is None:
@@ -728,13 +736,29 @@ class TmuxAgentHandler(AgentHandler):
                 return self._await_outcome_from_result_file(state)
 
             observation = self.handle_monitor(MonitorEffect(handle=effect.handle))
-            if observation.status in (SessionStatus.BLOCKED, SessionStatus.BLOCKED_API):
-                return AwaitOutcome(
-                    status=AwaitStatus.AWAITING_INPUT,
-                    validation_error=observation.output_snippet or "agent is awaiting input",
-                )
+            # A terminal observation (process exited / result artifact) always wins:
+            # trust the result contract over the cosmetic status label.
             if observation.is_terminal:
                 return self._await_outcome_from_result_file(state)
+            if observation.status in (SessionStatus.BLOCKED, SessionStatus.BLOCKED_API):
+                # Require the block to PERSIST before declaring AWAITING_INPUT, so a
+                # transient mid-think frame (Claude's spinner sits in the skipped
+                # status bar) does not abort a still-working agent. A genuine block
+                # holds past the grace window.
+                now = time.monotonic()
+                if blocked_since is None:
+                    blocked_since = now
+                    blocked_snippet = observation.output_snippet
+                elif now - blocked_since >= _AWAITING_INPUT_GRACE_SECONDS:
+                    return AwaitOutcome(
+                        status=AwaitStatus.AWAITING_INPUT,
+                        validation_error=blocked_snippet
+                        or observation.output_snippet
+                        or "agent is awaiting input",
+                    )
+            else:
+                blocked_since = None
+                blocked_snippet = None
             if time.monotonic() >= deadline:
                 return AwaitOutcome(status=AwaitStatus.TIMED_OUT)
             time.sleep(0.2)
