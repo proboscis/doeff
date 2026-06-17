@@ -126,6 +126,26 @@ def has_codex_active_marker(output: str) -> bool:
     return any(p in lines for p in patterns)
 
 
+def has_claude_active_marker(output: str) -> bool:
+    """Return True when Claude Code is visibly mid-turn (interruptible/streaming).
+
+    Claude keeps its input box and the "bypass permissions … (shift+tab to
+    cycle)" footer visible even while working, and its thinking spinner
+    ("✽ <verb>… (… · ↓ N tokens)") lives in the status-bar lines that
+    ``hash_content`` skips — so a busy agent looks output-stable + prompted and
+    would be misread as BLOCKED (→ a false AWAITING_INPUT that aborts an L2
+    AwaitResult mid-think). The "esc to interrupt" affordance and the active-turn
+    token meter are shown ONLY while a turn is running, so they distinguish a
+    working agent from one genuinely awaiting input.
+    """
+    lines = "\n".join(output.split("\n")[-30:])
+    lowered = lines.lower()
+    if "esc to interrupt" in lowered:
+        return True
+    # Active-turn token meter, e.g. "(6m 10s · ↓ 15.7k tokens)" / "↑ N tokens".
+    return ("· ↓" in lines or "· ↑" in lines) and "tokens" in lowered
+
+
 def has_codex_idle_prompt(output: str) -> bool:
     """Return True when Codex shows its idle prompt/status footer."""
     has_prompt = any(line.startswith("› ") for line in output.splitlines())  # noqa: RUF001
@@ -201,7 +221,11 @@ def detect_status(
     if is_agent_exited(output):
         return SessionStatus.EXITED
 
-    if output_changed:
+    # A changing pane means active work; so does Claude's thinking marker, whose
+    # spinner lives in the skipped status-bar lines so the pane otherwise reads
+    # output-stable + prompted and would be misclassified BLOCKED (a false
+    # AWAITING_INPUT that aborts an L2 AwaitResult mid-think).
+    if output_changed or has_claude_active_marker(output):
         return SessionStatus.RUNNING
 
     if has_prompt:
