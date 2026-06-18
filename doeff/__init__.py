@@ -38,6 +38,7 @@ from doeff.program import (
 from doeff.program import WithObserve as WithObserveRaw
 from doeff.program import handler as handler
 from doeff.program import program as program
+from doeff.program import with_handlers as with_handlers
 from doeff.result import Err as Err
 from doeff.result import Maybe as Maybe
 from doeff.result import Nothing as Nothing

@@ -4,6 +4,7 @@ DoExpr nodes — Rust pyclasses re-exported for Python use.
 The VM classifies them via downcast (not tag-based getattr).
 """
 
+from collections.abc import Callable, Iterable
 from typing import Any, cast
 
 from doeff_vm import Apply as Apply
@@ -47,6 +48,36 @@ def handler(raw_handler):
     install_meta._doeff_is_handler_fn = True
     install_meta.__doeff_handler_data__ = raw_handler
     return install
+
+
+ProgramHandler = Callable[[Any], Any]
+
+
+def with_handlers(handlers: Iterable[ProgramHandler], program: Any) -> Any:
+    """Apply a handler stack to a Program.
+
+    Handler order is scope order: the first handler is outermost, the last
+    handler is innermost. Raw effect dispatchers are normalized through
+    ``handler``; handler factories already marked as Program -> Program are
+    called directly. Empty runtime lists are accepted as identity so callers can
+    compose dynamically discovered stacks.
+    """
+    wrapped = program
+    for install in reversed(tuple(handlers)):
+        if not callable(install):
+            raise TypeError(
+                f"with_handlers: handler must be callable, got {type(install).__name__}"
+            )
+        install_meta = cast(Any, install)
+        try:
+            is_handler_fn = install_meta._doeff_is_handler_fn
+        except AttributeError:
+            is_handler_fn = False
+        if is_handler_fn is True:
+            wrapped = install(wrapped)
+        else:
+            wrapped = handler(install)(wrapped)
+    return wrapped
 
 
 def program(gen_fn, *args):
