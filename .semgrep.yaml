@@ -26,6 +26,20 @@ rules:
       include:
         - /packages/doeff-agents/src/doeff_agents/adapters/claude.py
 
+  - id: doeff-agents-await-result-must-prefer-schema-artifact
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      TmuxAgentHandler.handle_await_result must check .agentd-result.json before
+      waiting for tmux session exit. Claude --print returns to a shell prompt while
+      the tmux session remains alive, so session-first await can time out after a
+      valid schema artifact already exists.
+    pattern-regex: 'if state is None:\n\s+raise SessionNotFoundError\(f"Session \{effect\.handle\.session_id\} is not registered"\)\n\n\s+if not self\._backend\.has_session\(effect\.handle\.session_id\):'
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/handlers/production.py
+
   - id: no-future-annotations
     languages: [python]
     severity: ERROR
