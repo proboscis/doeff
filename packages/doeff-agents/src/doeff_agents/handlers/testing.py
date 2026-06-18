@@ -442,7 +442,11 @@ class ScenarioAgentHandler(MockAgentHandler):
 
         return _install_raw_handler(handler)(program)
 
-    def handle_launch_session(self, effect: LaunchSessionEffect) -> L2SessionHandle:
+    def handle_launch_session(
+        self,
+        effect: LaunchSessionEffect,
+        run_tool: RunToolFn | None = None,
+    ) -> L2SessionHandle:
         session_id = effect.spec.session_id
         if session_id not in self._handles:
             self._launch_counts[session_id] = self._launch_counts.get(session_id, 0) + 1

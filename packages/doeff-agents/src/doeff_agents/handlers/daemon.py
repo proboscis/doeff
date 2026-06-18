@@ -1,7 +1,5 @@
 """Agent effect handler backed by the doeff-agentd supervisor daemon."""
 
-from __future__ import annotations
-
 import os
 import shlex
 from collections.abc import Mapping
@@ -261,8 +259,16 @@ class DaemonAgentHandler(AgentHandler):
         )
         return snapshot.to_handle()
 
-    def handle_launch_session(self, effect: LaunchSessionEffect) -> L2SessionHandle:
+    def handle_launch_session(
+        self,
+        effect: LaunchSessionEffect,
+        run_tool: RunToolFn | None = None,
+    ) -> L2SessionHandle:
         """Idempotently launch or re-adopt an agentd session."""
+        if effect.spec.mcp_tools:
+            raise AgentLaunchError(
+                "doeff-agentd does not manage MCP lifecycle; prepare MCP with defmcp"
+            )
         session_id = effect.spec.session_id
         existing = self._client.get_session(session_id)
         if existing is not None:
