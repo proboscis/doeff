@@ -2217,6 +2217,7 @@ rules:
     paths:
       include:
         - "doeff/**/*.py"
+        - "doeff/**/*.hy"
         - "packages/**/*.py"
         - "packages/**/*.pyi"
         - "packages/**/*.hy"
@@ -2228,13 +2229,14 @@ rules:
         - "tests/semgrep/fixtures/**"
     message: |
       Public WithHandler shim usage is banned (core-withhandler-compat-shim-delete).
-      Compose handlers by calling Program -> Program handlers directly: handler(program).
+      Compose handler scopes with `(with-handler [handler ...] program)` in Hy,
+      or with a typed Program -> Program stack helper in Python.
       Deliberate VM-node tests must import WithHandler from doeff_vm explicitly.
     languages: [generic]
     severity: ERROR
     metadata:
       category: doexpr-hierarchy
-      rationale: "public WithHandler compatibility shim was deleted; h(body) is the only user idiom"
+      rationale: "public WithHandler compatibility shim was deleted; handler stack syntax is the user idiom"
 
   - id: no-legacy-intercept-api
     pattern-either:

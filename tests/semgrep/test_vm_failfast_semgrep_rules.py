@@ -97,6 +97,17 @@ def test_withhandler_return_clause_rule_detects_external_legacy_calls() -> None:
     assert _rule_start_lines(results, "doeff-withhandler-no-return-clause") == {20, 21, 22, 23}
 
 
+def test_public_withhandler_rule_detects_legacy_hy_import_and_calls() -> None:
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "doeff/public_withhandler_sample.hy",
+        cwd=fixture_root,
+    )
+
+    assert _rule_start_lines(results, "doeff-no-public-withhandler-shim") == {1}
+
+
 def test_agentd_only_worker_route_rule_detects_conductor_handler_bypass() -> None:
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     check_ids = _semgrep_rule_ids(

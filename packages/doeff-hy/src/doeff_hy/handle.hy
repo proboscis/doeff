@@ -8,6 +8,7 @@
 ;;;   (handle body (Effect [fields] body...) ...)             — inline handler
 ;;;   (defhandler name [params?] ["docstring"] (Effect [fields] body...) ...)
 ;;;                                                            — named handler
+;;;   (with-handler [handler ...] body)                       — handler stack syntax
 ;;;
 ;;; Handler clause operations (terminal — handler gives up control):
 ;;;   (resume value)        — Resume k with value, handler stays installed
@@ -476,6 +477,30 @@
      (import doeff [Resume Transfer Pass])
      (import doeff_vm [WithHandler])
      (WithHandler ~h-expr ~body)))
+
+
+(defmacro with-handler [handlers body]
+  "Apply a non-empty handler stack to a Program body.
+
+   (with-handler [outer inner] body)
+
+   expands to:
+
+     (outer (inner body))
+
+   The list order is scope order: leftmost is outermost, rightmost is
+   innermost. Handler values are Program -> Program functions such as the
+   values produced by defhandler."
+  (when (not (isinstance handlers List))
+    (raise (SyntaxError
+             "with-handler requires a handler vector: (with-handler [h1 h2] body)")))
+  (when (= (len handlers) 0)
+    (raise (SyntaxError
+             "with-handler requires a non-empty handler vector: (with-handler [h] body)")))
+  (setv wrapped body)
+  (for [h (reversed (list handlers))]
+    (setv wrapped `(~h ~wrapped)))
+  wrapped)
 
 
 (defmacro defhandler [name #* rest]
