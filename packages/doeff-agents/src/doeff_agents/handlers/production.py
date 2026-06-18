@@ -396,6 +396,8 @@ def _launch_effect_from_spec(spec: AgentSpec) -> LaunchEffect:
         effort=spec.effort,
         bare=spec.bare,
         lifecycle=spec.lifecycle,
+        mcp_tools=spec.mcp_tools,
+        mcp_server_name=spec.mcp_server_name,
         session_env=spec.session_env,
     )
 
