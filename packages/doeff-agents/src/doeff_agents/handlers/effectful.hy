@@ -6,7 +6,7 @@
 (require doeff-hy.handle [defhandler])
 (require doeff-hy.macros [<-])
 
-(import doeff [Ask GetHandlers run])
+(import doeff [Ask GetHandlers handler :as _program-handler run])
 (import doeff_agents.effects [
   AgentEffect
   AttachAgentSessionEffect
@@ -34,8 +34,8 @@
   (defn run-tool [tool arguments]
     (setv args (lfor name (.param-names tool) (.get arguments name)))
     (setv program (tool.handler #* args))
-    (for [handler handlers]
-      (setv program (handler program)))
+    (for [h handlers]
+      (setv program ((_program-handler h) program)))
     (run program))
   run-tool)
 
