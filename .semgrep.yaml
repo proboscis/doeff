@@ -184,6 +184,20 @@ rules:
       include:
         - /packages/doeff-agents/src/doeff_agents/handlers/mcp_server_loop.hy
 
+  - id: doeff-agents-mcp-stack-normalizes-raw-handlers
+    languages: [generic]
+    severity: ERROR
+    message: >
+      doeff-agents MCP dispatch must normalize captured handlers with
+      doeff.handler before applying them to a tool Program. GetHandlers may
+      capture raw (effect, k) dispatchers; calling them as `(h program)` drops
+      the continuation and fails every MCP tool with a missing `k` argument.
+    pattern-regex: '\(setv\s+program\s+\([A-Za-z_][A-Za-z0-9_-]*\s+program\)\)'
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/handlers/mcp_server_loop.hy
+        - /packages/doeff-agents/src/doeff_agents/handlers/effectful.hy
+
   - id: adr0001-d1-agentd-only-worker-route
     languages: [python]
     severity: ERROR
