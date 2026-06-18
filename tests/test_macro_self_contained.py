@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import doeff_hy  # noqa — registers extensions
 import hy
 import hy.macros
+import pytest
 from doeff_core_effects import Ask
 from doeff_core_effects.handlers import await_handler, lazy_ask
 from doeff_core_effects.scheduler import scheduled
@@ -76,6 +77,17 @@ class TestDefkSelfContained:
         """)
         assert result == 6
 
+    def test_defk_rejects_bare_effect_last_expression(self):
+        """defk should fail fast when the final expression is an unperformed effect."""
+        with pytest.raises(RuntimeError, match="last expression is an unperformed effect"):
+            _eval_no_doeff_do("""
+            (defk bad [x]
+              {:pre [(: x int)]
+               :post [(: % int)]}
+              (Num :value x))
+            (run (bad 5))
+            """)
+
 
 class TestFnkSelfContained:
     def test_fnk_no_external_import(self):
@@ -98,6 +110,14 @@ class TestDoBangSelfContained:
                 (+ val " world"))) )))
         """)
         assert result == "hello world"
+
+    def test_do_bang_rejects_bare_effect_last_expression(self):
+        """do! should fail fast when the final expression is an unperformed effect."""
+        with pytest.raises(RuntimeError, match="last expression is an unperformed effect"):
+            _eval_no_doeff_do("""
+            (run (do!
+              (Num :value 5)))
+            """)
 
 
 class TestDefpSelfContained:
