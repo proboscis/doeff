@@ -297,11 +297,38 @@ defk {name}: :post type annotation cannot be an empty string.
                           (. (type ~target) __name__))))))
       `(assert ~check ~(+ (str fn-name) ": " phase " failed: " (str check)))))
 
+(defn _guard-performed [result label]
+  "Raise if a kleisli (defk/do!) last expression evaluated to an unperformed
+   effect. A bare EffectBase as the final form is RETURNED as a value, never
+   performed — almost always a bug (regression: a do! whose last form was
+   `(LaunchEffect ...)` returned the effect object and never launched the
+   agent). The Program-return composition pattern returns a DoExpr (Pure/Expand/
+   a @do call), NOT an EffectBase, so this never fires on it; plain functions
+   (deff/defn) returning effect constructors are not kleisli and are not guarded.
+   Returns `result` unchanged when fine, so it can wrap a return position."
+  (import doeff [EffectBase])
+  (when (isinstance result EffectBase)
+    (raise (RuntimeError
+             (+ label ": last expression is an unperformed effect `"
+                (. (type result) __name__)
+                "`. A defk/do! last form is RETURNED as a value, not performed — "
+                "bind it instead: (<- v (" (. (type result) __name__)
+                " ...)) then return v."))))
+  result)
+
+
 (defn _build-fn-with-contracts [decorators name params pre-checks post-checks real-body]
   "Build a defn form with pre/post assertion wrappers.
-   Works for both plain functions (deff) and generator/kleisli functions (defk)."
+   Works for both plain functions (deff) and generator/kleisli functions (defk).
+   Kleisli functions (decorator `_doeff_do`) additionally guard against a bare
+   unperformed effect as the last form (see `_guard-performed`)."
   (setv pre-code (lfor check (or pre-checks [])
                    (_expand-check check name "pre-condition")))
+  (setv kleisli? (any (gfor d decorators (= (str d) "_doeff_do"))))
+  (setv guard-stmt
+    (if kleisli?
+        `(_guard-performed _contract_result ~(str name))
+        `(do)))
   (if post-checks
       (let [post-asserts (lfor check post-checks
                            (_expand-check check name "post-condition"))
@@ -311,6 +338,7 @@ defk {name}: :post type annotation cannot be an empty string.
            ~@pre-code
            ~@init-forms
            (setv _contract_result ~last-form)
+           ~guard-stmt
            (let [% _contract_result]
              ~@post-asserts)
            _contract_result))
@@ -493,6 +521,7 @@ defk {name}: {{:post [...]}} is required.
         `(do)))
   `(do
      (import doeff.do [do :as _doeff_do])
+     (import doeff-hy.macros [_guard-performed])
      ~lazy-imports
      ~fn-form
      (setv (. ~name __doeff_body__) '~real-body)
@@ -592,18 +621,23 @@ defk {name}: {{:post [...]}} is required.
       (let [post-asserts (lfor check post-checks
                            (_expand-check check "do!" "post-condition"))]
         `(do (import doeff.do [do :as _doeff-do])
+             (import doeff-hy.macros [_guard-performed])
              ((_doeff-do (fn []
                ~@pre-code
                ~@expanded
                (setv _contract_result ~body-expr)
+               (_guard-performed _contract_result "do!")
                (let [% _contract_result]
                  ~@post-asserts)
                (return _contract_result))))))
       `(do (import doeff.do [do :as _doeff-do])
+           (import doeff-hy.macros [_guard-performed])
            ((_doeff-do (fn []
              ~@pre-code
              ~@expanded
-             (return ~body-expr)))))))
+             (setv _contract_result ~body-expr)
+             (_guard-performed _contract_result "do!")
+             (return _contract_result)))))))
 
 
 ;; ---------------------------------------------------------------------------
