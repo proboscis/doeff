@@ -3,7 +3,7 @@
 ;;; Usage:
 ;;;   (require doeff-hy.macros [do! defk deff fnk <- ! <-> set! defp defpp deftest
 ;;;                             defpipeline traverse for/do
-;;;                             defhandler handle defmcp-tool])
+;;;                             defhandler handle with-handler defmcp-tool])
 ;;;   (import doeff [do :as _doeff-do])
 ;;;
 ;;; Core effects are imported from doeff_core_effects:
@@ -29,7 +29,7 @@
 ;; Without this, forgetting (require doeff-hy.handle [defhandler]) causes
 ;; (defhandler ...) to compile as a function call, silently leaking yield
 ;; from nested <- to the enclosing defn scope. See #387.
-(require doeff-hy.handle [defhandler handle])
+(require doeff-hy.handle [defhandler handle with-handler])
 
 (defn _compiling-file-ext []
   "Return the file extension of the .hy/.hyk/.hyp file being compiled.
@@ -171,9 +171,9 @@
         (<- base-result (MyEffect :field field))
         (resume (* base-result 2))))
 
-    ;; Install by direct Program -> Program call
-    (my-handler body)
-    ((my-handler config) body)
+    ;; Install through explicit handler stack syntax
+    (with-handler [my-handler] body)
+    (with-handler [(my-handler config)] body)
 ")
 
 (defn _reject-handler-signature [fn-name params]
