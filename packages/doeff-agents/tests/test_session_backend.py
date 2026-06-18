@@ -42,7 +42,7 @@ from doeff_agents.adapters.base import (
     LaunchParams,
 )
 from doeff_agents.adapters.codex import CodexAdapter
-from doeff_agents.effects import AgentSpec, LaunchSession
+from doeff_agents.effects import AgentSpec, AwaitResultEffect, AwaitStatus, LaunchSession
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import InMemoryAgentSessionRepository
 from doeff_agents.tmux import TmuxSessionBackend
@@ -352,6 +352,36 @@ def test_l2_launch_session_injects_mcp_config(monkeypatch, tmp_path: Path) -> No
     assert run_tool_was_passed
     sent_command = backend.sent[0][1]
     assert 'mcp_servers."sbi".url="http://127.0.0.1:51979/sse"' in sent_command
+
+
+def test_l2_await_result_prefers_schema_artifact_while_session_still_exists(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = FakeBackend()
+    monkeypatch.setattr("doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter())
+    work_dir = tmp_path / "workspace"
+    work_dir.mkdir()
+    spec = AgentSpec(
+        run_id="readiness",
+        node_id="sbi-recon",
+        attempt=0,
+        agent_type=AgentType.CLAUDE,
+        work_dir=work_dir,
+        prompt="write account state",
+        result_schema={"type": "object", "required": ["status"]},
+    )
+    handler = TmuxAgentHandler(backend=backend)
+    handle = handler.handle_launch_session(LaunchSession(spec))
+    (work_dir / ".agentd-result.json").write_text('{"status": "prepared"}', encoding="utf-8")
+    backend.captures[f"%{handle.session_id}"] = "agent output still visible, no shell prompt"
+
+    outcome = handler.handle_await_result(
+        AwaitResultEffect(handle=handle, timeout_seconds=0.01)
+    )
+
+    assert outcome.status == AwaitStatus.EXITED
+    assert outcome.result == {"status": "prepared"}
 
 
 def test_imperative_session_api_accepts_injected_backend(monkeypatch) -> None:

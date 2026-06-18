@@ -825,6 +825,9 @@ class TmuxAgentHandler(AgentHandler):
             if state is None:
                 raise SessionNotFoundError(f"Session {effect.handle.session_id} is not registered")
 
+            if (state.work_dir / ".agentd-result.json").exists():
+                return self._await_outcome_from_result_file(state)
+
             if not self._backend.has_session(effect.handle.session_id):
                 return self._await_outcome_from_result_file(state)
 
