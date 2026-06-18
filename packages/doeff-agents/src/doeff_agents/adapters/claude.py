@@ -94,6 +94,9 @@ class ClaudeAdapter:
         """Return argv list - caller will shlex.join() if needed."""
         args = ["claude", "--dangerously-skip-permissions"]
 
+        if params.prompt:
+            args.append("--print")
+
         if params.model:
             args.extend(["--model", params.model])
 
@@ -103,7 +106,6 @@ class ClaudeAdapter:
         if params.bare:
             args.append("--bare")
 
-        # Prompt is passed as positional argument (no quoting needed in argv)
         if params.prompt:
             args.append(params.prompt)
 

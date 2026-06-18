@@ -22,6 +22,7 @@ def test_launch_command_includes_model_when_provided() -> None:
     assert adapter.launch_command(params) == [
         "claude",
         "--dangerously-skip-permissions",
+        "--print",
         "--model",
         "opus",
         "ship it",
@@ -38,7 +39,24 @@ def test_launch_command_omits_model_when_not_provided() -> None:
     assert adapter.launch_command(params) == [
         "claude",
         "--dangerously-skip-permissions",
+        "--print",
         "ship it",
+    ]
+
+
+def test_launch_command_without_prompt_stays_interactive() -> None:
+    adapter = ClaudeAdapter()
+    params = LaunchParams(
+        work_dir=Path.cwd(),
+        prompt=None,
+        model="opus",
+    )
+
+    assert adapter.launch_command(params) == [
+        "claude",
+        "--dangerously-skip-permissions",
+        "--model",
+        "opus",
     ]
 
 
