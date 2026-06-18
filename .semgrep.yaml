@@ -13,6 +13,19 @@ rules:
   # EFFECT SYSTEM PATTERNS
   # ---------------------------------------------------------------------------
 
+  - id: doeff-agents-claude-prompt-launch-must-use-print
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      Claude Code prompt launches must include --print before passing the prompt.
+      Without --print, modern Claude Code starts an interactive TUI and local
+      tmux readiness sessions wait for input instead of executing the prompt.
+    pattern-regex: 'args = \["claude", "--dangerously-skip-permissions"\]\n\s*\n\s*if params\.model:'
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/adapters/claude.py
+
   - id: no-future-annotations
     languages: [python]
     severity: ERROR
