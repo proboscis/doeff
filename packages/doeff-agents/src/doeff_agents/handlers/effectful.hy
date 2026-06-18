@@ -58,7 +58,12 @@
       (resume (.handle-agent agent-handler effect)))
 
     (LaunchSessionEffect [spec]
-      (resume (.handle-launch-session agent-handler effect)))
+      (if spec.mcp-tools
+          (do
+            (<- handlers (GetHandlers k))
+            (resume (.handle-launch-session agent-handler effect
+                      :run-tool (_make-run-tool handlers))))
+          (resume (.handle-launch-session agent-handler effect :run-tool None))))
 
     (AwaitResultEffect [handle timeout-seconds]
       (resume (.handle-await-result agent-handler effect)))
@@ -142,7 +147,12 @@
         (<- active-backend (Ask SessionBackend)))
       (setv agent-handler
         (_cached-tmux-handler handler-ref active-backend session-repository))
-      (resume (.handle-launch-session agent-handler effect)))
+      (if spec.mcp-tools
+          (do
+            (<- handlers (GetHandlers k))
+            (resume (.handle-launch-session agent-handler effect
+                      :run-tool (_make-run-tool handlers))))
+          (resume (.handle-launch-session agent-handler effect :run-tool None))))
 
     (AwaitResultEffect [handle timeout-seconds]
       (setv active-backend backend)

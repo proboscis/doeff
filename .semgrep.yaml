@@ -211,6 +211,19 @@ rules:
       include:
         - /packages/doeff-agents/src/doeff_agents/handlers/production.py
 
+  - id: doeff-agents-l2-launchsession-captures-mcp-handler-stack
+    languages: [generic]
+    severity: ERROR
+    message: >
+      L2 LaunchSessionEffect with MCP tools must capture GetHandlers(k) and pass
+      a run_tool callback into handle-launch-session. Calling handle-launch-session
+      directly launches a tool-less session or loses the domain handler stack,
+      breaking k3s/SBI readiness at the broker MCP boundary.
+    pattern-regex: '\(resume\s+\(\.handle-launch-session\s+agent-handler\s+effect\)\)'
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/handlers/effectful.hy
+
   - id: adr0001-d1-agentd-only-worker-route
     languages: [python]
     severity: ERROR

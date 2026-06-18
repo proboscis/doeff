@@ -14,7 +14,7 @@ import json
 from dataclasses import dataclass
 
 from doeff_agents.adapters.base import AgentType
-from doeff_agents.effects import LaunchEffect
+from doeff_agents.effects import AgentSpec, L2SessionHandle, LaunchEffect, LaunchSession
 from doeff_agents.handlers import _make_protocol_handler
 from doeff_agents.handlers.testing import MockAgentHandler
 
@@ -109,6 +109,41 @@ class TestMcpE2E:
 
         wrapped = agent_protocol(_install_raw_handler(greet_handler)(_install_raw_handler(upper_handler)(program)))
         return run(wrapped), mock_handler
+
+    def test_l2_launch_session_mcp_tool_call_uses_captured_handler_stack(self, tmp_path):
+        """L2 LaunchSession captures the handler stack for MCP tool calls."""
+
+        class RecordingAgentHandler(MockAgentHandler):
+            def __init__(self):
+                super().__init__()
+                self.run_tool = None
+
+            def handle_launch_session(self, effect, run_tool=None):
+                self.run_tool = run_tool
+                return L2SessionHandle(session_id=effect.spec.session_id)
+
+        agent_handler = RecordingAgentHandler()
+        agent_protocol = _make_protocol_handler(agent_handler)
+
+        @do
+        def program():
+            spec = AgentSpec(
+                run_id="run-001",
+                node_id="node-mcp",
+                attempt=0,
+                agent_type=AgentType.CLAUDE,
+                work_dir=tmp_path,
+                prompt="use tools",
+                result_schema={"type": "object"},
+                mcp_tools=(greet_tool,),
+            )
+            return (yield LaunchSession(spec))
+
+        handle = run(agent_protocol(_install_raw_handler(greet_handler)(program())))
+
+        assert handle.session_id == "run-001-node-mcp-0"
+        assert agent_handler.run_tool is not None
+        assert agent_handler.run_tool(greet_tool, {"name": "Ada"}) == "Hello, Ada!"
 
     def test_launch_with_mcp_creates_server_and_mcp_json(self, tmp_path):
         """Launch with mcp_tools starts MCP server and writes .mcp.json."""
