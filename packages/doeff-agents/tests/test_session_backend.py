@@ -42,9 +42,12 @@ from doeff_agents.adapters.base import (
     LaunchParams,
 )
 from doeff_agents.adapters.codex import CodexAdapter
+from doeff_agents.effects import AgentSpec, LaunchSession
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import InMemoryAgentSessionRepository
 from doeff_agents.tmux import TmuxSessionBackend
+
+from doeff.mcp import McpParamSchema, McpToolDef
 
 
 def test_session_api_import_does_not_load_doeff_core() -> None:
@@ -298,6 +301,57 @@ def test_tmux_agent_handler_injects_codex_mcp_config(monkeypatch, tmp_path: Path
 
     sent_command = backend.sent[0][1]
     assert 'mcp_servers."hypha".url="http://127.0.0.1:51978/sse"' in sent_command
+
+
+def test_l2_launch_session_injects_mcp_config(monkeypatch, tmp_path: Path) -> None:
+    backend = FakeBackend()
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter",
+        lambda _agent_type: FakeCodexAdapter(),
+    )
+    run_tool_was_passed = False
+
+    class FakeMcpServer:
+        url = "http://127.0.0.1:51979/sse"
+
+    def fake_start_mcp_server(_self, _effect, run_tool):
+        nonlocal run_tool_was_passed
+        run_tool_was_passed = run_tool is not None
+        return FakeMcpServer()
+
+    monkeypatch.setattr(
+        TmuxAgentHandler,
+        "_start_mcp_server",
+        fake_start_mcp_server,
+    )
+    tool = McpToolDef(
+        name="sbi-status",
+        description="read SBI status",
+        params=(McpParamSchema(name="x", type="string", description="unused"),),
+        handler=lambda x: x,
+    )
+
+    spec = AgentSpec(
+        run_id="readiness",
+        node_id="sbi-executor",
+        attempt=0,
+        agent_type=AgentType.CODEX,
+        work_dir=tmp_path / "workspace",
+        prompt="use the sbi MCP server",
+        result_schema={"type": "object"},
+        mcp_tools=(tool,),
+        mcp_server_name="sbi",
+    )
+
+    handle = TmuxAgentHandler(backend=backend).handle_launch_session(
+        LaunchSession(spec),
+        run_tool=lambda *_args, **_kwargs: None,
+    )
+
+    assert handle.session_id == "readiness-sbi-executor-0"
+    assert run_tool_was_passed
+    sent_command = backend.sent[0][1]
+    assert 'mcp_servers."sbi".url="http://127.0.0.1:51979/sse"' in sent_command
 
 
 def test_imperative_session_api_accepts_injected_backend(monkeypatch) -> None:
