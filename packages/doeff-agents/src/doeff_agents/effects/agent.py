@@ -111,6 +111,8 @@ class AgentSpec:
     result_schema: JSONSchema
     model: str | None = None
     effort: str | None = None
+    mcp_tools: tuple["McpToolDef", ...] = ()
+    mcp_server_name: str = "doeff"
     bare: bool = False
     lifecycle: AgentSessionLifecycle = AgentSessionLifecycle.RUN_TO_COMPLETION
     session_env: dict[str, str] | None = None

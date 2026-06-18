@@ -126,6 +126,35 @@ def test_l2_effect_constructors_return_core_effects(tmp_path: Path) -> None:
     assert isinstance(ReleaseSession(handle), ReleaseSessionEffect)
 
 
+def test_l2_agent_spec_carries_mcp_tools_into_launch_effect(tmp_path: Path) -> None:
+    from doeff.mcp import McpParamSchema, McpToolDef
+    from doeff_agents.handlers.production import _launch_effect_from_spec
+
+    tool = McpToolDef(
+        name="test-tool",
+        description="A test MCP tool",
+        params=(McpParamSchema(name="x", type="string", description="input"),),
+        handler=lambda x: x,
+    )
+    spec = AgentSpec(
+        run_id="run-001",
+        node_id="node-mcp",
+        attempt=0,
+        agent_type=AgentType.CLAUDE,
+        work_dir=tmp_path,
+        prompt="use the tool",
+        result_schema=ARTIFACT_SCHEMA,
+        mcp_tools=(tool,),
+        mcp_server_name="sbi",
+    )
+
+    launch_effect = _launch_effect_from_spec(spec)
+
+    assert launch_effect.session_name == "run-001-node-mcp-0"
+    assert launch_effect.mcp_tools == (tool,)
+    assert launch_effect.mcp_server_name == "sbi"
+
+
 def test_agent_retries_invalid_schema_then_returns_valid_payload(tmp_path: Path) -> None:
     handler = ScenarioAgentHandler(
         scripts={
