@@ -47,7 +47,7 @@ from doeff_agents.adapters.codex import CodexAdapter
 from doeff_agents.effects import AwaitResultEffect, AwaitStatus, LaunchSession
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import InMemoryAgentSessionRepository
-from doeff_agents.tmux import TmuxSessionBackend
+from doeff_agents.tmux import TmuxSessionBackend, _output_has_unsubmitted_paste_input
 
 from doeff.mcp import McpParamSchema, McpToolDef
 
@@ -521,6 +521,60 @@ def test_tmux_backend_uses_injected_executable(monkeypatch, tmp_path: Path) -> N
 
     assert calls[0][0] == r"C:\msys64\usr\bin\tmux.exe"
     assert all(call[0] == r"C:\msys64\usr\bin\tmux.exe" for call in calls)
+
+
+def test_tmux_backend_pastes_literal_prompt_and_resubmits_collapsed_input(
+    monkeypatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args, **kwargs):
+        calls.append(list(args))
+        if args[1] == "-V":
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        if args[1] == "capture-pane":
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                stdout=(
+                    "✶ Spinning…\n"
+                    "────────────────────────────────────────\n"
+                    "\u276f\u00a0[Pasted text #3 +12 lines]\n"
+                    "────────────────────────────────────────\n"
+                    "  paste again to expand\n"
+                ),
+                stderr="",
+            )
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("doeff_agents.tmux.subprocess.run", fake_run)
+    monkeypatch.setattr("doeff_agents.tmux.time.sleep", lambda _seconds: None)
+
+    backend = TmuxSessionBackend()
+    backend.send_keys("%42", "long structured-result prompt", literal=True, enter=True)
+
+    command_names = [call[1] for call in calls]
+    assert command_names.count("set-buffer") == 1
+    assert command_names.count("paste-buffer") == 1
+    assert command_names.count("delete-buffer") == 1
+    assert command_names.count("capture-pane") == 1
+    enter_calls = [
+        call for call in calls if call[1:4] == ["send-keys", "-t", "%42"] and call[-1] == "Enter"
+    ]
+    assert len(enter_calls) == 2
+
+
+def test_unsubmitted_paste_detector_uses_latest_prompt_line() -> None:
+    historical_paste = (
+        "\u276f\u00a0[Pasted text #1 +2 lines]\n"
+        "⏺ Write(.agentd-result.json)\n"
+        "  ⎿ Wrote 1 lines to .agentd-result.json\n\n"
+        "\u276f\u00a0\n"
+    )
+
+    assert not _output_has_unsubmitted_paste_input(historical_paste)
+    assert _output_has_unsubmitted_paste_input("\u203a [Pasted text #1 +12 lines]\n")
+    assert not _output_has_unsubmitted_paste_input("\u276f\u00a0\n")
 
 
 def test_tmux_backend_defaults_to_tmux(monkeypatch) -> None:
