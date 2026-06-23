@@ -60,6 +60,64 @@ rules:
         - /packages/doeff-agents/src/doeff_agents/adapters/codex.py
         - /packages/doeff-agents/src/doeff_agents/adapters/gemini.py
 
+  - id: doeff-agents-require-real-claude-result-retry-e2e
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      doeff-agents must keep a real Claude Code E2E that exercises
+      agentd's schema-result retry loop. Fake-agent coverage is not enough.
+    pattern-regex: '(?s)\A(?!(?:.|\n)*test-agentd-real-claude-result-contract-retries-invalid-output)(?:.|\n)*\z'
+    paths:
+      include:
+        - /packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy
+        - /tests/semgrep/fixtures/python/packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy
+
+  - id: doeff-agents-require-real-codex-result-retry-e2e
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      doeff-agents must keep a real Codex CLI E2E that exercises agentd's
+      schema-result retry loop. Fake-agent coverage is not enough.
+    pattern-regex: '(?s)\A(?!(?:.|\n)*test-agentd-real-codex-result-contract-retries-invalid-output)(?:.|\n)*\z'
+    paths:
+      include:
+        - /packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy
+        - /tests/semgrep/fixtures/python/packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy
+
+  - id: doeff-agents-real-agent-e2e-must-not-be-skipped
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      Real agent E2E tests must run by default. Do not add skip, xfail, or
+      environment-variable gates around Claude/Codex live-agent coverage.
+    pattern-regex: '\b(pytest\.skip|pytest\.mark\.skip|pytest\.mark\.skipif|pytest\.mark\.xfail|skipif|DOEFFIC_RUN_LIVE_AGENT_E2E|RUN_LIVE_AGENT_E2E)\b'
+    paths:
+      include:
+        - /packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy
+        - /packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_support.py
+        - /packages/doeff-agents/tests/test_agentd_real_agent_result_retry_e2e.py
+        - /packages/doeff-agents/tests/test_mcp_live_e2e.py
+        - /tests/semgrep/fixtures/python/packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy
+        - /tests/semgrep/fixtures/python/packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_support.py
+        - /tests/semgrep/fixtures/python/packages/doeff-agents/tests/test_agentd_real_agent_result_retry_e2e.py
+
+  - id: doeff-agents-real-agent-e2e-must-not-use-command-override
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      Real agent E2E tests must launch actual Claude/Codex through agentd's
+      agent_type path. Do not pass command=... to replace the agent with a
+      fake process.
+    pattern-regex: '\bcommand\s*='
+    paths:
+      include:
+        - /packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_support.py
+        - /tests/semgrep/fixtures/python/packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_support.py
+
   - id: doeff-agents-await-result-must-prefer-schema-artifact
     languages:
       - generic

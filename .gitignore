@@ -112,3 +112,5 @@ ORCH_PROMPT.md
 
 # Local workspace artifacts
 python/
+!tests/semgrep/fixtures/python/
+!tests/semgrep/fixtures/python/**
