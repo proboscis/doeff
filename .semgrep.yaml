@@ -13,18 +13,52 @@ rules:
   # EFFECT SYSTEM PATTERNS
   # ---------------------------------------------------------------------------
 
-  - id: doeff-agents-claude-prompt-launch-must-use-print
+  - id: doeff-agents-no-claude-print-mode
     languages:
       - generic
     severity: ERROR
     message: >
-      Claude Code prompt launches must include --print before passing the prompt.
-      Without --print, modern Claude Code starts an interactive TUI and local
-      tmux readiness sessions wait for input instead of executing the prompt.
-    pattern-regex: 'args = \["claude", "--dangerously-skip-permissions"\]\n\s*\n\s*if params\.model:'
+      Claude must never be launched in print/one-shot mode. Start the agent
+      as a live terminal session and deliver prompts through the terminal
+      transport after launch.
+    pattern-regex: '\bclaude\b[^\n]*(\s-p\b|\s--print\b)'
+    paths:
+      include:
+        - /packages/**
+
+  - id: doeff-agents-built-in-adapters-must-not-read-launch-prompt
+    languages:
+      - python
+    severity: ERROR
+    message: >
+      Built-in agent adapters must not read LaunchParams.prompt while building
+      argv. Prompts belong to the live terminal transport, never CLI args.
+    patterns:
+      - pattern-inside: |
+          def launch_command(...):
+              ...
+      - pattern: $PARAMS.prompt
     paths:
       include:
         - /packages/doeff-agents/src/doeff_agents/adapters/claude.py
+        - /packages/doeff-agents/src/doeff_agents/adapters/codex.py
+        - /packages/doeff-agents/src/doeff_agents/adapters/gemini.py
+
+  - id: doeff-agents-built-in-adapters-must-use-terminal-transport
+    languages:
+      - python
+    severity: ERROR
+    message: >
+      Built-in agent adapters must use the live terminal transport. ARG/STDIN
+      prompt injection starts one-shot modes and breaks retryable sessions.
+    pattern-either:
+      - pattern: return InjectionMethod.ARG
+      - pattern: return InjectionMethod.STDIN
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/adapters/claude.py
+        - /packages/doeff-agents/src/doeff_agents/adapters/codex.py
+        - /packages/doeff-agents/src/doeff_agents/adapters/gemini.py
 
   - id: doeff-agents-await-result-must-prefer-schema-artifact
     languages:
@@ -32,7 +66,7 @@ rules:
     severity: ERROR
     message: >
       TmuxAgentHandler.handle_await_result must check .agentd-result.json before
-      waiting for tmux session exit. Claude --print returns to a shell prompt while
+      waiting for tmux session exit. One-shot CLI modes return to a shell prompt while
       the tmux session remains alive, so session-first await can time out after a
       valid schema artifact already exists.
     pattern-regex: 'if state is None:\n\s+raise SessionNotFoundError\(f"Session \{effect\.handle\.session_id\} is not registered"\)\n\n\s+if not self\._backend\.has_session\(effect\.handle\.session_id\):'

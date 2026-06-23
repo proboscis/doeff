@@ -78,7 +78,6 @@ from doeff_agents.session_store import AgentSessionRepository, InMemoryAgentSess
 from doeff_agents.shell import wrap_with_shell_exports
 
 RESULT_ARTIFACT_FILENAME = ".agentd-result.json"
-PROMPT_ARTIFACT_PREFIX = ".agentd-prompt"
 
 
 class AgentHandler(ABC):
@@ -424,44 +423,6 @@ def _prompt_with_result_contract(
     return f"{base}{_result_contract_prompt(result_schema)}"
 
 
-def _prompt_artifact_path(work_dir: Path, session_name: str) -> Path:
-    safe_name = re.sub(r"[^A-Za-z0-9_.-]", "-", session_name)
-    return work_dir / f"{PROMPT_ARTIFACT_PREFIX}-{safe_name}.txt"
-
-
-def _command_with_stdin_prompt(
-    command: str,
-    *,
-    work_dir: Path,
-    session_name: str,
-    prompt: str | None,
-) -> str:
-    if prompt is None:
-        return command
-    work_dir.mkdir(parents=True, exist_ok=True)
-    prompt_path = _prompt_artifact_path(work_dir, session_name)
-    prompt_path.write_text(prompt, encoding="utf-8")
-    return f"{command} < {shlex.quote(str(prompt_path))}"
-
-
-def _command_for_prompt_injection(
-    adapter: AgentAdapter,
-    command: str,
-    *,
-    work_dir: Path,
-    session_name: str,
-    prompt: str | None,
-) -> str:
-    if adapter.injection_method == InjectionMethod.STDIN:
-        return _command_with_stdin_prompt(
-            command,
-            work_dir=work_dir,
-            session_name=session_name,
-            prompt=prompt,
-        )
-    return command
-
-
 def _launch_effect_from_spec(spec: AgentSpec) -> LaunchEffect:
     return LaunchEffect(
         session_name=spec.session_id,
@@ -589,18 +550,21 @@ class TmuxAgentHandler(AgentHandler):
                 mcp_servers=mcp_servers or None,
             )
         )
-        command = self._wrap_with_shell_exports(
-            _command_for_prompt_injection(
-                adapter,
-                shlex.join(argv),
-                work_dir=effect.work_dir,
-                session_name=effect.session_name,
-                prompt=effect.prompt,
-            ),
-            agent_env_exports,
-        )
+        command = self._wrap_with_shell_exports(shlex.join(argv), agent_env_exports)
 
         self._backend.send_keys(session_info.pane_id, command, literal=False)
+        # Dismiss onboarding dialogs (trust, theme, auth) if adapter supports them.
+        # The first task prompt must be typed into the running agent, not passed
+        # through argv/stdin. Handle startup UI before sending that prompt.
+        onboarding_patterns = getattr(adapter, "onboarding_patterns", None)
+        if onboarding_patterns:
+            _dismiss_onboarding_dialogs(
+                session_info.pane_id,
+                onboarding_patterns,
+                timeout=effect.ready_timeout,
+                backend=self._backend,
+            )
+
         if adapter.injection_method == InjectionMethod.TMUX:
             if adapter.ready_pattern and not self._wait_for_ready(
                 session_info.pane_id, adapter.ready_pattern, effect.ready_timeout
@@ -612,16 +576,6 @@ class TmuxAgentHandler(AgentHandler):
                 )
             if effect.prompt:
                 self._backend.send_keys(session_info.pane_id, effect.prompt)
-
-        # Dismiss onboarding dialogs (trust, theme, auth) if adapter supports them
-        onboarding_patterns = getattr(adapter, "onboarding_patterns", None)
-        if onboarding_patterns:
-            _dismiss_onboarding_dialogs(
-                session_info.pane_id,
-                onboarding_patterns,
-                timeout=effect.ready_timeout,
-                backend=self._backend,
-            )
 
         handle = SessionHandle(
             session_id=effect.session_name,
@@ -672,13 +626,7 @@ class TmuxAgentHandler(AgentHandler):
             )
         )
         command = self._wrap_with_shell_exports(
-            _command_for_prompt_injection(
-                adapter,
-                shlex.join(argv),
-                work_dir=effect.work_dir,
-                session_name=effect.session_name,
-                prompt=effect.prompt,
-            ),
+            shlex.join(argv),
             {
                 **(effect.session_env or {}),
                 "HOME": str(agent_home),
@@ -701,6 +649,8 @@ class TmuxAgentHandler(AgentHandler):
                 timeout=effect.ready_timeout,
                 backend=self._backend,
             )
+        if adapter.injection_method == InjectionMethod.TMUX and effect.prompt:
+            self._backend.send_keys(session_info.pane_id, effect.prompt)
 
         handle = SessionHandle(
             session_id=effect.session_name,
