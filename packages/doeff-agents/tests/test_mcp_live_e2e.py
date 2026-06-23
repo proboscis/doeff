@@ -8,12 +8,10 @@ Run with: uv run pytest packages/doeff-agents/tests/test_mcp_live_e2e.py -v -s
 """
 
 import logging
-import os
 import shutil
 from pathlib import Path
 from tempfile import mkdtemp
 
-import pytest
 from doeff_agents.adapters.base import AgentType
 from doeff_agents.effects import (
     Capture,
@@ -30,14 +28,6 @@ from doeff import Perform, do, run
 from doeff.mcp import McpParamSchema, McpToolDef
 
 logging.basicConfig(level=logging.INFO)
-
-# Skip entire module if tmux or claude are not available
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("DOEFFIC_RUN_LIVE_AGENT_E2E")
-    or shutil.which("claude") is None
-    or shutil.which("tmux") is None,
-    reason="Requires DOEFFIC_RUN_LIVE_AGENT_E2E=1 plus tmux and claude CLI",
-)
 
 # -- Tools -------------------------------------------------------------------
 
@@ -58,11 +48,20 @@ echo_tool = McpToolDef(
 )
 
 
+def _require_live_dependency(binary: str) -> None:
+    assert shutil.which(binary) is not None, (
+        f"{binary!r} is required for the Claude MCP live E2E test"
+    )
+
+
 # -- Test --------------------------------------------------------------------
 
 class TestMcpLiveE2E:
     def test_claude_calls_mcp_tool(self):
         """Claude Code launches, discovers MCP tools, and calls echo tool."""
+        _require_live_dependency("tmux")
+        _require_live_dependency("claude")
+
         work_dir = Path(mkdtemp(prefix="doeff-mcp-e2e-"))
         _tool_call_log.clear()
 

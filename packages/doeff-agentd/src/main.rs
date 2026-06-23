@@ -319,7 +319,7 @@ fn result_file_name(session_id: &str) -> String {
 fn result_protocol_instruction(session_id: &str) -> String {
     let file_name = result_file_name(session_id);
     format!(
-        "\n\n---\nWhen you have finished the task, WRITE your result as a single JSON \
+        " Result channel: when you have finished the task, WRITE your result as a single JSON \
          object to the file '{file_name}' in your current working directory.  \
          agentd reads that file, validates it, and — if it is missing or does not \
          satisfy the contract — sends the reason back so you can fix it; rewrite the \
@@ -1019,7 +1019,10 @@ fn ignore_result_file(work_dir: &str, file_name: &str) -> Result<()> {
     let exclude_path = info_dir.join("exclude");
     let existing = fs::read_to_string(&exclude_path).unwrap_or_default();
     let entry = format!("/{file_name}");
-    if existing.lines().any(|line| line.trim() == entry || line.trim() == file_name) {
+    if existing
+        .lines()
+        .any(|line| line.trim() == entry || line.trim() == file_name)
+    {
         return Ok(());
     }
     let mut contents = existing;
@@ -1203,7 +1206,10 @@ fn session_launch(
             // describes WHAT data to report; agentd adds where to
             // put it and how it is validated.
             let full_prompt = if params.expected_result.is_some() {
-                format!("{prompt}{}", result_protocol_instruction(&params.session_id))
+                format!(
+                    "{prompt}{}",
+                    result_protocol_instruction(&params.session_id)
+                )
             } else {
                 prompt.clone()
             };
@@ -1215,7 +1221,9 @@ fn session_launch(
             // eaten by the loading screen — the visible symptom
             // was a prompt sitting in codex's input box that was
             // never submitted.
-            wait_for_repl_idle(config, &pane_id, Duration::from_secs(20))?;
+            if params.command.is_none() && is_interactive_agent_type(&params.agent_type) {
+                wait_for_repl_idle(config, &pane_id, Duration::from_secs(120))?;
+            }
             tmux_send_keys(config, &pane_id, &full_prompt, true, true)?;
             awaiting_response = true;
         }
@@ -1455,15 +1463,8 @@ fn session_cleanup(
 /// `serve` / `handle_stream`), so blocking the calling thread here
 /// does not stall the rest of the daemon — other RPCs continue to be
 /// served concurrently.
-fn session_await_result(
-    conn: &Connection,
-    params: AwaitResultParams,
-) -> Result<Value> {
-    session_await_result_with_interval(
-        conn,
-        params,
-        Duration::from_millis(AWAIT_POLL_INTERVAL_MS),
-    )
+fn session_await_result(conn: &Connection, params: AwaitResultParams) -> Result<Value> {
+    session_await_result_with_interval(conn, params, Duration::from_millis(AWAIT_POLL_INTERVAL_MS))
 }
 
 /// Test-friendly variant of `session_await_result` that exposes the
@@ -1563,30 +1564,29 @@ fn build_await_response(snapshot: &SessionSnapshot) -> Value {
                     result_value = Value::Object(result_obj);
                     validation_error = None;
                 }
-                None => match validate_expected_result(&snapshot.work_dir, &snapshot.session_id, spec) {
-                    Ok(parsed) => {
-                        // The file content IS the payload — no envelope.
-                        // Hand it back under `payload` so the caller's await
-                        // shape stays stable.
-                        let mut result_obj = serde_json::Map::new();
-                        result_obj.insert(String::from("payload"), parsed);
-                        result_value = Value::Object(result_obj);
-                        validation_error = None;
+                None => {
+                    match validate_expected_result(&snapshot.work_dir, &snapshot.session_id, spec) {
+                        Ok(parsed) => {
+                            // The file content IS the payload — no envelope.
+                            // Hand it back under `payload` so the caller's await
+                            // shape stays stable.
+                            let mut result_obj = serde_json::Map::new();
+                            result_obj.insert(String::from("payload"), parsed);
+                            result_value = Value::Object(result_obj);
+                            validation_error = None;
+                        }
+                        Err(reason) => {
+                            validation_error = Some(reason);
+                        }
                     }
-                    Err(reason) => {
-                        validation_error = Some(reason);
-                    }
-                },
+                }
             }
         }
     }
 
     response.insert(String::from("result"), result_value);
     if let Some(reason) = validation_error {
-        response.insert(
-            String::from("validation_error"),
-            Value::String(reason),
-        );
+        response.insert(String::from("validation_error"), Value::String(reason));
     }
     Value::Object(response)
 }
@@ -1839,16 +1839,20 @@ fn tmux_send_keys(
     literal: bool,
     enter: bool,
 ) -> Result<()> {
-    let mut command = Command::new(&config.tmux_bin);
-    command.args(["send-keys", "-t", target]);
-    if literal {
-        command.args(["-l", message]);
+    if literal && !message.is_empty() {
+        tmux_paste_literal(config, target, message)?;
     } else {
-        command.arg(message);
-    }
-    let status = command.status().context("tmux send-keys failed to run")?;
-    if !status.success() {
-        return Err(anyhow!("tmux send-keys failed"));
+        let mut command = Command::new(&config.tmux_bin);
+        command.args(["send-keys", "-t", target]);
+        if literal {
+            command.args(["-l", message]);
+        } else {
+            command.arg(message);
+        }
+        let status = command.status().context("tmux send-keys failed to run")?;
+        if !status.success() {
+            return Err(anyhow!("tmux send-keys failed"));
+        }
     }
     if enter {
         // codex renders the input box character-by-character; if we
@@ -1858,7 +1862,7 @@ fn tmux_send_keys(
         // the text sitting in the input forever.  A short pause gives
         // codex time to settle into the "prompt ready, awaiting
         // submit" state before the Enter is delivered.
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(Duration::from_millis(1000));
         let enter_status = Command::new(&config.tmux_bin)
             .args(["send-keys", "-t", target, "Enter"])
             .status()
@@ -1866,6 +1870,39 @@ fn tmux_send_keys(
         if !enter_status.success() {
             return Err(anyhow!("tmux send Enter failed"));
         }
+    }
+    Ok(())
+}
+
+fn tmux_paste_literal(config: &Config, target: &str, message: &str) -> Result<()> {
+    // Long, multi-line prompts are fragile through `send-keys -l`: real
+    // Claude Code has dropped them while staying at an empty prompt.  Keep the
+    // prompt in the live terminal transport, but paste the text through tmux's
+    // buffer and use send-keys only for the submit Enter.
+    let buffer_name = format!(
+        "doeff-agentd-{}-{}",
+        std::process::id(),
+        target
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect::<String>()
+    );
+    let set_status = Command::new(&config.tmux_bin)
+        .args(["set-buffer", "-b", &buffer_name, message])
+        .status()
+        .context("tmux set-buffer failed to run")?;
+    if !set_status.success() {
+        return Err(anyhow!("tmux set-buffer failed"));
+    }
+    let paste_status = Command::new(&config.tmux_bin)
+        .args(["paste-buffer", "-b", &buffer_name, "-t", target])
+        .status()
+        .context("tmux paste-buffer failed to run")?;
+    let _ = Command::new(&config.tmux_bin)
+        .args(["delete-buffer", "-b", &buffer_name])
+        .status();
+    if !paste_status.success() {
+        return Err(anyhow!("tmux paste-buffer failed"));
     }
     Ok(())
 }
@@ -2169,10 +2206,16 @@ fn output_has_agent_idle_prompt(output: &str) -> bool {
 /// update dialog also renders a `›` selection marker that would
 /// otherwise read as a ready REPL).
 fn output_indicates_startup_finished(output: &str) -> bool {
-    if output_is_starting_mcp_servers(output) || output_has_codex_update_dialog(output) {
+    if output_is_starting_mcp_servers(output)
+        || output_has_codex_update_dialog(output)
+        || output_has_claude_bypass_permissions_dialog(output)
+        || output_has_claude_fullscreen_renderer_dialog(output)
+    {
         return false;
     }
-    output_has_codex_active_marker(output) || output_has_agent_idle_prompt(output)
+    output_has_codex_active_marker(output)
+        || output_has_agent_idle_prompt(output)
+        || output_has_claude_turn_activity(output)
 }
 
 /// True while codex is still booting its MCP servers, e.g.
@@ -2222,6 +2265,17 @@ fn output_has_agent_active_marker(output: &str) -> bool {
     text.contains("… (")
 }
 
+/// Evidence that Claude has actually consumed the injected prompt and
+/// started producing a turn.  This is intentionally NOT an "active
+/// marker": completed Claude turns leave `⏺` tool-call bullets and `⎿`
+/// tool results on screen while idle, so using these as active-work
+/// markers would suppress turn-end detection forever.  Use this only to
+/// clear the just-launched awaiting-response latch and disarm the
+/// startup watchdog.
+fn output_has_claude_turn_activity(output: &str) -> bool {
+    output.contains('⏺') || output.contains('⎿')
+}
+
 /// Detect codex's interactive "Update available!" version-check dialog,
 /// e.g.
 ///
@@ -2241,8 +2295,49 @@ fn output_has_agent_active_marker(output: &str) -> bool {
 /// labels keeps ordinary agent output (which never contains both of
 /// these exact phrases) from triggering a stray keystroke.
 fn output_has_codex_update_dialog(output: &str) -> bool {
+    let lower = output_tail_lower(output, 10);
+    lower.contains("update now")
+        && lower.contains("skip until next version")
+        && lower.contains("press enter to continue")
+}
+
+/// True while Claude Code is blocking on the one-time
+/// `--dangerously-skip-permissions` confirmation dialog.
+///
+/// The dialog renders its selected menu option with the same `❯`
+/// glyph as Claude's input box, so it must be detected before the
+/// generic idle-prompt check. Otherwise agentd sends the user prompt
+/// into the menu and Enter accepts the default "No, exit" option.
+fn output_has_claude_bypass_permissions_dialog(output: &str) -> bool {
     let lower = output.to_lowercase();
-    lower.contains("update now") && lower.contains("skip until next version")
+    lower.contains("bypass permissions mode")
+        && lower.contains("no, exit")
+        && lower.contains("yes, i accept")
+        && lower.contains("enter to confirm")
+}
+
+/// True while Claude Code is blocking on the one-time fullscreen
+/// renderer opt-in dialog.
+///
+/// Like the bypass dialog, this menu renders the selected option with
+/// `❯`, so it must be cleared before treating `❯` as the REPL input
+/// box.  agentd chooses "Not now" to keep automated terminal captures
+/// on the stable renderer used by the existing heuristics.
+fn output_has_claude_fullscreen_renderer_dialog(output: &str) -> bool {
+    let lower = output.to_lowercase();
+    lower.contains("try the new fullscreen renderer?")
+        && lower.contains("yes, try it")
+        && lower.contains("not now")
+        && lower.contains("enter to confirm")
+}
+
+/// True while Claude Code is blocking on an organization managed-settings
+/// approval dialog.  This can appear after a turn has already started, so
+/// the monitor loop handles it in addition to launch-time readiness.
+fn output_has_claude_managed_settings_approval_dialog(output: &str) -> bool {
+    let lower = output.to_lowercase();
+    lower.contains("managed settings require approval")
+        && lower.contains("settings requiring approval")
 }
 
 /// Dismiss the codex update dialog by selecting "Skip until next version"
@@ -2257,6 +2352,39 @@ fn dismiss_codex_update_dialog(config: &Config, pane_id: &str) -> Result<()> {
     thread::sleep(Duration::from_millis(120));
     tmux_send_keys(config, pane_id, "Down", false, false)?;
     thread::sleep(Duration::from_millis(120));
+    tmux_send_keys(config, pane_id, "Enter", false, false)?;
+    Ok(())
+}
+
+/// Accept Claude Code's bypass-permissions confirmation dialog.
+///
+/// The default selection is "1. No, exit"; move exactly once to
+/// "2. Yes, I accept" before confirming. This is still terminal
+/// transport, not prompt-in-argv: it handles the CLI's startup menu
+/// before the actual user task is pasted into the live REPL.
+fn accept_claude_bypass_permissions_dialog(config: &Config, pane_id: &str) -> Result<()> {
+    tmux_send_keys(config, pane_id, "Down", false, false)?;
+    thread::sleep(Duration::from_millis(120));
+    tmux_send_keys(config, pane_id, "Enter", false, false)?;
+    Ok(())
+}
+
+/// Dismiss Claude Code's fullscreen-renderer opt-in by selecting
+/// "Not now". The default is "1. Yes, try it"; one Down then Enter
+/// keeps the legacy renderer for predictable agentd capture parsing.
+fn dismiss_claude_fullscreen_renderer_dialog(config: &Config, pane_id: &str) -> Result<()> {
+    tmux_send_keys(config, pane_id, "Down", false, false)?;
+    thread::sleep(Duration::from_millis(120));
+    tmux_send_keys(config, pane_id, "Enter", false, false)?;
+    Ok(())
+}
+
+/// Accept the organization managed-settings approval dialog.  The dialog
+/// exists so the human-visible session acknowledges managed env/policy
+/// settings; for agentd-launched real-agent tests and workers, the
+/// operator has already chosen to run this account, so we accept and let
+/// Claude continue the turn.
+fn accept_claude_managed_settings_approval_dialog(config: &Config, pane_id: &str) -> Result<()> {
     tmux_send_keys(config, pane_id, "Enter", false, false)?;
     Ok(())
 }
@@ -2464,6 +2592,18 @@ fn monitor_once(config: &Config) -> Result<()> {
                 }
             }
             let output = tmux_capture(config, &snapshot.pane_id, 100)?;
+            if output_has_claude_managed_settings_approval_dialog(&output) {
+                accept_claude_managed_settings_approval_dialog(config, &snapshot.pane_id)?;
+                snapshot.last_observed_at = Some(observed_at.clone());
+                snapshot.output_snippet = Some(tail_chars(&output, 500));
+                if snapshot.observed_active_at.is_none() {
+                    snapshot.observed_active_at = Some(observed_at.clone());
+                }
+                upsert_snapshot(&conn, &snapshot)?;
+                record_event(&conn, &snapshot.session_id, "session_observed", &snapshot)?;
+                thread::sleep(Duration::from_millis(800));
+                continue;
+            }
             // First, clear the awaiting-response latch once we see the
             // agent's "active" marker — that confirms the prompt landed
             // in the REPL and the agent is actually working on it.
@@ -2476,7 +2616,8 @@ fn monitor_once(config: &Config) -> Result<()> {
             // before the agent had done anything, and burned the whole
             // retry budget on a healthy worker (observed live).
             let active_marker_seen = output_has_agent_active_marker(&output);
-            if snapshot.awaiting_response && active_marker_seen {
+            let turn_activity_seen = output_has_claude_turn_activity(&output);
+            if snapshot.awaiting_response && (active_marker_seen || turn_activity_seen) {
                 snapshot.awaiting_response = false;
             }
             // Record the first time the agent visibly finished startup.
@@ -2493,8 +2634,7 @@ fn monitor_once(config: &Config) -> Result<()> {
             // initialisation is done.  MCP-boot and update-dialog panes
             // are explicitly excluded so the watchdog stays armed through
             // the hung-MCP startup it exists to catch.
-            if snapshot.observed_active_at.is_none() && output_indicates_startup_finished(&output)
-            {
+            if snapshot.observed_active_at.is_none() && output_indicates_startup_finished(&output) {
                 snapshot.observed_active_at = Some(observed_at.clone());
             }
             let raw_status = observed_status_for_snapshot(&snapshot, &output);
@@ -2542,7 +2682,9 @@ fn monitor_once(config: &Config) -> Result<()> {
             let mut artifact_accepted = false;
             if is_run_to_completion_lifecycle(&snapshot.lifecycle) {
                 if let Some(spec) = snapshot.expected_result.clone() {
-                    if let Ok(payload) = validate_expected_result(&snapshot.work_dir, &snapshot.session_id, &spec) {
+                    if let Ok(payload) =
+                        validate_expected_result(&snapshot.work_dir, &snapshot.session_id, &spec)
+                    {
                         observed_status = "done";
                         snapshot.last_validation_error = None;
                         // Persist the validated payload NOW, on the same
@@ -2559,10 +2701,16 @@ fn monitor_once(config: &Config) -> Result<()> {
                 }
             }
 
-            if !artifact_accepted && turn_ended && is_run_to_completion_lifecycle(&snapshot.lifecycle)
+            if !artifact_accepted
+                && turn_ended
+                && is_run_to_completion_lifecycle(&snapshot.lifecycle)
             {
                 match snapshot.expected_result.clone() {
-                    Some(spec) => match validate_expected_result(&snapshot.work_dir, &snapshot.session_id, &spec) {
+                    Some(spec) => match validate_expected_result(
+                        &snapshot.work_dir,
+                        &snapshot.session_id,
+                        &spec,
+                    ) {
                         Ok(payload) => {
                             observed_status = "done";
                             snapshot.last_validation_error = None;
@@ -2780,9 +2928,7 @@ fn validate_against_schema(
             "boolean" => instance.is_boolean(),
             "null" => instance.is_null(),
             other => {
-                return Err(format!(
-                    "schema at '{loc}' uses unsupported type '{other}'"
-                ));
+                return Err(format!("schema at '{loc}' uses unsupported type '{other}'"));
             }
         };
         if !ok {
@@ -2904,6 +3050,26 @@ fn wait_for_repl_idle(config: &Config, pane_id: &str, max_wait: Duration) -> Res
             thread::sleep(Duration::from_millis(800));
             continue;
         }
+        if output_has_claude_bypass_permissions_dialog(&output) {
+            accept_claude_bypass_permissions_dialog(config, pane_id)?;
+            // Claude redraws from the confirmation screen into the
+            // normal REPL; wait for that transition before checking for
+            // the `❯` input box again.
+            thread::sleep(Duration::from_millis(800));
+            continue;
+        }
+        if output_has_claude_fullscreen_renderer_dialog(&output) {
+            dismiss_claude_fullscreen_renderer_dialog(config, pane_id)?;
+            // Let Claude redraw after the one-time renderer dialog
+            // before checking for the normal input box.
+            thread::sleep(Duration::from_millis(800));
+            continue;
+        }
+        if output_has_claude_managed_settings_approval_dialog(&output) {
+            accept_claude_managed_settings_approval_dialog(config, pane_id)?;
+            thread::sleep(Duration::from_millis(800));
+            continue;
+        }
         if output_has_agent_idle_prompt(&output) {
             return Ok(());
         }
@@ -2983,8 +3149,111 @@ mod tests {
         ));
         // The update dialog must not be mistaken for an idle prompt path
         // even though it contains the `›` marker.
-        let dialog = "› 1. Update now\n  3. Skip until next version\n";
+        let dialog = "\
+› 1. Update now
+  3. Skip until next version
+
+  Press enter to continue
+";
         assert!(output_has_codex_update_dialog(dialog));
+    }
+
+    #[test]
+    fn update_dialog_detector_ignores_stale_scrollback_after_repl_ready() {
+        let output = "\
+  ✨ Update available! 0.141.0 -> 0.142.0
+  1. Update now
+  2. Skip
+› 3. Skip until next version
+  Press enter to continue
+
+╭──────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex                                      │
+╰──────────────────────────────────────────────────────╯
+
+  Tip: Try the Codex App.
+
+› Summarize recent commits
+";
+        assert!(!output_has_codex_update_dialog(output));
+        assert!(output_has_agent_idle_prompt(output));
+    }
+
+    #[test]
+    fn detects_claude_bypass_permissions_dialog() {
+        let dialog = "\
+────────────────────────────────────────────────────────────────────────────────
+  WARNING: Claude Code running in Bypass Permissions mode
+
+  In Bypass Permissions mode, Claude Code will not ask for your approval
+  before running potentially dangerous commands.
+
+  ❯ 1. No, exit
+    2. Yes, I accept
+
+  Enter to confirm · Esc to cancel
+";
+        assert!(output_has_claude_bypass_permissions_dialog(dialog));
+    }
+
+    #[test]
+    fn claude_bypass_dialog_detector_ignores_ordinary_output() {
+        assert!(!output_has_claude_bypass_permissions_dialog("❯\u{00A0}"));
+        assert!(!output_has_claude_bypass_permissions_dialog(
+            "I accept that bypass permissions mode exists."
+        ));
+    }
+
+    #[test]
+    fn detects_claude_fullscreen_renderer_dialog() {
+        let dialog = "\
+────────────────────────────────────────────────────────────────────────────────
+  Try the new fullscreen renderer?
+
+  · Flicker-free output
+  · Mouse support
+
+  ❯ 1. Yes, try it
+    2. Not now
+
+  Enter to confirm · Esc to cancel
+";
+        assert!(output_has_claude_fullscreen_renderer_dialog(dialog));
+    }
+
+    #[test]
+    fn claude_fullscreen_renderer_detector_ignores_ordinary_output() {
+        assert!(!output_has_claude_fullscreen_renderer_dialog("❯\u{00A0}"));
+        assert!(!output_has_claude_fullscreen_renderer_dialog(
+            "I tried the new fullscreen renderer and selected text."
+        ));
+    }
+
+    #[test]
+    fn detects_claude_managed_settings_approval_dialog() {
+        let dialog = "\
+ Managed settings require approval
+
+ Your organization has configured managed settings that could allow execution
+ of arbitrary code or interception of your prompts and responses.
+
+ Settings requiring approval:
+   · OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+";
+        assert!(output_has_claude_managed_settings_approval_dialog(dialog));
+    }
+
+    #[test]
+    fn claude_turn_activity_is_not_active_work() {
+        let finished_tool_turn = "\
+⏺ Write(.agentd-result.json)
+  ⎿  Wrote 1 lines to .agentd-result.json
+
+❯\u{00A0}
+";
+        assert!(output_has_claude_turn_activity(finished_tool_turn));
+        assert!(!output_has_agent_active_marker(finished_tool_turn));
+        assert!(output_indicates_startup_finished(finished_tool_turn));
     }
 
     #[test]
@@ -3001,8 +3270,12 @@ mod tests {
     #[test]
     fn active_marker_true_for_real_work() {
         // Genuine mid-turn work (no MCP-startup line) still counts.
-        assert!(output_has_codex_active_marker("Working (12s • esc to interrupt)\n"));
-        assert!(output_has_codex_active_marker("foo\nbar (3s • esc to interrupt)\n"));
+        assert!(output_has_codex_active_marker(
+            "Working (12s • esc to interrupt)\n"
+        ));
+        assert!(output_has_codex_active_marker(
+            "foo\nbar (3s • esc to interrupt)\n"
+        ));
         assert!(!output_is_starting_mcp_servers(
             "Working (12s • esc to interrupt)\n"
         ));
@@ -3647,7 +3920,21 @@ mod tests {
         // The update dialog renders a `›` selection marker that must
         // not read as a ready REPL.
         assert!(!output_indicates_startup_finished(
-            "✨ Update available!\n› 1. Update now\n  3. Skip until next version"
+            "✨ Update available!\n› 1. Update now\n  3. Skip until next version\nPress enter to continue"
+        ));
+        // Claude's bypass-permissions menu uses the same `❯` glyph as
+        // the normal input box, but it is still a startup dialog.
+        assert!(!output_indicates_startup_finished(
+            "WARNING: Claude Code running in Bypass Permissions mode\n\
+             ❯ 1. No, exit\n\
+               2. Yes, I accept\n\
+             Enter to confirm · Esc to cancel"
+        ));
+        assert!(!output_indicates_startup_finished(
+            "Try the new fullscreen renderer?\n\
+             ❯ 1. Yes, try it\n\
+               2. Not now\n\
+             Enter to confirm · Esc to cancel"
         ));
     }
 
@@ -3658,7 +3945,9 @@ mod tests {
         // Real claude capture: the glyph is followed by U+00A0, not an
         // ASCII space, and may carry typed-but-unsubmitted text.
         assert!(output_has_agent_idle_prompt("❯\u{00A0}monitor-nudge"));
-        assert!(output_has_agent_idle_prompt("scroll\n❯\u{00A0}\n  statusline"));
+        assert!(output_has_agent_idle_prompt(
+            "scroll\n❯\u{00A0}\n  statusline"
+        ));
         assert!(output_has_agent_idle_prompt("❯"));
         assert!(!output_has_agent_idle_prompt("plain shell $ "));
         assert!(!output_has_agent_idle_prompt("  quoted mid-line ❯ glyph"));
@@ -3687,7 +3976,9 @@ mod tests {
         )
         .expect("write result");
         let spec = schema_only_spec(impl_result_payload_schema());
-        assert!(validate_expected_result(work_dir.to_str().unwrap(), "test-session", &spec).is_ok());
+        assert!(
+            validate_expected_result(work_dir.to_str().unwrap(), "test-session", &spec).is_ok()
+        );
     }
 
     #[test]
@@ -3703,8 +3994,11 @@ mod tests {
     fn validate_expected_result_rejects_result_not_satisfying_schema() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let work_dir = tmp.path().to_path_buf();
-        fs::write(work_dir.join(result_file_name("test-session")), r#"{"pr_url":""}"#)
-            .expect("write bad result");
+        fs::write(
+            work_dir.join(result_file_name("test-session")),
+            r#"{"pr_url":""}"#,
+        )
+        .expect("write bad result");
         let spec = schema_only_spec(impl_result_payload_schema());
         let err = validate_expected_result(work_dir.to_str().unwrap(), "test-session", &spec)
             .expect_err("empty pr_url should fail the schema");
@@ -3721,7 +4015,9 @@ mod tests {
         let exclude = fs::read_to_string(work_dir.join(".git").join("info").join("exclude"))
             .expect("exclude file written");
         assert!(
-            exclude.lines().any(|l| l.trim() == format!("/{RESULT_FILE_EXCLUDE_GLOB}")),
+            exclude
+                .lines()
+                .any(|l| l.trim() == format!("/{RESULT_FILE_EXCLUDE_GLOB}")),
             "exclude should contain the result file, got: {exclude}"
         );
         // Idempotent: a second call does not duplicate the entry.
@@ -3765,7 +4061,9 @@ mod tests {
         let common_exclude = fs::read_to_string(common_git.join("info").join("exclude"))
             .expect("exclude written into the COMMON git dir");
         assert!(
-            common_exclude.lines().any(|l| l.trim() == format!("/{RESULT_FILE_EXCLUDE_GLOB}")),
+            common_exclude
+                .lines()
+                .any(|l| l.trim() == format!("/{RESULT_FILE_EXCLUDE_GLOB}")),
             "common exclude should contain the result file, got: {common_exclude}"
         );
         // It must NOT have been written into the per-worktree gitdir,
@@ -3884,7 +4182,10 @@ mod tests {
         let spec = schema_only_spec(impl_result_payload_schema());
         let err = validate_expected_result(work_dir.to_str().unwrap(), "test-session", &spec)
             .expect_err("blank identity must fail the contract");
-        assert!(err.contains("result does not satisfy its schema"), "got: {err}");
+        assert!(
+            err.contains("result does not satisfy its schema"),
+            "got: {err}"
+        );
     }
 
     #[test]
@@ -3919,7 +4220,10 @@ mod tests {
             .iter()
             .filter(|(k, _)| k == "DISABLE_AUTO_UPDATE")
             .collect();
-        assert_eq!(auto_update, vec![&(String::from("DISABLE_AUTO_UPDATE"), String::from("false"))]);
+        assert_eq!(
+            auto_update,
+            vec![&(String::from("DISABLE_AUTO_UPDATE"), String::from("false"))]
+        );
     }
 
     fn launch_params_for(agent_type: &str, effort: Option<&str>) -> LaunchParams {
@@ -3969,7 +4273,9 @@ mod tests {
             let params = launch_params_for("codex", effort);
             let argv = build_codex_argv(&params);
             assert!(
-                !argv.iter().any(|arg| arg.contains("model_reasoning_effort")),
+                !argv
+                    .iter()
+                    .any(|arg| arg.contains("model_reasoning_effort")),
                 "no effort config expected for effort={effort:?}: {argv:?}"
             );
         }
@@ -4252,14 +4558,7 @@ mod tests {
         migrate(&conn).expect("migrate");
 
         let spec = schema_only_spec(serde_json::json!({"type": "object"}));
-        insert_test_snapshot(
-            &conn,
-            "await-timeout",
-            "running",
-            "/tmp",
-            Some(spec),
-            None,
-        );
+        insert_test_snapshot(&conn, "await-timeout", "running", "/tmp", Some(spec), None);
 
         let err = session_await_result_with_interval(
             &conn,

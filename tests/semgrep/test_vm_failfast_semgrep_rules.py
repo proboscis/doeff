@@ -19,7 +19,7 @@ def _semgrep_results(config: Path, target: str, *, cwd: Path) -> list[dict[str, 
         pytest.skip("semgrep is not installed")
 
     completed = subprocess.run(
-        [semgrep_bin, "--config", str(config), "--json", target],
+        [semgrep_bin, "--no-git-ignore", "--config", str(config), "--json", target],
         cwd=cwd,
         capture_output=True,
         text=True,
@@ -130,3 +130,20 @@ def test_k4_deadline_rule_bans_transport_timeout_on_agent_task_specs() -> None:
 
     # Both the AgentTask and the AgentSpec construction must fire.
     assert len(_rule_start_lines(results, "k4-deadline-not-transport-timeout")) == 2
+
+
+def test_real_agent_e2e_semgrep_rules_detect_missing_and_skipped_coverage() -> None:
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    check_ids = _semgrep_rule_ids(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-agents/tests",
+        cwd=fixture_root,
+    )
+
+    expected = {
+        "doeff-agents-require-real-claude-result-retry-e2e",
+        "doeff-agents-require-real-codex-result-retry-e2e",
+        "doeff-agents-real-agent-e2e-must-not-be-skipped",
+        "doeff-agents-real-agent-e2e-must-not-use-command-override",
+    }
+    assert all(_has_rule(check_ids, rule_id) for rule_id in expected)
