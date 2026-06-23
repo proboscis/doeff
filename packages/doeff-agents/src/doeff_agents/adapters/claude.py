@@ -91,7 +91,12 @@ class ClaudeAdapter:
             settings_path.write_text("{}", encoding="utf-8")
 
     def launch_command(self, params: LaunchParams) -> list[str]:
-        """Return argv list - caller will shlex.join() if needed."""
+        """Return argv list - caller will shlex.join() if needed.
+
+        When a prompt is provided, the production handler supplies it through
+        stdin redirection. Passing multi-line prompts as argv is unsafe because
+        tmux sends the shell command through an interactive shell.
+        """
         args = ["claude", "--dangerously-skip-permissions"]
 
         if params.prompt:
@@ -106,14 +111,11 @@ class ClaudeAdapter:
         if params.bare:
             args.append("--bare")
 
-        if params.prompt:
-            args.append(params.prompt)
-
         return args
 
     @property
     def injection_method(self) -> InjectionMethod:
-        return InjectionMethod.ARG
+        return InjectionMethod.STDIN
 
     @property
     def ready_pattern(self) -> str | None:
