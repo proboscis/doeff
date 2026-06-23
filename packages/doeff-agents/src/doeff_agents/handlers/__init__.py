@@ -33,6 +33,7 @@ from doeff_agents.effects import (
     StopSessionEffect,
 )
 from doeff_agents.runtime import ClaudeRuntimePolicy
+from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import AgentSessionRepository
 
 from .daemon import AgentdSessionClient, DaemonAgentHandler
@@ -219,6 +220,26 @@ def agent_effectful_handler(
     )
 
 
+def default_agent_handler(
+    *,
+    backend: SessionBackend,
+    session_repository: AgentSessionRepository | None = None,
+    claude_runtime_policy: ClaudeRuntimePolicy | None = None,
+) -> AgentHandler:
+    """Return the default production AgentHandler without exposing transport class names.
+
+    Most callers should install ``agent_effectful_handler()`` and only emit agent
+    effects. Advanced callers that need to build a custom effect boundary, such as
+    providing an explicit MCP ``run_tool`` stack, can use this neutral factory
+    instead of importing ``TmuxAgentHandler`` directly.
+    """
+    return TmuxAgentHandler(
+        backend=backend,
+        session_repository=session_repository,
+        claude_runtime_policy=claude_runtime_policy,
+    )
+
+
 def mock_agent_handler() -> ProtocolHandler:
     """Return the mock testing handler as a Hy defhandler."""
     return _hy_effectful_module().agent_handler_defhandler(_mock_effect_handler)
@@ -352,6 +373,7 @@ __all__ = [  # noqa: RUF022 - grouped by category for readability
     "configure_mock_session",
     "daemon_agent_handler",
     "daemon_agent_handlers",
+    "default_agent_handler",
     "dispatch_effect",
     "get_adapter",
     "get_mock_agent_state",

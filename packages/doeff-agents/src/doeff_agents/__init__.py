@@ -96,6 +96,7 @@ _LAZY_EXPORTS = {
     "configure_mock_session": ".handlers",
     "daemon_agent_handler": ".handlers",
     "daemon_agent_handlers": ".handlers",
+    "default_agent_handler": ".handlers",
     "dispatch_effect": ".handlers",
     "get_mock_agent_state": ".handlers",
     "make_scheduled_handler": ".handlers",
