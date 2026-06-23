@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -62,8 +63,37 @@ class SessionBackend(Protocol):
     def list_sessions(self) -> list[str]: ...
 
 
+def default_session_backend(
+    *,
+    executable: str | Path | None = None,
+    stable: bool = True,
+) -> SessionBackend:
+    """Return the default local terminal backend without exposing its implementation.
+
+    Application code should depend on this neutral factory plus the
+    ``SessionBackend`` protocol. The current local implementation is tmux, but
+    callers must not import ``doeff_agents.tmux`` directly; that keeps the
+    terminal multiplexer replaceable by doeff-agents.
+    """
+    from .tmux import StableTmuxSessionBackend, TmuxSessionBackend
+
+    resolved = _resolve_default_executable(executable)
+    backend_cls = StableTmuxSessionBackend if stable else TmuxSessionBackend
+    return backend_cls(executable=resolved)
+
+
+def _resolve_default_executable(executable: str | Path | None) -> str | Path:
+    if executable is not None:
+        return executable
+    resolved = shutil.which("tmux")
+    if resolved is None:
+        raise RuntimeError("a terminal session backend is required, but tmux was not found")
+    return resolved
+
+
 __all__ = [
     "SessionBackend",
     "SessionConfig",
     "SessionInfo",
+    "default_session_backend",
 ]

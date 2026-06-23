@@ -7,6 +7,7 @@ import time
 from datetime import datetime, timezone
 
 from .session_backend import SessionBackend, SessionConfig, SessionInfo
+from .shell import assert_no_forbidden_agent_env
 
 
 class TmuxError(Exception):
@@ -67,6 +68,7 @@ class TmuxSessionBackend(SessionBackend):
         self._ensure_tmux_available()
         if self.has_session(cfg.session_name):
             raise SessionAlreadyExistsError(f"Session '{cfg.session_name}' already exists")
+        assert_no_forbidden_agent_env(cfg.env, context="tmux session environment")
 
         args = self._args("new-session", "-d", "-s", cfg.session_name, "-P", "-F", "#D")
         if cfg.work_dir:
@@ -125,10 +127,7 @@ class TmuxSessionBackend(SessionBackend):
                 self._confirm_literal_prompt_submitted(target)
 
     def _paste_literal(self, target: str, text: str) -> None:
-        buffer_name = (
-            f"doeff-agents-{os.getpid()}-"
-            f"{re.sub(r'[^A-Za-z0-9_]+', '_', target)}"
-        )
+        buffer_name = f"doeff-agents-{os.getpid()}-{re.sub(r'[^A-Za-z0-9_]+', '_', target)}"
         subprocess.run(
             self._args("set-buffer", "-b", buffer_name, text),
             check=True,
@@ -198,6 +197,20 @@ class TmuxSessionBackend(SessionBackend):
         return [session for session in result.stdout.strip().split("\n") if session]
 
 
+class StableTmuxSessionBackend(TmuxSessionBackend):
+    """Tmux backend that caches the first successful availability check."""
+
+    def __init__(self, executable: str | os.PathLike[str] | None = None) -> None:
+        super().__init__(executable=executable)
+        self._availability_verified = False
+
+    def _ensure_tmux_available(self) -> None:
+        if self._availability_verified:
+            return
+        super()._ensure_tmux_available()
+        self._availability_verified = True
+
+
 def get_default_backend() -> TmuxSessionBackend:
     """Return a default tmux backend instance using `tmux` from PATH."""
     return TmuxSessionBackend()
@@ -253,6 +266,7 @@ __all__ = [
     "SessionConfig",
     "SessionInfo",
     "SessionNotFoundError",
+    "StableTmuxSessionBackend",
     "TmuxError",
     "TmuxNotAvailableError",
     "TmuxSessionBackend",

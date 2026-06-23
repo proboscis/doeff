@@ -1,6 +1,5 @@
 """Production effect handler backed by tmux."""
 
-
 import json
 import os
 import re
@@ -75,7 +74,7 @@ from doeff_agents.runtime import ClaudeRuntimePolicy
 from doeff_agents.session import _dismiss_onboarding_dialogs
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import AgentSessionRepository, InMemoryAgentSessionRepository
-from doeff_agents.shell import wrap_with_shell_exports
+from doeff_agents.shell import assert_no_forbidden_agent_env, wrap_with_shell_exports
 
 RESULT_ARTIFACT_FILENAME = ".agentd-result.json"
 
@@ -178,6 +177,7 @@ class AgentHandler(ABC):
         effect: CleanupAgentSessionEffect,
     ) -> AgentSessionSnapshot:
         """Handle CleanupAgentSession effect."""
+
 
 @dataclass
 class SessionState:
@@ -451,9 +451,7 @@ class TmuxAgentHandler(AgentHandler):
     ) -> None:
         self._sessions: dict[str, SessionState] = {}
         self._backend = backend
-        self._session_repository = (
-            session_repository or InMemoryAgentSessionRepository()
-        )
+        self._session_repository = session_repository or InMemoryAgentSessionRepository()
         self._claude_runtime_policy = claude_runtime_policy or ClaudeRuntimePolicy()
         self._mcp_servers: dict[str, McpToolServer] = {}
 
@@ -482,8 +480,16 @@ class TmuxAgentHandler(AgentHandler):
         # Claude processes race on `~/.claude/.claude.json` writes and the
         # workspace-trust entry we plant gets clobbered, causing the agent
         # to hang at "Yes, I trust this folder" forever.
+        assert_no_forbidden_agent_env(
+            effect.session_env,
+            context="LaunchEffect.session_env",
+        )
         agent_env_exports: dict[str, str] = dict(effect.session_env or {})
         if effect.agent_type == AgentType.CLAUDE:
+            assert_no_forbidden_agent_env(
+                self._claude_runtime_policy.bootstrap_exports,
+                context="ClaudeRuntimePolicy.bootstrap_exports",
+            )
             agent_home = self._claude_runtime_policy.agent_home
             if agent_home is None:
                 # Default to a per-launch isolated home under the workdir so
@@ -494,16 +500,18 @@ class TmuxAgentHandler(AgentHandler):
                 effect.work_dir,
             )
             self._prepare_claude_home(agent_home, trusted_workspaces)
-            agent_env_exports.update({
-                "HOME": str(agent_home),
-                "CLAUDE_HOME": str(agent_home / ".claude"),
-                **(
-                    {"CLAUDE_CODE_OAUTH_TOKEN": os.environ["CLAUDE_CODE_OAUTH_TOKEN"]}
-                    if "CLAUDE_CODE_OAUTH_TOKEN" in os.environ
-                    else {}
-                ),
-                **self._claude_runtime_policy.bootstrap_exports,
-            })
+            agent_env_exports.update(
+                {
+                    "HOME": str(agent_home),
+                    "CLAUDE_HOME": str(agent_home / ".claude"),
+                    **(
+                        {"CLAUDE_CODE_OAUTH_TOKEN": os.environ["CLAUDE_CODE_OAUTH_TOKEN"]}
+                        if "CLAUDE_CODE_OAUTH_TOKEN" in os.environ
+                        else {}
+                    ),
+                    **self._claude_runtime_policy.bootstrap_exports,
+                }
+            )
         elif effect.agent_type == AgentType.CODEX:
             codex_home = agent_env_exports.get(
                 "CODEX_HOME",
@@ -605,6 +613,14 @@ class TmuxAgentHandler(AgentHandler):
         if self._backend.has_session(effect.session_name):
             raise SessionAlreadyExistsError(f"Session {effect.session_name} already exists")
 
+        assert_no_forbidden_agent_env(
+            effect.session_env,
+            context="ClaudeLaunchEffect.session_env",
+        )
+        assert_no_forbidden_agent_env(
+            self._claude_runtime_policy.bootstrap_exports,
+            context="ClaudeRuntimePolicy.bootstrap_exports",
+        )
         agent_home = self._claude_runtime_policy.agent_home or Path.home()
         trusted_workspaces = self._claude_runtime_policy.trusted_workspaces or (effect.work_dir,)
         self._prepare_claude_home(agent_home, trusted_workspaces)
