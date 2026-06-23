@@ -264,7 +264,11 @@ def test_withhandler_protocol_compliance_with_explicit_launch_handler() -> None:
         {"typed-flow": [(SessionStatus.DONE, "typed done")]}
     )
 
-    wrapped = lifecycle_handler(_install_raw_handler(launch_only_handler)(_run_completion("typed-flow", _build_config(), poll_interval=0.0)))
+    wrapped = _install_raw_handler(lifecycle_handler)(
+        _install_raw_handler(launch_only_handler)(
+            _run_completion("typed-flow", _build_config(), poll_interval=0.0)
+        )
+    )
 
     result = run(wrapped)
 
@@ -293,11 +297,15 @@ def test_withhandler_fallback_when_primary_agent_unavailable() -> None:
         launch_agent_override=AgentType.CODEX,
     )
 
-    wrapped = fallback_handler(_install_raw_handler(primary_handler)(_run_completion(
+    wrapped = _install_raw_handler(fallback_handler)(
+        _install_raw_handler(primary_handler)(
+            _run_completion(
                 "fallback-agent",
                 _build_config(agent_type=AgentType.CLAUDE),
                 poll_interval=0.0,
-            )))
+            )
+        )
+    )
 
     result = run(wrapped)
 

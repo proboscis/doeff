@@ -85,7 +85,7 @@ class AgentdSessionList:
 # the protocol (observed live: 10s client timeout vs 60s launch budget ->
 # client disconnect, daemon Broken pipe).
 RPC_TIMEOUT_MARGIN_SECONDS: float = 15.0
-LAUNCH_RPC_TIMEOUT_SECONDS: float = 60.0 + RPC_TIMEOUT_MARGIN_SECONDS
+LAUNCH_RPC_TIMEOUT_SECONDS: float = 120.0 + RPC_TIMEOUT_MARGIN_SECONDS
 # PURE TRANSPORT HEARTBEAT (L-K4-3).  This constant bounds ONE
 # session.await_result round-trip and carries no node semantics: expiry
 # means "renew the keep-alive and re-await", never a node failure and
