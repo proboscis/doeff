@@ -29,6 +29,7 @@ class InjectionMethod(Enum):
     """How the prompt should be sent to the agent."""
 
     ARG = "arg"  # Prompt passed as command-line argument
+    STDIN = "stdin"  # Prompt passed through stdin redirection
     TMUX = "tmux"  # Prompt sent via tmux send-keys after launch
 
 

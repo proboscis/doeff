@@ -21,16 +21,16 @@ from doeff_agents.session_backend import SessionBackend
 
 class FakeClaudeAdapter:
     agent_type = AgentType.CLAUDE
-    injection_method = InjectionMethod.ARG
+    injection_method = InjectionMethod.STDIN
     ready_pattern = None
     status_bar_lines = 0
 
     def launch_command(self, cfg: LaunchParams) -> list[str]:
         args = ["fake-claude"]
+        if cfg.prompt:
+            args.append("--print")
         if cfg.model:
             args.extend(["--model", cfg.model])
-        if cfg.prompt:
-            args.append(cfg.prompt)
         return args
 
     def is_available(self) -> bool:
@@ -135,4 +135,6 @@ def test_handle_claude_launch_materializes_workspace_and_uses_runtime_env(
     assert "HOME=" in sent
     assert str(agent_home) in sent
     assert "FOO=bar" in sent
-    assert "fake-claude --model opus 'Write result.json'" in sent
+    assert "fake-claude --print --model opus <" in sent
+    prompt_path = work_dir / ".agentd-prompt-worker.txt"
+    assert prompt_path.read_text(encoding="utf-8") == "Write result.json"

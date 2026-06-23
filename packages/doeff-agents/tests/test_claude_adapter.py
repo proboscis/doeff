@@ -7,8 +7,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from doeff_agents.adapters.base import LaunchParams
+from doeff_agents.adapters.base import InjectionMethod, LaunchParams
 from doeff_agents.adapters.claude import ClaudeAdapter
+
+
+def test_claude_adapter_uses_stdin_prompt_injection() -> None:
+    assert ClaudeAdapter().injection_method == InjectionMethod.STDIN
 
 
 def test_launch_command_includes_model_when_provided() -> None:
@@ -25,7 +29,6 @@ def test_launch_command_includes_model_when_provided() -> None:
         "--print",
         "--model",
         "opus",
-        "ship it",
     ]
 
 
@@ -40,7 +43,6 @@ def test_launch_command_omits_model_when_not_provided() -> None:
         "claude",
         "--dangerously-skip-permissions",
         "--print",
-        "ship it",
     ]
 
 
