@@ -18,12 +18,15 @@ workspace, prompt, model, MCP tools, result schema, and non-secret runtime hints
 must not smuggle LLM provider API keys into agent processes.
 
 Application packages must not import `doeff_agents.tmux`, instantiate
-`TmuxSessionBackend`, or shell out to `tmux` directly. They should emit
-`LaunchEffect` / `LaunchSession` effects and, when they must provide a local
-backend, use `doeff_agents.session_backend.default_session_backend()`. The
-terminal multiplexer implementation is an internal doeff-agents detail so it can
-move to tmux, zellij, opencode, or another transport without changing trading or
-application code.
+`TmuxSessionBackend` / `TmuxAgentHandler`, or shell out to `tmux` directly. They
+should emit `LaunchEffect` / `LaunchSession` effects and install
+`agent_effectful_handler()`. When they must provide a local backend, use
+`doeff_agents.session_backend.default_session_backend()`. When an advanced caller
+must build a custom effect boundary with an explicit MCP `run_tool` stack, use
+`doeff_agents.handlers.default_agent_handler()` rather than importing transport
+classes. The terminal multiplexer implementation is an internal doeff-agents
+detail so it can move to tmux, zellij, opencode, or another transport without
+changing trading or application code.
 
 Never pass Anthropic API keys to agents through `session_env`,
 `ClaudeRuntimePolicy.bootstrap_exports`, wrappers, shell exports, or equivalent
