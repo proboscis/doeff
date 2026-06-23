@@ -40,13 +40,15 @@
   run-tool)
 
 
-(defn _cached-tmux-handler [handler-ref active-backend session-repository]
+(defn _cached-tmux-handler [handler-ref active-backend session-repository
+                            claude-runtime-policy]
   (setv handler (.get handler-ref "handler"))
   (when (is handler None)
     (setv handler
       (TmuxAgentHandler
         :backend active-backend
-        :session-repository session-repository))
+        :session-repository session-repository
+        :claude-runtime-policy claude-runtime-policy))
     (setv (get handler-ref "handler") handler))
   handler)
 
@@ -125,7 +127,8 @@
   _handler)
 
 
-(defn tmux-agent-defhandler [* [session-repository None] [backend None]]
+(defn tmux-agent-defhandler [* [session-repository None] [backend None]
+                             [claude-runtime-policy None]]
   "Create the production tmux-backed agent defhandler.
 
   If backend is omitted, it is read through Ask(SessionBackend) when the first
@@ -138,7 +141,8 @@
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
       (setv agent-handler
-        (_cached-tmux-handler handler-ref active-backend session-repository))
+        (_cached-tmux-handler handler-ref active-backend session-repository
+                              claude-runtime-policy))
       (resume (.handle-agent agent-handler effect)))
 
     (LaunchSessionEffect [spec]
@@ -146,7 +150,8 @@
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
       (setv agent-handler
-        (_cached-tmux-handler handler-ref active-backend session-repository))
+        (_cached-tmux-handler handler-ref active-backend session-repository
+                              claude-runtime-policy))
       (if spec.mcp-tools
           (do
             (<- handlers (GetHandlers k))
@@ -159,7 +164,8 @@
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
       (setv agent-handler
-        (_cached-tmux-handler handler-ref active-backend session-repository))
+        (_cached-tmux-handler handler-ref active-backend session-repository
+                              claude-runtime-policy))
       (resume (.handle-await-result agent-handler effect)))
 
     (FollowUpEffect [handle message]
@@ -167,7 +173,8 @@
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
       (setv agent-handler
-        (_cached-tmux-handler handler-ref active-backend session-repository))
+        (_cached-tmux-handler handler-ref active-backend session-repository
+                              claude-runtime-policy))
       (resume (.handle-follow-up agent-handler effect)))
 
     (StopSessionEffect [handle reason]
@@ -175,7 +182,8 @@
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
       (setv agent-handler
-        (_cached-tmux-handler handler-ref active-backend session-repository))
+        (_cached-tmux-handler handler-ref active-backend session-repository
+                              claude-runtime-policy))
       (.handle-stop-session agent-handler effect)
       (resume None))
 
@@ -184,7 +192,8 @@
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
       (setv agent-handler
-        (_cached-tmux-handler handler-ref active-backend session-repository))
+        (_cached-tmux-handler handler-ref active-backend session-repository
+                              claude-runtime-policy))
       (.handle-release-session agent-handler effect)
       (resume None))
 
@@ -193,7 +202,8 @@
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
       (setv agent-handler
-        (_cached-tmux-handler handler-ref active-backend session-repository))
+        (_cached-tmux-handler handler-ref active-backend session-repository
+                              claude-runtime-policy))
       (if mcp-tools
           (do
             (<- handlers (GetHandlers k))
@@ -206,7 +216,8 @@
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
       (setv agent-handler
-        (_cached-tmux-handler handler-ref active-backend session-repository))
+        (_cached-tmux-handler handler-ref active-backend session-repository
+                              claude-runtime-policy))
       (resume (.handle-claude-launch agent-handler effect)))
 
     (MonitorEffect [handle]
@@ -214,7 +225,8 @@
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
       (setv agent-handler
-        (_cached-tmux-handler handler-ref active-backend session-repository))
+        (_cached-tmux-handler handler-ref active-backend session-repository
+                              claude-runtime-policy))
       (resume (.handle-monitor agent-handler effect)))
 
     (CaptureEffect [handle lines]
@@ -222,7 +234,8 @@
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
       (setv agent-handler
-        (_cached-tmux-handler handler-ref active-backend session-repository))
+        (_cached-tmux-handler handler-ref active-backend session-repository
+                              claude-runtime-policy))
       (resume (.handle-capture agent-handler effect)))
 
     (SendEffect [handle message enter literal]
@@ -230,7 +243,8 @@
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
       (setv agent-handler
-        (_cached-tmux-handler handler-ref active-backend session-repository))
+        (_cached-tmux-handler handler-ref active-backend session-repository
+                              claude-runtime-policy))
       (.handle-send agent-handler effect)
       (resume None))
 
@@ -239,7 +253,8 @@
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
       (setv agent-handler
-        (_cached-tmux-handler handler-ref active-backend session-repository))
+        (_cached-tmux-handler handler-ref active-backend session-repository
+                              claude-runtime-policy))
       (.handle-stop agent-handler effect)
       (resume None))
 
@@ -248,7 +263,8 @@
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
       (setv agent-handler
-        (_cached-tmux-handler handler-ref active-backend session-repository))
+        (_cached-tmux-handler handler-ref active-backend session-repository
+                              claude-runtime-policy))
       (resume (.handle-get-session agent-handler effect)))
 
     (ListAgentSessionsEffect [query]
@@ -256,7 +272,8 @@
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
       (setv agent-handler
-        (_cached-tmux-handler handler-ref active-backend session-repository))
+        (_cached-tmux-handler handler-ref active-backend session-repository
+                              claude-runtime-policy))
       (resume (.handle-list-sessions agent-handler effect)))
 
     (ObserveAgentSessionEffect [session-id lines]
@@ -264,7 +281,8 @@
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
       (setv agent-handler
-        (_cached-tmux-handler handler-ref active-backend session-repository))
+        (_cached-tmux-handler handler-ref active-backend session-repository
+                              claude-runtime-policy))
       (resume (.handle-observe-session agent-handler effect)))
 
     (AttachAgentSessionEffect [session-id]
@@ -272,7 +290,8 @@
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
       (setv agent-handler
-        (_cached-tmux-handler handler-ref active-backend session-repository))
+        (_cached-tmux-handler handler-ref active-backend session-repository
+                              claude-runtime-policy))
       (.handle-attach-session agent-handler effect)
       (resume None))
 
@@ -281,7 +300,8 @@
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
       (setv agent-handler
-        (_cached-tmux-handler handler-ref active-backend session-repository))
+        (_cached-tmux-handler handler-ref active-backend session-repository
+                              claude-runtime-policy))
       (resume (.handle-cancel-session agent-handler effect)))
 
     (CleanupAgentSessionEffect [session-id]
@@ -289,6 +309,7 @@
       (when (is active-backend None)
         (<- active-backend (Ask SessionBackend)))
       (setv agent-handler
-        (_cached-tmux-handler handler-ref active-backend session-repository))
+        (_cached-tmux-handler handler-ref active-backend session-repository
+                              claude-runtime-policy))
       (resume (.handle-cleanup-session agent-handler effect))))
   _handler)
