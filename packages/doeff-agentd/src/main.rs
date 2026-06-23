@@ -1863,15 +1863,52 @@ fn tmux_send_keys(
         // codex time to settle into the "prompt ready, awaiting
         // submit" state before the Enter is delivered.
         thread::sleep(Duration::from_millis(1000));
-        let enter_status = Command::new(&config.tmux_bin)
-            .args(["send-keys", "-t", target, "Enter"])
-            .status()
-            .context("tmux send Enter failed to run")?;
-        if !enter_status.success() {
-            return Err(anyhow!("tmux send Enter failed"));
+        tmux_send_enter(config, target)?;
+        if literal && !message.is_empty() {
+            confirm_literal_prompt_submitted(config, target)?;
         }
     }
     Ok(())
+}
+
+fn tmux_send_enter(config: &Config, target: &str) -> Result<()> {
+    let enter_status = Command::new(&config.tmux_bin)
+        .args(["send-keys", "-t", target, "Enter"])
+        .status()
+        .context("tmux send Enter failed to run")?;
+    if !enter_status.success() {
+        return Err(anyhow!("tmux send Enter failed"));
+    }
+    Ok(())
+}
+
+fn confirm_literal_prompt_submitted(config: &Config, target: &str) -> Result<()> {
+    // Claude Code can collapse large pasted prompts into `[Pasted text ...]`.
+    // On slower terminals, the submit Enter may be dropped after the paste,
+    // leaving that collapsed paste marker sitting in the input box forever.
+    // Detect that exact state and resend Enter once; this keeps the launch
+    // contract terminal-driven without falling back to `claude -p`/stdin.
+    thread::sleep(Duration::from_millis(1200));
+    let output = tmux_capture(config, target, 20)?;
+    if output_has_unsubmitted_paste_input(&output) {
+        tmux_send_enter(config, target)?;
+    }
+    Ok(())
+}
+
+fn output_has_unsubmitted_paste_input(output: &str) -> bool {
+    let lines: Vec<&str> = output.lines().collect();
+    let start = lines.len().saturating_sub(12);
+    let mut last_prompt_line: Option<&str> = None;
+    for line in &lines[start..] {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('❯') || trimmed.starts_with("› ") {
+            last_prompt_line = Some(trimmed);
+        }
+    }
+    last_prompt_line
+        .map(|line| line.contains("[Pasted text"))
+        .unwrap_or(false)
 }
 
 fn tmux_paste_literal(config: &Config, target: &str, message: &str) -> Result<()> {
@@ -3951,6 +3988,43 @@ mod tests {
         assert!(output_has_agent_idle_prompt("❯"));
         assert!(!output_has_agent_idle_prompt("plain shell $ "));
         assert!(!output_has_agent_idle_prompt("  quoted mid-line ❯ glyph"));
+    }
+
+    #[test]
+    fn detects_unsubmitted_collapsed_paste_input() {
+        let stuck_claude_input = "\
+ude Max
+  ▘▘ ▝▝    /tmp/sbi-executor-sbi-company_2026-06-23
+
+────────────────────────────────────────────────────────────────────────────────
+❯\u{00A0}[Pasted text #1 +57 lines][Pasted text #2 +22 lines]
+────────────────────────────────────────────────────────────────────────────────
+  paste again to expand
+";
+        assert!(output_has_unsubmitted_paste_input(stuck_claude_input));
+
+        let stuck_codex_input = "\
+╭──────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex                                      │
+╰──────────────────────────────────────────────────────╯
+
+› [Pasted text #1 +12 lines]
+";
+        assert!(output_has_unsubmitted_paste_input(stuck_codex_input));
+    }
+
+    #[test]
+    fn unsubmitted_paste_detector_ignores_history_and_empty_prompt() {
+        let historical_paste = "\
+❯\u{00A0}[Pasted text #1 +2 lines]
+⏺ Write(.agentd-result.json)
+  ⎿  Wrote 1 lines to .agentd-result.json
+
+❯\u{00A0}
+";
+        assert!(!output_has_unsubmitted_paste_input(historical_paste));
+        assert!(!output_has_unsubmitted_paste_input("❯\u{00A0}\n"));
+        assert!(!output_has_unsubmitted_paste_input("› \n"));
     }
 
     /// A spec carrying just a schema, as the single-protocol launcher
