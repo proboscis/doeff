@@ -337,9 +337,10 @@ def test_daemon_handler_launch_delegates_lifecycle_to_client(monkeypatch, tmp_pa
 
     assert handle.session_id == "s2"
     assert adapter.params is not None
-    assert adapter.params.prompt == "review this"
+    assert adapter.params.prompt is None
     assert fake_client.launches[0]["session_id"] == "s2"
     assert fake_client.launches[0]["agent_type"] == "custom"
+    assert fake_client.launches[0]["prompt"] == "review this"
     assert fake_client.launches[0]["lifecycle"] == AgentSessionLifecycle.INTERACTIVE
     assert "custom-agent" in fake_client.launches[0]["command"]
 
@@ -371,7 +372,7 @@ class FakeAdapter:
 
     def launch_command(self, params):
         self.params = params
-        return ["custom-agent", "--model", params.model or "default", params.prompt or ""]
+        return ["custom-agent", "--model", params.model or "default"]
 
 
 def _snapshot_payload(

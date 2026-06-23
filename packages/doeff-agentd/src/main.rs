@@ -914,20 +914,6 @@ fn resolve_launch_command(params: &LaunchParams) -> Result<String> {
     }
 }
 
-/// True when 'session_launch' should hand the prompt to the running
-/// agent as an interactive message instead of baking it into the argv.
-/// Currently codex and claude are the supported interactive agents;
-/// callers using `agent_type=generic` (or anything else) opt out by
-/// passing their own command + prompt argv explicitly.
-fn uses_interactive_prompt(params: &LaunchParams) -> bool {
-    if let Some(cmd) = params.command.as_ref() {
-        if !cmd.trim().is_empty() {
-            return false;
-        }
-    }
-    matches!(params.agent_type.as_str(), "codex" | "claude")
-}
-
 fn build_codex_argv(params: &LaunchParams) -> Vec<String> {
     let mut args: Vec<String> = vec![String::from("codex"), String::from("--yolo")];
     if let Some(effort) = params.effort.as_ref() {
@@ -1203,40 +1189,35 @@ fn session_launch(
     if !command_line.trim().is_empty() {
         tmux_send_keys(config, &pane_id, &command_line, true, true)?;
     }
-    // For interactive agents (codex / claude), the prompt is sent as a
-    // message INTO the running agent's REPL — not as a positional argv —
-    // so the session survives task completion and the monitor can
-    // re-prompt the still-alive agent when the output contract is
-    // violated.  Agents launched via an explicit `command` keep the
-    // legacy behaviour: callers that hand over their own argv are
-    // responsible for including a prompt if they want one.
+    // The prompt is sent as a message INTO the running agent's REPL — not
+    // as a positional argv or print-mode stdin — so the session survives
+    // task completion and the monitor can re-prompt the still-alive agent
+    // when the output contract is violated.
     let mut awaiting_response = false;
-    if uses_interactive_prompt(&params) {
-        if let Some(prompt) = params.prompt.as_ref() {
-            if !prompt.trim().is_empty() {
-                // agentd owns the result transmission contract: when an
-                // `expected_result` is attached, append the HOW/WHERE
-                // instruction here so the launcher never has to author
-                // file/path/envelope prose.  The launcher's prompt
-                // describes WHAT data to report; agentd adds where to
-                // put it and how it is validated.
-                let full_prompt = if params.expected_result.is_some() {
-                    format!("{prompt}{}", result_protocol_instruction(&params.session_id))
-                } else {
-                    prompt.clone()
-                };
-                // Wait for the agent's REPL to actually be ready for
-                // input before sending the prompt + Enter.  Codex (and
-                // similar) print their banner, load MCP servers, and
-                // only then enter the input loop.  Sending keys before
-                // that race lets the text queue up while the Enter is
-                // eaten by the loading screen — the visible symptom
-                // was a prompt sitting in codex's input box that was
-                // never submitted.
-                wait_for_repl_idle(config, &pane_id, Duration::from_secs(20))?;
-                tmux_send_keys(config, &pane_id, &full_prompt, true, true)?;
-                awaiting_response = true;
-            }
+    if let Some(prompt) = params.prompt.as_ref() {
+        if !prompt.trim().is_empty() {
+            // agentd owns the result transmission contract: when an
+            // `expected_result` is attached, append the HOW/WHERE
+            // instruction here so the launcher never has to author
+            // file/path/envelope prose.  The launcher's prompt
+            // describes WHAT data to report; agentd adds where to
+            // put it and how it is validated.
+            let full_prompt = if params.expected_result.is_some() {
+                format!("{prompt}{}", result_protocol_instruction(&params.session_id))
+            } else {
+                prompt.clone()
+            };
+            // Wait for the agent's REPL to actually be ready for
+            // input before sending the prompt + Enter.  Codex (and
+            // similar) print their banner, load MCP servers, and
+            // only then enter the input loop.  Sending keys before
+            // that race lets the text queue up while the Enter is
+            // eaten by the loading screen — the visible symptom
+            // was a prompt sitting in codex's input box that was
+            // never submitted.
+            wait_for_repl_idle(config, &pane_id, Duration::from_secs(20))?;
+            tmux_send_keys(config, &pane_id, &full_prompt, true, true)?;
+            awaiting_response = true;
         }
     }
     let mut backend_ref = BTreeMap::new();
@@ -4006,6 +3987,20 @@ mod tests {
     }
 
     #[test]
+    fn build_claude_argv_does_not_include_prompt_or_print_mode() {
+        let params = launch_params_for("claude", None);
+        let argv = build_claude_argv(&params);
+        assert!(
+            !argv.iter().any(|arg| arg == "hello world"),
+            "prompt must not appear in claude argv: {argv:?}"
+        );
+        assert!(
+            !argv.iter().any(|arg| arg == "-p" || arg == "--print"),
+            "claude print mode must not appear in argv: {argv:?}"
+        );
+    }
+
+    #[test]
     fn build_claude_argv_omits_effort_when_absent_or_empty() {
         for effort in [None, Some("")] {
             let params = launch_params_for("claude", effort);
@@ -4015,46 +4010,6 @@ mod tests {
                 "no --effort expected for effort={effort:?}: {argv:?}"
             );
         }
-    }
-
-    #[test]
-    fn uses_interactive_prompt_is_true_for_codex_without_command() {
-        let params = LaunchParams {
-            session_id: String::from("s"),
-            session_name: String::from("s"),
-            agent_type: String::from("codex"),
-            work_dir: String::from("/tmp"),
-            command: None,
-            prompt: Some(String::from("p")),
-            model: None,
-            effort: None,
-            mcp_servers: BTreeMap::new(),
-            skip_trust_setup: true,
-            lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
-            session_env: BTreeMap::new(),
-            expected_result: None,
-        };
-        assert!(uses_interactive_prompt(&params));
-    }
-
-    #[test]
-    fn uses_interactive_prompt_is_false_for_explicit_command_override() {
-        let params = LaunchParams {
-            session_id: String::from("s"),
-            session_name: String::from("s"),
-            agent_type: String::from("codex"),
-            work_dir: String::from("/tmp"),
-            command: Some(String::from("./run.sh")),
-            prompt: Some(String::from("p")),
-            model: None,
-            effort: None,
-            mcp_servers: BTreeMap::new(),
-            skip_trust_setup: true,
-            lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
-            session_env: BTreeMap::new(),
-            expected_result: None,
-        };
-        assert!(!uses_interactive_prompt(&params));
     }
 
     fn snapshot_for_lifecycle(lifecycle: &str, status: &str) -> SessionSnapshot {

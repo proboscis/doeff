@@ -132,20 +132,7 @@ def launch_session(
     )
     command = wrap_with_shell_exports(shlex.join(argv), config.session_env)
 
-    if adapter.injection_method == InjectionMethod.ARG:
-        # Command includes prompt - send directly
-        active_backend.send_keys(session_info.pane_id, command)
-    else:
-        # Send command first, wait for ready, then send prompt
-        active_backend.send_keys(session_info.pane_id, command)
-        if adapter.ready_pattern and not _wait_for_ready(
-            session_info.pane_id, adapter.ready_pattern, ready_timeout, backend=active_backend
-        ):
-            # Clean up on timeout
-            active_backend.kill_session(session_name)
-            raise AgentReadyTimeoutError(f"Agent did not become ready within {ready_timeout}s")
-        if config.prompt:
-            active_backend.send_keys(session_info.pane_id, config.prompt)
+    active_backend.send_keys(session_info.pane_id, command)
 
     # Dismiss onboarding/trust dialogs (default: enabled)
     if dismiss_trust_dialog:
@@ -167,6 +154,16 @@ def launch_session(
                     timeout=ready_timeout,
                     backend=active_backend,
                 )
+
+    if adapter.injection_method == InjectionMethod.TMUX:
+        if adapter.ready_pattern and not _wait_for_ready(
+            session_info.pane_id, adapter.ready_pattern, ready_timeout, backend=active_backend
+        ):
+            # Clean up on timeout
+            active_backend.kill_session(session_name)
+            raise AgentReadyTimeoutError(f"Agent did not become ready within {ready_timeout}s")
+        if config.prompt:
+            active_backend.send_keys(session_info.pane_id, config.prompt)
 
     return AgentSession(
         session_name=session_name,

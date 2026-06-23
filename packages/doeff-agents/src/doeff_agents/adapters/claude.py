@@ -93,14 +93,11 @@ class ClaudeAdapter:
     def launch_command(self, params: LaunchParams) -> list[str]:
         """Return argv list - caller will shlex.join() if needed.
 
-        When a prompt is provided, the production handler supplies it through
-        stdin redirection. Passing multi-line prompts as argv is unsafe because
-        tmux sends the shell command through an interactive shell.
+        Claude must be launched as an interactive terminal session. The prompt
+        is injected later through the terminal transport so the process stays
+        alive for validation retries and never enters single-shot print mode.
         """
         args = ["claude", "--dangerously-skip-permissions"]
-
-        if params.prompt:
-            args.append("--print")
 
         if params.model:
             args.extend(["--model", params.model])
@@ -115,11 +112,11 @@ class ClaudeAdapter:
 
     @property
     def injection_method(self) -> InjectionMethod:
-        return InjectionMethod.STDIN
+        return InjectionMethod.TMUX
 
     @property
     def ready_pattern(self) -> str | None:
-        return None  # Prompt passed via command line
+        return None
 
     @property
     def trust_dialog_pattern(self) -> str | None:

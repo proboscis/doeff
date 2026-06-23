@@ -238,22 +238,27 @@ class DaemonAgentHandler(AgentHandler):
         command_env: dict[str, str] = dict(session_env or {})
         self._prepare_agent_environment(agent_type, work_dir, tmux_env, command_env)
 
-        argv = adapter.launch_command(
-            LaunchParams(
-                work_dir=work_dir,
-                prompt=prompt,
-                model=model,
-                effort=effort,
-                bare=bare,
+        command: str | None = None
+        if agent_type not in (AgentType.CLAUDE, AgentType.CODEX):
+            argv = adapter.launch_command(
+                LaunchParams(
+                    work_dir=work_dir,
+                    prompt=None,
+                    model=model,
+                    effort=effort,
+                    bare=bare,
+                )
             )
-        )
-        command = wrap_with_shell_exports(shlex.join(argv), command_env)
+            command = wrap_with_shell_exports(shlex.join(argv), command_env)
         snapshot = self._client.launch_session(
             session_id=session_name,
             session_name=session_name,
             agent_type=agent_type.value,
             work_dir=work_dir,
             command=command,
+            prompt=prompt,
+            model=model,
+            effort=effort,
             lifecycle=lifecycle,
             session_env=tmux_env,
         )
@@ -339,18 +344,18 @@ class DaemonAgentHandler(AgentHandler):
             self._prepare_claude_home(agent_home, trusted_workspaces)
             tmux_env.setdefault("DISABLE_AUTO_UPDATE", "true")
             tmux_env.setdefault("DISABLE_UPDATE_PROMPT", "true")
-            command_env.update(
-                {
-                    "HOME": str(agent_home),
-                    "CLAUDE_HOME": str(agent_home / ".claude"),
-                    **(
-                        {"CLAUDE_CODE_OAUTH_TOKEN": os.environ["CLAUDE_CODE_OAUTH_TOKEN"]}
-                        if "CLAUDE_CODE_OAUTH_TOKEN" in os.environ
-                        else {}
-                    ),
-                    **self._claude_runtime_policy.bootstrap_exports,
-                }
-            )
+            claude_env = {
+                "HOME": str(agent_home),
+                "CLAUDE_HOME": str(agent_home / ".claude"),
+                **(
+                    {"CLAUDE_CODE_OAUTH_TOKEN": os.environ["CLAUDE_CODE_OAUTH_TOKEN"]}
+                    if "CLAUDE_CODE_OAUTH_TOKEN" in os.environ
+                    else {}
+                ),
+                **self._claude_runtime_policy.bootstrap_exports,
+            }
+            tmux_env.update(claude_env)
+            command_env.update(claude_env)
         elif agent_type == AgentType.CODEX:
             codex_home = command_env.get(
                 "CODEX_HOME",

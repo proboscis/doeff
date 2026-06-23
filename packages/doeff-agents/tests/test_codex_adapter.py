@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from doeff_agents.adapters.base import LaunchParams
+from doeff_agents.adapters.base import InjectionMethod, LaunchParams
 from doeff_agents.adapters.codex import CodexAdapter, trust_workspace_in_codex_home
 
 
@@ -30,8 +30,8 @@ def test_launch_command_includes_model_when_provided() -> None:
         'mcp_servers."hypha".url="http://127.0.0.1:51978/sse"',
         "--model",
         "gpt-5.5",
-        "ship it",
     ]
+    assert "ship it" not in adapter.launch_command(params)
 
 
 def test_launch_command_omits_model_when_not_provided() -> None:
@@ -44,8 +44,8 @@ def test_launch_command_omits_model_when_not_provided() -> None:
     assert adapter.launch_command(params) == [
         "codex",
         "--yolo",
-        "ship it",
     ]
+    assert "ship it" not in adapter.launch_command(params)
 
 
 def test_launch_command_never_uses_removed_full_auto_flag() -> None:
@@ -73,8 +73,11 @@ def test_launch_command_quotes_mcp_server_config() -> None:
         "--yolo",
         "-c",
         'mcp_servers."hypha \\"local\\"".url="http://127.0.0.1:51978/a\\\\b/sse"',
-        "ship it",
     ]
+
+
+def test_codex_adapter_uses_tmux_prompt_injection() -> None:
+    assert CodexAdapter().injection_method == InjectionMethod.TMUX
 
 
 def test_trust_workspace_persists_project_trust(tmp_path: Path) -> None:

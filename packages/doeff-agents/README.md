@@ -90,6 +90,19 @@ is reachable, it raises an actionable error containing the exact start command.
 - **Async support**: Both sync and async APIs
 - **Context managers**: Safe cleanup on exceptions/cancellation
 
+## Agent Launch Invariant
+
+Agents are launched as live terminal sessions. The initial task prompt and all
+follow-up prompts are delivered through the terminal transport after launch
+(`tmux send-keys` today; another terminal backend such as zellij can provide the
+same operation later).
+
+Do not start coding agents in print, one-shot, SDK, or prompt-argv mode. In
+particular, built-in adapters must not read `LaunchParams.prompt` while building
+argv, and Claude/Codex prompt-mode flags or positional prompt arguments are
+architecture violations. This keeps the agent process alive so doeff-agents can
+validate structured results and send correction prompts in the same session.
+
 ## Supported Agents
 
 - Claude Code (`claude`)
