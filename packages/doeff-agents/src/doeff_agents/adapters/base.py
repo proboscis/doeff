@@ -28,9 +28,12 @@ class AgentSessionLifecycle(Enum):
 class InjectionMethod(Enum):
     """How the prompt should be sent to the agent."""
 
-    ARG = "arg"  # Prompt passed as command-line argument
-    STDIN = "stdin"  # Prompt passed through stdin redirection
-    TMUX = "tmux"  # Prompt sent via tmux send-keys after launch
+    # Built-in coding agents must use a live terminal transport. Passing
+    # prompts through argv, print/one-shot flags, or stdin starts SDK-style
+    # modes and destroys the session that validation retries depend on.
+    ARG = "arg"  # Legacy/custom-only escape hatch; forbidden for built-ins.
+    STDIN = "stdin"  # Legacy/custom-only escape hatch; forbidden for built-ins.
+    TMUX = "tmux"  # Prompt sent to the live terminal after launch.
 
 
 @dataclass(frozen=True)
@@ -38,6 +41,8 @@ class LaunchParams:
     """Parameters for building agent launch command.
 
     Used only by adapters to build argv — no agent_type needed.
+    Adapters must not put ``prompt`` into argv. Session backends send prompts
+    after launch through the live terminal transport so agents stay interactive.
     """
 
     work_dir: Path

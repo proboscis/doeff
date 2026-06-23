@@ -17,7 +17,12 @@ class CodexAdapter:
         return shutil.which("codex") is not None
 
     def launch_command(self, params: LaunchParams) -> list[str]:
-        """Return argv list - caller will shlex.join() if needed."""
+        """Return argv list - caller will shlex.join() if needed.
+
+        The task prompt is never a CLI argument. Codex is launched as an
+        interactive terminal session and the prompt is typed later through the
+        terminal transport, keeping the process alive for validation retries.
+        """
         args = ["codex", "--yolo"]
 
         if params.effort:
@@ -35,18 +40,15 @@ class CodexAdapter:
         if params.model:
             args.extend(["--model", params.model])
 
-        if params.prompt:
-            args.append(params.prompt)
-
         return args
 
     @property
     def injection_method(self) -> InjectionMethod:
-        return InjectionMethod.ARG
+        return InjectionMethod.TMUX
 
     @property
     def ready_pattern(self) -> str | None:
-        return None  # Prompt passed via command line
+        return None
 
     @property
     def status_bar_lines(self) -> int:

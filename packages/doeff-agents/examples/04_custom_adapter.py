@@ -40,7 +40,7 @@ from doeff_time import Delay
 from doeff import do
 
 # =============================================================================
-# Example 1: Simple Custom Adapter (ARG injection)
+# Example 1: Simple Custom Adapter (terminal prompt injection)
 # =============================================================================
 
 
@@ -49,7 +49,8 @@ class AiderAdapter(AgentAdapter):
     Adapter for Aider (https://aider.chat).
 
     Aider is an AI pair programming tool that works with many LLMs.
-    It accepts prompts as command-line arguments.
+    This example keeps the agent in a live terminal session; prompts are
+    sent after launch by the session backend.
     """
 
     @property
@@ -67,19 +68,14 @@ class AiderAdapter(AgentAdapter):
         if cfg.profile:
             args.extend(["--model", cfg.profile])
 
-        if cfg.prompt:
-            args.extend(["--message", cfg.prompt])
-
         return args
 
     @property
     def injection_method(self) -> InjectionMethod:
-        # Prompt is passed via command line
-        return InjectionMethod.ARG
+        return InjectionMethod.TMUX
 
     @property
     def ready_pattern(self) -> str | None:
-        # Not needed for ARG injection
         return None
 
     @property
@@ -98,8 +94,8 @@ class ReplitAgentAdapter(AgentAdapter):
     Adapter for Replit Agent (hypothetical example).
 
     Some agents launch interactively and need the prompt sent
-    via tmux after they're ready. This adapter demonstrates
-    the TMUX injection method.
+    through the live terminal after they're ready. This adapter demonstrates
+    the terminal injection method.
     """
 
     @property
@@ -116,12 +112,11 @@ class ReplitAgentAdapter(AgentAdapter):
         if cfg.profile:
             args.extend(["--profile", cfg.profile])
 
-        # Note: prompt is NOT included here - it's sent via tmux
+        # Note: prompt is NOT included here - it is sent after launch.
         return args
 
     @property
     def injection_method(self) -> InjectionMethod:
-        # Prompt is sent via tmux after agent is ready
         return InjectionMethod.TMUX
 
     @property
@@ -171,14 +166,11 @@ class ContinueDevAdapter(AgentAdapter):
     def launch_command(self, cfg: LaunchConfig) -> list[str]:
         args = ["continue", "chat"]
 
-        if cfg.prompt:
-            args.extend(["--message", cfg.prompt])
-
         return args
 
     @property
     def injection_method(self) -> InjectionMethod:
-        return InjectionMethod.ARG
+        return InjectionMethod.TMUX
 
     @property
     def ready_pattern(self) -> str | None:

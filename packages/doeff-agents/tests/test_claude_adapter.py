@@ -11,8 +11,8 @@ from doeff_agents.adapters.base import InjectionMethod, LaunchParams
 from doeff_agents.adapters.claude import ClaudeAdapter
 
 
-def test_claude_adapter_uses_stdin_prompt_injection() -> None:
-    assert ClaudeAdapter().injection_method == InjectionMethod.STDIN
+def test_claude_adapter_uses_tmux_prompt_injection() -> None:
+    assert ClaudeAdapter().injection_method == InjectionMethod.TMUX
 
 
 def test_launch_command_includes_model_when_provided() -> None:
@@ -26,10 +26,10 @@ def test_launch_command_includes_model_when_provided() -> None:
     assert adapter.launch_command(params) == [
         "claude",
         "--dangerously-skip-permissions",
-        "--print",
         "--model",
         "opus",
     ]
+    assert "ship it" not in adapter.launch_command(params)
 
 
 def test_launch_command_omits_model_when_not_provided() -> None:
@@ -42,8 +42,8 @@ def test_launch_command_omits_model_when_not_provided() -> None:
     assert adapter.launch_command(params) == [
         "claude",
         "--dangerously-skip-permissions",
-        "--print",
     ]
+    assert "ship it" not in adapter.launch_command(params)
 
 
 def test_launch_command_without_prompt_stays_interactive() -> None:
