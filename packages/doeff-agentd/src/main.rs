@@ -1785,6 +1785,43 @@ const SHELL_PROMPT_SUPPRESSING_ENV: &[(&str, &str)] = &[
     ("DISABLE_UPDATE_PROMPT", "true"),
 ];
 
+const FORBIDDEN_AGENT_ENV_KEYS: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_API_KEY_PERSONAL",
+    "ANTHROPIC_API_KEY__PERSONAL",
+];
+
+fn normalized_env_key(key: &str) -> String {
+    key.replace('-', "_").to_ascii_uppercase()
+}
+
+fn forbidden_agent_env_keys(env_vars: &BTreeMap<String, String>) -> Vec<String> {
+    env_vars
+        .keys()
+        .filter(|key| {
+            let normalized = normalized_env_key(key);
+            FORBIDDEN_AGENT_ENV_KEYS
+                .iter()
+                .any(|forbidden| normalized == *forbidden)
+        })
+        .cloned()
+        .collect()
+}
+
+fn ensure_no_forbidden_agent_env(env_vars: &BTreeMap<String, String>) -> Result<()> {
+    let forbidden = forbidden_agent_env_keys(env_vars);
+    if forbidden.is_empty() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "doeff-agentd must never pass Anthropic API keys to agent processes. \
+         API-key-backed calls are allowed only through memoized LLMStructuredQuery / \
+         StructuredLLMQuery handlers, never agent session environments. \
+         Forbidden key(s): {}",
+        forbidden.join(", ")
+    ))
+}
+
 /// The ordered `KEY=VALUE` env entries to set on a new agent session: the
 /// baseline prompt-suppressors first (skipped when the caller overrides that
 /// key), then the caller's own `session_env`.  Pure so the merge/override
@@ -1808,6 +1845,7 @@ fn tmux_new_session(
     work_dir: &str,
     env_vars: &BTreeMap<String, String>,
 ) -> Result<String> {
+    ensure_no_forbidden_agent_env(env_vars)?;
     let mut command = Command::new(&config.tmux_bin);
     command.args(["new-session", "-d", "-s", session_name, "-P", "-F", "#D"]);
     command.args(["-c", work_dir]);
@@ -4298,6 +4336,33 @@ ude Max
             auto_update,
             vec![&(String::from("DISABLE_AUTO_UPDATE"), String::from("false"))]
         );
+    }
+
+    #[test]
+    fn forbidden_agent_env_keys_detects_anthropic_api_key_aliases() {
+        let mut env = BTreeMap::new();
+        env.insert(String::from("ANTHROPIC_API_KEY"), String::from("secret"));
+        env.insert(
+            String::from("anthropic_api_key__personal"),
+            String::from("secret"),
+        );
+        env.insert(
+            String::from("anthropic-api-key-personal"),
+            String::from("secret"),
+        );
+        env.insert(String::from("CODEX_HOME"), String::from("/tmp/codex"));
+
+        let forbidden = forbidden_agent_env_keys(&env);
+
+        assert_eq!(
+            forbidden,
+            vec![
+                String::from("ANTHROPIC_API_KEY"),
+                String::from("anthropic-api-key-personal"),
+                String::from("anthropic_api_key__personal"),
+            ]
+        );
+        assert!(ensure_no_forbidden_agent_env(&env).is_err());
     }
 
     fn launch_params_for(agent_type: &str, effort: Option<&str>) -> LaunchParams {

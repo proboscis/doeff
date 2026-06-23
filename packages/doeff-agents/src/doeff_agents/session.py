@@ -24,7 +24,7 @@ from .monitor import (
     is_waiting_for_input,
 )
 from .session_backend import SessionBackend
-from .shell import wrap_with_shell_exports
+from .shell import assert_no_forbidden_agent_env, wrap_with_shell_exports
 
 
 class AgentLaunchError(Exception):
@@ -113,6 +113,10 @@ def launch_session(
     # Pre-launch setup (e.g. .claude.json restore for Claude)
     if hasattr(adapter, "pre_launch"):
         adapter.pre_launch()
+    assert_no_forbidden_agent_env(
+        config.session_env,
+        context="LaunchConfig.session_env",
+    )
 
     # Create tmux session (raises SessionAlreadyExistsError if exists)
     tmux_config = tmux.SessionConfig(
@@ -327,6 +331,7 @@ def _dismiss_onboarding_dialogs(
     Returns the number of dialogs dismissed.
     """
     import logging
+
     logger = logging.getLogger("doeff_agents.onboarding")
 
     active_backend = backend or tmux.get_default_backend()
@@ -396,6 +401,7 @@ def _dismiss_trust_dialog(
     (e.g., directory was already trusted) and returns False.
     """
     import logging
+
     logger = logging.getLogger("doeff_agents.trust")
 
     active_backend = backend or tmux.get_default_backend()

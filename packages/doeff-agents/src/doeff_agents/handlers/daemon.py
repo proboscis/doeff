@@ -42,7 +42,7 @@ from doeff_agents.effects import (
 )
 from doeff_agents.mcp_server import RunToolFn
 from doeff_agents.runtime import ClaudeRuntimePolicy
-from doeff_agents.shell import wrap_with_shell_exports
+from doeff_agents.shell import assert_no_forbidden_agent_env, wrap_with_shell_exports
 
 from .production import AgentHandler, get_adapter
 
@@ -234,6 +234,10 @@ class DaemonAgentHandler(AgentHandler):
         if not adapter.is_available():
             raise AgentNotAvailableError(f"{agent_type.value} CLI is not available")
 
+        assert_no_forbidden_agent_env(
+            session_env,
+            context="AgentdAgentHandler session_env",
+        )
         tmux_env: dict[str, str] = dict(session_env or {})
         command_env: dict[str, str] = dict(session_env or {})
         self._prepare_agent_environment(agent_type, work_dir, tmux_env, command_env)
@@ -283,9 +287,15 @@ class DaemonAgentHandler(AgentHandler):
         if not adapter.is_available():
             raise AgentNotAvailableError(f"{effect.spec.agent_type.value} CLI is not available")
 
+        assert_no_forbidden_agent_env(
+            effect.spec.session_env,
+            context="AgentSpec.session_env",
+        )
         tmux_env: dict[str, str] = dict(effect.spec.session_env or {})
         command_env: dict[str, str] = dict(effect.spec.session_env or {})
-        self._prepare_agent_environment(effect.spec.agent_type, effect.spec.work_dir, tmux_env, command_env)
+        self._prepare_agent_environment(
+            effect.spec.agent_type, effect.spec.work_dir, tmux_env, command_env
+        )
 
         # agentd owns the concrete result-file contract.  The Python layer
         # supplies only the schema and retry budget.
@@ -339,6 +349,10 @@ class DaemonAgentHandler(AgentHandler):
         command_env: dict[str, str],
     ) -> None:
         if agent_type == AgentType.CLAUDE:
+            assert_no_forbidden_agent_env(
+                self._claude_runtime_policy.bootstrap_exports,
+                context="ClaudeRuntimePolicy.bootstrap_exports",
+            )
             agent_home = self._claude_runtime_policy.agent_home or work_dir / ".agent-home"
             trusted_workspaces = self._claude_runtime_policy.trusted_workspaces or (work_dir,)
             self._prepare_claude_home(agent_home, trusted_workspaces)
