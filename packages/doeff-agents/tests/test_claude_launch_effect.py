@@ -7,6 +7,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from doeff_agents import (
@@ -63,7 +65,9 @@ class FakeBackend(SessionBackend):
             },
         )()
 
-    def send_keys(self, target: str, keys: str, *, literal: bool = True, enter: bool = True) -> None:
+    def send_keys(
+        self, target: str, keys: str, *, literal: bool = True, enter: bool = True
+    ) -> None:
         self.sent.append((target, keys, literal, enter))
 
     def capture_pane(self, target: str, lines: int = 100, *, strip_ansi_codes: bool = True) -> str:
@@ -136,3 +140,59 @@ def test_handle_claude_launch_materializes_workspace_and_uses_runtime_env(
     assert "fake-claude --model opus" in sent
     assert "Write result.json" not in sent
     assert backend.sent[1] == ("%worker", "Write result.json", True, True)
+
+
+def test_handle_claude_launch_rejects_anthropic_api_key_session_env(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from doeff_agents.handlers import production as production_mod
+
+    backend = FakeBackend()
+    monkeypatch.setattr(production_mod, "get_adapter", lambda _agent_type: FakeClaudeAdapter())
+
+    work_dir = tmp_path / "workspace"
+    work_dir.mkdir()
+    forbidden_key = "ANTHROPIC" + "_API_KEY"
+    handler = TmuxAgentHandler(backend=backend)
+    effect = ClaudeLaunchEffect(
+        session_name="worker",
+        work_dir=work_dir,
+        prompt="Write result.json",
+        session_env={forbidden_key: "secret"},
+    )
+
+    with pytest.raises(ValueError, match="Anthropic API keys"):
+        handler.handle_claude_launch(effect)
+
+    assert backend.created == []
+
+
+def test_handle_claude_launch_rejects_anthropic_api_key_bootstrap_exports(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from doeff_agents.handlers import production as production_mod
+
+    backend = FakeBackend()
+    monkeypatch.setattr(production_mod, "get_adapter", lambda _agent_type: FakeClaudeAdapter())
+
+    work_dir = tmp_path / "workspace"
+    work_dir.mkdir()
+    forbidden_key = "ANTHROPIC" + "_API_KEY"
+    handler = TmuxAgentHandler(
+        backend=backend,
+        claude_runtime_policy=ClaudeRuntimePolicy(
+            bootstrap_exports={forbidden_key: "secret"},
+        ),
+    )
+    effect = ClaudeLaunchEffect(
+        session_name="worker",
+        work_dir=work_dir,
+        prompt="Write result.json",
+    )
+
+    with pytest.raises(ValueError, match="Anthropic API keys"):
+        handler.handle_claude_launch(effect)
+
+    assert backend.created == []

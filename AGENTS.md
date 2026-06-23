@@ -11,6 +11,29 @@ Install everything (including dev tools) with `make sync`. Use `uv run pytest` f
 
 **WARNING — Stale Rust VM builds:** `uv sync --group dev` does NOT reliably rebuild the Rust VM extension (`packages/doeff-vm`). If you edit any `.rs` file under `packages/doeff-vm/src/`, you MUST run `make sync` (or `cd packages/doeff-vm && maturin develop --release`) to rebuild. Failing to do so will run tests against a stale binary, producing phantom failures that look like real regressions but disappear after a clean rebuild. Always use `make sync` instead of bare `uv sync`.
 
+## Agent Authentication Boundary
+`doeff-agents` owns Claude/Codex agent launch, tmux/zellij-style terminal transport,
+schema-result retries, and agent authentication boundaries. Callers may provide
+workspace, prompt, model, MCP tools, result schema, and non-secret runtime hints, but
+must not smuggle LLM provider API keys into agent processes.
+
+Application packages must not import `doeff_agents.tmux`, instantiate
+`TmuxSessionBackend`, or shell out to `tmux` directly. They should emit
+`LaunchEffect` / `LaunchSession` effects and, when they must provide a local
+backend, use `doeff_agents.session_backend.default_session_backend()`. The
+terminal multiplexer implementation is an internal doeff-agents detail so it can
+move to tmux, zellij, opencode, or another transport without changing trading or
+application code.
+
+Never pass Anthropic API keys to agents through `session_env`,
+`ClaudeRuntimePolicy.bootstrap_exports`, wrappers, shell exports, or equivalent
+transport hooks. In particular, `ANTHROPIC_API_KEY`,
+`anthropic_api_key__personal`, and `anthropic-api-key-personal` are forbidden at
+the agent boundary. Claude agents must use Claude Code's interactive/OAuth
+credential state; Codex agents must use Codex's own credential state. API-key-backed
+LLM calls are allowed only through memoized `LLMStructuredQuery` /
+`StructuredLLMQuery` handlers for a single structured call, never through agents.
+
 ## Linting & Architectural Enforcement
 Run `make lint` to execute all linters (ruff, pyright, semgrep, doeff-linter). Individual targets: `make lint-ruff`, `make lint-pyright`, `make lint-semgrep`, `make lint-doeff`. Format code with `make format`. Install semgrep via `uv tool install semgrep`. Build doeff-linter with `cd packages/doeff-linter && cargo install --path .`. The `.semgrep.yaml` rules enforce architectural patterns (layer boundaries, effect system conventions); the Rust-based doeff-linter enforces immutability and code quality patterns. Install pre-commit hooks with `make pre-commit-install`.
 

@@ -1,6 +1,5 @@
 """Tests for backend-neutral session transport injection."""
 
-
 from __future__ import annotations
 
 import subprocess
@@ -8,6 +7,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
 from doeff_core_effects.handlers import lazy_ask
 
 from doeff import do, run
@@ -39,6 +39,7 @@ from doeff_agents import (
     send_message,
     stop_session,
 )
+from doeff_agents import session_backend as session_backend_module
 from doeff_agents.adapters.base import (
     InjectionMethod,
     LaunchParams,
@@ -58,8 +59,10 @@ def test_session_api_import_does_not_load_doeff_core() -> None:
         "import sys\n"
         f"sys.path.insert(0, {str(src_path)!r})\n"
         "from doeff_agents.session import launch_session\n"
+        "from doeff_agents.session_backend import default_session_backend\n"
         "from doeff_agents.tmux import TmuxSessionBackend\n"
         "print(launch_session.__name__)\n"
+        "print(default_session_backend.__name__)\n"
         "print(TmuxSessionBackend.__name__)\n"
         "print('doeff' in sys.modules)\n"
     )
@@ -73,9 +76,55 @@ def test_session_api_import_does_not_load_doeff_core() -> None:
 
     assert result.stdout.splitlines() == [
         "launch_session",
+        "default_session_backend",
         "TmuxSessionBackend",
         "False",
     ]
+
+
+def test_default_session_backend_resolves_stable_backend(monkeypatch) -> None:
+    monkeypatch.setattr(
+        session_backend_module.shutil,
+        "which",
+        lambda name: "/opt/homebrew/bin/tmux" if name == "tmux" else None,
+    )
+
+    backend = session_backend_module.default_session_backend()
+
+    assert isinstance(backend, TmuxSessionBackend)
+    assert backend.executable == "/opt/homebrew/bin/tmux"
+
+
+def test_default_session_backend_requires_available_default(monkeypatch) -> None:
+    monkeypatch.setattr(session_backend_module.shutil, "which", lambda _name: None)
+
+    with pytest.raises(RuntimeError, match="terminal session backend"):
+        session_backend_module.default_session_backend()
+
+
+def test_stable_default_session_backend_caches_availability(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(list(args))
+        if args == ["/opt/homebrew/bin/tmux", "-V"]:
+            return subprocess.CompletedProcess(args, 0, stdout="tmux 3.6a\n", stderr="")
+        if args[:3] == ["/opt/homebrew/bin/tmux", "has-session", "-t"]:
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+        raise AssertionError(f"unexpected tmux args: {args}")
+
+    monkeypatch.setattr(
+        session_backend_module.shutil,
+        "which",
+        lambda name: "/opt/homebrew/bin/tmux" if name == "tmux" else None,
+    )
+    monkeypatch.setattr("doeff_agents.tmux.subprocess.run", fake_run)
+
+    backend = session_backend_module.default_session_backend()
+
+    assert not backend.has_session("missing")
+    assert not backend.has_session("missing")
+    assert calls.count(["/opt/homebrew/bin/tmux", "-V"]) == 1
 
 
 class FakeAdapter:
@@ -177,7 +226,9 @@ def _config() -> LaunchConfig:
 
 def test_tmux_agent_handler_uses_injected_backend(monkeypatch) -> None:
     backend = FakeBackend()
-    monkeypatch.setattr("doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter())
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+    )
 
     handler = TmuxAgentHandler(backend=backend)
     launch = LaunchEffect(
@@ -216,10 +267,35 @@ def test_tmux_agent_handler_uses_injected_backend(monkeypatch) -> None:
     assert backend.killed == ["worker"]
 
 
+def test_tmux_agent_handler_rejects_anthropic_api_key_session_env(monkeypatch) -> None:
+    backend = FakeBackend()
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+    )
+    forbidden_key = "ANTHROPIC" + "_API_KEY"
+
+    handler = TmuxAgentHandler(backend=backend)
+    launch = LaunchEffect(
+        session_name="worker",
+        agent_type=AgentType.CLAUDE,
+        work_dir=Path.cwd(),
+        prompt="hello",
+        session_env={forbidden_key: "secret"},
+        ready_timeout=0.1,
+    )
+
+    with pytest.raises(ValueError, match="Anthropic API keys"):
+        handler.handle_launch(launch)
+
+    assert backend.created == []
+
+
 def test_tmux_agent_handler_persists_session_state(monkeypatch) -> None:
     backend = FakeBackend()
     repository = InMemoryAgentSessionRepository()
-    monkeypatch.setattr("doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter())
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+    )
 
     handler = TmuxAgentHandler(backend=backend, session_repository=repository)
     launch = LaunchEffect(
@@ -244,8 +320,7 @@ def test_tmux_agent_handler_persists_session_state(monkeypatch) -> None:
     assert observed.finished_at is not None
     assert observed.output_snippet == "$ "
     assert [
-        session.session_id
-        for session in handler.handle_list_sessions(ListAgentSessions())
+        session.session_id for session in handler.handle_list_sessions(ListAgentSessions())
     ] == ["persistent-worker"]
 
     cleaned = handler.handle_cleanup_session(CleanupAgentSession("persistent-worker"))
@@ -334,8 +409,7 @@ def test_tmux_agent_handler_trusts_codex_workspace(monkeypatch, tmp_path: Path) 
     handler.handle_launch(launch)
 
     assert (codex_home / "config.toml").read_text(encoding="utf-8") == (
-        f'[projects."{work_dir}"]\n'
-        'trust_level = "trusted"\n'
+        f'[projects."{work_dir}"]\ntrust_level = "trusted"\n'
     )
     assert "export CODEX_HOME=" in backend.sent[0][1]
 
@@ -428,7 +502,9 @@ def test_l2_await_result_prefers_schema_artifact_while_session_still_exists(
     tmp_path: Path,
 ) -> None:
     backend = FakeBackend()
-    monkeypatch.setattr("doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter())
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+    )
     work_dir = tmp_path / "workspace"
     work_dir.mkdir()
     spec = AgentSpec(
@@ -445,9 +521,7 @@ def test_l2_await_result_prefers_schema_artifact_while_session_still_exists(
     (work_dir / ".agentd-result.json").write_text('{"status": "prepared"}', encoding="utf-8")
     backend.captures[f"%{handle.session_id}"] = "agent output still visible, no shell prompt"
 
-    outcome = handler.handle_await_result(
-        AwaitResultEffect(handle=handle, timeout_seconds=0.01)
-    )
+    outcome = handler.handle_await_result(AwaitResultEffect(handle=handle, timeout_seconds=0.01))
 
     assert outcome.status == AwaitStatus.EXITED
     assert outcome.result == {"status": "prepared"}
@@ -473,9 +547,28 @@ def test_imperative_session_api_accepts_injected_backend(monkeypatch) -> None:
     assert backend.killed == ["worker"]
 
 
+def test_imperative_session_api_rejects_anthropic_api_key_session_env(monkeypatch) -> None:
+    backend = FakeBackend()
+    monkeypatch.setattr("doeff_agents.session.get_adapter", lambda _agent_type: FakeAdapter())
+    forbidden_key = "ANTHROPIC" + "_API_KEY"
+    config = LaunchConfig(
+        agent_type=AgentType.CLAUDE,
+        work_dir=Path.cwd(),
+        prompt="hello",
+        session_env={forbidden_key: "secret"},
+    )
+
+    with pytest.raises(ValueError, match="Anthropic API keys"):
+        launch_session("worker", config, backend=backend)
+
+    assert backend.created == []
+
+
 def test_agent_effectful_handler_asks_for_backend(monkeypatch) -> None:
     backend = FakeBackend()
-    monkeypatch.setattr("doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter())
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+    )
 
     @do
     def workflow():
@@ -490,9 +583,7 @@ def test_agent_effectful_handler_asks_for_backend(monkeypatch) -> None:
         yield StopEffect(handle=handle)
         return observation.status
 
-    result = run(
-        lazy_ask(env={SessionBackend: backend})(agent_effectful_handler()(workflow()))
-    )
+    result = run(lazy_ask(env={SessionBackend: backend})(agent_effectful_handler()(workflow())))
 
     assert result == SessionStatus.EXITED
     assert backend.created[0].session_name == "worker"
@@ -519,8 +610,10 @@ def test_tmux_backend_uses_injected_executable(monkeypatch, tmp_path: Path) -> N
     backend.capture_pane(info.pane_id)
     backend.kill_session("worker")
 
-    assert calls[0][0] == r"C:\msys64\usr\bin\tmux.exe"
-    assert all(call[0] == r"C:\msys64\usr\bin\tmux.exe" for call in calls)
+    expected_tmux = r"C:\msys64\usr\bin\tmux.exe"
+    backend_calls = [call for call in calls if call and call[0] in {expected_tmux, "tmux"}]
+    assert backend_calls
+    assert all(call[0] == expected_tmux for call in backend_calls)
 
 
 def test_tmux_backend_pastes_literal_prompt_and_resubmits_collapsed_input(

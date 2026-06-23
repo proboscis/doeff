@@ -26,6 +26,24 @@ rules:
       include:
         - /packages/**
 
+  - id: doeff-agents-no-anthropic-api-key-agent-env
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      doeff-agents must never pass Anthropic API keys to agent processes.
+      API-key-backed calls are allowed only through memoized LLMStructuredQuery /
+      StructuredLLMQuery handlers, never session_env or ClaudeRuntimePolicy
+      bootstrap_exports.
+    pattern-either:
+      - pattern-regex: 'session[_-]env\s*[:=]\s*\{[^}]*["''](ANTHROPIC_API_KEY|anthropic_api_key__personal|anthropic-api-key-personal)["'']'
+      - pattern-regex: 'bootstrap[_-]exports\s*[:=]\s*\{[^}]*["''](ANTHROPIC_API_KEY|anthropic_api_key__personal|anthropic-api-key-personal)["'']'
+    paths:
+      include:
+        - /packages/doeff-agents/src/**
+        - /packages/doeff-agents/tests/**
+        - /tests/semgrep/fixtures/python/packages/doeff-agents/**
+
   - id: doeff-agents-built-in-adapters-must-not-read-launch-prompt
     languages:
       - python

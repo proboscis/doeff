@@ -147,3 +147,14 @@ def test_real_agent_e2e_semgrep_rules_detect_missing_and_skipped_coverage() -> N
         "doeff-agents-real-agent-e2e-must-not-use-command-override",
     }
     assert all(_has_rule(check_ids, rule_id) for rule_id in expected)
+
+
+def test_agent_anthropic_api_key_semgrep_rule_detects_env_injection() -> None:
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    check_ids = _semgrep_rule_ids(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-agents/src",
+        cwd=fixture_root,
+    )
+
+    assert _has_rule(check_ids, "doeff-agents-no-anthropic-api-key-agent-env")
