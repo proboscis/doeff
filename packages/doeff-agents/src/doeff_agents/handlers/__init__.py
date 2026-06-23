@@ -204,14 +204,18 @@ def _hy_effectful_module():
 def agent_effectful_handler(
     *,
     session_repository: AgentSessionRepository | None = None,
+    claude_runtime_policy: ClaudeRuntimePolicy | None = None,
 ) -> ProtocolHandler:
     """Return the real tmux handler as a Hy defhandler.
 
     The session backend is resolved through Ask(SessionBackend), so
-    deployment-specific tmux paths are injected by the doeff environment.
+    deployment-specific terminal paths are injected by the doeff environment.
+    Claude runtime authentication/home policy stays owned by doeff-agents, but
+    callers can pin it here without constructing TmuxAgentHandler directly.
     """
     return _hy_effectful_module().tmux_agent_defhandler(
         session_repository=session_repository,
+        claude_runtime_policy=claude_runtime_policy,
     )
 
 
@@ -224,6 +228,7 @@ def agent_effectful_handlers(
     *,
     time_handler: ProtocolHandler | None = None,
     session_repository: AgentSessionRepository | None = None,
+    claude_runtime_policy: ClaudeRuntimePolicy | None = None,
 ) -> tuple[ProtocolHandler, ...]:
     """Return standard production handlers for real tmux agent workflows.
 
@@ -233,7 +238,10 @@ def agent_effectful_handlers(
     """
     return (
         time_handler or sync_time_handler(),
-        agent_effectful_handler(session_repository=session_repository),
+        agent_effectful_handler(
+            session_repository=session_repository,
+            claude_runtime_policy=claude_runtime_policy,
+        ),
     )
 
 

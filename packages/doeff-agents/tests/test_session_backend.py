@@ -46,6 +46,7 @@ from doeff_agents.adapters.base import (
 )
 from doeff_agents.adapters.codex import CodexAdapter
 from doeff_agents.effects import AwaitResultEffect, AwaitStatus, LaunchSession
+from doeff_agents.runtime import ClaudeRuntimePolicy
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import InMemoryAgentSessionRepository
 from doeff_agents.tmux import TmuxSessionBackend, _output_has_unsubmitted_paste_input
@@ -588,6 +589,38 @@ def test_agent_effectful_handler_asks_for_backend(monkeypatch) -> None:
     assert result == SessionStatus.EXITED
     assert backend.created[0].session_name == "worker"
     assert backend.killed == ["worker"]
+
+
+def test_agent_effectful_handler_accepts_claude_runtime_policy(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = FakeBackend()
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+    )
+
+    @do
+    def workflow():
+        handle = yield LaunchEffect(
+            session_name="worker",
+            agent_type=AgentType.CLAUDE,
+            work_dir=Path.cwd(),
+            prompt="hello",
+            ready_timeout=0.1,
+        )
+        yield StopEffect(handle=handle)
+        return backend.sent[0][1]
+
+    policy = ClaudeRuntimePolicy(agent_home=tmp_path)
+    command = run(
+        lazy_ask(env={SessionBackend: backend})(
+            agent_effectful_handler(claude_runtime_policy=policy)(workflow())
+        )
+    )
+
+    assert f"export HOME={tmp_path};" in command
+    assert f"export CLAUDE_HOME={tmp_path / '.claude'};" in command
 
 
 def test_tmux_backend_uses_injected_executable(monkeypatch, tmp_path: Path) -> None:
