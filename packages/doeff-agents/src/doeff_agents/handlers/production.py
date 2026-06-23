@@ -77,6 +77,8 @@ from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import AgentSessionRepository, InMemoryAgentSessionRepository
 from doeff_agents.shell import wrap_with_shell_exports
 
+RESULT_ARTIFACT_FILENAME = ".agentd-result.json"
+
 
 class AgentHandler(ABC):
     """Abstract handler for agent effects."""
@@ -381,13 +383,44 @@ def _validation_failure_from_outcome(  # noqa: PLR0911 - baseline cleanup keeps 
 
 def _retry_message(error: AgentValidationFailure) -> str:
     if error.kind == AgentValidationErrorKind.ABSENT:
-        return "No result artifact was produced. Return the required result artifact as JSON."
+        return (
+            "No structured result was returned. Complete the task and write the "
+            f"required JSON object to {RESULT_ARTIFACT_FILENAME}; doeff-agents "
+            "will validate it against the result schema."
+        )
     if error.kind == AgentValidationErrorKind.INVALID:
         return (
-            f"The result artifact was invalid: {error.message}. "
-            "Return a corrected result artifact that satisfies the schema."
+            f"The structured result was invalid: {error.message}. "
+            f"Write a corrected JSON object to {RESULT_ARTIFACT_FILENAME}; "
+            "doeff-agents will validate it against the result schema."
         )
     return f"Cannot continue automatically: {error.message}"
+
+
+def _result_contract_prompt(result_schema: dict[str, object]) -> str:
+    schema_json = json.dumps(result_schema, ensure_ascii=False, indent=2, sort_keys=True)
+    return (
+        "\n\n## Structured Result Contract (managed by doeff-agents)\n"
+        "Before the agent process exits, return exactly one structured result. "
+        f"For this terminal backend, write a JSON object to `{RESULT_ARTIFACT_FILENAME}` "
+        "in the current working directory. This is a doeff-agents transport detail; "
+        "the domain task only decides the JSON payload.\n\n"
+        "The JSON object must satisfy this schema:\n"
+        "```json\n"
+        f"{schema_json}\n"
+        "```\n\n"
+        "Do not ask the caller how to return the result. If the result is absent "
+        "or invalid, doeff-agents will send a follow-up; correct the same "
+        "structured result and continue until it validates or the task is blocked."
+    )
+
+
+def _prompt_with_result_contract(
+    prompt: str | None,
+    result_schema: dict[str, object],
+) -> str:
+    base = prompt or ""
+    return f"{base}{_result_contract_prompt(result_schema)}"
 
 
 def _launch_effect_from_spec(spec: AgentSpec) -> LaunchEffect:
@@ -395,7 +428,7 @@ def _launch_effect_from_spec(spec: AgentSpec) -> LaunchEffect:
         session_name=spec.session_id,
         agent_type=spec.agent_type,
         work_dir=spec.work_dir,
-        prompt=spec.prompt,
+        prompt=_prompt_with_result_contract(spec.prompt, spec.result_schema),
         model=spec.model,
         effort=spec.effort,
         bare=spec.bare,
@@ -870,7 +903,7 @@ class TmuxAgentHandler(AgentHandler):
         return snapshot
 
     def _await_outcome_from_result_file(self, state: SessionState) -> AwaitOutcome:
-        result_path = state.work_dir / ".agentd-result.json"
+        result_path = state.work_dir / RESULT_ARTIFACT_FILENAME
         if not result_path.exists():
             return AwaitOutcome(status=AwaitStatus.EXITED)
         try:
