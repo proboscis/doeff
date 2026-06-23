@@ -143,8 +143,9 @@ def test_agent_retries_invalid_schema_then_returns_valid_payload(tmp_path: Path)
 
     assert result == {"summary": "fixed", "ok": True}
     assert handler.follow_up_messages("run-001-node-c-0") == [
-        "The result artifact was invalid: required property 'ok' is missing. "
-        "Return a corrected result artifact that satisfies the schema."
+        "The structured result was invalid: required property 'ok' is missing. "
+        "Write a corrected JSON object to .agentd-result.json; doeff-agents will "
+        "validate it against the result schema."
     ]
 
 
@@ -162,7 +163,9 @@ def test_agent_distinguishes_absent_result_in_retry_message(tmp_path: Path) -> N
 
     assert result == {"summary": "reported", "ok": True}
     assert handler.follow_up_messages("run-001-node-c-0") == [
-        "No result artifact was produced. Return the required result artifact as JSON."
+        "No structured result was returned. Complete the task and write the "
+        "required JSON object to .agentd-result.json; doeff-agents will validate "
+        "it against the result schema."
     ]
 
 

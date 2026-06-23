@@ -15,12 +15,14 @@ from doeff import do, run
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from doeff_agents import (
+    AgentSpec,
     AgentType,
     CaptureEffect,
     CleanupAgentSession,
     GetAgentSession,
     LaunchConfig,
     LaunchEffect,
+    LaunchSessionEffect,
     ListAgentSessions,
     MonitorEffect,
     ObserveAgentSession,
@@ -89,6 +91,15 @@ class FakeAdapter:
 class FakeCodexAdapter(CodexAdapter):
     def is_available(self) -> bool:
         return True
+
+
+class RecordingAdapter(FakeAdapter):
+    def __init__(self) -> None:
+        self.params: list[LaunchParams] = []
+
+    def launch_command(self, params: LaunchParams) -> list[str]:
+        self.params.append(params)
+        return ["fake-agent", "--prompt", params.prompt or ""]
 
 
 class FakeBackend(SessionBackend):
@@ -239,6 +250,37 @@ def test_tmux_agent_handler_persists_session_state(monkeypatch) -> None:
     assert cleaned.status == SessionStatus.STOPPED
     assert cleaned.cleaned_at is not None
     assert backend.killed == ["persistent-worker"]
+
+
+def test_tmux_l2_launch_injects_structured_result_contract(monkeypatch, tmp_path: Path) -> None:
+    backend = FakeBackend()
+    adapter = RecordingAdapter()
+    monkeypatch.setattr("doeff_agents.handlers.production.get_adapter", lambda _agent_type: adapter)
+
+    handler = TmuxAgentHandler(backend=backend)
+    spec = AgentSpec(
+        run_id="run-structured",
+        node_id="node",
+        attempt=0,
+        agent_type=AgentType.CLAUDE,
+        work_dir=tmp_path,
+        prompt="Do the domain task only.",
+        result_schema={
+            "type": "object",
+            "required": ["ok"],
+            "properties": {"ok": {"type": "boolean"}},
+        },
+    )
+
+    handler.handle_launch_session(LaunchSessionEffect(spec=spec))
+
+    assert adapter.params
+    prompt = adapter.params[0].prompt or ""
+    assert "Do the domain task only." in prompt
+    assert "Structured Result Contract (managed by doeff-agents)" in prompt
+    assert ".agentd-result.json" in prompt
+    assert '"ok"' in prompt
+    assert "doeff-agents transport detail" in prompt
 
 
 def test_tmux_agent_handler_trusts_codex_workspace(monkeypatch, tmp_path: Path) -> None:
