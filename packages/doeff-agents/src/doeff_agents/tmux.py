@@ -3,6 +3,7 @@
 import os
 import re
 import subprocess
+import time
 from datetime import datetime, timezone
 
 from .session_backend import SessionBackend, SessionConfig, SessionInfo
@@ -103,14 +104,51 @@ class TmuxSessionBackend(SessionBackend):
         enter: bool = True,
     ) -> None:
         self._ensure_tmux_available()
-        args = self._args("send-keys", "-t", target)
-        if literal:
-            args.extend(["-l", keys])
-        else:
-            args.append(keys)
-        subprocess.run(args, check=True)
+        if literal and keys:
+            self._paste_literal(target, keys)
+        elif keys:
+            args = self._args("send-keys", "-t", target)
+            if literal:
+                args.extend(["-l", keys])
+            else:
+                args.append(keys)
+            subprocess.run(args, check=True)
 
         if enter:
+            if literal and keys:
+                # Claude/Codex redraw the input box after large pasted prompts.
+                # Pressing Enter immediately after the paste can be swallowed by
+                # that redraw, leaving "[Pasted text ...]" in the prompt.
+                time.sleep(1.0)
+            subprocess.run(self._args("send-keys", "-t", target, "Enter"), check=True)
+            if literal and keys:
+                self._confirm_literal_prompt_submitted(target)
+
+    def _paste_literal(self, target: str, text: str) -> None:
+        buffer_name = (
+            f"doeff-agents-{os.getpid()}-"
+            f"{re.sub(r'[^A-Za-z0-9_]+', '_', target)}"
+        )
+        subprocess.run(
+            self._args("set-buffer", "-b", buffer_name, text),
+            check=True,
+        )
+        try:
+            subprocess.run(
+                self._args("paste-buffer", "-b", buffer_name, "-t", target),
+                check=True,
+            )
+        finally:
+            subprocess.run(
+                self._args("delete-buffer", "-b", buffer_name),
+                check=False,
+                capture_output=True,
+            )
+
+    def _confirm_literal_prompt_submitted(self, target: str) -> None:
+        time.sleep(1.2)
+        output = self.capture_pane(target, 20)
+        if _output_has_unsubmitted_paste_input(output):
             subprocess.run(self._args("send-keys", "-t", target, "Enter"), check=True)
 
     def capture_pane(
@@ -163,6 +201,15 @@ class TmuxSessionBackend(SessionBackend):
 def get_default_backend() -> TmuxSessionBackend:
     """Return a default tmux backend instance using `tmux` from PATH."""
     return TmuxSessionBackend()
+
+
+def _output_has_unsubmitted_paste_input(output: str) -> bool:
+    last_prompt_line = ""
+    for line in output.splitlines()[-12:]:
+        stripped = line.lstrip()
+        if stripped.startswith(("❯", "›")):  # noqa: RUF001
+            last_prompt_line = stripped
+    return "[Pasted text" in last_prompt_line
 
 
 def is_tmux_available() -> bool:
