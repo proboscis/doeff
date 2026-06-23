@@ -34,6 +34,7 @@ from doeff_agents import (
     TmuxAgentHandler,
     agent_effectful_handler,
     capture_output,
+    default_agent_handler,
     launch_session,
     monitor_session,
     send_message,
@@ -619,6 +620,35 @@ def test_agent_effectful_handler_accepts_claude_runtime_policy(
         )
     )
 
+    assert f"export HOME={tmp_path};" in command
+    assert f"export CLAUDE_HOME={tmp_path / '.claude'};" in command
+
+
+def test_default_agent_handler_accepts_claude_runtime_policy(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = FakeBackend()
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+    )
+
+    handler = default_agent_handler(
+        backend=backend,
+        claude_runtime_policy=ClaudeRuntimePolicy(agent_home=tmp_path),
+    )
+    handle = handler.handle_launch(
+        LaunchEffect(
+            session_name="worker",
+            agent_type=AgentType.CLAUDE,
+            work_dir=Path.cwd(),
+            prompt="hello",
+            ready_timeout=0.1,
+        ),
+    )
+    handler.handle_stop(StopEffect(handle=handle))
+
+    command = backend.sent[0][1]
     assert f"export HOME={tmp_path};" in command
     assert f"export CLAUDE_HOME={tmp_path / '.claude'};" in command
 
