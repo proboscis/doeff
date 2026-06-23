@@ -105,6 +105,17 @@ class RecordingAdapter(FakeAdapter):
         return ["fake-agent", "--prompt", params.prompt or ""]
 
 
+class StdinRecordingAdapter(RecordingAdapter):
+    injection_method = InjectionMethod.STDIN
+
+    def launch_command(self, params: LaunchParams) -> list[str]:
+        self.params.append(params)
+        args = ["fake-agent"]
+        if params.prompt:
+            args.append("--print")
+        return args
+
+
 class FakeBackend(SessionBackend):
     def __init__(self) -> None:
         self.available = True
@@ -284,6 +295,35 @@ def test_tmux_l2_launch_injects_structured_result_contract(monkeypatch, tmp_path
     assert ".agentd-result.json" in prompt
     assert '"ok"' in prompt
     assert "doeff-agents transport detail" in prompt
+
+
+def test_tmux_agent_handler_writes_stdin_prompt_artifact(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = FakeBackend()
+    adapter = StdinRecordingAdapter()
+    monkeypatch.setattr("doeff_agents.handlers.production.get_adapter", lambda _agent_type: adapter)
+
+    handler = TmuxAgentHandler(backend=backend)
+    prompt = "line one\nline two"
+    handler.handle_launch(
+        LaunchEffect(
+            session_name="worker:stdin",
+            agent_type=AgentType.CLAUDE,
+            work_dir=tmp_path,
+            prompt=prompt,
+            ready_timeout=0.1,
+        )
+    )
+
+    prompt_path = tmp_path / ".agentd-prompt-worker-stdin.txt"
+    sent_command = backend.sent[0][1]
+    assert prompt_path.read_text(encoding="utf-8") == prompt
+    assert "fake-agent --print <" in sent_command
+    assert str(prompt_path) in sent_command
+    assert "line one" not in sent_command
+    assert len(backend.sent) == 1
 
 
 def test_tmux_agent_handler_trusts_codex_workspace(monkeypatch, tmp_path: Path) -> None:
