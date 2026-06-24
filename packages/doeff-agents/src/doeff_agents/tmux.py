@@ -146,9 +146,12 @@ class TmuxSessionBackend(SessionBackend):
 
     def _confirm_literal_prompt_submitted(self, target: str, text: str) -> None:
         time.sleep(1.2)
-        output = self.capture_pane(target, 20)
-        if _output_has_unsubmitted_paste_input(output, text):
+        for _ in range(3):
+            output = self.capture_pane(target, 20)
+            if not _output_has_unsubmitted_paste_input(output, text):
+                return
             subprocess.run(self._args("send-keys", "-t", target, "Enter"), check=True)
+            time.sleep(1.0)
 
     def capture_pane(
         self,
