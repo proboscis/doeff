@@ -1946,7 +1946,9 @@ fn output_has_unsubmitted_paste_input(output: &str) -> bool {
         }
     }
     last_prompt_line
-        .map(|line| line.contains("[Pasted text"))
+        .map(|line| {
+            line.contains("[Pasted text") || line.contains("Press up to edit queued messages")
+        })
         .unwrap_or(false)
 }
 
@@ -4051,6 +4053,14 @@ ude Max
   paste again to expand
 ";
         assert!(output_has_unsubmitted_paste_input(stuck_claude_input));
+
+        let stuck_queued_claude_input = "\
+────────────────────────────────────────────────────────────────────────────────
+❯\u{00A0}Press up to edit queued messages
+────────────────────────────────────────────────────────────────────────────────
+   ⚠⚠ NOT FABLE — model: Opus 4.8 (claude-opus-4-8) ⚠⚠
+";
+        assert!(output_has_unsubmitted_paste_input(stuck_queued_claude_input));
 
         let stuck_codex_input = "\
 ╭──────────────────────────────────────────────────────╮

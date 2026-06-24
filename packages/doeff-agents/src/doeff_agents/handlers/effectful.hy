@@ -7,6 +7,7 @@
 (require doeff-hy.macros [<-])
 
 (import doeff [Ask GetHandlers handler :as _program-handler run])
+(import doeff_core_effects.handlers [state])
 (import doeff_agents.effects [
   AgentEffect
   AttachAgentSessionEffect
@@ -36,6 +37,10 @@
     (setv program (tool.handler #* args))
     (for [h handlers]
       (setv program ((_program-handler h) program)))
+    ;; Captured handlers can own lazy-val/lazy-var state. Their own effects flow
+    ;; outside the handler, while LaunchSession's outer state handler is not
+    ;; reliably part of GetHandlers(k), so the callback VM must provide one.
+    (setv program ((_program-handler (state)) program))
     (run program))
   run-tool)
 

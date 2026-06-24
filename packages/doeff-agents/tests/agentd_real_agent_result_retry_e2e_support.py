@@ -91,7 +91,7 @@ def run_agentd_real_agent_result_retry_e2e(
                 session_env=_session_env(agent_type, runtime_dir, work_dir),
                 expected_result={
                     "payload_schema": ARTIFACT_SCHEMA,
-                    "max_retries": 1,
+                    "max_retries": 2,
                     "retry_prompt": _retry_prompt(agent_type),
                 },
             )
@@ -142,12 +142,13 @@ def _initial_prompt(agent_type: str) -> str:
 
 def _retry_prompt(agent_type: str) -> str:
     fixed = _fixed_summary(agent_type)
+    payload = f'{{"summary":"{fixed}","ok":true}}'
     return (
         "Expected retry turn. agentd rejected the first result: %REASON%. "
-        "Overwrite %RESULT_FILE% with exactly "
-        f'{{"summary":"{fixed}","ok":true}} and then wait at the interactive prompt. '
-        "A direct shell command is acceptable: "
-        f'printf %s \'{{"summary":"{fixed}","ok":true}}\' > %RESULT_FILE%. '
+        "Your only task now is to overwrite %RESULT_FILE% with this exact JSON, "
+        f"with no markdown fences and no extra text: {payload}. "
+        "Use this exact shell command, then stop at the interactive prompt:\n"
+        f"cat > %RESULT_FILE% <<'JSON'\n{payload}\nJSON\n"
         "Do not run sleep, background terminals, loops, or long-running commands."
     )
 
