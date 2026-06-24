@@ -166,6 +166,11 @@ def _hy_effectful_module():
     return import_module("doeff_agents.handlers.effectful")
 
 
+def _make_run_tool(handlers: Any) -> Any:
+    """Compatibility export for tests of the Hy effectful handler boundary."""
+    return _hy_effectful_module()._make_run_tool(handlers)
+
+
 def agent_effectful_handler(
     *,
     session_repository: AgentSessionRepository | None = None,
@@ -330,6 +335,7 @@ __all__ = [  # noqa: RUF022 - grouped by category for readability
     "ScenarioStep",
     "SessionState",
     "TmuxAgentHandler",
+    "_make_run_tool",
     "agent_effectful_handler",
     "agent_effectful_handlers",
     "codex_agent_handler",

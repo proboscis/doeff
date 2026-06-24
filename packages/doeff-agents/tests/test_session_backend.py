@@ -286,7 +286,7 @@ def test_tmux_agent_handler_rejects_anthropic_api_key_session_env(monkeypatch) -
         ready_timeout=0.1,
     )
 
-    with pytest.raises(ValueError, match="Anthropic API keys"):
+    with pytest.raises(ValueError, match="provider API keys"):
         handler.handle_launch(launch)
 
     assert backend.created == []
@@ -560,7 +560,7 @@ def test_imperative_session_api_rejects_anthropic_api_key_session_env(monkeypatc
         session_env={forbidden_key: "secret"},
     )
 
-    with pytest.raises(ValueError, match="Anthropic API keys"):
+    with pytest.raises(ValueError, match="provider API keys"):
         launch_session("worker", config, backend=backend)
 
     assert backend.created == []
