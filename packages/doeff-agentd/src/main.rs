@@ -280,7 +280,8 @@ struct ExpectedResultSpec {
     payload_schema: serde_json::Value,
     /// Message sent back to the agent when its result is missing or does
     /// not satisfy the schema.  `%REASON%` is replaced with the
-    /// validator's explanation so the agent has actionable feedback.
+    /// validator's explanation and `%RESULT_FILE%` with agentd's
+    /// per-session result file name so the agent has actionable feedback.
     /// agentd policy — launchers leave it at the default.
     #[serde(default = "default_retry_prompt")]
     retry_prompt: String,
@@ -331,7 +332,7 @@ fn result_protocol_instruction(session_id: &str) -> String {
 fn default_retry_prompt() -> String {
     String::from(
         "You exited without producing the required output file: %REASON%. \
-         Re-read your previous instructions, write the file at the expected path \
+         Re-read your previous instructions, write '%RESULT_FILE%' \
          with the exact schema declared, and do not exit until the file is valid.",
     )
 }
@@ -3083,9 +3084,19 @@ fn send_retry_prompt(
     // poll just absorbs the small window between turn-end detection
     // and the input box becoming receptive.
     wait_for_repl_idle(config, &snapshot.pane_id, Duration::from_secs(5))?;
-    let prompt = spec.retry_prompt.replace("%REASON%", reason);
+    let prompt = render_retry_prompt(snapshot, spec, reason);
     tmux_send_keys(config, &snapshot.pane_id, &prompt, true, true)?;
     Ok(())
+}
+
+fn render_retry_prompt(
+    snapshot: &SessionSnapshot,
+    spec: &ExpectedResultSpec,
+    reason: &str,
+) -> String {
+    spec.retry_prompt
+        .replace("%REASON%", reason)
+        .replace("%RESULT_FILE%", &result_file_name(&snapshot.session_id))
 }
 
 fn is_interactive_agent_type(agent_type: &str) -> bool {
@@ -4074,6 +4085,25 @@ ude Max
             retry_prompt: default_retry_prompt(),
             max_retries: 2,
         }
+    }
+
+    #[test]
+    fn render_retry_prompt_includes_result_file_name_and_reason() {
+        let snapshot = snapshot_for_lifecycle(LIFECYCLE_RUN_TO_COMPLETION, "running");
+        let spec = ExpectedResultSpec {
+            payload_schema: serde_json::json!({"type": "object"}),
+            retry_prompt: String::from("fix %RESULT_FILE% because %REASON%"),
+            max_retries: 1,
+        };
+        let prompt = render_retry_prompt(&snapshot, &spec, "missing ok");
+        assert!(
+            prompt.contains(".agentd-result-s1.json"),
+            "retry prompt should name the exact result file: {prompt}"
+        );
+        assert!(
+            prompt.contains("missing ok"),
+            "retry prompt should preserve validation reason: {prompt}"
+        );
     }
 
     #[test]
