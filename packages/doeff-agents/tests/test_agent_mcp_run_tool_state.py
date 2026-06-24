@@ -26,3 +26,9 @@ def test_agent_mcp_run_tool_provides_state_for_captured_lazy_handlers() -> None:
     run_tool_deftests.test_agent_mcp_run_tool_provides_state_for_captured_lazy_handlers(
         _deftest_interpreter
     )
+
+
+def test_agent_mcp_run_tool_provides_await_for_captured_handler_effects() -> None:
+    run_tool_deftests.test_agent_mcp_run_tool_provides_await_for_captured_handler_effects(
+        _deftest_interpreter
+    )
