@@ -1,16 +1,13 @@
 """Effect handlers for agent session management."""
 
 
-from collections.abc import Callable
 from importlib import import_module
 from pathlib import Path
 from typing import Any
 
+import hy  # noqa: F401  # activate Hy import hook for handler modules
 from doeff_time import sync_time_handler
 
-from doeff import Effect, Resume, do, run
-from doeff import handler as _program_handler
-from doeff.mcp import McpToolDef
 from doeff_agents.agentd_client import LazyAgentdClient
 from doeff_agents.effects import (
     AgentEffect,
@@ -115,48 +112,15 @@ def dispatch_effect(handler: AgentHandler, effect: Any) -> Any:  # noqa: PLR0912
     return result
 
 
-SimpleHandler = Callable[[Any], Any]
-ProtocolHandler = Callable[..., Any]
-
-
-def make_scheduled_handler(handler: SimpleHandler) -> ProtocolHandler:
-    """Wrap a plain `(effect) -> value` callable into `(effect, k) -> DoExpr`."""
-
-    @do
-    def scheduled_handler(effect: Effect, k: Any):
-        return (yield Resume(k, handler(effect)))
-
-    return _program_handler(scheduled_handler)
-
-
-def _make_run_tool(handlers: list) -> Callable[[McpToolDef, dict], Any]:
-    """Create a run_tool closure that executes tool programs with captured handlers.
-
-    Each MCP tool call:
-      1. Builds a DoExpr program from tool.handler(*args)
-      2. Wraps it with the captured handler stack by calling each handler
-      3. Runs it via doeff.run()
-    """
-
-    def run_tool(tool: McpToolDef, arguments: dict) -> Any:
-        args = [arguments.get(name) for name in tool.param_names()]
-        program = tool.handler(*args)
-        for h in handlers:
-            program = _program_handler(h)(program)
-        return run(program)
-
-    return run_tool
-
-
-def _make_protocol_handler(agent_handler: AgentHandler) -> ProtocolHandler:
-    """Wrap an AgentHandler object with the Hy defhandler boundary."""
+def _agent_handler_defhandler(agent_handler: AgentHandler) -> Any:
+    """Expose an AgentHandler object through the Hy defhandler boundary."""
     return _hy_effectful_module().agent_handler_defhandler(agent_handler)
 
 
-def _make_ask_agent_protocol_handler(
+def _tmux_agent_defhandler(
     *,
     session_repository: AgentSessionRepository | None = None,
-) -> ProtocolHandler:
+) -> Any:
     return _hy_effectful_module().tmux_agent_defhandler(
         session_repository=session_repository,
     )
@@ -206,7 +170,7 @@ def agent_effectful_handler(
     *,
     session_repository: AgentSessionRepository | None = None,
     claude_runtime_policy: ClaudeRuntimePolicy | None = None,
-) -> ProtocolHandler:
+) -> Any:
     """Return the real tmux handler as a Hy defhandler.
 
     The session backend is resolved through Ask(SessionBackend), so
@@ -240,17 +204,17 @@ def default_agent_handler(
     )
 
 
-def mock_agent_handler() -> ProtocolHandler:
+def mock_agent_handler() -> Any:
     """Return the mock testing handler as a Hy defhandler."""
     return _hy_effectful_module().agent_handler_defhandler(_mock_effect_handler)
 
 
 def agent_effectful_handlers(
     *,
-    time_handler: ProtocolHandler | None = None,
+    time_handler: Any | None = None,
     session_repository: AgentSessionRepository | None = None,
     claude_runtime_policy: ClaudeRuntimePolicy | None = None,
-) -> tuple[ProtocolHandler, ...]:
+) -> tuple[Any, ...]:
     """Return standard production handlers for real tmux agent workflows.
 
     High-level agent programs use ``doeff_time.Delay`` between monitor polls.
@@ -274,7 +238,7 @@ def daemon_agent_handler(
     client: AgentdSessionClient | None = None,
     claude_runtime_policy: ClaudeRuntimePolicy | None = None,
     max_running: int = 10,
-) -> ProtocolHandler:
+) -> Any:
     """Return the daemon-backed agent handler as a Hy defhandler."""
     active_client = client
     if active_client is None:
@@ -298,9 +262,9 @@ def daemon_agent_handlers(
     daemon_bin: str | Path | None = None,
     client: AgentdSessionClient | None = None,
     claude_runtime_policy: ClaudeRuntimePolicy | None = None,
-    time_handler: ProtocolHandler | None = None,
+    time_handler: Any | None = None,
     max_running: int = 10,
-) -> tuple[ProtocolHandler, ...]:
+) -> tuple[Any, ...]:
     """Return standard handlers for doeff-agentd-backed workflows."""
     return (
         time_handler or sync_time_handler(),
@@ -317,8 +281,8 @@ def daemon_agent_handlers(
 
 def mock_agent_handlers(
     *,
-    time_handler: ProtocolHandler | None = None,
-) -> tuple[ProtocolHandler, ...]:
+    time_handler: Any | None = None,
+) -> tuple[Any, ...]:
     """Return standard mock handlers, including a no-op Delay handler."""
     noop_time_handler = sync_time_handler(sleep=lambda _seconds: None)
     return (time_handler or noop_time_handler, mock_agent_handler())
@@ -327,12 +291,12 @@ def mock_agent_handlers(
 def production_handlers(
     *,
     session_repository: AgentSessionRepository | None = None,
-) -> tuple[ProtocolHandler, ...]:
+) -> tuple[Any, ...]:
     """Canonical handler tuple for production (tmux-backed) execution."""
     return agent_effectful_handlers(session_repository=session_repository)
 
 
-def mock_handlers() -> tuple[ProtocolHandler, ...]:
+def mock_handlers() -> tuple[Any, ...]:
     """Canonical handler tuple for mock execution in tests."""
     return mock_agent_handlers()
 
@@ -362,7 +326,6 @@ __all__ = [  # noqa: RUF022 - grouped by category for readability
     "MockAgentState",
     "MOCK_AGENT_STATE_KEY",
     "MockSessionScript",
-    "ProtocolHandler",
     "ScenarioAgentHandler",
     "ScenarioStep",
     "SessionState",
@@ -377,7 +340,6 @@ __all__ = [  # noqa: RUF022 - grouped by category for readability
     "dispatch_effect",
     "get_adapter",
     "get_mock_agent_state",
-    "make_scheduled_handler",
     "mock_agent_handler",
     "mock_agent_handlers",
     "mock_handlers",

@@ -158,3 +158,25 @@ def test_agent_anthropic_api_key_semgrep_rule_detects_env_injection() -> None:
     )
 
     assert _has_rule(check_ids, "doeff-agents-no-anthropic-api-key-agent-env")
+
+
+def test_defhandler_must_be_top_level_rule_detects_nested_handler() -> None:
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-agents/src/doeff_agents/handlers/nested_defhandler_forbidden.hy",
+        cwd=fixture_root,
+    )
+
+    assert _rule_start_lines(results, "doeff-hy-defhandler-must-be-top-level") == {4}
+
+
+def test_doeff_agents_rule_rejects_handler_callable_vocabulary() -> None:
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    check_ids = _semgrep_rule_ids(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-agents/src/doeff_agents/handlers/handler_callable_forbidden.py",
+        cwd=fixture_root,
+    )
+
+    assert _has_rule(check_ids, "doeff-agents-no-handler-callable-vocabulary")

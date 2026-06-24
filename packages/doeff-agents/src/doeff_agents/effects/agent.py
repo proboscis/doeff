@@ -551,8 +551,8 @@ class CleanupAgentSessionEffect(AgentEffectBase):
 # Deprecated — kept temporarily for backward compatibility during migration
 # =============================================================================
 
-# These will be removed once handlers/production.py and handlers/testing.py
-# are rewritten as Hy defhandlers.
+# These remain only for compatibility with callers that have not migrated to
+# LaunchEffect / LaunchSession yet.
 
 @dataclass(frozen=True, kw_only=True)
 class _DeprecatedLaunchTaskEffect(AgentEffectBase):

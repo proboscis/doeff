@@ -1,20 +1,17 @@
 """Example runtime helpers for running programs on doeff_vm public API."""
 
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from typing import Any
 
 from doeff import async_run, default_handlers
 from doeff import handler as _program_handler
 
-ProtocolHandler = Callable[[Any, Any], Any]
-
-
 async def run_program(
     program: Any,
     *,
-    custom_handlers: Sequence[ProtocolHandler] = (),
-    scoped_handlers: Sequence[ProtocolHandler] = (),
+    custom_handlers: Sequence[Any] = (),
+    scoped_handlers: Sequence[Any] = (),
     store: dict[str, Any] | None = None,
     env: dict[str, Any] | None = None,
 ) -> Any:

@@ -81,10 +81,10 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; claude_handler factory
+;; claude_handler
 ;; ---------------------------------------------------------------------------
 
-(defn claude-handler [* [backend None]]
+(defhandler claude-handler [* [backend None]]
   "Claude agent handler — catches LaunchEffect(CLAUDE) directly.
 
    Handles: trust, MCP, tmux, onboarding, session lifecycle.
@@ -92,127 +92,127 @@
 
    Non-CLAUDE LaunchEffects are Passed to outer handlers (so other agent handlers
    can pick them up)."
-  (setv adapter (ClaudeAdapter))
+  (lazy-var sessions {})
+  (lazy-var mcp-servers {})
 
-  (defhandler _handler
-    (lazy-var sessions {})
-    (lazy-var mcp-servers {})
+  (LaunchEffect [session-name agent-type work-dir prompt model mcp-tools mcp-server-name effort bare ready-timeout session-env]
+    :when (= agent-type AgentType.CLAUDE)
+    (setv active-backend backend)
+    (when (is active-backend None)
+      (<- active-backend (Ask SessionBackend)))
+    ;; 1. Trust
+    (_trust-workdir work-dir)
+    ;; 2. MCP server — tools run INSIDE the main VM as spawned tasks, not
+    ;;    in a separate run() from the HTTP thread. This way the scheduler,
+    ;;    sim_time clock, and state handler are shared between the pipeline
+    ;;    and every tool invocation, so WaitUntil / GetTime behave correctly.
+    ;;
+    ;;    Capture the full handler stack at the Launch site:
+    ;;      - inner: handlers below claude_handler (caught by GetHandlers(k))
+    ;;      - outer: handlers above claude_handler (scheduled, state, lazy_ask),
+    ;;        captured by GetOuterHandlers since claude_handler's segment is
+    ;;        detached from its parent after catching.
+    ;;    Tool programs are re-installed with this stack per call.
+    (when mcp-tools
+      (<- inner-handlers (GetHandlers k))
+      (<- outer-handlers (GetOuterHandlers))
+      (setv captured-handlers (+ (list inner-handlers) (list outer-handlers)))
+      (setv server (McpToolServer :tools mcp-tools))
+      ;; Wait for the HTTP server thread to enter its accept loop before
+      ;; launching the agent, so the CLI never hits a closed SSE endpoint.
+      (<- ready-ep (CreateExternalPromise))
+      (.start server :ready-promise ready-ep)
+      (<- _ (Wait ready-ep.future))
+      (_write-mcp-json work-dir server mcp-server-name)
+      ;; Spawn the dispatch loop as a scheduler child task — inherits the
+      ;; parent's scheduler so sim_time / state are shared.
+      (<- _ (Spawn (mcp-server-loop server captured-handlers)))
+      (set! mcp-servers (| mcp-servers {session-name server})))
+    ;; 3. Tmux session
+    (setv session-info (.new-session active-backend
+      (tmux.SessionConfig :session-name session-name :work-dir work-dir :env session-env)))
+    ;; 4. Launch command
+    (setv params (LaunchParams
+      :work-dir work-dir
+      :prompt prompt
+      :model model
+      :effort effort
+      :bare bare))
+    (setv argv (.launch-command (ClaudeAdapter) params))
+    (.send-keys active-backend session-info.pane-id
+      (wrap-with-shell-exports (shlex.join argv) session-env)
+      :literal False)
+    ;; The task prompt must be typed into the live terminal after Claude
+    ;; starts. Never pass it as argv/stdin; that enters one-shot SDK-style
+    ;; modes and breaks validation follow-ups.
+    (when prompt
+      (.send-keys active-backend session-info.pane-id prompt))
+    ;; 5. Store + resume
+    (setv handle (SessionHandle :session-id session-name))
+    (set! sessions (| sessions {session-name
+      {"handle" handle
+       "pane-id" session-info.pane-id
+       "agent-type" AgentType.CLAUDE
+       "monitor" (MonitorState)
+       "status" SessionStatus.BOOTING}}))
+    (resume handle))
 
-    (LaunchEffect [session-name agent-type work-dir prompt model mcp-tools mcp-server-name effort bare ready-timeout session-env]
-      :when (= agent-type AgentType.CLAUDE)
-      (setv active-backend backend)
-      (when (is active-backend None)
-        (<- active-backend (Ask SessionBackend)))
-      ;; 1. Trust
-      (_trust-workdir work-dir)
-      ;; 2. MCP server — tools run INSIDE the main VM as spawned tasks, not
-      ;;    in a separate run() from the HTTP thread. This way the scheduler,
-      ;;    sim_time clock, and state handler are shared between the pipeline
-      ;;    and every tool invocation, so WaitUntil / GetTime behave correctly.
-      ;;
-      ;;    Capture the full handler stack at the Launch site:
-      ;;      - inner: handlers below claude_handler (caught by GetHandlers(k))
-      ;;      - outer: handlers above claude_handler (scheduled, state, lazy_ask),
-      ;;        captured by GetOuterHandlers since claude_handler's segment is
-      ;;        detached from its parent after catching.
-      ;;    Tool programs are re-installed with this stack per call.
-      (when mcp-tools
-        (<- inner-handlers (GetHandlers k))
-        (<- outer-handlers (GetOuterHandlers))
-        (setv captured-handlers (+ (list inner-handlers) (list outer-handlers)))
-        (setv server (McpToolServer :tools mcp-tools))
-        ;; Wait for the HTTP server thread to enter its accept loop before
-        ;; launching the agent, so the CLI never hits a closed SSE endpoint.
-        (<- ready-ep (CreateExternalPromise))
-        (.start server :ready-promise ready-ep)
-        (<- _ (Wait ready-ep.future))
-        (_write-mcp-json work-dir server mcp-server-name)
-        ;; Spawn the dispatch loop as a scheduler child task — inherits the
-        ;; parent's scheduler so sim_time / state are shared.
-        (<- _ (Spawn (mcp-server-loop server captured-handlers)))
-        (set! mcp-servers (| mcp-servers {session-name server})))
-      ;; 3. Tmux session
-      (setv session-info (.new-session active-backend
-        (tmux.SessionConfig :session-name session-name :work-dir work-dir :env session-env)))
-      ;; 4. Launch command
-      (setv params (LaunchParams
-        :work-dir work-dir
-        :prompt prompt
-        :model model
-        :effort effort
-        :bare bare))
-      (setv argv (.launch-command adapter params))
-      (.send-keys active-backend session-info.pane-id
-        (wrap-with-shell-exports (shlex.join argv) session-env)
-        :literal False)
-      ;; 5. Store + resume
-      (setv handle (SessionHandle :session-id session-name))
-      (set! sessions (| sessions {session-name
-        {"handle" handle
-         "pane-id" session-info.pane-id
-         "agent-type" AgentType.CLAUDE
-         "monitor" (MonitorState)
-         "status" SessionStatus.BOOTING}}))
-      (resume handle))
+  (MonitorEffect [handle]
+    (setv active-backend backend)
+    (when (is active-backend None)
+      (<- active-backend (Ask SessionBackend)))
+    (setv sname handle.session-id)
+    (setv session-data (.get sessions sname))
+    (when (is session-data None)
+      (reperform effect))
+    (when (not (.has-session active-backend sname))
+      (resume (Observation :status SessionStatus.EXITED)))
+    (setv output (.capture-pane active-backend (.get session-data "pane-id") 100))
+    (setv mon (.get session-data "monitor" (MonitorState)))
+    (setv skip-lines 5)
+    (setv content-hash (hash-content output skip-lines))
+    (setv output-changed (!= content-hash mon.output-hash))
+    (setv has-prompt (is-waiting-for-input output))
+    (when output-changed
+      (setv mon.output-hash content-hash)
+      (setv mon.last-output output))
+    (setv new-status (detect-status output mon output-changed has-prompt))
+    (when new-status
+      (setv (get session-data "status") new-status))
+    (resume (Observation
+      :status (.get session-data "status" SessionStatus.RUNNING)
+      :output-changed output-changed
+      :output-snippet (when output (cut output -500 None)))))
 
-    (MonitorEffect [handle]
-      (setv active-backend backend)
-      (when (is active-backend None)
-        (<- active-backend (Ask SessionBackend)))
-      (setv sname handle.session-id)
-      (setv session-data (.get sessions sname))
-      (when (is session-data None)
-        (reperform effect))
-      (when (not (.has-session active-backend sname))
-        (resume (Observation :status SessionStatus.EXITED)))
-      (setv output (.capture-pane active-backend (.get session-data "pane-id") 100))
-      (setv mon (.get session-data "monitor" (MonitorState)))
-      (setv skip-lines 5)
-      (setv content-hash (hash-content output skip-lines))
-      (setv output-changed (!= content-hash mon.output-hash))
-      (setv has-prompt (is-waiting-for-input output))
-      (when output-changed
-        (setv mon.output-hash content-hash)
-        (setv mon.last-output output))
-      (setv new-status (detect-status output mon output-changed has-prompt))
-      (when new-status
-        (setv (get session-data "status") new-status))
-      (resume (Observation
-        :status (.get session-data "status" SessionStatus.RUNNING)
-        :output-changed output-changed
-        :output-snippet (when output (cut output -500 None)))))
+  (CaptureEffect [handle lines]
+    (setv active-backend backend)
+    (when (is active-backend None)
+      (<- active-backend (Ask SessionBackend)))
+    (setv session-data (.get sessions handle.session-id))
+    (when (is session-data None)
+      (reperform effect))
+    (resume (.capture-pane active-backend (.get session-data "pane-id") lines)))
 
-    (CaptureEffect [handle lines]
-      (setv active-backend backend)
-      (when (is active-backend None)
-        (<- active-backend (Ask SessionBackend)))
-      (setv session-data (.get sessions handle.session-id))
-      (when (is session-data None)
-        (reperform effect))
-      (resume (.capture-pane active-backend (.get session-data "pane-id") lines)))
+  (SendEffect [handle message literal enter]
+    (setv active-backend backend)
+    (when (is active-backend None)
+      (<- active-backend (Ask SessionBackend)))
+    (setv session-data (.get sessions handle.session-id))
+    (when (is session-data None)
+      (reperform effect))
+    (.send-keys active-backend (.get session-data "pane-id") message :literal literal :enter enter)
+    (resume None))
 
-    (SendEffect [handle message literal enter]
-      (setv active-backend backend)
-      (when (is active-backend None)
-        (<- active-backend (Ask SessionBackend)))
-      (setv session-data (.get sessions handle.session-id))
-      (when (is session-data None)
-        (reperform effect))
-      (.send-keys active-backend (.get session-data "pane-id") message :literal literal :enter enter)
-      (resume None))
-
-    (StopEffect [handle]
-      (setv active-backend backend)
-      (when (is active-backend None)
-        (<- active-backend (Ask SessionBackend)))
-      (setv session-data (.get sessions handle.session-id))
-      (when (is session-data None)
-        (reperform effect))
-      (setv server (.pop mcp-servers handle.session-id None))
-      (when server (.shutdown server))
-      (set! mcp-servers mcp-servers)
-      (when (.has-session active-backend handle.session-id)
-        (.kill-session active-backend handle.session-id))
-      (resume None)))
-
-  _handler)
+  (StopEffect [handle]
+    (setv active-backend backend)
+    (when (is active-backend None)
+      (<- active-backend (Ask SessionBackend)))
+    (setv session-data (.get sessions handle.session-id))
+    (when (is session-data None)
+      (reperform effect))
+    (setv server (.pop mcp-servers handle.session-id None))
+    (when server (.shutdown server))
+    (set! mcp-servers mcp-servers)
+    (when (.has-session active-backend handle.session-id)
+      (.kill-session active-backend handle.session-id))
+    (resume None)))

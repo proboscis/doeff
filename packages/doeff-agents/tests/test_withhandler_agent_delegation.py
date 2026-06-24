@@ -2,7 +2,6 @@
 
 
 import sys
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -30,7 +29,6 @@ from doeff_agents import (
     run_agent_to_completion,
 )
 
-ProtocolHandler = Callable[[Any, Any], Any]
 Script = dict[str, list[tuple[SessionStatus, str]]]
 
 
@@ -60,7 +58,7 @@ def _make_pipeline_handler(
     scripts: Script,
     *,
     launch_agent_override: AgentType | None = None,
-) -> tuple[ProtocolHandler, dict[str, Any]]:
+) -> tuple[Any, dict[str, Any]]:
     queue = {session_name: list(observations) for session_name, observations in scripts.items()}
     state: dict[str, Any] = {
         "launches": [],

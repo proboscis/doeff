@@ -15,8 +15,8 @@ Two dispatch modes:
    the request's threading.Event until the VM sets the result.
 
 2. Direct callback (legacy, backward-compat): caller supplies run_tool fn;
-   HTTP thread calls it synchronously. Used by handlers/production.py and
-   handlers/testing.py (OOP path).
+   HTTP thread calls it synchronously. Used by the AgentHandler object path
+   behind Hy defhandlers.
 
 Usage (queue mode):
     server = McpToolServer(tools, port=0)
