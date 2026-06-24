@@ -2,7 +2,6 @@
 
 import json
 import logging
-import os
 import shutil
 from pathlib import Path
 
@@ -30,49 +29,35 @@ class ClaudeAdapter:
         is the user's responsibility.
 
         On local machines: run `claude` once to authenticate.
-        On k3s: mount ~/.claude.json via PVC backup or k8s secret.
+        On k3s: mount a pre-authenticated Claude profile via PVC or secret.
         """
         home = Path.home()
         claude_json = home / ".claude.json"
 
-        # If CLAUDE_CODE_OAUTH_TOKEN is set, Claude Code will authenticate
-        # via env var — no need for oauthAccount in .claude.json.
-        # Still need .claude.json to exist (Claude Code expects it).
-        has_oauth_env = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
-
         if not claude_json.exists():
-            if has_oauth_env:
-                # Create minimal .claude.json — Claude Code will populate
-                # oauthAccount after authenticating via env var.
-                claude_json.write_text("{}", encoding="utf-8")
-                logger.info("Created minimal %s (CLAUDE_CODE_OAUTH_TOKEN set)", claude_json)
-            else:
-                raise RuntimeError(
-                    f"{claude_json} not found.\n"
-                    "\n"
-                    "Claude Code must be installed and authenticated before "
-                    "doeff-agents can launch a session.\n"
-                    "\n"
-                    "To fix:\n"
-                    "  Local:  run `claude` in a terminal and complete login\n"
-                    "  k3s:    set CLAUDE_CODE_OAUTH_TOKEN env var from k8s secret,\n"
-                    "          or mount ~/.claude.json via PVC backup\n"
-                    "  Docker: COPY a pre-authenticated .claude.json into the image\n"
-                )
+            raise RuntimeError(
+                f"{claude_json} not found.\n"
+                "\n"
+                "Claude Code must be installed and authenticated before "
+                "doeff-agents can launch a session.\n"
+                "\n"
+                "To fix:\n"
+                "  Local:  run `claude` in a terminal and complete login\n"
+                "  k3s:    mount a pre-authenticated Claude profile via PVC\n"
+                "  Docker: COPY a pre-authenticated .claude.json into the image\n"
+            )
 
-        # Verify oauthAccount is present (unless env var handles auth)
-        if not has_oauth_env:
-            try:
-                data = json.loads(claude_json.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                data = {}
-            if "oauthAccount" not in data:
-                raise RuntimeError(
-                    f"{claude_json} exists but has no oauthAccount.\n"
-                    "\n"
-                    "Claude Code is not authenticated. Run `claude` in a terminal "
-                    "and complete login, then try again.\n"
-                )
+        try:
+            data = json.loads(claude_json.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            data = {}
+        if "oauthAccount" not in data:
+            raise RuntimeError(
+                f"{claude_json} exists but has no oauthAccount.\n"
+                "\n"
+                "Claude Code is not authenticated. Run `claude` in a terminal "
+                "and complete login, then try again.\n"
+            )
 
         # Ensure supporting config files exist (these are safe to create)
         claude_dir = home / ".claude"
