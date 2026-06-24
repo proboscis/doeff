@@ -715,7 +715,50 @@ def test_tmux_backend_pastes_literal_prompt_and_resubmits_collapsed_input(
     assert command_names.count("set-buffer") == 1
     assert command_names.count("paste-buffer") == 1
     assert command_names.count("delete-buffer") == 1
-    assert command_names.count("capture-pane") == 1
+    assert command_names.count("capture-pane") == 3
+    enter_calls = [
+        call for call in calls if call[1:4] == ["send-keys", "-t", "%42"] and call[-1] == "Enter"
+    ]
+    assert len(enter_calls) == 4
+
+
+def test_tmux_backend_rechecks_resubmitted_literal_prompt_until_clear(
+    monkeypatch,
+) -> None:
+    calls: list[list[str]] = []
+    captures = [
+        (
+            "────────────────────────────────────────────────────────────────\n"
+            "\u276f\u00a0\n"
+            "────────────────────────────────────────────────────────────────\n"
+            "\n"
+            "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents\n"
+            ". Continue autonomously if safe, or return a blocked/error structured result.\n"
+        ),
+        "\u276f\u00a0\n",
+    ]
+
+    def fake_run(args, **kwargs):
+        calls.append(list(args))
+        if args[1] == "-V":
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        if args[1] == "capture-pane":
+            output = captures.pop(0) if captures else "\u276f\u00a0\n"
+            return subprocess.CompletedProcess(args, 0, stdout=output, stderr="")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("doeff_agents.tmux.subprocess.run", fake_run)
+    monkeypatch.setattr("doeff_agents.tmux.time.sleep", lambda _seconds: None)
+
+    sent_text = (
+        "The kabuStation executor appeared to be waiting for input. "
+        "Continue autonomously if safe, or return a blocked/error structured result."
+    )
+    backend = TmuxSessionBackend()
+    backend.send_keys("%42", sent_text, literal=True, enter=True)
+
+    command_names = [call[1] for call in calls]
+    assert command_names.count("capture-pane") == 2
     enter_calls = [
         call for call in calls if call[1:4] == ["send-keys", "-t", "%42"] and call[-1] == "Enter"
     ]
