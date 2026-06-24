@@ -93,6 +93,16 @@ class ClaudeAdapter:
         if params.bare:
             args.append("--bare")
 
+        if params.mcp_servers:
+            mcp_config = {
+                "mcpServers": {
+                    name: {"type": "sse", "url": url}
+                    for name, url in sorted(params.mcp_servers.items())
+                },
+            }
+            args.extend(["--mcp-config", json.dumps(mcp_config, sort_keys=True)])
+            args.append("--strict-mcp-config")
+
         return args
 
     @property
