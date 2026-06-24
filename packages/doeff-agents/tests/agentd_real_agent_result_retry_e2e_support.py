@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import signal
@@ -28,6 +29,8 @@ ARTIFACT_SCHEMA: dict[str, Any] = {
 }
 
 REAL_AGENT_TYPES = ("claude", "codex")
+PERSONAL_CLAUDE_CONFIG_DIR = Path("~/.config/claude-nameissoap")
+PERSONAL_CLAUDE_AUTH_EMAIL = "nameissoap@gmail.com"
 
 
 def run_agentd_real_agent_result_retry_e2e(
@@ -96,6 +99,14 @@ def run_agentd_real_agent_result_retry_e2e(
         if outcome.status != AwaitStatus.EXITED:
             raise AssertionError(
                 f"agentd real-agent E2E did not exit successfully: {outcome!r}\n"
+                f"db:\n{_read_session_debug(db_path, session_id)}\n"
+                f"agentd log:\n{_read_text(agentd_log_path)}\n"
+                f"capture:\n{_capture_tmux(session_id)}"
+            )
+        if outcome.validation_error is not None or outcome.result is None:
+            raise AssertionError(
+                f"agentd real-agent E2E returned invalid result: {outcome!r}\n"
+                f"db:\n{_read_session_debug(db_path, session_id)}\n"
                 f"agentd log:\n{_read_text(agentd_log_path)}\n"
                 f"capture:\n{_capture_tmux(session_id)}"
             )
@@ -144,12 +155,10 @@ def _fixed_summary(agent_type: str) -> str:
 
 def _session_env(agent_type: str, _runtime_dir: Path, work_dir: Path) -> dict[str, str]:
     if agent_type == "claude":
-        _prepare_real_claude_home(work_dir)
+        claude_config_dir = _prepare_real_personal_claude_home(work_dir)
         real_home = str(Path.home())
         return {
-            "CLAUDE_CODE_SAFE_MODE": "1",
-            "CLAUDE_CONFIG_DIR": str(Path.home() / ".claude"),
-            "CLAUDE_HOME": str(Path.home() / ".claude"),
+            "CLAUDE_CONFIG_DIR": str(claude_config_dir),
             "DISABLE_AUTO_UPDATE": "true",
             "DISABLE_UPDATE_PROMPT": "true",
             "HOME": real_home,
@@ -161,13 +170,35 @@ def _session_env(agent_type: str, _runtime_dir: Path, work_dir: Path) -> dict[st
     raise AssertionError(f"unsupported real agent type: {agent_type}")
 
 
-def _prepare_real_claude_home(work_dir: Path) -> None:
-    source_claude_json = Path.home() / ".claude" / ".claude.json"
-    assert source_claude_json.exists() or (Path.home() / ".claude.json").exists(), (
-        "Claude Code authentication in ~/.claude/.claude.json or ~/.claude.json is required "
-        "for the real-agent result retry E2E test"
+def _prepare_real_personal_claude_home(work_dir: Path) -> Path:
+    claude_config_dir = _personal_claude_config_dir()
+    claude_json = claude_config_dir / ".claude.json"
+    assert claude_json.exists(), (
+        f"Claude Code personal authentication is required at {claude_json}. "
+        "Run `cc personal` and log in as nameissoap@gmail.com before this E2E test."
     )
-    prepare_claude_home(Path.home(), (work_dir,))
+    _assert_personal_claude_auth(claude_json)
+    prepare_claude_home(claude_config_dir, (work_dir,))
+    for auth_path in (
+        claude_config_dir / ".claude.json",
+        claude_config_dir / ".claude" / ".claude.json",
+    ):
+        _assert_personal_claude_auth(auth_path)
+    return claude_config_dir
+
+
+def _personal_claude_config_dir() -> Path:
+    configured = os.environ.get("DOEFF_AGENTS_PERSONAL_CLAUDE_CONFIG_DIR")
+    return Path(configured).expanduser() if configured else PERSONAL_CLAUDE_CONFIG_DIR.expanduser()
+
+
+def _assert_personal_claude_auth(claude_json: Path) -> None:
+    data = json.loads(claude_json.read_text(encoding="utf-8"))
+    email = data.get("oauthAccount", {}).get("emailAddress")
+    assert email == PERSONAL_CLAUDE_AUTH_EMAIL, (
+        f"Claude Code auth for real-agent E2E must be {PERSONAL_CLAUDE_AUTH_EMAIL}; "
+        f"{claude_json} has {email!r}"
+    )
 
 
 def _require_live_binary(name: str) -> None:
@@ -240,6 +271,55 @@ def _read_session_db_state(db_path: Path, session_id: str) -> dict[str, Any]:
         }
     finally:
         conn.close()
+
+
+def _read_session_debug(db_path: Path, session_id: str) -> str:
+    if not db_path.exists():
+        return f"db not found: {db_path}"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            """
+            SELECT status, retries_used, last_validation_error, terminal_cause_json,
+                   output_snippet, result_payload_json
+            FROM agent_sessions
+            WHERE session_id = ?
+            """,
+            (session_id,),
+        ).fetchone()
+        session_debug = dict(row) if row is not None else {"missing_session": session_id}
+        events = conn.execute(
+            """
+            SELECT event_type, payload_json
+            FROM agent_session_events
+            WHERE session_id = ?
+            ORDER BY id DESC
+            LIMIT 5
+            """,
+            (session_id,),
+        ).fetchall()
+        event_debug = [
+            {
+                "event_type": event["event_type"],
+                "payload": _compact_event_payload(event["payload_json"]),
+            }
+            for event in events
+        ]
+        return json.dumps(
+            {"session": session_debug, "recent_events": event_debug},
+            ensure_ascii=False,
+            indent=2,
+        )
+    finally:
+        conn.close()
+
+
+def _compact_event_payload(raw_payload: str) -> dict[str, Any]:
+    payload = json.loads(raw_payload)
+    if isinstance(payload, dict) and isinstance(payload.get("output_snippet"), str):
+        payload["output_snippet"] = payload["output_snippet"][-1200:]
+    return payload
 
 
 def _capture_tmux(session_name: str) -> str:

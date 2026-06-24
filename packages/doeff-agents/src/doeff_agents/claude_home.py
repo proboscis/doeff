@@ -1,7 +1,5 @@
 """Claude Code home preparation shared by agent handlers."""
 
-from __future__ import annotations
-
 import json
 import shutil
 from pathlib import Path
@@ -17,10 +15,21 @@ def prepare_claude_home(agent_home: Path, trusted_workspaces: tuple[Path, ...]) 
         agent_home / ".claude.json",
         agent_home / ".claude" / ".claude.json",
     ]
-    source_claude_json = source_home / ".claude.json"
+    source_claude_json = _first_existing_path(
+        (
+            agent_home / ".claude.json",
+            agent_home / ".claude" / ".claude.json",
+            source_home / ".claude.json",
+            source_home / ".claude" / ".claude.json",
+        )
+    )
 
     for claude_json in candidate_json_paths:
-        if agent_home != source_home and not claude_json.exists() and source_claude_json.exists():
+        if (
+            source_claude_json is not None
+            and source_claude_json != claude_json
+            and not claude_json.exists()
+        ):
             claude_json.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_claude_json, claude_json)
 
@@ -62,6 +71,13 @@ def prepare_claude_home(agent_home: Path, trusted_workspaces: tuple[Path, ...]) 
         and source_credentials.exists()
     ):
         shutil.copy2(source_credentials, credentials_path)
+
+
+def _first_existing_path(paths: tuple[Path, ...]) -> Path | None:
+    for path in paths:
+        if path.exists():
+            return path
+    return None
 
 
 __all__ = ["prepare_claude_home"]

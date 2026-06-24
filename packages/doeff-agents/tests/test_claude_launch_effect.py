@@ -101,6 +101,36 @@ def test_prepare_claude_home_seeds_trusted_workspace(tmp_path: Path) -> None:
     assert (agent_home / ".claude" / "settings.json").exists()
 
 
+def test_prepare_claude_home_prefers_auth_already_in_agent_home(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from doeff_agents import claude_home as claude_home_mod
+
+    source_home = tmp_path / "default-home"
+    source_home.mkdir()
+    (source_home / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": "ca@example.com"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(claude_home_mod.Path, "home", lambda: source_home)
+
+    backend = FakeBackend()
+    handler = TmuxAgentHandler(backend=backend)
+    agent_home = tmp_path / "personal-profile"
+    agent_home.mkdir()
+    (agent_home / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": "nameissoap@gmail.com"}}),
+        encoding="utf-8",
+    )
+
+    handler._prepare_claude_home(agent_home, (tmp_path / "workspace",))
+
+    for path in (agent_home / ".claude.json", agent_home / ".claude" / ".claude.json"):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert data["oauthAccount"]["emailAddress"] == "nameissoap@gmail.com"
+
+
 def test_handle_claude_launch_materializes_workspace_and_uses_runtime_env(
     monkeypatch, tmp_path: Path
 ) -> None:

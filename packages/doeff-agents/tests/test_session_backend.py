@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-from doeff_core_effects.handlers import lazy_ask
+from doeff_core_effects.handlers import lazy_ask, state
 
 from doeff import do, run
 
@@ -585,7 +585,9 @@ def test_agent_effectful_handler_asks_for_backend(monkeypatch) -> None:
         yield StopEffect(handle=handle)
         return observation.status
 
-    result = run(lazy_ask(env={SessionBackend: backend})(agent_effectful_handler()(workflow())))
+    result = run(
+        lazy_ask(env={SessionBackend: backend})(state()(agent_effectful_handler()(workflow())))
+    )
 
     assert result == SessionStatus.EXITED
     assert backend.created[0].session_name == "worker"
@@ -616,7 +618,7 @@ def test_agent_effectful_handler_accepts_claude_runtime_policy(
     policy = ClaudeRuntimePolicy(agent_home=tmp_path)
     command = run(
         lazy_ask(env={SessionBackend: backend})(
-            agent_effectful_handler(claude_runtime_policy=policy)(workflow())
+            state()(agent_effectful_handler(claude_runtime_policy=policy)(workflow()))
         )
     )
 
@@ -731,6 +733,38 @@ def test_unsubmitted_paste_detector_uses_latest_prompt_line() -> None:
     assert not _output_has_unsubmitted_paste_input(historical_paste)
     assert _output_has_unsubmitted_paste_input("\u203a [Pasted text #1 +12 lines]\n")
     assert not _output_has_unsubmitted_paste_input("\u276f\u00a0\n")
+
+
+def test_unsubmitted_paste_detector_catches_visible_prompt_text() -> None:
+    output = (
+        "────────────────────────────────────────────────────────────────\n"
+        "\u276f\u00a0\n"
+        "────────────────────────────────────────────────────────────────\n"
+        "\n"
+        "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents\n"
+        ". Continue autonomously if safe, or return a blocked/error structured result.\n"
+    )
+    sent_text = (
+        "The kabuStation executor appeared to be waiting for input. "
+        "Continue autonomously if safe, or return a blocked/error structured result."
+    )
+
+    assert _output_has_unsubmitted_paste_input(output, sent_text)
+
+
+def test_unsubmitted_paste_detector_ignores_prior_submitted_text() -> None:
+    output = (
+        "The kabuStation executor appeared to be waiting for input. "
+        "Continue autonomously if safe, or return a blocked/error structured result.\n"
+        "⏺ Running tools\n"
+        "\u276f\u00a0\n"
+    )
+    sent_text = (
+        "The kabuStation executor appeared to be waiting for input. "
+        "Continue autonomously if safe, or return a blocked/error structured result."
+    )
+
+    assert not _output_has_unsubmitted_paste_input(output, sent_text)
 
 
 def test_tmux_backend_defaults_to_tmux(monkeypatch) -> None:

@@ -124,7 +124,7 @@ class TmuxSessionBackend(SessionBackend):
                 time.sleep(1.0)
             subprocess.run(self._args("send-keys", "-t", target, "Enter"), check=True)
             if literal and keys:
-                self._confirm_literal_prompt_submitted(target)
+                self._confirm_literal_prompt_submitted(target, keys)
 
     def _paste_literal(self, target: str, text: str) -> None:
         buffer_name = f"doeff-agents-{os.getpid()}-{re.sub(r'[^A-Za-z0-9_]+', '_', target)}"
@@ -144,10 +144,10 @@ class TmuxSessionBackend(SessionBackend):
                 capture_output=True,
             )
 
-    def _confirm_literal_prompt_submitted(self, target: str) -> None:
+    def _confirm_literal_prompt_submitted(self, target: str, text: str) -> None:
         time.sleep(1.2)
         output = self.capture_pane(target, 20)
-        if _output_has_unsubmitted_paste_input(output):
+        if _output_has_unsubmitted_paste_input(output, text):
             subprocess.run(self._args("send-keys", "-t", target, "Enter"), check=True)
 
     def capture_pane(
@@ -216,13 +216,42 @@ def get_default_backend() -> TmuxSessionBackend:
     return TmuxSessionBackend()
 
 
-def _output_has_unsubmitted_paste_input(output: str) -> bool:
+def _output_has_unsubmitted_paste_input(output: str, sent_text: str | None = None) -> bool:
     last_prompt_line = ""
-    for line in output.splitlines()[-12:]:
+    prompt_index = -1
+    lines = output.splitlines()[-20:]
+    for index, line in enumerate(lines):
         stripped = line.lstrip()
         if stripped.startswith(("❯", "›")):  # noqa: RUF001
             last_prompt_line = stripped
-    return "[Pasted text" in last_prompt_line
+            prompt_index = index
+    if "[Pasted text" in last_prompt_line:
+        return True
+    if not sent_text or prompt_index < 0:
+        return False
+    prompt_region = _normalize_prompt_text("\n".join(lines[prompt_index:]))
+    return any(
+        fragment in prompt_region
+        for fragment in _literal_prompt_fragments(sent_text)
+    )
+
+
+def _normalize_prompt_text(text: str) -> str:
+    return " ".join(text.replace("\u00a0", " ").split())
+
+
+def _literal_prompt_fragments(text: str) -> list[str]:
+    normalized = _normalize_prompt_text(text)
+    words = normalized.split()
+    fragments: list[str] = []
+    for start in range(max(len(words) - 3, 0)):
+        fragment = " ".join(words[start : start + 4])
+        if len(fragment) >= 24:
+            fragments.append(fragment)
+    if len(normalized) >= 24:
+        fragments.append(normalized[:80])
+        fragments.append(normalized[-80:])
+    return fragments
 
 
 def is_tmux_available() -> bool:
