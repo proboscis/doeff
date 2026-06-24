@@ -19,7 +19,7 @@ from doeff_agents.effects import (
     Monitor,
     Stop,
 )
-from doeff_agents.handlers import _make_protocol_handler
+from doeff_agents.handlers import _agent_handler_defhandler
 from doeff_agents.handlers.production import TmuxAgentHandler
 from doeff_agents.tmux import TmuxSessionBackend
 from doeff_time import Delay, sync_time_handler
@@ -66,7 +66,7 @@ class TestMcpLiveE2E:
         _tool_call_log.clear()
 
         handler = TmuxAgentHandler(backend=TmuxSessionBackend())
-        agent_protocol = _make_protocol_handler(handler)
+        agent_defhandler = _agent_handler_defhandler(handler)
 
         @do
         def program():
@@ -99,7 +99,7 @@ class TestMcpLiveE2E:
             return output
 
         try:
-            output = run(sync_time_handler()(agent_protocol(program())))
+            output = run(sync_time_handler()(agent_defhandler(program())))
 
             # Verify the tool was actually called via the in-process log
             assert len(_tool_call_log) > 0, (

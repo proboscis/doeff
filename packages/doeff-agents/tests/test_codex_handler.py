@@ -99,6 +99,7 @@ def test_codex_handler_asks_for_backend(tmp_path: Path) -> None:
 
 def test_launch_sends_codex_command(tmp_path: Path) -> None:
     backend = FakeTmuxBackend()
+    prompt = "do stuff"
 
     @do
     def program():
@@ -106,15 +107,18 @@ def test_launch_sends_codex_command(tmp_path: Path) -> None:
             session_name="codex-cmd",
             agent_type=AgentType.CODEX,
             work_dir=tmp_path,
-            prompt="do stuff",
+            prompt=prompt,
             model="gpt-5.5",
         )))
 
     _run(program(), backend)
-    assert len(backend.sent_keys) >= 1
+    assert len(backend.sent_keys) >= 2
     cmd = backend.sent_keys[0]["keys"]
     assert "codex" in cmd
     assert "gpt-5.5" in cmd
+    assert prompt not in cmd
+    assert backend.sent_keys[1]["keys"] == prompt
+    assert backend.sent_keys[1]["literal"] is True
 
 
 def test_stop_kills_session(tmp_path: Path) -> None:

@@ -99,7 +99,6 @@ _LAZY_EXPORTS = {
     "default_agent_handler": ".handlers",
     "dispatch_effect": ".handlers",
     "get_mock_agent_state": ".handlers",
-    "make_scheduled_handler": ".handlers",
     "mock_agent_handler": ".handlers",
     "mock_agent_handlers": ".handlers",
     "mock_handlers": ".handlers",

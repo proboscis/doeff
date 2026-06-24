@@ -103,6 +103,7 @@ class TestClaudeHandlerLaunch:
 
     def test_launch_sends_claude_command(self, tmp_path):
         backend = FakeTmuxBackend()
+        prompt = "do stuff"
 
         @do
         def program():
@@ -110,15 +111,18 @@ class TestClaudeHandlerLaunch:
                 session_name="cmd-test",
                 agent_type=AgentType.CLAUDE,
                 work_dir=tmp_path,
-                prompt="do stuff",
+                prompt=prompt,
                 model="opus",
             )))
 
         _run(program(), backend)
-        assert len(backend.sent_keys) >= 1
+        assert len(backend.sent_keys) >= 2
         cmd = backend.sent_keys[0]["keys"]
         assert "claude" in cmd
         assert "opus" in cmd
+        assert prompt not in cmd
+        assert backend.sent_keys[1]["keys"] == prompt
+        assert backend.sent_keys[1]["literal"] is True
 
 
 class TestClaudeHandlerMcp:
