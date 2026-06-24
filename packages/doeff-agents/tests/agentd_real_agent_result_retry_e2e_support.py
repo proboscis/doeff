@@ -29,8 +29,8 @@ ARTIFACT_SCHEMA: dict[str, Any] = {
 }
 
 REAL_AGENT_TYPES = ("claude", "codex")
-PERSONAL_CLAUDE_CONFIG_DIR = Path("~/.config/claude-nameissoap")
-PERSONAL_CLAUDE_AUTH_EMAIL = "nameissoap@gmail.com"
+DEFAULT_REAL_CLAUDE_CONFIG_DIR = Path("~/.config/claude-nameissoap")
+DEFAULT_REAL_CLAUDE_AUTH_EMAIL = "nameissoap@gmail.com"
 
 
 def run_agentd_real_agent_result_retry_e2e(
@@ -144,8 +144,10 @@ def _retry_prompt(agent_type: str) -> str:
     fixed = _fixed_summary(agent_type)
     return (
         "Expected retry turn. agentd rejected the first result: %REASON%. "
-        "Overwrite the same result file with exactly "
+        "Overwrite %RESULT_FILE% with exactly "
         f'{{"summary":"{fixed}","ok":true}} and then wait at the interactive prompt. '
+        "A direct shell command is acceptable: "
+        f'printf %s \'{{"summary":"{fixed}","ok":true}}\' > %RESULT_FILE%. '
         "Do not run sleep, background terminals, loops, or long-running commands."
     )
 
@@ -156,7 +158,7 @@ def _fixed_summary(agent_type: str) -> str:
 
 def _session_env(agent_type: str, _runtime_dir: Path, work_dir: Path) -> dict[str, str]:
     if agent_type == "claude":
-        claude_config_dir = _prepare_real_personal_claude_home(work_dir)
+        claude_config_dir = _prepare_real_claude_home(work_dir)
         real_home = str(Path.home())
         return {
             "CLAUDE_CONFIG_DIR": str(claude_config_dir),
@@ -171,33 +173,46 @@ def _session_env(agent_type: str, _runtime_dir: Path, work_dir: Path) -> dict[st
     raise AssertionError(f"unsupported real agent type: {agent_type}")
 
 
-def _prepare_real_personal_claude_home(work_dir: Path) -> Path:
-    claude_config_dir = _personal_claude_config_dir()
+def _prepare_real_claude_home(work_dir: Path) -> Path:
+    claude_config_dir = _real_claude_config_dir()
     claude_json = claude_config_dir / ".claude.json"
+    expected_email = _real_claude_auth_email()
     assert claude_json.exists(), (
-        f"Claude Code personal authentication is required at {claude_json}. "
-        "Run `cc personal` and log in as nameissoap@gmail.com before this E2E test."
+        f"Claude Code authentication is required at {claude_json}. "
+        f"Log in as {expected_email} before this E2E test."
     )
-    _assert_personal_claude_auth(claude_json)
+    _assert_real_claude_auth(claude_json, expected_email)
     prepare_claude_home(claude_config_dir, (work_dir,))
     for auth_path in (
         claude_config_dir / ".claude.json",
         claude_config_dir / ".claude" / ".claude.json",
     ):
-        _assert_personal_claude_auth(auth_path)
+        _assert_real_claude_auth(auth_path, expected_email)
     return claude_config_dir
 
 
-def _personal_claude_config_dir() -> Path:
-    configured = os.environ.get("DOEFF_AGENTS_PERSONAL_CLAUDE_CONFIG_DIR")
-    return Path(configured).expanduser() if configured else PERSONAL_CLAUDE_CONFIG_DIR.expanduser()
+def _real_claude_config_dir() -> Path:
+    configured = (
+        os.environ.get("DOEFF_AGENTS_REAL_CLAUDE_CONFIG_DIR")
+        or os.environ.get("DOEFF_AGENTS_PERSONAL_CLAUDE_CONFIG_DIR")
+    )
+    if configured:
+        return Path(configured).expanduser()
+    return DEFAULT_REAL_CLAUDE_CONFIG_DIR.expanduser()
 
 
-def _assert_personal_claude_auth(claude_json: Path) -> None:
+def _real_claude_auth_email() -> str:
+    return os.environ.get(
+        "DOEFF_AGENTS_REAL_CLAUDE_AUTH_EMAIL",
+        DEFAULT_REAL_CLAUDE_AUTH_EMAIL,
+    )
+
+
+def _assert_real_claude_auth(claude_json: Path, expected_email: str) -> None:
     data = json.loads(claude_json.read_text(encoding="utf-8"))
     email = data.get("oauthAccount", {}).get("emailAddress")
-    assert email == PERSONAL_CLAUDE_AUTH_EMAIL, (
-        f"Claude Code auth for real-agent E2E must be {PERSONAL_CLAUDE_AUTH_EMAIL}; "
+    assert email == expected_email, (
+        f"Claude Code auth for real-agent E2E must be {expected_email}; "
         f"{claude_json} has {email!r}"
     )
 
