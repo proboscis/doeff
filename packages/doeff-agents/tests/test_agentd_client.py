@@ -23,6 +23,7 @@ from doeff_agents import (
     AgentdUnavailableError,
     AgentSessionLifecycle,
     AgentType,
+    AwaitStatus,
     DaemonAgentHandler,
     LaunchEffect,
     LazyAgentdClient,
@@ -381,6 +382,7 @@ def _snapshot_payload(
     agent_type: str = "codex",
     work_dir: str = "/tmp/work",
     lifecycle: str = "run_to_completion",
+    status: str = "running",
 ) -> dict[str, Any]:
     return {
         "session_id": session_id,
@@ -389,7 +391,7 @@ def _snapshot_payload(
         "agent_type": agent_type,
         "work_dir": work_dir,
         "lifecycle": lifecycle,
-        "status": "running",
+        "status": status,
         "backend_kind": "tmux",
         "backend_ref": {"session_name": session_id, "pane_id": "%1"},
         "started_at": "2026-05-25T00:00:00+00:00",
@@ -461,6 +463,23 @@ def test_await_result_rejects_non_object_result_payload() -> None:
 
     with pytest.raises(AgentdProtocolError, match=r"session.await_result result.*non-object"):
         client.await_result("s1", timeout_seconds=1.0)
+
+
+def test_await_result_accepts_terminal_null_result_with_validation_error() -> None:
+    client = _StaticAwaitResultClient(
+        {
+            "session": _snapshot_payload(status="failed"),
+            "result": None,
+            "validation_error": "failed to read result file",
+        }
+    )
+
+    outcome = client.await_result("s1", timeout_seconds=1.0)
+
+    assert outcome.status == AwaitStatus.EXITED
+    assert outcome.result is None
+    assert outcome.validation_error == "failed to read result file"
+    assert not outcome.continuable
 
 
 def test_launch_read_timeout_covers_daemon_launch_budget() -> None:
