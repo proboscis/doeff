@@ -361,11 +361,6 @@ class DaemonAgentHandler(AgentHandler):
             claude_env = {
                 "HOME": str(agent_home),
                 "CLAUDE_HOME": str(agent_home / ".claude"),
-                **(
-                    {"CLAUDE_CODE_OAUTH_TOKEN": os.environ["CLAUDE_CODE_OAUTH_TOKEN"]}
-                    if "CLAUDE_CODE_OAUTH_TOKEN" in os.environ
-                    else {}
-                ),
                 **self._claude_runtime_policy.bootstrap_exports,
             }
             tmux_env.update(claude_env)
