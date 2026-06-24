@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -60,6 +61,37 @@ def test_launch_command_without_prompt_stays_interactive() -> None:
         "--model",
         "opus",
     ]
+
+
+def test_launch_command_includes_mcp_config_when_servers_provided() -> None:
+    adapter = ClaudeAdapter()
+    params = LaunchParams(
+        work_dir=Path.cwd(),
+        prompt="ship it",
+        model="opus",
+        mcp_servers={"nak": "http://127.0.0.1:42175/sse"},
+    )
+
+    command = adapter.launch_command(params)
+
+    assert command[:4] == [
+        "claude",
+        "--dangerously-skip-permissions",
+        "--model",
+        "opus",
+    ]
+    assert "--mcp-config" in command
+    config_index = command.index("--mcp-config") + 1
+    assert json.loads(command[config_index]) == {
+        "mcpServers": {
+            "nak": {
+                "type": "sse",
+                "url": "http://127.0.0.1:42175/sse",
+            },
+        },
+    }
+    assert "--strict-mcp-config" in command
+    assert "ship it" not in command
 
 
 def test_pre_launch_reads_and_writes_claude_files_as_utf8(monkeypatch, tmp_path: Path) -> None:
