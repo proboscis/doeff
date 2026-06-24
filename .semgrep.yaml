@@ -214,6 +214,42 @@ rules:
       include:
         - /packages/doeff-agents/**
 
+  - id: doeff-hy-defhandler-must-be-top-level
+    languages: [generic]
+    severity: ERROR
+    message: >
+      defhandler definitions must be module-level. Do not create handlers inside
+      defn, defk, def, or any other local scope. If a handler needs parameters,
+      make it a top-level parameterized defhandler.
+    pattern-regex: '^[ \t]+\(defhandler\b'
+    paths:
+      include:
+        - /packages/**/*.hy
+        - /packages/**/*.hyk
+        - /packages/**/*.hyp
+      exclude:
+        - /packages/doeff-hy/src/doeff_hy/handle.hy
+        - /packages/doeff-hy/src/doeff_hy/macros.hy
+
+  - id: doeff-agents-no-handler-callable-vocabulary
+    languages: [generic]
+    severity: ERROR
+    message: >
+      doeff-agents must expose agent execution through top-level Hy defhandler
+      boundaries. Do not describe or encode agent handlers as plain Python call
+      targets or protocol-wrapper shims.
+    pattern-either:
+      - pattern-regex: '\bProtocolHandler\b'
+      - pattern-regex: '\b_make_protocol_handler\b'
+      - pattern-regex: '\b_make_ask_agent_protocol_handler\b'
+      - pattern-regex: '(?i)(handler\s+callable|callable\s+handler|protocol\s+handler)'
+    paths:
+      include:
+        - /packages/doeff-agents/src/**
+        - /packages/doeff-agents/tests/**
+        - /packages/doeff-agents/examples/**
+        - /tests/semgrep/fixtures/python/packages/doeff-agents/src/**
+
   - id: conductor-random-effect-no-fixed-seed
     languages: [python]
     severity: ERROR
@@ -2903,7 +2939,7 @@ rules:
         - "**/packages/**/src/**/*.py"
     message: |
       Type-keyed handler_map annotations are banned.
-      Accept a protocol handler callable and stack with WithHandler instead.
+      Accept a Hy defhandler boundary and stack with WithHandler instead.
     languages: [python]
     severity: ERROR
     metadata:
@@ -2917,7 +2953,7 @@ rules:
         - "**/doeff/**/*.py"
         - "**/packages/**/src/**/*.py"
     message: |
-      Handler factories must return a protocol handler callable, not dict[type, handler].
+      Handler factories must return one Hy defhandler boundary, not dict[type, handler].
       Compose handlers by WithHandler stacking.
     languages: [python]
     severity: ERROR
@@ -2947,7 +2983,7 @@ rules:
         - "**/packages/**/src/**/handlers/**/*.py"
     message: |
       Type-keyed handler dict literals are banned.
-      Build a single protocol handler with isinstance(...) checks and Delegate/Pass forwarding.
+      Build one defhandler boundary with explicit clauses and reperform forwarding.
     languages: [python]
     severity: ERROR
     metadata:

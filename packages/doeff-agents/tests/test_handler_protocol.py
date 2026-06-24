@@ -88,6 +88,19 @@ def test_agent_handlers_are_defhandler_program_wrappers() -> None:
     )
 
 
+def test_scenario_handler_wrap_uses_defhandler_boundary() -> None:
+    source = (
+        Path("packages/doeff-agents/src/doeff_agents/handlers/testing.hy")
+        .read_text()
+    )
+
+    assert not Path("packages/doeff-agents/src/doeff_agents/handlers/testing.py").exists()
+    assert "(defclass ScenarioAgentHandler" in source
+    assert "(agent-handler-defhandler self)" in source
+    assert "def handler(effect: Effect, k)" not in source
+    assert "yield Pass(effect, k)" not in source
+
+
 def test_unknown_effect_delegates() -> None:
     result = run(
         _install_raw_handler(_unknown_effect_fallback)(agent_effectful_handler()(_unknown_workflow()))

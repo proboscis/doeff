@@ -2,7 +2,7 @@
 
 These tests use the mock tmux backend but real MCP server, verifying:
 1. defmcp-tool → McpToolDef → LaunchEffect.mcp_tools
-2. Protocol handler captures handler stack via GetHandlers()
+2. Hy defhandler captures handler stack via GetHandlers()
 3. MCP server starts, serves tools, and is reachable over HTTP
 4. .mcp.json is written correctly
 5. Tool calls execute through the captured handler stack
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from doeff_agents.adapters.base import AgentType
 from doeff_agents.effects import AgentSpec, L2SessionHandle, LaunchEffect, LaunchSession
-from doeff_agents.handlers import _make_protocol_handler
+from doeff_agents.handlers import _agent_handler_defhandler
 from doeff_agents.handlers.testing import MockAgentHandler
 
 from doeff import (
@@ -99,15 +99,15 @@ class TestMcpE2E:
     """E2E tests exercising the full handler stack with MCP tools."""
 
     def _run_with_handlers(self, program):
-        """Run a doeff program with domain handlers + mock agent handler.
+        """Run a doeff program with domain handlers + testing agent handler.
 
-        Agent protocol handler is OUTERMOST so that GetHandlers(k) captures
+        Agent defhandler is OUTERMOST so that GetHandlers(k) captures
         the domain handlers (greet, upper) from the continuation chain.
         """
         mock_handler = MockAgentHandler()
-        agent_protocol = _make_protocol_handler(mock_handler)
+        agent_defhandler = _agent_handler_defhandler(mock_handler)
 
-        wrapped = agent_protocol(_install_raw_handler(greet_handler)(_install_raw_handler(upper_handler)(program)))
+        wrapped = agent_defhandler(_install_raw_handler(greet_handler)(_install_raw_handler(upper_handler)(program)))
         return run(wrapped), mock_handler
 
     def test_l2_launch_session_mcp_tool_call_uses_captured_handler_stack(self, tmp_path):
@@ -123,7 +123,7 @@ class TestMcpE2E:
                 return L2SessionHandle(session_id=effect.spec.session_id)
 
         agent_handler = RecordingAgentHandler()
-        agent_protocol = _make_protocol_handler(agent_handler)
+        agent_defhandler = _agent_handler_defhandler(agent_handler)
 
         @do
         def program():
@@ -139,7 +139,7 @@ class TestMcpE2E:
             )
             return (yield LaunchSession(spec))
 
-        handle = run(agent_protocol(_install_raw_handler(greet_handler)(program())))
+        handle = run(agent_defhandler(_install_raw_handler(greet_handler)(program())))
 
         assert handle.session_id == "run-001-node-mcp-0"
         assert agent_handler.run_tool is not None
