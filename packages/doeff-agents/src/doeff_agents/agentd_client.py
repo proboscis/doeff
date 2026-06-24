@@ -663,6 +663,13 @@ def _await_outcome_from_result(result: Mapping[str, Any]) -> AwaitOutcome:
             f"(payload shape: {_mapping_shape(result)})"
         )
     response_result = result["result"]
+    if response_result is None:
+        return AwaitOutcome(
+            status=AwaitStatus.EXITED,
+            result=None,
+            validation_error=validation_error,
+            continuable=False,
+        )
     if not isinstance(response_result, Mapping):
         raise AgentdProtocolError(
             "session.await_result result was non-object "
