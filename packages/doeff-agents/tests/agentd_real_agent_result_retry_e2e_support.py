@@ -86,6 +86,7 @@ def run_agentd_real_agent_result_retry_e2e(
                 agent_type=agent_type,
                 work_dir=work_dir,
                 prompt=_initial_prompt(agent_type),
+                model="opus" if agent_type == "claude" else None,
                 lifecycle=AgentSessionLifecycle.RUN_TO_COMPLETION,
                 session_env=_session_env(agent_type, runtime_dir, work_dir),
                 expected_result={
