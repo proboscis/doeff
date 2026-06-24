@@ -96,6 +96,7 @@ def run_agentd_tmux_result_retry_e2e(tmp_path: Path) -> dict[str, Any]:
         if outcome.status != AwaitStatus.EXITED:
             raise AssertionError(
                 f"agentd E2E did not exit successfully: {outcome!r}\n"
+                f"db:\n{_read_session_debug(db_path, session_id)}\n"
                 f"agentd log:\n{_read_text(agentd_log_path)}\n"
                 f"fake log:\n{_read_text(fake_log_path)}"
             )
@@ -193,7 +194,7 @@ def render_idle() -> None:
 
 def render_working() -> None:
     print("\n\u2722 Swooping\u2026 (1s \u00b7 thinking)", flush=True)
-    time.sleep(0.8)
+    time.sleep(2.0)
     for _ in range(35):
         print("", flush=True)
 
@@ -270,6 +271,50 @@ def _read_session_db_state(db_path: Path, session_id: str) -> dict[str, Any]:
             "result_payload_json": row["result_payload_json"],
             "retry_events": retry_events,
         }
+    finally:
+        conn.close()
+
+
+def _read_session_debug(db_path: Path, session_id: str) -> str:
+    if not db_path.exists():
+        return "<db missing>"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            """
+            SELECT status, retries_used, last_validation_error, awaiting_response,
+                   observed_active_at, output_snippet
+            FROM agent_sessions
+            WHERE session_id = ?
+            """,
+            (session_id,),
+        ).fetchone()
+        events = conn.execute(
+            """
+            SELECT event_type, payload_json
+            FROM agent_session_events
+            WHERE session_id = ?
+            ORDER BY id DESC
+            LIMIT 8
+            """,
+            (session_id,),
+        ).fetchall()
+        return json.dumps(
+            {
+                "session": dict(row) if row is not None else None,
+                "recent_events": [
+                    {
+                        "event_type": event["event_type"],
+                        "payload": json.loads(event["payload_json"]),
+                    }
+                    for event in events
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        )
     finally:
         conn.close()
 
