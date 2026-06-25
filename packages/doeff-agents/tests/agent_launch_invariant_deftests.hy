@@ -25,7 +25,12 @@
       :model "opus"))
   (setv argv (.launch-command adapter params))
   (assert (= adapter.injection-method InjectionMethod.TMUX))
-  (assert (= argv ["claude" "--dangerously-skip-permissions" "--model" "opus"]))
+  (assert (= argv ["claude"
+                   "--dangerously-skip-permissions"
+                   "--permission-mode"
+                   "bypassPermissions"
+                   "--model"
+                   "opus"]))
   (_assert-prompt-not-in-argv argv)
   (assert (not (in "-p" argv)))
   (assert (not (in "--print" argv))))

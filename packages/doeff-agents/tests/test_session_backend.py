@@ -269,6 +269,36 @@ def test_tmux_agent_handler_uses_injected_backend(monkeypatch) -> None:
     assert backend.killed == ["worker"]
 
 
+def test_tmux_agent_handler_dismisses_claude_mcp_permission_prompt(monkeypatch) -> None:
+    backend = FakeBackend()
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+    )
+
+    handler = TmuxAgentHandler(backend=backend)
+    handle = handler.handle_launch(
+        LaunchEffect(
+            session_name="worker",
+            agent_type=AgentType.CLAUDE,
+            work_dir=Path.cwd(),
+            prompt="hello",
+            ready_timeout=0.1,
+        )
+    )
+    backend.captures["%worker"] = (
+        "Tool use\n\n"
+        "sbi - sbi-status (MCP)\n"
+        "Do you want to proceed?\n"
+        "Esc to cancel · Tab to amend\n"
+    )
+
+    handler.handle_monitor(MonitorEffect(handle=handle))
+    handler.handle_monitor(MonitorEffect(handle=handle))
+
+    proceed_sends = [sent for sent in backend.sent if sent == ("%worker", "", True, True)]
+    assert proceed_sends == [("%worker", "", True, True)]
+
+
 def test_tmux_agent_handler_rejects_anthropic_api_key_session_env(monkeypatch) -> None:
     backend = FakeBackend()
     monkeypatch.setattr(
