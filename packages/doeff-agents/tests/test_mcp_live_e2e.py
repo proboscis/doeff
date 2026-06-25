@@ -12,6 +12,7 @@ import shutil
 from pathlib import Path
 from tempfile import mkdtemp
 
+import pytest
 from doeff_agents.adapters.base import AgentType
 from doeff_agents.effects import (
     Capture,
@@ -22,6 +23,8 @@ from doeff_agents.effects import (
 from doeff_agents.handlers import _agent_handler_defhandler
 from doeff_agents.handlers.production import TmuxAgentHandler
 from doeff_agents.tmux import TmuxSessionBackend
+from doeff_core_effects.handlers import state
+from doeff_core_effects.scheduler import scheduled
 from doeff_time import Delay, sync_time_handler
 
 from doeff import Perform, do, run
@@ -56,6 +59,7 @@ def _require_live_dependency(binary: str) -> None:
 
 # -- Test --------------------------------------------------------------------
 
+@pytest.mark.e2e
 class TestMcpLiveE2E:
     def test_claude_calls_mcp_tool(self):
         """Claude Code launches, discovers MCP tools, and calls echo tool."""
@@ -99,7 +103,7 @@ class TestMcpLiveE2E:
             return output
 
         try:
-            output = run(sync_time_handler()(agent_defhandler(program())))
+            output = run(scheduled(state()(sync_time_handler()(agent_defhandler(program())))))
 
             # Verify the tool was actually called via the in-process log
             assert len(_tool_call_log) > 0, (
@@ -121,7 +125,3 @@ class TestMcpLiveE2E:
                 capture_output=True,
                 check=False,
             )
-            # Cleanup MCP server
-            if hasattr(handler, "_mcp_servers"):
-                for server in handler._mcp_servers.values():
-                    server.shutdown()

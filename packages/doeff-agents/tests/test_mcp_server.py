@@ -4,10 +4,9 @@ import http.client
 import json
 
 import pytest
-from doeff_agents.handlers import _make_run_tool
 from doeff_agents.mcp_server import McpToolServer
 
-from doeff import Resume, do, run
+from doeff import do, run
 from doeff.mcp import McpParamSchema, McpToolDef
 
 # -- Helpers -----------------------------------------------------------------
@@ -42,23 +41,44 @@ def _make_add_tool():
 
 
 def _simple_run_tool(tool, arguments):
-    """Simple run_tool that executes without outer handlers."""
+    """Simple test-side tool execution used by the fake VM wakeup."""
     args = [arguments.get(name) for name in tool.param_names()]
     return run(tool.handler(*args))
+
+
+class _FakeVmWakeup:
+    """Resolve one queued MCP request as if mcp_server_loop ran in the VM."""
+
+    def __init__(self, server: McpToolServer):
+        self.server = server
+
+    def complete(self, _value):
+        req = self.server.request_queue.get(timeout=1)
+        try:
+            result = _simple_run_tool(self.server._tools[req.tool_name], req.arguments)
+        except Exception as exc:  # pragma: no cover - defensive test helper
+            req.holder.append((False, str(exc)))
+        else:
+            req.holder.append((True, result))
+        req.event.set()
+
+
+def _prime_fake_vm(server: McpToolServer) -> None:
+    server.wakeup_mailbox.put(_FakeVmWakeup(server))
 
 
 # -- JSON-RPC dispatch tests -------------------------------------------------
 
 class TestJsonRpcDispatch:
     def test_initialize(self):
-        server = McpToolServer(tools=(_make_echo_tool(),), run_tool=_simple_run_tool)
+        server = McpToolServer(tools=(_make_echo_tool(),))
         resp = server.dispatch_jsonrpc({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
         assert resp["result"]["protocolVersion"] == "2024-11-05"
         assert resp["result"]["capabilities"]["tools"] == {}
         server.server_close()
 
     def test_tools_list(self):
-        server = McpToolServer(tools=(_make_echo_tool(), _make_add_tool()), run_tool=_simple_run_tool)
+        server = McpToolServer(tools=(_make_echo_tool(), _make_add_tool()))
         resp = server.dispatch_jsonrpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         tools = resp["result"]["tools"]
         assert len(tools) == 2
@@ -70,7 +90,8 @@ class TestJsonRpcDispatch:
         server.server_close()
 
     def test_tools_call(self):
-        server = McpToolServer(tools=(_make_echo_tool(),), run_tool=_simple_run_tool)
+        server = McpToolServer(tools=(_make_echo_tool(),))
+        _prime_fake_vm(server)
         resp = server.dispatch_jsonrpc({
             "jsonrpc": "2.0", "id": 3, "method": "tools/call",
             "params": {"name": "echo", "arguments": {"msg": "hello"}},
@@ -82,7 +103,8 @@ class TestJsonRpcDispatch:
         server.server_close()
 
     def test_tools_call_add(self):
-        server = McpToolServer(tools=(_make_add_tool(),), run_tool=_simple_run_tool)
+        server = McpToolServer(tools=(_make_add_tool(),))
+        _prime_fake_vm(server)
         resp = server.dispatch_jsonrpc({
             "jsonrpc": "2.0", "id": 4, "method": "tools/call",
             "params": {"name": "add", "arguments": {"a": 3, "b": 7}},
@@ -91,7 +113,7 @@ class TestJsonRpcDispatch:
         server.server_close()
 
     def test_unknown_tool(self):
-        server = McpToolServer(tools=(_make_echo_tool(),), run_tool=_simple_run_tool)
+        server = McpToolServer(tools=(_make_echo_tool(),))
         resp = server.dispatch_jsonrpc({
             "jsonrpc": "2.0", "id": 5, "method": "tools/call",
             "params": {"name": "nonexistent", "arguments": {}},
@@ -101,19 +123,19 @@ class TestJsonRpcDispatch:
         server.server_close()
 
     def test_unknown_method(self):
-        server = McpToolServer(tools=(), run_tool=_simple_run_tool)
+        server = McpToolServer(tools=())
         resp = server.dispatch_jsonrpc({"jsonrpc": "2.0", "id": 6, "method": "foo/bar"})
         assert resp["error"]["code"] == -32601
         server.server_close()
 
     def test_notification_returns_none(self):
-        server = McpToolServer(tools=(), run_tool=_simple_run_tool)
+        server = McpToolServer(tools=())
         resp = server.dispatch_jsonrpc({"jsonrpc": "2.0", "method": "notifications/initialized"})
         assert resp is None
         server.server_close()
 
     def test_ping(self):
-        server = McpToolServer(tools=(), run_tool=_simple_run_tool)
+        server = McpToolServer(tools=())
         resp = server.dispatch_jsonrpc({"jsonrpc": "2.0", "id": 7, "method": "ping"})
         assert resp["result"] == {}
         server.server_close()
@@ -122,8 +144,15 @@ class TestJsonRpcDispatch:
 # -- Server lifecycle tests --------------------------------------------------
 
 class TestServerLifecycle:
+    def test_direct_callback_dispatch_is_not_supported(self):
+        with pytest.raises(TypeError):
+            McpToolServer(
+                tools=(_make_echo_tool(),),
+                run_tool=lambda *_args: {"bad": "separate-vm"},
+            )
+
     def test_start_and_shutdown(self):
-        server = McpToolServer(tools=(_make_echo_tool(),), run_tool=_simple_run_tool)
+        server = McpToolServer(tools=(_make_echo_tool(),))
         server.start()
         assert server.port > 0
         assert "127.0.0.1" in server.url
@@ -131,7 +160,7 @@ class TestServerLifecycle:
         server.shutdown()
 
     def test_auto_port_assignment(self):
-        server = McpToolServer(tools=(), run_tool=_simple_run_tool, port=0)
+        server = McpToolServer(tools=(), port=0)
         server.start()
         assert server.port > 0
         server.shutdown()
@@ -141,7 +170,7 @@ class TestServerLifecycle:
             def complete(self, _value):
                 raise RuntimeError("ready already completed")
 
-        server = McpToolServer(tools=(), run_tool=_simple_run_tool, port=0)
+        server = McpToolServer(tools=(), port=0)
         server._ready_promise = FailingReadyPromise()
 
         def serve_forever(_poll_interval=0.5):
@@ -160,7 +189,7 @@ class TestServerLifecycle:
 class TestSseTransport:
     def test_sse_endpoint_event(self):
         """GET /sse returns endpoint event with session-specific POST URL."""
-        server = McpToolServer(tools=(_make_echo_tool(),), run_tool=_simple_run_tool)
+        server = McpToolServer(tools=(_make_echo_tool(),))
         server.start()
         try:
             conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
@@ -191,7 +220,7 @@ class TestSseTransport:
 
     def test_full_sse_flow(self):
         """Complete SSE flow: connect → POST tools/list → read response."""
-        server = McpToolServer(tools=(_make_echo_tool(),), run_tool=_simple_run_tool)
+        server = McpToolServer(tools=(_make_echo_tool(),))
         server.start()
         try:
             # 1. Connect SSE
@@ -223,13 +252,14 @@ class TestSseTransport:
 
     def test_sse_tool_call(self):
         """Complete tool call over SSE transport."""
-        server = McpToolServer(tools=(_make_echo_tool(),), run_tool=_simple_run_tool)
+        server = McpToolServer(tools=(_make_echo_tool(),))
         server.start()
         try:
             conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
             conn.request("GET", "/sse")
             resp = conn.getresponse()
             endpoint = self._read_sse_data(resp)
+            _prime_fake_vm(server)
 
             # POST tools/call
             conn2 = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
@@ -260,47 +290,3 @@ class TestSseTransport:
             if line.startswith("data:"):
                 return line.split(":", 1)[1].strip()
         raise ValueError(f"No data field in SSE event: {buf!r}")
-
-
-# -- run_tool with handler stack tests ---------------------------------------
-
-class TestRunToolWithHandlers:
-    def test_make_run_tool_no_handlers(self):
-        """run_tool works with empty handler list."""
-        tool = _make_echo_tool()
-        run_tool = _make_run_tool([])
-        result = run_tool(tool, {"msg": "hi"})
-        assert result == {"echo": "hi"}
-
-    def test_make_run_tool_with_handler(self):
-        """run_tool wraps program with captured handlers."""
-        from dataclasses import dataclass
-
-        from doeff import EffectBase, Perform, do
-
-        @dataclass(frozen=True)
-        class PrefixEffect(EffectBase):
-            text: str
-
-        @do
-        def prefix_handler(effect, k):
-            if isinstance(effect, PrefixEffect):
-                return (yield Resume(k, f"[PREFIX] {effect.text}"))
-            from doeff import Pass
-            yield Pass(effect, k)
-
-        @do
-        def tool_handler(msg):
-            result = yield Perform(PrefixEffect(text=msg))
-            return result
-
-        tool = McpToolDef(
-            name="prefixed",
-            description="Test tool with custom effect",
-            params=(McpParamSchema(name="msg", type="string", description="Msg"),),
-            handler=tool_handler,
-        )
-
-        run_tool = _make_run_tool([prefix_handler])
-        result = run_tool(tool, {"msg": "hello"})
-        assert result == "[PREFIX] hello"

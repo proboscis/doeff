@@ -5,18 +5,27 @@ These tests use the mock tmux backend but real MCP server, verifying:
 2. Hy defhandler captures handler stack via GetHandlers()
 3. MCP server starts, serves tools, and is reachable over HTTP
 4. .mcp.json is written correctly
-5. Tool calls execute through the captured handler stack
+5. Tool calls are served by the in-VM mcp_server_loop
 6. Stopping the session shuts down the MCP server
 """
 
 import http.client
 import json
+import threading
 from dataclasses import dataclass
 
 from doeff_agents.adapters.base import AgentType
-from doeff_agents.effects import AgentSpec, L2SessionHandle, LaunchEffect, LaunchSession
+from doeff_agents.effects import (
+    AgentSpec,
+    L2SessionHandle,
+    LaunchEffect,
+    LaunchSession,
+    StopEffect,
+)
 from doeff_agents.handlers import _agent_handler_defhandler
 from doeff_agents.handlers.testing import MockAgentHandler
+from doeff_core_effects.handlers import state
+from doeff_core_effects.scheduler import CreateExternalPromise, Wait, scheduled
 
 from doeff import (
     EffectBase,
@@ -108,18 +117,18 @@ class TestMcpE2E:
         agent_defhandler = _agent_handler_defhandler(mock_handler)
 
         wrapped = agent_defhandler(_install_raw_handler(greet_handler)(_install_raw_handler(upper_handler)(program)))
-        return run(wrapped), mock_handler
+        return run(scheduled(state()(wrapped))), mock_handler
 
-    def test_l2_launch_session_mcp_tool_call_uses_captured_handler_stack(self, tmp_path):
-        """L2 LaunchSession captures the handler stack for MCP tool calls."""
+    def test_l2_launch_session_receives_in_vm_mcp_server_url(self, tmp_path):
+        """L2 LaunchSession receives a URL for an in-VM MCP server."""
 
         class RecordingAgentHandler(MockAgentHandler):
             def __init__(self):
                 super().__init__()
-                self.run_tool = None
+                self.mcp_servers = None
 
-            def handle_launch_session(self, effect, run_tool=None):
-                self.run_tool = run_tool
+            def handle_launch_session(self, effect, mcp_servers=None):
+                self.mcp_servers = mcp_servers
                 return L2SessionHandle(session_id=effect.spec.session_id)
 
         agent_handler = RecordingAgentHandler()
@@ -139,11 +148,13 @@ class TestMcpE2E:
             )
             return (yield LaunchSession(spec))
 
-        handle = run(agent_defhandler(_install_raw_handler(greet_handler)(program())))
+        wrapped = agent_defhandler(_install_raw_handler(greet_handler)(program()))
+        handle = run(scheduled(state()(wrapped)))
 
         assert handle.session_id == "run-001-node-mcp-0"
-        assert agent_handler.run_tool is not None
-        assert agent_handler.run_tool(greet_tool, {"name": "Ada"}) == "Hello, Ada!"
+        assert agent_handler.mcp_servers is not None
+        assert agent_handler.mcp_servers["doeff"].startswith("http://127.0.0.1:")
+        assert agent_handler.mcp_servers["doeff"].endswith("/sse")
 
     def test_launch_with_mcp_creates_server_and_mcp_json(self, tmp_path):
         """Launch with mcp_tools starts MCP server and writes .mcp.json."""
@@ -207,8 +218,10 @@ class TestMcpE2E:
         assert data["status"] == "ok"
         conn.close()
 
-    def test_mcp_tool_call_uses_captured_handler_stack(self, tmp_path):
-        """Tool calls execute through the captured domain handler stack."""
+    def test_mcp_tool_call_uses_in_vm_server_loop(self, tmp_path):
+        """Tool calls execute through the in-VM MCP server loop."""
+        observed = []
+        errors = []
 
         @do
         def program():
@@ -220,42 +233,51 @@ class TestMcpE2E:
                     mcp_tools=(greet_tool, upper_tool),
                 )
             )
-            return handle
+            done = yield CreateExternalPromise()
 
-        _handle, _mock = self._run_with_handlers(program())
+            def call_tools():
+                conn = None
+                try:
+                    mcp_config = json.loads((tmp_path / ".mcp.json").read_text())
+                    url = mcp_config["mcpServers"]["doeff"]["url"]
+                    from urllib.parse import urlparse
 
-        mcp_config = json.loads((tmp_path / ".mcp.json").read_text())
-        url = mcp_config["mcpServers"]["doeff"]["url"]
-        from urllib.parse import urlparse
-        parsed = urlparse(url)
+                    parsed = urlparse(url)
+                    conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=5)
+                    conn.request("GET", "/sse")
+                    resp = conn.getresponse()
+                    endpoint = self._read_sse_data(resp)
 
-        # Connect SSE
-        conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=5)
-        conn.request("GET", "/sse")
-        resp = conn.getresponse()
+                    self._post_jsonrpc(parsed.hostname, parsed.port, endpoint, {
+                        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                        "params": {"name": "greet", "arguments": {"name": "doeff"}},
+                    })
+                    observed.append(json.loads(self._read_sse_data(resp)))
 
-        # Read endpoint
-        endpoint = self._read_sse_data(resp)
+                    self._post_jsonrpc(parsed.hostname, parsed.port, endpoint, {
+                        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                        "params": {"name": "upper", "arguments": {"text": "hello world"}},
+                    })
+                    observed.append(json.loads(self._read_sse_data(resp)))
+                except BaseException as exc:  # pragma: no cover - surfaced below
+                    errors.append(exc)
+                finally:
+                    if conn is not None:
+                        conn.close()
+                    done.complete(None)
 
-        # Call greet tool — should use captured GreetEffect handler
-        self._post_jsonrpc(parsed.hostname, parsed.port, endpoint, {
-            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": {"name": "greet", "arguments": {"name": "doeff"}},
-        })
-        data = json.loads(self._read_sse_data(resp))
-        assert data["id"] == 1
-        assert data["result"]["content"][0]["text"] == "Hello, doeff!"
+            threading.Thread(target=call_tools, daemon=True).start()
+            yield Wait(done.future)
+            yield Perform(StopEffect(handle=handle))
+            return observed
 
-        # Call upper tool — should use captured UpperEffect handler
-        self._post_jsonrpc(parsed.hostname, parsed.port, endpoint, {
-            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-            "params": {"name": "upper", "arguments": {"text": "hello world"}},
-        })
-        data = json.loads(self._read_sse_data(resp))
-        assert data["id"] == 2
-        assert data["result"]["content"][0]["text"] == "HELLO WORLD"
+        result, _mock = self._run_with_handlers(program())
 
-        conn.close()
+        assert errors == []
+        assert result[0]["id"] == 1
+        assert result[0]["result"]["content"][0]["text"] == "Hello, doeff!"
+        assert result[1]["id"] == 2
+        assert result[1]["result"]["content"][0]["text"] == "HELLO WORLD"
 
     def test_tools_list_returns_all_tools(self, tmp_path):
         """tools/list returns all configured MCP tools with correct schemas."""

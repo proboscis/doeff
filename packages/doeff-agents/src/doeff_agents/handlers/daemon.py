@@ -40,7 +40,6 @@ from doeff_agents.effects import (
     StopEffect,
     StopSessionEffect,
 )
-from doeff_agents.mcp_server import RunToolFn
 from doeff_agents.runtime import ClaudeRuntimePolicy
 from doeff_agents.shell import assert_no_forbidden_agent_env, wrap_with_shell_exports
 
@@ -111,7 +110,7 @@ class DaemonAgentHandler(AgentHandler):
     def handle_launch(
         self,
         effect: LaunchEffect,
-        run_tool: RunToolFn | None = None,
+        mcp_servers: dict[str, str] | None = None,
     ) -> SessionHandle:
         """Build the launch command and register it with doeff-agentd."""
         if effect.mcp_tools:
@@ -271,7 +270,7 @@ class DaemonAgentHandler(AgentHandler):
     def handle_launch_session(
         self,
         effect: LaunchSessionEffect,
-        run_tool: RunToolFn | None = None,
+        mcp_servers: dict[str, str] | None = None,
     ) -> L2SessionHandle:
         """Idempotently launch or re-adopt an agentd session."""
         if effect.spec.mcp_tools:

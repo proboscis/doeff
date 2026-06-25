@@ -61,7 +61,6 @@ from doeff_agents.effects import (
     StopEffect,
     StopSessionEffect,
 )
-from doeff_agents.mcp_server import McpToolServer, RunToolFn
 from doeff_agents.monitor import (
     MonitorState,
     SessionStatus,
@@ -89,7 +88,7 @@ class AgentHandler(ABC):
     def handle_launch_session(
         self,
         effect: LaunchSessionEffect,
-        run_tool: RunToolFn | None = None,
+        mcp_servers: dict[str, str] | None = None,
     ) -> L2SessionHandle:
         """Handle L2 Launch."""
         raise NotImplementedError
@@ -114,7 +113,7 @@ class AgentHandler(ABC):
     def handle_launch(
         self,
         effect: LaunchEffect,
-        run_tool: RunToolFn | None = None,
+        mcp_servers: dict[str, str] | None = None,
     ) -> SessionHandle:
         """Handle Launch effect."""
 
@@ -453,18 +452,16 @@ class TmuxAgentHandler(AgentHandler):
         self._backend = backend
         self._session_repository = session_repository or InMemoryAgentSessionRepository()
         self._claude_runtime_policy = claude_runtime_policy or ClaudeRuntimePolicy()
-        self._mcp_servers: dict[str, McpToolServer] = {}
 
     def handle_launch(
         self,
         effect: LaunchEffect,
-        run_tool: RunToolFn | None = None,
+        mcp_servers: dict[str, str] | None = None,
     ) -> SessionHandle:
         """Launch a new agent session in tmux.
 
-        If ``effect.mcp_tools`` is non-empty and ``run_tool`` is provided,
-        an SSE MCP server is started and ``.mcp.json`` is written to the work_dir
-        before launching the agent.
+        If ``effect.mcp_tools`` is non-empty, the Hy doeff handler must already
+        have started an in-VM MCP server and passed its URL in ``mcp_servers``.
         """
         adapter = get_adapter(effect.agent_type)
 
@@ -514,17 +511,14 @@ class TmuxAgentHandler(AgentHandler):
             )
             trust_workspace_in_codex_home(codex_home, effect.work_dir)
 
-        mcp_servers: dict[str, str] = {}
-
-        # Start MCP server if tools are provided.
-        #
-        # .mcp.json is still written for clients such as Claude Code, but
-        # Codex CLI does not auto-load that file from the workdir. For Codex
-        # the adapter also receives the active server URL and injects it as a
-        # `-c mcp_servers.<name>.url=...` override in the launch command.
-        if effect.mcp_tools and run_tool is not None:
-            server = self._start_mcp_server(effect, run_tool)
-            mcp_servers[effect.mcp_server_name] = server.url
+        active_mcp_servers: dict[str, str] = dict(mcp_servers or {})
+        if effect.mcp_tools:
+            if not active_mcp_servers or effect.mcp_server_name not in active_mcp_servers:
+                raise AgentLaunchError(
+                    "MCP tools must run inside the caller's doeff VM via "
+                    "mcp_server_loop; no in-VM MCP server URL was provided"
+                )
+            self._write_mcp_json(effect.work_dir, active_mcp_servers)
 
         # Disable oh-my-zsh's auto-update prompt. Without isolated HOME the
         # user's `.zshrc` would suppress this, but with `HOME=<work_dir>/
@@ -550,7 +544,7 @@ class TmuxAgentHandler(AgentHandler):
                 model=effect.model,
                 effort=effect.effort,
                 bare=effect.bare,
-                mcp_servers=mcp_servers or None,
+                mcp_servers=active_mcp_servers or None,
             )
         )
         command = self._wrap_with_shell_exports(shlex.join(argv), agent_env_exports)
@@ -572,7 +566,6 @@ class TmuxAgentHandler(AgentHandler):
             if adapter.ready_pattern and not self._wait_for_ready(
                 session_info.pane_id, adapter.ready_pattern, effect.ready_timeout
             ):
-                self._stop_mcp_server(effect.session_name)
                 self._backend.kill_session(effect.session_name)
                 raise AgentReadyTimeoutError(
                     f"Agent did not become ready within {effect.ready_timeout}s"
@@ -753,9 +746,8 @@ class TmuxAgentHandler(AgentHandler):
         )
 
     def handle_stop(self, effect: StopEffect) -> None:
-        """Stop session and its MCP server (if any)."""
+        """Stop session."""
         handle = effect.handle
-        self._stop_mcp_server(handle.session_id)
         if self._backend.has_session(handle.session_id):
             self._backend.kill_session(handle.session_id)
         state = self._sessions.get(handle.session_id)
@@ -817,7 +809,6 @@ class TmuxAgentHandler(AgentHandler):
         """Clean up a session by persisted id."""
         snapshot = self._require_snapshot(effect.session_id)
         handle = snapshot.to_handle()
-        self._stop_mcp_server(handle.session_id)
         if self._backend.has_session(handle.session_id):
             self._backend.kill_session(handle.session_id)
         now = datetime.now(timezone.utc)
@@ -835,13 +826,13 @@ class TmuxAgentHandler(AgentHandler):
     def handle_launch_session(
         self,
         effect: LaunchSessionEffect,
-        run_tool: RunToolFn | None = None,
+        mcp_servers: dict[str, str] | None = None,
     ) -> L2SessionHandle:
         """Idempotently launch or re-adopt an L2 session."""
         session_id = effect.spec.session_id
         if session_id in self._sessions or self._session_repository.get_session(session_id):
             return L2SessionHandle(session_id=session_id)
-        self.handle_launch(_launch_effect_from_spec(effect.spec), run_tool=run_tool)
+        self.handle_launch(_launch_effect_from_spec(effect.spec), mcp_servers=mcp_servers)
         state = self._sessions[session_id]
         state.result_schema = effect.spec.result_schema
         self._record_snapshot("session_l2_launched", state.handle, state.status)
@@ -1029,38 +1020,22 @@ class TmuxAgentHandler(AgentHandler):
         self._sessions[handle.session_id] = state
         return state
 
-    # -- MCP server lifecycle -------------------------------------------------
+    # -- MCP config ----------------------------------------------------------
 
-    def _start_mcp_server(
-        self,
-        effect: LaunchEffect,
-        run_tool: RunToolFn,
-    ) -> McpToolServer:
-        """Start an MCP SSE server and write .mcp.json to work_dir."""
-        server = McpToolServer(
-            tools=effect.mcp_tools,
-            run_tool=run_tool,
-        )
-        server.start()
-        self._mcp_servers[effect.session_name] = server
-
-        mcp_json_path = effect.work_dir / ".mcp.json"
+    def _write_mcp_json(self, work_dir: Path, mcp_servers: dict[str, str]) -> None:
+        """Write MCP config for clients that load `.mcp.json` from the workdir."""
+        work_dir.mkdir(parents=True, exist_ok=True)
+        mcp_json_path = work_dir / ".mcp.json"
         mcp_config = {
             "mcpServers": {
-                effect.mcp_server_name: {
+                name: {
                     "type": "sse",
-                    "url": server.url,
-                },
+                    "url": url,
+                }
+                for name, url in sorted(mcp_servers.items())
             },
         }
         mcp_json_path.write_text(json.dumps(mcp_config, indent=2))
-        return server
-
-    def _stop_mcp_server(self, session_name: str) -> None:
-        """Stop the MCP server for a session (if any)."""
-        server = self._mcp_servers.pop(session_name, None)
-        if server is not None:
-            server.shutdown()
 
     # -- Helpers -------------------------------------------------------------
 
