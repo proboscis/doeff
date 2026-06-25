@@ -5,12 +5,21 @@ from __future__ import annotations
 import http.client
 import json
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
 from doeff_agents.adapters.base import AgentType, InjectionMethod, LaunchParams
-from doeff_agents.effects.agent import LaunchEffect, StopEffect
+from doeff_agents.effects.agent import (
+    AgentSpec,
+    AwaitResult,
+    AwaitStatus,
+    LaunchEffect,
+    LaunchSession,
+    StopEffect,
+    StopSession,
+)
 from doeff_agents.handlers import agent_effectful_handler
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.tmux import SessionInfo
@@ -200,3 +209,91 @@ def test_agent_effectful_mcp_tools_run_inside_caller_scheduler_vm(
     assert adapter.params[0].mcp_servers is not None
     assert "probe" in adapter.params[0].mcp_servers
     assert backend.killed == ["same-vm-session"]
+
+
+def test_agent_mcp_loop_runs_while_await_result_is_pending(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """AwaitResult must not block the caller VM and starve mcp_server_loop.
+
+    Live regression: LaunchSession spawned mcp_server_loop in the caller VM, but
+    AwaitResult then synchronously blocked the same VM. HTTP tool calls could
+    reach the MCP server yet never receive a wakeup endpoint.
+    """
+    adapter = _FakeAdapter()
+    backend = _FakeBackend()
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter",
+        lambda _agent_type: adapter,
+    )
+
+    @do
+    def workflow():
+        semaphore = yield CreateSemaphore(1)
+
+        @do
+        def same_vm_probe():
+            yield AcquireSemaphore(semaphore)
+            yield ReleaseSemaphore(semaphore)
+            return {"status": "same-vm-during-await"}
+
+        tool = McpToolDef(
+            name="same-vm-probe",
+            description="Acquire a caller-owned scheduler semaphore",
+            params=(),
+            handler=same_vm_probe,
+        )
+        spec = AgentSpec(
+            run_id="same-vm-await",
+            node_id="worker",
+            attempt=0,
+            agent_type=AgentType.CLAUDE,
+            work_dir=tmp_path,
+            prompt="probe",
+            result_schema={"type": "object"},
+            mcp_tools=(tool,),
+            mcp_server_name="probe",
+        )
+        handle = yield LaunchSession(spec)
+        done = yield CreateExternalPromise()
+        holder: list[object] = []
+
+        def call_tool_and_finish() -> None:
+            try:
+                time.sleep(0.2)
+                holder.append(_call_tool_from_agent_side(tmp_path))
+                (tmp_path / ".agentd-result.json").write_text(
+                    json.dumps({"status": "done"}),
+                    encoding="utf-8",
+                )
+            except Exception as exc:  # pragma: no cover - failure is re-raised below
+                holder.append(exc)
+            finally:
+                done.complete(None)
+
+        threading.Thread(target=call_tool_and_finish, daemon=True).start()
+        outcome = yield AwaitResult(handle, timeout_seconds=5.0)
+        yield Wait(done.future)
+        yield StopSession(handle=handle)
+        result = holder[0]
+        if isinstance(result, Exception):
+            raise result
+        return {"tool": result, "outcome": outcome}
+
+    response = run(
+        scheduled(
+            lazy_ask(env={SessionBackend: backend})(
+                state()(agent_effectful_handler()(workflow()))
+            )
+        )
+    )
+
+    result = response["tool"]["result"]
+    assert result["isError"] is False, result
+    assert json.loads(result["content"][0]["text"]) == {
+        "status": "same-vm-during-await"
+    }
+    assert response["outcome"].status == AwaitStatus.EXITED
+    assert response["outcome"].result == {"status": "done"}
+    assert backend.killed == ["same-vm-await-worker-0"]
