@@ -1,6 +1,7 @@
 """Status monitoring and detection logic for agent sessions."""
 
 import hashlib
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -136,6 +137,23 @@ def has_claude_active_marker(output: str) -> bool:
     return any(p in lines for p in patterns)
 
 
+def has_claude_background_shell_marker(output: str) -> bool:
+    """Return True when Claude Code has a background shell task still running."""
+    recent_lines = output.splitlines()[-40:]
+    recent = "\n".join(recent_lines).lower()
+    if "shell still running" in recent:
+        return True
+    for line in recent_lines:
+        lowered = line.lower()
+        if "shell" not in lowered:
+            continue
+        if "ctrl+t" in lowered and "hide task" in lowered:
+            return True
+        if re.search(r"\b\d+\s+shells?\b", lowered) and "running" in recent:
+            return True
+    return False
+
+
 def has_codex_idle_prompt(output: str) -> bool:
     """Return True when Codex shows its idle prompt/status footer."""
     has_prompt = any(line.startswith("› ") for line in output.splitlines())  # noqa: RUF001
@@ -196,10 +214,11 @@ def detect_status(
     1. API limit patterns → BlockedAPI
     2. Stable idle Codex prompt → Blocked
     3. Claude active-turn marker → Running
-    4. Agent exited → Exited (shell prompt showing)
-    5. Output changing → Running
-    6. Output stable + prompt → Blocked
-    7. Otherwise → None (no change)
+    4. Claude background shell marker → Running
+    5. Agent exited → Exited (shell prompt showing)
+    6. Output changing → Running
+    7. Output stable + prompt → Blocked
+    8. Otherwise → None (no change)
 
     This function deliberately does not derive DONE/FAILED from terminal text.
     Workflow success is decided by the schema-validated result artifact.
@@ -209,7 +228,7 @@ def detect_status(
         status = SessionStatus.BLOCKED_API
     elif is_codex_turn_complete(output, state, output_changed=output_changed):
         status = SessionStatus.BLOCKED
-    elif has_claude_active_marker(output):
+    elif has_claude_active_marker(output) or has_claude_background_shell_marker(output):
         status = SessionStatus.RUNNING
     elif is_agent_exited(output):
         status = SessionStatus.EXITED

@@ -13,6 +13,7 @@ from doeff_agents.monitor import (
     SessionStatus,
     detect_status,
     has_claude_active_marker,
+    has_claude_background_shell_marker,
 )
 
 
@@ -61,4 +62,58 @@ def test_stable_claude_idle_prompt_can_still_block() -> None:
             has_prompt=True,
         )
         == SessionStatus.BLOCKED
+    )
+
+
+def test_stable_claude_background_shell_stays_running() -> None:
+    output = (
+        "● Waiting through lunch (~58 min remaining). I'll sleep in foreground "
+        "chunks within this same process, re-checking periodically.\n\n"
+        '● Bash(until [ "$(TZ=Asia/Tokyo date +%H%M)" -ge 1230 ]; do '
+        'sleep 20; done; TZ=Asia/Tokyo date +"%Y-%m-%d %H:%M:%S JST")\n'
+        "  ⎿  Running in the background (↓ to manage)\n\n"
+        "· Waiting for afternoon open… (2m 49s · ↑ 8.9k tokens)\n"
+        "  ⎿  ✔ Reconcile broker state pre-open\n"
+        "     ◼ Wait until 12:30 JST afternoon open\n"
+        "     ◻ Open plan positions (nariyuki/day)\n\n"
+        "────────────────────────────────────────────────────────────────────────────────\n"
+        "> \n"
+        "────────────────────────────────────────────────────────────────────────────────\n"
+        "  ⏵⏵ bypass permissions on · 1 shell · ctrl+t to hide tasks · ← for agents · …\n"
+    )
+
+    assert not has_claude_active_marker(output)
+    assert has_claude_background_shell_marker(output)
+    assert (
+        detect_status(
+            output,
+            _past_monitor_state(),
+            output_changed=False,
+            has_prompt=True,
+        )
+        == SessionStatus.RUNNING
+    )
+
+
+def test_stable_claude_shell_still_running_stays_running() -> None:
+    output = (
+        "✻ Cooked for 12s · 1 shell still running\n\n"
+        "  5 tasks (1 done, 1 in progress, 3 open)\n"
+        "  ✔ Reconcile broker state pre-open\n"
+        "  ◼ Wait until 12:30 JST afternoon open\n\n"
+        "────────────────────────────────────────────────────────────────────────────────\n"
+        "> \n"
+        "────────────────────────────────────────────────────────────────────────────────\n"
+        "  ⏵⏵ bypass permissions on · 1 shell · ctrl+t to hide tasks · ← for agents · …\n"
+    )
+
+    assert has_claude_background_shell_marker(output)
+    assert (
+        detect_status(
+            output,
+            _past_monitor_state(),
+            output_changed=False,
+            has_prompt=True,
+        )
+        == SessionStatus.RUNNING
     )
