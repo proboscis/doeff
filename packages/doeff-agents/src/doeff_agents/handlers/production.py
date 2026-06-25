@@ -191,6 +191,7 @@ class SessionState:
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     result_schema: dict[str, object] | None = None
     monitor_state: MonitorState = field(default_factory=MonitorState)
+    dismissed_permission_prompt_hashes: set[str] = field(default_factory=set)
     status: SessionStatus = SessionStatus.BOOTING
 
 
@@ -212,6 +213,17 @@ def get_adapter(agent_type: AgentType) -> AgentAdapter:
     if adapter_class is None:
         raise ValueError(f"No adapter registered for: {agent_type}")
     return adapter_class()
+
+
+def _claude_mcp_permission_prompt_visible(output: str) -> bool:
+    """Return True when Claude is blocking on an MCP tool permission prompt."""
+    lowered = output.lower()
+    return (
+        "tool use" in lowered
+        and "(mcp)" in lowered
+        and "do you want to proceed?" in lowered
+        and "esc to cancel" in lowered
+    )
 
 
 def _run_agent_task(handler: AgentHandler, task: AgentTask) -> object:
@@ -695,6 +707,20 @@ class TmuxAgentHandler(AgentHandler):
             state.monitor_state.output_hash = content_hash
             state.monitor_state.last_output = output
             state.monitor_state.last_output_at = datetime.now(timezone.utc)
+
+        if (
+            state.agent_type == AgentType.CLAUDE
+            and _claude_mcp_permission_prompt_visible(output)
+            and content_hash not in state.dismissed_permission_prompt_hashes
+        ):
+            self._backend.send_keys(state.pane_id, "", literal=True, enter=True)
+            state.dismissed_permission_prompt_hashes.add(content_hash)
+            self._record_snapshot(
+                "claude_mcp_permission_prompt_dismissed",
+                handle,
+                state.status,
+                output_snippet=output[-500:] if output else None,
+            )
 
         new_status = detect_status(output, state.monitor_state, output_changed, has_prompt)
         if new_status:
