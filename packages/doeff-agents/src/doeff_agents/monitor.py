@@ -126,6 +126,16 @@ def has_codex_active_marker(output: str) -> bool:
     return any(p in lines for p in patterns)
 
 
+def has_claude_active_marker(output: str) -> bool:
+    """Return True when Claude Code is visibly inside an active turn."""
+    lines = "\n".join(output.split("\n")[-30:]).lower()
+    patterns = [
+        "esc to interrupt",
+        "thinking with",
+    ]
+    return any(p in lines for p in patterns)
+
+
 def has_codex_idle_prompt(output: str) -> bool:
     """Return True when Codex shows its idle prompt/status footer."""
     has_prompt = any(line.startswith("› ") for line in output.splitlines())  # noqa: RUF001
@@ -184,27 +194,27 @@ def detect_status(
 
     Detection order:
     1. API limit patterns → BlockedAPI
-    2. Agent exited → Exited (shell prompt showing)
-    3. Output changing → Running
-    4. Output stable + prompt → Blocked
-    5. Otherwise → None (no change)
+    2. Stable idle Codex prompt → Blocked
+    3. Claude active-turn marker → Running
+    4. Agent exited → Exited (shell prompt showing)
+    5. Output changing → Running
+    6. Output stable + prompt → Blocked
+    7. Otherwise → None (no change)
 
     This function deliberately does not derive DONE/FAILED from terminal text.
     Workflow success is decided by the schema-validated result artifact.
     """
+    status = None
     if is_api_limited(output):
-        return SessionStatus.BLOCKED_API
-
-    if is_codex_turn_complete(output, state, output_changed=output_changed):
-        return SessionStatus.BLOCKED
-
-    if is_agent_exited(output):
-        return SessionStatus.EXITED
-
-    if output_changed:
-        return SessionStatus.RUNNING
-
-    if has_prompt:
-        return SessionStatus.BLOCKED
-
-    return None
+        status = SessionStatus.BLOCKED_API
+    elif is_codex_turn_complete(output, state, output_changed=output_changed):
+        status = SessionStatus.BLOCKED
+    elif has_claude_active_marker(output):
+        status = SessionStatus.RUNNING
+    elif is_agent_exited(output):
+        status = SessionStatus.EXITED
+    elif output_changed:
+        status = SessionStatus.RUNNING
+    elif has_prompt:
+        status = SessionStatus.BLOCKED
+    return status
