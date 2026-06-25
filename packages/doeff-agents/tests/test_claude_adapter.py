@@ -27,6 +27,8 @@ def test_launch_command_includes_model_when_provided() -> None:
     assert adapter.launch_command(params) == [
         "claude",
         "--dangerously-skip-permissions",
+        "--permission-mode",
+        "bypassPermissions",
         "--model",
         "opus",
     ]
@@ -43,6 +45,8 @@ def test_launch_command_omits_model_when_not_provided() -> None:
     assert adapter.launch_command(params) == [
         "claude",
         "--dangerously-skip-permissions",
+        "--permission-mode",
+        "bypassPermissions",
     ]
     assert "ship it" not in adapter.launch_command(params)
 
@@ -58,6 +62,8 @@ def test_launch_command_without_prompt_stays_interactive() -> None:
     assert adapter.launch_command(params) == [
         "claude",
         "--dangerously-skip-permissions",
+        "--permission-mode",
+        "bypassPermissions",
         "--model",
         "opus",
     ]
@@ -74,9 +80,11 @@ def test_launch_command_includes_mcp_config_when_servers_provided() -> None:
 
     command = adapter.launch_command(params)
 
-    assert command[:4] == [
+    assert command[:6] == [
         "claude",
         "--dangerously-skip-permissions",
+        "--permission-mode",
+        "bypassPermissions",
         "--model",
         "opus",
     ]

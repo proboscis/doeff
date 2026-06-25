@@ -82,7 +82,12 @@ class ClaudeAdapter:
         is injected later through the terminal transport so the process stays
         alive for validation retries and never enters single-shot print mode.
         """
-        args = ["claude", "--dangerously-skip-permissions"]
+        args = [
+            "claude",
+            "--dangerously-skip-permissions",
+            "--permission-mode",
+            "bypassPermissions",
+        ]
 
         if params.model:
             args.extend(["--model", params.model])
