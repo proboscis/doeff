@@ -28,6 +28,7 @@ from doeff_agents.effects import (
     agent,
 )
 from doeff_agents.handlers.testing import ScenarioAgentHandler, ScenarioStep
+from doeff_core_effects.scheduler import scheduled
 
 from doeff import do, run
 
@@ -422,7 +423,9 @@ def test_scenario_handler_supports_timeout_outcome(tmp_path: Path) -> None:
         scripts={"run-001-node-b-0": [ScenarioStep.timeout()]},
     )
 
-    handle, outcome, retry_handle = run(handler.wrap(_follow_up_and_release(tmp_path)))
+    handle, outcome, retry_handle = run(
+        scheduled(handler.wrap(_follow_up_and_release(tmp_path)))
+    )
 
     assert outcome.status == AwaitStatus.TIMED_OUT
     assert outcome.result is None

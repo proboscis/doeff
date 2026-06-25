@@ -6,12 +6,16 @@
 (require doeff-hy.handle [defhandler])
 (require doeff-hy.macros [<-])
 
+(import threading)
+(import time)
 (import doeff [Ask GetHandlers GetOuterHandlers])
 (import doeff_core_effects.scheduler [CreateExternalPromise Wait Spawn])
+(import doeff_agents.agentd-client [DEFAULT_AWAIT_BUDGET_SECONDS])
 (import doeff_agents.effects [
   AgentEffect
   AttachAgentSessionEffect
   AwaitResultEffect
+  AwaitStatus
   CancelAgentSessionEffect
   CaptureEffect
   ClaudeLaunchEffect
@@ -97,7 +101,22 @@
     (resume launch-result))
 
   (AwaitResultEffect [handle timeout-seconds]
-    (resume (.handle-await-result agent-handler effect)))
+    (setv effective-timeout
+      (if (is timeout-seconds None) DEFAULT_AWAIT_BUDGET_SECONDS timeout-seconds))
+    (setv deadline (+ (time.monotonic) effective-timeout))
+    (setv outcome None)
+    (while True
+      (setv outcome
+        (.handle-await-result agent-handler
+          (AwaitResultEffect :handle handle :timeout-seconds 0.0)))
+      (when (!= outcome.status AwaitStatus.TIMED_OUT)
+        (break))
+      (when (>= (time.monotonic) deadline)
+        (break))
+      (<- delay-ep (CreateExternalPromise))
+      (.start (threading.Timer 0.2 delay-ep.complete [None]))
+      (<- _ (Wait delay-ep.future)))
+    (resume outcome))
 
   (FollowUpEffect [handle message]
     (resume (.handle-follow-up agent-handler effect)))
@@ -227,7 +246,22 @@
     (setv agent-handler
       (_cached-tmux-handler handler-ref active-backend session-repository
                             claude-runtime-policy))
-    (resume (.handle-await-result agent-handler effect)))
+    (setv effective-timeout
+      (if (is timeout-seconds None) DEFAULT_AWAIT_BUDGET_SECONDS timeout-seconds))
+    (setv deadline (+ (time.monotonic) effective-timeout))
+    (setv outcome None)
+    (while True
+      (setv outcome
+        (.handle-await-result agent-handler
+          (AwaitResultEffect :handle handle :timeout-seconds 0.0)))
+      (when (!= outcome.status AwaitStatus.TIMED_OUT)
+        (break))
+      (when (>= (time.monotonic) deadline)
+        (break))
+      (<- delay-ep (CreateExternalPromise))
+      (.start (threading.Timer 0.2 delay-ep.complete [None]))
+      (<- _ (Wait delay-ep.future)))
+    (resume outcome))
 
   (FollowUpEffect [handle message]
     (setv active-backend backend)
