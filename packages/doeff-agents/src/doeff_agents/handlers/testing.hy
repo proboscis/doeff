@@ -33,7 +33,6 @@
   StopEffect
   StopSessionEffect])
 (import doeff_agents.handlers.production [AgentHandler])
-(import doeff_agents.mcp-server [McpToolServer])
 (import doeff_agents.monitor [SessionStatus])
 (import doeff_agents.session-store [
   AgentSessionRepository
@@ -90,21 +89,23 @@
     (setv (get self._outputs session-name) initial-output)
     (setv (get self._statuses session-name) SessionStatus.BOOTING))
 
-  (defn handle-launch [self effect [run-tool None]]
-    "Create a testing session, optionally starting an MCP server."
+  (defn handle-launch [self effect [mcp-servers None]]
+    "Create a testing session, optionally writing MCP server config."
     (when (in effect.session-name self._handles)
       (raise (SessionAlreadyExistsError
                f"Session {effect.session-name} already exists")))
 
-    (when (and effect.mcp-tools (is-not run-tool None))
-      (setv server (McpToolServer :tools effect.mcp-tools :run-tool run-tool))
-      (.start server)
-      (setv (get self._mcp-servers effect.session-name) server)
+    (when effect.mcp-tools
+      (when (or (is mcp-servers None)
+                (not (in effect.mcp-server-name mcp-servers)))
+        (raise (ValueError "MCP tools require an in-VM MCP server URL")))
       (setv mcp-json-path (/ effect.work-dir ".mcp.json"))
       (.write-text
         mcp-json-path
         (json.dumps
-          {"mcpServers" {effect.mcp-server-name {"type" "sse" "url" server.url}}}
+          {"mcpServers"
+           (dfor [name url] (.items mcp-servers)
+             name {"type" "sse" "url" url})}
           :indent 2)))
 
     (setv self._next-pane-id (+ self._next-pane-id 1))
@@ -361,7 +362,7 @@
     (import doeff_agents.handlers.effectful [agent-handler-defhandler])
     ((agent-handler-defhandler self) program))
 
-  (defn handle-launch-session [self effect [run-tool None]]
+  (defn handle-launch-session [self effect [mcp-servers None]]
     (setv session-id effect.spec.session-id)
     (when (not (in session-id self._handles))
       (setv (get self._launch-counts session-id)
