@@ -6,9 +6,8 @@
 (require doeff-hy.handle [defhandler])
 (require doeff-hy.macros [<-])
 
-(import doeff [Ask GetHandlers handler :as _program-handler run])
-(import doeff_core_effects.handlers [await-handler state])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff [Ask GetHandlers GetOuterHandlers])
+(import doeff_core_effects.scheduler [CreateExternalPromise Wait Spawn])
 (import doeff_agents.effects [
   AgentEffect
   AttachAgentSessionEffect
@@ -30,22 +29,29 @@
   StopSessionEffect])
 (import doeff_agents.session-backend [SessionBackend])
 (import doeff_agents.handlers.production [TmuxAgentHandler])
+(import doeff_agents.mcp-server [McpToolServer])
+(import doeff_agents.handlers.mcp-server-loop [mcp-server-loop])
 
 
-(defn _make-run-tool [handlers]
-  (defn run-tool [tool arguments]
-    (setv args (lfor name (.param-names tool) (.get arguments name)))
-    (setv program (tool.handler #* args))
-    (for [h handlers]
-      (setv program ((_program-handler h) program)))
-    ;; Captured handlers can own lazy-val/lazy-var state and async Await work.
-    ;; Their own effects flow outside the handler, while LaunchSession's outer
-    ;; state/await handlers are not reliably part of GetHandlers(k), so the
-    ;; callback VM must provide them.
-    (setv program ((_program-handler (await-handler)) program))
-    (setv program ((_program-handler (state)) program))
-    (run (scheduled program)))
-  run-tool)
+(defn _mcp-server-map [agent-handler]
+  (when (not (hasattr agent-handler "_doeff_mcp_servers"))
+    (setattr agent-handler "_doeff_mcp_servers" {}))
+  (getattr agent-handler "_doeff_mcp_servers"))
+
+
+(defn _remember-mcp-server [agent-handler session-id server]
+  (setv servers (_mcp-server-map agent-handler))
+  (setv (get servers session-id) server)
+  None)
+
+
+(defn _shutdown-mcp-server-for-session [agent-handler session-id]
+  (when (hasattr agent-handler "_doeff_mcp_servers")
+    (setv servers (getattr agent-handler "_doeff_mcp_servers"))
+    (setv server (.pop servers session-id None))
+    (when (is-not server None)
+      (.shutdown server)))
+  None)
 
 
 (defn _cached-tmux-handler [handler-ref active-backend session-repository
@@ -63,16 +69,32 @@
 
 (defhandler agent-handler-defhandler [agent-handler]
   "Define the Hy defhandler boundary for an AgentHandler object."
+
   (AgentEffect [task]
     (resume (.handle-agent agent-handler effect)))
 
   (LaunchSessionEffect [spec]
-    (if spec.mcp-tools
-        (do
-          (<- handlers (GetHandlers k))
-          (resume (.handle-launch-session agent-handler effect
-                    :run-tool (_make-run-tool handlers))))
-        (resume (.handle-launch-session agent-handler effect :run-tool None))))
+    (setv mcp-server-urls None)
+    (when spec.mcp-tools
+      (<- inner-handlers (GetHandlers k))
+      (<- outer-handlers (GetOuterHandlers))
+      (setv captured-handlers (+ (list inner-handlers) (list outer-handlers)))
+      (setv server (McpToolServer :tools spec.mcp-tools))
+      (<- ready-ep (CreateExternalPromise))
+      (.start server :ready-promise ready-ep)
+      (<- _ (Wait ready-ep.future))
+      (<- _ (Spawn (mcp-server-loop server captured-handlers)))
+      (_remember-mcp-server agent-handler spec.session-id server)
+      (setv mcp-server-urls {spec.mcp-server-name server.url}))
+    (setv launch-result None)
+    (try
+      (setv launch-result
+        (.handle-launch-session agent-handler effect :mcp-servers mcp-server-urls))
+      (except [e Exception]
+        (when spec.mcp-tools
+          (_shutdown-mcp-server-for-session agent-handler spec.session-id))
+        (raise e)))
+    (resume launch-result))
 
   (AwaitResultEffect [handle timeout-seconds]
     (resume (.handle-await-result agent-handler effect)))
@@ -82,19 +104,36 @@
 
   (StopSessionEffect [handle reason]
     (.handle-stop-session agent-handler effect)
+    (_shutdown-mcp-server-for-session agent-handler handle.session-id)
     (resume None))
 
   (ReleaseSessionEffect [handle]
     (.handle-release-session agent-handler effect)
+    (_shutdown-mcp-server-for-session agent-handler handle.session-id)
     (resume None))
 
   (LaunchEffect [session-name agent-type work-dir prompt model mcp-tools mcp-server-name effort bare ready-timeout session-env]
-    (if mcp-tools
-        (do
-          (<- handlers (GetHandlers k))
-          (resume (.handle-launch agent-handler effect
-                    :run-tool (_make-run-tool handlers))))
-        (resume (.handle-launch agent-handler effect))))
+    (setv mcp-server-urls None)
+    (when mcp-tools
+      (<- inner-handlers (GetHandlers k))
+      (<- outer-handlers (GetOuterHandlers))
+      (setv captured-handlers (+ (list inner-handlers) (list outer-handlers)))
+      (setv server (McpToolServer :tools mcp-tools))
+      (<- ready-ep (CreateExternalPromise))
+      (.start server :ready-promise ready-ep)
+      (<- _ (Wait ready-ep.future))
+      (<- _ (Spawn (mcp-server-loop server captured-handlers)))
+      (_remember-mcp-server agent-handler session-name server)
+      (setv mcp-server-urls {mcp-server-name server.url}))
+    (setv launch-result None)
+    (try
+      (setv launch-result
+        (.handle-launch agent-handler effect :mcp-servers mcp-server-urls))
+      (except [e Exception]
+        (when mcp-tools
+          (_shutdown-mcp-server-for-session agent-handler session-name))
+        (raise e)))
+    (resume launch-result))
 
   (ClaudeLaunchEffect [session-name work-dir prompt model mcp-tools mcp-server-name effort bare ready-timeout session-env]
     (resume (.handle-claude-launch agent-handler effect)))
@@ -111,6 +150,7 @@
 
   (StopEffect [handle]
     (.handle-stop agent-handler effect)
+    (_shutdown-mcp-server-for-session agent-handler handle.session-id)
     (resume None))
 
   (GetAgentSessionEffect [session-id]
@@ -130,6 +170,7 @@
     (resume (.handle-cancel-session agent-handler effect)))
 
   (CleanupAgentSessionEffect [session-id]
+    (_shutdown-mcp-server-for-session agent-handler session-id)
     (resume (.handle-cleanup-session agent-handler effect))))
 
 
@@ -159,10 +200,25 @@
                             claude-runtime-policy))
     (if spec.mcp-tools
         (do
-          (<- handlers (GetHandlers k))
-          (resume (.handle-launch-session agent-handler effect
-                    :run-tool (_make-run-tool handlers))))
-        (resume (.handle-launch-session agent-handler effect :run-tool None))))
+          (<- inner-handlers (GetHandlers k))
+          (<- outer-handlers (GetOuterHandlers))
+          (setv captured-handlers (+ (list inner-handlers) (list outer-handlers)))
+          (setv server (McpToolServer :tools spec.mcp-tools))
+          (<- ready-ep (CreateExternalPromise))
+          (.start server :ready-promise ready-ep)
+          (<- _ (Wait ready-ep.future))
+          (<- _ (Spawn (mcp-server-loop server captured-handlers)))
+          (_remember-mcp-server agent-handler spec.session-id server)
+          (setv launch-result None)
+          (try
+            (setv launch-result
+              (.handle-launch-session agent-handler effect
+                :mcp-servers {spec.mcp-server-name server.url}))
+            (except [e Exception]
+              (_shutdown-mcp-server-for-session agent-handler spec.session-id)
+              (raise e)))
+          (resume launch-result))
+        (resume (.handle-launch-session agent-handler effect :mcp-servers None))))
 
   (AwaitResultEffect [handle timeout-seconds]
     (setv active-backend backend)
@@ -190,6 +246,7 @@
       (_cached-tmux-handler handler-ref active-backend session-repository
                             claude-runtime-policy))
     (.handle-stop-session agent-handler effect)
+    (_shutdown-mcp-server-for-session agent-handler handle.session-id)
     (resume None))
 
   (ReleaseSessionEffect [handle]
@@ -200,6 +257,7 @@
       (_cached-tmux-handler handler-ref active-backend session-repository
                             claude-runtime-policy))
     (.handle-release-session agent-handler effect)
+    (_shutdown-mcp-server-for-session agent-handler handle.session-id)
     (resume None))
 
   (LaunchEffect [session-name agent-type work-dir prompt model mcp-tools mcp-server-name effort bare ready-timeout session-env]
@@ -211,9 +269,24 @@
                             claude-runtime-policy))
     (if mcp-tools
         (do
-          (<- handlers (GetHandlers k))
-          (resume (.handle-launch agent-handler effect
-                    :run-tool (_make-run-tool handlers))))
+          (<- inner-handlers (GetHandlers k))
+          (<- outer-handlers (GetOuterHandlers))
+          (setv captured-handlers (+ (list inner-handlers) (list outer-handlers)))
+          (setv server (McpToolServer :tools mcp-tools))
+          (<- ready-ep (CreateExternalPromise))
+          (.start server :ready-promise ready-ep)
+          (<- _ (Wait ready-ep.future))
+          (<- _ (Spawn (mcp-server-loop server captured-handlers)))
+          (_remember-mcp-server agent-handler session-name server)
+          (setv launch-result None)
+          (try
+            (setv launch-result
+              (.handle-launch agent-handler effect
+                :mcp-servers {mcp-server-name server.url}))
+            (except [e Exception]
+              (_shutdown-mcp-server-for-session agent-handler session-name)
+              (raise e)))
+          (resume launch-result))
         (resume (.handle-launch agent-handler effect))))
 
   (ClaudeLaunchEffect [session-name work-dir prompt model mcp-tools mcp-server-name effort bare ready-timeout session-env]
@@ -261,6 +334,7 @@
       (_cached-tmux-handler handler-ref active-backend session-repository
                             claude-runtime-policy))
     (.handle-stop agent-handler effect)
+    (_shutdown-mcp-server-for-session agent-handler handle.session-id)
     (resume None))
 
   (GetAgentSessionEffect [session-id]
@@ -316,4 +390,5 @@
     (setv agent-handler
       (_cached-tmux-handler handler-ref active-backend session-repository
                             claude-runtime-policy))
+    (_shutdown-mcp-server-for-session agent-handler session-id)
     (resume (.handle-cleanup-session agent-handler effect))))

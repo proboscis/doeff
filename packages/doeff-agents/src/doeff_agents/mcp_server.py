@@ -6,26 +6,16 @@ Implements the MCP SSE transport:
 
 Supports: initialize, tools/list, tools/call, ping.
 
-Two dispatch modes:
-
-1. Queue-based (preferred, for doeff-native flow): HTTP thread pushes
-   McpToolRequest onto self.request_queue and completes an ExternalPromise
-   on the mailbox to wake the VM. VM's mcp-server-loop task drains the queue
-   and runs tools inside the same VM as the caller. HTTP thread blocks on
-   the request's threading.Event until the VM sets the result.
-
-2. Direct callback (legacy, backward-compat): caller supplies run_tool fn;
-   HTTP thread calls it synchronously. Used by the AgentHandler object path
-   behind Hy defhandlers.
+Dispatch is queue-based only: the HTTP thread pushes McpToolRequest onto
+self.request_queue and completes an ExternalPromise on the mailbox to wake the
+doeff VM. The VM's mcp-server-loop task drains the queue and runs tools inside
+the same VM as the caller. HTTP thread blocks on the request's threading.Event
+until the VM sets the result.
 
 Usage (queue mode):
     server = McpToolServer(tools, port=0)
     server.start(ready_promise=ep)          # ep completes when ready
     # VM: yield Spawn(mcp-server-loop server full-stack)
-
-Usage (legacy):
-    server = McpToolServer(tools, run_tool=fn, port=0)
-    server.start()
 """
 
 import json
@@ -33,7 +23,6 @@ import logging
 import queue
 import threading
 import uuid
-from collections.abc import Callable
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
@@ -182,9 +171,6 @@ class _McpHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
-RunToolFn = Callable[[McpToolDef, dict[str, Any]], Any]
-
-
 class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
@@ -194,10 +180,6 @@ class McpToolServer(_ThreadingHTTPServer):
 
     Parameters:
         tools: Tuple of McpToolDef to serve.
-        run_tool: (legacy) direct callback for synchronous dispatch. If
-            provided, tools/call is handled inline in the HTTP thread. If
-            None (the doeff-native flow), tools/call pushes requests onto
-            self.request_queue and wakes the VM via self.wakeup_mailbox.
         port: Port to bind (0 = auto-assign).
     """
 
@@ -205,16 +187,14 @@ class McpToolServer(_ThreadingHTTPServer):
         self,
         tools: tuple[McpToolDef, ...],
         *,
-        run_tool: RunToolFn | None = None,
         port: int = 0,
     ) -> None:
         self._tools = {t.name: t for t in tools}
-        self._run_tool = run_tool
         self.sessions: dict[str, _SseSession] = {}
         self.shutting_down = False
         self._thread: threading.Thread | None = None
 
-        # Queue-based dispatch state (active when run_tool is None)
+        # Queue-based dispatch state.
         # request_queue: HTTP thread → VM (tool invocations)
         # wakeup_mailbox: VM → HTTP thread (single-slot ExternalPromise the
         #   HTTP thread completes to wake the VM's mcp-server-loop)
@@ -328,30 +308,13 @@ class McpToolServer(_ThreadingHTTPServer):
 
         return _jsonrpc_error(msg_id, -32601, f"Method not found: {method}")
 
-    def _handle_tool_call(self, msg_id: Any, params: dict) -> dict:  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
+    def _handle_tool_call(self, msg_id: Any, params: dict) -> dict:
         tool_name = params.get("name", "")
         arguments = params.get("arguments", {})
 
         tool = self._tools.get(tool_name)
         if tool is None:
             return _jsonrpc_error(msg_id, -32602, f"Unknown tool: {tool_name}")
-
-        run_tool = self._run_tool
-        if run_tool is not None:
-            # Legacy inline dispatch path
-            try:
-                result = run_tool(tool, arguments)
-                text = json.dumps(result) if not isinstance(result, str) else result
-                return _jsonrpc_result(msg_id, {
-                    "content": [{"type": "text", "text": text}],
-                    "isError": False,
-                })
-            except Exception as e:
-                log.exception("MCP tool %s failed", tool_name)
-                return _jsonrpc_result(msg_id, {
-                    "content": [{"type": "text", "text": f"Error: {e}"}],
-                    "isError": True,
-                })
 
         # Queue-based dispatch: forward to the VM and block until it resolves
         import time as _time

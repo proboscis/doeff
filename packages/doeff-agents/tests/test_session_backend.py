@@ -423,15 +423,6 @@ def test_tmux_agent_handler_injects_codex_mcp_config(monkeypatch, tmp_path: Path
         lambda _agent_type: FakeCodexAdapter(),
     )
 
-    class FakeMcpServer:
-        url = "http://127.0.0.1:51978/sse"
-
-    monkeypatch.setattr(
-        TmuxAgentHandler,
-        "_start_mcp_server",
-        lambda _self, _effect, _run_tool: FakeMcpServer(),
-    )
-
     handler = TmuxAgentHandler(backend=backend)
     launch = LaunchEffect(
         session_name="codex-mcp-worker",
@@ -442,7 +433,10 @@ def test_tmux_agent_handler_injects_codex_mcp_config(monkeypatch, tmp_path: Path
         mcp_server_name="hypha",
     )
 
-    handler.handle_launch(launch, run_tool=lambda *_args, **_kwargs: None)
+    handler.handle_launch(
+        launch,
+        mcp_servers={"hypha": "http://127.0.0.1:51978/sse"},
+    )
 
     sent_command = backend.sent[0][1]
     assert 'mcp_servers."hypha".url="http://127.0.0.1:51978/sse"' in sent_command
@@ -453,21 +447,6 @@ def test_l2_launch_session_injects_mcp_config(monkeypatch, tmp_path: Path) -> No
     monkeypatch.setattr(
         "doeff_agents.handlers.production.get_adapter",
         lambda _agent_type: FakeCodexAdapter(),
-    )
-    run_tool_was_passed = False
-
-    class FakeMcpServer:
-        url = "http://127.0.0.1:51979/sse"
-
-    def fake_start_mcp_server(_self, _effect, run_tool):
-        nonlocal run_tool_was_passed
-        run_tool_was_passed = run_tool is not None
-        return FakeMcpServer()
-
-    monkeypatch.setattr(
-        TmuxAgentHandler,
-        "_start_mcp_server",
-        fake_start_mcp_server,
     )
     tool = McpToolDef(
         name="sbi-status",
@@ -490,11 +469,10 @@ def test_l2_launch_session_injects_mcp_config(monkeypatch, tmp_path: Path) -> No
 
     handle = TmuxAgentHandler(backend=backend).handle_launch_session(
         LaunchSession(spec),
-        run_tool=lambda *_args, **_kwargs: None,
+        mcp_servers={"sbi": "http://127.0.0.1:51979/sse"},
     )
 
     assert handle.session_id == "readiness-sbi-executor-0"
-    assert run_tool_was_passed
     sent_command = backend.sent[0][1]
     assert 'mcp_servers."sbi".url="http://127.0.0.1:51979/sse"' in sent_command
 

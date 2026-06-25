@@ -192,7 +192,7 @@ def test_handle_claude_launch_rejects_anthropic_api_key_session_env(
         session_env={forbidden_key: "secret"},
     )
 
-    with pytest.raises(ValueError, match="Anthropic API keys"):
+    with pytest.raises(ValueError, match="provider API keys"):
         handler.handle_claude_launch(effect)
 
     assert backend.created == []
@@ -222,7 +222,7 @@ def test_handle_claude_launch_rejects_anthropic_api_key_bootstrap_exports(
         prompt="Write result.json",
     )
 
-    with pytest.raises(ValueError, match="Anthropic API keys"):
+    with pytest.raises(ValueError, match="provider API keys"):
         handler.handle_claude_launch(effect)
 
     assert backend.created == []

@@ -166,11 +166,6 @@ def _hy_effectful_module():
     return import_module("doeff_agents.handlers.effectful")
 
 
-def _make_run_tool(handlers: Any) -> Any:
-    """Compatibility export for tests of the Hy effectful handler boundary."""
-    return _hy_effectful_module()._make_run_tool(handlers)
-
-
 def agent_effectful_handler(
     *,
     session_repository: AgentSessionRepository | None = None,
@@ -198,9 +193,8 @@ def default_agent_handler(
     """Return the default production AgentHandler without exposing transport class names.
 
     Most callers should install ``agent_effectful_handler()`` and only emit agent
-    effects. Advanced callers that need to build a custom effect boundary, such as
-    providing an explicit MCP ``run_tool`` stack, can use this neutral factory
-    instead of importing ``TmuxAgentHandler`` directly.
+    effects. MCP tools require the doeff-native handler path so their calls run
+    inside the caller's doeff VM.
     """
     return TmuxAgentHandler(
         backend=backend,
@@ -335,7 +329,6 @@ __all__ = [  # noqa: RUF022 - grouped by category for readability
     "ScenarioStep",
     "SessionState",
     "TmuxAgentHandler",
-    "_make_run_tool",
     "agent_effectful_handler",
     "agent_effectful_handlers",
     "codex_agent_handler",
