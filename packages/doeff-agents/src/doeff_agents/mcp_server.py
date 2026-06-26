@@ -21,6 +21,7 @@ Usage (queue mode):
 import json
 import logging
 import queue
+import sys
 import threading
 import uuid
 from dataclasses import dataclass
@@ -173,6 +174,13 @@ class _McpHandler(BaseHTTPRequestHandler):
 
 class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (BrokenPipeError, ConnectionAbortedError, ConnectionResetError)):
+            log.debug("MCP client disconnected before request completed: %s", client_address)
+            return
+        super().handle_error(request, client_address)
 
 
 class McpToolServer(_ThreadingHTTPServer):
