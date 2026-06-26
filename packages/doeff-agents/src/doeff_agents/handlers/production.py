@@ -216,13 +216,22 @@ def get_adapter(agent_type: AgentType) -> AgentAdapter:
 
 
 def _claude_mcp_permission_prompt_visible(output: str) -> bool:
-    """Return True when Claude is blocking on an MCP tool permission prompt."""
+    """Return True when Claude is blocking on an MCP approval prompt."""
     lowered = output.lower()
     return (
-        "tool use" in lowered
-        and "(mcp)" in lowered
-        and "do you want to proceed?" in lowered
-        and "esc to cancel" in lowered
+        (
+            "tool use" in lowered
+            and "(mcp)" in lowered
+            and "do you want to proceed?" in lowered
+            and "esc to cancel" in lowered
+        )
+        or (
+            "new mcp server found" in lowered
+            and "use this mcp server" in lowered
+            and "continue without using this mcp server" in lowered
+            and "enter to confirm" in lowered
+            and "esc to cancel" in lowered
+        )
     )
 
 
