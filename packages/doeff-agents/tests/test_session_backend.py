@@ -299,6 +299,39 @@ def test_tmux_agent_handler_dismisses_claude_mcp_permission_prompt(monkeypatch) 
     assert proceed_sends == [("%worker", "", True, True)]
 
 
+def test_tmux_agent_handler_dismisses_claude_new_mcp_server_prompt(monkeypatch) -> None:
+    backend = FakeBackend()
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+    )
+
+    handler = TmuxAgentHandler(backend=backend)
+    handle = handler.handle_launch(
+        LaunchEffect(
+            session_name="worker",
+            agent_type=AgentType.CLAUDE,
+            work_dir=Path.cwd(),
+            prompt="hello",
+            ready_timeout=0.1,
+        )
+    )
+    backend.captures["%worker"] = (
+        "New MCP server found in this project: nak\n\n"
+        "MCP servers may execute code or access system resources.\n"
+        "All tool calls require approval.\n\n"
+        "❯ 1. Use this MCP server\n"
+        "  2. Use this and all future MCP servers in this project\n"
+        "  3. Continue without using this MCP server\n\n"
+        "Enter to confirm · Esc to cancel\n"
+    )
+
+    handler.handle_monitor(MonitorEffect(handle=handle))
+    handler.handle_monitor(MonitorEffect(handle=handle))
+
+    proceed_sends = [sent for sent in backend.sent if sent == ("%worker", "", True, True)]
+    assert proceed_sends == [("%worker", "", True, True)]
+
+
 def test_tmux_agent_handler_rejects_anthropic_api_key_session_env(monkeypatch) -> None:
     backend = FakeBackend()
     monkeypatch.setattr(
