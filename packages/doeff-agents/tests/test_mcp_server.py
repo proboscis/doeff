@@ -183,6 +183,20 @@ class TestServerLifecycle:
         finally:
             server.server_close()
 
+    def test_client_disconnect_does_not_print_traceback(self, capsys):
+        server = McpToolServer(tools=(), port=0)
+        try:
+            try:
+                raise ConnectionResetError("client closed SSE connection")
+            except ConnectionResetError:
+                server.handle_error(object(), ("127.0.0.1", 12345))
+
+            captured = capsys.readouterr()
+            assert "Exception occurred during processing of request" not in captured.err
+            assert "ConnectionResetError" not in captured.err
+        finally:
+            server.server_close()
+
 
 # -- SSE HTTP transport tests ------------------------------------------------
 
