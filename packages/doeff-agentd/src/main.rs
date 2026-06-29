@@ -1922,7 +1922,8 @@ fn tmux_send_enter(config: &Config, target: &str) -> Result<()> {
 }
 
 fn confirm_literal_prompt_submitted(config: &Config, target: &str) -> Result<()> {
-    // Claude Code can collapse large pasted prompts into `[Pasted text ...]`.
+    // Claude Code and Codex can collapse large pasted prompts into
+    // `[Pasted text ...]` / `[Pasted Content ...]`.
     // On slower terminals, the submit Enter may be dropped after the paste,
     // leaving that collapsed paste marker sitting in the input box forever.
     // Detect that exact state and resend Enter once; this keeps the launch
@@ -1947,7 +1948,9 @@ fn output_has_unsubmitted_paste_input(output: &str) -> bool {
     }
     last_prompt_line
         .map(|line| {
-            line.contains("[Pasted text") || line.contains("Press up to edit queued messages")
+            line.contains("[Pasted text")
+                || line.contains("[Pasted Content")
+                || line.contains("Press up to edit queued messages")
         })
         .unwrap_or(false)
 }
@@ -2339,8 +2342,22 @@ fn output_has_agent_active_marker(output: &str) -> bool {
     if output_has_codex_active_marker(output) {
         return true;
     }
-    let text = output_tail_lower(output, 30);
-    text.contains("… (")
+    output_has_live_claude_spinner_marker(output)
+}
+
+fn output_has_live_claude_spinner_marker(output: &str) -> bool {
+    let lines: Vec<&str> = output.lines().collect();
+    let Some(prompt_index) = lines.iter().rposition(|line| line.starts_with('❯')) else {
+        return output_tail_lower(output, 30).contains("… (");
+    };
+    for line in lines[..prompt_index].iter().rev() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        return trimmed.contains("… (");
+    }
+    false
 }
 
 /// Evidence that Claude has actually consumed the injected prompt and
@@ -2670,6 +2687,20 @@ fn monitor_once(config: &Config) -> Result<()> {
                 }
             }
             let output = tmux_capture(config, &snapshot.pane_id, 100)?;
+            if snapshot.awaiting_response && output_has_unsubmitted_paste_input(&output) {
+                tmux_send_enter(config, &snapshot.pane_id)?;
+                snapshot.last_observed_at = Some(observed_at.clone());
+                snapshot.output_snippet = Some(tail_chars(&output, 500));
+                upsert_snapshot(&conn, &snapshot)?;
+                record_event(
+                    &conn,
+                    &snapshot.session_id,
+                    "session_unsubmitted_paste_resubmitted",
+                    &snapshot,
+                )?;
+                thread::sleep(Duration::from_millis(800));
+                continue;
+            }
             if output_has_claude_managed_settings_approval_dialog(&output) {
                 accept_claude_managed_settings_approval_dialog(config, &snapshot.pane_id)?;
                 snapshot.last_observed_at = Some(observed_at.clone());
@@ -2697,6 +2728,22 @@ fn monitor_once(config: &Config) -> Result<()> {
             let turn_activity_seen = output_has_claude_turn_activity(&output);
             if snapshot.awaiting_response && (active_marker_seen || turn_activity_seen) {
                 snapshot.awaiting_response = false;
+            }
+            // Initial launch only: the first result artifact proves the
+            // agent consumed the prompt even if terminal heuristics missed
+            // the short active window. After a retry, a stale invalid file
+            // can remain on disk, so the last_validation_error guard keeps
+            // that stale artifact from clearing the latch by itself.
+            if snapshot.awaiting_response
+                && snapshot.last_validation_error.is_none()
+                && is_run_to_completion_lifecycle(&snapshot.lifecycle)
+                && snapshot.expected_result.is_some()
+            {
+                let result_path =
+                    Path::new(&snapshot.work_dir).join(result_file_name(&snapshot.session_id));
+                if result_path.exists() {
+                    snapshot.awaiting_response = false;
+                }
             }
             // Record the first time the agent visibly finished startup.
             // This is the signal the launch-timeout watchdog uses to
@@ -3974,9 +4021,23 @@ mod tests {
         assert!(output_has_agent_active_marker(
             "✢ Swooping… (37s · ↓ 1.1k tokens · thinking)\n\n❯\u{00A0}"
         ));
+        // During the submit→work transition the input box can disappear
+        // while the spinner is visible; this still proves the prompt was
+        // accepted and clears the awaiting-response latch.
+        assert!(output_has_agent_active_marker(
+            "✢ Swooping… (1s · thinking)\n\n\n"
+        ));
         // Idle claude pane: input box + statusline, no spinner row.
         assert!(!output_has_agent_active_marker(
             "  done.\n\n❯\u{00A0}\n  🏢 ca  Fable 5 XHI\n  $9.55 │ ⏱ 21m44s(api 10m30s)"
+        ));
+        // Historical spinner rows can remain in the transcript after
+        // the turn produced output and returned to the input box; only
+        // the row immediately above the input box is the live spinner.
+        assert!(!output_has_agent_active_marker(
+            "✢ Swooping… (1s · thinking)\n\
+             wrote invalid result\n\n\
+             ❯\u{00A0}"
         ));
         // Codex collapsed-turn hint must not read as active (the `… +9
         // lines (` form has text between the ellipsis and the paren).
@@ -4070,6 +4131,17 @@ ude Max
 › [Pasted text #1 +12 lines]
 ";
         assert!(output_has_unsubmitted_paste_input(stuck_codex_input));
+
+        let stuck_codex_content_input = "\
+╭──────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex                                      │
+╰──────────────────────────────────────────────────────╯
+
+› Fix [Pasted Content 6532 chars]
+";
+        assert!(output_has_unsubmitted_paste_input(
+            stuck_codex_content_input
+        ));
     }
 
     #[test]

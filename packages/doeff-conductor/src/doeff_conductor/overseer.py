@@ -283,6 +283,28 @@ def answered_gate_options(state_dir: str | Path, workflow_id: str) -> dict[str, 
     return gate_answer_journal.latest_answers()
 
 
+def answered_retry_agent_counts(state_dir: str | Path, workflow_id: str) -> dict[str, int]:
+    """Return gate_id -> number of explicit agent retry answers."""
+    from doeff_conductor.journal import GateAnswerJournal
+
+    gate_answer_journal: GateAnswerJournal = GateAnswerJournal.for_run(
+        workflow_id,
+        state_dir=state_dir,
+    )
+    return gate_answer_journal.option_counts("retry-agent")
+
+
+def answered_gate_stakes(state_dir: str | Path, workflow_id: str) -> dict[str, dict[str, Any]]:
+    """Return gate_id -> stakes captured when the gate was answered."""
+    from doeff_conductor.journal import GateAnswerJournal
+
+    gate_answer_journal: GateAnswerJournal = GateAnswerJournal.for_run(
+        workflow_id,
+        state_dir=state_dir,
+    )
+    return gate_answer_journal.latest_gate_stakes()
+
+
 def record_open_gates(
     state_dir: str | Path,
     *,
@@ -335,6 +357,48 @@ def record_open_gates(
     return updated
 
 
+def clear_open_gates(
+    state_dir: str | Path,
+    *,
+    workflow_id: str,
+    reason: str,
+) -> RunStateView | None:
+    """Close all open gates for a stopped/aborted workflow."""
+    try:
+        existing: RunStateView = load_run_state(state_dir, workflow_id)
+    except FileNotFoundError:
+        return None
+    if not existing.open_gates:
+        return existing
+
+    sequence = _last_sequence(existing.events)
+    events: list[ProgressEvent] = list(existing.events)
+    for gate in existing.open_gates:
+        sequence += 1
+        events.append(
+            make_progress_event(
+                sequence=sequence,
+                workflow_id=workflow_id,
+                node_id=gate.node_id,
+                phase=gate.phase,
+                status="closed",
+                message=f"{reason}: {gate.gate_id}",
+                terminal_kind="gate-close",
+            )
+        )
+
+    updated = RunStateView(
+        workflow_id=workflow_id,
+        workflow_name=existing.workflow_name,
+        events=tuple(events),
+        open_gates=(),
+        supervision=existing.supervision,
+        answered_gates=dict(existing.answered_gates),
+    )
+    save_run_state(state_dir, updated)
+    return updated
+
+
 def record_gate_answer(
     state_dir: str | Path,
     *,
@@ -374,6 +438,8 @@ def record_gate_answer(
             outcome=selected_gate_option.outcome,
             note=note,
             answered_at=datetime.now(timezone.utc).isoformat(),
+            gate_reason=target_gate.reason,
+            gate_stakes=dict(target_gate.stakes),
         )
     )
 
