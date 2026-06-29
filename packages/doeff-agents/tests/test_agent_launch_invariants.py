@@ -14,6 +14,7 @@ if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
 launch_deftests = importlib.import_module("agent_launch_invariant_deftests")
+await_result_deftests = importlib.import_module("agent_await_result_deftests")
 
 
 def _deftest_interpreter(program: Any, *, env: dict[Any, Any] | None = None) -> Any:
@@ -31,4 +32,18 @@ def test_claude_adapter_launches_interactive_terminal_session() -> None:
 def test_codex_adapter_launches_interactive_terminal_session() -> None:
     launch_deftests.test_codex_adapter_launches_interactive_terminal_session(
         _deftest_interpreter
+    )
+
+
+def test_await_result_reobserves_transient_awaiting_input(tmp_path: Path) -> None:
+    await_result_deftests.test_await_result_reobserves_transient_awaiting_input(
+        _deftest_interpreter,
+        tmp_path,
+    )
+
+
+def test_await_result_returns_stable_awaiting_input(tmp_path: Path) -> None:
+    await_result_deftests.test_await_result_returns_stable_awaiting_input(
+        _deftest_interpreter,
+        tmp_path,
     )

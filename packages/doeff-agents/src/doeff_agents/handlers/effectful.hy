@@ -6,7 +6,6 @@
 (require doeff-hy.handle [defhandler])
 (require doeff-hy.macros [<-])
 
-(import threading)
 (import time)
 (import doeff [Ask GetHandlers GetOuterHandlers])
 (import doeff_core_effects.scheduler [CreateExternalPromise Wait Spawn])
@@ -35,6 +34,10 @@
 (import doeff_agents.handlers.production [TmuxAgentHandler])
 (import doeff_agents.mcp-server [McpToolServer])
 (import doeff_agents.handlers.mcp-server-loop [mcp-server-loop])
+
+
+(setv AWAIT-RESULT-POLL-INTERVAL-SECONDS 0.2)
+(setv AWAIT-RESULT-AWAITING-INPUT-STABILITY-SECONDS 15.0)
 
 
 (defn _mcp-server-map [agent-handler]
@@ -71,6 +74,43 @@
   handler)
 
 
+(defn _await-result-poll-until [agent-handler handle timeout-seconds]
+  (setv effective-timeout
+    (if (is timeout-seconds None) DEFAULT_AWAIT_BUDGET_SECONDS timeout-seconds))
+  (setv deadline (+ (time.monotonic) effective-timeout))
+  (setv awaiting-input-deadline None)
+  (setv outcome None)
+  (while True
+    (setv outcome
+      (.handle-await-result agent-handler
+        (AwaitResultEffect :handle handle :timeout-seconds 0.0)))
+    (cond
+      (= outcome.status AwaitStatus.TIMED_OUT)
+      (setv awaiting-input-deadline None)
+
+      (= outcome.status AwaitStatus.AWAITING_INPUT)
+      (do
+        (when (is awaiting-input-deadline None)
+          (setv awaiting-input-deadline
+                (+ (time.monotonic)
+                   AWAIT-RESULT-AWAITING-INPUT-STABILITY-SECONDS)))
+        (when (or (not (getattr outcome "continuable" True))
+                  (>= (time.monotonic) awaiting-input-deadline))
+          (break)))
+
+      True
+      (break))
+    (when (>= (time.monotonic) deadline)
+      (break))
+    (setv delay-seconds
+          (max 0.0
+               (min AWAIT-RESULT-POLL-INTERVAL-SECONDS
+                    (- deadline (time.monotonic)))))
+    (when (> delay-seconds 0.0)
+      (time.sleep delay-seconds)))
+  outcome)
+
+
 (defhandler agent-handler-defhandler [agent-handler]
   "Define the Hy defhandler boundary for an AgentHandler object."
 
@@ -101,22 +141,7 @@
     (resume launch-result))
 
   (AwaitResultEffect [handle timeout-seconds]
-    (setv effective-timeout
-      (if (is timeout-seconds None) DEFAULT_AWAIT_BUDGET_SECONDS timeout-seconds))
-    (setv deadline (+ (time.monotonic) effective-timeout))
-    (setv outcome None)
-    (while True
-      (setv outcome
-        (.handle-await-result agent-handler
-          (AwaitResultEffect :handle handle :timeout-seconds 0.0)))
-      (when (!= outcome.status AwaitStatus.TIMED_OUT)
-        (break))
-      (when (>= (time.monotonic) deadline)
-        (break))
-      (<- delay-ep (CreateExternalPromise))
-      (.start (threading.Timer 0.2 delay-ep.complete [None]))
-      (<- _ (Wait delay-ep.future)))
-    (resume outcome))
+    (resume (_await-result-poll-until agent-handler handle timeout-seconds)))
 
   (FollowUpEffect [handle message]
     (resume (.handle-follow-up agent-handler effect)))
@@ -246,22 +271,7 @@
     (setv agent-handler
       (_cached-tmux-handler handler-ref active-backend session-repository
                             claude-runtime-policy))
-    (setv effective-timeout
-      (if (is timeout-seconds None) DEFAULT_AWAIT_BUDGET_SECONDS timeout-seconds))
-    (setv deadline (+ (time.monotonic) effective-timeout))
-    (setv outcome None)
-    (while True
-      (setv outcome
-        (.handle-await-result agent-handler
-          (AwaitResultEffect :handle handle :timeout-seconds 0.0)))
-      (when (!= outcome.status AwaitStatus.TIMED_OUT)
-        (break))
-      (when (>= (time.monotonic) deadline)
-        (break))
-      (<- delay-ep (CreateExternalPromise))
-      (.start (threading.Timer 0.2 delay-ep.complete [None]))
-      (<- _ (Wait delay-ep.future)))
-    (resume outcome))
+    (resume (_await-result-poll-until agent-handler handle timeout-seconds)))
 
   (FollowUpEffect [handle message]
     (setv active-backend backend)
