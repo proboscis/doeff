@@ -337,13 +337,19 @@ class McpToolServer(_ThreadingHTTPServer):
         try:
             wakeup_ep = self.wakeup_mailbox.get(timeout=TOOL_DISPATCH_WAKEUP_TIMEOUT)
         except queue.Empty:
-            log.warning("mcp %s: no wakeup ep (VM not accepting)", tool_name)
-            return _jsonrpc_result(msg_id, {
-                "content": [{"type": "text", "text": "Error: VM not accepting tool calls"}],
-                "isError": True,
-            })
-        t_wake = _time.perf_counter()
-        wakeup_ep.complete(None)
+            # The request is already queued. A missing wakeup endpoint does not
+            # prove the VM is dead: the loop may be between wakeups or inside a
+            # long-running tool task. Wait for the queued request result instead
+            # of surfacing a spurious agent-visible MCP failure.
+            log.warning(
+                "mcp %s: no wakeup ep after %.3fs; waiting for queued result",
+                tool_name,
+                TOOL_DISPATCH_WAKEUP_TIMEOUT,
+            )
+            t_wake = _time.perf_counter()
+        else:
+            t_wake = _time.perf_counter()
+            wakeup_ep.complete(None)
 
         if not req.event.wait(timeout=TOOL_RESPONSE_TIMEOUT):
             log.warning("mcp %s: timed out after %.3fs", tool_name, TOOL_RESPONSE_TIMEOUT)
