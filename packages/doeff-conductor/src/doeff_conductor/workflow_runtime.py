@@ -68,6 +68,8 @@ class _RuntimeContext:
     issue: Issue | None
     supervision: str
     answered_gate_options: Mapping[str, str]
+    answered_retry_agent_counts: Mapping[str, int]
+    answered_gate_stakes: Mapping[str, Mapping[str, Any]]
     bindings: dict[str, Any] = dataclass_field(default_factory=dict)
     open_gates: dict[str, OpenGateView] = dataclass_field(default_factory=dict)
     # Keyed by the workspace EXPRESSION's source-order occurrence, NOT by
@@ -147,6 +149,8 @@ def workflow_spec_to_program(
     registry: ProfileRegistry | None = None,
     supervision: str = "autonomous",
     answered_gate_options: Mapping[str, str] | None = None,
+    answered_retry_agent_counts: Mapping[str, int] | None = None,
+    answered_gate_stakes: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> Any:
     """Compile a ``WorkflowSpec`` into a production doeff Program."""
 
@@ -166,6 +170,8 @@ def workflow_spec_to_program(
             issue=issue,
             supervision=supervision,
             answered_gate_options=answered_gate_options or {},
+            answered_retry_agent_counts=answered_retry_agent_counts or {},
+            answered_gate_stakes=answered_gate_stakes or {},
         )
         result: Any = None
         for index, form in enumerate(workflow.body):
@@ -175,7 +181,10 @@ def workflow_spec_to_program(
                 current_phase=None,
                 path=str(index),
             )
-            if isinstance(result, ParkedValue) and result.halt_run:
+            if isinstance(result, ParkedValue):
+                # An open K5 gate is a decision boundary.  Do not evaluate
+                # downstream phases against missing or parked dependencies;
+                # resume with an answered gate if the overseer chooses proceed.
                 break
         return WorkflowRuntimeResult(
             value=result,
@@ -526,6 +535,14 @@ def _execute_agent(
         return prompt_value
     prompt_text: str = _stringify_prompt_value(prompt_value)
     schema: dict[str, Any] = _schema_to_dict(effect.schema)
+    validation_gate_id: str = _agent_result_validation_gate_id(context.run_id, node_id)
+    retry_attempt: int = context.answered_retry_agent_counts.get(validation_gate_id, 0)
+    prompt_context = ""
+    if retry_attempt > 0:
+        prompt_context = _agent_retry_prompt_context(
+            attempt=retry_attempt,
+            stakes=context.answered_gate_stakes.get(validation_gate_id, {}),
+        )
     workspace: Workspace
     if effect.workspace is None:
         # The implicit per-agent workspace binds the same resume-stable
@@ -563,9 +580,10 @@ def _execute_agent(
     task = AgentTask(
         run_id=context.run_id,
         node_id=node_id,
-        attempt=0,
+        attempt=retry_attempt,
         env=workspace,
         prompt=prompt_text,
+        prompt_context=prompt_context,
         result_schema=schema,
         verification_class=effect.verification_class,
         agent_type=profile.adapter,
@@ -595,7 +613,7 @@ def _execute_agent(
     except AgentAttemptExhaustedError as error:
         return _park(
             context,
-            _agent_budget_exhausted_gate(
+            _agent_result_validation_failed_gate(
                 context=context,
                 task=task,
                 phase=current_phase,
@@ -921,7 +939,7 @@ def _combine_parked_values(values: Iterable[Any]) -> ParkedValue | None:
     return ParkedValue(gates=tuple(gates_by_id.values()), halt_run=halt_run)
 
 
-def _agent_budget_exhausted_gate(
+def _agent_result_validation_failed_gate(
     *,
     context: _RuntimeContext,
     task: AgentTask,
@@ -929,11 +947,11 @@ def _agent_budget_exhausted_gate(
     error: AgentAttemptExhaustedError,
 ) -> OpenGateView:
     return OpenGateView(
-        gate_id=f"{context.run_id}:{task.node_id}:budget-exhausted",
+        gate_id=_agent_result_validation_gate_id(context.run_id, task.node_id),
         workflow_id=context.run_id,
         node_id=task.node_id,
         phase=phase,
-        reason="budget exhausted",
+        reason="agent result validation failed",
         stakes={
             "verification_class": task.verification_class,
             "blast_radius": "dependent-subtree",
@@ -941,8 +959,58 @@ def _agent_budget_exhausted_gate(
             "profile": task.profile,
             "attempts": error.attempts,
             "session_id": task.session_id,
+            "last_error_kind": error.last_error.kind.value,
+            "last_error_message": error.last_error.message,
         },
-        options=_gate_options(),
+        options=_agent_result_validation_gate_options(),
+    )
+
+
+def _agent_result_validation_gate_id(run_id: str, node_id: str) -> str:
+    return f"{run_id}:{node_id}:agent-result-validation-failed"
+
+
+def _agent_retry_prompt_context(
+    *,
+    attempt: int,
+    stakes: Mapping[str, Any],
+) -> str:
+    last_error_kind = stakes.get("last_error_kind", "unknown")
+    last_error_message = stakes.get("last_error_message", "no prior error detail recorded")
+    previous_session_id = stakes.get("session_id", "unknown")
+    return (
+        "\n\n"
+        "## Previous structured result failure (managed by doeff-conductor)\n"
+        f"This is retry attempt {attempt} for the same agent node. "
+        "The previous worker attempt finished without a schema-valid structured result.\n"
+        f"- previous_session_id: {previous_session_id}\n"
+        f"- last_error_kind: {last_error_kind}\n"
+        f"- last_error_message: {last_error_message}\n\n"
+        "Do not repeat the same result-shape mistake. Complete the domain task, then return "
+        "one structured result that satisfies the schema shown in the managed result contract."
+    )
+
+
+def _agent_result_validation_gate_options() -> tuple[GateOption, ...]:
+    return (
+        GateOption(
+            name="retry-agent",
+            outcome="resume",
+            description=(
+                "Launch a fresh worker attempt for this agent node with the last "
+                "structured-result validation error included in the prompt."
+            ),
+        ),
+        GateOption(
+            name="redirect",
+            outcome="resume",
+            description="Edit workflow state, result artifacts, or inputs, then resume.",
+        ),
+        GateOption(
+            name="abort",
+            outcome="abort",
+            description="Abort the dependent subtree and preserve the gate outcome.",
+        ),
     )
 
 

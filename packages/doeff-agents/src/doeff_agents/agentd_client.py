@@ -437,15 +437,31 @@ def ensure_agentd(
     active_db_path = Path(db_path) if db_path is not None else paths.db_path
     active_socket_path = Path(socket_path) if socket_path is not None else paths.socket_path
     client = AgentdClient(active_socket_path, timeout=client_timeout)
-    if _agentd_is_ready(client):
-        return client
-
     command = _agentd_command(
         daemon_bin=daemon_bin,
         db_path=active_db_path,
         socket_path=active_socket_path,
         max_running=max_running,
     )
+    status = _agentd_status_if_ready(client)
+    if status is not None:
+        daemon_db = status.get("db_path")
+        if isinstance(daemon_db, str) and _normalize_path(daemon_db) != _normalize_path(
+            active_db_path
+        ):
+            raise AgentdUnavailableError(
+                "doeff-agentd is reachable at the expected socket "
+                f"{active_socket_path}, but it is using a different database: "
+                f"{daemon_db}. Expected database: {active_db_path}. "
+                "Stop the stale daemon bound to this socket and start the "
+                "canonical daemon with:\n"
+                f"  {shlex.join(command)}\n"
+                f"Expected socket path: {active_socket_path}",
+                socket_path=active_socket_path,
+                start_command=tuple(command),
+            )
+        return client
+
     command_text = shlex.join(command)
     raise AgentdUnavailableError(
         "doeff-agentd is not reachable at the expected socket "
@@ -457,14 +473,17 @@ def ensure_agentd(
     )
 
 
-def _agentd_is_ready(client: AgentdClient) -> bool:
+def _agentd_status_if_ready(client: AgentdClient) -> Mapping[str, Any] | None:
     try:
-        client.status()
+        return client.status()
     except OSError:
-        return False
+        return None
     except AgentdClientError:
-        return False
-    return True
+        return None
+
+
+def _normalize_path(path: str | Path) -> str:
+    return str(Path(path).expanduser().resolve())
 
 
 def _agentd_command(

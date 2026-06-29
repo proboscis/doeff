@@ -11,7 +11,7 @@ from doeff_conductor.cli import cli
 from doeff_conductor.effects import AgentEffect, AgentTask, RandomCall, TimeCall
 from doeff_conductor.handlers.journaled_agent import JournaledAgentHandler
 from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
-from doeff_conductor.journal import GATE_ANSWER_JOURNAL_FILENAME, GateAnswerJournal
+from doeff_conductor.journal import GateAnswerJournal
 from doeff_conductor.overseer import (
     RUN_STATE_FILENAME,
     VALID_GATE_OUTCOMES,
@@ -27,11 +27,11 @@ from doeff_conductor.workflow_effect_journal import (
 )
 
 
-def _cheap_session_id(run_id: str, node_id: str) -> str:
+def _cheap_session_id(run_id: str, node_id: str, *, attempt: int = 0) -> str:
     return AgentTask(
         run_id=run_id,
         node_id=node_id,
-        attempt=0,
+        attempt=attempt,
         env=cast(Any, None),
         prompt="",
         result_schema={},
@@ -191,10 +191,10 @@ def test_live_retry_budget_exhaustion_opens_gate_and_parallel_sibling_continues(
 
     gates = list_open_gates(state_dir, run_id)
     assert len(gates) == 1
-    assert gates[0]["reason"] == "budget exhausted"
+    assert gates[0]["reason"] == "agent result validation failed"
     assert gates[0]["stakes"]["verification_class"] == "test-verifiable"
     assert gates[0]["stakes"]["blast_radius"] == "dependent-subtree"
-    assert {"proceed", "redirect", "abort"} <= {
+    assert {"retry-agent", "redirect", "abort"} <= {
         option["name"] for option in gates[0]["options"]
     }
 
@@ -210,6 +210,11 @@ def test_answer_proceed_records_journal_event_and_resumes_parked_subtree(
 
     runtime = MockConductorRuntime(tmp_path / "runtime")
     blocked_session_id = _cheap_session_id(run_id, "live-gate/0/parallel[0]/agent")
+    blocked_retry_session_id = _cheap_session_id(
+        run_id,
+        "live-gate/0/parallel[0]/agent",
+        attempt=1,
+    )
     independent_session_id = _cheap_session_id(run_id, "live-gate/0/parallel[1]/agent")
     runtime.configure_agent_script(blocked_session_id, [None])
     runtime.configure_agent_script(independent_session_id, [{"summary": "independent done"}])
@@ -222,7 +227,7 @@ def test_answer_proceed_records_journal_event_and_resumes_parked_subtree(
     assert first_handle.status is WorkflowStatus.BLOCKED
     gate_id = list_open_gates(state_dir, run_id)[0]["gate_id"]
 
-    runtime.configure_agent_script(blocked_session_id, [{"summary": "blocked recovered"}])
+    runtime.configure_agent_script(blocked_retry_session_id, [{"summary": "blocked recovered"}])
     result = CliRunner().invoke(
         cli,
         [
@@ -231,7 +236,7 @@ def test_answer_proceed_records_journal_event_and_resumes_parked_subtree(
             "answer",
             run_id,
             gate_id,
-            "proceed",
+            "retry-agent",
             "--json",
         ],
     )
@@ -240,10 +245,18 @@ def test_answer_proceed_records_journal_event_and_resumes_parked_subtree(
     payload = json.loads(result.output)
     assert payload["status"] == "done"
     assert list_open_gates(state_dir, run_id) == []
-    assert runtime.agent_invocation_count(blocked_session_id) == 2
+    assert runtime.agent_invocation_count(blocked_session_id) == 1
+    assert runtime.agent_invocation_count(blocked_retry_session_id) == 1
     assert runtime.agent_invocation_count(independent_session_id) == 1
+    assert runtime.agent_prompts(blocked_session_id) == ["blocked branch"]
+    retry_prompts = runtime.agent_prompts(blocked_retry_session_id)
+    assert len(retry_prompts) == 1
+    assert "blocked branch" in retry_prompts[0]
+    assert "Previous structured result failure" in retry_prompts[0]
+    assert "last_error_kind: absent" in retry_prompts[0]
+    assert "last_error_message: result artifact is absent" in retry_prompts[0]
     assert any(
-        event["status"] == "answered" and event["message"].endswith("proceed")
+        event["status"] == "answered" and event["message"].endswith("retry-agent")
         for event in progress_since(state_dir, run_id, 0)
     )
 
@@ -259,6 +272,11 @@ def test_workflow_effect_journal_coexists_with_open_gate_state(
 
     runtime = MockConductorRuntime(tmp_path / "runtime")
     blocked_session_id = _cheap_session_id(run_id, "random-live-gate/1/parallel[0]/agent")
+    blocked_retry_session_id = _cheap_session_id(
+        run_id,
+        "random-live-gate/1/parallel[0]/agent",
+        attempt=1,
+    )
     independent_session_id = _cheap_session_id(run_id, "random-live-gate/1/parallel[1]/agent")
     runtime.configure_agent_script(blocked_session_id, [None])
     runtime.configure_agent_script(independent_session_id, [{"summary": "independent done"}])
@@ -283,7 +301,7 @@ def test_workflow_effect_journal_coexists_with_open_gate_state(
     run_state = json.loads(run_state_path.read_text(encoding="utf-8"))
     assert run_state["open_gates"][0]["gate_id"] == gates[0]["gate_id"]
 
-    runtime.configure_agent_script(blocked_session_id, [{"summary": "blocked recovered"}])
+    runtime.configure_agent_script(blocked_retry_session_id, [{"summary": "blocked recovered"}])
     result = CliRunner().invoke(
         cli,
         [
@@ -292,7 +310,7 @@ def test_workflow_effect_journal_coexists_with_open_gate_state(
             "answer",
             run_id,
             gates[0]["gate_id"],
-            "proceed",
+            "retry-agent",
             "--json",
         ],
     )
@@ -472,6 +490,11 @@ def test_answer_replay_determinism_l_k5_2(
 
     runtime = MockConductorRuntime(tmp_path / "runtime")
     blocked_session_id = _cheap_session_id(run_id, "live-gate/0/parallel[0]/agent")
+    blocked_retry_session_id = _cheap_session_id(
+        run_id,
+        "live-gate/0/parallel[0]/agent",
+        attempt=1,
+    )
     independent_session_id = _cheap_session_id(run_id, "live-gate/0/parallel[1]/agent")
     runtime.configure_agent_script(blocked_session_id, [None])
     runtime.configure_agent_script(independent_session_id, [{"summary": "independent done"}])
@@ -484,20 +507,20 @@ def test_answer_replay_determinism_l_k5_2(
     assert first_handle.status is WorkflowStatus.BLOCKED
     gate_id = list_open_gates(state_dir, run_id)[0]["gate_id"]
 
-    runtime.configure_agent_script(blocked_session_id, [{"summary": "blocked recovered"}])
+    runtime.configure_agent_script(blocked_retry_session_id, [{"summary": "blocked recovered"}])
     api = ConductorAPI(state_dir=state_dir)
-    handle_1 = api.answer_gate(run_id, gate_id, "proceed")
+    handle_1 = api.answer_gate(run_id, gate_id, "retry-agent")
     assert handle_1.status is WorkflowStatus.DONE
 
     journal = GateAnswerJournal.for_run(run_id, state_dir=state_dir)
     answers_after_first = journal.latest_answers()
-    assert answers_after_first[gate_id] == "proceed"
+    assert answers_after_first[gate_id] == "retry-agent"
 
     handle_2 = api.resume_workflow(run_id)
     assert handle_2.status is WorkflowStatus.DONE
 
     answers_after_second = journal.latest_answers()
-    assert answers_after_second[gate_id] == "proceed"
+    assert answers_after_second[gate_id] == "retry-agent"
 
 
 def test_gate_list_shows_answered_gates_as_closed(
@@ -512,6 +535,11 @@ def test_gate_list_shows_answered_gates_as_closed(
 
     runtime = MockConductorRuntime(tmp_path / "runtime")
     blocked_session_id = _cheap_session_id(run_id, "live-gate/0/parallel[0]/agent")
+    blocked_retry_session_id = _cheap_session_id(
+        run_id,
+        "live-gate/0/parallel[0]/agent",
+        attempt=1,
+    )
     independent_session_id = _cheap_session_id(run_id, "live-gate/0/parallel[1]/agent")
     runtime.configure_agent_script(blocked_session_id, [None])
     runtime.configure_agent_script(independent_session_id, [{"summary": "independent done"}])
@@ -526,14 +554,14 @@ def test_gate_list_shows_answered_gates_as_closed(
     assert gates_before[0]["status"] == "open"
 
     gate_id = gates_before[0]["gate_id"]
-    runtime.configure_agent_script(blocked_session_id, [{"summary": "blocked recovered"}])
-    ConductorAPI(state_dir=state_dir).answer_gate(run_id, gate_id, "proceed")
+    runtime.configure_agent_script(blocked_retry_session_id, [{"summary": "blocked recovered"}])
+    ConductorAPI(state_dir=state_dir).answer_gate(run_id, gate_id, "retry-agent")
 
     gates_after = list_gates_with_status(state_dir, run_id)
     answered_gates = [g for g in gates_after if g["status"] == "answered"]
     assert len(answered_gates) == 1
     assert answered_gates[0]["gate_id"] == gate_id
-    assert answered_gates[0]["option"] == "proceed"
+    assert answered_gates[0]["option"] == "retry-agent"
 
 
 def test_gate_answer_cli_subcommand(
@@ -548,6 +576,11 @@ def test_gate_answer_cli_subcommand(
 
     runtime = MockConductorRuntime(tmp_path / "runtime")
     blocked_session_id = _cheap_session_id(run_id, "live-gate/0/parallel[0]/agent")
+    blocked_retry_session_id = _cheap_session_id(
+        run_id,
+        "live-gate/0/parallel[0]/agent",
+        attempt=1,
+    )
     independent_session_id = _cheap_session_id(run_id, "live-gate/0/parallel[1]/agent")
     runtime.configure_agent_script(blocked_session_id, [None])
     runtime.configure_agent_script(independent_session_id, [{"summary": "independent done"}])
@@ -559,7 +592,7 @@ def test_gate_answer_cli_subcommand(
     )
     gate_id = list_open_gates(state_dir, run_id)[0]["gate_id"]
 
-    runtime.configure_agent_script(blocked_session_id, [{"summary": "blocked recovered"}])
+    runtime.configure_agent_script(blocked_retry_session_id, [{"summary": "blocked recovered"}])
     result = CliRunner().invoke(
         cli,
         [
@@ -569,7 +602,7 @@ def test_gate_answer_cli_subcommand(
             "answer",
             run_id,
             gate_id,
-            "proceed",
+            "retry-agent",
             "--note",
             "approved via gate subcommand",
             "--json",

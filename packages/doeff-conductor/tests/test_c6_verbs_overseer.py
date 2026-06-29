@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 import pytest
 from click.testing import CliRunner
@@ -13,14 +12,11 @@ from doeff_conductor.dsl import (
     bind,
     defworkflow,
     loop,
-    prompt,
     ref,
-    workspace_bang,
 )
 from doeff_conductor.environment import ProfileRegistry, load_profile_registry_from_env
 from doeff_conductor.overseer import list_open_gates, progress_since
 from doeff_conductor.verbs import (
-    ALLOWED_TERMINAL_KINDS,
     BUILT_IN_VALIDATION_SCENARIOS,
     ScenarioValidationReport,
     TerminalState,
@@ -141,13 +137,13 @@ def test_validate_runs_built_in_scenarios_and_asserts_closure() -> None:
         BUILT_IN_VALIDATION_SCENARIOS
     )
     assert all(scenario.to_dict()["closure_ok"] for scenario in report.scenarios)
-    # retry-exhaustion scenario produces open gates with "budget exhausted" reason
+    # retry-exhaustion scenario produces open gates with the validation-failure reason.
     gate_reasons: set[str] = {
         gate.reason
         for scenario in report.scenarios
         for gate in scenario.open_gates
     }
-    assert "budget exhausted" in gate_reasons
+    assert "agent result validation failed" in gate_reasons
     # loop-exhaustion and merge-conflict scenarios park as K5 gates
     assert "loop predicate exhaustion" in gate_reasons
     assert "merge conflict" in gate_reasons

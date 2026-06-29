@@ -17,11 +17,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import pytest
 from doeff_conductor.dsl import (
     agent_bang,
     artifact,
     bind,
+    defphase,
     defworkflow,
     loop,
     merge_bang,
@@ -30,6 +30,12 @@ from doeff_conductor.dsl import (
     prompt,
     ref,
     workspace_bang,
+)
+from doeff_conductor.effects import (
+    AgentAttemptExhaustedError,
+    AgentEffect,
+    AgentValidationErrorKind,
+    AgentValidationFailure,
 )
 from doeff_conductor.effects.workspace import MergeWorkspaces
 from doeff_conductor.handlers import mock_handlers as build_mock_handlers
@@ -44,7 +50,6 @@ from doeff_conductor.types import (
 )
 from doeff_conductor.verbs import (
     BUILT_IN_VALIDATION_SCENARIOS,
-    assert_validation_closure,
     validate_workflow,
 )
 from doeff_conductor.workflow_runtime import (
@@ -59,6 +64,139 @@ RESULT_SCHEMA: dict[str, Any] = {
     "properties": {"summary": {"type": "string"}},
     "additionalProperties": False,
 }
+
+
+class TestAgentResultValidationGate:
+    """Agent schema failures park behind a clear validation gate."""
+
+    def test_agent_attempt_exhaustion_names_validation_not_budget(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        workflow = defworkflow(
+            "agent-result-validation-test",
+            params={"base_ref": str},
+            roles={"worker": {"profile": "cheap-coder", "retry": 0}},
+            body=[
+                bind(
+                    "result",
+                    agent_bang(
+                        role="worker",
+                        verification_class="test-verifiable",
+                        prompt="return schema-valid json",
+                        schema=RESULT_SCHEMA,
+                    ),
+                ),
+                artifact(ref("result")),
+            ],
+        )
+
+        def fail_agent(effect: AgentEffect) -> object:
+            raise AgentAttemptExhaustedError(
+                session_id=effect.task.session_id,
+                attempts=1,
+                last_error=AgentValidationFailure(
+                    kind=AgentValidationErrorKind.INVALID,
+                    message="'summary' is a required property",
+                ),
+            )
+
+        runtime = MockConductorRuntime(tmp_path)
+        handlers: Any = build_mock_handlers(
+            runtime=runtime,
+            overrides={AgentEffect: fail_agent},
+        )
+        program = workflow_spec_to_program(
+            workflow,
+            run_id="agent-validation-run",
+            params={"base_ref": "main"},
+        )
+
+        result = run_sync(program, scheduled_handlers=handlers)
+
+        assert result.is_ok
+        gate: OpenGateView = result.value.open_gates[0]
+        assert gate.reason == "agent result validation failed"
+        assert gate.gate_id.endswith(":agent-result-validation-failed")
+        assert gate.stakes["last_error_kind"] == "invalid"
+        assert gate.stakes["last_error_message"] == "'summary' is a required property"
+        assert {option.name for option in gate.options} == {
+            "retry-agent",
+            "redirect",
+            "abort",
+        }
+
+    def test_retry_agent_answer_starts_new_attempt_with_error_context(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        workflow = defworkflow(
+            "agent-validation-retry",
+            params={"base_ref": str},
+            roles={"worker": {"profile": "cheap-coder", "retry": 0}},
+            body=[
+                bind(
+                    "result",
+                    agent_bang(
+                        role="worker",
+                        verification_class="test-verifiable",
+                        prompt="return schema-valid json",
+                        schema=RESULT_SCHEMA,
+                    ),
+                ),
+                artifact(ref("result")),
+            ],
+        )
+        gate_id = (
+            "agent-validation-retry-run:"
+            "agent-validation-retry/0/agent:"
+            "agent-result-validation-failed"
+        )
+        seen_attempts: list[int] = []
+        seen_prompts: list[str] = []
+        seen_session_ids: list[str] = []
+
+        def fail_agent(effect: AgentEffect) -> object:
+            seen_attempts.append(effect.task.attempt)
+            seen_prompts.append(effect.task.worker_prompt)
+            seen_session_ids.append(effect.task.session_id)
+            raise AgentAttemptExhaustedError(
+                session_id=effect.task.session_id,
+                attempts=1,
+                last_error=AgentValidationFailure(
+                    kind=AgentValidationErrorKind.INVALID,
+                    message="'result.tests[0]' must be of type string",
+                ),
+            )
+
+        runtime = MockConductorRuntime(tmp_path)
+        handlers: Any = build_mock_handlers(
+            runtime=runtime,
+            overrides={AgentEffect: fail_agent},
+        )
+        program = workflow_spec_to_program(
+            workflow,
+            run_id="agent-validation-retry-run",
+            params={"base_ref": "main"},
+            answered_gate_options={gate_id: "retry-agent"},
+            answered_retry_agent_counts={gate_id: 1},
+            answered_gate_stakes={
+                gate_id: {
+                    "last_error_kind": "invalid",
+                    "last_error_message": "'tests' is a required property",
+                    "session_id": "previous-session-0",
+                }
+            },
+        )
+
+        result = run_sync(program, scheduled_handlers=handlers)
+
+        assert result.is_ok
+        assert seen_attempts == [1]
+        assert seen_session_ids[0].endswith("-1")
+        assert "Previous structured result failure" in seen_prompts[0]
+        assert "previous-session-0" in seen_prompts[0]
+        assert "'tests' is a required property" in seen_prompts[0]
 
 
 # =========================================================================
@@ -366,6 +504,79 @@ class TestLoopExhaustionParks:
         assert len(runtime_result.open_gates) == 0
         # The artifact is the last loop iteration's agent result
         assert runtime_result.value == {"summary": "mock artifact"}
+
+    def test_open_loop_gate_blocks_downstream_phases(self, tmp_path: Path) -> None:
+        """A parked loop gate stops downstream phases until it is answered."""
+        ws: Any = workspace_bang(from_="main")
+        workflow = defworkflow(
+            "loop-blocks-downstream",
+            params={"base_ref": str},
+            roles={"worker": {"profile": "cheap-coder", "retry": 0}},
+            body=[
+                defphase(
+                    "Blocker",
+                    body=[
+                        bind(
+                            "blocked",
+                            loop(
+                                max_iterations=1,
+                                until="never_true",
+                                body=[
+                                    agent_bang(
+                                        role="worker",
+                                        verification_class="test-verifiable",
+                                        prompt="loop body",
+                                        schema=RESULT_SCHEMA,
+                                        workspace=ws,
+                                        label="loop-agent",
+                                    )
+                                ],
+                            ),
+                        )
+                    ],
+                ),
+                defphase(
+                    "Downstream",
+                    body=[
+                        bind(
+                            "after",
+                            agent_bang(
+                                role="worker",
+                                verification_class="test-verifiable",
+                                prompt="must not run before gate answer",
+                                schema=RESULT_SCHEMA,
+                                workspace=ws,
+                                label="downstream-agent",
+                            ),
+                        ),
+                        artifact(prompt(ref("blocked"), ref("after"))),
+                    ],
+                ),
+            ],
+        )
+        seen_prompts: list[str] = []
+
+        def handle_agent(effect: AgentEffect) -> dict[str, Any]:
+            seen_prompts.append(effect.task.prompt)
+            return {"summary": effect.task.prompt}
+
+        runtime = MockConductorRuntime(tmp_path)
+        handlers: Any = build_mock_handlers(
+            runtime=runtime,
+            overrides={AgentEffect: handle_agent},
+        )
+        program: Any = workflow_spec_to_program(
+            workflow,
+            run_id="loop-blocks-downstream",
+            params={"base_ref": "main"},
+        )
+
+        result = run_sync(program, scheduled_handlers=handlers)
+
+        assert result.is_ok
+        runtime_result: WorkflowRuntimeResult = result.value
+        assert len(runtime_result.open_gates) == 1
+        assert seen_prompts == ["loop body"]
 
 
 # =========================================================================

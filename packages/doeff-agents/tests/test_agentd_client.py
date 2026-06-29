@@ -263,6 +263,39 @@ def test_ensure_agentd_uses_reachable_canonical_socket(
     assert server.requests[0]["method"] == "daemon.status"
 
 
+def test_ensure_agentd_rejects_reachable_daemon_with_wrong_db(
+    monkeypatch,
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    paths = default_agentd_paths()
+    paths.socket_path.parent.mkdir(parents=True)
+    stale_db = tmp_path / "stale" / "agentd.sqlite"
+
+    def handle(request: Mapping[str, Any]) -> Mapping[str, Any]:
+        return {
+            "id": request["id"],
+            "ok": True,
+            "result": {"state": "running", "db_path": str(stale_db)},
+        }
+
+    with (
+        OneShotAgentdServer(paths.socket_path, handle) as server,
+        pytest.raises(AgentdUnavailableError) as error,
+    ):
+        ensure_agentd(daemon_bin="/usr/local/bin/doeff-agentd", client_timeout=2.0)
+
+    message = str(error.value)
+    assert "using a different database" in message
+    assert str(stale_db) in message
+    assert str(paths.db_path) in message
+    assert f"--socket {paths.socket_path}" in message
+    assert server.requests[0]["method"] == "daemon.status"
+
+
 def test_ensure_agentd_fails_loudly_when_canonical_socket_unreachable(
     monkeypatch,
     tmp_path: Path,
@@ -480,6 +513,36 @@ def test_await_result_accepts_terminal_null_result_with_validation_error() -> No
     assert outcome.result is None
     assert outcome.validation_error == "failed to read result file"
     assert not outcome.continuable
+
+
+def test_await_result_accepts_null_result_as_absent_artifact() -> None:
+    client = _StaticAwaitResultClient(
+        {"session": _snapshot_payload(), "result": None, "validation_error": None}
+    )
+
+    outcome = client.await_result("s1", timeout_seconds=1.0)
+
+    assert outcome.status == AwaitStatus.EXITED
+    assert outcome.result is None
+    assert outcome.validation_error is None
+    assert outcome.continuable is False
+
+
+def test_await_result_preserves_validation_error_for_null_result() -> None:
+    client = _StaticAwaitResultClient(
+        {
+            "session": _snapshot_payload(),
+            "result": None,
+            "validation_error": "expected result file not readable",
+        }
+    )
+
+    outcome = client.await_result("s1", timeout_seconds=1.0)
+
+    assert outcome.status == AwaitStatus.EXITED
+    assert outcome.result is None
+    assert outcome.validation_error == "expected result file not readable"
+    assert outcome.continuable is False
 
 
 def test_launch_read_timeout_covers_daemon_launch_budget() -> None:

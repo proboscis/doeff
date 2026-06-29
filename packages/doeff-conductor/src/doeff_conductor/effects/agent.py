@@ -35,6 +35,7 @@ class AgentTask:
     result_schema: dict[str, Any]
     verification_class: str
     agent_type: str
+    prompt_context: str = ""
     name: str | None = None
     # ADR 0002: phase label threaded from the runtime for the observational
     # progress producer (monitor grouping). Optional; template-run tasks leave
@@ -68,6 +69,17 @@ class AgentTask:
             return self.node_id
         digest = resolved_identity_fingerprint(self.resolved_identity)[:8]
         return f"{self.node_id}-{digest}"
+
+    @property
+    def worker_prompt(self) -> str:
+        """Prompt sent to the worker process.
+
+        ``prompt`` remains the replay identity input.  ``prompt_context`` is
+        conductor-owned operational feedback for a fresh attempt, such as the
+        previous structured-result validation error; it must not invalidate
+        successful sibling replay in the L3 prefix journal.
+        """
+        return f"{self.prompt}{self.prompt_context}"
 
     @property
     def session_id(self) -> str:

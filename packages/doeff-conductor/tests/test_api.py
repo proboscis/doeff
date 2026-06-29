@@ -19,6 +19,7 @@ from unittest.mock import patch
 import doeff_conductor.exceptions as conductor_exceptions
 import pytest
 from doeff_conductor.api import ConductorAPI
+from doeff_conductor.journal import ProgressJournal, ProgressJournalEntry
 from doeff_conductor.types import (
     Issue,
     IssueStatus,
@@ -297,9 +298,40 @@ class TestStopWorkflow:
 
     def test_stop_workflow(self, api: ConductorAPI, running_workflow: str):
         """stop_workflow stops all agents and updates status."""
+        started_at = api.get_workflow(running_workflow).created_at
         stopped = api.stop_workflow(running_workflow)
         assert "agent-1" in stopped
         assert "agent-2" in stopped
+
+        workflow = api.get_workflow(running_workflow)
+        assert workflow is not None
+        assert workflow.status == WorkflowStatus.ABORTED
+        superseding = api._terminal_handle_superseding_run(
+            running_workflow,
+            run_started_at=started_at,
+        )
+        assert superseding is not None
+        assert superseding.status == WorkflowStatus.ABORTED
+
+    def test_stop_workflow_status_survives_stale_run_save(
+        self,
+        api: ConductorAPI,
+        running_workflow: str,
+    ):
+        """A still-unwinding run cannot overwrite an explicit stop."""
+        original = api.get_workflow(running_workflow)
+        assert original is not None
+        api.stop_workflow(running_workflow)
+
+        api._save_workflow(
+            WorkflowHandle(
+                id=running_workflow,
+                name=original.name,
+                status=WorkflowStatus.BLOCKED,
+                created_at=original.created_at,
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
 
         workflow = api.get_workflow(running_workflow)
         assert workflow is not None
@@ -310,11 +342,211 @@ class TestStopWorkflow:
         stopped = api.stop_workflow(running_workflow, agent="agent-1")
         assert stopped == ["agent-1"]
 
+    def test_stop_workflow_cancels_running_agentd_sessions(
+        self,
+        api: ConductorAPI,
+        running_workflow: str,
+    ):
+        """stop_workflow cancels/cleans live sessions from the progress journal."""
+        ProgressJournal.for_run(running_workflow, state_dir=api.state_dir).append_entry(
+            ProgressJournalEntry(
+                node_id="phase/agent",
+                node_identity="identity",
+                session_node_key="phase/agent-fp",
+                session_id="run12345-phase-agent-fp-0",
+                attempt=0,
+                phase="Implement",
+                status="running",
+                terminal_kind=None,
+                at=datetime.now(timezone.utc).isoformat(),
+            )
+        )
+        fake_client = FakeAgentdStopClient(existing={"run12345-phase-agent-fp-0"})
+
+        stopped = api.stop_workflow(running_workflow, agentd_client=fake_client)
+
+        assert "run12345-phase-agent-fp-0" in stopped
+        assert fake_client.cancelled == ["run12345-phase-agent-fp-0"]
+        assert fake_client.cleaned == ["run12345-phase-agent-fp-0"]
+
+    def test_stop_workflow_clears_open_gates(
+        self,
+        api: ConductorAPI,
+        running_workflow: str,
+    ):
+        """An aborted workflow should not keep stale open gates in the queue."""
+        from doeff_conductor.overseer import (
+            GateOption,
+            OpenGateView,
+            list_open_gates,
+            record_open_gates,
+        )
+
+        record_open_gates(
+            api.state_dir,
+            workflow_id=running_workflow,
+            workflow_name="running-workflow",
+            open_gates=(
+                OpenGateView(
+                    gate_id=f"{running_workflow}:node:agent-result-validation-failed",
+                    workflow_id=running_workflow,
+                    node_id="node",
+                    phase="Implement",
+                    reason="agent result validation failed",
+                    stakes={"last_error_message": "result artifact is absent"},
+                    options=(
+                        GateOption(
+                            name="abort",
+                            outcome="abort",
+                            description="Abort the dependent subtree.",
+                        ),
+                    ),
+                ),
+            ),
+            supervision="autonomous",
+        )
+        assert list_open_gates(api.state_dir, running_workflow)
+
+        api.stop_workflow(running_workflow)
+
+        assert list_open_gates(api.state_dir, running_workflow) == []
+
+    def test_stop_specific_agent_matches_progress_session_id(
+        self,
+        api: ConductorAPI,
+        running_workflow: str,
+    ):
+        """The --agent selector can target an exact agentd session id."""
+        ProgressJournal.for_run(running_workflow, state_dir=api.state_dir).append_entry(
+            ProgressJournalEntry(
+                node_id="phase/agent",
+                node_identity="identity",
+                session_node_key="phase/agent-fp",
+                session_id="run12345-phase-agent-fp-0",
+                attempt=0,
+                phase="Implement",
+                status="running",
+                terminal_kind=None,
+                at=datetime.now(timezone.utc).isoformat(),
+            )
+        )
+        fake_client = FakeAgentdStopClient(existing={"run12345-phase-agent-fp-0"})
+
+        stopped = api.stop_workflow(
+            running_workflow,
+            agent="run12345-phase-agent-fp-0",
+            agentd_client=fake_client,
+        )
+
+        assert stopped == ["run12345-phase-agent-fp-0"]
+        assert fake_client.cancelled == ["run12345-phase-agent-fp-0"]
+        assert fake_client.cleaned == ["run12345-phase-agent-fp-0"]
+
     def test_stop_nonexistent_workflow(self, api: ConductorAPI):
         """stop_workflow raises error for non-existent workflow."""
         with pytest.raises(ValueError, match="not found") as exc_info:
             api.stop_workflow("nonexistent")
         assert "not found" in str(exc_info.value)
+
+
+class FakeAgentdStopClient:
+    """Minimal agentd client double for conductor stop tests."""
+
+    def __init__(self, *, existing: set[str]) -> None:
+        self.existing = existing
+        self.cancelled: list[str] = []
+        self.cleaned: list[str] = []
+
+    def get_session(self, session_id: str) -> object | None:
+        if session_id in self.existing:
+            return object()
+        return None
+
+    def cancel_session(self, session_id: str) -> object:
+        self.cancelled.append(session_id)
+        return object()
+
+    def cleanup_session(self, session_id: str) -> object:
+        self.cleaned.append(session_id)
+        return object()
+
+
+class TestAnswerGate:
+    """Tests for applying overseer gate answers."""
+
+    @pytest.fixture
+    def api(self, tmp_path: Path) -> ConductorAPI:
+        """Create API with temporary state directory."""
+        return ConductorAPI(state_dir=tmp_path / "state")
+
+    def test_retry_agent_records_stakes_and_resumes(self, api: ConductorAPI):
+        """retry-agent preserves validation details and resumes the workflow."""
+        from doeff_conductor.overseer import (
+            GateOption,
+            OpenGateView,
+            answered_gate_stakes,
+            answered_retry_agent_counts,
+            list_open_gates,
+            record_open_gates,
+        )
+
+        now = datetime.now(timezone.utc)
+        workflow_id = "retry1234"
+        gate_id = f"{workflow_id}:node:agent-result-validation-failed"
+        handle = WorkflowHandle(
+            id=workflow_id,
+            name="retry-workflow",
+            status=WorkflowStatus.BLOCKED,
+            created_at=now,
+            updated_at=now,
+        )
+        api._save_workflow(handle)
+        record_open_gates(
+            api.state_dir,
+            workflow_id=workflow_id,
+            workflow_name="retry-workflow",
+            open_gates=(
+                OpenGateView(
+                    gate_id=gate_id,
+                    workflow_id=workflow_id,
+                    node_id="node",
+                    phase="Implement",
+                    reason="agent result validation failed",
+                    stakes={
+                        "last_error_kind": "invalid",
+                        "last_error_message": "'tests' is a required property",
+                    },
+                    options=(
+                        GateOption(
+                            name="retry-agent",
+                            outcome="resume",
+                            description="Retry the agent node.",
+                        ),
+                        GateOption(
+                            name="abort",
+                            outcome="abort",
+                            description="Abort.",
+                        ),
+                    ),
+                ),
+            ),
+            supervision="autonomous",
+        )
+
+        with patch.object(api, "resume_workflow", return_value=handle) as resume:
+            result = api.answer_gate(workflow_id, gate_id, "retry-agent")
+
+        assert result is handle
+        resume.assert_called_once_with(
+            workflow_id,
+            params=None,
+            supervision="autonomous",
+        )
+        assert list_open_gates(api.state_dir, workflow_id) == []
+        assert answered_retry_agent_counts(api.state_dir, workflow_id) == {gate_id: 1}
+        assert answered_gate_stakes(api.state_dir, workflow_id)[gate_id][
+            "last_error_message"
+        ] == "'tests' is a required property"
 
 
 class TestWatchWorkflow:
