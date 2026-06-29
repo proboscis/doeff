@@ -24,12 +24,12 @@ FIXTURES = Path(__file__).parent / "fixtures" / "workflow_nondeterminism"
 
 
 
-def _cheap_session_id(run_id: str, node_id: str) -> str:
+def _cheap_session_id(run_id: str, node_id: str, *, attempt: int = 0) -> str:
     """Session id as the runtime derives it for the default cheap-coder profile."""
     return AgentTask(
         run_id=run_id,
         node_id=node_id,
-        attempt=0,
+        attempt=attempt,
         env=cast(Any, None),
         prompt="",
         result_schema={},
@@ -218,6 +218,11 @@ def test_single_file_dsl_run_returns_payload_and_resumes_from_snapshot(
     runtime = MockConductorRuntime(tmp_path / "runtime")
     first_session_id = _cheap_session_id(run_id, "single-file/1/agent")
     second_session_id = _cheap_session_id(run_id, "single-file/2/agent")
+    second_retry_session_id = _cheap_session_id(
+        run_id,
+        "single-file/2/agent",
+        attempt=1,
+    )
     runtime.configure_agent_script(first_session_id, [{"summary": "first"}])
     runtime.configure_agent_script(second_session_id, [None])
     _install_mock_production_handlers(monkeypatch=monkeypatch, runtime=runtime)
@@ -230,14 +235,15 @@ def test_single_file_dsl_run_returns_payload_and_resumes_from_snapshot(
     assert (state_dir / "workflows" / run_id / "workflow.hy").exists()
 
     workflow_path.unlink()
-    runtime.configure_agent_script(second_session_id, [{"summary": "second"}])
+    runtime.configure_agent_script(second_retry_session_id, [{"summary": "second"}])
     gate_id = list_open_gates(state_dir, run_id)[0]["gate_id"]
-    resumed_handle = api.answer_gate(run_id, gate_id, "proceed")
+    resumed_handle = api.answer_gate(run_id, gate_id, "retry-agent")
 
     assert resumed_handle.status == WorkflowStatus.DONE
     assert resumed_handle.result_payload == {"summary": "second"}
     assert runtime.agent_invocation_count(first_session_id) == 1
-    assert runtime.agent_invocation_count(second_session_id) == 2
+    assert runtime.agent_invocation_count(second_session_id) == 1
+    assert runtime.agent_invocation_count(second_retry_session_id) == 1
 
 
 def test_cli_run_json_includes_workflow_return_payload(

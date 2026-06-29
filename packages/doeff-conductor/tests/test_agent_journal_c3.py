@@ -22,6 +22,7 @@ from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
 from doeff_conductor.journal import AgentJournal
 from doeff_conductor.replay_keying import ResolvedIdentity
 
+from doeff_core_effects.scheduler import scheduled
 from doeff.do import do
 from doeff.run import run
 
@@ -280,11 +281,11 @@ def test_l2_launch_re_adopts_session_by_deterministic_id_after_interrupted_await
     @do
     def launch_and_await():
         handle = yield LaunchSessionEffect(spec=task)
-        outcome = yield AwaitResultEffect(handle=handle)
+        outcome = yield AwaitResultEffect(handle=handle, timeout_seconds=0.0)
         return handle.session_id, outcome
 
-    first_session_id, first_outcome = run(handler.wrap(launch_and_await()))
-    second_session_id, second_outcome = run(handler.wrap(launch_and_await()))
+    first_session_id, first_outcome = run(scheduled(handler.wrap(launch_and_await())))
+    second_session_id, second_outcome = run(scheduled(handler.wrap(launch_and_await())))
 
     assert first_session_id == "run-re-adopt-node-1-0"
     assert second_session_id == first_session_id

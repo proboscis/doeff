@@ -146,7 +146,11 @@ class ConductorAPI:
                     raise ValueError("workflow function was not loaded")
                 program = workflow_func(**kwargs)
             else:
-                from doeff_conductor.overseer import answered_gate_options
+                from doeff_conductor.overseer import (
+                    answered_gate_options,
+                    answered_gate_stakes,
+                    answered_retry_agent_counts,
+                )
                 from doeff_conductor.workflow_runtime import workflow_spec_to_program
 
                 program = workflow_spec_to_program(
@@ -156,6 +160,11 @@ class ConductorAPI:
                     issue=issue,
                     supervision=supervision,
                     answered_gate_options=answered_gate_options(self.state_dir, workflow_id),
+                    answered_retry_agent_counts=answered_retry_agent_counts(
+                        self.state_dir,
+                        workflow_id,
+                    ),
+                    answered_gate_stakes=answered_gate_stakes(self.state_dir, workflow_id),
                 )
 
             # Run with conductor handlers
@@ -175,6 +184,13 @@ class ConductorAPI:
                 open_gates = result_value.open_gates
                 result_value = result_value.value
             result_payload = None if isinstance(result_value, ParkedValue) else result_value
+
+            superseding_terminal = self._terminal_handle_superseding_run(
+                workflow_id,
+                run_started_at=now,
+            )
+            if superseding_terminal is not None:
+                return superseding_terminal
 
             if open_gates:
                 from doeff_conductor.overseer import record_open_gates
@@ -223,6 +239,12 @@ class ConductorAPI:
             self._save_workflow(handle)
 
         except Exception as e:
+            superseding_terminal = self._terminal_handle_superseding_run(
+                workflow_id,
+                run_started_at=now,
+            )
+            if superseding_terminal is not None:
+                return superseding_terminal
             handle = WorkflowHandle(
                 id=workflow_id,
                 name=handle.name,
@@ -309,11 +331,12 @@ class ConductorAPI:
             )
             self._save_workflow(aborted)
             return aborted
-        if option in {"proceed", "extend"}:
-            # "extend" is the deadline-gate renewal answer (L-K4-3): the
-            # journaled answer IS the renewal; resume re-awaits the node
-            # with a fresh deadline window. There is no automatic
-            # extension path anywhere else.
+        if option in {"proceed", "extend", "retry-agent"}:
+            # These options all close the K5 decision by resuming the
+            # snapshotted workflow.  Runtime interprets their journaled
+            # answers by gate type: "extend" renews a deadline window,
+            # while "retry-agent" increments that agent node's session
+            # attempt and injects the previous schema error into the prompt.
             return self.resume_workflow(
                 workflow_id,
                 params=params,
@@ -446,6 +469,7 @@ class ConductorAPI:
         self,
         workflow_id: str,
         agent: str | None = None,
+        agentd_client: Any | None = None,
     ) -> list[str]:
         """Stop a workflow or specific agent.
 
@@ -457,15 +481,24 @@ class ConductorAPI:
         if handle is None:
             raise ValueError(f"Workflow not found: {workflow_id}")
 
-        stopped = []
-
-        # TODO: Implement actual agent stopping via doeff-agentic
-        # For now, just update workflow status
+        stopped: list[str] = []
+        session_ids = self._session_ids_for_stop(workflow_id, agent=agent)
+        if session_ids:
+            stopped.extend(self._stop_agentd_sessions(session_ids, agentd_client=agentd_client))
 
         if agent:
-            stopped.append(agent)
+            if agent not in stopped:
+                stopped.append(agent)
         else:
-            stopped.extend(handle.agents)
+            stopped.extend(name for name in handle.agents if name not in stopped)
+
+        from doeff_conductor.overseer import clear_open_gates
+
+        clear_open_gates(
+            self.state_dir,
+            workflow_id=workflow_id,
+            reason="workflow stopped",
+        )
 
         # Update workflow status
         handle = WorkflowHandle(
@@ -479,6 +512,65 @@ class ConductorAPI:
         )
         self._save_workflow(handle)
 
+        return stopped
+
+    def _session_ids_for_stop(self, workflow_id: str, *, agent: str | None) -> list[str]:
+        """Return live agentd session ids recorded by the progress journal."""
+        from doeff_conductor.journal import (
+            PROGRESS_STATUS_RUNNING,
+            ProgressJournal,
+        )
+
+        latest_by_node = ProgressJournal.for_run(
+            workflow_id,
+            state_dir=self.state_dir,
+        ).latest_by_node()
+        session_ids: list[str] = []
+        seen: set[str] = set()
+        for entry in latest_by_node.values():
+            if entry.status != PROGRESS_STATUS_RUNNING or not entry.session_id:
+                continue
+            if agent is not None and agent not in {
+                entry.session_id,
+                entry.node_id,
+                entry.session_node_key,
+            }:
+                continue
+            if entry.session_id in seen:
+                continue
+            seen.add(entry.session_id)
+            session_ids.append(entry.session_id)
+        return session_ids
+
+    def _stop_agentd_sessions(
+        self,
+        session_ids: list[str],
+        *,
+        agentd_client: Any | None,
+    ) -> list[str]:
+        """Cancel and clean up agentd sessions, preserving explicit failures."""
+        if not session_ids:
+            return []
+        client = agentd_client
+        if client is None:
+            from doeff_agents import LazyAgentdClient
+
+            client = LazyAgentdClient()
+
+        stopped: list[str] = []
+        errors: list[str] = []
+        for session_id in session_ids:
+            try:
+                snapshot = client.get_session(session_id)
+                if snapshot is None:
+                    continue
+                client.cancel_session(session_id)
+                client.cleanup_session(session_id)
+                stopped.append(session_id)
+            except Exception as error:  # pragma: no cover - message asserted by caller
+                errors.append(f"{session_id}: {error}")
+        if errors:
+            raise ValueError("failed to stop agentd session(s): " + "; ".join(errors))
         return stopped
 
     def list_workspaces(
@@ -600,12 +692,38 @@ class ConductorAPI:
 
         return cleaned
 
+    def _terminal_handle_superseding_run(
+        self,
+        workflow_id: str,
+        *,
+        run_started_at: datetime,
+    ) -> "WorkflowHandle | None":
+        """Return a terminal handle written after this run incarnation began."""
+        existing = self.get_workflow(workflow_id)
+        if existing is None or not existing.status.is_terminal():
+            return None
+        if existing.created_at <= run_started_at and existing.updated_at > run_started_at:
+            return existing
+        return None
+
     def _save_workflow(self, handle: "WorkflowHandle") -> None:
         """Save workflow state to disk."""
         workflow_dir = self.workflows_dir / handle.id
         workflow_dir.mkdir(parents=True, exist_ok=True)
 
         meta_file = workflow_dir / "meta.json"
+        if meta_file.exists():
+            try:
+                existing = WorkflowHandle.from_dict(json.loads(meta_file.read_text()))
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                existing = None
+            if (
+                existing is not None
+                and existing.status.is_terminal()
+                and existing.created_at <= handle.created_at
+                and existing.updated_at > handle.created_at
+            ):
+                return
         meta_file.write_text(json.dumps(handle.to_dict(), indent=2))
 
 

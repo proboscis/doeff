@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -290,6 +290,8 @@ class GateAnswerJournalEntry:
     outcome: str
     note: str
     answered_at: str
+    gate_reason: str = ""
+    gate_stakes: dict[str, Any] = field(default_factory=dict)
     terminal_kind: str = TERMINAL_KIND_GATE_ANSWER
 
     def to_json_line(self) -> str:
@@ -301,6 +303,8 @@ class GateAnswerJournalEntry:
             "outcome": self.outcome,
             "note": self.note,
             "answered_at": self.answered_at,
+            "gate_reason": self.gate_reason,
+            "gate_stakes": self.gate_stakes,
             "terminal_kind": self.terminal_kind,
         }
         return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
@@ -334,6 +338,8 @@ class GateAnswerJournalEntry:
             outcome=_require_str(payload, "outcome", path, line_number),
             note=_require_str(payload, "note", path, line_number),
             answered_at=_require_str(payload, "answered_at", path, line_number),
+            gate_reason=str(payload.get("gate_reason", "")),
+            gate_stakes=_optional_dict(payload, "gate_stakes", path, line_number),
             terminal_kind=_require_str(payload, "terminal_kind", path, line_number),
         )
 
@@ -387,6 +393,22 @@ class GateAnswerJournal:
         for entry in entries:
             answers[entry.gate_id] = entry.option
         return answers
+
+    def option_counts(self, option: str) -> dict[str, int]:
+        """Return gate_id -> count of answers that selected ``option``."""
+        counts: dict[str, int] = {}
+        for entry in self.load_entries():
+            if entry.option != option:
+                continue
+            counts[entry.gate_id] = counts.get(entry.gate_id, 0) + 1
+        return counts
+
+    def latest_gate_stakes(self) -> dict[str, dict[str, Any]]:
+        """Return gate_id -> stakes captured when the gate was last answered."""
+        stakes: dict[str, dict[str, Any]] = {}
+        for entry in self.load_entries():
+            stakes[entry.gate_id] = dict(entry.gate_stakes)
+        return stakes
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -829,6 +851,23 @@ def _optional_str(
             message=f"line {line_number} field {field_name!r} is not a string or null",
         )
     return value
+
+
+def _optional_dict(
+    payload: dict[str, Any],
+    field_name: str,
+    path: Path,
+    line_number: int,
+) -> dict[str, Any]:
+    if field_name not in payload:
+        return {}
+    value = payload[field_name]
+    if not isinstance(value, dict):
+        raise JournalCorruptionError(
+            path=path,
+            message=f"line {line_number} field {field_name!r} is not an object",
+        )
+    return dict(value)
 
 
 def _require_int(

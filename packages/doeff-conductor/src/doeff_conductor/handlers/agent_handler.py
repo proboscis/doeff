@@ -69,7 +69,7 @@ class AgentdAgentBackend:
                     attempt=effect.task.attempt,
                     agent_type=agent_type,
                     work_dir=workspace_resolver(effect.task.env),
-                    prompt=effect.task.prompt,
+                    prompt=effect.task.worker_prompt,
                     result_schema=effect.task.result_schema,
                     model=effect.task.model,
                     effort=effect.task.effort,

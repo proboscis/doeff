@@ -92,6 +92,7 @@ class MockConductorRuntime:
         self._agent_script_indices: dict[str, int] = {}
         self._agent_invocation_counts: dict[str, int] = {}
         self._agent_follow_ups: dict[str, list[str]] = {}
+        self._agent_prompts: dict[str, list[str]] = {}
         self._prs: dict[int, PRHandle] = {}
 
         self._issue_counter = 0
@@ -167,6 +168,10 @@ class MockConductorRuntime:
     def agent_follow_ups(self, session_id: str) -> list[str]:
         """Return validation follow-up messages sent for a scripted agent."""
         return list(self._agent_follow_ups.get(session_id, []))
+
+    def agent_prompts(self, session_id: str) -> list[str]:
+        """Return worker prompts observed for a scripted agent session."""
+        return list(self._agent_prompts.get(session_id, []))
 
     def agent_invocation_count(self, session_id: str) -> int:
         """Return how many times the stub AgentEffect handler ran."""
@@ -277,6 +282,7 @@ class MockConductorRuntime:
 
     def handle_agent(self, effect: AgentEffect) -> object:
         session_id = effect.task.session_id
+        self._agent_prompts.setdefault(session_id, []).append(effect.task.worker_prompt)
         self._agent_invocation_counts[session_id] = (
             self._agent_invocation_counts.get(session_id, 0) + 1
         )
