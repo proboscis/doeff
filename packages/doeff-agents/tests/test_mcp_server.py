@@ -2,8 +2,10 @@
 
 import http.client
 import json
+import threading
 
 import pytest
+import doeff_agents.mcp_server as mcp_server_module
 from doeff_agents.mcp_server import McpToolServer
 
 from doeff import do, run
@@ -121,6 +123,38 @@ class TestJsonRpcDispatch:
         assert "error" in resp
         assert resp["error"]["code"] == -32602
         server.server_close()
+
+    def test_tools_call_waits_for_queued_result_without_visible_wakeup(self, monkeypatch):
+        """A queued request may finish even when no wakeup ep is visible to HTTP.
+
+        Regression for live agents that saw "VM not accepting tool calls" while
+        the in-VM MCP loop was busy with a long SBI command. The HTTP side must
+        not turn a transient missing wakeup endpoint into an MCP tool error after
+        the request has already been queued.
+        """
+        monkeypatch.setattr(mcp_server_module, "TOOL_DISPATCH_WAKEUP_TIMEOUT", 0.01)
+        monkeypatch.setattr(mcp_server_module, "TOOL_RESPONSE_TIMEOUT", 2.0)
+        server = McpToolServer(tools=(_make_echo_tool(),))
+
+        def fake_active_vm_loop():
+            req = server.request_queue.get(timeout=1.0)
+            result = _simple_run_tool(server._tools[req.tool_name], req.arguments)
+            req.holder.append((True, result))
+            req.event.set()
+
+        worker = threading.Thread(target=fake_active_vm_loop, daemon=True)
+        worker.start()
+        try:
+            resp = server.dispatch_jsonrpc({
+                "jsonrpc": "2.0", "id": 8, "method": "tools/call",
+                "params": {"name": "echo", "arguments": {"msg": "queued"}},
+            })
+            content = resp["result"]["content"][0]
+            assert json.loads(content["text"]) == {"echo": "queued"}
+            assert resp["result"]["isError"] is False
+        finally:
+            server.server_close()
+        worker.join(timeout=1.0)
 
     def test_unknown_method(self):
         server = McpToolServer(tools=())
