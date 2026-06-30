@@ -6,6 +6,8 @@ import doeff_hy  # noqa: F401 - registers Hy import hooks
 import pytest
 from doeff_adr.registry import SemgrepSpec, clear_registry, get_adr, get_enforcement
 
+pytest_plugins = ["pytester"]
+
 
 @pytest.fixture
 def tmp_hy_dir(tmp_path):
@@ -185,3 +187,50 @@ def test_expected_red_defsemgrep_still_validates_rule_fixtures(tmp_hy_dir):
     )
 
     mod.test_expected_red_rule_defsemgrep()
+
+
+def test_pytest_plugin_collects_defadr_hy_files(pytester):
+    pytester.makeconftest(
+        """\
+        import pytest
+
+
+        @pytest.fixture
+        def doeff_interpreter():
+            def run_program(program, *, env=None):
+                from doeff import run
+
+                if env:
+                    raise ValueError("test interpreter does not accept env")
+                return run(program)
+
+            return run_program
+        """
+    )
+    pytester.mkdir("docs")
+    pytester.mkdir("docs/adr")
+    pytester.makefile(
+        ".hy",
+        **{
+            "docs/adr/defadr_0099_sample": """\
+                (require doeff-adr.macros [defadr deftest rule law])
+                (import doeff-adr.macros [fact counterexample])
+
+                (defadr ADR-SAMPLE-099
+                  :title "pytest plugin sample"
+                  :status "accepted"
+                  :problem [(fact "plugin should collect this file")]
+                  :decision [(rule R1 "collect defadr hy files")]
+                  :laws [(law collected-by-pytest
+                           :statement "defadr_*.hy is collected"
+                           :counterexamples [(counterexample "pytest sees no tests")])]
+                  :enforcement
+                    [(deftest test-plugin-inline-deftest
+                       (assert (= (+ 1 1) 2)))])
+                """,
+        },
+    )
+
+    result = pytester.runpytest("docs/adr/defadr_0099_sample.hy", "-q")
+
+    result.assert_outcomes(passed=2)
