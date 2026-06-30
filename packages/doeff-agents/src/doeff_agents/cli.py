@@ -1,5 +1,6 @@
 """CLI for doeff-agents."""
 
+import json
 import sys
 import time
 from pathlib import Path
@@ -233,6 +234,37 @@ def run(
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
+
+
+@cli.group("agentd")
+def agentd_group() -> None:
+    """Manage the doeff-agentd supervisor."""
+
+
+@agentd_group.command("ensure")
+@click.option("--json", "emit_json", is_flag=True, help="Emit machine-readable readiness JSON")
+def agentd_ensure_command(emit_json: bool) -> None:
+    """Ensure doeff-agentd is reachable."""
+    try:
+        client = ensure_agentd()
+        status = client.status()
+    except AgentdUnavailableError as error:
+        _print_agentd_unavailable(error)
+        sys.exit(1)
+    except (AgentdClientError, OSError) as error:
+        _print_agentd_request_error(error)
+        sys.exit(1)
+
+    if emit_json:
+        click.echo(
+            json.dumps(
+                {"socket_path": str(client.socket_path), "status": status},
+                sort_keys=True,
+            )
+        )
+        return
+
+    console.print(f"[green]✓[/green] agentd ready: {client.socket_path}")
 
 
 @cli.command("ps")

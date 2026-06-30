@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,14 @@ class FakeAgentdClient:
         self.calls.append(("list_sessions_with_warnings", query))
         return AgentdSessionList(snapshots=tuple(self.snapshots), warnings=self.warnings)
 
+    @property
+    def socket_path(self) -> Path:
+        return Path("/tmp/doeff-agentd-test.sock")
+
+    def status(self) -> dict[str, str]:
+        self.calls.append(("status", None))
+        return {"state": "running"}
+
     def capture_session(self, session_id: str, *, lines: int = 100) -> str:
         self.captures.append((session_id, lines))
         return f"captured from {session_id}"
@@ -79,6 +88,24 @@ def test_ps_lists_agentd_sessions_not_tmux(
     assert "agentd-tmux" in result.output
     assert "running" in result.output
     assert client.calls == [("list_sessions_with_warnings", None)]
+
+
+def test_agentd_ensure_emits_readiness_json(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    client = FakeAgentdClient([])
+    monkeypatch.setattr(cli_module, "ensure_agentd", lambda: client)
+
+    result = runner.invoke(cli, ["agentd", "ensure", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload == {
+        "socket_path": "/tmp/doeff-agentd-test.sock",
+        "status": {"state": "running"},
+    }
+    assert client.calls == [("status", None)]
 
 
 def test_ps_warns_about_unparseable_agentd_rows(
@@ -181,6 +208,7 @@ def test_attach_resolves_session_in_agentd(
 @pytest.mark.parametrize(
     "command",
     [
+        ["agentd", "ensure"],
         ["ps"],
         ["watch", "agentd-s1"],
         ["output", "agentd-s1"],
