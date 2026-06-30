@@ -70,6 +70,7 @@ doeff-traverse = { workspace = true }
 doeff-docker = { workspace = true }
 doeff-ml-nexus = { workspace = true }
 doeff-hy = { workspace = true }
+doeff-adr = { workspace = true }
 
 [tool.pytest.ini_options]
 timeout = 60
@@ -77,7 +78,12 @@ timeout_method = "thread"
 timeout_func_only = false
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
-testpaths = ["tests", "packages/doeff-vm/tests", "packages/doeff-vm-core/tests"]
+testpaths = [
+    "tests",
+    "packages/doeff-adr/tests",
+    "packages/doeff-vm/tests",
+    "packages/doeff-vm-core/tests",
+]
 markers = [
     "e2e: tests that exercise external integrations and may require real API keys",
     "requires_opencode: tests that require a running OpenCode server",
@@ -136,5 +142,6 @@ dev = [
     "pytest-timeout>=2.3.1",
     "hy>=1.2.0",
     "doeff-hy",
+    "doeff-adr",
     "cloudpickle>=3.0",
 ]

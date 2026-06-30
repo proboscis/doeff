@@ -45,6 +45,7 @@ verification are still mandatory before publishing.
 | `doeff-notify` | notification effects | after `doeff` |
 | `doeff-git` | Git effects used by orchestration packages | after `doeff` |
 | `doeff-flow` | workflow trace package | after `doeff` |
+| `doeff-adr` | executable ADR contract package | after `doeff-hy` |
 | `doeff-agentic` | workflow/session package | after `doeff-flow`, `doeff-agents` |
 | `doeff-conductor` | orchestration package | after `doeff-git`, `doeff-agentic`, `doeff-flow` |
 | `doeff-openai` | LLM provider package | after `doeff-llm` |
