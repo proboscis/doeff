@@ -114,3 +114,5 @@ ORCH_PROMPT.md
 python/
 !tests/semgrep/fixtures/python/
 !tests/semgrep/fixtures/python/**
+tests/semgrep/fixtures/python/**/__pycache__/
+tests/semgrep/fixtures/python/**/*.py[cod]
