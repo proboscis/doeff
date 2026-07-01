@@ -5,10 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from doeff_agents import AgentType
 
-ARTIFACT_SCHEMA = {
+RESULT_SCHEMA = {
     "type": "object",
     "required": ["summary"],
     "properties": {"summary": {"type": "string"}},
@@ -53,7 +52,7 @@ def test_agent_session_spec_has_no_result_schema(tmp_path: Path) -> None:
             session_name="bad",
             agent_type=AgentType.CODEX,
             work_dir=tmp_path,
-            result_schema=ARTIFACT_SCHEMA,  # type: ignore[call-arg]
+            result_schema=RESULT_SCHEMA,  # type: ignore[call-arg]
         )
 
 
@@ -77,10 +76,10 @@ def test_agent_invocation_spec_requires_result_schema(tmp_path: Path) -> None:
         agent_type=AgentType.CODEX,
         work_dir=tmp_path,
         prompt="return data",
-        result_schema=ARTIFACT_SCHEMA,
+        result_schema=RESULT_SCHEMA,
     )
 
-    assert spec.result_schema is ARTIFACT_SCHEMA
+    assert spec.result_schema is RESULT_SCHEMA
     assert spec.session_id == "run-001-triage-0"
 
 
@@ -114,13 +113,13 @@ def test_invoke_agent_lowers_to_schemaful_agent_effect(tmp_path: Path) -> None:
             agent_type=AgentType.CODEX,
             work_dir=tmp_path,
             prompt="return data",
-            result_schema=ARTIFACT_SCHEMA,
+            result_schema=RESULT_SCHEMA,
             max_retries=3,
         )
     )
 
     assert isinstance(effect, AgentEffect)
-    assert effect.task.result_schema is ARTIFACT_SCHEMA
+    assert effect.task.result_schema is RESULT_SCHEMA
     assert effect.task.max_retries == 3
     assert effect.task.session_id == "run-001-triage-0"
 
@@ -137,10 +136,10 @@ def test_start_agent_invocation_lowers_to_schemaful_launch_session(tmp_path: Pat
             agent_type=AgentType.CODEX,
             work_dir=tmp_path,
             prompt="return data",
-            result_schema=ARTIFACT_SCHEMA,
+            result_schema=RESULT_SCHEMA,
         )
     )
 
     assert isinstance(effect, LaunchSessionEffect)
-    assert effect.spec.result_schema is ARTIFACT_SCHEMA
+    assert effect.spec.result_schema is RESULT_SCHEMA
     assert effect.spec.session_id == "run-001-eval-1"

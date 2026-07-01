@@ -18,7 +18,7 @@ from doeff_agents.agentd_client import AgentdClient
 from doeff_agents.claude_home import prepare_claude_home
 from doeff_agents.effects import AgentSessionLifecycle, AwaitStatus
 
-ARTIFACT_SCHEMA: dict[str, Any] = {
+RESULT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "required": ["summary", "ok"],
     "properties": {
@@ -90,7 +90,7 @@ def run_agentd_real_agent_result_retry_e2e(
                 lifecycle=AgentSessionLifecycle.RUN_TO_COMPLETION,
                 session_env=_session_env(agent_type, runtime_dir, work_dir),
                 expected_result={
-                    "payload_schema": ARTIFACT_SCHEMA,
+                    "payload_schema": RESULT_SCHEMA,
                     "max_retries": 2,
                     "retry_prompt": _retry_prompt(agent_type),
                 },
@@ -131,10 +131,12 @@ def run_agentd_real_agent_result_retry_e2e(
 def _initial_prompt(agent_type: str) -> str:
     fixed = _fixed_summary(agent_type)
     return (
-        "Live agentd retry E2E. First write exactly "
-        '{"summary":"first invalid"} to the required result file and wait. '
-        "Do not add ok yet. After agentd sends a retry prompt, overwrite it "
-        f'with exactly {{"summary":"{fixed}","ok":true}} and wait. '
+        "Live agentd retry E2E. First return exactly this structured result block "
+        'with no ok field:\nDOEFF_AGENT_RESULT_BEGIN\n{"summary":"first invalid"}\n'
+        "DOEFF_AGENT_RESULT_END\n"
+        "After agentd sends a retry prompt, return exactly this corrected block:\n"
+        f'DOEFF_AGENT_RESULT_BEGIN\n{{"summary":"{fixed}","ok":true}}\n'
+        "DOEFF_AGENT_RESULT_END\n"
         "Waiting means end your turn at the interactive prompt; do not run "
         "sleep, background terminals, loops, or long-running commands."
     )
@@ -145,10 +147,8 @@ def _retry_prompt(agent_type: str) -> str:
     payload = f'{{"summary":"{fixed}","ok":true}}'
     return (
         "Expected retry turn. agentd rejected the first result: %REASON%. "
-        "Your only task now is to overwrite %RESULT_FILE% with this exact JSON, "
-        f"with no markdown fences and no extra text: {payload}. "
-        "Use this exact shell command, then stop at the interactive prompt:\n"
-        f"cat > %RESULT_FILE% <<'JSON'\n{payload}\nJSON\n"
+        "Your only task now is to return this exact block, with no markdown fences "
+        f"and no extra text:\n%RESULT_BLOCK_BEGIN%\n{payload}\n%RESULT_BLOCK_END%\n"
         "Do not run sleep, background terminals, loops, or long-running commands."
     )
 
@@ -193,9 +193,8 @@ def _prepare_real_claude_home(work_dir: Path) -> Path:
 
 
 def _real_claude_config_dir() -> Path:
-    configured = (
-        os.environ.get("DOEFF_AGENTS_REAL_CLAUDE_CONFIG_DIR")
-        or os.environ.get("DOEFF_AGENTS_PERSONAL_CLAUDE_CONFIG_DIR")
+    configured = os.environ.get("DOEFF_AGENTS_REAL_CLAUDE_CONFIG_DIR") or os.environ.get(
+        "DOEFF_AGENTS_PERSONAL_CLAUDE_CONFIG_DIR"
     )
     if configured:
         return Path(configured).expanduser()
@@ -213,8 +212,7 @@ def _assert_real_claude_auth(claude_json: Path, expected_email: str) -> None:
     data = json.loads(claude_json.read_text(encoding="utf-8"))
     email = data.get("oauthAccount", {}).get("emailAddress")
     assert email == expected_email, (
-        f"Claude Code auth for real-agent E2E must be {expected_email}; "
-        f"{claude_json} has {email!r}"
+        f"Claude Code auth for real-agent E2E must be {expected_email}; {claude_json} has {email!r}"
     )
 
 
@@ -241,8 +239,7 @@ def _wait_for_agentd(
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             raise AssertionError(
-                f"doeff-agentd exited early with {proc.returncode}\n"
-                f"{_read_text(log_path)}"
+                f"doeff-agentd exited early with {proc.returncode}\n{_read_text(log_path)}"
             )
         try:
             client.status()
