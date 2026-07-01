@@ -77,6 +77,7 @@ from doeff_agents.shell import assert_no_forbidden_agent_env, wrap_with_shell_ex
 
 RESULT_BLOCK_BEGIN = "DOEFF_AGENT_RESULT_BEGIN"
 RESULT_BLOCK_END = "DOEFF_AGENT_RESULT_END"
+AWAIT_RESULT_CAPTURE_LINES = 1000
 
 
 class AgentHandler(ABC):
@@ -953,8 +954,15 @@ class TmuxAgentHandler(AgentHandler):
 
             observation = self.handle_monitor(MonitorEffect(handle=effect.handle))
             output = state.monitor_state.last_output
-            if state.result_schema is not None and output and _has_result_block(output):
+            if output and _has_result_block(output):
                 return self._await_outcome_from_result_output(state, output)
+            if state.result_schema is not None:
+                result_output = self._backend.capture_pane(
+                    state.pane_id,
+                    AWAIT_RESULT_CAPTURE_LINES,
+                )
+                if result_output and _has_result_block(result_output):
+                    return self._await_outcome_from_result_output(state, result_output)
             if observation.status in (SessionStatus.BLOCKED, SessionStatus.BLOCKED_API):
                 return AwaitOutcome(
                     status=AwaitStatus.AWAITING_INPUT,

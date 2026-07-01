@@ -47,7 +47,7 @@ from doeff_agents.adapters.base import (
 )
 from doeff_agents.adapters.codex import CodexAdapter
 from doeff_agents.effects import AwaitResultEffect, AwaitStatus, LaunchSession
-from doeff_agents.handlers.production import _extract_result_payload
+from doeff_agents.handlers.production import AWAIT_RESULT_CAPTURE_LINES, _extract_result_payload
 from doeff_agents.result_validation import validate_result_payload
 from doeff_agents.runtime import ClaudeRuntimePolicy
 from doeff_agents.session_backend import SessionBackend
@@ -577,6 +577,62 @@ def test_l2_await_result_prefers_schema_result_block_while_session_still_exists(
 
     assert outcome.status == AwaitStatus.EXITED
     assert outcome.result == {"status": "prepared"}
+
+
+def test_l2_await_result_uses_extended_capture_before_awaiting_input(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class LineLimitedBackend(FakeBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.capture_lines: list[int] = []
+
+        def capture_pane(
+            self,
+            target: str,
+            lines: int = 100,
+            *,
+            strip_ansi_codes: bool = True,
+        ) -> str:
+            self.capture_lines.append(lines)
+            text = self.captures.get(target, "")
+            return "\n".join(text.splitlines()[-lines:])
+
+    backend = LineLimitedBackend()
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+    )
+    work_dir = tmp_path / "workspace"
+    work_dir.mkdir()
+    spec = AgentSpec(
+        run_id="readiness",
+        node_id="sbi-recon",
+        attempt=0,
+        agent_type=AgentType.CLAUDE,
+        work_dir=work_dir,
+        prompt="write account state",
+        result_schema={"type": "object", "required": ["status"]},
+    )
+    handler = TmuxAgentHandler(backend=backend)
+    handle = handler.handle_launch_session(LaunchSession(spec))
+    backend.captures[f"%{handle.session_id}"] = "\n".join(
+        [
+            "DOEFF_AGENT_RESULT_BEGIN",
+            '{"status": "prepared"}',
+            "DOEFF_AGENT_RESULT_END",
+            *[f"tool noise {idx}" for idx in range(150)],
+            "────────────────────────────────────────────────────────────────",
+            "\u276f\u00a0",
+            "────────────────────────────────────────────────────────────────",
+        ]
+    )
+
+    outcome = handler.handle_await_result(AwaitResultEffect(handle=handle, timeout_seconds=0.01))
+
+    assert outcome.status == AwaitStatus.EXITED
+    assert outcome.result == {"status": "prepared"}
+    assert AWAIT_RESULT_CAPTURE_LINES in backend.capture_lines
 
 
 def test_imperative_session_api_accepts_injected_backend(monkeypatch) -> None:
