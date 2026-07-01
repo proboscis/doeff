@@ -423,8 +423,9 @@ def _result_contract_prompt(result_schema: dict[str, object]) -> str:
         "\n\n## Structured Result Contract (managed by doeff-agents)\n"
         "Before the agent process exits, return exactly one structured result. "
         "Do not create JSON result files in the workspace. In the final response, "
-        f"start a line with {RESULT_BLOCK_BEGIN}, put the JSON object on the "
-        f"following line or lines, and end with a line containing {RESULT_BLOCK_END}. "
+        f"start a line with {RESULT_BLOCK_BEGIN}, put a compact single-line "
+        f"JSON object on the next line, and end with a line containing "
+        f"{RESULT_BLOCK_END}. Do not pretty-print the result JSON. "
         "Do not echo an example block from these instructions. This is a "
         "doeff-agents transport detail; the domain task only decides the JSON "
         "payload.\n\n"
@@ -458,16 +459,28 @@ def _has_complete_result_block(output: str) -> bool:
 
 
 def _extract_result_payload(output: str) -> tuple[object | None, str | None]:
-    begin = output.rfind(RESULT_BLOCK_BEGIN)
-    if begin < 0:
+    starts = [match.start() for match in re.finditer(re.escape(RESULT_BLOCK_BEGIN), output)]
+    if not starts:
         return None, f"structured result block not found: missing {RESULT_BLOCK_BEGIN}"
-    rest = output[begin + len(RESULT_BLOCK_BEGIN) :]
-    end = rest.find(RESULT_BLOCK_END)
-    if end < 0:
-        return None, f"structured result block not found: missing {RESULT_BLOCK_END}"
-    raw = rest[:end].strip()
+
+    latest_error = f"structured result block not found: missing {RESULT_BLOCK_END}"
+    for begin in reversed(starts):
+        rest = output[begin + len(RESULT_BLOCK_BEGIN) :]
+        end = rest.find(RESULT_BLOCK_END)
+        if end < 0:
+            continue
+        raw = rest[:end].strip()
+        payload, error = _parse_result_payload_candidate(raw)
+        if error is None:
+            return payload, None
+        latest_error = error
+    return None, latest_error
+
+
+def _parse_result_payload_candidate(raw: str) -> tuple[object | None, str | None]:
     if not raw:
         return None, "structured result block is empty"
+    raw = tmux.strip_ansi(raw)
     try:
         return json.loads(raw), None
     except json.JSONDecodeError as exc:
