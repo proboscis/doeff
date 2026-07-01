@@ -329,7 +329,7 @@ def _dismiss_onboarding_dialogs(
     timeout: float = 60.0,
     backend: SessionBackend | None = None,
 ) -> int:
-    """Dismiss onboarding dialogs by sending Enter (or Down+Enter for bypass permissions).
+    """Dismiss onboarding dialogs.
 
     Handles dialogs that may appear multiple times or not at all.
     Keeps polling until no new dialog is found for 5 consecutive seconds.
@@ -352,6 +352,15 @@ def _dismiss_onboarding_dialogs(
         output = active_backend.capture_pane(target, 50)
 
         matched = False
+
+        if _screen_reader_trust_prompt_visible(output):
+            logger.info("Onboarding: screen-reader trust prompt — sending y")
+            active_backend.send_keys(target, "y")
+            dismissed += 1
+            matched = True
+            last_match_time = time.time()
+            time.sleep(1.5)
+            continue
 
         # Check bypass permissions (needs Down+Enter, not just Enter)
         if re.search(r"Yes, I accept", output):
@@ -390,6 +399,15 @@ def _dismiss_onboarding_dialogs(
 
     logger.info("Onboarding: %d dialogs dismissed", dismissed)
     return dismissed
+
+
+def _screen_reader_trust_prompt_visible(output: str) -> bool:
+    return (
+        "[Accessible screen reader mode: on]" in output
+        and "Quick safety check: Is this a project you created or one you trust?" in output
+        and "Please answer y or n." in output
+        and "Enter y/n:" in output
+    )
 
 
 def _dismiss_trust_dialog(
