@@ -42,6 +42,13 @@ def test_await_result_reobserves_transient_awaiting_input(tmp_path: Path) -> Non
     )
 
 
+def test_await_result_result_wins_over_awaiting_input_status(tmp_path: Path) -> None:
+    await_result_deftests.test_await_result_result_wins_over_awaiting_input_status(
+        _deftest_interpreter,
+        tmp_path,
+    )
+
+
 def test_await_result_returns_stable_awaiting_input(tmp_path: Path) -> None:
     await_result_deftests.test_await_result_returns_stable_awaiting_input(
         _deftest_interpreter,

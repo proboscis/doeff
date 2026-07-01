@@ -20,7 +20,10 @@
        :evidence "packages/doeff-agents/src/doeff_agents/handlers/production.py")
      (fact
        "2026-07-02 の Nakagawa SBI L2 readiness では、agent pane に schema-valid な DOEFF_AGENT_RESULT_BEGIN/END block が出ていたが、通常監視幅と入力待ち判定の競合で AwaitResult.result として回収できなかった。"
-       :evidence "packages/doeff-agents/tests/test_session_backend.py::test_l2_await_result_uses_extended_capture_before_awaiting_input")]
+       :evidence "packages/doeff-agents/tests/test_session_backend.py::test_l2_await_result_uses_extended_capture_before_awaiting_input")
+     (fact
+       "同じ失敗モードでは、AwaitOutcome.status が AWAITING_INPUT でも schema-valid result を持つ可能性があるため、effectful loop も status より result 値を優先する必要がある。"
+       :evidence "packages/doeff-agents/tests/test_agent_launch_invariants.py::test_await_result_result_wins_over_awaiting_input_status")]
   :context
     [(interpretation
        "agent が生成する JSON file は input/result/evidence/checkpoint のどの用途でも runtime contract にしない。結果は doeff-agents が管理する structured result channel で回収する。")
@@ -32,7 +35,8 @@
      (rule R3 "result schema validation、invalid result retry、missing result retry は doeff-agents handler の責務である。")
      (rule R4 "doeff-agents は agent に .agentd-result.json / result.json などの JSON result file を作らせない。")
      (rule R5 "診断 / 証跡 / checkpoint が必要な caller は AgentSpec.result_schema に明示し、AwaitOutcome.result から受け取る。side-channel file を使わない。")
-     (rule R6 "AwaitResult は pane に schema-valid result block が存在する場合、agent がまだ起動中または入力待ち表示でも、その result を入力待ち判定より優先して返す。")]
+     (rule R6 "AwaitResult は pane に schema-valid result block が存在する場合、agent がまだ起動中または入力待ち表示でも、その result を入力待ち判定より優先して返す。")
+     (rule R7 "AwaitResult effectful loop は AwaitOutcome.result が存在し validation_error がない場合、AwaitOutcome.status が AWAITING_INPUT でも待受を終了して caller に返す。")]
   :laws
     [(law await-result-only-public-boundary
        :statement "doeff_agents_user_result => AwaitResult(handle).result and not agent_created_file"
@@ -54,7 +58,12 @@
        :statement "pane_contains_valid_result_block => AwaitResult.result regardless_of_prompt_status"
        :counterexamples
          [(counterexample "handler sees Claude prompt after the block and returns AWAITING_INPUT")
-          (counterexample "handler captures only the latest status area and misses an older result block")])]
+          (counterexample "handler captures only the latest status area and misses an older result block")])
+     (law result-value-wins-over-await-status
+       :statement "AwaitOutcome.result and no validation_error => caller receives outcome regardless_of_AwaitStatus"
+       :counterexamples
+         [(counterexample "effectful loop keeps waiting because status is AWAITING_INPUT even though result is present")
+          (counterexample "application code requires AwaitStatus.EXITED after doeff-agents has returned a schema-valid result")])]
   :enforcement
     [(defsemgrep no-public-agentd-result-file-read
        :languages ["generic"]

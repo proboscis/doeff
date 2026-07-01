@@ -48,6 +48,17 @@
   (assert (= outcome.result {"ok" True})))
 
 
+(deftest test-await-result-result-wins-over-awaiting-input-status [tmp-path]
+  (setv handler
+        (ScenarioAgentHandler
+          :scripts {_SID [(ScenarioStep
+                            :status AwaitStatus.AWAITING_INPUT
+                            :payload {"ok" True})]}))
+  (setv outcome (run (scheduled (.wrap handler (_await-session-once tmp-path)))))
+  (assert (= outcome.status AwaitStatus.AWAITING_INPUT))
+  (assert (= outcome.result {"ok" True})))
+
+
 (deftest test-await-result-returns-stable-awaiting-input [tmp-path]
   (setv handler
         (ScenarioAgentHandler
