@@ -65,6 +65,7 @@ from doeff_agents.monitor import (
     MonitorState,
     SessionStatus,
     detect_status,
+    evolve_status,
     hash_content,
     is_waiting_for_input,
 )
@@ -789,9 +790,11 @@ class TmuxAgentHandler(AgentHandler):
                 output_snippet=output[-500:] if output else None,
             )
 
-        new_status = detect_status(output, state.monitor_state, output_changed, has_prompt)
-        if new_status:
-            state.status = new_status
+        state.status = evolve_status(
+            state.status,
+            detect_status(output, state.monitor_state, output_changed, has_prompt),
+            has_prompt=has_prompt,
+        )
 
         observation = Observation(
             status=state.status,

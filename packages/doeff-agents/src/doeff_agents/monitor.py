@@ -235,3 +235,23 @@ def detect_status(
     elif has_prompt:
         status = SessionStatus.BLOCKED
     return status
+
+
+def evolve_status(
+    current: SessionStatus,
+    detected: SessionStatus | None,
+    *,
+    has_prompt: bool,
+) -> SessionStatus:
+    """Apply status detection without keeping stale input-blocked state.
+
+    A stable Claude Code status footer can produce no fresh detection while the
+    previous state is BLOCKED from an earlier idle prompt. If the current pane no
+    longer contains a real input prompt, the session must remain awaitable
+    instead of handing control back as awaiting input.
+    """
+    if detected is not None:
+        return detected
+    if current == SessionStatus.BLOCKED and not has_prompt:
+        return SessionStatus.RUNNING
+    return current

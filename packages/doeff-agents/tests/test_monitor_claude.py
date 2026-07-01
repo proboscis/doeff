@@ -12,6 +12,7 @@ from doeff_agents.monitor import (
     MonitorState,
     SessionStatus,
     detect_status,
+    evolve_status,
     has_claude_active_marker,
     has_claude_background_shell_marker,
     is_waiting_for_input,
@@ -86,6 +87,34 @@ def test_stable_claude_permission_footer_alone_does_not_block() -> None:
             has_prompt=is_waiting_for_input(output),
         )
         is None
+    )
+
+
+def test_stale_claude_blocked_state_clears_without_current_prompt() -> None:
+    output = (
+        "⏺ Called sbi\n"
+        "  ⎿  Running broker query...\n\n"
+        "✻ Marinating… (40s · ↓ tokens)\n\n"
+        "────────────────────────────────────────────────────────────────────────────────\n"
+        "❯\u00a0\n"
+        "────────────────────────────────────────────────────────────────────────────────\n"
+        "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents\n"
+    )
+    detected = detect_status(
+        output,
+        _past_monitor_state(),
+        output_changed=False,
+        has_prompt=is_waiting_for_input(output),
+    )
+
+    assert detected is None
+    assert (
+        evolve_status(
+            SessionStatus.BLOCKED,
+            detected,
+            has_prompt=is_waiting_for_input(output),
+        )
+        == SessionStatus.RUNNING
     )
 
 
