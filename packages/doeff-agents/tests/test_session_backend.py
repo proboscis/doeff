@@ -51,12 +51,13 @@ from doeff_agents.handlers.production import (
     AWAIT_RESULT_CAPTURE_LINES,
     _extract_result_payload,
     _has_complete_result_block,
+    _result_contract_prompt,
 )
 from doeff_agents.result_validation import validate_result_payload
 from doeff_agents.runtime import ClaudeRuntimePolicy
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import InMemoryAgentSessionRepository
-from doeff_agents.tmux import TmuxSessionBackend, _output_has_unsubmitted_paste_input
+from doeff_agents.tmux import TmuxSessionBackend, _output_has_unsubmitted_paste_input, strip_ansi
 
 from doeff.mcp import McpParamSchema, McpToolDef
 
@@ -759,7 +760,7 @@ def test_l2_await_result_ignores_unparseable_raw_transcript_block(
     backend.transcripts[pane] = (
         "DOEFF_AGENT_RESULT_BEGIN\n"
         "\x1b[48;5;237m"
-        '{"status"\x1b[10G: "ok"}\n'
+        '{"status"\x1b[10G "ok"}\n'
         "DOEFF_AGENT_RESULT_END\n"
     )
 
@@ -1104,6 +1105,36 @@ def test_result_payload_extract_repairs_wrapped_json_string_lines() -> None:
     assert isinstance(payload, dict)
     assert payload["pr_url"] == "https://github.com/example/repo/pull/1"
     assert payload["branch"] == "feat/long-branch"
+
+
+def test_result_payload_extract_uses_latest_parseable_block() -> None:
+    output = (
+        "DOEFF_AGENT_RESULT_BEGIN\n"
+        '{"status":"first"}\n'
+        "DOEFF_AGENT_RESULT_END\n"
+        "DOEFF_AGENT_RESULT_BEGIN\n"
+        "\x1b]0;Execute doeff-agents structured result workflow\x07"
+        '{"status"\x1b[10G "broken"}\n'
+        "DOEFF_AGENT_RESULT_END\n"
+    )
+
+    payload, error = _extract_result_payload(output)
+
+    assert error is None
+    assert payload == {"status": "first"}
+
+
+def test_result_contract_prompt_requires_compact_single_line_json() -> None:
+    prompt = _result_contract_prompt({"type": "object", "required": ["status"]})
+
+    assert "compact single-line JSON object" in prompt
+    assert "Do not pretty-print the result JSON" in prompt
+
+
+def test_tmux_strip_ansi_removes_osc_and_csi_controls() -> None:
+    text = "\x1b]0;title\x07DOEFF_AGENT_RESULT_BEGIN\x1b[?25l\n{}"
+
+    assert strip_ansi(text) == "DOEFF_AGENT_RESULT_BEGIN\n{}"
 
 
 def test_result_block_is_complete_only_after_end_marker() -> None:
