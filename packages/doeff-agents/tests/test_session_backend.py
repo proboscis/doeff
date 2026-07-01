@@ -166,6 +166,7 @@ class FakeBackend(SessionBackend):
         self.created: list[SessionConfig] = []
         self.sent: list[tuple[str, str, bool, bool]] = []
         self.captures: dict[str, str] = {}
+        self.transcripts: dict[str, str] = {}
         self.killed: list[str] = []
         self.attached: list[str] = []
 
@@ -207,6 +208,16 @@ class FakeBackend(SessionBackend):
         strip_ansi_codes: bool = True,
     ) -> str:
         return self.captures.get(target, "")
+
+    def capture_transcript(
+        self,
+        target: str,
+        lines: int = 100,
+        *,
+        strip_ansi_codes: bool = True,
+    ) -> str:
+        text = self.transcripts.get(target, "")
+        return "\n".join(text.splitlines()[-lines:])
 
     def kill_session(self, session: str) -> None:
         self.killed.append(session)
@@ -635,6 +646,50 @@ def test_l2_await_result_uses_extended_capture_before_awaiting_input(
     assert AWAIT_RESULT_CAPTURE_LINES in backend.capture_lines
 
 
+def test_l2_await_result_uses_transcript_when_result_begin_scrolled_off_screen(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = FakeBackend()
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+    )
+    work_dir = tmp_path / "workspace"
+    work_dir.mkdir()
+    spec = AgentSpec(
+        run_id="readiness",
+        node_id="sbi-recon",
+        attempt=0,
+        agent_type=AgentType.CLAUDE,
+        work_dir=work_dir,
+        prompt="write account state",
+        result_schema={"type": "object", "required": ["status"]},
+    )
+    handler = TmuxAgentHandler(backend=backend)
+    handle = handler.handle_launch_session(LaunchSession(spec))
+    pane = f"%{handle.session_id}"
+    backend.captures[pane] = (
+        '"reason": "long readiness blocker"}\n'
+        "DOEFF_AGENT_RESULT_END\n"
+        "────────────────────────────────────────────────────────────────\n"
+        "\u276f\u00a0retry the shortable inventory query\n"
+        "────────────────────────────────────────────────────────────────\n"
+    )
+    backend.transcripts[pane] = (
+        "DOEFF_AGENT_RESULT_BEGIN\n"
+        '{"status": "blocked", "reason": "long readiness blocker"}\n'
+        "DOEFF_AGENT_RESULT_END\n"
+        "────────────────────────────────────────────────────────────────\n"
+        "\u276f\u00a0retry the shortable inventory query\n"
+        "────────────────────────────────────────────────────────────────\n"
+    )
+
+    outcome = handler.handle_await_result(AwaitResultEffect(handle=handle, timeout_seconds=0.01))
+
+    assert outcome.status == AwaitStatus.EXITED
+    assert outcome.result == {"status": "blocked", "reason": "long readiness blocker"}
+
+
 def test_l2_await_result_does_not_treat_claude_status_footer_as_input(
     monkeypatch,
     tmp_path: Path,
@@ -910,6 +965,42 @@ def test_tmux_backend_uses_injected_executable(monkeypatch, tmp_path: Path) -> N
     capture_calls = [call for call in backend_calls if len(call) > 1 and call[1] == "capture-pane"]
     assert capture_calls
     assert all("-J" in call for call in capture_calls)
+
+
+def test_tmux_backend_captures_session_transcript_tail(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args, **kwargs):
+        calls.append(list(args))
+        if args[1] == "-V":
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        if args[1] == "has-session":
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+        if args[1] == "new-session":
+            return subprocess.CompletedProcess(args, 0, stdout="%42\n", stderr="")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("doeff_agents.tmux.subprocess.run", fake_run)
+    monkeypatch.setattr("doeff_agents.tmux.tempfile.gettempdir", lambda: str(tmp_path))
+
+    backend = TmuxSessionBackend()
+    info = backend.new_session(SessionConfig(session_name="worker"))
+    path = backend._transcript_paths[info.pane_id]
+    path.write_text(
+        'one\nDOEFF_AGENT_RESULT_BEGIN\n{"status":"ok"}\nDOEFF_AGENT_RESULT_END\n',
+        encoding="utf-8",
+    )
+
+    transcript = backend.capture_transcript(info.pane_id, 3)
+
+    assert "DOEFF_AGENT_RESULT_BEGIN" in transcript
+    assert "DOEFF_AGENT_RESULT_END" in transcript
+    pipe_calls = [call for call in calls if len(call) > 1 and call[1] == "pipe-pane"]
+    assert pipe_calls
+    assert str(path) in pipe_calls[0][-1]
 
 
 def test_result_payload_extract_repairs_wrapped_json_string_lines() -> None:

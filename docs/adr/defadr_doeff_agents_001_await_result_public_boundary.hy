@@ -32,7 +32,10 @@
        :evidence "packages/doeff-agents/tests/test_session_backend.py::test_l2_await_result_clears_stale_blocked_state_when_current_footer_is_not_input")
      (fact
        "Claude Code の tmux pane は launch 直後や長い MCP tool 後に shell prompt 風の行を含むことがある。tmux session がまだ存在する間にこれだけで EXITED + result None を返すと、schema result が出る直前に caller が absent result retry を消費する。"
-       :evidence "packages/doeff-agents/tests/test_session_backend.py::test_l2_await_result_does_not_finalize_absent_result_on_live_tmux_shell_prompt")]
+       :evidence "packages/doeff-agents/tests/test_session_backend.py::test_l2_await_result_does_not_finalize_absent_result_on_live_tmux_shell_prompt")
+     (fact
+       "2026-07-02 の Nakagawa SBI L2 readiness では、Claude が長い readiness_blocker JSON を出した結果、tmux 可視 pane には DOEFF_AGENT_RESULT_END だけが残り、DOEFF_AGENT_RESULT_BEGIN が流れて AwaitResult が result を回収できなかった。"
+       :evidence "packages/doeff-agents/tests/test_session_backend.py::test_l2_await_result_uses_transcript_when_result_begin_scrolled_off_screen")]
   :context
     [(interpretation
        "agent が生成する JSON file は input/result/evidence/checkpoint のどの用途でも runtime contract にしない。結果は doeff-agents が管理する structured result channel で回収する。")
@@ -48,7 +51,8 @@
      (rule R7 "AwaitResult effectful loop は AwaitOutcome.result が存在し validation_error がない場合、AwaitOutcome.status が AWAITING_INPUT でも待受を終了して caller に返す。")
      (rule R8 "Claude Code の常時フッターだけを AwaitResult の AWAITING_INPUT 根拠にしてはならない。明示的な入力要求または permission prompt だけを入力待ちとして扱う。")
      (rule R9 "doeff-agents は現在 pane に入力待ち根拠がない BLOCKED 状態を保持してはならない。古い BLOCKED は RUNNING に戻して AwaitResult を継続する。")
-     (rule R10 "tmux session がまだ存在する Claude Code L2 session では、shell prompt 風の表示だけで result absent を確定してはならない。結果がなければ heartbeat timeout として再監視する。")]
+     (rule R10 "tmux session がまだ存在する Claude Code L2 session では、shell prompt 風の表示だけで result absent を確定してはならない。結果がなければ heartbeat timeout として再監視する。")
+     (rule R11 "tmux backend の AwaitResult は可視 pane だけに依存せず、session 開始時からの transcript tail からも DOEFF_AGENT_RESULT_BEGIN/END block を回収する。")]
   :laws
     [(law await-result-only-public-boundary
        :statement "doeff_agents_user_result => AwaitResult(handle).result and not agent_created_file"
@@ -90,7 +94,12 @@
        :statement "tmux_session_exists and no_result_block => AwaitStatus.TIMED_OUT not EXITED_absent"
        :counterexamples
          [(counterexample "Claude launch echo with a shell prompt returns EXITED + result None")
-          (counterexample "a post-MCP idle-looking pane consumes absent-result retries before the schema block appears")])]
+          (counterexample "a post-MCP idle-looking pane consumes absent-result retries before the schema block appears")])
+     (law result-block-may-outlive-visible-pane
+       :statement "transcript_contains_valid_result_block => AwaitResult.result even_if_visible_pane_lost_BEGIN"
+       :counterexamples
+         [(counterexample "visible pane contains DOEFF_AGENT_RESULT_END but not BEGIN, so AwaitResult ignores a valid transcript result")
+          (counterexample "long readiness blocker JSON scrolls BEGIN out of tmux visible screen and the caller waits until timeout")])]
   :enforcement
     [(defsemgrep no-public-agentd-result-file-read
        :languages ["generic"]

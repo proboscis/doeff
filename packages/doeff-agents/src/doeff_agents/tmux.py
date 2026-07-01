@@ -2,9 +2,12 @@
 
 import os
 import re
+import shlex
 import subprocess
+import tempfile
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 from .session_backend import SessionBackend, SessionConfig, SessionInfo
 from .shell import assert_no_forbidden_agent_env
@@ -40,6 +43,8 @@ class TmuxSessionBackend(SessionBackend):
 
     def __init__(self, executable: str | os.PathLike[str] | None = None) -> None:
         self.executable = str(executable or "tmux")
+        self._transcript_dir = Path(tempfile.gettempdir()) / "doeff-agents-tmux-transcripts"
+        self._transcript_paths: dict[str, Path] = {}
 
     def _args(self, *args: str) -> list[str]:
         return [self.executable, *args]
@@ -90,12 +95,33 @@ class TmuxSessionBackend(SessionBackend):
             check=True,
         )
         pane_id = result.stdout.strip()
+        self._start_transcript_pipe(pane_id, cfg.session_name)
 
         return SessionInfo(
             session_name=cfg.session_name,
             pane_id=pane_id,
             created_at=datetime.now(timezone.utc),
         )
+
+    def _start_transcript_pipe(self, pane_id: str, session_name: str) -> None:
+        self._transcript_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self._transcript_dir.chmod(0o700)
+        safe_session = re.sub(r"[^A-Za-z0-9_.-]+", "_", session_name)
+        safe_pane = re.sub(r"[^A-Za-z0-9_.-]+", "_", pane_id)
+        path = self._transcript_dir / f"{safe_session}-{os.getpid()}-{safe_pane}.log"
+        path.touch(mode=0o600, exist_ok=True)
+        path.chmod(0o600)
+        subprocess.run(
+            self._args(
+                "pipe-pane",
+                "-t",
+                pane_id,
+                "-o",
+                f"cat >> {shlex.quote(str(path))}",
+            ),
+            check=True,
+        )
+        self._transcript_paths[pane_id] = path
 
     def send_keys(
         self,
@@ -173,9 +199,27 @@ class TmuxSessionBackend(SessionBackend):
             output = strip_ansi(output)
         return output
 
+    def capture_transcript(
+        self,
+        target: str,
+        lines: int = 100,
+        *,
+        strip_ansi_codes: bool = True,
+    ) -> str:
+        path = self._transcript_paths.get(target)
+        if path is None or not path.exists():
+            return ""
+        output = _tail_text_lines(path, lines)
+        if strip_ansi_codes:
+            output = strip_ansi(output)
+        return output
+
     def kill_session(self, session: str) -> None:
         self._ensure_tmux_available()
         subprocess.run(self._args("kill-session", "-t", session), check=True)
+        for pane_id, path in list(self._transcript_paths.items()):
+            if session in path.name:
+                self._transcript_paths.pop(pane_id, None)
 
     def attach_session(self, session: str) -> None:
         self._ensure_tmux_available()
@@ -255,6 +299,17 @@ def _literal_prompt_fragments(text: str) -> list[str]:
         fragments.append(normalized[:80])
         fragments.append(normalized[-80:])
     return fragments
+
+
+def _tail_text_lines(path: Path, lines: int) -> str:
+    if lines <= 0:
+        return ""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    selected = text.splitlines()[-lines:]
+    if not selected:
+        return ""
+    suffix = "\n" if text.endswith("\n") else ""
+    return "\n".join(selected) + suffix
 
 
 def is_tmux_available() -> bool:
