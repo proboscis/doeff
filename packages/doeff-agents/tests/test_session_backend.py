@@ -47,7 +47,11 @@ from doeff_agents.adapters.base import (
 )
 from doeff_agents.adapters.codex import CodexAdapter
 from doeff_agents.effects import AwaitResultEffect, AwaitStatus, LaunchSession
-from doeff_agents.handlers.production import AWAIT_RESULT_CAPTURE_LINES, _extract_result_payload
+from doeff_agents.handlers.production import (
+    AWAIT_RESULT_CAPTURE_LINES,
+    _extract_result_payload,
+    _has_complete_result_block,
+)
 from doeff_agents.result_validation import validate_result_payload
 from doeff_agents.runtime import ClaudeRuntimePolicy
 from doeff_agents.session_backend import SessionBackend
@@ -690,6 +694,82 @@ def test_l2_await_result_uses_transcript_when_result_begin_scrolled_off_screen(
     assert outcome.result == {"status": "blocked", "reason": "long readiness blocker"}
 
 
+def test_l2_await_result_waits_until_result_end_marker(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = FakeBackend()
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+    )
+    work_dir = tmp_path / "workspace"
+    work_dir.mkdir()
+    spec = AgentSpec(
+        run_id="readiness",
+        node_id="sbi-recon",
+        attempt=0,
+        agent_type=AgentType.CLAUDE,
+        work_dir=work_dir,
+        prompt="write account state",
+        result_schema={"type": "object", "required": ["status"]},
+    )
+    handler = TmuxAgentHandler(backend=backend)
+    handle = handler.handle_launch_session(LaunchSession(spec))
+    pane = f"%{handle.session_id}"
+    backend.captures[pane] = (
+        "DOEFF_AGENT_RESULT_BEGIN\n"
+        '{"status": "still-printing"'
+    )
+
+    outcome = handler.handle_await_result(AwaitResultEffect(handle=handle, timeout_seconds=0.01))
+
+    assert outcome.status == AwaitStatus.TIMED_OUT
+    assert outcome.result is None
+    assert outcome.validation_error is None
+
+
+def test_l2_await_result_ignores_unparseable_raw_transcript_block(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = FakeBackend()
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+    )
+    work_dir = tmp_path / "workspace"
+    work_dir.mkdir()
+    spec = AgentSpec(
+        run_id="readiness",
+        node_id="sbi-recon",
+        attempt=0,
+        agent_type=AgentType.CLAUDE,
+        work_dir=work_dir,
+        prompt="write account state",
+        result_schema={"type": "object", "required": ["status"]},
+    )
+    handler = TmuxAgentHandler(backend=backend)
+    handle = handler.handle_launch_session(LaunchSession(spec))
+    pane = f"%{handle.session_id}"
+    backend.captures[pane] = (
+        '"status": "ok"}\n'
+        "DOEFF_AGENT_RESULT_END\n"
+        "────────────────────────────────────────────────────────────────\n"
+        "\u276f\u00a0"
+    )
+    backend.transcripts[pane] = (
+        "DOEFF_AGENT_RESULT_BEGIN\n"
+        "\x1b[48;5;237m"
+        '{"status"\x1b[10G: "ok"}\n'
+        "DOEFF_AGENT_RESULT_END\n"
+    )
+
+    outcome = handler.handle_await_result(AwaitResultEffect(handle=handle, timeout_seconds=0.01))
+
+    assert outcome.status == AwaitStatus.TIMED_OUT
+    assert outcome.result is None
+    assert outcome.validation_error is None
+
+
 def test_l2_await_result_does_not_treat_claude_status_footer_as_input(
     monkeypatch,
     tmp_path: Path,
@@ -1024,6 +1104,13 @@ def test_result_payload_extract_repairs_wrapped_json_string_lines() -> None:
     assert isinstance(payload, dict)
     assert payload["pr_url"] == "https://github.com/example/repo/pull/1"
     assert payload["branch"] == "feat/long-branch"
+
+
+def test_result_block_is_complete_only_after_end_marker() -> None:
+    assert not _has_complete_result_block('DOEFF_AGENT_RESULT_BEGIN\n{"status": "ok"')
+    assert _has_complete_result_block(
+        'DOEFF_AGENT_RESULT_BEGIN\n{"status": "ok"}\nDOEFF_AGENT_RESULT_END'
+    )
 
 
 def test_result_validation_pattern_rejects_wrapped_identity_fields() -> None:

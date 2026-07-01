@@ -450,6 +450,13 @@ def _has_result_block(output: str) -> bool:
     return RESULT_BLOCK_BEGIN in output
 
 
+def _has_complete_result_block(output: str) -> bool:
+    begin = output.rfind(RESULT_BLOCK_BEGIN)
+    if begin < 0:
+        return False
+    return RESULT_BLOCK_END in output[begin + len(RESULT_BLOCK_BEGIN) :]
+
+
 def _extract_result_payload(output: str) -> tuple[object | None, str | None]:
     begin = output.rfind(RESULT_BLOCK_BEGIN)
     if begin < 0:
@@ -957,7 +964,7 @@ class TmuxAgentHandler(AgentHandler):
 
             observation = self.handle_monitor(MonitorEffect(handle=effect.handle))
             output = state.monitor_state.last_output
-            if output and _has_result_block(output):
+            if output and _has_complete_result_block(output):
                 return self._await_outcome_from_result_output(state, output)
             if state.result_schema is not None:
                 result_output = self._capture_result_output(state)
@@ -1034,7 +1041,7 @@ class TmuxAgentHandler(AgentHandler):
             state.pane_id,
             AWAIT_RESULT_CAPTURE_LINES,
         )
-        if result_output and _has_result_block(result_output):
+        if result_output and _has_complete_result_block(result_output):
             return result_output
         capture_transcript = getattr(self._backend, "capture_transcript", None)
         if not callable(capture_transcript):
@@ -1043,8 +1050,10 @@ class TmuxAgentHandler(AgentHandler):
             state.pane_id,
             AWAIT_RESULT_CAPTURE_LINES,
         )
-        if transcript_output and _has_result_block(transcript_output):
-            return transcript_output
+        if transcript_output and _has_complete_result_block(transcript_output):
+            _, parse_error = _extract_result_payload(transcript_output)
+            if parse_error is None:
+                return transcript_output
         return None
 
     def _snapshot_from_observation(
