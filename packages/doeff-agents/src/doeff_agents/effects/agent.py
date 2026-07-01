@@ -9,6 +9,7 @@ Key design:
 - Get/List/Observe/Cleanup/Cancel/Attach: session state management by id
 - SessionHandle: immutable value-type identifier
 """
+
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
@@ -58,7 +59,7 @@ class AwaitStatus(Enum):
 
 
 class AgentValidationErrorKind(Enum):
-    """Why an ``agent`` effect could not return a valid artifact."""
+    """Why an ``agent`` effect could not return a valid structured result."""
 
     ABSENT = "absent"
     INVALID = "invalid"
@@ -207,7 +208,9 @@ class AgentSessionSnapshot:
         return cls(
             session_id=handle.session_id,
             session_name=handle.session_id,
-            agent_type=AgentType(str((backend_ref or {}).get("agent_type", AgentType.CUSTOM.value))),
+            agent_type=AgentType(
+                str((backend_ref or {}).get("agent_type", AgentType.CUSTOM.value))
+            ),
             work_dir=Path(str((backend_ref or {}).get("work_dir", "."))),
             lifecycle=lifecycle or AgentSessionLifecycle.RUN_TO_COMPLETION,
             status=status,
@@ -246,16 +249,10 @@ class AgentSessionSnapshot:
             "backend_ref": dict(self.backend_ref),
             "started_at": self.started_at.isoformat(),
             "last_observed_at": (
-                self.last_observed_at.isoformat()
-                if self.last_observed_at is not None
-                else None
+                self.last_observed_at.isoformat() if self.last_observed_at is not None else None
             ),
-            "finished_at": self.finished_at.isoformat()
-            if self.finished_at is not None
-            else None,
-            "cleaned_at": self.cleaned_at.isoformat()
-            if self.cleaned_at is not None
-            else None,
+            "finished_at": self.finished_at.isoformat() if self.finished_at is not None else None,
+            "cleaned_at": self.cleaned_at.isoformat() if self.cleaned_at is not None else None,
             "output_snippet": self.output_snippet,
         }
 
@@ -426,7 +423,7 @@ class ReleaseSessionEffect(AgentEffectBase):
 class AgentEffect(AgentEffectBase):
     """Schema-validated worker invocation.
 
-    Yields: the validated artifact object.
+    Yields: the validated structured result object.
     """
 
     task: AgentTask
@@ -554,11 +551,14 @@ class CleanupAgentSessionEffect(AgentEffectBase):
 # These remain only for compatibility with callers that have not migrated to
 # LaunchEffect / LaunchSession yet.
 
+
 @dataclass(frozen=True, kw_only=True)
 class _DeprecatedLaunchTaskEffect(AgentEffectBase):
     """DEPRECATED: Use LaunchEffect directly. Will be removed."""
+
     session_name: str
     # Stub — just enough for old code to import without crashing
+
 
 LaunchTaskEffect = _DeprecatedLaunchTaskEffect  # backward compat alias
 

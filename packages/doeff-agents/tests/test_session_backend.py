@@ -47,6 +47,8 @@ from doeff_agents.adapters.base import (
 )
 from doeff_agents.adapters.codex import CodexAdapter
 from doeff_agents.effects import AwaitResultEffect, AwaitStatus, LaunchSession
+from doeff_agents.handlers.production import _extract_result_payload
+from doeff_agents.result_validation import validate_result_payload
 from doeff_agents.runtime import ClaudeRuntimePolicy
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import InMemoryAgentSessionRepository
@@ -319,7 +321,7 @@ def test_tmux_agent_handler_dismisses_claude_new_mcp_server_prompt(monkeypatch) 
         "New MCP server found in this project: nak\n\n"
         "MCP servers may execute code or access system resources.\n"
         "All tool calls require approval.\n\n"
-        "❯ 1. Use this MCP server\n"
+        "\u276f 1. Use this MCP server\n"
         "  2. Use this and all future MCP servers in this project\n"
         "  3. Continue without using this MCP server\n\n"
         "Enter to confirm · Esc to cancel\n"
@@ -421,7 +423,10 @@ def test_tmux_l2_launch_injects_structured_result_contract(monkeypatch, tmp_path
     prompt = adapter.params[0].prompt or ""
     assert "Do the domain task only." in prompt
     assert "Structured Result Contract (managed by doeff-agents)" in prompt
-    assert ".agentd-result.json" in prompt
+    assert "DOEFF_AGENT_RESULT_BEGIN" in prompt
+    assert "DOEFF_AGENT_RESULT_END" in prompt
+    assert "DOEFF_AGENT_RESULT_BEGIN\n{}\nDOEFF_AGENT_RESULT_END" not in prompt
+    assert "Do not create JSON result files" in prompt
     assert '"ok"' in prompt
     assert "doeff-agents transport detail" in prompt
 
@@ -540,7 +545,7 @@ def test_l2_launch_session_injects_mcp_config(monkeypatch, tmp_path: Path) -> No
     assert 'mcp_servers."sbi".url="http://127.0.0.1:51979/sse"' in sent_command
 
 
-def test_l2_await_result_prefers_schema_artifact_while_session_still_exists(
+def test_l2_await_result_prefers_schema_result_block_while_session_still_exists(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -561,8 +566,12 @@ def test_l2_await_result_prefers_schema_artifact_while_session_still_exists(
     )
     handler = TmuxAgentHandler(backend=backend)
     handle = handler.handle_launch_session(LaunchSession(spec))
-    (work_dir / ".agentd-result.json").write_text('{"status": "prepared"}', encoding="utf-8")
-    backend.captures[f"%{handle.session_id}"] = "agent output still visible, no shell prompt"
+    backend.captures[f"%{handle.session_id}"] = (
+        "agent output still visible\n"
+        "DOEFF_AGENT_RESULT_BEGIN\n"
+        '{"status": "prepared"}\n'
+        "DOEFF_AGENT_RESULT_END\n"
+    )
 
     outcome = handler.handle_await_result(AwaitResultEffect(handle=handle, timeout_seconds=0.01))
 
@@ -720,6 +729,58 @@ def test_tmux_backend_uses_injected_executable(monkeypatch, tmp_path: Path) -> N
     backend_calls = [call for call in calls if call and call[0] in {expected_tmux, "tmux"}]
     assert backend_calls
     assert all(call[0] == expected_tmux for call in backend_calls)
+    capture_calls = [call for call in backend_calls if len(call) > 1 and call[1] == "capture-pane"]
+    assert capture_calls
+    assert all("-J" in call for call in capture_calls)
+
+
+def test_result_payload_extract_repairs_wrapped_json_string_lines() -> None:
+    output = (
+        "done\n"
+        "DOEFF_AGENT_RESULT_BEGIN\n"
+        "{\n"
+        '  "status":"succeeded",\n'
+        '  "pr_url":"https://github.com/example/\n'
+        '    repo/pull/1",\n'
+        '  "pr_head_sha":"abc123",\n'
+        '  "branch":"feat/long-\n'
+        '    branch"\n'
+        "}\n"
+        "DOEFF_AGENT_RESULT_END\n"
+    )
+
+    payload, error = _extract_result_payload(output)
+
+    assert error is None
+    assert isinstance(payload, dict)
+    assert payload["pr_url"] == "https://github.com/example/repo/pull/1"
+    assert payload["branch"] == "feat/long-branch"
+
+
+def test_result_validation_pattern_rejects_wrapped_identity_fields() -> None:
+    schema = {
+        "type": "object",
+        "required": ["pr_url", "pr_head_sha", "branch"],
+        "properties": {
+            "pr_url": {
+                "type": "string",
+                "pattern": r"^https://github\.com/[^\s/]+/[^\s/]+/pull/[0-9]+$",
+            },
+            "pr_head_sha": {"type": "string", "pattern": r"^[0-9a-fA-F]{40}$"},
+            "branch": {"type": "string", "pattern": r"^\S+$"},
+        },
+    }
+    payload = {
+        "pr_url": "https://github.com/example/repo/ pull/1",
+        "pr_head_sha": "0123456789abcdef0123456789abcdef01234567",
+        "branch": "feat/wrapped branch",
+    }
+
+    error = validate_result_payload(payload, schema)
+
+    assert error is not None
+    assert "result.pr_url" in error
+    assert "pattern" in error
 
 
 def test_tmux_backend_pastes_literal_prompt_and_resubmits_collapsed_input(
@@ -809,8 +870,8 @@ def test_tmux_backend_rechecks_resubmitted_literal_prompt_until_clear(
 def test_unsubmitted_paste_detector_uses_latest_prompt_line() -> None:
     historical_paste = (
         "\u276f\u00a0[Pasted text #1 +2 lines]\n"
-        "⏺ Write(.agentd-result.json)\n"
-        "  ⎿ Wrote 1 lines to .agentd-result.json\n\n"
+        "⏺ Write(notes.txt)\n"
+        "  ⎿ Wrote 1 lines to notes.txt\n\n"
         "\u276f\u00a0\n"
     )
 

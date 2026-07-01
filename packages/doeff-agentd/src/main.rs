@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use regex::Regex;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -177,11 +178,12 @@ struct SessionSnapshot {
     output_snippet: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     terminal_cause: Option<TerminalCause>,
-    /// Optional output-file contract.  When set, the monitor refuses to
-    /// finalise the session as terminal until the named file exists and
-    /// (when configured) matches the declared schema.  Missing or
-    /// invalid output triggers an auto-retry up to `max_retries`
-    /// times; exhausting retries marks the session as failed.
+    /// Optional structured-result contract. When set, the monitor
+    /// refuses to finalise the session as terminal until the transcript
+    /// contains a structured result block that matches the declared
+    /// schema. Missing or invalid output triggers an auto-retry up to
+    /// `max_retries` times; exhausting retries marks the session as
+    /// failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     expected_result: Option<ExpectedResultSpec>,
     /// How many retries the monitor has issued so far for this session.
@@ -217,14 +219,11 @@ struct SessionSnapshot {
     /// startup spinner.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     observed_active_at: Option<String>,
-    /// The validated result payload, captured from the per-session result file
-    /// at the moment the monitor accepted it (status → `done`).  Stored as
-    /// the serialized JSON object the agent wrote.  This is the durable
-    /// copy `session.await_result` returns: the result file lives in the
-    /// agent's git worktree, which is reaped on the terminal transition, so
-    /// without this field a successfully-produced result is lost before the
-    /// launcher can read it back.  `None` for non-contract sessions and for
-    /// rows written by an agentd predating this field.
+    /// The validated result payload, captured from the runtime-managed
+    /// transcript result block at the moment the monitor accepted it
+    /// (status -> `done`). Stored as the serialized JSON object so
+    /// `session.await_result` can return the result after the terminal
+    /// pane/worktree has been cleaned up.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     result_payload: Option<String>,
 }
@@ -268,21 +267,17 @@ struct TerminalCause {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ExpectedResultSpec {
     /// The JSON-Schema (a constrained subset agentd enforces — see
-    /// `validate_against_schema`) the agent's result must satisfy.  This
-    /// is the ONLY thing the launcher supplies.  agentd owns the entire
-    /// transmission contract: it picks the result file path
-    /// (per-session `result_file_name`), injects the how/where instruction into
-    /// the agent (`result_protocol_instruction`), reads the file and
-    /// validates its content directly against this schema, and re-prompts
-    /// on violation.  The schema is opaque to agentd — it enforces
-    /// structure, it does not know what any field means — so the daemon
-    /// stays domain-agnostic.
+    /// `validate_against_schema`) the agent's result must satisfy. This
+    /// is the only thing the launcher supplies. agentd owns the result
+    /// transmission contract: it injects the transcript block instruction,
+    /// extracts the block from the terminal output, validates it against
+    /// this schema, and re-prompts on violation. The schema is opaque to
+    /// agentd: it enforces structure, not domain meaning.
     payload_schema: serde_json::Value,
     /// Message sent back to the agent when its result is missing or does
-    /// not satisfy the schema.  `%REASON%` is replaced with the
-    /// validator's explanation and `%RESULT_FILE%` with agentd's
-    /// per-session result file name so the agent has actionable feedback.
-    /// agentd policy — launchers leave it at the default.
+    /// not satisfy the schema. `%REASON%` is replaced with the
+    /// validator's explanation. `%RESULT_BLOCK_BEGIN%` and
+    /// `%RESULT_BLOCK_END%` are replaced with the runtime markers.
     #[serde(default = "default_retry_prompt")]
     retry_prompt: String,
     /// Maximum number of times the monitor re-prompts the agent before
@@ -292,48 +287,31 @@ struct ExpectedResultSpec {
     max_retries: u32,
 }
 
-/// Glob registered in `.git/info/exclude` (see `ignore_result_file`) so
-/// per-session result files written into the agent's git worktree never
-/// dirty `git status` or land in a commit.
-const RESULT_FILE_EXCLUDE_GLOB: &str = ".agentd-result-*.json";
-
-/// Per-SESSION result-file name.  The name is agentd's own — the launcher
-/// never learns it, keeping the transmission contract entirely inside
-/// agentd.  It must be per-session, not per-workdir: several sessions can
-/// share one workdir (conductor's shared-workspace workflows), and a fixed
-/// name let a later agent's contract validate against an EARLIER agent's
-/// stale result — the second agent was marked done (and its pane reaped
-/// mid-work) without doing anything (observed live: a fan-out where only
-/// the first writer's work existed, and a fix loop that never converged
-/// because each fixer was instantly 'done' with its predecessor's result).
-fn result_file_name(session_id: &str) -> String {
-    format!(".agentd-result-{session_id}.json")
-}
+const RESULT_BLOCK_BEGIN: &str = "DOEFF_AGENT_RESULT_BEGIN";
+const RESULT_BLOCK_END: &str = "DOEFF_AGENT_RESULT_END";
 
 /// The instruction agentd injects into the agent's first prompt telling
-/// it HOW and WHERE to emit its result.  This is agentd's transmission
-/// contract with the tmux agent — the launcher never authors it, so a
+/// it how to return the structured result. This is agentd's transmission
+/// contract with the terminal agent; the launcher never authors it, so a
 /// launcher that knows only the data schema still gets a working result
-/// channel.  The agent writes the result object directly; agentd reads
-/// it from the session's `result_file_name` and validates it against the
-/// launcher's `payload_schema`.
-fn result_protocol_instruction(session_id: &str) -> String {
-    let file_name = result_file_name(session_id);
+/// channel.
+fn result_protocol_instruction(_session_id: &str) -> String {
     format!(
-        " Result channel: when you have finished the task, WRITE your result as a single JSON \
-         object to the file '{file_name}' in your current working directory.  \
-         agentd reads that file, validates it, and — if it is missing or does not \
-         satisfy the contract — sends the reason back so you can fix it; rewrite the \
-         file and do NOT exit until it is accepted.  Write only the result object \
-         itself; the required fields are described in the task above.",
+        " Result channel: when you have finished the task, return exactly one structured \
+         result block in your final response. Do not create JSON result files in the \
+         workspace. Start a line with {RESULT_BLOCK_BEGIN}, put the JSON object that \
+         satisfies the result schema on the following line or lines, and end with a \
+         line containing {RESULT_BLOCK_END}. Do not echo an example block from these \
+         instructions. agentd extracts and validates that block; if it is missing or \
+         invalid, agentd sends the reason back so you can correct the same block.",
     )
 }
 
 fn default_retry_prompt() -> String {
     String::from(
-        "You exited without producing the required output file: %REASON%. \
-         Re-read your previous instructions, write '%RESULT_FILE%' \
-         with the exact schema declared, and do not exit until the file is valid.",
+        "The structured result block was missing or invalid: %REASON%. \
+         Re-read your previous instructions and return a corrected block using \
+         %RESULT_BLOCK_BEGIN% and %RESULT_BLOCK_END%. Do not create JSON result files.",
     )
 }
 
@@ -370,9 +348,9 @@ struct LaunchParams {
     lifecycle: String,
     #[serde(default)]
     session_env: BTreeMap<String, String>,
-    /// Optional output-file contract.  See 'ExpectedResultSpec' for the
-    /// semantics; persisted with the session so the monitor can enforce
-    /// it after the agent appears to finish.
+    /// Optional structured-result contract. See 'ExpectedResultSpec' for
+    /// the semantics; persisted with the session so the monitor can
+    /// enforce it after the agent appears to finish.
     #[serde(default)]
     expected_result: Option<ExpectedResultSpec>,
 }
@@ -977,65 +955,6 @@ fn build_claude_argv(params: &LaunchParams) -> Vec<String> {
     args
 }
 
-/// Add `file_name` to the git repo's local `info/exclude` so a result
-/// file agentd reads from a git worktree stays invisible to `git status`
-/// and can never be `git add`-ed into a commit.  No-op when work_dir is
-/// not a git work tree.  Uses the local exclude (not the tracked
-/// `.gitignore`) so the agent's PR is unaffected.  Idempotent.
-///
-/// Resolves the real git directory: in a plain checkout `.git` is a
-/// directory; in a linked worktree (what ACP uses) `.git` is a FILE
-/// holding `gitdir: <path>` pointing at `…/.git/worktrees/<name>`, whose
-/// own `info/exclude` is the per-worktree exclude.
-fn ignore_result_file(work_dir: &str, file_name: &str) -> Result<()> {
-    let dot_git = Path::new(work_dir).join(".git");
-    let git_dir: std::path::PathBuf = if dot_git.is_dir() {
-        dot_git
-    } else if dot_git.is_file() {
-        let contents = fs::read_to_string(&dot_git)?;
-        match contents
-            .lines()
-            .find_map(|l| l.strip_prefix("gitdir:").map(|p| p.trim().to_string()))
-        {
-            Some(p) => std::path::PathBuf::from(p),
-            None => return Ok(()),
-        }
-    } else {
-        return Ok(());
-    };
-    // `info/exclude` lives in the COMMON git dir, shared across all
-    // worktrees — NOT the per-worktree gitdir.  A linked worktree's
-    // gitdir carries a `commondir` file pointing at the common dir;
-    // follow it so a single exclude entry covers every worktree.  A
-    // plain checkout has no `commondir` and is its own common dir.
-    let common_dir = match fs::read_to_string(git_dir.join("commondir")) {
-        Ok(rel) => {
-            let joined = git_dir.join(rel.trim());
-            joined.canonicalize().unwrap_or(joined)
-        }
-        Err(_) => git_dir.clone(),
-    };
-    let info_dir = common_dir.join("info");
-    fs::create_dir_all(&info_dir)?;
-    let exclude_path = info_dir.join("exclude");
-    let existing = fs::read_to_string(&exclude_path).unwrap_or_default();
-    let entry = format!("/{file_name}");
-    if existing
-        .lines()
-        .any(|line| line.trim() == entry || line.trim() == file_name)
-    {
-        return Ok(());
-    }
-    let mut contents = existing;
-    if !contents.is_empty() && !contents.ends_with('\n') {
-        contents.push('\n');
-    }
-    contents.push_str(&entry);
-    contents.push('\n');
-    fs::write(&exclude_path, contents)?;
-    Ok(())
-}
-
 fn run_pre_launch_setup(params: &LaunchParams) -> Result<()> {
     if params.agent_type == "codex" {
         if let Err(err) = trust_codex_workspace(&params.work_dir) {
@@ -1171,18 +1090,6 @@ fn session_launch(
     let command_line = resolve_launch_command(&params)?;
     if !params.skip_trust_setup {
         run_pre_launch_setup(&params)?;
-    }
-    // Keep the result file agentd will read from out of the agent's git
-    // worktree status, so a result written into a checkout the agent
-    // commits from never dirties `git status` or lands in a PR.  Local
-    // (`.git/info/exclude`) so no tracked `.gitignore` is touched.
-    if params.expected_result.is_some() {
-        if let Err(err) = ignore_result_file(&params.work_dir, RESULT_FILE_EXCLUDE_GLOB) {
-            eprintln!(
-                "doeff-agentd: warning: could not register result file in git exclude for {}: {err:#}",
-                params.work_dir
-            );
-        }
     }
     let pane_id = tmux_new_session(
         config,
@@ -1454,11 +1361,10 @@ fn session_cleanup(
 
 /// Block until the named session reaches a terminal status (or the
 /// caller-supplied timeout elapses).  Built for the Haskell agent-
-/// control-plane daemon: clients used to poll `session.get` and then
-/// read the result file directly off disk, which bypassed agentd's
-/// `validate_expected_result` contract.  This RPC consolidates the
-/// wait + validation handoff into a single response so the daemon
-/// never sees an unvalidated payload.
+/// control-plane daemon: clients must not scrape terminal output or
+/// side-channel files themselves. This RPC consolidates the wait +
+/// validation handoff into a single response so callers never see an
+/// unvalidated payload.
 ///
 /// Threading note: each agentd connection runs in its own thread (see
 /// `serve` / `handle_stream`), so blocking the calling thread here
@@ -1527,7 +1433,7 @@ fn session_await_result_with_interval(
 
 /// Assemble the success response for `session.await_result`.  The
 /// `result` field is `Some(...)` only when the session reached `done`
-/// AND its `expected_result` contract revalidates successfully; in
+/// AND its `expected_result` contract validates successfully; in
 /// every other terminal state (including `failed` due to validation
 /// timeout) `result` is null and `validation_error` carries whichever
 /// reason the monitor recorded.
@@ -1544,16 +1450,8 @@ fn build_await_response(snapshot: &SessionSnapshot) -> Value {
     if snapshot.status == "done" {
         if let Some(spec) = snapshot.expected_result.as_ref() {
             // Prefer the payload the monitor persisted at validation time.
-            // It was captured from the result file the instant the session
-            // went `done`, BEFORE the worktree was reaped — so it survives
-            // cleanup, whereas the on-disk file almost never does (the
-            // worktree is removed milliseconds after the terminal
-            // transition).  Re-reading the file is only a fallback for
-            // sessions validated by an older agentd that stored no payload
-            // and whose worktree happens to still exist; since
-            // `validate_expected_result` now returns the parsed value, that
-            // path captures the payload in the same read that validates it,
-            // so there is no longer a "disappeared after validation" race.
+            // It was captured from the transcript result block before the
+            // pane/worktree was cleaned up.
             let stored = snapshot
                 .result_payload
                 .as_ref()
@@ -1566,19 +1464,22 @@ fn build_await_response(snapshot: &SessionSnapshot) -> Value {
                     validation_error = None;
                 }
                 None => {
-                    match validate_expected_result(&snapshot.work_dir, &snapshot.session_id, spec) {
-                        Ok(parsed) => {
-                            // The file content IS the payload — no envelope.
-                            // Hand it back under `payload` so the caller's await
-                            // shape stays stable.
-                            let mut result_obj = serde_json::Map::new();
-                            result_obj.insert(String::from("payload"), parsed);
-                            result_value = Value::Object(result_obj);
-                            validation_error = None;
+                    if let Some(output) = snapshot.output_snippet.as_ref() {
+                        match validate_expected_result(output, spec) {
+                            Ok(parsed) => {
+                                let mut result_obj = serde_json::Map::new();
+                                result_obj.insert(String::from("payload"), parsed);
+                                result_value = Value::Object(result_obj);
+                                validation_error = None;
+                            }
+                            Err(reason) => {
+                                validation_error = Some(reason);
+                            }
                         }
-                        Err(reason) => {
-                            validation_error = Some(reason);
-                        }
+                    } else if validation_error.is_none() {
+                        validation_error = Some(String::from(
+                            "structured result block not found in transcript",
+                        ));
                     }
                 }
             }
@@ -2057,7 +1958,7 @@ fn tmux_paste_literal(config: &Config, target: &str, message: &str) -> Result<()
 fn tmux_capture(config: &Config, target: &str, lines: i64) -> Result<String> {
     let start = format!("-{}", lines.max(1));
     let output = Command::new(&config.tmux_bin)
-        .args(["capture-pane", "-t", target, "-p", "-S", &start])
+        .args(["capture-pane", "-t", target, "-p", "-J", "-S", &start])
         .output()
         .context("tmux capture-pane failed to run")?;
     if !output.status.success() {
@@ -2816,21 +2717,15 @@ fn monitor_once(config: &Config) -> Result<()> {
             if snapshot.awaiting_response && (active_marker_seen || turn_activity_seen) {
                 snapshot.awaiting_response = false;
             }
-            // Initial launch only: the first result artifact proves the
-            // agent consumed the prompt even if terminal heuristics missed
-            // the short active window. After a retry, a stale invalid file
-            // can remain on disk, so the last_validation_error guard keeps
-            // that stale artifact from clearing the latch by itself.
-            if snapshot.awaiting_response
-                && snapshot.last_validation_error.is_none()
-                && is_run_to_completion_lifecycle(&snapshot.lifecycle)
-                && snapshot.expected_result.is_some()
-            {
-                let result_path =
-                    Path::new(&snapshot.work_dir).join(result_file_name(&snapshot.session_id));
-                if result_path.exists() {
-                    snapshot.awaiting_response = false;
-                }
+            // Initial launch only: the first complete result block proves the
+            // agent consumed the prompt even when the block is schema-invalid
+            // and terminal heuristics missed the short active window. That
+            // must be enough to let turn-end validation issue the retry. After
+            // a retry, a stale invalid block can remain in the transcript, so
+            // the last_validation_error guard keeps that stale block from
+            // clearing the latch by itself.
+            if should_clear_initial_result_response_latch(&snapshot, &output) {
+                snapshot.awaiting_response = false;
             }
             // Record the first time the agent visibly finished startup.
             // This is the signal the launch-timeout watchdog uses to
@@ -2881,48 +2776,32 @@ fn monitor_once(config: &Config) -> Result<()> {
 
             let mut observed_status = raw_status;
 
-            // ARTIFACT-FIRST: for contract sessions, a result file that
-            // validates IS completion — accept it on any cycle, without
-            // waiting for turn-end.  Truth is the artifact, never the
-            // transcript: the pane heuristics below (turn-end, latch)
-            // exist only to drive the RETRY path, and misreading them
-            // must never delay or fail work whose artifact is already
-            // valid (observed live: a finished claude worker hung, then
-            // a healthy one failed, purely on pane-state misreads).
-            // An invalid or missing file on this path is NOT punished;
+            // RESULT-BLOCK-FIRST: for contract sessions, a transcript
+            // result block that validates IS completion — accept it on
+            // any cycle, without waiting for turn-end. The pane heuristics
+            // below (turn-end, latch) exist only to drive the RETRY path,
+            // and misreading them must never delay or fail work whose
+            // structured block is already valid.
+            // An invalid or missing block on this path is NOT punished;
             // retry feedback stays gated on turn-end.
-            let mut artifact_accepted = false;
+            let mut result_block_accepted = false;
             if is_run_to_completion_lifecycle(&snapshot.lifecycle) {
                 if let Some(spec) = snapshot.expected_result.clone() {
-                    if let Ok(payload) =
-                        validate_expected_result(&snapshot.work_dir, &snapshot.session_id, &spec)
-                    {
+                    if let Ok(payload) = validate_expected_result(&output, &spec) {
                         observed_status = "done";
                         snapshot.last_validation_error = None;
-                        // Persist the validated payload NOW, on the same
-                        // tick that flips the session to "done" — the
-                        // worktree (and the result file inside it) is
-                        // reaped milliseconds later when cleanup runs, so
-                        // a payload kept only on disk is lost before the
-                        // launcher can await it.  build_await_response
-                        // serves this stored copy, decoupling result
-                        // delivery from the worktree's lifetime.
                         snapshot.result_payload = serde_json::to_string(&payload).ok();
-                        artifact_accepted = true;
+                        result_block_accepted = true;
                     }
                 }
             }
 
-            if !artifact_accepted
+            if !result_block_accepted
                 && turn_ended
                 && is_run_to_completion_lifecycle(&snapshot.lifecycle)
             {
                 match snapshot.expected_result.clone() {
-                    Some(spec) => match validate_expected_result(
-                        &snapshot.work_dir,
-                        &snapshot.session_id,
-                        &spec,
-                    ) {
+                    Some(spec) => match validate_expected_result(&output, &spec) {
                         Ok(payload) => {
                             observed_status = "done";
                             snapshot.last_validation_error = None;
@@ -3018,60 +2897,109 @@ fn monitor_once(config: &Config) -> Result<()> {
     Ok(())
 }
 
-/// Validate the result file the agent was instructed to produce, and on
-/// success return the parsed payload.  `Ok(value)` when the file exists,
-/// parses as JSON, and satisfies `payload_schema`.  The file content IS
-/// the result — there is no envelope and agentd owns the path
-/// (the per-session `result_file_name`).  The `Err(String)` carries a one-line
-/// explanation suitable for the retry prompt and the session's
-/// `last_validation_error` audit field.
-///
-/// Returning the parsed value (rather than `()`) lets the caller PERSIST
-/// the validated payload at validation time — the file lives in the
-/// agent's git worktree, which agentd reaps the instant the session goes
-/// terminal, so a result delivered only via on-disk re-read is lost the
-/// moment the worktree is cleaned.  Validation and capture must be a
-/// single read so there is no window for the file to change or vanish
-/// between them.
+/// Validate the runtime-managed transcript result block and return the
+/// parsed payload. The block content is the result object; there is no
+/// application-visible file, path, or envelope.
 fn validate_expected_result(
-    work_dir: &str,
-    session_id: &str,
+    output: &str,
     spec: &ExpectedResultSpec,
 ) -> std::result::Result<serde_json::Value, String> {
-    let path = Path::new(work_dir).join(result_file_name(session_id));
-    let raw = match fs::read_to_string(&path) {
-        Ok(contents) => contents,
-        Err(err) => {
-            return Err(format!(
-                "expected result file not readable at {}: {}",
-                path.display(),
-                err
-            ));
-        }
-    };
-    let value: serde_json::Value = match serde_json::from_str(&raw) {
+    let raw = extract_result_block(output)?;
+    let value: serde_json::Value = match parse_result_block_json(raw) {
         Ok(v) => v,
         Err(err) => {
-            return Err(format!(
-                "expected result file at {} is not valid JSON: {}",
-                path.display(),
-                err
-            ));
+            return Err(format!("structured result block is not valid JSON: {err}"));
         }
     };
     if let Err(reason) = validate_against_schema(&value, &spec.payload_schema, "result") {
         return Err(format!(
-            "result does not satisfy its schema in {}: {}",
-            path.display(),
+            "structured result does not satisfy its schema: {}",
             reason
         ));
     }
     Ok(value)
 }
 
+fn parse_result_block_json(raw: &str) -> std::result::Result<serde_json::Value, serde_json::Error> {
+    match serde_json::from_str(raw) {
+        Ok(value) => Ok(value),
+        Err(_) => serde_json::from_str(&normalize_wrapped_json_strings(raw)),
+    }
+}
+
+fn normalize_wrapped_json_strings(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    let mut in_string = false;
+    let mut escaped = false;
+    while let Some(ch) = chars.next() {
+        if in_string {
+            if escaped {
+                out.push(ch);
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => {
+                    out.push(ch);
+                    escaped = true;
+                }
+                '"' => {
+                    out.push(ch);
+                    in_string = false;
+                }
+                '\n' | '\r' => {
+                    while matches!(chars.peek(), Some(' ' | '\t')) {
+                        chars.next();
+                    }
+                }
+                _ => out.push(ch),
+            }
+        } else {
+            if ch == '"' {
+                in_string = true;
+            }
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn extract_result_block(output: &str) -> std::result::Result<&str, String> {
+    let begin = output.rfind(RESULT_BLOCK_BEGIN).ok_or_else(|| {
+        format!("structured result block not found: missing {RESULT_BLOCK_BEGIN}")
+    })?;
+    let after_begin = begin + RESULT_BLOCK_BEGIN.len();
+    let rest = &output[after_begin..];
+    let end = rest
+        .find(RESULT_BLOCK_END)
+        .ok_or_else(|| format!("structured result block not found: missing {RESULT_BLOCK_END}"))?;
+    let raw = rest[..end].trim();
+    if raw.is_empty() {
+        return Err(String::from("structured result block is empty"));
+    }
+    Ok(raw)
+}
+
+fn output_has_result_block(output: &str) -> bool {
+    let Some(begin) = output.rfind(RESULT_BLOCK_BEGIN) else {
+        return false;
+    };
+    let after_begin = begin + RESULT_BLOCK_BEGIN.len();
+    output[after_begin..].contains(RESULT_BLOCK_END)
+}
+
+fn should_clear_initial_result_response_latch(snapshot: &SessionSnapshot, output: &str) -> bool {
+    snapshot.awaiting_response
+        && snapshot.last_validation_error.is_none()
+        && is_run_to_completion_lifecycle(&snapshot.lifecycle)
+        && snapshot.expected_result.is_some()
+        && output_has_result_block(output)
+}
+
 /// Validate `instance` against a constrained subset of JSON Schema.
 ///
-/// Supported keywords: `type`, `const`, `minLength`, `required`,
+/// Supported keywords: `type`, `const`, `minLength`, `pattern`, `required`,
 /// `properties`, `oneOf`.  This is intentionally NOT a full JSON-Schema
 /// implementation — it covers exactly what the launcher-supplied
 /// contracts need (discriminated unions via `oneOf` + `const`, presence
@@ -3160,6 +3088,18 @@ fn validate_against_schema(
         }
     }
 
+    // pattern: used by result contracts for identity fields such as PR URLs,
+    // SHAs, and branch names. Invalid schema patterns fail closed.
+    if let Some(pattern) = obj.get("pattern").and_then(|v| v.as_str()) {
+        if let Some(s) = instance.as_str() {
+            let re = Regex::new(pattern)
+                .map_err(|err| format!("schema at '{loc}' has invalid pattern {pattern:?}: {err}"))?;
+            if !re.is_match(s) {
+                return Err(format!("'{loc}' must match pattern {pattern:?}"));
+            }
+        }
+    }
+
     // required: named fields must be present on an object.
     if let Some(req) = obj.get("required").and_then(|v| v.as_array()) {
         let map = instance.as_object();
@@ -3220,19 +3160,16 @@ fn send_retry_prompt(
     // poll just absorbs the small window between turn-end detection
     // and the input box becoming receptive.
     wait_for_repl_idle(config, &snapshot.pane_id, Duration::from_secs(5))?;
-    let prompt = render_retry_prompt(snapshot, spec, reason);
+    let prompt = render_retry_prompt(spec, reason);
     tmux_send_keys(config, &snapshot.pane_id, &prompt, true, true)?;
     Ok(())
 }
 
-fn render_retry_prompt(
-    snapshot: &SessionSnapshot,
-    spec: &ExpectedResultSpec,
-    reason: &str,
-) -> String {
+fn render_retry_prompt(spec: &ExpectedResultSpec, reason: &str) -> String {
     spec.retry_prompt
         .replace("%REASON%", reason)
-        .replace("%RESULT_FILE%", &result_file_name(&snapshot.session_id))
+        .replace("%RESULT_BLOCK_BEGIN%", RESULT_BLOCK_BEGIN)
+        .replace("%RESULT_BLOCK_END%", RESULT_BLOCK_END)
 }
 
 fn is_interactive_agent_type(agent_type: &str) -> bool {
@@ -3316,6 +3253,7 @@ fn parse_datetime(value: &str) -> Result<DateTime<Utc>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -3533,8 +3471,8 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
     #[test]
     fn claude_turn_activity_is_not_active_work() {
         let finished_tool_turn = "\
-⏺ Write(.agentd-result.json)
-  ⎿  Wrote 1 lines to .agentd-result.json
+⏺ Write(notes.txt)
+  ⎿  Wrote 1 lines to notes.txt
 
 ❯\u{00A0}
 ";
@@ -3700,6 +3638,38 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
         assert_eq!(config.socket_path, Path::new("/tmp/a.sock"));
         assert_eq!(config.monitor_interval, Duration::from_millis(250));
         assert_eq!(config.max_running, 3);
+    }
+
+    #[test]
+    fn tmux_capture_joins_wrapped_lines_for_result_blocks() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmux_bin = tmp.path().join("fake-tmux");
+        let args_file = tmp.path().join("args.txt");
+        fs::write(
+            &tmux_bin,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nprintf 'captured\\n'\n",
+                args_file.display()
+            ),
+        )
+        .expect("write fake tmux");
+        let mut perms = fs::metadata(&tmux_bin).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&tmux_bin, perms).expect("chmod fake tmux");
+        let config = Config {
+            db_path: tmp.path().join("agentd.sqlite"),
+            socket_path: tmp.path().join("agentd.sock"),
+            tmux_bin: tmux_bin.to_string_lossy().into_owned(),
+            monitor_interval: Duration::from_millis(1000),
+            max_running: 1,
+        };
+
+        let output = tmux_capture(&config, "%1", 40).expect("capture");
+
+        assert_eq!(output, "captured\n");
+        let args = fs::read_to_string(args_file).expect("read args");
+        assert!(args.lines().any(|arg| arg == "capture-pane"));
+        assert!(args.lines().any(|arg| arg == "-J"));
     }
 
     #[test]
@@ -4150,8 +4120,8 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
         // monitor that only knows the codex prompt never fires turn-end
         // for claude sessions, so their result contracts are never
         // validated (observed live: a finished claude worker with a
-        // valid result file sat "blocked" until the launcher's awaits
-        // exhausted).
+        // valid structured result sat "blocked" until the launcher's
+        // awaits exhausted).
         let mut snapshot = snapshot_for_lifecycle("run_to_completion", "running");
         let claude_idle = "  done. result written.\n\n❯\u{00A0}\n  🏢 ca  Fable 5 XHI";
         snapshot.output_snippet = Some(claude_idle.to_string());
@@ -4304,8 +4274,8 @@ ude Max
     fn unsubmitted_paste_detector_ignores_history_and_empty_prompt() {
         let historical_paste = "\
 ❯\u{00A0}[Pasted text #1 +2 lines]
-⏺ Write(.agentd-result.json)
-  ⎿  Wrote 1 lines to .agentd-result.json
+⏺ Write(notes.txt)
+  ⎿  Wrote 1 lines to notes.txt
 
 ❯\u{00A0}
 ";
@@ -4397,8 +4367,8 @@ Working...
     }
 
     /// A spec carrying just a schema, as the single-protocol launcher
-    /// sends it: agentd owns the path (per-session `result_file_name`) and the
-    /// retry policy; the launcher supplies only `payload_schema`.
+    /// sends it: agentd owns the transcript result block and the retry
+    /// policy; the launcher supplies only `payload_schema`.
     fn schema_only_spec(schema: Value) -> ExpectedResultSpec {
         ExpectedResultSpec {
             payload_schema: schema,
@@ -4408,17 +4378,18 @@ Working...
     }
 
     #[test]
-    fn render_retry_prompt_includes_result_file_name_and_reason() {
-        let snapshot = snapshot_for_lifecycle(LIFECYCLE_RUN_TO_COMPLETION, "running");
+    fn render_retry_prompt_includes_result_block_markers_and_reason() {
         let spec = ExpectedResultSpec {
             payload_schema: serde_json::json!({"type": "object"}),
-            retry_prompt: String::from("fix %RESULT_FILE% because %REASON%"),
+            retry_prompt: String::from(
+                "fix %RESULT_BLOCK_BEGIN%/%RESULT_BLOCK_END% because %REASON%",
+            ),
             max_retries: 1,
         };
-        let prompt = render_retry_prompt(&snapshot, &spec, "missing ok");
+        let prompt = render_retry_prompt(&spec, "missing ok");
         assert!(
-            prompt.contains(".agentd-result-s1.json"),
-            "retry prompt should name the exact result file: {prompt}"
+            prompt.contains(RESULT_BLOCK_BEGIN) && prompt.contains(RESULT_BLOCK_END),
+            "retry prompt should name the result block markers: {prompt}"
         );
         assert!(
             prompt.contains("missing ok"),
@@ -4427,113 +4398,115 @@ Working...
     }
 
     #[test]
-    fn validate_expected_result_accepts_well_formed_result() {
-        // The file content IS the result (no envelope), written to the
-        // agentd-owned default path and validated against payload_schema.
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let work_dir = tmp.path().to_path_buf();
-        fs::write(
-            work_dir.join(result_file_name("test-session")),
-            r#"{"pr_url":"https://x","pr_head_sha":"abc123","branch":"feat/x"}"#,
-        )
-        .expect("write result");
-        let spec = schema_only_spec(impl_result_payload_schema());
+    fn result_protocol_instruction_names_markers_without_embedding_a_result_block() {
+        let prompt = result_protocol_instruction("session-1");
+        assert!(prompt.contains(RESULT_BLOCK_BEGIN));
+        assert!(prompt.contains(RESULT_BLOCK_END));
         assert!(
-            validate_expected_result(work_dir.to_str().unwrap(), "test-session", &spec).is_ok()
+            !prompt.contains(&format!("{RESULT_BLOCK_BEGIN}\n{{}}\n{RESULT_BLOCK_END}")),
+            "instruction must not include a parseable example block: {prompt}"
         );
     }
 
     #[test]
-    fn validate_expected_result_rejects_missing_file() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+    fn initial_result_response_latch_clears_on_schema_invalid_result_block() {
+        let mut snapshot = snapshot_for_lifecycle(LIFECYCLE_RUN_TO_COMPLETION, "running");
+        snapshot.awaiting_response = true;
+        snapshot.expected_result = Some(schema_only_spec(impl_result_payload_schema()));
+        let output = format!(
+            "done\n{RESULT_BLOCK_BEGIN}\n{}\n{RESULT_BLOCK_END}\n›\n",
+            r#"{"pr_url":""}"#
+        );
+
+        assert!(output_has_result_block(&output));
+        assert!(validate_expected_result(
+            &output,
+            snapshot.expected_result.as_ref().expect("expected result")
+        )
+        .is_err());
+        assert!(should_clear_initial_result_response_latch(
+            &snapshot, &output
+        ));
+    }
+
+    #[test]
+    fn retry_result_response_latch_ignores_stale_invalid_result_block() {
+        let mut snapshot = snapshot_for_lifecycle(LIFECYCLE_RUN_TO_COMPLETION, "running");
+        snapshot.awaiting_response = true;
+        snapshot.last_validation_error = Some(String::from("previous invalid block"));
+        snapshot.expected_result = Some(schema_only_spec(impl_result_payload_schema()));
+        let output = format!(
+            "previous attempt\n{RESULT_BLOCK_BEGIN}\n{}\n{RESULT_BLOCK_END}\n›\n",
+            r#"{"pr_url":""}"#
+        );
+
+        assert!(!should_clear_initial_result_response_latch(
+            &snapshot, &output
+        ));
+    }
+
+    #[test]
+    fn validate_expected_result_accepts_well_formed_result() {
+        let output = format!(
+            "done\n{RESULT_BLOCK_BEGIN}\n{}\n{RESULT_BLOCK_END}\n",
+            r#"{"pr_url":"https://github.com/example/repo/pull/1","pr_head_sha":"0123456789abcdef0123456789abcdef01234567","branch":"feat/x"}"#
+        );
         let spec = schema_only_spec(impl_result_payload_schema());
-        let err = validate_expected_result(tmp.path().to_str().unwrap(), "test-session", &spec)
-            .expect_err("missing file should reject");
-        assert!(err.contains("not readable"), "got: {err}");
+        assert!(validate_expected_result(&output, &spec).is_ok());
+    }
+
+    #[test]
+    fn validate_expected_result_repairs_wrapped_json_string_lines() {
+        let output = format!(
+            "done\n{RESULT_BLOCK_BEGIN}\n{}\n{RESULT_BLOCK_END}\n",
+            concat!(
+                "{\n",
+                "  \"status\":\"succeeded\",\n",
+                "  \"pr_url\":\"https://github.com/example/\n",
+                "    repo/pull/1\",\n",
+                "  \"pr_head_sha\":\"0123456789abcdef0123456789abcdef01234567\",\n",
+                "  \"branch\":\"feat/long-\n",
+                "    branch\",\n",
+                "  \"summary\":\"wrapped\n",
+                "    summary\"\n",
+                "}"
+            )
+        );
+        let spec = schema_only_spec(impl_result_payload_schema());
+
+        let payload = validate_expected_result(&output, &spec).expect("wrapped payload validates");
+
+        assert_eq!(
+            payload.get("pr_url").and_then(Value::as_str),
+            Some("https://github.com/example/repo/pull/1")
+        );
+        assert_eq!(
+            payload.get("branch").and_then(Value::as_str),
+            Some("feat/long-branch")
+        );
+    }
+
+    #[test]
+    fn validate_expected_result_rejects_missing_block() {
+        let spec = schema_only_spec(impl_result_payload_schema());
+        let err = validate_expected_result("agent finished without block", &spec)
+            .expect_err("missing block should reject");
+        assert!(
+            err.contains("structured result block not found"),
+            "got: {err}"
+        );
     }
 
     #[test]
     fn validate_expected_result_rejects_result_not_satisfying_schema() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let work_dir = tmp.path().to_path_buf();
-        fs::write(
-            work_dir.join(result_file_name("test-session")),
-            r#"{"pr_url":""}"#,
-        )
-        .expect("write bad result");
+        let output = format!(
+            "done\n{RESULT_BLOCK_BEGIN}\n{}\n{RESULT_BLOCK_END}\n",
+            r#"{"pr_url":""}"#
+        );
         let spec = schema_only_spec(impl_result_payload_schema());
-        let err = validate_expected_result(work_dir.to_str().unwrap(), "test-session", &spec)
+        let err = validate_expected_result(&output, &spec)
             .expect_err("empty pr_url should fail the schema");
         assert!(err.contains("does not satisfy"), "got: {err}");
-    }
-
-    #[test]
-    fn ignore_result_file_registers_default_in_git_info_exclude() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let work_dir = tmp.path().to_path_buf();
-        fs::create_dir_all(work_dir.join(".git")).expect("fake .git");
-        ignore_result_file(work_dir.to_str().unwrap(), RESULT_FILE_EXCLUDE_GLOB)
-            .expect("register exclude");
-        let exclude = fs::read_to_string(work_dir.join(".git").join("info").join("exclude"))
-            .expect("exclude file written");
-        assert!(
-            exclude
-                .lines()
-                .any(|l| l.trim() == format!("/{RESULT_FILE_EXCLUDE_GLOB}")),
-            "exclude should contain the result file, got: {exclude}"
-        );
-        // Idempotent: a second call does not duplicate the entry.
-        ignore_result_file(work_dir.to_str().unwrap(), RESULT_FILE_EXCLUDE_GLOB)
-            .expect("register exclude again");
-        let exclude2 = fs::read_to_string(work_dir.join(".git").join("info").join("exclude"))
-            .expect("exclude file still there");
-        let count = exclude2
-            .lines()
-            .filter(|l| l.trim() == format!("/{RESULT_FILE_EXCLUDE_GLOB}"))
-            .count();
-        assert_eq!(count, 1, "entry must not be duplicated, got: {exclude2}");
-    }
-
-    #[test]
-    fn ignore_result_file_writes_to_worktree_common_dir_exclude() {
-        // ACP runs agents in linked worktrees, where `.git` is a FILE
-        // ("gitdir: <path>") and excludes live in the SHARED common git
-        // dir (located via the gitdir's `commondir` file), NOT the
-        // per-worktree gitdir.  The exclude must land in the common
-        // dir's info/exclude — that is the only one git consults.
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let common_git = tmp.path().join("mainrepo/.git");
-        let worktree_gitdir = common_git.join("worktrees/wt");
-        fs::create_dir_all(&worktree_gitdir).expect("mkdir worktree gitdir");
-        // commondir points from the per-worktree gitdir back to the
-        // shared .git (../.. from .git/worktrees/wt).
-        fs::write(worktree_gitdir.join("commondir"), "../..\n").expect("write commondir");
-
-        let work_dir = tmp.path().join("wt");
-        fs::create_dir_all(&work_dir).expect("mkdir worktree");
-        fs::write(
-            work_dir.join(".git"),
-            format!("gitdir: {}\n", worktree_gitdir.display()),
-        )
-        .expect("write .git pointer file");
-
-        ignore_result_file(work_dir.to_str().unwrap(), RESULT_FILE_EXCLUDE_GLOB)
-            .expect("register exclude via worktree common dir");
-
-        let common_exclude = fs::read_to_string(common_git.join("info").join("exclude"))
-            .expect("exclude written into the COMMON git dir");
-        assert!(
-            common_exclude
-                .lines()
-                .any(|l| l.trim() == format!("/{RESULT_FILE_EXCLUDE_GLOB}")),
-            "common exclude should contain the result file, got: {common_exclude}"
-        );
-        // It must NOT have been written into the per-worktree gitdir,
-        // which git does not consult for excludes.
-        assert!(
-            !worktree_gitdir.join("info").join("exclude").exists(),
-            "exclude must not be written into the per-worktree gitdir"
-        );
     }
 
     // ---- validate_against_schema: the JSON-Schema subset ----
@@ -4549,9 +4522,21 @@ Working...
                     "required": ["pr_url", "pr_head_sha", "branch"],
                     "properties": {
                         "status": {"const": "succeeded"},
-                        "pr_url": {"type": "string", "minLength": 1},
-                        "pr_head_sha": {"type": "string", "minLength": 1},
-                        "branch": {"type": "string", "minLength": 1}
+                        "pr_url": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^https://github\\.com/[^\\s/]+/[^\\s/]+/pull/[0-9]+$"
+                        },
+                        "pr_head_sha": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^[0-9a-fA-F]{40}$"
+                        },
+                        "branch": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^\\S+$"
+                        }
                     }
                 },
                 {
@@ -4572,7 +4557,7 @@ Working...
         // still matches the succeeded branch.
         let payload = serde_json::json!({
             "pr_url": "https://github.com/o/r/pull/1",
-            "pr_head_sha": "abc123",
+            "pr_head_sha": "0123456789abcdef0123456789abcdef01234567",
             "branch": "feat/x"
         });
         assert!(
@@ -4609,6 +4594,19 @@ Working...
     }
 
     #[test]
+    fn schema_rejects_wrapped_identity_fields_with_embedded_spaces() {
+        let payload = serde_json::json!({
+            "pr_url": "https://github.com/o/r/ pull/1",
+            "pr_head_sha": "0123456789abcdef0123456789abcdef01234567",
+            "branch": "feat/long-branch"
+        });
+        let err = validate_against_schema(&payload, &impl_result_payload_schema(), "payload")
+            .expect_err("wrapped identity fields must reject");
+        assert!(err.contains("payload.pr_url"), "got: {err}");
+        assert!(err.contains("pattern"), "got: {err}");
+    }
+
+    #[test]
     fn schema_rejects_blocked_without_reason() {
         let payload = serde_json::json!({"status": "blocked"});
         let err = validate_against_schema(&payload, &impl_result_payload_schema(), "payload")
@@ -4634,18 +4632,15 @@ Working...
 
     #[test]
     fn validate_expected_result_enforces_payload_schema() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let work_dir = tmp.path().to_path_buf();
-        fs::write(
-            work_dir.join(result_file_name("test-session")),
-            r#"{"pr_url":"","pr_head_sha":"","branch":""}"#,
-        )
-        .expect("write result");
+        let output = format!(
+            "done\n{RESULT_BLOCK_BEGIN}\n{}\n{RESULT_BLOCK_END}\n",
+            r#"{"pr_url":"","pr_head_sha":"","branch":""}"#
+        );
         let spec = schema_only_spec(impl_result_payload_schema());
-        let err = validate_expected_result(work_dir.to_str().unwrap(), "test-session", &spec)
+        let err = validate_expected_result(&output, &spec)
             .expect_err("blank identity must fail the contract");
         assert!(
-            err.contains("result does not satisfy its schema"),
+            err.contains("structured result does not satisfy its schema"),
             "got: {err}"
         );
     }
@@ -4845,6 +4840,8 @@ Working...
         work_dir: &str,
         expected_result: Option<ExpectedResultSpec>,
         last_validation_error: Option<String>,
+        output_snippet: Option<String>,
+        result_payload: Option<String>,
     ) {
         let snapshot = SessionSnapshot {
             session_id: String::from(session_id),
@@ -4861,14 +4858,14 @@ Working...
             finished_at: None,
             cleaned_at: None,
             pr_url: None,
-            output_snippet: None,
+            output_snippet,
             terminal_cause: None,
             expected_result,
             retries_used: 0,
             last_validation_error,
             awaiting_response: false,
             observed_active_at: None,
-            result_payload: None,
+            result_payload,
         };
         upsert_snapshot(conn, &snapshot).expect("upsert test snapshot");
     }
@@ -4882,7 +4879,16 @@ Working...
         let db = tmp.path().join("agentd.sqlite");
         let conn = Connection::open(&db).expect("open sqlite");
         migrate(&conn).expect("migrate");
-        insert_test_snapshot(&conn, "await-no-contract", "exited", "/tmp", None, None);
+        insert_test_snapshot(
+            &conn,
+            "await-no-contract",
+            "exited",
+            "/tmp",
+            None,
+            None,
+            None,
+            None,
+        );
 
         let value = session_await_result_with_interval(
             &conn,
@@ -4908,21 +4914,12 @@ Working...
 
     #[test]
     fn await_result_returns_parsed_payload_when_contract_validates() {
-        // Spec test #2: contract present, file valid → response carries
-        // the parsed result under `payload` (the file content IS the
-        // payload — there is no envelope).
+        // Spec test #2: contract present, transcript block valid -> response
+        // carries the parsed result under `payload`.
         let tmp = tempfile::tempdir().expect("tempdir");
         let db = tmp.path().join("agentd.sqlite");
         let conn = Connection::open(&db).expect("open sqlite");
         migrate(&conn).expect("migrate");
-
-        let work_dir = tmp.path().join("work");
-        fs::create_dir_all(&work_dir).expect("mkdir work_dir");
-        fs::write(
-            work_dir.join(result_file_name("await-with-contract")),
-            r#"{"verdict":"ok","notes":"clean"}"#,
-        )
-        .expect("write result");
 
         let verdict_schema = serde_json::json!({
             "type": "object",
@@ -4930,12 +4927,18 @@ Working...
             "properties": {"verdict": {"type": "string", "minLength": 1}}
         });
         let spec = schema_only_spec(verdict_schema);
+        let transcript = format!(
+            "done\n{RESULT_BLOCK_BEGIN}\n{}\n{RESULT_BLOCK_END}\n",
+            r#"{"verdict":"ok","notes":"clean"}"#
+        );
         insert_test_snapshot(
             &conn,
             "await-with-contract",
             "done",
-            work_dir.to_str().unwrap(),
+            "/tmp",
             Some(spec),
+            None,
+            Some(transcript),
             None,
         );
 
@@ -4964,12 +4967,9 @@ Working...
     #[test]
     fn await_result_serves_persisted_payload_after_worktree_reaped() {
         // Regression (result-payload loss): the monitor validates the
-        // result file and persists the payload, then cleanup reaps the
-        // agent's git worktree — so by the time the launcher awaits, the
-        // file is GONE.  await must serve the PERSISTED payload rather than
-        // fail with "expected result file not readable".  Before the fix
-        // the validated result was discarded and await re-read a deleted
-        // file, losing the agent's work forever.
+        // transcript block and persists the payload, then cleanup reaps the
+        // agent's terminal/worktree. await must serve the persisted payload
+        // rather than depending on any external state.
         let tmp = tempfile::tempdir().expect("tempdir");
         let db = tmp.path().join("agentd.sqlite");
         let conn = Connection::open(&db).expect("open sqlite");
@@ -5047,7 +5047,16 @@ Working...
         migrate(&conn).expect("migrate");
 
         let spec = schema_only_spec(serde_json::json!({"type": "object"}));
-        insert_test_snapshot(&conn, "await-timeout", "running", "/tmp", Some(spec), None);
+        insert_test_snapshot(
+            &conn,
+            "await-timeout",
+            "running",
+            "/tmp",
+            Some(spec),
+            None,
+            None,
+            None,
+        );
 
         let err = session_await_result_with_interval(
             &conn,
@@ -5109,7 +5118,7 @@ Working...
     #[test]
     fn await_result_surfaces_validation_error_when_contract_fails_post_done() {
         // Cross-cutting check: a session that landed in `done` but
-        // whose expected_result file is missing should yield
+        // whose structured result block is missing should yield
         // result: null AND surface the validation reason so the
         // Haskell client can branch on it.
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -5117,23 +5126,22 @@ Working...
         let conn = Connection::open(&db).expect("open sqlite");
         migrate(&conn).expect("migrate");
 
-        let work_dir = tmp.path().join("work");
-        fs::create_dir_all(&work_dir).expect("mkdir work_dir");
-        // Intentionally do NOT write the result file.
         let spec = schema_only_spec(serde_json::json!({"type": "object"}));
         insert_test_snapshot(
             &conn,
-            "await-bad-file",
+            "await-missing-block",
             "done",
-            work_dir.to_str().unwrap(),
+            "/tmp",
             Some(spec),
+            None,
+            None,
             None,
         );
 
         let value = session_await_result_with_interval(
             &conn,
             AwaitResultParams {
-                session_id: String::from("await-bad-file"),
+                session_id: String::from("await-missing-block"),
                 timeout_seconds: Some(2.0),
             },
             Duration::from_millis(50),
@@ -5146,8 +5154,8 @@ Working...
             .and_then(|v| v.as_str())
             .expect("validation_error string must be present");
         assert!(
-            reason.contains("not readable"),
-            "expected file-not-readable reason, got: {reason}"
+            reason.contains("structured result block not found"),
+            "expected missing-block reason, got: {reason}"
         );
     }
 }

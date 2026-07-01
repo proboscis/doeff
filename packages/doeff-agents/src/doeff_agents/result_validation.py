@@ -1,6 +1,7 @@
-"""Schema validation helpers for agent result artifacts."""
+"""Schema validation helpers for structured agent results."""
 
 from collections.abc import Mapping, Sequence
+import re
 from typing import Any
 
 
@@ -61,6 +62,17 @@ def _validate(instance: Any, schema: Mapping[str, Any], loc: str) -> None:  # no
         if len(instance) < min_length:
             raise ValueError(f"'{loc}' must be at least length {min_length}")
 
+    pattern = schema.get("pattern")
+    if pattern is not None and isinstance(instance, str):
+        if not isinstance(pattern, str):
+            raise ValueError(f"'pattern' at '{loc}' must be a string")
+        try:
+            compiled = re.compile(pattern)
+        except re.error as exc:
+            raise ValueError(f"'pattern' at '{loc}' is invalid: {exc}") from exc
+        if not compiled.search(instance):
+            raise ValueError(f"'{loc}' must match pattern {pattern!r}")
+
     required = schema.get("required")
     if required is not None:
         if not isinstance(required, Sequence) or isinstance(required, (str, bytes)):
@@ -89,9 +101,13 @@ def _validate(instance: Any, schema: Mapping[str, Any], loc: str) -> None:  # no
             raise ValueError(f"'{loc}' has unexpected fields {extra!r}")
 
     items = schema.get("items")
-    if items is not None and isinstance(instance, Sequence) and not isinstance(
-        instance,
-        (str, bytes),
+    if (
+        items is not None
+        and isinstance(instance, Sequence)
+        and not isinstance(
+            instance,
+            (str, bytes),
+        )
     ):
         for index, item in enumerate(instance):
             _validate(item, items, f"{loc}[{index}]")

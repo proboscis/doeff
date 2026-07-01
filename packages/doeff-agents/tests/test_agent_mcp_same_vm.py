@@ -64,6 +64,7 @@ class _FakeAdapter:
 class _FakeBackend:
     def __init__(self) -> None:
         self.sessions: dict[str, str] = {}
+        self.captures: dict[str, str] = {}
         self.sent: list[tuple[str, str]] = []
         self.killed: list[str] = []
 
@@ -83,7 +84,7 @@ class _FakeBackend:
         self.sent.append((target, keys))
 
     def capture_pane(self, target: str, lines=100, *, strip_ansi_codes=True) -> str:
-        return ""
+        return self.captures.get(target, "")
 
     def kill_session(self, session: str) -> None:
         self.killed.append(session)
@@ -197,9 +198,7 @@ def test_agent_effectful_mcp_tools_run_inside_caller_scheduler_vm(
 
     response = run(
         scheduled(
-            lazy_ask(env={SessionBackend: backend})(
-                state()(agent_effectful_handler()(workflow()))
-            )
+            lazy_ask(env={SessionBackend: backend})(state()(agent_effectful_handler()(workflow())))
         )
     )
 
@@ -263,9 +262,11 @@ def test_agent_mcp_loop_runs_while_await_result_is_pending(
             try:
                 time.sleep(0.2)
                 holder.append(_call_tool_from_agent_side(tmp_path))
-                (tmp_path / ".agentd-result.json").write_text(
-                    json.dumps({"status": "done"}),
-                    encoding="utf-8",
+                pane_id = backend.sessions[handle.session_id]
+                backend.captures[pane_id] = (
+                    "DOEFF_AGENT_RESULT_BEGIN\n"
+                    f"{json.dumps({'status': 'done'})}\n"
+                    "DOEFF_AGENT_RESULT_END\n"
                 )
             except Exception as exc:  # pragma: no cover - failure is re-raised below
                 holder.append(exc)
@@ -283,17 +284,13 @@ def test_agent_mcp_loop_runs_while_await_result_is_pending(
 
     response = run(
         scheduled(
-            lazy_ask(env={SessionBackend: backend})(
-                state()(agent_effectful_handler()(workflow()))
-            )
+            lazy_ask(env={SessionBackend: backend})(state()(agent_effectful_handler()(workflow())))
         )
     )
 
     result = response["tool"]["result"]
     assert result["isError"] is False, result
-    assert json.loads(result["content"][0]["text"]) == {
-        "status": "same-vm-during-await"
-    }
+    assert json.loads(result["content"][0]["text"]) == {"status": "same-vm-during-await"}
     assert response["outcome"].status == AwaitStatus.EXITED
     assert response["outcome"].result == {"status": "done"}
     assert backend.killed == ["same-vm-await-worker-0"]

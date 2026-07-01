@@ -221,7 +221,7 @@ def detect_status(
     8. Otherwise → None (no change)
 
     This function deliberately does not derive DONE/FAILED from terminal text.
-    Workflow success is decided by the schema-validated result artifact.
+    Workflow success is decided by the schema-validated structured result.
     """
     status = None
     if is_api_limited(output):
