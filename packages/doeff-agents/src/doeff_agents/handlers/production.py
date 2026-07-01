@@ -960,11 +960,8 @@ class TmuxAgentHandler(AgentHandler):
             if output and _has_result_block(output):
                 return self._await_outcome_from_result_output(state, output)
             if state.result_schema is not None:
-                result_output = self._backend.capture_pane(
-                    state.pane_id,
-                    AWAIT_RESULT_CAPTURE_LINES,
-                )
-                if result_output and _has_result_block(result_output):
+                result_output = self._capture_result_output(state)
+                if result_output is not None:
                     return self._await_outcome_from_result_output(state, result_output)
             if observation.status in (SessionStatus.BLOCKED, SessionStatus.BLOCKED_API):
                 return AwaitOutcome(
@@ -1031,6 +1028,24 @@ class TmuxAgentHandler(AgentHandler):
                     validation_error=validation_error,
                 )
         return AwaitOutcome(status=AwaitStatus.EXITED, result=payload)
+
+    def _capture_result_output(self, state: SessionState) -> str | None:
+        result_output = self._backend.capture_pane(
+            state.pane_id,
+            AWAIT_RESULT_CAPTURE_LINES,
+        )
+        if result_output and _has_result_block(result_output):
+            return result_output
+        capture_transcript = getattr(self._backend, "capture_transcript", None)
+        if not callable(capture_transcript):
+            return None
+        transcript_output = capture_transcript(
+            state.pane_id,
+            AWAIT_RESULT_CAPTURE_LINES,
+        )
+        if transcript_output and _has_result_block(transcript_output):
+            return transcript_output
+        return None
 
     def _snapshot_from_observation(
         self,
