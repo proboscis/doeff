@@ -971,7 +971,13 @@ class TmuxAgentHandler(AgentHandler):
                     status=AwaitStatus.AWAITING_INPUT,
                     validation_error=observation.output_snippet or "agent is awaiting input",
                 )
-            if observation.is_terminal:
+            terminal_without_live_session = (
+                observation.status == SessionStatus.EXITED
+                and not self._backend.has_session(effect.handle.session_id)
+            )
+            if observation.is_terminal and (
+                observation.status != SessionStatus.EXITED or terminal_without_live_session
+            ):
                 return self._await_outcome_from_result_output(state, output)
             if time.monotonic() >= deadline:
                 return AwaitOutcome(status=AwaitStatus.TIMED_OUT)
