@@ -75,7 +75,8 @@ from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import AgentSessionRepository, InMemoryAgentSessionRepository
 from doeff_agents.shell import assert_no_forbidden_agent_env, wrap_with_shell_exports
 
-RESULT_ARTIFACT_FILENAME = ".agentd-result.json"
+RESULT_BLOCK_BEGIN = "DOEFF_AGENT_RESULT_BEGIN"
+RESULT_BLOCK_END = "DOEFF_AGENT_RESULT_END"
 
 
 class AgentHandler(ABC):
@@ -219,19 +220,16 @@ def _claude_mcp_permission_prompt_visible(output: str) -> bool:
     """Return True when Claude is blocking on an MCP approval prompt."""
     lowered = output.lower()
     return (
-        (
-            "tool use" in lowered
-            and "(mcp)" in lowered
-            and "do you want to proceed?" in lowered
-            and "esc to cancel" in lowered
-        )
-        or (
-            "new mcp server found" in lowered
-            and "use this mcp server" in lowered
-            and "continue without using this mcp server" in lowered
-            and "enter to confirm" in lowered
-            and "esc to cancel" in lowered
-        )
+        "tool use" in lowered
+        and "(mcp)" in lowered
+        and "do you want to proceed?" in lowered
+        and "esc to cancel" in lowered
+    ) or (
+        "new mcp server found" in lowered
+        and "use this mcp server" in lowered
+        and "continue without using this mcp server" in lowered
+        and "enter to confirm" in lowered
+        and "esc to cancel" in lowered
     )
 
 
@@ -368,7 +366,7 @@ def _validation_failure_from_outcome(  # noqa: PLR0911 - baseline cleanup keeps 
     if outcome.status == AwaitStatus.TIMED_OUT:
         return AgentValidationFailure(
             kind=AgentValidationErrorKind.TIMED_OUT,
-            message=outcome.validation_error or "timed out awaiting result artifact",
+            message=outcome.validation_error or "timed out awaiting structured result",
         )
     if outcome.status == AwaitStatus.AWAITING_INPUT:
         return AgentValidationFailure(
@@ -383,7 +381,7 @@ def _validation_failure_from_outcome(  # noqa: PLR0911 - baseline cleanup keeps 
             )
         return AgentValidationFailure(
             kind=AgentValidationErrorKind.ABSENT,
-            message="result artifact is absent",
+            message="structured result is absent",
         )
 
     if outcome.validation_error:
@@ -404,14 +402,14 @@ def _validation_failure_from_outcome(  # noqa: PLR0911 - baseline cleanup keeps 
 def _retry_message(error: AgentValidationFailure) -> str:
     if error.kind == AgentValidationErrorKind.ABSENT:
         return (
-            "No structured result was returned. Complete the task and write the "
-            f"required JSON object to {RESULT_ARTIFACT_FILENAME}; doeff-agents "
-            "will validate it against the result schema."
+            "No structured result was returned. Complete the task and return a "
+            f"structured result block using {RESULT_BLOCK_BEGIN} and {RESULT_BLOCK_END}; "
+            "doeff-agents will validate it against the result schema."
         )
     if error.kind == AgentValidationErrorKind.INVALID:
         return (
             f"The structured result was invalid: {error.message}. "
-            f"Write a corrected JSON object to {RESULT_ARTIFACT_FILENAME}; "
+            f"Return a corrected block using {RESULT_BLOCK_BEGIN} and {RESULT_BLOCK_END}; "
             "doeff-agents will validate it against the result schema."
         )
     return f"Cannot continue automatically: {error.message}"
@@ -422,16 +420,19 @@ def _result_contract_prompt(result_schema: dict[str, object]) -> str:
     return (
         "\n\n## Structured Result Contract (managed by doeff-agents)\n"
         "Before the agent process exits, return exactly one structured result. "
-        f"For this terminal backend, write a JSON object to `{RESULT_ARTIFACT_FILENAME}` "
-        "in the current working directory. This is a doeff-agents transport detail; "
-        "the domain task only decides the JSON payload.\n\n"
+        "Do not create JSON result files in the workspace. In the final response, "
+        f"start a line with {RESULT_BLOCK_BEGIN}, put the JSON object on the "
+        f"following line or lines, and end with a line containing {RESULT_BLOCK_END}. "
+        "Do not echo an example block from these instructions. This is a "
+        "doeff-agents transport detail; the domain task only decides the JSON "
+        "payload.\n\n"
         "The JSON object must satisfy this schema:\n"
         "```json\n"
         f"{schema_json}\n"
         "```\n\n"
         "Do not ask the caller how to return the result. If the result is absent "
         "or invalid, doeff-agents will send a follow-up; correct the same "
-        "structured result and continue until it validates or the task is blocked."
+        "structured result block and continue until it validates or the task is blocked."
     )
 
 
@@ -441,6 +442,62 @@ def _prompt_with_result_contract(
 ) -> str:
     base = prompt or ""
     return f"{base}{_result_contract_prompt(result_schema)}"
+
+
+def _has_result_block(output: str) -> bool:
+    return RESULT_BLOCK_BEGIN in output
+
+
+def _extract_result_payload(output: str) -> tuple[object | None, str | None]:
+    begin = output.rfind(RESULT_BLOCK_BEGIN)
+    if begin < 0:
+        return None, f"structured result block not found: missing {RESULT_BLOCK_BEGIN}"
+    rest = output[begin + len(RESULT_BLOCK_BEGIN) :]
+    end = rest.find(RESULT_BLOCK_END)
+    if end < 0:
+        return None, f"structured result block not found: missing {RESULT_BLOCK_END}"
+    raw = rest[:end].strip()
+    if not raw:
+        return None, "structured result block is empty"
+    try:
+        return json.loads(raw), None
+    except json.JSONDecodeError as exc:
+        try:
+            return json.loads(_normalize_wrapped_json_strings(raw)), None
+        except json.JSONDecodeError:
+            return None, f"structured result block is not valid JSON: {exc}"
+
+
+def _normalize_wrapped_json_strings(raw: str) -> str:
+    out: list[str] = []
+    in_string = False
+    escaped = False
+    index = 0
+    while index < len(raw):
+        ch = raw[index]
+        if in_string:
+            if escaped:
+                out.append(ch)
+                escaped = False
+            elif ch == "\\":
+                out.append(ch)
+                escaped = True
+            elif ch == '"':
+                out.append(ch)
+                in_string = False
+            elif ch in "\r\n":
+                index += 1
+                while index < len(raw) and raw[index] in " \t":
+                    index += 1
+                continue
+            else:
+                out.append(ch)
+        else:
+            if ch == '"':
+                in_string = True
+            out.append(ch)
+        index += 1
+    return "".join(out)
 
 
 def _launch_effect_from_spec(spec: AgentSpec) -> LaunchEffect:
@@ -874,7 +931,7 @@ class TmuxAgentHandler(AgentHandler):
         return L2SessionHandle(session_id=session_id)
 
     def handle_await_result(self, effect: AwaitResultEffect) -> AwaitOutcome:
-        """Await a result file or an awaiting-input/timeout state.
+        """Await a structured result block or an awaiting-input/timeout state.
 
         The per-await budget is the transport keep-alive heartbeat
         (L-K4-3): expiry only hands control back to the caller's re-await
@@ -891,20 +948,20 @@ class TmuxAgentHandler(AgentHandler):
             if state is None:
                 raise SessionNotFoundError(f"Session {effect.handle.session_id} is not registered")
 
-            if (state.work_dir / ".agentd-result.json").exists():
-                return self._await_outcome_from_result_file(state)
-
             if not self._backend.has_session(effect.handle.session_id):
-                return self._await_outcome_from_result_file(state)
+                return self._await_outcome_from_result_output(state)
 
             observation = self.handle_monitor(MonitorEffect(handle=effect.handle))
+            output = state.monitor_state.last_output
+            if state.result_schema is not None and output and _has_result_block(output):
+                return self._await_outcome_from_result_output(state, output)
             if observation.status in (SessionStatus.BLOCKED, SessionStatus.BLOCKED_API):
                 return AwaitOutcome(
                     status=AwaitStatus.AWAITING_INPUT,
                     validation_error=observation.output_snippet or "agent is awaiting input",
                 )
             if observation.is_terminal:
-                return self._await_outcome_from_result_file(state)
+                return self._await_outcome_from_result_output(state, output)
             if time.monotonic() >= deadline:
                 return AwaitOutcome(status=AwaitStatus.TIMED_OUT)
             time.sleep(0.2)
@@ -935,14 +992,15 @@ class TmuxAgentHandler(AgentHandler):
             raise SessionNotFoundError(f"Session {session_id} is not registered")
         return snapshot
 
-    def _await_outcome_from_result_file(self, state: SessionState) -> AwaitOutcome:
-        result_path = state.work_dir / RESULT_ARTIFACT_FILENAME
-        if not result_path.exists():
-            return AwaitOutcome(status=AwaitStatus.EXITED)
-        try:
-            payload = json.loads(result_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            return AwaitOutcome(status=AwaitStatus.EXITED, validation_error=str(exc))
+    def _await_outcome_from_result_output(
+        self,
+        state: SessionState,
+        output: str | None = None,
+    ) -> AwaitOutcome:
+        transcript = output if output is not None else state.monitor_state.last_output
+        payload, parse_error = _extract_result_payload(transcript or "")
+        if parse_error is not None:
+            return AwaitOutcome(status=AwaitStatus.EXITED, validation_error=parse_error)
         snapshot = self._session_repository.get_session(state.handle.session_id)
         schema = None
         if snapshot is not None:

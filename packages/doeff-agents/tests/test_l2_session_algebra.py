@@ -32,7 +32,7 @@ from doeff_core_effects.scheduler import scheduled
 
 from doeff import do, run
 
-ARTIFACT_SCHEMA = {
+RESULT_SCHEMA = {
     "type": "object",
     "required": ["summary", "ok"],
     "properties": {
@@ -52,7 +52,7 @@ def _launch_twice(work_dir: Path):
         agent_type=AgentType.CODEX,
         work_dir=work_dir,
         prompt="return JSON",
-        result_schema=ARTIFACT_SCHEMA,
+        result_schema=RESULT_SCHEMA,
     )
     first = yield LaunchSession(spec)
     second = yield LaunchSession(spec)
@@ -68,7 +68,7 @@ def _follow_up_and_release(work_dir: Path):
         agent_type=AgentType.CODEX,
         work_dir=work_dir,
         prompt="return JSON",
-        result_schema=ARTIFACT_SCHEMA,
+        result_schema=RESULT_SCHEMA,
     )
     handle = yield LaunchSession(spec)
     outcome = yield AwaitResult(handle, timeout_seconds=5.0)
@@ -89,7 +89,7 @@ def _agent_task(work_dir: Path):
                 agent_type=AgentType.CODEX,
                 work_dir=work_dir,
                 prompt="return JSON",
-                result_schema=ARTIFACT_SCHEMA,
+                result_schema=RESULT_SCHEMA,
                 max_retries=2,
             )
         )
@@ -116,7 +116,7 @@ def test_l2_effect_constructors_return_core_effects(tmp_path: Path) -> None:
         agent_type=AgentType.CODEX,
         work_dir=tmp_path,
         prompt="return JSON",
-        result_schema=ARTIFACT_SCHEMA,
+        result_schema=RESULT_SCHEMA,
     )
     handle = L2SessionHandle(session_id="run-001-node-a-0")
 
@@ -145,7 +145,7 @@ def test_l2_agent_spec_carries_mcp_tools_into_launch_effect(tmp_path: Path) -> N
         agent_type=AgentType.CLAUDE,
         work_dir=tmp_path,
         prompt="use the tool",
-        result_schema=ARTIFACT_SCHEMA,
+        result_schema=RESULT_SCHEMA,
         mcp_tools=(tool,),
         mcp_server_name="sbi",
     )
@@ -175,8 +175,8 @@ def test_agent_retries_invalid_schema_then_returns_valid_payload(tmp_path: Path)
     assert result == {"summary": "fixed", "ok": True}
     assert handler.follow_up_messages("run-001-node-c-0") == [
         "The structured result was invalid: required property 'ok' is missing. "
-        "Write a corrected JSON object to .agentd-result.json; doeff-agents will "
-        "validate it against the result schema."
+        "Return a corrected block using DOEFF_AGENT_RESULT_BEGIN and "
+        "DOEFF_AGENT_RESULT_END; doeff-agents will validate it against the result schema."
     ]
 
 
@@ -194,9 +194,9 @@ def test_agent_distinguishes_absent_result_in_retry_message(tmp_path: Path) -> N
 
     assert result == {"summary": "reported", "ok": True}
     assert handler.follow_up_messages("run-001-node-c-0") == [
-        "No structured result was returned. Complete the task and write the "
-        "required JSON object to .agentd-result.json; doeff-agents will validate "
-        "it against the result schema."
+        "No structured result was returned. Complete the task and return a structured "
+        "result block using DOEFF_AGENT_RESULT_BEGIN and DOEFF_AGENT_RESULT_END; "
+        "doeff-agents will validate it against the result schema."
     ]
 
 
@@ -307,7 +307,7 @@ def _agent_task_with_deadline(
                 agent_type=AgentType.CODEX,
                 work_dir=work_dir,
                 prompt="return JSON",
-                result_schema=ARTIFACT_SCHEMA,
+                result_schema=RESULT_SCHEMA,
                 max_retries=max_retries,
                 deadline_seconds=deadline_seconds,
             )
@@ -320,7 +320,7 @@ def test_agent_heartbeat_expiry_never_burns_attempts(tmp_path: Path) -> None:
 
     With max_retries=0, the pre-demotion semantics (TIMED_OUT consumed an
     attempt) raised AgentAttemptExhaustedError on the first expiry; the
-    demoted loop re-awaits transparently until the artifact arrives.
+    demoted loop re-awaits transparently until the structured result arrives.
     """
     handler = ScenarioAgentHandler(
         scripts={
@@ -423,9 +423,7 @@ def test_scenario_handler_supports_timeout_outcome(tmp_path: Path) -> None:
         scripts={"run-001-node-b-0": [ScenarioStep.timeout()]},
     )
 
-    handle, outcome, retry_handle = run(
-        scheduled(handler.wrap(_follow_up_and_release(tmp_path)))
-    )
+    handle, outcome, retry_handle = run(scheduled(handler.wrap(_follow_up_and_release(tmp_path))))
 
     assert outcome.status == AwaitStatus.TIMED_OUT
     assert outcome.result is None

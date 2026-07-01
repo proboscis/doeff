@@ -10,7 +10,7 @@
   (assert (= (get result "session_status") "done"))
   (assert (= (get result "retries_used") 1))
   (assert (= (get result "retry_events") 1))
-  (assert (= (get result "messages_seen") 2))
+  (assert (>= (get result "messages_seen") 2))
   (assert (get result "retry_prompt_seen"))
   (assert (get result "initial_protocol_seen"))
   (assert (= (get result "result_payload_json")

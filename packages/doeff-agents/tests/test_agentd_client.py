@@ -636,7 +636,7 @@ def test_await_result_accepts_terminal_null_result_with_validation_error() -> No
         {
             "session": _snapshot_payload(status="failed"),
             "result": None,
-            "validation_error": "failed to read result file",
+            "validation_error": "structured result block not found",
         }
     )
 
@@ -644,11 +644,11 @@ def test_await_result_accepts_terminal_null_result_with_validation_error() -> No
 
     assert outcome.status == AwaitStatus.EXITED
     assert outcome.result is None
-    assert outcome.validation_error == "failed to read result file"
+    assert outcome.validation_error == "structured result block not found"
     assert not outcome.continuable
 
 
-def test_await_result_accepts_null_result_as_absent_artifact() -> None:
+def test_await_result_accepts_null_result_as_absent_structured_result() -> None:
     client = _StaticAwaitResultClient(
         {"session": _snapshot_payload(), "result": None, "validation_error": None}
     )
@@ -666,7 +666,7 @@ def test_await_result_preserves_validation_error_for_null_result() -> None:
         {
             "session": _snapshot_payload(),
             "result": None,
-            "validation_error": "expected result file not readable",
+            "validation_error": "structured result block not found",
         }
     )
 
@@ -674,7 +674,7 @@ def test_await_result_preserves_validation_error_for_null_result() -> None:
 
     assert outcome.status == AwaitStatus.EXITED
     assert outcome.result is None
-    assert outcome.validation_error == "expected result file not readable"
+    assert outcome.validation_error == "structured result block not found"
     assert outcome.continuable is False
 
 

@@ -18,7 +18,7 @@ import pytest
 from doeff_agents.agentd_client import AgentdClient
 from doeff_agents.effects import AgentSessionLifecycle, AwaitStatus
 
-ARTIFACT_SCHEMA: dict[str, Any] = {
+RESULT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "required": ["summary", "ok"],
     "properties": {
@@ -86,7 +86,7 @@ def run_agentd_tmux_result_retry_e2e(tmp_path: Path) -> dict[str, Any]:
                 lifecycle=AgentSessionLifecycle.RUN_TO_COMPLETION,
                 session_env={"FAKE_AGENT_SESSION_ID": session_id},
                 expected_result={
-                    "payload_schema": ARTIFACT_SCHEMA,
+                    "payload_schema": RESULT_SCHEMA,
                     "max_retries": 1,
                     "retry_prompt": "RETRY after validation failure: %REASON%",
                 },
@@ -103,9 +103,7 @@ def run_agentd_tmux_result_retry_e2e(tmp_path: Path) -> dict[str, Any]:
 
         db_snapshot = _read_session_db_state(db_path, session_id)
         fake_events = _read_jsonl(fake_log_path)
-        message_events = [
-            event for event in fake_events if event.get("event") == "message"
-        ]
+        message_events = [event for event in fake_events if event.get("event") == "message"]
         return {
             "payload": outcome.result,
             "validation_error": outcome.validation_error,
@@ -118,8 +116,7 @@ def run_agentd_tmux_result_retry_e2e(tmp_path: Path) -> dict[str, Any]:
                 for event in message_events
             ),
             "initial_protocol_seen": any(
-                f".agentd-result-{session_id}.json" in str(event.get("text", ""))
-                for event in message_events
+                "DOEFF_AGENT_RESULT_BEGIN" in str(event.get("text", "")) for event in message_events
             ),
             "result_payload_json": db_snapshot["result_payload_json"],
         }
@@ -152,8 +149,7 @@ def _wait_for_agentd(
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             raise AssertionError(
-                f"doeff-agentd exited early with {proc.returncode}\n"
-                f"{_read_text(log_path)}"
+                f"doeff-agentd exited early with {proc.returncode}\n{_read_text(log_path)}"
             )
         try:
             client.status()
@@ -179,7 +175,6 @@ from pathlib import Path
 
 SESSION_ID = os.environ["FAKE_AGENT_SESSION_ID"]
 WORK_DIR = Path.cwd()
-RESULT_PATH = WORK_DIR / f".agentd-result-{SESSION_ID}.json"
 LOG_PATH = WORK_DIR / "fake-agent-events.jsonl"
 
 
@@ -222,22 +217,28 @@ while True:
         break
     attempt += 1
     log("message", attempt=attempt, text=message)
-    render_working()
-    if attempt == 1:
-        RESULT_PATH.write_text(
-            json.dumps({"summary": "missing ok"}),
-            encoding="utf-8",
-        )
-        log("wrote-invalid", path=str(RESULT_PATH))
-        print("wrote invalid result", flush=True)
+    if "RETRY after validation failure" in message:
+        render_working()
+        payload = json.dumps({"summary": "fixed", "ok": True})
+        log("returned-valid")
+        print("DOEFF_AGENT_RESULT_BEGIN", flush=True)
+        print(payload, flush=True)
+        print("DOEFF_AGENT_RESULT_END", flush=True)
+        print("returned valid result", flush=True)
+        render_idle()
+    elif "Produce the e2e structured result." in message:
+        render_working()
+        payload = json.dumps({"summary": "missing ok"})
+        log("returned-invalid")
+        print("DOEFF_AGENT_RESULT_BEGIN", flush=True)
+        print(payload, flush=True)
+        print("DOEFF_AGENT_RESULT_END", flush=True)
+        print("returned invalid result", flush=True)
+        render_idle()
     else:
-        RESULT_PATH.write_text(
-            json.dumps({"summary": "fixed", "ok": True}),
-            encoding="utf-8",
-        )
-        log("wrote-valid", path=str(RESULT_PATH))
-        print("wrote valid result", flush=True)
-    render_idle()
+        log("ignored-non-task-message")
+        print("\nignored non-task message", flush=True)
+        render_idle()
 """.lstrip(),
         encoding="utf-8",
     )

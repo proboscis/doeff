@@ -162,7 +162,7 @@ class TmuxSessionBackend(SessionBackend):
     ) -> str:
         self._ensure_tmux_available()
         result = subprocess.run(
-            self._args("capture-pane", "-t", target, "-p", "-S", f"-{lines}"),
+            self._args("capture-pane", "-t", target, "-p", "-J", "-S", f"-{lines}"),
             capture_output=True,
             text=True,
             encoding="utf-8",
