@@ -14,6 +14,7 @@ from doeff_agents.monitor import (
     detect_status,
     has_claude_active_marker,
     has_claude_background_shell_marker,
+    is_waiting_for_input,
 )
 
 
@@ -47,6 +48,7 @@ def test_stable_claude_thinking_footer_stays_running() -> None:
 def test_stable_claude_idle_prompt_can_still_block() -> None:
     output = (
         "作業を完了しました。\n\n"
+        "No, and tell Claude what to do differently\n"
         "────────────────────────────────────────────────────────────────────────────────\n"
         "> \n"
         "────────────────────────────────────────────────────────────────────────────────\n"
@@ -62,6 +64,28 @@ def test_stable_claude_idle_prompt_can_still_block() -> None:
             has_prompt=True,
         )
         == SessionStatus.BLOCKED
+    )
+
+
+def test_stable_claude_permission_footer_alone_does_not_block() -> None:
+    output = (
+        "⏺ Bash(uv run pytest packages/doeff-agents/tests -q)\n"
+        "  ⎿  Running…\n\n"
+        "────────────────────────────────────────────────────────────────────────────────\n"
+        "> \n"
+        "────────────────────────────────────────────────────────────────────────────────\n"
+        "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents\n"
+    )
+
+    assert not is_waiting_for_input(output)
+    assert (
+        detect_status(
+            output,
+            _past_monitor_state(),
+            output_changed=False,
+            has_prompt=is_waiting_for_input(output),
+        )
+        is None
     )
 
 
