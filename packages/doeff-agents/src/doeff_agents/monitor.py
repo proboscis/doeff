@@ -70,8 +70,6 @@ def is_waiting_for_input(output: str, patterns: list[str] | None = None) -> bool
             "↵ send",
             "? for shortcuts",
             "accept edits",
-            "bypass permissions",
-            "shift+tab to cycle",
             "Esc to cancel",
             "to show all projects",
         ]

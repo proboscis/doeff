@@ -23,7 +23,10 @@
        :evidence "packages/doeff-agents/tests/test_session_backend.py::test_l2_await_result_uses_extended_capture_before_awaiting_input")
      (fact
        "同じ失敗モードでは、AwaitOutcome.status が AWAITING_INPUT でも schema-valid result を持つ可能性があるため、effectful loop も status より result 値を優先する必要がある。"
-       :evidence "packages/doeff-agents/tests/test_agent_launch_invariants.py::test_await_result_result_wins_over_awaiting_input_status")]
+       :evidence "packages/doeff-agents/tests/test_agent_launch_invariants.py::test_await_result_result_wins_over_awaiting_input_status")
+     (fact
+       "Claude Code の `bypass permissions on` / `shift+tab to cycle` は常時フッターであり、長い MCP tool 実行中に出続けるため、これだけを AwaitResult の入力待ち根拠にすると schema result が出る直前に早期 FollowUp してしまう。"
+       :evidence "packages/doeff-agents/tests/test_monitor_claude.py::test_stable_claude_permission_footer_alone_does_not_block")]
   :context
     [(interpretation
        "agent が生成する JSON file は input/result/evidence/checkpoint のどの用途でも runtime contract にしない。結果は doeff-agents が管理する structured result channel で回収する。")
@@ -36,7 +39,8 @@
      (rule R4 "doeff-agents は agent に .agentd-result.json / result.json などの JSON result file を作らせない。")
      (rule R5 "診断 / 証跡 / checkpoint が必要な caller は AgentSpec.result_schema に明示し、AwaitOutcome.result から受け取る。side-channel file を使わない。")
      (rule R6 "AwaitResult は pane に schema-valid result block が存在する場合、agent がまだ起動中または入力待ち表示でも、その result を入力待ち判定より優先して返す。")
-     (rule R7 "AwaitResult effectful loop は AwaitOutcome.result が存在し validation_error がない場合、AwaitOutcome.status が AWAITING_INPUT でも待受を終了して caller に返す。")]
+     (rule R7 "AwaitResult effectful loop は AwaitOutcome.result が存在し validation_error がない場合、AwaitOutcome.status が AWAITING_INPUT でも待受を終了して caller に返す。")
+     (rule R8 "Claude Code の常時フッターだけを AwaitResult の AWAITING_INPUT 根拠にしてはならない。明示的な入力要求または permission prompt だけを入力待ちとして扱う。")]
   :laws
     [(law await-result-only-public-boundary
        :statement "doeff_agents_user_result => AwaitResult(handle).result and not agent_created_file"
@@ -63,7 +67,12 @@
        :statement "AwaitOutcome.result and no validation_error => caller receives outcome regardless_of_AwaitStatus"
        :counterexamples
          [(counterexample "effectful loop keeps waiting because status is AWAITING_INPUT even though result is present")
-          (counterexample "application code requires AwaitStatus.EXITED after doeff-agents has returned a schema-valid result")])]
+          (counterexample "application code requires AwaitStatus.EXITED after doeff-agents has returned a schema-valid result")])
+     (law claude-footer-is-not-input-request
+       :statement "claude_status_footer_only => not AwaitStatus.AWAITING_INPUT"
+       :counterexamples
+         [(counterexample "bypass permissions footer alone triggers FollowUp during a long MCP tool call")
+          (counterexample "shift+tab footer alone is treated as a user prompt")])]
   :enforcement
     [(defsemgrep no-public-agentd-result-file-read
        :languages ["generic"]
