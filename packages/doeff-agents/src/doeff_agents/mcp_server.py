@@ -39,7 +39,8 @@ SERVER_INFO = {"name": "doeff-mcp", "version": "0.1.0"}
 
 # Timeouts — tunable via module constants (not McpToolServer args, to keep API small)
 TOOL_DISPATCH_WAKEUP_TIMEOUT = 5.0    # HTTP thread waits this long for VM to post wakeup ep
-TOOL_RESPONSE_TIMEOUT = 120.0          # HTTP thread waits this long for VM to produce result
+TOOL_VM_TIMEOUT = 120.0                # VM-side cooperative deadline for one tool body
+TOOL_RESPONSE_TIMEOUT = 125.0          # HTTP transport backstop; VM should answer first
 
 
 @dataclass
@@ -201,6 +202,7 @@ class McpToolServer(_ThreadingHTTPServer):
         self.sessions: dict[str, _SseSession] = {}
         self.shutting_down = False
         self._thread: threading.Thread | None = None
+        self.tool_vm_timeout = TOOL_VM_TIMEOUT
 
         # Queue-based dispatch state.
         # request_queue: HTTP thread → VM (tool invocations)
