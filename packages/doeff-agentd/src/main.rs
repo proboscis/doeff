@@ -1904,7 +1904,7 @@ fn tmux_send_keys(
         thread::sleep(Duration::from_millis(1000));
         tmux_send_enter(config, target)?;
         if literal && !message.is_empty() {
-            confirm_literal_prompt_submitted(config, target)?;
+            confirm_literal_prompt_submitted(config, target, message)?;
         }
     }
     Ok(())
@@ -1921,38 +1921,104 @@ fn tmux_send_enter(config: &Config, target: &str) -> Result<()> {
     Ok(())
 }
 
-fn confirm_literal_prompt_submitted(config: &Config, target: &str) -> Result<()> {
+fn confirm_literal_prompt_submitted(config: &Config, target: &str, message: &str) -> Result<()> {
     // Claude Code and Codex can collapse large pasted prompts into
     // `[Pasted text ...]` / `[Pasted Content ...]`.
     // On slower terminals, the submit Enter may be dropped after the paste,
-    // leaving that collapsed paste marker sitting in the input box forever.
-    // Detect that exact state and resend Enter once; this keeps the launch
-    // contract terminal-driven without falling back to `claude -p`/stdin.
+    // leaving that collapsed paste marker, or the visible tail of the pasted
+    // prompt, sitting in the input box forever. Detect that state and resend
+    // Enter a few times; this keeps the launch contract terminal-driven
+    // without falling back to `claude -p`/stdin.
     thread::sleep(Duration::from_millis(1200));
-    let output = tmux_capture(config, target, 20)?;
-    if output_has_unsubmitted_paste_input(&output) {
+    for _ in 0..3 {
+        let output = tmux_capture(config, target, 40)?;
+        if !output_has_unsubmitted_paste_input(&output, Some(message)) {
+            return Ok(());
+        }
         tmux_send_enter(config, target)?;
+        thread::sleep(Duration::from_millis(1000));
     }
     Ok(())
 }
 
-fn output_has_unsubmitted_paste_input(output: &str) -> bool {
+fn output_has_unsubmitted_paste_input(output: &str, sent_text: Option<&str>) -> bool {
     let lines: Vec<&str> = output.lines().collect();
-    let start = lines.len().saturating_sub(12);
+    let start = lines.len().saturating_sub(20);
+    let recent = &lines[start..];
     let mut last_prompt_line: Option<&str> = None;
-    for line in &lines[start..] {
+    let mut last_prompt_index: Option<usize> = None;
+    for (index, line) in recent.iter().enumerate() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with('❯') || trimmed.starts_with("› ") {
+        if trimmed.starts_with('❯') || trimmed.starts_with('›') {
             last_prompt_line = Some(trimmed);
+            last_prompt_index = Some(index);
         }
     }
-    last_prompt_line
+    if last_prompt_line
         .map(|line| {
             line.contains("[Pasted text")
                 || line.contains("[Pasted Content")
                 || line.contains("Press up to edit queued messages")
         })
         .unwrap_or(false)
+    {
+        return true;
+    }
+    let Some(sent_text) = sent_text else {
+        return false;
+    };
+    let Some(prompt_index) = last_prompt_index else {
+        return false;
+    };
+    let prompt_region = normalize_prompt_text(&recent[prompt_index..].join("\n"));
+    let prompt_region_compact = compact_prompt_text(&prompt_region);
+    literal_prompt_fragments(sent_text)
+        .into_iter()
+        .any(|fragment| {
+            if prompt_region.contains(&fragment) {
+                return true;
+            }
+            let compact_fragment = compact_prompt_text(&fragment);
+            compact_fragment.chars().count() >= 24
+                && prompt_region_compact.contains(&compact_fragment)
+        })
+}
+
+fn normalize_prompt_text(text: &str) -> String {
+    text.replace('\u{00A0}', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn compact_prompt_text(text: &str) -> String {
+    normalize_prompt_text(text)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn literal_prompt_fragments(text: &str) -> Vec<String> {
+    let normalized = normalize_prompt_text(text);
+    let words: Vec<&str> = normalized.split_whitespace().collect();
+    let mut fragments = Vec::new();
+    for start in 0..words.len().saturating_sub(3) {
+        let fragment = words[start..start + 4].join(" ");
+        if fragment.chars().count() >= 24 {
+            fragments.push(fragment);
+        }
+    }
+    let char_count = normalized.chars().count();
+    if char_count >= 24 {
+        fragments.push(normalized.chars().take(80).collect());
+        fragments.push(
+            normalized
+                .chars()
+                .skip(char_count.saturating_sub(80))
+                .collect(),
+        );
+    }
+    fragments
 }
 
 fn tmux_paste_literal(config: &Config, target: &str, message: &str) -> Result<()> {
@@ -2708,7 +2774,7 @@ fn monitor_once(config: &Config) -> Result<()> {
                 }
             }
             let output = tmux_capture(config, &snapshot.pane_id, 100)?;
-            if snapshot.awaiting_response && output_has_unsubmitted_paste_input(&output) {
+            if snapshot.awaiting_response && output_has_unsubmitted_paste_input(&output, None) {
                 tmux_send_enter(config, &snapshot.pane_id)?;
                 snapshot.last_observed_at = Some(observed_at.clone());
                 snapshot.output_snippet = Some(tail_chars(&output, 500));
@@ -3318,15 +3384,45 @@ mod tests {
         assert_eq!(codex_update_dialog_selected_option(option_one), Some(1));
         assert_eq!(codex_update_dialog_selected_option(option_two), Some(2));
         assert_eq!(codex_update_dialog_selected_option(option_three), Some(3));
-        assert_eq!(codex_update_dialog_down_steps_to_skip_until_next(option_one), 2);
-        assert_eq!(codex_update_dialog_down_steps_to_skip_until_next(option_two), 1);
-        assert_eq!(codex_update_dialog_down_steps_to_skip_until_next(option_three), 0);
+        assert_eq!(
+            codex_update_dialog_down_steps_to_skip_until_next(option_one),
+            2
+        );
+        assert_eq!(
+            codex_update_dialog_down_steps_to_skip_until_next(option_two),
+            1
+        );
+        assert_eq!(
+            codex_update_dialog_down_steps_to_skip_until_next(option_three),
+            0
+        );
         assert_eq!(
             codex_update_dialog_down_steps_to_skip_until_next(
                 "Update now\nSkip until next version\nPress enter to continue\n"
             ),
             2
         );
+    }
+
+    #[test]
+    fn codex_update_dialog_handles_live_selected_skip() {
+        let dialog = "\
+codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
+\n\
+  ✨\u{200a}Update available! 0.142.4 -> 0.142.5\n\
+\n\
+  Release notes: https://github.com/openai/codex/releases/latest\n\
+\n\
+  1. Update now (runs `npm install -g @openai/codex`)\n\
+› 2. Skip\n\
+  3. Skip until next version\n\
+\n\
+  Press enter to continue\n";
+
+        assert!(output_has_codex_update_dialog(dialog));
+        assert_eq!(codex_update_dialog_selected_option(dialog), Some(2));
+        assert_eq!(codex_update_dialog_down_steps_to_skip_until_next(dialog), 1);
+        assert!(!output_indicates_startup_finished(dialog));
     }
 
     #[test]
@@ -4169,7 +4265,7 @@ ude Max
 ────────────────────────────────────────────────────────────────────────────────
   paste again to expand
 ";
-        assert!(output_has_unsubmitted_paste_input(stuck_claude_input));
+        assert!(output_has_unsubmitted_paste_input(stuck_claude_input, None));
 
         let stuck_queued_claude_input = "\
 ────────────────────────────────────────────────────────────────────────────────
@@ -4177,7 +4273,10 @@ ude Max
 ────────────────────────────────────────────────────────────────────────────────
    ⚠⚠ NOT FABLE — model: Opus 4.8 (claude-opus-4-8) ⚠⚠
 ";
-        assert!(output_has_unsubmitted_paste_input(stuck_queued_claude_input));
+        assert!(output_has_unsubmitted_paste_input(
+            stuck_queued_claude_input,
+            None
+        ));
 
         let stuck_codex_input = "\
 ╭──────────────────────────────────────────────────────╮
@@ -4186,7 +4285,7 @@ ude Max
 
 › [Pasted text #1 +12 lines]
 ";
-        assert!(output_has_unsubmitted_paste_input(stuck_codex_input));
+        assert!(output_has_unsubmitted_paste_input(stuck_codex_input, None));
 
         let stuck_codex_content_input = "\
 ╭──────────────────────────────────────────────────────╮
@@ -4196,7 +4295,8 @@ ude Max
 › Fix [Pasted Content 6532 chars]
 ";
         assert!(output_has_unsubmitted_paste_input(
-            stuck_codex_content_input
+            stuck_codex_content_input,
+            None
         ));
     }
 
@@ -4209,9 +4309,91 @@ ude Max
 
 ❯\u{00A0}
 ";
-        assert!(!output_has_unsubmitted_paste_input(historical_paste));
-        assert!(!output_has_unsubmitted_paste_input("❯\u{00A0}\n"));
-        assert!(!output_has_unsubmitted_paste_input("› \n"));
+        assert!(!output_has_unsubmitted_paste_input(historical_paste, None));
+        assert!(!output_has_unsubmitted_paste_input("❯\u{00A0}\n", None));
+        assert!(!output_has_unsubmitted_paste_input("› \n", None));
+    }
+
+    #[test]
+    fn unsubmitted_paste_detector_catches_visible_prompt_text() {
+        let output = "\
+────────────────────────────────────────────────────────────────
+❯\u{00A0}
+────────────────────────────────────────────────────────────────
+
+  Continue autonomously if safe, or return a blocked/error structured result.
+";
+        let sent_text = "\
+The executor appeared to be waiting for input. Continue autonomously if safe, \
+or return a blocked/error structured result.";
+
+        assert!(output_has_unsubmitted_paste_input(output, Some(sent_text)));
+    }
+
+    #[test]
+    fn unsubmitted_paste_detector_catches_codex_wrapped_prompt_text() {
+        let sent_text = "\
+Read .acp-context.json, compare the inbox issue against existing open issues, \
+and write the structured triage result when done.";
+        let output = "\
+╭──────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex                                      │
+╰──────────────────────────────────────────────────────╯
+
+› Read .acp-context.json, compare the inbox issue
+  against existing open issues, and write the structured
+  triage result when done.
+";
+
+        assert!(output_has_unsubmitted_paste_input(output, Some(sent_text)));
+    }
+
+    #[test]
+    fn unsubmitted_paste_detector_catches_non_ascii_prompt_tail() {
+        let sent_text = "\
+トリアージ担当です。状況は .acp-context.json にあります。payload.inbox_issues を比較し、\
+構造化された結果を返してください。";
+        let output = "\
+╭──────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex                                      │
+╰──────────────────────────────────────────────────────╯
+
+› トリアージ担当です。状況は .acp-context.json にあります。
+  payload.inbox_issues を比較し、構造化された結果を返してください。
+";
+
+        assert!(output_has_unsubmitted_paste_input(output, Some(sent_text)));
+    }
+
+    #[test]
+    fn unsubmitted_paste_detector_ignores_prior_submitted_prompt_text() {
+        let sent_text = "\
+The executor appeared to be waiting for input. Continue autonomously if safe, \
+or return a blocked/error structured result.";
+        let output = "\
+The executor appeared to be waiting for input. Continue autonomously if safe, \
+or return a blocked/error structured result.
+⏺ Running tools
+
+❯\u{00A0}
+";
+
+        assert!(!output_has_unsubmitted_paste_input(output, Some(sent_text)));
+    }
+
+    #[test]
+    fn unsubmitted_paste_detector_ignores_prior_codex_prompt_text() {
+        let sent_text = "\
+Read .acp-context.json, compare the inbox issue against existing open issues, \
+and write the structured triage result when done.";
+        let output = "\
+› Read .acp-context.json, compare the inbox issue against existing open issues, \
+and write the structured triage result when done.
+Working...
+›
+";
+
+        assert!(!output_has_unsubmitted_paste_input(output, Some(sent_text)));
     }
 
     /// A spec carrying just a schema, as the single-protocol launcher
