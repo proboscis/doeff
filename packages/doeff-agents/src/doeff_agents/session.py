@@ -20,6 +20,7 @@ from .monitor import (
     OnStatusChange,
     SessionStatus,
     detect_status,
+    evolve_status,
     hash_content,
     is_waiting_for_input,
 )
@@ -252,14 +253,18 @@ def monitor_session(
         session._monitor_state.last_output = output
         session._monitor_state.last_output_at = datetime.now(timezone.utc)
 
-    new_status = detect_status(output, session._monitor_state, output_changed, has_prompt)
+    next_status = evolve_status(
+        session.status,
+        detect_status(output, session._monitor_state, output_changed, has_prompt),
+        has_prompt=has_prompt,
+    )
 
-    if new_status and new_status != session.status:
+    if next_status != session.status:
         old_status = session.status
-        session.status = new_status
+        session.status = next_status
         if on_status_change:
-            on_status_change(old_status, new_status, output)
-        return new_status
+            on_status_change(old_status, next_status, output)
+        return next_status
 
     return None
 
