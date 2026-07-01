@@ -38,7 +38,10 @@
        :evidence "packages/doeff-agents/tests/test_session_backend.py::test_l2_await_result_uses_transcript_when_result_begin_scrolled_off_screen")
      (fact
        "2026-07-02 の Nakagawa SBI L2 readiness では、Claude が account-state JSON をまだ描画中なのに AwaitResult が DOEFF_AGENT_RESULT_BEGIN だけで result block と見なし、validation follow-up を送って出力中の JSON を壊した。tmux pipe-pane transcript は ANSI/cursor 制御を含むため、BEGIN/END があっても JSON として抽出できないことがある。"
-       :evidence "packages/doeff-agents/tests/test_session_backend.py::test_l2_await_result_waits_until_result_end_marker")]
+       :evidence "packages/doeff-agents/tests/test_session_backend.py::test_l2_await_result_waits_until_result_end_marker")
+     (fact
+       "2026-07-02 の Nakagawa SBI L2 readiness では、compact single-line JSON を指示しても Claude Code の terminal UI が 80 桁付近で銘柄コードや数量の途中に物理改行を入れ、`5020.T` や `1000000000` が JSON token として壊れた。"
+       :evidence "packages/doeff-agents/tests/test_session_backend.py::test_result_payload_extract_repairs_terminal_wraps_inside_json_tokens")]
   :context
     [(interpretation
        "agent が生成する JSON file は input/result/evidence/checkpoint のどの用途でも runtime contract にしない。結果は doeff-agents が管理する structured result channel で回収する。")
@@ -56,7 +59,8 @@
      (rule R9 "doeff-agents は現在 pane に入力待ち根拠がない BLOCKED 状態を保持してはならない。古い BLOCKED は RUNNING に戻して AwaitResult を継続する。")
      (rule R10 "tmux session がまだ存在する Claude Code L2 session では、shell prompt 風の表示だけで result absent を確定してはならない。結果がなければ heartbeat timeout として再監視する。")
      (rule R11 "tmux backend の AwaitResult は可視 pane だけに依存せず、session 開始時からの transcript tail からも DOEFF_AGENT_RESULT_BEGIN/END block を回収する。ただし transcript fallback は JSON payload として抽出できる時だけ採用し、raw terminal 制御で壊れた block は結果として扱わない。")
-     (rule R12 "AwaitResult は DOEFF_AGENT_RESULT_BEGIN だけで result block と見なさず、対応する DOEFF_AGENT_RESULT_END が出るまで待つ。")]
+     (rule R12 "AwaitResult は DOEFF_AGENT_RESULT_BEGIN だけで result block と見なさず、対応する DOEFF_AGENT_RESULT_END が出るまで待つ。")
+     (rule R13 "AwaitResult は Claude Code の terminal wrap が JSON string / number / property name の途中へ入れた物理改行を搬送上のノイズとして復元する。workspace JSON file への退避を修復策にしてはならない。")]
   :laws
     [(law await-result-only-public-boundary
        :statement "doeff_agents_user_result => AwaitResult(handle).result and not agent_created_file"
@@ -108,7 +112,12 @@
        :statement "partial_or_unparseable_result_block => keep_waiting_or_use_other_valid_source"
        :counterexamples
          [(counterexample "AwaitResult sends a FollowUp while the agent is still printing JSON between BEGIN and END")
-          (counterexample "AwaitResult validates a raw pipe-pane transcript containing cursor-control fragments instead of waiting for a parseable pane block")])]
+          (counterexample "AwaitResult validates a raw pipe-pane transcript containing cursor-control fragments instead of waiting for a parseable pane block")])
+     (law terminal-wrap-is-transport-noise-not-file-contract
+       :statement "terminal_wrapped_result_json => AwaitResult reconstructs payload and not agent_workspace_json_file"
+       :counterexamples
+         [(counterexample "Claude wraps 1000000000 into two pane lines and caller asks the agent to write result.json instead")
+          (counterexample "doeff-agents treats a wrapped but reconstructable result block as absent and burns result retries")])]
   :enforcement
     [(defsemgrep no-public-agentd-result-file-read
        :languages ["generic"]

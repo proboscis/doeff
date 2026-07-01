@@ -1107,6 +1107,25 @@ def test_result_payload_extract_repairs_wrapped_json_string_lines() -> None:
     assert payload["branch"] == "feat/long-branch"
 
 
+def test_result_payload_extract_repairs_terminal_wraps_inside_json_tokens() -> None:
+    output = (
+        "done\n"
+        "DOEFF_AGENT_RESULT_BEGIN\n"
+        '  {"credit_opening_power_jpy":27269135,'
+        '"position_notional_jpy":0,'
+        '"shortable":{"5\n'
+        '  020.T":{"status":"▲","shares":1000\n'
+        '  000000},"7011.T":{"status":"◎","shares":1000000000}}}\n'
+        "DOEFF_AGENT_RESULT_END\n"
+    )
+
+    payload, error = _extract_result_payload(output)
+
+    assert error is None
+    assert isinstance(payload, dict)
+    assert payload["shortable"]["5020.T"]["shares"] == 1000000000
+
+
 def test_result_payload_extract_uses_latest_parseable_block() -> None:
     output = (
         "DOEFF_AGENT_RESULT_BEGIN\n"

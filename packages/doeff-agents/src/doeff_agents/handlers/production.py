@@ -480,14 +480,36 @@ def _extract_result_payload(output: str) -> tuple[object | None, str | None]:
 def _parse_result_payload_candidate(raw: str) -> tuple[object | None, str | None]:
     if not raw:
         return None, "structured result block is empty"
-    raw = tmux.strip_ansi(raw)
-    try:
-        return json.loads(raw), None
-    except json.JSONDecodeError as exc:
+    raw = tmux.strip_ansi(raw).strip()
+    first_error: json.JSONDecodeError | None = None
+    for candidate in _result_payload_json_candidates(raw):
         try:
-            return json.loads(_normalize_wrapped_json_strings(raw)), None
-        except json.JSONDecodeError:
-            return None, f"structured result block is not valid JSON: {exc}"
+            return json.loads(candidate), None
+        except json.JSONDecodeError as exc:
+            if first_error is None:
+                first_error = exc
+    return None, f"structured result block is not valid JSON: {first_error}"
+
+
+def _result_payload_json_candidates(raw: str) -> tuple[str, ...]:
+    return (
+        raw,
+        _normalize_wrapped_json_strings(raw),
+        _normalize_terminal_wrapped_json(raw),
+    )
+
+
+def _normalize_terminal_wrapped_json(raw: str) -> str:
+    """Remove hard terminal-wrap newlines that split JSON tokens.
+
+    Claude's interactive terminal UI can render one logical JSON line as
+    multiple physical pane lines. Those wraps can split strings, property
+    names, and numeric literals (for example ``1000\n  000000``). JSON
+    whitespace outside strings is optional, and result payloads must not rely
+    on literal newlines inside strings, so deleting pane newlines reconstructs
+    the transport payload without introducing workspace result files.
+    """
+    return re.sub(r"[\r\n]+[ \t]*", "", raw)
 
 
 def _normalize_wrapped_json_strings(raw: str) -> str:
