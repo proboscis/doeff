@@ -2396,6 +2396,27 @@ fn output_has_codex_update_dialog(output: &str) -> bool {
         && lower.contains("press enter to continue")
 }
 
+fn codex_update_dialog_selected_option(output: &str) -> Option<u8> {
+    for line in output.lines().rev().take(10) {
+        let Some((_, after_marker)) = line.split_once('›') else {
+            continue;
+        };
+        let selected = after_marker.trim_start().chars().next()?;
+        match selected {
+            '1' => return Some(1),
+            '2' => return Some(2),
+            '3' => return Some(3),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn codex_update_dialog_down_steps_to_skip_until_next(output: &str) -> usize {
+    let selected = codex_update_dialog_selected_option(output).unwrap_or(1);
+    ((3 + 3 - selected as usize) % 3) as usize
+}
+
 /// True while Claude Code is blocking on the one-time
 /// `--dangerously-skip-permissions` confirmation dialog.
 ///
@@ -2438,15 +2459,15 @@ fn output_has_claude_managed_settings_approval_dialog(output: &str) -> bool {
 /// Dismiss the codex update dialog by selecting "Skip until next version"
 /// (the last option) so it does not re-prompt for the same release.
 ///
-/// The default highlight is "1. Update now", so we move DOWN twice and
-/// then confirm with Enter. Using arrow keys (never Enter on the default
-/// selection, never a bare digit that some menu layouts ignore)
-/// guarantees we can never accidentally trigger the "Update now" upgrade.
-fn dismiss_codex_update_dialog(config: &Config, pane_id: &str) -> Result<()> {
-    tmux_send_keys(config, pane_id, "Down", false, false)?;
-    thread::sleep(Duration::from_millis(120));
-    tmux_send_keys(config, pane_id, "Down", false, false)?;
-    thread::sleep(Duration::from_millis(120));
+/// Codex has changed the initial highlight across versions: older builds
+/// selected "1. Update now", while 0.142.x can select "2. Skip". Parse the
+/// highlighted option and move to option 3 from there; fall back to the older
+/// default only when no highlight marker is visible.
+fn dismiss_codex_update_dialog(config: &Config, pane_id: &str, output: &str) -> Result<()> {
+    for _ in 0..codex_update_dialog_down_steps_to_skip_until_next(output) {
+        tmux_send_keys(config, pane_id, "Down", false, false)?;
+        thread::sleep(Duration::from_millis(120));
+    }
     tmux_send_keys(config, pane_id, "Enter", false, false)?;
     Ok(())
 }
@@ -3177,7 +3198,7 @@ fn wait_for_repl_idle(config: &Config, pane_id: &str, max_wait: Duration) -> Res
         // REPL and we'd send the prompt straight into the menu.
         // Detect and dismiss it BEFORE the idle check.
         if output_has_codex_update_dialog(&output) {
-            dismiss_codex_update_dialog(config, pane_id)?;
+            dismiss_codex_update_dialog(config, pane_id, &output)?;
             // Give codex time to process the selection and redraw the
             // REPL before the next capture, so we don't re-detect a
             // half-cleared dialog and send another Down/Down/Enter into
@@ -3271,6 +3292,41 @@ mod tests {
 \n\
   Press enter to continue\n";
         assert!(output_has_codex_update_dialog(dialog));
+    }
+
+    #[test]
+    fn codex_update_dialog_down_steps_follow_current_selection() {
+        let option_one = "\
+› 1. Update now (runs `npm install -g @openai/codex`)\n\
+  2. Skip\n\
+  3. Skip until next version\n\
+\n\
+  Press enter to continue\n";
+        let option_two = "\
+  1. Update now (runs `npm install -g @openai/codex`)\n\
+› 2. Skip\n\
+  3. Skip until next version\n\
+\n\
+  Press enter to continue\n";
+        let option_three = "\
+  1. Update now (runs `npm install -g @openai/codex`)\n\
+  2. Skip\n\
+› 3. Skip until next version\n\
+\n\
+  Press enter to continue\n";
+
+        assert_eq!(codex_update_dialog_selected_option(option_one), Some(1));
+        assert_eq!(codex_update_dialog_selected_option(option_two), Some(2));
+        assert_eq!(codex_update_dialog_selected_option(option_three), Some(3));
+        assert_eq!(codex_update_dialog_down_steps_to_skip_until_next(option_one), 2);
+        assert_eq!(codex_update_dialog_down_steps_to_skip_until_next(option_two), 1);
+        assert_eq!(codex_update_dialog_down_steps_to_skip_until_next(option_three), 0);
+        assert_eq!(
+            codex_update_dialog_down_steps_to_skip_until_next(
+                "Update now\nSkip until next version\nPress enter to continue\n"
+            ),
+            2
+        );
     }
 
     #[test]
