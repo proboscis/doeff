@@ -113,6 +113,9 @@
       (setv outcome
         (.handle-await-result agent-handler
           (AwaitResultEffect :handle handle :timeout-seconds 0.0)))
+      (when (and (is-not outcome.result None)
+                 (is outcome.validation-error None))
+        (break))
       (cond
         (= outcome.status AwaitStatus.TIMED_OUT)
         (setv awaiting-input-deadline None)
@@ -278,6 +281,9 @@
       (setv outcome
         (.handle-await-result agent-handler
           (AwaitResultEffect :handle handle :timeout-seconds 0.0)))
+      (when (and (is-not outcome.result None)
+                 (is outcome.validation-error None))
+        (break))
       (cond
         (= outcome.status AwaitStatus.TIMED_OUT)
         (setv awaiting-input-deadline None)
