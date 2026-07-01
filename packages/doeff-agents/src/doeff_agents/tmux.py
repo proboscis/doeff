@@ -29,8 +29,18 @@ class SessionAlreadyExistsError(TmuxError):
     """Raised when trying to create a session that already exists."""
 
 
-# ANSI escape sequence pattern for stripping
-ANSI_PATTERN = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+# ANSI/terminal control sequence pattern for stripping.
+#
+# tmux pipe-pane records raw full-screen application output. Claude Code emits
+# CSI cursor movement, OSC title updates, and a few single ESC controls; result
+# extraction must not treat those bytes as JSON payload text.
+ANSI_PATTERN = re.compile(
+    r"(?:"
+    r"\x1b\][^\x07]*(?:\x07|\x1b\\)"  # OSC ... BEL/ST
+    r"|\x1b\[[0-?]*[ -/]*[@-~]"  # CSI
+    r"|\x1b[@-Z\\-_]"  # single-character ESC controls
+    r")"
+)
 
 
 def strip_ansi(text: str) -> str:
