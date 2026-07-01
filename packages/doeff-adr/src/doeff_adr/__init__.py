@@ -1,5 +1,7 @@
 """Executable ADR contracts for doeff projects."""
 
+import doeff_hy as doeff_hy  # noqa: F401 - registers Hy import hooks
+
 from .registry import (
     AdrSpec as AdrSpec,
 )
