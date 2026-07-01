@@ -19,12 +19,13 @@ must not smuggle LLM provider API keys into agent processes.
 
 Callers must not read files created by an agent to obtain the agent result. The
 only public result boundary for a doeff-agents user is `AwaitResult` returning
-`AwaitOutcome.result` validated against `AgentSpec.result_schema`. Internal files
-such as `.agentd-result.json` are owned by doeff-agents transport/handler code;
-application code must not wait for, parse, or depend on those filenames. If an
-agent result is absent or invalid, doeff-agents owns the schema validation and
-retry loop before returning the final `AwaitOutcome`. If callers need diagnostic
-or evidence data, it must be part of `AgentSpec.result_schema` and returned in
+`AwaitOutcome.result` validated against `AgentSpec.result_schema`.
+`doeff-agents` must not ask agents to create JSON files for input, result,
+evidence, or checkpoints; especially do not use `.agentd-result.json`,
+`result.json`, or `helper-result.json` as a transport. If an agent result is
+absent or invalid, doeff-agents owns the schema validation and retry loop before
+returning the final `AwaitOutcome`. If callers need diagnostic or evidence data,
+it must be part of `AgentSpec.result_schema` and returned in
 `AwaitOutcome.result`, not carried through a side-channel file.
 
 Application packages must not import `doeff_agents.tmux`, instantiate
