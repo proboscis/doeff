@@ -49,3 +49,33 @@ def test_dismiss_onboarding_does_not_treat_theme_prompt_as_ready() -> None:
 
     assert dismissed == 1
     assert backend.sent[0] == ("%pane", "", True, True)
+
+
+def test_dismiss_onboarding_answers_screen_reader_trust_prompt_with_y() -> None:
+    backend = FakeBackend(
+        [
+            "\n".join(
+                [
+                    "[Accessible screen reader mode: on]",
+                    "Permission Required: Accessing workspace:",
+                    "/tmp/workspace",
+                    "Quick safety check: Is this a project you created or one you trust?",
+                    "y. Yes, I trust this folder",
+                    "n. No, exit",
+                    "Please answer y or n.",
+                    "Enter y/n:",
+                ]
+            ),
+            "Ready for input",
+        ]
+    )
+
+    dismissed = _dismiss_onboarding_dialogs(
+        "%pane",
+        [r"Choose the text style", r"Yes, I trust this folder"],
+        timeout=2.0,
+        backend=backend,
+    )
+
+    assert dismissed == 1
+    assert backend.sent[0] == ("%pane", "y", True, True)
