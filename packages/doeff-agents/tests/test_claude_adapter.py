@@ -26,6 +26,7 @@ def test_launch_command_includes_model_when_provided() -> None:
 
     assert adapter.launch_command(params) == [
         "claude",
+        "--ax-screen-reader",
         "--dangerously-skip-permissions",
         "--permission-mode",
         "bypassPermissions",
@@ -44,6 +45,7 @@ def test_launch_command_omits_model_when_not_provided() -> None:
 
     assert adapter.launch_command(params) == [
         "claude",
+        "--ax-screen-reader",
         "--dangerously-skip-permissions",
         "--permission-mode",
         "bypassPermissions",
@@ -61,6 +63,7 @@ def test_launch_command_without_prompt_stays_interactive() -> None:
 
     assert adapter.launch_command(params) == [
         "claude",
+        "--ax-screen-reader",
         "--dangerously-skip-permissions",
         "--permission-mode",
         "bypassPermissions",
@@ -80,11 +83,14 @@ def test_launch_command_includes_mcp_config_when_servers_provided() -> None:
 
     command = adapter.launch_command(params)
 
-    assert command[:6] == [
+    assert command[:5] == [
         "claude",
+        "--ax-screen-reader",
         "--dangerously-skip-permissions",
         "--permission-mode",
         "bypassPermissions",
+    ]
+    assert command[5:7] == [
         "--model",
         "opus",
     ]
