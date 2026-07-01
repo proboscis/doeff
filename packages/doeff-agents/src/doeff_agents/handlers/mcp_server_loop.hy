@@ -21,24 +21,33 @@
 
 (require doeff-hy.macros [<- defk])
 (import doeff [handler :as _program-handler])
-(import doeff_core_effects.scheduler [CreateExternalPromise Wait Spawn PRIORITY_IDLE])
-(import doeff_agents.mcp-server [McpToolServer McpToolRequest])
+(import doeff_core_effects.scheduler [
+  CreateExternalPromise Wait Spawn Race Cancel PRIORITY_IDLE])
+(import doeff_agents.mcp-server [
+  McpToolServer McpToolRequest TOOL_VM_TIMEOUT])
 (import queue [Empty])
+(import threading)
 
 
-(defk run-tool-with-stack [server full-stack req]
-  "Execute one tool call with the captured handler stack, then wake the
-   HTTP thread by writing req.holder and setting req.event.
+(defk _timeout-after [seconds timer-box]
+  {:pre [(: seconds float) (: timer-box dict)] :post [(: % tuple)]}
+  (<- timeout-ep (CreateExternalPromise))
+  (setv timer
+        (threading.Timer
+          seconds
+          (fn [] (.complete timeout-ep None))))
+  (setv (get timer-box "timer") timer)
+  (.start timer)
+  (<- _ (Wait timeout-ep.future :priority PRIORITY_IDLE))
+  #("timeout" seconds))
 
-   `full-stack` is the handler list captured at the Launch site
-   (GetHandlers(k) + GetOuterHandlers()). Installing them here rebuilds
-   the same dynamic handler environment the user's Program had."
-  {:pre [(: server McpToolServer) (: full-stack list) (: req McpToolRequest)] :post [(: % (type None))]}
+
+(defk _tool-result-with-stack [server full-stack req]
+  {:pre [(: server McpToolServer) (: full-stack list) (: req McpToolRequest)]
+   :post [(: % tuple)]}
   (setv tool (.get server._tools req.tool-name))
   (when (is tool None)
-    (.append req.holder #(False f"unknown tool: {req.tool-name}"))
-    (.set req.event)
-    (return None))
+    (return #("tool" False f"unknown tool: {req.tool-name}")))
   (setv args (lfor name (.param-names tool) (.get req.arguments name)))
   (setv program (tool.handler #* args))
   (for [h full-stack]
@@ -52,11 +61,49 @@
     (except [e Exception]
       (setv ok False)
       (setv error-msg (str e))))
-  (if ok
-      (.append req.holder #(True result))
-      (.append req.holder #(False error-msg)))
-  (.set req.event)
-  None)
+  #("tool" ok (if ok result error-msg)))
+
+
+(defk run-tool-with-stack [server full-stack req * [timeout-seconds TOOL_VM_TIMEOUT]]
+  "Execute one tool call with the captured handler stack, then wake the
+   HTTP thread by writing req.holder and setting req.event.
+
+   `full-stack` is the handler list captured at the Launch site
+   (GetHandlers(k) + GetOuterHandlers()). Installing them here rebuilds
+   the same dynamic handler environment the user's Program had.
+
+   The tool body itself is deadline-owned inside the doeff VM. The HTTP/SSE
+   thread timeout is only a transport backstop; cooperative tool waits such as
+   WaitUntil must be cancelled by this VM-side timeout."
+  {:pre [(: server McpToolServer) (: full-stack list) (: req McpToolRequest)
+         (: timeout-seconds float)]
+   :post [(: % (type None))]}
+  (<- tool-task (Spawn (_tool-result-with-stack server full-stack req)))
+  (setv timer-box {})
+  (<- timeout-task (Spawn (_timeout-after timeout-seconds timer-box)))
+  (<- outcome (Race tool-task timeout-task))
+  (setv timer (.get timer-box "timer"))
+  (when timer
+    (.cancel timer))
+  (setv tag (get outcome 0))
+  (if (= tag "timeout")
+      (do
+        (<- _ (Cancel tool-task))
+        (.append req.holder
+                 #(False
+                   (+ "tool call timed out inside doeff VM after "
+                      (str timeout-seconds) "s")))
+        (.set req.event)
+        None)
+      (do
+        (<- _ (Cancel timeout-task))
+        (setv ok (get outcome 1))
+        (setv value (get outcome 2))
+        (if ok
+            (.append req.holder #(True value))
+            (.append req.holder #(False value)))
+        (.set req.event)
+        None)))
 
 
 (defk mcp-server-loop [server full-stack]
@@ -88,5 +135,8 @@
         (except [_ Empty]
           (setv req None)))
       (when (is-not req None)
-        (<- _ (Spawn (run-tool-with-stack server full-stack req))))))
+        (<- _ (Spawn
+                (run-tool-with-stack
+                  server full-stack req
+                  :timeout-seconds (float server.tool-vm-timeout)))))))
   None)

@@ -9,9 +9,13 @@ scheduler state, and Ask-resolution shared across pipeline + tool calls.
 
 from __future__ import annotations
 
+import importlib
+import sys
 import threading
+from pathlib import Path
 from typing import Any, cast
 
+import doeff_hy  # noqa: F401  (register deftest .hy imports)
 import hy  # noqa: F401  (enable .hy imports)
 import pytest
 from doeff_agents.handlers.mcp_server_loop import mcp_server_loop
@@ -20,6 +24,18 @@ from doeff_core_effects.scheduler import scheduled
 
 from doeff import EffectBase, Pass, Perform, Pure, Resume, do, run
 from doeff.mcp import McpParamSchema, McpToolDef
+
+TESTS_DIR = Path(__file__).resolve().parent
+if str(TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(TESTS_DIR))
+
+timeout_deftests = importlib.import_module("mcp_server_loop_timeout_deftests")
+
+
+def _deftest_interpreter(program: Any, *, env: dict[Any, Any] | None = None) -> Any:
+    if env is not None:
+        raise ValueError("mcp_server_loop timeout deftests do not use env overrides")
+    return run(scheduled(program))
 
 # ---------------------------------------------------------------------------
 # Test fixtures
@@ -253,6 +269,12 @@ class TestMcpServerLoopMultiple:
             yield mcp_server_loop(server, [])
 
         run(scheduled(main()))  # should return, not hang
+
+
+def test_mcp_server_loop_tool_timeout_is_owned_inside_vm_deftest():
+    timeout_deftests.test_mcp_server_loop_tool_timeout_is_owned_inside_vm(
+        _deftest_interpreter
+    )
 
 
 class TestMcpServerLoopProtocolFailures:
