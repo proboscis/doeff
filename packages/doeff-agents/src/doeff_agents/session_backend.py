@@ -56,6 +56,14 @@ class SessionBackend(Protocol):
         strip_ansi_codes: bool = True,
     ) -> str: ...
 
+    def capture_transcript(
+        self,
+        target: str,
+        lines: int = 100,
+        *,
+        strip_ansi_codes: bool = True,
+    ) -> str: ...
+
     def kill_session(self, session: str) -> None: ...
 
     def attach_session(self, session: str) -> None: ...
