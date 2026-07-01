@@ -274,6 +274,13 @@ def test_ensure_agentd_rejects_reachable_daemon_with_wrong_db(
     paths = default_agentd_paths()
     paths.socket_path.parent.mkdir(parents=True)
     stale_db = tmp_path / "stale" / "agentd.sqlite"
+    starts: list[tuple[tuple[str, ...], Path]] = []
+    monkeypatch.setattr(
+        agentd_client,
+        "_start_agentd_process",
+        lambda command, log_path: starts.append((tuple(command), log_path)),
+        raising=False,
+    )
 
     def handle(request: Mapping[str, Any]) -> Mapping[str, Any]:
         return {
@@ -294,6 +301,7 @@ def test_ensure_agentd_rejects_reachable_daemon_with_wrong_db(
     assert str(paths.db_path) in message
     assert f"--socket {paths.socket_path}" in message
     assert server.requests[0]["method"] == "daemon.status"
+    assert starts == []
 
 
 def test_ensure_agentd_fails_loudly_when_canonical_socket_unreachable(
@@ -314,6 +322,86 @@ def test_ensure_agentd_fails_loudly_when_canonical_socket_unreachable(
     assert "doeff-agentd --db" in message
     assert f"--socket {paths.socket_path}" in message
     assert "--max-running 7 serve" in message
+
+
+def test_ensure_agentd_starts_daemon_when_canonical_socket_unreachable(
+    monkeypatch,
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    paths = default_agentd_paths()
+    starts: list[tuple[tuple[str, ...], Path]] = []
+    statuses: Iterator[Mapping[str, Any] | None] = iter(
+        [None, {"state": "running", "db_path": str(paths.db_path)}]
+    )
+
+    def status_if_ready(client: AgentdClient) -> Mapping[str, Any] | None:
+        assert client.socket_path == paths.socket_path
+        return next(statuses)
+
+    monkeypatch.setattr(agentd_client, "_agentd_status_if_ready", status_if_ready)
+    monkeypatch.setattr(
+        agentd_client,
+        "_start_agentd_process",
+        lambda command, log_path: starts.append((tuple(command), log_path)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        agentd_client,
+        "_sleep_for_agentd_start",
+        lambda _seconds: None,
+        raising=False,
+    )
+
+    client = ensure_agentd(
+        daemon_bin="/usr/local/bin/doeff-agentd",
+        max_running=7,
+        client_timeout=2.0,
+    )
+
+    assert client.socket_path == paths.socket_path
+    assert starts == [
+        (
+            (
+                "/usr/local/bin/doeff-agentd",
+                "--db",
+                str(paths.db_path),
+                "--socket",
+                str(paths.socket_path),
+                "--max-running",
+                "7",
+                "serve",
+            ),
+            paths.log_path,
+        )
+    ]
+    assert paths.db_path.parent.is_dir()
+    assert paths.socket_path.parent.is_dir()
+
+
+def test_agentd_command_falls_back_to_workspace_agentd_binary(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    local_bin = tmp_path / "doeff-agentd"
+    local_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    local_bin.chmod(0o755)
+    monkeypatch.delenv("DOEFF_AGENTD_BIN", raising=False)
+    monkeypatch.setattr(agentd_client.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(agentd_client, "_local_agentd_binary_path", lambda: local_bin)
+
+    command = agentd_client._agentd_command(
+        daemon_bin=None,
+        db_path=tmp_path / "agentd.sqlite",
+        socket_path=tmp_path / "agentd.sock",
+        max_running=3,
+    )
+
+    assert command[0] == str(local_bin)
+    assert command[-1] == "serve"
 
 
 def test_lazy_agentd_client_resolves_daemon_on_first_operation(monkeypatch, tmp_path: Path) -> None:
@@ -340,6 +428,51 @@ def test_lazy_agentd_client_resolves_daemon_on_first_operation(monkeypatch, tmp_
     assert client.status() == {"state": "running"}
     assert len(calls) == 1
     assert calls[0]["max_running"] == 4
+
+
+def test_lazy_agentd_client_singleflights_concurrent_resolution(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, Any]] = []
+    started = threading.Event()
+    release = threading.Event()
+
+    class FakeResolvedClient:
+        def status(self):
+            return {"state": "running"}
+
+    def fake_ensure_agentd(**kwargs):
+        calls.append(kwargs)
+        started.set()
+        assert release.wait(timeout=2.0)
+        return FakeResolvedClient()
+
+    monkeypatch.setattr(agentd_client, "ensure_agentd", fake_ensure_agentd)
+    client = LazyAgentdClient(
+        db_path=tmp_path / "agentd.sqlite",
+        socket_path=tmp_path / "agentd.sock",
+    )
+    results: list[Mapping[str, Any]] = []
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            results.append(client.status())
+        except BaseException as error:
+            errors.append(error)
+
+    threads = [threading.Thread(target=worker) for _index in range(5)]
+    for thread in threads:
+        thread.start()
+    assert started.wait(timeout=2.0)
+    release.set()
+    for thread in threads:
+        thread.join(timeout=2.0)
+
+    assert errors == []
+    assert results == [{"state": "running"}] * 5
+    assert len(calls) == 1
 
 
 def test_daemon_handler_observe_is_read_only() -> None:
