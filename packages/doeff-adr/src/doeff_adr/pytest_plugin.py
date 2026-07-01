@@ -83,6 +83,7 @@ def _import_hy_file(path: Path, root: Path) -> Any:
     root_text = str(root)
     if root_text not in sys.path:
         sys.path.insert(0, root_text)
+    _ensure_macro_module_loaded()
     existing = sys.modules.get(module_name)
     if existing is not None and Path(getattr(existing, "__file__", "")).resolve() == path:
         return existing
@@ -95,6 +96,23 @@ def _import_hy_file(path: Path, root: Path) -> Any:
     sys.modules[module_name] = module
     loader.exec_module(module)
     return module
+
+
+def _ensure_macro_module_loaded() -> None:
+    if "doeff_adr.macros" in sys.modules:
+        return
+    path = Path(__file__).with_name("macros.hy").resolve()
+    loader = HyLoader("doeff_adr.macros", str(path))
+    spec = importlib.util.spec_from_file_location(
+        "doeff_adr.macros",
+        path,
+        loader=loader,
+    )
+    if spec is None:
+        raise ImportError(f"could not create import spec for doeff_adr macros: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["doeff_adr.macros"] = module
+    loader.exec_module(module)
 
 
 def _module_name_for_path(path: Path, root: Path) -> str:
