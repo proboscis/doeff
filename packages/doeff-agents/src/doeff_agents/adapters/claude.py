@@ -84,6 +84,7 @@ class ClaudeAdapter:
         """
         args = [
             "claude",
+            "--ax-screen-reader",
             "--dangerously-skip-permissions",
             "--permission-mode",
             "bypassPermissions",
