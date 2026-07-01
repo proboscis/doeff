@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,15 @@ class FakeAgentdClient:
         self.calls: list[tuple[str, Any]] = []
         self.sent_messages: list[tuple[str, str]] = []
         self.captures: list[tuple[str, int]] = []
+        self.socket_path = Path("/tmp/fake-agentd.sock")
+        self.status_payload: dict[str, Any] = {
+            "state": "running",
+            "db_path": "/tmp/fake-agentd.sqlite",
+        }
+
+    def status(self) -> dict[str, Any]:
+        self.calls.append(("status", None))
+        return dict(self.status_payload)
 
     def get_session(self, session_id: str) -> AgentSessionSnapshot | None:
         self.calls.append(("get_session", session_id))
@@ -205,6 +215,52 @@ def test_monitoring_commands_fail_loudly_when_agentd_unreachable(
     monkeypatch.setattr(cli_module, "has_session", lambda *_args: pytest.fail("no tmux fallback"))
 
     result = runner.invoke(cli, command)
+
+    assert result.exit_code == 1
+    assert "agentd が起動していません" in result.output
+    assert "doeff-agentd serve" in result.output
+
+
+def test_agentd_ensure_json_outputs_readiness_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    client = FakeAgentdClient([])
+    client.socket_path = tmp_path / "agentd.sock"
+    client.status_payload = {
+        "state": "running",
+        "db_path": str(tmp_path / "agentd.sqlite"),
+    }
+    monkeypatch.setattr(cli_module, "ensure_agentd", lambda: client)
+
+    result = runner.invoke(cli, ["agentd", "ensure", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload == {
+        "socket_path": str(client.socket_path),
+        "db_path": str(tmp_path / "agentd.sqlite"),
+        "status": client.status_payload,
+    }
+    assert client.calls == [("status", None)]
+
+
+def test_agentd_ensure_json_fails_loudly_when_agentd_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    def unavailable() -> None:
+        raise AgentdUnavailableError(
+            "not reachable",
+            socket_path=tmp_path / "agentd.sock",
+            start_command=("doeff-agentd", "serve"),
+        )
+
+    monkeypatch.setattr(cli_module, "ensure_agentd", unavailable)
+
+    result = runner.invoke(cli, ["agentd", "ensure", "--json"])
 
     assert result.exit_code == 1
     assert "agentd が起動していません" in result.output

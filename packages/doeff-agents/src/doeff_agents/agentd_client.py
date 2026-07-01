@@ -3,8 +3,11 @@
 import json
 import os
 import shlex
+import shutil
 import socket
+import subprocess
 import threading
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -100,6 +103,7 @@ LAUNCH_RPC_TIMEOUT_SECONDS: float = 120.0 + RPC_TIMEOUT_MARGIN_SECONDS
 # long heartbeat is free in the failure case because the daemon monitor
 # resolves the await early the moment a session turns terminal.
 DEFAULT_AWAIT_BUDGET_SECONDS: float = 3600.0
+AGENTD_START_POLL_SECONDS: float = 0.1
 
 
 class AgentdClient:
@@ -432,7 +436,7 @@ def ensure_agentd(
     client_timeout: float = 1.0,
     max_running: int = 10,
 ) -> AgentdClient:
-    """Return a client for the canonical daemon, failing loudly if unreachable."""
+    """Return a client for the canonical daemon, starting it when necessary."""
     paths = default_agentd_paths()
     active_db_path = Path(db_path) if db_path is not None else paths.db_path
     active_socket_path = Path(socket_path) if socket_path is not None else paths.socket_path
@@ -443,34 +447,122 @@ def ensure_agentd(
         socket_path=active_socket_path,
         max_running=max_running,
     )
+    _prepare_agentd_paths(active_db_path, active_socket_path, paths.log_path)
     status = _agentd_status_if_ready(client)
     if status is not None:
-        daemon_db = status.get("db_path")
-        if isinstance(daemon_db, str) and _normalize_path(daemon_db) != _normalize_path(
-            active_db_path
-        ):
-            raise AgentdUnavailableError(
-                "doeff-agentd is reachable at the expected socket "
-                f"{active_socket_path}, but it is using a different database: "
-                f"{daemon_db}. Expected database: {active_db_path}. "
-                "Stop the stale daemon bound to this socket and start the "
-                "canonical daemon with:\n"
-                f"  {shlex.join(command)}\n"
-                f"Expected socket path: {active_socket_path}",
-                socket_path=active_socket_path,
-                start_command=tuple(command),
-            )
+        _validate_agentd_identity(
+            status,
+            expected_db_path=active_db_path,
+            expected_socket_path=active_socket_path,
+            command=command,
+        )
+        return client
+
+    try:
+        _start_agentd_process(command, paths.log_path)
+    except OSError as error:
+        command_text = shlex.join(command)
+        raise AgentdUnavailableError(
+            "doeff-agentd is not reachable at the expected socket "
+            f"{active_socket_path}, and starting it failed: {error}. "
+            "Start command:\n"
+            f"  {command_text}\n"
+            f"Expected socket path: {active_socket_path}\n"
+            f"Log path: {paths.log_path}",
+            socket_path=active_socket_path,
+            start_command=tuple(command),
+        ) from error
+
+    if _wait_for_agentd_ready(
+        client,
+        expected_db_path=active_db_path,
+        expected_socket_path=active_socket_path,
+        command=command,
+        timeout=timeout,
+    ):
         return client
 
     command_text = shlex.join(command)
     raise AgentdUnavailableError(
         "doeff-agentd is not reachable at the expected socket "
-        f"{active_socket_path}. Start it with:\n"
+        f"{active_socket_path} after starting it. Start command:\n"
         f"  {command_text}\n"
-        f"Expected socket path: {active_socket_path}",
+        f"Expected socket path: {active_socket_path}\n"
+        f"Log path: {paths.log_path}",
         socket_path=active_socket_path,
         start_command=tuple(command),
     )
+
+
+def _prepare_agentd_paths(db_path: Path, socket_path: Path, log_path: Path) -> None:
+    for directory in (db_path.parent, socket_path.parent, log_path.parent):
+        directory.mkdir(parents=True, exist_ok=True)
+
+
+def _validate_agentd_identity(
+    status: Mapping[str, Any],
+    *,
+    expected_db_path: Path,
+    expected_socket_path: Path,
+    command: list[str],
+) -> None:
+    daemon_db = status.get("db_path")
+    if isinstance(daemon_db, str) and _normalize_path(daemon_db) != _normalize_path(
+        expected_db_path
+    ):
+        raise AgentdUnavailableError(
+            "doeff-agentd is reachable at the expected socket "
+            f"{expected_socket_path}, but it is using a different database: "
+            f"{daemon_db}. Expected database: {expected_db_path}. "
+            "Stop the stale daemon bound to this socket and start the "
+            "canonical daemon with:\n"
+            f"  {shlex.join(command)}\n"
+            f"Expected socket path: {expected_socket_path}",
+            socket_path=expected_socket_path,
+            start_command=tuple(command),
+        )
+
+
+def _start_agentd_process(command: list[str], log_path: Path) -> None:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("ab") as log_file:
+        subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            close_fds=True,
+        )
+
+
+def _wait_for_agentd_ready(
+    client: AgentdClient,
+    *,
+    expected_db_path: Path,
+    expected_socket_path: Path,
+    command: list[str],
+    timeout: float,
+) -> bool:
+    deadline = time.monotonic() + timeout
+    while True:
+        status = _agentd_status_if_ready(client)
+        if status is not None:
+            _validate_agentd_identity(
+                status,
+                expected_db_path=expected_db_path,
+                expected_socket_path=expected_socket_path,
+                command=command,
+            )
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        _sleep_for_agentd_start(min(AGENTD_START_POLL_SECONDS, remaining))
+
+
+def _sleep_for_agentd_start(seconds: float) -> None:
+    time.sleep(seconds)
 
 
 def _agentd_status_if_ready(client: AgentdClient) -> Mapping[str, Any] | None:
@@ -493,12 +585,7 @@ def _agentd_command(
     socket_path: Path,
     max_running: int,
 ) -> list[str]:
-    if daemon_bin is not None:
-        prefix = [str(daemon_bin)]
-    elif env_bin := os.environ.get("DOEFF_AGENTD_BIN"):
-        prefix = [env_bin]
-    else:
-        prefix = ["doeff-agentd"]
+    prefix = [str(daemon_bin)] if daemon_bin is not None else [_resolve_agentd_binary()]
     return [
         *prefix,
         "--db",
@@ -509,6 +596,27 @@ def _agentd_command(
         str(max_running),
         "serve",
     ]
+
+
+def _resolve_agentd_binary() -> str:
+    if env_bin := os.environ.get("DOEFF_AGENTD_BIN"):
+        return env_bin
+    if path_bin := shutil.which("doeff-agentd"):
+        return path_bin
+    if local_bin := _local_agentd_binary_path():
+        return str(local_bin)
+    return "doeff-agentd"
+
+
+def _local_agentd_binary_path() -> Path | None:
+    packages_dir = Path(__file__).resolve().parents[3]
+    for profile in ("debug", "release"):
+        candidate = packages_dir / "doeff-agentd" / "target" / profile / "doeff-agentd"
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
 def _query_to_params(query: AgentSessionQuery | None) -> dict[str, Any]:
     if query is None:
         return {}

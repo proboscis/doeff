@@ -1,5 +1,6 @@
 """CLI for doeff-agents."""
 
+import json
 import sys
 import time
 from pathlib import Path
@@ -170,6 +171,45 @@ def _resolve_tmux_session(user_name: str) -> str | None:
 @click.group()
 def cli() -> None:
     """doeff-agents: Agent session management for coding agents."""
+
+
+@cli.group()
+def agentd() -> None:
+    """Manage the doeff-agentd supervisor."""
+
+
+@agentd.command("ensure")
+@click.option("--json", "json_output", is_flag=True, help="Print machine-readable status.")
+def agentd_ensure(json_output: bool) -> None:
+    """Ensure doeff-agentd is reachable, starting it if necessary."""
+    try:
+        client = ensure_agentd()
+    except AgentdUnavailableError as error:
+        _print_agentd_unavailable(error)
+        sys.exit(1)
+
+    try:
+        status = dict(client.status())
+    except (AgentdClientError, OSError) as error:
+        _print_agentd_request_error(error)
+        sys.exit(1)
+
+    payload = {
+        "socket_path": str(client.socket_path),
+        "status": status,
+    }
+    daemon_db = status.get("db_path")
+    if isinstance(daemon_db, str):
+        payload["db_path"] = daemon_db
+
+    if json_output:
+        click.echo(json.dumps(payload, sort_keys=True))
+        return
+
+    console.print(f"doeff-agentd: {status.get('state', 'running')}")
+    console.print(f"socket: {client.socket_path}")
+    if isinstance(daemon_db, str):
+        console.print(f"db: {daemon_db}")
 
 
 @cli.command()
