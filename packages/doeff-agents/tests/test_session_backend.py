@@ -635,6 +635,42 @@ def test_l2_await_result_uses_extended_capture_before_awaiting_input(
     assert AWAIT_RESULT_CAPTURE_LINES in backend.capture_lines
 
 
+def test_l2_await_result_does_not_treat_claude_status_footer_as_input(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = FakeBackend()
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+    )
+    work_dir = tmp_path / "workspace"
+    work_dir.mkdir()
+    spec = AgentSpec(
+        run_id="readiness",
+        node_id="sbi-recon",
+        attempt=0,
+        agent_type=AgentType.CLAUDE,
+        work_dir=work_dir,
+        prompt="write account state",
+        result_schema={"type": "object", "required": ["status"]},
+    )
+    handler = TmuxAgentHandler(backend=backend)
+    handle = handler.handle_launch_session(LaunchSession(spec))
+    backend.captures[f"%{handle.session_id}"] = (
+        "⏺ Bash(uv run pytest packages/doeff-agents/tests -q)\n"
+        "  ⎿  Running…\n\n"
+        "────────────────────────────────────────────────────────────────────────────────\n"
+        "\u276f\u00a0\n"
+        "────────────────────────────────────────────────────────────────────────────────\n"
+        "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents\n"
+    )
+
+    outcome = handler.handle_await_result(AwaitResultEffect(handle=handle, timeout_seconds=0.01))
+
+    assert outcome.status == AwaitStatus.TIMED_OUT
+    assert outcome.result is None
+
+
 def test_imperative_session_api_accepts_injected_backend(monkeypatch) -> None:
     backend = FakeBackend()
     monkeypatch.setattr("doeff_agents.session.get_adapter", lambda _agent_type: FakeAdapter())
