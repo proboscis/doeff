@@ -29,7 +29,10 @@
        :evidence "packages/doeff-agents/tests/test_monitor_claude.py::test_stable_claude_permission_footer_alone_does_not_block")
      (fact
        "一度 BLOCKED と判定された Claude Code session は、現在 pane に入力待ち根拠がない場合 RUNNING に戻さなければ、長い MCP tool 実行中の安定画面を古い BLOCKED 状態のまま AwaitResult.AWAITING_INPUT として返してしまう。"
-       :evidence "packages/doeff-agents/tests/test_session_backend.py::test_l2_await_result_clears_stale_blocked_state_when_current_footer_is_not_input")]
+       :evidence "packages/doeff-agents/tests/test_session_backend.py::test_l2_await_result_clears_stale_blocked_state_when_current_footer_is_not_input")
+     (fact
+       "Claude Code の tmux pane は launch 直後や長い MCP tool 後に shell prompt 風の行を含むことがある。tmux session がまだ存在する間にこれだけで EXITED + result None を返すと、schema result が出る直前に caller が absent result retry を消費する。"
+       :evidence "packages/doeff-agents/tests/test_session_backend.py::test_l2_await_result_does_not_finalize_absent_result_on_live_tmux_shell_prompt")]
   :context
     [(interpretation
        "agent が生成する JSON file は input/result/evidence/checkpoint のどの用途でも runtime contract にしない。結果は doeff-agents が管理する structured result channel で回収する。")
@@ -44,7 +47,8 @@
      (rule R6 "AwaitResult は pane に schema-valid result block が存在する場合、agent がまだ起動中または入力待ち表示でも、その result を入力待ち判定より優先して返す。")
      (rule R7 "AwaitResult effectful loop は AwaitOutcome.result が存在し validation_error がない場合、AwaitOutcome.status が AWAITING_INPUT でも待受を終了して caller に返す。")
      (rule R8 "Claude Code の常時フッターだけを AwaitResult の AWAITING_INPUT 根拠にしてはならない。明示的な入力要求または permission prompt だけを入力待ちとして扱う。")
-     (rule R9 "doeff-agents は現在 pane に入力待ち根拠がない BLOCKED 状態を保持してはならない。古い BLOCKED は RUNNING に戻して AwaitResult を継続する。")]
+     (rule R9 "doeff-agents は現在 pane に入力待ち根拠がない BLOCKED 状態を保持してはならない。古い BLOCKED は RUNNING に戻して AwaitResult を継続する。")
+     (rule R10 "tmux session がまだ存在する Claude Code L2 session では、shell prompt 風の表示だけで result absent を確定してはならない。結果がなければ heartbeat timeout として再監視する。")]
   :laws
     [(law await-result-only-public-boundary
        :statement "doeff_agents_user_result => AwaitResult(handle).result and not agent_created_file"
@@ -81,7 +85,12 @@
        :statement "previous_status_BLOCKED and not current_input_prompt => current_status_RUNNING"
        :counterexamples
          [(counterexample "old idle prompt keeps AwaitResult returning AWAITING_INPUT during an MCP call")
-          (counterexample "stable Claude footer with no input request inherits a previous BLOCKED state")])]
+          (counterexample "stable Claude footer with no input request inherits a previous BLOCKED state")])
+     (law live-tmux-prompt-is-not-absent-result
+       :statement "tmux_session_exists and no_result_block => AwaitStatus.TIMED_OUT not EXITED_absent"
+       :counterexamples
+         [(counterexample "Claude launch echo with a shell prompt returns EXITED + result None")
+          (counterexample "a post-MCP idle-looking pane consumes absent-result retries before the schema block appears")])]
   :enforcement
     [(defsemgrep no-public-agentd-result-file-read
        :languages ["generic"]

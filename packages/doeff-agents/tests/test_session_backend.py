@@ -671,6 +671,44 @@ def test_l2_await_result_does_not_treat_claude_status_footer_as_input(
     assert outcome.result is None
 
 
+def test_l2_await_result_does_not_finalize_absent_result_on_live_tmux_shell_prompt(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = FakeBackend()
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
+    )
+    work_dir = tmp_path / "workspace"
+    work_dir.mkdir()
+    spec = AgentSpec(
+        run_id="readiness",
+        node_id="sbi-recon",
+        attempt=0,
+        agent_type=AgentType.CLAUDE,
+        work_dir=work_dir,
+        prompt="write account state",
+        result_schema={"type": "object", "required": ["status"]},
+    )
+    handler = TmuxAgentHandler(backend=backend)
+    handle = handler.handle_launch_session(LaunchSession(spec))
+    pane = f"%{handle.session_id}"
+    backend.captures[pane] = (
+        "export HOME=/tmp/agent; claude --strict-mcp-config\n"
+        "➜  workspace export HOME=/tmp/agent; claude --strict-mcp-config\n"
+        "  structured account-state result requested by doeff-agents.\n"
+        "  Return the required account-state result.\n\n"
+        "────────────────────────────────────────────────────────────────────────────────\n"
+        "\u276f\u00a0\n"
+        "────────────────────────────────────────────────────────────────────────────────\n"
+    )
+
+    outcome = handler.handle_await_result(AwaitResultEffect(handle=handle, timeout_seconds=0.01))
+
+    assert outcome.status == AwaitStatus.TIMED_OUT
+    assert outcome.result is None
+
+
 def test_l2_await_result_clears_stale_blocked_state_when_current_footer_is_not_input(
     monkeypatch,
     tmp_path: Path,
