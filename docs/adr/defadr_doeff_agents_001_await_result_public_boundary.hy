@@ -26,7 +26,10 @@
        :evidence "packages/doeff-agents/tests/test_agent_launch_invariants.py::test_await_result_result_wins_over_awaiting_input_status")
      (fact
        "Claude Code の `bypass permissions on` / `shift+tab to cycle` は常時フッターであり、長い MCP tool 実行中に出続けるため、これだけを AwaitResult の入力待ち根拠にすると schema result が出る直前に早期 FollowUp してしまう。"
-       :evidence "packages/doeff-agents/tests/test_monitor_claude.py::test_stable_claude_permission_footer_alone_does_not_block")]
+       :evidence "packages/doeff-agents/tests/test_monitor_claude.py::test_stable_claude_permission_footer_alone_does_not_block")
+     (fact
+       "一度 BLOCKED と判定された Claude Code session は、現在 pane に入力待ち根拠がない場合 RUNNING に戻さなければ、長い MCP tool 実行中の安定画面を古い BLOCKED 状態のまま AwaitResult.AWAITING_INPUT として返してしまう。"
+       :evidence "packages/doeff-agents/tests/test_session_backend.py::test_l2_await_result_clears_stale_blocked_state_when_current_footer_is_not_input")]
   :context
     [(interpretation
        "agent が生成する JSON file は input/result/evidence/checkpoint のどの用途でも runtime contract にしない。結果は doeff-agents が管理する structured result channel で回収する。")
@@ -40,7 +43,8 @@
      (rule R5 "診断 / 証跡 / checkpoint が必要な caller は AgentSpec.result_schema に明示し、AwaitOutcome.result から受け取る。side-channel file を使わない。")
      (rule R6 "AwaitResult は pane に schema-valid result block が存在する場合、agent がまだ起動中または入力待ち表示でも、その result を入力待ち判定より優先して返す。")
      (rule R7 "AwaitResult effectful loop は AwaitOutcome.result が存在し validation_error がない場合、AwaitOutcome.status が AWAITING_INPUT でも待受を終了して caller に返す。")
-     (rule R8 "Claude Code の常時フッターだけを AwaitResult の AWAITING_INPUT 根拠にしてはならない。明示的な入力要求または permission prompt だけを入力待ちとして扱う。")]
+     (rule R8 "Claude Code の常時フッターだけを AwaitResult の AWAITING_INPUT 根拠にしてはならない。明示的な入力要求または permission prompt だけを入力待ちとして扱う。")
+     (rule R9 "doeff-agents は現在 pane に入力待ち根拠がない BLOCKED 状態を保持してはならない。古い BLOCKED は RUNNING に戻して AwaitResult を継続する。")]
   :laws
     [(law await-result-only-public-boundary
        :statement "doeff_agents_user_result => AwaitResult(handle).result and not agent_created_file"
@@ -72,7 +76,12 @@
        :statement "claude_status_footer_only => not AwaitStatus.AWAITING_INPUT"
        :counterexamples
          [(counterexample "bypass permissions footer alone triggers FollowUp during a long MCP tool call")
-          (counterexample "shift+tab footer alone is treated as a user prompt")])]
+          (counterexample "shift+tab footer alone is treated as a user prompt")])
+     (law stale-blocked-state-must-clear
+       :statement "previous_status_BLOCKED and not current_input_prompt => current_status_RUNNING"
+       :counterexamples
+         [(counterexample "old idle prompt keeps AwaitResult returning AWAITING_INPUT during an MCP call")
+          (counterexample "stable Claude footer with no input request inherits a previous BLOCKED state")])]
   :enforcement
     [(defsemgrep no-public-agentd-result-file-read
        :languages ["generic"]
