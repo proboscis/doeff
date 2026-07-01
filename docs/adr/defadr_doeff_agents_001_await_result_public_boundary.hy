@@ -17,7 +17,10 @@
        :evidence "packages/doeff-agents/src/doeff_agents/effects/agent.py")
      (fact
        "schema validation と retry prompt は doeff-agents handler が所有している。"
-       :evidence "packages/doeff-agents/src/doeff_agents/handlers/production.py")]
+       :evidence "packages/doeff-agents/src/doeff_agents/handlers/production.py")
+     (fact
+       "2026-07-02 の Nakagawa SBI L2 readiness では、agent pane に schema-valid な DOEFF_AGENT_RESULT_BEGIN/END block が出ていたが、通常監視幅と入力待ち判定の競合で AwaitResult.result として回収できなかった。"
+       :evidence "packages/doeff-agents/tests/test_session_backend.py::test_l2_await_result_uses_extended_capture_before_awaiting_input")]
   :context
     [(interpretation
        "agent が生成する JSON file は input/result/evidence/checkpoint のどの用途でも runtime contract にしない。結果は doeff-agents が管理する structured result channel で回収する。")
@@ -28,7 +31,8 @@
      (rule R2 "doeff-agents 利用者が受け取れる agent result は AwaitResultEffect が返す AwaitOutcome.result のみである。")
      (rule R3 "result schema validation、invalid result retry、missing result retry は doeff-agents handler の責務である。")
      (rule R4 "doeff-agents は agent に .agentd-result.json / result.json などの JSON result file を作らせない。")
-     (rule R5 "診断 / 証跡 / checkpoint が必要な caller は AgentSpec.result_schema に明示し、AwaitOutcome.result から受け取る。side-channel file を使わない。")]
+     (rule R5 "診断 / 証跡 / checkpoint が必要な caller は AgentSpec.result_schema に明示し、AwaitOutcome.result から受け取る。side-channel file を使わない。")
+     (rule R6 "AwaitResult は pane に schema-valid result block が存在する場合、agent がまだ起動中または入力待ち表示でも、その result を入力待ち判定より優先して返す。")]
   :laws
     [(law await-result-only-public-boundary
        :statement "doeff_agents_user_result => AwaitResult(handle).result and not agent_created_file"
@@ -45,7 +49,12 @@
        :statement "agent_terminal_result => structured_result_channel and not workspace_json_file"
        :counterexamples
          [(counterexample "doeff-agents prompt tells the agent to write .agentd-result.json")
-          (counterexample "doeff-agents retry prompt asks the agent to create a JSON result file")])]
+          (counterexample "doeff-agents retry prompt asks the agent to create a JSON result file")])
+     (law visible-result-block-wins-over-awaiting-input
+       :statement "pane_contains_valid_result_block => AwaitResult.result regardless_of_prompt_status"
+       :counterexamples
+         [(counterexample "handler sees Claude prompt after the block and returns AWAITING_INPUT")
+          (counterexample "handler captures only the latest status area and misses an older result block")])]
   :enforcement
     [(defsemgrep no-public-agentd-result-file-read
        :languages ["generic"]
