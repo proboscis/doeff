@@ -96,6 +96,16 @@ const RPC_ERR_AWAIT_TIMEOUT: i32 = -32000;
 /// session id that does not exist (or has been deleted during the
 /// wait).
 const RPC_ERR_NO_SUCH_SESSION: i32 = -32001;
+/// JSON-RPC error code returned when `session.report_result` receives a
+/// payload that does not satisfy the session's result schema.  A
+/// deterministic failure: agentd never re-prompts (ADR 0035 R4).
+const RPC_ERR_RESULT_REJECTED: i32 = -32002;
+/// JSON-RPC error code returned when `session.report_result` arrives after
+/// the session already reached a terminal status without a result.
+const RPC_ERR_ALREADY_TERMINAL: i32 = -32003;
+/// MCP protocol version the `report-result-mcp` stdio server advertises
+/// when a client omits its own requested version.
+const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 
 #[derive(Debug, Clone)]
 struct Config {
@@ -122,13 +132,13 @@ struct RpcRequest {
     params: Value,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct RpcResponse {
     id: Value,
     ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     result: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     error: Option<String>,
     /// Structured JSON-RPC 2.0 style error code.  Present only on
     /// failure responses raised through `RpcError`; preserved alongside
@@ -137,7 +147,7 @@ struct RpcResponse {
     /// New methods such as `session.await_result` use this so callers
     /// can distinguish e.g. "no such session" (-32001) from "timeout"
     /// (-32000) without parsing the error message.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     error_code: Option<i32>,
 }
 
@@ -260,63 +270,53 @@ struct TerminalCause {
 
 /// Contract the launcher attaches to a session to enforce input→output
 /// semantics on top of doeff-agentd's existing terminal-detection
-/// heuristics.  When set, the monitor validates the agent's output on
-/// every transition to "done" before letting the session enter a
-/// terminal state — and auto-prompts the agent to fix forgotten or
-/// malformed outputs.
+/// heuristics.  When set, the agent must deliver its result over the
+/// agentd-owned `report_result` MCP tool (see ADR 0035); agentd validates
+/// the reported payload against `payload_schema` before the session may
+/// enter a terminal `done` state.
+///
+/// Wire note: older launchers also send `retry_prompt` / `max_retries`.
+/// ADR 0035 removed the re-prompt path (a deterministic validation
+/// failure is never retried — hard rule 7), so those fields are now
+/// ignored.  There is no `deny_unknown_fields`, so they deserialize
+/// harmlessly and the wire contract stays backward-compatible.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ExpectedResultSpec {
     /// The JSON-Schema (a constrained subset agentd enforces — see
     /// `validate_against_schema`) the agent's result must satisfy. This
     /// is the only thing the launcher supplies. agentd owns the result
-    /// transmission contract: it injects the transcript block instruction,
-    /// extracts the block from the terminal output, validates it against
-    /// this schema, and re-prompts on violation. The schema is opaque to
+    /// transmission contract: it wires the `report_result` MCP server into
+    /// the agent's launch, receives the payload over that data channel,
+    /// and validates it against this schema. The schema is opaque to
     /// agentd: it enforces structure, not domain meaning.
     payload_schema: serde_json::Value,
-    /// Message sent back to the agent when its result is missing or does
-    /// not satisfy the schema. `%REASON%` is replaced with the
-    /// validator's explanation. `%RESULT_BLOCK_BEGIN%` and
-    /// `%RESULT_BLOCK_END%` are replaced with the runtime markers.
-    #[serde(default = "default_retry_prompt")]
-    retry_prompt: String,
-    /// Maximum number of times the monitor re-prompts the agent before
-    /// finalising the session as failed.  Counts retries only, not the
-    /// initial run, so total attempts = max_retries + 1.
-    #[serde(default = "default_max_retries")]
-    max_retries: u32,
 }
 
-const RESULT_BLOCK_BEGIN: &str = "DOEFF_AGENT_RESULT_BEGIN";
-const RESULT_BLOCK_END: &str = "DOEFF_AGENT_RESULT_END";
+/// MCP server name and tool name for the agentd-owned result channel.
+/// agentd injects a stdio MCP server (a subcommand of this same binary)
+/// into every contract session's launch; the agent calls `report_result`
+/// with its payload, which is relayed byte-faithfully to agentd over the
+/// existing unix socket (ADR 0035 R1).  tmux is never the result source.
+const REPORT_RESULT_MCP_SERVER: &str = "doeff_result";
+const REPORT_RESULT_TOOL: &str = "report_result";
+/// argv subcommand that runs the stdio MCP server (see `run_report_result_mcp`).
+const REPORT_RESULT_MCP_SUBCOMMAND: &str = "report-result-mcp";
 
 /// The instruction agentd injects into the agent's first prompt telling
 /// it how to return the structured result. This is agentd's transmission
 /// contract with the terminal agent; the launcher never authors it, so a
 /// launcher that knows only the data schema still gets a working result
-/// channel.
+/// channel.  ADR 0035: the result is recovered over a byte-faithful data
+/// channel (the `report_result` MCP tool), never scraped from the screen.
 fn result_protocol_instruction(_session_id: &str) -> String {
     format!(
-        " Result channel: when you have finished the task, return exactly one structured \
-         result block in your final response. Do not create JSON result files in the \
-         workspace. Start a line with {RESULT_BLOCK_BEGIN}, put the JSON object that \
-         satisfies the result schema on the following line or lines, and end with a \
-         line containing {RESULT_BLOCK_END}. Do not echo an example block from these \
-         instructions. agentd extracts and validates that block; if it is missing or \
-         invalid, agentd sends the reason back so you can correct the same block.",
+        " Result channel: when you have finished the task, call the `{REPORT_RESULT_TOOL}` \
+         MCP tool exactly once, passing your result as the `payload` argument — a JSON \
+         object that satisfies the result schema. Do not print the result to the terminal \
+         and do not create JSON result files; agentd only accepts the result through the \
+         `{REPORT_RESULT_TOOL}` tool. If the tool responds with a validation error, fix the \
+         payload and call `{REPORT_RESULT_TOOL}` again in the same session.",
     )
-}
-
-fn default_retry_prompt() -> String {
-    String::from(
-        "The structured result block was missing or invalid: %REASON%. \
-         Re-read your previous instructions and return a corrected block using \
-         %RESULT_BLOCK_BEGIN% and %RESULT_BLOCK_END%. Do not create JSON result files.",
-    )
-}
-
-fn default_max_retries() -> u32 {
-    2
 }
 
 #[derive(Debug, Deserialize)]
@@ -358,6 +358,16 @@ struct LaunchParams {
 #[derive(Debug, Deserialize)]
 struct SessionIdParams {
     session_id: String,
+}
+
+/// Parameters for `session.report_result`: the agent's structured result
+/// delivered over the agentd-owned data channel (ADR 0035). `payload` is
+/// the exact JSON value the agent emitted; agentd persists it
+/// byte-faithfully and never reconstructs it from the screen.
+#[derive(Debug, Deserialize)]
+struct ReportResultParams {
+    session_id: String,
+    payload: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -449,7 +459,14 @@ fn parse_iso_timestamp(raw: Option<&str>) -> Option<DateTime<Utc>> {
 }
 
 fn main() -> Result<()> {
-    let config = parse_args(env::args().skip(1).collect())?;
+    let raw: Vec<String> = env::args().skip(1).collect();
+    // The `report-result-mcp` subcommand runs a stdio MCP server that
+    // relays the agent's result to a running agentd (ADR 0035). It is a
+    // pure socket client — no DB, lease, or serve loop.
+    if raw.first().map(String::as_str) == Some(REPORT_RESULT_MCP_SUBCOMMAND) {
+        return run_report_result_mcp(&raw[1..]);
+    }
+    let config = parse_args(raw)?;
     if let Some(parent) = config.db_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -552,6 +569,231 @@ fn home_dir() -> PathBuf {
     env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Absolute path to the running agentd binary, used as the command the
+/// agent spawns for the `report_result` stdio MCP server.  Falls back to
+/// the bare binary name (PATH lookup) if the exe path cannot be resolved.
+fn agentd_binary_path() -> String {
+    env::current_exe()
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| String::from("doeff-agentd"))
+}
+
+/// Run the stdio MCP server that delivers an agent's result to agentd
+/// (ADR 0035 R1).  agentd wires `<agentd-bin> report-result-mcp --session
+/// <id> --socket <path>` into every contract session's MCP config; the
+/// agent calls the `report_result` tool, and this server relays the
+/// payload verbatim to agentd's `session.report_result` RPC over the unix
+/// socket.  The result travels as JSON end to end — tmux is never a source,
+/// so the transport is byte-faithful (no fixed-width grid projection).
+fn run_report_result_mcp(args: &[String]) -> Result<()> {
+    let mut session_id: Option<String> = None;
+    let mut socket: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--session" => {
+                i += 1;
+                session_id = args.get(i).cloned();
+            }
+            "--socket" => {
+                i += 1;
+                socket = args.get(i).cloned();
+            }
+            other => return Err(anyhow!("report-result-mcp: unknown argument: {other}")),
+        }
+        i += 1;
+    }
+    let session_id =
+        session_id.ok_or_else(|| anyhow!("report-result-mcp requires --session <id>"))?;
+    let socket = socket.ok_or_else(|| anyhow!("report-result-mcp requires --socket <path>"))?;
+
+    let stdin = std::io::stdin();
+    let mut reader = stdin.lock();
+    let mut stdout = std::io::stdout();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let read = reader.read_line(&mut line)?;
+        if read == 0 {
+            break;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let msg: Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            // A malformed line is ignored rather than crashing the server
+            // (a crash would kill the agent's only result channel).
+            Err(_) => continue,
+        };
+        if let Some(response) = handle_mcp_message(&msg, &session_id, &socket) {
+            let encoded = serde_json::to_string(&response)?;
+            stdout.write_all(encoded.as_bytes())?;
+            stdout.write_all(b"\n")?;
+            stdout.flush()?;
+        }
+    }
+    Ok(())
+}
+
+/// Dispatch one MCP JSON-RPC message. Returns `Some(response)` for
+/// requests and `None` for notifications (no `id`).
+fn handle_mcp_message(msg: &Value, session_id: &str, socket: &str) -> Option<Value> {
+    let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
+    let id = msg.get("id").cloned();
+    match method {
+        "initialize" => {
+            let protocol = msg
+                .get("params")
+                .and_then(|p| p.get("protocolVersion"))
+                .and_then(Value::as_str)
+                .unwrap_or(MCP_PROTOCOL_VERSION);
+            Some(mcp_result(
+                id,
+                json!({
+                    "protocolVersion": protocol,
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {
+                        "name": "doeff-agentd-report-result",
+                        "version": env!("CARGO_PKG_VERSION"),
+                    },
+                }),
+            ))
+        }
+        "notifications/initialized" => None,
+        "ping" => Some(mcp_result(id, json!({}))),
+        "tools/list" => Some(mcp_result(id, json!({ "tools": [report_result_tool_def()] }))),
+        "tools/call" => Some(handle_report_result_tool_call(
+            id,
+            msg.get("params"),
+            session_id,
+            socket,
+        )),
+        _ => {
+            if id.is_none() {
+                None
+            } else {
+                Some(mcp_error(id, -32601, format!("method not found: {method}")))
+            }
+        }
+    }
+}
+
+fn report_result_tool_def() -> Value {
+    json!({
+        "name": REPORT_RESULT_TOOL,
+        "description": "Report this session's final structured result to agentd. Call exactly \
+                        once with your result as the `payload` argument. agentd validates it \
+                        against the session's result schema and records it byte-faithfully; if \
+                        it responds with a validation error, fix the payload and call again.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "payload": {
+                    "type": "object",
+                    "description": "The result object satisfying the session's result schema."
+                }
+            },
+            "required": ["payload"]
+        }
+    })
+}
+
+fn handle_report_result_tool_call(
+    id: Option<Value>,
+    params: Option<&Value>,
+    session_id: &str,
+    socket: &str,
+) -> Value {
+    let name = params
+        .and_then(|p| p.get("name"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if name != REPORT_RESULT_TOOL {
+        return mcp_tool_error(id, format!("unknown tool: {name}"));
+    }
+    let payload = match params
+        .and_then(|p| p.get("arguments"))
+        .and_then(|a| a.get("payload"))
+    {
+        Some(p) => p.clone(),
+        None => {
+            return mcp_tool_error(
+                id,
+                format!("{REPORT_RESULT_TOOL} requires a `payload` argument"),
+            )
+        }
+    };
+    match relay_report_result(socket, session_id, &payload) {
+        Ok(_) => mcp_result(
+            id,
+            json!({
+                "content": [{"type": "text", "text": "result recorded"}],
+                "isError": false,
+            }),
+        ),
+        // A rejected/invalid result is surfaced as an MCP tool error (not a
+        // transport error) so the agent sees the reason and can correct the
+        // payload within the same turn — agentd never re-prompts.
+        Err(e) => mcp_tool_error(id, format!("{e:#}")),
+    }
+}
+
+/// Relay a `report_result` payload to a running agentd over its unix
+/// socket via the `session.report_result` RPC.
+fn relay_report_result(socket: &str, session_id: &str, payload: &Value) -> Result<Value> {
+    let stream = UnixStream::connect(socket)
+        .with_context(|| format!("connecting to agentd socket {socket}"))?;
+    let mut writer = stream.try_clone()?;
+    let mut reader = BufReader::new(stream);
+    let request = json!({
+        "id": 1,
+        "method": "session.report_result",
+        "params": {"session_id": session_id, "payload": payload},
+    });
+    let mut encoded = serde_json::to_string(&request)?;
+    encoded.push('\n');
+    writer.write_all(encoded.as_bytes())?;
+    writer.flush()?;
+    let mut response_line = String::new();
+    reader.read_line(&mut response_line)?;
+    let response: RpcResponse = serde_json::from_str(response_line.trim())
+        .with_context(|| "parsing agentd session.report_result response")?;
+    if response.ok {
+        Ok(response.result.unwrap_or(Value::Null))
+    } else {
+        Err(anyhow!(
+            "{}",
+            response
+                .error
+                .unwrap_or_else(|| String::from("session.report_result failed"))
+        ))
+    }
+}
+
+fn mcp_result(id: Option<Value>, result: Value) -> Value {
+    json!({"jsonrpc": "2.0", "id": id.unwrap_or(Value::Null), "result": result})
+}
+
+fn mcp_error(id: Option<Value>, code: i32, message: String) -> Value {
+    json!({"jsonrpc": "2.0", "id": id.unwrap_or(Value::Null), "error": {"code": code, "message": message}})
+}
+
+/// A tool-level error: a well-formed `tools/call` response whose content
+/// carries the failure and sets `isError`, so the agent (not the MCP
+/// transport) handles it.
+fn mcp_tool_error(id: Option<Value>, text: String) -> Value {
+    mcp_result(
+        id,
+        json!({
+            "content": [{"type": "text", "text": format!("Error: {text}")}],
+            "isError": true,
+        }),
+    )
 }
 
 fn migrate(conn: &Connection) -> Result<()> {
@@ -864,24 +1106,58 @@ fn dispatch_request_result(
     } else if request.method == "session.await_result" {
         let params: AwaitResultParams = serde_json::from_value(request.params)?;
         session_await_result(conn, params)
+    } else if request.method == "session.report_result" {
+        let params: ReportResultParams = serde_json::from_value(request.params)?;
+        session_report_result(conn, params)
     } else {
         Err(anyhow!("unknown method: {}", request.method))
+    }
+}
+
+/// The agentd-owned result channel wired into a contract session's launch.
+/// agentd runs a stdio MCP server (a `report-result-mcp` subcommand of its
+/// own binary) that the agent spawns; the server relays `report_result`
+/// calls to agentd over `socket`.  This is how ADR 0035's byte-faithful,
+/// agentd-owned transport is delivered without scraping the screen.
+#[derive(Debug, Clone)]
+struct ResultChannel {
+    /// Absolute path to the agentd binary (the stdio MCP server command).
+    command: String,
+    session_id: String,
+    /// Path to agentd's unix socket the stdio server relays results to.
+    socket: String,
+}
+
+impl ResultChannel {
+    /// argv the agent uses to spawn the stdio MCP server.
+    fn mcp_command_args(&self) -> Vec<String> {
+        vec![
+            String::from(REPORT_RESULT_MCP_SUBCOMMAND),
+            String::from("--session"),
+            self.session_id.clone(),
+            String::from("--socket"),
+            self.socket.clone(),
+        ]
     }
 }
 
 /// Build the shell command line that tmux runs in the new pane.  Per-agent
 /// adapters (codex, claude) own the argv shape; callers passing
 /// `agent_type=generic` (or any unknown type) must provide `command`
-/// explicitly as an escape hatch.
-fn resolve_launch_command(params: &LaunchParams) -> Result<String> {
+/// explicitly as an escape hatch.  When `result_channel` is set the agent
+/// gets the agentd-owned `report_result` MCP server wired into its argv.
+fn resolve_launch_command(
+    params: &LaunchParams,
+    result_channel: Option<&ResultChannel>,
+) -> Result<String> {
     if let Some(explicit) = params.command.as_ref() {
         if !explicit.trim().is_empty() {
             return Ok(explicit.clone());
         }
     }
     match params.agent_type.as_str() {
-        "codex" => Ok(shell_join(build_codex_argv(params))),
-        "claude" => Ok(shell_join(build_claude_argv(params))),
+        "codex" => Ok(shell_join(build_codex_argv(params, result_channel))),
+        "claude" => Ok(shell_join(build_claude_argv(params, result_channel))),
         "generic" | "" => Err(anyhow!(
             "session.launch: agent_type='{}' requires an explicit `command`",
             params.agent_type
@@ -893,7 +1169,7 @@ fn resolve_launch_command(params: &LaunchParams) -> Result<String> {
     }
 }
 
-fn build_codex_argv(params: &LaunchParams) -> Vec<String> {
+fn build_codex_argv(params: &LaunchParams, result_channel: Option<&ResultChannel>) -> Vec<String> {
     let mut args: Vec<String> = vec![String::from("codex"), String::from("--yolo")];
     if let Some(effort) = params.effort.as_ref() {
         if !effort.is_empty() {
@@ -910,6 +1186,29 @@ fn build_codex_argv(params: &LaunchParams) -> Vec<String> {
             "mcp_servers.{}.url={}",
             toml_quoted_key(name),
             toml_quoted_string(url)
+        ));
+    }
+    // Wire the agentd-owned result channel as a stdio MCP server. codex
+    // takes `mcp_servers.<name>.command` + `.args` config overrides via
+    // `-c`; the args are a TOML array of quoted strings.
+    if let Some(channel) = result_channel {
+        args.push(String::from("-c"));
+        args.push(format!(
+            "mcp_servers.{}.command={}",
+            toml_quoted_key(REPORT_RESULT_MCP_SERVER),
+            toml_quoted_string(&channel.command)
+        ));
+        let arg_items = channel
+            .mcp_command_args()
+            .into_iter()
+            .map(|a| toml_quoted_string(&a))
+            .collect::<Vec<_>>()
+            .join(",");
+        args.push(String::from("-c"));
+        args.push(format!(
+            "mcp_servers.{}.args=[{}]",
+            toml_quoted_key(REPORT_RESULT_MCP_SERVER),
+            arg_items
         ));
     }
     if let Some(model) = params.model.as_ref() {
@@ -930,7 +1229,7 @@ fn build_codex_argv(params: &LaunchParams) -> Vec<String> {
     args
 }
 
-fn build_claude_argv(params: &LaunchParams) -> Vec<String> {
+fn build_claude_argv(params: &LaunchParams, result_channel: Option<&ResultChannel>) -> Vec<String> {
     let mut args: Vec<String> = vec![
         String::from("claude"),
         String::from("--dangerously-skip-permissions"),
@@ -949,9 +1248,38 @@ fn build_claude_argv(params: &LaunchParams) -> Vec<String> {
             args.push(model.clone());
         }
     }
+    // MCP wiring. The Rust launcher previously left this unimplemented
+    // (only the Python adapter wired it), so a claude launch could never
+    // deliver a result and would be falsely rejected by the ADR 0035
+    // reject-at-launch gate. Wire both caller-supplied servers (SSE, to
+    // match doeff-agents/adapters/claude.py) and the agentd-owned
+    // `report_result` stdio server into a single --mcp-config.
+    let mut mcp_servers = serde_json::Map::new();
+    for (name, url) in &params.mcp_servers {
+        mcp_servers.insert(
+            name.clone(),
+            serde_json::json!({"type": "sse", "url": url}),
+        );
+    }
+    if let Some(channel) = result_channel {
+        mcp_servers.insert(
+            String::from(REPORT_RESULT_MCP_SERVER),
+            serde_json::json!({
+                "type": "stdio",
+                "command": channel.command,
+                "args": channel.mcp_command_args(),
+            }),
+        );
+    }
+    if !mcp_servers.is_empty() {
+        let mcp_config = serde_json::json!({ "mcpServers": mcp_servers });
+        args.push(String::from("--mcp-config"));
+        args.push(serde_json::to_string(&mcp_config).unwrap_or_else(|_| String::from("{}")));
+        args.push(String::from("--strict-mcp-config"));
+    }
     // Same rationale as 'build_codex_argv': the prompt is sent as a
     // message into the running agent (not as a positional argv) so the
-    // session stays alive past task completion and can be re-prompted.
+    // session stays alive past task completion.
     args
 }
 
@@ -1087,7 +1415,40 @@ fn session_launch(
             params.session_name
         ));
     }
-    let command_line = resolve_launch_command(&params)?;
+    // ADR 0035: a contract session (expected_result set) delivers its
+    // result over the agentd-owned `report_result` MCP channel. Wire it
+    // for codex/claude launches agentd builds the argv for; a caller that
+    // supplied an explicit `command` owns its own reporting (escape hatch).
+    let has_command_override = params
+        .command
+        .as_ref()
+        .map(|c| !c.trim().is_empty())
+        .unwrap_or(false);
+    let result_channel = if params.expected_result.is_some()
+        && !has_command_override
+        && matches!(params.agent_type.as_str(), "codex" | "claude")
+    {
+        Some(ResultChannel {
+            command: agentd_binary_path(),
+            session_id: params.session_id.clone(),
+            socket: config.socket_path.to_string_lossy().into_owned(),
+        })
+    } else {
+        None
+    };
+    // Reject-at-launch gate (ADR 0035, fork #13): an agent that agentd
+    // cannot wire the result channel into can never deliver a result —
+    // reject up front instead of silently accepting a session that will
+    // only ever time out without a result.
+    if params.expected_result.is_some() && result_channel.is_none() && !has_command_override {
+        return Err(anyhow!(
+            "session.launch: agent_type '{}' cannot deliver a result over the \
+             {REPORT_RESULT_TOOL} channel; a result contract requires agent_type \
+             'codex' or 'claude' (or an explicit `command` that reports results itself)",
+            params.agent_type
+        ));
+    }
+    let command_line = resolve_launch_command(&params, result_channel.as_ref())?;
     if !params.skip_trust_setup {
         run_pre_launch_setup(&params)?;
     }
@@ -1437,6 +1798,95 @@ fn session_await_result_with_interval(
 /// every other terminal state (including `failed` due to validation
 /// timeout) `result` is null and `validation_error` carries whichever
 /// reason the monitor recorded.
+/// Handle `session.report_result` (ADR 0035): the agent delivered its
+/// structured result over the agentd-owned MCP data channel. Validate it
+/// against the session's contract and, if valid, persist it byte-faithfully.
+///
+/// Concurrency: `report_result` is the SOLE writer of `result_payload_json`,
+/// written via a guarded UPDATE (first-write-wins, only while the session is
+/// non-terminal). It NEVER writes `status`; the monitor stays the sole
+/// status writer and flips the session to `done` once it observes the
+/// persisted result. `upsert_snapshot` COALESCE-preserves
+/// `result_payload_json`, so the monitor's routine observation upserts can
+/// never clobber a reported result.
+///
+/// A schema-invalid payload is a deterministic failure: it is NOT persisted
+/// and NOT retried (hard rule 7 / ADR 0035 R4). The reason is returned to
+/// the agent so it can correct the payload within the same session; agentd
+/// never re-prompts on its own.
+fn session_report_result(conn: &Connection, params: ReportResultParams) -> Result<Value> {
+    let snapshot = require_session(conn, &params.session_id)?;
+    if is_terminal_status(&snapshot.status) {
+        if snapshot.result_payload.is_some() {
+            // Idempotent: the result already landed before the session
+            // finalised; a duplicate report is not an error.
+            return Ok(json!({"accepted": true, "already_reported": true}));
+        }
+        return Err(anyhow::Error::new(RpcError {
+            code: RPC_ERR_ALREADY_TERMINAL,
+            message: format!(
+                "session '{}' already reached terminal status '{}' without a result",
+                params.session_id, snapshot.status
+            ),
+        }));
+    }
+    let spec = snapshot.expected_result.as_ref().ok_or_else(|| {
+        anyhow!(
+            "session '{}' has no result contract; {REPORT_RESULT_TOOL} is not applicable",
+            params.session_id
+        )
+    })?;
+    if let Err(reason) = validate_against_schema(&params.payload, &spec.payload_schema, "payload") {
+        // Deterministic validation failure: record for audit, tell the
+        // agent why, do NOT persist and do NOT retry.
+        record_event(
+            conn,
+            &params.session_id,
+            "session_result_rejected",
+            &json!({"session_id": params.session_id, "reason": reason}),
+        )?;
+        return Err(anyhow::Error::new(RpcError {
+            code: RPC_ERR_RESULT_REJECTED,
+            message: format!("reported result does not satisfy its schema: {reason}"),
+        }));
+    }
+    // Byte-faithful persistence: serialize the exact JSON value the agent
+    // sent. Guarded UPDATE = first-write-wins while the session is not yet
+    // terminal.
+    let payload_json = serde_json::to_string(&params.payload)?;
+    let affected = conn.execute(
+        "UPDATE agent_sessions SET result_payload_json = ?1 \
+         WHERE session_id = ?2 AND result_payload_json IS NULL \
+           AND status NOT IN ('done','failed','exited','stopped','cancelled')",
+        params![payload_json, params.session_id],
+    )?;
+    if affected == 0 {
+        // Either a result already landed (idempotent) or the session went
+        // terminal between the checks above and the UPDATE.
+        match session_get(conn, &params.session_id)? {
+            Some(s) if s.result_payload.is_some() => {
+                return Ok(json!({"accepted": true, "already_reported": true}));
+            }
+            _ => {
+                return Err(anyhow::Error::new(RpcError {
+                    code: RPC_ERR_ALREADY_TERMINAL,
+                    message: format!(
+                        "session '{}' finished before the result could be recorded",
+                        params.session_id
+                    ),
+                }));
+            }
+        }
+    }
+    record_event(
+        conn,
+        &params.session_id,
+        "session_result_reported",
+        &json!({"session_id": params.session_id}),
+    )?;
+    Ok(json!({"accepted": true}))
+}
+
 fn build_await_response(snapshot: &SessionSnapshot) -> Value {
     let mut response = serde_json::Map::new();
     response.insert(
@@ -1448,10 +1898,14 @@ fn build_await_response(snapshot: &SessionSnapshot) -> Value {
     let mut validation_error: Option<String> = snapshot.last_validation_error.clone();
 
     if snapshot.status == "done" {
-        if let Some(spec) = snapshot.expected_result.as_ref() {
-            // Prefer the payload the monitor persisted at validation time.
-            // It was captured from the transcript result block before the
-            // pane/worktree was cleaned up.
+        if snapshot.expected_result.is_some() {
+            // ADR 0035: the ONLY result source is the payload the agent
+            // delivered over the `report_result` data channel and agentd
+            // persisted byte-faithfully. There is no transcript fallback —
+            // scraping the screen is exactly the non-injective projection
+            // this ADR removes. `report_result` only ever persists a
+            // schema-valid payload, so a `done` contract session always
+            // has one; a missing payload is a bug, surfaced as an error.
             let stored = snapshot
                 .result_payload
                 .as_ref()
@@ -1464,21 +1918,9 @@ fn build_await_response(snapshot: &SessionSnapshot) -> Value {
                     validation_error = None;
                 }
                 None => {
-                    if let Some(output) = snapshot.output_snippet.as_ref() {
-                        match validate_expected_result(output, spec) {
-                            Ok(parsed) => {
-                                let mut result_obj = serde_json::Map::new();
-                                result_obj.insert(String::from("payload"), parsed);
-                                result_value = Value::Object(result_obj);
-                                validation_error = None;
-                            }
-                            Err(reason) => {
-                                validation_error = Some(reason);
-                            }
-                        }
-                    } else if validation_error.is_none() {
+                    if validation_error.is_none() {
                         validation_error = Some(String::from(
-                            "structured result block not found in transcript",
+                            "session reached 'done' without a reported result payload",
                         ));
                     }
                 }
@@ -2717,16 +3159,6 @@ fn monitor_once(config: &Config) -> Result<()> {
             if snapshot.awaiting_response && (active_marker_seen || turn_activity_seen) {
                 snapshot.awaiting_response = false;
             }
-            // Initial launch only: the first complete result block proves the
-            // agent consumed the prompt even when the block is schema-invalid
-            // and terminal heuristics missed the short active window. That
-            // must be enough to let turn-end validation issue the retry. After
-            // a retry, a stale invalid block can remain in the transcript, so
-            // the last_validation_error guard keeps that stale block from
-            // clearing the latch by itself.
-            if should_clear_initial_result_response_latch(&snapshot, &output) {
-                snapshot.awaiting_response = false;
-            }
             // Record the first time the agent visibly finished startup.
             // This is the signal the launch-timeout watchdog uses to
             // distinguish "agent finished startup" from "agent stuck
@@ -2747,106 +3179,75 @@ fn monitor_once(config: &Config) -> Result<()> {
             let raw_status = observed_status_for_snapshot(&snapshot, &output);
             snapshot.last_observed_at = Some(observed_at.clone());
 
-            // Turn-end is the agent's "I finished one ply, what's
-            // next" signal.  We use it for two things:
+            // Turn-end is the agent's "I finished one ply, what's next"
+            // signal.  For a RunToCompletion contract session it means the
+            // agent yielded without (yet) reporting a result; for an
+            // Interactive session it means nothing (the session sits at the
+            // idle prompt awaiting the next user input).
             //
-            //  * Kind 2 (RunToCompletion): trigger contract
-            //    validation.  Until the contract passes the work is
-            //    not done — we either retry or fail.
-            //  * Kind 1 (Interactive): nothing.  The session just
-            //    sits at the idle prompt awaiting the next user
-            //    input; cleanup is the client's responsibility.
+            // 'awaiting_response' is the latch that ignores turn-end events
+            // between sending the prompt and the agent visibly picking it up,
+            // so we do not read a stale "Worked for" line from before the
+            // prompt landed.
             //
-            // 'awaiting_response' is the latch that ignores turn-end
-            // events between the moment we inject a retry prompt and
-            // the moment the agent visibly picks it up; that prevents
-            // us re-validating against the same "Worked for" line
-            // we already reacted to one cycle earlier.
-            //
-            // CRITICAL: 'output_indicates_turn_end' compares the
-            // current output against 'snapshot.output_snippet' to
-            // decide stability.  We must therefore evaluate it
-            // BEFORE writing the fresh snippet back into the
-            // snapshot, otherwise the comparison degenerates into
-            // "current == current" and every observation looks
-            // stable, firing the turn-end branch prematurely.
+            // CRITICAL: 'output_indicates_turn_end' compares the current
+            // output against 'snapshot.output_snippet' to decide stability.
+            // We must therefore evaluate it BEFORE writing the fresh snippet
+            // back into the snapshot, otherwise the comparison degenerates
+            // into "current == current" and every observation looks stable,
+            // firing the turn-end branch prematurely.
             let turn_ended =
                 !snapshot.awaiting_response && output_indicates_turn_end(&snapshot, &output);
             snapshot.output_snippet = Some(tail_chars(&output, 500));
 
             let mut observed_status = raw_status;
 
-            // RESULT-BLOCK-FIRST: for contract sessions, a transcript
-            // result block that validates IS completion — accept it on
-            // any cycle, without waiting for turn-end. The pane heuristics
-            // below (turn-end, latch) exist only to drive the RETRY path,
-            // and misreading them must never delay or fail work whose
-            // structured block is already valid.
-            // An invalid or missing block on this path is NOT punished;
-            // retry feedback stays gated on turn-end.
-            let mut result_block_accepted = false;
-            if is_run_to_completion_lifecycle(&snapshot.lifecycle) {
-                if let Some(spec) = snapshot.expected_result.clone() {
-                    if let Ok(payload) = validate_expected_result(&output, &spec) {
-                        observed_status = "done";
-                        snapshot.last_validation_error = None;
-                        snapshot.result_payload = serde_json::to_string(&payload).ok();
-                        result_block_accepted = true;
-                    }
-                }
-            }
-
-            if !result_block_accepted
-                && turn_ended
-                && is_run_to_completion_lifecycle(&snapshot.lifecycle)
+            // ADR 0035: results arrive over the agentd-owned `report_result`
+            // MCP data channel, never from the screen. `session_report_result`
+            // persists a schema-valid payload into `result_payload_json`
+            // (COALESCE-preserved so this loop's upserts cannot clobber it);
+            // the monitor only OBSERVES that column and flips the session to
+            // `done`.  The pane is never parsed for a result.
+            if is_run_to_completion_lifecycle(&snapshot.lifecycle)
+                && snapshot.expected_result.is_some()
             {
-                match snapshot.expected_result.clone() {
-                    Some(spec) => match validate_expected_result(&output, &spec) {
-                        Ok(payload) => {
-                            observed_status = "done";
-                            snapshot.last_validation_error = None;
-                            snapshot.result_payload = serde_json::to_string(&payload).ok();
-                        }
-                        Err(reason) => {
-                            if snapshot.retries_used < spec.max_retries {
-                                send_retry_prompt(config, &snapshot, &spec, &reason)?;
-                                snapshot.retries_used += 1;
-                                snapshot.last_validation_error = Some(reason.clone());
-                                snapshot.status = String::from("running");
-                                snapshot.finished_at = None;
-                                snapshot.awaiting_response = true;
-                                upsert_snapshot(&conn, &snapshot)?;
-                                record_event(
-                                    &conn,
-                                    &snapshot.session_id,
-                                    "session_output_retry",
-                                    &snapshot,
-                                )?;
-                                continue;
-                            } else {
-                                observed_status = "failed";
-                                let reason = format!(
-                                    "output validation exhausted after {} retries: {}",
-                                    spec.max_retries, reason
-                                );
-                                snapshot.last_validation_error = Some(reason.clone());
-                                set_terminal_cause_if_absent(
-                                    &mut snapshot,
-                                    TerminalCauseCategory::RunFailed,
-                                    reason,
-                                    false,
-                                    &observed_at,
-                                );
-                            }
-                        }
-                    },
-                    None => {
-                        // RunToCompletion without an explicit contract
-                        // means the launcher trusts the turn-end signal
-                        // as work-end.  Mark done and let cleanup run.
+                // RESULT-FIRST: a reported result finalizes the session on any
+                // cycle, regardless of turn-end.  Read it fresh so a result
+                // reported since this tick's active-set query is seen at once
+                // (report_result runs on a separate connection).
+                if let Some(reported) = current_result_payload(&conn, &snapshot.session_id)? {
+                    snapshot.result_payload = Some(reported);
+                    snapshot.last_validation_error = None;
+                    observed_status = "done";
+                } else if turn_ended {
+                    // The agent reached a stable turn-end without reporting a
+                    // result.  Deterministic failure — agentd never re-prompts
+                    // (hard rule 7 / ADR 0035 R4).  Re-read once more right
+                    // before failing to close the (stability-gated, sub-tick)
+                    // window against a result landing exactly at turn-end.
+                    if let Some(reported) = current_result_payload(&conn, &snapshot.session_id)? {
+                        snapshot.result_payload = Some(reported);
+                        snapshot.last_validation_error = None;
                         observed_status = "done";
+                    } else {
+                        observed_status = "failed";
+                        let reason = String::from(
+                            "session reached turn-end without reporting a result via report_result",
+                        );
+                        snapshot.last_validation_error = Some(reason.clone());
+                        set_terminal_cause_if_absent(
+                            &mut snapshot,
+                            TerminalCauseCategory::RunFailed,
+                            reason,
+                            false,
+                            &observed_at,
+                        );
                     }
                 }
+            } else if turn_ended && is_run_to_completion_lifecycle(&snapshot.lifecycle) {
+                // RunToCompletion without an explicit contract: the launcher
+                // trusts the turn-end signal as work-end.
+                observed_status = "done";
             }
 
             snapshot.status = String::from(observed_status);
@@ -2880,121 +3281,53 @@ fn monitor_once(config: &Config) -> Result<()> {
                 &snapshot,
             )?;
         } else {
-            snapshot.status = String::from("exited");
+            // The tmux session is gone. RESULT-FIRST: if the agent reported
+            // a result over the data channel before its process exited, that
+            // is a completed run, not a lost one (ADR 0035).
+            let reported = if snapshot.expected_result.is_some() {
+                current_result_payload(&conn, &snapshot.session_id)?
+            } else {
+                None
+            };
             snapshot.last_observed_at = Some(observed_at.clone());
             snapshot.finished_at = Some(observed_at.clone());
-            set_terminal_cause_if_absent(
-                &mut snapshot,
-                TerminalCauseCategory::Lost,
-                "tmux session disappeared",
-                true,
-                &observed_at,
-            );
-            upsert_snapshot(&conn, &snapshot)?;
-            record_event(&conn, &snapshot.session_id, "session_exited", &snapshot)?;
+            if let Some(reported) = reported {
+                snapshot.result_payload = Some(reported);
+                snapshot.last_validation_error = None;
+                snapshot.status = String::from("done");
+                upsert_snapshot(&conn, &snapshot)?;
+                record_event(&conn, &snapshot.session_id, "session_done", &snapshot)?;
+            } else {
+                snapshot.status = String::from("exited");
+                set_terminal_cause_if_absent(
+                    &mut snapshot,
+                    TerminalCauseCategory::Lost,
+                    "tmux session disappeared",
+                    true,
+                    &observed_at,
+                );
+                upsert_snapshot(&conn, &snapshot)?;
+                record_event(&conn, &snapshot.session_id, "session_exited", &snapshot)?;
+            }
         }
     }
     Ok(())
 }
 
-/// Validate the runtime-managed transcript result block and return the
-/// parsed payload. The block content is the result object; there is no
-/// application-visible file, path, or envelope.
-fn validate_expected_result(
-    output: &str,
-    spec: &ExpectedResultSpec,
-) -> std::result::Result<serde_json::Value, String> {
-    let raw = extract_result_block(output)?;
-    let value: serde_json::Value = match parse_result_block_json(raw) {
-        Ok(v) => v,
-        Err(err) => {
-            return Err(format!("structured result block is not valid JSON: {err}"));
-        }
-    };
-    if let Err(reason) = validate_against_schema(&value, &spec.payload_schema, "result") {
-        return Err(format!(
-            "structured result does not satisfy its schema: {}",
-            reason
-        ));
-    }
-    Ok(value)
-}
-
-fn parse_result_block_json(raw: &str) -> std::result::Result<serde_json::Value, serde_json::Error> {
-    match serde_json::from_str(raw) {
-        Ok(value) => Ok(value),
-        Err(_) => serde_json::from_str(&normalize_wrapped_json_strings(raw)),
-    }
-}
-
-fn normalize_wrapped_json_strings(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len());
-    let mut chars = raw.chars().peekable();
-    let mut in_string = false;
-    let mut escaped = false;
-    while let Some(ch) = chars.next() {
-        if in_string {
-            if escaped {
-                out.push(ch);
-                escaped = false;
-                continue;
-            }
-            match ch {
-                '\\' => {
-                    out.push(ch);
-                    escaped = true;
-                }
-                '"' => {
-                    out.push(ch);
-                    in_string = false;
-                }
-                '\n' | '\r' => {
-                    while matches!(chars.peek(), Some(' ' | '\t')) {
-                        chars.next();
-                    }
-                }
-                _ => out.push(ch),
-            }
-        } else {
-            if ch == '"' {
-                in_string = true;
-            }
-            out.push(ch);
-        }
-    }
-    out
-}
-
-fn extract_result_block(output: &str) -> std::result::Result<&str, String> {
-    let begin = output.rfind(RESULT_BLOCK_BEGIN).ok_or_else(|| {
-        format!("structured result block not found: missing {RESULT_BLOCK_BEGIN}")
-    })?;
-    let after_begin = begin + RESULT_BLOCK_BEGIN.len();
-    let rest = &output[after_begin..];
-    let end = rest
-        .find(RESULT_BLOCK_END)
-        .ok_or_else(|| format!("structured result block not found: missing {RESULT_BLOCK_END}"))?;
-    let raw = rest[..end].trim();
-    if raw.is_empty() {
-        return Err(String::from("structured result block is empty"));
-    }
-    Ok(raw)
-}
-
-fn output_has_result_block(output: &str) -> bool {
-    let Some(begin) = output.rfind(RESULT_BLOCK_BEGIN) else {
-        return false;
-    };
-    let after_begin = begin + RESULT_BLOCK_BEGIN.len();
-    output[after_begin..].contains(RESULT_BLOCK_END)
-}
-
-fn should_clear_initial_result_response_latch(snapshot: &SessionSnapshot, output: &str) -> bool {
-    snapshot.awaiting_response
-        && snapshot.last_validation_error.is_none()
-        && is_run_to_completion_lifecycle(&snapshot.lifecycle)
-        && snapshot.expected_result.is_some()
-        && output_has_result_block(output)
+/// Read a session's persisted, byte-faithful result payload (the JSON the
+/// agent delivered over the `report_result` channel), if any.  Targeted
+/// read used by the monitor's RESULT-FIRST checks: `report_result` writes
+/// this column on a separate connection, so the monitor must re-read it
+/// rather than trust its (possibly stale) active-set snapshot.
+fn current_result_payload(conn: &Connection, session_id: &str) -> Result<Option<String>> {
+    conn.query_row(
+        "SELECT result_payload_json FROM agent_sessions WHERE session_id = ?1",
+        params![session_id],
+        |row| row.get::<_, Option<String>>(0),
+    )
+    .optional()
+    .map(|opt| opt.flatten())
+    .map_err(Into::into)
 }
 
 /// Validate `instance` against a constrained subset of JSON Schema.
@@ -3128,49 +3461,12 @@ fn validate_against_schema(
     Ok(())
 }
 
-/// Send the validator's feedback into the still-alive agent session as
-/// the next message in its REPL.  Crucially we do NOT re-run a fresh
-/// agent invocation — the agent process is the same one that just
-/// finished the task, so it has the full conversation context and can
-/// act on the feedback the way a human user would by typing follow-up
-/// instructions.  The prompt template's `%REASON%` placeholder is
-/// substituted with the validator's explanation so the agent knows
-/// what to fix.
-///
-/// Supported agents are the ones that own an interactive REPL we can
-/// drive via tmux keystrokes; for everything else we cannot auto-retry
-/// reliably and the caller surfaces the failure instead.
-fn send_retry_prompt(
-    config: &Config,
-    snapshot: &SessionSnapshot,
-    spec: &ExpectedResultSpec,
-    reason: &str,
-) -> Result<()> {
-    if !is_interactive_agent_type(&snapshot.agent_type) {
-        return Err(anyhow!(
-            "cannot auto-retry agent_type '{}': only codex and claude are supported",
-            snapshot.agent_type
-        ));
-    }
-    // Make sure codex is parked at the idle prompt before we type
-    // anything — otherwise the message lands in an unrelated UI
-    // state (banner, MCP loader, modal) and the Enter that follows
-    // can be eaten.  We tolerate a missing idle marker because the
-    // caller already concluded the agent reached turn-end; this
-    // poll just absorbs the small window between turn-end detection
-    // and the input box becoming receptive.
-    wait_for_repl_idle(config, &snapshot.pane_id, Duration::from_secs(5))?;
-    let prompt = render_retry_prompt(spec, reason);
-    tmux_send_keys(config, &snapshot.pane_id, &prompt, true, true)?;
-    Ok(())
-}
-
-fn render_retry_prompt(spec: &ExpectedResultSpec, reason: &str) -> String {
-    spec.retry_prompt
-        .replace("%REASON%", reason)
-        .replace("%RESULT_BLOCK_BEGIN%", RESULT_BLOCK_BEGIN)
-        .replace("%RESULT_BLOCK_END%", RESULT_BLOCK_END)
-}
+// ADR 0035 removed the re-prompt path entirely. A deterministic
+// validation failure (a schema-invalid or missing result) is never
+// retried (hard rule 7): the session fails on first occurrence and the
+// failure is surfaced to the caller. `report_result` gives the agent
+// synchronous, same-turn feedback so it can self-correct within its own
+// turn, but agentd itself never injects a retry prompt.
 
 fn is_interactive_agent_type(agent_type: &str) -> bool {
     matches!(agent_type, "codex" | "claude")
@@ -4366,147 +4662,33 @@ Working...
         assert!(!output_has_unsubmitted_paste_input(output, Some(sent_text)));
     }
 
-    /// A spec carrying just a schema, as the single-protocol launcher
-    /// sends it: agentd owns the transcript result block and the retry
-    /// policy; the launcher supplies only `payload_schema`.
+    /// A spec carrying just a schema, as the launcher sends it: agentd
+    /// owns the result channel; the launcher supplies only `payload_schema`.
     fn schema_only_spec(schema: Value) -> ExpectedResultSpec {
         ExpectedResultSpec {
             payload_schema: schema,
-            retry_prompt: default_retry_prompt(),
-            max_retries: 2,
         }
     }
 
     #[test]
-    fn render_retry_prompt_includes_result_block_markers_and_reason() {
-        let spec = ExpectedResultSpec {
-            payload_schema: serde_json::json!({"type": "object"}),
-            retry_prompt: String::from(
-                "fix %RESULT_BLOCK_BEGIN%/%RESULT_BLOCK_END% because %REASON%",
-            ),
-            max_retries: 1,
-        };
-        let prompt = render_retry_prompt(&spec, "missing ok");
-        assert!(
-            prompt.contains(RESULT_BLOCK_BEGIN) && prompt.contains(RESULT_BLOCK_END),
-            "retry prompt should name the result block markers: {prompt}"
-        );
-        assert!(
-            prompt.contains("missing ok"),
-            "retry prompt should preserve validation reason: {prompt}"
-        );
-    }
-
-    #[test]
-    fn result_protocol_instruction_names_markers_without_embedding_a_result_block() {
+    fn result_protocol_instruction_directs_agent_to_report_result_tool() {
+        // ADR 0035: the instruction tells the agent to call the
+        // report_result MCP tool, NOT to print a screen block. The old
+        // DOEFF_AGENT_RESULT_BEGIN/END markers must not appear.
         let prompt = result_protocol_instruction("session-1");
-        assert!(prompt.contains(RESULT_BLOCK_BEGIN));
-        assert!(prompt.contains(RESULT_BLOCK_END));
         assert!(
-            !prompt.contains(&format!("{RESULT_BLOCK_BEGIN}\n{{}}\n{RESULT_BLOCK_END}")),
-            "instruction must not include a parseable example block: {prompt}"
+            prompt.contains(REPORT_RESULT_TOOL),
+            "instruction must name the report_result tool: {prompt}"
         );
-    }
-
-    #[test]
-    fn initial_result_response_latch_clears_on_schema_invalid_result_block() {
-        let mut snapshot = snapshot_for_lifecycle(LIFECYCLE_RUN_TO_COMPLETION, "running");
-        snapshot.awaiting_response = true;
-        snapshot.expected_result = Some(schema_only_spec(impl_result_payload_schema()));
-        let output = format!(
-            "done\n{RESULT_BLOCK_BEGIN}\n{}\n{RESULT_BLOCK_END}\n›\n",
-            r#"{"pr_url":""}"#
-        );
-
-        assert!(output_has_result_block(&output));
-        assert!(validate_expected_result(
-            &output,
-            snapshot.expected_result.as_ref().expect("expected result")
-        )
-        .is_err());
-        assert!(should_clear_initial_result_response_latch(
-            &snapshot, &output
-        ));
-    }
-
-    #[test]
-    fn retry_result_response_latch_ignores_stale_invalid_result_block() {
-        let mut snapshot = snapshot_for_lifecycle(LIFECYCLE_RUN_TO_COMPLETION, "running");
-        snapshot.awaiting_response = true;
-        snapshot.last_validation_error = Some(String::from("previous invalid block"));
-        snapshot.expected_result = Some(schema_only_spec(impl_result_payload_schema()));
-        let output = format!(
-            "previous attempt\n{RESULT_BLOCK_BEGIN}\n{}\n{RESULT_BLOCK_END}\n›\n",
-            r#"{"pr_url":""}"#
-        );
-
-        assert!(!should_clear_initial_result_response_latch(
-            &snapshot, &output
-        ));
-    }
-
-    #[test]
-    fn validate_expected_result_accepts_well_formed_result() {
-        let output = format!(
-            "done\n{RESULT_BLOCK_BEGIN}\n{}\n{RESULT_BLOCK_END}\n",
-            r#"{"pr_url":"https://github.com/example/repo/pull/1","pr_head_sha":"0123456789abcdef0123456789abcdef01234567","branch":"feat/x"}"#
-        );
-        let spec = schema_only_spec(impl_result_payload_schema());
-        assert!(validate_expected_result(&output, &spec).is_ok());
-    }
-
-    #[test]
-    fn validate_expected_result_repairs_wrapped_json_string_lines() {
-        let output = format!(
-            "done\n{RESULT_BLOCK_BEGIN}\n{}\n{RESULT_BLOCK_END}\n",
-            concat!(
-                "{\n",
-                "  \"status\":\"succeeded\",\n",
-                "  \"pr_url\":\"https://github.com/example/\n",
-                "    repo/pull/1\",\n",
-                "  \"pr_head_sha\":\"0123456789abcdef0123456789abcdef01234567\",\n",
-                "  \"branch\":\"feat/long-\n",
-                "    branch\",\n",
-                "  \"summary\":\"wrapped\n",
-                "    summary\"\n",
-                "}"
-            )
-        );
-        let spec = schema_only_spec(impl_result_payload_schema());
-
-        let payload = validate_expected_result(&output, &spec).expect("wrapped payload validates");
-
-        assert_eq!(
-            payload.get("pr_url").and_then(Value::as_str),
-            Some("https://github.com/example/repo/pull/1")
-        );
-        assert_eq!(
-            payload.get("branch").and_then(Value::as_str),
-            Some("feat/long-branch")
-        );
-    }
-
-    #[test]
-    fn validate_expected_result_rejects_missing_block() {
-        let spec = schema_only_spec(impl_result_payload_schema());
-        let err = validate_expected_result("agent finished without block", &spec)
-            .expect_err("missing block should reject");
         assert!(
-            err.contains("structured result block not found"),
-            "got: {err}"
+            prompt.contains("payload"),
+            "instruction must name the payload argument: {prompt}"
         );
-    }
-
-    #[test]
-    fn validate_expected_result_rejects_result_not_satisfying_schema() {
-        let output = format!(
-            "done\n{RESULT_BLOCK_BEGIN}\n{}\n{RESULT_BLOCK_END}\n",
-            r#"{"pr_url":""}"#
+        assert!(
+            !prompt.contains("DOEFF_AGENT_RESULT_BEGIN")
+                && !prompt.contains("DOEFF_AGENT_RESULT_END"),
+            "instruction must not tell the agent to print a transcript block: {prompt}"
         );
-        let spec = schema_only_spec(impl_result_payload_schema());
-        let err = validate_expected_result(&output, &spec)
-            .expect_err("empty pr_url should fail the schema");
-        assert!(err.contains("does not satisfy"), "got: {err}");
     }
 
     // ---- validate_against_schema: the JSON-Schema subset ----
@@ -4631,21 +4813,6 @@ Working...
     }
 
     #[test]
-    fn validate_expected_result_enforces_payload_schema() {
-        let output = format!(
-            "done\n{RESULT_BLOCK_BEGIN}\n{}\n{RESULT_BLOCK_END}\n",
-            r#"{"pr_url":"","pr_head_sha":"","branch":""}"#
-        );
-        let spec = schema_only_spec(impl_result_payload_schema());
-        let err = validate_expected_result(&output, &spec)
-            .expect_err("blank identity must fail the contract");
-        assert!(
-            err.contains("structured result does not satisfy its schema"),
-            "got: {err}"
-        );
-    }
-
-    #[test]
     fn interactive_agent_types_are_codex_and_claude() {
         assert!(is_interactive_agent_type("codex"));
         assert!(is_interactive_agent_type("claude"));
@@ -4731,7 +4898,7 @@ Working...
     #[test]
     fn build_codex_argv_does_not_include_prompt_as_argument() {
         let params = launch_params_for("codex", None);
-        let argv = build_codex_argv(&params);
+        let argv = build_codex_argv(&params, None);
         assert!(
             !argv.iter().any(|arg| arg == "hello world"),
             "prompt must not appear in codex argv (it is sent via send-keys instead): {argv:?}"
@@ -4743,7 +4910,7 @@ Working...
     #[test]
     fn build_codex_argv_delivers_effort_as_model_reasoning_effort() {
         let params = launch_params_for("codex", Some("xhigh"));
-        let argv = build_codex_argv(&params);
+        let argv = build_codex_argv(&params, None);
         let position = argv
             .iter()
             .position(|arg| arg == "model_reasoning_effort=\"xhigh\"")
@@ -4755,7 +4922,7 @@ Working...
     fn build_codex_argv_omits_effort_when_absent_or_empty() {
         for effort in [None, Some("")] {
             let params = launch_params_for("codex", effort);
-            let argv = build_codex_argv(&params);
+            let argv = build_codex_argv(&params, None);
             assert!(
                 !argv
                     .iter()
@@ -4768,7 +4935,7 @@ Working...
     #[test]
     fn build_claude_argv_delivers_effort_flag() {
         let params = launch_params_for("claude", Some("xhigh"));
-        let argv = build_claude_argv(&params);
+        let argv = build_claude_argv(&params, None);
         let position = argv
             .iter()
             .position(|arg| arg == "--effort")
@@ -4779,7 +4946,7 @@ Working...
     #[test]
     fn build_claude_argv_does_not_include_prompt_or_print_mode() {
         let params = launch_params_for("claude", None);
-        let argv = build_claude_argv(&params);
+        let argv = build_claude_argv(&params, None);
         assert!(
             !argv.iter().any(|arg| arg == "hello world"),
             "prompt must not appear in claude argv: {argv:?}"
@@ -4794,12 +4961,77 @@ Working...
     fn build_claude_argv_omits_effort_when_absent_or_empty() {
         for effort in [None, Some("")] {
             let params = launch_params_for("claude", effort);
-            let argv = build_claude_argv(&params);
+            let argv = build_claude_argv(&params, None);
             assert!(
                 !argv.iter().any(|arg| arg == "--effort"),
                 "no --effort expected for effort={effort:?}: {argv:?}"
             );
         }
+    }
+
+    fn test_result_channel() -> ResultChannel {
+        ResultChannel {
+            command: String::from("/opt/doeff-agentd"),
+            session_id: String::from("sess-123"),
+            socket: String::from("/run/agentd.sock"),
+        }
+    }
+
+    #[test]
+    fn build_codex_argv_wires_report_result_stdio_mcp_server() {
+        // ADR 0035: a contract session's codex launch carries the
+        // agentd-owned report_result stdio MCP server (command + args), so
+        // the agent can deliver its result over a byte-faithful channel.
+        let params = launch_params_for("codex", None);
+        let channel = test_result_channel();
+        let argv = build_codex_argv(&params, Some(&channel));
+        assert!(
+            argv.iter().any(|a| a
+                == &format!(
+                    "mcp_servers.\"{REPORT_RESULT_MCP_SERVER}\".command=\"/opt/doeff-agentd\""
+                )),
+            "codex argv must set the report_result server command: {argv:?}"
+        );
+        let args_line = argv
+            .iter()
+            .find(|a| a.starts_with(&format!("mcp_servers.\"{REPORT_RESULT_MCP_SERVER}\".args=")))
+            .unwrap_or_else(|| panic!("codex argv must set report_result server args: {argv:?}"));
+        assert!(args_line.contains(REPORT_RESULT_MCP_SUBCOMMAND), "{args_line}");
+        assert!(args_line.contains("sess-123"), "{args_line}");
+        assert!(args_line.contains("/run/agentd.sock"), "{args_line}");
+    }
+
+    #[test]
+    fn build_claude_argv_wires_report_result_stdio_mcp_server() {
+        let params = launch_params_for("claude", None);
+        let channel = test_result_channel();
+        let argv = build_claude_argv(&params, Some(&channel));
+        let cfg_pos = argv
+            .iter()
+            .position(|a| a == "--mcp-config")
+            .expect("claude argv must carry --mcp-config");
+        let cfg: Value =
+            serde_json::from_str(&argv[cfg_pos + 1]).expect("mcp-config must be valid JSON");
+        let server = &cfg["mcpServers"][REPORT_RESULT_MCP_SERVER];
+        assert_eq!(server["type"], "stdio", "config: {}", argv[cfg_pos + 1]);
+        assert_eq!(server["command"], "/opt/doeff-agentd");
+        let args = server["args"].as_array().expect("stdio args array");
+        assert_eq!(args[0], REPORT_RESULT_MCP_SUBCOMMAND);
+        assert!(args.iter().any(|a| a == "sess-123"));
+        assert!(
+            argv.iter().any(|a| a == "--strict-mcp-config"),
+            "claude argv must restrict to the wired servers: {argv:?}"
+        );
+    }
+
+    #[test]
+    fn build_claude_argv_has_no_mcp_config_without_a_channel_or_caller_servers() {
+        let params = launch_params_for("claude", None);
+        let argv = build_claude_argv(&params, None);
+        assert!(
+            !argv.iter().any(|a| a == "--mcp-config"),
+            "no MCP config expected when there is nothing to wire: {argv:?}"
+        );
     }
 
     fn snapshot_for_lifecycle(lifecycle: &str, status: &str) -> SessionSnapshot {
@@ -4914,8 +5146,9 @@ Working...
 
     #[test]
     fn await_result_returns_parsed_payload_when_contract_validates() {
-        // Spec test #2: contract present, transcript block valid -> response
-        // carries the parsed result under `payload`.
+        // Spec test #2: contract present, a result reported over the
+        // report_result channel and persisted -> response carries the
+        // parsed result under `payload`. (ADR 0035: no transcript source.)
         let tmp = tempfile::tempdir().expect("tempdir");
         let db = tmp.path().join("agentd.sqlite");
         let conn = Connection::open(&db).expect("open sqlite");
@@ -4927,10 +5160,6 @@ Working...
             "properties": {"verdict": {"type": "string", "minLength": 1}}
         });
         let spec = schema_only_spec(verdict_schema);
-        let transcript = format!(
-            "done\n{RESULT_BLOCK_BEGIN}\n{}\n{RESULT_BLOCK_END}\n",
-            r#"{"verdict":"ok","notes":"clean"}"#
-        );
         insert_test_snapshot(
             &conn,
             "await-with-contract",
@@ -4938,8 +5167,8 @@ Working...
             "/tmp",
             Some(spec),
             None,
-            Some(transcript),
             None,
+            Some(String::from(r#"{"verdict":"ok","notes":"clean"}"#)),
         );
 
         let value = session_await_result_with_interval(
@@ -5117,10 +5346,11 @@ Working...
 
     #[test]
     fn await_result_surfaces_validation_error_when_contract_fails_post_done() {
-        // Cross-cutting check: a session that landed in `done` but
-        // whose structured result block is missing should yield
-        // result: null AND surface the validation reason so the
-        // Haskell client can branch on it.
+        // Defensive cross-cutting check: a contract session that somehow
+        // landed in `done` with no reported result payload must yield
+        // result: null AND surface a reason so the Haskell client can
+        // branch on it. (ADR 0035: `done` normally implies a persisted
+        // report_result payload; this guards the should-not-happen case.)
         let tmp = tempfile::tempdir().expect("tempdir");
         let db = tmp.path().join("agentd.sqlite");
         let conn = Connection::open(&db).expect("open sqlite");
@@ -5154,8 +5384,279 @@ Working...
             .and_then(|v| v.as_str())
             .expect("validation_error string must be present");
         assert!(
-            reason.contains("structured result block not found"),
-            "expected missing-block reason, got: {reason}"
+            reason.contains("without a reported result payload"),
+            "expected missing-result reason, got: {reason}"
         );
+    }
+
+    // ---- ADR 0035: report_result data channel + reject-at-launch gate ----
+
+    fn open_migrated_db() -> (tempfile::TempDir, Connection) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let conn = Connection::open(tmp.path().join("agentd.sqlite")).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        (tmp, conn)
+    }
+
+    fn permissive_summary_spec() -> ExpectedResultSpec {
+        schema_only_spec(serde_json::json!({
+            "type": "object",
+            "required": ["summary"],
+            "properties": {"summary": {"type": "string", "minLength": 1}}
+        }))
+    }
+
+    #[test]
+    fn report_result_persists_payload_byte_faithfully() {
+        // The core ADR 0035 property at the RPC boundary: a payload whose
+        // string values contain exactly the content a fixed-width terminal
+        // grid would corrupt (word-boundary spaces, runs of spaces, a tab,
+        // a trailing space) round-trips byte-for-byte through the data
+        // channel. A screen scrape could never preserve these.
+        let (_tmp, conn) = open_migrated_db();
+        insert_test_snapshot(
+            &conn,
+            "byte-faithful",
+            "running",
+            "/tmp",
+            Some(permissive_summary_spec()),
+            None,
+            None,
+            None,
+        );
+        let tricky = "ACPresult notevalidating — value with  double  spaces and\ttab and trailing ";
+        let payload = serde_json::json!({
+            "summary": tricky,
+            "pr_url": "https://github.com/acme/proboscis-ema/pull/594"
+        });
+
+        let ok = session_report_result(
+            &conn,
+            ReportResultParams {
+                session_id: String::from("byte-faithful"),
+                payload: payload.clone(),
+            },
+        )
+        .expect("valid payload is accepted");
+        assert_eq!(ok.get("accepted").and_then(Value::as_bool), Some(true));
+
+        // The recovered payload equals what the agent emitted, exactly.
+        let stored = current_result_payload(&conn, "byte-faithful")
+            .expect("read")
+            .expect("payload persisted");
+        let recovered: Value = serde_json::from_str(&stored).expect("stored payload is JSON");
+        assert_eq!(recovered, payload, "recovered payload must be byte-identical");
+        assert_eq!(
+            recovered.get("summary").and_then(Value::as_str),
+            Some(tricky),
+            "the exact whitespace of the string value must survive"
+        );
+    }
+
+    #[test]
+    fn report_result_rejects_schema_invalid_payload_without_persisting() {
+        // Deterministic validation failure (ADR 0035 R4 / hard rule 7):
+        // the payload is not persisted, the agent is told the reason, and
+        // nothing is retried.
+        let (_tmp, conn) = open_migrated_db();
+        insert_test_snapshot(
+            &conn,
+            "invalid-payload",
+            "running",
+            "/tmp",
+            Some(permissive_summary_spec()),
+            None,
+            None,
+            None,
+        );
+
+        let err = session_report_result(
+            &conn,
+            ReportResultParams {
+                session_id: String::from("invalid-payload"),
+                payload: serde_json::json!({"summary": ""}), // fails minLength
+            },
+        )
+        .expect_err("schema-invalid payload must be rejected");
+        let rpc = err.downcast_ref::<RpcError>().expect("structured error");
+        assert_eq!(rpc.code, RPC_ERR_RESULT_REJECTED);
+        assert!(
+            current_result_payload(&conn, "invalid-payload")
+                .expect("read")
+                .is_none(),
+            "an invalid payload must not be persisted"
+        );
+    }
+
+    #[test]
+    fn report_result_is_idempotent_first_write_wins() {
+        let (_tmp, conn) = open_migrated_db();
+        insert_test_snapshot(
+            &conn,
+            "idem",
+            "running",
+            "/tmp",
+            Some(permissive_summary_spec()),
+            None,
+            None,
+            None,
+        );
+        session_report_result(
+            &conn,
+            ReportResultParams {
+                session_id: String::from("idem"),
+                payload: serde_json::json!({"summary": "first"}),
+            },
+        )
+        .expect("first report accepted");
+        let second = session_report_result(
+            &conn,
+            ReportResultParams {
+                session_id: String::from("idem"),
+                payload: serde_json::json!({"summary": "second"}),
+            },
+        )
+        .expect("second report is idempotent, not an error");
+        assert_eq!(
+            second.get("already_reported").and_then(Value::as_bool),
+            Some(true)
+        );
+        let stored = current_result_payload(&conn, "idem").expect("read").expect("payload");
+        let recovered: Value = serde_json::from_str(&stored).unwrap();
+        assert_eq!(
+            recovered.get("summary").and_then(Value::as_str),
+            Some("first"),
+            "first write wins"
+        );
+    }
+
+    #[test]
+    fn report_result_rejected_after_terminal_without_result() {
+        let (_tmp, conn) = open_migrated_db();
+        insert_test_snapshot(
+            &conn,
+            "already-failed",
+            "failed",
+            "/tmp",
+            Some(permissive_summary_spec()),
+            None,
+            None,
+            None,
+        );
+        let err = session_report_result(
+            &conn,
+            ReportResultParams {
+                session_id: String::from("already-failed"),
+                payload: serde_json::json!({"summary": "too late"}),
+            },
+        )
+        .expect_err("a report after terminal-without-result must be rejected");
+        let rpc = err.downcast_ref::<RpcError>().expect("structured error");
+        assert_eq!(rpc.code, RPC_ERR_ALREADY_TERMINAL);
+    }
+
+    fn gate_config(tmp: &tempfile::TempDir) -> Config {
+        Config {
+            db_path: tmp.path().join("agentd.sqlite"),
+            socket_path: tmp.path().join("agentd.sock"),
+            // `has-session` always exits non-zero → no pre-existing session,
+            // so session_launch reaches the reject-at-launch gate. A
+            // rejected launch never calls `new-session`, so `false` suffices.
+            tmux_bin: String::from("false"),
+            monitor_interval: Duration::from_millis(1000),
+            max_running: 4,
+        }
+    }
+
+    fn contract_launch_params(agent_type: &str) -> LaunchParams {
+        LaunchParams {
+            session_id: format!("gate-{agent_type}"),
+            session_name: format!("gate-{agent_type}"),
+            agent_type: String::from(agent_type),
+            work_dir: String::from("/tmp"),
+            command: None,
+            prompt: Some(String::from("do the task")),
+            model: None,
+            effort: None,
+            mcp_servers: BTreeMap::new(),
+            skip_trust_setup: true,
+            lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
+            session_env: BTreeMap::new(),
+            expected_result: Some(schema_only_spec(serde_json::json!({"type": "object"}))),
+        }
+    }
+
+    #[test]
+    fn session_launch_rejects_contract_for_unwireable_agent() {
+        // ADR 0035 reject-at-launch: an agent agentd cannot wire the
+        // report_result channel into (here: gemini) cannot deliver a result,
+        // so a contract launch is rejected up front.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let conn = Connection::open(tmp.path().join("agentd.sqlite")).expect("db");
+        migrate(&conn).expect("migrate");
+        let config = gate_config(&tmp);
+        let err = session_launch(&conn, &config, contract_launch_params("gemini"))
+            .expect_err("gemini contract launch must be rejected");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains(REPORT_RESULT_TOOL) && msg.contains("codex' or 'claude'"),
+            "gate error must explain the missing result channel: {msg}"
+        );
+    }
+
+    #[test]
+    fn session_launch_lets_codex_contract_through_the_gate() {
+        // A codex contract launch passes the gate (agentd wires the channel);
+        // it fails later only because the fake tmux cannot start a session —
+        // proving the gate itself did not reject it.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let conn = Connection::open(tmp.path().join("agentd.sqlite")).expect("db");
+        migrate(&conn).expect("migrate");
+        let config = gate_config(&tmp);
+        let err = session_launch(&conn, &config, contract_launch_params("codex"))
+            .expect_err("fake tmux cannot actually launch");
+        let msg = format!("{err:#}");
+        assert!(
+            !msg.contains("cannot deliver a result"),
+            "codex must pass the result-channel gate, got: {msg}"
+        );
+    }
+
+    // ---- stdio MCP server (report-result-mcp subcommand) ----
+
+    #[test]
+    fn mcp_initialize_echoes_protocol_and_advertises_tools() {
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18"}
+        });
+        let resp = handle_mcp_message(&msg, "s1", "/nonexistent.sock").expect("initialize responds");
+        assert_eq!(resp["result"]["protocolVersion"], "2025-06-18");
+        assert!(resp["result"]["capabilities"]["tools"].is_object());
+    }
+
+    #[test]
+    fn mcp_tools_list_exposes_report_result() {
+        let msg = serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"});
+        let resp = handle_mcp_message(&msg, "s1", "/nonexistent.sock").expect("tools/list responds");
+        let tools = resp["result"]["tools"].as_array().expect("tools array");
+        assert_eq!(tools[0]["name"], REPORT_RESULT_TOOL);
+        assert_eq!(tools[0]["inputSchema"]["required"][0], "payload");
+    }
+
+    #[test]
+    fn mcp_notifications_get_no_response() {
+        let msg = serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
+        assert!(handle_mcp_message(&msg, "s1", "/nonexistent.sock").is_none());
+    }
+
+    #[test]
+    fn mcp_unknown_tool_is_a_tool_error() {
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": {"name": "not_report_result", "arguments": {}}
+        });
+        let resp = handle_mcp_message(&msg, "s1", "/nonexistent.sock").expect("tools/call responds");
+        assert_eq!(resp["result"]["isError"], true);
     }
 }
