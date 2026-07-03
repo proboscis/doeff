@@ -1,17 +1,24 @@
 (require doeff-hy.macros [deftest])
 
-(import agentd-result-retry-e2e-support [run-agentd-tmux-result-retry-e2e])
+(import agentd-result-retry-e2e-support
+        [run-agentd-deterministic-failure-no-retry-e2e])
 
 
-(deftest test-agentd-tmux-result-contract-retries-invalid-output [tmp-path]
-  (setv result (run-agentd-tmux-result-retry-e2e tmp-path))
-  (assert (= (get result "payload") {"summary" "fixed" "ok" True}))
-  (assert (= (get result "validation_error") None))
-  (assert (= (get result "session_status") "done"))
-  (assert (= (get result "retries_used") 1))
-  (assert (= (get result "retry_events") 1))
-  (assert (>= (get result "messages_seen") 2))
-  (assert (get result "retry_prompt_seen"))
-  (assert (get result "initial_protocol_seen"))
-  (assert (= (get result "result_payload_json")
-             "{\"ok\":true,\"summary\":\"fixed\"}")))
+;; ADR 0035 R4 / hard rule 7: a deterministic validation failure (a
+;; schema-invalid result reported over the report_result channel) is NEVER
+;; re-prompted. The session fails on first occurrence with zero retries.
+(deftest test-agentd-deterministic-result-failure-is-not-retried [tmp-path]
+  (setv result (run-agentd-deterministic-failure-no-retry-e2e tmp-path))
+  ;; The agent's invalid report was rejected over the data channel.
+  (assert (get result "reported_invalid"))
+  (assert (in "does not satisfy" (get result "rejection_error")))
+  ;; No valid result was ever recorded.
+  (assert (= (get result "result_payload_json") None))
+  (assert (= (get result "await_result") None))
+  ;; Zero re-prompt retries — the whole point of the ADR.
+  (assert (= (get result "retries_used") 0))
+  (assert (= (get result "retry_events") 0))
+  ;; The rejection is surfaced (failure visibility), not silently dropped.
+  (assert (>= (get result "rejected_events") 1))
+  ;; The session reached a terminal state without a result.
+  (assert (in (get result "session_status") #("failed" "exited"))))

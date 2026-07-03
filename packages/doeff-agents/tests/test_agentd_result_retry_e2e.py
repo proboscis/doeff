@@ -24,10 +24,10 @@ def _deftest_interpreter(program: Any, *, env: dict[Any, Any] | None = None) -> 
 
 
 @pytest.mark.e2e
-def test_agentd_tmux_result_contract_retries_invalid_output(
+def test_agentd_deterministic_result_failure_is_not_retried(
     tmp_path: Path,
 ) -> None:
-    retry_deftests.test_agentd_tmux_result_contract_retries_invalid_output(
+    retry_deftests.test_agentd_deterministic_result_failure_is_not_retried(
         _deftest_interpreter,
         tmp_path,
     )
