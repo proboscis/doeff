@@ -3936,8 +3936,13 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
         assert_eq!(config.max_running, 3);
     }
 
+    // ADR 0035: capture-pane survives ONLY as an OBSERVATION transport
+    // (active-marker / turn-end / dialog detection). It is no longer the
+    // source of agent results — those arrive over the report_result data
+    // channel (see session_report_result / current_result_payload), so no
+    // result-recovery code path calls tmux_capture.
     #[test]
-    fn tmux_capture_joins_wrapped_lines_for_result_blocks() {
+    fn tmux_capture_is_observation_transport_only() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let tmux_bin = tmp.path().join("fake-tmux");
         let args_file = tmp.path().join("args.txt");
