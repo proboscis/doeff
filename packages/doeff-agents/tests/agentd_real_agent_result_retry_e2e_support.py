@@ -33,11 +33,17 @@ DEFAULT_REAL_CLAUDE_CONFIG_DIR = Path("~/.config/claude-nameissoap")
 DEFAULT_REAL_CLAUDE_AUTH_EMAIL = "nameissoap@gmail.com"
 
 
-def run_agentd_real_agent_result_retry_e2e(
+def run_agentd_real_agent_result_report_e2e(
     tmp_path: Path,
     agent_type: str,
 ) -> dict[str, Any]:
-    """Run a real Claude/Codex agent through agentd's result retry contract."""
+    """Run a real Claude/Codex agent that delivers its result over the
+    agentd-owned report_result MCP channel (ADR 0035).
+
+    agentd wires the report_result stdio MCP server into the agent's launch
+    automatically; the prompt tells the agent to call it. A valid report
+    finalises the session as done — with zero re-prompt retries.
+    """
     assert agent_type in REAL_AGENT_TYPES
     _require_live_binary("cargo")
     _require_live_binary("tmux")
@@ -89,11 +95,7 @@ def run_agentd_real_agent_result_retry_e2e(
                 model="opus" if agent_type == "claude" else None,
                 lifecycle=AgentSessionLifecycle.RUN_TO_COMPLETION,
                 session_env=_session_env(agent_type, runtime_dir, work_dir),
-                expected_result={
-                    "payload_schema": RESULT_SCHEMA,
-                    "max_retries": 2,
-                    "retry_prompt": _retry_prompt(agent_type),
-                },
+                expected_result={"payload_schema": RESULT_SCHEMA},
             )
             outcome = client.await_result(session_id, timeout_seconds=240.0)
 
@@ -131,25 +133,14 @@ def run_agentd_real_agent_result_retry_e2e(
 def _initial_prompt(agent_type: str) -> str:
     fixed = _fixed_summary(agent_type)
     return (
-        "Live agentd retry E2E. First return exactly this structured result block "
-        'with no ok field:\nDOEFF_AGENT_RESULT_BEGIN\n{"summary":"first invalid"}\n'
-        "DOEFF_AGENT_RESULT_END\n"
-        "After agentd sends a retry prompt, return exactly this corrected block:\n"
-        f'DOEFF_AGENT_RESULT_BEGIN\n{{"summary":"{fixed}","ok":true}}\n'
-        "DOEFF_AGENT_RESULT_END\n"
-        "Waiting means end your turn at the interactive prompt; do not run "
-        "sleep, background terminals, loops, or long-running commands."
-    )
-
-
-def _retry_prompt(agent_type: str) -> str:
-    fixed = _fixed_summary(agent_type)
-    payload = f'{{"summary":"{fixed}","ok":true}}'
-    return (
-        "Expected retry turn. agentd rejected the first result: %REASON%. "
-        "Your only task now is to return this exact block, with no markdown fences "
-        f"and no extra text:\n%RESULT_BLOCK_BEGIN%\n{payload}\n%RESULT_BLOCK_END%\n"
-        "Do not run sleep, background terminals, loops, or long-running commands."
+        "Live agentd report_result E2E. Your only task is to deliver a result. "
+        "Call the `report_result` MCP tool exactly once with this exact payload "
+        "argument (a JSON object, not a string):\n"
+        f'payload = {{"summary": "{fixed}", "ok": true}}\n'
+        "Do not print the result to the terminal and do not create result files; "
+        "deliver it ONLY through the report_result tool. After the tool confirms "
+        "the result was recorded, end your turn at the interactive prompt. Do not "
+        "run sleep, background terminals, loops, or long-running commands."
     )
 
 
