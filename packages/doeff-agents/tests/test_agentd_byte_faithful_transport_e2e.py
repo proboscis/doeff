@@ -48,7 +48,7 @@ from typing import Any
 
 import pytest
 from doeff_agents.agentd_client import AgentdClient
-from doeff_agents.effects import AgentSessionLifecycle, AwaitStatus
+from doeff_agents.effects import AgentSessionLifecycle
 
 RESULT_BLOCK_BEGIN = "DOEFF_AGENT_RESULT_BEGIN"
 RESULT_BLOCK_END = "DOEFF_AGENT_RESULT_END"
@@ -199,7 +199,7 @@ def _run_byte_faithful_e2e(tmp_path: Path) -> dict[str, Any]:
 
 def _write_fake_agent(path: Path) -> None:
     path.write_text(
-        r'''
+        r"""
 from __future__ import annotations
 
 import json
@@ -213,7 +213,7 @@ AGENTD_BIN = os.environ["DOEFF_AGENTD_BIN"]
 PAYLOAD = json.loads(os.environ["DOEFF_RESULT_PAYLOAD"])
 
 # Park at an idle prompt marker so agentd's REPL-idle heuristics are happy.
-print("❯ ", end="", flush=True)
+print("\u276f\u00a0", end="", flush=True)
 
 # 1) Print the payload inside the legacy markers so the SAME content lands on
 #    the fixed-width grid and soft-wraps (what the retired scrape path saw).
@@ -256,9 +256,9 @@ proc.wait(timeout=10)
 
 # Keep the pane alive so the monitor can observe the reported result and the
 # test can capture the pane; then reach turn-end at an idle prompt.
-print("❯ ", end="", flush=True)
+print("\u276f\u00a0", end="", flush=True)
 time.sleep(60)
-'''.lstrip(),
+""".lstrip(),
         encoding="utf-8",
     )
 

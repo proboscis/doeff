@@ -1084,46 +1084,28 @@ def test_tmux_backend_captures_session_transcript_tail(
     assert str(path) in pipe_calls[0][-1]
 
 
-def test_result_payload_extract_repairs_wrapped_json_string_lines() -> None:
+def test_result_payload_extract_does_not_repair_wrapped_json() -> None:
+    # ADR 0035: the non-invertible wrap-repair heuristics
+    # (_normalize_wrapped_json_strings / _normalize_terminal_wrapped_json)
+    # were deleted. A block whose JSON was mangled by a terminal wrap now
+    # surfaces a parse error instead of being silently "repaired" into a
+    # possibly-wrong value; byte-faithful recovery is agentd's report_result
+    # channel, not screen scraping.
     output = (
         "done\n"
         "DOEFF_AGENT_RESULT_BEGIN\n"
         "{\n"
-        '  "status":"succeeded",\n'
         '  "pr_url":"https://github.com/example/\n'
-        '    repo/pull/1",\n'
-        '  "pr_head_sha":"abc123",\n'
-        '  "branch":"feat/long-\n'
-        '    branch"\n'
+        '    repo/pull/1"\n'
         "}\n"
         "DOEFF_AGENT_RESULT_END\n"
     )
 
     payload, error = _extract_result_payload(output)
 
-    assert error is None
-    assert isinstance(payload, dict)
-    assert payload["pr_url"] == "https://github.com/example/repo/pull/1"
-    assert payload["branch"] == "feat/long-branch"
-
-
-def test_result_payload_extract_repairs_terminal_wraps_inside_json_tokens() -> None:
-    output = (
-        "done\n"
-        "DOEFF_AGENT_RESULT_BEGIN\n"
-        '  {"credit_opening_power_jpy":27269135,'
-        '"position_notional_jpy":0,'
-        '"shortable":{"5\n'
-        '  020.T":{"status":"▲","shares":1000\n'
-        '  000000},"7011.T":{"status":"◎","shares":1000000000}}}\n'
-        "DOEFF_AGENT_RESULT_END\n"
-    )
-
-    payload, error = _extract_result_payload(output)
-
-    assert error is None
-    assert isinstance(payload, dict)
-    assert payload["shortable"]["5020.T"]["shares"] == 1000000000
+    assert payload is None
+    assert error is not None
+    assert "not valid JSON" in error
 
 
 def test_result_payload_extract_uses_latest_parseable_block() -> None:

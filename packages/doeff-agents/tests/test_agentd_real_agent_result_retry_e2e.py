@@ -25,10 +25,10 @@ def _deftest_interpreter(program: Any, *, env: dict[Any, Any] | None = None) -> 
 
 @pytest.mark.e2e
 @pytest.mark.timeout(360)
-def test_agentd_real_claude_result_contract_retries_invalid_output(
+def test_agentd_real_claude_reports_result_over_mcp_channel(
     tmp_path: Path,
 ) -> None:
-    retry_deftests.test_agentd_real_claude_result_contract_retries_invalid_output(
+    retry_deftests.test_agentd_real_claude_reports_result_over_mcp_channel(
         _deftest_interpreter,
         tmp_path,
     )
@@ -36,10 +36,10 @@ def test_agentd_real_claude_result_contract_retries_invalid_output(
 
 @pytest.mark.e2e
 @pytest.mark.timeout(360)
-def test_agentd_real_codex_result_contract_retries_invalid_output(
+def test_agentd_real_codex_reports_result_over_mcp_channel(
     tmp_path: Path,
 ) -> None:
-    retry_deftests.test_agentd_real_codex_result_contract_retries_invalid_output(
+    retry_deftests.test_agentd_real_codex_reports_result_over_mcp_channel(
         _deftest_interpreter,
         tmp_path,
     )

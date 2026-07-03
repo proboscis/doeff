@@ -481,67 +481,17 @@ def _parse_result_payload_candidate(raw: str) -> tuple[object | None, str | None
     if not raw:
         return None, "structured result block is empty"
     raw = tmux.strip_ansi(raw).strip()
-    first_error: json.JSONDecodeError | None = None
-    for candidate in _result_payload_json_candidates(raw):
-        try:
-            return json.loads(candidate), None
-        except json.JSONDecodeError as exc:
-            if first_error is None:
-                first_error = exc
-    return None, f"structured result block is not valid JSON: {first_error}"
-
-
-def _result_payload_json_candidates(raw: str) -> tuple[str, ...]:
-    return (
-        raw,
-        _normalize_wrapped_json_strings(raw),
-        _normalize_terminal_wrapped_json(raw),
-    )
-
-
-def _normalize_terminal_wrapped_json(raw: str) -> str:
-    """Remove hard terminal-wrap newlines that split JSON tokens.
-
-    Claude's interactive terminal UI can render one logical JSON line as
-    multiple physical pane lines. Those wraps can split strings, property
-    names, and numeric literals (for example ``1000\n  000000``). JSON
-    whitespace outside strings is optional, and result payloads must not rely
-    on literal newlines inside strings, so deleting pane newlines reconstructs
-    the transport payload without introducing workspace result files.
-    """
-    return re.sub(r"[\r\n]+[ \t]*", "", raw)
-
-
-def _normalize_wrapped_json_strings(raw: str) -> str:
-    out: list[str] = []
-    in_string = False
-    escaped = False
-    index = 0
-    while index < len(raw):
-        ch = raw[index]
-        if in_string:
-            if escaped:
-                out.append(ch)
-                escaped = False
-            elif ch == "\\":
-                out.append(ch)
-                escaped = True
-            elif ch == '"':
-                out.append(ch)
-                in_string = False
-            elif ch in "\r\n":
-                index += 1
-                while index < len(raw) and raw[index] in " \t":
-                    index += 1
-                continue
-            else:
-                out.append(ch)
-        else:
-            if ch == '"':
-                in_string = True
-            out.append(ch)
-        index += 1
-    return "".join(out)
+    # ADR 0035: no wrap-repair heuristic. The retired
+    # `_normalize_wrapped_json_strings` / `_normalize_terminal_wrapped_json`
+    # helpers were a non-invertible clone of the Rust agentd repair — they
+    # assumed a terminal wrap never replaced a real space, so a word-boundary
+    # wrap silently lost it (and the two implementations could diverge). The
+    # byte-faithful result transport is agentd's `report_result` data
+    # channel; this legacy tmux path parses the block verbatim only.
+    try:
+        return json.loads(raw), None
+    except json.JSONDecodeError as exc:
+        return None, f"structured result block is not valid JSON: {exc}"
 
 
 def _launch_effect_from_spec(spec: AgentSpec) -> LaunchEffect:

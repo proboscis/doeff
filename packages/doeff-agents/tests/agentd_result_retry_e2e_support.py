@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 from doeff_agents.agentd_client import AgentdClient
-from doeff_agents.effects import AgentSessionLifecycle, AwaitStatus
+from doeff_agents.effects import AgentSessionLifecycle
 
 RESULT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -29,8 +29,14 @@ RESULT_SCHEMA: dict[str, Any] = {
 }
 
 
-def run_agentd_tmux_result_retry_e2e(tmp_path: Path) -> dict[str, Any]:
-    """Run a real agentd + tmux contract retry without a real LLM agent."""
+def run_agentd_deterministic_failure_no_retry_e2e(tmp_path: Path) -> dict[str, Any]:
+    """Run a real agentd + tmux contract where the agent reports a
+    schema-invalid result over the report_result channel and then ends its
+    turn without a valid result.
+
+    ADR 0035 R4 / hard rule 7: this deterministic validation failure is NOT
+    re-prompted. The session fails on first occurrence with zero retries.
+    """
     _require_binary("cargo")
     _require_binary("tmux")
 
@@ -84,39 +90,33 @@ def run_agentd_tmux_result_retry_e2e(tmp_path: Path) -> dict[str, Any]:
                 command=command,
                 prompt="Produce the e2e structured result.",
                 lifecycle=AgentSessionLifecycle.RUN_TO_COMPLETION,
-                session_env={"FAKE_AGENT_SESSION_ID": session_id},
-                expected_result={
-                    "payload_schema": RESULT_SCHEMA,
-                    "max_retries": 1,
-                    "retry_prompt": "RETRY after validation failure: %REASON%",
+                session_env={
+                    "DOEFF_RESULT_SESSION_ID": session_id,
+                    "DOEFF_AGENTD_SOCKET": str(socket_path),
+                    "DOEFF_AGENTD_BIN": str(agentd_bin),
                 },
+                expected_result={"payload_schema": RESULT_SCHEMA},
             )
             outcome = client.await_result(session_id, timeout_seconds=25.0)
 
-        if outcome.status != AwaitStatus.EXITED:
-            raise AssertionError(
-                f"agentd E2E did not exit successfully: {outcome!r}\n"
-                f"db:\n{_read_session_debug(db_path, session_id)}\n"
-                f"agentd log:\n{_read_text(agentd_log_path)}\n"
-                f"fake log:\n{_read_text(fake_log_path)}"
-            )
-
         db_snapshot = _read_session_db_state(db_path, session_id)
         fake_events = _read_jsonl(fake_log_path)
-        message_events = [event for event in fake_events if event.get("event") == "message"]
         return {
-            "payload": outcome.result,
-            "validation_error": outcome.validation_error,
+            "await_result": outcome.result,
             "session_status": db_snapshot["status"],
             "retries_used": db_snapshot["retries_used"],
             "retry_events": db_snapshot["retry_events"],
-            "messages_seen": len(message_events),
-            "retry_prompt_seen": any(
-                "RETRY after validation failure" in str(event.get("text", ""))
-                for event in message_events
+            "rejected_events": db_snapshot["rejected_events"],
+            "reported_invalid": any(
+                event.get("event") == "reported-invalid" for event in fake_events
             ),
-            "initial_protocol_seen": any(
-                "DOEFF_AGENT_RESULT_BEGIN" in str(event.get("text", "")) for event in message_events
+            "rejection_error": next(
+                (
+                    str(event.get("error", ""))
+                    for event in fake_events
+                    if event.get("event") == "reported-invalid"
+                ),
+                "",
             ),
             "result_payload_json": db_snapshot["result_payload_json"],
         }
@@ -169,13 +169,15 @@ from __future__ import annotations
 import json
 import os
 import select
+import subprocess
 import sys
 import time
 from pathlib import Path
 
-SESSION_ID = os.environ["FAKE_AGENT_SESSION_ID"]
-WORK_DIR = Path.cwd()
-LOG_PATH = WORK_DIR / "fake-agent-events.jsonl"
+SESSION_ID = os.environ["DOEFF_RESULT_SESSION_ID"]
+SOCKET = os.environ["DOEFF_AGENTD_SOCKET"]
+AGENTD_BIN = os.environ["DOEFF_AGENTD_BIN"]
+LOG_PATH = Path.cwd() / "fake-agent-events.jsonl"
 
 
 def log(event: str, **data: object) -> None:
@@ -184,12 +186,16 @@ def log(event: str, **data: object) -> None:
 
 
 def render_idle() -> None:
-    print("\u276f\u00a0", end="", flush=True)
+    print("\u276f ", end="", flush=True)
 
 
 def render_working() -> None:
-    print("\n\u2722 Swooping\u2026 (1s \u00b7 thinking)", flush=True)
-    time.sleep(2.0)
+    # A claude turn-activity bullet (\u23fa) so agentd clears its
+    # awaiting_response latch. Crucially this is NOT a live spinner ("\u2026 (")
+    # \u2014 a lingering spinner would read as an active marker and block
+    # turn-end forever; a \u23fa bullet may stay on screen while idle.
+    print("\n\u23fa Ran the task", flush=True)
+    time.sleep(1.0)
     for _ in range(35):
         print("", flush=True)
 
@@ -208,36 +214,57 @@ def read_message() -> str | None:
         chunks.append(data.decode("utf-8", "replace"))
 
 
+def report_invalid() -> str:
+    # Report a SCHEMA-INVALID result over the agentd-owned report_result MCP
+    # server (missing the required "ok" field). agentd must reject it
+    # deterministically and MUST NOT re-prompt.
+    proc = subprocess.Popen(
+        [AGENTD_BIN, "report-result-mcp", "--session", SESSION_ID, "--socket", SOCKET],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+
+    def rpc(msg):
+        proc.stdin.write(json.dumps(msg) + "\n")
+        proc.stdin.flush()
+        return proc.stdout.readline()
+
+    rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+         "params": {"protocolVersion": "2024-11-05"}})
+    resp = ""
+    for attempt in range(40):
+        # Retry only the transient "not registered" race (the launch may not
+        # have committed the session row yet); a schema rejection is terminal.
+        resp = rpc({"jsonrpc": "2.0", "id": 2 + attempt, "method": "tools/call",
+                    "params": {"name": "report_result",
+                               "arguments": {"payload": {"summary": "missing ok"}}}})
+        if "not registered" not in resp:
+            break
+        time.sleep(0.25)
+    proc.stdin.close()
+    try:
+        proc.wait(timeout=10)
+    except Exception:
+        pass
+    return resp.strip()
+
+
 print("fake interactive agent ready", flush=True)
 render_idle()
-attempt = 0
 while True:
     message = read_message()
     if message is None:
         break
-    attempt += 1
-    log("message", attempt=attempt, text=message)
-    if "RETRY after validation failure" in message:
+    log("message", text=message)
+    if "Produce the e2e structured result." in message:
         render_working()
-        payload = json.dumps({"summary": "fixed", "ok": True})
-        log("returned-valid")
-        print("DOEFF_AGENT_RESULT_BEGIN", flush=True)
-        print(payload, flush=True)
-        print("DOEFF_AGENT_RESULT_END", flush=True)
-        print("returned valid result", flush=True)
-        render_idle()
-    elif "Produce the e2e structured result." in message:
-        render_working()
-        payload = json.dumps({"summary": "missing ok"})
-        log("returned-invalid")
-        print("DOEFF_AGENT_RESULT_BEGIN", flush=True)
-        print(payload, flush=True)
-        print("DOEFF_AGENT_RESULT_END", flush=True)
-        print("returned invalid result", flush=True)
+        error = report_invalid()
+        log("reported-invalid", error=error)
+        # Do NOT report a valid result: end the turn at an idle prompt. The
+        # session must fail on first occurrence with zero retries.
         render_idle()
     else:
-        log("ignored-non-task-message")
-        print("\nignored non-task message", flush=True)
         render_idle()
 """.lstrip(),
         encoding="utf-8",
@@ -266,11 +293,20 @@ def _read_session_db_state(db_path: Path, session_id: str) -> dict[str, Any]:
             """,
             (session_id,),
         ).fetchone()["retry_events"]
+        rejected_events = conn.execute(
+            """
+            SELECT COUNT(*) AS rejected_events
+            FROM agent_session_events
+            WHERE session_id = ? AND event_type = 'session_result_rejected'
+            """,
+            (session_id,),
+        ).fetchone()["rejected_events"]
         return {
             "status": row["status"],
             "retries_used": row["retries_used"],
             "result_payload_json": row["result_payload_json"],
             "retry_events": retry_events,
+            "rejected_events": rejected_events,
         }
     finally:
         conn.close()
