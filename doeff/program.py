@@ -11,6 +11,7 @@ from doeff_vm import Apply as Apply
 from doeff_vm import Expand as Expand
 from doeff_vm import GetExecutionContext as GetExecutionContext
 from doeff_vm import GetHandlers as GetHandlers
+from doeff_vm import GetObservers as GetObservers
 from doeff_vm import GetOuterHandlers as GetOuterHandlers
 from doeff_vm import GetTraceback as GetTraceback
 from doeff_vm import Pass as Pass

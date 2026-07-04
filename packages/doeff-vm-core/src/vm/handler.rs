@@ -60,6 +60,24 @@ impl VM {
         chain
     }
 
+    /// Collect all intercept (observer) boundary callables walking up the caller chain.
+    pub(super) fn observers_in_caller_chain(&self, start_seg_id: SegmentId) -> Vec<CallableRef> {
+        let mut observers = Vec::new();
+        let mut cursor = Some(start_seg_id);
+        while let Some(seg_id) = cursor {
+            let Some(seg) = self.segments.get(seg_id) else {
+                break;
+            };
+            if let Some(handler) = &seg.handler {
+                if let Some(intercept) = handler.intercept_boundary() {
+                    observers.push(intercept.interceptor.clone());
+                }
+            }
+            cursor = seg.parent;
+        }
+        observers
+    }
+
     /// Find a prompt boundary with a specific marker walking up from start.
     pub(super) fn find_prompt_boundary_in_caller_chain(
         &self,

@@ -356,6 +356,33 @@ impl PyGetHandlers {
     }
 }
 
+/// GetObservers(k) — extract observer callables from continuation's fiber chain.
+///
+/// Observer analog of GetHandlers(k): walks the continuation's detached
+/// fiber chain and returns the observer callable of every intercept
+/// (WithObserve) boundary on it, innermost first. Non-consuming.
+///
+/// Used by the scheduler's Spawn handler to inherit observer boundaries
+/// between the spawn site and the scheduler onto the spawned task
+/// (issue scheduler-spawn-drops-observer-boundary).
+#[pyclass(name = "GetObservers", frozen, dict, module = "doeff_vm.doeff_vm")]
+pub struct PyGetObservers {
+    #[pyo3(get)]
+    pub continuation: Py<PyK>,
+}
+
+#[pymethods]
+impl PyGetObservers {
+    #[new]
+    fn new(k: Py<PyK>) -> Self {
+        Self { continuation: k }
+    }
+
+    fn __repr__(&self) -> &'static str {
+        "GetObservers(k)"
+    }
+}
+
 /// GetOuterHandlers — extract handlers installed ABOVE the current handler.
 ///
 /// When a handler catches an effect, its segment's parent is detached from the

@@ -156,7 +156,6 @@ def test_observer_scoped_below_spawn_site_is_not_inherited():
     @do
     def sibling():
         yield Mark("sibling-effect")
-        return None
 
     @do
     def spawn_outside_observer_scope():
@@ -192,7 +191,6 @@ def test_cancelled_child_effects_before_cancel_are_observed():
         yield Mark("pre-block-effect")
         yield Wait(gate.future)
         yield Mark("never-reached")
-        return None
 
     @do
     def spawn_and_cancel():
