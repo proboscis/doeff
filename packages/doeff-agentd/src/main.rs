@@ -1558,6 +1558,15 @@ fn shell_quote(value: String) -> String {
     }
 }
 
+/// True when a caller-supplied command line will run codex: any
+/// whitespace token equal to `codex` or ending in `/codex`.  Substrings
+/// inside other words (e.g. `codexify`) do not count.
+fn command_mentions_codex(command: &str) -> bool {
+    command
+        .split_whitespace()
+        .any(|token| token == "codex" || token.ends_with("/codex"))
+}
+
 fn session_launch(
     conn: &Connection,
     config: &Config,
@@ -1582,6 +1591,45 @@ fn session_launch(
             "tmux session already exists: {}",
             params.session_name
         ));
+    }
+    // ADR-DOE-AGENTS-003: an agent's auth profile is a per-project
+    // (per-namespace) decision with NO default.  A codex launch without an
+    // explicit CODEX_HOME silently inherits whatever account lives in
+    // ~/.codex — on shared machines the PERSONAL one (observed live
+    // 2026-07-04: ACP's catalog registered bare `codex` commands and an
+    // unattended session burned the personal weekly quota).  Reject at
+    // launch instead of guessing.
+    let launches_codex = params.agent_type == "codex"
+        || params
+            .command
+            .as_deref()
+            .map(command_mentions_codex)
+            .unwrap_or(false);
+    if launches_codex {
+        let has_explicit_codex_home = params.session_env.contains_key("CODEX_HOME")
+            || params
+                .command
+                .as_deref()
+                .map(|c| c.contains("CODEX_HOME="))
+                .unwrap_or(false);
+        if !has_explicit_codex_home {
+            return Err(anyhow!(
+                "session.launch: no agent auth profile for a codex session — set CODEX_HOME \
+                 explicitly (session_env or the launch command). There is NO default: the \
+                 implicit ~/.codex fallback selects whatever account lives there. Declare \
+                 the auth profile per project/namespace (ADR-DOE-AGENTS-003)."
+            ));
+        }
+    }
+    // Staged enforcement (ADR-DOE-AGENTS-003 R3): claude sessions only warn
+    // until existing callers declare CLAUDE_CONFIG_DIR explicitly.
+    if params.agent_type == "claude" && !params.session_env.contains_key("CLAUDE_CONFIG_DIR") {
+        eprintln!(
+            "doeff-agentd WARNING: claude session {} launched without an explicit \
+             CLAUDE_CONFIG_DIR auth profile (ADR-DOE-AGENTS-003 R3: enforcement \
+             follows once callers migrate)",
+            params.session_id
+        );
     }
     // ADR 0035: a contract session (expected_result set) delivers its
     // result over the agentd-owned `report_result` MCP channel. Wire it
@@ -6138,6 +6186,13 @@ Working...
     }
 
     fn contract_launch_params(agent_type: &str) -> LaunchParams {
+        // ADR-DOE-AGENTS-003: codex launches must pin their auth profile;
+        // the gate tests target OTHER gates, so satisfy this one up front.
+        let mut session_env = BTreeMap::new();
+        session_env.insert(
+            String::from("CODEX_HOME"),
+            String::from("/profiles/company-test"),
+        );
         LaunchParams {
             session_id: format!("gate-{agent_type}"),
             session_name: format!("gate-{agent_type}"),
@@ -6150,9 +6205,61 @@ Working...
             mcp_servers: BTreeMap::new(),
             skip_trust_setup: true,
             lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
-            session_env: BTreeMap::new(),
+            session_env,
             expected_result: Some(schema_only_spec(serde_json::json!({"type": "object"}))),
         }
+    }
+
+    #[test]
+    fn session_launch_rejects_codex_without_explicit_auth_profile() {
+        // ADR-DOE-AGENTS-003: no default agent auth.  A codex launch that
+        // pins no CODEX_HOME (neither session_env nor command) is rejected
+        // before any tmux work.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let conn = Connection::open(tmp.path().join("agentd.sqlite")).expect("db");
+        migrate(&conn).expect("migrate");
+        let config = gate_config(&tmp);
+        let mut params = contract_launch_params("codex");
+        params.session_env.clear();
+        let err = session_launch(&conn, &config, params)
+            .expect_err("codex without an auth profile must be rejected");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("no agent auth profile") && msg.contains("CODEX_HOME"),
+            "gate error must name the missing profile and the remedy: {msg}"
+        );
+    }
+
+    #[test]
+    fn session_launch_accepts_codex_auth_via_command_override() {
+        // An explicit command that pins CODEX_HOME satisfies the gate even
+        // with an empty session_env (the ACP catalog shape:
+        // `env CODEX_HOME=... codex`).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let conn = Connection::open(tmp.path().join("agentd.sqlite")).expect("db");
+        migrate(&conn).expect("migrate");
+        let config = gate_config(&tmp);
+        let mut params = contract_launch_params("codex");
+        params.session_env.clear();
+        params.command = Some(String::from(
+            "env CODEX_HOME=/profiles/company-test codex",
+        ));
+        let err = session_launch(&conn, &config, params)
+            .expect_err("fake tmux cannot actually launch");
+        let msg = format!("{err:#}");
+        assert!(
+            !msg.contains("no agent auth profile"),
+            "explicit command auth must pass the gate, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn command_mentions_codex_matches_tokens_not_substrings() {
+        assert!(command_mentions_codex("codex"));
+        assert!(command_mentions_codex("env CODEX_HOME=/x codex --yolo"));
+        assert!(command_mentions_codex("/usr/local/bin/codex"));
+        assert!(!command_mentions_codex("true"));
+        assert!(!command_mentions_codex("codexify --all"));
     }
 
     #[test]
