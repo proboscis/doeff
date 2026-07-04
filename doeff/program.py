@@ -9,6 +9,7 @@ from typing import Any, cast
 
 from doeff_vm import Apply as Apply
 from doeff_vm import Expand as Expand
+from doeff_vm import GetBoundaries as GetBoundaries
 from doeff_vm import GetExecutionContext as GetExecutionContext
 from doeff_vm import GetHandlers as GetHandlers
 from doeff_vm import GetOuterHandlers as GetOuterHandlers
