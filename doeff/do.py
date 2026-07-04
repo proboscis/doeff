@@ -167,20 +167,57 @@ def _call_leaf_name(node: ast.AST) -> str | None:
     return None
 
 
+# Keyed by (code object id via the object itself, non_tail).  `do()` is applied
+# every time a handler/closure is CONSTRUCTED, which in Hy apps happens per
+# handler instantiation (sometimes per request / per reconcile step) — without
+# a cache every construction re-reads the source file and re-runs the CPython
+# PEG parser.  Live incident 2026-07-04: a BFF serving ~114k requests spent
+# essentially all its CPU inside ast.parse/getsourcelines from this diagnostic,
+# starving the co-resident reconcile loop into wire timeouts.  The analysis
+# depends only on the code object, so caching is behavior-identical (the
+# non-tail warning fires once per code object instead of once per construction,
+# which is strictly less noisy).
+_RESUME_ANALYSIS_CACHE: dict[tuple[int, bool], tuple[int, ...]] = {}
+_RESUME_ANALYSIS_CACHE_KEEPALIVE: list[Any] = []
+
+
 def _analyze_resume_yields(fn: Callable[..., Any], *, non_tail: bool) -> tuple[int, ...]:
     # tail-resume analysis is purely a warning/diagnostic optimization. If we
     # cannot recover Python source for `fn` (e.g. Hy-defined handlers, lambdas
     # generated at runtime, frozen functions), silently skip — the runtime
     # behavior of the @do wrapper is unaffected.
+    code = getattr(fn, "__code__", None)
+    cache_key = None
+    if code is not None:
+        cache_key = (id(code), non_tail)
+        cached = _RESUME_ANALYSIS_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+        # Hy (and any non-.py) sources can never satisfy ast.parse — skip
+        # before paying for the file read and the parse attempt.
+        filename = getattr(code, "co_filename", "")
+        if not filename.endswith(".py"):
+            _RESUME_ANALYSIS_CACHE[cache_key] = ()
+            _RESUME_ANALYSIS_CACHE_KEEPALIVE.append(code)
+            return ()
+
+    def _remember(result: tuple[int, ...]) -> tuple[int, ...]:
+        if cache_key is not None:
+            _RESUME_ANALYSIS_CACHE[cache_key] = result
+            # id(code) keys are only stable while the code object lives; keep
+            # it alive so a recycled id cannot alias a different function.
+            _RESUME_ANALYSIS_CACHE_KEEPALIVE.append(code)
+        return result
+
     try:
         source_lines, start_line = inspect.getsourcelines(fn)
     except (OSError, TypeError, tokenize.TokenError, SyntaxError):
-        return ()
+        return _remember(())
 
     try:
         module = ast.parse(dedent("".join(source_lines)))
     except (SyntaxError, ValueError):
-        return ()
+        return _remember(())
 
     function_node = next(
         (
@@ -191,7 +228,7 @@ def _analyze_resume_yields(fn: Callable[..., Any], *, non_tail: bool) -> tuple[i
         None,
     )
     if function_node is None:
-        return ()
+        return _remember(())
 
     visitor = _ResumeYieldAnalysis(start_line)
     visitor.visit(function_node)
@@ -208,7 +245,7 @@ def _analyze_resume_yields(fn: Callable[..., Any], *, non_tail: bool) -> tuple[i
             sorted_lines[0],
         )
 
-    return tuple(sorted(visitor.tail_resume_lines))
+    return _remember(tuple(sorted(visitor.tail_resume_lines)))
 
 
 @overload
