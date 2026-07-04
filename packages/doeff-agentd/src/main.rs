@@ -97,8 +97,10 @@ const RPC_ERR_AWAIT_TIMEOUT: i32 = -32000;
 /// wait).
 const RPC_ERR_NO_SUCH_SESSION: i32 = -32001;
 /// JSON-RPC error code returned when `session.report_result` receives a
-/// payload that does not satisfy the session's result schema.  A
-/// deterministic failure: agentd never re-prompts (ADR 0035 R4).
+/// payload that does not satisfy the session's result schema.  The
+/// rejection is final for that payload: agentd never re-validates it
+/// (ADR 0035 R4).  A later turn-end without a valid result enters the
+/// bounded solicitation loop instead (ADR-DOE-AGENTS-002 R3).
 const RPC_ERR_RESULT_REJECTED: i32 = -32002;
 /// JSON-RPC error code returned when `session.report_result` arrives after
 /// the session already reached a terminal status without a result.
@@ -107,6 +109,59 @@ const RPC_ERR_ALREADY_TERMINAL: i32 = -32003;
 /// when a client omits its own requested version.
 const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 
+/// ADR-DOE-AGENTS-002 R1/R2: how many corrective "call report_result now"
+/// solicitations the monitor sends to a contract session that reaches
+/// turn-end without a valid reported result, before finalising it as
+/// terminal-without-result.  A missing result at turn-end is an
+/// OBSERVATION (the agent may simply have stopped talking), not a
+/// deterministic failure — the deterministic case is a schema-invalid
+/// payload, which is rejected immediately (-32002) and never
+/// re-validated.  Override with `--result-solicitations` /
+/// `DOEFF_AGENTD_RESULT_SOLICITATIONS`; 0 restores the old
+/// fail-immediately behaviour.
+const DEFAULT_RESULT_SOLICITATION_LIMIT: u32 = 2;
+
+/// ADR-DOE-AGENTS-002 R5: how long a run_to_completion pane may stay
+/// byte-identical (no active-work marker, no idle REPL prompt) before
+/// the interactive-prompt watchdog treats it as blocked on an
+/// interactive prompt and consults the judge.  Override with
+/// `--prompt-stall-secs` / `DOEFF_AGENTD_PROMPT_STALL_SECS`.
+const DEFAULT_PROMPT_STALL_SECONDS: i64 = 180;
+
+/// ADR-DOE-AGENTS-002 R5/R7: bounded judge/unblock attempts per session
+/// (durable column `prompt_unblock_attempts`).  Exceeding the bound
+/// fails the session loudly with `interactive-prompt-blocked` — never
+/// an infinite wait.  Override with `--prompt-unblock-attempts` /
+/// `DOEFF_AGENTD_PROMPT_UNBLOCK_ATTEMPTS`.
+const DEFAULT_PROMPT_UNBLOCK_LIMIT: u32 = 3;
+
+/// ADR-DOE-AGENTS-002 R5: default command for the interactive-prompt
+/// judge — a small LLM invoked as `sh -c <cmd>` with the judge prompt
+/// on stdin, expected to print a single JSON object
+/// `{"blocked": bool, "keys": [..], "reason": ".."}`.  Override with
+/// `--prompt-judge-cmd` / `DOEFF_AGENTD_PROMPT_JUDGE_CMD`; an empty
+/// string disables the judge (the stall watchdog then fails loudly
+/// without an unblock attempt, and turn-end solicitation proceeds
+/// without menu disambiguation).
+const DEFAULT_PROMPT_JUDGE_CMD: &str = "claude -p --model haiku";
+
+/// Wall-clock cap on one judge invocation.  The judge runs inside the
+/// monitor tick, so a hung judge process must not stall observation of
+/// the other sessions indefinitely.
+const PROMPT_JUDGE_TIMEOUT_SECONDS: u64 = 45;
+
+/// Upper bound on how many keys one judge verdict may send.  Bounds
+/// the damage of a hallucinated key sequence.
+const PROMPT_JUDGE_MAX_KEYS: usize = 8;
+
+/// The corrective message the monitor pastes into a contract session
+/// that reached turn-end without reporting a result
+/// (ADR-DOE-AGENTS-002 R1).
+const RESULT_SOLICITATION_MESSAGE: &str =
+    "AGENTD RESULT CONTRACT: your turn ended without a report_result call. \
+     Call the report_result MCP tool now with a payload that satisfies the \
+     declared result schema. Do only that — no other actions, no files.";
+
 #[derive(Debug, Clone)]
 struct Config {
     db_path: PathBuf,
@@ -114,6 +169,16 @@ struct Config {
     tmux_bin: String,
     monitor_interval: Duration,
     max_running: usize,
+    /// ADR-DOE-AGENTS-002 R2: bound on turn-end result solicitations.
+    result_solicitation_limit: u32,
+    /// ADR-DOE-AGENTS-002 R5: pane-unchanged threshold for the
+    /// interactive-prompt stall watchdog.
+    prompt_stall_seconds: i64,
+    /// ADR-DOE-AGENTS-002 R5/R7: bound on judge/unblock attempts.
+    prompt_unblock_limit: u32,
+    /// ADR-DOE-AGENTS-002 R5: the judge command (`sh -c`); None
+    /// disables the judge.
+    prompt_judge_cmd: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -236,6 +301,23 @@ struct SessionSnapshot {
     /// pane/worktree has been cleaned up.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     result_payload: Option<String>,
+    /// ADR-DOE-AGENTS-002 R2: durable count of "call report_result now"
+    /// solicitations sent to this session.  Deliberately NOT the
+    /// vestigial `retries_used` (whose wire meaning was the removed
+    /// validation re-prompt) and deliberately NOT cleared on daemon
+    /// restart — the bound must survive restarts.
+    #[serde(default)]
+    result_solicitations_used: u32,
+    /// ADR-DOE-AGENTS-002 R5: durable count of interactive-prompt judge
+    /// invocations (each may send unblock keys).  Survives restart.
+    #[serde(default)]
+    prompt_unblock_attempts: u32,
+    /// Timestamp of the last observed CHANGE of the capture tail —
+    /// unlike `last_observed_at`, which refreshes on every successful
+    /// capture even when the pane is frozen.  Basis of the "pane
+    /// unchanged for T seconds" stall trigger (ADR-DOE-AGENTS-002 R5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_output_change_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,6 +330,11 @@ enum TerminalCauseCategory {
     ProtocolError,
     RunnerUnavailable,
     RunFailed,
+    /// ADR-DOE-AGENTS-002 R7: the pane froze on an interactive prompt
+    /// and the bounded judge/unblock loop could not clear it.  Internal
+    /// / audit detail only — the ACP-facing discriminator is unchanged
+    /// (the failure surfaces as `failed` + `last_validation_error`).
+    InteractivePromptBlocked,
     Unknown,
 }
 
@@ -498,6 +585,16 @@ fn parse_args(args: Vec<String>) -> Result<Config> {
     let mut tmux_bin = String::from("tmux");
     let mut monitor_interval = Duration::from_millis(DEFAULT_MONITOR_INTERVAL_MS);
     let mut max_running = DEFAULT_MAX_RUNNING_SESSIONS;
+    let mut result_solicitation_limit =
+        env_u32("DOEFF_AGENTD_RESULT_SOLICITATIONS").unwrap_or(DEFAULT_RESULT_SOLICITATION_LIMIT);
+    let mut prompt_stall_seconds = env_positive_i64("DOEFF_AGENTD_PROMPT_STALL_SECS")
+        .unwrap_or(DEFAULT_PROMPT_STALL_SECONDS);
+    let mut prompt_unblock_limit =
+        env_u32("DOEFF_AGENTD_PROMPT_UNBLOCK_ATTEMPTS").unwrap_or(DEFAULT_PROMPT_UNBLOCK_LIMIT);
+    let mut prompt_judge_cmd = normalize_prompt_judge_cmd(
+        env::var("DOEFF_AGENTD_PROMPT_JUDGE_CMD")
+            .unwrap_or_else(|_| String::from(DEFAULT_PROMPT_JUDGE_CMD)),
+    );
     let mut command = String::from("serve");
     let mut index = 0;
     while index < args.len() {
@@ -526,6 +623,34 @@ fn parse_args(args: Vec<String>) -> Result<Config> {
                 .get(index)
                 .ok_or_else(|| anyhow!("--max-running requires a value"))?;
             max_running = raw.parse::<usize>()?;
+        } else if arg == "--result-solicitations" {
+            index += 1;
+            let raw = args
+                .get(index)
+                .ok_or_else(|| anyhow!("--result-solicitations requires a value"))?;
+            result_solicitation_limit = raw.parse::<u32>()?;
+        } else if arg == "--prompt-stall-secs" {
+            index += 1;
+            let raw = args
+                .get(index)
+                .ok_or_else(|| anyhow!("--prompt-stall-secs requires a value"))?;
+            prompt_stall_seconds = raw.parse::<i64>()?;
+            if prompt_stall_seconds <= 0 {
+                return Err(anyhow!("--prompt-stall-secs must be positive"));
+            }
+        } else if arg == "--prompt-unblock-attempts" {
+            index += 1;
+            let raw = args
+                .get(index)
+                .ok_or_else(|| anyhow!("--prompt-unblock-attempts requires a value"))?;
+            prompt_unblock_limit = raw.parse::<u32>()?;
+        } else if arg == "--prompt-judge-cmd" {
+            index += 1;
+            let raw = args
+                .get(index)
+                .cloned()
+                .ok_or_else(|| anyhow!("--prompt-judge-cmd requires a value"))?;
+            prompt_judge_cmd = normalize_prompt_judge_cmd(raw);
         } else if arg == "serve" {
             command = arg.clone();
         } else {
@@ -542,7 +667,34 @@ fn parse_args(args: Vec<String>) -> Result<Config> {
         tmux_bin,
         monitor_interval,
         max_running,
+        result_solicitation_limit,
+        prompt_stall_seconds,
+        prompt_unblock_limit,
+        prompt_judge_cmd,
     })
+}
+
+fn env_u32(name: &str) -> Option<u32> {
+    env::var(name)
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+}
+
+fn env_positive_i64(name: &str) -> Option<i64> {
+    env::var(name)
+        .ok()
+        .and_then(|s| s.trim().parse::<i64>().ok())
+        .filter(|&v| v > 0)
+}
+
+/// An empty (or blank) judge command means "judge disabled".
+fn normalize_prompt_judge_cmd(raw: String) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 fn default_db_path() -> PathBuf {
@@ -738,7 +890,10 @@ fn handle_report_result_tool_call(
         ),
         // A rejected/invalid result is surfaced as an MCP tool error (not a
         // transport error) so the agent sees the reason and can correct the
-        // payload within the same turn — agentd never re-prompts.
+        // payload within the same turn — the rejection itself is final for
+        // that payload (no re-validation, ADR 0035 R4); a missing result at
+        // turn-end is handled by the monitor's bounded solicitation loop
+        // (ADR-DOE-AGENTS-002 R1/R3).
         Err(e) => mcp_tool_error(id, format!("{e:#}")),
     }
 }
@@ -872,6 +1027,19 @@ fn migrate(conn: &Connection) -> Result<()> {
     ensure_column(conn, "agent_sessions", "observed_active_at", "TEXT")?;
     ensure_column(conn, "agent_sessions", "terminal_cause_json", "TEXT")?;
     ensure_column(conn, "agent_sessions", "result_payload_json", "TEXT")?;
+    ensure_column(
+        conn,
+        "agent_sessions",
+        "result_solicitations_used",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column(
+        conn,
+        "agent_sessions",
+        "prompt_unblock_attempts",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column(conn, "agent_sessions", "last_output_change_at", "TEXT")?;
     Ok(())
 }
 
@@ -1525,6 +1693,9 @@ fn session_launch(
         awaiting_response,
         observed_active_at: None,
         result_payload: None,
+        result_solicitations_used: 0,
+        prompt_unblock_attempts: 0,
+        last_output_change_at: None,
     };
     record_command(
         conn,
@@ -1545,7 +1716,8 @@ fn session_get(conn: &Connection, session_id: &str) -> Result<Option<SessionSnap
                 backend_kind, backend_ref_json, started_at, last_observed_at,
                 finished_at, cleaned_at, pr_url, output_snippet,
                 terminal_cause_json, expected_result_json, retries_used, last_validation_error,
-                awaiting_response, observed_active_at, result_payload_json
+                awaiting_response, observed_active_at, result_payload_json,
+                result_solicitations_used, prompt_unblock_attempts, last_output_change_at
          FROM agent_sessions WHERE session_id = ?1",
         params![session_id],
         row_to_snapshot,
@@ -1560,7 +1732,8 @@ fn session_list(conn: &Connection, query: ListParams) -> Result<Vec<SessionSnaps
                 backend_kind, backend_ref_json, started_at, last_observed_at,
                 finished_at, cleaned_at, pr_url, output_snippet,
                 terminal_cause_json, expected_result_json, retries_used, last_validation_error,
-                awaiting_response, observed_active_at, result_payload_json
+                awaiting_response, observed_active_at, result_payload_json,
+                result_solicitations_used, prompt_unblock_attempts, last_output_change_at
          FROM agent_sessions
          ORDER BY started_at DESC, session_id ASC",
     )?;
@@ -1811,9 +1984,10 @@ fn session_await_result_with_interval(
 /// never clobber a reported result.
 ///
 /// A schema-invalid payload is a deterministic failure: it is NOT persisted
-/// and NOT retried (hard rule 7 / ADR 0035 R4). The reason is returned to
-/// the agent so it can correct the payload within the same session; agentd
-/// never re-prompts on its own.
+/// and NOT re-validated (hard rule 7 / ADR 0035 R4). The reason is returned
+/// to the agent so it can correct the payload within the same session; if
+/// the session then reaches turn-end without a valid result, the monitor's
+/// bounded solicitation loop takes over (ADR-DOE-AGENTS-002 R3).
 fn session_report_result(conn: &Connection, params: ReportResultParams) -> Result<Value> {
     let snapshot = require_session(conn, &params.session_id)?;
     if is_terminal_status(&snapshot.status) {
@@ -1992,6 +2166,9 @@ fn row_to_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSnapshot>
         awaiting_response: row.get::<_, i64>(19)? != 0,
         observed_active_at: row.get(20)?,
         result_payload: row.get(21)?,
+        result_solicitations_used: row.get::<_, i64>(22)? as u32,
+        prompt_unblock_attempts: row.get::<_, i64>(23)? as u32,
+        last_output_change_at: row.get(24)?,
     })
 }
 
@@ -2011,8 +2188,9 @@ fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> 
             backend_kind, backend_ref_json, started_at, last_observed_at,
             finished_at, cleaned_at, pr_url, output_snippet,
             terminal_cause_json, expected_result_json, retries_used, last_validation_error,
-            awaiting_response, observed_active_at, result_payload_json
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+            awaiting_response, observed_active_at, result_payload_json,
+            result_solicitations_used, prompt_unblock_attempts, last_output_change_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
          ON CONFLICT(session_id) DO UPDATE SET
             session_name = excluded.session_name,
             pane_id = excluded.pane_id,
@@ -2034,7 +2212,10 @@ fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> 
             last_validation_error = excluded.last_validation_error,
             awaiting_response = excluded.awaiting_response,
             observed_active_at = excluded.observed_active_at,
-            result_payload_json = COALESCE(agent_sessions.result_payload_json, excluded.result_payload_json)",
+            result_payload_json = COALESCE(agent_sessions.result_payload_json, excluded.result_payload_json),
+            result_solicitations_used = excluded.result_solicitations_used,
+            prompt_unblock_attempts = excluded.prompt_unblock_attempts,
+            last_output_change_at = excluded.last_output_change_at",
         params![
             snapshot.session_id,
             snapshot.session_name,
@@ -2058,6 +2239,9 @@ fn upsert_snapshot(conn: &Connection, snapshot: &SessionSnapshot) -> Result<()> 
             i64::from(snapshot.awaiting_response),
             snapshot.observed_active_at,
             snapshot.result_payload,
+            i64::from(snapshot.result_solicitations_used),
+            i64::from(snapshot.prompt_unblock_attempts),
+            snapshot.last_output_change_at,
         ],
     )?;
     Ok(())
@@ -2914,6 +3098,162 @@ fn accept_claude_managed_settings_approval_dialog(config: &Config, pane_id: &str
     Ok(())
 }
 
+/// Verdict returned by the interactive-prompt judge
+/// (ADR-DOE-AGENTS-002 R5).  The judge is the GENERAL path for unknown
+/// blocking prompts; the hardcoded dialog detectors above remain as
+/// deterministic fast-paths for the known ones (R9).
+#[derive(Debug, Deserialize)]
+struct PromptJudgeVerdict {
+    blocked: bool,
+    #[serde(default)]
+    keys: Vec<String>,
+    #[serde(default)]
+    reason: String,
+}
+
+/// tmux send-keys names a judge verdict may use.  The whitelist bounds
+/// the damage of a hallucinated verdict: navigation, confirmation and
+/// single alphanumerics only — never control sequences.
+fn is_allowed_unblock_key(key: &str) -> bool {
+    let mut chars = key.chars();
+    if let (Some(first), None) = (chars.next(), chars.next()) {
+        return first.is_ascii_alphanumeric();
+    }
+    matches!(
+        key,
+        "Up" | "Down" | "Left" | "Right" | "Enter" | "Escape" | "Tab" | "Space" | "BSpace"
+            | "Home" | "End"
+    )
+}
+
+/// The full prompt handed to the judge command on stdin.  agentd owns
+/// the instruction framing so the configured command stays a plain
+/// "LLM with stdin/stdout" adapter.
+fn prompt_judge_instructions(pane: &str) -> String {
+    format!(
+        "You are a terminal-UI judge inside an agent supervisor. Below is a tmux pane \
+         capture of a coding-agent CLI session whose screen has stopped changing. Decide \
+         whether the pane is BLOCKED on an interactive prompt (menu, confirmation dialog, \
+         pager, login prompt) that is waiting for keyboard input. If it is, produce the \
+         shortest safe key sequence that dismisses the prompt while PRESERVING current \
+         behaviour — prefer options like 'Keep current model', 'Skip', 'Not now', 'No'. \
+         A normal idle REPL prompt or ordinary scrolled output is NOT blocked.\n\
+         Respond with ONLY one JSON object, no prose:\n\
+         {{\"blocked\": true, \"keys\": [\"Down\", \"Enter\"], \"reason\": \"...\"}}\n\
+         Allowed key names: single letters/digits, Up, Down, Left, Right, Enter, Escape, \
+         Tab, Space, BSpace, Home, End.\n\
+         PANE CAPTURE:\n{pane}"
+    )
+}
+
+/// Run the judge command (`sh -c <cmd>`) with `stdin_text` on stdin and
+/// a hard wall-clock cap.  The judge runs inside the monitor tick, so a
+/// hung judge must not stall observation of the other sessions.
+fn run_judge_command(cmd: &str, stdin_text: &str, timeout: Duration) -> Result<String> {
+    use std::io::{Read, Write};
+    use std::process::Stdio;
+    let mut child = Command::new("sh")
+        .args(["-c", cmd])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("prompt judge failed to spawn")?;
+    // The judge prompt (instructions + a 100-line pane capture) is far
+    // below the pipe buffer and the judge's JSON reply is tiny, so a
+    // plain sequential write→poll→read cannot deadlock here.
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(stdin_text.as_bytes())
+            .context("prompt judge stdin write failed")?;
+    }
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if child
+            .try_wait()
+            .context("prompt judge wait failed")?
+            .is_some()
+        {
+            let mut out = String::new();
+            if let Some(mut stdout) = child.stdout.take() {
+                stdout
+                    .read_to_string(&mut out)
+                    .context("prompt judge stdout read failed")?;
+            }
+            return Ok(out);
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(anyhow!(
+                "prompt judge timed out after {}s",
+                timeout.as_secs()
+            ));
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Parse and validate a judge reply.  Anything other than one JSON
+/// object with whitelisted keys is a judge failure — the callers decide
+/// whether that degrades to solicitation (turn-end site) or fails the
+/// session loudly (stall site), per ADR-DOE-AGENTS-002 R7.
+fn parse_prompt_judge_verdict(raw: &str) -> Result<PromptJudgeVerdict> {
+    let start = raw
+        .find('{')
+        .ok_or_else(|| anyhow!("prompt judge reply contains no JSON object: {raw:?}"))?;
+    let end = raw
+        .rfind('}')
+        .ok_or_else(|| anyhow!("prompt judge reply contains no JSON object: {raw:?}"))?;
+    if end < start {
+        return Err(anyhow!("prompt judge reply contains no JSON object: {raw:?}"));
+    }
+    let verdict: PromptJudgeVerdict = serde_json::from_str(&raw[start..=end])
+        .context("prompt judge reply is not valid verdict JSON")?;
+    if verdict.blocked {
+        if verdict.keys.is_empty() {
+            return Err(anyhow!("prompt judge verdict is blocked but carries no keys"));
+        }
+        if verdict.keys.len() > PROMPT_JUDGE_MAX_KEYS {
+            return Err(anyhow!(
+                "prompt judge verdict carries {} keys (max {})",
+                verdict.keys.len(),
+                PROMPT_JUDGE_MAX_KEYS
+            ));
+        }
+        if let Some(bad) = verdict.keys.iter().find(|k| !is_allowed_unblock_key(k)) {
+            return Err(anyhow!("prompt judge verdict uses disallowed key {bad:?}"));
+        }
+    }
+    Ok(verdict)
+}
+
+/// Ask the configured judge whether the captured pane is blocked on an
+/// interactive prompt.  Errors cover: judge not configured, spawn/timeout
+/// failures, and invalid verdicts.
+fn judge_interactive_prompt(config: &Config, pane: &str) -> Result<PromptJudgeVerdict> {
+    let cmd = config
+        .prompt_judge_cmd
+        .as_deref()
+        .ok_or_else(|| anyhow!("no prompt judge configured"))?;
+    let reply = run_judge_command(
+        cmd,
+        &prompt_judge_instructions(pane),
+        Duration::from_secs(PROMPT_JUDGE_TIMEOUT_SECONDS),
+    )?;
+    parse_prompt_judge_verdict(&reply)
+}
+
+/// Send a validated unblock key sequence, mirroring the pacing of the
+/// hardcoded dialog dismissers (120ms between keys).
+fn send_unblock_keys(config: &Config, pane_id: &str, keys: &[String]) -> Result<()> {
+    for key in keys {
+        tmux_send_keys(config, pane_id, key, false, false)?;
+        thread::sleep(Duration::from_millis(120));
+    }
+    Ok(())
+}
+
 /// Extract a human-readable message from a `catch_unwind` panic payload.
 fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
     if let Some(s) = payload.downcast_ref::<&str>() {
@@ -3196,9 +3536,17 @@ fn monitor_once(config: &Config) -> Result<()> {
             // back into the snapshot, otherwise the comparison degenerates
             // into "current == current" and every observation looks stable,
             // firing the turn-end branch prematurely.
+            let output_changed = !output_is_stable(&snapshot, &output);
             let turn_ended =
                 !snapshot.awaiting_response && output_indicates_turn_end(&snapshot, &output);
             snapshot.output_snippet = Some(tail_chars(&output, 500));
+            // Stall clock for the interactive-prompt watchdog
+            // (ADR-DOE-AGENTS-002 R5): last_output_change_at tracks content
+            // CHANGE, unlike last_observed_at which refreshes on every
+            // successful capture even when the pane is frozen.
+            if output_changed || snapshot.last_output_change_at.is_none() {
+                snapshot.last_output_change_at = Some(observed_at.clone());
+            }
 
             let mut observed_status = raw_status;
 
@@ -3220,20 +3568,90 @@ fn monitor_once(config: &Config) -> Result<()> {
                     snapshot.last_validation_error = None;
                     observed_status = "done";
                 } else if turn_ended {
-                    // The agent reached a stable turn-end without reporting a
-                    // result.  Deterministic failure — agentd never re-prompts
-                    // (hard rule 7 / ADR 0035 R4).  Re-read once more right
-                    // before failing to close the (stability-gated, sub-tick)
-                    // window against a result landing exactly at turn-end.
+                    // The agent reached a stable turn-end without a valid
+                    // reported result.  This is an OBSERVATION, not a
+                    // deterministic failure (ADR-DOE-AGENTS-002 R1): the
+                    // deterministic case is a schema-invalid payload, which
+                    // session_report_result rejected with -32002 and never
+                    // re-validates.  Re-read once more right before acting to
+                    // close the (stability-gated, sub-tick) window against a
+                    // result landing exactly at turn-end.
                     if let Some(reported) = current_result_payload(&conn, &snapshot.session_id)? {
                         snapshot.result_payload = Some(reported);
                         snapshot.last_validation_error = None;
                         observed_status = "done";
                     } else {
+                        // Menu disambiguation (ADR-DOE-AGENTS-002 R6): codex
+                        // menus render the same `› ` glyph as the idle REPL
+                        // prompt, so this "turn-end" may actually be a
+                        // blocking dialog eating input.  Pasting the
+                        // solicitation there would press Enter on an
+                        // arbitrary menu option — ask the judge first.  A
+                        // judge failure here degrades to solicitation
+                        // (bounded), never to a hang (R7).
+                        if config.prompt_judge_cmd.is_some()
+                            && snapshot.prompt_unblock_attempts < config.prompt_unblock_limit
+                        {
+                            snapshot.prompt_unblock_attempts += 1;
+                            match judge_interactive_prompt(config, &output) {
+                                Ok(verdict) if verdict.blocked => {
+                                    send_unblock_keys(config, &snapshot.pane_id, &verdict.keys)?;
+                                    upsert_snapshot(&conn, &snapshot)?;
+                                    record_event(
+                                        &conn,
+                                        &snapshot.session_id,
+                                        "session_prompt_unblocked",
+                                        &snapshot,
+                                    )?;
+                                    continue;
+                                }
+                                Ok(_) => {}
+                                Err(err) => {
+                                    eprintln!(
+                                        "doeff-agentd prompt judge (turn-end) failed for {}: {err:#}",
+                                        snapshot.session_id
+                                    );
+                                }
+                            }
+                        }
+                        if snapshot.result_solicitations_used < config.result_solicitation_limit {
+                            // Bounded solicitation (R1/R2): tell the agent to
+                            // call report_result and nothing else, re-arm the
+                            // awaiting_response latch so turn-end stays quiet
+                            // until the agent visibly picks the message up,
+                            // and keep the session non-terminal so a landing
+                            // report_result wins (R4).  The counter is a
+                            // durable column, so the bound survives daemon
+                            // restarts (the latch does not).
+                            snapshot.result_solicitations_used += 1;
+                            tmux_send_keys(
+                                config,
+                                &snapshot.pane_id,
+                                RESULT_SOLICITATION_MESSAGE,
+                                true,
+                                true,
+                            )?;
+                            snapshot.awaiting_response = true;
+                            upsert_snapshot(&conn, &snapshot)?;
+                            record_event(
+                                &conn,
+                                &snapshot.session_id,
+                                "session_result_solicited",
+                                &snapshot,
+                            )?;
+                            continue;
+                        }
                         observed_status = "failed";
-                        let reason = String::from(
-                            "session reached turn-end without reporting a result via report_result",
-                        );
+                        let reason = if snapshot.result_solicitations_used == 0 {
+                            String::from(
+                                "session reached turn-end without reporting a result via report_result",
+                            )
+                        } else {
+                            format!(
+                                "session reached turn-end without reporting a result via report_result (after {} solicitation(s))",
+                                snapshot.result_solicitations_used
+                            )
+                        };
                         snapshot.last_validation_error = Some(reason.clone());
                         set_terminal_cause_if_absent(
                             &mut snapshot,
@@ -3248,6 +3666,97 @@ fn monitor_once(config: &Config) -> Result<()> {
                 // RunToCompletion without an explicit contract: the launcher
                 // trusts the turn-end signal as work-end.
                 observed_status = "done";
+            }
+
+            // Interactive-prompt stall watchdog (ADR-DOE-AGENTS-002 R5/R7):
+            // a pane that has stayed byte-identical past the stall threshold
+            // with no active-work marker and no idle REPL prompt is blocked
+            // on something turn-end detection can never see (login prompt,
+            // pager, unknown dialog).  last_observed_at refreshes on every
+            // capture, so no other watchdog fires for this state — before
+            // this block such a session pinned a concurrency slot forever.
+            // Bounded judge/unblock attempts, then a typed loud failure;
+            // never an infinite wait.
+            if observed_status == "running"
+                && is_run_to_completion_lifecycle(&snapshot.lifecycle)
+                && !snapshot.awaiting_response
+                && snapshot.observed_active_at.is_some()
+                && !active_marker_seen
+                && !output_has_agent_idle_prompt(&output)
+                && parse_iso_timestamp(snapshot.last_output_change_at.as_deref())
+                    .map(|changed| {
+                        now.signed_duration_since(changed)
+                            > ChronoDuration::seconds(config.prompt_stall_seconds)
+                    })
+                    .unwrap_or(false)
+            {
+                let blocked_failure: Option<String> = if snapshot.prompt_unblock_attempts
+                    >= config.prompt_unblock_limit
+                {
+                    Some(format!(
+                        "interactive-prompt-blocked: pane unchanged for over {}s and {} unblock attempt(s) exhausted",
+                        config.prompt_stall_seconds, snapshot.prompt_unblock_attempts
+                    ))
+                } else if config.prompt_judge_cmd.is_none() {
+                    Some(format!(
+                        "interactive-prompt-blocked: pane unchanged for over {}s and no prompt judge configured",
+                        config.prompt_stall_seconds
+                    ))
+                } else {
+                    snapshot.prompt_unblock_attempts += 1;
+                    match judge_interactive_prompt(config, &output) {
+                        Ok(verdict) if verdict.blocked => {
+                            send_unblock_keys(config, &snapshot.pane_id, &verdict.keys)?;
+                            upsert_snapshot(&conn, &snapshot)?;
+                            record_event(
+                                &conn,
+                                &snapshot.session_id,
+                                "session_prompt_unblocked",
+                                &snapshot,
+                            )?;
+                            continue;
+                        }
+                        Ok(verdict) => {
+                            // The judge sees no blocker, yet the pane has been
+                            // frozen past the threshold with no work marker.
+                            // Do not park forever on inconclusive verdicts:
+                            // the attempt budget bounds these rounds too (R7).
+                            eprintln!(
+                                "doeff-agentd prompt judge saw no blocker for {} (attempt {}): {}",
+                                snapshot.session_id,
+                                snapshot.prompt_unblock_attempts,
+                                verdict.reason
+                            );
+                            upsert_snapshot(&conn, &snapshot)?;
+                            record_event(
+                                &conn,
+                                &snapshot.session_id,
+                                "session_prompt_judge_inconclusive",
+                                &snapshot,
+                            )?;
+                            continue;
+                        }
+                        // Judge unavailable / invalid verdict at the stall
+                        // site: there is no other path that can unblock this
+                        // pane, so fail loudly (R7) instead of waiting
+                        // forever.
+                        Err(err) => Some(format!(
+                            "interactive-prompt-blocked: pane unchanged for over {}s and prompt judge failed: {err:#}",
+                            config.prompt_stall_seconds
+                        )),
+                    }
+                };
+                if let Some(reason) = blocked_failure {
+                    observed_status = "failed";
+                    snapshot.last_validation_error = Some(reason.clone());
+                    set_terminal_cause_if_absent(
+                        &mut snapshot,
+                        TerminalCauseCategory::InteractivePromptBlocked,
+                        reason,
+                        false,
+                        &observed_at,
+                    );
+                }
             }
 
             snapshot.status = String::from(observed_status);
@@ -3834,6 +4343,9 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
             awaiting_response: false,
             observed_active_at: None,
             result_payload: None,
+            result_solicitations_used: 0,
+            prompt_unblock_attempts: 0,
+            last_output_change_at: None,
         };
         assert!(list_query_matches(
             &snapshot,
@@ -3963,6 +4475,10 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
             tmux_bin: tmux_bin.to_string_lossy().into_owned(),
             monitor_interval: Duration::from_millis(1000),
             max_running: 1,
+            result_solicitation_limit: DEFAULT_RESULT_SOLICITATION_LIMIT,
+            prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
+            prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
+            prompt_judge_cmd: None,
         };
 
         let output = tmux_capture(&config, "%1", 40).expect("capture");
@@ -4022,6 +4538,9 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
                 awaiting_response: false,
                 observed_active_at: None,
                 result_payload: None,
+                result_solicitations_used: 0,
+                prompt_unblock_attempts: 0,
+                last_output_change_at: None,
                 last_observed_at: None,
                 finished_at: None,
                 cleaned_at: None,
@@ -4037,6 +4556,10 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
             tmux_bin: String::from("tmux"),
             monitor_interval: Duration::from_millis(1000),
             max_running: 1,
+            result_solicitation_limit: DEFAULT_RESULT_SOLICITATION_LIMIT,
+            prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
+            prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
+            prompt_judge_cmd: None,
         };
         let err = session_launch(
             &conn,
@@ -4095,6 +4618,9 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
                 awaiting_response: false,
                 observed_active_at: None,
                 result_payload: None,
+                result_solicitations_used: 0,
+                prompt_unblock_attempts: 0,
+                last_output_change_at: None,
                 last_observed_at: Some(stale_iso),
                 finished_at: None,
                 cleaned_at: None,
@@ -4113,6 +4639,10 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
             tmux_bin: String::from("/nonexistent/tmux"),
             monitor_interval: Duration::from_millis(1000),
             max_running: 10,
+            result_solicitation_limit: DEFAULT_RESULT_SOLICITATION_LIMIT,
+            prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
+            prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
+            prompt_judge_cmd: None,
         };
 
         monitor_once(&config).expect("monitor_once succeeds via watchdog");
@@ -4184,6 +4714,9 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
                 terminal_cause: None,
                 observed_active_at: None,
                 result_payload: None,
+                result_solicitations_used: 0,
+                prompt_unblock_attempts: 0,
+                last_output_change_at: None,
             },
         )
         .expect("insert hung-startup session");
@@ -4193,6 +4726,10 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
             tmux_bin: String::from("/nonexistent/tmux"),
             monitor_interval: Duration::from_millis(1000),
             max_running: 10,
+            result_solicitation_limit: DEFAULT_RESULT_SOLICITATION_LIMIT,
+            prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
+            prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
+            prompt_judge_cmd: None,
         };
 
         monitor_once(&config).expect("monitor_once via launch-timeout watchdog");
@@ -4267,6 +4804,9 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
                 terminal_cause: None,
                 observed_active_at: Some(active_at),
                 result_payload: None,
+                result_solicitations_used: 0,
+                prompt_unblock_attempts: 0,
+                last_output_change_at: None,
             },
         )
         .expect("insert long-running active session");
@@ -4276,6 +4816,10 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
             tmux_bin: String::from("tmux"),
             monitor_interval: Duration::from_millis(1000),
             max_running: 10,
+            result_solicitation_limit: DEFAULT_RESULT_SOLICITATION_LIMIT,
+            prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
+            prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
+            prompt_judge_cmd: None,
         };
 
         monitor_once(&config).expect("monitor_once succeeds");
@@ -4324,6 +4868,9 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
                 awaiting_response: false,
                 observed_active_at: None,
                 result_payload: None,
+                result_solicitations_used: 0,
+                prompt_unblock_attempts: 0,
+                last_output_change_at: None,
                 last_observed_at: Some(fresh_iso),
                 finished_at: None,
                 cleaned_at: None,
@@ -4339,6 +4886,10 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
             tmux_bin: String::from("tmux"),
             monitor_interval: Duration::from_millis(1000),
             max_running: 10,
+            result_solicitation_limit: DEFAULT_RESULT_SOLICITATION_LIMIT,
+            prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
+            prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
+            prompt_judge_cmd: None,
         };
 
         monitor_once(&config).expect("monitor_once succeeds");
@@ -5063,6 +5614,9 @@ Working...
             awaiting_response: false,
             observed_active_at: None,
             result_payload: None,
+            result_solicitations_used: 0,
+            prompt_unblock_attempts: 0,
+            last_output_change_at: None,
         }
     }
 
@@ -5103,6 +5657,9 @@ Working...
             awaiting_response: false,
             observed_active_at: None,
             result_payload,
+            result_solicitations_used: 0,
+            prompt_unblock_attempts: 0,
+            last_output_change_at: None,
         };
         upsert_snapshot(conn, &snapshot).expect("upsert test snapshot");
     }
@@ -5241,6 +5798,9 @@ Working...
             awaiting_response: false,
             observed_active_at: None,
             result_payload: Some(String::from(r#"{"verdict":"ok","notes":"clean"}"#)),
+            result_solicitations_used: 0,
+            prompt_unblock_attempts: 0,
+            last_output_change_at: None,
         };
         // Round-trips through the DB: upsert → session_get → row_to_snapshot
         // → build_await_response, so it also exercises the new column.
@@ -5570,6 +6130,10 @@ Working...
             tmux_bin: String::from("false"),
             monitor_interval: Duration::from_millis(1000),
             max_running: 4,
+            result_solicitation_limit: DEFAULT_RESULT_SOLICITATION_LIMIT,
+            prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
+            prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
+            prompt_judge_cmd: None,
         }
     }
 
@@ -5663,5 +6227,410 @@ Working...
         });
         let resp = handle_mcp_message(&msg, "s1", "/nonexistent.sock").expect("tools/call responds");
         assert_eq!(resp["result"]["isError"], true);
+    }
+
+    // ---- ADR-DOE-AGENTS-002: result solicitation + interactive-prompt
+    // watchdog ------------------------------------------------------------
+
+    /// Fake tmux for monitor-loop tests: logs every invocation, answers
+    /// `has-session` with success, serves `capture-pane` from a file so
+    /// tests control exactly what the monitor "sees", and reports the
+    /// pane's current command as the agent binary (not an idle shell).
+    fn write_monitor_fake_tmux(
+        tmp: &tempfile::TempDir,
+        pane_file: &std::path::Path,
+        log_file: &std::path::Path,
+    ) -> String {
+        let tmux_bin = tmp.path().join("fake-tmux");
+        fs::write(
+            &tmux_bin,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{log}'\ncase \"$1\" in\n  has-session) exit 0 ;;\n  capture-pane) cat '{pane}' ;;\n  display-message) printf 'codex\\n' ;;\nesac\nexit 0\n",
+                log = log_file.display(),
+                pane = pane_file.display()
+            ),
+        )
+        .expect("write fake tmux");
+        let mut perms = fs::metadata(&tmux_bin).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&tmux_bin, perms).expect("chmod fake tmux");
+        tmux_bin.to_string_lossy().into_owned()
+    }
+
+    fn monitor_test_config(
+        tmp: &tempfile::TempDir,
+        db: PathBuf,
+        tmux_bin: String,
+        judge_cmd: Option<String>,
+    ) -> Config {
+        Config {
+            db_path: db,
+            socket_path: tmp.path().join("agentd.sock"),
+            tmux_bin,
+            monitor_interval: Duration::from_millis(1000),
+            max_running: 10,
+            result_solicitation_limit: DEFAULT_RESULT_SOLICITATION_LIMIT,
+            prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
+            prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
+            prompt_judge_cmd: judge_cmd,
+        }
+    }
+
+    /// A running run_to_completion session that is past startup, recently
+    /// observed, and whose output snippet equals `pane` — so the very next
+    /// monitor tick sees a STABLE capture.
+    fn stable_monitor_snapshot(pane: &str, expected: Option<ExpectedResultSpec>) -> SessionSnapshot {
+        let mut snapshot = snapshot_for_lifecycle(LIFECYCLE_RUN_TO_COMPLETION, "running");
+        snapshot.expected_result = expected;
+        snapshot.output_snippet = Some(tail_chars(pane, 500));
+        snapshot.observed_active_at = Some(now_iso());
+        snapshot.last_observed_at = Some(now_iso());
+        snapshot
+    }
+
+    fn session_event_types(conn: &Connection, session_id: &str) -> Vec<String> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT event_type FROM agent_session_events WHERE session_id = ?1 ORDER BY id",
+            )
+            .expect("prepare events query");
+        let rows = stmt
+            .query_map(params![session_id], |row| row.get::<_, String>(0))
+            .expect("query events");
+        rows.filter_map(|r| r.ok()).collect()
+    }
+
+    fn verdict_schema_spec() -> ExpectedResultSpec {
+        schema_only_spec(serde_json::json!({
+            "type": "object",
+            "required": ["verdict"],
+            "properties": {"verdict": {"type": "string", "minLength": 1}}
+        }))
+    }
+
+    #[test]
+    fn turn_end_without_result_solicits_before_failing() {
+        // ADR-DOE-AGENTS-002 R1/R2/R4: the first turn-end without a valid
+        // reported result sends the corrective solicitation and keeps the
+        // session non-terminal instead of failing it.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pane = "agent output scrolled by\n› ";
+        let pane_file = tmp.path().join("pane.txt");
+        fs::write(&pane_file, pane).expect("write pane");
+        let log_file = tmp.path().join("tmux.log");
+        let tmux_bin = write_monitor_fake_tmux(&tmp, &pane_file, &log_file);
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        upsert_snapshot(&conn, &stable_monitor_snapshot(pane, Some(verdict_schema_spec())))
+            .expect("insert session");
+        let config = monitor_test_config(&tmp, db, tmux_bin, None);
+
+        monitor_once(&config).expect("monitor tick");
+
+        let session = session_get(&conn, "s1").expect("get").expect("exists");
+        assert_eq!(session.status, "running", "solicitation must stay non-terminal");
+        assert_eq!(session.result_solicitations_used, 1);
+        assert!(session.awaiting_response, "latch re-armed after solicitation");
+        assert!(
+            session_event_types(&conn, "s1").contains(&String::from("session_result_solicited")),
+            "solicitation event recorded"
+        );
+        let log = fs::read_to_string(&log_file).expect("read tmux log");
+        assert!(
+            log.contains("paste-buffer"),
+            "solicitation message pasted into the pane: {log}"
+        );
+
+        // A second tick while the latch is armed must NOT double-solicit:
+        // turn-end is suppressed until the agent visibly picks the message
+        // up (active marker), so the counter stays at 1.
+        monitor_once(&config).expect("second monitor tick");
+        let session = session_get(&conn, "s1").expect("get").expect("exists");
+        assert_eq!(session.result_solicitations_used, 1);
+        assert_eq!(session.status, "running");
+    }
+
+    #[test]
+    fn turn_end_fails_terminal_without_result_after_solicitation_budget() {
+        // ADR-DOE-AGENTS-002 R2: an exhausted solicitation budget finalises
+        // through the existing terminal-without-result failure (the ACP
+        // discriminator is unchanged, the reason names the solicitations).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pane = "agent output scrolled by\n› ";
+        let pane_file = tmp.path().join("pane.txt");
+        fs::write(&pane_file, pane).expect("write pane");
+        let log_file = tmp.path().join("tmux.log");
+        let tmux_bin = write_monitor_fake_tmux(&tmp, &pane_file, &log_file);
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        let mut snapshot = stable_monitor_snapshot(pane, Some(verdict_schema_spec()));
+        snapshot.result_solicitations_used = DEFAULT_RESULT_SOLICITATION_LIMIT;
+        upsert_snapshot(&conn, &snapshot).expect("insert session");
+        let config = monitor_test_config(&tmp, db, tmux_bin, None);
+
+        monitor_once(&config).expect("monitor tick");
+
+        let session = session_get(&conn, "s1").expect("get").expect("exists");
+        assert_eq!(session.status, "failed");
+        let reason = session.last_validation_error.expect("validation error");
+        assert!(
+            reason.contains("without reporting a result via report_result"),
+            "discriminator-facing reason preserved: {reason}"
+        );
+        assert!(
+            reason.contains("after 2 solicitation(s)"),
+            "reason names the exhausted budget: {reason}"
+        );
+    }
+
+    #[test]
+    fn turn_end_menu_is_unblocked_by_judge_not_solicited() {
+        // ADR-DOE-AGENTS-002 R6: a codex menu renders the idle-prompt glyph,
+        // so the turn-end site must consult the judge BEFORE pasting the
+        // solicitation (whose submit Enter would confirm an arbitrary menu
+        // option).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pane = "Approaching usage limits\n\
+                    Switch to a smaller model for lower credit usage?\n\
+                    › 1. Switch to mini\n  2. Keep current model\nPress enter to confirm\n";
+        let pane_file = tmp.path().join("pane.txt");
+        fs::write(&pane_file, pane).expect("write pane");
+        let log_file = tmp.path().join("tmux.log");
+        let tmux_bin = write_monitor_fake_tmux(&tmp, &pane_file, &log_file);
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        upsert_snapshot(&conn, &stable_monitor_snapshot(pane, Some(verdict_schema_spec())))
+            .expect("insert session");
+        let judge = String::from(
+            r#"printf '{"blocked": true, "keys": ["Down", "Enter"], "reason": "confirmation menu"}'"#,
+        );
+        let config = monitor_test_config(&tmp, db, tmux_bin, Some(judge));
+
+        monitor_once(&config).expect("monitor tick");
+
+        let session = session_get(&conn, "s1").expect("get").expect("exists");
+        assert_eq!(session.status, "running");
+        assert_eq!(session.prompt_unblock_attempts, 1);
+        assert_eq!(
+            session.result_solicitations_used, 0,
+            "no solicitation was pasted into the menu"
+        );
+        assert!(
+            session_event_types(&conn, "s1").contains(&String::from("session_prompt_unblocked")),
+            "unblock event recorded"
+        );
+        let log = fs::read_to_string(&log_file).expect("read tmux log");
+        assert!(log.contains("Down"), "menu navigation key sent: {log}");
+        assert!(
+            !log.contains("paste-buffer"),
+            "no solicitation paste into a menu: {log}"
+        );
+    }
+
+    #[test]
+    fn stalled_non_prompt_pane_fails_typed_when_no_judge_configured() {
+        // ADR-DOE-AGENTS-002 R5/R7: a frozen non-REPL pane (login prompt,
+        // pager, unknown dialog) can never reach turn-end; past the stall
+        // threshold it must fail loudly with the typed cause — with no
+        // judge configured there is nothing else that can unblock it.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pane = "Enter password for proxy: ";
+        let pane_file = tmp.path().join("pane.txt");
+        fs::write(&pane_file, pane).expect("write pane");
+        let log_file = tmp.path().join("tmux.log");
+        let tmux_bin = write_monitor_fake_tmux(&tmp, &pane_file, &log_file);
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        let mut snapshot = stable_monitor_snapshot(pane, None);
+        snapshot.last_output_change_at = Some(
+            (Utc::now() - ChronoDuration::seconds(DEFAULT_PROMPT_STALL_SECONDS + 120))
+                .to_rfc3339(),
+        );
+        upsert_snapshot(&conn, &snapshot).expect("insert session");
+        let config = monitor_test_config(&tmp, db, tmux_bin, None);
+
+        monitor_once(&config).expect("monitor tick");
+
+        let session = session_get(&conn, "s1").expect("get").expect("exists");
+        assert_eq!(session.status, "failed");
+        let reason = session.last_validation_error.expect("validation error");
+        assert!(
+            reason.starts_with("interactive-prompt-blocked:"),
+            "typed reason prefix: {reason}"
+        );
+        let cause = session.terminal_cause.expect("terminal cause");
+        assert!(matches!(
+            cause.category,
+            TerminalCauseCategory::InteractivePromptBlocked
+        ));
+    }
+
+    #[test]
+    fn stalled_pane_is_unblocked_by_judge_and_stays_running() {
+        // ADR-DOE-AGENTS-002 R5: the judge clears a blocked prompt and the
+        // session keeps running under the bounded attempt budget.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pane = "Do you want to continue? [y/N] ";
+        let pane_file = tmp.path().join("pane.txt");
+        fs::write(&pane_file, pane).expect("write pane");
+        let log_file = tmp.path().join("tmux.log");
+        let tmux_bin = write_monitor_fake_tmux(&tmp, &pane_file, &log_file);
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        let mut snapshot = stable_monitor_snapshot(pane, None);
+        snapshot.last_output_change_at = Some(
+            (Utc::now() - ChronoDuration::seconds(DEFAULT_PROMPT_STALL_SECONDS + 120))
+                .to_rfc3339(),
+        );
+        upsert_snapshot(&conn, &snapshot).expect("insert session");
+        let judge = String::from(
+            r#"printf '{"blocked": true, "keys": ["y", "Enter"], "reason": "y/N confirmation"}'"#,
+        );
+        let config = monitor_test_config(&tmp, db, tmux_bin, Some(judge));
+
+        monitor_once(&config).expect("monitor tick");
+
+        let session = session_get(&conn, "s1").expect("get").expect("exists");
+        assert_eq!(session.status, "running");
+        assert_eq!(session.prompt_unblock_attempts, 1);
+        assert!(
+            session_event_types(&conn, "s1").contains(&String::from("session_prompt_unblocked"))
+        );
+        let log = fs::read_to_string(&log_file).expect("read tmux log");
+        assert!(log.contains("send-keys"), "unblock keys sent: {log}");
+    }
+
+    #[test]
+    fn stalled_pane_fails_typed_after_unblock_budget_exhausted() {
+        // ADR-DOE-AGENTS-002 R7: the attempt budget is the hard stop —
+        // never an infinite judge loop.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pane = "Enter password for proxy: ";
+        let pane_file = tmp.path().join("pane.txt");
+        fs::write(&pane_file, pane).expect("write pane");
+        let log_file = tmp.path().join("tmux.log");
+        let tmux_bin = write_monitor_fake_tmux(&tmp, &pane_file, &log_file);
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        let mut snapshot = stable_monitor_snapshot(pane, None);
+        snapshot.prompt_unblock_attempts = DEFAULT_PROMPT_UNBLOCK_LIMIT;
+        snapshot.last_output_change_at = Some(
+            (Utc::now() - ChronoDuration::seconds(DEFAULT_PROMPT_STALL_SECONDS + 120))
+                .to_rfc3339(),
+        );
+        upsert_snapshot(&conn, &snapshot).expect("insert session");
+        let judge = String::from(r#"printf '{"blocked": true, "keys": ["Enter"], "reason": "x"}'"#);
+        let config = monitor_test_config(&tmp, db, tmux_bin, Some(judge));
+
+        monitor_once(&config).expect("monitor tick");
+
+        let session = session_get(&conn, "s1").expect("get").expect("exists");
+        assert_eq!(session.status, "failed");
+        let reason = session.last_validation_error.expect("validation error");
+        assert!(reason.contains("unblock attempt(s) exhausted"), "{reason}");
+    }
+
+    #[test]
+    fn active_working_pane_is_never_stall_judged() {
+        // The stall watchdog must not fire while the agent is visibly
+        // working — the active marker excludes it even if the clock says
+        // the content has not changed.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pane = "compiling...\n• Working (12s • esc to interrupt)\n";
+        let pane_file = tmp.path().join("pane.txt");
+        fs::write(&pane_file, pane).expect("write pane");
+        let log_file = tmp.path().join("tmux.log");
+        let tmux_bin = write_monitor_fake_tmux(&tmp, &pane_file, &log_file);
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        let mut snapshot = stable_monitor_snapshot(pane, None);
+        snapshot.last_output_change_at = Some(
+            (Utc::now() - ChronoDuration::seconds(DEFAULT_PROMPT_STALL_SECONDS + 120))
+                .to_rfc3339(),
+        );
+        upsert_snapshot(&conn, &snapshot).expect("insert session");
+        let config = monitor_test_config(&tmp, db, tmux_bin, None);
+
+        monitor_once(&config).expect("monitor tick");
+
+        let session = session_get(&conn, "s1").expect("get").expect("exists");
+        assert_eq!(session.status, "running");
+        assert_eq!(session.prompt_unblock_attempts, 0);
+        assert!(session.last_validation_error.is_none());
+    }
+
+    #[test]
+    fn adr002_counters_round_trip_through_store() {
+        // ADR-DOE-AGENTS-002: the correction counters are durable columns
+        // that survive close/reopen (and, unlike awaiting_response, are
+        // never reset by daemon startup).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        {
+            let conn = Connection::open(&db).expect("open sqlite");
+            migrate(&conn).expect("migrate");
+            let mut snapshot = snapshot_for_lifecycle(LIFECYCLE_RUN_TO_COMPLETION, "running");
+            snapshot.result_solicitations_used = 2;
+            snapshot.prompt_unblock_attempts = 1;
+            snapshot.last_output_change_at = Some(String::from("2026-07-04T00:00:00Z"));
+            upsert_snapshot(&conn, &snapshot).expect("insert");
+        }
+        let conn = Connection::open(&db).expect("reopen sqlite");
+        migrate(&conn).expect("migrate is idempotent");
+        let session = session_get(&conn, "s1").expect("get").expect("exists");
+        assert_eq!(session.result_solicitations_used, 2);
+        assert_eq!(session.prompt_unblock_attempts, 1);
+        assert_eq!(
+            session.last_output_change_at.as_deref(),
+            Some("2026-07-04T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn prompt_judge_verdict_parses_json_embedded_in_prose() {
+        let verdict = parse_prompt_judge_verdict(
+            "Sure! Here is my verdict:\n{\"blocked\": true, \"keys\": [\"Down\", \"Enter\"], \"reason\": \"menu\"}\nHope that helps.",
+        )
+        .expect("verdict parses");
+        assert!(verdict.blocked);
+        assert_eq!(verdict.keys, vec!["Down", "Enter"]);
+    }
+
+    #[test]
+    fn prompt_judge_verdict_rejects_disallowed_keys() {
+        let err = parse_prompt_judge_verdict(
+            r#"{"blocked": true, "keys": ["C-c"], "reason": "kill it"}"#,
+        )
+        .expect_err("control sequences are not allowed");
+        assert!(err.to_string().contains("disallowed key"));
+    }
+
+    #[test]
+    fn prompt_judge_verdict_rejects_blocked_without_keys() {
+        let err = parse_prompt_judge_verdict(r#"{"blocked": true, "keys": [], "reason": "?"}"#)
+            .expect_err("blocked verdict must carry keys");
+        assert!(err.to_string().contains("no keys"));
+    }
+
+    #[test]
+    fn prompt_judge_verdict_accepts_not_blocked_without_keys() {
+        let verdict = parse_prompt_judge_verdict(r#"{"blocked": false, "reason": "idle REPL"}"#)
+            .expect("not-blocked verdict parses");
+        assert!(!verdict.blocked);
+        assert!(verdict.keys.is_empty());
+    }
+
+    #[test]
+    fn run_judge_command_times_out_hung_judge() {
+        let err = run_judge_command("sleep 30", "pane", Duration::from_millis(300))
+            .expect_err("hung judge must time out");
+        assert!(err.to_string().contains("timed out"));
     }
 }
