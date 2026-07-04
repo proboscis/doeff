@@ -126,6 +126,23 @@ impl DetachedFiberChain {
         handlers
     }
 
+    pub fn observer_callables(&self) -> Vec<CallableRef> {
+        let mut observers = Vec::new();
+        let mut cursor = Some(self.head);
+
+        while let Some(fid) = cursor {
+            let Some(fiber) = self.fiber(fid) else { break };
+            if let Some(handler) = &fiber.handler {
+                if let Some(intercept) = handler.intercept_boundary() {
+                    observers.push(intercept.interceptor.clone());
+                }
+            }
+            cursor = fiber.parent;
+        }
+
+        observers
+    }
+
     pub fn collect_rich_context(&self) -> Vec<Value> {
         let mut raw: Vec<(String, String, u32)> = Vec::new();
         let mut first_boundary: Option<FiberId> = None;
@@ -317,6 +334,10 @@ impl Continuation {
 
     pub fn handler_callables(&self) -> Option<Vec<CallableRef>> {
         self.chain.as_ref().map(DetachedFiberChain::handler_callables)
+    }
+
+    pub fn observer_callables(&self) -> Option<Vec<CallableRef>> {
+        self.chain.as_ref().map(DetachedFiberChain::observer_callables)
     }
 
     pub fn collect_rich_context(&self) -> Option<Vec<Value>> {

@@ -490,6 +490,29 @@ fn continuation_handlers_value(
     Ok(Value::List(handlers))
 }
 
+fn continuation_observers_value(
+    py: Python<'_>,
+    k: &Py<doeff_vm_core::continuation::PyK>,
+    label: &str,
+) -> Result<Value, String> {
+    let k_ref = k.bind(py);
+    let k_borrowed = k_ref.borrow();
+    let Some(doeff_vm_core::OwnedControlContinuation::Started(k)) = k_borrowed.continuation_ref()
+    else {
+        return Err(format!(
+            "{}: continuation has no detached fiber chain",
+            label
+        ));
+    };
+    let observers = k
+        .observer_callables()
+        .ok_or_else(|| format!("{}: continuation has no detached fiber chain", label))?
+        .into_iter()
+        .map(Value::Callable)
+        .collect();
+    Ok(Value::List(observers))
+}
+
 /// Wrap a handler callable as Value::Callable.
 fn wrap_handler(py: Python<'_>, handler: &Py<PyAny>) -> Value {
     let callable = PythonCallable::new(handler.clone_ref(py));
@@ -600,6 +623,10 @@ pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<
     }
     if let Ok(gh) = obj.downcast::<PyGetHandlers>() {
         let value = continuation_handlers_value(py, &gh.get().continuation, "GetHandlers")?;
+        return Ok(DoCtrl::Pure { value });
+    }
+    if let Ok(go) = obj.downcast::<PyGetObservers>() {
+        let value = continuation_observers_value(py, &go.get().continuation, "GetObservers")?;
         return Ok(DoCtrl::Pure { value });
     }
     if obj.downcast::<crate::do_expr::PyGetOuterHandlers>().is_ok() {

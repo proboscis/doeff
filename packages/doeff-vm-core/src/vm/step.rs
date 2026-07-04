@@ -345,6 +345,17 @@ impl VM {
                 continue_send(Value::List(handlers), error_context)
             }
 
+            DoCtrl::GetObservers { from } => {
+                // Walk the fiber chain from `from` upward, collecting observer
+                // (intercept boundary) callables. Symmetric to GetHandlers.
+                let observers: Vec<Value> = self
+                    .observers_in_caller_chain(from)
+                    .into_iter()
+                    .map(Value::Callable)
+                    .collect();
+                continue_send(Value::List(observers), error_context)
+            }
+
             DoCtrl::GetOuterHandlers => {
                 // Walk from current_segment upward — captures handlers OUTSIDE the
                 // currently-catching handler. When a handler catches an effect, its

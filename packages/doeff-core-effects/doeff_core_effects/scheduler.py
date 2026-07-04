@@ -21,11 +21,13 @@ Usage:
     run(scheduled(main()))
 """
 
+from doeff_vm import Callable as _VmCallable
 from doeff_vm import EffectBase, Err, Ok, TailEval
 
 from doeff.do import do
-from doeff.handler_utils import get_inner_handlers
+from doeff.handler_utils import get_inner_handlers, get_inner_observers
 from doeff.program import Pass, Perform, Pure, Resume, Transfer
+from doeff.program import WithObserve as _WithObserveRaw
 from doeff.program import handler as _program_handler
 
 
@@ -302,12 +304,13 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
     def enqueue_raise(owner_tid, cont, error, priority=PRIORITY_NORMAL):
         enqueue(("raise", owner_tid, cont, error), priority)
 
-    def alloc_task(program, priority=PRIORITY_NORMAL, inner_handlers=None):
+    def alloc_task(program, priority=PRIORITY_NORMAL, inner_handlers=None, inner_observers=None):
         tid = fresh_id()
         tasks[tid] = {
             "status": "pending", "result": None,
             "program": program, "priority": priority,
             "inner_handlers": inner_handlers or [],
+            "inner_observers": inner_observers or [],
         }
         return tid
 
@@ -392,6 +395,11 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                     # Re-wrap task with inner handlers captured at spawn site
                     for h in tasks[tid].pop("inner_handlers", []):
                         prog = _program_handler(h)(prog)
+                    # Re-wrap with observer boundaries captured at spawn site.
+                    # The boundary lives in this task's own fiber tree, so it
+                    # is released with the task (terminal state / cancel).
+                    for obs in tasks[tid].pop("inner_observers", []):
+                        prog = _WithObserveRaw(_VmCallable(obs), prog)
                     return make_handler(tid)(wrap_task(tid, prog))
                 if entry[0] == "resume":
                     _, owner_tid, cont, value = entry
@@ -442,6 +450,7 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             return
         t.pop("program", None)
         t.pop("inner_handlers", None)
+        t.pop("inner_observers", None)
         t.pop("spawn_site", None)
 
     def resume_with_waitable_result(owner_tid, waiter_k, key):
@@ -575,6 +584,10 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         if isinstance(effect, Spawn):
             # Capture inner handlers from continuation (between yield site and scheduler).
             inner_handlers = yield get_inner_handlers(k)
+            # Capture observer (WithObserve) boundaries the same way so
+            # spawned-task effects stay visible to observers installed
+            # inside scheduled() (issue scheduler-spawn-drops-observer-boundary).
+            inner_observers = yield get_inner_observers(k)
 
             # Capture spawn site from continuation's traceback
             from doeff.program import GetTraceback
@@ -585,7 +598,12 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 if isinstance(f, (list, tuple)) and len(f) >= 3:
                     spawn_site = f"{f[0]}  {f[1]}:{f[2]}"
 
-            tid = alloc_task(effect.program, effect.priority, inner_handlers=inner_handlers)
+            tid = alloc_task(
+                effect.program,
+                effect.priority,
+                inner_handlers=inner_handlers,
+                inner_observers=inner_observers,
+            )
             tasks[tid]["spawn_site"] = spawn_site
             enqueue(("new", tid), effect.priority)
             enqueue_resume(current_tid, k, Task(tid))  # spawner resumes at normal priority

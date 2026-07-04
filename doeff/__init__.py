@@ -23,6 +23,7 @@ from doeff.program import Apply as Apply
 from doeff.program import Expand as Expand
 from doeff.program import GetExecutionContext as GetExecutionContext
 from doeff.program import GetHandlers as GetHandlers
+from doeff.program import GetObservers as GetObservers
 from doeff.program import GetOuterHandlers as GetOuterHandlers
 from doeff.program import GetTraceback as GetTraceback
 from doeff.program import Pass as Pass
@@ -103,7 +104,7 @@ Effect = EffectBase
 _DOEXPR_TYPES = (
     Pure, Perform, Resume, Transfer, Apply, Expand, Pass,
     WithHandlerType, WithObserveRaw, ResumeThrow, TransferThrow,
-    GetTraceback, GetExecutionContext, GetHandlers, GetOuterHandlers,
+    GetTraceback, GetExecutionContext, GetHandlers, GetObservers, GetOuterHandlers,
 )
 
 

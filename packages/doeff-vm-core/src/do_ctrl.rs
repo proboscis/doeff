@@ -88,6 +88,12 @@ pub enum DoCtrl {
     /// Non-consuming — does not take ownership of the continuation.
     GetHandlers { from: crate::ids::FiberId },
 
+    /// Extract observer callables from a continuation's fiber chain.
+    /// Walks head→...→last_fiber collecting intercept (WithObserve) boundaries.
+    /// Returns Value::List of observer callables (innermost first).
+    /// Non-consuming — does not take ownership of the continuation.
+    GetObservers { from: crate::ids::FiberId },
+
     /// Extract OUTER handler callables — those installed ABOVE the current handler.
     /// Walks from the VM's current_segment upward. When a handler catches an effect,
     /// its own segment's parent is detached (set to None), so GetHandlers(k) cannot
