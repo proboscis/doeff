@@ -626,6 +626,38 @@ effect environment. When `handlers` is explicitly provided, those handlers
 are used directly (skipping `GetHandlers`), allowing advanced use cases like
 running a child with a different handler stack.
 
+**Observer inheritance** (issue `scheduler-spawn-drops-observer-boundary`):
+Spawn inherits `WithObserve` boundaries with the same rule as handlers.
+
+- VM-level semantics stay fiber-chain-scoped: `call_all_observers` walks the
+  perform site's parent chain and nothing more. The VM does NOT implicitly
+  propagate observer boundaries across task creation.
+- Instead, the VM provides `GetObservers(k)` — the observer analog of
+  `GetHandlers(k)`. It walks the continuation's detached fiber chain
+  (perform site → catching handler) and returns the observer callables of
+  every intercept boundary on it, innermost first. Non-consuming; the
+  one-shot continuation is unaffected.
+- The scheduler's Spawn handler opts in: it captures inner observers via
+  `GetObservers(k)` alongside inner handlers, stores them on the task, and
+  reinstalls each with `WithObserve` around the child program when the task
+  first runs. Inheritance therefore recurses: a grandchild spawned from the
+  child sees the reinstalled boundary on its own chain and inherits it again.
+- Ownership/lifetime: the reinstalled boundary lives in the child task's own
+  fiber tree. It is released when the task reaches a terminal state
+  (completed / failed / cancelled) together with the task's other
+  references (`_release_task_refs`) — identical to inherited handlers. No
+  cross-task boundary sharing exists, so cancel needs no special handling.
+- Only boundaries between the spawn site and the scheduler are inherited
+  (dynamic scope at spawn time). Observers installed outside `scheduled()`
+  are unaffected: they remain on the fiber parent chain and observe child
+  effects directly.
+
+Rationale: handlers and observers previously had asymmetric inheritance
+(handlers crossed Spawn, observers were silently dropped), which broke
+subtree instrumentation — e.g. effect→span tracing — with no error. No
+document justified the asymmetry; symmetry is the expected default, and the
+opt-in intrinsic keeps the VM core policy-free.
+
 ### Wait
 
 ```
