@@ -28,6 +28,7 @@ WithObserve = _ext.WithObserve
 GetTraceback = _ext.GetTraceback
 GetExecutionContext = _ext.GetExecutionContext
 GetHandlers = _ext.GetHandlers
+GetBoundaries = _ext.GetBoundaries
 GetOuterHandlers = _ext.GetOuterHandlers
 TailEval = _ext.TailEval
 
