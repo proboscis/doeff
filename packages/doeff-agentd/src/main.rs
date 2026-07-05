@@ -1460,6 +1460,75 @@ fn run_pre_launch_setup(params: &LaunchParams) -> Result<()> {
             );
         }
     }
+    if params.agent_type == "claude" {
+        if let Err(err) = trust_claude_workspace(&params.work_dir, &params.session_env) {
+            eprintln!(
+                "doeff-agentd: warning: failed to persist Claude workspace trust for {}: {err:#}",
+                params.work_dir
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Persist Claude Code's per-workspace trust in
+/// `<CLAUDE_CONFIG_DIR>/.claude.json` so a fresh workspace does not stall the
+/// launch on the interactive "do you trust this folder?" dialog — the claude
+/// twin of `trust_codex_workspace` (ACP ADR 0043: claude agent runtime).
+/// Claude keys projects by the REALPATH of the cwd (`/tmp` shows up as
+/// `/private/tmp` on macOS), so the work dir is canonicalised first.
+fn trust_claude_workspace(
+    work_dir: &str,
+    session_env: &std::collections::BTreeMap<String, String>,
+) -> Result<()> {
+    let config_dir = session_env
+        .get("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from))
+        .unwrap_or_else(|| home_dir().join(".claude"));
+    fs::create_dir_all(&config_dir)
+        .with_context(|| format!("creating claude config dir: {}", config_dir.display()))?;
+    let trusted_dir = fs::canonicalize(work_dir)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| work_dir.to_string());
+    let state_path = config_dir.join(".claude.json");
+    let mut state: serde_json::Value = if state_path.exists() {
+        let raw = fs::read_to_string(&state_path)
+            .with_context(|| format!("reading claude state: {}", state_path.display()))?;
+        serde_json::from_str(&raw)
+            .with_context(|| format!("parsing claude state: {}", state_path.display()))?
+    } else {
+        serde_json::json!({})
+    };
+    let root = state
+        .as_object_mut()
+        .context("claude state file is not a JSON object")?;
+    let projects = root
+        .entry("projects")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .context("claude state 'projects' is not a JSON object")?;
+    let project = projects
+        .entry(trusted_dir)
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .context("claude state project entry is not a JSON object")?;
+    project.insert(
+        "hasTrustDialogAccepted".to_string(),
+        serde_json::json!(true),
+    );
+    project.insert(
+        "hasCompletedProjectOnboarding".to_string(),
+        serde_json::json!(true),
+    );
+    let serialized = serde_json::to_string(&state)?;
+    // write-new + rename so a concurrently-running claude session never
+    // reads a torn state file.
+    let tmp_path = config_dir.join(".claude.json.agentd-tmp");
+    fs::write(&tmp_path, serialized)
+        .with_context(|| format!("writing claude state: {}", tmp_path.display()))?;
+    fs::rename(&tmp_path, &state_path)
+        .with_context(|| format!("installing claude state: {}", state_path.display()))?;
     Ok(())
 }
 
