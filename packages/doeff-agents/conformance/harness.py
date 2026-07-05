@@ -1,0 +1,258 @@
+"""Driver harness for the agentd conformance suite (contract: README.md).
+
+Dependency discipline (mirrors ACP mini_conformance): the driver may import
+ONLY the public wire client (doeff_agents.agentd_client / effects enums),
+pytest, and stdlib. SQLite access is READ-ONLY and reserved for obligations
+that do not appear on the wire (payload persistence, counter durability).
+
+Absorbed from tests/agentd_result_retry_e2e_support.py — the proven physics:
+cargo-built agentd, 100ms monitor tick, fake CLI in a real tmux pane,
+result channel spoken via `report-result-mcp`.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shlex
+import shutil
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import pytest
+from doeff_agents.agentd_client import AgentdClient
+
+CONFORMANCE_DIR = Path(__file__).resolve().parent
+PACKAGES_DIR = CONFORMANCE_DIR.parents[1]
+AGENTD_CRATE = PACKAGES_DIR / "doeff-agentd"
+AGENT_SCRIPT = CONFORMANCE_DIR / "conformance_agent.py"
+JUDGE_SCRIPT = CONFORMANCE_DIR / "scripted_judge.py"
+
+RESULT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["summary", "ok"],
+    "properties": {
+        "summary": {"type": "string"},
+        "ok": {"type": "boolean"},
+    },
+    "additionalProperties": False,
+}
+
+
+def require_binaries() -> None:
+    for name in ("cargo", "tmux"):
+        if shutil.which(name) is None:
+            pytest.skip(f"{name} is required for the agentd conformance suite")
+
+
+def build_agentd() -> Path:
+    subprocess.run(["cargo", "build", "--quiet"], cwd=AGENTD_CRATE, check=True)
+    return AGENTD_CRATE / "target" / "debug" / "doeff-agentd"
+
+
+@dataclass
+class AgentdHarness:
+    """One scenario = one isolated agentd (own root/db/socket/tmp homes)."""
+
+    extra_serve_args: list[str] = field(default_factory=list)
+    runtime_dir: Path = field(init=False)
+    agentd_bin: Path = field(init=False)
+    db_path: Path = field(init=False)
+    socket_path: Path = field(init=False)
+    log_path: Path = field(init=False)
+    client: AgentdClient = field(init=False)
+    _proc: subprocess.Popen[str] | None = field(init=False, default=None)
+    _sessions: list[str] = field(init=False, default_factory=list)
+
+    def __enter__(self) -> "AgentdHarness":
+        require_binaries()
+        self.agentd_bin = build_agentd()
+        self.runtime_dir = Path(tempfile.mkdtemp(prefix="agentd-conf-", dir="/tmp"))
+        self.db_path = self.runtime_dir / "agentd.sqlite"
+        self.socket_path = self.runtime_dir / "agentd.sock"
+        self.log_path = self.runtime_dir / "agentd.log"
+        self.start()
+        return self
+
+    def start(self) -> None:
+        log = self.log_path.open("a", encoding="utf-8")
+        self._proc = subprocess.Popen(
+            [
+                str(self.agentd_bin),
+                "--db",
+                str(self.db_path),
+                "--socket",
+                str(self.socket_path),
+                "--monitor-interval-ms",
+                "100",
+                "--max-running",
+                "4",
+                *self.extra_serve_args,
+                "serve",
+            ],
+            cwd=AGENTD_CRATE,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        self.client = AgentdClient(self.socket_path, timeout=5.0)
+        self._wait_ready()
+
+    def restart(self) -> None:
+        """Durability probe (S10/S15): bounce the daemon, keep db + sessions."""
+        self._terminate()
+        self.start()
+
+    def _wait_ready(self) -> None:
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            assert self._proc is not None
+            if self._proc.poll() is not None:
+                raise AssertionError(
+                    f"doeff-agentd exited early rc={self._proc.returncode}\n"
+                    + self.log_text()
+                )
+            try:
+                self.client.status()
+                return
+            except Exception:
+                time.sleep(0.1)
+        raise AssertionError(f"doeff-agentd not ready\n{self.log_text()}")
+
+    # -- scenario plumbing -------------------------------------------------
+
+    def scenario(self, name: str, script: list[dict[str, Any]]) -> "Scenario":
+        work_dir = self.runtime_dir / f"work-{name}"
+        work_dir.mkdir(parents=True, exist_ok=True)
+        script_path = self.runtime_dir / f"script-{name}.json"
+        journal_path = self.runtime_dir / f"journal-{name}.jsonl"
+        script_path.write_text(json.dumps(script), encoding="utf-8")
+        session_id = f"conf-{name}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
+        self._sessions.append(session_id)
+        return Scenario(
+            harness=self,
+            session_id=session_id,
+            work_dir=work_dir,
+            script_path=script_path,
+            journal_path=journal_path,
+        )
+
+    # -- read-only observation ---------------------------------------------
+
+    def session_row(self, session_id: str) -> dict[str, Any]:
+        conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            row = conn.execute(
+                "SELECT * FROM agent_sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                raise AssertionError(f"session row not found: {session_id}")
+            return dict(row)
+        finally:
+            conn.close()
+
+    def events(self, session_id: str) -> list[dict[str, Any]]:
+        conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(
+                "SELECT event_type, payload_json FROM agent_session_events"
+                " WHERE session_id = ? ORDER BY id",
+                (session_id,),
+            ).fetchall()
+            return [
+                {"event_type": r["event_type"], "payload": json.loads(r["payload_json"])}
+                for r in rows
+            ]
+        finally:
+            conn.close()
+
+    def log_text(self) -> str:
+        if not self.log_path.exists():
+            return ""
+        return self.log_path.read_text(encoding="utf-8", errors="replace")
+
+    # -- teardown ------------------------------------------------------------
+
+    def _terminate(self) -> None:
+        if self._proc is None or self._proc.poll() is not None:
+            return
+        self._proc.terminate()
+        try:
+            self._proc.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            self._proc.kill()
+            self._proc.wait(timeout=5.0)
+
+    def __exit__(self, *exc: object) -> None:
+        for session_id in self._sessions:
+            subprocess.run(
+                ["tmux", "kill-session", "-t", session_id],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        self._terminate()
+        shutil.rmtree(self.runtime_dir, ignore_errors=True)
+
+
+@dataclass
+class Scenario:
+    harness: AgentdHarness
+    session_id: str
+    work_dir: Path
+    script_path: Path
+    journal_path: Path
+
+    def launch_m2(
+        self,
+        *,
+        agent_type: str = "claude",
+        prompt: str,
+        expected_result: dict[str, Any] | None = None,
+        extra_env: dict[str, str] | None = None,
+    ) -> None:
+        """M2 (command override): the conformance agent runs as the pane
+        command; the result channel is spoken via report-result-mcp."""
+        from doeff_agents.adapters.base import AgentSessionLifecycle
+
+        command = (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(AGENT_SCRIPT))}"
+        )
+        session_env = {
+            "CONFORMANCE_SCRIPT": str(self.script_path),
+            "CONFORMANCE_JOURNAL": str(self.journal_path),
+            "DOEFF_RESULT_SESSION_ID": self.session_id,
+            "DOEFF_AGENTD_SOCKET": str(self.harness.socket_path),
+            "DOEFF_AGENTD_BIN": str(self.harness.agentd_bin),
+            **(extra_env or {}),
+        }
+        self.harness.client.launch_session(
+            session_id=self.session_id,
+            session_name=self.session_id,
+            agent_type=agent_type,
+            work_dir=self.work_dir,
+            command=command,
+            prompt=prompt,
+            lifecycle=AgentSessionLifecycle.RUN_TO_COMPLETION,
+            session_env=session_env,
+            expected_result=expected_result,
+        )
+
+    def journal(self) -> list[dict[str, Any]]:
+        if not self.journal_path.exists():
+            return []
+        return [
+            json.loads(line)
+            for line in self.journal_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
