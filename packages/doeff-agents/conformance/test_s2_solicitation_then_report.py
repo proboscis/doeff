@@ -9,7 +9,7 @@ pane; the agent then reports a valid payload and the session finalizes
 
 Discovery note: this scenario reaches the turn-end-without-result branch,
 which (unless disabled) consults `config.prompt_judge_cmd` for R6 menu
-disambiguation -- a REAL `claude -p` invocation by default
+disambiguation -- a REAL one-shot claude invocation (print mode) by default
 (`DEFAULT_PROMPT_JUDGE_CMD`, main.rs:150), which fires on every turn-end
 evaluation and violates the suite's own non-goal ("no real model
 execution", README「Non-goals」). `harness.py`'s `AgentdHarness.start()`
@@ -19,8 +19,6 @@ scenario supplies its own via `extra_serve_args` -- this test still passes
 redundant now, kept for self-documentation and as a guard against that
 default changing back).
 """
-
-from __future__ import annotations
 
 import json
 

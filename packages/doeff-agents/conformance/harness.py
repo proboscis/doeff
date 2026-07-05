@@ -10,8 +10,6 @@ cargo-built agentd, 100ms monitor tick, fake CLI in a real tmux pane,
 result channel spoken via `report-result-mcp`.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import shlex
@@ -47,12 +45,33 @@ RESULT_SCHEMA: dict[str, Any] = {
 
 
 def require_binaries() -> None:
-    for name in ("cargo", "tmux"):
+    # Under CONFORMANCE_AGENTD_BIN (see build_agentd) the daemon under test
+    # is not cargo-built, so cargo is not a prerequisite.
+    names = ("tmux",) if os.environ.get("CONFORMANCE_AGENTD_BIN") else ("cargo", "tmux")
+    for name in names:
         if shutil.which(name) is None:
             pytest.skip(f"{name} is required for the agentd conformance suite")
 
 
 def build_agentd() -> Path:
+    """Resolve the daemon binary under test.
+
+    Transfer-gate seam (C3): `CONFORMANCE_AGENTD_BIN` points the whole suite
+    at an alternative agentd-compatible executable (a single binary path —
+    it is reused verbatim as `DOEFF_AGENTD_BIN` for the `report-result-mcp`
+    relay, so it must implement the full agentd CLI contract: `serve` with
+    the flags below plus the `report-result-mcp` subcommand).  Unset, the
+    suite builds and runs the Rust oracle exactly as before — the seam is
+    infra, not a contract change.
+    """
+    override = os.environ.get("CONFORMANCE_AGENTD_BIN")
+    if override:
+        path = Path(override)
+        if not (path.exists() and os.access(path, os.X_OK)):
+            raise AssertionError(
+                f"CONFORMANCE_AGENTD_BIN is not an executable file: {path}"
+            )
+        return path
     subprocess.run(["cargo", "build", "--quiet"], cwd=AGENTD_CRATE, check=True)
     return AGENTD_CRATE / "target" / "debug" / "doeff-agentd"
 
@@ -93,8 +112,8 @@ class AgentdHarness:
 
     def start(self) -> None:
         log = self.log_path.open("a", encoding="utf-8")
-        # The daemon's DEFAULT prompt judge is a REAL `claude -p --model
-        # haiku` subprocess, and it runs at every turn-end judgment point
+        # The daemon's DEFAULT prompt judge is a REAL one-shot claude
+        # subprocess (print mode, model haiku), running at every turn-end judgment point
         # before solicitation (main.rs:150/3722). Left enabled it burns
         # real quota and adds up to 3x45s of latency per scenario — the
         # suite's non-goal. Disable it unless the scenario wires the
