@@ -118,9 +118,24 @@ class AgentdHarness:
         self._wait_ready()
 
     def restart(self) -> None:
-        """Durability probe (S10/S15): bounce the daemon, keep db + sessions."""
+        """Durability probe (S10/S15): bounce the daemon, keep db + sessions.
+
+        The daemon holds a DB lease with a 10s TTL (LEASE_TTL_SECONDS,
+        main.rs:21) and does NOT release it on SIGTERM — a fresh `serve`
+        started inside that window exits early with "lease is active"
+        (acquire_lease_in_transaction, main.rs:1092). Retry past the TTL
+        so restarts are deterministic; discovered by the S10 worker.
+        """
         self._terminate()
-        self.start()
+        deadline = time.monotonic() + 15.0
+        while True:
+            try:
+                self.start()
+                return
+            except AssertionError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(1.0)
 
     def _wait_ready(self) -> None:
         deadline = time.monotonic() + 15.0
