@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
@@ -2704,12 +2704,25 @@ fn tmux_paste_literal(config: &Config, target: &str, message: &str) -> Result<()
             .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
             .collect::<String>()
     );
-    let set_status = Command::new(&config.tmux_bin)
-        .args(["set-buffer", "-b", &buffer_name, message])
-        .status()
-        .context("tmux set-buffer failed to run")?;
-    if !set_status.success() {
-        return Err(anyhow!("tmux set-buffer failed"));
+    // The buffer content goes through load-buffer's STDIN, never through the
+    // command line: tmux's client-server protocol caps a single command at
+    // ~16KB (imsg framing), so `set-buffer -b <name> <message>` fails with
+    // "command too long" once the message outgrows that — observed live when
+    // argus attend prompts crossed the threshold and every launch died at
+    // paste. stdin streaming has no such cap (verified to 5MB).
+    let mut load = Command::new(&config.tmux_bin)
+        .args(["load-buffer", "-b", &buffer_name, "-"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .context("tmux load-buffer failed to run")?;
+    load.stdin
+        .as_mut()
+        .context("tmux load-buffer stdin unavailable")?
+        .write_all(message.as_bytes())
+        .context("tmux load-buffer stdin write failed")?;
+    let load_status = load.wait().context("tmux load-buffer failed to run")?;
+    if !load_status.success() {
+        return Err(anyhow!("tmux load-buffer failed"));
     }
     let paste_status = Command::new(&config.tmux_bin)
         .args(["paste-buffer", "-b", &buffer_name, "-t", target])
