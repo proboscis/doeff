@@ -193,13 +193,18 @@
   {:pre [(: tmux-bin str) (: pane-id str) (: message str)]
    :post [(: % "None")]}
   "長文 prompt は send-keys -l でなく buffer paste(oracle tmux_paste_literal:
-   実 Claude Code が -l の長文を落とした実測)。"
+   実 Claude Code が -l の長文を落とした実測)。buffer 内容は load-buffer の
+   STDIN で流し込む — tmux の client-server protocol は 1 コマンド ~16KB
+   (imsg framing)で、set-buffer の argv 渡しは message がそれを超えると
+   \"command too long\" で必ず落ちる(oracle 33ab4bae と同修正。argus attend
+   prompt の成長で live 実測)。"
   (setv buffer-name
         (+ "doeff-sessionhost-" (str (os.getpid)) "-"
            (.join "" (gfor c pane-id (if (.isalnum c) c "_")))))
-  (setv res (run-tmux tmux-bin ["set-buffer" "-b" buffer-name message]))
+  (setv res (subprocess.run [tmux-bin "load-buffer" "-b" buffer-name "-"]
+                            :input message :capture-output True :text True))
   (when (!= res.returncode 0)
-    (raise (RuntimeError "tmux set-buffer failed")))
+    (raise (RuntimeError "tmux load-buffer failed")))
   (setv paste (run-tmux tmux-bin ["paste-buffer" "-b" buffer-name "-t" pane-id]))
   (run-tmux tmux-bin ["delete-buffer" "-b" buffer-name])
   (when (!= paste.returncode 0)

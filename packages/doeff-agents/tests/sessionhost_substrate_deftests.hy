@@ -24,6 +24,7 @@
   tmux-new-session
   tmux-has-session
   tmux-capture
+  tmux-send-keys
   tmux-kill-session])
 (import doeff_agents.sessionhost.substrate [
   real-substrate
@@ -171,3 +172,28 @@
     (except [e RuntimeError] (setv raised e)))
   (assert (is-not raised None))
   (assert (in "Anthropic API keys" (str raised))))
+
+
+(deftest test-tmux-paste-survives-imsg-command-limit
+  {:skip-if (is None (shutil.which "tmux"))
+   :skip-reason "tmux not installed"}
+  ;; tmux の client-server protocol は 1 コマンド ~16KB(imsg framing)。
+  ;; set-buffer の argv 渡しは 16KB 超の paste で "command too long" になり
+  ;; launch が必ず落ちる(argus attend prompt の成長で live 実測、oracle
+  ;; 33ab4bae と同修正)。pin は「20KB literal paste が例外なく完了する」
+  ;; こと(旧実装は RuntimeError で即死)。pane 内容の assert はしない —
+  ;; 表示は受け手の line-editor / canonical-mode 物理(agent 所有)で、
+  ;; 実配送は live(17KB attend prompt の全文受領)で実証済み。
+  (setv tmux (shutil.which "tmux"))
+  (setv d (tempfile.mkdtemp))
+  (setv session-name f"doeff-sessionhost-bigpaste-{(os.getpid)}")
+  (setv message (+ (* "x" 20000) " BIGPASTE-END-MARKER"))
+  (try
+    (<- pane ((real-substrate tmux)
+              (tmux-new-session session-name d {})))
+    ;; submit=False: paste のみ(confirm ループの Enter 物理はここでは無関係)。
+    ;; 旧 set-buffer 実装ではこの行が "tmux set-buffer failed" で raise する。
+    (<- _ ((real-substrate tmux) (tmux-send-keys pane message True False)))
+    (finally
+      (os.system f"{tmux} kill-session -t {session-name} 2>/dev/null")
+      (shutil.rmtree d :ignore-errors True))))
