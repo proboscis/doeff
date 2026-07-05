@@ -98,7 +98,15 @@
   #^ bool has-unsubmitted-paste
   (setv has-unsubmitted-paste False)
   #^ (| str None) dialog
-  (setv dialog None))
+  (setv dialog None)
+  ;; dialog の決定的 dismissal キー列(R9 fast-path、S18 で Rust detector と
+  ;; verbatim 一致まで確定した物理)。dialog 検出と同じく per-kind impl 所有 —
+  ;; policy はこの keys を送るだけで、per-kind のキー物理を知らない
+  ;; (protocol-physics-has-one-home)。C2 で追加(oracle:
+  ;; dismiss_codex_update_dialog の selected-option 依存 Down 数 /
+  ;; bypass・fullscreen = Down,Enter / managed = Enter)。
+  #^ Any dialog-dismiss-keys
+  (setv dialog-dismiss-keys #()))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] JudgeVerdict []
@@ -267,6 +275,55 @@
   (setv stdin None))
 
 
+;; --- C2 拡張(DOE-004 R1 改訂と同一チェンジセット): launch 経路と per-kind
+;; trust 物理(S11/S12)が要求する substrate。impls/ は生 IO を持てない
+;; (substrate-clean defsemgrep)ため、FS / env / session 作成もすべて effect 境界。
+
+(defclass [(dataclass :frozen True :kw-only True)] TmuxNewSession [EffectBase]
+  "detached tmux session の作成(oracle tmux_new_session: new-session -d -P -F #D、
+   -c work-dir、session_env を -e で注入)。戻り値: pane-id str。
+   禁止 env(ANTHROPIC_API_KEY*)の hard reject は substrate 所有(oracle
+   ensure_no_forbidden_agent_env — C0 README 実装メモの凍結物理)。"
+  #^ str session-name
+  #^ str work-dir
+  #^ dict env)
+
+(defclass [(dataclass :frozen True :kw-only True)] FsCanonicalPath [EffectBase]
+  "path の canonicalize(realpath。S12: claude trust は canonicalized work_dir を
+   project key にする — /tmp は macOS で /private/tmp)。解決不能なら入力を
+   そのまま返す(oracle: canonicalize(...).unwrap_or(work_dir))。戻り値: str。"
+  #^ str path)
+
+(defclass [(dataclass :frozen True :kw-only True)] FsReadText [EffectBase]
+  "テキストファイルの読み。不存在は None(oracle: exists 分岐)。戻り値: str | None。"
+  #^ str path)
+
+(defclass [(dataclass :frozen True :kw-only True)] FsWriteTextAtomic [EffectBase]
+  "temp+rename の原子的書き込み(S12: 並走 claude が torn state を読まない・
+   temp 残骸を残さない)。substrate は path + tmp-suffix の一時ファイルに書いて
+   rename する。戻り値: None。"
+  #^ str path
+  #^ str text
+  #^ str tmp-suffix
+  (setv tmp-suffix ".agentd-tmp"))
+
+(defclass [(dataclass :frozen True :kw-only True)] FsMakeDirs [EffectBase]
+  "ディレクトリの再帰作成(exist-ok。oracle: fs::create_dir_all)。戻り値: None。"
+  #^ str path)
+
+(defclass [(dataclass :frozen True :kw-only True)] EnvGet [EffectBase]
+  "呼び手 process env の単読(S11 caveat: trust writer は session_env に無い
+   home を process env から fallback 参照する — daemon 束縛では daemon env、
+   直接束縛では呼び手 env)。戻り値: str | None。"
+  #^ str name)
+
+(defclass [(dataclass :frozen True :kw-only True)] ClockSleep [EffectBase]
+  "実時間待ち(wait-for-repl-idle の poll 間隔・dialog 再描画待ち)。
+   時間算術が ClockNow 経由であるのと同じく、待ちも effect 経由 — program は
+   wall clock に直接触れない。戻り値: None。"
+  #^ float seconds)
+
+
 ;; ===========================================================================
 ;; deff 構築子(署名 = 契約面)
 ;; ===========================================================================
@@ -374,3 +431,46 @@
    :post [(: % ProcRun)]}
   "ProcRun を構築する(prompt judge 実行)。"
   (ProcRun :command command :stdin stdin))
+
+(deff tmux-new-session [session-name work-dir env]
+  {:pre [(: session-name str) (: work-dir str) (: env dict)]
+   :post [(: % TmuxNewSession)]}
+  "TmuxNewSession を構築する(launch 経路。禁止 env reject は substrate 所有)。"
+  (TmuxNewSession :session-name session-name :work-dir work-dir :env env))
+
+(deff fs-canonical-path [path]
+  {:pre [(: path str) (> (len path) 0)]
+   :post [(: % FsCanonicalPath)]}
+  "FsCanonicalPath を構築する(S12 の canonicalized project key)。"
+  (FsCanonicalPath :path path))
+
+(deff fs-read-text [path]
+  {:pre [(: path str) (> (len path) 0)]
+   :post [(: % FsReadText)]}
+  "FsReadText を構築する(不存在は None)。"
+  (FsReadText :path path))
+
+(deff fs-write-text-atomic [path text tmp-suffix]
+  {:pre [(: path str) (> (len path) 0) (: text str)
+         (: tmp-suffix str) (> (len tmp-suffix) 0)]
+   :post [(: % FsWriteTextAtomic)]}
+  "FsWriteTextAtomic を構築する(temp+rename、S12)。"
+  (FsWriteTextAtomic :path path :text text :tmp-suffix tmp-suffix))
+
+(deff fs-make-dirs [path]
+  {:pre [(: path str) (> (len path) 0)]
+   :post [(: % FsMakeDirs)]}
+  "FsMakeDirs を構築する(exist-ok 再帰作成)。"
+  (FsMakeDirs :path path))
+
+(deff env-get [name]
+  {:pre [(: name str) (> (len name) 0)]
+   :post [(: % EnvGet)]}
+  "EnvGet を構築する(process env fallback、S11 caveat)。"
+  (EnvGet :name name))
+
+(deff clock-sleep [seconds]
+  {:pre [(: seconds (| int float)) (>= seconds 0)]
+   :post [(: % ClockSleep)]}
+  "ClockSleep を構築する(poll 間隔・再描画待ち)。"
+  (ClockSleep :seconds (float seconds)))

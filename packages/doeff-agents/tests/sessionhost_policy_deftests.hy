@@ -181,7 +181,8 @@
     :has-turn-activity turn-activity
     :startup-finished startup
     :has-unsubmitted-paste (in "<unsubmitted-paste>" output)
-    :dialog (if managed "managed" None)))
+    :dialog (if managed "managed" None)
+    :dialog-dismiss-keys (if managed #("Enter") #())))
 
 
 (defhandler fake-substrate [world]
