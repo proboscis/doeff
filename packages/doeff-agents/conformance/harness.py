@@ -83,6 +83,17 @@ class AgentdHarness:
 
     def start(self) -> None:
         log = self.log_path.open("a", encoding="utf-8")
+        # The daemon's DEFAULT prompt judge is a REAL `claude -p --model
+        # haiku` subprocess, and it runs at every turn-end judgment point
+        # before solicitation (main.rs:150/3722). Left enabled it burns
+        # real quota and adds up to 3x45s of latency per scenario — the
+        # suite's non-goal. Disable it unless the scenario wires the
+        # scripted judge explicitly via extra_serve_args.
+        judge_args = (
+            []
+            if "--prompt-judge-cmd" in self.extra_serve_args
+            else ["--prompt-judge-cmd", ""]
+        )
         self._proc = subprocess.Popen(
             [
                 str(self.agentd_bin),
@@ -94,6 +105,7 @@ class AgentdHarness:
                 "100",
                 "--max-running",
                 "4",
+                *judge_args,
                 *self.extra_serve_args,
                 "serve",
             ],
