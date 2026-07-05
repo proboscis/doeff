@@ -5,12 +5,16 @@
 ;;; CLI(parse_args :600-693)・default path(:718-742)・単一インスタンス
 ;;; 拒否(prepare_socket_path :1079-1092)・serve/dispatch(:1159-1301)。
 ;;;
-;;; C3 実行設計(ACP plan)の実装順 3 まで: wire 封筒 + store-of-record
+;;; C3 実行設計(ACP plan)の実装順 4 まで: wire 封筒 + store-of-record
 ;;; (store.hy の StoreActor / lease / latch clear)+ RPC→program 写像
 ;;; (launch-session / monitor-cycle / capture / send / cancel / cleanup)+
-;;; monitor / heartbeat thread。session.await_result / session.report_result
-;;; は C3-impl-4 — それまで「not implemented (C3 skeleton)」で loud に落とす
-;;; (黙った縮退をしない)。
+;;; monitor / heartbeat thread + result 経路(await_result の blocking poll /
+;;; report_result の first-write-wins)。全 10 契約 method 実装済み。
+;;;
+;;; report-result-mcp stdio relay は relaymain.py(stdlib-only 純 Python)に
+;;; 住む: relay の boot レイテンシは report-vs-turn-end race の凍結物理で、
+;;; Hy import 連鎖を払うと golden path で solicitation を焼く(S1 実測)。
+;;; subcommand dispatch も hostmain.py が Hy import より先に行う。
 
 (require doeff-hy.macros [deff defk <-])
 
@@ -18,6 +22,7 @@
 (import json)
 (import os)
 (import socket)
+(import sqlite3)
 (import sys)
 (import threading)
 (import time)
@@ -45,6 +50,7 @@
   make-cause
   monitor-cycle
   tail-chars])
+(import doeff_agents.sessionhost.schema [validate-against-schema])
 (import doeff_agents.sessionhost.substrate [real-substrate])
 (import doeff_agents.sessionhost.store [
   LEASE-TTL-SECONDS
@@ -55,6 +61,8 @@
   db-heartbeat-once
   db-read-lease
   db-record-command
+  db-record-event
+  db-report-result-guarded-update
   db-session-get
   db-session-list
   snapshot-to-wire-dict
@@ -79,7 +87,6 @@
 ;; もう 1 箇所は oracle main.rs:164)。
 (setv DEFAULT-PROMPT-JUDGE-CMD
       "claude -p --settings '{\"disableAllHooks\":true}' --model haiku") ; nosemgrep: doeff-agents-no-claude-print-mode
-(setv REPORT-RESULT-MCP-SUBCOMMAND "report-result-mcp")
 
 ;; 構造化 wire エラーコード(oracle :107-120)。
 (setv RPC-ERR-AWAIT-TIMEOUT -32000)
@@ -87,14 +94,16 @@
 (setv RPC-ERR-RESULT-REJECTED -32002)
 (setv RPC-ERR-ALREADY-TERMINAL -32003)
 
-;; 契約上存在する RPC method(dispatch_request_result :1247-1301)。skeleton
-;; では daemon.status 以外を「not implemented」で loud に落とすための一覧 —
-;; unknown method(契約外)とは区別する。
-(setv CONTRACT-METHODS
-      #{"daemon.status" "session.launch" "session.get" "session.list"
-        "session.capture" "session.send" "session.cancel" "session.cleanup"
-        "session.await_result" "session.report_result"})
+;; session.await_result の timeout 物理(oracle :89-103)。
+(setv DEFAULT-AWAIT-TIMEOUT-SECONDS 600.0)
+(setv MIN-AWAIT-TIMEOUT-SECONDS 1.0)
+(setv MAX-AWAIT-TIMEOUT-SECONDS 3600.0)
+(setv AWAIT-POLL-INTERVAL-SECONDS 0.5)
 
+;; await が「終端」と見なす status(oracle is_await_terminal_status
+;; :2925-2930 — is_terminal_status の 5 つ + lost)。
+(setv AWAIT-TERMINAL-STATUSES
+      #{"done" "failed" "cancelled" "exited" "stopped" "lost"})
 
 ;; wire 上の任意 JSON 値(serde_json::Value 相当)。id / params / result の
 ;; contract 型 — json.loads が返し得る全形。
@@ -504,6 +513,118 @@
   None)
 
 
+;; ---------------------------------------------------------------------------
+;; result 経路(oracle session_await_result :2052-2111 /
+;; build_await_response :2209-2255 / session_report_result :2136-2207)
+;; ---------------------------------------------------------------------------
+
+(deff build-await-response [snap]
+  {:pre [(: snap dict)]
+   :post [(: % dict)]}
+  "await の成功応答: result は done かつ contract の永続 payload がある時だけ
+   {\"payload\": …}(ADR 0035: 結果源はデータチャネル経由の payload のみ —
+   transcript fallback は存在しない)。それ以外は result null +
+   validation_error に monitor の記録した reason。"
+  (setv response {"session" (snapshot-to-wire-dict snap)})
+  (setv result-value None)
+  (setv validation-error (get snap "last_validation_error"))
+  (when (and (= (get snap "status") "done")
+             (is-not (get snap "expected_result") None))
+    (setv parse-ok False)
+    (setv parsed None)
+    (setv raw (get snap "result_payload"))
+    (when (is-not raw None)
+      (try
+        (setv parsed (json.loads raw))
+        (setv parse-ok True)
+        (except [Exception])))
+    (if parse-ok
+        (do
+          (setv result-value {"payload" parsed})
+          (setv validation-error None))
+        (when (is validation-error None)
+          (setv validation-error
+                "session reached 'done' without a reported result payload"))))
+  (setv (get response "result") result-value)
+  (when (is-not validation-error None)
+    (setv (get response "validation_error") validation-error))
+  response)
+
+
+(deff report-result-op [conn session-id payload]
+  {:pre [(: conn sqlite3.Connection) (: session-id str) (: payload JsonValue)]
+   :post [(: % dict)]}
+  "session.report_result の実体(actor 内で 1 op として実行 = 原子的)。
+   終端 + payload 有り = idempotent already_reported / 終端 + 無し = -32003 /
+   contract 無し = error / schema 不適合 = -32002 + session_result_rejected
+   event、payload は永続しない・再検証しない(ADR 0035 R4)/ 適合 =
+   first-write-wins guarded UPDATE(status は書かない — done 化は monitor)。"
+  (setv snap (db-session-get conn session-id))
+  (when (is snap None)
+    (raise (RuntimeError f"session is not registered: {session-id}")))
+  (setv status (get snap "status"))
+  (when (is-terminal-status status)
+    (when (is-not (get snap "result_payload") None)
+      (return {"accepted" True "already_reported" True}))
+    (raise (RpcHostError RPC-ERR-ALREADY-TERMINAL
+             (+ f"session '{session-id}' already reached terminal status "
+                f"'{status}' without a result"))))
+  (setv spec (get snap "expected_result"))
+  (when (or (is spec None) (not (isinstance spec dict)))
+    (raise (RuntimeError
+             (+ f"session '{session-id}' has no result contract; "
+                "report_result is not applicable"))))
+  (setv reason (validate-against-schema payload (.get spec "payload_schema")
+                                        "payload"))
+  (when (is-not reason None)
+    (db-record-event conn session-id "session_result_rejected"
+                     {"session_id" session-id "reason" reason})
+    (raise (RpcHostError RPC-ERR-RESULT-REJECTED
+             f"reported result does not satisfy its schema: {reason}")))
+  ;; byte-faithful 永続化(serde to_string と同じ compact・非 ASCII 素通し)。
+  (setv payload-json (json.dumps payload :separators #("," ":")
+                                 :ensure-ascii False))
+  (setv affected (db-report-result-guarded-update conn session-id payload-json))
+  (when (= affected 0)
+    (setv fresh (db-session-get conn session-id))
+    (when (and (is-not fresh None) (is-not (get fresh "result_payload") None))
+      (return {"accepted" True "already_reported" True}))
+    (raise (RpcHostError RPC-ERR-ALREADY-TERMINAL
+             (+ f"session '{session-id}' finished before the result could be "
+                "recorded"))))
+  (db-record-event conn session-id "session_result_reported"
+                   {"session_id" session-id})
+  {"accepted" True})
+
+
+(deff await-result-blocking [actor session-id timeout-seconds]
+  {:pre [(: actor StoreActor) (: session-id str)
+         (: timeout-seconds (| int float))]
+   :post [(: % dict)]}
+  "終端 status まで 500ms poll で block(oracle
+   session_await_result_with_interval — deadline は connection thread の
+   stack にのみ生きる transient。daemon 再起動で in-flight await は
+   socket 切断として落ちる = oracle と同じ)。"
+  (setv started (time.monotonic))
+  (setv snap (.submit actor (fn [conn] (db-session-get conn session-id))))
+  (when (is snap None)
+    (raise (RpcHostError RPC-ERR-NO-SUCH-SESSION
+             f"no session with id '{session-id}'")))
+  (while True
+    (when (in (get snap "status") AWAIT-TERMINAL-STATUSES)
+      (return (build-await-response snap)))
+    (when (>= (- (time.monotonic) started) timeout-seconds)
+      (setv secs (int timeout-seconds))
+      (raise (RpcHostError RPC-ERR-AWAIT-TIMEOUT
+               (+ f"session.await_result timed out after {secs}s "
+                  f"for session '{session-id}'"))))
+    (time.sleep AWAIT-POLL-INTERVAL-SECONDS)
+    (setv snap (.submit actor (fn [conn] (db-session-get conn session-id))))
+    (when (is snap None)
+      (raise (RpcHostError RPC-ERR-NO-SUCH-SESSION
+               f"no session with id '{session-id}'")))))
+
+
 (deff dispatch-method [method params config actor]
   {:pre [(: method str) (: params JsonValue) (: config HostConfig)
          (: actor StoreActor)]
@@ -588,9 +709,28 @@
     (record-command actor sid "session.cleanup" wire)
     (return wire))
 
-  (if (in method CONTRACT-METHODS)
-      (raise (RuntimeError f"not implemented (C3 skeleton): {method}"))
-      (raise (RuntimeError f"unknown method: {method}"))))
+  (when (= method "session.await_result")
+    (setv p (params-object params "session.await_result"))
+    (setv sid (required-str-param p "session_id" "session.await_result"))
+    (setv timeout-raw (.get p "timeout_seconds"))
+    (setv timeout-seconds
+          (if (is timeout-raw None)
+              DEFAULT-AWAIT-TIMEOUT-SECONDS
+              (float timeout-raw)))
+    (setv timeout-seconds (max MIN-AWAIT-TIMEOUT-SECONDS
+                               (min MAX-AWAIT-TIMEOUT-SECONDS timeout-seconds)))
+    (return (await-result-blocking actor sid timeout-seconds)))
+
+  (when (= method "session.report_result")
+    (setv p (params-object params "session.report_result"))
+    (setv sid (required-str-param p "session_id" "session.report_result"))
+    (when (not-in "payload" p)
+      (raise (RuntimeError
+               "invalid params for session.report_result: missing field `payload`")))
+    (setv payload (get p "payload"))
+    (return (.submit actor (fn [conn] (report-result-op conn sid payload)))))
+
+  (raise (RuntimeError f"unknown method: {method}")))
 
 (deff dispatch-line [line config actor]
   {:pre [(: line str) (: config HostConfig) (: actor StoreActor)]
@@ -749,21 +889,11 @@
 ;; entry(oracle main :566-598)
 ;; ---------------------------------------------------------------------------
 
-(deff run-report-result-mcp [args]
-  {:pre [(: args list)]
-   :post [(: % "None")]}
-  "stdio MCP ↔ socket relay(oracle run_report_result_mcp :761-811)。
-   C3-impl-4 で実装 — それまでは loud に落とす(黙った成功偽装をしない)。"
-  (raise (NotImplementedError
-           "report-result-mcp relay is not implemented yet (C3-impl-4)")))
-
 (defn main []
-  "console script entry(pyproject: doeff-sessionhost)。subcommand dispatch は
-   oracle main と同順: report-result-mcp が最初(DB/lease/serve を触らない)。"
+  "serve entry(console script doeff-sessionhost の serve 経路 — subcommand
+   dispatch は hostmain.py 所有で、report-result-mcp は relaymain.py へ
+   Hy import より先に分岐済み)。"
   (setv raw (list (cut sys.argv 1 None)))
-  (when (and raw (= (get raw 0) REPORT-RESULT-MCP-SUBCOMMAND))
-    (run-report-result-mcp (list (cut raw 1 None)))
-    (return None))
   (setv config (parse-args raw))
   (for [parent [(os.path.dirname config.db-path)
                 (os.path.dirname config.socket-path)]]
