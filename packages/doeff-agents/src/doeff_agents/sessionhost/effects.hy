@@ -72,7 +72,12 @@
   #^ int prompt-unblock-attempts
   (setv prompt-unblock-attempts 0)
   #^ (| TerminalCause None) terminal-cause
-  (setv terminal-cause None))
+  (setv terminal-cause None)
+  ;; 解決済み実効 identity(CODEX_HOME / CLAUDE_CONFIG_DIR)。S14 は oracle
+  ;; expected-red(agent_sessions に identity 列なし)— Hy 実装はここに永続化
+  ;; して positive assert に差し替える(DOE-004 契約拡張、C2 で追加)。
+  #^ (| dict None) effective-identity
+  (setv effective-identity None))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] PaneObservation []

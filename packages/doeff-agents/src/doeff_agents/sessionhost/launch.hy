@@ -1,0 +1,252 @@
+;;; 共有 session-launch program(ADR-DOE-AGENTS-004 C2)。
+;;;
+;;; oracle: packages/doeff-agentd/src/main.rs session_launch + wait_for_repl_idle。
+;;; kind 別の protocol 物理(argv・trust・gate・marker・dialog キー)は
+;;; interface effect 越しに per-kind defhandler(impls/)が所有し、この program は
+;;; 凍結された起動の「順序と方針」だけを持つ:
+;;;   admission(重複 / 既存 tmux)→ per-kind PreLaunchSetup(S11 gate + trust)
+;;;   → result channel 配線(ADR 0035 reject-at-launch)→ argv 構築 →
+;;;   TmuxNewSession → 起動 command 送出 → wait-for-repl-idle(R9 launch dialog
+;;;   の決定的 dismissal)→ prompt の live REPL 配送(result-protocol instruction
+;;;   追記)→ booting 行 upsert + session_started event。
+;;;
+;;; program は effect を yield するのみで IO を直接呼ばない(substrate-clean)。
+;;; 呼び手より長生きする部分(socket・writer actor・lease・cycle 起動)は
+;;; C3 の host 所有 — ここには置かない(daemon-owns-only-exteriority)。
+
+(require doeff-hy.macros [defk deff <-])
+
+(import doeff_agents.sessionhost.effects [
+  SessionRow
+  PaneObservation
+  classify-pane
+  deliver-message
+  build-launch
+  pre-launch-setup
+  wire-result-channel
+  session-store-get
+  session-store-upsert
+  session-store-record-event
+  tmux-has-session
+  tmux-new-session
+  tmux-send-keys
+  tmux-capture
+  clock-now
+  clock-sleep])
+(import doeff_agents.sessionhost.policy [iso-format seconds-since])
+
+
+;; ---------------------------------------------------------------------------
+;; 凍結定数(oracle 定数と文言)
+;; ---------------------------------------------------------------------------
+
+(setv LIFECYCLE-RUN-TO-COMPLETION "run_to_completion")
+(setv LIFECYCLE-INTERACTIVE "interactive")
+
+;; agentd が argv を組める(= interface effect の per-kind impl が存在すると
+;; 契約上約束されている)kind(oracle is_interactive_agent_type)。
+(setv INTERACTIVE-AGENT-TYPES #{"codex" "claude"})
+
+;; expected_result 付き launch の prompt へ追記する結果搬送契約
+;; (oracle result_protocol_instruction — 文言 verbatim。ADR 0035:
+;; 結果は byte-faithful データチャネルで回収し、決して画面から scrape しない)。
+(setv RESULT-PROTOCOL-INSTRUCTION
+      (+ " Result channel: when you have finished the task, call the "
+         "`report_result` MCP tool exactly once, passing your result as the "
+         "`payload` argument — a JSON object that satisfies the result schema. "
+         "Do not print the result to the terminal and do not create JSON "
+         "result files; agentd only accepts the result through the "
+         "`report_result` tool. If the tool responds with a validation error, "
+         "fix the payload and call `report_result` again in the same session."))
+
+;; wait-for-repl-idle の上限(oracle: Duration::from_secs(120) 定数)と
+;; poll / 再描画待ち(oracle: 300ms / 800ms)。
+(setv REPL-IDLE-MAX-WAIT-SECONDS 120)
+(setv REPL-IDLE-POLL-SECONDS 0.3)
+(setv DIALOG-REDRAW-SECONDS 0.8)
+
+
+;; ---------------------------------------------------------------------------
+;; 純粋 helper(oracle shell_quote / shell_join / command_mentions_codex)
+;; ---------------------------------------------------------------------------
+
+(deff shell-quote [value]
+  {:pre [(: value str)]
+   :post [(: % str)]}
+  "oracle shell_quote: 空は ''、安全文字([a-zA-Z0-9] と -_./:=@,%+)のみは
+   素通し、それ以外は single-quote(埋め込み ' は '\\'' でエスケープ)。"
+  (if (= value "")
+      "''"
+      (do
+        (setv safe (all (gfor c value
+                              (or (.isalnum c) (in c "-_./:=@,%+")))))
+        (if safe
+            value
+            (+ "'" (.replace value "'" "'\\''") "'")))))
+
+(deff shell-join [args]
+  {:pre [(: args list)]
+   :post [(: % str)]}
+  "argv → tmux pane に流す 1 行 shell command(oracle shell_join)。"
+  (.join " " (lfor a args (shell-quote a))))
+
+(deff command-mentions-codex [command]
+  {:pre [(: command str)]
+   :post [(: % bool)]}
+  "明示 command が codex を起動するか(oracle command_mentions_codex:
+   whitespace token が `codex` そのもの、または `/codex` で終わる。
+   `codexify` のような部分文字列は数えない)。"
+  (bool (any (gfor token (.split command)
+                   (or (= token "codex") (.endswith token "/codex"))))))
+
+
+;; ---------------------------------------------------------------------------
+;; wait-for-repl-idle(oracle wait_for_repl_idle — R9 launch dialog 込み)
+;; ---------------------------------------------------------------------------
+
+(defk wait-for-repl-idle [agent-type pane-id max-wait-seconds]
+  {:pre [(: agent-type str) (: pane-id str)
+         (: max-wait-seconds (| int float)) (> max-wait-seconds 0)]
+   :post [(: % bool)]}
+  "REPL が入力を受けられる状態(idle prompt 可視)まで poll する。codex は
+   banner + MCP ロードの後にしか input loop が配線されない — その窓に keys を
+   送ると Enter がロード画面に食われ、prompt が入力箱に座ったまま submit
+   されない(oracle 実障害)。R9 launch dialog(codex-update / bypass /
+   fullscreen / managed)は idle 判定より先に検出して決定的 keys で dismiss
+   する(update dialog は `›` 選択 marker を描くため idle と誤認される)。
+   上限到達は False を返すだけ — 呼び手は構わず送出し、通常の validation
+   経路で fail させる(RPC を hang させない)。"
+  (<- start (clock-now))
+  (setv idle-seen False)
+  (setv looping True)
+  (while looping
+    (<- now (clock-now))
+    (setv elapsed (- now start))
+    (if (>= (.total-seconds elapsed) max-wait-seconds)
+        (setv looping False)
+        (do
+          (<- output (tmux-capture pane-id 60))
+          (<- obs (classify-pane agent-type output))
+          (cond
+            (is-not obs.dialog None)
+              (do
+                (for [key obs.dialog-dismiss-keys]
+                  (<- _ (tmux-send-keys pane-id key False False)))
+                (<- _ (clock-sleep DIALOG-REDRAW-SECONDS)))
+            obs.has-idle-prompt
+              (do
+                (setv idle-seen True)
+                (setv looping False))
+            True
+              (<- _ (clock-sleep REPL-IDLE-POLL-SECONDS))))))
+  idle-seen)
+
+
+;; ---------------------------------------------------------------------------
+;; launch program 本体(oracle session_launch の凍結順序)
+;; ---------------------------------------------------------------------------
+
+(defk launch-session [params]
+  {:pre [(: params dict)]
+   :post [(: % SessionRow)]}
+  "1 session の launch。params(oracle LaunchParams と同形):
+   session_id / session_name / agent_type / work_dir / lifecycle /
+   session_env / prompt / command(明示 override、escape hatch)/
+   expected_result / model / effort / mcp_servers / socket_path /
+   skip_trust_setup。戻り値: 永続化済みの booting SessionRow。"
+  (setv session-id (get params "session_id"))
+  (setv session-name (get params "session_name"))
+  (setv agent-type (get params "agent_type"))
+  (setv lifecycle (get params "lifecycle"))
+  (setv session-env (.get params "session_env" {}))
+  (setv command-override (or (.get params "command") ""))
+  (setv has-override (bool (.strip command-override)))
+  (setv expected-result (.get params "expected_result"))
+
+  ;; --- admission(oracle 順序: lifecycle → 重複 → 既存 tmux)。
+  (when (not-in lifecycle #{LIFECYCLE-RUN-TO-COMPLETION LIFECYCLE-INTERACTIVE})
+    (raise (RuntimeError
+             (+ f"unsupported session lifecycle: {lifecycle} "
+                f"(expected {LIFECYCLE-RUN-TO-COMPLETION} or {LIFECYCLE-INTERACTIVE})"))))
+  (<- existing (session-store-get session-id))
+  (when (is-not existing None)
+    (raise (RuntimeError f"session is already registered: {session-id}")))
+  (<- tmux-exists (tmux-has-session session-name))
+  (when tmux-exists
+    (raise (RuntimeError f"tmux session already exists: {session-name}")))
+
+  ;; --- ADR 0035 reject-at-launch: result channel を配線できない agent が
+  ;; result contract を持つことは受けない(silent timeout の予約になる)。
+  (when (and (is-not expected-result None)
+             (not has-override)
+             (not-in agent-type INTERACTIVE-AGENT-TYPES))
+    (raise (RuntimeError
+             (+ f"session.launch: agent_type '{agent-type}' cannot deliver a "
+                "result over the report_result channel; a result contract "
+                "requires agent_type 'codex' or 'claude' (or an explicit "
+                "`command` that reports results itself)"))))
+
+  ;; --- per-kind PreLaunchSetup(S11 auth gate + trust、必ず tmux より前)。
+  ;; 明示 command が codex を起動する場合も codex の gate/trust が効く
+  ;; (oracle command_mentions_codex — 暗黙 ~/.codex が個人クォータを焼いた
+  ;; 実障害)。
+  (setv prelaunch-kind
+        (cond
+          (in agent-type INTERACTIVE-AGENT-TYPES) agent-type
+          (command-mentions-codex command-override) "codex"
+          True None))
+  (setv identity None)
+  (when (is-not prelaunch-kind None)
+    (<- resolved (pre-launch-setup prelaunch-kind params))
+    (setv identity resolved))
+
+  ;; --- result channel 配線 + 起動 command(oracle resolve_launch_command:
+  ;; override は verbatim、それ以外は per-kind argv builder)。
+  (setv command-line command-override)
+  (when (not has-override)
+    (setv effective-params (dict params))
+    (when (and (is-not expected-result None)
+               (in agent-type INTERACTIVE-AGENT-TYPES))
+      (<- channel (wire-result-channel agent-type session-id
+                                       (.get params "socket_path" "")))
+      (setv (get effective-params "result_channel") channel))
+    (<- argv (build-launch agent-type effective-params))
+    (setv command-line (shell-join argv)))
+
+  ;; --- tmux session 作成(禁止 env reject は substrate 所有)+ 起動。
+  (<- pane-id (tmux-new-session session-name (get params "work_dir") session-env))
+  (when (.strip command-line)
+    (<- _ (tmux-send-keys pane-id command-line True True)))
+
+  ;; --- prompt の live REPL 配送(argv / print-mode 禁止 — session が task
+  ;; 完了後も生き、monitor が validate / 再促せるように)。
+  (setv awaiting False)
+  (setv prompt (or (.get params "prompt") ""))
+  (when (.strip prompt)
+    (setv full-prompt
+          (if (is-not expected-result None)
+              (+ prompt RESULT-PROTOCOL-INSTRUCTION)
+              prompt))
+    (when (and (not has-override) (in agent-type INTERACTIVE-AGENT-TYPES))
+      (<- _ (wait-for-repl-idle agent-type pane-id REPL-IDLE-MAX-WAIT-SECONDS)))
+    (if (in agent-type INTERACTIVE-AGENT-TYPES)
+        (<- _ (deliver-message pane-id full-prompt))
+        (<- _ (tmux-send-keys pane-id full-prompt True True)))
+    (setv awaiting True))
+
+  ;; --- booting 行の永続化 + event(実効 identity 込み — S14 の Hy positive 化)。
+  (<- now (clock-now))
+  (setv row (SessionRow
+              :session-id session-id
+              :session-name session-name
+              :pane-id pane-id
+              :agent-type agent-type
+              :lifecycle lifecycle
+              :status "booting"
+              :started-at (iso-format now)
+              :awaiting-response awaiting
+              :expected-result expected-result
+              :effective-identity identity))
+  (<- _ (session-store-upsert row))
+  (<- _ (session-store-record-event session-id "session_started" row))
+  row)
