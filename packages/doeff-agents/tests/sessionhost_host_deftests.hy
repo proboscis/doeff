@@ -24,6 +24,7 @@
   err-response
   dispatch-line
   prepare-socket-path])
+(import doeff_agents.sessionhost.store [StoreActor db-acquire-lease])
 
 
 ;; ---------------------------------------------------------------------------
@@ -154,55 +155,73 @@
 ;; dispatch(1 行 → 1 行)
 ;; ---------------------------------------------------------------------------
 
-(defn skeleton-config []
-  (parse-args ["--db" "/tmp/host-deftest.sqlite"
-               "--socket" "/tmp/host-deftest.sock"
-               "--prompt-judge-cmd" ""
-               "serve"]))
+(defn with-skeleton [thunk]
+  "tmpdir の StoreActor + config で thunk(config actor)を回し、必ず閉じる。"
+  (setv d (tempfile.mkdtemp))
+  (try
+    (setv config (parse-args ["--db" (os.path.join d "agentd.sqlite")
+                              "--socket" (os.path.join d "agentd.sock")
+                              "--prompt-judge-cmd" ""
+                              "serve"]))
+    (setv actor (StoreActor config.db-path))
+    (try
+      (thunk config actor)
+      (finally (.close actor)))
+    (finally (shutil.rmtree d :ignore-errors True))))
 
 
 (deftest test-dispatch-invalid-json
-  (setv response (json.loads (dispatch-line "not json" (skeleton-config))))
-  (assert (is (get response "id") None))
-  (assert (= (get response "ok") False))
-  (assert (.startswith (get response "error") "invalid request:"))
-  (assert (not-in "error_code" response))
-  ;; id 欠落も invalid request(serde の必須 field parity)
-  (setv response (json.loads (dispatch-line "{\"method\":\"daemon.status\"}"
-                                            (skeleton-config))))
-  (assert (= (get response "ok") False))
-  (assert (in "invalid request" (get response "error"))))
+  (defn check [config actor]
+    (setv response (json.loads (dispatch-line "not json" config actor)))
+    (assert (is (get response "id") None))
+    (assert (= (get response "ok") False))
+    (assert (.startswith (get response "error") "invalid request:"))
+    (assert (not-in "error_code" response))
+    ;; id 欠落も invalid request(serde の必須 field parity)
+    (setv response (json.loads (dispatch-line "{\"method\":\"daemon.status\"}"
+                                              config actor)))
+    (assert (= (get response "ok") False))
+    (assert (in "invalid request" (get response "error"))))
+  (with-skeleton check))
 
 
 (deftest test-dispatch-daemon-status
-  (setv response (json.loads (dispatch-line
-                               "{\"id\":7,\"method\":\"daemon.status\"}"
-                               (skeleton-config))))
-  (assert (= (get response "id") 7))
-  (assert (= (get response "ok") True))
-  (setv result (get response "result"))
-  (assert (= (get result "state") "running"))
-  (assert (= (get result "pid") (os.getpid)))
-  (assert (= (get result "db_path") "/tmp/host-deftest.sqlite"))
-  (assert (= (get result "socket_path") "/tmp/host-deftest.sock"))
-  (assert (= (get result "max_running") 10))
-  (assert (in "active_sessions" result))
-  (assert (in "lease" result)))
+  (defn check [config actor]
+    ;; lease 取得後の daemon.status は lease 行を返す(oracle :1252-1263)
+    (.submit actor (fn [conn] (db-acquire-lease conn (os.getpid))))
+    (setv response (json.loads (dispatch-line
+                                 "{\"id\":7,\"method\":\"daemon.status\"}"
+                                 config actor)))
+    (assert (= (get response "id") 7))
+    (assert (= (get response "ok") True))
+    (setv result (get response "result"))
+    (assert (= (get result "state") "running"))
+    (assert (= (get result "pid") (os.getpid)))
+    (assert (= (get result "db_path") config.db-path))
+    (assert (= (get result "socket_path") config.socket-path))
+    (assert (= (get result "max_running") 10))
+    (assert (= (get result "active_sessions") 0))
+    (setv lease (get result "lease"))
+    (assert (= (get lease "lease_name") "doeff-agentd"))
+    (assert (= (get lease "owner_pid") (os.getpid))))
+  (with-skeleton check))
 
 
 (deftest test-dispatch-skeleton-loud
-  ;; 契約 method は「not implemented」で loud(黙った縮退をしない)
-  (setv response (json.loads (dispatch-line
-                               "{\"id\":1,\"method\":\"session.launch\",\"params\":{}}"
-                               (skeleton-config))))
-  (assert (= (get response "ok") False))
-  (assert (in "not implemented (C3 skeleton)" (get response "error")))
-  ;; 契約外 method は oracle と同文言
-  (setv response (json.loads (dispatch-line
-                               "{\"id\":1,\"method\":\"no.such\"}"
-                               (skeleton-config))))
-  (assert (= (get response "ok") False))
-  (assert (= (get response "error") "unknown method: no.such")))
+  (defn check [config actor]
+    ;; 契約 method は「not implemented」で loud(黙った縮退をしない)
+    (setv response (json.loads (dispatch-line
+                                 "{\"id\":1,\"method\":\"session.launch\",\"params\":{}}"
+                                 config actor)))
+    (assert (= (get response "ok") False))
+    (assert (in "not implemented (C3 skeleton)" (get response "error")))
+    ;; 契約外 method は oracle と同文言
+    (setv response (json.loads (dispatch-line
+                                 "{\"id\":1,\"method\":\"no.such\"}"
+                                 config actor)))
+    (assert (= (get response "ok") False))
+    (assert (= (get response "error") "unknown method: no.such")))
+  (with-skeleton check))
 
 
 ;; ---------------------------------------------------------------------------

@@ -235,6 +235,9 @@
     (setv awaiting True))
 
   ;; --- booting 行の永続化 + event(実効 identity 込み — S14 の Hy positive 化)。
+  ;; work-dir / backend-ref は store-of-record が行作成に要る launch 所有
+  ;; field(oracle backend_ref = session_name / pane_id / command、
+  ;; main.rs:1813-1816)。
   (<- now (clock-now))
   (setv row (SessionRow
               :session-id session-id
@@ -246,7 +249,11 @@
               :started-at (iso-format now)
               :awaiting-response awaiting
               :expected-result expected-result
-              :effective-identity identity))
+              :effective-identity identity
+              :work-dir (get params "work_dir")
+              :backend-ref {"session_name" session-name
+                            "pane_id" pane-id
+                            "command" command-line}))
   (<- _ (session-store-upsert row))
   (<- _ (session-store-record-event session-id "session_started" row))
   row)

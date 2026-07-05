@@ -77,7 +77,18 @@
   ;; expected-red(agent_sessions に identity 列なし)— Hy 実装はここに永続化
   ;; して positive assert に差し替える(DOE-004 契約拡張、C2 で追加)。
   #^ (| dict None) effective-identity
-  (setv effective-identity None))
+  (setv effective-identity None)
+  ;; --- C3 拡張: launch 所有の store-of-record field。行の作成が SessionRow
+  ;; だけで完結する(host の store が別口の登記簿を持たない)ための追加 —
+  ;; oracle SessionSnapshot の work_dir / backend_kind / backend_ref
+  ;; ({"session_name", "pane_id", "command"}、main.rs:1813-1816)に対応。
+  ;; policy はこれらを読まない。
+  #^ str work-dir
+  (setv work-dir "")
+  #^ str backend-kind
+  (setv backend-kind "tmux")
+  #^ (| dict None) backend-ref
+  (setv backend-ref None))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] PaneObservation []
