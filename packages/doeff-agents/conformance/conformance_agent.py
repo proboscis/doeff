@@ -72,9 +72,67 @@ FRAMES: dict[str, str] = {
     # neither idle nor active nor waiting: stall-watchdog bait
     "F-frozen": "\nPassword:\n",
     "F-trust-dialog": "\nDo you trust the files in this folder?\n ❯ 1. Yes, proceed\n",
-    # R9 fast-path dialog frames: fill VERBATIM from the Rust detectors
-    # (main.rs:3115/3150/3165/3176 + their tests at :4222-4406) before
-    # enabling S18 — placeholders here would silently miss the detectors.
+    # R9 fast-path dialog frames — VERBATIM from the Rust detectors and
+    # their unit tests (main.rs:3115/3150/3165/3176, tests :4222-4406).
+    # codex update dialog: detector wants "update now" + "skip until next
+    # version" + "press enter to continue" in the lowercased tail-10; the
+    # `›` highlight on option 1 makes the dismisser send Down×2+Enter
+    # (codex_update_dialog_down_steps_to_skip_until_next). Dismissed only
+    # in wait_for_repl_idle (launch path) — S18 runs it in M1.
+    "F-dialog-codex-update": (
+        "\n  ✨ Update available! 0.134.0 -> 0.135.0\n"
+        "\n"
+        "  Release notes: https://github.com/openai/codex/releases/latest\n"
+        "\n"
+        "› 1. Update now (runs `npm install -g @openai/codex`)\n"
+        "  2. Skip\n"
+        "  3. Skip until next version\n"
+        "\n"
+        "  Press enter to continue\n"
+    ),
+    # claude bypass-permissions confirmation: whole-capture detector
+    # ("bypass permissions mode" + "no, exit" + "yes, i accept" + "enter
+    # to confirm"); dismissed Down+Enter (select "2. Yes, I accept").
+    # The `❯` highlight is indented, so it never reads as the idle prompt
+    # (that check is line-start anchored). launch path only — M1.
+    "F-dialog-bypass": (
+        "\n  WARNING: Claude Code running in Bypass Permissions mode\n"
+        "\n"
+        "  In Bypass Permissions mode, Claude Code will not ask for your approval\n"
+        "  before running potentially dangerous commands.\n"
+        "\n"
+        "  ❯ 1. No, exit\n"
+        "    2. Yes, I accept\n"
+        "\n"
+        "  Enter to confirm · Esc to cancel\n"
+    ),
+    # claude fullscreen-renderer opt-in: whole-capture detector; dismissed
+    # Down+Enter (select "2. Not now"). launch path only — M1.
+    "F-dialog-fullscreen": (
+        "\n  Try the new fullscreen renderer?\n"
+        "\n"
+        "  · Flicker-free output\n"
+        "  · Mouse support\n"
+        "\n"
+        "  ❯ 1. Yes, try it\n"
+        "    2. Not now\n"
+        "\n"
+        "  Enter to confirm · Esc to cancel\n"
+    ),
+    # claude managed-settings approval: whole-capture detector ("managed
+    # settings require approval" + "settings requiring approval");
+    # dismissed with a bare Enter. The ONLY R9 dialog also handled in the
+    # MONITOR loop (main.rs:3604) — the other three exist solely in
+    # wait_for_repl_idle — so S18 exercises this one in M2 mid-session.
+    "F-dialog-managed": (
+        "\n Managed settings require approval\n"
+        "\n"
+        " Your organization has configured managed settings that could allow execution\n"
+        " of arbitrary code or interception of your prompts and responses.\n"
+        "\n"
+        " Settings requiring approval:\n"
+        "   · OTEL_EXPORTER_OTLP_LOGS_ENDPOINT\n"
+    ),
 }
 
 

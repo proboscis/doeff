@@ -94,7 +94,7 @@ checklist (a) の凍結対象の一部**(marker→分類は impl 所有になる
 | F-menu-codex | `› 1. Switch…`(idle glyph でメニュー描画) | idle に偽装したメニュー(R6 の核心) |
 | F-frozen | idle でも active でもない任意画面(pager/login 風) | stall watchdog 対象 |
 | F-trust-dialog | claude trust ダイアログ風フレーム | pre-seed 無しの hang 再現用 |
-| F-dialog-codex-update / F-dialog-bypass / F-dialog-fullscreen / F-dialog-managed | R9 fast-path 対象の 4 ダイアログ | 決定的 dismisser の発火確認 |
+| F-dialog-codex-update / F-dialog-bypass / F-dialog-fullscreen / F-dialog-managed | R9 fast-path 対象の 4 ダイアログ(S18 で Rust detector と verbatim 一致まで確定) | 決定的 dismisser の発火確認 |
 
 turn-end 判定は「idle prompt AND not active AND **500 字 tail が前回
 snapshot と一致(stable)**」(main.rs:2832, 2932)なので、フレームは
@@ -126,7 +126,7 @@ snapshot と一致(stable)**」(main.rs:2832, 2932)なので、フレームは
 | S15 | solicitation 1 回目と 2 回目の間で agentd 再起動 → `result_solicitations_used` が生存し合計 2 で終端(awaiting_response latch は再起動でクリアされる仕様と両立) | 002 law counters-durable | (e) | P | M2 |
 | S16 | 2 session 並走・片方を異常系フレームに → 他方が golden path を完走。tick は panic/error を捕捉して継続(run_worker_tick)。per-session 隔離の粒度は oracle では tick 単位 — Hy 実装は session 単位隔離を満たすこと(観測可能な assert は「他方の完走」で共通) | DOE-004 R3 | (f) | P | M2 |
 | S17 | in-process result endpoint ↔ host endpoint の意味論 parity(per-kind ゲートとの継ぎ目) | ACP plan 補遺 | — | X(C1 後) | — |
-| S18 | R9 fast-path: 4 ダイアログフレーム各々に対し想定 dismissal keys を journal で受領確認(codex update→Down×N+Enter / bypass→Down,Enter / fullscreen→Not now / managed→Enter) | 002 R9 | — | P | M2 |
+| S18 | R9 fast-path: 4 ダイアログの dismissal keys を journal で受領確認(codex update→Down×2+Enter / bypass→Down,Enter / fullscreen→Down,Enter=Not now / managed→Enter)。**観測物理で契約修正**: codex-update/bypass/fullscreen は `wait_for_repl_idle` のみ(launch 経路 = M1)で発火し M2 では到達不能。managed のみ monitor loop でも発火(main.rs:3604)なので M2 で mid-session 検証。tty は canonical+ICRNL(Enter=`\r`→`\n`、Down+Enter は 1 行で到達 = `\x1b[B` を待つ)。managed の bare Enter は内容で判別不能なので `observed_active_at` set(managed 分岐でしか立たない)を主 assert に | 002 R9 | — | P | M1(update/bypass/fullscreen)/ M2(managed) |
 | S19 | launch-timeout watchdog: F-frozen のまま startup 完了マーカーを出さない → `DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS` 超過で failed・TimedOut true / stale-observation(300s)・zombie(idle shell)reaper → exited・Lost true | main.rs:3485-3587 | — | P | M2 |
 
 X 項目を P として数えて「oracle green」を主張することは禁止。
