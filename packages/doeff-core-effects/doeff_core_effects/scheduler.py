@@ -21,12 +21,23 @@ Usage:
     run(scheduled(main()))
 """
 
+from doeff_vm import Callable as _VmCallable
 from doeff_vm import EffectBase, Err, Ok, TailEval
+from doeff_vm import WithObserve as _WithObserveRaw
 
 from doeff.do import do
-from doeff.handler_utils import get_inner_handlers
+from doeff.handler_utils import get_inner_boundaries
 from doeff.program import Pass, Perform, Pure, Resume, Transfer
 from doeff.program import handler as _program_handler
+
+
+def _reinstall_boundary(prog, kind, boundary_callable):
+    """Re-wrap prog with one boundary captured at the spawn site."""
+    if kind == "handler":
+        return _program_handler(boundary_callable)(prog)
+    if kind == "observer":
+        return _WithObserveRaw(_VmCallable(boundary_callable), prog)
+    raise RuntimeError(f"unknown boundary kind: {kind!r}")
 
 
 def _enrich_exception_traceback(exc, task_meta=None, vm_ctx=None):
@@ -34,7 +45,7 @@ def _enrich_exception_traceback(exc, task_meta=None, vm_ctx=None):
 
     vm_ctx: from GetExecutionContext — fiber chain at error site (before unwinding).
             Contains ["frame", ...] and ["handler", ...] entries from the live fiber chain.
-    task_meta: scheduler task metadata with inner_handlers.
+    task_meta: scheduler task metadata with inner_boundaries.
     """
     entries = []
 
@@ -302,12 +313,12 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
     def enqueue_raise(owner_tid, cont, error, priority=PRIORITY_NORMAL):
         enqueue(("raise", owner_tid, cont, error), priority)
 
-    def alloc_task(program, priority=PRIORITY_NORMAL, inner_handlers=None):
+    def alloc_task(program, priority=PRIORITY_NORMAL, inner_boundaries=None):
         tid = fresh_id()
         tasks[tid] = {
             "status": "pending", "result": None,
             "program": program, "priority": priority,
-            "inner_handlers": inner_handlers or [],
+            "inner_boundaries": inner_boundaries or [],
         }
         return tid
 
@@ -389,9 +400,11 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                         continue  # skip cancelled tasks
                     tasks[tid]["status"] = "running"
                     prog = tasks[tid].pop("program")
-                    # Re-wrap task with inner handlers captured at spawn site
-                    for h in tasks[tid].pop("inner_handlers", []):
-                        prog = _program_handler(h)(prog)
+                    # Re-wrap task with the boundary stack (handlers AND
+                    # observers) captured at the spawn site, innermost first —
+                    # preserves handler/observer nesting order.
+                    for kind, boundary_callable in tasks[tid].pop("inner_boundaries", []):
+                        prog = _reinstall_boundary(prog, kind, boundary_callable)
                     return make_handler(tid)(wrap_task(tid, prog))
                 if entry[0] == "resume":
                     _, owner_tid, cont, value = entry
@@ -434,14 +447,14 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         """Drop heavy references from a terminal task.
 
         Keeps status/result (needed by Wait/Gather) but releases the
-        program, inner_handlers, and spawn_site closures that pin large
+        program, inner_boundaries, and spawn_site closures that pin large
         Python object graphs into memory.
         """
         t = tasks.get(tid)
         if t is None:
             return
         t.pop("program", None)
-        t.pop("inner_handlers", None)
+        t.pop("inner_boundaries", None)
         t.pop("spawn_site", None)
 
     def resume_with_waitable_result(owner_tid, waiter_k, key):
@@ -573,8 +586,10 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
     def handle_scheduler_effect(current_tid, effect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
         drain()
         if isinstance(effect, Spawn):
-            # Capture inner handlers from continuation (between yield site and scheduler).
-            inner_handlers = yield get_inner_handlers(k)
+            # Capture the boundary stack (handlers AND WithObserve observers)
+            # from the continuation (between yield site and scheduler) so the
+            # spawned task keeps both — with nesting order preserved.
+            inner_boundaries = yield get_inner_boundaries(k)
 
             # Capture spawn site from continuation's traceback
             from doeff.program import GetTraceback
@@ -585,7 +600,7 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 if isinstance(f, (list, tuple)) and len(f) >= 3:
                     spawn_site = f"{f[0]}  {f[1]}:{f[2]}"
 
-            tid = alloc_task(effect.program, effect.priority, inner_handlers=inner_handlers)
+            tid = alloc_task(effect.program, effect.priority, inner_boundaries=inner_boundaries)
             tasks[tid]["spawn_site"] = spawn_site
             enqueue(("new", tid), effect.priority)
             enqueue_resume(current_tid, k, Task(tid))  # spawner resumes at normal priority

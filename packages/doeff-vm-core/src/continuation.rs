@@ -39,6 +39,16 @@ pub struct DetachedFiber {
     pub fiber: Fiber,
 }
 
+/// Kind of callable boundary found while walking a detached fiber chain.
+/// `Handler` = prompt boundary (WithHandler), `Observer` = intercept
+/// boundary (WithObserve). Mask boundaries carry no callable and are
+/// not reported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoundaryKind {
+    Handler,
+    Observer,
+}
+
 /// A body-through-boundary fiber chain owned by `Continuation`.
 #[derive(Debug)]
 pub struct DetachedFiberChain {
@@ -124,6 +134,30 @@ impl DetachedFiberChain {
         }
 
         handlers
+    }
+
+    /// Collect the interleaved handler/observer boundary stack, innermost
+    /// first (chain head toward parents). The catching handler's prompt
+    /// boundary terminates the chain and is included as the last entry,
+    /// symmetric with `handler_callables`.
+    pub fn boundary_callables(&self) -> Vec<(BoundaryKind, CallableRef)> {
+        let mut boundaries = Vec::new();
+        let mut cursor = Some(self.head);
+
+        while let Some(fid) = cursor {
+            let Some(fiber) = self.fiber(fid) else { break };
+            if let Some(handler) = &fiber.handler {
+                if let Some(prompt) = handler.prompt_boundary() {
+                    boundaries.push((BoundaryKind::Handler, prompt.handler.clone()));
+                }
+                if let Some(intercept) = handler.intercept_boundary() {
+                    boundaries.push((BoundaryKind::Observer, intercept.interceptor.clone()));
+                }
+            }
+            cursor = fiber.parent;
+        }
+
+        boundaries
     }
 
     pub fn collect_rich_context(&self) -> Vec<Value> {
@@ -317,6 +351,12 @@ impl Continuation {
 
     pub fn handler_callables(&self) -> Option<Vec<CallableRef>> {
         self.chain.as_ref().map(DetachedFiberChain::handler_callables)
+    }
+
+    pub fn boundary_callables(&self) -> Option<Vec<(BoundaryKind, CallableRef)>> {
+        self.chain
+            .as_ref()
+            .map(DetachedFiberChain::boundary_callables)
     }
 
     pub fn collect_rich_context(&self) -> Option<Vec<Value>> {
