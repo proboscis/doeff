@@ -34,7 +34,20 @@ const SQLITE_BUSY_TIMEOUT_MS: u32 = 30_000;
 /// forever. Real codex sessions refresh `last_observed_at` every
 /// monitor_interval (~1s), so 5 minutes is two orders of magnitude
 /// above the noise floor.
+/// Override with the `DOEFF_AGENTD_STALE_OBSERVATION_SECS` env var.
 const STALE_OBSERVATION_THRESHOLD_SECONDS: i64 = 300;
+
+/// Effective stale-observation threshold: the
+/// `STALE_OBSERVATION_THRESHOLD_SECONDS` default, overridable at runtime
+/// via the `DOEFF_AGENTD_STALE_OBSERVATION_SECS` env var (positive
+/// integer seconds). Read at use-site so the conformance suite can
+/// compress the watchdog to seconds without a rebuild — a pure
+/// testability knob (semantics and default unchanged; recorded in the
+/// conformance README knob table).
+fn effective_stale_observation_threshold_seconds() -> i64 {
+    env_positive_i64("DOEFF_AGENTD_STALE_OBSERVATION_SECS")
+        .unwrap_or(STALE_OBSERVATION_THRESHOLD_SECONDS)
+}
 /// Force a `running` session to `failed` if it has never reached
 /// the agent's "active" marker (= still inside startup) for this
 /// long.  Distinct from the stale-observation watchdog: the startup
@@ -3484,7 +3497,8 @@ fn monitor_once(config: &Config) -> Result<()> {
         // is broken.
         if let Some(last) = parse_iso_timestamp(snapshot.last_observed_at.as_deref()) {
             let age = now.signed_duration_since(last);
-            if age > ChronoDuration::seconds(STALE_OBSERVATION_THRESHOLD_SECONDS) {
+            let stale_threshold = effective_stale_observation_threshold_seconds();
+            if age > ChronoDuration::seconds(stale_threshold) {
                 snapshot.status = String::from("exited");
                 let observed = now_iso();
                 snapshot.last_observed_at = Some(observed.clone());
@@ -3494,7 +3508,7 @@ fn monitor_once(config: &Config) -> Result<()> {
                     TerminalCauseCategory::Lost,
                     format!(
                         "no monitor observation for more than {}s",
-                        STALE_OBSERVATION_THRESHOLD_SECONDS
+                        stale_threshold
                     ),
                     true,
                     &observed,
@@ -4446,6 +4460,14 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
         // The MCP/launch-startup wait defaults to 60s (overridable via
         // the DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS env var at runtime).
         assert_eq!(LAUNCH_TIMEOUT_SECONDS, 60);
+    }
+
+    #[test]
+    fn stale_observation_default_is_300s() {
+        // The stale-observation watchdog defaults to 300s (overridable
+        // via the DOEFF_AGENTD_STALE_OBSERVATION_SECS env var at runtime
+        // — a conformance-suite testability knob, semantics unchanged).
+        assert_eq!(STALE_OBSERVATION_THRESHOLD_SECONDS, 300);
     }
 
     #[test]

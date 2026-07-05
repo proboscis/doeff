@@ -157,8 +157,8 @@ Hy 実装がこの表を変える場合は ADR 改訂が先(黙った変更は c
 | solicitation budget(2) | `--result-solicitations` / env | ✓ |
 | judge cmd | `--prompt-judge-cmd` / env(空 = 無効) | ✓ |
 | launch timeout(60s) | `DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS` | ✓ |
-| unblock budget(3) | config 定数 :136 — flag の有無を実装時に確認、無ければ knob 追加(意味論不変) | 要確認 |
-| stale-observation 閾値(300s) | **定数 :3485 — knob 無し**。S19 用に env knob を oracle に追加(意味論不変・本 README に記録) | 追加要 |
+| unblock budget(3) | `--prompt-unblock-attempts` / `DOEFF_AGENTD_PROMPT_UNBLOCK_ATTEMPTS`(main.rs:646 — 実装時走査で実在確認。S6 は既定 3 のまま検証) | ✓ |
+| stale-observation 閾値(300s) | `DOEFF_AGENTD_STALE_OBSERVATION_SECS`(S19 用に oracle へ追加した env-only knob、`effective_stale_observation_threshold_seconds` — 既定 300s・意味論不変。launch timeout と同じく flag 無しの env 専用なので harness は `extra_env` で daemon プロセスに渡す) | ✓(追加済) |
 | wait_for_repl_idle 上限(120s) | 定数 — fake は即 idle を描画するので実害なし | 不要 |
 
 oracle への変更は「意味論を変えない設定追加」のみ許す(挙動変更禁止)。
