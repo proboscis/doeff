@@ -209,15 +209,36 @@
 
 (deftest test-dispatch-skeleton-loud
   (defn check [config actor]
-    ;; 契約 method は「not implemented」で loud(黙った縮退をしない)
+    ;; 未実装の契約 method(await / report = C3-impl-4)は loud
+    ;; (黙った縮退をしない)
+    (for [method ["session.await_result" "session.report_result"]]
+      (setv response (json.loads (dispatch-line
+                                   (json.dumps {"id" 1 "method" method
+                                                "params" {}})
+                                   config actor)))
+      (assert (= (get response "ok") False))
+      (assert (in "not implemented (C3 skeleton)" (get response "error"))))
+    ;; 実装済み method の params 検証も loud(missing field)
     (setv response (json.loads (dispatch-line
                                  "{\"id\":1,\"method\":\"session.launch\",\"params\":{}}"
                                  config actor)))
     (assert (= (get response "ok") False))
-    (assert (in "not implemented (C3 skeleton)" (get response "error")))
+    (assert (in "missing field" (get response "error")))
+    ;; 存在しない session への get は result null(oracle parity)
+    (setv response (json.loads (dispatch-line
+                                 "{\"id\":2,\"method\":\"session.get\",\"params\":{\"session_id\":\"nope\"}}"
+                                 config actor)))
+    (assert (= (get response "ok") True))
+    (assert (is (get response "result") None))
+    ;; 存在しない session への cancel は require-session の文言(oracle :2257)
+    (setv response (json.loads (dispatch-line
+                                 "{\"id\":3,\"method\":\"session.cancel\",\"params\":{\"session_id\":\"nope\"}}"
+                                 config actor)))
+    (assert (= (get response "ok") False))
+    (assert (= (get response "error") "session is not registered: nope"))
     ;; 契約外 method は oracle と同文言
     (setv response (json.loads (dispatch-line
-                                 "{\"id\":1,\"method\":\"no.such\"}"
+                                 "{\"id\":4,\"method\":\"no.such\"}"
                                  config actor)))
     (assert (= (get response "ok") False))
     (assert (= (get response "error") "unknown method: no.such")))

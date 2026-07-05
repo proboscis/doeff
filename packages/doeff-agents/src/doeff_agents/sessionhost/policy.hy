@@ -55,14 +55,22 @@
          "declared result schema. Do only that — no other actions, no files."))
 
 ;; TerminalCause 凍結表(conformance README、category → retryable。契約所有)。
+;; category 文字列は **wire / 行に載る serde snake_case 値そのもの**
+;; (oracle TerminalCauseCategory は rename_all = "snake_case" —
+;; S3 が cause["category"] == "run_failed" を wire で assert する。README 表の
+;; CamelCase は enum variant のラベルであって wire 値ではない。C1 がラベルを
+;; 転記していた parity バグを C3 で是正)。
 (setv TERMINAL-CAUSE-RETRYABLE
-      {"RateLimited" True
-       "TimedOut" True
-       "Lost" True
-       "RunnerUnavailable" False
-       "ProtocolError" False
-       "RunFailed" False
-       "InteractivePromptBlocked" False})
+      {"rate_limited" True
+       "timed_out" True
+       "lost" True
+       "runner_unavailable" False
+       "protocol_error" False
+       "run_failed" False
+       "interactive_prompt_blocked" False
+       ;; host RPC(session.cancel / session.cleanup)所有 — oracle は
+       ;; retryable=false を明示で渡す(:1985-1991)。
+       "cancelled" False})
 
 (setv TERMINAL-CAUSE-CATEGORIES (frozenset (.keys TERMINAL-CAUSE-RETRYABLE)))
 
@@ -175,19 +183,19 @@
    :post [(: % TerminalCause)]}
   "reason 無し failed 限定の output 写像(oracle set_failed_output_cause_if_absent、
    ハザード 2: last_validation_error が立つ経路では走らない)。凍結表:
-   api-limit → RateLimited / tail30 に timeout・timed out・deadline → TimedOut /
-   authentication failed → RunnerUnavailable / invalid json・protocol error →
-   ProtocolError / その他 → RunFailed。"
+   api-limit → rate_limited / tail30 に timeout・timed out・deadline → timed_out /
+   authentication failed → runner_unavailable / invalid json・protocol error →
+   protocol_error / その他 → run_failed。"
   (setv lower (tail-lower output 30))
   (setv category
         (cond
-          obs.has-api-limit-marker "RateLimited"
+          obs.has-api-limit-marker "rate_limited"
           (or (in "timeout" lower) (in "timed out" lower) (in "deadline" lower))
-            "TimedOut"
-          (in "authentication failed" lower) "RunnerUnavailable"
+            "timed_out"
+          (in "authentication failed" lower) "runner_unavailable"
           (or (in "invalid json" lower) (in "protocol error" lower))
-            "ProtocolError"
-          True "RunFailed"))
+            "protocol_error"
+          True "run_failed"))
   (setv reason (tail-chars (or (.strip output) " ") 500))
   (make-cause category
               (if (.strip reason) reason "agent output indicated failure")
@@ -295,7 +303,7 @@
             (if (is-not row.last-validation-error None)
                 ;; 明示カテゴリ(solicitation 超過・stall)は reason が先に
                 ;; 書かれている — ここは既書き cause を尊重する保険写像のみ
-                (cause-if-absent row (make-cause "RunFailed"
+                (cause-if-absent row (make-cause "run_failed"
                                                  row.last-validation-error
                                                  observed-at))
                 ;; reason 無し failed のみ output 写像(ハザード 2)
@@ -339,7 +347,7 @@
                        :last-observed-at observed-at
                        :finished-at (or row.finished-at observed-at)))
     (setv row (cause-if-absent
-                row (make-cause "Lost"
+                row (make-cause "lost"
                                 f"no monitor observation for more than {stale-secs}s"
                                 observed-at)))
     (<- _ (session-store-upsert row))
@@ -360,7 +368,7 @@
                          :last-observed-at observed-at
                          :finished-at (or row.finished-at observed-at)
                          :last-validation-error reason))
-      (setv row (cause-if-absent row (make-cause "TimedOut" reason observed-at)))
+      (setv row (cause-if-absent row (make-cause "timed_out" reason observed-at)))
       (<- _ (session-store-upsert row))
       (<- _ (session-store-record-event row.session-id "session_launch_timeout" row))
       (return row)))
@@ -386,7 +394,7 @@
         (do
           (setv row (replace row :status "exited"))
           (setv row (cause-if-absent
-                      row (make-cause "Lost" "tmux session disappeared" observed-at)))
+                      row (make-cause "lost" "tmux session disappeared" observed-at)))
           (<- _ (session-store-upsert row))
           (<- _ (session-store-record-event row.session-id "session_exited" row))))
     (return row))
@@ -402,7 +410,7 @@
                          :last-observed-at observed-at
                          :finished-at (or row.finished-at observed-at)))
       (setv row (cause-if-absent
-                  row (make-cause "Lost"
+                  row (make-cause "lost"
                                   f"tmux pane returned to idle shell: {current-command}"
                                   observed-at)))
       (<- _ (session-store-upsert row))
@@ -547,7 +555,7 @@
                                        f" (after {row.result-solicitations-used} solicitation(s))")))
                           (setv row (replace row :last-validation-error reason))
                           (setv row (cause-if-absent
-                                      row (make-cause "RunFailed" reason
+                                      row (make-cause "run_failed" reason
                                                       observed-at))))))))))
       ;; contract 無し RunToCompletion: turn-end 信号を work-end として信頼。
       (when (and turn-ended (is-run-to-completion row.lifecycle))
@@ -611,7 +619,7 @@
       (setv observed-status "failed")
       (setv row (replace row :last-validation-error blocked-failure))
       (setv row (cause-if-absent
-                  row (make-cause "InteractivePromptBlocked" blocked-failure
+                  row (make-cause "interactive_prompt_blocked" blocked-failure
                                   observed-at)))))
 
   ;; --- 書き戻し + 終端 taxonomy + cleanup + event。
