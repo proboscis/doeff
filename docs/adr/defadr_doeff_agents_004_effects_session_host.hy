@@ -44,15 +44,39 @@
          [(counterexample "中断した program の continuation を直列化して再起動時に復元する")])
      (law conformance-before-cutover
        :statement "rust_retirement => hy_impl_passes_oracle_conformance including_trust_and_hooks_scars"
+       :facts
+         [(fact
+            "C0-2 交代ゲート前半は達成済み: conformance suite 31/31 green on Rust oracle(全 P green・S14 は X として expected-red 記録)+ cargo test -p doeff-agentd 94 passed / 0 failed。"
+            :evidence "packages/doeff-agents/conformance @ doeff 0b67cd5c(2026-07-05): pytest 31/31・cargo 94/0")]
        :counterexamples
          [(counterexample "conformance 無しで Hy 版に切り替え、solicitation/turn-end の hardening が退行する")])]
   :enforcement
-    ;; proposed(実装前): 実 enforcement(conformance suite・substrate-clean
-    ;; 検査)は実装と同一チェンジセットで足す。現段階は設計 ADR の存在ピン。
+    ;; C1(effect 語彙 + policy program)と同一チェンジセットで substrate-clean
+    ;; を実 enforcement 化。conformance suite ゲートは C0-2 で green 済み
+    ;; (conformance-before-cutover law の :facts 参照)。
     [(defsemgrep no-new-agent-physics-in-rust-agentd
        :languages ["generic"]
        :pattern "fn build_kimi_argv"
        :message "新 CLI の protocol 物理を Rust agentd に足すのは ADR-DOE-AGENTS-004 R2 違反。kind 追加は doeff-agents の defhandler モジュール + conformance。"
        :bad ["fn build_kimi_argv(params: &LaunchParams) -> Vec<String> {"]
-       :good ["; doeff-agents/impls/kimi.hy に defhandler を書く"])]
+       :good ["; doeff-agents/impls/kimi.hy に defhandler を書く"])
+     ;; R2 substrate-clean: impls/(C2 で作る per-kind defhandler 置き場の
+     ;; glob 先行予約)は substrate effect(SessionStore / Tmux / Clock /
+     ;; Proc)を yield するのみ — 生 IO(subprocess / sqlite3 / open /
+     ;; os.system)を直接呼ぶことを禁止する。installed rule は
+     ;; .semgrep.yaml の doeff-agents-substrate-clean-impls。
+     (defsemgrep substrate-clean
+       "doeff-agents-substrate-clean-impls"
+       [{"relative-path" "packages/doeff-agents/impls/kimi.hy"
+         "source" ";; per-kind impl が subprocess を直接叩く違反\n(import subprocess)\n(defn launch [argv] (subprocess.run argv))\n"}
+        {"relative-path" "packages/doeff-agents/impls/opencode.hy"
+         "source" ";; per-kind impl が sqlite3 を直接読む違反\n(import sqlite3 [connect])\n"}
+        {"relative-path" "packages/doeff-agents/impls/awskind.hy"
+         "source" ";; per-kind impl がファイル IO を直接行う違反\n(defn read-home [path] (with [f (open path)] (.read f)))\n"}
+        {"relative-path" "packages/doeff-agents/impls/geminikind.hy"
+         "source" ";; per-kind impl が shell を直接叩く違反\n(defn kick [cmd] (os.system cmd))\n"}]
+       [{"relative-path" "packages/doeff-agents/impls/cleankind.hy"
+         "source" ";; substrate-clean な per-kind impl: substrate effect を yield するのみ\n(defhandler cleankind-handler\n  (ClassifyPane [agent-type output]\n    (resume (classify-frame output)))\n  (DeliverMessage [pane-id text]\n    (<- _ (TmuxSendKeys :pane-id pane-id :text text :literal True :submit True))\n    (resume None)))\n"}
+        {"relative-path" "packages/doeff-agents/src/doeff_agents/session_store_sub.py"
+         "source" "# substrate handler 側(impls/ の外)は生 IO を持ってよい\nimport sqlite3\nimport subprocess\n"}])]
   :plans ["../agent-control-plane 側 master plan: docs/acp-2026-07-05-agentd-hy-session-host-plan.md"])
