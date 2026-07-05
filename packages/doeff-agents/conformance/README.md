@@ -119,7 +119,7 @@ snapshot と一致(stable)**」(main.rs:2832, 2932)なので、フレームは
 | S8b | failure マーカー + api-limit 文言の複合フレーム → failed 時の output 写像で cause **RateLimited retryable=true** が wire に載る(last_validation_error 無しの failed のみ output 写像が走る — main.rs:3895-3905) | ACP ADR 0042 下流 | (a) | P | M2 |
 | S9 | 帯域外 tmux kill: result 報告済→done(result-first)/ 未報告→exited・cause Lost retryable=true。ACP 側 200 discriminator は ACP EntityReadsSpec 所管(重複させない) | main.rs:3922-3951 | (c) | P | M2 |
 | S10 | 報告済 payload が agentd 再起動後も await_result で読める + 終端後の再報告 = already_reported:true / 未報告終端後の報告 = -32003(**両者とも daemon wire `session.report_result` でのみ観測可** — MCP relay 面では潰れる、ハザード 5) | COALESCE 規律(main.rs:2339) | (d)(e) | P | M2 |
-| S11 | agent_type=codex・CODEX_HOME 無し → **tmux 呼び出し前に** launch Err(tmp root に tmux 痕跡ゼロ)。claude・CLAUDE_CONFIG_DIR 無し → warning のみ(DOE-003 R3 staged) | DOE-003 R1/R3 | (g) | P | M1 |
+| S11 | agent_type=codex・CODEX_HOME 無し → **tmux 呼び出し前に** launch Err(tmp root に tmux 痕跡ゼロ・session 行無し・shim 未実行)。claude・CLAUDE_CONFIG_DIR 無し → warning のみ(DOE-003 R3 staged)。**caveat**: pre-launch trust writer は CODEX_HOME/CLAUDE_CONFIG_DIR を **daemon プロセス env** から fallback 参照(main.rs:1500/1553)するため、harness は `extra_env` で daemon にスクラッチ home を渡す(未指定だと実 `~/.codex`/`~/.claude` を汚す) | DOE-003 R1/R3 | (g) | P | M1 |
 | S12 | claude launch(M1)→ `<CLAUDE_CONFIG_DIR>/.claude.json` に canonicalized work_dir の `hasTrustDialogAccepted=true` が temp+rename で書かれる。pre-seed 済なら fake は即 REPL 描画 | 42fb28fa 傷跡 | — | P | M1 |
 | S13 | claude launch(M1)→ fake が受領した argv に `--settings {"disableAllHooks":true}` と `--mcp-config`(doeff_result stdio)を確認。codex launch → `-c mcp_servers.doeff_result.command=` を確認 | 49b3549b 傷跡 / 0035 配線 | — | P | M1 |
 | S14 | 解決済み実効 identity(CODEX_HOME / CLAUDE_CONFIG_DIR)が session 行に永続化される — **oracle expected-red**(agent_sessions に identity 列なし、走査で確認済) | DOE-004 契約拡張 | (b) | **X** | M1 |
@@ -127,10 +127,34 @@ snapshot と一致(stable)**」(main.rs:2832, 2932)なので、フレームは
 | S16 | 2 session 並走・片方を異常系フレームに → 他方が golden path を完走。tick は panic/error を捕捉して継続(run_worker_tick)。per-session 隔離の粒度は oracle では tick 単位 — Hy 実装は session 単位隔離を満たすこと(観測可能な assert は「他方の完走」で共通) | DOE-004 R3 | (f) | P | M2 |
 | S17 | in-process result endpoint ↔ host endpoint の意味論 parity(per-kind ゲートとの継ぎ目) | ACP plan 補遺 | — | X(C1 後) | — |
 | S18 | R9 fast-path: 4 ダイアログの dismissal keys を journal で受領確認(codex update→Down×2+Enter / bypass→Down,Enter / fullscreen→Down,Enter=Not now / managed→Enter)。**観測物理で契約修正**: codex-update/bypass/fullscreen は `wait_for_repl_idle` のみ(launch 経路 = M1)で発火し M2 では到達不能。managed のみ monitor loop でも発火(main.rs:3604)なので M2 で mid-session 検証。tty は canonical+ICRNL(Enter=`\r`→`\n`、Down+Enter は 1 行で到達 = `\x1b[B` を待つ)。managed の bare Enter は内容で判別不能なので `observed_active_at` set(managed 分岐でしか立たない)を主 assert に | 002 R9 | — | P | M1(update/bypass/fullscreen)/ M2(managed) |
-| S19 | launch-timeout watchdog: F-frozen のまま startup 完了マーカーを出さない → `DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS` 超過で failed・TimedOut true / stale-observation(300s)・zombie(idle shell)reaper → exited・Lost true | main.rs:3485-3587 | — | P | M2 |
+| S19 | launch-timeout watchdog: F-frozen のまま startup 完了マーカーを出さない → `DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS` 超過で failed・TimedOut true / zombie(`{"exit":0}` → idle shell)→ exited・Lost true / stale-observation → exited・Lost true。**stale-obs の black-box 形状**: tmux session は生かしたまま(2 枚目の window を足す)監視対象 pane を帯域外 kill → 以後 tick は `tmux_capture` で abort し `last_observed_at` が凍結、stale 分岐(tmux probe より前)が `DOEFF_AGENTD_STALE_OBSERVATION_SECS` 超過で reap。3 knob は全て env-only なので `extra_env` 経由 | main.rs:3485-3587 | — | P | M2 |
 
 X 項目を P として数えて「oracle green」を主張することは禁止。
 **C0-2 の完了 = 全 P green on Rust + 全 X の expected-red 記録**。
+
+### C0-1 残りシナリオの実装状況(2026-07-05・全 P green on Rust)
+
+S1-S5/S7-S10/S15 に続き、以下を Rust oracle に対して green 実装済み
+(X の S14 は expected-red として記録)。テストファイルは
+`test_<sid>_*.py`。
+
+| # | 状況 | テスト | 実装上の要点 / 観測物理 |
+|---|---|---|---|
+| S6 | ✅ green | test_s6_stall_judge.py | judge blocked → 1 tick 1 unblock、`prompt_unblock_attempts` が 3 に達して exhausted failed。judge inconclusive(空 verdict 表)変種も同じ bound(`session_prompt_judge_inconclusive`×3)。stall 台本は S5 と同じ盲窓同期(`await_monitor_ack`)+ ハザード 3 の >100 行 scroll |
+| S6b | ✅ green | test_s6b_judge_unavailable.py | judge 無効("")= stall 点で attempt 0 のまま即 typed failure(`no prompt judge configured`)。judge 不在パス = attempt 1 消費して `prompt judge failed`。turn-end 点の solicitation degrade は M2 バッチ全体(既定 judge 無効)が既に witness |
+| S11 | ✅ green | test_s11_auth_profile_gate.py | 上行の caveat 参照(daemon-env trust fallback) |
+| S12 | ✅ green | test_s12_claude_trust_preseed.py | `os.path.realpath(work_dir)` で canonical 化した project key に `hasTrustDialogAccepted=true`、temp+rename の残骸不在も確認 |
+| S13 | ✅ green | test_s13_argv_wiring.py | journaled argv から claude の `--settings {"disableAllHooks":true}`/`--mcp-config`(doeff_result stdio)/`--strict-mcp-config`、codex の `-c mcp_servers."doeff_result".command=`/`.args=[...]` を厳密一致。claude 変種は M1 golden path 完走も兼ねる |
+| S14 | 🟥 expected-red(X) | test_s14_identity_persistence_expected_red.py | `agent_sessions` に identity 列無し + 実効 CODEX_HOME が行の全値に非出現。Hy gate で positive assert に差し替え |
+| S16 | ✅ green | test_s16_concurrency_isolation.py | 1 daemon 2 session、B(F-failed)先行 → A(golden path)完走を両方 wire で確認 |
+| S18 | ✅ green | test_s18_dialog_fastpaths.py | 上の S18 行参照(M1/M2 分割・canonical tty・observed_active_at 主 assert) |
+| S19 | ✅ green | test_s19_watchdogs.py | 上の S19 行参照(3 reaper・env-only knob・stale の black-box 形状) |
+
+**harness 拡張(このバッチ)**: `AgentdHarness.extra_env`(daemon プロセス
+env: env-only watchdog knob + trust fallback home)と `Scenario.launch_m1`
+(PATH-shadowing。session_env の PATH prepend だけでは pane の login zsh が
+PATH を再構築して実 codex/claude を解決してしまう実測があるため、
+scenario 専用 `ZDOTDIR` の rc で shim dir を再 prepend して決定化)。
 
 ## TerminalCause 凍結表(checklist (a) — 契約所有、走査値で凍結)
 
