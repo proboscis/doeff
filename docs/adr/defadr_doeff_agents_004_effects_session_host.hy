@@ -23,7 +23,7 @@
      (interpretation
        "実装言語は Hy + doeff(ユーザー裁定)。monitor は常駐 continuation ではなく、session 行(store-as-truth)から毎 cycle 再導出する level-triggered reconciler program — agentd は ACP と同じ存在論のミニ control plane になり、新しい理論を要さない。")]
   :decision
-    [(rule R1 "effect 語彙が interface: BuildLaunch / PreLaunchSetup / ClassifyPane / DeliverMessage / WireResultChannel(+substrate: SessionStore / Tmux / Clock / Proc)。共有 policy program(monitor・bounded solicitation・judge・taxonomy・result 検証)は 1 本で、impl は書かない。")
+    [(rule R1 "effect 語彙が interface: BuildLaunch / PreLaunchSetup / ClassifyPane / DeliverMessage / WireResultChannel(+substrate: SessionStore / Tmux / Fs / Env / Clock / Proc)。共有 policy program(monitor・bounded solicitation・judge・taxonomy・result 検証)は 1 本で、impl は書かない。substrate の Fs / Env は C2 で追加 — per-kind trust 物理(S11/S12: claude .claude.json temp+rename・codex config.toml・process env fallback)は kind 所有だが、impls/ は substrate-clean で生 IO を持てないため、FS / env 読みも effect 境界を通る。")
      (rule R2 "kind 追加 = defhandler モジュール 1 個 + kind スキーマ + conformance green。同一モジュールが直接束縛(呼び手 process 内)と host 束縛(RPC 転送)の両方で動く — impl は substrate-clean(生 IO 禁止、substrate effect のみ yield)。")
      (rule R3 "agentd(Hy)は外部性の 4 点だけを所有する: socket・単一 writer actor(SQLite session 行)・毎 cycle の reconciler 起動・lease。RPC method は program に写像され、handler stack が解釈する。continuation は永続化しない — 真実は行のみ。")
      (rule R4 "conformance 先行: Rust agentd を oracle に black-box 契約 suite(mini_conformance 前例)+ 台本駆動の conformance-agent(偽 CLI、実クォータ非消費)を先に整備し、Hy 実装は parity 到達で交代。cargo 93 tests + 2026-07-05 の trust/hooks 傷跡を挙動として結晶化してから Rust を退役する。")
@@ -60,22 +60,26 @@
        :message "新 CLI の protocol 物理を Rust agentd に足すのは ADR-DOE-AGENTS-004 R2 違反。kind 追加は doeff-agents の defhandler モジュール + conformance。"
        :bad ["fn build_kimi_argv(params: &LaunchParams) -> Vec<String> {"]
        :good ["; doeff-agents/impls/kimi.hy に defhandler を書く"])
-     ;; R2 substrate-clean: impls/(C2 で作る per-kind defhandler 置き場の
-     ;; glob 先行予約)は substrate effect(SessionStore / Tmux / Clock /
-     ;; Proc)を yield するのみ — 生 IO(subprocess / sqlite3 / open /
-     ;; os.system)を直接呼ぶことを禁止する。installed rule は
-     ;; .semgrep.yaml の doeff-agents-substrate-clean-impls。
+     ;; R2 substrate-clean: impls/(per-kind defhandler 置き場)は substrate
+     ;; effect(SessionStore / Tmux / Fs / Env / Clock / Proc)を yield する
+     ;; のみ — 生 IO(subprocess / sqlite3 / open / os.system)を直接呼ぶことを
+     ;; 禁止する。glob は C1 で `packages/doeff-agents/impls/` を先行予約し、
+     ;; C2 実装時に import 可能なパッケージ内
+     ;; `packages/doeff-agents/src/doeff_agents/sessionhost/impls/` へ具体化
+     ;; (doeff-agents は hatchling src-layout — src 外のモジュールは wheel に
+     ;; 入らず import 不能)。installed rule は .semgrep.yaml の
+     ;; doeff-agents-substrate-clean-impls。
      (defsemgrep substrate-clean
        "doeff-agents-substrate-clean-impls"
-       [{"relative-path" "packages/doeff-agents/impls/kimi.hy"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/impls/kimi.hy"
          "source" ";; per-kind impl が subprocess を直接叩く違反\n(import subprocess)\n(defn launch [argv] (subprocess.run argv))\n"}
-        {"relative-path" "packages/doeff-agents/impls/opencode.hy"
+        {"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/impls/opencode.hy"
          "source" ";; per-kind impl が sqlite3 を直接読む違反\n(import sqlite3 [connect])\n"}
-        {"relative-path" "packages/doeff-agents/impls/awskind.hy"
+        {"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/impls/awskind.hy"
          "source" ";; per-kind impl がファイル IO を直接行う違反\n(defn read-home [path] (with [f (open path)] (.read f)))\n"}
-        {"relative-path" "packages/doeff-agents/impls/geminikind.hy"
+        {"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/impls/geminikind.hy"
          "source" ";; per-kind impl が shell を直接叩く違反\n(defn kick [cmd] (os.system cmd))\n"}]
-       [{"relative-path" "packages/doeff-agents/impls/cleankind.hy"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/impls/cleankind.hy"
          "source" ";; substrate-clean な per-kind impl: substrate effect を yield するのみ\n(defhandler cleankind-handler\n  (ClassifyPane [agent-type output]\n    (resume (classify-frame output)))\n  (DeliverMessage [pane-id text]\n    (<- _ (TmuxSendKeys :pane-id pane-id :text text :literal True :submit True))\n    (resume None)))\n"}
         {"relative-path" "packages/doeff-agents/src/doeff_agents/session_store_sub.py"
          "source" "# substrate handler 側(impls/ の外)は生 IO を持ってよい\nimport sqlite3\nimport subprocess\n"}])]

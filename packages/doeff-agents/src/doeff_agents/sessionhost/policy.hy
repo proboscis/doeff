@@ -425,9 +425,14 @@
     (return row))
 
   ;; --- managed-settings dialog fast-path(R9・S18: monitor loop で発火するのは
-  ;; managed のみ)。Enter で accept し、observed_active_at を立てる。
+  ;; managed のみ)。dismissal キー列は per-kind impl 所有(C2 で
+  ;; PaneObservation.dialog-dismiss-keys に移設 — policy はキー物理を知らない)。
+  ;; accept 後に observed_active_at を立てる。
   (when (= obs.dialog "managed")
-    (<- _ (tmux-send-keys row.pane-id "Enter" False False))
+    (assert obs.dialog-dismiss-keys
+            f"ClassifyPane returned dialog={obs.dialog !r} without dismiss keys")
+    (for [key obs.dialog-dismiss-keys]
+      (<- _ (tmux-send-keys row.pane-id key False False)))
     (setv row (replace row
                        :last-observed-at observed-at
                        :output-snippet (tail-chars output 500)
