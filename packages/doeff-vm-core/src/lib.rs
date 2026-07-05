@@ -49,7 +49,9 @@ mod vm_tests;
 #[cfg(feature = "python_bridge")]
 pub use arena::FiberArena;
 #[cfg(feature = "python_bridge")]
-pub use continuation::{Continuation, OwnedControlContinuation, PendingContinuation, PyK};
+pub use continuation::{
+    BoundaryKind, Continuation, OwnedControlContinuation, PendingContinuation, PyK,
+};
 #[cfg(feature = "python_bridge")]
 pub use do_ctrl::DoCtrl;
 #[cfg(feature = "python_bridge")]
