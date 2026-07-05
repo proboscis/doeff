@@ -98,23 +98,28 @@ def test_defadr_accepts_inline_deftest_and_defsemgrep(tmp_hy_dir):
 
 
 def test_defsemgrep_accepts_installed_rule_fixture_form(tmp_hy_dir):
+    # Exercises the installed-rule fixture form against a repo rule whose hit
+    # text is legal to embed here. The previous fixture inlined the banned
+    # WithHandler shim import, which tripped the raw-text architecture guard
+    # (tests/architecture/test_no_public_withhandler_shim.py) — that guard is
+    # deliberately blunt and must stay free of per-file exceptions.
     mod = _write_and_import(
         tmp_hy_dir,
         "test_installed_semgrep.hy",
         """\
         (require doeff-adr.macros [defsemgrep])
 
-        (defsemgrep test-installed-withhandler-rule
-          "doeff-no-public-withhandler-shim"
-          [{"relative-path" "packages/sample/bad.hy"
-            "source" "(import doeff [WithHandler])\\n"}]
-          [{"relative-path" "packages/sample/clean.hy"
-            "source" "(import doeff [run])\\n"}])
+        (defsemgrep test-installed-future-annotations-rule
+          "no-future-annotations"
+          [{"relative-path" "packages/sample/bad.py"
+            "source" "from __future__ import annotations\\n"}]
+          [{"relative-path" "packages/sample/clean.py"
+            "source" "import json\\n"}])
         """,
     )
 
-    assert callable(mod.test_test_installed_withhandler_rule_defsemgrep)
-    mod.test_test_installed_withhandler_rule_defsemgrep()
+    assert callable(mod.test_test_installed_future_annotations_rule_defsemgrep)
+    mod.test_test_installed_future_annotations_rule_defsemgrep()
 
 
 def test_accepted_defadr_without_enforcement_fails_contract(tmp_hy_dir):
