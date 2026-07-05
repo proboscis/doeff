@@ -346,9 +346,12 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
       (if (is (get snap "terminal_cause") None)
           None
           (json.dumps (get snap "terminal_cause") :separators #("," ":")))
+      ;; expected_result は oracle では serde Value(BTreeMap)= key ソート。
+      ;; terminal_cause は struct(宣言順)なのでソートしない。
       (if (is (get snap "expected_result") None)
           None
-          (json.dumps (get snap "expected_result") :separators #("," ":")))
+          (json.dumps (get snap "expected_result") :sort-keys True
+                      :separators #("," ":")))
       (int (get snap "retries_used"))
       (get snap "last_validation_error")
       (int (bool (get snap "awaiting_response")))
@@ -428,7 +431,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
 (deff db-record-command [conn session-id command-type status error payload]
   {:pre [(: conn sqlite3.Connection) (: session-id (| str None))
          (: command-type str) (: status str) (: error (| str None))
-         (: payload dict)]
+         ;; oracle record_command<T: Serialize>(:2415)は任意 JSON 値 —
+         ;; session.send は message 文字列を payload としてそのまま監査する。
+         (: payload (| dict str))]
    :post [(: % "None")]}
   (setv now (now-iso))
   (.execute conn
