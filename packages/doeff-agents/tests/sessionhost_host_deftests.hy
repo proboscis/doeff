@@ -1,0 +1,237 @@
+;;; 直接束縛 deftest: Hy session host の walking skeleton(DOE-004 C3)。
+;;;
+;;; host.hy の host 層物理 — CLI parse(oracle parse_args :600-693)・
+;;; default path(:718-742)・wire 封筒(:210-235 の skip_serializing_if
+;;; parity 込み)・dispatch(:1215-1301)・単一インスタンス拒否
+;;; (prepare_socket_path :1079-1092)— を daemon 起動なしで検証する。
+;;; serve loop 全体の検証は conformance suite(転送束縛)の領分。
+
+(require doeff-hy.macros [deftest])
+
+(import json)
+(import os)
+(import shutil)
+(import socket)
+(import tempfile)
+
+(import doeff_agents.sessionhost.host [
+  HostConfig
+  DEFAULT-PROMPT-JUDGE-CMD
+  parse-args
+  default-db-path
+  default-socket-path
+  ok-response
+  err-response
+  dispatch-line
+  prepare-socket-path])
+
+
+;; ---------------------------------------------------------------------------
+;; env 操作ヘルパ(save/restore — deftest は他 test と env を共有する)
+;; ---------------------------------------------------------------------------
+
+(defn with-env [overrides thunk]
+  "overrides(value=None は削除)を適用して thunk を呼び、必ず復元する。"
+  (setv saved {})
+  (for [key (.keys overrides)]
+    (setv (get saved key) (.get os.environ key)))
+  (try
+    (for [[key value] (.items overrides)]
+      (if (is value None)
+          (.pop os.environ key None)
+          (setv (get os.environ key) value)))
+    (thunk)
+    (finally
+      (for [[key value] (.items saved)]
+        (if (is value None)
+            (.pop os.environ key None)
+            (setv (get os.environ key) value))))))
+
+
+;; ---------------------------------------------------------------------------
+;; CLI parse(oracle parse_args parity)
+;; ---------------------------------------------------------------------------
+
+(deftest test-parse-args-defaults
+  (defn check []
+    (setv config (parse-args []))
+    (assert (= config.db-path (default-db-path)))
+    (assert (= config.socket-path (default-socket-path)))
+    (assert (= config.tmux-bin "tmux"))
+    (assert (= config.monitor-interval-seconds 1.0))
+    (assert (= config.max-running 10))
+    (assert (= config.result-solicitation-limit 2))
+    (assert (= config.prompt-stall-seconds 180))
+    (assert (= config.prompt-unblock-limit 3))
+    ;; 既定 judge は実 claude haiku(oracle :163-164)— 無効化は明示のみ
+    (assert (= config.prompt-judge-cmd DEFAULT-PROMPT-JUDGE-CMD)))
+  ;; env knob が漏れていると既定が変わるので、素の env で検証する
+  (with-env {"DOEFF_AGENTD_RESULT_SOLICITATIONS" None
+             "DOEFF_AGENTD_PROMPT_STALL_SECS" None
+             "DOEFF_AGENTD_PROMPT_UNBLOCK_ATTEMPTS" None
+             "DOEFF_AGENTD_PROMPT_JUDGE_CMD" None}
+            check))
+
+
+(deftest test-parse-args-harness-argv
+  ;; conformance harness が渡す正確な argv(harness.py start())
+  (setv config (parse-args ["--db" "/tmp/x.sqlite"
+                            "--socket" "/tmp/x.sock"
+                            "--monitor-interval-ms" "100"
+                            "--max-running" "4"
+                            "--prompt-judge-cmd" ""
+                            "serve"]))
+  (assert (= config.db-path "/tmp/x.sqlite"))
+  (assert (= config.socket-path "/tmp/x.sock"))
+  (assert (= config.monitor-interval-seconds 0.1))
+  (assert (= config.max-running 4))
+  ;; 空文字 = judge 無効(ハザード 1 — conformance が依存する意味論)
+  (assert (is config.prompt-judge-cmd None)))
+
+
+(deftest test-parse-args-rejects
+  (for [[args fragment]
+        [[["--frobnicate"] "unknown argument"]
+         [["--tmux"] "--tmux requires a value"]
+         [["--prompt-stall-secs" "0"] "must be positive"]
+         [["status"] "unknown argument"]]]
+    (setv raised None)
+    (try
+      (parse-args args)
+      (except [e ValueError] (setv raised e)))
+    (assert (is-not raised None) f"expected reject for {args}")
+    (assert (in fragment (str raised)))))
+
+
+(deftest test-parse-args-env-knobs
+  ;; 有効値は既定を置換、parse 不能値は黙って既定へ fallback(oracle env_u32)
+  (defn check-valid []
+    (setv config (parse-args []))
+    (assert (= config.result-solicitation-limit 5))
+    (assert (= config.prompt-stall-seconds 7))
+    (assert (= config.prompt-unblock-limit 9)))
+  (with-env {"DOEFF_AGENTD_RESULT_SOLICITATIONS" "5"
+             "DOEFF_AGENTD_PROMPT_STALL_SECS" "7"
+             "DOEFF_AGENTD_PROMPT_UNBLOCK_ATTEMPTS" "9"}
+            check-valid)
+  (defn check-invalid []
+    (setv config (parse-args []))
+    (assert (= config.result-solicitation-limit 2))
+    (assert (= config.prompt-stall-seconds 180)))
+  (with-env {"DOEFF_AGENTD_RESULT_SOLICITATIONS" "banana"
+             "DOEFF_AGENTD_PROMPT_STALL_SECS" "-3"
+             "DOEFF_AGENTD_PROMPT_UNBLOCK_ATTEMPTS" None}
+            check-invalid))
+
+
+(deftest test-default-socket-path
+  (defn check-runtime-dir []
+    (assert (= (default-socket-path) "/run/user/501/doeff/agentd.sock")))
+  (with-env {"XDG_RUNTIME_DIR" "/run/user/501"} check-runtime-dir)
+  (defn check-user-fallback []
+    (assert (= (default-socket-path) "/tmp/doeff-agentd-conftest.sock")))
+  (with-env {"XDG_RUNTIME_DIR" None "USER" "conftest" "LOGNAME" None}
+            check-user-fallback))
+
+
+;; ---------------------------------------------------------------------------
+;; wire 封筒(RpcResponse の skip_serializing_if parity)
+;; ---------------------------------------------------------------------------
+
+(deftest test-wire-envelope
+  ;; 成功: result は JSON null でも field として残る(session.get の不在)
+  (assert (= (ok-response 1 None) "{\"id\":1,\"ok\":true,\"result\":null}"))
+  (assert (= (ok-response "a" {"x" 1})
+             "{\"id\":\"a\",\"ok\":true,\"result\":{\"x\":1}}"))
+  ;; 失敗: error_code は None のとき field ごと省略、構造化エラーのみ載る
+  (assert (= (err-response None "boom" None)
+             "{\"id\":null,\"ok\":false,\"error\":\"boom\"}"))
+  (assert (= (err-response 2 "timeout" -32000)
+             "{\"id\":2,\"ok\":false,\"error\":\"timeout\",\"error_code\":-32000}")))
+
+
+;; ---------------------------------------------------------------------------
+;; dispatch(1 行 → 1 行)
+;; ---------------------------------------------------------------------------
+
+(defn skeleton-config []
+  (parse-args ["--db" "/tmp/host-deftest.sqlite"
+               "--socket" "/tmp/host-deftest.sock"
+               "--prompt-judge-cmd" ""
+               "serve"]))
+
+
+(deftest test-dispatch-invalid-json
+  (setv response (json.loads (dispatch-line "not json" (skeleton-config))))
+  (assert (is (get response "id") None))
+  (assert (= (get response "ok") False))
+  (assert (.startswith (get response "error") "invalid request:"))
+  (assert (not-in "error_code" response))
+  ;; id 欠落も invalid request(serde の必須 field parity)
+  (setv response (json.loads (dispatch-line "{\"method\":\"daemon.status\"}"
+                                            (skeleton-config))))
+  (assert (= (get response "ok") False))
+  (assert (in "invalid request" (get response "error"))))
+
+
+(deftest test-dispatch-daemon-status
+  (setv response (json.loads (dispatch-line
+                               "{\"id\":7,\"method\":\"daemon.status\"}"
+                               (skeleton-config))))
+  (assert (= (get response "id") 7))
+  (assert (= (get response "ok") True))
+  (setv result (get response "result"))
+  (assert (= (get result "state") "running"))
+  (assert (= (get result "pid") (os.getpid)))
+  (assert (= (get result "db_path") "/tmp/host-deftest.sqlite"))
+  (assert (= (get result "socket_path") "/tmp/host-deftest.sock"))
+  (assert (= (get result "max_running") 10))
+  (assert (in "active_sessions" result))
+  (assert (in "lease" result)))
+
+
+(deftest test-dispatch-skeleton-loud
+  ;; 契約 method は「not implemented」で loud(黙った縮退をしない)
+  (setv response (json.loads (dispatch-line
+                               "{\"id\":1,\"method\":\"session.launch\",\"params\":{}}"
+                               (skeleton-config))))
+  (assert (= (get response "ok") False))
+  (assert (in "not implemented (C3 skeleton)" (get response "error")))
+  ;; 契約外 method は oracle と同文言
+  (setv response (json.loads (dispatch-line
+                               "{\"id\":1,\"method\":\"no.such\"}"
+                               (skeleton-config))))
+  (assert (= (get response "ok") False))
+  (assert (= (get response "error") "unknown method: no.such")))
+
+
+;; ---------------------------------------------------------------------------
+;; 単一インスタンス拒否(実 socket、tmpdir)
+;; ---------------------------------------------------------------------------
+
+(deftest test-prepare-socket-path
+  (setv d (tempfile.mkdtemp))
+  (try
+    (setv path (os.path.join d "agentd.sock"))
+    ;; 不存在 → no-op
+    (assert (is None (prepare-socket-path path)))
+    ;; stale(誰も listen していない socket file)→ unlink
+    (setv stale (socket.socket socket.AF-UNIX socket.SOCK-STREAM))
+    (.bind stale path)
+    (.close stale)
+    (assert (os.path.exists path))
+    (assert (is None (prepare-socket-path path)))
+    (assert (not (os.path.exists path)))
+    ;; 生存(listen 中)→ 単一インスタンス拒否
+    (setv live (socket.socket socket.AF-UNIX socket.SOCK-STREAM))
+    (.bind live path)
+    (.listen live 1)
+    (setv raised None)
+    (try
+      (prepare-socket-path path)
+      (except [e RuntimeError] (setv raised e)))
+    (.close live)
+    (assert (is-not raised None))
+    (assert (in "already listening" (str raised)))
+    (finally
+      (shutil.rmtree d :ignore-errors True))))

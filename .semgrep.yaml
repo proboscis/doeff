@@ -25,6 +25,15 @@ rules:
     paths:
       include:
         - /packages/**
+      exclude:
+        # Prose documentation is never a launch site — the conformance README
+        # must be able to QUOTE the frozen judge default without tripping the
+        # raw-text scan. Code comments stay in scope (reword them instead);
+        # the two intended one-shot sites (the prompt-judge default in the
+        # Rust oracle and its Hy sessionhost port) carry inline nosemgrep
+        # with justification — the judge is an adjudicator subprocess, not
+        # an agent session launch.
+        - '**/*.md'
 
   - id: doeff-agents-no-anthropic-api-key-agent-env
     languages:

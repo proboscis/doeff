@@ -23,6 +23,7 @@ classifiers = [
 dependencies = [
     "doeff>=0.1.0",
     "doeff-time",
+    "doeff-hy",
     "click>=8.0.0",
     "rich>=13.0.0",
 ]
@@ -38,6 +39,7 @@ examples = ["doeff-preset"]
 
 [project.scripts]
 doeff-agents = "doeff_agents.cli:cli"
+doeff-sessionhost = "doeff_agents.sessionhost.hostmain:main"
 
 [project.urls]
 Homepage = "https://github.com/proboscis/doeff"
@@ -52,4 +54,5 @@ packages = ["src/doeff_agents"]
 
 [tool.uv.sources]
 doeff = { workspace = true }
+doeff-hy = { workspace = true }
 doeff-preset = { workspace = true }

@@ -160,8 +160,10 @@ const DEFAULT_PROMPT_UNBLOCK_LIMIT: u32 = 3;
 // survives word splitting.  disableAllHooks: the judge must not inherit
 // the operator's interactive hooks (measured: a Stop hook replaced the
 // judge verdict with "Operation stopped by hook").
+// The judge is an adjudicator subprocess, not an agent session launch — the
+// one-shot form IS the intended physics, hence the inline nosemgrep.
 const DEFAULT_PROMPT_JUDGE_CMD: &str =
-    "claude -p --settings '{\"disableAllHooks\":true}' --model haiku";
+    "claude -p --settings '{\"disableAllHooks\":true}' --model haiku"; // nosemgrep: doeff-agents-no-claude-print-mode
 
 /// Wall-clock cap on one judge invocation.  The judge runs inside the
 /// monitor tick, so a hung judge process must not stall observation of
@@ -2598,7 +2600,7 @@ fn confirm_literal_prompt_submitted(config: &Config, target: &str, message: &str
     // leaving that collapsed paste marker, or the visible tail of the pasted
     // prompt, sitting in the input box forever. Detect that state and resend
     // Enter a few times; this keeps the launch contract terminal-driven
-    // without falling back to `claude -p`/stdin.
+    // without falling back to one-shot print mode or stdin delivery.
     thread::sleep(Duration::from_millis(1200));
     for _ in 0..3 {
         let output = tmux_capture(config, target, 40)?;
