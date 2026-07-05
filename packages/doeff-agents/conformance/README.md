@@ -113,7 +113,8 @@ snapshot と一致(stable)**」(main.rs:2832, 2932)なので、フレームは
 | S6 | F-frozen + stall T 超過 → bounded judge(3)→ failed・reason `interactive-prompt-blocked:` 接頭・cause InteractivePromptBlocked false | 002 R5/R7 | (a) | P | M2 |
 | S6b | judge 無効(空文字)変種: stall 点 = 即 typed failure / turn-end 点 = solicitation へ degrade。judge error(不在パス)変種: stall 点 = typed failure | 002 R7 | — | P | M2 |
 | S7 | F-failed → failed・cause 写像どおり(`authentication failed`→RunnerUnavailable false / `timeout`→TimedOut true / その他→RunFailed false) | taxonomy 凍結 | (a) | P | M2 |
-| S8 | F-api-limit → blocked_api → cause RateLimited **retryable=true** が wire(get/await)に載る | ACP ADR 0042 下流 | (a) | P | M2 |
+| S8a | F-api-limit 単独 → status `blocked_api`(**非終端が正** — active_statuses に含まれ、await_result は -32000 timeout。level-triggered: pane が変われば回復し得る) | main.rs:1918/2912 | — | P | M2 |
+| S8b | failure マーカー + api-limit 文言の複合フレーム → failed 時の output 写像で cause **RateLimited retryable=true** が wire に載る(last_validation_error 無しの failed のみ output 写像が走る — main.rs:3895-3905) | ACP ADR 0042 下流 | (a) | P | M2 |
 | S9 | 帯域外 tmux kill: result 報告済→done(result-first)/ 未報告→exited・cause Lost retryable=true。ACP 側 200 discriminator は ACP EntityReadsSpec 所管(重複させない) | main.rs:3922-3951 | (c) | P | M2 |
 | S10 | 報告済 payload が agentd 再起動後も await_result で読める + 終端後の再報告 = already_reported:true / 未報告終端後の報告 = -32003 | COALESCE 規律(main.rs:2339) | (d)(e) | P | M2 |
 | S11 | agent_type=codex・CODEX_HOME 無し → **tmux 呼び出し前に** launch Err(tmp root に tmux 痕跡ゼロ)。claude・CLAUDE_CONFIG_DIR 無し → warning のみ(DOE-003 R3 staged) | DOE-003 R1/R3 | (g) | P | M1 |
@@ -166,6 +167,25 @@ oracle への変更は「意味論を変えない設定追加」のみ許す(挙
   `agentd_real_agent_result_retry_e2e_support.py` 系は本 suite に含めない)
 - Rust agentd の挙動変更(上記 knob 追加を除く)
 - per-kind ゲートの実装(C1 以降)
+
+## 発見済みハザード(suite 設計に焼き込み済み)
+
+1. **デフォルト judge は実 claude**: `DEFAULT_PROMPT_JUDGE_CMD = claude -p
+   --settings '{"disableAllHooks":true}' --model haiku`(main.rs:150)が
+   turn-end 判定点で solicitation より先に最大 3 回走る(:3722)。suite の
+   non-goal(実モデル禁止)に直撃するため、**harness は既定で
+   `--prompt-judge-cmd ""`(無効)を渡す**。judge シナリオ(S5/S6)だけが
+   scripted judge を明示配線する。Hy 実装の conformance 実行時も同じ既定を
+   維持すること。
+2. **terminal cause の output 写像は「reason 無し failed」限定**:
+   last_validation_error が立つ経路(solicitation 超過・stall)は明示
+   カテゴリが先に書かれ、output 写像(RateLimited/TimedOut/…)は
+   走らない(first-write-wins、main.rs:3895-3905)。S7/S8b のフレームは
+   これを前提に設計されている。
+3. **turn-end には stable tail が要る**: フレーム描画後に出力を続けると
+   turn-end に到達しない。idle glyph は capture 100 行内に残留するので、
+   stall 系(S6)は 100 行超の scroll で idle glyph を掃き出してから
+   凍結フレームを出す。
 
 ## 実装メモ(C0-1 残り = sonnet worker へ委譲する範囲)
 
