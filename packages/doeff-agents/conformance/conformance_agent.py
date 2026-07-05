@@ -17,8 +17,10 @@ Env contract:
 Steps (JSON objects, executed in order; see README for the frame vocabulary):
   {"render": "<frame-id>"} | {"render": {"literal": "..."}}
   {"await_keys": {"expect": "<substr>", "timeout_s": N}}
+  {"await_monitor_ack": {"timeout_s": N}}
   {"report_result": {"payload": {...}}} | {"report_result": "schema_invalid"}
   {"sleep_s": N}
+  {"scroll": N}
   {"record_env": ["NAME", ...]}
   {"exit": code}
 
@@ -115,6 +117,60 @@ def await_keys(expect: str, timeout_s: float) -> bool:
     return False
 
 
+def await_monitor_ack(timeout_s: float) -> bool:
+    """Hold the currently-rendered frame until the monitor has CONSUMED it:
+    poll `session.get` over the agentd socket until the session row exists
+    and its `awaiting_response` latch has cleared (main.rs:3629 clears it
+    only on an observed active marker / turn activity).
+
+    Why a wire poll and not a sleep: `session.launch` upserts the session
+    row only AFTER the prompt paste + Enter + confirm loop completes
+    (main.rs:1794-1830, up to ~5s with confirm re-sends), and the monitor
+    cannot observe a session that has no row. A frame rendered and retired
+    inside that blind window never existed as far as agentd is concerned,
+    so any sleep-based hold races the launch tail. This step is the
+    deterministic sync point; scripts retire an active frame (scroll +
+    next frame) only after it returns.
+    """
+    import socket as socket_mod
+
+    session_id = os.environ["DOEFF_RESULT_SESSION_ID"]
+    socket_path = os.environ["DOEFF_AGENTD_SOCKET"]
+    deadline = time.monotonic() + timeout_s
+    request_id = 0
+    while time.monotonic() < deadline:
+        request_id += 1
+        line = ""
+        try:
+            with socket_mod.socket(
+                socket_mod.AF_UNIX, socket_mod.SOCK_STREAM
+            ) as sock:
+                sock.settimeout(2.0)
+                sock.connect(socket_path)
+                request = {
+                    "id": request_id,
+                    "method": "session.get",
+                    "params": {"session_id": session_id},
+                }
+                sock.sendall((json.dumps(request) + "\n").encode("utf-8"))
+                with sock.makefile("r", encoding="utf-8") as reader:
+                    line = reader.readline()
+        except OSError:
+            # transient: daemon serves one connection at a time; a poll
+            # colliding with the monitor's tick just tries again — a real
+            # outage still fails loudly via the deadline below
+            pass
+        if line:
+            response = json.loads(line)
+            snapshot = response.get("result") if response.get("ok") else None
+            if snapshot and not snapshot.get("awaiting_response", False):
+                journal("monitor_ack", matched=True, status=snapshot.get("status"))
+                return True
+        time.sleep(0.1)
+    journal("monitor_ack", matched=False)
+    return False
+
+
 def report_result(spec: object) -> None:
     """Speak the report_result MCP tool over agentd's own binary
     (report-result-mcp subcommand), exactly like a real CLI's MCP client.
@@ -201,8 +257,19 @@ def main() -> None:
         elif "await_keys" in step:
             spec = step["await_keys"]
             await_keys(str(spec["expect"]), float(spec.get("timeout_s", 30)))
+        elif "await_monitor_ack" in step:
+            spec = step["await_monitor_ack"] or {}
+            await_monitor_ack(float(spec.get("timeout_s", 30)))
         elif "report_result" in step:
             report_result(step["report_result"])
+        elif "scroll" in step:
+            # Retire stale rows the way a real TUI redraw does: codex's
+            # "working (" status row is matched over the tail-30 window
+            # (main.rs:3033) and our pane is append-only, so an old active
+            # marker would otherwise pin the session active forever and
+            # suppress turn-end.
+            print("\n" * int(step["scroll"]), end="", flush=True)
+            journal("scrolled", lines=step["scroll"])
         elif "sleep_s" in step:
             time.sleep(float(step["sleep_s"]))
         elif "record_env" in step:
