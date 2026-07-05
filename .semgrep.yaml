@@ -156,10 +156,11 @@ rules:
     severity: ERROR
     message: >
       ADR-DOE-AGENTS-004 R2 (substrate-clean): per-kind impl modules under
-      packages/doeff-agents/impls/ must only yield substrate effects
-      (SessionStore / Tmux / Clock / Proc). Raw IO — subprocess, sqlite3,
-      open(), os.system — is forbidden here; it belongs to the substrate
-      handlers that interpret those effects.
+      packages/doeff-agents/src/doeff_agents/sessionhost/impls/ must only
+      yield substrate effects (SessionStore / Tmux / Fs / Env / Clock /
+      Proc). Raw IO — subprocess, sqlite3, open(), os.system — is forbidden
+      here; it belongs to the substrate handlers that interpret those
+      effects.
     pattern-either:
       - pattern-regex: '\(\s*import\s[^)]*\b(subprocess|sqlite3)\b'
       - pattern-regex: '(?m)^\s*(import|from)\s+(subprocess|sqlite3)\b'
@@ -167,7 +168,7 @@ rules:
       - pattern-regex: '(?<![\w.])open\s*\('
     paths:
       include:
-        - /packages/doeff-agents/impls/**
+        - /packages/doeff-agents/src/doeff_agents/sessionhost/impls/**
 
   - id: no-future-annotations
     languages: [python]
