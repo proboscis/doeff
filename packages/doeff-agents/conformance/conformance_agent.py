@@ -185,6 +185,15 @@ def park() -> None:
 
 def main() -> None:
     journal("started", argv=sys.argv, cwd=os.getcwd())
+    # Bottom-anchor the terminal before any frame: real CLIs render onto an
+    # already-scrolled pane, so their text sits in the BOTTOM rows. tmux
+    # capture-pane returns the full visible pane including blank rows below
+    # the cursor, and the failure classifier only reads the last 10 lines
+    # (main.rs:2956 output_tail_lower(output, 10)) — printing from the top
+    # of a fresh pane leaves those tail rows blank and silently disables
+    # tail-limited markers (observed: S8b classified blocked_api because
+    # "fatal error" never entered the tail-10 window).
+    print("\n" * 30, end="", flush=True)
     steps = json.loads(SCRIPT.read_text(encoding="utf-8"))
     for step in steps:
         if "render" in step:
