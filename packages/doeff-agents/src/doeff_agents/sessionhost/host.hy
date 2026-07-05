@@ -581,8 +581,11 @@
                      {"session_id" session-id "reason" reason})
     (raise (RpcHostError RPC-ERR-RESULT-REJECTED
              f"reported result does not satisfy its schema: {reason}")))
-  ;; byte-faithful 永続化(serde to_string と同じ compact・非 ASCII 素通し)。
-  (setv payload-json (json.dumps payload :separators #("," ":")
+  ;; byte-faithful 永続化 = serde to_string parity: compact・非 ASCII 素通し・
+  ;; **key はソート**(serde_json::Value の Map は BTreeMap — oracle は挿入順
+  ;; でなく辞書順で書く。S17 の raw column 突き合わせが検出した実測物理)。
+  (setv payload-json (json.dumps payload :sort-keys True
+                                 :separators #("," ":")
                                  :ensure-ascii False))
   (setv affected (db-report-result-guarded-update conn session-id payload-json))
   (when (= affected 0)
