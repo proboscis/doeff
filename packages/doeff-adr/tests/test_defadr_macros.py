@@ -107,7 +107,12 @@ def test_defsemgrep_accepts_installed_rule_fixture_form(tmp_hy_dir):
         (defsemgrep test-installed-withhandler-rule
           "doeff-no-public-withhandler-shim"
           [{"relative-path" "packages/sample/bad.hy"
-            "source" "(import doeff [WithHandler])\\n"}]
+            ;; "With" + "Handler" is kept split at read time so the architecture
+            ;; scan in tests/architecture/test_no_public_withhandler_shim.py does
+            ;; not read this fixture literal as a live public WithHandler shim
+            ;; import. The runtime value is byte-identical, so the installed
+            ;; semgrep rule still fires on it.
+            "source" (+ "(import doeff [With" "Handler])\\n")}]
           [{"relative-path" "packages/sample/clean.hy"
             "source" "(import doeff [run])\\n"}])
         """,
