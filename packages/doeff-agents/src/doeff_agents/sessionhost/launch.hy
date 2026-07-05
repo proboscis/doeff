@@ -25,6 +25,7 @@
   pre-launch-setup
   wire-result-channel
   session-store-get
+  session-store-list-active
   session-store-upsert
   session-store-record-event
   tmux-has-session
@@ -171,6 +172,16 @@
   (<- existing (session-store-get session-id))
   (when (is-not existing None)
     (raise (RuntimeError f"session is already registered: {session-id}")))
+  ;; max_running admission(oracle :1679-1685 — 重複 check の後・tmux check の
+  ;; 前)。host が params["max_running"] に運用上限を注入する。直接束縛では
+  ;; 省略 = 無制限(config を持たない)。
+  (setv max-running (.get params "max_running"))
+  (when (is-not max-running None)
+    (<- active-rows (session-store-list-active))
+    (setv active-count (len active-rows))
+    (when (>= active-count max-running)
+      (raise (RuntimeError
+               f"max running agent sessions reached: {active-count}/{max-running}"))))
   (<- tmux-exists (tmux-has-session session-name))
   (when tmux-exists
     (raise (RuntimeError f"tmux session already exists: {session-name}")))
@@ -198,7 +209,10 @@
   (setv identity None)
   (when (is-not prelaunch-kind None)
     (<- resolved (pre-launch-setup prelaunch-kind params))
-    (setv identity resolved))
+    ;; warnings は運用ログ向けの副産物(host が stderr へ出す)— 永続する
+    ;; identity(S14 の effective_identity 列)は auth home の解決結果のみ。
+    (setv identity (dict resolved))
+    (.pop identity "warnings" None))
 
   ;; --- result channel 配線 + 起動 command(oracle resolve_launch_command:
   ;; override は verbatim、それ以外は per-kind argv builder)。

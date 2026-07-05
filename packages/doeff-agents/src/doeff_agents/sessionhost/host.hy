@@ -5,15 +5,16 @@
 ;;; CLI(parse_args :600-693)・default path(:718-742)・単一インスタンス
 ;;; 拒否(prepare_socket_path :1079-1092)・serve/dispatch(:1159-1301)。
 ;;;
-;;; C3 実行設計(ACP plan)の実装順 1 = walking skeleton: daemon.status と
-;;; wire 封筒のみ本実装し、契約上存在する他 method は「not implemented
-;;; (C3 skeleton)」で loud に落とす — conformance suite を
-;;; CONFORMANCE_AGENTD_BIN でこの host に向けると全 S 行が正しく red に
-;;; なることを確認するための骨格。DB / lease / monitor は C3-impl-2 以降。
+;;; C3 実行設計(ACP plan)の実装順 3 まで: wire 封筒 + store-of-record
+;;; (store.hy の StoreActor / lease / latch clear)+ RPC→program 写像
+;;; (launch-session / monitor-cycle / capture / send / cancel / cleanup)+
+;;; monitor / heartbeat thread。session.await_result / session.report_result
+;;; は C3-impl-4 — それまで「not implemented (C3 skeleton)」で loud に落とす
+;;; (黙った縮退をしない)。
 
-(require doeff-hy.macros [deff])
+(require doeff-hy.macros [deff defk <-])
 
-(import dataclasses [dataclass])
+(import dataclasses [dataclass replace])
 (import json)
 (import os)
 (import socket)
@@ -21,6 +22,30 @@
 (import threading)
 (import time)
 
+(import doeff [run])
+
+(import doeff_agents.sessionhost.effects [
+  MonitorKnobs
+  SessionRow
+  clock-now
+  session-store-get
+  session-store-record-event
+  session-store-upsert
+  tmux-capture
+  tmux-has-session
+  tmux-kill-session
+  tmux-send-keys])
+(import doeff_agents.sessionhost.impls.claude_code [claude-code-impl])
+(import doeff_agents.sessionhost.impls.codex [codex-impl])
+(import doeff_agents.sessionhost.launch [launch-session])
+(import doeff_agents.sessionhost.policy [
+  cause-if-absent
+  is-terminal-status
+  iso-format
+  make-cause
+  monitor-cycle
+  tail-chars])
+(import doeff_agents.sessionhost.substrate [real-substrate])
 (import doeff_agents.sessionhost.store [
   LEASE-TTL-SECONDS
   StoreActor
@@ -28,7 +53,12 @@
   db-clear-awaiting-latches
   db-count-active
   db-heartbeat-once
-  db-read-lease])
+  db-read-lease
+  db-record-command
+  db-session-get
+  db-session-list
+  snapshot-to-wire-dict
+  sqlite-session-store])
 
 
 ;; ---------------------------------------------------------------------------
@@ -37,6 +67,8 @@
 
 (setv DEFAULT-MONITOR-INTERVAL-MS 1000)
 (setv DEFAULT-MAX-RUNNING-SESSIONS 10)
+(setv LAUNCH-TIMEOUT-SECONDS 60)
+(setv STALE-OBSERVATION-THRESHOLD-SECONDS 300)
 (setv DEFAULT-RESULT-SOLICITATION-LIMIT 2)
 (setv DEFAULT-PROMPT-STALL-SECONDS 180)
 (setv DEFAULT-PROMPT-UNBLOCK-LIMIT 3)
@@ -288,14 +320,197 @@
   (json.dumps payload :separators #("," ":")))
 
 
+;; ---------------------------------------------------------------------------
+;; RPC→program 写像(plan「C3 実行設計」の host 骨格)
+;;
+;; 各 RPC は C1/C2 の共有 program(launch-session / monitor-cycle)か、下の
+;; 小 program(capture / send / cancel / cleanup)を handler stack
+;; (sqlite-session-store ∘ real-substrate ∘ codex-impl ∘ claude-code-impl)
+;; で実行する。純 read(get / list / daemon.status)は program 化せず store
+;; 直読。record_command(監査)は host 所有 — program は event を書く。
+;; oracle は record_command → upsert → event の順だが、Hy は program 完了後に
+;; command を記録する(commands 表は wire 契約外の監査ログで、conformance が
+;; assert するのは events 表のみ)。
+;; ---------------------------------------------------------------------------
+
+(deff host-binary-path []
+  {:pre [True]
+   :post [(: % str)]}
+  "result channel に配線する自分自身の実行 path(oracle agentd_binary_path
+   :747-752 = current_exe。console script `doeff-sessionhost` の絶対 path)。"
+  (setv candidate (get sys.argv 0))
+  (if candidate (os.path.abspath candidate) "doeff-sessionhost"))
+
+(defn run-hosted [config actor program]
+  "handler stack で program を実行する(RPC 写像と monitor tick の共通経路)。
+   substrate(生 IO)と store(SQLite actor)が外側、per-kind impl が内側。"
+  (setv result-command (host-binary-path))
+  (run ((sqlite-session-store actor)
+        ((real-substrate config.tmux-bin)
+         ((codex-impl result-command)
+          ((claude-code-impl result-command)
+           program))))))
+
+
+(defk require-session-row [session-id]
+  {:pre [(: session-id str)]
+   :post [(: % SessionRow)]}
+  "session 行の必須読み(oracle require_session :2257 — 文言 verbatim)。"
+  (<- row (session-store-get session-id))
+  (when (is row None)
+    (raise (RuntimeError f"session is not registered: {session-id}")))
+  row)
+
+(defk capture-program [session-id lines]
+  {:pre [(: session-id str) (: lines int) (> lines 0)]
+   :post [(: % str)]}
+  "session.capture(oracle session_capture :1943-1953): live capture +
+   snippet(tail 500)/ last_observed_at の書き戻し + session_captured。"
+  (<- row (require-session-row session-id))
+  (<- text (tmux-capture row.pane-id lines))
+  (<- now (clock-now))
+  (setv updated (replace row
+                         :output-snippet (tail-chars (or text " ") 500)
+                         :last-observed-at (iso-format now)))
+  (<- _ (session-store-upsert updated))
+  (<- _ (session-store-record-event session-id "session_captured" updated))
+  text)
+
+(defk send-program [session-id message literal submit]
+  {:pre [(: session-id str) (: message str) (: literal bool) (: submit bool)]
+   :post [(: % SessionRow)]}
+  "session.send(oracle session_send :1955-1974): live pane へのキー配送 +
+   session_sent event。"
+  (<- row (require-session-row session-id))
+  (<- _ (tmux-send-keys row.pane-id message literal submit))
+  (<- _ (session-store-record-event session-id "session_sent" row))
+  row)
+
+(defk cancel-program [session-id]
+  {:pre [(: session-id str)]
+   :post [(: % SessionRow)]}
+  "session.cancel(oracle session_cancel :1976-2003): tmux kill(生存時)→
+   stopped + cause cancelled(first-write-wins)+ session_cancelled。"
+  (<- row (require-session-row session-id))
+  (<- exists (tmux-has-session row.session-name))
+  (when exists
+    (<- _ (tmux-kill-session row.session-name)))
+  (<- now (clock-now))
+  (setv now-str (iso-format now))
+  (setv updated (replace row :status "stopped"
+                             :finished-at now-str
+                             :last-observed-at now-str))
+  (setv updated (cause-if-absent
+                  updated (make-cause "cancelled" "session.cancel requested"
+                                      now-str)))
+  (<- _ (session-store-upsert updated))
+  (<- _ (session-store-record-event session-id "session_cancelled" updated))
+  updated)
+
+(defk cleanup-program [session-id]
+  {:pre [(: session-id str)]
+   :post [(: % SessionRow)]}
+  "session.cleanup(oracle session_cleanup :2005-2039): tmux kill(生存時)、
+   非終端なら stopped + cause cancelled、finished_at は既存優先、cleaned_at
+   刻印 + session_cleaned。"
+  (<- row (require-session-row session-id))
+  (<- exists (tmux-has-session row.session-name))
+  (when exists
+    (<- _ (tmux-kill-session row.session-name)))
+  (<- now (clock-now))
+  (setv now-str (iso-format now))
+  (setv updated row)
+  (when (not (is-terminal-status updated.status))
+    (setv updated (replace updated :status "stopped"))
+    (setv updated (cause-if-absent
+                    updated
+                    (make-cause "cancelled"
+                                "session.cleanup stopped a non-terminal session"
+                                now-str))))
+  (when (is updated.finished-at None)
+    (setv updated (replace updated :finished-at now-str)))
+  (setv updated (replace updated :cleaned-at now-str
+                                 :last-observed-at now-str))
+  (<- _ (session-store-upsert updated))
+  (<- _ (session-store-record-event session-id "session_cleaned" updated))
+  updated)
+
+
+;; ---------------------------------------------------------------------------
+;; wire params(serde 既定値の再現)
+;; ---------------------------------------------------------------------------
+
+(deff params-object [params method]
+  {:pre [(: params JsonValue) (: method str)]
+   :post [(: % dict)]}
+  "params は object 必須(serde: from_value(Null) は struct へ deserialize
+   できない — 全 field optional でも同じ)。"
+  (when (not (isinstance params dict))
+    (raise (RuntimeError f"invalid params for {method}: expected an object")))
+  params)
+
+(deff required-str-param [params key method]
+  {:pre [(: params dict) (: key str) (: method str)]
+   :post [(: % str)]}
+  (setv value (.get params key))
+  (when (not (isinstance value str))
+    (raise (RuntimeError f"invalid params for {method}: missing field `{key}`")))
+  value)
+
+(deff build-launch-program-params [params config]
+  {:pre [(: params dict) (: config HostConfig)]
+   :post [(: % dict)]}
+  "wire LaunchParams(oracle :429-463)→ launch program params。serde 既定値
+   (mcp_servers {} / skip_trust_setup False / lifecycle run_to_completion /
+   session_env {})を再現し、host 所有値(socket_path / max_running)を注入。"
+  (for [key ["session_id" "session_name" "agent_type" "work_dir"]]
+    (when (not (isinstance (.get params key) str))
+      (raise (RuntimeError
+               f"invalid params for session.launch: missing field `{key}`"))))
+  {"session_id" (get params "session_id")
+   "session_name" (get params "session_name")
+   "agent_type" (get params "agent_type")
+   "work_dir" (get params "work_dir")
+   "command" (.get params "command")
+   "prompt" (.get params "prompt")
+   "model" (.get params "model")
+   "effort" (.get params "effort")
+   "mcp_servers" (or (.get params "mcp_servers") {})
+   "skip_trust_setup" (bool (.get params "skip_trust_setup" False))
+   "lifecycle" (or (.get params "lifecycle") "run_to_completion")
+   "session_env" (or (.get params "session_env") {})
+   "expected_result" (.get params "expected_result")
+   "socket_path" config.socket-path
+   "max_running" config.max-running})
+
+
+(deff wire-snapshot [actor session-id]
+  {:pre [(: actor StoreActor) (: session-id str)]
+   :post [(: % dict)]}
+  "行の fresh read → wire 形(program 完了後の応答用)。"
+  (setv snap (.submit actor (fn [conn] (db-session-get conn session-id))))
+  (when (is snap None)
+    (raise (RuntimeError f"session is not registered: {session-id}")))
+  (snapshot-to-wire-dict snap))
+
+(deff record-command [actor session-id command-type payload]
+  {:pre [(: actor StoreActor) (: session-id str) (: command-type str)
+         (: payload (| dict str))]
+   :post [(: % "None")]}
+  (.submit actor
+           (fn [conn]
+             (db-record-command conn session-id command-type "completed"
+                                None payload)))
+  None)
+
+
 (deff dispatch-method [method params config actor]
   {:pre [(: method str) (: params JsonValue) (: config HostConfig)
          (: actor StoreActor)]
    :post [(: % JsonValue)]}
-  "dispatch_request_result(:1247-1301)。daemon.status は DB 実測
-   (active_sessions は active status の行数、lease は lease 行)。残りの
-   契約 method は not-implemented で loud、契約外は oracle と同文言の
-   unknown method。"
+  "dispatch_request_result(:1247-1301)。session.await_result /
+   session.report_result は C3-impl-4 — それまで not-implemented で loud。
+   契約外 method は oracle と同文言の unknown method。"
   (when (= method "daemon.status")
     (return {"state" "running"
              "pid" (os.getpid)
@@ -304,6 +519,75 @@
              "max_running" config.max-running
              "active_sessions" (.submit actor db-count-active)
              "lease" (.submit actor db-read-lease)}))
+
+  (when (= method "session.launch")
+    (setv wire-params (params-object params "session.launch"))
+    (setv program-params (build-launch-program-params wire-params config))
+    ;; DOE-003 R3 staged enforcement の warning(oracle :1721-1730 verbatim —
+    ;; 運用ログは host の外部性。S11b が daemon log でこの文言を assert する)。
+    (when (and (= (get program-params "agent_type") "claude")
+               (not-in "CLAUDE_CONFIG_DIR" (get program-params "session_env")))
+      (setv sid-for-warning (get program-params "session_id"))
+      (print (+ "doeff-agentd WARNING: claude session "
+                f"{sid-for-warning} launched without an explicit "
+                "CLAUDE_CONFIG_DIR auth profile (ADR-DOE-AGENTS-003 R3: "
+                "enforcement follows once callers migrate)")
+             :file sys.stderr)
+      (.flush sys.stderr))
+    (setv row (run-hosted config actor (launch-session program-params)))
+    (setv sid row.session-id)
+    (setv wire (wire-snapshot actor sid))
+    (record-command actor sid "session.launch" wire)
+    (return wire))
+
+  (when (= method "session.get")
+    (setv p (params-object params "session.get"))
+    (setv sid (required-str-param p "session_id" "session.get"))
+    (setv snap (.submit actor (fn [conn] (db-session-get conn sid))))
+    (return (if (is snap None) None (snapshot-to-wire-dict snap))))
+
+  (when (= method "session.list")
+    (setv p (params-object params "session.list"))
+    (setv filters {"status" (.get p "status")
+                   "agent_type" (.get p "agent_type")
+                   "backend_kind" (.get p "backend_kind")
+                   "lifecycle" (.get p "lifecycle")})
+    (setv snaps (.submit actor (fn [conn] (db-session-list conn filters))))
+    (return (lfor s snaps (snapshot-to-wire-dict s))))
+
+  (when (= method "session.capture")
+    (setv p (params-object params "session.capture"))
+    (setv sid (required-str-param p "session_id" "session.capture"))
+    (setv lines (int (.get p "lines" 100)))
+    (setv text (run-hosted config actor (capture-program sid lines)))
+    (return {"text" text}))
+
+  (when (= method "session.send")
+    (setv p (params-object params "session.send"))
+    (setv sid (required-str-param p "session_id" "session.send"))
+    (setv message (required-str-param p "message" "session.send"))
+    (setv enter (bool (.get p "enter" True)))
+    (setv literal (bool (.get p "literal" True)))
+    (run-hosted config actor (send-program sid message literal enter))
+    (record-command actor sid "session.send" message)
+    (return {"sent" True}))
+
+  (when (= method "session.cancel")
+    (setv p (params-object params "session.cancel"))
+    (setv sid (required-str-param p "session_id" "session.cancel"))
+    (run-hosted config actor (cancel-program sid))
+    (setv wire (wire-snapshot actor sid))
+    (record-command actor sid "session.cancel" wire)
+    (return wire))
+
+  (when (= method "session.cleanup")
+    (setv p (params-object params "session.cleanup"))
+    (setv sid (required-str-param p "session_id" "session.cleanup"))
+    (run-hosted config actor (cleanup-program sid))
+    (setv wire (wire-snapshot actor sid))
+    (record-command actor sid "session.cleanup" wire)
+    (return wire))
+
   (if (in method CONTRACT-METHODS)
       (raise (RuntimeError f"not implemented (C3 skeleton): {method}"))
       (raise (RuntimeError f"unknown method: {method}"))))
@@ -402,15 +686,48 @@
     (time.sleep interval)))
 
 
+(deff build-monitor-knobs [config]
+  {:pre [(: config HostConfig)]
+   :post [(: % MonitorKnobs)]}
+  "MonitorKnobs の組み立て。stale / launch timeout は oracle と同じく
+   **use-site で env を読む**(:47-50 / :79-85 — conformance が rebuild 無しで
+   watchdog を秒単位へ圧縮する調整口。tick 毎に評価される)。"
+  (MonitorKnobs
+    :prompt-stall-seconds config.prompt-stall-seconds
+    :result-solicitation-limit config.result-solicitation-limit
+    :prompt-unblock-limit config.prompt-unblock-limit
+    :launch-timeout-seconds (or (env-positive-i64 "DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS")
+                                LAUNCH-TIMEOUT-SECONDS)
+    :stale-observation-seconds (or (env-positive-i64 "DOEFF_AGENTD_STALE_OBSERVATION_SECS")
+                                   STALE-OBSERVATION-THRESHOLD-SECONDS)
+    :judge-cmd config.prompt-judge-cmd))
+
+
+(defn monitor-loop [config actor]
+  "monitor loop(oracle monitor_loop :3447-3452)。tick = monitor-cycle
+   program の実行 — per-session 隔離は program 所有(policy.hy:622、oracle の
+   tick 隔離より強い)。run-worker-tick は backstop。"
+  (while True
+    (run-worker-tick
+      "monitor"
+      (fn [] (run-hosted config actor (monitor-cycle (build-monitor-knobs config)))))
+    (time.sleep config.monitor-interval-seconds)))
+
+
 (deff serve [config actor]
   {:pre [(: config HostConfig) (: actor StoreActor)]
    :post [(: % "戻らない(accept loop)")]}
-  "bind → heartbeat thread → accept loop(connection 毎 thread)。
-   monitor thread は C3-impl-3 でここに生える(oracle serve :1159-1180)。"
+  "bind → monitor / heartbeat thread → accept loop(connection 毎 thread、
+   oracle serve :1159-1180)。"
   (prepare-socket-path config.socket-path)
   (setv listener (socket.socket socket.AF-UNIX socket.SOCK-STREAM))
   (.bind listener config.socket-path)
   (.listen listener 64)
+  (setv monitor (threading.Thread :target monitor-loop
+                                  :args #(config actor)
+                                  :daemon True
+                                  :name "sessionhost-monitor"))
+  (.start monitor)
   (setv heartbeat (threading.Thread :target heartbeat-loop
                                     :args #(actor (os.getpid))
                                     :daemon True

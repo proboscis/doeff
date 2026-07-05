@@ -309,13 +309,13 @@
 
 (deftest test-classification-failure-beats-api-limit
   ;; S8b: failure マーカー + api-limit 文言の複合フレーム → failed、
-  ;; output 写像で cause RateLimited retryable=true
+  ;; output 写像で cause rate_limited retryable=true
   (setv world (FakeWorld))
   (seed world (make-row world) :frame (+ F-FAILED "\n" F-API-LIMIT))
   (<- outcomes (run-cycle world (MonitorKnobs)))
   (setv row (get world.rows "s1"))
   (assert (= row.status "failed"))
-  (assert (= row.terminal-cause.category "RateLimited"))
+  (assert (= row.terminal-cause.category "rate_limited"))
   (assert (= row.terminal-cause.retryable True))
   (assert (in #("s1" "session_failed") world.events)))
 
@@ -412,7 +412,7 @@
 
 
 (deftest test-solicitation-exhaustion-runfailed
-  ;; S3: budget(2)超過 → failed・reason 文言 verbatim・cause RunFailed false
+  ;; S3: budget(2)超過 → failed・reason 文言 verbatim・cause run_failed false
   (setv world (FakeWorld))
   (seed world (make-row world
                         :result-solicitations-used 2
@@ -423,7 +423,7 @@
   (assert (= row.status "failed"))
   (assert (= row.last-validation-error
              "session reached turn-end without reporting a result via report_result (after 2 solicitation(s))"))
-  (assert (= row.terminal-cause.category "RunFailed"))
+  (assert (= row.terminal-cause.category "run_failed"))
   (assert (= row.terminal-cause.retryable False))
   (assert (in "doeff-s1" world.killed))
   (assert (in #("s1" "session_failed") world.events)))
@@ -521,7 +521,7 @@
   (assert (= row.status "failed"))
   (assert (= row.last-validation-error
              "interactive-prompt-blocked: pane unchanged for over 180s and 3 unblock attempt(s) exhausted"))
-  (assert (= row.terminal-cause.category "InteractivePromptBlocked"))
+  (assert (= row.terminal-cause.category "interactive_prompt_blocked"))
   (assert (= row.terminal-cause.retryable False)))
 
 
@@ -535,7 +535,7 @@
   (assert (= row.prompt-unblock-attempts 0))
   (assert (= row.last-validation-error
              "interactive-prompt-blocked: pane unchanged for over 180s and no prompt judge configured"))
-  (assert (= row.terminal-cause.category "InteractivePromptBlocked"))
+  (assert (= row.terminal-cause.category "interactive_prompt_blocked"))
   (assert (= row.terminal-cause.retryable False)))
 
 
@@ -550,7 +550,7 @@
   (assert (= row.prompt-unblock-attempts 1))
   (assert (.startswith row.last-validation-error
                        "interactive-prompt-blocked: pane unchanged for over 180s and prompt judge failed:"))
-  (assert (= row.terminal-cause.category "InteractivePromptBlocked")))
+  (assert (= row.terminal-cause.category "interactive_prompt_blocked")))
 
 
 (deftest test-stall-judge-blocked-sends-keys
@@ -571,7 +571,7 @@
 ;; ---------------------------------------------------------------------------
 
 (deftest test-launch-timeout-watchdog
-  ;; F-frozen のまま startup 完了マーカー無し → launch timeout で failed・TimedOut true
+  ;; F-frozen のまま startup 完了マーカー無し → launch timeout で failed・timed_out true
   (setv world (FakeWorld))
   (seed world (make-row world
                         :observed-active-at None
@@ -582,7 +582,7 @@
   (assert (= row.status "failed"))
   (assert (= row.last-validation-error
              "launch timeout: never reached active state within 60s (stuck in startup — likely a hung MCP server)"))
-  (assert (= row.terminal-cause.category "TimedOut"))
+  (assert (= row.terminal-cause.category "timed_out"))
   (assert (= row.terminal-cause.retryable True))
   (assert (in #("s1" "session_launch_timeout") world.events))
   ;; SQL 直行 reap: tmux には触れない
@@ -608,7 +608,7 @@
   (<- outcomes (run-cycle world (MonitorKnobs)))
   (setv row (get world.rows "s1"))
   (assert (= row.status "exited"))
-  (assert (= row.terminal-cause.category "Lost"))
+  (assert (= row.terminal-cause.category "lost"))
   (assert (= row.terminal-cause.retryable True))
   (assert (= row.terminal-cause.reason "no monitor observation for more than 300s"))
   (assert (in #("s1" "session_stale_reaped") world.events))
@@ -623,7 +623,7 @@
   (<- outcomes (run-cycle world (MonitorKnobs)))
   (setv row (get world.rows "s1"))
   (assert (= row.status "exited"))
-  (assert (= row.terminal-cause.category "Lost"))
+  (assert (= row.terminal-cause.category "lost"))
   (assert (= row.terminal-cause.retryable True))
   (assert (= row.terminal-cause.reason "tmux pane returned to idle shell: zsh"))
   (assert (= world.capture-count 0))
@@ -652,7 +652,7 @@
   (<- outcomes (run-cycle world (MonitorKnobs)))
   (setv row (get world.rows "s1"))
   (assert (= row.status "exited"))
-  (assert (= row.terminal-cause.category "Lost"))
+  (assert (= row.terminal-cause.category "lost"))
   (assert (= row.terminal-cause.retryable True))
   (assert (= row.terminal-cause.reason "tmux session disappeared"))
   (assert (in #("s1" "session_exited") world.events)))
@@ -696,12 +696,12 @@
 (deftest test-taxonomy-first-write-wins
   ;; set_terminal_cause_if_absent + DB COALESCE も契約
   (setv world (FakeWorld))
-  (setv pre-cause (make-cause "RateLimited" "pre-existing" (iso-at world -5)))
+  (setv pre-cause (make-cause "rate_limited" "pre-existing" (iso-at world -5)))
   (seed world (make-row world :terminal-cause pre-cause) :frame F-FAILED)
   (<- outcomes (run-cycle world (MonitorKnobs)))
   (setv row (get world.rows "s1"))
   (assert (= row.status "failed"))
-  (assert (= row.terminal-cause.category "RateLimited"))
+  (assert (= row.terminal-cause.category "rate_limited"))
   (assert (= row.terminal-cause.reason "pre-existing")))
 
 
@@ -717,27 +717,32 @@
 (deftest test-failed-output-cause-frozen-table
   ;; S7 + TerminalCause 凍結表(reason 無し failed のみ output 写像 — ハザード 2)
   (<- c-timeout (failure-cause-for "fatal error: request timeout"))
-  (assert (= #(c-timeout.category c-timeout.retryable) #("TimedOut" True)))
+  (assert (= #(c-timeout.category c-timeout.retryable) #("timed_out" True)))
   (<- c-auth (failure-cause-for "fatal error: authentication failed"))
-  (assert (= #(c-auth.category c-auth.retryable) #("RunnerUnavailable" False)))
+  (assert (= #(c-auth.category c-auth.retryable) #("runner_unavailable" False)))
   (<- c-proto (failure-cause-for "fatal error: invalid json body"))
-  (assert (= #(c-proto.category c-proto.retryable) #("ProtocolError" False)))
+  (assert (= #(c-proto.category c-proto.retryable) #("protocol_error" False)))
   (<- c-run (failure-cause-for F-FAILED))
-  (assert (= #(c-run.category c-run.retryable) #("RunFailed" False)))
+  (assert (= #(c-run.category c-run.retryable) #("run_failed" False)))
   (<- c-rate (failure-cause-for (+ F-FAILED "\n" F-API-LIMIT)))
-  (assert (= #(c-rate.category c-rate.retryable) #("RateLimited" True))))
+  (assert (= #(c-rate.category c-rate.retryable) #("rate_limited" True))))
 
 
 (deftest test-terminal-cause-retryable-frozen-table
-  ;; conformance README「TerminalCause 凍結表」からの verbatim 転記
+  ;; conformance README「TerminalCause 凍結表」の wire 値(serde snake_case)
+  ;; での転記 — S3 が cause["category"] == "run_failed" を wire で assert する
+  ;; とおり、category は snake_case が真(README の CamelCase はラベル)。
+  ;; cancelled は host RPC(session.cancel / cleanup)所有で oracle が
+  ;; retryable=false を明示(:1985-1991)。
   (assert (= TERMINAL-CAUSE-RETRYABLE
-             {"RateLimited" True
-              "TimedOut" True
-              "Lost" True
-              "RunnerUnavailable" False
-              "ProtocolError" False
-              "RunFailed" False
-              "InteractivePromptBlocked" False})))
+             {"rate_limited" True
+              "timed_out" True
+              "lost" True
+              "runner_unavailable" False
+              "protocol_error" False
+              "run_failed" False
+              "interactive_prompt_blocked" False
+              "cancelled" False})))
 
 
 ;; ---------------------------------------------------------------------------

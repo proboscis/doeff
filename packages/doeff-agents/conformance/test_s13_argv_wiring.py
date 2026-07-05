@@ -21,8 +21,6 @@ report_result → done) — the one place the suite proves the launch
 pipeline + result channel work end to end in M1, not just per-flag.
 """
 
-from __future__ import annotations
-
 import json
 import time
 
@@ -72,7 +70,11 @@ def test_s13_claude_argv_wiring_and_m1_golden_path(tmp_path) -> None:
         mcp_config = json.loads(args[mcp_index + 1])
         server = mcp_config["mcpServers"]["doeff_result"]
         assert server["type"] == "stdio", server
-        assert server["command"].endswith("doeff-agentd"), server
+        # The daemon wires ITSELF as the report-result-mcp server (oracle
+        # agentd_binary_path = current_exe) — compare against the binary
+        # under test, not a hardcoded name, so the CONFORMANCE_AGENTD_BIN
+        # seam exercises the same contract.
+        assert server["command"] == str(harness.agentd_bin), server
         assert server["args"] == [
             "report-result-mcp",
             "--session",
@@ -123,7 +125,11 @@ def test_s13_codex_argv_wiring(tmp_path) -> None:
         command_arg = f'mcp_servers."doeff_result".command='
         command_entries = [a for a in args if a.startswith(command_arg)]
         assert len(command_entries) == 1, args
-        assert command_entries[0].endswith('doeff-agentd"'), command_entries
+        # Same self-wiring contract as the claude leg: the daemon under test
+        # wires its own binary (seam-compatible, not a hardcoded name).
+        assert command_entries[0] == f'{command_arg}"{harness.agentd_bin}"', (
+            command_entries
+        )
 
         expected_args_entry = (
             'mcp_servers."doeff_result".args='
