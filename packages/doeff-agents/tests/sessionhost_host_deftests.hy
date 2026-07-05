@@ -209,15 +209,20 @@
 
 (deftest test-dispatch-skeleton-loud
   (defn check [config actor]
-    ;; 未実装の契約 method(await / report = C3-impl-4)は loud
-    ;; (黙った縮退をしない)
-    (for [method ["session.await_result" "session.report_result"]]
-      (setv response (json.loads (dispatch-line
-                                   (json.dumps {"id" 1 "method" method
-                                                "params" {}})
-                                   config actor)))
-      (assert (= (get response "ok") False))
-      (assert (in "not implemented (C3 skeleton)" (get response "error"))))
+    ;; await: 不在 session は -32001 を error_code 付きで返す(oracle
+    ;; :2071-2082 — timeout を待たず即答)
+    (setv response (json.loads (dispatch-line
+                                 "{\"id\":1,\"method\":\"session.await_result\",\"params\":{\"session_id\":\"nope\"}}"
+                                 config actor)))
+    (assert (= (get response "ok") False))
+    (assert (= (get response "error_code") -32001))
+    (assert (= (get response "error") "no session with id 'nope'"))
+    ;; report: 不在 session は require-session の文言
+    (setv response (json.loads (dispatch-line
+                                 "{\"id\":1,\"method\":\"session.report_result\",\"params\":{\"session_id\":\"nope\",\"payload\":{}}}"
+                                 config actor)))
+    (assert (= (get response "ok") False))
+    (assert (= (get response "error") "session is not registered: nope"))
     ;; 実装済み method の params 検証も loud(missing field)
     (setv response (json.loads (dispatch-line
                                  "{\"id\":1,\"method\":\"session.launch\",\"params\":{}}"
