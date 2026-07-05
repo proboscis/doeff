@@ -143,7 +143,12 @@ const DEFAULT_PROMPT_UNBLOCK_LIMIT: u32 = 3;
 /// string disables the judge (the stall watchdog then fails loudly
 /// without an unblock attempt, and turn-end solicitation proceeds
 /// without menu disambiguation).
-const DEFAULT_PROMPT_JUDGE_CMD: &str = "claude -p --model haiku";
+// The judge runs through `sh -c`, so the single-quoted settings JSON
+// survives word splitting.  disableAllHooks: the judge must not inherit
+// the operator's interactive hooks (measured: a Stop hook replaced the
+// judge verdict with "Operation stopped by hook").
+const DEFAULT_PROMPT_JUDGE_CMD: &str =
+    "claude -p --settings '{\"disableAllHooks\":true}' --model haiku";
 
 /// Wall-clock cap on one judge invocation.  The judge runs inside the
 /// monitor tick, so a hung judge process must not stall observation of
@@ -1401,6 +1406,14 @@ fn build_claude_argv(params: &LaunchParams, result_channel: Option<&ResultChanne
     let mut args: Vec<String> = vec![
         String::from("claude"),
         String::from("--dangerously-skip-permissions"),
+        // Unattended sessions must not inherit the config-dir owner's
+        // interactive workflow hooks: measured 2026-07-05, a Stop-hook
+        // chain truncated an agent turn mid-work and swallowed the
+        // queued result solicitation (and the prompt judge died with
+        // "Operation stopped by hook").  Hooks are human-workflow
+        // config; the agent contract is the result channel below.
+        String::from("--settings"),
+        String::from("{\"disableAllHooks\":true}"),
     ];
     // Effort delivery, symmetric with build_codex_argv's
     // model_reasoning_effort: the claude CLI has a real --effort flag.
