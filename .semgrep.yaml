@@ -302,6 +302,15 @@ rules:
     paths:
       include:
         - /packages/doeff-agents/src/**
+      exclude:
+        # The sessionhost store-of-record (C3) inherits the daemon's
+        # agent_sessions schema verbatim from the Rust oracle, and that
+        # schema contains the legacy pr_url COLUMN. Carrying the column for
+        # migrate/SELECT/upsert parity is storage plumbing, not
+        # terminal-text sniffing — the module has no access to pane
+        # captures at all. Sniffing stays banned everywhere else in
+        # doeff-agents/src, including the rest of sessionhost.
+        - /packages/doeff-agents/src/doeff_agents/sessionhost/store.hy
 
   - id: doeff-agents-no-terminal-text-success-status
     languages: [python]

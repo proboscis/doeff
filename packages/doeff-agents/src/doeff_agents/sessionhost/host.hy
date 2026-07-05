@@ -19,6 +19,16 @@
 (import socket)
 (import sys)
 (import threading)
+(import time)
+
+(import doeff_agents.sessionhost.store [
+  LEASE-TTL-SECONDS
+  StoreActor
+  db-acquire-lease
+  db-clear-awaiting-latches
+  db-count-active
+  db-heartbeat-once
+  db-read-lease])
 
 
 ;; ---------------------------------------------------------------------------
@@ -27,8 +37,6 @@
 
 (setv DEFAULT-MONITOR-INTERVAL-MS 1000)
 (setv DEFAULT-MAX-RUNNING-SESSIONS 10)
-(setv LEASE-NAME "doeff-agentd")
-(setv LEASE-TTL-SECONDS 10)
 (setv DEFAULT-RESULT-SOLICITATION-LIMIT 2)
 (setv DEFAULT-PROMPT-STALL-SECONDS 180)
 (setv DEFAULT-PROMPT-UNBLOCK-LIMIT 3)
@@ -280,27 +288,28 @@
   (json.dumps payload :separators #("," ":")))
 
 
-(deff dispatch-method [method params config]
-  {:pre [(: method str) (: params JsonValue) (: config HostConfig)]
+(deff dispatch-method [method params config actor]
+  {:pre [(: method str) (: params JsonValue) (: config HostConfig)
+         (: actor StoreActor)]
    :post [(: % JsonValue)]}
-  "dispatch_request_result(:1247-1301)。skeleton: daemon.status のみ本実装。
+  "dispatch_request_result(:1247-1301)。daemon.status は DB 実測
+   (active_sessions は active status の行数、lease は lease 行)。残りの
    契約 method は not-implemented で loud、契約外は oracle と同文言の
    unknown method。"
   (when (= method "daemon.status")
-    ;; C3-impl-2 で active_sessions / lease を DB 実測に置換する。
     (return {"state" "running"
              "pid" (os.getpid)
              "db_path" config.db-path
              "socket_path" config.socket-path
              "max_running" config.max-running
-             "active_sessions" 0
-             "lease" None}))
+             "active_sessions" (.submit actor db-count-active)
+             "lease" (.submit actor db-read-lease)}))
   (if (in method CONTRACT-METHODS)
       (raise (RuntimeError f"not implemented (C3 skeleton): {method}"))
       (raise (RuntimeError f"unknown method: {method}"))))
 
-(deff dispatch-line [line config]
-  {:pre [(: line str) (: config HostConfig)]
+(deff dispatch-line [line config actor]
+  {:pre [(: line str) (: config HostConfig) (: actor StoreActor)]
    :post [(: % str)]}
   "1 リクエスト行 → 1 レスポンス行。parse 失敗は id=null の invalid request
    (:1197-1205)。RpcRequest は id + method 必須、params default null。"
@@ -318,7 +327,7 @@
     (return (err-response None "invalid request: missing field `method`" None)))
   (setv params (.get request "params"))
   (try
-    (setv value (dispatch-method method params config))
+    (setv value (dispatch-method method params config actor))
     (ok-response id value)
     (except [e RpcHostError]
       (err-response id e.message e.code))
@@ -350,8 +359,8 @@
   (os.remove socket-path)
   None)
 
-(deff handle-stream [conn config]
-  {:pre [(: conn socket.socket) (: config HostConfig)]
+(deff handle-stream [conn config actor]
+  {:pre [(: conn socket.socket) (: config HostConfig) (: actor StoreActor)]
    :post [(: % "None")]}
   "connection 毎の JSON-lines ループ(oracle handle_stream)。EOF で終了、
    空行は skip、エラーは stderr へ(接続は落とすが daemon は落とさない)。"
@@ -363,7 +372,7 @@
           (break))
         (when (= (.strip line) "")
           (continue))
-        (setv response (dispatch-line line config))
+        (setv response (dispatch-line line config actor))
         (.write stream (+ response "\n"))
         (.flush stream)))
     (except [e Exception]
@@ -372,15 +381,41 @@
       (.close conn)))
   None)
 
-(deff serve [config]
-  {:pre [(: config HostConfig)]
+
+(defn run-worker-tick [worker thunk]
+  "1 tick の隔離実行(oracle run_worker_tick :3433-3445 — worker thread は
+   例外で死なず log して次 tick へ。disk-full storm が両 worker を黙殺した
+   傷跡)。"
+  (try
+    (thunk)
+    (except [e Exception]
+      (print f"doeff-sessionhost {worker} error: {e}" :file sys.stderr))))
+
+
+(defn heartbeat-loop [actor owner-pid]
+  "lease 更新 loop(oracle heartbeat_loop :3454-3460、interval = TTL/3)。"
+  (setv interval (max (// LEASE-TTL-SECONDS 3) 1))
+  (while True
+    (run-worker-tick
+      "heartbeat"
+      (fn [] (.submit actor (fn [conn] (db-heartbeat-once conn owner-pid)))))
+    (time.sleep interval)))
+
+
+(deff serve [config actor]
+  {:pre [(: config HostConfig) (: actor StoreActor)]
    :post [(: % "戻らない(accept loop)")]}
-  "bind → accept loop(connection 毎 thread)。monitor / heartbeat thread は
-   C3-impl-2/3 でここに生える(oracle serve :1159-1180)。"
+  "bind → heartbeat thread → accept loop(connection 毎 thread)。
+   monitor thread は C3-impl-3 でここに生える(oracle serve :1159-1180)。"
   (prepare-socket-path config.socket-path)
   (setv listener (socket.socket socket.AF-UNIX socket.SOCK-STREAM))
   (.bind listener config.socket-path)
   (.listen listener 64)
+  (setv heartbeat (threading.Thread :target heartbeat-loop
+                                    :args #(actor (os.getpid))
+                                    :daemon True
+                                    :name "sessionhost-heartbeat"))
+  (.start heartbeat)
   (while True
     (try
       (setv #(conn _addr) (.accept listener))
@@ -388,7 +423,7 @@
         (print f"doeff-sessionhost accept error: {e}" :file sys.stderr)
         (continue)))
     (setv worker (threading.Thread :target handle-stream
-                                   :args #(conn config)
+                                   :args #(conn config actor)
                                    :daemon True))
     (.start worker)))
 
@@ -417,7 +452,11 @@
                 (os.path.dirname config.socket-path)]]
     (when parent
       (os.makedirs parent :exist-ok True)))
-  ;; C3-impl-2: open_conn + migrate + acquire_lease + awaiting_response
-  ;; latch clear がここに入る(oracle main :581-596)。
-  (serve config)
+  ;; oracle main :581-596: open+migrate(StoreActor 構築で完了)→ lease 取得
+  ;; (未失効 lease は loud に拒否)→ awaiting_response latch 全 clear。
+  (setv actor (StoreActor config.db-path))
+  (setv owner-pid (os.getpid))
+  (.submit actor (fn [conn] (db-acquire-lease conn owner-pid)))
+  (.submit actor (fn [conn] (db-clear-awaiting-latches conn)))
+  (serve config actor)
   None)
