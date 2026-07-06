@@ -21,7 +21,7 @@ Benefits:
 import asyncio
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from _runtime import run_program
@@ -42,7 +42,7 @@ from doeff_agents import (
     mock_agent_handlers,
 )
 from doeff_preset import preset_handlers
-from doeff_time import Delay
+from doeff_time import Delay, GetTime
 
 from doeff import do
 
@@ -75,7 +75,8 @@ def monitored_session_workflow(session_name: str, config: LaunchConfig):
     Instead of callbacks, we yield slog effects for every event.
     The runtime accumulates these logs for later analysis.
     """
-    yield slog(step="session_start", session_name=session_name, timestamp=datetime.now(timezone.utc).isoformat())
+    start_time: datetime = yield GetTime()
+    yield slog(step="session_start", session_name=session_name, timestamp=start_time.isoformat())
 
     handle: SessionHandle = yield Launch(session_name, config)
     yield slog(step="launched", pane_id=handle.pane_id)
@@ -92,12 +93,13 @@ def monitored_session_workflow(session_name: str, config: LaunchConfig):
 
             # Log status changes (equivalent to on_status_change callback)
             if observation.status != previous_status:
+                status_change_time: datetime = yield GetTime()
                 yield slog(
                     step="status_change",
                     event_type="status_change",
                     old_status=previous_status.value,
                     new_status=observation.status.value,
-                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    timestamp=status_change_time.isoformat(),
                 )
 
                 # Log specific status events
@@ -135,11 +137,12 @@ def monitored_session_workflow(session_name: str, config: LaunchConfig):
             # Log PR detection (equivalent to on_pr_detected callback)
             if observation.pr_url and not pr_url:
                 pr_url = observation.pr_url
+                pr_detected_time: datetime = yield GetTime()
                 yield slog(
                     step="pr_created",
                     event_type="pr_detected",
                     pr_url=pr_url,
-                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    timestamp=pr_detected_time.isoformat(),
                 )
 
             if observation.is_terminal:
@@ -182,7 +185,7 @@ def event_collecting_workflow(session_name: str, config: LaunchConfig):
         session_name=session_name,
     )
 
-    result = yield from monitored_session_workflow(session_name, config)
+    result = yield monitored_session_workflow(session_name, config)
 
     yield slog(
         step="collector_end",

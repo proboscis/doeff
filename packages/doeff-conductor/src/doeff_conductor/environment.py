@@ -1,6 +1,5 @@
 """Author-facing conductor environment description and profile resolution."""
 
-from __future__ import annotations
 
 import json
 import os
@@ -75,7 +74,7 @@ class ProfileBinding:
     effort: str | None = None
 
     @classmethod
-    def from_mapping(cls, name: str, data: Mapping[str, Any]) -> ProfileBinding:
+    def from_mapping(cls, name: str, data: Mapping[str, Any]) -> "ProfileBinding":
         adapter: object | None = data.get("adapter")
         model: object | None = data.get("model")
         if not isinstance(adapter, str) or not adapter:

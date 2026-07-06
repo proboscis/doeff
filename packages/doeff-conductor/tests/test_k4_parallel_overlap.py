@@ -80,7 +80,10 @@ class _TimedAgentHandler:
         session_id: str = effect.task.session_id
         with self._lock:
             self.events[session_id] = {"start": time.monotonic()}
-        time.sleep(self._delay)
+        # This test asserts genuine wall-clock overlap between
+        # concurrently-dispatched real scheduler threads (K4), which a
+        # simulated clock cannot observe.
+        time.sleep(self._delay)  # nosemgrep: doeff-no-sleep-in-tests
         result = self._runtime.handle_agent(effect)
         with self._lock:
             self.events[session_id]["end"] = time.monotonic()

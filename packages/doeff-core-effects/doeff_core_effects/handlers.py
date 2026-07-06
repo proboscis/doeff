@@ -391,7 +391,7 @@ def lazy_ask(env=None, *, strict=False):  # noqa: PLR0915 - baseline cleanup kee
                     # Forward to outer handler so env-var-ask (or other
                     # fallback handlers) can resolve the key.
                     yield Pass(effect, k)
-                    return
+                    return None
 
                 # Plain value — resume directly
                 if not isinstance(raw, Program):
@@ -521,13 +521,13 @@ def env_var_ask(*, prefix="DOEFF_"):
     def handler(effect, k):  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
         if not isinstance(effect, Ask):
             yield Pass(effect, k)
-            return
+            return None
 
         env_key = f"{prefix}{effect.key}"
         raw = os.environ.get(env_key)
         if raw is None:
             yield Pass(effect, k)
-            return
+            return None
 
         # Plain string — no caching, always fresh.
         if not (raw.startswith("{") and raw.endswith("}")):

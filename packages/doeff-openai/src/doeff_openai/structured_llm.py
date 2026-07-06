@@ -5,7 +5,6 @@ through Effects, supporting Pydantic models, GPT-5 thinking modes, and
 comprehensive cost/token tracking.
 """
 
-from __future__ import annotations
 
 import asyncio
 import base64
