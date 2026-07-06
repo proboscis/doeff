@@ -382,16 +382,21 @@ def test_ensure_agentd_starts_daemon_when_canonical_socket_unreachable(
     assert paths.socket_path.parent.is_dir()
 
 
-def test_agentd_command_falls_back_to_workspace_agentd_binary(
+def test_agentd_command_defaults_to_interpreter_sibling_sessionhost(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    local_bin = tmp_path / "doeff-agentd"
-    local_bin.write_text("#!/bin/sh\n", encoding="utf-8")
-    local_bin.chmod(0o755)
+    # Retirement (DOE-004): the canonical spawn target is the Hy session
+    # host console script installed next to the running interpreter — the
+    # executor ships with the client package, so any env that can import
+    # doeff_agents can start the right daemon.
+    fake_bin_dir = tmp_path / "venv" / "bin"
+    fake_bin_dir.mkdir(parents=True)
+    sibling = fake_bin_dir / "doeff-sessionhost"
+    sibling.write_text("#!/bin/sh\n", encoding="utf-8")
+    sibling.chmod(0o755)
     monkeypatch.delenv("DOEFF_AGENTD_BIN", raising=False)
-    monkeypatch.setattr(agentd_client.shutil, "which", lambda _name: None)
-    monkeypatch.setattr(agentd_client, "_local_agentd_binary_path", lambda: local_bin)
+    monkeypatch.setattr(agentd_client.sys, "executable", str(fake_bin_dir / "python"))
 
     command = agentd_client._agentd_command(
         daemon_bin=None,
@@ -400,8 +405,29 @@ def test_agentd_command_falls_back_to_workspace_agentd_binary(
         max_running=3,
     )
 
-    assert command[0] == str(local_bin)
+    assert command[0] == str(sibling)
     assert command[-1] == "serve"
+
+
+def test_agentd_command_never_resolves_the_retired_rust_binary(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    # No sibling script and nothing on PATH: the bare name is the Hy host,
+    # never the retired Rust "doeff-agentd" (silent-rollback root cause).
+    monkeypatch.delenv("DOEFF_AGENTD_BIN", raising=False)
+    monkeypatch.setattr(agentd_client.sys, "executable", str(tmp_path / "nowhere" / "python"))
+    monkeypatch.setattr(agentd_client.shutil, "which", lambda _name: None)
+
+    command = agentd_client._agentd_command(
+        daemon_bin=None,
+        db_path=tmp_path / "agentd.sqlite",
+        socket_path=tmp_path / "agentd.sock",
+        max_running=3,
+    )
+
+    assert command[0] == "doeff-sessionhost"
+    assert "doeff-agentd" not in command[0]
 
 
 def test_lazy_agentd_client_resolves_daemon_on_first_operation(monkeypatch, tmp_path: Path) -> None:

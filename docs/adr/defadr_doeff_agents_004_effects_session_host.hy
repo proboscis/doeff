@@ -6,7 +6,7 @@
 
 (defadr ADR-DOE-AGENTS-004
   :title "agent 実行は effect 語彙 + kind 別 defhandler に分解し、agentd は『寿命の外部性』だけを提供する Hy 製 session host(session を resource とするミニ control plane)へ再実装する — conformance 先行で Rust を oracle に交代"
-  :status "proposed"
+  :status "accepted"
   :scope ["packages/doeff-agents"
           "packages/doeff-agentd(現 Rust = oracle)"
           "docs/adr/defadr_doeff_agents_004_effects_session_host.hy"]
@@ -28,7 +28,9 @@
      (rule R3 "agentd(Hy)は外部性の 4 点だけを所有する: socket・単一 writer actor(SQLite session 行)・毎 cycle の reconciler 起動・lease。RPC method は program に写像され、handler stack が解釈する。continuation は永続化しない — 真実は行のみ。")
      (rule R4 "conformance 先行: Rust agentd を oracle に black-box 契約 suite(mini_conformance 前例)+ 台本駆動の conformance-agent(偽 CLI、実クォータ非消費)を先に整備し、Hy 実装は parity 到達で交代。cargo 93 tests + 2026-07-05 の trust/hooks 傷跡を挙動として結晶化してから Rust を退役する。")
      (rule R5 "host は kinds.list で {kind, apiVersion, スキーマ} を広告し、ACP は宣言時に照合して未知 kind/version を fail-loud 拒否する。wire は有限の versioned 語彙に限る(任意 effect のリモート転送は禁止)。")
-     (rule R6 "デプロイは frozen 環境から(pin 済み専用 env)。dev venv / target-debug 依存の自己参照(子守りが子守られる開発環境に依存する)を禁止する。")]
+     (rule R6 "デプロイは frozen 環境から(pin 済み専用 env)。dev venv / target-debug 依存の自己参照(子守りが子守られる開発環境に依存する)を禁止する。")
+     (rule R7 "退役後の正典 executor は doeff-sessionhost: ensure_agentd の spawn 解決は DOEFF_AGENTD_BIN(明示 seam)→ 実行中 interpreter 隣接の console script → PATH の doeff-sessionhost で、退役 Rust binary は解決対象に含めない(silent rollback の根絶、ACP ADR 0045 R5)。Rust binary/source の保存理由は rollback 可用性のみ — 正しさの基準として参照することを禁止する(U1: それは一度も oracle ではなく partial-unreliable-impl だった)。")
+     (rule R8 "result-contract 検証の意味論は JSON Schema 仕様が唯一の正(U1 裁定): 検証器は準拠参照実装(jsonschema)の輸入であり、subset を自前実装しない。仕様適合の保証は参照実装の upstream CI(公式 JSON-Schema-Test-Suite)から継承する。schema 自体は launch 時に meta-schema で fail-closed 検証(壊れた契約で session を作らない)。旧 Rust 実装の fail-open 挙動を expected に固定するテストは歴史ピンとしても置かない。")]
   :laws
     [(law protocol-physics-has-one-home
        :statement "protocol_physics(kind) => single_defhandler_module never_duplicated_across_languages"
@@ -47,7 +49,16 @@
        :facts
          [(fact
             "C0-2 交代ゲート前半は達成済み: conformance suite 31/31 green on Rust oracle(全 P green・S14 は X として expected-red 記録)+ cargo test -p doeff-agentd 94 passed / 0 failed。"
-            :evidence "packages/doeff-agents/conformance @ doeff 0b67cd5c(2026-07-05): pytest 31/31・cargo 94/0")]
+            :evidence "packages/doeff-agents/conformance @ doeff 0b67cd5c(2026-07-05): pytest 31/31・cargo 94/0")
+          (fact
+            "C3 交代ゲート後半も達成: Hy session host が hy gate で全 green(S14 は positive 側)となり、2026-07-06 に canary 交代(同一 socket・同一 4.6GB store)。交代後に実 steward attend・24KB 合成 session・launchd 常駐化・identity probe(ACP ADR 0045)まで検証済み。"
+            :evidence "doeff agentd-c1-base fa41774d(C3-1 LANDED)+ ACP docs/acp-2026-07-06-executor-cutover-closure-architecture-plan.md F1-F7")
+          (fact
+            "Rust 退役はユーザー GO(2026-07-06)で実行: E.2 の 1 週間無退行窓はユーザー裁定で短縮。Rust は binary/source とも保存 — ただし rollback 可用性のためだけであり、正しさの基準ではない。"
+            :evidence "ACP plan U1 / 裁定台帳 8(docs/acp-2026-07-05-agentd-hy-session-host-plan.md)")
+          (fact
+            "同日 U1 裁定: Rust 実装の schema 検証は無裁可 subset(items/enum/additionalProperties 等を黙殺 = fail-open)で、parity 移植がこの省略を契約に洗浄していた(ACP steward 実障害で露呈)。修正 = 検証器を jsonschema(参照実装)の輸入に置換し、S20 が復元契約(items 違反の in-session reject→fix / malformed schema の launch 拒否)を凍結。教訓: 契約 enforcement 境界(結合核)の正解定義を sub-frontier 産実装の実測に接地してはならない — 仕様が存在するなら仕様が oracle。"
+            :evidence "doeff#482 / conformance test_s20_schema_vocabulary.py / sessionhost/schema.hy / ACP sandbox invocation inv_wi_57cbac033483bed5_a1")]
        :counterexamples
          [(counterexample "conformance 無しで Hy 版に切り替え、solicitation/turn-end の hardening が退行する")])]
   :enforcement
