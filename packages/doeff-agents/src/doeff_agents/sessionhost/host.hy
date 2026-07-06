@@ -50,7 +50,7 @@
   make-cause
   monitor-cycle
   tail-chars])
-(import doeff_agents.sessionhost.schema [validate-against-schema])
+(import doeff_agents.sessionhost.schema [validate-against-schema schema-admission-error])
 (import doeff_agents.sessionhost.substrate [real-substrate])
 (import doeff_agents.sessionhost.store [
   LEASE-TTL-SECONDS
@@ -476,6 +476,15 @@
     (when (not (isinstance (.get params key) str))
       (raise (RuntimeError
                f"invalid params for session.launch: missing field `{key}`"))))
+  ;; doeff#482: 契約 schema の fail-closed admission — meta-schema 違反の
+  ;; payload_schema で session を作らない(検証されない契約を存在させない)。
+  (setv expected (.get params "expected_result"))
+  (when (isinstance expected dict)
+    (setv admission-error (schema-admission-error
+                            (.get expected "payload_schema")))
+    (when (is-not admission-error None)
+      (raise (RuntimeError
+               f"invalid params for session.launch: {admission-error}"))))
   {"session_id" (get params "session_id")
    "session_name" (get params "session_name")
    "agent_type" (get params "agent_type")

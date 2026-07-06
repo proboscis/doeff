@@ -26,6 +26,10 @@ dependencies = [
     "doeff-hy",
     "click>=8.0.0",
     "rich>=13.0.0",
+    # result-contract validation imports the settled JSON Schema semantics
+    # (doeff#482: never hand-roll a subset validator for an enforcement
+    # boundary). NOT used by the stdlib-only report-result-mcp relay.
+    "jsonschema>=4.21",
 ]
 
 [project.optional-dependencies]
