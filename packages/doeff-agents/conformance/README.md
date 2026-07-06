@@ -1,5 +1,14 @@
 # agentd conformance suite — 契約(C0-1 台本設計)
 
+> **裁定追補(2026-07-06、ACP plan U1 / C 段階 plan 裁定台帳 8)**: 本文書の
+> 「Rust = oracle」は破棄された。Rust 実装は正しさの基準であったことは一度も
+> なく(schema 検証は無裁可 subset の fail-open)、以後は「凍結された旧実装
+> (rollback 可用性のためだけに保存)」と読み替える。**S20 以降、result-contract
+> 検証の正解定義は JSON Schema 仕様**(検証器 = jsonschema 参照実装の輸入、
+> 仕様適合は upstream の公式 JSON-Schema-Test-Suite CI から継承)。suite の
+> canonical gate は CONFORMANCE_AGENTD_BIN = Hy session host。旧実装挙動を
+> expected に固定する parity ピンは(歴史ピンとしても)置かない。
+
 Status: **CONTRACT FIXED(2026-07-05)— physics は Rust agentd
 `packages/doeff-agentd/src/main.rs`(branch adr0035-byte-faithful-transport
 tip)の実走査で確定**。ADR-DOE-AGENTS-004 R4(conformance 先行・Rust =
@@ -128,6 +137,8 @@ snapshot と一致(stable)**」(main.rs:2832, 2932)なので、フレームは
 | S17 | in-process result endpoint ↔ host endpoint の意味論 parity(per-kind ゲートとの継ぎ目) | ACP plan 補遺 | — | X(C1 後) | — |
 | S18 | R9 fast-path: 4 ダイアログの dismissal keys を journal で受領確認(codex update→Down×2+Enter / bypass→Down,Enter / fullscreen→Down,Enter=Not now / managed→Enter)。**観測物理で契約修正**: codex-update/bypass/fullscreen は `wait_for_repl_idle` のみ(launch 経路 = M1)で発火し M2 では到達不能。managed のみ monitor loop でも発火(main.rs:3604)なので M2 で mid-session 検証。tty は canonical+ICRNL(Enter=`\r`→`\n`、Down+Enter は 1 行で到達 = `\x1b[B` を待つ)。managed の bare Enter は内容で判別不能なので `observed_active_at` set(managed 分岐でしか立たない)を主 assert に | 002 R9 | — | P | M1(update/bypass/fullscreen)/ M2(managed) |
 | S19 | launch-timeout watchdog: F-frozen のまま startup 完了マーカーを出さない → `DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS` 超過で failed・TimedOut true / zombie(`{"exit":0}` → idle shell)→ exited・Lost true / stale-observation → exited・Lost true。**stale-obs の black-box 形状**: tmux session は生かしたまま(2 枚目の window を足す)監視対象 pane を帯域外 kill → 以後 tick は `tmux_capture` で abort し `last_observed_at` が凍結、stale 分岐(tmux probe より前)が `DOEFF_AGENTD_STALE_OBSERVATION_SECS` 超過で reap。3 knob は全て env-only なので `extra_env` 経由 | main.rs:3485-3587 | — | P | M2 |
+
+| S20 | result-contract 検証 = JSON Schema 仕様(U1 復元契約): items 違反 payload は report 時 reject → solicitation → in-session fix(ACP steward 実障害の形そのまま)/ meta-schema 違反 schema は session.launch で fail-closed 拒否 | doeff#482 / U1 裁定 | — | P(hy gate のみ — 旧実装は fail-open で基準外) | M2 |
 
 X 項目を P として数えて「oracle green」を主張することは禁止。
 **C0-2 の完了 = 全 P green on Rust + 全 X の expected-red 記録**。
