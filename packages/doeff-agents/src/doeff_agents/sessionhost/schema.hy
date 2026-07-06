@@ -23,6 +23,7 @@
 
 (import jsonschema.exceptions [SchemaError best-match])
 (import jsonschema.validators [validator-for])
+(import referencing.exceptions [Unresolvable])
 
 
 (setv JsonValue (| dict list str int float bool None))
@@ -52,7 +53,14 @@
     (.check-schema cls schema)
     (except [e SchemaError]
       (return f"schema at '{loc}' is itself invalid: {e.message}")))
-  (setv errors (list (.iter-errors (cls schema) instance)))
+  (try
+    (setv errors (list (.iter-errors (cls schema) instance)))
+    (except [e Unresolvable]
+      ;; 契約 schema は自己完結が前提(remote $ref のレジストリを持たない)。
+      ;; 壊れているのは payload でなく schema — 文言でそれを明示する。
+      (return (+ f"schema at '{loc}' is broken (not the payload): "
+                 f"unresolvable reference: {e} — contract schemas must be "
+                 "self-contained"))))
   (if errors
       (_located-reason loc (best-match errors))
       None))

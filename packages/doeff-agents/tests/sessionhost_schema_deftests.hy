@@ -123,3 +123,19 @@
   (assert (is (schema-admission-error True) None))
   (assert (is (validate-against-schema {"anything" 1} True "payload") None))
   (assert (is-not (validate-against-schema {"anything" 1} False "payload") None)))
+
+(deftest test-unresolvable-ref-is-fail-loud
+  ;; 契約 schema は自己完結が前提。remote $ref は黙って素通しせず、
+  ;; schema 側の欠陥として reason 化する(payload の欠陥と混同させない)。
+  (setv reason (validate-against-schema
+                 {"x" 1}
+                 {"$ref" "http://example.invalid/nowhere.json"}
+                 "payload"))
+  (assert (is-not reason None))
+  (assert (in "self-contained" reason)))
+
+
+(deftest test-admission-rejects-noncompilable-regex
+  ;; ECMA-262 の \\p{...} は Python re の外 — meta-schema の format:regex が
+  ;; launch 時に fail-closed で弾く(静かな方言逸脱を契約にしない)。
+  (assert (is-not (schema-admission-error {"pattern" "\\p{Letter}"}) None)))
