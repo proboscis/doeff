@@ -944,6 +944,15 @@ class TmuxAgentHandler(AgentHandler):
             if state is None:
                 raise SessionNotFoundError(f"Session {effect.handle.session_id} is not registered")
 
+            # Prefer a captured schema result block over session liveness: a
+            # one-shot CLI mode returns to a shell prompt while the tmux
+            # session stays alive, so a session-first await would keep
+            # waiting past a result that has already been written.
+            if state.result_schema is not None:
+                result_output = self._capture_result_output(state)
+                if result_output is not None:
+                    return self._await_outcome_from_result_output(state, result_output)
+
             if not self._backend.has_session(effect.handle.session_id):
                 return self._await_outcome_from_result_output(state)
 
@@ -951,10 +960,6 @@ class TmuxAgentHandler(AgentHandler):
             output = state.monitor_state.last_output
             if output and _has_complete_result_block(output):
                 return self._await_outcome_from_result_output(state, output)
-            if state.result_schema is not None:
-                result_output = self._capture_result_output(state)
-                if result_output is not None:
-                    return self._await_outcome_from_result_output(state, result_output)
             if observation.status in (SessionStatus.BLOCKED, SessionStatus.BLOCKED_API):
                 return AwaitOutcome(
                     status=AwaitStatus.AWAITING_INPUT,

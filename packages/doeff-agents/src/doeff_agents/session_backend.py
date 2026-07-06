@@ -1,6 +1,5 @@
 """Backend-neutral terminal session transport primitives."""
 
-from __future__ import annotations
 
 import shutil
 from dataclasses import dataclass

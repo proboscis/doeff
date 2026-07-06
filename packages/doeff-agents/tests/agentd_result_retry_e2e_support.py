@@ -155,9 +155,12 @@ def _wait_for_agentd(
             client.status()
             return
         except OSError:
-            time.sleep(0.1)
+            # Polling a real doeff-agentd subprocess's readiness; there is no
+            # doeff effect clock to control here.
+            time.sleep(0.1)  # nosemgrep: doeff-no-sleep-in-tests
         except Exception:
-            time.sleep(0.1)
+            # See OSError branch above.
+            time.sleep(0.1)  # nosemgrep: doeff-no-sleep-in-tests
     raise AssertionError(f"doeff-agentd did not become ready\n{_read_text(log_path)}")
 
 

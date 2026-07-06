@@ -112,7 +112,7 @@ def parallel_tasks_workflow(tasks: list[tuple[str, str]]):
         yield slog(step="task_start", name=name_suffix)
 
         # Run each task (sequentially in this case)
-        result = yield from single_session_workflow(session_name, config)
+        result = yield single_session_workflow(session_name, config)
         results.append((name_suffix, result))
 
         yield slog(step="task_complete", name=name_suffix, status=result["status"])

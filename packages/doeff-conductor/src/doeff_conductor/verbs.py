@@ -1,6 +1,5 @@
 """C6 public verb implementations for planning and validation."""
 
-from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass

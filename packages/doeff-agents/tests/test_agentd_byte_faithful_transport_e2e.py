@@ -274,7 +274,9 @@ def _capture_until_block(client: AgentdClient, session_id: str, timeout_s: float
             last = ""
         if RESULT_BLOCK_BEGIN in last and RESULT_BLOCK_END in last:
             return last
-        time.sleep(0.2)
+        # Polling a real tmux pane via a real doeff-agentd subprocess; there
+        # is no doeff effect clock here.
+        time.sleep(0.2)  # nosemgrep: doeff-no-sleep-in-tests
     return last
 
 
@@ -298,7 +300,9 @@ def _wait_for_agentd(
             client.status()
             return
         except Exception:
-            time.sleep(0.1)
+            # Polling a real doeff-agentd subprocess's readiness; there is no
+            # doeff effect clock to control here.
+            time.sleep(0.1)  # nosemgrep: doeff-no-sleep-in-tests
     raise AssertionError(f"doeff-agentd did not become ready\n{_read_text(log_path)}")
 
 

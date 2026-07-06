@@ -1,5 +1,4 @@
 """Min-heap queue of time-ordered promises."""
-from __future__ import annotations
 
 import heapq
 from dataclasses import dataclass

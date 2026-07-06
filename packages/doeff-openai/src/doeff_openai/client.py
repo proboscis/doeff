@@ -1,6 +1,5 @@
 """Main OpenAI client using doeff effects for observability."""
 
-from __future__ import annotations
 
 import copy
 import time
