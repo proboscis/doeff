@@ -356,6 +356,32 @@ impl PyGetHandlers {
     }
 }
 
+/// GetBoundaries(k) — extract the interleaved handler/observer boundary
+/// stack from the continuation's fiber chain, innermost first. Each entry is
+/// a `["handler" | "observer", callable]` pair. The catching handler is
+/// included as the last entry, symmetric with GetHandlers(k).
+///
+/// Used by the scheduler to reinstall the full spawn-site boundary stack —
+/// handlers AND WithObserve observers, preserving their relative nesting
+/// order — on Spawn'd tasks (issue scheduler-spawn-drops-observer-boundary).
+#[pyclass(name = "GetBoundaries", frozen, dict, module = "doeff_vm.doeff_vm")]
+pub struct PyGetBoundaries {
+    #[pyo3(get)]
+    pub continuation: Py<PyK>,
+}
+
+#[pymethods]
+impl PyGetBoundaries {
+    #[new]
+    fn new(k: Py<PyK>) -> Self {
+        Self { continuation: k }
+    }
+
+    fn __repr__(&self) -> &'static str {
+        "GetBoundaries(k)"
+    }
+}
+
 /// GetOuterHandlers — extract handlers installed ABOVE the current handler.
 ///
 /// When a handler catches an effect, its segment's parent is detached from the

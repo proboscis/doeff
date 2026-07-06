@@ -21,6 +21,7 @@ from doeff.mcp import McpParamSchema as McpParamSchema
 from doeff.mcp import McpToolDef as McpToolDef
 from doeff.program import Apply as Apply
 from doeff.program import Expand as Expand
+from doeff.program import GetBoundaries as GetBoundaries
 from doeff.program import GetExecutionContext as GetExecutionContext
 from doeff.program import GetHandlers as GetHandlers
 from doeff.program import GetOuterHandlers as GetOuterHandlers
@@ -103,7 +104,7 @@ Effect = EffectBase
 _DOEXPR_TYPES = (
     Pure, Perform, Resume, Transfer, Apply, Expand, Pass,
     WithHandlerType, WithObserveRaw, ResumeThrow, TransferThrow,
-    GetTraceback, GetExecutionContext, GetHandlers, GetOuterHandlers,
+    GetTraceback, GetExecutionContext, GetHandlers, GetBoundaries, GetOuterHandlers,
 )
 
 
