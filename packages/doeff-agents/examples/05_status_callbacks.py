@@ -182,7 +182,7 @@ def event_collecting_workflow(session_name: str, config: LaunchConfig):
         session_name=session_name,
     )
 
-    result = yield from monitored_session_workflow(session_name, config)
+    result = yield monitored_session_workflow(session_name, config)
 
     yield slog(
         step="collector_end",
