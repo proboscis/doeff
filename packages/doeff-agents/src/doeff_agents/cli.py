@@ -32,7 +32,7 @@ console = Console()
 
 # All doeff-agents sessions are prefixed with this to distinguish from other tmux sessions
 SESSION_PREFIX = "doeff-"
-AGENTD_UNAVAILABLE_HINT = "agentd が起動していません。doeff-agentd serve を実行してください。"
+AGENTD_UNAVAILABLE_HINT = "agentd が起動していません。doeff-agents agentd ensure(または doeff-sessionhost ... serve)を実行してください。"
 TERMINAL_STATUSES = {
     SessionStatus.DONE,
     SessionStatus.FAILED,
