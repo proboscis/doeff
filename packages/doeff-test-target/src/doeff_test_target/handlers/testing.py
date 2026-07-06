@@ -23,9 +23,11 @@ class MockFixtureRuntime:
     def resolve(self, key: str) -> Any:
         return self.seed_env.get(key, f"{self.default_prefix}{key}")
 
+    @do
     def handle_read_value(self, effect: ReadFixtureValue, k):
         return (yield Resume(k, self.resolve(effect.key)))
 
+    @do
     def handle_record_event(self, effect: RecordFixtureEvent, k):
         self.emitted_events.append(effect.message)
         return (yield Resume(k, None))
@@ -47,9 +49,9 @@ def mock_handlers(
     @do
     def handler(effect: Effect, k: Any):
         if isinstance(effect, ReadFixtureValue):
-            return (yield from active_runtime.handle_read_value(effect, k))
+            return (yield active_runtime.handle_read_value(effect, k))
         if isinstance(effect, RecordFixtureEvent):
-            return (yield from active_runtime.handle_record_event(effect, k))
+            return (yield active_runtime.handle_record_event(effect, k))
         return (yield Pass())
 
     return _program_handler(handler)
