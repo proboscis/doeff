@@ -88,7 +88,7 @@ def openrouter_production_handler(effect: Any, k: Any):
         return (yield _handle_structured_output(effect, k))
     if isinstance(effect, LLMEmbedding):
         yield Pass(effect, k)
-        return
+        return None
     yield Pass(effect, k)
 
 
