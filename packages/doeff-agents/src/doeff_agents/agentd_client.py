@@ -6,6 +6,7 @@ import shlex
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -599,22 +600,24 @@ def _agentd_command(
 
 
 def _resolve_agentd_binary() -> str:
+    """Resolve the canonical agentd executable: the Hy session host.
+
+    Retirement (DOE-004, user GO 2026-07-06): the Rust ``doeff-agentd``
+    binary is no longer a spawn target — auto-(re)starting it silently
+    rolled the executor back and invalidated canary observation (ADR 0045
+    R5 in agent-control-plane).  The session host ships WITH this package,
+    so the console script installed next to the running interpreter is the
+    deterministic default; ``DOEFF_AGENTD_BIN`` stays as the explicit
+    override seam (tests, oracle runs).
+    """
     if env_bin := os.environ.get("DOEFF_AGENTD_BIN"):
         return env_bin
-    if path_bin := shutil.which("doeff-agentd"):
+    sibling = Path(sys.executable).parent / "doeff-sessionhost"
+    if sibling.exists() and os.access(sibling, os.X_OK):
+        return str(sibling)
+    if path_bin := shutil.which("doeff-sessionhost"):
         return path_bin
-    if local_bin := _local_agentd_binary_path():
-        return str(local_bin)
-    return "doeff-agentd"
-
-
-def _local_agentd_binary_path() -> Path | None:
-    packages_dir = Path(__file__).resolve().parents[3]
-    for profile in ("debug", "release"):
-        candidate = packages_dir / "doeff-agentd" / "target" / profile / "doeff-agentd"
-        if candidate.exists() and os.access(candidate, os.X_OK):
-            return candidate
-    return None
+    return "doeff-sessionhost"
 
 
 def _query_to_params(query: AgentSessionQuery | None) -> dict[str, Any]:
