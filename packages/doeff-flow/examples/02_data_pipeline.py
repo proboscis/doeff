@@ -22,7 +22,7 @@ import time
 
 from doeff_flow import run_workflow
 
-from doeff import do, slog
+from doeff import Ask, do, slog
 
 # =============================================================================
 # Data Pipeline Stages
@@ -35,9 +35,11 @@ def extract_data(source: str):
     yield slog(step="extract", status="reading", source=source)
     time.sleep(0.2)  # Simulate I/O
 
-    # Simulate extracted records
+    # Simulate extracted records; rng is injected via Ask so the workflow
+    # stays pure and swappable for a seeded generator under test.
+    rng = yield Ask("random")
     records = [
-        {"id": i, "value": random.randint(1, 100), "source": source}
+        {"id": i, "value": rng.randint(1, 100), "source": source}
         for i in range(5)
     ]
 
@@ -179,6 +181,7 @@ def main():
             destination="warehouse://analytics/users_processed",
         ),
         workflow_id="data-pipeline",
+        env={"random": random},
     )
 
     if result.is_ok():

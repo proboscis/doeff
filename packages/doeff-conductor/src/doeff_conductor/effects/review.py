@@ -1,6 +1,5 @@
 """Attention-tier review routing primitives for conductor workflows."""
 
-from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable, Mapping, Sequence
@@ -68,7 +67,7 @@ class ReviewFinding:
     file: str | None = None
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, object]) -> ReviewFinding:
+    def from_dict(cls, data: Mapping[str, object]) -> "ReviewFinding":
         title_value = data["title"]
         severity_value = data["severity"]
         detail_value = data["detail"]
@@ -125,7 +124,7 @@ class ReviewVerdictArtifact:
     findings: tuple[ReviewFinding, ...]
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, object]) -> ReviewVerdictArtifact:
+    def from_dict(cls, data: Mapping[str, object]) -> "ReviewVerdictArtifact":
         verdict_value = data["verdict"]
         findings_value = data["findings"]
         if not isinstance(verdict_value, str):
@@ -303,7 +302,7 @@ class BudgetConsumption:
     """Result of attempting to consume a durable budget counter."""
 
     consumed: bool
-    budget: DurableReviewBudget
+    budget: "DurableReviewBudget"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -314,7 +313,7 @@ class DurableReviewBudget:
     spent_entries: tuple[BudgetCounterEntry, ...] = ()
 
     @classmethod
-    def from_limits(cls, limits: Mapping[BudgetCounterKey, int]) -> DurableReviewBudget:
+    def from_limits(cls, limits: Mapping[BudgetCounterKey, int]) -> "DurableReviewBudget":
         entries = tuple(
             BudgetCounterEntry(key=key, units=units)
             for key, units in sorted(
@@ -349,7 +348,7 @@ class DurableReviewBudget:
             return BudgetConsumption(consumed=False, budget=self)
         return BudgetConsumption(consumed=True, budget=self._with_spent(key, units))
 
-    def _with_spent(self, key: BudgetCounterKey, units: int) -> DurableReviewBudget:
+    def _with_spent(self, key: BudgetCounterKey, units: int) -> "DurableReviewBudget":
         updated_entries: list[BudgetCounterEntry] = []
         replaced = False
         for entry in self.spent_entries:
@@ -381,11 +380,11 @@ class CalibrationPolicy:
     lane_rates: tuple[CalibrationLaneRate, ...] = ()
 
     @classmethod
-    def disabled(cls) -> CalibrationPolicy:
+    def disabled(cls) -> "CalibrationPolicy":
         return cls()
 
     @classmethod
-    def manual_rates(cls, rates: Mapping[str, float]) -> CalibrationPolicy:
+    def manual_rates(cls, rates: Mapping[str, float]) -> "CalibrationPolicy":
         lane_rates: list[CalibrationLaneRate] = []
         for lane, sample_rate in sorted(rates.items()):
             if sample_rate < 0.0 or sample_rate > 1.0:
@@ -425,7 +424,7 @@ class CalibrationLedger:
 
     records: tuple[CalibrationEscapeRecord, ...] = ()
 
-    def record_escape(self, record: CalibrationEscapeRecord) -> CalibrationLedger:
+    def record_escape(self, record: CalibrationEscapeRecord) -> "CalibrationLedger":
         return CalibrationLedger(records=(*self.records, record))
 
 

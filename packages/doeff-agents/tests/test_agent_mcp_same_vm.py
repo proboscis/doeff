@@ -260,7 +260,10 @@ def test_agent_mcp_loop_runs_while_await_result_is_pending(
 
         def call_tool_and_finish() -> None:
             try:
-                time.sleep(0.2)
+                # Runs on a real threading.Thread racing the doeff VM's
+                # AwaitResult wait; SimulationRuntime only controls the effect
+                # clock, not this background OS thread.
+                time.sleep(0.2)  # nosemgrep: doeff-no-sleep-in-tests
                 holder.append(_call_tool_from_agent_side(tmp_path))
                 pane_id = backend.sessions[handle.session_id]
                 backend.captures[pane_id] = (

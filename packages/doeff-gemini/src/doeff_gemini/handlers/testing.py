@@ -193,22 +193,22 @@ def mock_handlers(
         if isinstance(effect, LLMStreamingChat | GeminiStreamingChat):
             if not _is_gemini_model(effect.model):
                 yield Pass(effect, k)
-                return
+                return None
             return (yield Resume(k, active_handler.handle_chat(effect)))
         if isinstance(effect, LLMChat | GeminiChat):
             if not _is_gemini_model(effect.model):
                 yield Pass(effect, k)
-                return
+                return None
             return (yield Resume(k, active_handler.handle_chat(effect)))
         if isinstance(effect, LLMStructuredQuery | GeminiStructuredOutput):
             if not _is_gemini_model(effect.model):
                 yield Pass(effect, k)
-                return
+                return None
             return (yield Resume(k, active_handler.handle_structured(effect)))
         if isinstance(effect, LLMEmbedding | GeminiEmbedding):
             if not _is_gemini_model(effect.model):
                 yield Pass(effect, k)
-                return
+                return None
             return (yield Resume(k, active_handler.handle_embedding(effect)))
         if isinstance(effect, ImageGenerate):
             return (yield Resume(k, active_handler.handle_image_generate(effect)))

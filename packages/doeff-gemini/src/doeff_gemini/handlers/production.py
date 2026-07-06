@@ -368,21 +368,21 @@ def gemini_image_handler(effect: Any, k: Any):
     if isinstance(effect, GeminiImageEdit):
         if not _is_gemini_image_model(effect.model):
             yield Pass(effect, k)
-            return
+            return None
         value = yield _image_edit_impl(effect)
         return (yield Resume(k, value))
 
     if isinstance(effect, ImageGenerate):
         if not _is_gemini_image_model(effect.model):
             yield Pass(effect, k)
-            return
+            return None
         value = yield _image_generate_impl(effect)
         return (yield Resume(k, value))
 
     if isinstance(effect, ImageEdit):
         if not _is_gemini_image_model(effect.model):
             yield Pass(effect, k)
-            return
+            return None
         value = yield _image_edit_impl(effect)
         return (yield Resume(k, value))
 
@@ -397,10 +397,10 @@ def default_gemini_cost_handler(effect: Any, k: Any):
         if estimate is not None:
             return (yield Resume(k, estimate))
         yield Pass(effect, k)
-        return
+        return None
     if isinstance(effect, EffectBase):
         yield Pass(effect, k)
-        return
+        return None
     yield Pass(effect, k)
 
 
@@ -433,18 +433,18 @@ def production_handlers(
         if isinstance(effect, GeminiCalculateCost):
             if active_cost_handler is None:
                 yield Pass(effect, k)
-                return
+                return None
             return (yield active_cost_handler(effect, k))
         if isinstance(effect, LLMStreamingChat | GeminiStreamingChat):
             if not _is_gemini_model(effect.model):
                 yield Pass(effect, k)
-                return
+                return None
             value = yield active_streaming_chat_impl(effect)
             return (yield Resume(k, value))
         if isinstance(effect, LLMChat | GeminiChat):
             if not _is_gemini_model(effect.model):
                 yield Pass(effect, k)
-                return
+                return None
             if effect.stream:
                 value = yield active_streaming_chat_impl(effect)
                 return (yield Resume(k, value))
@@ -453,25 +453,25 @@ def production_handlers(
         if isinstance(effect, LLMStructuredQuery | GeminiStructuredOutput):
             if not _is_gemini_model(effect.model):
                 yield Pass(effect, k)
-                return
+                return None
             value = yield active_structured_impl(effect)
             return (yield Resume(k, value))
         if isinstance(effect, LLMEmbedding | GeminiEmbedding):
             if not _is_gemini_model(effect.model):
                 yield Pass(effect, k)
-                return
+                return None
             value = yield active_embedding_impl(effect)
             return (yield Resume(k, value))
         if isinstance(effect, ImageGenerate):
             if not _is_gemini_image_model(effect.model):
                 yield Pass(effect, k)
-                return
+                return None
             value = yield active_image_generate_impl(effect)
             return (yield Resume(k, value))
         if isinstance(effect, ImageEdit | GeminiImageEdit):
             if not _is_gemini_image_model(effect.model):
                 yield Pass(effect, k)
-                return
+                return None
             value = yield active_image_edit_impl(effect)
             return (yield Resume(k, value))
         yield Pass(effect, k)
