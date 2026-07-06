@@ -50,7 +50,7 @@ from doeff_agents import (
 from doeff_preset import preset_handlers
 from doeff_time import Delay
 
-from doeff import do
+from doeff import do, program
 
 # =============================================================================
 # Example 1: Direct Effect Usage with @do
@@ -114,11 +114,14 @@ def high_level_programs_workflow(session_name: str, config: LaunchConfig):
     yield slog(step="example2", msg="High-Level Programs")
 
     # run_agent_to_completion is a generator that yields effects
-    # We use yield from to delegate to it
-    result = yield from run_agent_to_completion(
-        session_name,
-        config,
-        poll_interval=0.5,
+    # program() lifts it into a Program so the VM tracks it as one call-tree
+    # node, instead of flattening its yields via `yield from`.
+    result = yield program(
+        lambda: run_agent_to_completion(
+            session_name,
+            config,
+            poll_interval=0.5,
+        )
     )
 
     yield slog(
@@ -169,7 +172,7 @@ def bracket_pattern_workflow(session_name: str, config: LaunchConfig):
         return output
 
     # with_session ensures Stop is called even on error
-    output = yield from with_session(session_name, config, use_session)
+    output = yield program(lambda: with_session(session_name, config, use_session))
 
     yield slog(step="bracket_complete", output_length=len(output) if output else 0)
 
