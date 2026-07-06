@@ -373,7 +373,10 @@ class _SlowTransportScenarioHandler(ScenarioAgentHandler):
         self._transport_delay_seconds = transport_delay_seconds
 
     def handle_await_result(self, effect):
-        time.sleep(self._transport_delay_seconds)
+        # Deliberately real wall-clock delay: this test asserts the node-spec
+        # deadline is measured against real elapsed time (L-K4-3), so
+        # simulated time would defeat the point.
+        time.sleep(self._transport_delay_seconds)  # nosemgrep: doeff-no-sleep-in-tests
         return super().handle_await_result(effect)
 
 
