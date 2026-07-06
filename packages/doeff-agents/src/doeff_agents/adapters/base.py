@@ -1,6 +1,5 @@
 """Base protocol and types for agent adapters."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum

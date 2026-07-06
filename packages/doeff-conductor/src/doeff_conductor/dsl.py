@@ -1,6 +1,5 @@
 """Closed workflow DSL IR and expansion-time checks for doeff-conductor."""
 
-from __future__ import annotations
 
 import math
 from collections.abc import Callable, Iterable, Mapping, Sequence

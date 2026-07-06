@@ -1,6 +1,5 @@
 """Durable L3 agent effect journal for conductor workflow replay."""
 
-from __future__ import annotations
 
 import json
 import logging
@@ -77,7 +76,7 @@ class AgentJournalEntry:
         return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
     @classmethod
-    def from_json_line(cls, line: str, *, path: Path, line_number: int) -> AgentJournalEntry:
+    def from_json_line(cls, line: str, *, path: Path, line_number: int) -> "AgentJournalEntry":
         try:
             payload = json.loads(line)
         except json.JSONDecodeError as exc:
@@ -135,7 +134,7 @@ class AgentJournal:
         run_id: str,
         *,
         state_dir: str | Path | None = None,
-    ) -> AgentJournal:
+    ) -> "AgentJournal":
         run_dir = _state_dir(state_dir) / "workflows" / run_id
         return cls(run_dir / AGENT_JOURNAL_FILENAME)
 
@@ -211,7 +210,7 @@ class ProgressJournalEntry:
         return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
     @classmethod
-    def from_json_line(cls, line: str) -> ProgressJournalEntry | None:
+    def from_json_line(cls, line: str) -> "ProgressJournalEntry" | None:
         """Tolerant parse: a malformed observational line is skipped, never fatal."""
         try:
             payload = json.loads(line)
@@ -246,12 +245,12 @@ class ProgressJournal:
         self.path = path
 
     @classmethod
-    def for_run(cls, run_id: str, *, state_dir: str | Path | None = None) -> ProgressJournal:
+    def for_run(cls, run_id: str, *, state_dir: str | Path | None = None) -> "ProgressJournal":
         run_dir = _state_dir(state_dir) / "workflows" / run_id
         return cls(run_dir / PROGRESS_JOURNAL_FILENAME)
 
     @classmethod
-    def for_run_dir(cls, run_dir: Path) -> ProgressJournal:
+    def for_run_dir(cls, run_dir: Path) -> "ProgressJournal":
         return cls(run_dir / PROGRESS_JOURNAL_FILENAME)
 
     def load_entries(self) -> list[ProgressJournalEntry]:
@@ -310,7 +309,7 @@ class GateAnswerJournalEntry:
         return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
     @classmethod
-    def from_json_line(cls, line: str, *, path: Path, line_number: int) -> GateAnswerJournalEntry:
+    def from_json_line(cls, line: str, *, path: Path, line_number: int) -> "GateAnswerJournalEntry":
         try:
             payload = json.loads(line)
         except json.JSONDecodeError as exc:
@@ -356,7 +355,7 @@ class GateAnswerJournal:
         run_id: str,
         *,
         state_dir: str | Path | None = None,
-    ) -> GateAnswerJournal:
+    ) -> "GateAnswerJournal":
         run_dir: Path = _state_dir(state_dir) / "workflows" / run_id
         return cls(run_dir / GATE_ANSWER_JOURNAL_FILENAME)
 
@@ -441,7 +440,7 @@ class CreateWorkspaceJournalEntry:
     @classmethod
     def from_json_line(
         cls, line: str, *, path: Path, line_number: int
-    ) -> CreateWorkspaceJournalEntry:
+    ) -> "CreateWorkspaceJournalEntry":
         try:
             payload = json.loads(line)
         except json.JSONDecodeError as exc:
@@ -486,7 +485,7 @@ class WorkspaceJournal:
         run_id: str,
         *,
         state_dir: str | Path | None = None,
-    ) -> WorkspaceJournal:
+    ) -> "WorkspaceJournal":
         run_dir: Path = _state_dir(state_dir) / "workflows" / run_id
         return cls(run_dir / WORKSPACE_JOURNAL_FILENAME)
 
