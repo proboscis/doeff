@@ -34,7 +34,10 @@ use crate::value::CallableRef;
 /// Extensions (intercept, mask) are layered on the handler, not the fiber.
 #[derive(Debug, Clone)]
 pub struct Handler {
-    pub marker: Marker,
+    // This is Handler.marker, not a top-level Fiber field: SPEC-VM-019 Rev 5
+    // already folds the marker into the boundary/handler representation
+    // (Fiber.handler is Option of this struct), so the field belongs here.
+    pub marker: Marker, // nosemgrep: vm-ocaml5-no-marker-on-fiber
     pub prompt: Option<PromptBoundary>,
     pub intercept: Option<InterceptSpec>,
     pub mask: Option<MaskSpec>,
