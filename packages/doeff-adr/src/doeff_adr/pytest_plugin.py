@@ -1,6 +1,5 @@
 """Pytest plugin for executable ADR Hy files."""
 
-from __future__ import annotations
 
 import fnmatch
 import importlib

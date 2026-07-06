@@ -1,6 +1,5 @@
 """Journal-materialized overseer progress and gate queue views."""
 
-from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
@@ -28,7 +27,7 @@ class GateOption:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> GateOption:
+    def from_dict(cls, data: dict[str, Any]) -> "GateOption":
         outcome: str = str(data["outcome"])
         if outcome not in VALID_GATE_OUTCOMES:
             raise ValueError(
@@ -65,7 +64,7 @@ class OpenGateView:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> OpenGateView:
+    def from_dict(cls, data: dict[str, Any]) -> "OpenGateView":
         raw_options: object = data.get("options", [])
         if not isinstance(raw_options, list):
             raise ValueError("gate options must be a list")
@@ -111,7 +110,7 @@ class ProgressEvent:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ProgressEvent:
+    def from_dict(cls, data: dict[str, Any]) -> "ProgressEvent":
         return cls(
             sequence=int(data["sequence"]),
             workflow_id=str(data["workflow_id"]),
@@ -150,7 +149,7 @@ class RunStateView:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> RunStateView:
+    def from_dict(cls, data: dict[str, Any]) -> "RunStateView":
         raw_events: object = data.get("events", [])
         raw_gates: object = data.get("open_gates", [])
         if not isinstance(raw_events, list):

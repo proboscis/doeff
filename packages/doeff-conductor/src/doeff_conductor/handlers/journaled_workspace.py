@@ -5,7 +5,6 @@ runs can verify coverage: every workspace that existed in the original
 run must still exist in the resumed run.
 """
 
-from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime, timezone

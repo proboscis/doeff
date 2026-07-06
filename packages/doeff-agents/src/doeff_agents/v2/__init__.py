@@ -7,7 +7,6 @@ subpackage adds names whose outcome contract is visible at the call site:
 * ``InvokeAgent`` runs one structured invocation and returns a validated payload.
 """
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
