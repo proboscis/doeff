@@ -93,7 +93,10 @@ impl PyVM {
                         let py_frames: Vec<_> =
                             frames.into_iter().map(|v| value_to_python(py, v)).collect();
                         if let Ok(tb_list) = pyo3::types::PyList::new(py, &py_frames) {
-                            let _ = py_obj.setattr("__doeff_traceback__", tb_list);
+                            // py_obj is an arbitrary user-raised Python exception, not a
+                            // doeff PyClass, so there is no typed field to attach this to;
+                            // scheduler.py reads this same attribute off exception objects.
+                            let _ = py_obj.setattr("__doeff_traceback__", tb_list); // nosemgrep: vm-no-dunder-attrs
                         }
                     }
                 }
@@ -164,7 +167,10 @@ impl PyVM {
             let py_frames: Vec<_> = frames.into_iter().map(|v| value_to_python(py, v)).collect();
             let tb_list = pyo3::types::PyList::new(py, &py_frames).unwrap();
             let exc_val = err.value(py);
-            let _ = exc_val.setattr("__doeff_traceback__", tb_list);
+            // exc_val is a pyo3-constructed Python exception, not a doeff
+            // PyClass, so there is no typed field to attach this to;
+            // scheduler.py reads this same attribute off exception objects.
+            let _ = exc_val.setattr("__doeff_traceback__", tb_list); // nosemgrep: vm-no-dunder-attrs
         }
         err
     }
