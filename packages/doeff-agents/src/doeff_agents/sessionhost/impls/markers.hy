@@ -3,7 +3,8 @@
 ;;; oracle: packages/doeff-agentd/src/main.rs の output_has_*(main.rs:2969-3229)
 ;;; を verbatim 移植。marker→検出は impl 所有・分類の順序と意味づけは policy 所有
 ;;; (PaneObservation は事実だけを運ぶ)。凍結出典は conformance README の
-;;; F-* 表(CONTRACT FIXED 2026-07-05)。
+;;; F-* 表(CONTRACT FIXED 2026-07-05)。例外: has-claude-trust-dialog のみ
+;;; oracle 非在 — 2026-07-07 の R9 カバレッジ欠落(実物 frame で実証)の修正。
 ;;;
 ;;; oracle の検出関数は kind 非依存(codex の `› ` と claude の `❯` を同じ関数が
 ;;; 見る)なので、ここも共有モジュールとして両 impl から使う。kind 分岐が
@@ -191,6 +192,20 @@
              (in "not now" lower)
              (in "enter to confirm" lower))))
 
+(deff has-claude-trust-dialog [output]
+  {:pre [(: output str)] :post [(: % bool)]}
+  "claude の workspace-trust gate(未 trust の cwd で startup を塞ぐ —
+   dismiss しないと wait-for-repl-idle は永久に idle を見ず 120s 上限縮退 →
+   prompt が dialog に送出されて死ぬ)。Rust oracle に対応関数は無い:
+   2026-07-07 に実物 frame(R9 カバレッジ欠落の実障害)から追加した
+   5 つ目の R9 dialog。長文の質問文(Is this a project you created …)は
+   pane 幅で reflow するため marker にしない — 折返しは部分文字列一致を
+   殺す(幾何学物理)。"
+  (setv lower (.lower output))
+  (bool (and (in "yes, i trust this folder" lower)
+             (in "no, exit" lower)
+             (in "enter to confirm" lower))))
+
 (deff has-claude-managed-dialog [output]
   {:pre [(: output str)] :post [(: % bool)]}
   "組織 managed-settings 承認 dialog(mid-turn にも出る — monitor loop でも
@@ -203,11 +218,14 @@
 (deff detect-dialog [output]
   {:pre [(: output str)] :post [(: % tuple)]}
   "R9 dialog の検出と決定的 dismissal キー列。検査順は oracle
-   wait_for_repl_idle と同じ: codex-update → bypass → fullscreen → managed。
+   wait_for_repl_idle と同じ(trust は oracle 非在 — fullscreen の後に挿入):
+   codex-update → bypass → fullscreen → trust → managed。
    dismissal(S18 verbatim): update = selected 依存 Down×n + Enter /
    bypass = Down,Enter(既定 No,exit → Yes,I accept)/
-   fullscreen = Down,Enter(既定 Yes,try it → Not now)/ managed = Enter。
-   戻り値: #(dialog-name keys) — 検出なしは #(None #())。"
+   fullscreen = Down,Enter(既定 Yes,try it → Not now)/
+   trust = Enter(既定 Yes,I trust this folder — pre-seed
+   hasTrustDialogAccepted と同じ意図で doeff 制御の work_dir を信頼)/
+   managed = Enter。戻り値: #(dialog-name keys) — 検出なしは #(None #())。"
   (cond
     (has-codex-update-dialog output)
       #("codex-update" (codex-update-dismiss-keys output))
@@ -215,6 +233,8 @@
       #("bypass" #("Down" "Enter"))
     (has-claude-fullscreen-dialog output)
       #("fullscreen" #("Down" "Enter"))
+    (has-claude-trust-dialog output)
+      #("trust" #("Enter"))
     (has-claude-managed-dialog output)
       #("managed" #("Enter"))
     True #(None #())))
@@ -223,12 +243,13 @@
   {:pre [(: output str)] :post [(: % bool)]}
   "launch watchdog の解除信号(oracle output_indicates_startup_finished):
    REPL input box / active / turn-activity のどれかが見え、かつ MCP boot・
-   update・bypass・fullscreen dialog 中でない(それらは watchdog が刈り続ける
-   べき stuck-in-startup 状態そのもの)。"
+   update・bypass・fullscreen・trust dialog 中でない(それらは watchdog が
+   刈り続けるべき stuck-in-startup 状態そのもの)。"
   (if (or (is-starting-mcp-servers output)
           (has-codex-update-dialog output)
           (has-claude-bypass-dialog output)
-          (has-claude-fullscreen-dialog output))
+          (has-claude-fullscreen-dialog output)
+          (has-claude-trust-dialog output))
       False
       (bool (or (has-codex-active-marker output)
                 (has-idle-prompt output)
