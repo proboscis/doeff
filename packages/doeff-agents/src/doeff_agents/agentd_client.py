@@ -134,6 +134,7 @@ class AgentdClient:
         model: str | None = None,
         effort: str | None = None,
         lifecycle: AgentSessionLifecycle | str = AgentSessionLifecycle.RUN_TO_COMPLETION,
+        binding: Mapping[str, Any] | None = None,
         session_env: Mapping[str, str] | None = None,
         expected_result: Mapping[str, Any] | None = None,
     ) -> AgentSessionSnapshot:
@@ -153,6 +154,10 @@ class AgentdClient:
             params["model"] = model
         if effort is not None:
             params["effort"] = effort
+        if binding is not None:
+            # ADR-DOE-AGENTS-004 R7: auth/profile rides the typed binding;
+            # session_env stays a non-auth overlay.
+            params["binding"] = dict(binding)
         if expected_result is not None:
             params["expected_result"] = dict(expected_result)
         result = self.request(
@@ -347,6 +352,7 @@ class LazyAgentdClient:
         model: str | None = None,
         effort: str | None = None,
         lifecycle: AgentSessionLifecycle | str = AgentSessionLifecycle.RUN_TO_COMPLETION,
+        binding: Mapping[str, Any] | None = None,
         session_env: Mapping[str, str] | None = None,
         expected_result: Mapping[str, Any] | None = None,
     ) -> AgentSessionSnapshot:
@@ -360,6 +366,7 @@ class LazyAgentdClient:
             model=model,
             effort=effort,
             lifecycle=lifecycle,
+            binding=binding,
             session_env=session_env,
             expected_result=expected_result,
         )

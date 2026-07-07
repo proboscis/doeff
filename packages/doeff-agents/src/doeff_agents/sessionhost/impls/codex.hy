@@ -84,19 +84,22 @@
   {:pre [(: params dict)]
    :post [(: % "None — gate は raise するか通すだけ")]}
   "ADR-DOE-AGENTS-003: agent の auth profile は per-project の決定で、既定は
-   無い。CODEX_HOME の明示(session_env か launch command 埋め込み)が無い
-   codex launch は tmux に触る前に typed fail(暗黙の ~/.codex fallback が
-   共有マシンで個人アカウントの週次クォータを焼いた 2026-07-04 の実障害)。"
-  (setv session-env (.get params "session_env" {}))
+   無い。auth profile の明示(typed binding か launch command への
+   CODEX_HOME= 埋め込み — R7: session_env は非 auth overlay で運搬手段では
+   ない)が無い codex launch は tmux に触る前に typed fail(暗黙の ~/.codex
+   fallback が共有マシンで個人アカウントの週次クォータを焼いた 2026-07-04 の
+   実障害)。"
+  (setv binding (.get params "binding"))
   (setv command (or (.get params "command") ""))
-  (when (and (not-in "CODEX_HOME" session-env)
+  (when (and (is binding None)
              (not-in "CODEX_HOME=" command))
     (raise (RuntimeError
              (+ "session.launch: no agent auth profile for a codex session — "
-                "set CODEX_HOME explicitly (session_env or the launch command). "
-                "There is NO default: the implicit ~/.codex fallback selects "
-                "whatever account lives there. Declare the auth profile per "
-                "project/namespace (ADR-DOE-AGENTS-003)."))))
+                "declare the typed `binding` (kind \"codex\", codex_home) or "
+                "embed CODEX_HOME= in the explicit launch command. There is NO "
+                "default: the implicit ~/.codex fallback selects whatever "
+                "account lives there. Declare the auth profile per "
+                "project/namespace (ADR-DOE-AGENTS-003 / -004 R7)."))))
   None)
 
 
@@ -144,13 +147,14 @@
   {:pre [(: params dict)]
    :post [(: % dict)]}
   "PreLaunchSetup の codex 実体: auth gate(S11、常時)→ trust 書き込み
-   (skip_trust_setup で trust だけ飛ばす)。実効 CODEX_HOME は session_env →
-   process env fallback(S11 caveat: oracle の trust writer は daemon env を
-   fallback 参照する — 直接束縛では呼び手 env)。解決不能(command 埋め込みで
-   env にも無い)なら trust は typed skip(書き先が無い)で identity は None。"
+   (skip_trust_setup で trust だけ飛ばす)。実効 CODEX_HOME は binding
+   (R7: auth は typed 構成で運ぶ)→ process env fallback(S11 caveat:
+   oracle の trust writer は daemon env を fallback 参照する — command
+   埋め込みの escape hatch 用)。解決不能(command 埋め込みで env にも無い)
+   なら trust は typed skip(書き先が無い)で identity は None。"
   (codex-auth-gate params)
-  (setv session-env (.get params "session_env" {}))
-  (setv codex-home (.get session-env "CODEX_HOME"))
+  (setv binding (.get params "binding"))
+  (setv codex-home (when (is-not binding None) (.get binding "codex_home")))
   (when (is None codex-home)
     (<- from-env (env-get "CODEX_HOME"))
     (setv codex-home from-env))
