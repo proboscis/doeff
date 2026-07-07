@@ -17,6 +17,7 @@
 (import doeff_agents.sessionhost.host [
   HostConfig
   DEFAULT-PROMPT-JUDGE-CMD
+  build-launch-program-params
   parse-args
   default-db-path
   default-socket-path
@@ -280,3 +281,31 @@
     (assert (in "already listening" (str raised)))
     (finally
       (shutil.rmtree d :ignore-errors True))))
+
+
+;; ---------------------------------------------------------------------------
+;; wire → launch program params(R7 binding passthrough)
+;; ---------------------------------------------------------------------------
+
+(deftest test-launch-program-params-carries-binding-and-overlay
+  ;; R7: typed binding は wire から program へそのまま渡り、session_env は
+  ;; 非 auth overlay として素通しされる(auth 検査は launch program の
+  ;; admission 所有 — ここは serde 既定値の再現のみ)。
+  (setv config (HostConfig :db-path "/tmp/x.db" :socket-path "/tmp/x.sock"
+                           :tmux-bin "tmux" :monitor-interval-seconds 1.0
+                           :max-running 4 :result-solicitation-limit 3
+                           :prompt-stall-seconds 90 :prompt-unblock-limit 3
+                           :prompt-judge-cmd DEFAULT-PROMPT-JUDGE-CMD))
+  (setv wire {"session_id" "s1" "session_name" "doeff-s1"
+              "agent_type" "codex" "work_dir" "/w"
+              "binding" {"kind" "codex" "codex_home" "/x/codex"}
+              "session_env" {"PYTHONUNBUFFERED" "1"}})
+  (setv params (build-launch-program-params wire config))
+  (assert (= (get params "binding") {"kind" "codex" "codex_home" "/x/codex"}))
+  (assert (= (get params "session_env") {"PYTHONUNBUFFERED" "1"}))
+  ;; binding 省略は None(serde 既定値)
+  (setv bare {"session_id" "s1" "session_name" "doeff-s1"
+              "agent_type" "codex" "work_dir" "/w"})
+  (setv params2 (build-launch-program-params bare config))
+  (assert (is None (get params2 "binding")))
+  (assert (= (get params2 "session_env") {})))
