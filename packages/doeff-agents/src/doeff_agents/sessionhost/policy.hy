@@ -91,17 +91,39 @@
 ;; (所有権ベース — 既知の悪いキーの列挙は腐るが所有権は腐らない)。
 (setv BINDING-OWNED-ENV-KEYS #{"CODEX_HOME" "CLAUDE_CONFIG_DIR"})
 
-;; wire binding kind → agent_type(ACP bindingAgentType と同写像)と必須 field。
+;; wire binding kind → agent_type(ACP bindingAgentType と同写像)。
 (setv BINDING-KIND-AGENT-TYPE {"codex" "codex" "claude-code" "claude"})
-(setv BINDING-KIND-REQUIRED-FIELD {"codex" "codex_home" "claude-code" "config_dir"})
+
+;; kind ごとの受理形(shape = kind 以外の field 名集合。宣言順に列挙)。
+;; codex v2(#15)は「受理形の拡張」: {codex_home}(native home — daemon
+;; ローカル束縛・CODEX_HOME= escape hatch の恒久住人)XOR {auth_file,
+;; profile_dir}(control plane の二軸宣言 — host が FsComposeHomeView で
+;; view を合成)。混在・部分・未知 field はどの shape にも一致せず reject。
+(setv BINDING-KIND-SHAPES
+      {"codex" [#{"codex_home"} #{"auth_file" "profile_dir"}]
+       "claude-code" [#{"config_dir"}]})
+
+;; per-kind の契約版。ACP 側の kind→期待版表(Definition.hs)と同写像 —
+;; 二枚の表の drift は ACP の verifyBindingKindsOnce(kinds.list 照合)が
+;; BindingKindUnsupported として検出する。codex は #15(受理形拡張)で v2、
+;; claude-code は v1 のまま。
+(setv BINDING-KIND-API-VERSION
+      {"codex" "acp.dev/agent-binding/v2"
+       "claude-code" "acp.dev/agent-binding/v1"})
+
+(deff binding-kind-shape-label [kind]
+  {:pre [(: kind str)]
+   :post [(: % str)]}
+  "kind の受理形の人間可読ラベル(広告と admission エラーの共有語彙)。
+   shape 内は field 名の昇順を `+`、shape 間は宣言順を ` | ` で結ぶ。"
+  (.join " | " (lfor shape (get BINDING-KIND-SHAPES kind)
+                     (.join "+" (sorted shape)))))
 
 ;; kinds.list 広告(DOE-004 R5 縮小版、2026-07-08): host は自分の binding
 ;; kind 語彙を広告し、control plane の reconciler が登録済み binding と定期
 ;; 照合する(登録時結合はしない — host liveness と registration を結合しない)。
-;; api_version は ACP AgentBindingDefinition(agent-binding/v1)と同写像の
-;; 契約ラベル。表とこの定数がスキーマの単一の家。
-(setv AGENT-BINDING-API-VERSION "acp.dev/agent-binding/v1")
-
+;; 照合の機械面は (kind, api_version) のみ。required_field は人間可読ラベル
+;; (shapes DSL は導入しない — 機械消費者不在の YAGNI 裁定、#15)。
 (deff binding-kind-advertisement []
   {:pre []
    :post [(: % list)]}
@@ -110,8 +132,8 @@
   (lfor kind (sorted (.keys BINDING-KIND-AGENT-TYPE))
         {"kind" kind
          "agent_type" (get BINDING-KIND-AGENT-TYPE kind)
-         "required_field" (get BINDING-KIND-REQUIRED-FIELD kind)
-         "api_version" AGENT-BINDING-API-VERSION}))
+         "required_field" (binding-kind-shape-label kind)
+         "api_version" (get BINDING-KIND-API-VERSION kind)}))
 
 (deff policy-normalized-env-key [key]
   {:pre [(: key str)]
@@ -132,7 +154,8 @@
    :post [(: % (| str None))]}
   "wire binding の admission(ADR 0044 R3 と同思想: parse できた binding だけが
    launch に到達する)。None = 適合。文字列 = reject 理由。検査: object 形・
-   既知 kind・kind↔agent_type 整合・必須 field(非空 str)・未知 field 拒否。"
+   既知 kind・kind↔agent_type 整合・受理形への完全一致(XOR — 混在・部分・
+   未知 field はどの shape にも一致しない)・shape の全 field が非空 str。"
   (when (is binding None)
     (return None))
   (when (not (isinstance binding dict))
@@ -145,13 +168,18 @@
   (when (!= agent-type expected-agent-type)
     (return (+ f"binding kind {kind !r} drives agent_type "
                f"{expected-agent-type !r}, not {agent-type !r}")))
-  (setv required (get BINDING-KIND-REQUIRED-FIELD kind))
-  (setv value (.get binding required))
-  (when (or (not (isinstance value str)) (not (.strip value)))
-    (return f"binding kind {kind !r} requires a non-empty string field `{required}`"))
-  (setv unknown (sorted (- (set (.keys binding)) #{"kind" required})))
-  (when unknown
-    (return f"binding carries unknown field(s): {(.join ", " unknown) }"))
+  (setv present (- (set (.keys binding)) #{"kind"}))
+  (setv matched (lfor shape (get BINDING-KIND-SHAPES kind)
+                      :if (= present shape)
+                      shape))
+  (when (not matched)
+    (setv got (if present (.join ", " (sorted present)) "none"))
+    (return (+ f"binding kind {kind !r} requires exactly one field set of: "
+               f"{(binding-kind-shape-label kind) } (got: {got})")))
+  (for [field (sorted (get matched 0))]
+    (setv value (.get binding field))
+    (when (or (not (isinstance value str)) (not (.strip value)))
+      (return f"binding kind {kind !r} requires a non-empty string field `{field}`")))
   None)
 
 ;; judge verdict の keys whitelist(main.rs is_allowed_unblock_key):
