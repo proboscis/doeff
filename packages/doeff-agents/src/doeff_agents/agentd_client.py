@@ -133,6 +133,23 @@ class AgentdClient:
             raise AgentdProtocolError("daemon.status returned a non-object result")
         return result
 
+    def kinds(self) -> list[Mapping[str, Any]]:
+        """Advertised binding-kind vocabulary (DOE-004 R5, reduced form).
+
+        The host advertises {kind, agent_type, required_field, api_version}
+        rows; the control plane's reconciler cross-checks its registered
+        agent bindings against this list on a level-triggered cadence
+        (registration itself never couples to host liveness).
+        """
+        result = self.request("kinds.list")
+        if not isinstance(result, Mapping) or not isinstance(result.get("kinds"), list):
+            raise AgentdProtocolError("kinds.list returned a malformed result")
+        rows = result["kinds"]
+        for row in rows:
+            if not isinstance(row, Mapping) or not isinstance(row.get("kind"), str):
+                raise AgentdProtocolError("kinds.list returned a malformed kind row")
+        return rows
+
     def launch_session(
         self,
         *,
