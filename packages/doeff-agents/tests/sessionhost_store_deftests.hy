@@ -10,11 +10,14 @@
 (require doeff-hy.macros [deftest defk deff <-])
 
 (import dataclasses [replace])
+(import datetime [datetime timezone])
 (import json)
 (import os)
 (import shutil)
 (import sqlite3)
 (import tempfile)
+
+(import doeff_agents.sessionhost.policy [parse-iso])
 
 (import doeff [EffectBase])
 
@@ -226,7 +229,26 @@
     (.execute conn
               "UPDATE agent_daemon_lease SET expires_at = '2000-01-01T00:00:00+00:00'")
     (db-acquire-lease conn 222)
-    (assert (= (get (db-read-lease conn) "owner_pid") 222)))
+    (assert (= (get (db-read-lease conn) "owner_pid") 222))
+    ;; heartbeat 自己修復(2026-07-07 ensure spawn スパイラルの根治):
+    ;; **失効した**他人名義 lease は heartbeat が再取得する(level-triggered)。
+    ;; 盗んで死んだ競合者の残骸から、bind を保持する本物が回復する経路。
+    (.execute conn
+              "UPDATE agent_daemon_lease SET expires_at = '2000-01-01T00:00:00+00:00'")
+    (db-heartbeat-once conn 111)
+    (assert (= (get (db-read-lease conn) "owner_pid") 111))
+    ;; 再取得後は自分名義で TTL が張り直されている(未失効)
+    (setv healed (db-read-lease conn))
+    (assert (> (parse-iso (get healed "expires_at"))
+               (datetime.now timezone.utc)))
+    ;; 消失は raise のまま(oracle parity — 自己修復は失効残骸に限る)
+    (.execute conn "DELETE FROM agent_daemon_lease")
+    (setv raised None)
+    (try
+      (db-heartbeat-once conn 111)
+      (except [e RuntimeError] (setv raised e)))
+    (assert (is-not raised None))
+    (assert (in "disappeared" (str raised))))
   (with-tmp-conn check))
 
 

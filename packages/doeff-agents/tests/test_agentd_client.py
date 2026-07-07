@@ -382,6 +382,222 @@ def test_ensure_agentd_starts_daemon_when_canonical_socket_unreachable(
     assert paths.socket_path.parent.is_dir()
 
 
+class SilentListener:
+    """Live listener that accepts connections but never answers.
+
+    Models the busy host of the 2026-07-07 ensure-spawn-spiral incident:
+    the writer actor is wedged behind a bulk query, so daemon.status is
+    slow, but the socket listener is alive and owns the exclusivity.
+    """
+
+    def __init__(self, socket_path: Path) -> None:
+        self.socket_path = socket_path
+        self._server: socket.socket | None = None
+        self._conns: list[socket.socket] = []
+        self._thread: threading.Thread | None = None
+
+    def __enter__(self) -> SilentListener:
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(str(self.socket_path))
+        server.listen(8)
+        self._server = server
+
+        def serve() -> None:
+            while True:
+                try:
+                    conn, _addr = server.accept()
+                except OSError:
+                    return
+                self._conns.append(conn)
+
+        self._thread = threading.Thread(target=serve, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        for conn in self._conns:
+            conn.close()
+        if self._server is not None:
+            self._server.close()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        if self.socket_path.exists():
+            self.socket_path.unlink()
+
+
+class BusyThenHealthyAgentdServer:
+    """JSON-line server whose FIRST request goes unanswered.
+
+    Models the busy host from the client's point of view without any
+    test-side clock: the first status probe fails (connection closed
+    with no response — the same `_agentd_status_if_ready` -> None branch
+    a timeout takes), while the listener stays alive and every later
+    request is answered immediately.
+    """
+
+    def __init__(self, socket_path: Path) -> None:
+        self.socket_path = socket_path
+        self._server: socket.socket | None = None
+        self._thread: threading.Thread | None = None
+        self._requests_seen = 0
+        self._lock = threading.Lock()
+
+    def __enter__(self) -> BusyThenHealthyAgentdServer:
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(str(self.socket_path))
+        server.listen(8)
+        self._server = server
+
+        def answer(conn: socket.socket) -> None:
+            with conn:
+                line = conn.makefile("r", encoding="utf-8").readline()
+                if not line:
+                    return
+                with self._lock:
+                    self._requests_seen += 1
+                    first = self._requests_seen == 1
+                if first:
+                    return
+                request = json.loads(line)
+                response = {
+                    "id": request["id"],
+                    "ok": True,
+                    "result": {"state": "running"},
+                }
+                try:
+                    conn.sendall(json.dumps(response).encode("utf-8") + b"\n")
+                except OSError:
+                    return
+
+        def serve() -> None:
+            while True:
+                try:
+                    conn, _addr = server.accept()
+                except OSError:
+                    return
+                threading.Thread(target=answer, args=(conn,), daemon=True).start()
+
+        self._thread = threading.Thread(target=serve, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        if self._server is not None:
+            self._server.close()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        if self.socket_path.exists():
+            self.socket_path.unlink()
+
+
+def test_ensure_agentd_never_spawns_against_live_but_slow_listener(
+    monkeypatch,
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    # Spawn predicate root fix (2026-07-07): slow != dead.  A listener
+    # that accepts connect() but misses the status budget must produce a
+    # LOUD error, never a competing daemon (which steals the lease, dies
+    # on the socket bind, and leaves the lease rotting under a dead pid).
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    paths = default_agentd_paths()
+    paths.socket_path.parent.mkdir(parents=True)
+    starts: list[tuple[tuple[str, ...], Path]] = []
+    monkeypatch.setattr(
+        agentd_client,
+        "_start_agentd_process",
+        lambda command, log_path: starts.append((tuple(command), log_path)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        agentd_client,
+        "AGENTD_BUSY_STATUS_TIMEOUT_SECONDS",
+        0.3,
+        raising=False,
+    )
+
+    with SilentListener(paths.socket_path):
+        with pytest.raises(AgentdUnavailableError) as error:
+            ensure_agentd(
+                daemon_bin="/usr/local/bin/doeff-agentd",
+                client_timeout=0.2,
+            )
+
+    message = str(error.value)
+    assert "refusing to start a competing daemon" in message
+    assert str(paths.socket_path) in message
+    assert starts == []
+
+
+def test_ensure_agentd_waits_out_slow_status_from_live_listener(
+    monkeypatch,
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    # The busy host misses the first probe but answers the long-budget
+    # retry: ensure must return the client without spawning anything.
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    paths = default_agentd_paths()
+    paths.socket_path.parent.mkdir(parents=True)
+    starts: list[tuple[tuple[str, ...], Path]] = []
+    monkeypatch.setattr(
+        agentd_client,
+        "_start_agentd_process",
+        lambda command, log_path: starts.append((tuple(command), log_path)),
+        raising=False,
+    )
+
+    with BusyThenHealthyAgentdServer(paths.socket_path):
+        client = ensure_agentd(client_timeout=0.5)
+
+    assert client.socket_path == paths.socket_path
+    assert starts == []
+
+
+def test_ensure_agentd_spawns_when_socket_file_is_stale(
+    monkeypatch,
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    # A socket file with no listener (ECONNREFUSED) is PROVEN death:
+    # the spawn path stays open for it.
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    paths = default_agentd_paths()
+    paths.socket_path.parent.mkdir(parents=True)
+    stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    stale.bind(str(paths.socket_path))
+    stale.close()
+    starts: list[tuple[tuple[str, ...], Path]] = []
+    monkeypatch.setattr(
+        agentd_client,
+        "_start_agentd_process",
+        lambda command, log_path: starts.append((tuple(command), log_path)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        agentd_client,
+        "_sleep_for_agentd_start",
+        lambda _seconds: None,
+        raising=False,
+    )
+
+    with pytest.raises(AgentdUnavailableError) as error:
+        ensure_agentd(
+            daemon_bin="/usr/local/bin/doeff-agentd",
+            client_timeout=0.2,
+            timeout=0.2,
+        )
+
+    assert "after starting it" in str(error.value)
+    assert len(starts) == 1
+
+
 def test_agentd_command_defaults_to_interpreter_sibling_sessionhost(
     monkeypatch,
     tmp_path: Path,

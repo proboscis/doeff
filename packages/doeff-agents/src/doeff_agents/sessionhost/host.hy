@@ -869,15 +869,28 @@
     (time.sleep config.monitor-interval-seconds)))
 
 
-(deff serve [config actor]
-  {:pre [(: config HostConfig) (: actor StoreActor)]
-   :post [(: % "戻らない(accept loop)")]}
-  "bind → monitor / heartbeat thread → accept loop(connection 毎 thread、
-   oracle serve :1159-1180)。"
-  (prepare-socket-path config.socket-path)
+(deff bind-listener [socket-path]
+  {:pre [(: socket-path str)]
+   :post [(: % socket.socket)]}
+  "単一インスタンス排他の実体 = socket bind(lease はその影)。生存 listener は
+   prepare-socket-path が loud に拒否するので、bind に勝った 1 プロセスだけが
+   ここを通過する。main はこれを store open / lease より**先**に呼ぶ —
+   敗者が lease や latch clear に触れてから死ぬ 2026-07-07 の
+   ensure spawn スパイラル(競合 child が lease を盗んで socket 衝突で死亡、
+   lease が死 pid 名義で腐る)の根治点。"
+  (prepare-socket-path socket-path)
   (setv listener (socket.socket socket.AF-UNIX socket.SOCK-STREAM))
-  (.bind listener config.socket-path)
+  (.bind listener socket-path)
   (.listen listener 64)
+  listener)
+
+
+(deff serve [config actor listener]
+  {:pre [(: config HostConfig) (: actor StoreActor) (: listener socket.socket)]
+   :post [(: % "戻らない(accept loop)")]}
+  "monitor / heartbeat thread → accept loop(connection 毎 thread、
+   oracle serve :1159-1180)。listener は bind-listener が起動順の先頭で
+   確保済みのものを受け取る。"
   (setv monitor (threading.Thread :target monitor-loop
                                   :args #(config actor)
                                   :daemon True
@@ -914,11 +927,15 @@
                 (os.path.dirname config.socket-path)]]
     (when parent
       (os.makedirs parent :exist-ok True)))
-  ;; oracle main :581-596: open+migrate(StoreActor 構築で完了)→ lease 取得
-  ;; (未失効 lease は loud に拒否)→ awaiting_response latch 全 clear。
+  ;; 起動順は bind が先(oracle main :581-596 からの意図的乖離、2026-07-07
+  ;; ensure spawn スパイラルの根治): socket bind = 排他の実体に負けた競合者は
+  ;; store open / lease 取得 / latch clear のどれにも触れずに死ぬ。
+  ;; lease 取得(未失効 lease は loud に拒否)→ awaiting_response latch 全
+  ;; clear は bind 通過後にのみ走る。
+  (setv listener (bind-listener config.socket-path))
   (setv actor (StoreActor config.db-path))
   (setv owner-pid (os.getpid))
   (.submit actor (fn [conn] (db-acquire-lease conn owner-pid)))
   (.submit actor (fn [conn] (db-clear-awaiting-latches conn)))
-  (serve config actor)
+  (serve config actor listener)
   None)
