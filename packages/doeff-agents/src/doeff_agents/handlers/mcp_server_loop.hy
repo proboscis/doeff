@@ -29,6 +29,17 @@
 (import threading)
 
 
+(defn _scheduler-prompt? [h]
+  "True when h is (or wraps) the scheduler's own prompt handler.
+   scheduler.make_handler marks its raw handler with
+   __doeff_scheduler_prompt__; captured stacks may carry either the raw
+   handler or its Program->Program install wrapper
+   (__doeff_handler_data__)."
+  (or (getattr h "__doeff_scheduler_prompt__" False)
+      (getattr (getattr h "__doeff_handler_data__" None)
+               "__doeff_scheduler_prompt__" False)))
+
+
 (defk _timeout-after [seconds timer-box]
   {:pre [(: seconds float) (: timer-box dict)] :post [(: % tuple)]}
   (<- timeout-ep (CreateExternalPromise))
@@ -51,7 +62,15 @@
   (setv args (lfor name (.param-names tool) (.get req.arguments name)))
   (setv program (tool.handler #* args))
   (for [h full-stack]
-    (setv program ((_program-handler h) program)))
+    ;; Never reinstall the scheduler's own prompt handler (marked by
+    ;; scheduler.make_handler): the VM has exactly ONE scheduler prompt.
+    ;; A duplicate inside this tool task makes Transfer-resumed pipeline
+    ;; continuations unwind their exceptions into THIS task's except
+    ;; below — the pipeline error is swallowed as a tool error while the
+    ;; orphaned tool value becomes the run() result (2026-07-07 SBI live
+    ;; exit-0 incident).
+    (when (not (_scheduler-prompt? h))
+      (setv program ((_program-handler h) program))))
   (setv ok True)
   (setv result None)
   (setv error-msg None)
