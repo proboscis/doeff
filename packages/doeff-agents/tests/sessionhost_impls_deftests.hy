@@ -437,6 +437,42 @@
   (assert (= (list m.dialog-dismiss-keys) ["Enter"])))
 
 
+(deftest test-classify-claude-trust-dialog
+  ;; 実物 frame(herdr demo-claude-2 で 2026-07-07 逐語採取。workspace path
+  ;; 行のみ可変なので一般化)。claude CLI が未 trust の cwd で起動すると出す
+  ;; startup gate — R9 で dismiss しないと wait-for-repl-idle が永久に idle を
+  ;; 見ず、120s 上限縮退 → launch が prompt を dialog に送出して死ぬ実障害。
+  ;; 長文の質問文は pane 幅次第で reflow されるため marker には使わない
+  ;; (幾何学物理: 折返しは部分文字列一致を殺す)。
+  (setv trust (+ "\n"
+                 " Accessing workspace:\n"
+                 "\n"
+                 " /home/user\n"
+                 "\n"
+                 " Quick safety check: Is this a project you created or one you trust? (Like your own code,\n"
+                 " a well-known open source project, or work from your team). If not, take a moment to\n"
+                 " review what's in this folder first.\n"
+                 "\n"
+                 " Claude Code'll be able to read, edit, and execute files here.\n"
+                 "\n"
+                 " Security guide\n"
+                 "\n"
+                 " ❯ 1. Yes, I trust this folder\n"
+                 "   2. No, exit\n"
+                 "\n"
+                 " Enter to confirm · Esc to cancel\n"))
+  (<- t (classify-claude trust))
+  ;; 既定選択が option 1(trust 側)なので dismiss は Enter 単発。doeff が
+  ;; 制御する work_dir を信頼する = pre-seed(hasTrustDialogAccepted=True)と
+  ;; 同じポリシー(bypass は既定 No,exit だから Down,Enter — trust は違う)
+  (assert (= t.dialog "trust"))
+  (assert (= (list t.dialog-dismiss-keys) ["Enter"]))
+  ;; 選択行は行頭スペース付き ` ❯` — idle prompt と誤認しないこと
+  (assert (not t.has-idle-prompt))
+  ;; trust dialog は stuck-in-startup — launch watchdog の解除信号ではない
+  (assert (not t.startup-finished)))
+
+
 (deftest test-classify-unsubmitted-paste
   (setv frame "❯ [Pasted text +40 lines]")
   (<- obs (classify-claude frame))
