@@ -45,6 +45,38 @@ def assert_no_forbidden_agent_env(
         )
 
 
+def assert_session_env_is_non_auth_overlay(
+    env: dict[str, str] | None,
+    *,
+    context: str,
+) -> None:
+    """ADR-DOE-AGENTS-004 R9: session_env is a non-auth overlay.
+
+    Binding-owned auth keys (CODEX_HOME / CLAUDE_CONFIG_DIR) may not ride
+    the per-launch env dict — auth belongs to the handler binder
+    (runtime policy locally, the typed ``binding`` field on the wire).
+    The ownership set lives in ONE place, sessionhost/policy.hy, so the
+    local guard and the host admission can never drift.
+    """
+    if not env:
+        return
+    import hy  # noqa: F401 -- installs the .hy import hook
+
+    from doeff_agents.sessionhost.policy import overlay_env_offenders
+
+    offenders = overlay_env_offenders(dict(env))
+    if offenders:
+        joined = ", ".join(offenders)
+        raise ValueError(
+            "session_env is a non-auth overlay and may not carry "
+            f"binding-owned auth env (offending: {joined}) in {context}. "
+            "Inject auth through the handler binder instead — runtime "
+            "policy (ClaudeRuntimePolicy / CodexRuntimePolicy) for local "
+            "bindings, the typed `binding` field on the wire "
+            "(ADR-DOE-AGENTS-004 R9)."
+        )
+
+
 def wrap_with_shell_exports(command: str, env: dict[str, str] | None) -> str:
     if not env:
         return command

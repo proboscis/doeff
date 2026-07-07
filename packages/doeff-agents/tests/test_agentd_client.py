@@ -34,6 +34,7 @@ from doeff_agents import (
     ensure_agentd,
 )
 from doeff_agents.agentd_client import AgentdSessionList, AgentdSessionParseWarning
+from doeff_agents.runtime import CodexRuntimePolicy
 
 
 @pytest.fixture
@@ -752,6 +753,89 @@ def test_daemon_handler_launch_delegates_lifecycle_to_client(monkeypatch, tmp_pa
     assert fake_client.launches[0]["prompt"] == "review this"
     assert fake_client.launches[0]["lifecycle"] == AgentSessionLifecycle.INTERACTIVE
     assert "custom-agent" in fake_client.launches[0]["command"]
+
+
+
+def test_daemon_agent_handler_sends_codex_binding_from_policy(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # ADR-DOE-AGENTS-004 R9: codex auth rides the typed wire binding derived
+    # from the handler binder (constructor policy) — never session_env.
+    monkeypatch.setattr(
+        "doeff_agents.handlers.daemon.get_adapter", lambda _t: FakeAdapter()
+    )
+    fake_client = FakeAgentdClient()
+    handler = DaemonAgentHandler(
+        client=fake_client,
+        codex_runtime_policy=CodexRuntimePolicy(codex_home=tmp_path / "codex-home"),
+    )
+
+    handler.handle_launch(
+        LaunchEffect(
+            session_name="s-codex",
+            agent_type=AgentType.CODEX,
+            work_dir=tmp_path,
+            prompt="do it",
+        )
+    )
+
+    launch = fake_client.launches[0]
+    assert launch["binding"] == {
+        "kind": "codex",
+        "codex_home": str(tmp_path / "codex-home"),
+    }
+    assert "CODEX_HOME" not in (launch["session_env"] or {})
+
+
+def test_daemon_agent_handler_codex_binding_falls_back_to_binder_env(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # The binder process env is binder configuration too (whoever started
+    # the daemon configured it); it backs the policy, never the effect.
+    monkeypatch.setattr(
+        "doeff_agents.handlers.daemon.get_adapter", lambda _t: FakeAdapter()
+    )
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "env-home"))
+    fake_client = FakeAgentdClient()
+    handler = DaemonAgentHandler(client=fake_client)
+
+    handler.handle_launch(
+        LaunchEffect(
+            session_name="s-codex",
+            agent_type=AgentType.CODEX,
+            work_dir=tmp_path,
+            prompt="do it",
+        )
+    )
+
+    assert fake_client.launches[0]["binding"] == {
+        "kind": "codex",
+        "codex_home": str(tmp_path / "env-home"),
+    }
+
+
+def test_daemon_agent_handler_rejects_codex_home_in_session_env(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # R9: session_env is a non-auth overlay — the local guard rejects
+    # binding-owned keys before anything reaches the wire.
+    monkeypatch.setattr(
+        "doeff_agents.handlers.daemon.get_adapter", lambda _t: FakeAdapter()
+    )
+    fake_client = FakeAgentdClient()
+    handler = DaemonAgentHandler(client=fake_client)
+
+    with pytest.raises(ValueError, match="non-auth overlay"):
+        handler.handle_launch(
+            LaunchEffect(
+                session_name="s-codex",
+                agent_type=AgentType.CODEX,
+                work_dir=tmp_path,
+                prompt="do it",
+                session_env={"CODEX_HOME": "/x"},
+            )
+        )
+    assert fake_client.launches == []
 
 
 class FakeAgentdClient:
