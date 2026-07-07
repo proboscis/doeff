@@ -18,8 +18,8 @@
        "ACP は doeff-agents でなく agentd の暗黙 wire に結合しており、新 CLI(opencode/kimi/AWS 系)追加の経路が『Rust の god daemon を編集する』しかない。"
        :evidence "ACP src/Acp/App/Agentd*.hs; ユーザー討議 2026-07-05 深夜")
      (fact
-       "公開 launch effect の現署名は session-env(汎用 env dict)を引数に持ち、auth 物理(合成 CODEX_HOME / CLAUDE_CONFIG_DIR)が effect user から流れ込む構造裏口になっている — 呼び手が credentials の存在と形を知らないと起動できない。effect API レビュー(2026-07-07)で『the effect user should not know the auth specifics』と裁定。"
-       :evidence "packages/doeff-agents/src/doeff_agents/handlers/codex.hy LaunchEffect [... session-env]; ユーザー討議 2026-07-07")]
+       "launch 面の session_env(汎用 env dict)は auth 物理(合成 CODEX_HOME / CLAUDE_CONFIG_DIR)が effect user から流れ込む構造裏口だった — FORBIDDEN_AGENT_ENV_KEYS(provider API キーの blocklist)が既に『env に auth を運ばせない』意図を刻んでいたのに、profile ディレクトリ系キーは現行アーキテクチャ自身が必要とするためリストに載せられなかった(blocklist の腐敗そのもの)。『the effect user should not know the auth specifics』(2026-07-07 裁定)。"
+       :evidence "doeff_agents/shell.py FORBIDDEN_AGENT_ENV_KEYS; 旧 impls の session_env 経由 CODEX_HOME 解決; ユーザー討議 2026-07-07")]
   :context
     [(interpretation
        "agentd の存在理由は効果の解釈ではなく寿命の外部性(セッションが呼び手より長生きする・複数 user 間で真実が一つ)。意味論は doeff-native であり、daemon とは handler stack を寿命の外側でホストする場所にすぎない(ユーザー裁定)。多重化点は host の内側 = kubelet/CRI 同型で、ACP は multi-backend を持たない。")
@@ -34,7 +34,7 @@
      (rule R4 "conformance 先行: Rust agentd を oracle に black-box 契約 suite(mini_conformance 前例)+ 台本駆動の conformance-agent(偽 CLI、実クォータ非消費)を先に整備し、Hy 実装は parity 到達で交代。cargo 93 tests + 2026-07-05 の trust/hooks 傷跡を挙動として結晶化してから Rust を退役する。")
      (rule R5 "host は kinds.list で {kind, apiVersion, スキーマ} を広告し、ACP は宣言時に照合して未知 kind/version を fail-loud 拒否する。wire は有限の versioned 語彙に限る(任意 effect のリモート転送は禁止)。")
      (rule R6 "デプロイは frozen 環境から(pin 済み専用 env)。dev venv / target-debug 依存の自己参照(子守りが子守られる開発環境に依存する)を禁止する。")
-     (rule R7 "公開 launch effect は auth-blind: 引数は意図のみ(kind・binding 名(alias、省略可)・work-dir・prompt・model・effort・result-contract・session 名)。auth 物理(生パス・生鍵・合成 env)と汎用 env 注入(session-env — auth の構造裏口)は公開 effect から退役し、kind 別の auth 材料スキーマ(codex = authFile+profileDir、claude = configDir)は handler の束縛時構成として注入する。host 束縛(RPC)では構成の serialize として運び、effect 引数としては運ばない。非 auth の env 注入が将来必要になっても handler 構成として導入し、effect 引数に戻さない。ACP 側の同原則(0044 R2/R5: payload override は alias 参照のみ・秘密は参照のみ)と同じ線を doeff の effect 語彙に引く。")]
+     (rule R9 "公開 launch 面(effect 語彙と wire launch の両方)は auth-blind: auth/profile 物理(CODEX_HOME / CLAUDE_CONFIG_DIR / 生鍵)は typed `binding`(束縛時構成の serialize、kind 判別スキーマ: codex {codex_home} / claude-code {config_dir})でのみ運ぶ。session_env は非 auth overlay に縮む — binding 所有キーの混入は全副作用より前に typed reject(所有権ベース: 既知の悪いキーの列挙は腐るが所有権は腐らない。provider API キーの FORBIDDEN blocklist は substrate 境界の防御として併存)。非 auth の per-launch env(観測フラグ・result channel 配線値など)は overlay として正当であり、handler 構成へ押し込まない(2026-07-07 裁定: env には auth と run 意図の 2 住人が居て、家が違う)。kind 別 auth 材料スキーマは handler の束縛時構成 — ローカル束縛 = main、host 束縛 = binding registry を持つ control plane(ACP 0044 R2/R5 と同じ線)。binding admission は ADR 0044 R3 と同思想: 未知 kind / kind↔agent_type 不整合 / 必須 field 欠落 / 未知 field を typed reject。")]
   :laws
     [(law protocol-physics-has-one-home
        :statement "protocol_physics(kind) => single_defhandler_module never_duplicated_across_languages"
@@ -49,22 +49,27 @@
        :counterexamples
          [(counterexample "中断した program の continuation を直列化して再起動時に復元する")])
      (law effect-user-is-auth-blind
-       :statement "public_launch_effect_args => intent_only; auth_material_and_env_live_in_handler_binding_configuration"
+       :statement "public_launch_surface_args => intent_plus_nonauth_overlay_only; auth_material_rides_typed_binding_owned_by_handler_binder"
+       :facts
+         [(fact
+            "R9 実装 landed(2026-07-07): sessionhost の launch admission が binding 検査 + overlay 所有キー拒否を全副作用より前に実施し、tmux env = overlay ∪ binding 由来 auth env(合成の唯一の源は per-kind impl の identity — trust 書き先と agent の読みが構造的に一致)。ACP engine は bindingWireValue を typed field で送り、launch env の auth 直詰めを退役。live 検証: auth-in-env は loud reject / binding 由来 CLAUDE_CONFIG_DIR と非 auth overlay が tmux session env に並んで届く。"
+            :evidence "doeff agentd-retire-rust 0ce87c84(sessionhost/policy.hy BINDING-OWNED-ENV-KEYS + binding-admission-error / launch.hy R7 admission / sessionhost_launch_deftests.hy test-launch-allows-non-auth-overlay-env・test-launch-rejects-auth-in-session-env)+ doeff-agent-haskell 789e3a8 + ACP 7b7cac6")]
        :counterexamples
-         [(counterexample "session-env 経由で合成 CODEX_HOME を effect user が組んで渡す(現行 LaunchEffect の形 — R7 が退役対象と宣言)")
-          (counterexample "LaunchAgent に authFile 引数を足し、user program がアカウント物理を知る")
+         [(counterexample "session_env 経由で合成 CODEX_HOME を effect user が組んで渡す(旧形 — launch admission が typed reject する)")
+          (counterexample "LaunchAgent / wire launch に authFile 引数を足し、user program がアカウント物理を知る")
+          (counterexample "非 auth の per-launch env が必要になったからと session_env の所有権ガードを外す(overlay は非 auth 専用のまま、auth は binding へ)")
           (counterexample "テストと本番で同じ program が走らない(auth が effect 引数に居るため差し替え点が構成でなく呼び手コードになる)")])
      (law conformance-before-cutover
        :statement "rust_retirement => hy_impl_passes_oracle_conformance including_trust_and_hooks_scars"
        :counterexamples
          [(counterexample "conformance 無しで Hy 版に切り替え、solicitation/turn-end の hardening が退行する")])]
   :enforcement
-    ;; proposed(実装前): 実 enforcement(conformance suite・substrate-clean
-    ;; 検査)は実装と同一チェンジセットで足す。現段階は設計 ADR の存在ピン。
+    ;; R9 実 enforcement(admission ガード + deftests)は sessionhost 実装と
+    ;; 同一チェンジセット(agentd-retire-rust 0ce87c84)に landed。
     [(defsemgrep no-auth-material-in-launch-effect-args
        :languages ["generic"]
        :pattern "LaunchAgent :auth-file"
-       :message "公開 launch effect の引数に auth 物理を置くのは ADR-DOE-AGENTS-004 R7 違反。auth 材料は handler の束縛時構成(ローカル = main、host 束縛 = control plane の registry)として注入する。"
+       :message "公開 launch effect の引数に auth 物理を置くのは ADR-DOE-AGENTS-004 R9 違反。auth 材料は handler の束縛時構成(ローカル = main、host 束縛 = control plane の binding registry)として注入し、wire では typed binding で運ぶ。session_env は非 auth overlay 専用。"
        :bad ["(LaunchAgent :auth-file \"~/.codex/auth.json\" :prompt p)"]
        :good ["(LaunchAgent :kind \"codex\" :binding \"company\" :prompt p)"])
      (defsemgrep no-new-agent-physics-in-rust-agentd
