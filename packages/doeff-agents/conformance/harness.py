@@ -262,6 +262,34 @@ class AgentdHarness:
         shutil.rmtree(self.runtime_dir, ignore_errors=True)
 
 
+# ADR-DOE-AGENTS-004 R9: the launch wire is auth-blind — auth/profile
+# material rides the typed `binding` field and the launch admission
+# rejects binding-owned keys (CODEX_HOME / CLAUDE_CONFIG_DIR) inside
+# session_env.  The suite's scenarios still express identity as env
+# pairs (that IS the physics the agent process observes), so the launch
+# helpers convert the auth key for the launched agent_type into the
+# binding; everything else stays a non-auth overlay.
+_BINDING_ENV_KEY_BY_AGENT_TYPE = {
+    "codex": ("CODEX_HOME", "codex", "codex_home"),
+    "claude": ("CLAUDE_CONFIG_DIR", "claude-code", "config_dir"),
+}
+
+
+def binding_from_session_env(
+    agent_type: str, session_env: dict[str, str]
+) -> dict[str, Any] | None:
+    """Pop the agent_type's auth env key out of session_env into a typed
+    wire binding (None when the scenario declares no identity)."""
+    spec = _BINDING_ENV_KEY_BY_AGENT_TYPE.get(agent_type)
+    if spec is None:
+        return None
+    env_key, kind, field = spec
+    value = session_env.pop(env_key, None)
+    if value is None:
+        return None
+    return {"kind": kind, field: value}
+
+
 @dataclass
 class Scenario:
     harness: AgentdHarness
@@ -293,6 +321,7 @@ class Scenario:
             "DOEFF_AGENTD_BIN": str(self.harness.agentd_bin),
             **(extra_env or {}),
         }
+        binding = binding_from_session_env(agent_type, session_env)
         self.harness.client.launch_session(
             session_id=self.session_id,
             session_name=self.session_id,
@@ -301,6 +330,7 @@ class Scenario:
             command=command,
             prompt=prompt,
             lifecycle=AgentSessionLifecycle.RUN_TO_COMPLETION,
+            binding=binding,
             session_env=session_env,
             expected_result=expected_result,
         )
@@ -365,6 +395,7 @@ class Scenario:
             "DOEFF_AGENTD_BIN": str(self.harness.agentd_bin),
             **(extra_env or {}),
         }
+        binding = binding_from_session_env(agent_type, session_env)
         self.harness.client.launch_session(
             session_id=self.session_id,
             session_name=self.session_id,
@@ -372,6 +403,7 @@ class Scenario:
             work_dir=self.work_dir,
             prompt=prompt,
             lifecycle=AgentSessionLifecycle.RUN_TO_COMPLETION,
+            binding=binding,
             session_env=session_env,
             expected_result=expected_result,
         )
