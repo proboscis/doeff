@@ -210,6 +210,29 @@
   (with-skeleton check))
 
 
+(deftest test-dispatch-kinds-list
+  ;; DOE-004 R5(縮小版): kinds.list は policy.hy の kind 表(単一ソース)
+  ;; から導出した広告を返す — control plane の定期照合の読み口。表と広告が
+  ;; 乖離したらここが red(スキーマの家は 1 つ)。
+  (defn check [config actor]
+    (setv response (json.loads (dispatch-line
+                                 "{\"id\":9,\"method\":\"kinds.list\"}"
+                                 config actor)))
+    (assert (= (get response "id") 9))
+    (assert (= (get response "ok") True))
+    (setv kinds (get (get response "result") "kinds"))
+    (assert (= kinds
+               [{"kind" "claude-code"
+                 "agent_type" "claude"
+                 "required_field" "config_dir"
+                 "api_version" "acp.dev/agent-binding/v1"}
+                {"kind" "codex"
+                 "agent_type" "codex"
+                 "required_field" "codex_home"
+                 "api_version" "acp.dev/agent-binding/v1"}])))
+  (with-skeleton check))
+
+
 (deftest test-dispatch-skeleton-loud
   (defn check [config actor]
     ;; await: 不在 session は -32001 を error_code 付きで返す(oracle
