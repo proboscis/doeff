@@ -12,6 +12,7 @@
 (import os)
 (import shutil)
 (import socket)
+(import sys)
 (import tempfile)
 
 (import doeff_agents.sessionhost.host [
@@ -24,7 +25,8 @@
   ok-response
   err-response
   dispatch-line
-  prepare-socket-path])
+  prepare-socket-path
+  main])
 (import doeff_agents.sessionhost.store [StoreActor db-acquire-lease])
 
 
@@ -279,6 +281,35 @@
     (.close live)
     (assert (is-not raised None))
     (assert (in "already listening" (str raised)))
+    (finally
+      (shutil.rmtree d :ignore-errors True))))
+
+
+(deftest test-main-loser-dies-at-bind-before-touching-store
+  ;; 起動順の根治ピン(2026-07-07 ensure spawn スパイラル): socket bind =
+  ;; 排他の実体に負けた競合者は store open / lease 取得 / latch clear の
+  ;; どれにも触れずに死ぬ。旧順序(store→lease→bind)ではこの test の DB
+  ;; file が作られ lease 行が競合者名義で書かれてから bind で死んでいた。
+  (setv d (tempfile.mkdtemp))
+  (try
+    (setv sock-path (os.path.join d "agentd.sock"))
+    (setv db-path (os.path.join d "loser.sqlite"))
+    ;; 本物の代役: live listener が socket を保持している
+    (setv live (socket.socket socket.AF-UNIX socket.SOCK-STREAM))
+    (.bind live sock-path)
+    (.listen live 1)
+    (setv saved-argv (list sys.argv))
+    (setv raised None)
+    (try
+      (setv sys.argv ["doeff-sessionhost" "--db" db-path "--socket" sock-path "serve"])
+      (main)
+      (except [e RuntimeError] (setv raised e))
+      (finally (setv sys.argv saved-argv)))
+    (.close live)
+    (assert (is-not raised None))
+    (assert (in "already listening" (str raised)))
+    ;; 敗者は store に一切触れていない — DB file 不在が証拠
+    (assert (not (os.path.exists db-path)))
     (finally
       (shutil.rmtree d :ignore-errors True))))
 

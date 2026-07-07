@@ -34,7 +34,8 @@
      (rule R6 "デプロイは frozen 環境から(pin 済み専用 env)。dev venv / target-debug 依存の自己参照(子守りが子守られる開発環境に依存する)を禁止する。")
      (rule R7 "退役後の正典 executor は doeff-sessionhost: ensure_agentd の spawn 解決は DOEFF_AGENTD_BIN(明示 seam)→ 実行中 interpreter 隣接の console script → PATH の doeff-sessionhost で、退役 Rust binary は解決対象に含めない(silent rollback の根絶、ACP ADR 0045 R5)。Rust binary/source の保存理由は rollback 可用性のみ — 正しさの基準として参照することを禁止する(U1: それは一度も oracle ではなく partial-unreliable-impl だった)。")
      (rule R8 "result-contract 検証の意味論は JSON Schema 仕様が唯一の正(U1 裁定): 検証器は準拠参照実装(jsonschema)の輸入であり、subset を自前実装しない。仕様適合は公式 JSON-Schema-Test-Suite を repo 内に vendor して adapter に直接通すことで検証する(draft2020-12 required 全 1260 case green。skip 21 は全て裁定記録付き: remote レジストリ依存 = 契約は自己完結前提で unresolvable $ref は fail-loud / ECMA \\p regex = admission が launch 時 fail-closed で拒否 — 対 deftest あり)。schema 自体は launch 時に meta-schema で fail-closed 検証(壊れた契約で session を作らない)。旧 Rust 実装の fail-open 挙動を expected に固定するテストは歴史ピンとしても置かない。")
-     (rule R9 "公開 launch 面(effect 語彙と wire launch の両方)は auth-blind: auth/profile 物理(CODEX_HOME / CLAUDE_CONFIG_DIR / 生鍵)は typed `binding`(束縛時構成の serialize、kind 判別スキーマ: codex {codex_home} / claude-code {config_dir})でのみ運ぶ。session_env は非 auth overlay に縮む — binding 所有キーの混入は全副作用より前に typed reject(所有権ベース: 既知の悪いキーの列挙は腐るが所有権は腐らない。provider API キーの FORBIDDEN blocklist は substrate 境界の防御として併存)。非 auth の per-launch env(観測フラグ・result channel 配線値など)は overlay として正当であり、handler 構成へ押し込まない(2026-07-07 裁定: env には auth と run 意図の 2 住人が居て、家が違う)。kind 別 auth 材料スキーマは handler の束縛時構成 — ローカル束縛 = main、host 束縛 = binding registry を持つ control plane(ACP 0044 R2/R5 と同じ線)。binding admission は ADR 0044 R3 と同思想: 未知 kind / kind↔agent_type 不整合 / 必須 field 欠落 / 未知 field を typed reject。")]
+     (rule R9 "公開 launch 面(effect 語彙と wire launch の両方)は auth-blind: auth/profile 物理(CODEX_HOME / CLAUDE_CONFIG_DIR / 生鍵)は typed `binding`(束縛時構成の serialize、kind 判別スキーマ: codex {codex_home} / claude-code {config_dir})でのみ運ぶ。session_env は非 auth overlay に縮む — binding 所有キーの混入は全副作用より前に typed reject(所有権ベース: 既知の悪いキーの列挙は腐るが所有権は腐らない。provider API キーの FORBIDDEN blocklist は substrate 境界の防御として併存)。非 auth の per-launch env(観測フラグ・result channel 配線値など)は overlay として正当であり、handler 構成へ押し込まない(2026-07-07 裁定: env には auth と run 意図の 2 住人が居て、家が違う)。kind 別 auth 材料スキーマは handler の束縛時構成 — ローカル束縛 = main、host 束縛 = binding registry を持つ control plane(ACP 0044 R2/R5 と同じ線)。binding admission は ADR 0044 R3 と同思想: 未知 kind / kind↔agent_type 不整合 / 必須 field 欠落 / 未知 field を typed reject。")
+     (rule R10 "単一インスタンス排他の実体は socket bind であり、lease はその影(観測面)。この主従を順序と述語で守る: (a) host 起動順は bind → store open → lease 取得 → latch clear — bind に負けた競合者は store にも lease にも触れずに死ぬ。(b) ensure の spawn 述語は『socket に live listener が居ない』(path 不在 / ECONNREFUSED)のみ — 生きた listener が status probe に遅い場合は長い予算(AGENTD_BUSY_STATUS_TIMEOUT_SECONDS)で再試行し、それでも駄目なら spawn せず loud エラー(slow ≠ dead。証明されない死で競合 host を作らない)。(c) heartbeat は失効した他人名義 lease を再取得する(level-triggered 自己修復 — 盗んで死んだ競合者の残骸から bind 保持者が回復する)が、未失効の他人名義は loud エラーのまま(別 socket 同一 DB 誤構成 = 生きた二重 host の検出面)。判定と upsert は BEGIN IMMEDIATE で原子化。")]
   :laws
     [(law protocol-physics-has-one-home
        :statement "protocol_physics(kind) => single_defhandler_module never_duplicated_across_languages"
@@ -59,6 +60,17 @@
           (counterexample "LaunchAgent / wire launch に authFile 引数を足し、user program がアカウント物理を知る")
           (counterexample "非 auth の per-launch env が必要になったからと session_env の所有権ガードを外す(overlay は非 auth 専用のまま、auth は binding へ)")
           (counterexample "テストと本番で同じ program が走らない(auth が effect 引数に居るため差し替え点が構成でなく呼び手コードになる)")])
+     (law liveness-authority-is-the-socket
+       :statement "exclusivity => socket_bind_primary AND lease_is_shadow; ensure_spawn_predicate => absence_of_live_listener_only; slow_status_never_spawns_competitor"
+       :facts
+         [(fact
+            "R10 の起源 = 2026-07-07 ensure spawn スパイラル(live 障害): ensure_agentd が daemon.status の 1s timeout を『死』と誤診 → 同一 DB に競合 host を spawn → 子が(旧起動順 store→lease→bind のため)失効 lease を先に盗んでから socket 衝突で死亡 → 本物の heartbeat が『lease owner changed: expected 68021 got 88831』を無限連発し lease が死 pid 名義で腐る → attend launch が 11 分遅延し orphan 誤裁定。根治 3 層 = R10 (a)(b)(c)。mutation 検証済み(述語反転 / 起動順逆転 / 失効チェック除去 → 各ピン red)。"
+            :evidence "packages/doeff-agents/tests/test_agentd_client.py test_ensure_agentd_never_spawns_against_live_but_slow_listener・test_ensure_agentd_waits_out_slow_status_from_live_listener・test_ensure_agentd_spawns_when_socket_file_is_stale / tests/sessionhost_host_deftests.hy test-main-loser-dies-at-bind-before-touching-store / tests/sessionhost_store_deftests.hy test-lease-acquire-and-heartbeat(失効他人名義の heartbeat 再取得 phase)")]
+       :counterexamples
+         [(counterexample "status probe の timeout を死と同一視して spawn する(遅い ≠ 死。busy writer actor の実測 class)")
+          (counterexample "host が lease を取ってから socket を bind する(敗者が lease/latch に触れてから死ぬ)")
+          (counterexample "heartbeat が owner 交代を無条件 raise し続け、失効残骸から永久に回復しない")
+          (counterexample "heartbeat が未失効の他人名義 lease まで奪い返す(生きた二重 host の検出面が消える)")])
      (law conformance-before-cutover
        :statement "rust_retirement => hy_impl_passes_oracle_conformance including_trust_and_hooks_scars"
        :facts
