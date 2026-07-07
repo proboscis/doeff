@@ -20,22 +20,18 @@ deterministic regardless of future script changes.
 from __future__ import annotations
 
 import json
-import subprocess
 import time
 
-from harness import RESULT_SCHEMA, AgentdHarness
+from harness import RESULT_SCHEMA, AgentdHarness, kill_session_out_of_band
 
 PROMPT = "Produce the conformance structured result."
 PAYLOAD = {"summary": "reported before kill", "ok": True}
 
 
 def _kill_pane(session_id: str) -> None:
-    subprocess.run(
-        ["tmux", "kill-session", "-t", session_id],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
+    # Backend-aware (tmux kill-session / herdr pane.close) — harness owns
+    # the physics so S9 stays a pure fault-injection scenario.
+    kill_session_out_of_band(session_id)
 
 
 def test_s9a_result_first_survives_kill() -> None:
