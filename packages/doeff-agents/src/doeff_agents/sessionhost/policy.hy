@@ -74,6 +74,68 @@
 
 (setv TERMINAL-CAUSE-CATEGORIES (frozenset (.keys TERMINAL-CAUSE-RETRYABLE)))
 
+
+;; ===========================================================================
+;; wire binding(ADR-DOE-AGENTS-004 R7: launch effect は auth-blind)
+;; ===========================================================================
+;;
+;; auth/profile 物理は typed `binding` field で運ぶ(束縛時構成の serialize —
+;; ACP AgentBindingDefinition agent-binding/v1 と同写像)。session_env は
+;; 非 auth overlay に縮む: binding 所有キーが overlay に居たら typed reject
+;; (それが 2026-07 まで生きていた構造裏口 — 合成 CODEX_HOME が汎用 env dict
+;; 経由で effect user から流れ込んでいた)。
+
+;; binding 所有 env キー: per-kind impl が binding から合成する auth/profile
+;; env。真実の家: impls/codex.hy(CODEX_HOME)/ impls/claude_code.hy
+;; (CLAUDE_CONFIG_DIR)。kind を問わず overlay から全キーを締め出す
+;; (所有権ベース — 既知の悪いキーの列挙は腐るが所有権は腐らない)。
+(setv BINDING-OWNED-ENV-KEYS #{"CODEX_HOME" "CLAUDE_CONFIG_DIR"})
+
+;; wire binding kind → agent_type(ACP bindingAgentType と同写像)と必須 field。
+(setv BINDING-KIND-AGENT-TYPE {"codex" "codex" "claude-code" "claude"})
+(setv BINDING-KIND-REQUIRED-FIELD {"codex" "codex_home" "claude-code" "config_dir"})
+
+(deff policy-normalized-env-key [key]
+  {:pre [(: key str)]
+   :post [(: % str)]}
+  "env key の正規化(substrate normalized-env-key と同規約: `-`→`_`・大文字化)。"
+  (.upper (.replace key "-" "_")))
+
+(deff overlay-env-offenders [session-env]
+  {:pre [(: session-env dict)]
+   :post [(: % list)]}
+  "session_env(非 auth overlay)に居てはならない binding 所有キーの列挙。"
+  (sorted (lfor key (.keys session-env)
+                :if (in (policy-normalized-env-key key) BINDING-OWNED-ENV-KEYS)
+                key)))
+
+(deff binding-admission-error [binding agent-type]
+  {:pre [(: binding (| dict None)) (: agent-type str)]
+   :post [(: % (| str None))]}
+  "wire binding の admission(ADR 0044 R3 と同思想: parse できた binding だけが
+   launch に到達する)。None = 適合。文字列 = reject 理由。検査: object 形・
+   既知 kind・kind↔agent_type 整合・必須 field(非空 str)・未知 field 拒否。"
+  (when (is binding None)
+    (return None))
+  (when (not (isinstance binding dict))
+    (return "binding must be an object"))
+  (setv kind (.get binding "kind"))
+  (when (not-in kind BINDING-KIND-AGENT-TYPE)
+    (return (+ f"unknown binding kind: {kind !r} "
+               f"(known: {(.join ", " (sorted (.keys BINDING-KIND-AGENT-TYPE))) })")))
+  (setv expected-agent-type (get BINDING-KIND-AGENT-TYPE kind))
+  (when (!= agent-type expected-agent-type)
+    (return (+ f"binding kind {kind !r} drives agent_type "
+               f"{expected-agent-type !r}, not {agent-type !r}")))
+  (setv required (get BINDING-KIND-REQUIRED-FIELD kind))
+  (setv value (.get binding required))
+  (when (or (not (isinstance value str)) (not (.strip value)))
+    (return f"binding kind {kind !r} requires a non-empty string field `{required}`"))
+  (setv unknown (sorted (- (set (.keys binding)) #{"kind" required})))
+  (when unknown
+    (return f"binding carries unknown field(s): {(.join ", " unknown) }"))
+  None)
+
 ;; judge verdict の keys whitelist(main.rs is_allowed_unblock_key):
 ;; 単一英数字 or 以下の名前付きキーのみ — 制御シーケンスは決して送らない。
 (setv ALLOWED-UNBLOCK-KEY-NAMES

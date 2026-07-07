@@ -496,6 +496,7 @@
    "mcp_servers" (or (.get params "mcp_servers") {})
    "skip_trust_setup" (bool (.get params "skip_trust_setup" False))
    "lifecycle" (or (.get params "lifecycle") "run_to_completion")
+   "binding" (.get params "binding")
    "session_env" (or (.get params "session_env") {})
    "expected_result" (.get params "expected_result")
    "socket_path" config.socket-path
@@ -658,8 +659,10 @@
     (setv program-params (build-launch-program-params wire-params config))
     ;; DOE-003 R3 staged enforcement の warning(oracle :1721-1730 verbatim —
     ;; 運用ログは host の外部性。S11b が daemon log でこの文言を assert する)。
+    ;; R7 後の運搬手段は typed binding — overlay session_env は admission で
+    ;; auth キーを拒否するため、明示の有無は binding の有無そのもの。
     (when (and (= (get program-params "agent_type") "claude")
-               (not-in "CLAUDE_CONFIG_DIR" (get program-params "session_env")))
+               (is (.get program-params "binding") None))
       (setv sid-for-warning (get program-params "session_id"))
       (print (+ "doeff-agentd WARNING: claude session "
                 f"{sid-for-warning} launched without an explicit "
