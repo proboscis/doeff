@@ -33,6 +33,7 @@
   ClassifyPane
   DeliverMessage
   FsCanonicalPath
+  FsComposeHomeView
   FsReadText
   FsWriteTextAtomic
   FsMakeDirs
@@ -61,6 +62,7 @@
     (setv self.delivered [])
     (setv self.fs {})
     (setv self.env {})
+    (setv self.canonical {})        ;; path → realpath(FsCanonicalPath の台本)
     (setv self.tmux-envs {})        ;; session-name → new-session に渡った env
     (setv self.now (datetime 2026 7 5 12 0 0 :tzinfo timezone.utc))))
 
@@ -105,7 +107,10 @@
     (setv world.now (+ world.now (timedelta :seconds seconds)))
     (resume None))
   (FsCanonicalPath [path]
-    (resume path))
+    (resume (.get world.canonical path path)))
+  (FsComposeHomeView [auth-file profile-dir view-root]
+    (.append world.trace #("compose-view" auth-file profile-dir view-root))
+    (resume f"{view-root}/composed-view"))
   (FsReadText [path]
     (resume (.get world.fs path)))
   (FsWriteTextAtomic [path text tmp-suffix]
@@ -345,13 +350,18 @@
 
 (deftest test-launch-rejects-malformed-binding
   ;; binding admission(ADR 0044 R3 と同思想): parse できた binding だけが
-  ;; launch に到達する。全 reject は副作用ゼロ。
+  ;; launch に到達する。全 reject は副作用ゼロ。codex v2(#15)は受理形の
+  ;; XOR({codex_home} か {auth_file, profile_dir})— 混在・部分・未知 field
+  ;; はどの shape にも一致せず reject。
   (setv cases
         [#({"kind" "gemini" "config_dir" "/x"} "unknown binding kind")
          #({"kind" "claude-code" "config_dir" "/x"} "drives agent_type")   ;; agent_type は codex
-         #({"kind" "codex"} "non-empty string field")
+         #({"kind" "codex"} "exactly one field set")
          #({"kind" "codex" "codex_home" ""} "non-empty string field")
-         #({"kind" "codex" "codex_home" "/x" "auth_file" "/y"} "unknown field")])
+         #({"kind" "codex" "codex_home" "/x" "auth_file" "/y"} "exactly one field set")   ;; 混在
+         #({"kind" "codex" "auth_file" "/y"} "exactly one field set")                     ;; 部分二軸
+         #({"kind" "codex" "codex_home" "/x" "unknown_extra" "1"} "exactly one field set");; 未知 field
+         #({"kind" "codex" "auth_file" "/y" "profile_dir" ""} "non-empty string field")])
   (for [[bad-binding expected] cases]
     (setv world (LaunchWorld))
     (setv raised None)
@@ -361,6 +371,51 @@
     (assert (in "invalid binding" (str raised)) (str raised))
     (assert (in expected (str raised)) (str raised))
     (assert (= world.trace []))))
+
+
+(deftest test-launch-composes-view-for-two-axis-codex-binding
+  ;; #15(DOE-004 R5 v2): 二軸宣言 {auth_file, profile_dir} は host が
+  ;; FsComposeHomeView で view を合成し、native 形(codex_home)へ合流する。
+  ;; view root は $XDG_STATE_HOME/doeff/agent-homes(store DB と同じ解決系)。
+  ;; binding が在る限り process env の CODEX_HOME fallback には決して到達
+  ;; しない(decoy で pin)。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["codex booting banner" "› "])
+  (setv (get world.env "XDG_STATE_HOME") "/state")
+  (setv (get world.env "CODEX_HOME") "/decoy/never-used")
+  (<- row (run-launch world (launch-params
+                              :binding {"kind" "codex"
+                                        "auth_file" "/auths/company.json"
+                                        "profile_dir" "/profiles/agent"})))
+  ;; 合成は宣言二軸 + 解決済み view root で呼ばれる
+  (assert (in #("compose-view" "/auths/company.json" "/profiles/agent"
+                "/state/doeff/agent-homes")
+              world.trace))
+  ;; 実効 identity と tmux env は合成 view(decoy ではない)
+  (setv stored (get world.rows "s1"))
+  (assert (= (get stored.effective-identity "CODEX_HOME")
+             "/state/doeff/agent-homes/composed-view"))
+  (assert (= (get (get world.tmux-envs "doeff-s1") "CODEX_HOME")
+             "/state/doeff/agent-homes/composed-view"))
+  ;; trust 書きは合成 view の config.toml へ(canonicalize は fake では恒等)
+  (assert (in #("fs-write" "/state/doeff/agent-homes/composed-view/config.toml")
+              world.trace)))
+
+
+(deftest test-launch-trust-write-lands-on-canonical-path
+  ;; #15 同梱修理: trust 書きは realpath へ。temp+rename は symlink を辿らず
+  ;; 置換するため、config.toml が profile bundle への symlink のとき旧形は
+  ;; view の link を実ファイル化して registry と fork させていた(cutover 起源
+  ;; の地雷 — 旧 Rust の plain write は貫通していた)。canonicalize を殺すと
+  ;; ここが red(mutation ピン)。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["codex booting banner" "› "])
+  (setv (get world.canonical "/x/codex/config.toml") "/bundle/config.toml")
+  (<- row (run-launch world (launch-params)))
+  (assert (in #("fs-write" "/bundle/config.toml") world.trace))
+  (assert (not-in #("fs-write" "/x/codex/config.toml") world.trace))
+  ;; trust の中身は bundle 側の path に居る
+  (assert (in "trust_level" (get world.fs "/bundle/config.toml"))))
 
 
 ;; ---------------------------------------------------------------------------

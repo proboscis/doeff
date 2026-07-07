@@ -213,7 +213,9 @@
 (deftest test-dispatch-kinds-list
   ;; DOE-004 R5(縮小版): kinds.list は policy.hy の kind 表(単一ソース)
   ;; から導出した広告を返す — control plane の定期照合の読み口。表と広告が
-  ;; 乖離したらここが red(スキーマの家は 1 つ)。
+  ;; 乖離したらここが red(スキーマの家は 1 つ)。#15: codex は v2(受理形の
+  ;; 拡張 — {codex_home} XOR {auth_file, profile_dir})、claude-code は v1 の
+  ;; まま。required_field は人間可読ラベル(照合の機械面は kind+api_version)。
   (defn check [config actor]
     (setv response (json.loads (dispatch-line
                                  "{\"id\":9,\"method\":\"kinds.list\"}"
@@ -228,8 +230,8 @@
                  "api_version" "acp.dev/agent-binding/v1"}
                 {"kind" "codex"
                  "agent_type" "codex"
-                 "required_field" "codex_home"
-                 "api_version" "acp.dev/agent-binding/v1"}])))
+                 "required_field" "codex_home | auth_file+profile_dir"
+                 "api_version" "acp.dev/agent-binding/v2"}])))
   (with-skeleton check))
 
 
