@@ -44,6 +44,7 @@
 (import doeff_agents.sessionhost.impls.codex [codex-impl])
 (import doeff_agents.sessionhost.launch [launch-session])
 (import doeff_agents.sessionhost.policy [
+  binding-kind-advertisement
   cause-if-absent
   is-terminal-status
   iso-format
@@ -653,6 +654,11 @@
              "max_running" config.max-running
              "active_sessions" (.submit actor db-count-active)
              "lease" (.submit actor db-read-lease)}))
+
+  ;; DOE-004 R5(縮小版、2026-07-08): kind 語彙の広告。純粋(store 非依存)
+  ;; — control plane の reconciler が登録済み binding と定期照合する読み口。
+  (when (= method "kinds.list")
+    (return {"kinds" (binding-kind-advertisement)}))
 
   (when (= method "session.launch")
     (setv wire-params (params-object params "session.launch"))

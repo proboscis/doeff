@@ -95,6 +95,24 @@
 (setv BINDING-KIND-AGENT-TYPE {"codex" "codex" "claude-code" "claude"})
 (setv BINDING-KIND-REQUIRED-FIELD {"codex" "codex_home" "claude-code" "config_dir"})
 
+;; kinds.list 広告(DOE-004 R5 縮小版、2026-07-08): host は自分の binding
+;; kind 語彙を広告し、control plane の reconciler が登録済み binding と定期
+;; 照合する(登録時結合はしない — host liveness と registration を結合しない)。
+;; api_version は ACP AgentBindingDefinition(agent-binding/v1)と同写像の
+;; 契約ラベル。表とこの定数がスキーマの単一の家。
+(setv AGENT-BINDING-API-VERSION "acp.dev/agent-binding/v1")
+
+(deff binding-kind-advertisement []
+  {:pre []
+   :post [(: % list)]}
+  "kinds.list の result 本体: kind 表から導出した
+   [{kind agent_type required_field api_version}](kind 昇順)。"
+  (lfor kind (sorted (.keys BINDING-KIND-AGENT-TYPE))
+        {"kind" kind
+         "agent_type" (get BINDING-KIND-AGENT-TYPE kind)
+         "required_field" (get BINDING-KIND-REQUIRED-FIELD kind)
+         "api_version" AGENT-BINDING-API-VERSION}))
+
 (deff policy-normalized-env-key [key]
   {:pre [(: key str)]
    :post [(: % str)]}
