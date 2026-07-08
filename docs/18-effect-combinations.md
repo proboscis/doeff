@@ -16,12 +16,12 @@ contracts.
 
 The matrix below follows `SPEC-EFF-100` outer/inner structure.
 
-| Outer / Inner | Ask | Get | Put | Log | Try | Local | Listen | WithIntercept | Gather |
-|---------------|-----|-----|-----|-----|------|-------|--------|-----------|--------|
+| Outer / Inner | Ask | Get | Put | Tell | Try | Local | Listen | WithObserve | Gather |
+|---------------|-----|-----|-----|------|------|-------|--------|-------------|--------|
 | **Local**     | Scoped | Propagates | Propagates | Propagates | Propagates | Scoped | Propagates | Propagates | Propagates |
 | **Listen**    | - | - | - | Captured* | - | - | Nested | - | All captured* |
 | **Try**      | - | - | Persists | Persists | Wrapped | Restores | - | - | First error |
-| **WithIntercept** | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform |
+| **WithObserve** | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform |
 | **Gather**    | Inherit | Shared** | Shared** | Merged | Isolated | Inherit | Shared | Propagates | Nested |
 
 `*` Listen captures logs only on success paths. On error, the error propagates and logs are not
@@ -37,7 +37,7 @@ wrapped in `ListenResult`.[^D5]
 - `Persists`: Side effects persist even when errors are caught.
 - `Wrapped`: Result is wrapped in outer effect type.
 - `Restores`: Environment restores to pre-scope value.
-- `Transform`: Effect can be transformed by `WithIntercept` (including nested programs).[^D1]
+- `Transform`: Effect can be transformed by `WithObserve` (including nested programs).[^D1]
 - `Isolated`: Error handling remains per-branch while parent receives failing outcome.
 - `Inherit`: Child inherits parent environment snapshot at invocation time.
 - `Shared`: All branches use the same underlying resource.
@@ -109,17 +109,19 @@ def test_law_5():
     # Environment is restored after Try exits
 ```
 
-### Law 6: WithIntercept Transformation Law
+### Law 6: WithObserve Transformation Law
 
-`WithIntercept` transforms effects in the intercepted program, including nested program values in
+`WithObserve` transforms effects in the observed program, including nested program values in
 payloads (for example `Gather` children and `Local`/`Listen` sub-programs).[^D1]
 
 ```python
+from doeff import WithObserve
+
 @do
 def test_law_6():
     seen = [0]
 
-    def transform(effect):
+    def observer(effect):
         if isinstance(effect, AskEffect):
             seen[0] += 1
         return effect
@@ -128,7 +130,7 @@ def test_law_6():
     def child():
         return (yield Ask("key"))
 
-    _ = yield WithIntercept(transform, Gather(child(), child()), types=(AskEffect,), mode="include")
+    _ = yield WithObserve(observer, Gather(child(), child()))
     assert seen[0] == 2
 ```
 
@@ -197,20 +199,22 @@ def test_law_9():
 ## Sync vs Async Runtime Differences
 
 `SPEC-EFF-100` defines shared semantics plus explicit runtime-dependent behavior.
+The single entry point is `run(doexpr)` — compose `scheduled()` into the program to enable
+scheduler-based concurrency.
 
-| Concern | `run(...)` (`SyncRuntime`) | `async_run(...)` (`AsyncRuntime`) |
+| Concern | Sequential (no scheduler) | Concurrent (`scheduled()`) |
 | --- | --- | --- |
-| Gather execution model | Sequential child execution. | Parallel child execution. |
+| Gather execution model | Sequential child execution. | Concurrent child execution via scheduler. |
 | Gather store semantics | Shared store, deterministic state observation by child order. | Shared store, race-prone interleavings for read/modify/write patterns. |
 | Gather error propagation | Stop at first failing child; later children are not executed. | First failure propagates; other children may continue running. |
 | Gather side effects on sibling failure | Effects only from children that already ran before failure. | Effects from siblings may still happen after failure is observed. |
 
-Guideline: treat `Gather` as shared-store in both runtimes; require explicit coordination for
-race-sensitive async state updates.
+Guideline: treat `Gather` as shared-store in both modes; require explicit coordination for
+race-sensitive concurrent state updates.
 
 ## Design Decision Notes
 
-[^D1]: **D1 WithIntercept Scope**: WithIntercept applies structural rewriting to nested programs in
+[^D1]: **D1 WithObserve Scope**: WithObserve applies structural rewriting to nested programs in
 effect payloads. Scope across task boundaries is runtime-dependent; in current
 implementation, it does not reach independently spawned tasks that do not share the parent
 continuation stack.

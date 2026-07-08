@@ -15,46 +15,58 @@ Last audit: 2026-07-08
 | index.md | `docs/index.md` | Removed links to deleted docs, fixed Quick Example (no `default_handlers`, correct `run()` usage), updated Effect Quick Reference, fixed code examples |
 | API Reference | `docs/13-api-reference.md` | Full rewrite to match current API |
 
-## Remaining (STALE — needs future fix)
+## Fixed (Phase 3 — this audit)
 
-These files still contain incorrect code examples referencing deleted APIs. Listed by priority:
+All previously listed STALE files have been fixed:
 
-### High Priority (tutorial/getting-started docs)
+### High Priority (tutorial/getting-started docs) — DONE
 
-| File | Key Issues |
+| File | Fixes Applied |
 | --- | --- |
-| `docs/01-getting-started.md` | `default_handlers`, `RunResult`, `async_run`, `KleisliProgram`, `Program.pure()` |
-| `docs/02-core-concepts.md` | `KleisliProgram`, `Delegate`, `async_run`, `WithIntercept`, `Program.pure/map/flat_map` |
-| `docs/03-basic-effects.md` | `default_handlers`, `result.value`, `Modify`, `StructuredLog`, `Delay` import path |
-| `docs/04-async-effects.md` | `async_run`, `default_async_handlers`, `task.cancel()` (should be `Cancel(task)`) |
-| `docs/05-error-handling.md` | `RunResult` entire section, `default_handlers` |
+| `docs/01-getting-started.md` | Removed `default_handlers`, `RunResult`, `async_run`, `KleisliProgram`, `Program.pure()` |
+| `docs/02-core-concepts.md` | Removed `KleisliProgram`, `Delegate`, `async_run`, `WithIntercept`; fixed `Call` → `Expand` |
+| `docs/03-basic-effects.md` | Removed `default_handlers`, `result.value`, `Modify` → `Get+Put`, `StructuredLog` → `slog` |
+| `docs/04-async-effects.md` | Removed `async_run`, `default_async_handlers`; `task.cancel()` → `Cancel(task)` |
+| `docs/05-error-handling.md` | Removed `RunResult` section; `isinstance(result, Ok)` for checking |
 
-### Medium Priority
+### Medium Priority — DONE
 
-| File | Key Issues |
+| File | Fixes Applied |
 | --- | --- |
-| `docs/07-cache-system.md` | `@cache` deleted, `CacheLifecycle.TEMPORARY` (should be `TRANSIENT`), `CacheStorage.DISTRIBUTED` doesn't exist |
-| `docs/09-advanced-effects.md` | `Modify`, `WithIntercept`, `task.cancel()`, `Gather` usage (needs `Spawn` first) |
-| `docs/11-kleisli-arrows.md` | `KleisliProgram`, `Call` (should be `Expand`), `.map/.flat_map/>>` don't exist |
-| `docs/12-patterns.md` | `AtomicGet/AtomicUpdate`, `Step`, `default_handlers` |
-| `docs/17-effect-boundaries.md` | `async_run`, `default_handlers` |
-| `docs/20-why-effects-over-di.md` | `WithIntercept`, `Pass()` needs arguments |
-| `docs/MARKERS.md` | Code examples use `program.run()`, `async_run`, `default_async_handlers` |
+| `docs/07-cache-system.md` | Removed `@cache`; `TEMPORARY` → `TRANSIENT`; removed `DISTRIBUTED` |
+| `docs/09-advanced-effects.md` | `Modify` → `Get+Put`; `WithIntercept` → `WithObserve`; `task.cancel()` → `Cancel(task)` |
+| `docs/11-kleisli-arrows.md` | `KleisliProgram` → callable; `Call` → `Expand`; removed `.map/.flat_map/>>` |
+| `docs/12-patterns.md` | Removed `AtomicGet/AtomicUpdate`, `Step`; fixed handler composition |
+| `docs/17-effect-boundaries.md` | Removed `async_run`, `default_handlers`; fixed comparison table |
+| `docs/18-effect-combinations.md` | `Log` → `Tell`; `WithIntercept` → `WithObserve` |
+| `docs/20-why-effects-over-di.md` | `WithIntercept` → `WithObserve`; `Pass()` → `Pass(effect, k)` |
+| `docs/MARKERS.md` | `program.run()` → `run(program)`; removed `async_run` |
 
-### Low Priority (design docs / proposals)
+### Low Priority (design docs / proposals) — DONE
 
-| File | Key Issues |
+| File | Fixes Applied |
 | --- | --- |
-| `docs/program-architecture-overview.md` | `run(..., trace=True)`, `async_run` |
-| `docs/cli-run-command-architecture.md` | `RunCommand`, `SymbolResolver` classes don't match actual `run_services.py` |
-| `docs/llm_unified_effects.md` | `LLMStructuredOutput` should be `LLMStructuredQuery` |
-| `docs/unified_image_effects.md` | `ImageResult` categorized as effect (it's a result type) |
-| `docs/MILESTONES.md` | References deleted `_vendor.py` |
-| `docs/specs/SPEC-WITHHANDLER-TYPE-FILTER.md` | `doeff/rust_vm.py`, `doeff/types.py` don't exist |
-| `docs/proposals/001-doeff-flow-webui.md` | `EffectCallTree`, `.intercept()` — old APIs |
-| `docs/proposals/002-run-result-printing-ownership-plan.md` | Final implementation step incomplete |
-| `docs/18-effect-combinations.md` | `Log` should be `Tell` |
-| `docs/12-mcp-tools.md` | `Sleep` doesn't exist in `doeff_agents.effects` |
+| `docs/program-architecture-overview.md` | Removed `run(..., trace=True)`, `async_run`; updated to `WithObserve` |
+| `docs/cli-run-command-architecture.md` | Updated to `RunContext`/`ResolvedRunContext`/`resolve_context()` |
+| `docs/llm_unified_effects.md` | `LLMStructuredOutput` → `LLMStructuredQuery` |
+| `docs/unified_image_effects.md` | `ImageResult` reclassified as result type |
+| `docs/MILESTONES.md` | Updated `_vendor.py` references; noted API removals |
+| `docs/specs/SPEC-WITHHANDLER-TYPE-FILTER.md` | `doeff/rust_vm.py` → `doeff/program.py`; fixed `EffectBase` import |
+| `docs/proposals/001-doeff-flow-webui.md` | Added deprecation header; fixed code examples |
+| `docs/proposals/002-run-result-printing-ownership-plan.md` | Marked superseded |
+| `docs/12-mcp-tools.md` | `Sleep` → `ClockSleep` |
+
+### Additional fixes (discovered during verification)
+
+| File | Fixes Applied |
+| --- | --- |
+| `docs/06-io-effects.md` | Removed `default_handlers` reference |
+| `docs/14-cli-auto-discovery.md` | 13 instances of `run(prog, handlers=default_handlers()).value` fixed |
+| `docs/15-cli-script-execution.md` | Removed `RunResult`/`default_handlers` from variable table |
+| `docs/gemini_cost_hook.md` | Removed `*default_handlers()` |
+| `docs/gemini_client_setup.md` | `async_run` → `run(scheduled(...))` |
+| `docs/seedream.md` | `async_run` → `run(scheduled(...))`; `Log` → `Tell` |
+| `packages/doeff-llm/README.md` | `LLMStructuredOutput` → `LLMStructuredQuery` |
 
 ## Cross-Cutting Deleted API Reference
 

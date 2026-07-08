@@ -276,13 +276,10 @@ def retry_handler(max_retries=3, backoff=1.0, transient_errors=None):
     return handler
 
 # Use it
-result = run(
-    execute_kubectl("get pods"),
-    handlers=[
-        retry_handler(max_retries=3, backoff=1.0),
-        system_call_handler(),
-    ]
-)
+prog = execute_kubectl("get pods")
+prog = system_call_handler()(prog)
+prog = retry_handler(max_retries=3, backoff=1.0)(prog)
+result = run(scheduled(prog))
 ```
 
 **Retry logic written once, applies to all SystemCall effects.** Want circuit breaker? Add a circuit breaker handler. Want jitter? Modify the retry handler once. The business logic (`execute_kubectl`, `krsync_to_pod`) never changes.
@@ -354,15 +351,14 @@ def logging_handler():
     return handler
 
 # Silent mode: just don't include the logging handler
-result_verbose = run(
-    execute_kubectl("get pods"),
-    handlers=[logging_handler(), system_call_handler()]
-)
+prog = execute_kubectl("get pods")
+prog = system_call_handler()(prog)
+prog = logging_handler()(prog)
+result_verbose = run(scheduled(prog))
 
-result_silent = run(
-    execute_kubectl("get pods"),
-    handlers=[system_call_handler()]  # no logging handler
-)
+prog = execute_kubectl("get pods")
+prog = system_call_handler()(prog)  # no logging handler
+result_silent = run(scheduled(prog))
 ```
 
 **One function, not two.** Logging is composed through handlers. Polling loops use the silent handler stack. User-facing commands use the verbose stack. The business logic never changes.
@@ -425,20 +421,17 @@ def test_job_deployment():
         return handler
     
     # Run with stub handlers
-    result = run(
-        persistent_ml_platform_job_core(
-            job_spec=test_job_spec,
-            mount_plan=test_mount_plan,
-        ),
-        handlers=[
-            stub_system_call_handler(),
-            stub_sync_handler(),
-        ]
+    prog = persistent_ml_platform_job_core(
+        job_spec=test_job_spec,
+        mount_plan=test_mount_plan,
     )
+    prog = stub_sync_handler()(prog)
+    prog = stub_system_call_handler()(prog)
+    result = run(scheduled(prog))
     
     # Verify orchestration logic
-    assert result.value.status == "completed"
-    assert result.value.pod_name == "test-job"
+    assert result.status == "completed"
+    assert result.pod_name == "test-job"
 
 def test_retry_on_transient_failure():
     """Test retry logic without real infrastructure."""
@@ -456,16 +449,13 @@ def test_retry_on_transient_failure():
             yield Delegate()
         return handler
     
-    result = run(
-        execute_kubectl("get pods"),
-        handlers=[
-            retry_handler(max_retries=3),
-            flaky_system_call_handler(),
-        ]
-    )
+    prog = execute_kubectl("get pods")
+    prog = flaky_system_call_handler()(prog)
+    prog = retry_handler(max_retries=3)(prog)
+    result = run(scheduled(prog))
     
     assert call_count == 3  # retried twice, succeeded on third
-    assert result.value == "success"
+    assert result == "success"
 ```
 
 **Tests are fast, deterministic, and require no infrastructure.** The orchestration logic is unit-testable. Integration tests still exist (with real handlers), but unit tests cover the majority of logic.
@@ -748,20 +738,24 @@ def vertex_ai_handlers(registry: str, gcs_bucket: str):
 # ---- Usage: same function, different handlers ----
 
 # Local Docker
-result = run(run_ml_job(project, schematic, "python train.py", A100_CONFIG, mounts),
-    handlers=[local_docker_handlers(), retry_handler(), logging_handler()])
+prog = run_ml_job(project, schematic, "python train.py", A100_CONFIG, mounts)
+prog = logging_handler()(retry_handler()(local_docker_handlers()(prog)))
+result = run(scheduled(prog))
 
 # K8s GPUaaS
-result = run(run_ml_job(project, schematic, "python train.py", A100_CONFIG, mounts),
-    handlers=[k8s_gpuaas_handlers(registry), retry_handler(), logging_handler()])
+prog = run_ml_job(project, schematic, "python train.py", A100_CONFIG, mounts)
+prog = logging_handler()(retry_handler()(k8s_gpuaas_handlers(registry)(prog)))
+result = run(scheduled(prog))
 
 # Vertex AI
-result = run(run_ml_job(project, schematic, "python train.py", A100_CONFIG, mounts),
-    handlers=[vertex_ai_handlers(registry, bucket), retry_handler(), logging_handler()])
+prog = run_ml_job(project, schematic, "python train.py", A100_CONFIG, mounts)
+prog = logging_handler()(retry_handler()(vertex_ai_handlers(registry, bucket)(prog)))
+result = run(scheduled(prog))
 
 # Test (no infrastructure)
-result = run(run_ml_job(project, schematic, "python train.py", A100_CONFIG, mounts),
-    handlers=[stub_handlers()])
+prog = run_ml_job(project, schematic, "python train.py", A100_CONFIG, mounts)
+prog = stub_handlers()(prog)
+result = run(scheduled(prog))
 ```
 
 The key insight visualized:
@@ -797,21 +791,19 @@ And because handlers compose, cross-cutting concerns stack orthogonally:
 
 ```python
 # Production K8s with retry + logging + event bus + recording
-result = run(run_ml_job(project, schematic, script, config, mounts),
-    handlers=[
-        recording_handler("runs/run_042.json"),  # audit trail
-        retry_handler(max_retries=3),             # transient error recovery
-        event_bus_handler(bus),                    # observability
-        logging_handler(),                        # user-facing logs
-        k8s_gpuaas_handlers(registry),            # K8s-specific operations
-    ])
+prog = run_ml_job(project, schematic, script, config, mounts)
+prog = k8s_gpuaas_handlers(registry)(prog)            # K8s-specific operations
+prog = logging_handler()(prog)                        # user-facing logs
+prog = event_bus_handler(bus)(prog)                    # observability
+prog = retry_handler(max_retries=3)(prog)             # transient error recovery
+prog = recording_handler("runs/run_042.json")(prog)   # audit trail
+result = run(scheduled(prog))
 
 # Same job, replay a failed run on Vertex AI instead
-result = run(run_ml_job(project, schematic, script, config, mounts),
-    handlers=[
-        replay_handler("runs/run_042.json"),      # replay decisions from failed run
-        vertex_ai_handlers(registry, bucket),     # but on Vertex AI this time
-    ])
+prog = run_ml_job(project, schematic, script, config, mounts)
+prog = vertex_ai_handlers(registry, bucket)(prog)     # but on Vertex AI this time
+prog = replay_handler("runs/run_042.json")(prog)      # replay decisions from failed run
+result = run(scheduled(prog))
 ```
 
 **You can't do this with DI.** DI can swap `KrsyncService` for `GsutilService`. But DI cannot replay a K8s run on Vertex AI by composing a replay handler with a different environment handler. That requires controlling execution flow — which is what effects do.
@@ -937,13 +929,10 @@ def event_bus_handler(bus):
     return handler
 
 # Use it
-result = run(
-    execute_kubectl("get pods"),
-    handlers=[
-        event_bus_handler(ml_nexus_event_bus),
-        system_call_handler(),
-    ]
-)
+prog = execute_kubectl("get pods")
+prog = system_call_handler()(prog)
+prog = event_bus_handler(ml_nexus_event_bus)(prog)
+result = run(scheduled(prog))
 ```
 
 **Event emission is automatic.** Every `SystemCall` effect triggers events through the handler. The business logic never mentions the event bus.
