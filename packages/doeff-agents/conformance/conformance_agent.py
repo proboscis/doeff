@@ -71,7 +71,45 @@ FRAMES: dict[str, str] = {
     ),
     # neither idle nor active nor waiting: stall-watchdog bait
     "F-frozen": "\nPassword:\n",
-    "F-trust-dialog": "\nDo you trust the files in this folder?\n ❯ 1. Yes, proceed\n",
+    # an UNKNOWN startup dialog — deliberately matches NO R9 detector and
+    # no idle/active marker (the `❯` highlight is indented). Represents the
+    # CLI prompts that appear unpredictably and are not in the R9 set yet;
+    # the launch must fail closed on these instead of degrading silently
+    # (pasting the prompt into the dialog) — 2026-07-07 contract revision.
+    "F-dialog-unknown": (
+        "\n Help improve Claude Code\n"
+        "\n"
+        " Share anonymous usage data with Anthropic?\n"
+        "\n"
+        " ❯ 1. Yes, share usage data\n"
+        "   2. Maybe later\n"
+        "\n"
+        " Enter to confirm · Esc to cancel\n"
+    ),
+    # claude workspace-trust gate: VERBATIM from a live claude CLI frame
+    # (herdr demo-claude-2, 2026-07-07; only the workspace path line is
+    # variable). Whole-capture detector ("yes, i trust this folder" +
+    # "no, exit" + "enter to confirm" — the long question sentence reflows
+    # with pane width so it is NOT a marker); default selection is option 1
+    # (trust), so the dismisser sends a bare Enter. Launch path only — M1.
+    "F-dialog-trust": (
+        "\n Accessing workspace:\n"
+        "\n"
+        " /home/user\n"
+        "\n"
+        " Quick safety check: Is this a project you created or one you trust? (Like your own code,\n"
+        " a well-known open source project, or work from your team). If not, take a moment to\n"
+        " review what's in this folder first.\n"
+        "\n"
+        " Claude Code'll be able to read, edit, and execute files here.\n"
+        "\n"
+        " Security guide\n"
+        "\n"
+        " ❯ 1. Yes, I trust this folder\n"
+        "   2. No, exit\n"
+        "\n"
+        " Enter to confirm · Esc to cancel\n"
+    ),
     # R9 fast-path dialog frames — VERBATIM from the Rust detectors and
     # their unit tests (main.rs:3115/3150/3165/3176, tests :4222-4406).
     # codex update dialog: detector wants "update now" + "skip until next
@@ -267,7 +305,10 @@ def report_result(spec: object) -> None:
         }
     )
     resp = ""
-    for attempt in range(40):
+    # 200 attempts x 50ms = the same 10s total budget the previous
+    # 40 x 250ms grid gave — the launch confirm loop keeps the session
+    # unregistered for ~4.3s, so the budget must comfortably cover it.
+    for attempt in range(200):
         resp = rpc(
             {
                 "jsonrpc": "2.0",
@@ -278,7 +319,17 @@ def report_result(spec: object) -> None:
         )
         if "not registered" not in resp:
             break
-        time.sleep(0.25)
+        # Retry grid must stay well inside one monitor tick (100ms under the
+        # harness's compressed clock): the golden-path zero-solicitation pin
+        # asserts "the report lands before the tick after the latch-clearing
+        # observation", and a coarser grid (0.25s) phase-locks that outcome
+        # to the mux backend's incidental subprocess latency — green on tmux,
+        # red on the faster herdr substrate for the same protocol behavior
+        # (measured 2026-07-07: report landed 8ms after tick1 on tmux vs
+        # 121ms on herdr; both landed at the first grid point after row
+        # registration). 50ms keeps the pin about the protocol, not the
+        # backend's speed.
+        time.sleep(0.05)
     if proc.stdin is not None:
         proc.stdin.close()
     try:

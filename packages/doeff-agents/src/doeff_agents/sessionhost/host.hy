@@ -53,6 +53,7 @@
   tail-chars])
 (import doeff_agents.sessionhost.schema [validate-against-schema schema-admission-error])
 (import doeff_agents.sessionhost.substrate [real-substrate])
+(import doeff_agents.sessionhost.substrate_herdr [DEFAULT-HERDR-SOCKET herdr-substrate])
 (import doeff_agents.sessionhost.store [
   LEASE-TTL-SECONDS
   StoreActor
@@ -121,7 +122,9 @@
 
 
 (defclass [(dataclass :frozen True :kw-only True)] HostConfig []
-  "daemon 設定(oracle Config)。monitor-interval は秒(float)で持つ。"
+  "daemon 設定(oracle Config)。monitor-interval は秒(float)で持つ。
+   backend は mux substrate の選択(tmux | herdr — herdr トライアル、
+   既定 tmux)。herdr-socket は backend=herdr のときのみ使う。"
   #^ str db-path
   #^ str socket-path
   #^ str tmux-bin
@@ -130,7 +133,11 @@
   #^ int result-solicitation-limit
   #^ int prompt-stall-seconds
   #^ int prompt-unblock-limit
-  #^ (| str None) prompt-judge-cmd)
+  #^ (| str None) prompt-judge-cmd
+  #^ str backend
+  (setv backend "tmux")
+  #^ str herdr-socket
+  (setv herdr-socket DEFAULT-HERDR-SOCKET))
 
 
 ;; ---------------------------------------------------------------------------
@@ -240,6 +247,12 @@
         (normalize-prompt-judge-cmd
           (.get os.environ "DOEFF_AGENTD_PROMPT_JUDGE_CMD"
                 DEFAULT-PROMPT-JUDGE-CMD)))
+  ;; herdr トライアルの transfer gate: conformance harness は daemon の argv を
+  ;; 組み替えないため、env knob(flag が優先)で backend を切り替えられるように
+  ;; する(CONFORMANCE_AGENTD_BIN seam と組で使う)。
+  (setv backend (.get os.environ "DOEFF_SESSIONHOST_BACKEND" "tmux"))
+  (setv herdr-socket (.get os.environ "DOEFF_SESSIONHOST_HERDR_SOCKET"
+                           DEFAULT-HERDR-SOCKET))
   (setv command "serve")
   (setv index 0)
   (while (< index (len args))
@@ -289,6 +302,12 @@
       (do (+= index 1)
           (setv raw (required-arg args index "--prompt-judge-cmd"))
           (setv prompt-judge-cmd (normalize-prompt-judge-cmd raw)))
+      (= arg "--backend")
+      (do (+= index 1)
+          (setv backend (required-arg args index "--backend")))
+      (= arg "--herdr-socket")
+      (do (+= index 1)
+          (setv herdr-socket (required-arg args index "--herdr-socket")))
       (= arg "serve")
       (setv command arg)
       True
@@ -296,6 +315,8 @@
     (+= index 1))
   (when (!= command "serve")
     (raise (ValueError f"unsupported command: {command}")))
+  (when (not-in backend #{"tmux" "herdr"})
+    (raise (ValueError f"unsupported backend: {backend} (expected tmux|herdr)")))
   (HostConfig
     :db-path (or db-path (default-db-path))
     :socket-path (or socket-path (default-socket-path))
@@ -305,7 +326,9 @@
     :result-solicitation-limit result-solicitation-limit
     :prompt-stall-seconds prompt-stall-seconds
     :prompt-unblock-limit prompt-unblock-limit
-    :prompt-judge-cmd prompt-judge-cmd))
+    :prompt-judge-cmd prompt-judge-cmd
+    :backend backend
+    :herdr-socket herdr-socket))
 
 
 ;; ---------------------------------------------------------------------------
@@ -353,13 +376,20 @@
 
 (defn run-hosted [config actor program]
   "handler stack で program を実行する(RPC 写像と monitor tick の共通経路)。
-   substrate(生 IO)と store(SQLite actor)が外側、per-kind impl が内側。"
+   substrate(生 IO)と store(SQLite actor)が外側、per-kind impl が内側。
+   backend=herdr のときは herdr-substrate を real-substrate の内側に挿す —
+   Tmux* effect は herdr が先取りし、非 mux substrate(Clock / Proc / Fs /
+   Env)は素通しで real-substrate に残る(mux 差し替えの blast radius を
+   多重化 effect 6 個に限定する)。"
   (setv result-command (host-binary-path))
+  (setv inner ((codex-impl result-command)
+               ((claude-code-impl result-command)
+                program)))
+  (when (= config.backend "herdr")
+    (setv inner ((herdr-substrate config.herdr-socket) inner)))
   (run ((sqlite-session-store actor)
         ((real-substrate config.tmux-bin)
-         ((codex-impl result-command)
-          ((claude-code-impl result-command)
-           program))))))
+         inner))))
 
 
 (defk require-session-row [session-id]
@@ -501,7 +531,12 @@
    "session_env" (or (.get params "session_env") {})
    "expected_result" (.get params "expected_result")
    "socket_path" config.socket-path
-   "max_running" config.max-running})
+   "max_running" config.max-running
+   ;; repl-idle 予算の env-only knob(S19 watchdog knob と同じ use-site 読み。
+   ;; 未設定なら None → launch.hy が oracle 定数 120s に fallback)。
+   "repl_idle_max_wait_seconds" (env-positive-i64
+                                  "DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS")
+   "backend_kind" config.backend})
 
 
 (deff wire-snapshot [actor session-id]
