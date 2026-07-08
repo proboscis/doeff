@@ -9,8 +9,10 @@ Doeff markers are special comments that allow precise categorization of function
 Markers use the format `# doeff: <marker_name>` and can be placed on or near function definitions:
 
 ```python
-def my_interpreter(program: Program):  # doeff: interpreter
-    return program.run()
+from doeff import run
+
+def my_interpreter(program):  # doeff: interpreter
+    return run(program)
 ```
 
 ## Supported Markers
@@ -19,15 +21,16 @@ def my_interpreter(program: Program):  # doeff: interpreter
 
 1. **`interpreter`** - Functions that execute/interpret Program objects
    ```python
-   def run_program(program: Program):  # doeff: interpreter
-       return program.run()
+   from doeff import run
+
+   def run_program(program):  # doeff: interpreter
+       return run(program)
    ```
 
 2. **`transform`** / **`transformer`** - Functions that transform Program objects
    ```python
-   @do
-   def optimize(program: Program) -> Program:  # doeff: transform
-       return program.optimize()
+   def add_logging(program):  # doeff: transform
+       return writer(program)
    ```
 
 3. **`kleisli`** - Composable effect-handling functions (usually with `@do` decorator)
@@ -43,15 +46,19 @@ def my_interpreter(program: Program):  # doeff: interpreter
 
    For interpreters (requires both `interpreter` and `default`):
    ```python
-   def my_interpreter(program: Program):
+   from doeff import run
+
+   def my_interpreter(program):
        """# doeff: interpreter, default"""
-       return program.run()
+       return run(program)
    ```
 
    For environments:
    ```python
+   from doeff import Pure
+
    # doeff: default
-   base_env: Program[dict] = Program.pure({
+   base_env = Pure({
        'db_host': 'localhost',
        'timeout': 10
    })
@@ -65,8 +72,8 @@ Functions can have multiple roles specified with comma-separated markers:
 
 ```python
 @do
-def hybrid_function(program: Program):  # doeff: kleisli, transform
-    transformed = yield program.transform()
+def hybrid_function(program):  # doeff: kleisli, transform
+    transformed = yield program
     return transformed
 ```
 
@@ -76,14 +83,14 @@ Markers can be placed in several positions:
 
 ### Same Line as Function Definition
 ```python
-def interpreter(program: Program):  # doeff: interpreter
+def interpreter(program):  # doeff: interpreter
     pass
 ```
 
 ### On Multi-line Function Signatures
 ```python
 def interpreter(  # doeff: interpreter
-    program: Program,
+    program,
     config: dict = None
 ):
     pass
@@ -92,7 +99,7 @@ def interpreter(  # doeff: interpreter
 ### Inline with Parameters
 ```python
 def interpreter(
-    program: Program,  # doeff: interpreter
+    program,  # doeff: interpreter
     verbose: bool = False
 ):
     pass
@@ -144,33 +151,38 @@ Source Code → Indexer Extracts Markers → Index Entry with Markers → IDE Pl
 ### 1. Be Explicit
 Mark functions when their role is clear:
 ```python
+from doeff import run
+
 # Good - explicit marking
-def my_interpreter(program: Program):  # doeff: interpreter
-    return program.run()
+def my_interpreter(program):  # doeff: interpreter
+    return run(program)
 
 # Less ideal - relies on type detection
-def my_interpreter(program: Program):
-    return program.run()
+def my_interpreter(program):
+    return run(program)
 ```
 
 ### 2. Use Consistent Placement
 Choose a consistent marker placement style in your codebase:
 ```python
 # Style 1: Same line
-def func(program: Program):  # doeff: interpreter
+def func(program):  # doeff: interpreter
 
 # Style 2: Multi-line signature
 def func(  # doeff: interpreter
-    program: Program
+    program
 ):
 ```
 
 ### 3. Mark Factory Functions
 Mark functions that create interpreters/transforms:
 ```python
+from doeff import run
+from doeff_core_effects.handlers import reader
+
 def create_interpreter(config: dict):  # doeff: interpreter
-    def inner(program: Program):
-        return program.run_with_config(config)
+    def inner(program):
+        return run(reader(config)(program))
     return inner
 ```
 
@@ -179,7 +191,7 @@ Add docstrings explaining complex marker usage:
 ```python
 @do
 def complex_function(  # doeff: kleisli, transform
-    program: Program
+    program
 ):
     """
     This function acts as both a Kleisli arrow and a transformer.
@@ -192,34 +204,41 @@ def complex_function(  # doeff: kleisli, transform
 
 ### Basic Interpreter
 ```python
-def simple_interpreter(program: Program):  # doeff: interpreter
+from doeff import run
+
+def simple_interpreter(program):  # doeff: interpreter
     """Execute a program with default settings."""
-    return program.run()
+    return run(program)
 ```
 
-### Async Interpreter
+### Interpreter with Handlers
 ```python
-from doeff import async_run, default_async_handlers
+from doeff import run
+from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects.scheduler import scheduled
 
-async def async_interpreter(  # doeff: interpreter
-    program: Program,
-    timeout: float = None
+def full_interpreter(  # doeff: interpreter
+    program,
+    env: dict = None
 ):
-    """Execute program asynchronously with optional timeout."""
-    return await async_run(program, handlers=default_async_handlers())
+    """Execute program with reader, state, writer, and scheduler."""
+    wrapped = scheduled(writer(state()(reader(env or {})(program))))
+    return run(wrapped)
 ```
 
 ### Transform Chain
 ```python
-@do
+from doeff_core_effects.handlers import state, writer
+
 def optimization_pipeline(  # doeff: transform
-    program: Program,
-    level: int = 1
-) -> Program:
-    """Apply multiple optimization passes."""
-    for _ in range(level):
-        program = program.optimize()
-    return program
+    program,
+    with_state: bool = True
+):
+    """Apply handler wrapping as a transform."""
+    wrapped = writer(program)
+    if with_state:
+        wrapped = state()(wrapped)
+    return wrapped
 ```
 
 ### Kleisli Composition
@@ -235,10 +254,13 @@ def data_pipeline():  # doeff: kleisli
 
 ### Class Method Interpreter
 ```python
+from doeff import run
+from doeff_core_effects.handlers import reader
+
 class Executor:
-    def execute(self, program: Program):  # doeff: interpreter
+    def execute(self, program):  # doeff: interpreter
         """Execute program with executor context."""
-        return program.run_with_context(self.context)
+        return run(reader(self.context)(program))
 ```
 
 ## Troubleshooting

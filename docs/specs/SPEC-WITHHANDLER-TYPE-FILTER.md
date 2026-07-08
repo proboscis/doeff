@@ -171,14 +171,21 @@ fn should_dispatch_to_handler(effect: &PyAny, handler: &InstalledHandler) -> boo
 
 ## Python wrapper changes
 
-### `doeff/rust_vm.py`
+### `doeff/program.py` (handler installer)
+
+The `handler()` function in `doeff/program.py` wraps a raw effect dispatcher as a
+`Program -> Program` installer. Type extraction is integrated into the `WithHandler`
+construction path.
 
 ```python
-def WithHandler(handler, expr, return_clause=None):
-    handler = _coerce_handler(handler, api_name="WithHandler", role="handler")
-    types = _extract_handler_effect_types(handler)
-    vm = _vm()
-    return vm.WithHandler(handler, expr, types=types, return_clause=return_clause)
+# doeff/program.py — simplified view
+from doeff_vm import WithHandler as WithHandlerType
+
+def handler(raw_handler):
+    """Wrap a raw effect dispatcher as a Program -> Program handler."""
+    def install(body):
+        return WithHandlerType(raw_handler, body)
+    return install
 ```
 
 ### Type extraction implementation
@@ -212,7 +219,9 @@ def _extract_handler_effect_types(handler) -> tuple[type, ...] | None:
 
 def _resolve_effect_types(annotation) -> tuple[type, ...] | None:
     """Resolve an annotation to a tuple of concrete effect types, or None for 'all'."""
-    from doeff.types import Effect, EffectBase
+    from doeff_vm import EffectBase
+
+    Effect = EffectBase  # doeff.__init__ aliases Effect = EffectBase
 
     # Base classes mean "all effects"
     if annotation in (Effect, EffectBase, Any):
@@ -282,7 +291,7 @@ def _resolve_effect_types(annotation) -> tuple[type, ...] | None:
 
 | Phase | Scope | Files |
 |-------|-------|-------|
-| 1 | Python type extraction | `doeff/rust_vm.py` — add `_extract_handler_effect_types` |
+| 1 | Python type extraction | `doeff/program.py` or semgrep-guarded utility — add `_extract_handler_effect_types` |
 | 2 | Rust IR extension | `do_ctrl.rs` — add `types` field to `WithHandler` |
 | 3 | PyO3 bridge | `pyvm.rs` — accept `types` kwarg on `WithHandler` |
 | 4 | VM dispatch | `vm.rs` — isinstance pre-check in handler dispatch loop |

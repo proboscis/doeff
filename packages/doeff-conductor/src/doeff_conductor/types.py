@@ -76,6 +76,7 @@ class ExecResult:
 
     exit_code: int
     log_path: str
+    output: str = ""
     timed_out: bool = False
 
     @property

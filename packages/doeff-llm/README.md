@@ -10,7 +10,7 @@ that route these effects by model name.
 
 - `LLMChat`
 - `LLMStreamingChat`
-- `LLMStructuredOutput`
+- `LLMStructuredQuery`
 - `LLMEmbedding`
 
 ## Quick Example
@@ -40,6 +40,5 @@ result = run(
         gemini_production_handler,
         WithHandler(openai_production_handler, workflow()),
     ),
-    env={"openai_api_key": "...", "gemini_api_key": "..."},
 )
 ```

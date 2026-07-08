@@ -16,7 +16,7 @@ from doeff_docker.handlers.dockerfile import (
 
 def _run_with_handlers(program):
     return run(
-        writer()(slog_handler()(reader(env={})(program)))
+        writer(slog_handler(reader(env={})(program)))
     )
 
 
