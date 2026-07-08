@@ -74,7 +74,7 @@ For anyone fixing the remaining docs, here are the key replacements:
 
 | Deleted API | Replacement |
 | --- | --- |
-| `default_handlers()` | Compose handlers individually: `writer()(state()(prog))` |
+| `default_handlers()` | Compose handlers individually: `writer(state()(prog))` |
 | `run(prog, handlers=..., env=..., trace=...)` | `run(doexpr)` — single argument, returns raw value |
 | `RunResult[T]` / `.value` / `.is_ok()` | `run()` returns the raw value directly |
 | `async_run()` | `run(scheduled(prog))` |

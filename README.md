@@ -27,7 +27,7 @@ def counter_program():
 
 # Compose handlers explicitly by calling each handler installer.
 prog = counter_program()
-prog = writer()(prog)
+prog = writer(prog)
 prog = state()(prog)
 prog = reader(env={"greeting": "hello"})(prog)
 result = run(scheduled(prog))
@@ -98,14 +98,14 @@ Scheduler effects (from `doeff_core_effects.scheduler`):
 
 Built-in handlers (from `doeff_core_effects.handlers`):
 
-| Handler | Factory | Effects handled |
+| Handler | Installer | Effects handled |
 | --- | --- | --- |
 | Reader | `reader(env={...})` | `Ask` |
 | Lazy Ask | `lazy_ask(env={...})` | `Ask`, `Local` (with caching) |
 | State | `state(initial={...})` | `Get`, `Put` |
-| Writer | `writer()` | `Tell` / `WriterTellEffect` |
+| Writer | `writer` | `Tell` / `WriterTellEffect` |
 | Try | `try_handler` | `Try` |
-| Slog | `slog_handler()` | `Slog` |
+| Slog | `slog_handler` | `Slog` |
 | Local | `local_handler` | `Local` |
 | Listen | `listen_handler` | `Listen` |
 | Await | `await_handler()` | `Await` |
@@ -131,7 +131,7 @@ def main():
     results = yield Gather(t1, t2)
     return results
 
-result = run(scheduled(writer()(main())))
+result = run(scheduled(writer(main())))
 print(result)  # ['a', 'b']
 ```
 

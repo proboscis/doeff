@@ -186,6 +186,6 @@ class TestLazyAskEnvVarFallback:
             "name": "test-service",
         }
 
-        composed = lazy_ask(env=env)(writer()(try_handler(state()(_install_raw_handler(env_var_fallback_handler)(program())))))
+        composed = lazy_ask(env=env)(writer(try_handler(state()(_install_raw_handler(env_var_fallback_handler)(program())))))
         result = run(scheduled(composed))
         assert result == "loaded:/run/secrets/api-key|test-service"

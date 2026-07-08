@@ -34,8 +34,7 @@ def connect_to_database():
 # Run with environment
 def main():
     prog = connect_to_database()
-    w = writer()
-    prog = w(prog)
+    prog = writer(prog)
     prog = reader(env={
         "database_url": "postgresql://localhost/mydb",
         "timeout": 30
@@ -336,7 +335,7 @@ Writer effects accumulate output (messages, events, structured entries) througho
 ```python
 from doeff import do, run
 from doeff_core_effects import Get, Tell
-from doeff_core_effects.handlers import state, writer
+from doeff_core_effects.handlers import state, writer, writer_log
 from doeff_core_effects.scheduler import scheduled
 
 @do
@@ -350,15 +349,20 @@ def with_logging():
     yield Tell("Operation complete")
     return "done"
 
+@do
+def main_program():
+    result = yield with_logging()
+    # result is "done"
+    # Access the writer log via writer_log()
+    log = yield writer_log()
+    return result, log
+
 def main():
-    prog = with_logging()
-    w = writer()
-    prog = w(prog)
+    prog = main_program()
+    prog = writer(prog)
     prog = state(initial={"count": 0})(prog)
     result = run(scheduled(prog))
-    # result is "done"
-    # All entries are in w.log
-    print(w.log)
+    print(result)
 
 main()
 ```
