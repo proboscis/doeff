@@ -44,13 +44,153 @@ RESULT_SCHEMA: dict[str, Any] = {
 }
 
 
+# herdr trial transfer gate: DOEFF_SESSIONHOST_BACKEND=herdr flows through the
+# harness environment into the daemon under test (parse_args reads it), and the
+# harness swaps its own backend-dependent physics (required binary, out-of-band
+# kill) to the herdr equivalents. Observations live in herdr-physics.md — the
+# frozen contract README is tmux-oracle and stays untouched.
+SESSIONHOST_BACKEND = os.environ.get("DOEFF_SESSIONHOST_BACKEND", "tmux")
+
+
 def require_binaries() -> None:
     # Under CONFORMANCE_AGENTD_BIN (see build_agentd) the daemon under test
     # is not cargo-built, so cargo is not a prerequisite.
-    names = ("tmux",) if os.environ.get("CONFORMANCE_AGENTD_BIN") else ("cargo", "tmux")
+    mux = "herdr" if SESSIONHOST_BACKEND == "herdr" else "tmux"
+    names = (mux,) if os.environ.get("CONFORMANCE_AGENTD_BIN") else ("cargo", mux)
     for name in names:
         if shutil.which(name) is None:
             pytest.skip(f"{name} is required for the agentd conformance suite")
+
+
+def _herdr_call(method: str, params: dict[str, Any]) -> dict[str, Any]:
+    """One-shot newline-JSON RPC to the herdr socket (out-of-band fixtures).
+
+    Returns the raw envelope ({"result": ...} or {"error": ...}); callers
+    decide whether an error is swallowed (best-effort kill) or fatal
+    (fault-injection setup that the test depends on).
+    """
+    import socket as socket_mod
+
+    herdr_socket = os.environ.get(
+        "DOEFF_SESSIONHOST_HERDR_SOCKET",
+        os.path.join(os.path.expanduser("~"), ".config", "herdr", "herdr.sock"),
+    )
+    line = json.dumps({"id": "conf-oob", "method": method, "params": params})
+    sock = socket_mod.socket(socket_mod.AF_UNIX, socket_mod.SOCK_STREAM)
+    try:
+        sock.settimeout(5.0)
+        sock.connect(herdr_socket)
+        sock.sendall((line + "\n").encode("utf-8"))
+        chunks: list[bytes] = []
+        while True:
+            data = sock.recv(65536)
+            if not data:
+                break
+            chunks.append(data)
+            if b"\n" in data:
+                break
+    finally:
+        sock.close()
+    return json.loads(b"".join(chunks).decode("utf-8").strip())
+
+
+def kill_session_out_of_band(session_id: str) -> None:
+    """Backend-aware out-of-band session kill (S9 + harness teardown).
+
+    tmux: `tmux kill-session -t NAME`. herdr: resolve the agent name to its
+    pane over the socket (`agent.get {target}`) and `pane.close` it — herdr
+    has no name-addressed close. Both paths swallow "not found": the kill is
+    best-effort teardown / S9 fault injection, not an assertion.
+    """
+    if SESSIONHOST_BACKEND != "herdr":
+        subprocess.run(
+            ["tmux", "kill-session", "-t", session_id],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return
+    try:
+        got = _herdr_call("agent.get", {"target": session_id})
+        if "error" in got:
+            return
+        _herdr_call("pane.close", {"pane_id": got["result"]["agent"]["pane_id"]})
+    except OSError:
+        return
+
+
+def session_exists_out_of_band(session_id: str) -> bool:
+    """Backend-aware out-of-band liveness probe (load-bearing for cleanup
+    asserts: a rejected/failed launch must leave no mux session behind).
+
+    tmux: `tmux has-session -t NAME`. herdr: `agent.get {target}` resolves
+    the name; an error envelope means the agent/pane does not exist.
+    """
+    if SESSIONHOST_BACKEND != "herdr":
+        probe = subprocess.run(
+            ["tmux", "has-session", "-t", session_id],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return probe.returncode == 0
+    try:
+        got = _herdr_call("agent.get", {"target": session_id})
+    except OSError:
+        return False
+    return "error" not in got
+
+
+def break_pane_observation_out_of_band(session_id: str, pane_id: str) -> None:
+    """Kill the MONITORED PANE while keeping session liveness true (S19c
+    stale-observation fault injection): capture of the recorded pane_id must
+    start failing while the liveness probe keeps answering, so the monitor
+    reaches the stale reaper instead of the `lost` path.
+
+    tmux: add a second window to the session, then kill the monitored pane —
+    the session survives through the new window (`has-session` true).
+
+    herdr: agent == pane (two layers, not tmux's session>window>pane three),
+    so a bare pane.close would delete the agent entry too and the liveness
+    check (agent.get) would fail first. Synthesize the same split state:
+    split a sibling pane, re-report the agent name onto the sibling
+    (pane.report_agent — same namespace as agent.start, measured 2026-07-07),
+    then close the original pane. agent.get then resolves to the sibling
+    (alive) while pane.read on the recorded pane_id fails. Errors raise:
+    this is fault-injection setup the test depends on, not best-effort.
+    """
+    if SESSIONHOST_BACKEND != "herdr":
+        subprocess.run(
+            ["tmux", "new-window", "-t", session_id],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        subprocess.run(
+            ["tmux", "kill-pane", "-t", pane_id],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return
+    split = _herdr_call("pane.split", {"pane_id": pane_id, "direction": "right"})
+    if "error" in split:
+        raise RuntimeError(f"herdr pane.split failed: {split['error']}")
+    sibling = split["result"]["pane"]["pane_id"]
+    reported = _herdr_call(
+        "pane.report_agent",
+        {
+            "pane_id": sibling,
+            "source": "doeff-conformance",
+            "agent": session_id,
+            "state": "idle",
+        },
+    )
+    if "error" in reported:
+        raise RuntimeError(f"herdr pane.report_agent failed: {reported['error']}")
+    closed = _herdr_call("pane.close", {"pane_id": pane_id})
+    if "error" in closed:
+        raise RuntimeError(f"herdr pane.close failed: {closed['error']}")
 
 
 def build_agentd() -> Path:
@@ -252,12 +392,7 @@ class AgentdHarness:
 
     def __exit__(self, *exc: object) -> None:
         for session_id in self._sessions:
-            subprocess.run(
-                ["tmux", "kill-session", "-t", session_id],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-            )
+            kill_session_out_of_band(session_id)
         self._terminate()
         shutil.rmtree(self.runtime_dir, ignore_errors=True)
 

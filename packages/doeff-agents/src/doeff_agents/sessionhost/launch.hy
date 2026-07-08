@@ -32,6 +32,7 @@
   tmux-new-session
   tmux-send-keys
   tmux-capture
+  tmux-kill-session
   clock-now
   clock-sleep])
 (import doeff_agents.sessionhost.policy [
@@ -118,10 +119,12 @@
    banner + MCP ロードの後にしか input loop が配線されない — その窓に keys を
    送ると Enter がロード画面に食われ、prompt が入力箱に座ったまま submit
    されない(oracle 実障害)。R9 launch dialog(codex-update / bypass /
-   fullscreen / managed)は idle 判定より先に検出して決定的 keys で dismiss
-   する(update dialog は `›` 選択 marker を描くため idle と誤認される)。
-   上限到達は False を返すだけ — 呼び手は構わず送出し、通常の validation
-   経路で fail させる(RPC を hang させない)。"
+   fullscreen / trust / managed)は idle 判定より先に検出して決定的 keys で
+   dismiss する(update dialog は `›` 選択 marker を描くため idle と誤認
+   される)。上限到達は False を返すだけ — 呼び手(launch-session)はこれを
+   fail-closed の typed error にする(2026-07-07 契約修正。旧 oracle は
+   構わず送出していたが、R9 外の未知 dialog に prompt が送出されて
+   silent hang になる実障害 — trust dialog — がそれで隠れた)。"
   (<- start (clock-now))
   (setv idle-seen False)
   (setv looping True)
@@ -273,7 +276,29 @@
               (+ prompt RESULT-PROTOCOL-INSTRUCTION)
               prompt))
     (when (and (not has-override) (in agent-type INTERACTIVE-AGENT-TYPES))
-      (<- _ (wait-for-repl-idle agent-type pane-id REPL-IDLE-MAX-WAIT-SECONDS)))
+      ;; 予算は host 注入 knob(DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS、
+      ;; max_running と同じ注入パターン)が優先、無ければ oracle 定数 120s。
+      (setv repl-idle-max-wait
+            (or (.get params "repl_idle_max_wait_seconds")
+                REPL-IDLE-MAX-WAIT-SECONDS))
+      (<- repl-ready (wait-for-repl-idle agent-type pane-id repl-idle-max-wait))
+      (when (not repl-ready)
+        ;; fail-closed(2026-07-07 契約修正): idle 未達のまま paste すると
+        ;; prompt が R9 外の未知 dialog に送出され session は silent hang に
+        ;; なる(trust dialog 実障害)。paste せず、画面 tail を証拠として
+        ;; 積んだ typed error で launch を fail させ、作った session は
+        ;; 片付ける(行は未永続なので放置すると誰にも観測されないリーク)。
+        (<- final-frame (tmux-capture pane-id 40))
+        (<- _ (tmux-kill-session session-name))
+        (setv tail-lines (cut (.splitlines final-frame) -15 None))
+        (setv screen-tail (.join "\n" tail-lines))
+        (raise (RuntimeError
+                 (+ f"session.launch: {agent-type} REPL did not become ready "
+                    f"within {repl-idle-max-wait}s — startup is blocked by an "
+                    "unrecognized screen (a dialog outside the R9 fast-path "
+                    "set?). The prompt was NOT delivered and the created "
+                    "session was cleaned up. Last screen tail:\n"
+                    screen-tail)))))
     (if (in agent-type INTERACTIVE-AGENT-TYPES)
         (<- _ (deliver-message pane-id full-prompt))
         (<- _ (tmux-send-keys pane-id full-prompt True True)))
@@ -296,6 +321,7 @@
               :expected-result expected-result
               :effective-identity identity
               :work-dir (get params "work_dir")
+              :backend-kind (.get params "backend_kind" "tmux")
               :backend-ref {"session_name" session-name
                             "pane_id" pane-id
                             "command" command-line}))
