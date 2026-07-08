@@ -34,8 +34,9 @@ uv add doeff
 Let's write a simple program that uses state management and logging:
 
 ```python
-from doeff import do, Program, Put, Get, Tell
-from doeff import run, default_handlers
+from doeff import do, run, Pure
+from doeff_core_effects import Get, Put, Tell
+from doeff_core_effects.handlers import state, writer
 
 @do
 def counter_program():
@@ -52,8 +53,11 @@ def counter_program():
     return final_count
 
 def main():
-    result = run(counter_program(), default_handlers())
-    print(f"Result: {result.value}")
+    prog = counter_program()
+    prog = writer()(prog)
+    prog = state()(prog)
+    result = run(prog)
+    print(f"Result: {result}")
 
 main()
 ```
@@ -67,27 +71,30 @@ Result: 1
 
 Let's break down what's happening:
 
-1. **`@do` decorator**: Converts a generator function into a reusable `KleisliProgram`
+1. **`@do` decorator**: Converts a generator function into a callable that produces an `Expand` program node
 2. **`yield` effects**: Each `yield` *performs* an algebraic effect — the program suspends and the handler processes it
 3. **Effects** (algebraic effect operations):
    - `Put("counter", value)` - State effect: sets state (handled by the State handler)
    - `Get("counter")` - State effect: retrieves state
    - `Tell(message)` - Writer effect: appends to log (handled by the Writer handler)
-4. **`run`**: Executes programs with the provided effect handlers
-5. **Result**: Returns a `RunResult` with `.value` for success or `.error` for failure
+4. **Handler composition**: Handlers are composed by wrapping the program: `writer()(state()(prog))`
+5. **`run`**: Executes the fully-handled program and returns the raw result value
 
-Examples in this guide use `default_handlers()` / `default_async_handlers()` only to install the
-builtin runtime preset. For custom handler composition, call a Program -> Program handler installer
-directly, for example `handler(program)`, instead of passing custom handlers directly to `run()` /
-`async_run()`.
+Handler composition is done by calling each handler factory and applying it to the program.
+Each handler is a `Program -> Program` installer — compose them by nesting calls rather than
+passing handlers to `run()`.
 
 ## Key Concepts
 
 ### Programs are Lazy
 
-Programs don't execute until you call `run()` or `async_run()`:
+Programs don't execute until you call `run()`:
 
 ```python
+from doeff import do, run
+from doeff_core_effects import Tell
+from doeff_core_effects.handlers import writer
+
 @do
 def my_program():
     yield Tell("This won't execute yet")
@@ -97,7 +104,8 @@ def my_program():
 program = my_program()
 
 # Now it executes
-result = run(program, default_handlers())
+prog = writer()(program)
+result = run(prog)
 ```
 
 ### Programs are Reusable
@@ -105,6 +113,10 @@ result = run(program, default_handlers())
 Unlike Python generators, `@do` functions can be called multiple times:
 
 ```python
+from doeff import do, run
+from doeff_core_effects import Tell
+from doeff_core_effects.handlers import writer
+
 @do
 def format_label(label: str):
     yield Tell(f"Formatting {label}")
@@ -115,8 +127,8 @@ prog1 = format_label("alpha")
 prog2 = format_label("beta")
 
 # Each execution is independent
-result1 = run(prog1, default_handlers())
-result2 = run(prog2, default_handlers())
+result1 = run(writer()(prog1))
+result2 = run(writer()(prog2))
 ```
 
 ### Effects are Composable
@@ -124,6 +136,9 @@ result2 = run(prog2, default_handlers())
 You can compose effectful programs together — a key advantage of algebraic effects:
 
 ```python
+from doeff import do
+from doeff_core_effects import Get, Put, Tell
+
 @do
 def setup():
     yield Put("config", {"debug": True})
@@ -144,43 +159,47 @@ def full_program():
 
 ## Running with Initial State
 
-You can provide initial environment and store:
+You can provide initial environment and state via handler arguments:
 
 ```python
-from doeff import run, default_handlers
+from doeff import do, run
+from doeff_core_effects import Ask, Get
+from doeff_core_effects.handlers import reader, state
 
-# Pass initial environment and store
-result = run(
-    my_program(),
-    default_handlers(),
-    env={"database_url": "postgresql://localhost/mydb"},
-    store={"user_id": 123}
-)
+@do
+def my_program():
+    db_url = yield Ask("database_url")
+    user_id = yield Get("user_id")
+    return f"Connected to {db_url} as user {user_id}"
+
+# Pass initial environment to reader and initial state to state
+prog = my_program()
+prog = state(initial={"user_id": 123})(prog)
+prog = reader(env={"database_url": "postgresql://localhost/mydb"})(prog)
+result = run(prog)
 ```
 
 ## Error Handling
 
-`run()` and `async_run()` always return a `RunResult`:
+`run()` returns the raw result value on success, or raises an exception on failure:
 
 ```python
-from doeff import run, default_handlers
+from doeff import do, run
+from doeff_core_effects import Tell
+from doeff_core_effects.handlers import writer
 
-result = run(my_program(), default_handlers())
+@do
+def my_program():
+    yield Tell("working...")
+    return 42
 
-# Check success with methods (use parentheses!)
-if result.is_ok():
-    print(f"Success: {result.value}")
-else:
-    print(f"Error: {result.error}")
+prog = writer()(my_program())
 
-# Pattern matching (Python 3.10+)
-from doeff import Ok, Err
-
-match result.result:
-    case Ok(value):
-        print(f"Success: {value}")
-    case Err(error):
-        print(f"Error: {error}")
+try:
+    result = run(prog)
+    print(f"Success: {result}")
+except Exception as e:
+    print(f"Error: {e}")
 ```
 
 ## Common Patterns
@@ -188,6 +207,10 @@ match result.result:
 ### Combining Multiple Effects
 
 ```python
+from doeff import do, run
+from doeff_core_effects import Ask, Get, Put, Tell
+from doeff_core_effects.handlers import reader, state, writer
+
 @do
 def complex_workflow():
     # Reader effect - get configuration
@@ -199,16 +222,22 @@ def complex_workflow():
     # Writer effect - log progress
     yield Tell("Processing data...")
 
-    # Async effect - await async operations
-    data = yield Await(fetch_data_async())
+    connection = yield Get("connection")
+    return connection
 
-    # Return final result
-    return len(data)
+prog = complex_workflow()
+prog = writer()(prog)
+prog = state()(prog)
+prog = reader(env={"database_url": "postgresql://localhost/mydb"})(prog)
+result = run(prog)
 ```
 
 ### Conditional Logic
 
 ```python
+from doeff import do
+from doeff_core_effects import Get, Put, Tell
+
 @do
 def conditional_program():
     count = yield Get("count")
@@ -245,15 +274,17 @@ def my_program():
 Only yield `Effect` or `Program` instances:
 
 ```python
+from doeff import Pure
+
 # Wrong - yielding a plain value
 @do
 def wrong():
     value = yield 42  # Error!
 
-# Right - wrap in Program.pure()
+# Right - wrap in Pure()
 @do
 def right():
-    value = yield Program.pure(42)  # OK
+    value = yield Pure(42)  # OK
     # Or just return it
     return 42
 ```
@@ -263,12 +294,15 @@ def right():
 Don't reuse Program objects after running them with sub-effects:
 
 ```python
+from doeff import run
+from doeff_core_effects.handlers import writer
+
 # If you need to run a program multiple times, call the function again
 prog = my_program()
-result1 = run(prog, default_handlers())
+result1 = run(writer()(prog))
 # Don't reuse prog - create a new one
 prog2 = my_program()
-result2 = run(prog2, default_handlers())
+result2 = run(writer()(prog2))
 ```
 
 ## Next Steps
@@ -285,38 +319,44 @@ Now that you understand the basics, explore:
 ### Common Imports
 
 ```python
+# Core
 from doeff import (
     do,                    # Decorator for creating programs
-    Program,               # Program type
+    run,                   # Execute a program, returns raw value
+    Pure,                  # Wrap a plain value as a Program
+    WithObserve,           # Install an observer around a body program
+    Cancel,                # Cancel a spawned task
+)
 
-    # State effects
-    Get, Put, Modify,
+# Effects
+from doeff_core_effects import (
+    Get, Put,              # State effects
+    Ask, Local,            # Reader effects
+    Tell,                  # Writer effect
+    slog,                  # Structured logging helper
+)
 
-    # Reader effects
-    Ask, Local,
+# Handlers
+from doeff_core_effects.handlers import (
+    reader,                # Reader handler (resolves Ask)
+    state,                 # State handler (resolves Get/Put)
+    writer,                # Writer handler (resolves Tell)
+)
 
-    # Writer effects
-    Tell, Listen,
-
-    # Async effects
-    Await, Gather,
-
-    # Error handling
-    Try,
-
-    # Result types
-    Ok, Err, Result,
-
-    # Execution functions
-    run, async_run,
-    default_handlers, default_async_handlers,
+# Scheduler (for concurrency)
+from doeff_core_effects.scheduler import (
+    scheduled,             # Wrap program for concurrent execution
+    Spawn, Wait,           # Spawn a task and wait for it
+    Gather, Race,          # Gather/race multiple tasks
 )
 ```
 
 ### Basic Program Template
 
 ```python
-from doeff import do, Tell, run, default_handlers
+from doeff import do, run
+from doeff_core_effects import Tell
+from doeff_core_effects.handlers import writer
 
 @do
 def my_program():
@@ -325,8 +365,9 @@ def my_program():
     return "result"
 
 def main():
-    result = run(my_program(), default_handlers())
-    print(result.value)
+    prog = writer()(my_program())
+    result = run(prog)
+    print(result)
 
 if __name__ == "__main__":
     main()

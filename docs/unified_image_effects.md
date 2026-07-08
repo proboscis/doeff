@@ -1,10 +1,15 @@
 # Unified Image Effects (`doeff-image`)
 
-`doeff-image` provides provider-agnostic image effects:
+`doeff-image` provides provider-agnostic image effects and result types.
 
-- `ImageGenerate`
-- `ImageEdit`
-- `ImageResult`
+## Effects
+
+- `ImageGenerate` — request image generation from a model
+- `ImageEdit` — request editing/transformation of existing images
+
+## Result Type
+
+- `ImageResult` — provider-agnostic result dataclass in `doeff_image.types` containing generated/edited images, model name, prompt, and optional metadata (`generation_id`, `cost_usd`, `raw_response`). This is a **data type**, not an effect — it is the return value from handlers that process `ImageGenerate` and `ImageEdit` effects.
 
 Provider packages implement protocol handlers and route by model prefix.
 
@@ -52,5 +57,5 @@ result = run(
 
 ## Deprecation aliases
 
-- `doeff_seedream.effects.SeedreamGenerate` is a deprecated alias of unified image editing semantics.
+- `doeff_seedream.effects.SeedreamGenerate` is a deprecated alias; use `doeff_image.effects.ImageEdit` instead. Instantiation emits a `DeprecationWarning`.
 - `doeff_gemini.effects.GeminiImageEdit` is a deprecated alias of `doeff_image.effects.ImageEdit`.

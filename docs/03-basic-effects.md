@@ -19,7 +19,10 @@ Reader effects provide read-only access to an environment/configuration that flo
 `Ask(key)` retrieves a value from the environment:
 
 ```python
-from doeff import do, Ask, Tell, run, default_handlers
+from doeff import do, run
+from doeff_core_effects import Ask, Tell
+from doeff_core_effects.handlers import reader, writer
+from doeff_core_effects.scheduler import scheduled
 
 @do
 def connect_to_database():
@@ -30,15 +33,15 @@ def connect_to_database():
 
 # Run with environment
 def main():
-    result = run(
-        connect_to_database(),
-        default_handlers(),
-        env={
-            "database_url": "postgresql://localhost/mydb",
-            "timeout": 30
-        }
-    )
-    print(result.value)  # "Connected to postgresql://localhost/mydb"
+    prog = connect_to_database()
+    w = writer()
+    prog = w(prog)
+    prog = reader(env={
+        "database_url": "postgresql://localhost/mydb",
+        "timeout": 30
+    })(prog)
+    result = run(scheduled(prog))
+    print(result)  # "Connected to postgresql://localhost/mydb"
 
 main()
 ```
@@ -51,17 +54,19 @@ main()
 
 ### Ask with Missing Keys
 
-If a key is not in the environment, `Ask` raises `MissingEnvKeyError`:
+If a key is not in the environment, `Ask` raises `KeyError`:
 
 ```python
 @do
 def requires_config():
-    # Raises MissingEnvKeyError if "timeout" not in env
+    # Raises KeyError if "timeout" not in env
     timeout = yield Ask("timeout")
     return timeout
 
-# Provide required keys via env parameter
-result = run(requires_config(), default_handlers(), env={"timeout": 30})
+# Provide required keys via reader handler
+prog = requires_config()
+prog = reader(env={"timeout": 30})(prog)
+result = run(scheduled(prog))
 ```
 
 ### Lazy Program Evaluation in Environment
@@ -69,6 +74,8 @@ result = run(requires_config(), default_handlers(), env={"timeout": 30})
 When an environment value is a `Program`, it is evaluated lazily on first access. The result is cached for subsequent `Ask` calls with the same key:
 
 ```python
+from doeff_time.effects.time import Delay
+
 @do
 def expensive_computation():
     yield Tell("Computing config...")
@@ -82,11 +89,9 @@ def use_config():
     return config
 
 # Pass a Program as the env value - evaluated lazily on first Ask
-result = run(
-    use_config(),
-    default_handlers(),
-    env={"config": expensive_computation()}  # Program, not value
-)
+prog = use_config()
+prog = reader(env={"config": expensive_computation()})(prog)
+result = run(scheduled(prog))
 ```
 
 This is useful for:
@@ -148,7 +153,10 @@ def fetch_data():
 ### Reader Pattern Example
 
 ```python
-from doeff import run, default_handlers
+from doeff import do, run
+from doeff_core_effects import Ask
+from doeff_core_effects.handlers import reader
+from doeff_core_effects.scheduler import scheduled
 
 @do
 def application():
@@ -163,12 +171,10 @@ def application():
 
 # Initialize with config
 def main():
-    result = run(
-        application(),
-        default_handlers(),
-        env={"config": {"option1": "value1", "option2": "value2"}}
-    )
-    print(result.value)
+    prog = application()
+    prog = reader(env={"config": {"option1": "value1", "option2": "value2"}})(prog)
+    result = run(scheduled(prog))
+    print(result)
 
 main()
 ```
@@ -194,10 +200,14 @@ def read_counter():
 **Raises:** `KeyError` if key doesn't exist. Use `Try` to handle missing keys:
 
 ```python
+from doeff import Ok, Err
+
 @do
 def safe_read():
     result = yield Try(Get("maybe_missing"))
-    return result.ok() if result.is_ok() else "default"
+    if isinstance(result, Ok):
+        return result.value
+    return "default"
 ```
 
 ### Put - Write State
@@ -218,36 +228,38 @@ def initialize_state():
 - Overwrites existing value
 - Returns `None`
 
-### Modify - Transform State
+### Get + Put - Transform State
 
-`Modify(key, func)` applies a function to current state and returns the new value:
+Since `Modify` has been removed, use `Get` followed by `Put` to transform state:
 
 ```python
 @do
 def increment_counter():
-    # Get, transform, and set in one operation
-    new_value = yield Modify("counter", lambda x: x + 1)
+    # Get, transform, and set
+    current = yield Get("counter")
+    new_value = current + 1
+    yield Put("counter", new_value)
     yield Tell(f"Counter now: {new_value}")
     return new_value
 ```
 
 **Returns:** The new (transformed) value after applying the function.
 
-**Missing-key behavior:** If the key doesn't exist, `Modify` passes `None` to the function (unlike `Get` which raises `KeyError`).
+**Missing-key behavior:** `Get` raises `KeyError` if the key doesn't exist. Use `Try` to handle missing keys:
 
-**Atomicity:** If the transform function raises, the store is unchanged.
-
-**Equivalent when the key already exists:**
 ```python
+from doeff import Ok, Err
+
 @do
-def increment_counter_manual():
-    current = yield Get("counter")
+def safe_increment():
+    result = yield Try(Get("counter"))
+    current = result.value if isinstance(result, Ok) else 0
+    if isinstance(result, Err):
+        yield Put("counter", 0)
     new_value = current + 1
     yield Put("counter", new_value)
     return new_value
 ```
-
-For missing keys, `Modify` and `Get` + `Put` are not equivalent because `Get` raises `KeyError` while `Modify` passes `None`.
 
 ### State Composition Rules
 
@@ -266,9 +278,9 @@ def counter_operations():
     yield Put("count", 0)
 
     # Increment multiple times
-    yield Modify("count", lambda x: x + 1)
-    yield Modify("count", lambda x: x + 1)
-    yield Modify("count", lambda x: x + 1)
+    for _ in range(3):
+        val = yield Get("count")
+        yield Put("count", val + 1)
 
     # Read final value
     final = yield Get("count")
@@ -283,8 +295,10 @@ def collect_items():
     yield Put("items", [])
 
     # Add items
-    yield Modify("items", lambda xs: xs + [1])
-    yield Modify("items", lambda xs: xs + [2, 3])
+    items = yield Get("items")
+    yield Put("items", items + [1])
+    items = yield Get("items")
+    yield Put("items", items + [2, 3])
 
     # Read all
     items = yield Get("items")
@@ -298,8 +312,8 @@ def state_machine():
     yield Put("state", "idle")
 
     # Transition: idle -> processing
-    state = yield Get("state")
-    if state == "idle":
+    current_state = yield Get("state")
+    if current_state == "idle":
         yield Put("state", "processing")
         yield Tell("Started processing")
 
@@ -320,7 +334,10 @@ Writer effects accumulate output (messages, events, structured entries) througho
 `Tell(message)` appends any Python object to the shared writer log:
 
 ```python
-from doeff import do, Get, Tell, default_handlers, run
+from doeff import do, run
+from doeff_core_effects import Get, Tell
+from doeff_core_effects.handlers import state, writer
+from doeff_core_effects.scheduler import scheduled
 
 @do
 def with_logging():
@@ -334,41 +351,45 @@ def with_logging():
     return "done"
 
 def main():
-    result = run(with_logging(), default_handlers(), store={"count": 0})
-    # All entries are in result.raw_store.get("__log__", [])
+    prog = with_logging()
+    w = writer()
+    prog = w(prog)
+    prog = state(initial={"count": 0})(prog)
+    result = run(scheduled(prog))
+    # result is "done"
+    # All entries are in w.log
+    print(w.log)
 
 main()
 ```
 
 `Tell` is not string-only. It accepts and stores any Python object unchanged, including dictionaries, numbers, and custom objects.
 
-### StructuredLog / slog - Structured Entries
+### slog - Structured Entries
 
-`StructuredLog(**entries)` logs a dictionary payload.
-`slog(**entries)` is the lowercase alias.
+`slog(msg, **kwargs)` logs a structured entry with a message and keyword arguments.
+`WriterTellEffect(msg, **kwargs)` is the underlying effect class.
 
 ```python
-def StructuredLog(**entries: object) -> Effect:
-    """Log a dictionary of key-value pairs."""
-
-def slog(**entries: object) -> WriterTellEffect:
-    """Lowercase alias for StructuredLog."""
+def slog(msg, **kwargs) -> WriterTellEffect:
+    """Create a structured log entry with msg and keyword data."""
 ```
 
 ```python
-from doeff import StructuredLog, do, slog
+from doeff import do
+from doeff_core_effects import slog
 
 @do
 def structured_logging():
-    yield StructuredLog(
+    yield slog(
+        "User logged in",
         level="info",
-        message="User logged in",
         user_id=12345,
         ip="192.168.1.1",
     )
     yield slog(
+        "High memory usage",
         level="warn",
-        message="High memory usage",
         memory_mb=512,
         threshold_mb=400,
     )
@@ -376,17 +397,18 @@ def structured_logging():
 
 ### Listen - Capture Sub-Program Logs
 
-`Listen(sub_program)` runs a sub-program and returns `ListenResult(value, log)`.
+`Listen(sub_program)` runs a sub-program and returns `(value, collected)` -- a tuple of the sub-program's return value and the list of collected effects.
 
 Mechanism (SPEC-EFF-003):
 - Record the current log start index before running the sub-program.
 - Push an internal listen frame using that start index.
 - Execute the sub-program.
-- Capture entries from that start index onward into the returned `ListenResult`.
+- Capture entries from that start index onward into the returned collected list.
 - Keep those captured entries in the shared log store (they are not removed).
 
 ```python
-from doeff import Listen, Tell, do
+from doeff_core_effects import Listen, Tell
+from doeff import do
 
 @do
 def inner_operation():
@@ -397,29 +419,20 @@ def inner_operation():
 @do
 def outer_operation():
     yield Tell("before inner")
-    listen_result = yield Listen(inner_operation())
+    value, collected = yield Listen(inner_operation())
     yield Tell("after inner")
-    return listen_result
+    return value, collected
 ```
 
-`ListenResult.log` is a `BoundedLog` (see `doeff.utils.BoundedLog`), not a plain `list`:
-
-```python
-@dataclass
-class ListenResult(Generic[T]):
-    value: T
-    log: BoundedLog
-```
-
-`BoundedLog` keeps bounded retention semantics: when capacity is exceeded, oldest entries are evicted.
+The `collected` result is a plain list of captured effects.
 
 ### Listen Composition Rules
 
-- `Listen + Tell`: entries told in the Listen scope appear in `ListenResult.log`.
+- `Listen + Tell`: entries told in the Listen scope appear in `collected`.
 - `Listen + Local`: entries from inside `Local(...)` are captured normally by Listen.
 - `Listen + Try`:
-  - `Listen(Try(sub_program))` returns `ListenResult` whose `.value` is a `Result`; entries before the caught error remain in `.log`.
-  - `Try(Listen(sub_program))` returns `Err(...)` if `sub_program` fails before Listen completes; no `ListenResult` is produced on that path.
+  - `Listen(Try(sub_program))` returns `(result, collected)` where `result` is `Ok(value)` or `Err(error)`; entries before the caught error remain in `collected`.
+  - `Try(Listen(sub_program))` returns `Err(...)` if `sub_program` fails before Listen completes; no result tuple is produced on that path.
 - `Listen + Gather`: gathered programs share the same log store.
 - `Listen + Gather` in `SyncRuntime`: ordering is sequential in program order.
 - `Listen + Gather` in `AsyncRuntime`: ordering is non-deterministic and may interleave.
@@ -436,7 +449,8 @@ def process_transaction(transaction_id):
     yield Put("balance", 1000)
     yield Tell(f"[AUDIT] Initial balance: 1000")
 
-    yield Modify("balance", lambda x: x - 100)
+    balance = yield Get("balance")
+    yield Put("balance", balance - 100)
     new_balance = yield Get("balance")
     yield Tell(f"[AUDIT] Debited 100, new balance: {new_balance}")
 
@@ -482,7 +496,7 @@ def application_workflow():
     # Process with retry logic
     for i in range(max_retries):
         attempt = yield Get("attempt")
-        yield Modify("attempt", lambda x: x + 1)
+        yield Put("attempt", attempt + 1)
         yield Tell(f"Attempt {attempt + 1}/{max_retries}")
 
         # Simulate work
@@ -536,24 +550,25 @@ def isolated_operation():
     yield Put("main_counter", 0)
 
     # Run sub-operation under Listen (captures logs, not state)
-    listen_result = yield Listen(isolated_sub_operation())
+    value, collected = yield Listen(isolated_sub_operation())
 
     # State changes inside Listen persist in the shared store
     main_count = yield Get("main_counter")
     yield Tell(f"Main counter after Listen: {main_count}")  # 10
 
-    return listen_result.value
+    return value
 
 @do
 def isolated_sub_operation():
     # This mutates the same state store as the caller
-    yield Modify("main_counter", lambda x: x + 10)
+    val = yield Get("main_counter")
+    yield Put("main_counter", val + 10)
     yield Tell("Modified counter in sub-operation")
     return "sub-done"
 ```
 
 `Listen` captures writer output (`Tell`) from the sub-program. It does not isolate state:
-`Get`/`Put`/`Modify` effects inside `Listen(...)` remain visible after `Listen` completes.
+`Get`/`Put` effects inside `Listen(...)` remain visible after `Listen` completes.
 
 ## Best Practices
 
@@ -581,15 +596,16 @@ def get_database_config():
 **DO:**
 - Use descriptive key names
 - Initialize state before reading
-- Use `Modify` for atomic updates
+- Use `Get` + `Put` for atomic updates
 
 ```python
 @do
 def safe_increment():
     # Initialize if not exists
-    try:
-        count = yield Get("counter")
-    except KeyError:
+    result = yield Try(Get("counter"))
+    if isinstance(result, Ok):
+        count = result.value
+    else:
         yield Put("counter", 0)
         count = 0
 
@@ -605,19 +621,19 @@ def safe_increment():
 **DO:**
 - Use consistent log formats
 - Log important state transitions
-- Use `StructuredLog` for machine-readable logs
+- Use `slog` for machine-readable logs
 
 ```python
 @do
 def well_logged_operation():
-    yield StructuredLog(
-        event="operation_start",
+    yield slog(
+        "operation_start",
         timestamp=...,
         user_id=...
     )
     # ... work ...
-    yield StructuredLog(
-        event="operation_complete",
+    yield slog(
+        "operation_complete",
         timestamp=...,
         duration_ms=...
     )
@@ -647,9 +663,8 @@ def well_logged_operation():
 | `Local(env, prog)` | Scoped environment | Testing, overrides |
 | `Get(key)` | Read state | Counters, flags |
 | `Put(key, val)` | Write state | Initialize, update |
-| `Modify(key, f)` | Transform state | Increment, append |
 | `Tell(msg)` | Append to log | Debugging, audit |
-| `StructuredLog(**kw)` / `slog(**kw)` | Structured logging | Machine-readable logs |
+| `slog(msg, **kw)` / `WriterTellEffect(msg, **kw)` | Structured logging | Machine-readable logs |
 | `Listen(prog)` | Capture sub-logs | Nested operations |
 
 ## Next Steps

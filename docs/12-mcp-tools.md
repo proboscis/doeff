@@ -197,7 +197,8 @@ from pathlib import Path
 from doeff import do, run, Perform
 from doeff.mcp import McpToolDef, McpParamSchema
 from doeff_agents.adapters.base import AgentType
-from doeff_agents.effects import LaunchEffect, Monitor, Sleep, Capture, Stop
+from doeff_agents.effects import LaunchEffect, Monitor, Capture, Stop
+from doeff_agents.sessionhost.effects import ClockSleep
 from doeff_agents.handlers import claude_agent_handler
 
 # 1. Define a tool
@@ -225,7 +226,7 @@ def main():
 
     # Monitor until done
     for _ in range(60):
-        yield Sleep(1.0)
+        yield ClockSleep(seconds=1.0)
         obs = yield Monitor(handle)
         if obs.is_terminal:
             break
@@ -244,7 +245,8 @@ print(result)
 ```hy
 (require doeff-hy.macros [defmcp-tool defp <- defhandler])
 (import doeff [run])
-(import doeff_agents.effects [Launch Monitor Sleep Capture Stop])
+(import doeff_agents.effects [Launch Monitor Capture Stop])
+(import doeff_agents.sessionhost.effects [ClockSleep])
 (import doeff_agents.handlers [claude-agent-handler])
 (import doeff_agents.adapters.base [AgentType])
 (import pathlib [Path])
