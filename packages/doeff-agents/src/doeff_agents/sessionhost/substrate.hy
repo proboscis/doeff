@@ -13,9 +13,11 @@
 
 (import dataclasses [replace])
 (import datetime [datetime timezone])
+(import hashlib)
 (import json)
 (import os)
 (import subprocess)
+(import threading)
 (import time)
 
 (import doeff_agents.sessionhost.effects [
@@ -36,6 +38,7 @@
   ClockSleep
   ProcRun
   FsCanonicalPath
+  FsComposeHomeView
   FsReadText
   FsWriteTextAtomic
   FsMakeDirs
@@ -243,6 +246,83 @@
 
 
 ;; ---------------------------------------------------------------------------
+;; home view の合成(#15 FsComposeHomeView の実 IO — apps ensure-agent-home の
+;; 意味移植。合成 CODEX_HOME は adapter 物理で、その家は host に一本化)
+;; ---------------------------------------------------------------------------
+
+;; view 単位の合成 lock: host は connection 毎 thread で launch を回すため、
+;; 同一 binding の並行 launch が symlink の unlink/relink で race しないよう
+;; view path で直列化する(trust upsert の read-modify-write は incumbent の
+;; last-writer-wins のまま — 対象外、DOE-004 R5 v2 の記録参照)。
+(setv _COMPOSE-VIEW-LOCKS {})
+(setv _COMPOSE-VIEW-LOCKS-GUARD (threading.Lock))
+
+(deff _compose-view-lock [view-path]
+  {:pre [(: view-path str)]
+   :post [(: % "value")]}
+  (with [_ _COMPOSE-VIEW-LOCKS-GUARD]
+    (when (not-in view-path _COMPOSE-VIEW-LOCKS)
+      (setv (get _COMPOSE-VIEW-LOCKS view-path) (threading.Lock)))
+    (get _COMPOSE-VIEW-LOCKS view-path)))
+
+(deff compose-home-view-name [auth-resolved profile-resolved]
+  {:pre [(: auth-resolved str) (: profile-resolved str)]
+   :post [(: % str)]}
+  "決定的な view 名: 人間可読 prefix(profile basename)+ resolved realpath
+   ペアの sha256 先頭 8 桁。wire には path しか載らないため名前は path から
+   導出するしかなく、basename 単独は別 registry の同名 bundle で衝突する。"
+  (setv digest (.hexdigest (hashlib.sha256 (.encode f"{auth-resolved}\x00{profile-resolved}" "utf-8"))))
+  f"{(os.path.basename profile-resolved)}--{(cut digest 0 8)}")
+
+(deff _ensure-view-symlink [link target]
+  {:pre [(: link str) (: target str)]
+   :post [(: % "None — 実ファイル/実 dir は raise(erosion guard)")]}
+  "apps _ensure-symlink の意味移植: symlink は張り替え、実ファイル/実 dir が
+   居たら typed fail(erosion guard — 黙って置換しない。silent 置換は registry
+   と token の fork を隠す)。"
+  (when (os.path.islink link)
+    (os.unlink link)
+    (os.symlink target link)
+    (return None))
+  (when (os.path.exists link)
+    (raise (RuntimeError
+             (+ link " is a real file where a symlink into the profile "
+                "bundle is required (erosion guard) — reconcile it manually; "
+                "refusing to overwrite"))))
+  (os.symlink target link)
+  None)
+
+(deff compose-home-view [auth-file profile-dir view-root]
+  {:pre [(: auth-file str) (: profile-dir str) (: view-root str)]
+   :post [(: % str)]}
+  "二軸宣言から home view を実体化して絶対パスを返す(冪等・view 単位 lock)。
+   実在検証はここが単一の家(登録時検証の launch-time 移設、ACP 0040 R2 改訂):
+   auth-file は実ファイル・profile-dir は実 dir でなければ typed fail。"
+  (setv auth-resolved (os.path.realpath auth-file))
+  (when (not (os.path.isfile auth-resolved))
+    (raise (RuntimeError
+             (+ "binding auth_file does not resolve to a file: " auth-file))))
+  (setv profile-resolved (os.path.realpath profile-dir))
+  (when (not (os.path.isdir profile-resolved))
+    (raise (RuntimeError
+             (+ "binding profile_dir does not resolve to a directory: " profile-dir))))
+  (setv view (os.path.join view-root (compose-home-view-name auth-resolved profile-resolved)))
+  (with [_ (_compose-view-lock view)]
+    (os.makedirs view :exist-ok True)
+    ;; sessions は bundle 側に掘る(incumbent 意味論: session 履歴は profile
+    ;; 単位で共有 — host が bundle へ書ける同一ユーザー前提は #15 で明示)。
+    (setv sessions (os.path.join profile-resolved "sessions"))
+    (when (not (os.path.exists sessions))
+      (os.makedirs sessions :exist-ok True))
+    (_ensure-view-symlink (os.path.join view "auth.json") auth-resolved)
+    (for [entry (sorted (os.listdir profile-resolved))]
+      (when (!= entry "auth.json")
+        (_ensure-view-symlink (os.path.join view entry)
+                              (os.path.join profile-resolved entry)))))
+  view)
+
+
+;; ---------------------------------------------------------------------------
 ;; 実 substrate handler(tmux / clock / proc / fs / env)
 ;; ---------------------------------------------------------------------------
 
@@ -330,6 +410,9 @@
   (FsMakeDirs [path]
     (os.makedirs path :exist-ok True)
     (resume None))
+
+  (FsComposeHomeView [auth-file profile-dir view-root]
+    (resume (compose-home-view auth-file profile-dir view-root)))
 
   (EnvGet [name]
     (resume (.get os.environ name))))

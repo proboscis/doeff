@@ -44,6 +44,7 @@
 (import doeff_agents.sessionhost.impls.codex [codex-impl])
 (import doeff_agents.sessionhost.launch [launch-session])
 (import doeff_agents.sessionhost.policy [
+  binding-kind-advertisement
   cause-if-absent
   is-terminal-status
   iso-format
@@ -526,6 +527,7 @@
    "mcp_servers" (or (.get params "mcp_servers") {})
    "skip_trust_setup" (bool (.get params "skip_trust_setup" False))
    "lifecycle" (or (.get params "lifecycle") "run_to_completion")
+   "binding" (.get params "binding")
    "session_env" (or (.get params "session_env") {})
    "expected_result" (.get params "expected_result")
    "socket_path" config.socket-path
@@ -688,13 +690,20 @@
              "active_sessions" (.submit actor db-count-active)
              "lease" (.submit actor db-read-lease)}))
 
+  ;; DOE-004 R5(縮小版、2026-07-08): kind 語彙の広告。純粋(store 非依存)
+  ;; — control plane の reconciler が登録済み binding と定期照合する読み口。
+  (when (= method "kinds.list")
+    (return {"kinds" (binding-kind-advertisement)}))
+
   (when (= method "session.launch")
     (setv wire-params (params-object params "session.launch"))
     (setv program-params (build-launch-program-params wire-params config))
     ;; DOE-003 R3 staged enforcement の warning(oracle :1721-1730 verbatim —
     ;; 運用ログは host の外部性。S11b が daemon log でこの文言を assert する)。
+    ;; R7 後の運搬手段は typed binding — overlay session_env は admission で
+    ;; auth キーを拒否するため、明示の有無は binding の有無そのもの。
     (when (and (= (get program-params "agent_type") "claude")
-               (not-in "CLAUDE_CONFIG_DIR" (get program-params "session_env")))
+               (is (.get program-params "binding") None))
       (setv sid-for-warning (get program-params "session_id"))
       (print (+ "doeff-agentd WARNING: claude session "
                 f"{sid-for-warning} launched without an explicit "
@@ -901,15 +910,28 @@
     (time.sleep config.monitor-interval-seconds)))
 
 
-(deff serve [config actor]
-  {:pre [(: config HostConfig) (: actor StoreActor)]
-   :post [(: % "戻らない(accept loop)")]}
-  "bind → monitor / heartbeat thread → accept loop(connection 毎 thread、
-   oracle serve :1159-1180)。"
-  (prepare-socket-path config.socket-path)
+(deff bind-listener [socket-path]
+  {:pre [(: socket-path str)]
+   :post [(: % socket.socket)]}
+  "単一インスタンス排他の実体 = socket bind(lease はその影)。生存 listener は
+   prepare-socket-path が loud に拒否するので、bind に勝った 1 プロセスだけが
+   ここを通過する。main はこれを store open / lease より**先**に呼ぶ —
+   敗者が lease や latch clear に触れてから死ぬ 2026-07-07 の
+   ensure spawn スパイラル(競合 child が lease を盗んで socket 衝突で死亡、
+   lease が死 pid 名義で腐る)の根治点。"
+  (prepare-socket-path socket-path)
   (setv listener (socket.socket socket.AF-UNIX socket.SOCK-STREAM))
-  (.bind listener config.socket-path)
+  (.bind listener socket-path)
   (.listen listener 64)
+  listener)
+
+
+(deff serve [config actor listener]
+  {:pre [(: config HostConfig) (: actor StoreActor) (: listener socket.socket)]
+   :post [(: % "戻らない(accept loop)")]}
+  "monitor / heartbeat thread → accept loop(connection 毎 thread、
+   oracle serve :1159-1180)。listener は bind-listener が起動順の先頭で
+   確保済みのものを受け取る。"
   (setv monitor (threading.Thread :target monitor-loop
                                   :args #(config actor)
                                   :daemon True
@@ -946,11 +968,15 @@
                 (os.path.dirname config.socket-path)]]
     (when parent
       (os.makedirs parent :exist-ok True)))
-  ;; oracle main :581-596: open+migrate(StoreActor 構築で完了)→ lease 取得
-  ;; (未失効 lease は loud に拒否)→ awaiting_response latch 全 clear。
+  ;; 起動順は bind が先(oracle main :581-596 からの意図的乖離、2026-07-07
+  ;; ensure spawn スパイラルの根治): socket bind = 排他の実体に負けた競合者は
+  ;; store open / lease 取得 / latch clear のどれにも触れずに死ぬ。
+  ;; lease 取得(未失効 lease は loud に拒否)→ awaiting_response latch 全
+  ;; clear は bind 通過後にのみ走る。
+  (setv listener (bind-listener config.socket-path))
   (setv actor (StoreActor config.db-path))
   (setv owner-pid (os.getpid))
   (.submit actor (fn [conn] (db-acquire-lease conn owner-pid)))
   (.submit actor (fn [conn] (db-clear-awaiting-latches conn)))
-  (serve config actor)
+  (serve config actor listener)
   None)

@@ -242,8 +242,8 @@
 
 (deftest test-codex-prelaunch-rejects-missing-codex-home
   (setv world (ImplWorld))
-  ;; process env に CODEX_HOME が居ても、session_env に明示が無ければ拒否
-  ;; (oracle: ゲートは session_env / command 明示のみを見る — 暗黙の
+  ;; process env に CODEX_HOME が居ても、binding / command の明示が無ければ
+  ;; 拒否(R7: ゲートは typed binding と command 埋め込みのみを見る — 暗黙の
   ;; ~/.codex fallback が個人アカウントを焼いた実障害)
   (setv (get world.env "CODEX_HOME") "/env/home")
   (setv params (base-params))
@@ -276,7 +276,7 @@
 
 (deftest test-codex-prelaunch-trust-creates-config
   (setv world (ImplWorld))
-  (setv params (base-params :session_env {"CODEX_HOME" "/x/codex"}))
+  (setv params (base-params :binding {"kind" "codex" "codex_home" "/x/codex"}))
   (<- identity (run-codex world (pre-launch-setup "codex" params)))
   ;; 実効 identity が返る(S14 の Hy positive 化の布石)
   (assert (= (get identity "CODEX_HOME") "/x/codex"))
@@ -290,7 +290,7 @@
   (setv world (ImplWorld))
   (setv (get world.fs "/x/codex/config.toml")
         "[projects.\"/work/dir\"]\ntrust_level = \"untrusted\"\n[other]\nkey = 1\n")
-  (setv params (base-params :session_env {"CODEX_HOME" "/x/codex"}))
+  (setv params (base-params :binding {"kind" "codex" "codex_home" "/x/codex"}))
   (<- _ (run-codex world (pre-launch-setup "codex" params)))
   (setv written (get world.fs "/x/codex/config.toml"))
   ;; 既存 header 内の trust_level を差し替え(重複 append しない)
@@ -307,7 +307,8 @@
   (setv world (ImplWorld))
   (setv (get world.canonical "/work/dir") "/private/work/dir")
   (setv params (base-params :agent_type "claude"
-                            :session_env {"CLAUDE_CONFIG_DIR" "/x/claude"}))
+                            :binding {"kind" "claude-code"
+                                      "config_dir" "/x/claude"}))
   (<- identity (run-claude world (pre-launch-setup "claude" params)))
   (assert (= (get identity "CLAUDE_CONFIG_DIR") "/x/claude"))
   (assert (in "/x/claude" world.dirs))
@@ -326,7 +327,8 @@
         (json.dumps {"projects" {"/old" {"hasTrustDialogAccepted" True}}
                      "userID" "u1"}))
   (setv params (base-params :agent_type "claude"
-                            :session_env {"CLAUDE_CONFIG_DIR" "/x/claude"}))
+                            :binding {"kind" "claude-code"
+                                      "config_dir" "/x/claude"}))
   (<- _ (run-claude world (pre-launch-setup "claude" params)))
   (setv state (json.loads (get world.fs "/x/claude/.claude.json")))
   ;; 既存 state は保持されつつ新 project が追記される
