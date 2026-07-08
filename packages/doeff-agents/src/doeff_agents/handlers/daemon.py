@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Protocol
 
 from doeff_agents.adapters.base import AgentType, LaunchParams
-from doeff_agents.adapters.codex import trust_workspace_in_codex_home
 from doeff_agents.agentd_client import RPC_ERR_NO_SUCH_SESSION, AgentdClientError
 from doeff_agents.claude_home import prepare_claude_home
 from doeff_agents.effects import (
@@ -40,8 +39,12 @@ from doeff_agents.effects import (
     StopEffect,
     StopSessionEffect,
 )
-from doeff_agents.runtime import ClaudeRuntimePolicy
-from doeff_agents.shell import assert_no_forbidden_agent_env, wrap_with_shell_exports
+from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
+from doeff_agents.shell import (
+    assert_no_forbidden_agent_env,
+    assert_session_env_is_non_auth_overlay,
+    wrap_with_shell_exports,
+)
 
 from .production import AgentHandler, get_adapter
 
@@ -61,6 +64,7 @@ class AgentdSessionClient(Protocol):
         model: str | None = None,
         effort: str | None = None,
         lifecycle: AgentSessionLifecycle,
+        binding: Mapping[str, object] | None = None,
         session_env: Mapping[str, str] | None = None,
         expected_result: Mapping[str, object] | None = None,
     ) -> AgentSessionSnapshot: ...
@@ -103,9 +107,11 @@ class DaemonAgentHandler(AgentHandler):
         *,
         client: AgentdSessionClient,
         claude_runtime_policy: ClaudeRuntimePolicy | None = None,
+        codex_runtime_policy: CodexRuntimePolicy | None = None,
     ) -> None:
         self._client = client
         self._claude_runtime_policy = claude_runtime_policy or ClaudeRuntimePolicy()
+        self._codex_runtime_policy = codex_runtime_policy or CodexRuntimePolicy()
 
     def handle_launch(
         self,
@@ -237,6 +243,15 @@ class DaemonAgentHandler(AgentHandler):
             session_env,
             context="AgentdAgentHandler session_env",
         )
+        # ADR-DOE-AGENTS-004 R9: the wire launch is auth-blind — session_env
+        # is a non-auth overlay (the host rejects binding-owned keys in it)
+        # and codex auth travels as the typed `binding` field, derived from
+        # the handler binder below.
+        assert_session_env_is_non_auth_overlay(
+            session_env,
+            context="AgentdAgentHandler session_env",
+        )
+        binding = self._wire_binding(agent_type)
         tmux_env: dict[str, str] = dict(session_env or {})
         command_env: dict[str, str] = dict(session_env or {})
         self._prepare_agent_environment(agent_type, work_dir, tmux_env, command_env)
@@ -263,6 +278,7 @@ class DaemonAgentHandler(AgentHandler):
             model=model,
             effort=effort,
             lifecycle=lifecycle,
+            binding=binding,
             session_env=tmux_env,
         )
         return snapshot.to_handle()
@@ -290,6 +306,11 @@ class DaemonAgentHandler(AgentHandler):
             effect.spec.session_env,
             context="AgentSpec.session_env",
         )
+        assert_session_env_is_non_auth_overlay(
+            effect.spec.session_env,
+            context="AgentSpec.session_env",
+        )
+        binding = self._wire_binding(effect.spec.agent_type)
         tmux_env: dict[str, str] = dict(effect.spec.session_env or {})
         command_env: dict[str, str] = dict(effect.spec.session_env or {})
         self._prepare_agent_environment(
@@ -307,6 +328,7 @@ class DaemonAgentHandler(AgentHandler):
             model=effect.spec.model,
             effort=effect.spec.effort,
             lifecycle=effect.spec.lifecycle,
+            binding=binding,
             session_env=tmux_env,
             expected_result={
                 "payload_schema": effect.spec.result_schema,
@@ -364,12 +386,29 @@ class DaemonAgentHandler(AgentHandler):
             }
             tmux_env.update(claude_env)
             command_env.update(claude_env)
-        elif agent_type == AgentType.CODEX:
-            codex_home = command_env.get(
-                "CODEX_HOME",
-                os.environ.get("CODEX_HOME", str(Path.home() / ".codex")),
-            )
-            trust_workspace_in_codex_home(codex_home, work_dir)
+        # NOTE (R9, 2026-07-08): the codex branch is gone.  The session host
+        # owns codex pre-launch physics (trust setup) and derives it from
+        # the typed `binding` we now send — a second local trust writer was
+        # exactly the two-writers drift R9 retired.
+
+    def _wire_binding(self, agent_type: AgentType) -> dict[str, object] | None:
+        """Typed wire binding derived from the handler binder (R9).
+
+        CODEX_HOME comes from the constructor policy first, then the binder
+        process environment (the process that bound this handler configured
+        its own env).  When neither names a home, send no binding and let
+        the host's explicit-auth gate reject the launch — the gate has one
+        authority and it is not this client.
+        """
+        if agent_type != AgentType.CODEX:
+            return None
+        policy_home = self._codex_runtime_policy.codex_home
+        codex_home = (
+            str(policy_home) if policy_home is not None else os.environ.get("CODEX_HOME")
+        )
+        if not codex_home:
+            return None
+        return {"kind": "codex", "codex_home": codex_home}
 
     def _require_snapshot(self, session_id: str) -> AgentSessionSnapshot:
         snapshot = self._client.get_session(session_id)

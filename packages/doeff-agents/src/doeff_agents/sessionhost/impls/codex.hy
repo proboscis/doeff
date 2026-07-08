@@ -16,6 +16,8 @@
   ClassifyPane
   DeliverMessage
   WireResultChannel
+  fs-canonical-path
+  fs-compose-home-view
   fs-read-text
   fs-write-text-atomic
   fs-make-dirs
@@ -84,19 +86,22 @@
   {:pre [(: params dict)]
    :post [(: % "None — gate は raise するか通すだけ")]}
   "ADR-DOE-AGENTS-003: agent の auth profile は per-project の決定で、既定は
-   無い。CODEX_HOME の明示(session_env か launch command 埋め込み)が無い
-   codex launch は tmux に触る前に typed fail(暗黙の ~/.codex fallback が
-   共有マシンで個人アカウントの週次クォータを焼いた 2026-07-04 の実障害)。"
-  (setv session-env (.get params "session_env" {}))
+   無い。auth profile の明示(typed binding か launch command への
+   CODEX_HOME= 埋め込み — R7: session_env は非 auth overlay で運搬手段では
+   ない)が無い codex launch は tmux に触る前に typed fail(暗黙の ~/.codex
+   fallback が共有マシンで個人アカウントの週次クォータを焼いた 2026-07-04 の
+   実障害)。"
+  (setv binding (.get params "binding"))
   (setv command (or (.get params "command") ""))
-  (when (and (not-in "CODEX_HOME" session-env)
+  (when (and (is binding None)
              (not-in "CODEX_HOME=" command))
     (raise (RuntimeError
              (+ "session.launch: no agent auth profile for a codex session — "
-                "set CODEX_HOME explicitly (session_env or the launch command). "
-                "There is NO default: the implicit ~/.codex fallback selects "
-                "whatever account lives there. Declare the auth profile per "
-                "project/namespace (ADR-DOE-AGENTS-003)."))))
+                "declare the typed `binding` (kind \"codex\", codex_home) or "
+                "embed CODEX_HOME= in the explicit launch command. There is NO "
+                "default: the implicit ~/.codex fallback selects whatever "
+                "account lives there. Declare the auth profile per "
+                "project/namespace (ADR-DOE-AGENTS-003 / -004 R7)."))))
   None)
 
 
@@ -140,27 +145,62 @@
   (if (.endswith output "\n") output (+ output "\n")))
 
 
+(defk codex-view-root []
+  {:pre []
+   :post [(: % str)]}
+  "二軸合成 view の置き場: $XDG_STATE_HOME/doeff/agent-homes(store DB と
+   同じ解決系 — host.hy xdg-state-home と同写像。impl は substrate-clean
+   なので env-get effect で解決する)。"
+  (<- xdg (env-get "XDG_STATE_HOME"))
+  (<- home (env-get "HOME"))
+  (setv state-root
+        (cond
+          (and (is-not xdg None) (.strip xdg)) xdg
+          (and (is-not home None) (.strip home)) f"{home}/.local/state"
+          True (raise (RuntimeError
+                        (+ "cannot resolve the agent-homes view root: "
+                           "neither XDG_STATE_HOME nor HOME is set")))))
+  f"{state-root}/doeff/agent-homes")
+
+
 (defk codex-pre-launch [params]
   {:pre [(: params dict)]
    :post [(: % dict)]}
   "PreLaunchSetup の codex 実体: auth gate(S11、常時)→ trust 書き込み
-   (skip_trust_setup で trust だけ飛ばす)。実効 CODEX_HOME は session_env →
-   process env fallback(S11 caveat: oracle の trust writer は daemon env を
-   fallback 参照する — 直接束縛では呼び手 env)。解決不能(command 埋め込みで
-   env にも無い)なら trust は typed skip(書き先が無い)で identity は None。"
+   (skip_trust_setup で trust だけ飛ばす)。実効 CODEX_HOME は binding
+   (R7: auth は typed 構成で運ぶ。v2 二軸形 {auth_file, profile_dir} は
+   host が FsComposeHomeView で view を合成して native 形へ合流 — #15)
+   → process env fallback(S11 caveat: oracle の trust writer は daemon env
+   を fallback 参照する — command 埋め込みの escape hatch 用。binding が
+   在れば fallback には決して到達しない)。解決不能(command 埋め込みで env
+   にも無い)なら trust は typed skip(書き先が無い)で identity は None。"
   (codex-auth-gate params)
-  (setv session-env (.get params "session_env" {}))
-  (setv codex-home (.get session-env "CODEX_HOME"))
+  (setv binding (.get params "binding"))
+  (setv codex-home (when (is-not binding None) (.get binding "codex_home")))
+  (when (and (is None codex-home) (is-not binding None))
+    ;; admission(BINDING-KIND-SHAPES)通過済みの codex binding で codex_home
+    ;; が無い = 二軸形。実在検証は FsComposeHomeView が単一の家(不在は
+    ;; typed fail — 登録時検証の launch-time 移設、ACP 0040 R2 改訂)。
+    (<- view-root (codex-view-root))
+    (<- composed (fs-compose-home-view (get binding "auth_file")
+                                       (get binding "profile_dir")
+                                       view-root))
+    (setv codex-home composed))
   (when (is None codex-home)
     (<- from-env (env-get "CODEX_HOME"))
     (setv codex-home from-env))
   (when (and (is-not codex-home None)
              (not (.get params "skip_trust_setup" False)))
     (<- _ (fs-make-dirs codex-home))
-    (setv config-path f"{codex-home}/config.toml")
+    ;; trust 書きは realpath へ。temp+rename(os.replace)は symlink を辿らず
+    ;; 置換するため、config.toml が profile bundle への symlink のとき、旧形は
+    ;; view 内の link を実ファイル化して registry と fork させていた(oracle の
+    ;; plain write は symlink を貫通する — 「temp+rename は観測等価」は symlink
+    ;; 先では偽。2026-07-08 #15 接地で発見した cutover 起源の地雷)。realpath に
+    ;; 書けば trust は bundle に届き、view は symlink のまま保存される。
+    (<- config-path (fs-canonical-path f"{codex-home}/config.toml"))
     (<- raw (fs-read-text config-path))
     (setv updated (upsert-codex-trust-toml (or raw "") (get params "work_dir")))
-    ;; oracle は plain write だが temp+rename は strictly safer で観測等価
     (<- _ (fs-write-text-atomic config-path updated ".agentd-tmp")))
   {"CODEX_HOME" codex-home})
 

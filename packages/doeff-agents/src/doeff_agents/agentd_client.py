@@ -105,6 +105,17 @@ LAUNCH_RPC_TIMEOUT_SECONDS: float = 120.0 + RPC_TIMEOUT_MARGIN_SECONDS
 # resolves the await early the moment a session turns terminal.
 DEFAULT_AWAIT_BUDGET_SECONDS: float = 3600.0
 AGENTD_START_POLL_SECONDS: float = 0.1
+# Status budget for a listener that answered connect() but not the 1s
+# default status probe.  The host serialises ALL store reads through one
+# writer actor; on a multi-GiB store a bulk query can hold the queue for
+# seconds, so a slow daemon.status is normal degraded operation, NOT
+# death.  Spawning a competitor on that misdiagnosis is the "ensure
+# spawn spiral" incident (2026-07-07): the child stole the lease, died
+# on the socket bind, and left the lease rotting under a dead pid while
+# the live host's heartbeat erred forever.  Liveness authority is the
+# socket listener; this budget only bounds how long ensure waits for the
+# busy host to answer before failing LOUDLY (never by spawning).
+AGENTD_BUSY_STATUS_TIMEOUT_SECONDS: float = 15.0
 
 
 class AgentdClient:
@@ -122,6 +133,23 @@ class AgentdClient:
             raise AgentdProtocolError("daemon.status returned a non-object result")
         return result
 
+    def kinds(self) -> list[Mapping[str, Any]]:
+        """Advertised binding-kind vocabulary (DOE-004 R5, reduced form).
+
+        The host advertises {kind, agent_type, required_field, api_version}
+        rows; the control plane's reconciler cross-checks its registered
+        agent bindings against this list on a level-triggered cadence
+        (registration itself never couples to host liveness).
+        """
+        result = self.request("kinds.list")
+        if not isinstance(result, Mapping) or not isinstance(result.get("kinds"), list):
+            raise AgentdProtocolError("kinds.list returned a malformed result")
+        rows = result["kinds"]
+        for row in rows:
+            if not isinstance(row, Mapping) or not isinstance(row.get("kind"), str):
+                raise AgentdProtocolError("kinds.list returned a malformed kind row")
+        return rows
+
     def launch_session(
         self,
         *,
@@ -134,6 +162,7 @@ class AgentdClient:
         model: str | None = None,
         effort: str | None = None,
         lifecycle: AgentSessionLifecycle | str = AgentSessionLifecycle.RUN_TO_COMPLETION,
+        binding: Mapping[str, Any] | None = None,
         session_env: Mapping[str, str] | None = None,
         expected_result: Mapping[str, Any] | None = None,
     ) -> AgentSessionSnapshot:
@@ -153,6 +182,10 @@ class AgentdClient:
             params["model"] = model
         if effort is not None:
             params["effort"] = effort
+        if binding is not None:
+            # ADR-DOE-AGENTS-004 R7: auth/profile rides the typed binding;
+            # session_env stays a non-auth overlay.
+            params["binding"] = dict(binding)
         if expected_result is not None:
             params["expected_result"] = dict(expected_result)
         result = self.request(
@@ -347,6 +380,7 @@ class LazyAgentdClient:
         model: str | None = None,
         effort: str | None = None,
         lifecycle: AgentSessionLifecycle | str = AgentSessionLifecycle.RUN_TO_COMPLETION,
+        binding: Mapping[str, Any] | None = None,
         session_env: Mapping[str, str] | None = None,
         expected_result: Mapping[str, Any] | None = None,
     ) -> AgentSessionSnapshot:
@@ -360,6 +394,7 @@ class LazyAgentdClient:
             model=model,
             effort=effort,
             lifecycle=lifecycle,
+            binding=binding,
             session_env=session_env,
             expected_result=expected_result,
         )
@@ -458,6 +493,32 @@ def ensure_agentd(
             command=command,
         )
         return client
+
+    # Spawn predicate: only the ABSENCE of a live listener proves the
+    # daemon is dead.  A listener that accepts connect() but misses the
+    # short status probe is alive-but-busy (slow != dead); starting a
+    # competitor against it corrupts the lease and the store, so that
+    # path retries with a long budget and then fails loudly instead.
+    if _socket_has_live_listener(active_socket_path):
+        status = _agentd_status_from_live_listener(client)
+        if status is not None:
+            _validate_agentd_identity(
+                status,
+                expected_db_path=active_db_path,
+                expected_socket_path=active_socket_path,
+                command=command,
+            )
+            return client
+        raise AgentdUnavailableError(
+            "doeff-agentd has a live listener on "
+            f"{active_socket_path} but did not answer daemon.status within "
+            f"{AGENTD_BUSY_STATUS_TIMEOUT_SECONDS}s; refusing to start a "
+            "competing daemon against a live socket. Inspect the running "
+            "host process and its log instead.\n"
+            f"Log path: {paths.log_path}",
+            socket_path=active_socket_path,
+            start_command=tuple(command),
+        )
 
     try:
         _start_agentd_process(command, paths.log_path)
@@ -573,6 +634,43 @@ def _agentd_status_if_ready(client: AgentdClient) -> Mapping[str, Any] | None:
         return None
     except AgentdClientError:
         return None
+
+
+def _socket_has_live_listener(socket_path: Path, *, connect_timeout: float = 1.0) -> bool:
+    """True iff something is accepting connections on the socket.
+
+    Only a missing path or ECONNREFUSED (stale socket file, no listener)
+    proves absence.  A successful connect proves presence, and any other
+    OSError (e.g. backlog-full timeout under load) is treated as
+    presence too: the fail-safe direction is to never spawn a competing
+    daemon on an unproven death.
+    """
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    probe.settimeout(connect_timeout)
+    try:
+        probe.connect(str(socket_path))
+        return True
+    except (ConnectionRefusedError, FileNotFoundError):
+        return False
+    except OSError:
+        return True
+    finally:
+        probe.close()
+
+
+def _agentd_status_from_live_listener(client: AgentdClient) -> Mapping[str, Any] | None:
+    try:
+        result = client.request(
+            "daemon.status",
+            read_timeout=AGENTD_BUSY_STATUS_TIMEOUT_SECONDS,
+        )
+    except OSError:
+        return None
+    except AgentdClientError:
+        return None
+    if not isinstance(result, Mapping):
+        return None
+    return result
 
 
 def _normalize_path(path: str | Path) -> str:

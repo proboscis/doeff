@@ -54,7 +54,7 @@ from doeff_agents.handlers.production import (
     _result_contract_prompt,
 )
 from doeff_agents.result_validation import validate_result_payload
-from doeff_agents.runtime import ClaudeRuntimePolicy
+from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import InMemoryAgentSessionRepository
 from doeff_agents.tmux import TmuxSessionBackend, _output_has_unsubmitted_paste_input, strip_ansi
@@ -483,13 +483,17 @@ def test_tmux_agent_handler_trusts_codex_workspace(monkeypatch, tmp_path: Path) 
     codex_home = tmp_path / "codex-home"
     work_dir = tmp_path / "workspace"
 
-    handler = TmuxAgentHandler(backend=backend)
+    # ADR-DOE-AGENTS-004 R9: CODEX_HOME is binder configuration — injected
+    # at handler construction (CodexRuntimePolicy), never via session_env.
+    handler = TmuxAgentHandler(
+        backend=backend,
+        codex_runtime_policy=CodexRuntimePolicy(codex_home=codex_home),
+    )
     launch = LaunchEffect(
         session_name="codex-worker",
         agent_type=AgentType.CODEX,
         work_dir=work_dir,
         prompt="hello",
-        session_env={"CODEX_HOME": str(codex_home)},
     )
 
     handler.handle_launch(launch)
@@ -498,6 +502,34 @@ def test_tmux_agent_handler_trusts_codex_workspace(monkeypatch, tmp_path: Path) 
         f'[projects."{work_dir}"]\ntrust_level = "trusted"\n'
     )
     assert "export CODEX_HOME=" in backend.sent[0][1]
+
+
+def test_tmux_agent_handler_rejects_codex_home_in_session_env(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # R9: session_env is a non-auth overlay — binding-owned keys are
+    # rejected loudly before any side effect (no tmux session, no trust
+    # write).
+    backend = FakeBackend()
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter",
+        lambda _agent_type: FakeCodexAdapter(),
+    )
+    codex_home = tmp_path / "codex-home"
+
+    handler = TmuxAgentHandler(backend=backend)
+    launch = LaunchEffect(
+        session_name="codex-worker",
+        agent_type=AgentType.CODEX,
+        work_dir=tmp_path / "workspace",
+        prompt="hello",
+        session_env={"CODEX_HOME": str(codex_home)},
+    )
+
+    with pytest.raises(ValueError, match="non-auth overlay"):
+        handler.handle_launch(launch)
+    assert backend.sent == []
+    assert not (codex_home / "config.toml").exists()
 
 
 def test_tmux_agent_handler_injects_codex_mcp_config(monkeypatch, tmp_path: Path) -> None:

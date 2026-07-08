@@ -70,11 +70,11 @@ from doeff_agents.monitor import (
     is_waiting_for_input,
 )
 from doeff_agents.result_validation import validate_result_payload
-from doeff_agents.runtime import ClaudeRuntimePolicy
+from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
 from doeff_agents.session import _dismiss_onboarding_dialogs
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import AgentSessionRepository, InMemoryAgentSessionRepository
-from doeff_agents.shell import assert_no_forbidden_agent_env, wrap_with_shell_exports
+from doeff_agents.shell import assert_no_forbidden_agent_env, assert_session_env_is_non_auth_overlay, wrap_with_shell_exports
 
 RESULT_BLOCK_BEGIN = "DOEFF_AGENT_RESULT_BEGIN"
 RESULT_BLOCK_END = "DOEFF_AGENT_RESULT_END"
@@ -519,11 +519,13 @@ class TmuxAgentHandler(AgentHandler):
         backend: SessionBackend,
         session_repository: AgentSessionRepository | None = None,
         claude_runtime_policy: ClaudeRuntimePolicy | None = None,
+        codex_runtime_policy: CodexRuntimePolicy | None = None,
     ) -> None:
         self._sessions: dict[str, SessionState] = {}
         self._backend = backend
         self._session_repository = session_repository or InMemoryAgentSessionRepository()
         self._claude_runtime_policy = claude_runtime_policy or ClaudeRuntimePolicy()
+        self._codex_runtime_policy = codex_runtime_policy or CodexRuntimePolicy()
 
     def handle_launch(
         self,
@@ -553,6 +555,14 @@ class TmuxAgentHandler(AgentHandler):
             effect.session_env,
             context="LaunchEffect.session_env",
         )
+        # ADR-DOE-AGENTS-004 R9: the launch surface is auth-blind.  The
+        # caller's session_env is a NON-AUTH overlay; auth material comes
+        # from the handler binder (runtime policies below), mirroring the
+        # wire's typed `binding` field.
+        assert_session_env_is_non_auth_overlay(
+            effect.session_env,
+            context="LaunchEffect.session_env",
+        )
         agent_env_exports: dict[str, str] = dict(effect.session_env or {})
         if effect.agent_type == AgentType.CLAUDE:
             assert_no_forbidden_agent_env(
@@ -577,11 +587,18 @@ class TmuxAgentHandler(AgentHandler):
                 }
             )
         elif effect.agent_type == AgentType.CODEX:
-            codex_home = agent_env_exports.get(
-                "CODEX_HOME",
-                os.environ.get("CODEX_HOME", str(Path.home() / ".codex")),
+            # R9: CODEX_HOME is binder configuration — constructor policy
+            # first, then the binder process env (the process that BOUND
+            # this handler configured its own environment).  Never the
+            # effect's session_env (rejected above).
+            policy_home = self._codex_runtime_policy.codex_home
+            codex_home = (
+                str(policy_home)
+                if policy_home is not None
+                else os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
             )
             trust_workspace_in_codex_home(codex_home, effect.work_dir)
+            agent_env_exports["CODEX_HOME"] = codex_home
 
         active_mcp_servers: dict[str, str] = dict(mcp_servers or {})
         if effect.mcp_tools:
@@ -674,6 +691,10 @@ class TmuxAgentHandler(AgentHandler):
             raise SessionAlreadyExistsError(f"Session {effect.session_name} already exists")
 
         assert_no_forbidden_agent_env(
+            effect.session_env,
+            context="ClaudeLaunchEffect.session_env",
+        )
+        assert_session_env_is_non_auth_overlay(
             effect.session_env,
             context="ClaudeLaunchEffect.session_env",
         )

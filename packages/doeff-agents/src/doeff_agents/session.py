@@ -25,7 +25,11 @@ from .monitor import (
     is_waiting_for_input,
 )
 from .session_backend import SessionBackend
-from .shell import assert_no_forbidden_agent_env, wrap_with_shell_exports
+from .shell import (
+    assert_no_forbidden_agent_env,
+    assert_session_env_is_non_auth_overlay,
+    wrap_with_shell_exports,
+)
 
 
 class AgentLaunchError(Exception):
@@ -115,6 +119,12 @@ def launch_session(
     if hasattr(adapter, "pre_launch"):
         adapter.pre_launch()
     assert_no_forbidden_agent_env(
+        config.session_env,
+        context="LaunchConfig.session_env",
+    )
+    # ADR-DOE-AGENTS-004 R9: session_env is a non-auth overlay; auth homes
+    # belong to the binder (runtime policy / binder process env).
+    assert_session_env_is_non_auth_overlay(
         config.session_env,
         context="LaunchConfig.session_env",
     )

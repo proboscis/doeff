@@ -23,7 +23,8 @@
 (import doeff_agents.handlers.mcp-server-loop [mcp-server-loop])
 (import doeff_agents.monitor [MonitorState SessionStatus
   detect-status hash-content is-waiting-for-input])
-(import doeff_agents.shell [wrap-with-shell-exports])
+(import doeff_agents.shell [wrap-with-shell-exports
+                            assert-session-env-is-non-auth-overlay])
 (import doeff_agents [tmux])
 
 (import json)
@@ -97,6 +98,9 @@
 
   (LaunchEffect [session-name agent-type work-dir prompt model mcp-tools mcp-server-name effort bare ready-timeout session-env]
     :when (= agent-type AgentType.CLAUDE)
+    ;; R9: session-env は非 auth overlay(binding 所有キーは loud 拒否)。
+    (assert-session-env-is-non-auth-overlay session-env
+      :context "LaunchEffect.session_env (claude-handler)")
     (setv active-backend backend)
     (when (is active-backend None)
       (<- active-backend (Ask SessionBackend)))
