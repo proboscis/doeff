@@ -30,7 +30,7 @@ def my_interpreter(program):  # doeff: interpreter
 2. **`transform`** / **`transformer`** - Functions that transform Program objects
    ```python
    def add_logging(program):  # doeff: transform
-       return writer()(program)
+       return writer(program)
    ```
 
 3. **`kleisli`** - Composable effect-handling functions (usually with `@do` decorator)
@@ -222,7 +222,7 @@ def full_interpreter(  # doeff: interpreter
     env: dict = None
 ):
     """Execute program with reader, state, writer, and scheduler."""
-    wrapped = scheduled(writer()(state()(reader(env or {})(program))))
+    wrapped = scheduled(writer(state()(reader(env or {})(program))))
     return run(wrapped)
 ```
 
@@ -235,7 +235,7 @@ def optimization_pipeline(  # doeff: transform
     with_state: bool = True
 ):
     """Apply handler wrapping as a transform."""
-    wrapped = writer()(program)
+    wrapped = writer(program)
     if with_state:
         wrapped = state()(wrapped)
     return wrapped

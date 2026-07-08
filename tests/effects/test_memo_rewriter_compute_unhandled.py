@@ -27,7 +27,7 @@ def test_memo_rewriter_does_not_swallow_compute_path_unhandled_effect():
     def program():
         return (yield Lookup("alpha"))
 
-    wrapped = _with_handlers(program(), slog_handler(), rewriter)
+    wrapped = _with_handlers(program(), slog_handler, rewriter)
 
     with pytest.raises(UnhandledEffect):
         run(wrapped)

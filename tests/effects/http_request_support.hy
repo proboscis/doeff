@@ -82,7 +82,8 @@
 
 
 (defn handler-log [handler]
-  handler.log)
+  "DEPRECATED: handler.log is removed. Use (yield (slog-log)) or (yield (writer-log)) instead."
+  (raise (AttributeError "handler.log removed — use writer_log() or slog_log() inside the effect system")))
 
 
 (defn is-doeff-handler [handler]

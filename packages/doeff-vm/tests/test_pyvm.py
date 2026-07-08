@@ -2,7 +2,7 @@
 
 import doeff_vm
 import pytest
-from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects.handlers import reader, state, writer, writer_log
 from doeff_core_effects.scheduler import Gather, Spawn, scheduled
 
 from doeff import Ask, Get, Put, Tell, do, run
@@ -200,14 +200,12 @@ def test_current_state_reader_writer_handlers_use_installer_api() -> None:
     def writer_body():
         yield Tell("starting")
         yield Tell("done")
-        return "ok"
-
-    writer_handler = writer()
+        log = yield writer_log()
+        return ("ok", log)
 
     assert run(state(initial={"counter": 1})(state_body())) == 2
     assert run(reader(env={"name": "Ada"})(reader_body())) == "Ada"
-    assert run(writer_handler(writer_body())) == "ok"
-    assert writer_handler.log == ["starting", "done"]
+    assert run(state()(writer(writer_body()))) == ("ok", ["starting", "done"])
 
 
 def test_scheduled_spawn_gather_runs_via_doeff_facade() -> None:

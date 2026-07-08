@@ -49,7 +49,7 @@ def program_single_ping() -> EffectGenerator[int]:
 
 
 def _run(program):
-    wrapped = writer()(try_handler(state()(_install_raw_handler(double_resume_handler)(program))))
+    wrapped = writer(try_handler(state()(_install_raw_handler(double_resume_handler)(program))))
     return run(scheduled(wrapped))
 
 

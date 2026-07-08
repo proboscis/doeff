@@ -256,7 +256,7 @@ def my_program():
 
 
 program = my_program()
-program = writer()(program)
+program = writer(program)
 program = state(initial={"x": 0})(program)
 program = reader(env={"greeting": "hello"})(program)
 result = run(program)
@@ -1763,7 +1763,7 @@ def user_program():
 
 
 program = user_program()
-program = writer()(program)
+program = writer(program)
 program = state(initial={"x": 0})(program)
 program = reader(env={"prefix": "count"})(program)
 

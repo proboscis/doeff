@@ -1,13 +1,16 @@
 ;;; Rsync handler
-;;; Handles RsyncTo effect via rsync shell command.
+;;; Handles RsyncTo effect via ShellRun effects.
+;;;
+;;; Handler clauses yield ShellRun instead of calling subprocess directly.
+;;; The production shell-run-handler resolves them at the IO boundary.
 
 (require doeff_hy.macros [defk <- defhandler])
 (import doeff [do :as _doeff-do])
 (import doeff_core_effects [slog])
 
-(import subprocess)
 (import pathlib [Path])
 
+(import doeff_docker.effects [ShellRun])
 (import doeff_ml_nexus.effects [RsyncTo])
 
 
@@ -40,10 +43,16 @@
     (<- (slog :msg f"rsync: {src} -> {host}:{dst-path}"))
     ;; Ensure destination directory exists
     (when (!= host "localhost")
-      (subprocess.run ["ssh" host f"mkdir -p {dst-path}"]
-                      :check True :capture-output True))
+      (setv mkdir-args ["ssh" host f"mkdir -p {dst-path}"])
+      (<- mkdir-result (ShellRun :args (tuple mkdir-args)))
+      (when (!= mkdir-result.returncode 0)
+        (raise (RuntimeError
+                 f"Command failed (rc={mkdir-result.returncode}):\n{mkdir-args}\nstderr: {(.decode mkdir-result.stderr)}"))))
     (<- args (_rsync-args src host dst-path
                           :excludes excludes
                           :includes includes))
-    (subprocess.run args :check True :capture-output True)
+    (<- rsync-result (ShellRun :args (tuple args)))
+    (when (!= rsync-result.returncode 0)
+      (raise (RuntimeError
+               f"Command failed (rc={rsync-result.returncode}):\n{args}\nstderr: {(.decode rsync-result.stderr)}")))
     (resume dst-path)))

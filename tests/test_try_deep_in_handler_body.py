@@ -116,7 +116,7 @@ def test_try_deep_in_handler_body_happy_path():
     env = {"api_key": "sk-test", "client": "prebuilt-client"}
     wrapped = prog()
     # reader(outer) → state → writer → try_handler → custom_query_handler(inner)
-    for h in reversed([reader(env=env), state(), writer(), try_handler, custom_query_handler]):
+    for h in reversed([reader(env=env), state(), writer, try_handler, custom_query_handler]):
         wrapped = _program_handler(h)(wrapped)
 
     result = run(wrapped)
@@ -132,7 +132,7 @@ def test_try_deep_in_handler_body_no_client_in_env():
 
     env = {"api_key": "sk-fallback"}  # no 'client' key
     wrapped = prog()
-    for h in reversed([reader(env=env), state(), writer(), try_handler, custom_query_handler]):
+    for h in reversed([reader(env=env), state(), writer, try_handler, custom_query_handler]):
         wrapped = _program_handler(h)(wrapped)
 
     result = run(wrapped)
@@ -148,7 +148,7 @@ def test_try_deep_in_handler_body_no_keys():
 
     env = {}  # no client, no api_key
     wrapped = prog()
-    for h in reversed([reader(env=env), state(), writer(), try_handler, custom_query_handler]):
+    for h in reversed([reader(env=env), state(), writer, try_handler, custom_query_handler]):
         wrapped = _program_handler(h)(wrapped)
 
     result = run(wrapped)
@@ -167,7 +167,7 @@ def test_try_deep_wrapped_in_outer_try():
 
     env = {"api_key": "sk-test"}
     wrapped = prog()
-    for h in reversed([reader(env=env), state(), writer(), try_handler, custom_query_handler]):
+    for h in reversed([reader(env=env), state(), writer, try_handler, custom_query_handler]):
         wrapped = _program_handler(h)(wrapped)
 
     result = run(wrapped)

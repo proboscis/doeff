@@ -188,7 +188,7 @@ def default_interpreter(program: Any) -> Any:
     from doeff import run
 
     handlers = [
-        lazy_ask(), state(), writer(), try_handler, slog_handler(),
+        lazy_ask(), state(), writer, try_handler, slog_handler,
         listen_handler, await_handler(),
     ]
     wrapped = program

@@ -72,7 +72,7 @@ class TestUnhandledEffectMessageIncludesChain:
 
         # lazy_ask defaults to Pass-on-miss (PR D), so Ask bubbles through
         # telemetry_handler → slog_handler → lazy_ask before going Unhandled.
-        composed = lazy_ask(env={})(slog_handler()(_install_raw_handler(telemetry_handler)(prog())))
+        composed = lazy_ask(env={})(slog_handler(_install_raw_handler(telemetry_handler)(prog())))
         with pytest.raises(UnhandledEffect) as excinfo:
             run(composed)
         msg = _extract_msg(excinfo.value)

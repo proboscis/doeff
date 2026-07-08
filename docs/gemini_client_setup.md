@@ -17,7 +17,7 @@ from doeff_core_effects.handlers import reader, state, writer
 from doeff_core_effects.scheduler import scheduled
 
 prog = my_program()
-prog = writer()(prog)
+prog = writer(prog)
 prog = state()(prog)
 prog = reader(env={"gemini_api_key": "your-api-key"})(prog)
 result = run(scheduled(prog))
@@ -35,7 +35,7 @@ If `gemini_api_key` is absent, the client attempts ADC:
 Example with explicit project:
 ```python
 prog = my_program()
-prog = writer()(prog)
+prog = writer(prog)
 prog = state()(prog)
 prog = reader(env={
     "gemini_project": "your-project-id",

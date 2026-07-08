@@ -65,7 +65,7 @@ def test_core_handler_factories_compose_directly_without_withhandler_warning() -
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always", DeprecationWarning)
         program = counter_program()
-        program = writer()(program)
+        program = writer(program)
         program = state()(program)
         program = reader(env={"greeting": "hello"})(program)
         result = run(program)

@@ -40,7 +40,7 @@ def main():
     result.images[0].save("harbour.png")
 
 prog = main()
-prog = writer()(prog)
+prog = writer(prog)
 prog = state()(prog)
 prog = reader(env={"seedream_api_key": "YOUR_ARK_KEY"})(prog)
 run(scheduled(prog))
