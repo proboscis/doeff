@@ -37,6 +37,7 @@
   ClassifyPane
   DeliverMessage
   FsCanonicalPath
+  FsComposeHomeView
   FsReadText
   FsWriteTextAtomic
   FsMakeDirs
@@ -65,6 +66,8 @@
     (setv self.delivered [])
     (setv self.fs {})
     (setv self.env {})
+    (setv self.canonical {})        ;; path → realpath(FsCanonicalPath の台本)
+    (setv self.tmux-envs {})        ;; session-name → new-session に渡った env
     (setv self.now (datetime 2026 7 5 12 0 0 :tzinfo timezone.utc))))
 
 
@@ -83,6 +86,7 @@
   (TmuxNewSession [session-name work-dir env]
     (.append world.trace #("new-session" session-name))
     (.add world.tmux-sessions session-name)
+    (setv (get world.tmux-envs session-name) (dict env))
     (resume "%7"))
   (TmuxCapture [pane-id lines]
     (setv world.captures (+ world.captures 1))
@@ -111,7 +115,10 @@
     (setv world.now (+ world.now (timedelta :seconds seconds)))
     (resume None))
   (FsCanonicalPath [path]
-    (resume path))
+    (resume (.get world.canonical path path)))
+  (FsComposeHomeView [auth-file profile-dir view-root]
+    (.append world.trace #("compose-view" auth-file profile-dir view-root))
+    (resume f"{view-root}/composed-view"))
   (FsReadText [path]
     (resume (.get world.fs path)))
   (FsWriteTextAtomic [path text tmp-suffix]
@@ -130,7 +137,8 @@
                 "agent_type" "codex"
                 "work_dir" "/work/dir"
                 "lifecycle" "run_to_completion"
-                "session_env" {"CODEX_HOME" "/x/codex"}
+                "binding" {"kind" "codex" "codex_home" "/x/codex"}
+                "session_env" {}
                 "prompt" "do the task"
                 "command" None
                 "expected_result" {"type" "object"}
@@ -187,6 +195,9 @@
   (assert (= stored.status "booting"))
   (assert stored.awaiting-response)
   (assert (= (get stored.effective-identity "CODEX_HOME") "/x/codex"))
+  ;; R7: binding 由来の auth env は host が合成して tmux env に載せる
+  ;; (session_env 経由ではない)
+  (assert (= (get (get world.tmux-envs "doeff-s1") "CODEX_HOME") "/x/codex"))
   (assert (in #("s1" "session_started") world.events)))
 
 
@@ -195,7 +206,8 @@
   (setv world.capture-script ["❯"])
   (<- row (run-launch world (launch-params
                               :agent_type "claude"
-                              :session_env {"CLAUDE_CONFIG_DIR" "/x/claude"})))
+                              :binding {"kind" "claude-code"
+                                        "config_dir" "/x/claude"})))
   (setv [pane cmd literal submit] (get world.sent-keys 0))
   (assert (.startswith cmd "claude --dangerously-skip-permissions"))
   (assert (in "disableAllHooks" cmd))
@@ -236,7 +248,7 @@
   (setv world (LaunchWorld))
   (setv raised None)
   (try
-    (<- _ (run-launch world (launch-params :session_env {})))
+    (<- _ (run-launch world (launch-params :binding None)))
     (except [e RuntimeError] (setv raised e)))
   (assert (in "no agent auth profile" (str raised)))
   ;; tmux 痕跡ゼロ・session 行無し(S11 の直接束縛版)
@@ -258,7 +270,7 @@
   (setv world (LaunchWorld))
   (setv raised None)
   (try
-    (<- _ (run-launch world (launch-params :agent_type "generic")))
+    (<- _ (run-launch world (launch-params :agent_type "generic" :binding None)))
     (except [e RuntimeError] (setv raised e)))
   (assert (in "cannot deliver a result" (str raised))))
 
@@ -272,8 +284,8 @@
   (setv world.capture-script ["› "])
   (<- row (run-launch world (launch-params
                               :agent_type "generic"
-                              :command "/usr/bin/fake-agent --serve"
-                              :session_env {})))
+                              :binding None
+                              :command "/usr/bin/fake-agent --serve")))
   ;; command は verbatim・wait-for-repl-idle は走らない(capture 0 回)
   (setv [pane cmd literal submit] (get world.sent-keys 0))
   (assert (= cmd "/usr/bin/fake-agent --serve"))
@@ -291,10 +303,127 @@
   (try
     (<- _ (run-launch world (launch-params
                               :agent_type "generic"
-                              :command "codex --yolo"
-                              :session_env {})))
+                              :binding None
+                              :command "codex --yolo")))
     (except [e RuntimeError] (setv raised e)))
   (assert (in "no agent auth profile" (str raised))))
+
+
+;; ---------------------------------------------------------------------------
+;; R7: launch effect は auth-blind — binding が auth を運び、
+;; session_env は非 auth overlay(ADR-DOE-AGENTS-004 R7)
+;; ---------------------------------------------------------------------------
+
+(deftest test-launch-allows-non-auth-overlay-env
+  ;; 非 auth の per-launch env(観測フラグ・result channel の配線値など)は
+  ;; overlay として通り、binding 由来 auth env と並んで tmux env に載る。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["› "])
+  (<- row (run-launch world (launch-params
+                              :session_env {"PYTHONUNBUFFERED" "1"
+                                            "DOEFF_RESULT_SESSION_ID" "s1"})))
+  (setv tmux-env (get world.tmux-envs "doeff-s1"))
+  (assert (= (get tmux-env "PYTHONUNBUFFERED") "1"))
+  (assert (= (get tmux-env "DOEFF_RESULT_SESSION_ID") "s1"))
+  (assert (= (get tmux-env "CODEX_HOME") "/x/codex")))
+
+
+(deftest test-launch-rejects-auth-in-session-env
+  ;; binding 所有キーの overlay 混入 = 裏口 — 全副作用(trust 書き込み・tmux)
+  ;; より前に typed reject。
+  (setv world (LaunchWorld))
+  (setv raised None)
+  (try
+    (<- _ (run-launch world (launch-params
+                              :session_env {"CODEX_HOME" "/sneaky/home"})))
+    (except [e RuntimeError] (setv raised e)))
+  (assert (in "non-auth overlay" (str raised)))
+  (assert (in "CODEX_HOME" (str raised)))
+  (assert (= world.trace []))
+  (assert (= world.rows {})))
+
+
+(deftest test-launch-rejects-foreign-owned-key-in-overlay
+  ;; 所有権は kind を跨いで効く: codex launch でも CLAUDE_CONFIG_DIR は
+  ;; overlay に住めない(所有権ベース — キー列挙の腐敗を許さない)。
+  (setv world (LaunchWorld))
+  (setv raised None)
+  (try
+    (<- _ (run-launch world (launch-params
+                              :session_env {"CLAUDE_CONFIG_DIR" "/x/claude"})))
+    (except [e RuntimeError] (setv raised e)))
+  (assert (in "CLAUDE_CONFIG_DIR" (str raised)))
+  (assert (= world.rows {})))
+
+
+(deftest test-launch-rejects-malformed-binding
+  ;; binding admission(ADR 0044 R3 と同思想): parse できた binding だけが
+  ;; launch に到達する。全 reject は副作用ゼロ。codex v2(#15)は受理形の
+  ;; XOR({codex_home} か {auth_file, profile_dir})— 混在・部分・未知 field
+  ;; はどの shape にも一致せず reject。
+  (setv cases
+        [#({"kind" "gemini" "config_dir" "/x"} "unknown binding kind")
+         #({"kind" "claude-code" "config_dir" "/x"} "drives agent_type")   ;; agent_type は codex
+         #({"kind" "codex"} "exactly one field set")
+         #({"kind" "codex" "codex_home" ""} "non-empty string field")
+         #({"kind" "codex" "codex_home" "/x" "auth_file" "/y"} "exactly one field set")   ;; 混在
+         #({"kind" "codex" "auth_file" "/y"} "exactly one field set")                     ;; 部分二軸
+         #({"kind" "codex" "codex_home" "/x" "unknown_extra" "1"} "exactly one field set");; 未知 field
+         #({"kind" "codex" "auth_file" "/y" "profile_dir" ""} "non-empty string field")])
+  (for [[bad-binding expected] cases]
+    (setv world (LaunchWorld))
+    (setv raised None)
+    (try
+      (<- _ (run-launch world (launch-params :binding bad-binding)))
+      (except [e RuntimeError] (setv raised e)))
+    (assert (in "invalid binding" (str raised)) (str raised))
+    (assert (in expected (str raised)) (str raised))
+    (assert (= world.trace []))))
+
+
+(deftest test-launch-composes-view-for-two-axis-codex-binding
+  ;; #15(DOE-004 R5 v2): 二軸宣言 {auth_file, profile_dir} は host が
+  ;; FsComposeHomeView で view を合成し、native 形(codex_home)へ合流する。
+  ;; view root は $XDG_STATE_HOME/doeff/agent-homes(store DB と同じ解決系)。
+  ;; binding が在る限り process env の CODEX_HOME fallback には決して到達
+  ;; しない(decoy で pin)。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["codex booting banner" "› "])
+  (setv (get world.env "XDG_STATE_HOME") "/state")
+  (setv (get world.env "CODEX_HOME") "/decoy/never-used")
+  (<- row (run-launch world (launch-params
+                              :binding {"kind" "codex"
+                                        "auth_file" "/auths/company.json"
+                                        "profile_dir" "/profiles/agent"})))
+  ;; 合成は宣言二軸 + 解決済み view root で呼ばれる
+  (assert (in #("compose-view" "/auths/company.json" "/profiles/agent"
+                "/state/doeff/agent-homes")
+              world.trace))
+  ;; 実効 identity と tmux env は合成 view(decoy ではない)
+  (setv stored (get world.rows "s1"))
+  (assert (= (get stored.effective-identity "CODEX_HOME")
+             "/state/doeff/agent-homes/composed-view"))
+  (assert (= (get (get world.tmux-envs "doeff-s1") "CODEX_HOME")
+             "/state/doeff/agent-homes/composed-view"))
+  ;; trust 書きは合成 view の config.toml へ(canonicalize は fake では恒等)
+  (assert (in #("fs-write" "/state/doeff/agent-homes/composed-view/config.toml")
+              world.trace)))
+
+
+(deftest test-launch-trust-write-lands-on-canonical-path
+  ;; #15 同梱修理: trust 書きは realpath へ。temp+rename は symlink を辿らず
+  ;; 置換するため、config.toml が profile bundle への symlink のとき旧形は
+  ;; view の link を実ファイル化して registry と fork させていた(cutover 起源
+  ;; の地雷 — 旧 Rust の plain write は貫通していた)。canonicalize を殺すと
+  ;; ここが red(mutation ピン)。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["codex booting banner" "› "])
+  (setv (get world.canonical "/x/codex/config.toml") "/bundle/config.toml")
+  (<- row (run-launch world (launch-params)))
+  (assert (in #("fs-write" "/bundle/config.toml") world.trace))
+  (assert (not-in #("fs-write" "/x/codex/config.toml") world.trace))
+  ;; trust の中身は bundle 側の path に居る
+  (assert (in "trust_level" (get world.fs "/bundle/config.toml"))))
 
 
 ;; ---------------------------------------------------------------------------

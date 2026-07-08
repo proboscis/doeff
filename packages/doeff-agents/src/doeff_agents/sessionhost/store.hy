@@ -533,19 +533,36 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
 
 (deff db-heartbeat-once [conn owner-pid]
   {:pre [(: conn sqlite3.Connection) (: owner-pid int)]
-   :post [(: % "None — owner 交代は raise")]}
-  "lease 更新(oracle heartbeat_once: 消失・owner 交代は raise —
-   worker tick が log して次 tick で再試行する)。"
-  (setv current (db-read-lease conn))
-  (when (is current None)
-    (raise (RuntimeError
-             "doeff-agentd lease disappeared while daemon was running")))
-  (when (!= (get current "owner_pid") owner-pid)
-    (setv got (get current "owner_pid"))
-    (raise (RuntimeError
-             (+ "doeff-agentd lease owner changed: "
-                f"expected {owner-pid} got {got}"))))
-  (db-upsert-lease conn owner-pid)
+   :post [(: % "None — 未失効の owner 交代は raise")]}
+  "lease 更新。消失は raise(oracle parity)。owner 交代は 2 相
+   (2026-07-07 ensure spawn スパイラルの根治、oracle からの意図的乖離):
+   - 相手 lease が**失効済み** → 再取得(level-triggered 自己修復)。socket
+     bind が排他の実体で lease はその影 — bind を保持する自分が、盗んで死んだ
+     競合者の残骸(死 pid 名義の失効 lease)から回復しないと heartbeat が
+     永久にエラーし続ける(実測: expected 68021 got 88831 の無限連発)。
+   - 相手 lease が**未失効** → raise(worker tick が log して次 tick へ)。
+     これは生きた二重 host(別 socket 同一 DB の誤構成)の検出面なので残す。
+   判定と upsert は BEGIN IMMEDIATE で原子化(read→upsert の隙間に競合の
+   acquire が挟まると未失効 lease を盗むため)。"
+  (.execute conn "BEGIN IMMEDIATE")
+  (try
+    (setv current (db-read-lease conn))
+    (when (is current None)
+      (raise (RuntimeError
+               "doeff-agentd lease disappeared while daemon was running")))
+    (when (!= (get current "owner_pid") owner-pid)
+      (setv expires (parse-iso (get current "expires_at")))
+      (when (and (is-not expires None)
+                 (> expires (datetime.now timezone.utc)))
+        (setv got (get current "owner_pid"))
+        (raise (RuntimeError
+                 (+ "doeff-agentd lease owner changed: "
+                    f"expected {owner-pid} got {got}")))))
+    (db-upsert-lease conn owner-pid)
+    (.execute conn "COMMIT")
+    (except [e Exception]
+      (.execute conn "ROLLBACK")
+      (raise)))
   None)
 
 
