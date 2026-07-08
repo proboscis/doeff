@@ -465,7 +465,8 @@
   (try
     (<- _ (run-launch world (launch-params
                               :agent_type "claude"
-                              :session_env {"CLAUDE_CONFIG_DIR" "/x/claude"})))
+                              :binding {"kind" "claude-code"
+                                        "config_dir" "/x/claude"})))
     (except [e RuntimeError] (setv raised e)))
   (assert (is-not raised None))
   ;; エラーは明確に語る: REPL 未 ready・prompt 未配送・画面 tail(証拠)
@@ -491,7 +492,8 @@
   (try
     (<- _ (run-launch world (launch-params
                               :agent_type "claude"
-                              :session_env {"CLAUDE_CONFIG_DIR" "/x/claude"}
+                              :binding {"kind" "claude-code"
+                                        "config_dir" "/x/claude"}
                               :repl_idle_max_wait_seconds 5)))
     (except [e RuntimeError] (setv raised e)))
   (assert (is-not raised None))
