@@ -74,6 +74,114 @@
 
 (setv TERMINAL-CAUSE-CATEGORIES (frozenset (.keys TERMINAL-CAUSE-RETRYABLE)))
 
+
+;; ===========================================================================
+;; wire binding(ADR-DOE-AGENTS-004 R7: launch effect は auth-blind)
+;; ===========================================================================
+;;
+;; auth/profile 物理は typed `binding` field で運ぶ(束縛時構成の serialize —
+;; ACP AgentBindingDefinition agent-binding/v1 と同写像)。session_env は
+;; 非 auth overlay に縮む: binding 所有キーが overlay に居たら typed reject
+;; (それが 2026-07 まで生きていた構造裏口 — 合成 CODEX_HOME が汎用 env dict
+;; 経由で effect user から流れ込んでいた)。
+
+;; binding 所有 env キー: per-kind impl が binding から合成する auth/profile
+;; env。真実の家: impls/codex.hy(CODEX_HOME)/ impls/claude_code.hy
+;; (CLAUDE_CONFIG_DIR)。kind を問わず overlay から全キーを締め出す
+;; (所有権ベース — 既知の悪いキーの列挙は腐るが所有権は腐らない)。
+(setv BINDING-OWNED-ENV-KEYS #{"CODEX_HOME" "CLAUDE_CONFIG_DIR"})
+
+;; wire binding kind → agent_type(ACP bindingAgentType と同写像)。
+(setv BINDING-KIND-AGENT-TYPE {"codex" "codex" "claude-code" "claude"})
+
+;; kind ごとの受理形(shape = kind 以外の field 名集合。宣言順に列挙)。
+;; codex v2(#15)は「受理形の拡張」: {codex_home}(native home — daemon
+;; ローカル束縛・CODEX_HOME= escape hatch の恒久住人)XOR {auth_file,
+;; profile_dir}(control plane の二軸宣言 — host が FsComposeHomeView で
+;; view を合成)。混在・部分・未知 field はどの shape にも一致せず reject。
+(setv BINDING-KIND-SHAPES
+      {"codex" [#{"codex_home"} #{"auth_file" "profile_dir"}]
+       "claude-code" [#{"config_dir"}]})
+
+;; per-kind の契約版。ACP 側の kind→期待版表(Definition.hs)と同写像 —
+;; 二枚の表の drift は ACP の verifyBindingKindsOnce(kinds.list 照合)が
+;; BindingKindUnsupported として検出する。codex は #15(受理形拡張)で v2、
+;; claude-code は v1 のまま。
+(setv BINDING-KIND-API-VERSION
+      {"codex" "acp.dev/agent-binding/v2"
+       "claude-code" "acp.dev/agent-binding/v1"})
+
+(deff binding-kind-shape-label [kind]
+  {:pre [(: kind str)]
+   :post [(: % str)]}
+  "kind の受理形の人間可読ラベル(広告と admission エラーの共有語彙)。
+   shape 内は field 名の昇順を `+`、shape 間は宣言順を ` | ` で結ぶ。"
+  (.join " | " (lfor shape (get BINDING-KIND-SHAPES kind)
+                     (.join "+" (sorted shape)))))
+
+;; kinds.list 広告(DOE-004 R5 縮小版、2026-07-08): host は自分の binding
+;; kind 語彙を広告し、control plane の reconciler が登録済み binding と定期
+;; 照合する(登録時結合はしない — host liveness と registration を結合しない)。
+;; 照合の機械面は (kind, api_version) のみ。required_field は人間可読ラベル
+;; (shapes DSL は導入しない — 機械消費者不在の YAGNI 裁定、#15)。
+(deff binding-kind-advertisement []
+  {:pre []
+   :post [(: % list)]}
+  "kinds.list の result 本体: kind 表から導出した
+   [{kind agent_type required_field api_version}](kind 昇順)。"
+  (lfor kind (sorted (.keys BINDING-KIND-AGENT-TYPE))
+        {"kind" kind
+         "agent_type" (get BINDING-KIND-AGENT-TYPE kind)
+         "required_field" (binding-kind-shape-label kind)
+         "api_version" (get BINDING-KIND-API-VERSION kind)}))
+
+(deff policy-normalized-env-key [key]
+  {:pre [(: key str)]
+   :post [(: % str)]}
+  "env key の正規化(substrate normalized-env-key と同規約: `-`→`_`・大文字化)。"
+  (.upper (.replace key "-" "_")))
+
+(deff overlay-env-offenders [session-env]
+  {:pre [(: session-env dict)]
+   :post [(: % list)]}
+  "session_env(非 auth overlay)に居てはならない binding 所有キーの列挙。"
+  (sorted (lfor key (.keys session-env)
+                :if (in (policy-normalized-env-key key) BINDING-OWNED-ENV-KEYS)
+                key)))
+
+(deff binding-admission-error [binding agent-type]
+  {:pre [(: binding (| dict None)) (: agent-type str)]
+   :post [(: % (| str None))]}
+  "wire binding の admission(ADR 0044 R3 と同思想: parse できた binding だけが
+   launch に到達する)。None = 適合。文字列 = reject 理由。検査: object 形・
+   既知 kind・kind↔agent_type 整合・受理形への完全一致(XOR — 混在・部分・
+   未知 field はどの shape にも一致しない)・shape の全 field が非空 str。"
+  (when (is binding None)
+    (return None))
+  (when (not (isinstance binding dict))
+    (return "binding must be an object"))
+  (setv kind (.get binding "kind"))
+  (when (not-in kind BINDING-KIND-AGENT-TYPE)
+    (return (+ f"unknown binding kind: {kind !r} "
+               f"(known: {(.join ", " (sorted (.keys BINDING-KIND-AGENT-TYPE))) })")))
+  (setv expected-agent-type (get BINDING-KIND-AGENT-TYPE kind))
+  (when (!= agent-type expected-agent-type)
+    (return (+ f"binding kind {kind !r} drives agent_type "
+               f"{expected-agent-type !r}, not {agent-type !r}")))
+  (setv present (- (set (.keys binding)) #{"kind"}))
+  (setv matched (lfor shape (get BINDING-KIND-SHAPES kind)
+                      :if (= present shape)
+                      shape))
+  (when (not matched)
+    (setv got (if present (.join ", " (sorted present)) "none"))
+    (return (+ f"binding kind {kind !r} requires exactly one field set of: "
+               f"{(binding-kind-shape-label kind) } (got: {got})")))
+  (for [field (sorted (get matched 0))]
+    (setv value (.get binding field))
+    (when (or (not (isinstance value str)) (not (.strip value)))
+      (return f"binding kind {kind !r} requires a non-empty string field `{field}`")))
+  None)
+
 ;; judge verdict の keys whitelist(main.rs is_allowed_unblock_key):
 ;; 単一英数字 or 以下の名前付きキーのみ — 制御シーケンスは決して送らない。
 (setv ALLOWED-UNBLOCK-KEY-NAMES

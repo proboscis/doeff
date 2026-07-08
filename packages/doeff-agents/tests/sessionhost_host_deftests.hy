@@ -12,18 +12,21 @@
 (import os)
 (import shutil)
 (import socket)
+(import sys)
 (import tempfile)
 
 (import doeff_agents.sessionhost.host [
   HostConfig
   DEFAULT-PROMPT-JUDGE-CMD
+  build-launch-program-params
   parse-args
   default-db-path
   default-socket-path
   ok-response
   err-response
   dispatch-line
-  prepare-socket-path])
+  prepare-socket-path
+  main])
 (import doeff_agents.sessionhost.store [StoreActor db-acquire-lease])
 
 
@@ -207,6 +210,31 @@
   (with-skeleton check))
 
 
+(deftest test-dispatch-kinds-list
+  ;; DOE-004 R5(縮小版): kinds.list は policy.hy の kind 表(単一ソース)
+  ;; から導出した広告を返す — control plane の定期照合の読み口。表と広告が
+  ;; 乖離したらここが red(スキーマの家は 1 つ)。#15: codex は v2(受理形の
+  ;; 拡張 — {codex_home} XOR {auth_file, profile_dir})、claude-code は v1 の
+  ;; まま。required_field は人間可読ラベル(照合の機械面は kind+api_version)。
+  (defn check [config actor]
+    (setv response (json.loads (dispatch-line
+                                 "{\"id\":9,\"method\":\"kinds.list\"}"
+                                 config actor)))
+    (assert (= (get response "id") 9))
+    (assert (= (get response "ok") True))
+    (setv kinds (get (get response "result") "kinds"))
+    (assert (= kinds
+               [{"kind" "claude-code"
+                 "agent_type" "claude"
+                 "required_field" "config_dir"
+                 "api_version" "acp.dev/agent-binding/v1"}
+                {"kind" "codex"
+                 "agent_type" "codex"
+                 "required_field" "codex_home | auth_file+profile_dir"
+                 "api_version" "acp.dev/agent-binding/v2"}])))
+  (with-skeleton check))
+
+
 (deftest test-dispatch-skeleton-loud
   (defn check [config actor]
     ;; await: 不在 session は -32001 を error_code 付きで返す(oracle
@@ -280,3 +308,60 @@
     (assert (in "already listening" (str raised)))
     (finally
       (shutil.rmtree d :ignore-errors True))))
+
+
+(deftest test-main-loser-dies-at-bind-before-touching-store
+  ;; 起動順の根治ピン(2026-07-07 ensure spawn スパイラル): socket bind =
+  ;; 排他の実体に負けた競合者は store open / lease 取得 / latch clear の
+  ;; どれにも触れずに死ぬ。旧順序(store→lease→bind)ではこの test の DB
+  ;; file が作られ lease 行が競合者名義で書かれてから bind で死んでいた。
+  (setv d (tempfile.mkdtemp))
+  (try
+    (setv sock-path (os.path.join d "agentd.sock"))
+    (setv db-path (os.path.join d "loser.sqlite"))
+    ;; 本物の代役: live listener が socket を保持している
+    (setv live (socket.socket socket.AF-UNIX socket.SOCK-STREAM))
+    (.bind live sock-path)
+    (.listen live 1)
+    (setv saved-argv (list sys.argv))
+    (setv raised None)
+    (try
+      (setv sys.argv ["doeff-sessionhost" "--db" db-path "--socket" sock-path "serve"])
+      (main)
+      (except [e RuntimeError] (setv raised e))
+      (finally (setv sys.argv saved-argv)))
+    (.close live)
+    (assert (is-not raised None))
+    (assert (in "already listening" (str raised)))
+    ;; 敗者は store に一切触れていない — DB file 不在が証拠
+    (assert (not (os.path.exists db-path)))
+    (finally
+      (shutil.rmtree d :ignore-errors True))))
+
+
+;; ---------------------------------------------------------------------------
+;; wire → launch program params(R7 binding passthrough)
+;; ---------------------------------------------------------------------------
+
+(deftest test-launch-program-params-carries-binding-and-overlay
+  ;; R7: typed binding は wire から program へそのまま渡り、session_env は
+  ;; 非 auth overlay として素通しされる(auth 検査は launch program の
+  ;; admission 所有 — ここは serde 既定値の再現のみ)。
+  (setv config (HostConfig :db-path "/tmp/x.db" :socket-path "/tmp/x.sock"
+                           :tmux-bin "tmux" :monitor-interval-seconds 1.0
+                           :max-running 4 :result-solicitation-limit 3
+                           :prompt-stall-seconds 90 :prompt-unblock-limit 3
+                           :prompt-judge-cmd DEFAULT-PROMPT-JUDGE-CMD))
+  (setv wire {"session_id" "s1" "session_name" "doeff-s1"
+              "agent_type" "codex" "work_dir" "/w"
+              "binding" {"kind" "codex" "codex_home" "/x/codex"}
+              "session_env" {"PYTHONUNBUFFERED" "1"}})
+  (setv params (build-launch-program-params wire config))
+  (assert (= (get params "binding") {"kind" "codex" "codex_home" "/x/codex"}))
+  (assert (= (get params "session_env") {"PYTHONUNBUFFERED" "1"}))
+  ;; binding 省略は None(serde 既定値)
+  (setv bare {"session_id" "s1" "session_name" "doeff-s1"
+              "agent_type" "codex" "work_dir" "/w"})
+  (setv params2 (build-launch-program-params bare config))
+  (assert (is None (get params2 "binding")))
+  (assert (= (get params2 "session_env") {})))
