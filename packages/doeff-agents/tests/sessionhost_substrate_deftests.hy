@@ -30,7 +30,9 @@
   real-substrate
   normalized-env-key
   ensure-no-forbidden-agent-env
-  unsubmitted-paste-input?])
+  unsubmitted-paste-input?
+  compose-home-view
+  compose-home-view-name])
 
 
 ;; ---------------------------------------------------------------------------
@@ -130,6 +132,100 @@
   (<- now (drive (clock-now)))
   (assert (is-not now.tzinfo None))
   (assert (= (.total-seconds (.utcoffset now)) 0.0)))
+
+
+;; ---------------------------------------------------------------------------
+;; home view の合成(#15 FsComposeHomeView — apps ensure-agent-home の後継)
+;; ---------------------------------------------------------------------------
+
+(deff _compose-fixture []
+  {:pre []
+   :post [(: % dict)]}
+  "tmpdir に profile bundle(config.toml + legacy auth.json + mcp.json)と
+   auth file を敷く。"
+  (setv d (os.path.realpath (tempfile.mkdtemp)))
+  (setv profile (os.path.join d "bundle"))
+  (os.makedirs profile)
+  (with [f (open (os.path.join profile "config.toml") "w")]
+    (.write f "model = \"gpt\"\n"))
+  (with [f (open (os.path.join profile "mcp.json") "w")]
+    (.write f "{}"))
+  ;; bundle 内の legacy auth.json は合成で無視される(宣言 auth_file が勝つ)
+  (with [f (open (os.path.join profile "auth.json") "w")]
+    (.write f "{\"legacy\": true}"))
+  (setv auth (os.path.join d "company-auth.json"))
+  (with [f (open auth "w")]
+    (.write f "{}"))
+  {"root" d "profile" profile "auth" auth
+   "view-root" (os.path.join d "agent-homes")})
+
+
+(deftest test-compose-home-view-materializes-and-is-idempotent
+  ;; 全 symlink の view・決定的命名(basename--hash8)・sessions は bundle 側・
+  ;; 2 回目も同一 view に収束(level-triggered 再 ensure)。
+  (setv fx (_compose-fixture))
+  (try
+    (setv view (compose-home-view (get fx "auth") (get fx "profile")
+                                  (get fx "view-root")))
+    (assert (= view (os.path.join (get fx "view-root")
+                                  (compose-home-view-name (get fx "auth")
+                                                          (get fx "profile")))))
+    (assert (.startswith (os.path.basename view) "bundle--"))
+    ;; auth.json は宣言 auth_file へ(bundle の legacy auth.json ではない)
+    (assert (os.path.islink (os.path.join view "auth.json")))
+    (assert (= (os.readlink (os.path.join view "auth.json")) (get fx "auth")))
+    ;; config.toml は copy でなく symlink のまま(trust は canonicalize 書きで
+    ;; bundle に届く — per-view trust という意味論変更を持ち込まない)
+    (assert (os.path.islink (os.path.join view "config.toml")))
+    (assert (= (os.readlink (os.path.join view "config.toml"))
+               (os.path.join (get fx "profile") "config.toml")))
+    ;; sessions は bundle 側に掘られ view から symlink(profile 単位で共有)
+    (assert (os.path.isdir (os.path.join (get fx "profile") "sessions")))
+    (assert (os.path.islink (os.path.join view "sessions")))
+    ;; 冪等
+    (setv again (compose-home-view (get fx "auth") (get fx "profile")
+                                    (get fx "view-root")))
+    (assert (= again view))
+    (finally
+      (shutil.rmtree (get fx "root") :ignore-errors True))))
+
+
+(deftest test-compose-home-view-fails-loud
+  ;; 実在検証の単一の家(登録時検証の launch-time 移設、ACP 0040 R2 改訂):
+  ;; auth_file / profile_dir の不在は typed fail。erosion guard: symlink で
+  ;; あるべき場所の実ファイルは黙って置換しない。
+  (setv fx (_compose-fixture))
+  (try
+    ;; auth 不在
+    (setv raised None)
+    (try
+      (compose-home-view (os.path.join (get fx "root") "nope.json")
+                         (get fx "profile") (get fx "view-root"))
+      (except [e RuntimeError] (setv raised e)))
+    (assert (in "auth_file does not resolve" (str raised)))
+    ;; profile 不在
+    (setv raised None)
+    (try
+      (compose-home-view (get fx "auth")
+                         (os.path.join (get fx "root") "nodir")
+                         (get fx "view-root"))
+      (except [e RuntimeError] (setv raised e)))
+    (assert (in "profile_dir does not resolve" (str raised)))
+    ;; erosion guard: view 内の config.toml を実ファイル化してから再合成
+    (setv view (compose-home-view (get fx "auth") (get fx "profile")
+                                  (get fx "view-root")))
+    (setv link (os.path.join view "config.toml"))
+    (os.unlink link)
+    (with [f (open link "w")]
+      (.write f "forked = true\n"))
+    (setv raised None)
+    (try
+      (compose-home-view (get fx "auth") (get fx "profile")
+                         (get fx "view-root"))
+      (except [e RuntimeError] (setv raised e)))
+    (assert (in "refusing to overwrite" (str raised)))
+    (finally
+      (shutil.rmtree (get fx "root") :ignore-errors True))))
 
 
 ;; ---------------------------------------------------------------------------

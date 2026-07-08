@@ -327,6 +327,25 @@
   "ディレクトリの再帰作成(exist-ok。oracle: fs::create_dir_all)。戻り値: None。"
   #^ str path)
 
+(defclass [(dataclass :frozen True :kw-only True)] FsComposeHomeView [EffectBase]
+  "二軸宣言 (auth-file, profile-dir) から home view を実体化する(#15、
+   DOE-004 R5 v2 / ACP 0040 R3 後継: 合成 CODEX_HOME は adapter 物理で、
+   その家は host — apps の ensure-agent-home 退役の受け皿)。物理:
+   view-root 配下の決定的な名前(resolved realpath ペア由来 — basename 衝突
+   排除)のディレクトリに auth.json → auth-file の symlink、profile-dir の
+   各 entry(auth.json 名は skip)の symlink、profile-dir/sessions の mkdir
+   (bundle 側 = session 履歴は profile 単位で共有、incumbent 意味論)。
+   view は全 symlink — config.toml も symlink のままにし、trust 書きは
+   fs-canonical-path 経由で bundle に届く。substrate は view 単位の lock で
+   合成を直列化する(並行 launch の race 面を閉じる)。冪等(level-triggered
+   再 ensure)。fail-loud: auth-file/profile-dir 不在は typed RuntimeError
+   (登録時実在検証の launch-time 移設、ACP 0040 R2 改訂)、symlink である
+   べき場所の実ファイルも typed RuntimeError(erosion guard — 黙って置換
+   しない)。戻り値: 実体化した view の絶対パス str。"
+  #^ str auth-file
+  #^ str profile-dir
+  #^ str view-root)
+
 (defclass [(dataclass :frozen True :kw-only True)] EnvGet [EffectBase]
   "呼び手 process env の単読(S11 caveat: trust writer は session_env に無い
    home を process env から fallback 参照する — daemon 束縛では daemon env、
@@ -478,6 +497,14 @@
    :post [(: % FsMakeDirs)]}
   "FsMakeDirs を構築する(exist-ok 再帰作成)。"
   (FsMakeDirs :path path))
+
+(deff fs-compose-home-view [auth-file profile-dir view-root]
+  {:pre [(: auth-file str) (> (len auth-file) 0)
+         (: profile-dir str) (> (len profile-dir) 0)
+         (: view-root str) (> (len view-root) 0)]
+   :post [(: % FsComposeHomeView)]}
+  "FsComposeHomeView を構築する(#15 二軸 → home view の実体化)。"
+  (FsComposeHomeView :auth-file auth-file :profile-dir profile-dir :view-root view-root))
 
 (deff env-get [name]
   {:pre [(: name str) (> (len name) 0)]

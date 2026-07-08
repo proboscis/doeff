@@ -34,7 +34,12 @@
   tmux-capture
   clock-now
   clock-sleep])
-(import doeff_agents.sessionhost.policy [iso-format seconds-since])
+(import doeff_agents.sessionhost.policy [
+  BINDING-OWNED-ENV-KEYS
+  binding-admission-error
+  iso-format
+  overlay-env-offenders
+  seconds-since])
 
 
 ;; ---------------------------------------------------------------------------
@@ -150,19 +155,35 @@
 (defk launch-session [params]
   {:pre [(: params dict)]
    :post [(: % SessionRow)]}
-  "1 session の launch。params(oracle LaunchParams と同形):
+  "1 session の launch。params(oracle LaunchParams + R7 binding):
    session_id / session_name / agent_type / work_dir / lifecycle /
-   session_env / prompt / command(明示 override、escape hatch)/
-   expected_result / model / effort / mcp_servers / socket_path /
-   skip_trust_setup。戻り値: 永続化済みの booting SessionRow。"
+   binding(typed auth/profile 構成 — ADR-DOE-AGENTS-004 R7)/
+   session_env(非 auth overlay)/ prompt / command(明示 override、
+   escape hatch)/ expected_result / model / effort / mcp_servers /
+   socket_path / skip_trust_setup。戻り値: 永続化済みの booting SessionRow。"
   (setv session-id (get params "session_id"))
   (setv session-name (get params "session_name"))
   (setv agent-type (get params "agent_type"))
   (setv lifecycle (get params "lifecycle"))
+  (setv binding (.get params "binding"))
   (setv session-env (.get params "session_env" {}))
   (setv command-override (or (.get params "command") ""))
   (setv has-override (bool (.strip command-override)))
   (setv expected-result (.get params "expected_result"))
+
+  ;; --- R7 admission(純粋検査 — 全副作用より前): auth は typed binding で
+  ;; 運び、session_env は非 auth overlay。binding 所有キーの overlay 混入は
+  ;; 裏口(2026-07 まで合成 CODEX_HOME がここを通っていた)なので typed reject。
+  (setv binding-error (binding-admission-error binding agent-type))
+  (when (is-not binding-error None)
+    (raise (RuntimeError f"session.launch: invalid binding — {binding-error}")))
+  (setv offenders (overlay-env-offenders session-env))
+  (when offenders
+    (raise (RuntimeError
+             (+ "session.launch: session_env is a non-auth overlay and may not "
+                f"carry binding-owned auth env (offending: {(.join ", " offenders) }). "
+                "Declare the auth profile through the typed `binding` field "
+                "(ADR-DOE-AGENTS-004 R7)."))))
 
   ;; --- admission(oracle 順序: lifecycle → 重複 → 既存 tmux)。
   (when (not-in lifecycle #{LIFECYCLE-RUN-TO-COMPLETION LIFECYCLE-INTERACTIVE})
@@ -228,7 +249,17 @@
     (setv command-line (shell-join argv)))
 
   ;; --- tmux session 作成(禁止 env reject は substrate 所有)+ 起動。
-  (<- pane-id (tmux-new-session session-name (get params "work_dir") session-env))
+  ;; 実効 env = 非 auth overlay ∪ binding 由来 auth env(R7: auth の合成は
+  ;; per-kind impl の解決した identity が唯一の源 — overlay は admission で
+  ;; 所有キーを締め出し済みなので衝突は構造的に無い)。
+  (setv binding-env
+        (if (is identity None)
+            {}
+            (dfor [k v] (.items identity)
+                  :if (and (in k BINDING-OWNED-ENV-KEYS) (isinstance v str))
+                  k v)))
+  (setv effective-env {#** session-env #** binding-env})
+  (<- pane-id (tmux-new-session session-name (get params "work_dir") effective-env))
   (when (.strip command-line)
     (<- _ (tmux-send-keys pane-id command-line True True)))
 

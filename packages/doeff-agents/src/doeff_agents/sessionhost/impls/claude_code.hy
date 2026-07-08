@@ -81,12 +81,13 @@
 (defk resolve-claude-config-dir [params]
   {:pre [(: params dict)]
    :post [(: % tuple)]}
-  "実効 CLAUDE_CONFIG_DIR の解決(oracle: session_env → process env →
-   HOME/.claude)。戻り値 #(config-dir warnings) — 明示無しは DOE-003 R3 の
+  "実効 CLAUDE_CONFIG_DIR の解決(R7: typed binding → process env →
+   HOME/.claude — session_env は非 auth overlay で運搬手段ではない)。
+   戻り値 #(config-dir warnings) — 明示無しは DOE-003 R3 の
    staged enforcement で warning のみ(codex と違い reject しない)。"
-  (setv session-env (.get params "session_env" {}))
+  (setv binding (.get params "binding"))
   (setv warnings [])
-  (setv config-dir (.get session-env "CLAUDE_CONFIG_DIR"))
+  (setv config-dir (when (is-not binding None) (.get binding "config_dir")))
   (when (is None config-dir)
     (.append warnings
              (+ "claude session launched without an explicit CLAUDE_CONFIG_DIR "
