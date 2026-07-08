@@ -2,7 +2,6 @@
 
 import os
 import subprocess
-import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -75,12 +74,13 @@ class ExecHandler:
         with log_path.open("w", encoding="utf-8") as log_file:
             log_file.write(output)
 
-        if output:
-            sys.stdout.write(output)
-            sys.stdout.flush()
-
         exit_code = process.returncode
         if timed_out:
             exit_code = 124
-        return ExecResult(exit_code=exit_code, log_path=str(log_path), timed_out=timed_out)
+        return ExecResult(
+            exit_code=exit_code,
+            log_path=str(log_path),
+            output=output,
+            timed_out=timed_out,
+        )
 

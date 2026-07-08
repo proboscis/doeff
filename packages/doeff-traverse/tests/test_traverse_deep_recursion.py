@@ -30,7 +30,6 @@ from doeff_core_effects.scheduler import scheduled
 from doeff_time import GetTime, WaitUntil, sim_time_handler
 from doeff_traverse.effects import Inspect, Traverse
 from doeff_traverse.handlers import fail_handler, parallel
-from doeff_vm import WithHandler
 
 from doeff import EffectBase, Pass, Program, Resume, do, run, slog
 from doeff import handler as _program_handler
@@ -64,9 +63,13 @@ def process_item_multi_effect(i: int) -> Program[int]:
 
 
 def _compose(program, *handlers):
+    """Compose handlers onto program.
+
+    Each handler is a Program -> Program function.
+    """
     wrapped = program
     for handler in reversed(handlers):
-        wrapped = WithHandler(handler, wrapped)
+        wrapped = handler(wrapped)
     return wrapped
 
 
@@ -74,7 +77,7 @@ def _run_parallel(program, concurrency=40):
     wrapped = _compose(
         program,
         lazy_ask(env={"multiplier": 3}),
-        writer(),
+        writer,
         try_handler,
         state(),
         local_handler,
@@ -82,7 +85,7 @@ def _run_parallel(program, concurrency=40):
         await_handler(),
         parallel(concurrency=concurrency),
         fail_handler,
-        slog_handler(),
+        slog_handler,
     )
     return run(scheduled(wrapped))
 
@@ -204,7 +207,7 @@ def _run_parallel_with_sim_time(program, concurrency=40):
     wrapped = _compose(
         program,
         lazy_ask(env={"multiplier": 3}),
-        writer(),
+        writer,
         try_handler,
         state(),
         local_handler,
@@ -213,7 +216,7 @@ def _run_parallel_with_sim_time(program, concurrency=40):
         sim_time_handler(start_time=SIM_EPOCH),
         parallel(concurrency=concurrency),
         fail_handler,
-        slog_handler(),
+        slog_handler,
     )
     return run(scheduled(wrapped))
 
@@ -326,7 +329,7 @@ def _run_deep_stack(program, n_extra_handlers=15, concurrency=40):
     wrapped = _compose(
         program,
         lazy_ask(env={"multiplier": 3}),
-        writer(),
+        writer,
         try_handler,
         state(),
         local_handler,
@@ -336,7 +339,7 @@ def _run_deep_stack(program, n_extra_handlers=15, concurrency=40):
         *extra,
         parallel(concurrency=concurrency),
         fail_handler,
-        slog_handler(),
+        slog_handler,
     )
     return run(scheduled(wrapped))
 
@@ -479,7 +482,7 @@ def _run_deep_catching_stack(program, concurrency=40):
     wrapped = _compose(
         program,
         lazy_ask(env={"multiplier": 3}),
-        writer(),
+        writer,
         try_handler,
         state(),
         local_handler,
@@ -491,7 +494,7 @@ def _run_deep_catching_stack(program, concurrency=40):
         *extra,
         parallel(concurrency=concurrency),
         fail_handler,
-        slog_handler(),
+        slog_handler,
     )
     return run(scheduled(wrapped))
 

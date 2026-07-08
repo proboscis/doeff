@@ -115,7 +115,7 @@ class TestLazyAskInnerHandlerPropagation:
             "plain_value": "hello",
         }
 
-        composed = lazy_ask(env=env)(writer()(try_handler(state()(_install_raw_handler(secret_handler)(program())))))
+        composed = lazy_ask(env=env)(writer(try_handler(state()(_install_raw_handler(secret_handler)(program())))))
         result = run(scheduled(composed))
         assert result == "secret:my-api-token|hello"
 

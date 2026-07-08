@@ -109,11 +109,11 @@ class TestMemoRewriterSpawnContinuation:
 
         result = _run_scheduled(_compose(
             prog(),
-            writer(),
+            writer,
             try_handler,
             state(),
             await_handler(),
-            slog_handler(),
+            slog_handler,
             simple_fetch_handler,
         ))
         assert result == {"close": 1234.5, "ticker": "8801.T", "date": "2026-04-09"}
@@ -126,11 +126,11 @@ class TestMemoRewriterSpawnContinuation:
 
         result = _run_scheduled(_compose(
             prog(),
-            writer(),
+            writer,
             try_handler,
             state(),
             await_handler(),
-            slog_handler(),
+            slog_handler,
             spawn_fetch_handler,
         ))
         assert result == {"close": 1234.5, "ticker": "8801.T", "date": "2026-04-09"}

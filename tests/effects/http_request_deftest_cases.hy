@@ -4,13 +4,13 @@
 (import pathlib [Path])
 (import pytest)
 (import doeff_core_effects [HttpError HttpRequest HttpResponse])
-(import doeff_core_effects.handlers [await-handler slog-handler])
+(import doeff_core_effects.handlers [await-handler slog-handler slog-log state])
 (import doeff_core_effects.http_handlers [http-production-handler http-fixture-handler])
 (import doeff_hy.http [http-get http-post http-put http-delete http-head])
+(import doeff_core_effects.handlers [slog-log])
 (import tests.effects.http_request_support
   [FakeAsyncClient
    handler-name
-   handler-log
    is-doeff-handler
    make-response
    noop-sleep
@@ -64,15 +64,15 @@
   (setv client (FakeAsyncClient
                  [(make-response 200 {"X-Test" "yes"} b"ok" "ok"
                                  "https://example.test/final" 0.2)]))
-  (setv logs (slog-handler))
-  (<- response
-      (logs ((await-handler)
+  (<- #(response slog-entries)
+      ((state) (slog-handler ((await-handler)
           ((http-production-handler :client-factory (fn [] client)
                                     :sleep noop-sleep)
             (do!
               (<- resp (HttpRequest "GET" "https://example.test/start"
                                      :params {"a" "1"}))
-              resp)))))
+              (<- log (slog-log))
+              #(resp log)))))))
   (assert (= (. response status) 200))
   (assert (= (. response headers) {"X-Test" "yes"}))
   (assert (= (. response content) b"ok"))
@@ -86,7 +86,7 @@
                "content" None
                "timeout" 30.0
                "follow_redirects" True}]))
-  (assert (= (handler-log logs)
+  (assert (= slog-entries
              [{"msg" "http_request"
                "method" "GET"
                "url" "https://example.test/start"
@@ -102,14 +102,14 @@
                  [(make-response 201 {"Content-Type" "application/json"} b"{}" "{}"
                                  "https://example.test/api" 0.1)]))
   (<- response
-      ((slog-handler) ((await-handler)
+      ((state) (slog-handler ((await-handler)
           ((http-production-handler :client-factory (fn [] client)
                                     :sleep noop-sleep)
             (do!
               (<- resp (HttpRequest "POST" "https://example.test/api"
                                      :headers {"X-Trace" "abc"}
                                      :body {"b" 2 "a" 1}))
-              resp)))))
+              resp))))))
   (assert (= (. response status) 201))
   (assert (= (get (get client.calls 0) "headers")
              {"X-Trace" "abc" "Content-Type" "application/json"}))
@@ -122,14 +122,14 @@
                  [(make-response 302 {"Location" "/next"} b"" ""
                                  "https://example.test/start" 0.1)]))
   (<- response
-      ((slog-handler) ((await-handler)
+      ((state) (slog-handler ((await-handler)
           ((http-production-handler :client-factory (fn [] client)
                                     :sleep noop-sleep)
             (do!
               (<- resp (HttpRequest "HEAD" "https://example.test/start"
                                      :timeout-seconds 1.25
                                      :follow-redirects False))
-              resp)))))
+              resp))))))
   (assert (= (. response status) 302))
   (assert (= (get (get client.calls 0) "timeout") 1.25))
   (assert (is (get (get client.calls 0) "follow_redirects") False))
@@ -143,13 +143,13 @@
                   (make-response 200 {} b"ok" "ok" "https://example.test/api" 0.1)]))
   (setv sleeps [])
   (<- response
-      ((slog-handler) ((await-handler)
+      ((state) (slog-handler ((await-handler)
           ((http-production-handler :client-factory (fn [] client)
                                     :sleep (record-sleep sleeps))
             (do!
               (<- resp (HttpRequest "GET" "https://example.test/api"
                                      :max-retries 2))
-              resp)))))
+              resp))))))
   (assert (= (. response status) 200))
   (assert (= (len client.calls) 3))
   (assert (= sleeps [0.25 0.5]))
@@ -162,14 +162,14 @@
                   (make-response 200 {} b"ok" "ok" "https://example.test/api" 0.1)]))
   (setv sleeps [])
   (<- response
-      ((slog-handler) ((await-handler)
+      ((state) (slog-handler ((await-handler)
           ((http-production-handler :client-factory (fn [] client)
                                     :sleep (record-sleep sleeps))
             (do!
               (<- resp (HttpRequest "GET" "https://example.test/api"
                                      :timeout-seconds 0.01
                                      :max-retries 1))
-              resp)))))
+              resp))))))
   (assert (= (. response status) 200))
   (assert (= (len client.calls) 2))
   (assert (= (lfor call client.calls (get call "timeout")) [0.01 0.01]))
@@ -183,13 +183,13 @@
                  [(make-response 200 {"X-Fixture" "yes"} b"fixture" "fixture"
                                  "https://example.test/resource" 0.3)]))
   (<- recorded
-      ((slog-handler) ((await-handler)
+      ((state) (slog-handler ((await-handler)
           ((http-fixture-handler fixture-path :mode "record"
                                  :client-factory (fn [] client)
                                  :sleep noop-sleep)
             (do!
               (<- resp (HttpRequest "GET" "https://example.test/resource"))
-              resp)))))
+              resp))))))
   (<- replayed
       ((http-fixture-handler fixture-path :mode "replay")
         (do!

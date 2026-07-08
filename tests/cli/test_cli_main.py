@@ -78,7 +78,7 @@ def _env_interpreter(program, env=None):
         env_dict = result.value if hasattr(result, "value") else result
 
     handlers = [
-        reader(env_dict), state(), writer(), try_handler, slog_handler(),
+        reader(env_dict), state(), writer, try_handler, slog_handler,
         local_handler, listen_handler, await_handler(),
     ]
     wrapped = program

@@ -4,35 +4,38 @@ Complete API reference for doeff's current public surface.
 
 ## Core Types
 
-### Program[T]
+### Program (DoExpr)
 
 The core abstraction for lazy, reusable effectful computations.
 
+`Program` is a virtual type alias for `DoExpr`. It is a union of all program node types
+(`Pure`, `Expand`, `Perform`, `WithHandlerType`, `WithObserve`, etc.). There are no
+`.map()`, `.flat_map()`, `.pure()`, or `.lift()` methods. Compose programs using the
+`@do` decorator and `yield`.
+
 ```python
-class Program[T]:
-    def map(self, f: Callable[[T], U]) -> Program[U]
-    def flat_map(self, f: Callable[[T], Program[U]]) -> Program[U]
-    def and_then_k(self, binder: Callable[[T], Program[U]]) -> Program[U]
+from doeff import Program, DoExpr
 
-    @staticmethod
-    def pure(value: T) -> Program[T]
-
-    @staticmethod
-    def lift(value: Program[U] | U) -> Program[U]
+isinstance(my_node, Program)  # True for any program node
+isinstance(my_node, DoExpr)   # equivalent
 ```
 
 **See:** [Core Concepts](02-core-concepts.md#program-model)
 
 ---
 
-### EffectBase / EffectValue[T]
+### EffectBase
 
 Effects are user-space operation payloads. They are data, not execution control nodes.
+All effects inherit from `EffectBase` (imported from `doeff_vm`).
 
 ```python
-@dataclass(frozen=True, kw_only=True)
-class EffectBase:
-    created_at: EffectCreationContext | None = None
+from doeff_vm import EffectBase
+
+class MyEffect(EffectBase):
+    def __init__(self, payload):
+        super().__init__()
+        self.payload = payload
 ```
 
 At runtime, effect dispatch happens through `Perform(effect)`.
@@ -41,42 +44,9 @@ At runtime, effect dispatch happens through `Perform(effect)`.
 
 ---
 
-### RunResult[T]
-
-Result container returned by `run()` and `async_run()`.
-
-```python
-class RunResult[T](Protocol):
-    @property
-    def result(self) -> Result[T]: ...
-
-    @property
-    def raw_store(self) -> dict[str, Any]: ...
-
-    @property
-    def value(self) -> T: ...
-
-    @property
-    def error(self) -> BaseException: ...
-
-    def is_ok(self) -> bool: ...
-    def is_err(self) -> bool: ...
-```
-
-**Core fields:**
-
-- **`result`** - `Ok(value)` or `Err(error)`
-- **`raw_store`** - Final store snapshot
-- **`value`** - Unwraps `Ok` value (raises on `Err`)
-- **`error`** - Unwraps `Err` error (raises on `Ok`)
-
-**See:** [Error Handling](05-error-handling.md#runresult-overview)
-
----
-
 ### Result[T]
 
-Success/failure sum type used by `RunResult.result` and `Try(...)`.
+Success/failure sum type used by `Try(...)`.
 
 ```python
 Result[T] = Ok[T] | Err
@@ -118,22 +88,40 @@ Failure constructor for `Result[T]`.
 err = Err(ValueError("invalid input"))
 ```
 
-**Signature:**
-`Err(error: Exception, captured_traceback: Maybe[EffectTraceback] = NOTHING)`
+**Signature:** `Err(error: Exception)`
 
 **Fields:**
 
 - **`error`** - The captured exception
-- **`captured_traceback`** - Optional effect traceback metadata. Defaults to `NOTHING`,
-  and is populated when traceback capture is enabled for that error path.
 
 **Pattern matching:**
 
 ```python
 match result:
-    case Err(error=e, captured_traceback=tb):
-        print("failed", e, tb)
+    case Err(error=e):
+        print("failed", e)
 ```
+
+---
+
+### Maybe
+
+Optional value type.
+
+```python
+from doeff import Some, Nothing
+
+maybe_val = Some(42)
+empty = Nothing
+
+match maybe_val:
+    case Some(value=v):
+        print("has value", v)
+    case Nothing:
+        print("empty")
+```
+
+`Maybe = Some | Nothing`
 
 ---
 
@@ -141,42 +129,34 @@ match result:
 
 ### @do
 
-Converts a generator function into a `KleisliProgram`.
+Converts a generator function into a callable that produces `Expand` objects (program nodes).
 
 ```python
+from doeff import do
+
 @do
-def my_program(x: int) -> Program[int]:
+def my_program(x: int):
     value = yield Get("key")
     return value + x
+
+prog = my_program(42)  # returns Expand (a DoExpr node), not executed yet
+result = run(prog)     # execute
 ```
 
-**Returns:** `KleisliProgram[..., T]`
+**Returns:** `Callable[..., Expand]`
 
-**See:** [Core Concepts](02-core-concepts.md#generator-as-ast),
-[Kleisli Arrows](11-kleisli-arrows.md)
-
----
-
-### @cache
-
-Caches Program results with policy fields.
+Accepts an optional `non_tail` keyword argument to suppress warnings about non-tail
+`Resume`/`ResumeThrow` usage in handler functions:
 
 ```python
-@cache(ttl=60, lifecycle=CacheLifecycle.SESSION)
-@do
-def expensive_computation(x: int):
-    return x * 2
+@do(non_tail=True)
+def my_handler(effect, k):
+    value = yield Resume(k, 42)
+    # ... use value (non-tail position) ...
+    return value
 ```
 
-**Primary parameters:**
-
-- **`ttl`** (`float | None`) - Time-to-live in seconds
-- **`lifecycle`** (`CacheLifecycle | str | None`) - Cache lifecycle hint
-- **`storage`** (`CacheStorage | str | None`) - Storage hint
-- **`metadata`** (`Mapping[str, Any] | None`) - Policy metadata
-- **`policy`** (`CachePolicy | Mapping[str, Any] | None`) - Full policy object
-
-**See:** [Cache System](07-cache-system.md), [cache.md](cache.md)
+**See:** [Core Concepts](02-core-concepts.md#generator-as-ast)
 
 ---
 
@@ -186,11 +166,10 @@ def expensive_computation(x: int):
 
 Request an environment value.
 
-Raises `MissingEnvKeyError` (a `KeyError` subtype) when `key` is not present in the current
-environment.
+Raises `KeyError` when `key` is not present in the current environment.
 
 If the environment value is a `Program`, `Ask` evaluates it lazily once per `run()` invocation and
-caches the computed value per key. Concurrent `Ask` calls for the same lazy key are coordinated so
+caches the computed value per key (when using `lazy_ask`). Concurrent `Ask` calls for the same lazy key are coordinated so
 only one task performs evaluation while others wait cooperatively. `Local(...)` overrides can
 invalidate that per-run cache for overridden keys.
 
@@ -198,13 +177,13 @@ invalidate that per-run cache for overridden keys.
 config = yield Ask("database_url")
 ```
 
-**Signature:** `Ask(key: EnvKey)`
+**Signature:** `Ask(key)`
 
 **See:** [Basic Effects](03-basic-effects.md#reader-effects)
 
 ---
 
-### Local(env_update, sub_program)
+### Local(env, program)
 
 Run a sub-program with environment overrides.
 
@@ -212,8 +191,7 @@ Run a sub-program with environment overrides.
 result = yield Local({"timeout": 30}, sub_program())
 ```
 
-**Signature:**
-`Local(env_update: Mapping[Any, object], sub_program: ProgramLike)`
+**Signature:** `Local(env: Mapping, program: DoExpr)`
 
 **See:** [Basic Effects](03-basic-effects.md#local)
 
@@ -229,9 +207,9 @@ Read state value.
 count = yield Get("counter")
 ```
 
-**Signature:** `Get(key: str)`
+**Signature:** `Get(key)`
 
-Raises `KeyError` when `key` is missing.
+Returns `None` when `key` is missing (with the default `state()` handler).
 
 ---
 
@@ -243,23 +221,7 @@ Write state value.
 yield Put("counter", 42)
 ```
 
-**Signature:** `Put(key: str, value: Any)`
-
----
-
-### Modify(key, f)
-
-Update state value using a transformation function.
-
-```python
-yield Modify("counter", lambda x: x + 1)
-```
-
-**Signature:** `Modify(key: str, f: Callable[[Any | None], Any])`
-
-If `key` is missing, `Modify` calls `f(None)` (it does not raise `KeyError`).
-
-`Modify` is atomic: if `f` raises, the store is left unchanged.
+**Signature:** `Put(key, value)`
 
 **See:** [Basic Effects](03-basic-effects.md#state-effects)
 
@@ -269,95 +231,214 @@ If `key` is missing, `Modify` calls `f(None)` (it does not raise `KeyError`).
 
 ### Tell(message)
 
-Append a log entry.
+Append a log entry. `Tell(message)` is a convenience function that creates a
+`WriterTellEffect(message)`.
 
 ```python
 yield Tell("Processing started")
 ```
 
-**Signature:** `Tell(message: object)`
-
-`Log` is a deprecated alias for `Tell`. Use `Tell` instead.
+**Signature:** `Tell(message) -> WriterTellEffect`
 
 ---
 
-### Listen(sub_program)
+### slog(msg, **kwargs)
 
-Run a sub-program and capture emitted writer logs.
+Append a structured log entry. Creates a `WriterTellEffect` with keyword arguments.
 
 ```python
-result = yield Listen(sub_program())
-value, logs = result
+yield slog("Processing", count=42, level="info")
 ```
 
-**Signature:** `Listen(sub_program: ProgramLike)`
+**Signature:** `slog(msg, **kwargs) -> WriterTellEffect`
 
-**Returns:** `ListenResult(value: T, log: BoundedLog)`
-
-`ListenResult.log` uses bounded retention semantics: when capacity is exceeded, oldest
-entries are evicted.
+`Slog` is an alias for `WriterTellEffect`.
 
 ---
 
-### StructuredLog(**entries)
+### WriterTellEffect(msg, **kwargs)
 
-Append a structured log payload.
+The underlying effect type for both `Tell` and `slog`. `Listen` collects these.
 
 ```python
-yield StructuredLog(level="info", message="Processing", count=42)
+yield WriterTellEffect("event", severity="warn")
 ```
 
-**Signature:** `StructuredLog(**entries: object)`
+**Signature:** `WriterTellEffect(msg, **kwargs)`
+
+**Fields:**
+
+- **`msg`** - The log message
+- **`kwargs`** - Additional structured key-value pairs
+
+---
+
+### Listen(program, types=None)
+
+Run a sub-program and collect all effects of the given types emitted during execution.
+
+```python
+value, collected = yield Listen(sub_program())
+```
+
+**Signature:** `Listen(program, types=None)`
+
+**Returns:** `(value, list)` tuple -- the program result and a list of collected effects.
+
+When `types` is `None`, defaults to collecting `WriterTellEffect` instances.
 
 **See:** [Basic Effects](03-basic-effects.md#writer-effects)
 
 ---
 
+## Error Handling Effects
+
+### Try(program)
+
+Run a sub-program and capture errors as `Result`.
+
+```python
+result = yield Try(risky_operation())
+match result:
+    case Ok(value=v):
+        return v
+    case Err(error=e):
+        return "fallback"
+```
+
+**Signature:** `Try(program: DoExpr)`
+
+**Returns:** `Ok(value)` or `Err(error)`
+
+**See:** [Error Handling](05-error-handling.md#try-effect)
+
+---
+
+## Control Effects
+
+### Pure(value)
+
+Wrap a plain value as a DoExpr program node.
+
+```python
+value = yield Pure({"status": "ok"})
+```
+
+**Signature:** `Pure(value)`
+
+---
+
+### Pass(effect, k)
+
+Forward an unhandled effect to the next outer handler. Used inside handler functions
+to indicate "I don't handle this effect".
+
+```python
+@do
+def my_handler(effect, k):
+    if isinstance(effect, MyEffect):
+        result = yield Resume(k, effect.payload * 2)
+        return result
+    yield Pass(effect, k)  # forward everything else
+```
+
+**Signature:** `Pass(effect, k)`
+
+---
+
+### WithObserve(observer, body)
+
+Install a cross-cutting observer and run a body program under it. The observer is
+called for each effect performed during execution.
+
+```python
+def my_observer(effect):
+    print(f"observed: {effect}")
+
+result = yield WithObserve(my_observer, sub_program())
+```
+
+**Signature:** `WithObserve(observer: callable, body: DoExpr)`
+
+Accepts a plain Python callable as observer -- automatically wraps it with `doeff_vm.Callable`
+so the Rust VM can invoke it.
+
+---
+
+### Handler Installer Call
+
+Run a scoped sub-program under a custom handler by calling a `Program -> Program`
+handler installer.
+
+```python
+from doeff_core_effects.handlers import reader
+
+scoped = reader(env={"name": "override"})(worker())
+```
+
+**Shape:** `handler(program: DoExpr) -> DoExpr`
+
+Handlers built with `doeff.program.handler()` have this `Program -> Program` shape.
+Compose them by nesting calls:
+
+```python
+prog = my_program()
+prog = writer(prog)
+prog = state()(prog)
+prog = reader(env={"key": "value"})(prog)
+result = run(scheduled(prog))
+```
+
+---
+
 ## Async and Concurrency Effects
 
-### Await(awaitable)
+### Await(coroutine)
 
-Await a Python awaitable.
+Await a Python coroutine or future. Bridges async into doeff.
 
 ```python
 value = yield Await(async_call())
 ```
 
-**Signature:** `Await(awaitable: Awaitable[Any])`
+**Signature:** `Await(coroutine)`
 
-`Await` bridges Python `asyncio` awaitables into doeff. For doeff-native `Task`/`Future`
-handles, use `Wait` instead.
+Requires `await_handler()` and `scheduled()` to be installed.
 
 ---
 
-### Spawn(program, **options)
+### Spawn(program, priority=PRIORITY_NORMAL)
 
-Spawn a Program in the background and return a `Task` handle.
+Spawn a program in the background and return a `Task` handle.
 
 ```python
 task = yield Spawn(worker())
 result = yield Wait(task)
 ```
 
+**Signature:** `Spawn(program, priority=PRIORITY_NORMAL)`
+
+**Returns:** `Task`
+
 **See:** [Advanced Effects](09-advanced-effects.md)
 
 ---
 
-### Wait(future)
+### Wait(task)
 
-Wait for a `Task`/`Future` waitable value.
+Wait for a `Task` or `Future` handle to complete.
 
 ```python
 result = yield Wait(task)
 ```
 
-**Signature:** `Wait(future: Waitable[T])`
+**Signature:** `Wait(task, priority=None)`
 
 ---
 
-### Gather(*items)
+### Gather(*tasks)
 
-Resolve multiple waitables and return results in input order.
+Wait for multiple tasks/futures and return results in input order.
 
 ```python
 task_1 = yield Spawn(fetch_user(1))
@@ -366,51 +447,39 @@ task_3 = yield Spawn(fetch_user(3))
 results = yield Gather(task_1, task_2, task_3)
 ```
 
-**Signature:** `Gather(*items: Waitable[Any])`
+**Signature:** `Gather(*tasks)`
 
 **See:** [Advanced Effects](09-advanced-effects.md#gather-effects)
 
 ---
 
-### Race(*waitables)
+### Race(*tasks)
 
-Wait for the first waitable to complete.
+Wait for the first task/future to complete.
 
 ```python
 winner = yield Race(task_a, task_b)
-value = winner.value
 ```
 
-**Signature:** `Race(*futures: Waitable[Any])`
-
-**Returns:** `RaceResult(first, value, rest)`
+**Signature:** `Race(*tasks)`
 
 **See:** [Async Effects](04-async-effects.md#race-semantics),
 [Advanced Effects](09-advanced-effects.md#race-effect)
 
 ---
 
-### Task.cancel()
+### Cancel(task)
 
 Request cooperative cancellation for a target `Task`.
 
 ```python
 task = yield Spawn(worker())
-_ = yield task.cancel()
+yield Cancel(task)
 ```
 
-**Signature:** `Task.cancel()`
+**Signature:** `Cancel(task)`
 
-`Task.cancel()` is effectful: it returns a cancellation effect that must be yielded.
-
-Cancellation behavior depends on the target task state:
-
-- **`Pending`** - Mark cancelled immediately and wake waiters with `TaskCancelledError`.
-- **`Running`** - Set cooperative cancel flag; task is cancelled at next scheduler yield point.
-- **`Suspended`** - Mark cancelled immediately and wake waiters with `TaskCancelledError`.
-- **`Blocked`** - Mark cancelled, remove target wait registration, wake waiters with
-  `TaskCancelledError`.
-- **`Completed` / `Failed` / `Cancelled`** - No-op.
+`Cancel` is an effect that must be yielded. There is no `task.cancel()` method.
 
 **See:** [Async Effects](04-async-effects.md#cancel-and-taskcancellederror)
 
@@ -422,13 +491,72 @@ Raised by `Wait`, `Gather`, or `Race` when a waited task was cancelled.
 
 ```python
 joined = yield Try(Wait(task))
-if joined.is_err() and joined.error.__class__.__name__ == "TaskCancelledError":
-    ...
+match joined:
+    case Err(error=e) if isinstance(e, TaskCancelledError):
+        ...  # handle cancellation
 ```
 
-**Signature:** `class TaskCancelledError(Exception)`
+**Import:** `from doeff import TaskCancelledError`
 
-**Import:** `from doeff.effects import TaskCancelledError`
+---
+
+## Promise Effects
+
+### CreatePromise()
+
+Create a scheduler-internal promise and return a `Promise` handle.
+
+```python
+promise = yield CreatePromise()
+future = promise.future  # read-side Future handle
+```
+
+**Signature:** `CreatePromise()`
+
+**Returns:** `Promise` (with `.future` property for `Wait`)
+
+---
+
+### CompletePromise(promise, value)
+
+Complete a promise with a success value.
+
+```python
+yield CompletePromise(promise, result_value)
+```
+
+**Signature:** `CompletePromise(promise, value)`
+
+---
+
+### FailPromise(promise, error)
+
+Complete a promise with an error.
+
+```python
+yield FailPromise(promise, ValueError("something went wrong"))
+```
+
+**Signature:** `FailPromise(promise, error)`
+
+---
+
+### CreateExternalPromise()
+
+Create a thread-safe external promise. The returned `ExternalPromise` has `.complete(value)`
+and `.fail(error)` methods that can be called from any thread.
+
+```python
+ep = yield CreateExternalPromise()
+# From another thread:
+ep.complete(result)
+# or ep.fail(error)
+value = yield Wait(ep.future)
+```
+
+**Signature:** `CreateExternalPromise()`
+
+**Returns:** `ExternalPromise` (with `.future` property and thread-safe `.complete()`/`.fail()`)
 
 ---
 
@@ -438,23 +566,17 @@ if joined.is_err() and joined.error.__class__.__name__ == "TaskCancelledError":
 
 Create an opaque semaphore handle with `permits` initial permits.
 
-`permits` must be `>= 1`; `CreateSemaphore(0)` raises
-`ValueError("permits must be >= 1")`.
-
 ```python
 sem = yield CreateSemaphore(3)
 ```
 
-**Signature:** `CreateSemaphore(permits: int)`
+**Signature:** `CreateSemaphore(permits=1)`
 
 **Returns:** `Semaphore`
 
-The returned `Semaphore` is opaque. Keep and reuse the handle returned by `CreateSemaphore`.
-`Semaphore(...)` is not part of the public API and raises `TypeError`.
-
 ---
 
-### AcquireSemaphore(sem)
+### AcquireSemaphore(semaphore)
 
 Acquire one permit from a semaphore; blocks cooperatively when no permits are available.
 
@@ -466,22 +588,15 @@ finally:
     yield ReleaseSemaphore(sem)
 ```
 
-**Signature:** `AcquireSemaphore(semaphore: Semaphore)`
+**Signature:** `AcquireSemaphore(semaphore)`
 
-`semaphore` must be the handle returned by `CreateSemaphore` or another Python reference to that
-same handle object. `Semaphore(id)` construction is not supported.
-
-Blocked acquirers are resumed in FIFO order. When no permit is available, the task transitions to
-`BLOCKED` until a release occurs.
-
-If a blocked waiter is cancelled, it is removed from the semaphore queue, raises
-`TaskCancelledError`, and consumes no permit.
+Blocked acquirers are resumed in FIFO order.
 
 **See:** [Semaphore Effects](21-semaphore-effects.md#acquiresemaphoresem)
 
 ---
 
-### ReleaseSemaphore(sem)
+### ReleaseSemaphore(semaphore)
 
 Release one permit back to a semaphore.
 
@@ -489,136 +604,43 @@ Release one permit back to a semaphore.
 yield ReleaseSemaphore(sem)
 ```
 
-**Signature:** `ReleaseSemaphore(semaphore: Semaphore)`
+**Signature:** `ReleaseSemaphore(semaphore)`
 
-`semaphore` must be the runtime-created handle returned by `CreateSemaphore` (or another Python
-reference to that same handle object). `Semaphore(id)` construction is not supported.
+When waiters exist, release uses direct handoff to the oldest waiter (FIFO).
 
-When waiters exist, release uses direct handoff to the oldest waiter (FIFO): the permit transfers
-to that waiter and `available_permits` remains `0`.
-
-Permit leak warning: semaphores do not track ownership. If a task fails or is cancelled after
-acquire and before release, that permit is leaked. Always guard critical sections with
-`try/finally` so `ReleaseSemaphore` still runs.
-
-Lifecycle: there is no explicit destroy API; semaphore state is released when handles are garbage
-collected.
+Always guard critical sections with `try/finally` so `ReleaseSemaphore` still runs
+if the task fails or is cancelled.
 
 **See:** [Semaphore Effects](21-semaphore-effects.md#releasesemaphoresem)
 
 ---
 
-## Control Effects
-
-### Pure(value)
-
-Return an immediate value without mutating state, environment, or writer log.
-
-On the control path, `yield Pure(x)` is equivalent to returning `x` directly.
-
-```python
-value = yield Pure({"status": "ok"})
-```
-
-**Signature:** `Pure(value: Any)`
-
----
-
-### Handler Installer Call
-
-Run a scoped sub-program under a custom handler by calling a Program -> Program handler installer.
-
-```python
-from doeff_core_effects.handlers import reader
-
-scoped = reader(env={"name": "override"})(worker())
-```
-
-**Shape:** `handler(program: Program[T]) -> Program[T]`
-
-**Notes:**
-
-- New-style handlers built with `defhandler` already have this Program -> Program shape.
-- Python handler factories should return this shape rather than asking callers to use the
-  deprecated `WithHandler` compatibility shim.
-- The raw handler's first-parameter effect annotation is converted into a runtime type filter
-  inside the installed handler scope.
-- Use `yield Pass()` for transparent fallthrough.
-- Use `yield Delegate()` only when the handler intentionally wants the outer handler's result.
-
-### Deprecated WithHandler Shim
-
-`WithHandler` remains exported for backward compatibility. New code should call a handler installer
-directly, for example `handler(program)`. `WithHandlerType` is the low-level VM node/type alias for
-code that needs direct DoExpr construction or `isinstance` checks.
-
----
-
-### WithIntercept(f, expr, types=None, mode="include")
-
-Run a scoped program under interception. Each matched yielded value is offered to `f`.
-
-```python
-@do
-def transform(effect):
-    if isinstance(effect, AskEffect) and effect.key == "timeout":
-        return Pure(30)
-    return effect
-
-result = yield WithIntercept(transform, worker(), types=(AskEffect,), mode="include")
-```
-
-**Signature:**
-`WithIntercept(f: HandlerFn, expr: DoExpr[T], types: Iterable[type] | None = None, mode: str = "include")`
-
-**Interceptor contract:**
-
-- Return the original effect to pass through unchanged.
-- Return an `Effect` or `Program` to replace that step.
-- Interceptor errors propagate.
-
-Interception propagates to child execution contexts (for example `Gather`, `Try`, and `Spawn`).
-
----
-
-## Error Handling Effects
-
-### Try(sub_program)
-
-Run a sub-program and capture errors as `Result`.
-
-```python
-result = yield Try(risky_operation())
-if result.is_ok():
-    return result.value
-return "fallback"
-```
-
-**Signature:** `Try(sub_program: ProgramLike)`
-
-**See:** [Error Handling](05-error-handling.md#try-effect)
-
----
-
 ## Cache Effects
+
+Located in `doeff_core_effects.cache_effects`.
 
 ### CacheGet(key)
 
 Retrieve a cached value.
 
 ```python
+from doeff_core_effects.cache_effects import CacheGet
+
 value = yield CacheGet("expensive_key")
 ```
 
-**Signature:** `CacheGet(key: Any)`
+**Signature:** `CacheGet(key) -> CacheGetEffect`
 
 ---
 
 ### CachePut(key, value, ttl=None, *, lifecycle=None, storage=None, metadata=None, policy=None)
 
-Store a value in cache.
+Store a value in cache with optional policy.
 
 ```python
+from doeff_core_effects.cache_effects import CachePut
+from doeff_core_effects.cache_policy import CacheLifecycle
+
 yield CachePut(
     "key",
     value,
@@ -627,186 +649,287 @@ yield CachePut(
 )
 ```
 
-**See:** [Cache System](07-cache-system.md), [cache.md](cache.md)
+**Signature:** `CachePut(key, value, ttl=None, *, lifecycle=None, storage=None, metadata=None, policy=None) -> CachePutEffect`
 
 ---
 
-## Graph Effects
-
-### Step(value, meta=None)
-
-Add a step node to the execution graph.
+### CachePolicy
 
 ```python
-yield Step("initialize", {"phase": "setup"})
+from doeff_core_effects.cache_policy import CachePolicy, CacheLifecycle, CacheStorage
 ```
 
-**Signature:** `Step(value: Any, meta: dict[str, Any] | None = None)`
+**CacheLifecycle** enum: `TRANSIENT`, `SESSION`, `PERSISTENT`
+
+**CacheStorage** enum: `MEMORY`, `DISK`
 
 ---
 
-### Annotate(meta)
+## Memo Effects
 
-Add metadata to the latest graph step.
+Located in `doeff_core_effects.memo_effects`. Memo effects are the cost-aware memoization
+system that replaced the old `CacheGet` name in the `doeff` top-level namespace.
+
+### MemoGet(key)
+
+Retrieve a memoized value.
 
 ```python
-yield Annotate({"user_id": 123, "operation": "fetch"})
+from doeff_core_effects.memo_effects import MemoGet
+
+value = yield MemoGet("computation_result")
 ```
 
-**Signature:** `Annotate(meta: dict[str, Any])`
+**Signature:** `MemoGet(key, *, recompute_cost=RecomputeCost.CHEAP) -> MemoGetEffect`
 
 ---
 
-### Snapshot()
+### MemoPut(key, value, ...)
 
-Capture current graph state.
-
-```python
-graph = yield Snapshot()
-```
-
----
-
-### CaptureGraph(program)
-
-Run a sub-program and capture its graph output.
+Store a memoized value.
 
 ```python
-value, graph = yield CaptureGraph(sub_program())
+from doeff_core_effects.memo_effects import MemoPut
+
+yield MemoPut("key", value, recompute_cost="expensive")
 ```
 
-**Signature:** `CaptureGraph(program: ProgramLike)`
-
-**See:** [Graph Tracking](08-graph-tracking.md#capturegraph)
-
----
-
-## Atomic Effects
-
-### AtomicGet(key, *, default_factory=None)
-
-Thread-safe shared-state read.
-
-```python
-count = yield AtomicGet("counter")
-```
-
-**Signature:**
-`AtomicGet(key: str, *, default_factory: Callable[[], Any] | None = None)`
-
----
-
-### AtomicUpdate(key, updater, *, default_factory=None)
-
-Thread-safe shared-state update.
-
-```python
-new_value = yield AtomicUpdate("counter", lambda x: x + 1)
-```
-
-**Signature:**
-`AtomicUpdate(key: str, updater: Callable[[Any], Any], *, default_factory: Callable[[], Any] | None = None)`
+**Signature:** `MemoPut(key, value, ttl=None, *, recompute_cost=None, lifecycle=None, metadata=None, policy=None, source_effect=None) -> MemoPutEffect`
 
 ---
 
 ## Execution
 
-### run
+### run(doexpr)
 
-Synchronously execute a Program/effect with explicit handler stack.
+Execute a DoExpr program to completion and return the raw result value.
 
 ```python
-from doeff import default_handlers, run
+from doeff import do, run
+from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects.scheduler import scheduled
 
-result = run(
-    my_program(),
-    handlers=default_handlers(),
-    env={"key": "value"},
-    store={"state": 0},
-)
+@do
+def my_program():
+    name = yield Ask("name")
+    yield Put("greeted", True)
+    yield Tell(f"Hello, {name}")
+    return f"Done greeting {name}"
+
+prog = my_program()
+prog = writer(prog)
+prog = state()(prog)
+prog = reader(env={"name": "Alice"})(prog)
+result = run(scheduled(prog))
+# result is "Done greeting Alice" (raw value, not a wrapper)
 ```
 
 **Signature:**
 
 ```python
-def run(
-    program: DoExpr[T] | EffectValue[T],
-    handlers: Sequence[Any] = (),
-    env: dict[Any, Any] | None = None,
-    store: dict[str, Any] | None = None,
-    trace: bool = False,
-) -> RunResult[T]
+def run(doexpr) -> T
 ```
 
-`env` and `store` are the execution inputs (Reader and State roots).
-`handlers` is a low-level runner hook. For custom handler composition, prefer direct
-`handler(program)` calls.
+`run()` takes a single argument -- the program to execute. There are no `handlers`, `env`,
+or `store` keyword arguments. Compose handlers by wrapping the program before passing it
+to `run()`. Use `scheduled()` as the outermost wrapper when using scheduler effects
+(`Spawn`, `Wait`, `Gather`, `Race`, semaphores, promises).
+
+On error, exceptions propagate with enriched doeff traceback information printed to stderr.
 
 ---
 
-### async_run
+### scheduled(program)
 
-Asynchronously execute a Program/effect with async-aware await handling.
-
-```python
-from doeff import async_run, default_async_handlers
-
-result = await async_run(
-    my_program(),
-    handlers=default_async_handlers(),
-    env={"key": "value"},
-    store={"state": 0},
-)
-```
-
-**Signature:**
+Wrap a program with the cooperative scheduler. Returns a new DoExpr that, when passed to
+`run()`, enables all scheduler effects (Spawn, Wait, Gather, Race, Cancel, promises,
+semaphores).
 
 ```python
-async def async_run(
-    program: DoExpr[T] | EffectValue[T],
-    handlers: Sequence[Any] = (),
-    env: dict[Any, Any] | None = None,
-    store: dict[str, Any] | None = None,
-    trace: bool = False,
-) -> RunResult[T]
+from doeff_core_effects.scheduler import scheduled
+
+result = run(scheduled(prog))
 ```
 
-`handlers` is a low-level runner hook. For custom handler composition, prefer direct
-`handler(program)` calls.
+**Signature:** `scheduled(program) -> DoExpr`
+
+This is the replacement for the deleted `async_run()`. All async/concurrent effects
+require `scheduled()` to be installed.
 
 ---
 
----
+## Handlers
 
-## Utilities
-
-### graph_to_html(graph, *, title="doeff Graph Snapshot", mark_success=False)
-
-Generate graph-visualization HTML as a Program.
+Handlers are `Program -> Program` functions. Compose them by calling them in sequence:
 
 ```python
-from doeff import default_handlers, graph_to_html, run
+from doeff import do, run
+from doeff_core_effects.handlers import reader, state, writer, try_handler, slog_handler
+from doeff_core_effects.scheduler import scheduled
 
-html = run(graph_to_html(graph), handlers=default_handlers()).value
+prog = my_program()
+prog = slog_handler(prog)        # innermost
+prog = writer(prog)
+prog = state(initial={"k": 0})(prog)
+prog = reader(env={"key": "val"})(prog)  # outermost user handler
+result = run(scheduled(prog))    # scheduler wraps everything
 ```
 
-**Signature:**
-`graph_to_html(graph: WGraph, *, title: str = ..., mark_success: bool = False) -> Program[str]`
+### reader(env=None)
+
+Handles `Ask(key)` by looking up `key` in `env`. Raises `KeyError` on miss.
+
+```python
+from doeff_core_effects.handlers import reader
+
+prog = reader(env={"db_url": "postgres://..."})(my_program())
+```
 
 ---
 
-### write_graph_html(graph, output_path, *, title="doeff Graph Snapshot", mark_success=False)
+### lazy_ask(env=None, *, strict=False)
 
-Write graph HTML to a file as a Program.
+Handles `Ask` and `Local` with lazy evaluation and caching. If an env value is a
+`Program`, evaluates it lazily once per key with concurrent coordination via semaphores.
 
 ```python
-from doeff import default_handlers, run, write_graph_html
+from doeff_core_effects.handlers import lazy_ask
 
-path = run(write_graph_html(graph, "output.html"), handlers=default_handlers()).value
+prog = lazy_ask(env={"config": load_config_program()})(my_program())
 ```
 
-**Signature:**
-`write_graph_html(graph: WGraph, output_path: str | Path, *, title: str = ..., mark_success: bool = False) -> Program[Path]`
+- `strict=False` (default): unresolved keys are forwarded to outer handlers via `Pass`.
+- `strict=True`: unresolved keys raise `KeyError`.
+
+Requires `scheduled()` to be installed (for semaphore support).
+
+---
+
+### state(initial=None)
+
+Handles `Get(key)` and `Put(key, value)` with a mutable dict.
+
+```python
+from doeff_core_effects.handlers import state
+
+prog = state(initial={"counter": 0})(my_program())
+```
+
+---
+
+### writer
+
+Handles `Tell(message)` / `WriterTellEffect`. Collects messages into a list.
+Pre-installed `Program -> Program` handler (not a factory -- use directly).
+Requires `state()` to be installed as an outer handler.
+
+Access the log from inside a `@do` program via `yield writer_log()`.
+
+```python
+from doeff_core_effects.handlers import writer, writer_log
+
+prog = writer(my_program())
+prog = state()(prog)
+run(scheduled(prog))
+
+# To access the log, use writer_log() inside a @do program:
+@do
+def with_log_access():
+    yield my_program()
+    log = yield writer_log()
+    return log
+```
+
+---
+
+### slog_handler
+
+Handles `Slog` / `WriterTellEffect` structured log entries. Collects entries as dicts
+with `msg` and all kwargs. Pre-installed `Program -> Program` handler (not a factory --
+use directly). Requires `state()` to be installed as an outer handler.
+
+Access the log from inside a `@do` program via `yield slog_log()`.
+
+```python
+from doeff_core_effects.handlers import slog_handler, slog_log
+
+prog = slog_handler(my_program())
+prog = state()(prog)
+run(scheduled(prog))
+
+# To access the log, use slog_log() inside a @do program:
+@do
+def with_slog_access():
+    yield my_program()
+    log = yield slog_log()
+    return log
+# log is [{"msg": "event", "count": 42}, ...]
+```
+
+---
+
+### try_handler
+
+Handles `Try(program)` -- wraps inner program execution and catches errors as
+`Ok(value)` or `Err(error)`. Pre-installed (not a factory -- use directly).
+
+```python
+from doeff_core_effects.handlers import try_handler
+
+prog = try_handler(my_program())
+```
+
+---
+
+### local_handler
+
+Handles `Local(env, program)` -- scoped environment overrides. Pre-installed
+(not a factory -- use directly).
+
+```python
+from doeff_core_effects.handlers import local_handler
+
+prog = local_handler(my_program())
+```
+
+---
+
+### listen_handler
+
+Handles `Listen(program, types=...)` -- collects effects during sub-program execution.
+Pre-installed (not a factory -- use directly).
+
+```python
+from doeff_core_effects.handlers import listen_handler
+
+prog = listen_handler(my_program())
+```
+
+---
+
+### await_handler()
+
+Handles `Await(coroutine)` by bridging async into the scheduler via `ExternalPromise`.
+Requires `scheduled()` to be installed.
+
+```python
+from doeff_core_effects.handlers import await_handler
+
+prog = await_handler()(my_program())
+```
+
+---
+
+### env_var_ask(*, prefix="DOEFF_")
+
+Handles `Ask(key)` by looking up `os.environ[prefix + key]`. Supports `{module.path}`
+syntax for importing symbols. Unresolved keys are forwarded to outer handlers.
+
+```python
+from doeff_core_effects.handlers import env_var_ask
+
+prog = env_var_ask()(my_program())
+```
 
 ---
 
@@ -816,53 +939,110 @@ path = run(write_graph_html(graph, "output.html"), handlers=default_handlers()).
 
 | Category | Effects |
 |----------|---------|
-| **Reader** | Ask, Local |
-| **State** | Get, Put, Modify |
-| **Writer** | Tell, Listen, StructuredLog, slog |
-| **Async/Concurrency** | Await, Spawn, Wait, Gather, Race, Task.cancel, TaskCancelledError |
-| **Semaphore** | CreateSemaphore, AcquireSemaphore, ReleaseSemaphore |
-| **Control** | Pure, handler installer calls, WithHandlerType, WithIntercept |
-| **Error** | Try, Ok, Err |
-| **Cache** | CacheGet, CachePut |
-| **Graph** | Step, Annotate, Snapshot, CaptureGraph |
-| **Atomic** | AtomicGet, AtomicUpdate |
+| **Reader** | `Ask`, `Local` |
+| **State** | `Get`, `Put` |
+| **Writer** | `Tell`, `slog`, `WriterTellEffect`, `Listen` |
+| **Async/Concurrency** | `Await`, `Spawn`, `Wait`, `Gather`, `Race`, `Cancel` |
+| **Semaphore** | `CreateSemaphore`, `AcquireSemaphore`, `ReleaseSemaphore` |
+| **Promise** | `CreatePromise`, `CompletePromise`, `FailPromise`, `CreateExternalPromise` |
+| **Control** | `Pure`, `Pass`, `WithObserve`, handler installer calls |
+| **Error** | `Try`, `Ok`, `Err` |
+| **Cache** | `CacheGet`, `CachePut` (in `doeff_core_effects.cache_effects`) |
+| **Memo** | `MemoGet`, `MemoPut` (in `doeff_core_effects.memo_effects`) |
 
 ### Common Imports
 
 ```python
 # Core
-from doeff import Program, EffectBase, do
+from doeff import Program, DoExpr, do
 
 # Execution
-from doeff import run, async_run
-from doeff import default_handlers, default_async_handlers
+from doeff import run
+from doeff_core_effects.scheduler import scheduled
 
 # Reader / State / Writer
-from doeff import Ask, Local, Get, Put, Modify, Tell, Listen, StructuredLog, slog
+from doeff import Ask, Local, Get, Put, Tell, Listen, slog, WriterTellEffect
 
 # Async / Concurrency
-from doeff import Await, Spawn, Wait, Gather, Race, Task
-from doeff.effects import TaskCancelledError  # raised on Wait/Gather/Race for cancelled tasks
+from doeff import Await, Spawn, Wait, Gather, Race, Cancel, Task
+from doeff import TaskCancelledError
 
 # Semaphore
 from doeff import AcquireSemaphore, CreateSemaphore, ReleaseSemaphore, Semaphore
 
+# Promise
+from doeff import CreatePromise, CompletePromise, FailPromise, CreateExternalPromise
+
 # Control
-from doeff import Pure, WithHandlerType, WithIntercept
+from doeff import Pure, Pass, WithObserve
 
 # Error handling
 from doeff import Try, Ok, Err
 
-# Cache
-from doeff import CacheGet, CachePut, cache
+# Maybe
+from doeff import Some, Nothing
 
-# Graph
-from doeff import Step, Annotate, Snapshot, CaptureGraph, graph_to_html, write_graph_html
+# Handlers
+from doeff_core_effects.handlers import (
+    reader, lazy_ask, state, writer, try_handler,
+    slog_handler, local_handler, listen_handler, await_handler,
+)
 
-# Atomic
-from doeff import AtomicGet, AtomicUpdate
+# Cache effects (separate package)
+from doeff_core_effects.cache_effects import CacheGet, CachePut
+from doeff_core_effects.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 
+# Memo effects (separate package)
+from doeff_core_effects.memo_effects import MemoGet, MemoPut
 ```
+
+### Handler Composition Pattern
+
+```python
+from doeff import do, run
+from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects.scheduler import scheduled
+
+@do
+def my_program():
+    name = yield Ask("name")
+    yield Put("count", 1)
+    yield Tell(f"greeted {name}")
+    return name
+
+prog = my_program()
+prog = writer(prog)
+prog = state()(prog)
+prog = reader(env={"name": "Alice"})(prog)
+result = run(scheduled(prog))
+```
+
+---
+
+## Removed APIs
+
+The following APIs have been removed. Using them raises `RuntimeError` with a migration hint.
+
+| Removed | Replacement |
+|---------|-------------|
+| `default_handlers` | Compose handlers by calling `handler(program)` |
+| `async_run` | Use `run()` with `scheduled()` |
+| `default_async_handlers` | Compose handlers by calling `handler(program)` |
+| `RunResult` | `run()` returns raw values directly |
+| `Modify` | Use `Get` + `Put` instead |
+| `WithIntercept` | Use `WithObserve` instead |
+| `KleisliProgram` | Use `@do` instead |
+| `Delegate` | Use `yield effect` to re-perform in handler body |
+| `cache` (decorator) | Cache module removed |
+| `CacheGet` (top-level) | Renamed to `MemoGet` in `doeff_core_effects.memo_effects` |
+| `graph_snapshot` | Concept removed |
+| `Step`, `Annotate`, `Snapshot`, `CaptureGraph` | Graph tracking removed |
+| `graph_to_html`, `write_graph_html` | Graph visualization removed |
+| `AtomicGet`, `AtomicUpdate` | Concept removed |
+| `AllocVar`, `ReadVar` | Use var_store directly |
+| `presets` | Presets module removed |
+
+---
 
 ## Next Steps
 
