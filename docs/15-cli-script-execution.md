@@ -161,10 +161,12 @@ The following variables are automatically injected into your script's global nam
 
 | Variable | Type | Description |
 |----------|------|-------------|
-| `RunResult` | `Type[RunResult]` | RunResult class for type checking |
 | `Program` | `Type[Program]` | Program class for type checking |
-| `run` | `Callable[..., RunResult[T]]` | Runtime entrypoint for executing programs |
-| `default_handlers` | `Callable[[], dict]` | Builds the default sync handler set |
+| `run` | `Callable[..., T]` | Runtime entrypoint for executing programs (returns raw value) |
+| `reader` | `Callable` | Reader handler from `doeff_core_effects.handlers` |
+| `state` | `Callable` | State handler from `doeff_core_effects.handlers` |
+| `writer` | `Callable` | Writer handler from `doeff_core_effects.handlers` |
+| `scheduled` | `Callable` | Scheduler from `doeff_core_effects.scheduler` |
 
 ### Standard Library
 
@@ -192,8 +194,8 @@ if callable(interpreter):
     print(f"New result: {new_result}")
 
 # Use runtime helpers
-runtime_result = run(program, handlers=default_handlers())
-print(f"Runtime helper result: {runtime_result.value}")
+runtime_result = run(scheduled(writer()(state()(reader(env={})(program)))))
+print(f"Runtime helper result: {runtime_result}")
 
 # Use standard library
 print(f"Python version: {sys.version}")
@@ -247,8 +249,8 @@ Modify and re-execute programs:
 ```bash
 uv run doeff run --program myapp.base_program - <<'PY'
 # Re-run with runtime helpers
-result = run(program, handlers=default_handlers())
-print(f"Re-run result: {result.value}")
+result = run(scheduled(writer()(state()(reader(env={})(program)))))
+print(f"Re-run result: {result}")
 PY
 ```
 

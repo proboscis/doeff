@@ -26,9 +26,9 @@ program in one of two ways:
   `seedream_client` key.
 
 ```python
-import asyncio
-
-from doeff import async_run, default_async_handlers, do
+from doeff import do, run
+from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects.scheduler import scheduled
 from doeff_seedream import edit_image__seedream4
 
 @do
@@ -39,14 +39,11 @@ def main():
     )
     result.images[0].save("harbour.png")
 
-run_result = asyncio.run(
-    async_run(
-        main(),
-        handlers=default_async_handlers(),
-        env={"seedream_api_key": "YOUR_ARK_KEY"},
-    )
-)
-run_result.value
+prog = main()
+prog = writer()(prog)
+prog = state()(prog)
+prog = reader(env={"seedream_api_key": "YOUR_ARK_KEY"})(prog)
+run(scheduled(prog))
 ```
 
 ## Controlling the request payload
@@ -85,8 +82,8 @@ atomic shared state keys:
 - ``seedream_cost_<model>`` – model-specific totals.
 - ``seedream_api_calls`` – append-only list capturing per-call cost metadata.
 
-Every execution also logs the cost via ``Log`` so that ledger entries surface in
-``RunResult.log``.
+Every execution also logs the cost via ``Tell`` so that ledger entries surface in
+the writer handler's log.
 
 ## Request flow diagram
 
@@ -105,7 +102,7 @@ ASCII overview:
                                                                 |
                                                                 v
 +------------------+       +---------------------+       +------------------+
-| RunResult / Step | <---- | _decode_images(...) | <---- | JSON response    |
+| Result           | <---- | _decode_images(...) | <---- | JSON response    |
 +------------------+       +---------------------+       +------------------+
 ```
 

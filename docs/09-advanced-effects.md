@@ -4,21 +4,22 @@ Advanced effects for parallel execution, shared-state coordination, and runtime-
 
 ## Gather Effects
 
-Execute multiple Programs in parallel and collect results.
+Execute multiple spawned tasks in parallel and collect results.
 
-### Gather - Parallel Programs
+### Gather - Parallel Tasks
 
 ```python
-from doeff import Gather, do
+from doeff import do
+from doeff_core_effects.scheduler import Spawn, Gather, Wait, scheduled
 
 @do
 def parallel_programs():
-    prog1 = fetch_user(1)
-    prog2 = fetch_user(2)
-    prog3 = fetch_user(3)
+    t1 = yield Spawn(fetch_user(1))
+    t2 = yield Spawn(fetch_user(2))
+    t3 = yield Spawn(fetch_user(3))
 
-    # Run all Programs in parallel
-    users = yield Gather(prog1, prog2, prog3)
+    # Wait for all tasks in parallel
+    users = yield Gather(t1, t2, t3)
     # users = [user1, user2, user3]
 
     return users
@@ -26,7 +27,7 @@ def parallel_programs():
 
 ### User-Side Dict Pattern
 
-If you need to run a dict of Programs in parallel, use `Gather` with dict reconstruction:
+If you need to run a dict of programs in parallel, use `Spawn` + `Gather` with dict reconstruction:
 
 ```python
 @do
@@ -37,7 +38,10 @@ def parallel_dict():
         "comments": fetch_comments(123),
     }
     keys = list(programs.keys())
-    values = yield Gather(*programs.values())
+    tasks = []
+    for prog in programs.values():
+        tasks.append((yield Spawn(prog)))
+    values = yield Gather(*tasks)
     results = dict(zip(keys, values))
 
     # results = {"user": ..., "posts": [...], "comments": [...]}
@@ -46,10 +50,11 @@ def parallel_dict():
 
 ### Using Gather with Async Operations
 
-To run async operations in parallel, wrap them with `Await`:
+To run async operations in parallel, wrap them with `Await` and `Spawn`:
 
 ```python
-from doeff import Await, Gather, do
+from doeff import Await, do
+from doeff_core_effects.scheduler import Spawn, Gather
 
 @do
 def parallel_async():
@@ -57,10 +62,10 @@ def parallel_async():
     def fetch_data(url):
         return (yield Await(http_get(url)))
 
-    results = yield Gather(
-        fetch_data("https://api1.example.com"),
-        fetch_data("https://api2.example.com"),
-    )
+    t1 = yield Spawn(fetch_data("https://api1.example.com"))
+    t2 = yield Spawn(fetch_data("https://api2.example.com"))
+
+    results = yield Gather(t1, t2)
     return results
 ```
 
@@ -77,51 +82,40 @@ Use `Try(...)` around child programs when you need partial results instead of fa
 
 ## State Effects in Concurrent Programs
 
-State semantics use `Get`, `Put`, and `Modify`.
+State semantics use `Get` and `Put`.
 
 - `Get(key)`: read a required value (raises `KeyError` if missing)
 - `Put(key, value)`: write a value
-- `Modify(key, fn)`: atomic read-modify-write update
 
-### Atomic Updates with Modify
+### Read-Modify-Write with Get + Put
 
-Use `Modify` when multiple tasks can update the same key.
+Use `Get` followed by `Put` when you need to update state:
 
 ```python
-from doeff import Modify, Tell, do
+from doeff import do
+from doeff_core_effects import Get, Put, Tell
 
 @do
 def increment_counter():
-    new_value = yield Modify("counter", lambda current: (current or 0) + 1)
+    current = yield Get("counter")
+    new_value = (current or 0) + 1
+    yield Put("counter", new_value)
     yield Tell(f"Counter: {new_value}")
     return new_value
 ```
 
-### Get/Put vs Modify
+### Common Update Patterns
 
 ```python
-from doeff import Get, Modify, Put, do
-
-@do
-def unsafe_increment():
-    # Not atomic across tasks
-    count = yield Get("counter")
-    yield Put("counter", count + 1)
-
-@do
-def safe_increment():
-    # Atomic read-modify-write
-    return (yield Modify("counter", lambda current: (current or 0) + 1))
-```
-
-### Common Modify Patterns
-
-```python
-from doeff import Modify, do
+from doeff import do
+from doeff_core_effects import Get, Put
 
 @do
 def accumulate_result(value):
-    return (yield Modify("total", lambda current: (current or 0) + value))
+    current = yield Get("total")
+    new_total = (current or 0) + value
+    yield Put("total", new_total)
+    return new_total
 ```
 
 ## Semaphore Effects
@@ -164,7 +158,7 @@ def run_workers():
     tasks = []
     for i in range(10):
         tasks.append((yield Spawn(worker(sem, i))))
-    return (yield Gather(*[Wait(task) for task in tasks]))
+    return (yield Gather(*tasks))
 ```
 
 ### Semaphore Use Cases
@@ -183,7 +177,7 @@ def run_workers():
 
 ## Spawn Effect
 
-Execute Programs in the background and retrieve results later.
+Execute programs in the background and retrieve results later.
 
 ### Basic Spawn
 
@@ -222,7 +216,7 @@ def parallel_background_work():
 
 | Effect | Execution | Use Case |
 |--------|-----------|----------|
-| `Gather(*progs)` | Parallel, blocking | Wait for all immediately |
+| `Gather(*tasks)` | Parallel, blocking | Wait for all spawned tasks immediately |
 | `Spawn(prog)` | Background, non-blocking | Do other work while waiting |
 
 ```python
@@ -230,7 +224,11 @@ from doeff import Gather, Spawn, Wait, do
 
 @do
 def comparison():
-    results = yield Gather(prog1(), prog2(), prog3())
+    # Spawn all, then gather
+    t1 = yield Spawn(prog1())
+    t2 = yield Spawn(prog2())
+    t3 = yield Spawn(prog3())
+    results = yield Gather(t1, t2, t3)
 
     task = yield Spawn(slow_prog())
     yield do_other_work()
@@ -240,45 +238,47 @@ def comparison():
 
 ## Race Effect
 
-`Race(*waitables)` resumes when the first waitable completes.
+`Race(*tasks)` resumes when the first task completes.
 
 - First completion wins.
 - If the winner fails, `Race` raises that error.
 - If the winner is cancelled, `Race` raises `TaskCancelledError`.
-- The returned `RaceResult` exposes `first`, `value`, and `rest`.
+- `Race` returns the winning value directly.
 
 By default, non-winning siblings keep running. Cancel them explicitly when you want winner-takes-all
 behavior:
 
 ```python
-from doeff import Race, Spawn, do
+from doeff import Cancel, Race, Spawn, do
 
 @do
 def first_wins():
     fast = yield Spawn(fetch_fast())
     slow = yield Spawn(fetch_slow())
 
-    result = yield Race(fast, slow)
-    for loser in result.rest:
-        _ = yield loser.cancel()
+    value = yield Race(fast, slow)
 
-    return result.value
+    # Cancel remaining tasks explicitly
+    yield Cancel(fast)
+    yield Cancel(slow)
+
+    return value
 ```
 
 ## Cancel / TaskCancelledError
 
 Cancellation is cooperative and non-blocking:
 
-- `yield task.cancel()` requests cancellation and returns immediately.
+- `yield Cancel(task)` requests cancellation and returns immediately.
 - `Wait`, `Gather`, and `Race` raise `TaskCancelledError` when waiting on a cancelled task.
 
 ```python
-from doeff import Try, Spawn, TaskCancelledError, Wait, do
+from doeff import Cancel, Try, Spawn, TaskCancelledError, Wait, do
 
 @do
 def cancel_and_join():
     task = yield Spawn(long_running_job())
-    _ = yield task.cancel()
+    yield Cancel(task)
 
     joined = yield Try(Wait(task))
     if joined.is_err() and isinstance(joined.error, TaskCancelledError):
@@ -286,64 +286,52 @@ def cancel_and_join():
     return joined.value
 ```
 
-## WithIntercept
+## WithObserve
 
-`WithIntercept` is the canonical interception primitive. It observes or rewrites yielded effects
+`WithObserve` is the canonical observation primitive. It observes yielded effects
 within a scoped subtree (including child dispatch in that scope).
 
-### Interceptor Contract
+### Observer Contract
 
 ```python
-from doeff import Effect, Program, do
+from doeff import do
 
-@do
-def interceptor(effect: Effect) -> Effect | Program:
-    ...
+def observer(effect):
+    # Observer is a plain callable that receives each effect.
+    # It is called for observation only — return value is ignored.
+    pass
 ```
-
-- Return the original effect to pass through unchanged.
-- Return a replacement `Effect` or `Program` to rewrite that dispatch step.
-- If the interceptor raises, that error propagates.
-- Program exceptions inside the intercepted subtree still propagate unless wrapped (for example by `Try`).
 
 ### Child Propagation
 
-`WithIntercept` applies to scoped child execution contexts:
+`WithObserve` applies to scoped child execution contexts:
 
-- `Gather` branches run under the intercept scope.
+- `Gather` branches run under the observe scope.
 - `Spawn` tasks created inside the scope inherit the scope.
 
 In parallel contexts, observation order is not guaranteed.
 
 ```python
-from doeff import Ask, AskEffect, Gather, Spawn, WithIntercept, do
-
-@do
-def fallback_user():
-    value = yield Ask("fallback_user")
-    return f"user:{value}"
-
-@do
-def interceptor(effect):
-    if isinstance(effect, AskEffect) and effect.key == "user":
-        return fallback_user()
-    return effect
+from doeff import Ask, Spawn, WithObserve, Gather, Wait, do
 
 @do
 def child():
     return (yield Ask("user"))
 
 @do
-def run_with_intercept():
-    t1 = yield Spawn(child())
-    t2 = yield Spawn(child())
-    return (yield WithIntercept(interceptor, Gather(t1, t2), types=(AskEffect,), mode="include"))
-```
+def run_with_observe():
+    seen = []
+    def my_observer(effect):
+        seen.append(effect)
 
-### Nested Interceptors
+    @do
+    def body():
+        t1 = yield Spawn(child())
+        t2 = yield Spawn(child())
+        return (yield Gather(t1, t2))
 
-```python
-WithIntercept(outer, WithIntercept(inner, program(), types=(), mode="exclude"))
+    result = yield WithObserve(my_observer, body())
+    return result
 ```
 
 ## Custom Control Effects with Frames
@@ -364,7 +352,11 @@ retries without modifying the runtime internals.
 
 ## Time Effects Runtime Matrix
 
-`Delay`, `GetTime`, and `WaitUntil` are runtime-dependent. Use this behavior matrix:
+`Delay`, `GetTime`, and `WaitUntil` are runtime-dependent. They live in the `doeff_time` package:
+
+```python
+from doeff_time import Delay, GetTime, WaitUntil
+```
 
 | Effect | Sync Runtime | Simulation Runtime | Async Runtime |
 |--------|--------------|--------------------|---------------|
@@ -376,10 +368,11 @@ If `WaitUntil` receives a time in the past, it returns immediately.
 
 ## Combining Advanced Effects
 
-### Gather + Modify
+### Gather + State Updates
 
 ```python
-from doeff import Gather, Get, Modify, Put, do
+from doeff import Gather, Spawn, do
+from doeff_core_effects import Get, Put
 
 @do
 def parallel_counter():
@@ -388,17 +381,17 @@ def parallel_counter():
     @do
     def increment_task(n):
         for _ in range(n):
-            yield Modify("count", lambda current: (current or 0) + 1)
+            current = yield Get("count")
+            yield Put("count", (current or 0) + 1)
         return "done"
 
-    yield Gather(
-        increment_task(100),
-        increment_task(100),
-        increment_task(100),
-    )
+    t1 = yield Spawn(increment_task(100))
+    t2 = yield Spawn(increment_task(100))
+    t3 = yield Spawn(increment_task(100))
+    yield Gather(t1, t2, t3)
 
     final = yield Get("count")
-    return final  # 300
+    return final
 ```
 
 ## Best Practices
@@ -422,20 +415,20 @@ This does not require adding `__interpreter__` to your environment.
 ### When to Use Gather
 
 **DO:**
-- Multiple independent Programs
+- Multiple independent spawned tasks
 - Fan-out computation patterns
 - Parallel data fetching
 
 **DON'T:**
 - Dependent computations (use sequential yields)
-- Single Program (just yield it directly)
+- Single program (just yield it directly)
 
-### When to Use Modify
+### When to Use Get + Put
 
 **DO:**
-- Concurrent state updates
+- State reads and updates
 - Counters and accumulators
-- Atomic read-modify-write flows
+- Sequential read-modify-write flows
 
 **DON'T:**
 - Isolated single-step reads (`Get` is enough)
@@ -452,32 +445,30 @@ This does not require adding `__interpreter__` to your environment.
 - Skip `ReleaseSemaphore` on error paths
 - Use huge permit counts as a substitute for backpressure design
 
-### When to Use WithIntercept
+### When to Use WithObserve
 
 **DO:**
-- Rewrite or short-circuit selected effects in a scoped subtree
-- Inject fallback programs for missing data or policy checks
-- Use `types`/`mode` filters to scope observation cost
+- Observe effects in a scoped subtree for logging or tracing
+- Monitor effects across parallel child branches
 
 **DON'T:**
 - Assume deterministic observation order across parallel child effects
-- Return replacement programs that recursively trigger the same interceptor without a stop condition
 
 ## Summary
 
 | Effect | Purpose | Use Case |
 |--------|---------|----------|
-| `Gather(*progs)` | Parallel Programs | Fan-out computation |
+| `Spawn(prog)` + `Gather(*tasks)` | Parallel tasks | Fan-out computation |
 | `Spawn(prog)` | Background execution | Non-blocking tasks |
-| `Race(*waitables)` | First-completion wait | Fastest-response selection |
-| `task.cancel()` | Cooperative task cancellation | Stop non-winning/background work |
-| `WithIntercept(f, expr, types, mode)` | Scoped effect transformation | Policy injection, tracing, effect rewriting |
-| `Modify(key, fn)` | Atomic read-modify-write | Shared-state updates |
+| `Race(*tasks)` | First-completion wait | Fastest-response selection |
+| `Cancel(task)` | Cooperative task cancellation | Stop non-winning/background work |
+| `WithObserve(observer, body)` | Scoped effect observation | Tracing, logging |
+| `Get(key)` + `Put(key, val)` | State read and write | Shared-state updates |
 | `CreateSemaphore / AcquireSemaphore / ReleaseSemaphore` | Cooperative concurrency limit | Rate limiting, mutex, pools |
-| `Delay / GetTime / WaitUntil` | Runtime-aware time control | Time-based workflows |
+| `Delay / GetTime / WaitUntil` | Runtime-aware time control (doeff_time) | Time-based workflows |
 
 ## Next Steps
 
-- **[Async Effects](04-async-effects.md)** - Async operations with Await and Gather
+- **[Async Effects](04-async-effects.md)** - Async operations with Await
 - **[Cache System](07-cache-system.md)** - Persistent caching
 - **[Patterns](12-patterns.md)** - Advanced patterns and best practices

@@ -112,12 +112,12 @@ def test_process_order(mock_sleep, mock_http, mock_db, mock_cache_set, mock_cach
 
 ```python
 def test_process_order():
-    result = run(process_order("order-123"), handlers=[
-        InMemoryCache(),
-        StubDB({"order-123": Order(qty=5, product_id="X")}),
-        StubHTTP({"/api/price/X": {"price": 100}}),
-    ])
-    assert result.value == 500
+    prog = process_order("order-123")
+    prog = StubHTTP({"/api/price/X": {"price": 100}})(prog)
+    prog = StubDB({"order-123": Order(qty=5, product_id="X")})(prog)
+    prog = InMemoryCache()(prog)
+    result = run(scheduled(prog))
+    assert result == 500
 ```
 
 **What the audience sees:**
@@ -135,20 +135,20 @@ def test_process_order():
 ### Record a production run:
 
 ```python
-result = run(process_order("order-123"), handlers=[
-    RecordingHandler("runs/order-123-20260212.json"),
-    RealDB(),
-    RealHTTP(),
-    RealCache(),
-])
+prog = process_order("order-123")
+prog = RealCache()(prog)
+prog = RealHTTP()(prog)
+prog = RealDB()(prog)
+prog = RecordingHandler("runs/order-123-20260212.json")(prog)
+result = run(scheduled(prog))
 ```
 
 ### Replay without any external services:
 
 ```python
-result = run(process_order("order-123"), handlers=[
-    ReplayHandler("runs/order-123-20260212.json"),
-])
+prog = process_order("order-123")
+prog = ReplayHandler("runs/order-123-20260212.json")(prog)
+result = run(scheduled(prog))
 # Zero network calls. Zero DB queries. Instant. Deterministic.
 ```
 
@@ -156,10 +156,10 @@ result = run(process_order("order-123"), handlers=[
 
 ```python
 # Same recorded data, but with a new pricing algorithm
-result = run(process_order("order-123"), handlers=[
-    ReplayHandler("runs/order-123-20260212.json"),
-    NewPricingHandler(),  # Override just the pricing effect
-])
+prog = process_order("order-123")
+prog = NewPricingHandler()(prog)  # Override just the pricing effect
+prog = ReplayHandler("runs/order-123-20260212.json")(prog)
+result = run(scheduled(prog))
 ```
 
 **What the audience sees:**

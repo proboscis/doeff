@@ -4,7 +4,7 @@ This chapter covers async integration and scheduler primitives for cooperative c
 
 ## Table of Contents
 
-- [Runner and Handler Presets](#runner-and-handler-presets)
+- [Runner and Scheduled Programs](#runner-and-scheduled-programs)
 - [Await Effect](#await-effect)
 - [Scheduler Effect Catalog](#scheduler-effect-catalog)
 - [Waitables and Handles](#waitables-and-handles)
@@ -16,32 +16,34 @@ This chapter covers async integration and scheduler primitives for cooperative c
 - [Common Mistakes](#common-mistakes)
 - [Quick Reference](#quick-reference)
 
-## Runner and Handler Presets
+## Runner and Scheduled Programs
 
-Pair each runner with the matching handler preset. The preferred pairings are marked below.
+There is a single runner: `run(doexpr)`. It takes one argument (a program expression) and returns the
+raw result value directly. To enable scheduler effects (Spawn, Wait, Gather, Race, Cancel), wrap
+your program with `scheduled()`.
 
-The examples in this chapter use `handlers=` only to install the builtin sync/async runtime preset.
 For custom handler composition, call a Program -> Program handler installer directly, for example
 `handler(program)`.
 
-| Runner | Preset | Status | Await Behavior |
-| --- | --- | --- | --- |
-| `run(...)` | `default_handlers()` | Valid (preferred) | Uses `sync_await_handler` |
-| `await async_run(...)` | `default_async_handlers()` | Valid (preferred) | Uses `async_await_handler` |
-| `await async_run(...)` | `default_handlers()` | Valid (non-preferred) | Works, but `Await` work runs sequentially/blocking |
-| `run(...)` | `default_async_handlers()` | Invalid | Raises `TypeError` (`async_await_handler` requires async driver) |
+```python
+from doeff import run
+from doeff_core_effects.scheduler import scheduled
+
+result = run(scheduled(program()))
+```
+
+Handler composition example:
 
 ```python
-from doeff import async_run, default_async_handlers, default_handlers, run
+from doeff import run
+from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects.scheduler import scheduled
 
-sync_result = run(program(), handlers=default_handlers())
-async_result = await async_run(program(), handlers=default_async_handlers())
-
-# Non-preferred but valid: Await work is sequential/blocking.
-slow_result = await async_run(program(), handlers=default_handlers())
-
-# Invalid pairing: raises TypeError.
-bad_result = run(program(), handlers=default_async_handlers())
+prog = my_program()
+prog = writer()(prog)
+prog = state()(prog)
+prog = reader(env={"name": "doeff"})(prog)
+result = run(scheduled(prog))
 ```
 
 ## Await Effect
@@ -66,16 +68,15 @@ Both Await handlers bridge completion through `CreateExternalPromise` plus `Wait
   - submits the awaitable to a background asyncio loop thread
   - waits on `promise.future` via `Wait`
   - spawned Await work is sequential (no overlap)
-- `async_await_handler` (`async_run` preset):
+- `async_await_handler`:
   - schedules awaitable submission through the async runtime path
   - waits on `promise.future` via `Wait`
   - spawned Await work can overlap
 
 ### Await timing note
 
-`Await` on sync `run(...)` is not concurrent by itself. If you spawn two Await tasks, each
-`Await` resolves sequentially under `sync_await_handler`. Concurrency requires
-`async_await_handler` with `async_run(...)`.
+`Await` under `sync_await_handler` is not concurrent by itself. If you spawn two Await tasks, each
+`Await` resolves sequentially. Concurrency requires the `async_await_handler`.
 
 ## Scheduler Effect Catalog
 
@@ -87,7 +88,7 @@ The scheduler primitives are:
 | `Wait(task_or_future)` | `Task` or `Future` waitable handle | `T` | Suspend until one waitable resolves |
 | `Gather(*waitables)` | `Task`/`Future` waitable handles | `list[T]` | Suspend until all complete (input order) |
 | `Race(*waitables)` | `Task`/`Future` waitable handles | `RaceResult` | Suspend until first completion |
-| `task.cancel()` | `Task[T]` | `None` | Request task cancellation |
+| `Cancel(task)` | `Task[T]` | `None` | Request task cancellation (effect, not method) |
 | `SchedulerYield` | internal | internal | Cooperative preemption point inserted per yield |
 | `CreatePromise()` | none | `Promise[T]` | Allocate doeff-internal promise |
 | `CompletePromise(p, value)` | `Promise[T]`, `T` | `None` | Resolve promise successfully |
@@ -206,10 +207,10 @@ def collect_all_even_on_errors():
 - if that completion is cancellation, `Race` raises `TaskCancelledError`
 
 Race losers continue running by default. Cancel them explicitly if needed (for Task inputs):
-`for t in result.rest: yield t.cancel()`.
+`for t in result.rest: yield Cancel(t)`.
 
 ```python
-from doeff import Race, Spawn, do
+from doeff import Cancel, Race, Spawn, do
 
 @do
 def first_result():
@@ -221,7 +222,7 @@ def first_result():
 
     # Race losers continue by default; cancel explicitly for teardown.
     for t in result.rest:
-        _ = yield t.cancel()
+        yield Cancel(t)
     return winner, value
 ```
 
@@ -229,20 +230,25 @@ def first_result():
 
 Cancellation is explicit and cooperative:
 
-- request cancellation via `yield task.cancel()`
+- request cancellation via `yield Cancel(task)`
 - `Cancel` applies to `Pending`, `Running`, `Suspended`, and `Blocked` tasks
 - cancelling `Completed`/`Failed`/`Cancelled` tasks is a no-op
 - waiters (`Wait`, `Gather`, `Race`) observe cancelled tasks as `TaskCancelledError`
 - cancellation request returns immediately; running tasks cancel at next `SchedulerYield`
 
 ```python
-from doeff import Try, Spawn, Wait, do
+from doeff import Cancel, Ok, Err, Try, Spawn, Wait, do
 
 @do
 def cancel_child():
     task = yield Spawn(work())
-    _ = yield task.cancel()
-    return (yield Try(Wait(task)))  # Err(TaskCancelledError)
+    yield Cancel(task)
+    result = yield Try(Wait(task))
+    match result:
+        case Err(error=e):
+            return e  # TaskCancelledError
+        case Ok(value=v):
+            return v
 ```
 
 ## Promise vs ExternalPromise
@@ -271,23 +277,21 @@ def complete_later(p):
 
 ## Common Mistakes
 
-1. Passing `default_handlers()` to `async_run(...)` and expecting overlap.
-This pairing is valid, but `Await` work runs sequentially under `sync_await_handler`.
-
-2. Passing `default_async_handlers()` to `run(...)`.
-This pairing is invalid and raises `TypeError` because sync `run(...)` cannot handle async escape effects.
-
-3. Passing a raw coroutine to `Wait(...)`.
+1. Passing a raw coroutine to `Wait(...)`.
 Use `Await(coroutine)` for Python async work; use `Wait` for scheduler waitables.
 
-4. Passing raw programs directly to `Wait`, `Gather`, or `Race`.
+2. Passing raw programs directly to `Wait`, `Gather`, or `Race`.
 Use `task = yield Spawn(program)` first, then pass the returned `Task` (or a `Future`) handle.
 
-5. Expecting `Gather` to keep going after first failure.
+3. Expecting `Gather` to keep going after first failure.
 Use `Try(...)` around child programs if you need partial success collection.
 
-6. Assuming `Await` is concurrent under `run(...)`.
-It is sequential under `sync_await_handler`; use `async_run(...)` for overlap.
+4. Using `task.cancel()` instead of `yield Cancel(task)`.
+`Cancel` is an effect that must be yielded; tasks do not have a `.cancel()` method.
+
+5. Forgetting to wrap the program with `scheduled()`.
+Scheduler effects (`Spawn`, `Wait`, `Gather`, `Race`, `Cancel`) require
+`run(scheduled(prog))`.
 
 ## Quick Reference
 
@@ -298,7 +302,7 @@ It is sequential under `sync_await_handler`; use `async_run(...)` for overlap.
 | `Wait(waitable)` | waiting for one task/future handle | Accepts only `Task` or `Future` handles |
 | `Gather(*waitables)` | waiting for all spawned children | Pass `Task`/`Future` handles; fail-fast on first error/cancellation |
 | `Race(*waitables)` | waiting for first spawned child | Returns `RaceResult` (`first`, `value`, `rest`); losers continue unless cancelled |
-| `task.cancel()` | requesting task cancellation | Applies to `Pending`/`Running`/`Suspended`/`Blocked`; terminal states are no-op |
+| `Cancel(task)` | requesting task cancellation | Effect; yield it. Applies to `Pending`/`Running`/`Suspended`/`Blocked`; terminal states are no-op |
 | `SchedulerYield` | understanding scheduler fairness | Internal cooperative preemption point |
 | `CreatePromise()` | internal producer/consumer sync | Complete/fail via effects |
 | `CompletePromise(...)` | resolve internal promise | Wakes waiters |

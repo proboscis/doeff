@@ -46,20 +46,20 @@ Retry, fallback, error handling, progress tracking, logging — all flat yields.
 ```python
 # Run with recording — captures all effects
 try:
-    result = run(process_batch(items), handlers=[
-        RecordingHandler("runs/batch_2026_02_12.json"),
-        RealDBHandler(),
-        RealAPIHandler(),
-    ])
+    prog = process_batch(items)
+    prog = RealAPIHandler()(prog)
+    prog = RealDBHandler()(prog)
+    prog = RecordingHandler("runs/batch_2026_02_12.json")(prog)
+    result = run(scheduled(prog))
 except BatchError:
     pass  # Recording captured everything up to the failure point
 
 # Resume from where it failed — replay completed effects, continue with real ones
-result = run(process_batch(items), handlers=[
-    ResumeHandler("runs/batch_2026_02_12.json"),  # replays completed, then switches to real
-    RealDBHandler(),
-    RealAPIHandler(),
-])
+prog = process_batch(items)
+prog = RealAPIHandler()(prog)
+prog = RealDBHandler()(prog)
+prog = ResumeHandler("runs/batch_2026_02_12.json")(prog)  # replays completed, then switches to real
+result = run(scheduled(prog))
 # Skips the 7,432 already-processed records. Continues from 7,433.
 ```
 
@@ -70,14 +70,12 @@ result = run(process_batch(items), handlers=[
 ```python
 def test_batch_with_partial_failure():
     items = ["good1", "bad1", "good2"]
-    result = run(process_batch(items), handlers=[
-        StubDB({"good1": data1, "good2": data2}),
-        StubAPI({"good1": enriched1, "bad1": APIError("timeout"), "good2": enriched2}),
-    ])
-    assert result.value.total == 3
-    assert result.value.succeeded == 2
-    # Verify the error was logged
-    assert any("bad1" in log["processed"] for log in result.writer_output)
+    prog = process_batch(items)
+    prog = StubAPI({"good1": enriched1, "bad1": APIError("timeout"), "good2": enriched2})(prog)
+    prog = StubDB({"good1": data1, "good2": data2})(prog)
+    result = run(scheduled(prog))
+    assert result.total == 3
+    assert result.succeeded == 2
 
 def test_retry_behavior():
     call_count = 0
@@ -88,12 +86,12 @@ def test_retry_behavior():
             raise APIError("transient")
         return {"data": item}
 
-    result = run(process_single_item("test"), handlers=[
-        FunctionHandler(fetch_data=lambda i: {"raw": i}),
-        FunctionHandler(enrich_from_api=flaky_api),
-    ])
+    prog = process_single_item("test")
+    prog = FunctionHandler(enrich_from_api=flaky_api)(prog)
+    prog = FunctionHandler(fetch_data=lambda i: {"raw": i})(prog)
+    result = run(scheduled(prog))
     assert call_count == 3  # retried twice, succeeded on third
-    assert result.value.data == {"data": "test"}
+    assert result.data == {"data": "test"}
 ```
 
 No `@patch`. No `unittest.mock`. No knowledge of which module imports what.

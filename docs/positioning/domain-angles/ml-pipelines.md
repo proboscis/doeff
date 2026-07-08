@@ -34,22 +34,22 @@ Injected.mzip(a, b, c)                ->  a, b, c = yield Gather(prog_a, prog_b,
 ### Record a training experiment:
 
 ```python
-result = run(train_experiment(), handlers=[
-    RecordingHandler("runs/exp_2026_02_12.json"),
-    RealGPUHandler(),
-    WandBHandler(),
-    OpenAIHandler(),
-])
+prog = train_experiment()
+prog = OpenAIHandler()(prog)
+prog = WandBHandler()(prog)
+prog = RealGPUHandler()(prog)
+prog = RecordingHandler("runs/exp_2026_02_12.json")(prog)
+result = run(scheduled(prog))
 # Cost: $50 in API calls, 4 hours of GPU time
 ```
 
 ### Replay to re-analyze with different metrics ($0, instant):
 
 ```python
-result = run(evaluate_model(), handlers=[
-    ReplayHandler("runs/exp_2026_02_12.json"),  # replays all IO
-    NewMetricsHandler(),                         # computes new metrics
-])
+prog = evaluate_model()
+prog = NewMetricsHandler()(prog)                              # computes new metrics
+prog = ReplayHandler("runs/exp_2026_02_12.json")(prog)       # replays all IO
+result = run(scheduled(prog))
 # Cost: $0. No GPU. No API calls. Instant.
 ```
 
@@ -57,10 +57,10 @@ result = run(evaluate_model(), handlers=[
 
 ```python
 for lr in [0.001, 0.01, 0.1]:
-    result = run(train_experiment(), handlers=[
-        ReplayHandler("runs/exp_2026_02_12.json"),
-        OverrideHandler({"learning_rate": lr}),
-    ])
+    prog = train_experiment()
+    prog = OverrideHandler({"learning_rate": lr})(prog)
+    prog = ReplayHandler("runs/exp_2026_02_12.json")(prog)
+    result = run(scheduled(prog))
 # "This saved us $4,950 in API costs"
 ```
 

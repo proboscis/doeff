@@ -41,7 +41,7 @@ Must complete before anything goes public. Gates all other milestones.
 
 - [x] `README.md:340` — remove old project-name attribution line
 - [x] `docs/index.md:221` — same
-- [x] `doeff/_vendor.py:2,4` — source attribution comments
+- [x] `doeff/_vendor.py` — file has been removed (vendored code now lives in `doeff_vm`)
 - [x] `tests/misc/test_segmentation_pragmo.py.skip` — dead test with legacy imports → delete file
 
 ### M0.5 — Purge secrets
@@ -64,7 +64,7 @@ Only 2 files outside VAULT:
 ### M0.8 — Drop phantom dependencies
 Zero-risk removals — these are never imported:
 
-- [x] Remove `returns>=0.22.0` from `pyproject.toml` (0 imports — doeff has own `Result`/`Maybe` in `_vendor.py`)
+- [x] Remove `returns>=0.22.0` from `pyproject.toml` (0 imports — doeff has own `Result`/`Maybe` via `doeff_vm`)
 - [x] Remove `cytoolz>=1.0.0` from `pyproject.toml` (0 imports)
 - [x] Move `beartype>=0.19.0` from `dependencies` to `[dependency-groups] dev` only (only used in 1 test file)
 - [x] Consider making `phart>=1.1.4` optional (already has `try/except ImportError` guard)
@@ -226,11 +226,11 @@ No docs build system exists (no mkdocs.yml, no sphinx).
 | `09-advanced-effects.md` | LOW | 1 |
 | `13-api-reference.md` | LOW | 1 (runtime kwargs section) |
 
-- [ ] Rewrite all examples to use `run()` / `async_run()` + `default_handlers()` / `default_async_handlers()`
+- [ ] Rewrite all examples to use `run(doexpr)` with composed handler stacks (no `default_handlers()` — it was removed; `async_run()` was removed — use `run(scheduled(...))` instead)
 
 ### M4.3 — Fix naming inconsistency
-- [ ] Standardize on `async_run` across all docs
-- [ ] `01-getting-started.md` and `02-core-concepts.md` reference `async_run`
+- [ ] Remove all `async_run` references — `async_run` was removed; use `run(scheduled(...))` instead
+- [ ] `01-getting-started.md` and `02-core-concepts.md` may still reference `async_run` — update to `run(scheduled(...))`
 
 ### M4.4 — Write missing critical docs
 Biggest structural gaps:
