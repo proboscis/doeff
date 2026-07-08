@@ -50,7 +50,7 @@ def test_observe_sees_program_effects():
         return 42
 
     wrapped = prog()
-    for h in reversed([state(), writer(), slog_handler()]):
+    for h in reversed([state(), writer, slog_handler]):
         wrapped = _program_handler(h)(wrapped)
     wrapped = WithObserve(VMCallable(observer), wrapped)
 
@@ -79,7 +79,7 @@ def test_observe_sees_handler_body_effects():
         return result
 
     wrapped = prog()
-    for h in reversed([state(), writer(), try_handler, slog_handler(), custom_handler]):
+    for h in reversed([state(), writer, try_handler, slog_handler, custom_handler]):
         wrapped = _program_handler(h)(wrapped)
     wrapped = WithObserve(VMCallable(observer), wrapped)
 

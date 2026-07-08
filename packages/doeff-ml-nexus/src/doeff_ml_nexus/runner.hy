@@ -48,5 +48,5 @@
   "Minimal interpreter for the runner program."
   (setv resolved-env (run (resolve-runner-env env)))
   (run (scheduled
-    (with-handlers [(reader :env resolved-env) (slog-handler) (writer)]
+    (with-handlers [(reader :env resolved-env) slog-handler writer]
       program))))

@@ -98,7 +98,7 @@ def example_workflow():
     return count
 
 prog = example_workflow()
-prog = writer()(prog)
+prog = writer(prog)
 prog = state()(prog)
 result = run(scheduled(prog))
 print(f"Result: {result}")  # Result: 42

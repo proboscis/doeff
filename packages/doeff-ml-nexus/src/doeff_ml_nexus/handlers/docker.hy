@@ -1,6 +1,10 @@
 ;;; ML-nexus Docker run handler.
 ;;; DockerBuild and ImagePush handlers are in doeff-docker.
 ;;; This module provides DockerRun handler with file-based cloudpickle exchange.
+;;;
+;;; Handler clauses yield ShellRun effects instead of calling subprocess
+;;; directly — the production shell-run-handler resolves them at the IO
+;;; boundary.
 
 (require doeff_hy.macros [<- defhandler])
 (import doeff [do :as _doeff-do])
@@ -8,8 +12,13 @@
 
 (import uuid)
 
-(import doeff_docker.effects [DockerRun])
-(import doeff_docker.handlers.docker [run-cmd])
+(import doeff_docker.effects [DockerRun ShellRun])
+(import doeff_docker.handlers.docker [_build-shell-args])
+
+
+(defn _shell-run-checked [full-args * [stdin-data None]]
+  "Build a ShellRun effect from args. Caller must yield and check result."
+  (ShellRun :args (tuple full-args) :stdin-data stdin-data))
 
 
 (defhandler docker-run-handler
@@ -29,9 +38,18 @@
     (setv container-exchange "/tmp/doeff-exchange")
 
     ;; Create tmp dir and write pickled program
-    (run-cmd ["mkdir" "-p" tmp-dir] :host host)
+    (setv mkdir-args (_build-shell-args ["mkdir" "-p" tmp-dir] :host host))
+    (<- mkdir-result (ShellRun :args (tuple mkdir-args)))
+    (when (!= mkdir-result.returncode 0)
+      (raise (RuntimeError
+               f"Command failed (rc={mkdir-result.returncode}):\n{mkdir-args}\nstderr: {(.decode mkdir-result.stderr)}")))
+
     (setv pickled (.dumps serializer program))
-    (run-cmd ["tee" f"{tmp-dir}/program.pkl"] :host host :stdin-data pickled)
+    (setv tee-args (_build-shell-args ["tee" f"{tmp-dir}/program.pkl"] :host host))
+    (<- tee-result (ShellRun :args (tuple tee-args) :stdin-data pickled))
+    (when (!= tee-result.returncode 0)
+      (raise (RuntimeError
+               f"Command failed (rc={tee-result.returncode}):\n{tee-args}\nstderr: {(.decode tee-result.stderr)}")))
 
     ;; Docker run args
     (setv parts ["docker" "run" "--rm"])
@@ -52,13 +70,23 @@
                     "--interpreter" "doeff_ml_nexus.runner.runner_interpreter"])
 
     ;; Execute
-    (run-cmd parts :host host)
+    (setv run-args (_build-shell-args parts :host host))
+    (<- run-result (ShellRun :args (tuple run-args)))
+    (when (!= run-result.returncode 0)
+      (raise (RuntimeError
+               f"Command failed (rc={run-result.returncode}):\n{run-args}\nstderr: {(.decode run-result.stderr)}")))
 
     ;; Read result
-    (setv proc (run-cmd ["cat" f"{tmp-dir}/result.pkl"] :host host))
-    (setv result (.loads serializer proc.stdout))
+    (setv cat-args (_build-shell-args ["cat" f"{tmp-dir}/result.pkl"] :host host))
+    (<- cat-result (ShellRun :args (tuple cat-args)))
+    (when (!= cat-result.returncode 0)
+      (raise (RuntimeError
+               f"Command failed (rc={cat-result.returncode}):\n{cat-args}\nstderr: {(.decode cat-result.stderr)}")))
+    (setv result (.loads serializer cat-result.stdout))
 
     ;; Cleanup
-    (run-cmd ["rm" "-rf" tmp-dir] :host host)
+    (setv rm-args (_build-shell-args ["rm" "-rf" tmp-dir] :host host))
+    (<- rm-result (ShellRun :args (tuple rm-args)))
+    ;; Cleanup failure is non-fatal — do not raise
 
     (resume result)))

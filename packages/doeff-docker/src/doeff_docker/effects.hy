@@ -71,3 +71,22 @@
   "Push a Docker image to a registry."
   #^ str local-tag
   #^ str remote-tag)
+
+
+;; ===========================================================================
+;; Shell substrate — boundary effect for subprocess execution
+;; ===========================================================================
+
+(defclass [(dataclass :frozen True :kw-only True)] ShellRunResult []
+  "Structured result from a ShellRun effect."
+  #^ int returncode
+  #^ bytes stdout
+  #^ bytes stderr)
+
+(defclass [(dataclass :frozen True :kw-only True)] ShellRun [EffectBase]
+  "Run a subprocess as a list of string args.  A production shell-run-handler
+   calls subprocess.run — that IS the boundary.  Handler clauses yield this
+   effect instead of calling subprocess directly."
+  #^ tuple args
+  #^ (| bytes None) stdin-data
+  (setv stdin-data None))

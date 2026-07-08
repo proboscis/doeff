@@ -141,6 +141,6 @@ def compute():
     value = yield Ask("key")
     return value * 2
 
-result = run(scheduled(writer()(state()(reader({"key": 21})(compute())))))
+result = run(scheduled(writer(state()(reader({"key": 21})(compute())))))
 assert result == 42
 ```

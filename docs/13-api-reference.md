@@ -383,7 +383,7 @@ Compose them by nesting calls:
 
 ```python
 prog = my_program()
-prog = writer()(prog)
+prog = writer(prog)
 prog = state()(prog)
 prog = reader(env={"key": "value"})(prog)
 result = run(scheduled(prog))
@@ -717,7 +717,7 @@ def my_program():
     return f"Done greeting {name}"
 
 prog = my_program()
-prog = writer()(prog)
+prog = writer(prog)
 prog = state()(prog)
 prog = reader(env={"name": "Alice"})(prog)
 result = run(scheduled(prog))
@@ -768,8 +768,8 @@ from doeff_core_effects.handlers import reader, state, writer, try_handler, slog
 from doeff_core_effects.scheduler import scheduled
 
 prog = my_program()
-prog = slog_handler()(prog)      # innermost
-prog = writer()(prog)
+prog = slog_handler(prog)        # innermost
+prog = writer(prog)
 prog = state(initial={"k": 0})(prog)
 prog = reader(env={"key": "val"})(prog)  # outermost user handler
 result = run(scheduled(prog))    # scheduler wraps everything
@@ -817,37 +817,53 @@ prog = state(initial={"counter": 0})(my_program())
 
 ---
 
-### writer()
+### writer
 
 Handles `Tell(message)` / `WriterTellEffect`. Collects messages into a list.
+Pre-installed `Program -> Program` handler (not a factory -- use directly).
+Requires `state()` to be installed as an outer handler.
 
-The returned handler has a `.log` attribute for inspecting collected entries after execution.
+Access the log from inside a `@do` program via `yield writer_log()`.
 
 ```python
-from doeff_core_effects.handlers import writer
+from doeff_core_effects.handlers import writer, writer_log
 
-w = writer()
-prog = w(my_program())
+prog = writer(my_program())
+prog = state()(prog)
 run(scheduled(prog))
-print(w.log)  # ["message1", "message2", ...]
+
+# To access the log, use writer_log() inside a @do program:
+@do
+def with_log_access():
+    yield my_program()
+    log = yield writer_log()
+    return log
 ```
 
 ---
 
-### slog_handler()
+### slog_handler
 
 Handles `Slog` / `WriterTellEffect` structured log entries. Collects entries as dicts
-with `msg` and all kwargs.
+with `msg` and all kwargs. Pre-installed `Program -> Program` handler (not a factory --
+use directly). Requires `state()` to be installed as an outer handler.
 
-The returned handler has a `.log` attribute.
+Access the log from inside a `@do` program via `yield slog_log()`.
 
 ```python
-from doeff_core_effects.handlers import slog_handler
+from doeff_core_effects.handlers import slog_handler, slog_log
 
-sh = slog_handler()
-prog = sh(my_program())
+prog = slog_handler(my_program())
+prog = state()(prog)
 run(scheduled(prog))
-print(sh.log)  # [{"msg": "event", "count": 42}, ...]
+
+# To access the log, use slog_log() inside a @do program:
+@do
+def with_slog_access():
+    yield my_program()
+    log = yield slog_log()
+    return log
+# log is [{"msg": "event", "count": 42}, ...]
 ```
 
 ---
@@ -995,7 +1011,7 @@ def my_program():
     return name
 
 prog = my_program()
-prog = writer()(prog)
+prog = writer(prog)
 prog = state()(prog)
 prog = reader(env={"name": "Alice"})(prog)
 result = run(scheduled(prog))

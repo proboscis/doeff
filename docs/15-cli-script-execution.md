@@ -194,7 +194,7 @@ if callable(interpreter):
     print(f"New result: {new_result}")
 
 # Use runtime helpers
-runtime_result = run(scheduled(writer()(state()(reader(env={})(program)))))
+runtime_result = run(scheduled(writer(state()(reader(env={})(program)))))
 print(f"Runtime helper result: {runtime_result}")
 
 # Use standard library
@@ -249,7 +249,7 @@ Modify and re-execute programs:
 ```bash
 uv run doeff run --program myapp.base_program - <<'PY'
 # Re-run with runtime helpers
-result = run(scheduled(writer()(state()(reader(env={})(program)))))
+result = run(scheduled(writer(state()(reader(env={})(program)))))
 print(f"Re-run result: {result}")
 PY
 ```

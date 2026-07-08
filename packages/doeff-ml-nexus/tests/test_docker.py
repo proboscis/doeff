@@ -11,7 +11,7 @@ from doeff_ml_nexus.docker import uv_image, uv_gpu_image
 
 def _run_with_handlers(program):
     return run(
-        writer()(slog_handler()(reader(env={})(program)))
+        writer(slog_handler(reader(env={})(program)))
     )
 
 

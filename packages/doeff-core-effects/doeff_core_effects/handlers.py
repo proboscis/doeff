@@ -1,12 +1,18 @@
 """
 Core handlers — reader, state, writer.
 
-Handler factories return Program -> Program installers. Compose them by calling
-the returned handler with the program to wrap:
+Stateless handlers are pre-installed Program -> Program functions.
+Parameterised handlers are factories that return Program -> Program installers.
 
-    prog = state(initial={"count": 0})(body())
+Compose them by calling each handler with the program to wrap:
+
+    prog = writer(state(initial={"count": 0})(body()))
     prog = reader(env={"key": "value"})(prog)
     run(prog)
+
+writer and slog_handler use lazy state init via Get/Put + Some
+(same pattern as Hy defhandler's ``lazy`` clause). They require
+the ``state`` handler to be installed as an outer handler.
 """
 
 from doeff import do
@@ -69,25 +75,53 @@ def state(initial=None):
     return _program_handler(handler)
 
 
-def writer():
+_WRITER_LOG_KEY = "__doeff_writer_log__"
+
+
+@do
+def _writer_handler(effect, k):
     """Writer handler: collects Tell(message) into a log list.
 
-    The log is returned as the handler's result when the body completes.
-    Access via the handler's return value, or inspect handler_log after run.
+    Uses lazy state init via Get/Put + Some (same pattern as Hy
+    defhandler's ``lazy`` clause).  Requires the ``state`` handler
+    to be installed as an outer handler.
+
+    Retrieve the collected log with ``yield writer_log()``.
     """
-    log = []
+    if isinstance(effect, WriterTellEffect):
+        from doeff.result import Some
 
-    @do
-    def handler(effect, k):
-        if isinstance(effect, WriterTellEffect):
-            log.append(effect.msg)
-            result = yield Resume(k, None)
-            return result
-        yield Pass(effect, k)
+        cached = yield Get(_WRITER_LOG_KEY)
+        if isinstance(cached, Some):
+            log = cached.value
+        else:
+            log = []
+            yield Put(_WRITER_LOG_KEY, Some(log))
+        log.append(effect.msg)
+        result = yield Resume(k, None)
+        return result
+    yield Pass(effect, k)
 
-    install = _program_handler(handler)
-    install.log = log  # expose for inspection
-    return install
+
+writer = _program_handler(_writer_handler)
+writer.__name__ = "writer"
+writer.__qualname__ = "writer"
+
+
+@do
+def writer_log():
+    """Return a snapshot of the current writer log from state.
+
+    Requires state handler.  Returns an empty list if no Tell has
+    been issued yet.  The returned list is a copy — mutations do not
+    affect the handler's internal log.
+    """
+    from doeff.result import Some
+
+    cached = yield Get(_WRITER_LOG_KEY)
+    if isinstance(cached, Some):
+        return list(cached.value)
+    return []
 
 
 @do
@@ -132,26 +166,54 @@ try_handler.__name__ = "try_handler"
 try_handler.__qualname__ = "try_handler"
 
 
-def slog_handler():
+_SLOG_LOG_KEY = "__doeff_slog_log__"
+
+
+@do
+def _slog_handler(effect, k):
     """Structured log handler: collects Slog messages.
 
-    Returns a handler with a .log attribute containing collected entries.
+    Uses lazy state init via Get/Put + Some.  Requires the ``state``
+    handler to be installed as an outer handler.
+
+    Retrieve the collected log with ``yield slog_log()``.
     Each entry is a dict with 'msg' and all kwargs.
     """
-    log = []
+    if isinstance(effect, Slog):
+        from doeff.result import Some
 
-    @do
-    def handler(effect, k):
-        if isinstance(effect, Slog):
-            entry = {"msg": effect.msg, **effect.kwargs}
-            log.append(entry)
-            result = yield Resume(k, None)
-            return result
-        yield Pass(effect, k)
+        cached = yield Get(_SLOG_LOG_KEY)
+        if isinstance(cached, Some):
+            log = cached.value
+        else:
+            log = []
+            yield Put(_SLOG_LOG_KEY, Some(log))
+        entry = {"msg": effect.msg, **effect.kwargs}
+        log.append(entry)
+        result = yield Resume(k, None)
+        return result
+    yield Pass(effect, k)
 
-    install = _program_handler(handler)
-    install.log = log
-    return install
+
+slog_handler = _program_handler(_slog_handler)
+slog_handler.__name__ = "slog_handler"
+slog_handler.__qualname__ = "slog_handler"
+
+
+@do
+def slog_log():
+    """Return a snapshot of the current structured log from state.
+
+    Requires state handler.  Returns an empty list if no Slog has
+    been issued yet.  The returned list is a copy — mutations do not
+    affect the handler's internal log.
+    """
+    from doeff.result import Some
+
+    cached = yield Get(_SLOG_LOG_KEY)
+    if isinstance(cached, Some):
+        return list(cached.value)
+    return []
 
 
 @do

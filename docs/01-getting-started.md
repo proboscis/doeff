@@ -54,7 +54,7 @@ def counter_program():
 
 def main():
     prog = counter_program()
-    prog = writer()(prog)
+    prog = writer(prog)
     prog = state()(prog)
     result = run(prog)
     print(f"Result: {result}")
@@ -77,12 +77,14 @@ Let's break down what's happening:
    - `Put("counter", value)` - State effect: sets state (handled by the State handler)
    - `Get("counter")` - State effect: retrieves state
    - `Tell(message)` - Writer effect: appends to log (handled by the Writer handler)
-4. **Handler composition**: Handlers are composed by wrapping the program: `writer()(state()(prog))`
+4. **Handler composition**: Handlers are composed by wrapping the program: `writer(state()(prog))`
 5. **`run`**: Executes the fully-handled program and returns the raw result value
 
-Handler composition is done by calling each handler factory and applying it to the program.
+Handler composition is done by applying each handler to the program.
 Each handler is a `Program -> Program` installer — compose them by nesting calls rather than
-passing handlers to `run()`.
+passing handlers to `run()`. Some handlers like `writer` and `slog_handler` are pre-installed
+(used directly), while others like `reader(env=...)` and `state(initial=...)` are factories
+that return an installer.
 
 ## Key Concepts
 
@@ -104,7 +106,7 @@ def my_program():
 program = my_program()
 
 # Now it executes
-prog = writer()(program)
+prog = writer(program)
 result = run(prog)
 ```
 
@@ -127,8 +129,8 @@ prog1 = format_label("alpha")
 prog2 = format_label("beta")
 
 # Each execution is independent
-result1 = run(writer()(prog1))
-result2 = run(writer()(prog2))
+result1 = run(writer(prog1))
+result2 = run(writer(prog2))
 ```
 
 ### Effects are Composable
@@ -193,7 +195,7 @@ def my_program():
     yield Tell("working...")
     return 42
 
-prog = writer()(my_program())
+prog = writer(my_program())
 
 try:
     result = run(prog)
@@ -226,7 +228,7 @@ def complex_workflow():
     return connection
 
 prog = complex_workflow()
-prog = writer()(prog)
+prog = writer(prog)
 prog = state()(prog)
 prog = reader(env={"database_url": "postgresql://localhost/mydb"})(prog)
 result = run(prog)
@@ -299,10 +301,10 @@ from doeff_core_effects.handlers import writer
 
 # If you need to run a program multiple times, call the function again
 prog = my_program()
-result1 = run(writer()(prog))
+result1 = run(writer(prog))
 # Don't reuse prog - create a new one
 prog2 = my_program()
-result2 = run(writer()(prog2))
+result2 = run(writer(prog2))
 ```
 
 ## Next Steps
@@ -365,7 +367,7 @@ def my_program():
     return "result"
 
 def main():
-    prog = writer()(my_program())
+    prog = writer(my_program())
     result = run(prog)
     print(result)
 

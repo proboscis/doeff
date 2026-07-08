@@ -40,7 +40,7 @@ from doeff_core_effects.handlers import reader, state, writer
 from doeff_core_effects.scheduler import scheduled
 
 prog = my_program()
-prog = writer()(prog)
+prog = writer(prog)
 prog = state()(prog)
 prog = reader(env={"name": "doeff"})(prog)
 result = run(scheduled(prog))

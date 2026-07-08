@@ -31,7 +31,7 @@ def program():
     return name.upper()
 
 prog = program()
-prog = writer()(prog)
+prog = writer(prog)
 prog = reader(env={"name": "doeff"})(prog)
 result = run(prog)
 # result is "DOEFF" directly — no wrapper
@@ -129,7 +129,7 @@ def app(raw: str):
             return 0
 
 prog = app("not-a-number")
-prog = writer()(prog)
+prog = writer(prog)
 result = run(prog)
 print(result)  # 0
 ```
