@@ -1,7 +1,15 @@
 """Tests for core effects — Ask, Get, Put, Tell."""
 
 from doeff_core_effects.effects import Ask, Get, Put, Slog, Tell, Try
-from doeff_core_effects.handlers import reader, slog_handler, state, try_handler, writer
+from doeff_core_effects.handlers import (
+    reader,
+    slog_handler,
+    slog_log,
+    state,
+    try_handler,
+    writer,
+    writer_log,
+)
 
 from doeff import Pure, do
 from doeff import run as doeff_run
@@ -68,17 +76,14 @@ class TestState:
 
 class TestWriter:
     def test_tell_collects_messages(self):
-        w = writer()
-
         @do
         def body():
             yield Tell("hello")
             yield Tell("world")
-            return "done"
+            return (yield writer_log())
 
-        result = doeff_run(w(body()))
-        assert result == "done"
-        assert w.log == ["hello", "world"]
+        result = doeff_run(state()(writer(body())))
+        assert result == ["hello", "world"]
 
 
 class TestComposed:
@@ -97,18 +102,19 @@ class TestComposed:
 
     def test_all_three(self):
         """Reader + State + Writer composed."""
-        w = writer()
 
         @do
         def body():
             name = yield Ask("name")
             yield Tell(f"hello {name}")
             yield Put("greeted", True)
-            return (yield Get("greeted"))
+            greeted = yield Get("greeted")
+            log = yield writer_log()
+            return (greeted, log)
 
-        prog = reader(env={"name": "Bob"})(state()(w(body())))
-        assert doeff_run(prog) is True
-        assert w.log == ["hello Bob"]
+        prog = reader(env={"name": "Bob"})(state()(writer(body())))
+        result = doeff_run(prog)
+        assert result == (True, ["hello Bob"])
 
 
 class TestTry:
@@ -156,19 +162,17 @@ class TestTry:
 
 class TestSlog:
     def test_slog_basic(self):
-        sh = slog_handler()
-
         @do
         def body():
             yield Slog("hello")
             yield Slog("event", user="alice", action="login")
-            return "done"
+            log = yield slog_log()
+            return log
 
-        result = doeff_run(sh(body()))
-        assert result == "done"
-        assert len(sh.log) == 2
-        assert sh.log[0] == {"msg": "hello"}
-        assert sh.log[1] == {"msg": "event", "user": "alice", "action": "login"}
+        result = doeff_run(state()(slog_handler(body())))
+        assert len(result) == 2
+        assert result[0] == {"msg": "hello"}
+        assert result[1] == {"msg": "event", "user": "alice", "action": "login"}
 
 
 class TestAwait:

@@ -115,11 +115,11 @@ The user runs the pipeline, sees the result, and thinks "what if I used factor=2
 
 ```python
 # Replay Denoise from recording, override Upscale params, continue live
-result = run(image_pipeline(image), handlers=[
-    ReplayHandler("trace.json", replay_until="Upscale"),  # instant
-    OverrideHandler(Upscale, {"factor": 2}),              # modify
-    RealHandler(),                                         # continue
-])
+prog = image_pipeline(image)
+prog = RealHandler()(prog)                                          # continue
+prog = OverrideHandler(Upscale, {"factor": 2})(prog)               # modify
+prog = ReplayHandler("trace.json", replay_until="Upscale")(prog)   # instant
+result = run(scheduled(prog))
 ```
 
 In the Gradio UI:
@@ -147,16 +147,17 @@ The recorded effect trace isn't just a log — it's the full execution with all 
 
 ```python
 # Researcher A runs the pipeline, records everything
-result = run(style_transfer(content, style), handlers=[
-    RecordingHandler("experiments/run_42.json"),
-    *gpu_handlers,
-])
+prog = style_transfer(content, style)
+for h in reversed(gpu_handlers):
+    prog = h(prog)
+prog = RecordingHandler("experiments/run_42.json")(prog)
+result = run(scheduled(prog))
 # run_42.json contains: every effect, every intermediate tensor, every parameter
 
 # Researcher B opens the trace in their own Gradio app — no GPU needed
-result = run(style_transfer(content, style), handlers=[
-    InteractiveReplayHandler("experiments/run_42.json"),
-])
+prog = style_transfer(content, style)
+prog = InteractiveReplayHandler("experiments/run_42.json")(prog)
+result = run(scheduled(prog))
 # They can browse every intermediate result, fork, modify parameters
 ```
 
@@ -168,15 +169,16 @@ This one is simple but high-value for the Gradio community:
 
 ```python
 # Before the conference: record your demo session
-run(demo_pipeline(inputs), handlers=[
-    RecordingHandler("demo_session.json"),
-    *real_handlers,
-])
+prog = demo_pipeline(inputs)
+for h in reversed(real_handlers):
+    prog = h(prog)
+prog = RecordingHandler("demo_session.json")(prog)
+run(scheduled(prog))
 
 # At the conference: replay mode
-run(demo_pipeline(inputs), handlers=[
-    ReplayHandler("demo_session.json"),
-])
+prog = demo_pipeline(inputs)
+prog = ReplayHandler("demo_session.json")(prog)
+run(scheduled(prog))
 # Works on airplane WiFi. No API key. No GPU. Same outputs.
 ```
 

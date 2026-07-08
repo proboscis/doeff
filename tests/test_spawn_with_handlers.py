@@ -51,9 +51,9 @@ def _run_with_handlers(program):
     handlers = [
         reader(env={"model": "test"}),
         state(),
-        writer(),
+        writer,
         try_handler,
-        slog_handler(),
+        slog_handler,
         custom_query_handler,
     ]
     for h in reversed(handlers):

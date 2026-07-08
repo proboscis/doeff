@@ -43,17 +43,17 @@ Every LLM call, tool use, and decision point is a yield. The program is a pure d
 
 ```python
 # Record a real agent run
-result = run(research_agent("quantum computing"), handlers=[
-    RecordingHandler("sessions/run_42.json"),
-    OpenAIHandler(api_key="..."),
-    ClaudeHandler(api_key="..."),
-    WebSearchHandler(),
-])
+prog = research_agent("quantum computing")
+prog = WebSearchHandler()(prog)
+prog = ClaudeHandler(api_key="...")(prog)
+prog = OpenAIHandler(api_key="...")(prog)
+prog = RecordingHandler("sessions/run_42.json")(prog)
+result = run(scheduled(prog))
 
 # Replay to debug — zero API cost
-result = run(research_agent("quantum computing"), handlers=[
-    ReplayHandler("sessions/run_42.json"),
-])
+prog = research_agent("quantum computing")
+prog = ReplayHandler("sessions/run_42.json")(prog)
+result = run(scheduled(prog))
 # Instant. Deterministic. Free.
 ```
 
@@ -63,21 +63,21 @@ A user reports "the agent gave wrong results for X." Replay their session. Step 
 
 ```python
 # Production: GPT-4o + Claude
-result = run(research_agent(query), handlers=[
-    OpenAIHandler(model="gpt-4o"),
-    ClaudeHandler(model="claude-sonnet"),
-])
+prog = research_agent(query)
+prog = ClaudeHandler(model="claude-sonnet")(prog)
+prog = OpenAIHandler(model="gpt-4o")(prog)
+result = run(scheduled(prog))
 
 # Testing: local models
-result = run(research_agent(query), handlers=[
-    OllamaHandler(model="llama-3-70b"),
-])
+prog = research_agent(query)
+prog = OllamaHandler(model="llama-3-70b")(prog)
+result = run(scheduled(prog))
 
 # Evaluation: compare models
 for model in ["gpt-4o", "claude-sonnet", "gemini-2-pro"]:
-    result = run(research_agent(query), handlers=[
-        UnifiedLLMHandler(model=model),
-    ])
+    prog = research_agent(query)
+    prog = UnifiedLLMHandler(model=model)(prog)
+    result = run(scheduled(prog))
 ```
 
 The program never mentions a provider. The handler stack decides.
@@ -98,14 +98,13 @@ def cost_cap_handler(effect: Effect, k):
             raise BudgetExceededError(f"${current:.2f} > ${MAX_BUDGET}")
     yield Delegate()
 
-result = run(
-    openai_handler(
-        claude_handler(
-            cost_cap_handler(research_agent(query)),
-        ),
-    ),
-)
-print(result.effect_log)
+prog = research_agent(query)
+prog = cost_cap_handler(prog)
+prog = claude_handler(prog)
+prog = openai_handler(prog)
+result = run(scheduled(prog))
+# The cost_cap_handler tracks costs via Get/Put effects.
+# A logging handler can emit per-call stats:
 # LLMChat: 3 calls, $0.12 total, 4.2s latency
 # WebSearch: 5 calls, 2.1s latency
 ```

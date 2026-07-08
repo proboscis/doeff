@@ -71,13 +71,15 @@ def my_workflow():
     return analysis, image
 
 # Stack handlers — routing is automatic
+from doeff_core_effects.handlers import reader
 result = run(
-    seedream_handler(
-        gemini_handler(
-            openai_handler(my_workflow()),
+    reader({"openai_api_key": "...", "gemini_api_key": "...", "seedream_api_key": "..."})(
+        seedream_handler(
+            gemini_handler(
+                openai_handler(my_workflow()),
+            ),
         ),
     ),
-    env={"openai_api_key": "...", "gemini_api_key": "...", "seedream_api_key": "..."}
 )
 ```
 
@@ -133,7 +135,7 @@ def cost_cap_handler(effect: LLMChat | LLMEmbedding | LLMStructuredOutput | Imag
     current_cost = yield Get("total_cost")
     if current_cost > MAX_BUDGET:
         raise BudgetExceededError(current_cost)
-    yield Pass()
+    yield Pass(effect, k)
 
 # One retry handler works for everything
 @do
@@ -154,7 +156,7 @@ def retry_handler(effect: Effect, k):
 Effects can be intercepted, transformed, or blocked without the original code knowing.
 
 ```python
-from doeff import Get, Pass, Resume, Tell, WithIntercept, do
+from doeff import Get, Pass, Resume, Tell, WithObserve, do
 
 # Budget cap across ALL providers — impossible to bypass
 @do
@@ -163,7 +165,7 @@ def budget_handler(effect: LLMChat | LLMStructuredOutput | ImageGenerate, k):
     if total > settings.max_budget_usd:
         yield Tell(f"Budget exceeded: ${total:.2f} > ${settings.max_budget_usd}")
         return (yield Resume(k, BudgetExceededResult()))
-    yield Pass()
+    yield Pass(effect, k)
 
 # Dry-run mode — intercept ALL side effects
 @do
@@ -171,14 +173,13 @@ def dry_run_handler(effect: LLMChat | ImageGenerate, k):
     yield Tell(f"[DRY RUN] Would execute: {type(effect).__name__}(model={effect.model})")
     return (yield Resume(k, mock_response(effect)))
 
-# Rewriting is better modeled with WithIntercept than Delegate()
-@do
+# Rewriting is better modeled with WithObserve
 def rewrite_gpt4(effect):
     if isinstance(effect, LLMChat) and effect.model == "gpt-4":
         return LLMChat(**{**vars(effect), "model": "gpt-4o-mini"})
     return effect
 
-rewritten_program = WithIntercept(rewrite_gpt4, my_workflow(), types=(LLMChat,), mode="include")
+rewritten_program = WithObserve(rewrite_gpt4, my_workflow())
 ```
 
 With DI, each of these requires a new wrapper class per service type.
@@ -241,7 +242,6 @@ result = run(
     gemini_handler(
         openai_handler(my_workflow()),   # inner tries first
     ),
-    env={...}
 )
 ```
 
@@ -265,13 +265,13 @@ The program never mentions a provider. The handler stack decides where secrets c
 
 ```python
 # Production: Google Cloud Secret Manager
-run(gsm_handler(deploy_workflow()), env={...})
+run(gsm_handler(deploy_workflow()))
 
 # Local dev: 1Password
-run(onepassword_handler(deploy_workflow()), env={...})
+run(onepassword_handler(deploy_workflow()))
 
 # CI: AWS Secrets Manager
-run(aws_secrets_handler(deploy_workflow()), env={...})
+run(aws_secrets_handler(deploy_workflow()))
 
 # Fallback chain: try 1Password, fall back to env vars
 run(
@@ -289,13 +289,11 @@ With DI, you'd need a `SecretService` protocol, provider implementations, a fact
 # Production
 result = run(
     openai_production_handler(my_workflow()),
-    env={"openai_api_key": real_key}
 )
 
 # Test — swap handler, everything else identical
 result = run(
     openai_mock_handler(my_workflow()),
-    store={"mock_config": MockOpenAIConfig(default_response="test")}
 )
 
 # Replay — record and replay real responses
@@ -353,7 +351,7 @@ With effects, dependencies are resolved at runtime by whatever handler is stacke
 
 ### 4. Static Analysis
 
-Type checkers can fully verify DI wiring. Effects with `Delegate()` chains are harder to statically verify — you trust the handler stack at runtime.
+Type checkers can fully verify DI wiring. Effects with `Pass()` chains are harder to statically verify — you trust the handler stack at runtime.
 
 ## Decision Guide
 
@@ -447,7 +445,8 @@ This program uses three independent effect domains:
 from doeff_sim.handlers import deterministic_sim_handler
 from doeff_events.handlers import event_handler
 from doeff_time.handlers import async_time_handler
-from doeff import async_run, default_async_handlers, run
+from doeff import run
+from doeff_core_effects.scheduler import scheduled
 
 # Deterministic simulation (instant, reproducible)
 result = run(
@@ -458,12 +457,13 @@ result = run(
     ),
 )
 
-# Same program, real-time execution (wall-clock, asyncio)
-result = await async_run(
-    async_time_handler()(                 # asyncio.sleep, time.time()
-        event_handler()(trading_strategy()),  # Same event handler
+# Same program, real-time execution (with scheduler for concurrency)
+result = run(
+    scheduled(
+        async_time_handler()(                 # asyncio.sleep, time.time()
+            event_handler()(trading_strategy()),  # Same event handler
+        ),
     ),
-    handlers=default_async_handlers(),
 )
 ```
 
