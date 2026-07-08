@@ -17,6 +17,8 @@
 
 The specific motivating use case from this spec — observing effects emitted by handlers above an observer in the stack — is solved by the override pattern because the override handler is installed as the innermost handler for the observed effect type, catching effects before the original handler.
 
+**Current API**: The public Python API replacement is `WithObserve(observer, body)` (exported from `doeff`). See `docs/09-advanced-effects.md` for usage.
+
 **Historical context**: This spec is retained for historical reference. The analysis in "Why Intercept cannot be an Effect" (§Design Rationale) remains valid for the old continuation model. The override pattern avoids the problem entirely by using standard handler semantics (handler + mask) instead of a separate interception mechanism.
 
 See: SPEC-008 R17 (R17-F), SPEC-VM-016 R2 (§4.3)

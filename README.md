@@ -141,21 +141,19 @@ print(result)  # ['a', 'b']
 # Run a program with auto-discovered interpreter
 doeff run --program myapp.module.program
 
-# With explicit interpreter
-doeff run --program myapp.program --interpreter myapp.interpreter
-
-# With environment
-doeff run --program myapp.program --env myapp.default_env
-
-# Inline code
+# Inline Python code
 doeff run -c 'return 42'
 
-# Apply transform (T -> Program[U])
-doeff run --program myapp.program --apply myapp.transforms.wrap
+# Inline Hy code (preferred — compose handlers inline)
+doeff run --hy '(import myapp [p]) (import doeff-core-effects [lazy-ask]) ((lazy-ask :env myapp.env_dict) p)'
 
 # JSON output
 doeff run --program myapp.program --format json
 ```
+
+> **Note**: Legacy flags `--interpreter`, `--env`, `--set`, `--apply`, and
+> `--transform` still work but emit deprecation warnings. Use `--hy` for
+> inline handler composition instead.
 
 The CLI supports automatic interpreter/environment discovery via `doeff-indexer`.
 See `docs/14-cli-auto-discovery.md` for marker syntax and hierarchy rules.
@@ -204,9 +202,12 @@ make bench-smoke
 ## Development
 
 ```bash
-uv sync --reinstall  # rebuild Rust VM
-uv run pytest
+make sync            # install deps + rebuild Rust VM (maturin develop --release)
+uv run pytest        # run full test suite
 ```
+
+> **Warning**: `uv sync` alone does NOT rebuild the Rust VM extension. Always
+> use `make sync` after editing `.rs` files under `packages/doeff-vm/`.
 
 ## License
 
