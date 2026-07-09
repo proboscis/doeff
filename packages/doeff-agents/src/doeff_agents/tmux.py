@@ -181,13 +181,25 @@ class TmuxSessionBackend(SessionBackend):
             )
 
     def _confirm_literal_prompt_submitted(self, target: str, text: str) -> None:
+        # Startup banners (e.g. usage-limit promos) can keep the agent input
+        # box unresponsive well past the first Enter, so retry with escalating
+        # waits. If the pasted prompt verifiably never submits, raise instead
+        # of returning: a silent give-up here leaves the agent session idle
+        # forever while the caller polls for a result that can never arrive.
         time.sleep(1.2)
-        for _ in range(3):
+        for wait in (1.0, 2.0, 4.0, 8.0, 15.0):
             output = self.capture_pane(target, 20)
             if not _output_has_unsubmitted_paste_input(output, text):
                 return
             subprocess.run(self._args("send-keys", "-t", target, "Enter"), check=True)
-            time.sleep(1.0)
+            time.sleep(wait)
+        output = self.capture_pane(target, 20)
+        if _output_has_unsubmitted_paste_input(output, text):
+            raise RuntimeError(
+                f"pasted prompt was never submitted in tmux pane {target}: the "
+                "agent input box still shows the pasted text after repeated "
+                "Enter retries; refusing to leave a silently idle agent session"
+            )
 
     def capture_pane(
         self,
@@ -279,7 +291,12 @@ def _output_has_unsubmitted_paste_input(output: str, sent_text: str | None = Non
     lines = output.splitlines()[-20:]
     for index, line in enumerate(lines):
         stripped = line.lstrip()
-        if stripped.startswith(("❯", "›")):  # noqa: RUF001
+        # "❯"/"›" are the classic TUI input glyphs; "input:" is the
+        # --ax-screen-reader rendering. A glyph-only scan misses the
+        # ax-mode input box, so a stuck "[Pasted text ...]" there was
+        # reported as submitted and Enter was never retried
+        # (2026-07-09 live incident: both broker agents idled for hours).
+        if stripped.startswith(("❯", "›", "input:")):  # noqa: RUF001
             last_prompt_line = stripped
             prompt_index = index
     if "[Pasted text" in last_prompt_line:
