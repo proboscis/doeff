@@ -1217,17 +1217,18 @@ def test_tmux_backend_pastes_literal_prompt_and_resubmits_collapsed_input(
     monkeypatch.setattr("doeff_agents.tmux.time.sleep", lambda _seconds: None)
 
     backend = TmuxSessionBackend()
-    backend.send_keys("%42", "long structured-result prompt", literal=True, enter=True)
+    with pytest.raises(RuntimeError, match="never submitted"):
+        backend.send_keys("%42", "long structured-result prompt", literal=True, enter=True)
 
     command_names = [call[1] for call in calls]
     assert command_names.count("set-buffer") == 1
     assert command_names.count("paste-buffer") == 1
     assert command_names.count("delete-buffer") == 1
-    assert command_names.count("capture-pane") == 3
+    assert command_names.count("capture-pane") == 6
     enter_calls = [
         call for call in calls if call[1:4] == ["send-keys", "-t", "%42"] and call[-1] == "Enter"
     ]
-    assert len(enter_calls) == 4
+    assert len(enter_calls) == 6
 
 
 def test_tmux_backend_rechecks_resubmitted_literal_prompt_until_clear(
@@ -1271,6 +1272,41 @@ def test_tmux_backend_rechecks_resubmitted_literal_prompt_until_clear(
         call for call in calls if call[1:4] == ["send-keys", "-t", "%42"] and call[-1] == "Enter"
     ]
     assert len(enter_calls) == 2
+
+
+def test_unsubmitted_paste_detector_handles_ax_screen_reader_input_line() -> None:
+    # Real pane captures from the 2026-07-09 live incident: --ax-screen-reader
+    # renders the input box as an "input:" line (no "❯" glyph), so the stuck
+    # paste was previously reported as submitted and never rescued.
+    stuck = (
+        "Extended: Fable 5 is included in your weekly limit\n"
+        "Through July 12, you can use up to 50% of your weekly usage limit on\n"
+        "Fable 5. Learn more\n"
+        "bypass permissions on (shift+tab to cycle)\n"
+        "input: [Pasted text #1 +77 lines]\n"
+    )
+    submitted = (
+        "Warping…\n"
+        "bypass permissions on (shift+tab to cycle)  ·  esc to interrupt\n"
+        "input:\n"
+    )
+
+    assert _output_has_unsubmitted_paste_input(stuck)
+    assert not _output_has_unsubmitted_paste_input(submitted)
+
+
+def test_unsubmitted_paste_detector_catches_ax_visible_prompt_text() -> None:
+    output = (
+        "bypass permissions on (shift+tab to cycle)\n"
+        "input: The kabuStation executor appeared to be waiting for input. "
+        "Continue autonomously if safe, or return a blocked/error structured result.\n"
+    )
+    sent_text = (
+        "The kabuStation executor appeared to be waiting for input. "
+        "Continue autonomously if safe, or return a blocked/error structured result."
+    )
+
+    assert _output_has_unsubmitted_paste_input(output, sent_text)
 
 
 def test_unsubmitted_paste_detector_uses_latest_prompt_line() -> None:
