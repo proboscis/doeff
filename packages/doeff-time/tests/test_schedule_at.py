@@ -1,12 +1,13 @@
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
-from doeff_core_effects.scheduler import Wait
+import pytest
+from doeff_core_effects.scheduler import Task, Wait
 from doeff_time.effects import Delay, GetTime, ScheduleAt
-from doeff_time.handlers import sim_time_handler
-
+from doeff_time.handlers import async_time_handler, sim_time_handler, sync_time_handler
 from time_test_support import run_with_handlers
+
 from doeff import Effect, EffectBase, Pass, Resume, do
 from doeff import handler as _program_handler
 
@@ -74,5 +75,89 @@ def test_schedule_at_preserves_outer_handler_stack() -> None:
 
     run_with_handlers(
         _outer_handler(marker)(sim_time_handler()(program())),
+    )
+    assert marker["done"] is True
+
+
+# ---------------------------------------------------------------------------
+# #503: async/sync ScheduleAt must return the spawned Task (like sim) so the
+# caller can Wait/Gather it and observe failures of the deferred program.
+# ---------------------------------------------------------------------------
+
+
+class _ScheduledBoomError(Exception):
+    pass
+
+
+def _make_raising_program():
+    @do
+    def _boom():
+        raise _ScheduledBoomError("deferred program failed")
+        yield  # pragma: no cover - makes this a generator function
+
+    return _boom()
+
+
+def test_async_schedule_at_returns_task_and_wait_raises_deferred_failure() -> None:
+    """#503 regression: ScheduleAt of a raising program under the async
+    handler returns a Task whose Wait re-raises the deferred error."""
+
+    @do
+    def program():
+        target = datetime.now(timezone.utc) + timedelta(seconds=0.01)
+        task = yield ScheduleAt(target, _make_raising_program())
+        assert isinstance(task, Task)
+        yield Wait(task)
+
+    with pytest.raises(_ScheduledBoomError):
+        run_with_handlers(
+            async_time_handler()(program()),
+        )
+
+
+def test_async_schedule_at_task_is_waitable_on_success() -> None:
+    marker = {"done": False}
+
+    @do
+    def program():
+        target = datetime.now(timezone.utc) + timedelta(seconds=0.01)
+        task = yield ScheduleAt(target, _make_marker_program(marker))
+        assert isinstance(task, Task)
+        yield Wait(task)
+
+    run_with_handlers(
+        async_time_handler()(program()),
+    )
+    assert marker["done"] is True
+
+
+def test_sync_schedule_at_returns_task_and_wait_raises_deferred_failure() -> None:
+    """#503 regression: same contract for the sync (threading.Timer) handler."""
+
+    @do
+    def program():
+        target = datetime.now(timezone.utc) + timedelta(seconds=0.01)
+        task = yield ScheduleAt(target, _make_raising_program())
+        assert isinstance(task, Task)
+        yield Wait(task)
+
+    with pytest.raises(_ScheduledBoomError):
+        run_with_handlers(
+            sync_time_handler()(program()),
+        )
+
+
+def test_sync_schedule_at_task_is_waitable_on_success() -> None:
+    marker = {"done": False}
+
+    @do
+    def program():
+        target = datetime.now(timezone.utc) + timedelta(seconds=0.01)
+        task = yield ScheduleAt(target, _make_marker_program(marker))
+        assert isinstance(task, Task)
+        yield Wait(task)
+
+    run_with_handlers(
+        sync_time_handler()(program()),
     )
     assert marker["done"] is True
