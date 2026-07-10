@@ -1,5 +1,9 @@
 """Min-heap queue of time-ordered promises."""
 
+# Promise is not generic at runtime; without lazy annotations the
+# Promise[Any] annotations below raise TypeError at import on Python < 3.14.
+from __future__ import annotations
+
 import heapq
 from dataclasses import dataclass
 from datetime import datetime

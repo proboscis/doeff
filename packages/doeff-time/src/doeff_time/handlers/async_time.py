@@ -58,8 +58,12 @@ class AsyncTimeRuntime:
             yield Await(sleep(wait_seconds))
             yield effect.program
 
-        yield Spawn(deferred())
-        return (yield Resume(k, None))
+        # Resume the caller with the spawned Task (same contract as
+        # sim_time_handler) so failures of the deferred program can be
+        # observed via Wait/Gather instead of vanishing on an unwatched
+        # task (#503).
+        task = yield Spawn(deferred())
+        return (yield Resume(k, task))
 
     @do
     def handle(self, effect: Any, k: Any):

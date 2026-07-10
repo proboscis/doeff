@@ -15,6 +15,7 @@ from doeff_core_effects.scheduler import (
 )
 
 from doeff import Pass, Resume, Transfer, do
+from doeff import handler as _program_handler
 from doeff_time._internals import SimClock, TimeQueue
 from doeff_time.effects import (
     DelayEffect,
@@ -162,7 +163,7 @@ def sim_time_handler(
     """Return a virtual-clock handler that delegates core concurrency effects."""
 
     runtime = SimTimeRuntime(start_time=start_time, log_formatter=log_formatter)
-    return runtime._handler
+    return _program_handler(runtime._handler)
 
 
 __all__ = [
