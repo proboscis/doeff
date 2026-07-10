@@ -1,78 +1,14 @@
-
 import sys
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from doeff import handler as _install_raw_handler
-
-ROOT = Path(__file__).resolve().parents[3]
+TESTS_DIR = Path(__file__).resolve().parent
+ROOT = TESTS_DIR.parents[2]
 TIME_PACKAGE_ROOT = ROOT / "packages" / "doeff-time" / "src"
 EVENTS_PACKAGE_ROOT = ROOT / "packages" / "doeff-events" / "src"
 
-for package_root in (TIME_PACKAGE_ROOT, EVENTS_PACKAGE_ROOT):
+# TESTS_DIR makes the uniquely-named `time_test_support` helper module
+# importable even when this suite is collected together with other
+# testpaths (pytest only prepends a test file's own directory lazily).
+for package_root in (TIME_PACKAGE_ROOT, EVENTS_PACKAGE_ROOT, TESTS_DIR):
     if str(package_root) not in sys.path:
         sys.path.insert(0, str(package_root))
-
-SIM_TIME_EPOCH = datetime(2024, 1, 1, tzinfo=timezone.utc)
-
-
-def sim_time(seconds: float) -> datetime:
-    return SIM_TIME_EPOCH + timedelta(seconds=seconds)
-
-
-def sim_seconds(value: datetime) -> float:
-    return (value - SIM_TIME_EPOCH).total_seconds()
-
-
-def listen(program, types=None):
-    """Local listen — collects effects while running program in place.
-
-    OCaml 5 pattern: local match_with, not an effect.
-    Returns DoExpr that evaluates to (result, collected_effects).
-    """
-    from doeff_core_effects import WriterTellEffect
-
-    from doeff import Pass, do
-
-    types_to_collect = types or (WriterTellEffect,)
-    collected = []
-
-    @do
-    def collector(effect, k):
-        if isinstance(effect, tuple(types_to_collect)):
-            collected.append(effect)
-        yield Pass(effect, k)
-
-    @do
-    def _listen():
-        result = yield _install_raw_handler(collector)(program)
-        return (result, collected)
-
-    return _listen()
-
-
-def run_with_handlers(program, *, env=None):
-    from doeff_core_effects.handlers import (
-        await_handler,
-        listen_handler,
-        reader,
-        slog_handler,
-        try_handler,
-        writer,
-    )
-    from doeff_core_effects.scheduler import scheduled
-
-    from doeff import run
-
-    wrapped = program
-    if env is not None:
-        wrapped = reader(env=env)(wrapped)
-    # await_handler uses scheduler effects (CreateExternalPromise, Wait),
-    # so it must be inside the scheduler.
-    wrapped = await_handler()(wrapped)
-    wrapped = scheduled(wrapped)
-    wrapped = slog_handler(wrapped)
-    wrapped = try_handler(wrapped)
-    wrapped = listen_handler(wrapped)
-    wrapped = writer(wrapped)
-    return run(wrapped)
