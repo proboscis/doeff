@@ -397,18 +397,29 @@ class TestRace:
         assert _run_race_with_timeout(body()) == "duplicate"
 
     def test_race_resolves_once_when_waitables_complete_back_to_back(self):
-        events: list[str] = []
+        """Back-to-back completions of both raced externals resolve once.
 
-        @do
-        def complete_both(first: Any, second: Any):
-            first.complete("first")
-            second.complete("second")
+        The completions come from a real thread: since #505 a Race over
+        pending external promises holds the PRIORITY_EXTERNAL_WAIT shield
+        exactly like Wait, so an in-scheduler IDLE completer would be
+        (correctly) starved behind it — external promises are completed by
+        foreign threads by contract.
+        """
+        import time
+
+        events: list[str] = []
 
         @do
         def body():
             first = yield CreateExternalPromise()
             second = yield CreateExternalPromise()
-            _ = yield Spawn(complete_both(first, second), priority=PRIORITY_IDLE)
+
+            def complete_both():
+                time.sleep(0.05)
+                first.complete("first")
+                second.complete("second")
+
+            threading.Thread(target=complete_both, daemon=True).start()
             winner = yield Race(first.future, second.future)
             events.append(f"winner:{winner}")
             return list(events)
@@ -1399,3 +1410,414 @@ class TestDeadlockDiagnostics:
         ]
         assert stall_messages, "expected a stall warning while blocked >50ms"
         assert "parked waiters" in stall_messages[0]
+
+
+# ---------------------------------------------------------------------------
+# Root close-out (#501)
+# ---------------------------------------------------------------------------
+
+class TestRootCloseOut:
+    """#501: root completion must not silently abandon in-flight work, and an
+    empty Race() must fail loudly instead of leaking the caller continuation."""
+
+    def test_root_return_dropping_queued_work_warns(self):
+        """Repro E from the #501 report: root returns while another task's
+        fully-runnable work (spawned at IDLE behind the external-wait shield)
+        is still pending — the run must emit a loud diagnostic. Semantics are
+        unchanged: the result is still returned and W still never runs."""
+        import time
+
+        flag = {"w_ran_after_wait": False}
+
+        @do
+        def x_task(ep: Any):
+            return (yield Wait(ep.future))
+
+        @do
+        def w_task(tx: Any):
+            _ = yield Wait(tx)
+            flag["w_ran_after_wait"] = True
+            return "W"
+
+        @do
+        def body():
+            ep = yield CreateExternalPromise()
+            tx = yield Spawn(x_task(ep))
+            _tw = yield Spawn(w_task(tx), priority=PRIORITY_IDLE)
+
+            def completer():
+                time.sleep(0.1)
+                ep.complete("x-done")
+
+            threading.Thread(target=completer, daemon=True).start()
+            _ = yield Wait(tx)
+            return "root-done"
+
+        with pytest.warns(RuntimeWarning, match="abandon"):
+            result = doeff_run(scheduled(body()))
+        assert result == "root-done"
+        assert flag["w_ran_after_wait"] is False, (
+            "#501 fix is diagnostic-only: abandoned work must still not run"
+        )
+
+    def test_root_return_with_unstarted_idle_task_warns(self):
+        """Deterministic no-thread variant: an IDLE spawn whose "new" entry is
+        never popped before root returns is reported as abandoned."""
+        @do
+        def noop():
+            return None
+
+        @do
+        def body():
+            _ = yield Spawn(noop(), priority=PRIORITY_IDLE)
+            return "done"
+
+        with pytest.warns(RuntimeWarning, match="unstarted task"):
+            assert doeff_run(scheduled(body())) == "done"
+
+    def test_fully_awaited_run_does_not_warn(self):
+        """A run that awaits all of its spawned work stays silent."""
+        import warnings as warnings_mod
+
+        @do
+        def child():
+            return 1
+
+        @do
+        def body():
+            t = yield Spawn(child())
+            return (yield Wait(t))
+
+        with warnings_mod.catch_warnings():
+            warnings_mod.simplefilter("error")
+            assert doeff_run(scheduled(body())) == 1
+
+    def test_empty_race_raises_value_error(self):
+        """Repro D from the #501 report: Race() with zero waitables used to
+        silently leak the caller continuation and 'succeed' with None."""
+        @do
+        def body():
+            r = yield Race()
+            return ("raced", r)
+
+        with pytest.raises(ValueError, match="Race"):
+            _run_scheduled_with_timeout(body(), timeout=2.0)
+
+    def test_empty_race_error_is_catchable_at_the_yield_site(self):
+        @do
+        def body():
+            try:
+                yield Race()
+                return "unreachable"
+            except ValueError as e:
+                return f"caught:{e}"
+
+        assert "caught:" in _run_scheduled_with_timeout(body(), timeout=2.0)
+
+
+# ---------------------------------------------------------------------------
+# Gather/Race external-promise wait shield (#505)
+# ---------------------------------------------------------------------------
+
+class TestGatherRaceExternalWaitShield:
+    """#505: Gather/Race over pending external promises must hold the
+    PRIORITY_EXTERNAL_WAIT shield exactly like Wait, so the IDLE sim clock
+    driver cannot advance past a pending external completion."""
+
+    def test_gather_external_pending_blocks_idle_task(self):
+        import time
+
+        order: list[str] = []
+
+        @do
+        def idle_probe():
+            order.append("idle_ran")
+
+        @do
+        def body():
+            ep1 = yield CreateExternalPromise()
+            ep2 = yield CreateExternalPromise()
+            t_idle = yield Spawn(idle_probe(), priority=PRIORITY_IDLE)
+
+            def completer():
+                time.sleep(0.15)
+                order.append("completions_fired")
+                ep1.complete(1)
+                ep2.complete(2)
+
+            threading.Thread(target=completer, daemon=True).start()
+            results = yield Gather(ep1.future, ep2.future)
+            _ = yield Wait(t_idle)
+            return results
+
+        assert _run_scheduled_with_timeout(body(), timeout=5.0) == [1, 2]
+        assert order == ["completions_fired", "idle_ran"], (
+            f"IDLE task ran while Gathered external completions were pending "
+            f"(#505): {order}"
+        )
+
+    def test_race_external_pending_blocks_idle_task_and_drops_loser_placeholder(self):
+        """The winner's completion must resolve the race while the shield held
+        the IDLE task back; the loser's placeholder must be dropped on
+        resolution or the run would hang on a completion that never comes."""
+        import time
+
+        order: list[str] = []
+
+        @do
+        def idle_probe():
+            order.append("idle_ran")
+
+        @do
+        def body():
+            win = yield CreateExternalPromise()
+            lose = yield CreateExternalPromise()  # never completed
+            t_idle = yield Spawn(idle_probe(), priority=PRIORITY_IDLE)
+
+            def completer():
+                time.sleep(0.15)
+                order.append("completion_fired")
+                win.complete("winner")
+
+            threading.Thread(target=completer, daemon=True).start()
+            value = yield Race(win.future, lose.future)
+            _ = yield Wait(t_idle)
+            return value
+
+        assert _run_scheduled_with_timeout(body(), timeout=5.0) == "winner"
+        assert order == ["completion_fired", "idle_ran"], (
+            f"IDLE task ran while raced external completions were pending "
+            f"(#505): {order}"
+        )
+
+    def test_gather_external_failure_drops_sibling_placeholder(self):
+        """Fail-fast Gather resolution must drop the placeholders of its
+        still-pending external siblings, or the run would block forever on a
+        completion nobody observes anymore."""
+        import time
+
+        @do
+        def body():
+            ep1 = yield CreateExternalPromise()
+            ep2 = yield CreateExternalPromise()  # never completed
+
+            def completer():
+                time.sleep(0.1)
+                ep1.fail(RuntimeError("boom"))
+
+            threading.Thread(target=completer, daemon=True).start()
+            try:
+                yield Gather(ep1.future, ep2.future)
+                return "unreachable"
+            except RuntimeError as e:
+                return str(e)
+
+        assert _run_scheduled_with_timeout(body(), timeout=5.0) == "boom"
+
+
+# ---------------------------------------------------------------------------
+# Terminal-entry sweep (#502)
+# ---------------------------------------------------------------------------
+
+class TestTerminalEntrySweep:
+    """#502: terminal tasks/promises with no waiter and no live handle must be
+    swept so long-lived runs do not grow scheduler state monotonically."""
+
+    def test_spawn_wait_cycles_do_not_grow_scheduler_state(self):
+        from doeff_core_effects.scheduler import (
+            HANDLE_SWEEP_INTERVAL,
+            _SchedulerIntrospection,
+        )
+
+        cycles = 5000
+
+        @do
+        def child(i: int):
+            return i
+
+        @do
+        def body():
+            total = 0
+            for i in range(cycles):
+                t = yield Spawn(child(i))
+                total += yield Wait(t)
+                p = yield CreatePromise()
+                yield CompletePromise(p, None)
+                _ = yield Wait(p.future)
+            counts = yield _SchedulerIntrospection()
+            return total, counts
+
+        total, counts = doeff_run(scheduled(body()))
+        assert total == sum(range(cycles))
+        # 2 ids per cycle; a sweep runs every HANDLE_SWEEP_INTERVAL ids, so at
+        # most one unswept window (plus live handles) may remain — without the
+        # sweep both dicts would hold ~5000 entries.
+        assert counts["tasks"] <= HANDLE_SWEEP_INTERVAL, counts
+        assert counts["promises"] <= HANDLE_SWEEP_INTERVAL, counts
+        assert counts["handle_refs"] <= 2 * HANDLE_SWEEP_INTERVAL, counts
+
+    def test_live_handle_prevents_sweep(self):
+        """A terminal task whose Task handle is still alive must keep its
+        result readable across sweep boundaries."""
+        @do
+        def child():
+            return 42
+
+        @do
+        def noop():
+            return None
+
+        @do
+        def spin(n: int):
+            for _ in range(n):
+                t = yield Spawn(noop())
+                _ = yield Wait(t)
+
+        @do
+        def body():
+            t = yield Spawn(child())
+            _ = yield Wait(t)
+            yield spin(1200)  # cross at least one sweep boundary
+            return (yield Wait(t))
+
+        assert doeff_run(scheduled(body())) == 42
+
+    def test_wait_on_swept_id_raises_loud_keyerror(self):
+        """Waiting on a swept id (reconstructed handle) must raise a KeyError
+        that explains the sweep instead of a bare lookup failure."""
+        @do
+        def child():
+            return 1
+
+        @do
+        def noop():
+            return None
+
+        @do
+        def spin(n: int):
+            for _ in range(n):
+                t = yield Spawn(noop())
+                _ = yield Wait(t)
+
+        @do
+        def body():
+            t = yield Spawn(child())
+            _ = yield Wait(t)
+            tid = t.task_id
+            del t  # drop the only live handle
+            yield spin(1200)  # cross at least one sweep boundary
+            return (yield Wait(Task(tid)))
+
+        with pytest.raises(KeyError, match="swept"):
+            doeff_run(scheduled(body()))
+
+
+# ---------------------------------------------------------------------------
+# Promise resolution guards (#507)
+# ---------------------------------------------------------------------------
+
+class TestPromiseResolutionGuards:
+    """#507 minor 1: CompletePromise/FailPromise must guard already-resolved
+    promises like the drain path does, and must reject external promises."""
+
+    def test_double_complete_raises(self):
+        @do
+        def body():
+            p = yield CreatePromise()
+            yield CompletePromise(p, 1)
+            try:
+                yield CompletePromise(p, 2)
+                return "unreachable"
+            except RuntimeError as e:
+                return str(e)
+
+        assert "already completed" in doeff_run(scheduled(body()))
+
+    def test_fail_after_complete_raises(self):
+        from doeff_core_effects.scheduler import FailPromise
+
+        @do
+        def body():
+            p = yield CreatePromise()
+            yield CompletePromise(p, 1)
+            try:
+                yield FailPromise(p, RuntimeError("late"))
+                return "unreachable"
+            except RuntimeError as e:
+                return str(e)
+
+        assert "already completed" in doeff_run(scheduled(body()))
+
+    def test_double_resolution_does_not_rewrite_result(self):
+        """The first resolution stays authoritative for late waiters."""
+        @do
+        def body():
+            p = yield CreatePromise()
+            yield CompletePromise(p, "first")
+            rejected = False
+            try:
+                yield CompletePromise(p, "second")
+            except RuntimeError:
+                rejected = True
+            assert rejected, "second resolution must be rejected"
+            return (yield Wait(p.future))
+
+        assert doeff_run(scheduled(body())) == "first"
+
+    def test_internal_complete_on_external_promise_raises(self):
+        @do
+        def body():
+            ep = yield CreateExternalPromise()
+            try:
+                yield CompletePromise(ep, 1)
+                return "unreachable"
+            except RuntimeError as e:
+                return str(e)
+
+        assert "external" in doeff_run(scheduled(body()))
+
+    def test_internal_fail_on_external_promise_raises(self):
+        from doeff_core_effects.scheduler import FailPromise
+
+        @do
+        def body():
+            ep = yield CreateExternalPromise()
+            try:
+                yield FailPromise(ep, RuntimeError("boom"))
+                return "unreachable"
+            except RuntimeError as e:
+                return str(e)
+
+        assert "external" in doeff_run(scheduled(body()))
+
+
+# ---------------------------------------------------------------------------
+# BaseException in a task (#507)
+# ---------------------------------------------------------------------------
+
+class TestBaseExceptionInTask:
+    """#507 minor 2: KeyboardInterrupt/SystemExit raised inside a spawned task
+    must record the task failure and wake its waiters, then keep unwinding out
+    of the whole run — never be converted into an ordinary (potentially
+    unawaited, #485-silent) task failure."""
+
+    @pytest.mark.parametrize("interrupt_type", [KeyboardInterrupt, SystemExit])
+    def test_interrupt_in_task_propagates_out_of_run(self, interrupt_type):
+        @do
+        def interrupting_task():
+            raise interrupt_type("from-task")
+            yield
+
+        @do
+        def body():
+            t = yield Spawn(interrupting_task())
+            try:
+                _ = yield Wait(t)
+                return "wait-returned"
+            except interrupt_type:
+                # If the interrupt were delivered as a normal task failure,
+                # this waiter would swallow it and the run would return.
+                return "interrupt-swallowed-at-wait-site"
+
+        with pytest.raises(interrupt_type):
+            doeff_run(scheduled(body()))
