@@ -20,9 +20,12 @@
 //! eval_perform/eval_perform_with_k, then `Frame::Program.handler_k_handle`
 //! or `EvalReturnContinuation::ExpandReturn.handler_k_handle` (#492).
 
+use std::sync::Arc;
+
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+use crate::arena::SlotReclaimQueue;
 use crate::ids::FiberId;
 use crate::ir_stream::StreamSourceLocation;
 use crate::memory_stats;
@@ -57,6 +60,14 @@ pub struct DetachedFiberChain {
     head: FiberId,
     last_fiber: FiberId,
     fibers: Vec<DetachedFiber>,
+    /// Where to report still-owned arena slot indices if this chain is
+    /// dropped without being reattached (#497). Armed by
+    /// `FiberArena::detach_chain`; `None` for chains constructed outside an
+    /// arena (tests). Carries bare slot indices only — never fibers or
+    /// continuations (ISSUE-VM-001 G1); the chain never touches the arena
+    /// directly (Drop can fire at arbitrary Python dealloc points,
+    /// including from another thread).
+    slot_reclaim_queue: Option<Arc<SlotReclaimQueue>>,
 }
 
 impl DetachedFiberChain {
@@ -65,7 +76,15 @@ impl DetachedFiberChain {
             head,
             last_fiber,
             fibers,
+            slot_reclaim_queue: None,
         }
+    }
+
+    /// Arm slot reclamation: on drop, any fibers this chain still owns are
+    /// reported to `queue` so the owning arena can return their slots to
+    /// its free list (#497).
+    pub(crate) fn arm_slot_reclaim(&mut self, queue: Arc<SlotReclaimQueue>) {
+        self.slot_reclaim_queue = Some(queue);
     }
 
     pub fn head(&self) -> FiberId {
@@ -80,8 +99,10 @@ impl DetachedFiberChain {
         &self.fibers
     }
 
-    pub fn into_fibers(self) -> Vec<DetachedFiber> {
-        self.fibers
+    pub fn into_fibers(mut self) -> Vec<DetachedFiber> {
+        // Drain in place: `self` then drops with no owned fibers, so the
+        // Drop impl reports nothing — the caller now owns the fibers.
+        std::mem::take(&mut self.fibers)
     }
 
     pub fn set_parent(&mut self, id: FiberId, parent: Option<FiberId>) -> bool {
@@ -266,6 +287,27 @@ impl DetachedFiberChain {
         }
 
         handlers
+    }
+}
+
+impl Drop for DetachedFiberChain {
+    /// A chain dropped while still owning fibers was abandoned without
+    /// reattachment (abort-style handler, scheduler cancellation, dropped
+    /// parked K). Report the owned slot indices to the arena's reclaim
+    /// queue so they return to the free list instead of stranding as
+    /// vacant-reserved until run end (#497). Consumption paths
+    /// (`into_fibers`, `append`) drain `fibers` first, so they report
+    /// nothing here.
+    fn drop(&mut self) {
+        if self.fibers.is_empty() {
+            return;
+        }
+        let Some(queue) = &self.slot_reclaim_queue else {
+            // Chain never belonged to an arena (direct construction in
+            // tests) — there is no free list to return slots to.
+            return;
+        };
+        queue.report_dropped_slots(self.fibers.iter().map(|entry| entry.id.index()));
     }
 }
 
