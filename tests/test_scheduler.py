@@ -1213,3 +1213,29 @@ class TestSemaphore:
         assert error.semaphore_waiters == {0: [1, 2]}
         assert "semaphore 0" in str(error)
         assert "tasks 1, 2" in str(error)
+
+    def test_permit_survives_receiver_cancelled_after_transfer(self):
+        """Regression for #496: a permit transferred by ReleaseSemaphore to a
+        parked waiter must be returned to the semaphore when that waiter is
+        cancelled before its resume entry is dequeued — the next live waiter
+        gets it instead of it leaking (which surfaced as a spurious
+        SchedulerDeadlockError)."""
+        from doeff_core_effects.scheduler import CreateSemaphore, ReleaseSemaphore
+
+        @do
+        def acquirer(sem: Any, name: str):
+            yield AcquireSemaphore(sem)
+            yield ReleaseSemaphore(sem)
+            return name
+
+        @do
+        def body():
+            sem = yield CreateSemaphore(1)
+            yield AcquireSemaphore(sem)          # permits 1 -> 0
+            w = yield Spawn(acquirer(sem, "W"))  # W parks on acquire
+            yield ReleaseSemaphore(sem)          # permit transferred to W
+            yield Cancel(w)                      # W cancelled while permit in flight
+            v = yield Spawn(acquirer(sem, "V"))  # V must receive the permit
+            return (yield Wait(v))
+
+        assert _run_scheduled_with_timeout(body(), timeout=2.0) == "V"
