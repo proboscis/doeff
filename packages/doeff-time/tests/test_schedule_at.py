@@ -6,7 +6,7 @@ from doeff_core_effects.scheduler import Wait
 from doeff_time.effects import Delay, GetTime, ScheduleAt
 from doeff_time.handlers import sim_time_handler
 
-from conftest import run_with_handlers
+from time_test_support import run_with_handlers
 from doeff import Effect, EffectBase, Pass, Resume, do
 from doeff import handler as _program_handler
 
