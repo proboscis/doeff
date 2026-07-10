@@ -220,3 +220,196 @@ def test_prompt_contract_switches_to_tool_transport(tmp_path: Path) -> None:
     assert RESULT_BLOCK_BEGIN not in tool_mode
     assert RESULT_BLOCK_BEGIN in marker_mode
     assert REPORT_RESULT_TOOL_NAME not in marker_mode
+
+
+# ---------------------------------------------------------------------------
+# Integration through agent_effectful_handler (tmux-agent-defhandler): the
+# handler that nakagawa installs. Regression guard for the duplicated
+# LaunchSessionEffect branches in effectful.hy — the first fix landed only in
+# agent-handler-defhandler and this launch path kept marker-mode prompts.
+# ---------------------------------------------------------------------------
+
+import http.client
+import threading
+from datetime import datetime, timezone
+from urllib.parse import urlparse
+
+from doeff import do
+from doeff_agents.adapters.base import InjectionMethod, LaunchParams
+from doeff_agents.effects.agent import AwaitResult, LaunchSession, StopSession
+from doeff_agents.handlers import agent_effectful_handler
+from doeff_agents.session_backend import SessionBackend
+from doeff_agents.tmux import SessionInfo
+from doeff_core_effects.handlers import lazy_ask, state
+from doeff_core_effects.scheduler import CreateExternalPromise, Wait, scheduled
+
+
+class _FakeAdapter:
+    def __init__(self) -> None:
+        self.params: list[LaunchParams] = []
+
+    def is_available(self) -> bool:
+        return True
+
+    def launch_command(self, params: LaunchParams) -> list[str]:
+        self.params.append(params)
+        return ["fake-agent"]
+
+    @property
+    def injection_method(self) -> InjectionMethod:
+        return InjectionMethod.TMUX
+
+    @property
+    def ready_pattern(self) -> str | None:
+        return None
+
+    @property
+    def status_bar_lines(self) -> int:
+        return 3
+
+
+class _FakeLaunchBackend:
+    def __init__(self) -> None:
+        self.sessions: dict[str, str] = {}
+        self.killed: list[str] = []
+
+    def has_session(self, name: str) -> bool:
+        return name in self.sessions
+
+    def new_session(self, cfg) -> SessionInfo:
+        pane_id = f"%{len(self.sessions)}"
+        self.sessions[cfg.session_name] = pane_id
+        return SessionInfo(
+            session_name=cfg.session_name,
+            pane_id=pane_id,
+            created_at=datetime.now(timezone.utc),
+        )
+
+    def send_keys(self, target: str, keys: str, *, literal=True, enter=True) -> None:
+        pass
+
+    def capture_pane(self, target: str, lines=100, *, strip_ansi_codes=True) -> str:
+        return ""
+
+    def kill_session(self, session: str) -> None:
+        self.killed.append(session)
+        self.sessions.pop(session, None)
+
+
+def _read_sse_data(resp) -> str:
+    buf = ""
+    while not buf.endswith("\n\n"):
+        buf += resp.read(1).decode()
+    for line in buf.strip().split("\n"):
+        if line.startswith("data:"):
+            return line.split(":", 1)[1].strip()
+    raise AssertionError(f"No data field in SSE event: {buf!r}")
+
+
+def _call_report_result_from_agent_side(work_dir: Path, payload: dict) -> dict:
+    config = json.loads((work_dir / ".mcp.json").read_text(encoding="utf-8"))
+    server_url = config["mcpServers"]["sbi"]["url"]
+    parsed = urlparse(server_url)
+    conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=10)
+    conn.request("GET", "/sse")
+    resp = conn.getresponse()
+    endpoint = _read_sse_data(resp)
+
+    post = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=10)
+    body = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": REPORT_RESULT_TOOL_NAME,
+                "arguments": {"result": payload},
+            },
+        }
+    )
+    post.request("POST", endpoint, body.encode(), {"Content-Type": "application/json"})
+    post_resp = post.getresponse()
+    assert post_resp.status == 202
+    post_resp.read()
+    post.close()
+
+    data = json.loads(_read_sse_data(resp))
+    conn.close()
+    return data
+
+
+def test_launch_session_via_effectful_handler_carries_report_result(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    adapter = _FakeAdapter()
+    backend = _FakeLaunchBackend()
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter",
+        lambda _agent_type: adapter,
+    )
+
+    @do
+    def noop_tool_body():
+        return {"status": "done"}
+
+    from doeff.mcp import McpToolDef
+
+    domain_tool = McpToolDef(
+        name="sbi-login",
+        description="fake domain tool",
+        params=(),
+        handler=noop_tool_body,
+    )
+
+    @do
+    def workflow():
+        spec = AgentSpec(
+            run_id="run-rr-int",
+            node_id="node-rr-int",
+            attempt=0,
+            agent_type=AgentType.CLAUDE,
+            work_dir=tmp_path,
+            prompt="read state and report",
+            result_schema=RESULT_SCHEMA,
+            mcp_tools=(domain_tool,),
+            mcp_server_name="sbi",
+        )
+        handle = yield LaunchSession(spec)
+        done = yield CreateExternalPromise()
+        holder: list[object] = []
+
+        def call_tool() -> None:
+            try:
+                holder.append(
+                    _call_report_result_from_agent_side(tmp_path, LONG_PAYLOAD)
+                )
+            except Exception as exc:  # pragma: no cover - re-raised below
+                holder.append(exc)
+            finally:
+                done.complete(None)
+
+        threading.Thread(target=call_tool, daemon=True).start()
+        yield Wait(done.future)
+        outcome = yield AwaitResult(handle, timeout_seconds=5.0)
+        yield StopSession(handle, reason="test cleanup")
+        reply = holder[0]
+        if isinstance(reply, Exception):
+            raise reply
+        return outcome, reply
+
+    outcome, reply = run(
+        scheduled(
+            lazy_ask(env={SessionBackend: backend})(
+                state()(agent_effectful_handler()(workflow()))
+            )
+        )
+    )
+
+    tool_reply = json.loads(reply["result"]["content"][0]["text"])
+    assert tool_reply == {"status": "accepted"}
+    assert outcome.validation_error is None
+    assert outcome.result == LONG_PAYLOAD
+    # The launch prompt must instruct the typed transport, not markers.
+    assert REPORT_RESULT_TOOL_NAME in adapter.params[0].prompt
+    assert RESULT_BLOCK_BEGIN not in adapter.params[0].prompt

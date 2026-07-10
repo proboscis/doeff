@@ -267,7 +267,18 @@
           (<- inner-handlers (GetHandlers k))
           (<- outer-handlers (GetOuterHandlers))
           (setv captured-handlers (+ (list inner-handlers) (list outer-handlers)))
-          (setv server (McpToolServer :tools spec.mcp-tools))
+          ;; Typed result transport (ADR 0035) — same registration as the
+          ;; agent-handler-defhandler branch above: schema sessions get a
+          ;; report_result tool on the in-VM server so the result never rides
+          ;; the rendered terminal.
+          (setv server-tools (tuple spec.mcp-tools))
+          (when (and agent-handler.supports-inprocess-report-result
+                     (spec-uses-report-result-transport spec))
+            (setv sink (.create-result-sink agent-handler spec.session-id))
+            (setv server-tools
+                  (+ server-tools
+                     #((make-report-result-tool sink spec.result-schema)))))
+          (setv server (McpToolServer :tools server-tools))
           (<- ready-ep (CreateExternalPromise))
           (.start server :ready-promise ready-ep)
           (<- _ (Wait ready-ep.future))
@@ -280,6 +291,7 @@
                 :mcp-servers {spec.mcp-server-name server.url}))
             (except [e Exception]
               (_shutdown-mcp-server-for-session agent-handler spec.session-id)
+              (.discard-result-sink agent-handler spec.session-id)
               (raise e)))
           (resume launch-result))
         (resume (.handle-launch-session agent-handler effect :mcp-servers None))))
