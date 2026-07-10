@@ -67,7 +67,11 @@ class SimTimeRuntime:
         if self._driver_running:
             return None
         self._driver_running = True
-        yield Spawn(self._clock_driver(), priority=PRIORITY_IDLE)
+        # daemon=True: the driver's final IDLE resume (queued right after
+        # its last CompletePromise) is routinely abandoned when the root
+        # body returns first — that is this daemon's lifecycle, not lost
+        # work, so it must not trip the #501 root close-out diagnostic.
+        yield Spawn(self._clock_driver(), priority=PRIORITY_IDLE, daemon=True)
         return None
 
     @do
