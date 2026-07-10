@@ -437,6 +437,15 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                     if is_owner_cancelled(owner_tid):
                         continue
                     return Transfer(cont, value)
+                if entry[0] == "sem_resume":
+                    # A ReleaseSemaphore permit travelling to a parked
+                    # waiter (#496): the entry carries the semaphore id so
+                    # the permit is recoverable at this drop site.
+                    _, owner_tid, cont, sid = entry
+                    if is_owner_cancelled(owner_tid):
+                        return_inflight_permit(sid)
+                        continue
+                    return Transfer(cont, None)
                 if entry[0] == "raise":
                     _, owner_tid, cont, error = entry
                     if is_owner_cancelled(owner_tid):
@@ -615,6 +624,33 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 continue
             return owner_tid, waiter_k
         return None
+
+    def grant_permit_to_next_waiter(sid):
+        """Transfer one permit to the next live waiter of semaphore ``sid``.
+
+        The ready entry is tagged ``sem_resume`` and carries ``sid`` so the
+        permit it holds can be returned if the receiving task is cancelled
+        before the resume is dequeued (#496). Returns True when the permit
+        was transferred, False when no live waiter exists.
+        """
+        sem = semaphores[sid]
+        waiter = pop_live_semaphore_waiter(sem)
+        if waiter is None:
+            return False
+        owner_tid, waiter_k = waiter
+        enqueue(("sem_resume", owner_tid, waiter_k, sid), task_priority(owner_tid))
+        return True
+
+    def return_inflight_permit(sid):
+        """Return a permit whose receiving waiter was cancelled in flight.
+
+        The task was cancelled after ReleaseSemaphore transferred the
+        permit to it but before its sem_resume entry was dequeued (#496):
+        re-run the release so the next live waiter — or the free pool —
+        gets the permit instead of it leaking.
+        """
+        if not grant_permit_to_next_waiter(sid):
+            semaphores[sid]["permits"] += 1
 
     def make_handler(current_tid):
         @do
@@ -876,12 +912,9 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         elif isinstance(effect, ReleaseSemaphore):
             sid = effect.semaphore.sem_id
             sem = semaphores[sid]
-            waiter = pop_live_semaphore_waiter(sem)
-            if waiter is not None:
-                # Transfer permit directly to first waiter
-                owner_tid, waiter_k = waiter
-                enqueue_resume(owner_tid, waiter_k, None)
-            else:
+            # Transfer the permit directly to the first live waiter (#496:
+            # via a recoverable sem_resume entry) or bank it.
+            if not grant_permit_to_next_waiter(sid):
                 if sem["permits"] >= sem["max_permits"]:
                     from doeff.program import ResumeThrow
                     return (yield ResumeThrow(k, RuntimeError("semaphore released too many times")))
