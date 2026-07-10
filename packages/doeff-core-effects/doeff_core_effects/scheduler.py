@@ -417,20 +417,22 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                         continue
                     return ResumeThrow(cont, error)
                 if entry[0] == "wait_external":
-                    # Task waiting for external promise at NORMAL priority.
-                    # Keeps IDLE tasks (clock driver) from running.
-                    _, owner_tid, cont, wk = entry
-                    if is_owner_cancelled(owner_tid):
-                        continue
-                    if waitable_status(wk)[0] in terminal_statuses:
-                        resume_with_waitable_result(owner_tid, cont, wk)
+                    # Placeholder for a task waiting on an external promise.
+                    # Keeps IDLE tasks (clock driver) from running while the
+                    # wait is pending, and drives the blocking drain. The
+                    # resume itself is owned by the paired `waiters`
+                    # registration: wake_waiters claims and enqueues it the
+                    # moment the completion is drained — even while this loop
+                    # is blocked on a DIFFERENT unresolved external wait
+                    # (#490). This entry never resumes the continuation; once
+                    # claimed it is simply dropped.
+                    _, owner_tid, _cont, _wk, claimed = entry
+                    if claimed[0] or is_owner_cancelled(owner_tid):
                         continue
                     # Not yet resolved — block for one completion, drain rest
                     _drain_one_external()
                     drain()
-                    if waitable_status(wk)[0] in terminal_statuses:
-                        resume_with_waitable_result(owner_tid, cont, wk)
-                    else:
+                    if not claimed[0]:
                         enqueue(entry, PRIORITY_EXTERNAL_WAIT)
                     continue
             blocked_semaphore_waiters = live_semaphore_waiters()
@@ -552,6 +554,13 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             if w[0] == "wait":
                 _, owner_tid, waiter_k = w
                 resume_with_waitable_result(owner_tid, waiter_k, completed_key)
+            elif w[0] == "wait_external":
+                # Eager wake for a non-IDLE external wait (#490): enqueue the
+                # resume now and claim it so the paired ready-heap placeholder
+                # drops itself instead of resuming a second time.
+                _, owner_tid, waiter_k, claimed = w
+                claimed[0] = True
+                resume_with_waitable_result(owner_tid, waiter_k, completed_key)
             elif w[0] == "gather":
                 _, _owner_tid, gather_state = w
                 wake_gather_waiter(gather_state, completed_key)
@@ -662,7 +671,21 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                     if effect.priority == PRIORITY_IDLE:
                         waiters.setdefault(wk, []).append(("wait", current_tid, k))
                     else:
-                        enqueue(("wait_external", current_tid, k, wk), PRIORITY_EXTERNAL_WAIT)
+                        # Register in `waiters` too so the resume is enqueued
+                        # by wake_waiters the moment the completion is drained
+                        # — even while pick_next is blocked on a different
+                        # unresolved external wait (#490). The ready-heap
+                        # placeholder only blocks the clock driver and drives
+                        # the blocking drain; `claimed` marks that the waiters
+                        # side owns the (one-shot) resume.
+                        claimed = [False]
+                        waiters.setdefault(wk, []).append(
+                            ("wait_external", current_tid, k, claimed)
+                        )
+                        enqueue(
+                            ("wait_external", current_tid, k, wk, claimed),
+                            PRIORITY_EXTERNAL_WAIT,
+                        )
                 else:
                     # Internal promise: use waiters (resolved by other tasks)
                     waiters.setdefault(wk, []).append(("wait", current_tid, k))
