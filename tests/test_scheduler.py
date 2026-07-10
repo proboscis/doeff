@@ -1913,6 +1913,27 @@ class TestTerminalEntrySweep:
         assert counts["promises"] <= HANDLE_SWEEP_INTERVAL, counts
         assert counts["handle_refs"] <= 2 * HANDLE_SWEEP_INTERVAL, counts
 
+    def test_repeated_future_minting_on_pending_promise_prunes_dead_refs(self):
+        """Minting `.future` repeatedly from one long-lived PENDING promise
+        must not accumulate dead weakrefs until terminality (adversarial
+        finding on #502): the sweep never scans non-terminal entries, so
+        dead refs are pruned amortized at registration time instead."""
+        from doeff_core_effects.scheduler import _SchedulerIntrospection
+
+        mints = 1000
+
+        @do
+        def body():
+            ep = yield CreateExternalPromise()
+            for _ in range(mints):
+                _ = ep.future  # minted and immediately dropped
+            counts = yield _SchedulerIntrospection()
+            return counts
+
+        counts = doeff_run(scheduled(body()))
+        # Without the prune the ep's refs list holds ~1000 dead weakrefs.
+        assert counts["handle_ref_total"] < 64, counts
+
     def test_live_handle_prevents_sweep(self):
         """A terminal task whose Task handle is still alive must keep its
         result readable across sweep boundaries."""
