@@ -733,6 +733,62 @@ class TestExternalPromise:
         assert results == list(range(100))
         assert elapsed < 2.0, f"took {elapsed:.1f}s — not concurrent!"
 
+    def test_resolved_external_wait_not_stalled_behind_unresolved_peer(self):
+        """Regression for #490: a resolved external wait resumes promptly.
+
+        Two slow promises complete at T+0.6s; the fast one at T+0.05s. Spawn
+        order fixes the ready-heap FIFO to [slow, slow, fast]: with the bug,
+        fast's completion is drained during slow-1's blocking get without
+        waking fast, then the next pop (slow-2, unresolved) blocks the loop
+        until the slow completions arrive — fast stalls ~0.55s despite being
+        resolved. The waiters registration must wake it the moment its
+        completion is drained.
+        """
+        import time
+
+        from doeff_core_effects.scheduler import CreateExternalPromise
+
+        t_fast_completed: list[float] = [0.0]
+        t_fast_resumed: list[float] = [0.0]
+
+        def complete_later(ep: Any, delay: float, mark: list[float] | None = None) -> None:
+            def worker() -> None:
+                time.sleep(delay)
+                if mark is not None:
+                    mark[0] = time.perf_counter()
+                ep.complete("done")
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        @do
+        def slow_task():
+            ep = yield CreateExternalPromise()
+            complete_later(ep, 0.6)
+            return (yield Wait(ep.future))
+
+        @do
+        def fast_task():
+            ep = yield CreateExternalPromise()
+            complete_later(ep, 0.05, mark=t_fast_completed)
+            value = yield Wait(ep.future)
+            t_fast_resumed[0] = time.perf_counter()
+            return value
+
+        @do
+        def body():
+            tasks = [(yield Spawn(slow_task())), (yield Spawn(slow_task()))]
+            tasks.append((yield Spawn(fast_task())))
+            return (yield Gather(*tasks))
+
+        results = doeff_run(scheduled(body()))
+
+        assert results == ["done", "done", "done"]
+        stall = t_fast_resumed[0] - t_fast_completed[0]
+        assert stall < 0.25, (
+            f"fast external wait stalled {stall * 1000:.0f}ms behind an "
+            f"unresolved peer (#490)"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Cancel
