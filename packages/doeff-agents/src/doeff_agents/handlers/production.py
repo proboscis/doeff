@@ -76,23 +76,18 @@ from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import AgentSessionRepository, InMemoryAgentSessionRepository
 from doeff_agents.shell import assert_no_forbidden_agent_env, assert_session_env_is_non_auth_overlay, wrap_with_shell_exports
 
-RESULT_BLOCK_BEGIN = "DOEFF_AGENT_RESULT_BEGIN"
-RESULT_BLOCK_END = "DOEFF_AGENT_RESULT_END"
-AWAIT_RESULT_CAPTURE_LINES = 1000
 REPORT_RESULT_TOOL_NAME = "report_result"
 
 
 def spec_uses_report_result_transport(spec: AgentSpec) -> bool:
-    """True when a session can carry its result over the in-VM MCP data channel.
+    """True when a session owes a structured result over the in-VM data channel.
 
-    ADR 0035: the byte-faithful result transport is a typed data channel, not a
-    scrape of rendered terminal bytes. A session that already talks to an in-VM
-    MCP server (``mcp_tools`` non-empty) and owes a structured result
-    (``result_schema`` set) gets a ``report_result`` tool on that server; the
-    terminal marker block stays only for sessions with no MCP server, and as an
-    uninstructed legacy fallback.
+    ADR-DOE-AGENTS-005 R1: EVERY schema session launched through the in-process
+    defhandlers carries the ``report_result`` MCP tool — the launch site starts
+    an in-VM server even when the spec has no domain tools. Terminal bytes are
+    never a result transport (the marker/scrape vocabulary was deleted by R3).
     """
-    return bool(spec.mcp_tools) and spec.result_schema is not None
+    return spec.result_schema is not None
 
 
 def make_report_result_tool(
@@ -463,118 +458,61 @@ def _validation_failure_from_outcome(  # noqa: PLR0911 - baseline cleanup keeps 
 def _retry_message(error: AgentValidationFailure) -> str:
     if error.kind == AgentValidationErrorKind.ABSENT:
         return (
-            "No structured result was returned. Complete the task and return a "
-            f"structured result block using {RESULT_BLOCK_BEGIN} and {RESULT_BLOCK_END}; "
-            "doeff-agents will validate it against the result schema."
+            "No structured result was reported. Complete the task and report "
+            f"the result by calling the `{REPORT_RESULT_TOOL_NAME}` MCP tool "
+            "exactly once; it validates the payload against the result schema."
         )
     if error.kind == AgentValidationErrorKind.INVALID:
         return (
             f"The structured result was invalid: {error.message}. "
-            f"Return a corrected block using {RESULT_BLOCK_BEGIN} and {RESULT_BLOCK_END}; "
-            "doeff-agents will validate it against the result schema."
+            f"Call the `{REPORT_RESULT_TOOL_NAME}` MCP tool again with a "
+            "corrected payload; it validates against the result schema."
         )
     return f"Cannot continue automatically: {error.message}"
 
 
 def _result_contract_prompt(
     result_schema: dict[str, object],
-    report_result_server: str | None = None,
+    report_result_server: str,
 ) -> str:
+    # Typed data channel only (ADR-DOE-AGENTS-005 R1-R3): the terminal never
+    # carries the result, so TUI line-wrapping cannot corrupt it.
     schema_json = json.dumps(result_schema, ensure_ascii=False, indent=2, sort_keys=True)
-    if report_result_server is not None:
-        # Typed data channel (ADR 0035): the terminal never carries the result,
-        # so TUI line-wrapping cannot corrupt it.
-        return (
-            "\n\n## Structured Result Contract (managed by doeff-agents)\n"
-            "When the task is complete, report exactly one structured result by "
-            f"calling the `{REPORT_RESULT_TOOL_NAME}` MCP tool on the "
-            f"`{report_result_server}` MCP server, passing the result object as "
-            "its `result` argument. Do not create JSON result files in the "
-            "workspace and do not print the result to the terminal; the tool "
-            "call is the only result transport. This is a doeff-agents "
-            "transport detail; the domain task only decides the JSON payload.\n\n"
-            "The result object must satisfy this schema:\n"
-            "```json\n"
-            f"{schema_json}\n"
-            "```\n\n"
-            "The tool validates the payload: on status=rejected, fix the "
-            "payload per the returned validation_error and call the tool "
-            "again. Do not ask the caller how to return the result."
-        )
     return (
         "\n\n## Structured Result Contract (managed by doeff-agents)\n"
-        "Before the agent process exits, return exactly one structured result. "
-        "Do not create JSON result files in the workspace. In the final response, "
-        f"start a line with {RESULT_BLOCK_BEGIN}, put a compact single-line "
-        f"JSON object on the next line, and end with a line containing "
-        f"{RESULT_BLOCK_END}. Do not pretty-print the result JSON. "
-        "Do not echo an example block from these instructions. This is a "
-        "doeff-agents transport detail; the domain task only decides the JSON "
-        "payload.\n\n"
-        "The JSON object must satisfy this schema:\n"
+        "When the task is complete, report exactly one structured result by "
+        f"calling the `{REPORT_RESULT_TOOL_NAME}` MCP tool on the "
+        f"`{report_result_server}` MCP server, passing the result object as "
+        "its `result` argument. Do not create JSON result files in the "
+        "workspace and do not print the result to the terminal; the tool "
+        "call is the only result transport. This is a doeff-agents "
+        "transport detail; the domain task only decides the JSON payload.\n\n"
+        "The result object must satisfy this schema:\n"
         "```json\n"
         f"{schema_json}\n"
         "```\n\n"
-        "Do not ask the caller how to return the result. If the result is absent "
-        "or invalid, doeff-agents will send a follow-up; correct the same "
-        "structured result block and continue until it validates or the task is blocked."
+        "The tool validates the payload: on status=rejected, fix the "
+        "payload per the returned validation_error and call the tool "
+        "again. Do not ask the caller how to return the result."
     )
 
 
 def _prompt_with_result_contract(
     prompt: str | None,
-    result_schema: dict[str, object],
-    report_result_server: str | None = None,
+    result_schema: dict[str, object] | None,
+    report_result_server: str | None,
 ) -> str:
     base = prompt or ""
+    if result_schema is None:
+        return base
+    if report_result_server is None:
+        raise AgentLaunchError(
+            "a schema session has no report_result server: in-process schema "
+            "sessions must be launched through the L2 LaunchSession defhandler "
+            "path, which registers the result sink and serves the "
+            f"`{REPORT_RESULT_TOOL_NAME}` tool (ADR-DOE-AGENTS-005 R1/R5)"
+        )
     return f"{base}{_result_contract_prompt(result_schema, report_result_server)}"
-
-
-def _has_result_block(output: str) -> bool:
-    return RESULT_BLOCK_BEGIN in output
-
-
-def _has_complete_result_block(output: str) -> bool:
-    begin = output.rfind(RESULT_BLOCK_BEGIN)
-    if begin < 0:
-        return False
-    return RESULT_BLOCK_END in output[begin + len(RESULT_BLOCK_BEGIN) :]
-
-
-def _extract_result_payload(output: str) -> tuple[object | None, str | None]:
-    starts = [match.start() for match in re.finditer(re.escape(RESULT_BLOCK_BEGIN), output)]
-    if not starts:
-        return None, f"structured result block not found: missing {RESULT_BLOCK_BEGIN}"
-
-    latest_error = f"structured result block not found: missing {RESULT_BLOCK_END}"
-    for begin in reversed(starts):
-        rest = output[begin + len(RESULT_BLOCK_BEGIN) :]
-        end = rest.find(RESULT_BLOCK_END)
-        if end < 0:
-            continue
-        raw = rest[:end].strip()
-        payload, error = _parse_result_payload_candidate(raw)
-        if error is None:
-            return payload, None
-        latest_error = error
-    return None, latest_error
-
-
-def _parse_result_payload_candidate(raw: str) -> tuple[object | None, str | None]:
-    if not raw:
-        return None, "structured result block is empty"
-    raw = tmux.strip_ansi(raw).strip()
-    # ADR 0035: no wrap-repair heuristic. The retired
-    # `_normalize_wrapped_json_strings` / `_normalize_terminal_wrapped_json`
-    # helpers were a non-invertible clone of the Rust agentd repair — they
-    # assumed a terminal wrap never replaced a real space, so a word-boundary
-    # wrap silently lost it (and the two implementations could diverge). The
-    # byte-faithful result transport is agentd's `report_result` data
-    # channel; this legacy tmux path parses the block verbatim only.
-    try:
-        return json.loads(raw), None
-    except json.JSONDecodeError as exc:
-        return None, f"structured result block is not valid JSON: {exc}"
 
 
 def _launch_effect_from_spec(
@@ -712,6 +650,9 @@ class TmuxAgentHandler(AgentHandler):
                     "MCP tools must run inside the caller's doeff VM via "
                     "mcp_server_loop; no in-VM MCP server URL was provided"
                 )
+        # Schema-only sessions carry no domain tools but still need .mcp.json
+        # so the agent can reach the report_result server (ADR-DOE-AGENTS-005).
+        if active_mcp_servers:
             self._write_mcp_json(effect.work_dir, active_mcp_servers)
 
         # Disable oh-my-zsh's auto-update prompt. Without isolated HOME the
@@ -1047,11 +988,21 @@ class TmuxAgentHandler(AgentHandler):
         session_id = effect.spec.session_id
         if session_id in self._sessions or self._session_repository.get_session(session_id):
             return L2SessionHandle(session_id=session_id)
-        # A registered sink means the launch site put a report_result tool on
-        # the session's in-VM MCP server; instruct the typed transport.
+        # ADR-DOE-AGENTS-005 R5: a schema session without a registered sink has
+        # no result transport on the in-process face — the L2 defhandler path
+        # registers the sink and serves report_result before launching. Direct
+        # calls (including the L1 agent() task path, whose synchronous await
+        # would starve the in-VM server loop) must fail fast, not launch an
+        # agent whose result can never be read.
+        if effect.spec.result_schema is not None and session_id not in self._result_sinks:
+            raise AgentLaunchError(
+                f"schema session {session_id} has no report_result sink: launch "
+                "in-process schema sessions through the L2 LaunchSession "
+                "defhandler path (ADR-DOE-AGENTS-005 R1/R5)"
+            )
         report_result_server = (
             effect.spec.mcp_server_name
-            if session_id in self._result_sinks
+            if effect.spec.result_schema is not None
             else None
         )
         self.handle_launch(
@@ -1064,11 +1015,14 @@ class TmuxAgentHandler(AgentHandler):
         return L2SessionHandle(session_id=session_id)
 
     def handle_await_result(self, effect: AwaitResultEffect) -> AwaitOutcome:
-        """Await a structured result block or an awaiting-input/timeout state.
+        """Await a reported result or an awaiting-input/timeout observation.
 
-        The per-await budget is the transport keep-alive heartbeat
-        (L-K4-3): expiry only hands control back to the caller's re-await
-        loop and never decides anything about the node.
+        The reported sink is the ONLY result source (ADR-DOE-AGENTS-005 R2):
+        terminal bytes are never parsed as result payload; pane capture stays
+        observation-only (status, dialogs, watchdogs). The per-await budget is
+        the transport keep-alive heartbeat (L-K4-3): expiry only hands control
+        back to the caller's re-await loop and never decides anything about
+        the node.
         """
         timeout_seconds = (
             effect.timeout_seconds
@@ -1083,28 +1037,16 @@ class TmuxAgentHandler(AgentHandler):
 
             # Result-first read of the typed report_result transport: the sink
             # payload is byte-faithful (never rendered by the TUI), already
-            # schema-validated at report time, and wins over any terminal
-            # capture regardless of session liveness (ADR-DOE-AGENTS-002 R4).
+            # schema-validated at report time, and wins regardless of session
+            # liveness (ADR-DOE-AGENTS-002 R4 / ADR-DOE-AGENTS-005 R2).
             sink = self._result_sinks.get(effect.handle.session_id)
             if sink is not None and sink["payload"] is not None:
                 return AwaitOutcome(status=AwaitStatus.EXITED, result=sink["payload"])
 
-            # Prefer a captured schema result block over session liveness: a
-            # one-shot CLI mode returns to a shell prompt while the tmux
-            # session stays alive, so a session-first await would keep
-            # waiting past a result that has already been written.
-            if state.result_schema is not None:
-                result_output = self._capture_result_output(state)
-                if result_output is not None:
-                    return self._await_outcome_from_result_output(state, result_output)
-
             if not self._backend.has_session(effect.handle.session_id):
-                return self._await_outcome_from_result_output(state)
+                return self._await_outcome_without_result(state)
 
             observation = self.handle_monitor(MonitorEffect(handle=effect.handle))
-            output = state.monitor_state.last_output
-            if output and _has_complete_result_block(output):
-                return self._await_outcome_from_result_output(state, output)
             if observation.status in (SessionStatus.BLOCKED, SessionStatus.BLOCKED_API):
                 return AwaitOutcome(
                     status=AwaitStatus.AWAITING_INPUT,
@@ -1117,7 +1059,7 @@ class TmuxAgentHandler(AgentHandler):
             if observation.is_terminal and (
                 observation.status != SessionStatus.EXITED or terminal_without_live_session
             ):
-                return self._await_outcome_from_result_output(state, output)
+                return self._await_outcome_without_result(state)
             if time.monotonic() >= deadline:
                 return AwaitOutcome(status=AwaitStatus.TIMED_OUT)
             time.sleep(0.2)
@@ -1149,48 +1091,22 @@ class TmuxAgentHandler(AgentHandler):
             raise SessionNotFoundError(f"Session {session_id} is not registered")
         return snapshot
 
-    def _await_outcome_from_result_output(
-        self,
-        state: SessionState,
-        output: str | None = None,
-    ) -> AwaitOutcome:
-        transcript = output if output is not None else state.monitor_state.last_output
-        payload, parse_error = _extract_result_payload(transcript or "")
-        if parse_error is not None:
-            return AwaitOutcome(status=AwaitStatus.EXITED, validation_error=parse_error)
-        snapshot = self._session_repository.get_session(state.handle.session_id)
-        schema = None
-        if snapshot is not None:
-            schema = snapshot.backend_ref.get("result_schema_json")
-        if schema:
-            validation_error = validate_result_payload(payload, json.loads(schema))
-            if validation_error is not None:
-                return AwaitOutcome(
-                    status=AwaitStatus.EXITED,
-                    result=payload,
-                    validation_error=validation_error,
-                )
-        return AwaitOutcome(status=AwaitStatus.EXITED, result=payload)
+    def _await_outcome_without_result(self, state: SessionState) -> AwaitOutcome:
+        """Typed no-result observation for a session that ended unreported.
 
-    def _capture_result_output(self, state: SessionState) -> str | None:
-        result_output = self._backend.capture_pane(
-            state.pane_id,
-            AWAIT_RESULT_CAPTURE_LINES,
+        ADR-DOE-AGENTS-005 R4: the session reached a terminal state without
+        calling ``report_result``. This is an observation, not a parse — the
+        caller owns the solicitation/failure policy. ``continuable=False``
+        because the pane is gone; a follow-up would land on a dead session.
+        """
+        return AwaitOutcome(
+            status=AwaitStatus.EXITED,
+            validation_error=(
+                "session ended without reporting a result via the "
+                f"`{REPORT_RESULT_TOOL_NAME}` MCP tool"
+            ),
+            continuable=False,
         )
-        if result_output and _has_complete_result_block(result_output):
-            return result_output
-        capture_transcript = getattr(self._backend, "capture_transcript", None)
-        if not callable(capture_transcript):
-            return None
-        transcript_output = capture_transcript(
-            state.pane_id,
-            AWAIT_RESULT_CAPTURE_LINES,
-        )
-        if transcript_output and _has_complete_result_block(transcript_output):
-            _, parse_error = _extract_result_payload(transcript_output)
-            if parse_error is None:
-                return transcript_output
-        return None
 
     def _snapshot_from_observation(
         self,
