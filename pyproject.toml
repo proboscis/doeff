@@ -81,6 +81,7 @@ asyncio_default_fixture_loop_scope = "function"
 testpaths = [
     "tests",
     "packages/doeff-adr/tests",
+    "packages/doeff-time/tests",
     "packages/doeff-vm/tests",
     "packages/doeff-vm-core/tests",
 ]
