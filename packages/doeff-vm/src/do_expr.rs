@@ -2,9 +2,29 @@
 //!
 //! These replace the plain Python classes in `doeff/program.py`.
 //! The VM classifies them via `downcast` (not tag-based `getattr`).
+//!
+//! ## GC integration (#500)
+//!
+//! Every class that holds `Py<PyAny>` / `Py<PyK>` fields implements
+//! `__traverse__` so CPython's cycle collector can see through it —
+//! without it, any reference cycle through a program node is permanently
+//! uncollectable. `__clear__` is deliberately NOT implemented: these
+//! classes are `frozen` (no `&mut self` access, required by the VM's
+//! immutable-program invariant), so their field references cannot be
+//! dropped in-place. That is sound for collection: field cycles cannot be
+//! constructed among frozen nodes alone (fields are set once at
+//! construction), so every real cycle routes through at least one mutable
+//! Python object (instance `__dict__`, list, generator frame, ...) whose
+//! `tp_clear` breaks the cycle once `__traverse__` has made it visible.
+//!
+//! Known limitation: the pyo3 `dict` slot (`#[pyclass(dict)]`, used by
+//! defp for `__doeff_body__` metadata) is NOT reachable from
+//! `__traverse__` in pyo3 0.28, so a cycle routed exclusively through a
+//! program node's instance `__dict__` is still invisible to the GC.
 
 use doeff_vm_core::continuation::PyK;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 
 /// Pure(value) — return a value immediately.
 #[pyclass(name = "Pure", frozen, dict, module = "doeff_vm.doeff_vm")]
@@ -28,6 +48,10 @@ impl PyPure {
     fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyAny>,))> {
         let cls = py.get_type::<Self>().into_any().unbind();
         Ok((cls, (self.value.clone_ref(py),)))
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.value)
     }
 }
 
@@ -54,6 +78,10 @@ impl PyPerform {
         let cls = py.get_type::<Self>().into_any().unbind();
         Ok((cls, (self.effect.clone_ref(py),)))
     }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.effect)
+    }
 }
 
 /// Resume(k, value) — resume continuation with value (non-tail, handler stays alive).
@@ -78,6 +106,11 @@ impl PyResume {
     fn __repr__(&self) -> &'static str {
         "Resume(k, ...)"
     }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.continuation)?;
+        visit.call(&self.value)
+    }
 }
 
 /// Transfer(k, value) — resume continuation with value (tail, handler done).
@@ -101,6 +134,11 @@ impl PyTransfer {
 
     fn __repr__(&self) -> &'static str {
         "Transfer(k, ...)"
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.continuation)?;
+        visit.call(&self.value)
     }
 }
 
@@ -128,6 +166,11 @@ impl PyApply {
         let cls = py.get_type::<Self>().into_any().unbind();
         Ok((cls, (self.f.clone_ref(py), self.args.clone_ref(py))))
     }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.f)?;
+        visit.call(&self.args)
+    }
 }
 
 /// Expand(expr) — evaluate inner expr to Stream, then run it.
@@ -152,6 +195,10 @@ impl PyExpand {
         let cls = py.get_type::<Self>().into_any().unbind();
         Ok((cls, (self.expr.clone_ref(py),)))
     }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.expr)
+    }
 }
 
 /// Pass(effect, k) — handler doesn't handle, forward to outer.
@@ -175,6 +222,11 @@ impl PyPass {
 
     fn __repr__(&self) -> &'static str {
         "Pass(effect, k)"
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.effect)?;
+        visit.call(&self.continuation)
     }
 }
 
@@ -216,6 +268,11 @@ impl PyWithHandler {
         let cls = py.get_type::<Self>().into_any().unbind();
         Ok((cls, (self.handler.clone_ref(py), self.body.clone_ref(py))))
     }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.handler)?;
+        visit.call(&self.body)
+    }
 }
 
 /// ResumeThrow(k, exception) — throw exception into continuation (non-tail).
@@ -240,6 +297,11 @@ impl PyResumeThrow {
     fn __repr__(&self) -> &'static str {
         "ResumeThrow(k, ...)"
     }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.continuation)?;
+        visit.call(&self.exception)
+    }
 }
 
 /// TransferThrow(k, exception) — throw exception into continuation (tail).
@@ -263,6 +325,11 @@ impl PyTransferThrow {
 
     fn __repr__(&self) -> &'static str {
         "TransferThrow(k, ...)"
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.continuation)?;
+        visit.call(&self.exception)
     }
 }
 
@@ -290,6 +357,11 @@ impl PyWithObserve {
         let cls = py.get_type::<Self>().into_any().unbind();
         Ok((cls, (self.observer.clone_ref(py), self.body.clone_ref(py))))
     }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.observer)?;
+        visit.call(&self.body)
+    }
 }
 
 /// GetTraceback(k) — query traceback from continuation without consuming it.
@@ -308,6 +380,10 @@ impl PyGetTraceback {
 
     fn __repr__(&self) -> &'static str {
         "GetTraceback(k)"
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.continuation)
     }
 }
 
@@ -354,6 +430,10 @@ impl PyGetHandlers {
     fn __repr__(&self) -> &'static str {
         "GetHandlers(k)"
     }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.continuation)
+    }
 }
 
 /// GetBoundaries(k) — extract the interleaved handler/observer boundary
@@ -379,6 +459,10 @@ impl PyGetBoundaries {
 
     fn __repr__(&self) -> &'static str {
         "GetBoundaries(k)"
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.continuation)
     }
 }
 
@@ -425,5 +509,9 @@ impl PyTailEval {
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
         let e = self.expr.bind(py).repr()?;
         Ok(format!("TailEval({})", e))
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.expr)
     }
 }
