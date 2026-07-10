@@ -57,6 +57,22 @@ def test_g1_arena_exposes_explicit_detach_attach_operations() -> None:
     assert "DetachedFiberChain" in source
 
 
+def test_g1_slot_reclaim_carries_indices_not_fibers() -> None:
+    """#497: a detached chain dropped without reattachment reports its
+    arena slot indices through `SlotReclaimQueue` so the arena can reuse
+    them. That channel is allocator bookkeeping, not fiber ownership: it
+    must carry bare slot indices (usize) only — never fibers, chains, or
+    continuations. Fibers still move into Continuation ownership at detach
+    and drop normally with the chain (ISSUE-VM-001 G1 / SPEC-VM-021)."""
+    arena_source = _runtime_source(ARENA_RS)
+    body = _struct_body(arena_source, "SlotReclaimQueue")
+
+    assert "Mutex<Vec<usize>>" in body
+    assert "Fiber" not in body
+    assert "Chain" not in body
+    assert "Continuation" not in body
+
+
 def test_g1_dispatch_and_step_do_not_construct_queue_backed_continuations() -> None:
     source = "\n".join(
         [
