@@ -1,4 +1,10 @@
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
+
+// GC note (#500): both result classes implement `__traverse__` so the cycle
+// collector can see through them. They are `frozen`, so `__clear__` is not
+// possible (no `&mut self`); see the module doc of `do_expr.rs` for why
+// traverse-only is sound for frozen value holders.
 
 #[pyclass(frozen, name = "Ok", module = "doeff_vm.doeff_vm")]
 pub struct PyResultOk {
@@ -42,6 +48,10 @@ impl PyResultOk {
     fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyAny>,))> {
         let cls = py.get_type::<Self>().into_any().unbind();
         Ok((cls, (self.value.clone_ref(py),)))
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.value)
     }
 }
 
@@ -103,5 +113,10 @@ impl PyResultErr {
                 self.captured_traceback.clone_ref(py),
             ),
         ))
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.error)?;
+        visit.call(&self.captured_traceback)
     }
 }
