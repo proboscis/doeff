@@ -99,12 +99,22 @@ PRIORITY_HIGH = 20
 class Spawn(EffectBase):
     """Spawn a task; resumes the spawner with a Task handle.
 
-    ``daemon=True`` declares that the task is background work the run may
-    abandon when the root body returns (sim clock driver, persistent
-    listener loops): daemon tasks and their queued wakes are excluded from
-    the root close-out diagnostic (#501). Daemon-ness changes nothing else
-    — scheduling priority, deadlock detection (#495), and the stall log
-    still see daemon tasks like any other task.
+    ``daemon=True`` declares that the task is background work the run does
+    not need for progress (sim clock driver, persistent listener loops):
+
+    - Daemon tasks and their queued wakes are excluded from the root
+      close-out diagnostic (#501) — abandoning them at root return is
+      their declared lifecycle.
+    - Daemon tasks are the only tasks the PRIORITY_EXTERNAL_WAIT shield
+      may starve while an external completion is pending (#505): a
+      non-daemon entry below the shield always runs before the scheduler
+      blocks, because the run may need it to progress (it may be the very
+      task producing the awaited completion, or the releaser of a blocked
+      semaphore).
+
+    Daemon-ness changes nothing else — scheduling priority, deadlock
+    detection (#495), and the stall log still see daemon tasks like any
+    other task.
     """
 
     def __init__(self, program, priority=PRIORITY_NORMAL, daemon=False):
@@ -295,7 +305,14 @@ class Semaphore:
 
 
 class ExternalPromise:
-    """Write-side handle for an external promise. Thread-safe complete/fail."""
+    """Write-side handle for an external promise.
+
+    ``complete``/``fail`` are the ONLY thread-safe operations — they may be
+    called from foreign threads (the primary pattern) or from in-run tasks
+    (a non-daemon in-run completer stays runnable below the external-wait
+    shield, #505). Minting ``.future`` must happen on the scheduler thread:
+    handle registration (#502) is scheduler-thread-confined.
+    """
     def __init__(self, promise_id, queue, _register=None):
         self.promise_id = promise_id
         self._queue = queue
@@ -431,12 +448,40 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         insertion_seq[0] += 1
         heapq.heappush(ready, (-priority, seq, entry))
 
-    def dequeue():
-        """Pop highest-priority entry. Returns None if empty."""
-        if ready:
-            _, _, entry = heapq.heappop(ready)
-            return entry
-        return None
+    def has_live_ready_entry(include_daemons):
+        """True when the ready heap holds an entry that can still run.
+
+        ``include_daemons=False`` asks the narrower question the
+        external-wait shield needs: is there real (non-daemon) work below
+        the shield? Placeholders are never "work"; cancelled owners are
+        dead entries.
+        """
+        for _neg_prio, _seq, entry in ready:
+            kind = entry[0]
+            if kind == "new":
+                tid = entry[1]
+                if tasks[tid]["status"] == "cancelled":
+                    continue
+                if include_daemons or not is_daemon(tid):
+                    return True
+            elif kind in ("resume", "raise", "sem_resume"):
+                owner_tid = entry[1]
+                if is_owner_cancelled(owner_tid):
+                    continue
+                if include_daemons or not is_daemon(owner_tid):
+                    return True
+        return False
+
+    def is_live_daemon_entry(entry):
+        """True for a runnable entry owned by a live daemon task."""
+        kind = entry[0]
+        if kind == "new":
+            tid = entry[1]
+            return tasks[tid]["status"] != "cancelled" and is_daemon(tid)
+        if kind in ("resume", "raise", "sem_resume"):
+            owner_tid = entry[1]
+            return not is_owner_cancelled(owner_tid) and is_daemon(owner_tid)
+        return False
 
     def is_owner_cancelled(owner_tid):
         return (
@@ -463,14 +508,18 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         return tasks[owner_tid]["priority"]
 
     def enqueue_resume(owner_tid, cont, value, priority=None):
+        """Queue a resume; returns the effective priority used (#493)."""
         if priority is None:
             priority = task_priority(owner_tid)
         enqueue(("resume", owner_tid, cont, value), priority)
+        return priority
 
     def enqueue_raise(owner_tid, cont, error, priority=None):
+        """Queue a throw-resume; returns the effective priority used (#493)."""
         if priority is None:
             priority = task_priority(owner_tid)
         enqueue(("raise", owner_tid, cont, error), priority)
+        return priority
 
     def alloc_task(program, priority=PRIORITY_NORMAL, inner_boundaries=None,
                    daemon=False):
@@ -707,84 +756,128 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                     return True
         return False
 
-    def pick_next():  # noqa: PLR0912 - scheduler dispatch loop has one branch per ready entry
+    def pick_next():  # noqa: PLR0912, PLR0915 - scheduler dispatch loop has one branch per ready entry
         from doeff.program import ResumeThrow
-        while True:
-            drain()
-            while ready:
-                entry = dequeue()
-                if entry[0] == "new":
-                    _, tid = entry
-                    if tasks[tid]["status"] == "cancelled":
-                        continue  # skip cancelled tasks
-                    tasks[tid]["status"] = "running"
-                    prog = tasks[tid].pop("program")
-                    # Re-wrap task with the boundary stack (handlers AND
-                    # observers) captured at the spawn site, innermost first —
-                    # preserves handler/observer nesting order.
-                    for kind, boundary_callable in tasks[tid].pop("inner_boundaries", []):
-                        prog = _reinstall_boundary(prog, kind, boundary_callable)
-                    return make_handler(tid)(wrap_task(tid, prog))
-                if entry[0] == "resume":
-                    _, owner_tid, cont, value = entry
-                    if is_owner_cancelled(owner_tid):
+        # Heap tuples held out of the heap for the duration of this call:
+        # unclaimed external-wait placeholders deferring to live non-daemon
+        # work below them (#505), plus the daemon entries those placeholders
+        # shield. Re-pushed with their ORIGINAL seq in the finally block, so
+        # heap order is preserved exactly across pick_next calls.
+        held = []
+        shield_deferred = False
+        try:
+            while True:
+                drain()
+                while ready:
+                    heap_item = heapq.heappop(ready)
+                    entry = heap_item[2]
+                    if (
+                        shield_deferred
+                        and entry[0] != "wait_external"
+                        and is_live_daemon_entry(entry)
+                    ):
+                        # An unclaimed external-wait placeholder was deferred
+                        # to let non-daemon work run (#505); daemon work stays
+                        # shielded exactly as if the placeholder were still
+                        # ahead of it in the heap.
+                        held.append(heap_item)
                         continue
-                    return Transfer(cont, value)
-                if entry[0] == "sem_resume":
-                    # A ReleaseSemaphore permit travelling to a parked
-                    # waiter (#496): the entry carries the semaphore id so
-                    # the permit is recoverable at this drop site.
-                    _, owner_tid, cont, sid = entry
-                    if is_owner_cancelled(owner_tid):
-                        return_inflight_permit(sid, owner_tid)
+                    if entry[0] == "new":
+                        _, tid = entry
+                        if tasks[tid]["status"] == "cancelled":
+                            continue  # skip cancelled tasks
+                        tasks[tid]["status"] = "running"
+                        prog = tasks[tid].pop("program")
+                        # Re-wrap task with the boundary stack (handlers AND
+                        # observers) captured at the spawn site, innermost first —
+                        # preserves handler/observer nesting order.
+                        for kind, boundary_callable in tasks[tid].pop("inner_boundaries", []):
+                            prog = _reinstall_boundary(prog, kind, boundary_callable)
+                        return make_handler(tid)(wrap_task(tid, prog))
+                    if entry[0] == "resume":
+                        _, owner_tid, cont, value = entry
+                        if is_owner_cancelled(owner_tid):
+                            continue
+                        return Transfer(cont, value)
+                    if entry[0] == "sem_resume":
+                        # A ReleaseSemaphore permit travelling to a parked
+                        # waiter (#496): the entry carries the semaphore id so
+                        # the permit is recoverable at this drop site.
+                        _, owner_tid, cont, sid = entry
+                        if is_owner_cancelled(owner_tid):
+                            return_inflight_permit(sid, owner_tid)
+                            continue
+                        return Transfer(cont, None)
+                    if entry[0] == "raise":
+                        _, owner_tid, cont, error = entry
+                        if is_owner_cancelled(owner_tid):
+                            continue
+                        return ResumeThrow(cont, error)
+                    if entry[0] == "wait_external":
+                        # Placeholder for a task waiting on an external promise.
+                        # Keeps DAEMON tasks (sim clock driver) from running
+                        # while the wait is pending, and drives the blocking
+                        # drain. The resume itself is owned by the paired
+                        # `waiters` registration: wake_waiters claims and
+                        # enqueues it the moment the completion is drained —
+                        # even while this loop is blocked on a DIFFERENT
+                        # unresolved external wait (#490). This entry never
+                        # resumes the continuation; once claimed it is simply
+                        # dropped.
+                        _, owner_tid, _cont, _wk, claimed = entry
+                        if claimed[0] or is_owner_cancelled(owner_tid):
+                            continue
+                        if has_live_ready_entry(include_daemons=False):
+                            # Real (non-daemon) work is runnable below this
+                            # placeholder. The shield may starve only daemon
+                            # tasks: starving a non-daemon entry can starve
+                            # the very task that would produce the awaited
+                            # completion (in-run completer, #505) or release
+                            # a blocked semaphore (#495c). Defer the
+                            # placeholder for this pass and let the
+                            # non-daemon entry run; daemon entries popped
+                            # after this stay held via the guard above.
+                            held.append(heap_item)
+                            shield_deferred = True
+                            continue
+                        if not has_live_ready_entry(include_daemons=True):
+                            # Deadlock diagnostics must stay reachable while
+                            # this branch keeps the loop from ever reaching
+                            # the bottom of pick_next (#495c/d) — but only
+                            # when NOTHING else can run: any live entry
+                            # (shielded daemon included) may still release a
+                            # blocked semaphore once the external completion
+                            # arrives, so declaring doom while one exists
+                            # would be a false positive.
+                            raise_if_semaphore_cycle_unresolvable(live_semaphore_waiters())
+                        # Not yet resolved — block for one completion, drain rest
+                        _drain_one_external()
+                        drain()
+                        if not claimed[0]:
+                            enqueue(entry, PRIORITY_EXTERNAL_WAIT)
                         continue
-                    return Transfer(cont, None)
-                if entry[0] == "raise":
-                    _, owner_tid, cont, error = entry
-                    if is_owner_cancelled(owner_tid):
-                        continue
-                    return ResumeThrow(cont, error)
-                if entry[0] == "wait_external":
-                    # Placeholder for a task waiting on an external promise.
-                    # Keeps IDLE tasks (clock driver) from running while the
-                    # wait is pending, and drives the blocking drain. The
-                    # resume itself is owned by the paired `waiters`
-                    # registration: wake_waiters claims and enqueues it the
-                    # moment the completion is drained — even while this loop
-                    # is blocked on a DIFFERENT unresolved external wait
-                    # (#490). This entry never resumes the continuation; once
-                    # claimed it is simply dropped.
-                    _, owner_tid, _cont, _wk, claimed = entry
-                    if claimed[0] or is_owner_cancelled(owner_tid):
-                        continue
-                    # Deadlock diagnostics must stay reachable while this
-                    # branch keeps the loop from ever reaching the bottom
-                    # of pick_next (#495c/d): report an unresolvable
-                    # semaphore cycle loudly before blocking.
-                    raise_if_semaphore_cycle_unresolvable(live_semaphore_waiters())
-                    # Not yet resolved — block for one completion, drain rest
-                    _drain_one_external()
-                    drain()
-                    if not claimed[0]:
-                        enqueue(entry, PRIORITY_EXTERNAL_WAIT)
-                    continue
-            blocked_semaphore_waiters = live_semaphore_waiters()
-            if not has_pending_external_waiters():
-                parked = live_parked_waiter_summary()
-                if blocked_semaphore_waiters or parked:
-                    # Nothing is runnable and no pending external
-                    # completion can ever wake any parked waiter — the run
-                    # would hang silently in external_queue.get() forever.
-                    # Fail loudly instead (#495a).
-                    raise SchedulerDeadlockError(blocked_semaphore_waiters, parked)
-            else:
-                # External waiters exist, but they must not mask a
-                # semaphore cycle that no holder can ever release (#495c).
-                raise_if_semaphore_cycle_unresolvable(blocked_semaphore_waiters)
-            if not waiters:
-                return Pure(None)
-            # All tasks blocked — block for one external completion
-            _drain_one_external()
+                blocked_semaphore_waiters = live_semaphore_waiters()
+                if not has_pending_external_waiters():
+                    parked = live_parked_waiter_summary()
+                    if blocked_semaphore_waiters or parked:
+                        # Nothing is runnable and no pending external
+                        # completion can ever wake any parked waiter — the run
+                        # would hang silently in external_queue.get() forever.
+                        # Fail loudly instead (#495a).
+                        raise SchedulerDeadlockError(blocked_semaphore_waiters, parked)
+                else:
+                    # External waiters exist, but they must not mask a
+                    # semaphore cycle that no holder can ever release (#495c).
+                    raise_if_semaphore_cycle_unresolvable(blocked_semaphore_waiters)
+                if not waiters:
+                    return Pure(None)
+                # All tasks blocked — block for one external completion
+                _drain_one_external()
+        finally:
+            # Restore every held tuple with its original (priority, seq) so
+            # the heap looks exactly as if the deferral never happened.
+            for heap_item in held:
+                heapq.heappush(ready, heap_item)
 
     terminal_statuses = ("completed", "failed", "cancelled")
 
@@ -805,22 +898,26 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
     def resume_with_waitable_result(owner_tid, waiter_k, key, priority=None):
         """Add a ready entry that resumes waiter with the waitable's result.
         For failed/cancelled, uses ("raise", k, error) so handler can throw.
-        priority=None wakes the waiter at its own task priority (#504)."""
+        priority=None wakes the waiter at its own task priority (#504).
+        Returns the effective wake priority, or None if nothing was queued."""
         status, result = waitable_status(key)
         if status == "completed":
-            enqueue_resume(owner_tid, waiter_k, result, priority)
-        elif status == "failed":
-            enqueue_raise(owner_tid, waiter_k, result, priority)
-        elif status == "cancelled":
-            enqueue_raise(owner_tid, waiter_k, TaskCancelledError(), priority)
+            return enqueue_resume(owner_tid, waiter_k, result, priority)
+        if status == "failed":
+            return enqueue_raise(owner_tid, waiter_k, result, priority)
+        if status == "cancelled":
+            return enqueue_raise(owner_tid, waiter_k, TaskCancelledError(), priority)
+        return None
 
     def register_pending_waiter(wk, entry_type, owner_tid, state):
         """Register a gather/race waiter for a pending waitable (#505).
 
         A pending EXTERNAL promise additionally gets a claimed-style
         placeholder at PRIORITY_EXTERNAL_WAIT — the same shape Wait uses
-        (#490/#491): the placeholder only blocks the IDLE clock driver and
-        drives the blocking drain; it never resumes anything. wake_waiters
+        (#490/#491): the placeholder only blocks DAEMON tasks (the sim
+        clock driver) and drives the blocking drain; non-daemon work below
+        it still runs (in-run completers must not be starved) and it never
+        resumes anything. wake_waiters
         (or remove_gather_waiters/remove_race_waiters on early resolution)
         sets ``claimed`` and the placeholder drops itself, so Gather/Race
         get the same sim-ordering semantics as Wait.
@@ -857,33 +954,36 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 waiters.pop(wk, None)
 
     def resolve_gather_with_error(gather_state, error):
+        """Resolve a Gather with an error; returns the wake priority used."""
         if gather_state["resolved"]:
-            return
+            return None
         gather_state["resolved"] = True
         gather_state["failure"] = error
         remove_gather_waiters(gather_state)
-        enqueue_raise(gather_state["owner_tid"], gather_state["waiter_k"], error)
+        return enqueue_raise(gather_state["owner_tid"], gather_state["waiter_k"], error)
 
     def wake_gather_waiter(gather_state, completed_key):
+        """Returns the wake priority if the Gather owner was queued, else None."""
         if gather_state["resolved"]:
-            return
+            return None
 
         status, result = waitable_status(completed_key)
         if status == "failed":
-            resolve_gather_with_error(gather_state, result)
-            return
+            return resolve_gather_with_error(gather_state, result)
         if status == "cancelled":
-            resolve_gather_with_error(gather_state, TaskCancelledError())
-            return
+            return resolve_gather_with_error(gather_state, TaskCancelledError())
 
         if status != "completed":
-            return
+            return None
 
         gather_state["remaining"] -= 1
         if gather_state["remaining"] == 0:
             gather_state["resolved"] = True
             results = [waitable_status(wk)[1] for wk in gather_state["keys"]]
-            enqueue_resume(gather_state["owner_tid"], gather_state["waiter_k"], results)
+            return enqueue_resume(
+                gather_state["owner_tid"], gather_state["waiter_k"], results
+            )
+        return None
 
     def remove_race_waiters(race_state):
         """Remove unresolved sibling waiter refs after Race has a winner."""
@@ -907,28 +1007,38 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 waiters.pop(wk, None)
 
     def wake_race_waiter(race_state, completed_key):
+        """Returns the wake priority if the Race owner was queued, else None."""
         if race_state["resolved"]:
-            return
+            return None
 
         status, result = waitable_status(completed_key)
         if status not in terminal_statuses:
-            return
+            return None
 
         race_state["resolved"] = True
         remove_race_waiters(race_state)
         if status == "completed":
-            enqueue_resume(race_state["owner_tid"], race_state["waiter_k"], result)
-        elif status == "failed":
-            enqueue_raise(race_state["owner_tid"], race_state["waiter_k"], result)
-        elif status == "cancelled":
-            enqueue_raise(race_state["owner_tid"], race_state["waiter_k"], TaskCancelledError())
+            return enqueue_resume(race_state["owner_tid"], race_state["waiter_k"], result)
+        if status == "failed":
+            return enqueue_raise(race_state["owner_tid"], race_state["waiter_k"], result)
+        return enqueue_raise(
+            race_state["owner_tid"], race_state["waiter_k"], TaskCancelledError()
+        )
 
     def wake_waiters(completed_key):
+        """Wake everything parked on ``completed_key``.
+
+        Returns the MINIMUM priority at which a waiter was queued (None when
+        nothing was queued), so CompletePromise/FailPromise can guarantee the
+        completer resumes only after every task its resolution woke (#493).
+        """
         ws = waiters.pop(completed_key, [])
+        woken_min = None
         for w in ws:
+            queued_at = None
             if w[0] == "wait":
                 _, owner_tid, waiter_k, wake_priority = w
-                resume_with_waitable_result(
+                queued_at = resume_with_waitable_result(
                     owner_tid, waiter_k, completed_key, wake_priority
                 )
             elif w[0] == "wait_external":
@@ -937,7 +1047,7 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 # drops itself instead of resuming a second time.
                 _, owner_tid, waiter_k, claimed, wake_priority = w
                 claimed[0] = True
-                resume_with_waitable_result(
+                queued_at = resume_with_waitable_result(
                     owner_tid, waiter_k, completed_key, wake_priority
                 )
             elif w[0] == "gather":
@@ -946,12 +1056,15 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                     # External-promise key (#505): drop the paired
                     # ready-heap placeholder now that the completion is in.
                     claimed[0] = True
-                wake_gather_waiter(gather_state, completed_key)
+                queued_at = wake_gather_waiter(gather_state, completed_key)
             elif w[0] == "race":
                 _, _owner_tid, race_state, claimed = w
                 if claimed is not None:
                     claimed[0] = True
-                wake_race_waiter(race_state, completed_key)
+                queued_at = wake_race_waiter(race_state, completed_key)
+            if queued_at is not None and (woken_min is None or queued_at < woken_min):
+                woken_min = queued_at
+        return woken_min
 
     def drain():
         """Drain all pending external completions into promise state."""
@@ -1081,13 +1194,15 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             else:
                 kind, wid = wk
                 if kind == "promise" and promises.get(wid, {}).get("external"):
-                    # External promise: by default stay in ready queue above
-                    # IDLE (blocks clock driver). Callers that are just
-                    # listening in the background (MCP server loop, result
-                    # file polling, etc.) pass priority=PRIORITY_IDLE, which
-                    # parks the task in `waiters` just like an internal
-                    # promise — drain() wakes it when the promise resolves,
-                    # and the clock driver is free to advance sim time.
+                    # External promise: by default hold a ready-heap
+                    # placeholder that shields DAEMON tasks (the sim clock
+                    # driver) from running past the pending completion.
+                    # Callers that are just listening in the background
+                    # (MCP server loop, result file polling, etc.) pass
+                    # priority=PRIORITY_IDLE, which parks the task in
+                    # `waiters` just like an internal promise — drain()
+                    # wakes it when the promise resolves, and the clock
+                    # driver is free to advance sim time.
                     if effect.priority == PRIORITY_IDLE:
                         # PRIORITY_IDLE is the park mode, not the wake
                         # priority: the waiter wakes at its own task priority
@@ -1232,17 +1347,23 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 )))
             promise["status"] = "completed"
             promise["result"] = effect.value
-            wake_waiters(("promise", pid))
-            # Re-queue the completer at its OWN task priority (#493). A
-            # hard-coded IDLE here froze every completer behind pending
-            # non-IDLE external waits (whose ready-heap placeholders block
-            # the loop in _drain_one_external). The sim clock driver still
-            # yields to the tasks it wakes because it is Spawned at
-            # PRIORITY_IDLE (doeff-time sim_time.py) — its stored task
-            # priority, not a demotion at this site, holds it back. Waiters
-            # woken above are enqueued first, so equal-priority completers
-            # still run after the tasks they woke (FIFO within priority).
-            enqueue_resume(current_tid, k, None)
+            woken_min = wake_waiters(("promise", pid))
+            # Re-queue the completer at min(its OWN task priority, the
+            # lowest wake priority it just caused): the tasks a resolution
+            # woke ALWAYS run before the completer resumes — waiters are
+            # enqueued first, so FIFO within equal priority finishes the
+            # guarantee. Pub/sub loops depend on it: a HIGH publisher
+            # resuming ahead of the woken NORMAL listener publishes the
+            # next event before the listener re-registers, silently losing
+            # it (doeff_events memory handler; adversarial finding on the
+            # first #493 fix). #493 itself stays fixed because there is no
+            # hard-coded IDLE demotion: with no woken waiter the completer
+            # keeps its own priority, and it is never demoted below the
+            # tasks it woke — so it cannot freeze behind an external-wait
+            # placeholder unless the tasks it woke are equally frozen.
+            own = task_priority(current_tid)
+            completer_priority = own if woken_min is None else min(own, woken_min)
+            enqueue_resume(current_tid, k, None, completer_priority)
             yield TailEval(pick_next())
 
         elif isinstance(effect, FailPromise):
@@ -1264,11 +1385,12 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 )))
             promise["status"] = "failed"
             promise["result"] = effect.error
-            wake_waiters(("promise", pid))
-            # Same as CompletePromise: the completer keeps its own task
-            # priority (#493); the sim clock driver keeps IDLE via its
-            # spawn priority.
-            enqueue_resume(current_tid, k, None)
+            woken_min = wake_waiters(("promise", pid))
+            # Same as CompletePromise: the completer resumes only after the
+            # tasks its resolution woke (#493 + pub/sub ordering guarantee).
+            own = task_priority(current_tid)
+            completer_priority = own if woken_min is None else min(own, woken_min)
+            enqueue_resume(current_tid, k, None, completer_priority)
             yield TailEval(pick_next())
 
         elif isinstance(effect, CreateExternalPromise):
