@@ -277,6 +277,65 @@ def test_mcp_server_loop_tool_timeout_is_owned_inside_vm_deftest():
     )
 
 
+class TestMcpServerLoopDaemonSpawn:
+    """#501: the handlers spawn mcp_server_loop fire-and-forget. The loop
+    parked on its wakeup ep when the root body returns is its documented
+    lifecycle — it must be spawned daemon=True or every normal agent-session
+    shutdown trips the scheduler's root close-out RuntimeWarning."""
+
+    def test_fire_and_forget_loop_shutdown_does_not_warn(self):
+        """The exact claude.hy/effectful.hy shape: Spawn(loop, daemon=True),
+        never awaited, root returns after signalling shutdown — no
+        RuntimeWarning may be emitted."""
+        import warnings
+
+        from doeff_core_effects.scheduler import Spawn
+
+        server = McpToolServer(tools=(_echo_tool(),))
+
+        @do
+        def main():
+            _ = yield Spawn(mcp_server_loop(server, []), daemon=True)
+            # ... agent session work happens here (elided) ...
+            # StopSession → server shutdown: set the flag, then complete the
+            # pending wakeup ep so the loop can observe it.
+            ep = server.wakeup_mailbox.get(timeout=5.0)
+            server.shutting_down = True
+            ep.complete(None)
+            return "agent-result"
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = run(scheduled(main()))
+
+        assert result == "agent-result"
+        runtime_warnings = [
+            w for w in caught if issubclass(w.category, RuntimeWarning)
+        ]
+        assert not runtime_warnings, [str(w.message) for w in runtime_warnings]
+
+    def test_all_handler_spawn_sites_mark_the_loop_daemon(self):
+        """Every (Spawn (mcp-server-loop ...)) site in the handler sources
+        must pass :daemon True — a plain Spawn reintroduces the per-session
+        RuntimeWarning this class documents."""
+        import doeff_agents.handlers as handlers_pkg
+
+        handlers_dir = Path(handlers_pkg.__file__).resolve().parent
+        spawn_lines: list[tuple[Path, str]] = []
+        for hy_file in sorted(handlers_dir.glob("*.hy")):
+            for line in hy_file.read_text().splitlines():
+                if "(Spawn (mcp-server-loop" in line:
+                    spawn_lines.append((hy_file, line.strip()))
+
+        assert spawn_lines, "expected mcp-server-loop Spawn sites in handlers"
+        undaemonized = [
+            (path.name, line)
+            for path, line in spawn_lines
+            if ":daemon True" not in line
+        ]
+        assert not undaemonized, undaemonized
+
+
 class TestMcpServerLoopProtocolFailures:
     def test_request_queue_unexpected_error_propagates(self):
         """Only queue.Empty is a benign drain race; other queue errors are fatal."""
