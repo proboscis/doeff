@@ -454,6 +454,28 @@ impl OwnedControlContinuation {
 // PyK — Python-visible continuation handle (sole owner)
 // ---------------------------------------------------------------------------
 
+/// GC note (#500): PyK deliberately implements NEITHER `__traverse__` nor
+/// `__clear__`, unlike the other Py-holding pyclasses.
+///
+/// - `__clear__` is unsafe by construction: a live PyK is the SOLE owner of
+///   a detached fiber chain (SPEC-VM-021 move-only invariant), and during a
+///   handler dispatch the VM may still recover that chain through a
+///   dispatch-owned `Py<PyK>` handle to reattach it for exception
+///   propagation (#492). Dropping the chain from the GC's `tp_clear` while
+///   such a handle exists would destroy the one-shot ownership invariant
+///   mid-dispatch.
+/// - `__traverse__` alone is not implementable with the current internals:
+///   the Python references inside the chain live behind `PyShared` handles
+///   in fibers → frames → `dyn IRStream` streams → `Value`s, none of which
+///   expose a GC-visit API. Walking them would require threading a visitor
+///   through the whole frame/stream abstraction.
+///
+/// Consequence: the GC treats PyK as an opaque leaf. Cycles that merely
+/// pass through a PyK handle held in a DoExpr field (Resume/Transfer/...)
+/// are still detected via those classes' `__traverse__`; a cycle that
+/// closes through PyK's interior (e.g. a suspended generator captured in
+/// the chain referencing the PyK itself) remains uncollectable until the
+/// continuation is consumed or the PyK is dropped by refcount.
 #[pyclass(name = "K")]
 pub struct PyK {
     continuation: Option<OwnedControlContinuation>,
