@@ -150,7 +150,7 @@ def test_l2_agent_spec_carries_mcp_tools_into_launch_effect(tmp_path: Path) -> N
         mcp_server_name="sbi",
     )
 
-    launch_effect = _launch_effect_from_spec(spec)
+    launch_effect = _launch_effect_from_spec(spec, "sbi")
 
     assert launch_effect.session_name == "run-001-node-mcp-0"
     assert launch_effect.mcp_tools == (tool,)
@@ -175,8 +175,8 @@ def test_agent_retries_invalid_schema_then_returns_valid_payload(tmp_path: Path)
     assert result == {"summary": "fixed", "ok": True}
     assert handler.follow_up_messages("run-001-node-c-0") == [
         "The structured result was invalid: required property 'ok' is missing. "
-        "Return a corrected block using DOEFF_AGENT_RESULT_BEGIN and "
-        "DOEFF_AGENT_RESULT_END; doeff-agents will validate it against the result schema."
+        "Call the `report_result` MCP tool again with a corrected payload; "
+        "it validates against the result schema."
     ]
 
 
@@ -194,9 +194,9 @@ def test_agent_distinguishes_absent_result_in_retry_message(tmp_path: Path) -> N
 
     assert result == {"summary": "reported", "ok": True}
     assert handler.follow_up_messages("run-001-node-c-0") == [
-        "No structured result was returned. Complete the task and return a structured "
-        "result block using DOEFF_AGENT_RESULT_BEGIN and DOEFF_AGENT_RESULT_END; "
-        "doeff-agents will validate it against the result schema."
+        "No structured result was reported. Complete the task and report the "
+        "result by calling the `report_result` MCP tool exactly once; it "
+        "validates the payload against the result schema."
     ]
 
 

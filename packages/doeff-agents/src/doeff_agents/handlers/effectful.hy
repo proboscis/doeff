@@ -86,18 +86,19 @@
 
   (LaunchSessionEffect [spec]
     (setv mcp-server-urls None)
-    (when spec.mcp-tools
+    ;; ADR-DOE-AGENTS-005 R1: every schema session gets the report_result
+    ;; data channel — start the in-VM server even when the spec carries no
+    ;; domain tools. Terminal bytes are never a result transport.
+    (setv report-transport?
+          (and agent-handler.supports-inprocess-report-result
+               (spec-uses-report-result-transport spec)))
+    (setv wants-server? (or (bool spec.mcp-tools) report-transport?))
+    (when wants-server?
       (<- inner-handlers (GetHandlers k))
       (<- outer-handlers (GetOuterHandlers))
       (setv captured-handlers (+ (list inner-handlers) (list outer-handlers)))
-      ;; Typed result transport (ADR 0035): schema sessions that already talk
-      ;; to the in-VM MCP server also get a report_result tool on it, so the
-      ;; result never rides the rendered terminal (TUI line-wrapping corrupted
-      ;; long single-line result JSON once the wrap-repair heuristic was
-      ;; removed by ADR 0035 R5 — 2026-07-10 SBI recon readiness failure).
       (setv server-tools (tuple spec.mcp-tools))
-      (when (and agent-handler.supports-inprocess-report-result
-                 (spec-uses-report-result-transport spec))
+      (when report-transport?
         (setv sink (.create-result-sink agent-handler spec.session-id))
         (setv server-tools
               (+ server-tools
@@ -114,7 +115,7 @@
       (setv launch-result
         (.handle-launch-session agent-handler effect :mcp-servers mcp-server-urls))
       (except [e Exception]
-        (when spec.mcp-tools
+        (when wants-server?
           (_shutdown-mcp-server-for-session agent-handler spec.session-id))
         (when agent-handler.supports-inprocess-report-result
           (.discard-result-sink agent-handler spec.session-id))
@@ -262,18 +263,19 @@
     (setv agent-handler
       (_cached-tmux-handler handler-ref active-backend session-repository
                             claude-runtime-policy codex-runtime-policy))
-    (if spec.mcp-tools
+    ;; ADR-DOE-AGENTS-005 R1 — same registration as the
+    ;; agent-handler-defhandler branch above: every schema session gets the
+    ;; report_result data channel, with or without domain tools.
+    (setv report-transport?
+          (and agent-handler.supports-inprocess-report-result
+               (spec-uses-report-result-transport spec)))
+    (if (or (bool spec.mcp-tools) report-transport?)
         (do
           (<- inner-handlers (GetHandlers k))
           (<- outer-handlers (GetOuterHandlers))
           (setv captured-handlers (+ (list inner-handlers) (list outer-handlers)))
-          ;; Typed result transport (ADR 0035) — same registration as the
-          ;; agent-handler-defhandler branch above: schema sessions get a
-          ;; report_result tool on the in-VM server so the result never rides
-          ;; the rendered terminal.
           (setv server-tools (tuple spec.mcp-tools))
-          (when (and agent-handler.supports-inprocess-report-result
-                     (spec-uses-report-result-transport spec))
+          (when report-transport?
             (setv sink (.create-result-sink agent-handler spec.session-id))
             (setv server-tools
                   (+ server-tools
