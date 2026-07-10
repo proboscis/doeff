@@ -22,6 +22,8 @@ Usage:
 """
 
 import logging
+import warnings
+import weakref
 
 from doeff_vm import Callable as _VmCallable
 from doeff_vm import EffectBase, Err, Ok, TailEval
@@ -38,6 +40,12 @@ _logger = logging.getLogger(__name__)
 # stall diagnostic is logged (#495b). Blocking semantics are unchanged: the
 # scheduler logs the parked-waiter summary and keeps waiting.
 EXTERNAL_STALL_LOG_INTERVAL_SECONDS = 30.0
+
+# How many fresh_id allocations pass between two sweeps of terminal,
+# unobserved task/promise entries (#502). The sweep runs synchronously inside
+# the scheduler's own dispatch path (fresh_id is only called from effect
+# handlers), never from a GC callback, so it can safely mutate the state dicts.
+HANDLE_SWEEP_INTERVAL = 1024
 
 
 def _reinstall_boundary(prog, kind, boundary_callable):
@@ -215,6 +223,17 @@ class CreateExternalPromise(EffectBase):
         super().__init__()
 
 
+class _SchedulerIntrospection(EffectBase):
+    """Test-only hook: resume with the sizes of the scheduler state dicts.
+
+    Not public API — exists so the #502 sweep can be asserted on without
+    exposing the closure state.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+
 # ---------------------------------------------------------------------------
 # Handles
 # ---------------------------------------------------------------------------
@@ -235,13 +254,22 @@ class Future:
 
 
 class Promise:
-    """Write-side handle for an internal promise."""
-    def __init__(self, promise_id):
+    """Write-side handle for an internal promise.
+
+    ``_register`` is the owning run's handle registrar (#502): every derived
+    ``Future`` must be registered too, so a promise entry is only swept once
+    the write handle AND every read handle created from it are dead.
+    """
+    def __init__(self, promise_id, _register=None):
         self.promise_id = promise_id
+        self._register = _register
 
     @property
     def future(self):
-        return Future(self.promise_id)
+        future = Future(self.promise_id)
+        if self._register is not None:
+            self._register(("promise", self.promise_id), future)
+        return future
 
     def __repr__(self):
         return f"Promise({self.promise_id})"
@@ -257,13 +285,17 @@ class Semaphore:
 
 class ExternalPromise:
     """Write-side handle for an external promise. Thread-safe complete/fail."""
-    def __init__(self, promise_id, queue):
+    def __init__(self, promise_id, queue, _register=None):
         self.promise_id = promise_id
         self._queue = queue
+        self._register = _register
 
     @property
     def future(self):
-        return Future(self.promise_id)
+        future = Future(self.promise_id)
+        if self._register is not None:
+            self._register(("promise", self.promise_id), future)
+        return future
 
     def complete(self, value):
         """Complete the promise with a value. Thread-safe, wakes scheduler via Queue."""
@@ -295,10 +327,65 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
     waiters = {}         # waitable_key → [(type, owner_tid, k/state, ...)]
     ready = []           # heapq: (-priority, seq, entry)
     external_queue = queue_mod.Queue()  # thread-safe, blocking get()
+    handle_refs = {}     # waitable_key → [weakref.ref(Task/Promise/Future/…)]
+
+    def register_handle(key, handle):
+        """Track handle liveness for the terminal-entry sweep (#502).
+
+        Weakrefs carry no callbacks — liveness is polled by the sweep inside
+        the scheduler's own dispatch path, never from a GC callback, so no
+        reentrant dict mutation can occur.
+        """
+        handle_refs.setdefault(key, []).append(weakref.ref(handle))
+        return handle
+
+    def sweep_terminal_unobserved_entries():
+        """Delete task/promise entries nothing can ever observe again (#502).
+
+        An entry is swept when it is terminal, has no registered waiter, is
+        not referenced by a live Gather/Race resolution, and every handle
+        (Task, Promise/ExternalPromise, and each Future minted from them) is
+        dead. Cancelled tasks are exempt: a self-cancelled task still runs to
+        its TaskCompleted and a cancelled parked waiter is still woken through
+        task_priority — both re-read tasks[tid]. Semaphores are never swept:
+        "no permits outstanding" is not trackable from handle liveness.
+        """
+        protected = set()
+        for entries in waiters.values():
+            for entry in entries:
+                if entry[0] == "gather":
+                    # Gather re-reads waitable_status for EVERY key (including
+                    # already-terminal ones) at final resolution.
+                    protected.update(entry[2]["keys"])
+                elif entry[0] == "race":
+                    protected.update(entry[2]["pending_keys"])
+        for kind, store in (("task", tasks), ("promise", promises)):
+            dead = []
+            for wid, meta in store.items():
+                if meta["status"] not in ("completed", "failed"):
+                    continue
+                key = (kind, wid)
+                if key in waiters or key in protected:
+                    continue
+                refs = handle_refs.get(key)
+                if refs is None:
+                    continue
+                # No in-place pruning: a live parent handle may mint (and
+                # register) new Futures from a foreign thread; the list is
+                # only dropped once every handle is dead, at which point no
+                # new registration for this key can happen.
+                if any(ref() is not None for ref in refs):
+                    continue
+                dead.append(wid)
+            for wid in dead:
+                del store[wid]
+                del handle_refs[(kind, wid)]
 
     def fresh_id():
         i = next_id[0]
         next_id[0] += 1
+        if next_id[0] % HANDLE_SWEEP_INTERVAL == 0:
+            sweep_terminal_unobserved_entries()
         return i
 
     def waitable_key(obj):
@@ -312,10 +399,20 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
     def waitable_status(key):
         kind, wid = key
         if kind == "task":
-            return tasks[wid]["status"], tasks[wid].get("result")
-        if kind == "promise":
-            return promises[wid]["status"], promises[wid].get("result")
-        return "unknown", None
+            store = tasks
+        elif kind == "promise":
+            store = promises
+        else:
+            return "unknown", None
+        entry = store.get(wid)
+        if entry is None:
+            raise KeyError(
+                f"{kind} {wid} is unknown to this scheduler run: it was swept "
+                "after reaching a terminal state with no live Task/Future "
+                "handle and no registered waiter (#502). Keep a handle alive "
+                "to Wait/Gather/Race on it later."
+            )
+        return entry["status"], entry.get("result")
 
     def enqueue(entry, priority=PRIORITY_NORMAL):
         """Add entry to priority queue. Higher priority = served first."""
@@ -388,6 +485,22 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 except Exception:
                     pass
                 yield Perform(TaskCompleted(tid, Err(e)))
+            except (KeyboardInterrupt, SystemExit) as e:
+                # #507: an interrupt must neither vanish into ordinary task
+                # bookkeeping nor bypass it. Record the failure and wake the
+                # waiters directly — performing TaskCompleted here could not
+                # re-raise afterwards because its handler never resumes the
+                # completing task — then RE-RAISE so the interrupt still
+                # unwinds out of the whole run. GeneratorExit and other
+                # BaseExceptions are deliberately not intercepted: close() of
+                # an abandoned task must stay a plain close, without waking
+                # anything.
+                if tasks[tid]["status"] not in terminal_statuses:
+                    tasks[tid]["status"] = "failed"
+                    tasks[tid]["result"] = e
+                    wake_waiters(("task", tid))
+                _release_task_refs(tid)
+                raise
         return wrapped()
 
     def _drain_one_external():
@@ -429,6 +542,55 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 who = "root" if owner_tid is None else f"task {owner_tid}"
                 parked.append(f"{who} ({wtype}) on {kind} {wid}")
         return parked
+
+    def abandoned_ready_summary():
+        """Describe live ready-heap entries a root return would abandon (#501).
+
+        "wait_external" placeholders are skipped: an unclaimed one is already
+        reported through its paired waiters registration and a claimed one is
+        inert by construction.
+        """
+        abandoned = []
+        for _neg_prio, _seq, entry in ready:
+            kind = entry[0]
+            if kind == "new":
+                tid = entry[1]
+                if tasks[tid]["status"] != "cancelled":
+                    abandoned.append(f"unstarted task {tid}")
+            elif kind in ("resume", "raise"):
+                owner_tid = entry[1]
+                if not is_owner_cancelled(owner_tid):
+                    who = "root" if owner_tid is None else f"task {owner_tid}"
+                    abandoned.append(f"queued {kind} for {who}")
+            elif kind == "sem_resume":
+                owner_tid, sid = entry[1], entry[3]
+                if not is_owner_cancelled(owner_tid):
+                    abandoned.append(
+                        f"queued semaphore {sid} permit for task {owner_tid}"
+                    )
+        return abandoned
+
+    @do
+    def root_close_out(prog):
+        """Report work the run abandons when the root body returns (#501).
+
+        Diagnostic only: return value and cancellation semantics are
+        unchanged — the abandoned entries are still dropped, but loudly.
+        """
+        result = yield prog
+        abandoned = abandoned_ready_summary()
+        parked = live_parked_waiter_summary()
+        if abandoned or parked:
+            warnings.warn(
+                "scheduler root body returned while abandoning in-flight "
+                f"work (#501): ready entries [{'; '.join(abandoned)}]; "
+                f"parked waiters [{'; '.join(parked)}]. Spawned work that "
+                "must finish has to be awaited (Wait/Gather) before the "
+                "root body returns.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        return result
 
     def live_semaphore_waiters():
         """Return live semaphore waiters, pruning cancelled task continuations."""
@@ -614,17 +776,43 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         elif status == "cancelled":
             enqueue_raise(owner_tid, waiter_k, TaskCancelledError(), priority)
 
+    def register_pending_waiter(wk, entry_type, owner_tid, state):
+        """Register a gather/race waiter for a pending waitable (#505).
+
+        A pending EXTERNAL promise additionally gets a claimed-style
+        placeholder at PRIORITY_EXTERNAL_WAIT — the same shape Wait uses
+        (#490/#491): the placeholder only blocks the IDLE clock driver and
+        drives the blocking drain; it never resumes anything. wake_waiters
+        (or remove_gather_waiters/remove_race_waiters on early resolution)
+        sets ``claimed`` and the placeholder drops itself, so Gather/Race
+        get the same sim-ordering semantics as Wait.
+        """
+        claimed = None
+        kind, wid = wk
+        if kind == "promise" and promises[wid].get("external"):
+            claimed = [False]
+            enqueue(
+                ("wait_external", owner_tid, None, wk, claimed),
+                PRIORITY_EXTERNAL_WAIT,
+            )
+        waiters.setdefault(wk, []).append((entry_type, owner_tid, state, claimed))
+
     def remove_gather_waiters(gather_state):
         """Remove unresolved waiter refs for a fail-fast Gather resolution."""
         for wk in set(gather_state["pending_keys"]):
             entries = waiters.get(wk)
             if not entries:
                 continue
-            remaining_entries = [
-                entry
-                for entry in entries
-                if not (entry[0] == "gather" and entry[2] is gather_state)
-            ]
+            remaining_entries = []
+            for entry in entries:
+                if entry[0] == "gather" and entry[2] is gather_state:
+                    if entry[3] is not None:
+                        # Drop the paired external-wait placeholder (#505) so
+                        # it cannot block the run on a completion nobody
+                        # observes anymore.
+                        entry[3][0] = True
+                    continue
+                remaining_entries.append(entry)
             if remaining_entries:
                 waiters[wk] = remaining_entries
             else:
@@ -665,11 +853,16 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             entries = waiters.get(wk)
             if not entries:
                 continue
-            remaining_entries = [
-                entry
-                for entry in entries
-                if not (entry[0] == "race" and entry[2] is race_state)
-            ]
+            remaining_entries = []
+            for entry in entries:
+                if entry[0] == "race" and entry[2] is race_state:
+                    if entry[3] is not None:
+                        # Drop the paired external-wait placeholder (#505):
+                        # the losing external promise may never complete and
+                        # must not keep blocking the drain loop.
+                        entry[3][0] = True
+                    continue
+                remaining_entries.append(entry)
             if remaining_entries:
                 waiters[wk] = remaining_entries
             else:
@@ -710,10 +903,16 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                     owner_tid, waiter_k, completed_key, wake_priority
                 )
             elif w[0] == "gather":
-                _, _owner_tid, gather_state = w
+                _, _owner_tid, gather_state, claimed = w
+                if claimed is not None:
+                    # External-promise key (#505): drop the paired
+                    # ready-heap placeholder now that the completion is in.
+                    claimed[0] = True
                 wake_gather_waiter(gather_state, completed_key)
             elif w[0] == "race":
-                _, _owner_tid, race_state = w
+                _, _owner_tid, race_state, claimed = w
+                if claimed is not None:
+                    claimed[0] = True
                 wake_race_waiter(race_state, completed_key)
 
     def drain():
@@ -800,7 +999,7 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             # Spawner resumes at its OWN task priority (#504): a hard-coded
             # NORMAL here would promote an IDLE spawner above the
             # PRIORITY_EXTERNAL_WAIT shield and demote a HIGH spawner.
-            enqueue_resume(current_tid, k, Task(tid))
+            enqueue_resume(current_tid, k, register_handle(("task", tid), Task(tid)))
             yield TailEval(pick_next())
 
         elif isinstance(effect, TaskCompleted):
@@ -912,10 +1111,18 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 "resolved": False,
             }
             for wk in pending_wks:
-                waiters.setdefault(wk, []).append(("gather", current_tid, gather_state))
+                register_pending_waiter(wk, "gather", current_tid, gather_state)
             yield TailEval(pick_next())
 
         elif isinstance(effect, Race):
+            if not effect.tasks:
+                # An empty Race has no identity (unlike Gather's []): the
+                # caller continuation would otherwise be silently leaked and
+                # the run would "succeed" with None (#501).
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, ValueError(
+                    "Race() requires at least one Task or Future to race"
+                )))
             for t in effect.tasks:
                 wk = waitable_key(t)
                 status, result = waitable_status(wk)
@@ -940,7 +1147,7 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                     "resolved": False,
                 }
                 for wk in pending_wks:
-                    waiters.setdefault(wk, []).append(("race", current_tid, race_state))
+                    register_pending_waiter(wk, "race", current_tid, race_state)
             yield TailEval(pick_next())
 
         elif isinstance(effect, Cancel):
@@ -956,13 +1163,35 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
 
         elif isinstance(effect, CreatePromise):
             pid = alloc_promise()
-            r = yield Resume(k, Promise(pid))
+            promise_handle = register_handle(
+                ("promise", pid), Promise(pid, _register=register_handle)
+            )
+            r = yield Resume(k, promise_handle)
             return r
 
         elif isinstance(effect, CompletePromise):
             pid = effect.promise.promise_id
-            promises[pid]["status"] = "completed"
-            promises[pid]["result"] = effect.value
+            promise = promises[pid]
+            if promise.get("external"):
+                # #507: external promises are resolved through
+                # ExternalPromise.complete()/fail(); an internal resolution
+                # would silently discard the foreign thread's completion.
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, RuntimeError(
+                    f"CompletePromise on external promise {pid}: resolve it "
+                    "through ExternalPromise.complete() instead"
+                )))
+            if promise["status"] != "pending":
+                # #507: same guard the drain path has — a double resolution
+                # would silently rewrite the result after waiters were woken
+                # with the old value.
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, RuntimeError(
+                    f"CompletePromise on promise {pid} which is already "
+                    f"{promise['status']}"
+                )))
+            promise["status"] = "completed"
+            promise["result"] = effect.value
             wake_waiters(("promise", pid))
             # Re-queue the completer at its OWN task priority (#493). A
             # hard-coded IDLE here froze every completer behind pending
@@ -978,8 +1207,23 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
 
         elif isinstance(effect, FailPromise):
             pid = effect.promise.promise_id
-            promises[pid]["status"] = "failed"
-            promises[pid]["result"] = effect.error
+            promise = promises[pid]
+            if promise.get("external"):
+                # #507: see CompletePromise — external promises are resolved
+                # through the thread-safe ExternalPromise handle only.
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, RuntimeError(
+                    f"FailPromise on external promise {pid}: resolve it "
+                    "through ExternalPromise.fail() instead"
+                )))
+            if promise["status"] != "pending":
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, RuntimeError(
+                    f"FailPromise on promise {pid} which is already "
+                    f"{promise['status']}"
+                )))
+            promise["status"] = "failed"
+            promise["result"] = effect.error
             wake_waiters(("promise", pid))
             # Same as CompletePromise: the completer keeps its own task
             # priority (#493); the sim clock driver keeps IDLE via its
@@ -990,8 +1234,22 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         elif isinstance(effect, CreateExternalPromise):
             pid = alloc_promise()
             promises[pid]["external"] = True
-            ep = ExternalPromise(pid, external_queue)
+            ep = register_handle(
+                ("promise", pid),
+                ExternalPromise(pid, external_queue, _register=register_handle),
+            )
             r = yield Resume(k, ep)
+            return r
+
+        elif isinstance(effect, _SchedulerIntrospection):
+            r = yield Resume(k, {
+                "tasks": len(tasks),
+                "promises": len(promises),
+                "semaphores": len(semaphores),
+                "waiters": len(waiters),
+                "ready": len(ready),
+                "handle_refs": len(handle_refs),
+            })
             return r
 
         elif isinstance(effect, CreateSemaphore):
@@ -1046,4 +1304,4 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         else:
             yield Pass(effect, k)
 
-    return make_handler(None)(body_program)
+    return make_handler(None)(root_close_out(body_program))
