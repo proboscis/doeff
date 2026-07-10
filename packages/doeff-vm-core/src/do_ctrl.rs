@@ -68,7 +68,10 @@ pub enum DoCtrl {
 
     /// Install an observer and execute body.
     /// observer: Value::Callable — called synchronously with (effect) on every perform.
-    /// Return value ignored. Original effect always proceeds.
+    /// Return value ignored. If the observer raises, the dispatch is aborted
+    /// and the exception propagates like a handler error — the effect does
+    /// NOT proceed (fail-fast, #506). On success the original effect always
+    /// proceeds unchanged.
     /// body: DoExpr — evaluated under the observer.
     WithObserve { observer: Value, body: Box<DoCtrl> },
 

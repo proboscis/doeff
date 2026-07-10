@@ -16,11 +16,16 @@
 //! construction: `Option::take()` returns `Some` first time, `None` after.
 //! The VM does not store continuations; for exception recovery during handler
 //! dispatch, it keeps a `Py<PyK>` reference (a Python handle, not a
-//! continuation) — see vm.rs `pending_handler_k_handle`.
+//! continuation) owned by the dispatch itself — a local in
+//! eval_perform/eval_perform_with_k, then `Frame::Program.handler_k_handle`
+//! or `EvalReturnContinuation::ExpandReturn.handler_k_handle` (#492).
+
+use std::sync::Arc;
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+use crate::arena::SlotReclaimQueue;
 use crate::ids::FiberId;
 use crate::ir_stream::StreamSourceLocation;
 use crate::memory_stats;
@@ -55,6 +60,14 @@ pub struct DetachedFiberChain {
     head: FiberId,
     last_fiber: FiberId,
     fibers: Vec<DetachedFiber>,
+    /// Where to report still-owned arena slot indices if this chain is
+    /// dropped without being reattached (#497). Armed by
+    /// `FiberArena::detach_chain`; `None` for chains constructed outside an
+    /// arena (tests). Carries bare slot indices only — never fibers or
+    /// continuations (ISSUE-VM-001 G1); the chain never touches the arena
+    /// directly (Drop can fire at arbitrary Python dealloc points,
+    /// including from another thread).
+    slot_reclaim_queue: Option<Arc<SlotReclaimQueue>>,
 }
 
 impl DetachedFiberChain {
@@ -63,7 +76,15 @@ impl DetachedFiberChain {
             head,
             last_fiber,
             fibers,
+            slot_reclaim_queue: None,
         }
+    }
+
+    /// Arm slot reclamation: on drop, any fibers this chain still owns are
+    /// reported to `queue` so the owning arena can return their slots to
+    /// its free list (#497).
+    pub(crate) fn arm_slot_reclaim(&mut self, queue: Arc<SlotReclaimQueue>) {
+        self.slot_reclaim_queue = Some(queue);
     }
 
     pub fn head(&self) -> FiberId {
@@ -78,8 +99,10 @@ impl DetachedFiberChain {
         &self.fibers
     }
 
-    pub fn into_fibers(self) -> Vec<DetachedFiber> {
-        self.fibers
+    pub fn into_fibers(mut self) -> Vec<DetachedFiber> {
+        // Drain in place: `self` then drops with no owned fibers, so the
+        // Drop impl reports nothing — the caller now owns the fibers.
+        std::mem::take(&mut self.fibers)
     }
 
     pub fn set_parent(&mut self, id: FiberId, parent: Option<FiberId>) -> bool {
@@ -264,6 +287,27 @@ impl DetachedFiberChain {
         }
 
         handlers
+    }
+}
+
+impl Drop for DetachedFiberChain {
+    /// A chain dropped while still owning fibers was abandoned without
+    /// reattachment (abort-style handler, scheduler cancellation, dropped
+    /// parked K). Report the owned slot indices to the arena's reclaim
+    /// queue so they return to the free list instead of stranding as
+    /// vacant-reserved until run end (#497). Consumption paths
+    /// (`into_fibers`, `append`) drain `fibers` first, so they report
+    /// nothing here.
+    fn drop(&mut self) {
+        if self.fibers.is_empty() {
+            return;
+        }
+        let Some(queue) = &self.slot_reclaim_queue else {
+            // Chain never belonged to an arena (direct construction in
+            // tests) — there is no free list to return slots to.
+            return;
+        };
+        queue.report_dropped_slots(self.fibers.iter().map(|entry| entry.id.index()));
     }
 }
 
@@ -452,6 +496,28 @@ impl OwnedControlContinuation {
 // PyK — Python-visible continuation handle (sole owner)
 // ---------------------------------------------------------------------------
 
+/// GC note (#500): PyK deliberately implements NEITHER `__traverse__` nor
+/// `__clear__`, unlike the other Py-holding pyclasses.
+///
+/// - `__clear__` is unsafe by construction: a live PyK is the SOLE owner of
+///   a detached fiber chain (SPEC-VM-021 move-only invariant), and during a
+///   handler dispatch the VM may still recover that chain through a
+///   dispatch-owned `Py<PyK>` handle to reattach it for exception
+///   propagation (#492). Dropping the chain from the GC's `tp_clear` while
+///   such a handle exists would destroy the one-shot ownership invariant
+///   mid-dispatch.
+/// - `__traverse__` alone is not implementable with the current internals:
+///   the Python references inside the chain live behind `PyShared` handles
+///   in fibers → frames → `dyn IRStream` streams → `Value`s, none of which
+///   expose a GC-visit API. Walking them would require threading a visitor
+///   through the whole frame/stream abstraction.
+///
+/// Consequence: the GC treats PyK as an opaque leaf. Cycles that merely
+/// pass through a PyK handle held in a DoExpr field (Resume/Transfer/...)
+/// are still detected via those classes' `__traverse__`; a cycle that
+/// closes through PyK's interior (e.g. a suspended generator captured in
+/// the chain referencing the PyK itself) remains uncollectable until the
+/// continuation is consumed or the PyK is dropped by refcount.
 #[pyclass(name = "K")]
 pub struct PyK {
     continuation: Option<OwnedControlContinuation>,
