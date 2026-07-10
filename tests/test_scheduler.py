@@ -1379,6 +1379,72 @@ class TestDeadlockDiagnostics:
 
         assert _run_scheduled_with_timeout(body(), timeout=2.0) == ["holder", "waiter"]
 
+    def test_daemon_task_still_counts_for_deadlock_detection(self):
+        """daemon=True only opts out of the #501 close-out diagnostic. A
+        daemon parked on an unresolvable wait mid-run still hangs the run and
+        must still be diagnosed loudly (#495a)."""
+        from doeff_core_effects.scheduler import SchedulerDeadlockError
+
+        @do
+        def stuck_daemon():
+            p = yield CreatePromise()
+            return (yield Wait(p.future))  # nobody completes
+
+        @do
+        def body():
+            t = yield Spawn(stuck_daemon(), daemon=True)
+            return (yield Wait(t))
+
+        with pytest.raises(SchedulerDeadlockError):
+            _run_scheduled_with_timeout(body(), timeout=2.0)
+
+    def test_semaphore_used_as_cross_task_signal_is_diagnosed_as_deadlock(self):
+        """Documents the #495c detection model: permits are released by their
+        holders. A semaphore used as a cross-task SIGNAL — the only holder
+        double-acquires (parks holding its permit) while a NON-holder plans to
+        release after an external event — is diagnosed as a deadlock instead
+        of waiting for the foreign release. Loud-over-silent is deliberate
+        (#495b requires detection despite live external waiters, which makes
+        a sound 'anyone may release later' model impossible); use a Promise
+        for cross-task signalling."""
+        import time
+
+        from doeff_core_effects.scheduler import (
+            CreateSemaphore,
+            ReleaseSemaphore,
+            SchedulerDeadlockError,
+        )
+
+        @do
+        def double_acquirer(sem: Any):
+            yield AcquireSemaphore(sem)
+            yield AcquireSemaphore(sem)  # parks while holding the only permit
+            return "signalled"
+
+        @do
+        def foreign_releaser(sem: Any, ep: Any):
+            _ = yield Wait(ep.future)
+            yield ReleaseSemaphore(sem)  # release-by-non-holder (legal)
+            return "released"
+
+        @do
+        def body():
+            sem = yield CreateSemaphore(1)
+            ep = yield CreateExternalPromise()
+            t = yield Spawn(double_acquirer(sem))
+            r = yield Spawn(foreign_releaser(sem, ep))
+
+            def completer():
+                time.sleep(0.15)
+                ep.complete("go")
+
+            threading.Thread(target=completer, daemon=True).start()
+            return (yield Gather(t, r))
+
+        with pytest.raises(SchedulerDeadlockError) as exc_info:
+            _run_scheduled_with_timeout(body(), timeout=2.0)
+        assert exc_info.value.semaphore_waiters
+
     def test_stall_diagnostic_logged_while_blocking_on_external(self, monkeypatch, caplog):
         """#495b: a long block on external completions logs a stall warning
         with the parked-waiter summary, then keeps blocking (semantics
@@ -1491,6 +1557,65 @@ class TestRootCloseOut:
         with warnings_mod.catch_warnings():
             warnings_mod.simplefilter("error")
             assert doeff_run(scheduled(body())) == 1
+
+    def test_daemon_queued_resume_abandoned_at_root_return_does_not_warn(self):
+        """Sim-clock-driver shape: an IDLE daemon completes a promise (its own
+        resume is queued at IDLE), the woken root returns first, and the
+        daemon's queued resume is abandoned. That is the daemon lifecycle —
+        it must not trip the #501 diagnostic, or every doeff-time sim run
+        would warn."""
+        import warnings as warnings_mod
+
+        @do
+        def completer(p: Any):
+            yield CompletePromise(p, "tick")
+            return "driver-done"  # resume queued at IDLE; routinely abandoned
+
+        @do
+        def body():
+            p = yield CreatePromise()
+            _ = yield Spawn(completer(p), priority=PRIORITY_IDLE, daemon=True)
+            v = yield Wait(p.future)
+            return v
+
+        with warnings_mod.catch_warnings():
+            warnings_mod.simplefilter("error")
+            assert doeff_run(scheduled(body())) == "tick"
+
+    def test_daemon_parked_listener_at_root_return_does_not_warn(self):
+        """Listener pattern: a daemon parked on a never-completed external
+        promise at root return is expected background work, not lost work."""
+        import warnings as warnings_mod
+
+        @do
+        def listener(ep: Any):
+            return (yield Wait(ep.future, priority=PRIORITY_IDLE))
+
+        @do
+        def body():
+            ep = yield CreateExternalPromise()  # never completed
+            _ = yield Spawn(listener(ep), daemon=True)
+            return "done"
+
+        with warnings_mod.catch_warnings():
+            warnings_mod.simplefilter("error")
+            assert doeff_run(scheduled(body())) == "done"
+
+    def test_non_daemon_spawn_default_still_warns(self):
+        """daemon defaults to False: the same abandoned-listener shape without
+        the flag keeps the #501 diagnostic."""
+        @do
+        def listener(ep: Any):
+            return (yield Wait(ep.future, priority=PRIORITY_IDLE))
+
+        @do
+        def body():
+            ep = yield CreateExternalPromise()  # never completed
+            _ = yield Spawn(listener(ep))
+            return "done"
+
+        with pytest.warns(RuntimeWarning, match="abandon"):
+            assert doeff_run(scheduled(body())) == "done"
 
     def test_empty_race_raises_value_error(self):
         """Repro D from the #501 report: Race() with zero waitables used to
