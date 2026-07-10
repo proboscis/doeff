@@ -47,6 +47,11 @@ EXTERNAL_STALL_LOG_INTERVAL_SECONDS = 30.0
 # handlers), never from a GC callback, so it can safely mutate the state dicts.
 HANDLE_SWEEP_INTERVAL = 1024
 
+# Minimum handle_refs list length before dead weakrefs are pruned at
+# registration time (#502): a long-lived PENDING promise whose owner mints
+# `.future` repeatedly must not accumulate dead refs until terminality.
+HANDLE_REFS_PRUNE_MIN = 8
+
 
 def _reinstall_boundary(prog, kind, boundary_callable):
     """Re-wrap prog with one boundary captured at the spawn site."""
@@ -356,6 +361,7 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
     ready = []           # heapq: (-priority, seq, entry)
     external_queue = queue_mod.Queue()  # thread-safe, blocking get()
     handle_refs = {}     # waitable_key → [weakref.ref(Task/Promise/Future/…)]
+    handle_prune_at = {}  # waitable_key → refs length that triggers a dead-ref prune
 
     def register_handle(key, handle):
         """Track handle liveness for the terminal-entry sweep (#502).
@@ -363,8 +369,19 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         Weakrefs carry no callbacks — liveness is polled by the sweep inside
         the scheduler's own dispatch path, never from a GC callback, so no
         reentrant dict mutation can occur.
+
+        Dead refs are pruned amortized at registration time (doubling
+        threshold), so a long-lived PENDING promise whose owner repeatedly
+        mints `.future` handles does not grow its list until terminality.
+        Registration is scheduler-thread-confined — only ``complete``/
+        ``fail`` are thread-safe on ExternalPromise — so the in-place prune
+        cannot race a foreign-thread append.
         """
-        handle_refs.setdefault(key, []).append(weakref.ref(handle))
+        refs = handle_refs.setdefault(key, [])
+        if len(refs) >= handle_prune_at.get(key, HANDLE_REFS_PRUNE_MIN):
+            refs[:] = [ref for ref in refs if ref() is not None]
+            handle_prune_at[key] = max(HANDLE_REFS_PRUNE_MIN, 2 * len(refs))
+        refs.append(weakref.ref(handle))
         return handle
 
     def sweep_terminal_unobserved_entries():
@@ -398,16 +415,17 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 refs = handle_refs.get(key)
                 if refs is None:
                     continue
-                # No in-place pruning: a live parent handle may mint (and
-                # register) new Futures from a foreign thread; the list is
-                # only dropped once every handle is dead, at which point no
-                # new registration for this key can happen.
+                # register_handle prunes dead refs amortized; here the whole
+                # list is dropped once every handle is dead, at which point
+                # no new registration for this key can happen (a Future is
+                # only minted from a live parent handle).
                 if any(ref() is not None for ref in refs):
                     continue
                 dead.append(wid)
             for wid in dead:
                 del store[wid]
                 del handle_refs[(kind, wid)]
+                handle_prune_at.pop((kind, wid), None)
 
     def fresh_id():
         i = next_id[0]
@@ -1411,6 +1429,7 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 "waiters": len(waiters),
                 "ready": len(ready),
                 "handle_refs": len(handle_refs),
+                "handle_ref_total": sum(len(refs) for refs in handle_refs.values()),
             })
             return r
 
