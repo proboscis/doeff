@@ -129,8 +129,10 @@
       (<- _ (Wait ready-ep.future))
       (_write-mcp-json work-dir server mcp-server-name)
       ;; Spawn the dispatch loop as a scheduler child task — inherits the
-      ;; parent's scheduler so sim_time / state are shared.
-      (<- _ (Spawn (mcp-server-loop server captured-handlers)))
+      ;; parent's scheduler so sim_time / state are shared. daemon: the
+      ;; loop parked on its wakeup ep when the root body returns is its
+      ;; documented lifecycle, not lost work (#501).
+      (<- _ (Spawn (mcp-server-loop server captured-handlers) :daemon True))
       (set! mcp-servers (| mcp-servers {session-name server})))
     ;; 3. Tmux session
     (setv session-info (.new-session active-backend
