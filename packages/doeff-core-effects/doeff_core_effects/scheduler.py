@@ -97,10 +97,21 @@ PRIORITY_HIGH = 20
 
 
 class Spawn(EffectBase):
-    def __init__(self, program, priority=PRIORITY_NORMAL):
+    """Spawn a task; resumes the spawner with a Task handle.
+
+    ``daemon=True`` declares that the task is background work the run may
+    abandon when the root body returns (sim clock driver, persistent
+    listener loops): daemon tasks and their queued wakes are excluded from
+    the root close-out diagnostic (#501). Daemon-ness changes nothing else
+    — scheduling priority, deadlock detection (#495), and the stall log
+    still see daemon tasks like any other task.
+    """
+
+    def __init__(self, program, priority=PRIORITY_NORMAL, daemon=False):
         super().__init__()
         self.program = program
         self.priority = priority
+        self.daemon = daemon
 
 
 class TaskCompleted(EffectBase):
@@ -433,6 +444,13 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             and tasks.get(owner_tid, {}).get("status") == "cancelled"
         )
 
+    def is_daemon(owner_tid):
+        """True when the owner was spawned with daemon=True (root is not)."""
+        return (
+            owner_tid is not None
+            and tasks.get(owner_tid, {}).get("daemon", False)
+        )
+
     def task_priority(owner_tid):
         """Stored spawn priority of the owner task; the root (None) is NORMAL.
 
@@ -454,11 +472,13 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             priority = task_priority(owner_tid)
         enqueue(("raise", owner_tid, cont, error), priority)
 
-    def alloc_task(program, priority=PRIORITY_NORMAL, inner_boundaries=None):
+    def alloc_task(program, priority=PRIORITY_NORMAL, inner_boundaries=None,
+                   daemon=False):
         tid = fresh_id()
         tasks[tid] = {
             "status": "pending", "result": None,
             "program": program, "priority": priority,
+            "daemon": daemon,
             "inner_boundaries": inner_boundaries or [],
         }
         return tid
@@ -531,13 +551,21 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             promises[pid]["result"] = value
             wake_waiters(("promise", pid))
 
-    def live_parked_waiter_summary():
-        """Describe live (non-cancelled) parked waiters for diagnostics."""
+    def live_parked_waiter_summary(include_daemons=True):
+        """Describe live (non-cancelled) parked waiters for diagnostics.
+
+        ``include_daemons=False`` is the root close-out view (#501): a
+        daemon parked at root return is the documented listener pattern,
+        not lost work. Deadlock detection and the stall log keep the full
+        view — a daemon hung mid-run still hangs the run.
+        """
         parked = []
         for (kind, wid), entries in waiters.items():
             for entry in entries:
                 wtype, owner_tid = entry[0], entry[1]
                 if is_owner_cancelled(owner_tid):
+                    continue
+                if not include_daemons and is_daemon(owner_tid):
                     continue
                 who = "root" if owner_tid is None else f"task {owner_tid}"
                 parked.append(f"{who} ({wtype}) on {kind} {wid}")
@@ -548,23 +576,24 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
 
         "wait_external" placeholders are skipped: an unclaimed one is already
         reported through its paired waiters registration and a claimed one is
-        inert by construction.
+        inert by construction. Daemon-owned entries are skipped: abandoning
+        daemon work at root return is that flag's declared contract.
         """
         abandoned = []
         for _neg_prio, _seq, entry in ready:
             kind = entry[0]
             if kind == "new":
                 tid = entry[1]
-                if tasks[tid]["status"] != "cancelled":
+                if tasks[tid]["status"] != "cancelled" and not is_daemon(tid):
                     abandoned.append(f"unstarted task {tid}")
             elif kind in ("resume", "raise"):
                 owner_tid = entry[1]
-                if not is_owner_cancelled(owner_tid):
+                if not is_owner_cancelled(owner_tid) and not is_daemon(owner_tid):
                     who = "root" if owner_tid is None else f"task {owner_tid}"
                     abandoned.append(f"queued {kind} for {who}")
             elif kind == "sem_resume":
                 owner_tid, sid = entry[1], entry[3]
-                if not is_owner_cancelled(owner_tid):
+                if not is_owner_cancelled(owner_tid) and not is_daemon(owner_tid):
                     abandoned.append(
                         f"queued semaphore {sid} permit for task {owner_tid}"
                     )
@@ -579,14 +608,15 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         """
         result = yield prog
         abandoned = abandoned_ready_summary()
-        parked = live_parked_waiter_summary()
+        parked = live_parked_waiter_summary(include_daemons=False)
         if abandoned or parked:
             warnings.warn(
                 "scheduler root body returned while abandoning in-flight "
                 f"work (#501): ready entries [{'; '.join(abandoned)}]; "
                 f"parked waiters [{'; '.join(parked)}]. Spawned work that "
                 "must finish has to be awaited (Wait/Gather) before the "
-                "root body returns.",
+                "root body returns; intentional background work should be "
+                "spawned with Spawn(..., daemon=True).",
                 RuntimeWarning,
                 stacklevel=2,
             )
@@ -614,16 +644,24 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         return blocked
 
     def unreleasable_semaphores(blocked):
-        """Blocked semaphores that provably no permit holder can release.
+        """Blocked semaphores whose permit holders can never release (#495c).
 
         A holder is stuck when it is itself parked in the waiter queue of
         a semaphore still presumed deadlocked — computed as a greatest
         fixpoint so a holder awaiting an external event keeps its
         semaphore (and everything parked behind it) blocking quietly, and
-        cross-semaphore cycles are still caught (#495c). Holder tracking
-        is diagnostics-only metadata: a release by a task that never
-        acquired (legal) leaves a stale holder behind, which can only
-        make this check miss a deadlock, never fabricate one.
+        cross-semaphore cycles are still caught.
+
+        MODEL: permits are released by their holders. #495b/c require the
+        deadlock diagnosed even while unrelated live external waiters
+        exist, so the check cannot soundly assume "anyone might release
+        later". A program that instead uses a semaphore as a cross-task
+        SIGNAL — every holder parked on the semaphore family while a
+        non-holder plans to release it after an external event — is
+        diagnosed as a deadlock by this model; use a Promise for
+        signalling. A stale holder left by such a cross-task release can
+        additionally make the check miss a later deadlock (never the
+        reverse: a missing/extra holder that is not parked only prunes).
         """
         candidates = set(blocked)
         changed = True
@@ -993,7 +1031,9 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 if isinstance(f, (list, tuple)) and len(f) >= 3:
                     spawn_site = f"{f[0]}  {f[1]}:{f[2]}"
 
-            tid = alloc_task(effect.program, effect.priority, inner_boundaries=inner_boundaries)
+            tid = alloc_task(effect.program, effect.priority,
+                             inner_boundaries=inner_boundaries,
+                             daemon=effect.daemon)
             tasks[tid]["spawn_site"] = spawn_site
             enqueue(("new", tid), effect.priority)
             # Spawner resumes at its OWN task priority (#504): a hard-coded
