@@ -16,7 +16,9 @@
 //! construction: `Option::take()` returns `Some` first time, `None` after.
 //! The VM does not store continuations; for exception recovery during handler
 //! dispatch, it keeps a `Py<PyK>` reference (a Python handle, not a
-//! continuation) — see vm.rs `pending_handler_k_handle`.
+//! continuation) owned by the dispatch itself — a local in
+//! eval_perform/eval_perform_with_k, then `Frame::Program.handler_k_handle`
+//! or `EvalReturnContinuation::ExpandReturn.handler_k_handle` (#492).
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;

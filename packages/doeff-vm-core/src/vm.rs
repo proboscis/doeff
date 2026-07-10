@@ -29,18 +29,14 @@ pub struct VM {
     pub segments: FiberArena,
     pub var_store: VarStore,
     pub current_segment: Option<SegmentId>,
-    /// Transient slot used by `eval_perform`/`eval_perform_with_k` to thread
-    /// a reference to the handler's PyK object through to `push_stream_value`.
-    /// Set before calling a handler callable; consumed when the resulting
-    /// Stream frame is pushed (the handle ends up in
-    /// `Frame::Program.handler_k_handle`).
-    ///
-    /// This is a Python handle (Py<PyK>), NOT a continuation. The chain lives
-    /// inside the PyK — if the handler raises, the VM borrows this handle,
-    /// calls `PyK::take()`, and reattaches the recovered chain.
-    /// Always None outside the handler-dispatch window.
-    pub pending_handler_k_handle: Option<pyo3::Py<crate::continuation::PyK>>,
 }
+
+// NOTE (#492): there is deliberately NO VM-global `pending_handler_k_handle`
+// slot. The handler-dispatch PyK handle is owned by the dispatch itself
+// (a local in eval_perform/eval_perform_with_k) and, for deferred handler
+// construction, by the `EvalReturnContinuation::ExpandReturn` frame — so its
+// lifetime is structurally tied to the dispatch window and cannot leak into
+// an unrelated later frame.
 
 impl VM {
     pub fn new() -> Self {
@@ -48,7 +44,6 @@ impl VM {
             segments: FiberArena::new(),
             var_store: VarStore::new(),
             current_segment: None,
-            pending_handler_k_handle: None,
         }
     }
 
@@ -56,7 +51,6 @@ impl VM {
         self.segments.clear();
         self.var_store.clear_run_local();
         self.current_segment = None;
-        self.pending_handler_k_handle = None;
     }
 
     pub fn end_active_run_session(&mut self) {
@@ -65,7 +59,6 @@ impl VM {
         self.var_store.clear_run_local();
         self.var_store.shrink_run_local_to_fit();
         self.current_segment = None;
-        self.pending_handler_k_handle = None;
     }
 
     pub fn alloc_segment(&mut self, fiber: Fiber) -> FiberId {
