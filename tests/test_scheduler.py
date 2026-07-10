@@ -399,11 +399,11 @@ class TestRace:
     def test_race_resolves_once_when_waitables_complete_back_to_back(self):
         """Back-to-back completions of both raced externals resolve once.
 
-        The completions come from a real thread: since #505 a Race over
-        pending external promises holds the PRIORITY_EXTERNAL_WAIT shield
-        exactly like Wait, so an in-scheduler IDLE completer would be
-        (correctly) starved behind it — external promises are completed by
-        foreign threads by contract.
+        This variant completes from a real thread (the primary
+        ExternalPromise pattern); the in-run IDLE completer variant lives in
+        TestGatherRaceExternalWaitShield::
+        test_race_resolves_with_in_run_idle_completer — the #505 shield
+        starves only daemon tasks, so both variants must resolve.
         """
         import time
 
@@ -859,6 +859,47 @@ class TestPrioritySurvivesSuspension:
             f"external wait after CompletePromise (#493)"
         )
 
+    def test_completer_resumes_after_the_waiters_it_woke_across_priorities(self):
+        """A completer resumes AFTER the tasks its completion woke, even when
+        the completer's task priority is higher (adversarial finding on the
+        first #493/#504 fix): pub/sub listeners re-register between events,
+        so a HIGH publisher resuming ahead of the woken NORMAL listener
+        publishes into an empty registry and the event is silently lost
+        (doeff_events memory handler shape)."""
+        from doeff_core_effects.scheduler import PRIORITY_HIGH
+
+        mailbox: list[Any] = []
+        delivered: list[int] = []
+
+        @do
+        def listener():
+            for _ in range(2):
+                p = yield CreatePromise()
+                mailbox.append(p)
+                delivered.append((yield Wait(p.future)))
+            return delivered
+
+        @do
+        def publisher():
+            # Each publish completes the currently-registered promise; the
+            # listener must re-register before the next publish or the event
+            # has nowhere to go.
+            yield CompletePromise(mailbox.pop(), 1)
+            assert mailbox, (
+                "publisher resumed before the woken listener re-registered "
+                "(#493/#504 completer-ordering guarantee)"
+            )
+            yield CompletePromise(mailbox.pop(), 2)
+
+        @do
+        def body():
+            tl = yield Spawn(listener())
+            tp = yield Spawn(publisher(), priority=PRIORITY_HIGH)
+            yield Gather(tl, tp)
+            return delivered
+
+        assert _run_scheduled_with_timeout(body(), timeout=2.0) == [1, 2]
+
     def test_high_priority_task_woken_before_normal_backlog(self):
         """Regression for #504: a HIGH task woken after a park is served
         before NORMAL entries already queued in the ready heap.
@@ -911,8 +952,12 @@ class TestPrioritySurvivesSuspension:
 
         Before the fix, the spawner resume promoted an IDLE spawner past the
         shield for one step, so its continuation ran ahead of a pending
-        non-IDLE external wait instead of being held back like every other
-        IDLE entry.
+        non-IDLE external wait instead of being held back.
+
+        The spawner models the sim clock driver, so it is spawned
+        daemon=True: the shield may starve only daemon tasks — a non-daemon
+        IDLE task is real work the run may need and runs below the shield
+        (see TestGatherRaceExternalWaitShield).
         """
         import time
 
@@ -942,7 +987,8 @@ class TestPrioritySurvivesSuspension:
             blocking_ep = yield CreateExternalPromise()
             parked_ep = yield CreateExternalPromise()
             t_w = yield Spawn(external_waiter(parked_ep.future, blocking_ep.future))
-            t_i = yield Spawn(idle_spawner(parked_ep), priority=PRIORITY_IDLE)
+            t_i = yield Spawn(idle_spawner(parked_ep), priority=PRIORITY_IDLE,
+                              daemon=True)
 
             def complete_later():
                 time.sleep(0.3)
@@ -1398,6 +1444,44 @@ class TestDeadlockDiagnostics:
         with pytest.raises(SchedulerDeadlockError):
             _run_scheduled_with_timeout(body(), timeout=2.0)
 
+    def test_runnable_idle_releaser_not_diagnosed_as_deadlock(self):
+        """A releaser sitting RUNNABLE in the ready heap disproves doom: the
+        holder-model check must not fire while any live entry can still run
+        (adversarial finding on #495c — the check previously ignored the
+        ready heap and fabricated a SchedulerDeadlockError although the
+        releaser needed no external event, only its turn to run)."""
+        import time
+
+        from doeff_core_effects.scheduler import CreateSemaphore, ReleaseSemaphore
+
+        @do
+        def double_acquirer(sem: Any):
+            yield AcquireSemaphore(sem)
+            yield AcquireSemaphore(sem)  # parks while holding the only permit
+            return "H"
+
+        @do
+        def idle_releaser(sem: Any):
+            yield ReleaseSemaphore(sem)  # non-holder release; runnable at IDLE
+            return "R"
+
+        @do
+        def body():
+            sem = yield CreateSemaphore(1)
+            ep = yield CreateExternalPromise()
+            t_h = yield Spawn(double_acquirer(sem))
+            t_r = yield Spawn(idle_releaser(sem), priority=PRIORITY_IDLE)
+
+            def completer():
+                time.sleep(0.1)
+                ep.complete("x")
+
+            threading.Thread(target=completer, daemon=True).start()
+            _ = yield Wait(ep.future)  # non-IDLE → placeholder cycles pick_next
+            return (yield Gather(t_h, t_r))
+
+        assert _run_scheduled_with_timeout(body(), timeout=2.0) == ["H", "R"]
+
     def test_semaphore_used_as_cross_task_signal_is_diagnosed_as_deadlock(self):
         """Documents the #495c detection model: permits are released by their
         holders. A semaphore used as a cross-task SIGNAL — the only holder
@@ -1646,8 +1730,14 @@ class TestRootCloseOut:
 
 class TestGatherRaceExternalWaitShield:
     """#505: Gather/Race over pending external promises must hold the
-    PRIORITY_EXTERNAL_WAIT shield exactly like Wait, so the IDLE sim clock
-    driver cannot advance past a pending external completion."""
+    PRIORITY_EXTERNAL_WAIT shield exactly like Wait, so the DAEMON sim clock
+    driver cannot advance past a pending external completion.
+
+    The probes are spawned daemon=True because the shield may starve only
+    daemon tasks: a non-daemon task below the shield is real work the run
+    may need for progress (it may be the only producer of the awaited
+    completion) and always runs — see
+    test_race_resolves_with_in_run_idle_completer below."""
 
     def test_gather_external_pending_blocks_idle_task(self):
         import time
@@ -1662,7 +1752,7 @@ class TestGatherRaceExternalWaitShield:
         def body():
             ep1 = yield CreateExternalPromise()
             ep2 = yield CreateExternalPromise()
-            t_idle = yield Spawn(idle_probe(), priority=PRIORITY_IDLE)
+            t_idle = yield Spawn(idle_probe(), priority=PRIORITY_IDLE, daemon=True)
 
             def completer():
                 time.sleep(0.15)
@@ -1697,7 +1787,7 @@ class TestGatherRaceExternalWaitShield:
         def body():
             win = yield CreateExternalPromise()
             lose = yield CreateExternalPromise()  # never completed
-            t_idle = yield Spawn(idle_probe(), priority=PRIORITY_IDLE)
+            t_idle = yield Spawn(idle_probe(), priority=PRIORITY_IDLE, daemon=True)
 
             def completer():
                 time.sleep(0.15)
@@ -1714,6 +1804,48 @@ class TestGatherRaceExternalWaitShield:
             f"IDLE task ran while raced external completions were pending "
             f"(#505): {order}"
         )
+
+    def test_race_resolves_with_in_run_idle_completer(self):
+        """An in-run (non-daemon) IDLE task that completes the raced external
+        promises must run even while the Race holds the external-wait shield
+        (adversarial finding on #505): the shield may starve only daemon
+        tasks. Starving the completer deadlocks the run on completions only
+        that task can produce — this exact shape ran on the pre-#505
+        scheduler."""
+
+        @do
+        def complete_both(first, second):
+            first.complete("first")
+            second.complete("second")
+
+        @do
+        def body():
+            first = yield CreateExternalPromise()
+            second = yield CreateExternalPromise()
+            _ = yield Spawn(complete_both(first, second), priority=PRIORITY_IDLE)
+            return (yield Race(first.future, second.future))
+
+        assert _run_scheduled_with_timeout(body(), timeout=2.0) == "first"
+
+    def test_non_daemon_idle_completer_runs_below_pending_external_wait(self):
+        """Same invariant for plain Wait: a non-daemon IDLE task below the
+        PRIORITY_EXTERNAL_WAIT placeholder is real work and must run — here
+        it is the only producer of the awaited completion, so starving it
+        (as the pre-fix shield did to every IDLE entry) hangs the run."""
+
+        @do
+        def completer(ep):
+            ep.complete("from-idle-task")
+
+        @do
+        def body():
+            ep = yield CreateExternalPromise()
+            t = yield Spawn(completer(ep), priority=PRIORITY_IDLE)
+            value = yield Wait(ep.future)
+            _ = yield Wait(t)
+            return value
+
+        assert _run_scheduled_with_timeout(body(), timeout=2.0) == "from-idle-task"
 
     def test_gather_external_failure_drops_sibling_placeholder(self):
         """Fail-fast Gather resolution must drop the placeholders of its
