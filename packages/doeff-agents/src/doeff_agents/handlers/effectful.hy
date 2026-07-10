@@ -31,7 +31,10 @@
   StopEffect
   StopSessionEffect])
 (import doeff_agents.session-backend [SessionBackend])
-(import doeff_agents.handlers.production [TmuxAgentHandler])
+(import doeff_agents.handlers.production [
+  TmuxAgentHandler
+  make-report-result-tool
+  spec-uses-report-result-transport])
 (import doeff_agents.mcp-server [McpToolServer])
 (import doeff_agents.handlers.mcp-server-loop [mcp-server-loop])
 
@@ -87,7 +90,19 @@
       (<- inner-handlers (GetHandlers k))
       (<- outer-handlers (GetOuterHandlers))
       (setv captured-handlers (+ (list inner-handlers) (list outer-handlers)))
-      (setv server (McpToolServer :tools spec.mcp-tools))
+      ;; Typed result transport (ADR 0035): schema sessions that already talk
+      ;; to the in-VM MCP server also get a report_result tool on it, so the
+      ;; result never rides the rendered terminal (TUI line-wrapping corrupted
+      ;; long single-line result JSON once the wrap-repair heuristic was
+      ;; removed by ADR 0035 R5 — 2026-07-10 SBI recon readiness failure).
+      (setv server-tools (tuple spec.mcp-tools))
+      (when (and agent-handler.supports-inprocess-report-result
+                 (spec-uses-report-result-transport spec))
+        (setv sink (.create-result-sink agent-handler spec.session-id))
+        (setv server-tools
+              (+ server-tools
+                 #((make-report-result-tool sink spec.result-schema)))))
+      (setv server (McpToolServer :tools server-tools))
       (<- ready-ep (CreateExternalPromise))
       (.start server :ready-promise ready-ep)
       (<- _ (Wait ready-ep.future))
@@ -101,6 +116,8 @@
       (except [e Exception]
         (when spec.mcp-tools
           (_shutdown-mcp-server-for-session agent-handler spec.session-id))
+        (when agent-handler.supports-inprocess-report-result
+          (.discard-result-sink agent-handler spec.session-id))
         (raise e)))
     (resume launch-result))
 
