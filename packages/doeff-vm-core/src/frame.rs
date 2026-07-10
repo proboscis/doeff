@@ -149,7 +149,19 @@ pub enum EvalReturnContinuation {
         continuation: InterceptorContinuation,
     },
     /// Expand: inner expr evaluated, result must be Value::Stream → push as frame.
-    ExpandReturn,
+    ///
+    /// `handler_k_handle` is Some only when this Expand came from a handler
+    /// dispatch (eval_perform / eval_perform_with_k on the generator-handler
+    /// path, e.g. the @do wrapper's `Expand(Apply(Pure(thunk), []))`). The
+    /// handle owns the perform-site continuation chain for the duration of
+    /// the deferred handler construction; it is consumed on EVERY exit from
+    /// this frame — moved into `Frame::Program.handler_k_handle` on the value
+    /// path, or used to discontinue the perform-site chain on the raise path
+    /// (see step_raise). Storing it here (not in a VM-global slot) ties its
+    /// lifetime to the dispatch that created it.
+    ExpandReturn {
+        handler_k_handle: Option<pyo3::Py<crate::continuation::PyK>>,
+    },
 }
 
 impl EvalReturnContinuation {
@@ -169,7 +181,7 @@ impl EvalReturnContinuation {
             | EvalReturnContinuation::TailResumeReturn
             | EvalReturnContinuation::ReturnToContinuation { .. }
             | EvalReturnContinuation::EvalInScopeReturn { .. }
-            | EvalReturnContinuation::ExpandReturn => None,
+            | EvalReturnContinuation::ExpandReturn { .. } => None,
         }
     }
 }
