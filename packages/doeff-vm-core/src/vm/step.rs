@@ -520,8 +520,22 @@ impl VM {
             }
         };
 
-        // 1. Call ALL observers in the chain (synchronous, return value ignored)
-        self.call_all_observers(current, &effect);
+        // 1. Call ALL observers in the chain (synchronous, return value
+        //    ignored). An observer exception FAILS FAST: it aborts the
+        //    dispatch and propagates like a handler error — the effect is
+        //    NOT delivered to any handler (#506). A dead tracing/audit
+        //    layer must be loud, not silently dropped.
+        if let Err(err) = self.call_all_observers(current, &effect) {
+            return match err {
+                VMError::UncaughtException { exception } => {
+                    // Python exception from the observer — raise it at the
+                    // perform site so try/except around the yield sees it,
+                    // exactly like a synchronous handler exception.
+                    continue_raise(exception, error_context)
+                }
+                err => error_result(err, error_context),
+            };
+        }
 
         // 2. Proceed to handler
         let result = match self.perform_effect(&effect) {
@@ -634,7 +648,13 @@ impl VM {
     }
 
     /// Walk the entire chain and call all observers synchronously.
-    fn call_all_observers(&self, start: FiberId, effect: &Value) {
+    ///
+    /// Observer RETURN VALUES are ignored, but observer ERRORS are not:
+    /// the first failing observer aborts the walk and its error is
+    /// propagated by the caller like a handler error (fail-fast, #506).
+    /// Observers outside the failing one (further up the chain) are not
+    /// called for this effect.
+    fn call_all_observers(&self, start: FiberId, effect: &Value) -> Result<(), VMError> {
         let mut cursor = Some(start);
         while let Some(fid) = cursor {
             let Some(seg) = self.segments.get(fid) else {
@@ -642,11 +662,12 @@ impl VM {
             };
             if seg.is_intercept_boundary() {
                 if let Some(observer) = seg.intercept_handler().cloned() {
-                    let _ = observer.call(vec![effect.clone()]);
+                    observer.call(vec![effect.clone()])?;
                 }
             }
             cursor = seg.parent;
         }
+        Ok(())
     }
 
     /// Evaluate WithObserve: install observer boundary, create body fiber, evaluate body.
