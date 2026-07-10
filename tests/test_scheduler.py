@@ -1239,3 +1239,163 @@ class TestSemaphore:
             return (yield Wait(v))
 
         assert _run_scheduled_with_timeout(body(), timeout=2.0) == "V"
+
+
+# ---------------------------------------------------------------------------
+# Deadlock diagnostics (#495)
+# ---------------------------------------------------------------------------
+
+class TestDeadlockDiagnostics:
+    """Regressions for #495: unresolvable waits must fail loudly, stalls must
+    be observable, and unrelated external waiters must not mask semaphore
+    deadlocks."""
+
+    def test_internal_promise_wait_never_completed_raises(self):
+        """#495a: waiting on an internal promise nobody completes must raise a
+        SchedulerDeadlockError instead of blocking forever in
+        external_queue.get()."""
+        from doeff_core_effects.scheduler import SchedulerDeadlockError
+
+        @do
+        def body():
+            p = yield CreatePromise()
+            return (yield Wait(p.future))
+
+        with pytest.raises(SchedulerDeadlockError) as exc_info:
+            _run_scheduled_with_timeout(body(), timeout=2.0)
+
+        error = exc_info.value
+        assert error.parked_waiters, "diagnostic must list the parked waiters"
+        assert "promise" in str(error)
+
+    def test_semaphore_deadlock_detected_despite_idle_external_listener(self):
+        """#495c (repro F): an unrelated idle external listener must not mask
+        a semaphore cycle that no permit holder can ever release."""
+        from doeff_core_effects.scheduler import (
+            CreateSemaphore,
+            SchedulerDeadlockError,
+        )
+
+        @do
+        def listener(ep: Any):
+            return (yield Wait(ep.future, priority=PRIORITY_IDLE))
+
+        @do
+        def acquirer(sem: Any):
+            yield AcquireSemaphore(sem)
+            return "acquired"
+
+        @do
+        def body():
+            ep = yield CreateExternalPromise()   # never completed
+            _ = yield Spawn(listener(ep))
+            sem = yield CreateSemaphore(1)
+            yield AcquireSemaphore(sem)
+            _ = yield Spawn(acquirer(sem))
+            yield AcquireSemaphore(sem)          # root deadlocks on its own sem
+            return "unreachable"
+
+        with pytest.raises(SchedulerDeadlockError) as exc_info:
+            _run_scheduled_with_timeout(body(), timeout=2.0)
+
+        assert exc_info.value.semaphore_waiters
+
+    def test_semaphore_deadlock_detected_behind_pending_external_wait_entry(self):
+        """#495c/d: the deadlock check must fire even while a non-IDLE
+        wait_external placeholder keeps the pick_next loop cycling."""
+        from doeff_core_effects.scheduler import (
+            CreateSemaphore,
+            SchedulerDeadlockError,
+        )
+
+        @do
+        def recv(ep: Any):
+            return (yield Wait(ep.future))  # default priority: ready-heap entry
+
+        @do
+        def acquirer(sem: Any):
+            yield AcquireSemaphore(sem)
+            return "acquired"
+
+        @do
+        def body():
+            ep = yield CreateExternalPromise()   # never completed
+            _ = yield Spawn(recv(ep))
+            sem = yield CreateSemaphore(1)
+            yield AcquireSemaphore(sem)
+            _ = yield Spawn(acquirer(sem))
+            yield AcquireSemaphore(sem)          # root deadlocks on its own sem
+            return "unreachable"
+
+        with pytest.raises(SchedulerDeadlockError) as exc_info:
+            _run_scheduled_with_timeout(body(), timeout=2.0)
+
+        assert exc_info.value.semaphore_waiters
+
+    def test_semaphore_holder_awaiting_external_event_blocks_quietly(self):
+        """A permit holder parked on a live external completion is NOT a
+        deadlock: the sem waiter must simply wait until the holder releases."""
+        import time
+
+        from doeff_core_effects.scheduler import CreateSemaphore, ReleaseSemaphore
+
+        @do
+        def holder(sem: Any, ep: Any):
+            yield AcquireSemaphore(sem)
+            _ = yield Wait(ep.future)  # released by a real completer thread
+            yield ReleaseSemaphore(sem)
+            return "holder"
+
+        @do
+        def waiter(sem: Any):
+            yield AcquireSemaphore(sem)
+            yield ReleaseSemaphore(sem)
+            return "waiter"
+
+        @do
+        def body():
+            ep = yield CreateExternalPromise()
+            sem = yield CreateSemaphore(1)
+            th = yield Spawn(holder(sem, ep))
+            tw = yield Spawn(waiter(sem))
+
+            def completer():
+                time.sleep(0.1)
+                ep.complete("go")
+
+            threading.Thread(target=completer, daemon=True).start()
+            return (yield Gather(th, tw))
+
+        assert _run_scheduled_with_timeout(body(), timeout=2.0) == ["holder", "waiter"]
+
+    def test_stall_diagnostic_logged_while_blocking_on_external(self, monkeypatch, caplog):
+        """#495b: a long block on external completions logs a stall warning
+        with the parked-waiter summary, then keeps blocking (semantics
+        unchanged: the run still completes once the completion arrives)."""
+        import logging
+        import time
+
+        import doeff_core_effects.scheduler as sched_module
+
+        monkeypatch.setattr(sched_module, "EXTERNAL_STALL_LOG_INTERVAL_SECONDS", 0.05)
+        caplog.set_level(logging.WARNING, logger="doeff_core_effects.scheduler")
+
+        @do
+        def body():
+            ep = yield CreateExternalPromise()
+
+            def completer():
+                time.sleep(0.3)
+                ep.complete("late")
+
+            threading.Thread(target=completer, daemon=True).start()
+            return (yield Wait(ep.future))
+
+        assert _run_scheduled_with_timeout(body(), timeout=5.0) == "late"
+        stall_messages = [
+            record.getMessage()
+            for record in caplog.records
+            if "scheduler stalled" in record.getMessage()
+        ]
+        assert stall_messages, "expected a stall warning while blocked >50ms"
+        assert "parked waiters" in stall_messages[0]

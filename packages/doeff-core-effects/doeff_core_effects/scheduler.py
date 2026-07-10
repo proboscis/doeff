@@ -21,6 +21,8 @@ Usage:
     run(scheduled(main()))
 """
 
+import logging
+
 from doeff_vm import Callable as _VmCallable
 from doeff_vm import EffectBase, Err, Ok, TailEval
 from doeff_vm import WithObserve as _WithObserveRaw
@@ -29,6 +31,13 @@ from doeff.do import do
 from doeff.handler_utils import get_inner_boundaries
 from doeff.program import Pass, Perform, Pure, Resume, Transfer
 from doeff.program import handler as _program_handler
+
+_logger = logging.getLogger(__name__)
+
+# How long a blocking wait for external completions may stay silent before a
+# stall diagnostic is logged (#495b). Blocking semantics are unchanged: the
+# scheduler logs the parked-waiter summary and keeps waiting.
+EXTERNAL_STALL_LOG_INTERVAL_SECONDS = 30.0
 
 
 def _reinstall_boundary(prog, kind, boundary_callable):
@@ -131,11 +140,12 @@ class TaskCancelledError(Exception):
 class SchedulerDeadlockError(RuntimeError):
     """Raised when the scheduler has parked work that cannot make progress."""
 
-    def __init__(self, semaphore_waiters):
+    def __init__(self, semaphore_waiters, parked_waiters=None):
         self.semaphore_waiters = {
             sem_id: list(task_ids)
             for sem_id, task_ids in semaphore_waiters.items()
         }
+        self.parked_waiters = list(parked_waiters or [])
         details = []
         for sem_id, task_ids in self.semaphore_waiters.items():
             if task_ids:
@@ -143,10 +153,18 @@ class SchedulerDeadlockError(RuntimeError):
                 details.append(f"semaphore {sem_id}: tasks {task_list}")
             else:
                 details.append(f"semaphore {sem_id}: root continuation")
-        super().__init__(
-            "scheduler deadlock: semaphore waiters remain with no runnable tasks "
-            f"({'; '.join(details)})"
-        )
+        parts = []
+        if details:
+            parts.append(
+                "semaphore waiters remain with no runnable tasks "
+                f"({'; '.join(details)})"
+            )
+        if self.parked_waiters:
+            parts.append(
+                "parked waiters that no external completion can wake: "
+                f"{'; '.join(self.parked_waiters)}"
+            )
+        super().__init__("scheduler deadlock: " + "; ".join(parts))
 
 
 class Race(EffectBase):
@@ -373,12 +391,44 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         return wrapped()
 
     def _drain_one_external():
-        """Block for one external completion and process it."""
-        action, pid, value = external_queue.get()
+        """Block for one external completion and process it.
+
+        Blocks with a timeout so a stalled scheduler stays observable
+        (#495b): every EXTERNAL_STALL_LOG_INTERVAL_SECONDS a warning with
+        the parked-waiter summary is logged, then blocking continues —
+        semantics are unchanged.
+        """
+        waited = 0.0
+        while True:
+            interval = EXTERNAL_STALL_LOG_INTERVAL_SECONDS
+            try:
+                action, pid, value = external_queue.get(timeout=interval)
+                break
+            except queue_mod.Empty:
+                waited += interval
+                _logger.warning(
+                    "scheduler stalled %.0fs waiting on external completions; "
+                    "parked waiters: %s; semaphore waiters: %s",
+                    waited,
+                    live_parked_waiter_summary() or "none",
+                    live_semaphore_waiters() or "none",
+                )
         if pid in promises and promises[pid]["status"] == "pending":
             promises[pid]["status"] = "completed" if action == "complete" else "failed"
             promises[pid]["result"] = value
             wake_waiters(("promise", pid))
+
+    def live_parked_waiter_summary():
+        """Describe live (non-cancelled) parked waiters for diagnostics."""
+        parked = []
+        for (kind, wid), entries in waiters.items():
+            for entry in entries:
+                wtype, owner_tid = entry[0], entry[1]
+                if is_owner_cancelled(owner_tid):
+                    continue
+                who = "root" if owner_tid is None else f"task {owner_tid}"
+                parked.append(f"{who} ({wtype}) on {kind} {wid}")
+        return parked
 
     def live_semaphore_waiters():
         """Return live semaphore waiters, pruning cancelled task continuations."""
@@ -400,6 +450,49 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                     if owner_tid is not None
                 ]
         return blocked
+
+    def unreleasable_semaphores(blocked):
+        """Blocked semaphores that provably no permit holder can release.
+
+        A holder is stuck when it is itself parked in the waiter queue of
+        a semaphore still presumed deadlocked — computed as a greatest
+        fixpoint so a holder awaiting an external event keeps its
+        semaphore (and everything parked behind it) blocking quietly, and
+        cross-semaphore cycles are still caught (#495c). Holder tracking
+        is diagnostics-only metadata: a release by a task that never
+        acquired (legal) leaves a stale holder behind, which can only
+        make this check miss a deadlock, never fabricate one.
+        """
+        candidates = set(blocked)
+        changed = True
+        while candidates and changed:
+            parked_tids = {
+                owner_tid
+                for sid in candidates
+                for owner_tid, _waiter_k in semaphores[sid]["waiters"]
+            }
+            pruned = {
+                sid
+                for sid in candidates
+                if not semaphores[sid]["holders"]
+                or any(h not in parked_tids for h in semaphores[sid]["holders"])
+            }
+            candidates -= pruned
+            changed = bool(pruned)
+        return {sid: blocked[sid] for sid in candidates}
+
+    def raise_if_semaphore_cycle_unresolvable(blocked_semaphore_waiters):
+        """Fail loudly when a blocked semaphore cycle can never resolve.
+
+        Called wherever pick_next is about to block on external
+        completions: unrelated pending external waiters must not mask a
+        semaphore deadlock into a silent hang (#495c).
+        """
+        if not blocked_semaphore_waiters:
+            return
+        doomed = unreleasable_semaphores(blocked_semaphore_waiters)
+        if doomed:
+            raise SchedulerDeadlockError(doomed)
 
     def has_pending_external_waiters():
         for key, entries in waiters.items():
@@ -443,7 +536,7 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                     # the permit is recoverable at this drop site.
                     _, owner_tid, cont, sid = entry
                     if is_owner_cancelled(owner_tid):
-                        return_inflight_permit(sid)
+                        return_inflight_permit(sid, owner_tid)
                         continue
                     return Transfer(cont, None)
                 if entry[0] == "raise":
@@ -464,6 +557,11 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                     _, owner_tid, _cont, _wk, claimed = entry
                     if claimed[0] or is_owner_cancelled(owner_tid):
                         continue
+                    # Deadlock diagnostics must stay reachable while this
+                    # branch keeps the loop from ever reaching the bottom
+                    # of pick_next (#495c/d): report an unresolvable
+                    # semaphore cycle loudly before blocking.
+                    raise_if_semaphore_cycle_unresolvable(live_semaphore_waiters())
                     # Not yet resolved — block for one completion, drain rest
                     _drain_one_external()
                     drain()
@@ -471,8 +569,18 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                         enqueue(entry, PRIORITY_EXTERNAL_WAIT)
                     continue
             blocked_semaphore_waiters = live_semaphore_waiters()
-            if blocked_semaphore_waiters and not has_pending_external_waiters():
-                raise SchedulerDeadlockError(blocked_semaphore_waiters)
+            if not has_pending_external_waiters():
+                parked = live_parked_waiter_summary()
+                if blocked_semaphore_waiters or parked:
+                    # Nothing is runnable and no pending external
+                    # completion can ever wake any parked waiter — the run
+                    # would hang silently in external_queue.get() forever.
+                    # Fail loudly instead (#495a).
+                    raise SchedulerDeadlockError(blocked_semaphore_waiters, parked)
+            else:
+                # External waiters exist, but they must not mask a
+                # semaphore cycle that no holder can ever release (#495c).
+                raise_if_semaphore_cycle_unresolvable(blocked_semaphore_waiters)
             if not waiters:
                 return Pure(None)
             # All tasks blocked — block for one external completion
@@ -638,10 +746,11 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         if waiter is None:
             return False
         owner_tid, waiter_k = waiter
+        sem["holders"].append(owner_tid)
         enqueue(("sem_resume", owner_tid, waiter_k, sid), task_priority(owner_tid))
         return True
 
-    def return_inflight_permit(sid):
+    def return_inflight_permit(sid, cancelled_tid):
         """Return a permit whose receiving waiter was cancelled in flight.
 
         The task was cancelled after ReleaseSemaphore transferred the
@@ -649,8 +758,10 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         re-run the release so the next live waiter — or the free pool —
         gets the permit instead of it leaking.
         """
+        sem = semaphores[sid]
+        sem["holders"].remove(cancelled_tid)
         if not grant_permit_to_next_waiter(sid):
-            semaphores[sid]["permits"] += 1
+            sem["permits"] += 1
 
     def make_handler(current_tid):
         @do
@@ -893,6 +1004,10 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 "permits": effect.permits,
                 "max_permits": effect.permits,
                 "waiters": deque_type(),
+                # Diagnostics-only permit-holder tracking (#495c): which
+                # tasks currently hold a permit (None = root; duplicates
+                # allowed for multi-permit holds).
+                "holders": [],
             }
             r = yield Resume(k, Semaphore(sid))
             return r
@@ -902,6 +1017,7 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             sem = semaphores[sid]
             if sem["permits"] > 0:
                 sem["permits"] -= 1
+                sem["holders"].append(current_tid)
                 r = yield Resume(k, None)
                 return r
             else:
@@ -914,10 +1030,15 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             sem = semaphores[sid]
             # Transfer the permit directly to the first live waiter (#496:
             # via a recoverable sem_resume entry) or bank it.
-            if not grant_permit_to_next_waiter(sid):
-                if sem["permits"] >= sem["max_permits"]:
-                    from doeff.program import ResumeThrow
-                    return (yield ResumeThrow(k, RuntimeError("semaphore released too many times")))
+            transferred = grant_permit_to_next_waiter(sid)
+            if not transferred and sem["permits"] >= sem["max_permits"]:
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, RuntimeError("semaphore released too many times")))
+            # Holder tracking is diagnostics-only (#495c): releasing from a
+            # task that never acquired is legal and just leaves it stale.
+            if current_tid in sem["holders"]:
+                sem["holders"].remove(current_tid)
+            if not transferred:
                 sem["permits"] += 1
             r = yield Resume(k, None)
             return r
