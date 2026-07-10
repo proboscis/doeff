@@ -3,8 +3,8 @@ from datetime import datetime, timezone
 
 from doeff_time.effects import GetTime
 from doeff_time.handlers import sync_time_handler
+from time_test_support import run_with_handlers
 
-from conftest import run_with_handlers
 from doeff import do
 
 
