@@ -364,10 +364,12 @@ def _shutdown_await_bridge():
 def _get_await_bridge_loop():
     """Return the process-global bridge loop, (re)creating it if needed.
 
-    Double-checked locking; a loop is unusable when it is closed or its
-    thread died (e.g. SystemExit/KeyboardInterrupt escaped a bridged
-    coroutine and propagated out of run_forever) — in that case a loud
-    warning names the killer exception and a fresh loop is started.
+    Double-checked locking. The bridge coroutine never lets an exception
+    escape onto the loop, so the loop is expected to outlive the process;
+    this replacement path is a backstop for external kills only (e.g. user
+    code scheduled its own task on the loop and raised SystemExit, or a
+    forked child inherited a bridge whose thread does not exist). It warns
+    loudly, naming the killer exception, before starting a fresh loop.
     """
     import asyncio
     import atexit
@@ -439,14 +441,23 @@ def await_handler():
     All instances share one process-global event loop + daemon thread
     (#498); the loop is stopped/closed by an atexit hook. The bridge
     coroutine resolves its promise on EVERY exit, including BaseException
-    such as asyncio.CancelledError (#494) — KeyboardInterrupt/SystemExit are
-    re-raised on the loop thread after failing the promise so process-level
-    intent still propagates.
+    such as asyncio.CancelledError (#494). ``ep.fail`` is the ONLY
+    propagation channel: the scheduler's task wrapper catches only
+    ``Exception``, so KeyboardInterrupt/SystemExit failed into the promise
+    escape the scheduler and reach the ``run()`` caller's thread. They are
+    deliberately NOT re-raised on the loop thread — that would kill the
+    shared loop (asyncio re-raises them out of ``run_forever``), silently
+    orphaning every other in-flight Await in the process, while gaining
+    nothing: ``threading`` swallows SystemExit on daemon threads.
 
     Known limitation (#498): cancelling a doeff task does NOT cancel the
     in-flight bridged coroutine — it keeps running on the shared loop and
     its late completion is ignored. Fixing that requires scheduler-side
     cancel propagation to the run_coroutine_threadsafe future.
+
+    Isolation trade-off of the shared loop: a bridged coroutine that blocks
+    the loop (e.g. a synchronous call inside async code) now stalls every
+    run's Awaits process-wide, not just its own run's.
     """
     import asyncio
 
@@ -465,9 +476,12 @@ def await_handler():
                     # Resolve the promise on EVERY exit — a swallowed
                     # BaseException (e.g. asyncio.CancelledError) would
                     # otherwise park the scheduler forever (#494).
+                    # Never re-raise here, not even KeyboardInterrupt or
+                    # SystemExit: asyncio would propagate it out of
+                    # run_forever and kill the SHARED loop thread, silently
+                    # hanging every other in-flight Await in the process.
+                    # ep.fail already delivers it to the run() caller.
                     ep.fail(e)
-                    if isinstance(e, (KeyboardInterrupt, SystemExit)):
-                        raise
                 else:
                     ep.complete(result)
 
