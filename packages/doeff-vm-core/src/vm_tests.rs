@@ -1343,13 +1343,233 @@ mod tests {
             Err(err) => panic!("expected Ok, got error: {:?}", err),
         }
 
-        // Critical assertion: pending_handler_k_handle must be None.
-        // With the stale-backup bug, the handle would persist and
-        // attach to the next unrelated Program frame.
+        // Critical assertion: no dispatch k handle may survive anywhere in
+        // VM state. The VM-global pending_handler_k_handle slot was removed
+        // (#492) — the handle is dispatch-local and, for non-Expand results,
+        // dropped inside eval_perform — so the only places a handle can live
+        // are Program / ExpandReturn frames. Scan them all.
         assert!(
-            vm.pending_handler_k_handle.is_none(),
-            "stale-backup-leak: pending_handler_k_handle must be None \
+            no_leaked_k_handle(&vm),
+            "stale-backup-leak: no frame may carry a handler k handle \
              after a generator handler returns a non-Expand DoCtrl"
+        );
+    }
+
+    /// True if no live arena fiber carries a handler-dispatch k handle
+    /// (Program.handler_k_handle or ExpandReturn.handler_k_handle).
+    fn no_leaked_k_handle(vm: &VM) -> bool {
+        vm.segments.iter().all(|(_, fiber)| {
+            fiber.frames.iter().all(|frame| match frame {
+                Frame::Program {
+                    handler_k_handle, ..
+                } => handler_k_handle.is_none(),
+                Frame::EvalReturn(cont) => !matches!(
+                    cont.as_ref(),
+                    crate::frame::EvalReturnContinuation::ExpandReturn {
+                        handler_k_handle: Some(_),
+                    }
+                ),
+                _ => true,
+            })
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 14 (#492): a deferred handler-construction failure (the @do
+    // wrapper's Expand(Apply(Pure(thunk), [])) shape, where the thunk raises
+    // an arity TypeError inside eval_apply) must not leave a stale k handle
+    // behind. Pre-fix, the stale handle was adopted by the NEXT Expand frame,
+    // and a later unrelated exception was delivered INTO the abandoned
+    // perform-site continuation, whose return value was then substituted as
+    // the unrelated program's result.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_deferred_expand_apply_error_routes_to_perform_site_and_leaves_no_stale_handle() {
+        use crate::continuation::PyK;
+
+        /// Callable that raises when called — models fn(*args) blowing up
+        /// with an arity TypeError inside the @do wrapper's thunk.
+        #[derive(Debug)]
+        struct RaisingThunk;
+
+        impl Callable for RaisingThunk {
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+            fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
+                Err(VMError::UncaughtException {
+                    exception: Value::String("arity TypeError".into()),
+                })
+            }
+        }
+
+        /// Generator-like handler that returns the deferred-construction
+        /// shape WITHOUT touching k: Expand(Apply(Pure(RaisingThunk), [])).
+        /// The k stays inside the PyK the VM allocated — exactly the @do
+        /// wrong-arity situation from #492.
+        #[derive(Debug)]
+        struct DeferredCrashingHandler;
+
+        impl Callable for DeferredCrashingHandler {
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+            fn call(&self, _args: Vec<Value>) -> Result<Value, VMError> {
+                Err(VMError::internal("use call_handler"))
+            }
+            fn is_generator_handler(&self) -> bool {
+                true
+            }
+            fn call_handler(&self, args: Vec<Value>) -> Result<DoCtrl, VMError> {
+                // Sanity: k arrives as Opaque(PyK) on the generator path.
+                pyo3::Python::attach(|py| match &args[1] {
+                    Value::Opaque(obj) => {
+                        obj.bind(py).cast::<PyK>().expect("expected PyK");
+                    }
+                    other => panic!("expected Opaque(PyK), got {:?}", other),
+                });
+                Ok(DoCtrl::Expand {
+                    expr: Box::new(DoCtrl::Apply {
+                        f: Box::new(DoCtrl::Pure {
+                            value: Value::Callable(Arc::new(RaisingThunk) as CallableRef),
+                        }),
+                        args: vec![],
+                    }),
+                })
+            }
+        }
+
+        /// Victim body: performs, and its throw() arm swallows ONLY the
+        /// unrelated crash (like the Python repro's `except RuntimeError`),
+        /// returning a recognizable substituted value. The construction
+        /// TypeError — correctly discontinued into the victim's chain —
+        /// propagates through. If the stale-handle bug is present, the later
+        /// unrelated crash lands HERE and Int(666) becomes the unrelated
+        /// program's "result".
+        #[derive(Debug)]
+        struct VictimStream {
+            state: u8,
+        }
+
+        impl IRStream for VictimStream {
+            fn resume(&mut self, value: Value) -> StreamStep {
+                match self.state {
+                    0 => {
+                        self.state = 1;
+                        StreamStep::Instruction(DoCtrl::Perform {
+                            effect: Value::String("ping".into()),
+                        })
+                    }
+                    _ => StreamStep::Done(value),
+                }
+            }
+            fn throw(&mut self, e: Value) -> StreamStep {
+                match &e {
+                    Value::String(s) if s == "unrelated crash" => {
+                        StreamStep::Done(Value::Int(666))
+                    }
+                    _ => StreamStep::Error(e),
+                }
+            }
+        }
+
+        /// Crasher body: raises an unrelated error, uncaught.
+        #[derive(Debug)]
+        struct CrasherStream;
+
+        impl IRStream for CrasherStream {
+            fn resume(&mut self, _value: Value) -> StreamStep {
+                StreamStep::Error(Value::String("unrelated crash".into()))
+            }
+            fn throw(&mut self, e: Value) -> StreamStep {
+                StreamStep::Error(e)
+            }
+        }
+
+        /// Main: installs the bad handler around the victim, CATCHES the
+        /// construction error (throw → continues), then runs the crasher as
+        /// an unrelated subprogram. The crasher's error must propagate out.
+        #[derive(Debug)]
+        struct MainStream {
+            state: u8,
+            h: Option<Value>,
+            b: Option<Box<DoCtrl>>,
+            caught: Option<Value>,
+        }
+
+        impl IRStream for MainStream {
+            fn resume(&mut self, value: Value) -> StreamStep {
+                match self.state {
+                    0 => {
+                        self.state = 1;
+                        StreamStep::Instruction(DoCtrl::WithHandler {
+                            handler: self.h.take().unwrap(),
+                            body: self.b.take().unwrap(),
+                        })
+                    }
+                    1 => {
+                        // WithHandler returned normally — the construction
+                        // error was NOT raised. That would itself be a bug.
+                        StreamStep::Error(Value::String(
+                            "expected construction TypeError, got value".into(),
+                        ))
+                    }
+                    2 => {
+                        self.state = 3;
+                        StreamStep::Instruction(DoCtrl::Expand {
+                            expr: Box::new(DoCtrl::Pure {
+                                value: Value::Stream(IRStreamRef::new(
+                                    Box::new(CrasherStream) as Box<dyn IRStream>,
+                                )),
+                            }),
+                        })
+                    }
+                    _ => StreamStep::Done(value),
+                }
+            }
+            fn throw(&mut self, e: Value) -> StreamStep {
+                if self.state == 1 {
+                    // Caught the handler-construction error — proceed to the
+                    // unrelated crasher, like the Python repro's try/except.
+                    self.state = 2;
+                    self.caught = Some(e);
+                    self.resume(Value::Unit)
+                } else {
+                    StreamStep::Error(e)
+                }
+            }
+        }
+
+        let mut vm = setup_vm_with_stream(MainStream {
+            state: 0,
+            h: Some(Value::Callable(
+                Arc::new(DeferredCrashingHandler) as CallableRef,
+            )),
+            b: Some(expand_stream(VictimStream { state: 0 })),
+            caught: None,
+        });
+
+        let result = run_to_completion(&mut vm);
+
+        // The unrelated crash must propagate out as an uncaught error —
+        // NOT be swallowed by the abandoned victim continuation (which
+        // would substitute Ok(Int(666)) here).
+        match result {
+            Err(VMError::UncaughtException { exception }) => match exception {
+                Value::String(s) => assert_eq!(s, "unrelated crash"),
+                other => panic!("expected String exception, got {:?}", other),
+            },
+            Ok(other) => panic!(
+                "unrelated crash was swallowed; wrong-scope substituted result: {:?}",
+                other
+            ),
+            Err(err) => panic!("expected UncaughtException, got {:?}", err),
+        }
+
+        assert!(
+            no_leaked_k_handle(&vm),
+            "stale k handle survived the deferred handler-construction failure"
         );
     }
 }

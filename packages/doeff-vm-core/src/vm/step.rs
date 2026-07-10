@@ -173,8 +173,30 @@ impl VM {
                 }
             }
             _ => {
-                // Non-program frames can't handle errors — pop and propagate
-                seg.frames.pop();
+                // Non-program frames can't handle errors — pop and propagate.
+                //
+                // Exception (#492): an ExpandReturn frame carrying a
+                // handler-dispatch k handle marks an in-flight deferred
+                // handler construction (the @do wrapper's
+                // Expand(Apply(Pure(thunk), [])) shape) whose evaluation
+                // raised — e.g. an arity TypeError from fn(*args) inside
+                // eval_apply. The handle is still owned here, so route the
+                // exception to the perform site's dynamic scope (recover the
+                // chain and discontinue it), exactly like the synchronous
+                // recovery arm in eval_perform. Dropping the handle instead
+                // would strand the perform-site chain; leaving it (the old
+                // VM-global slot design) let the NEXT Expand adopt it and
+                // deliver a later unrelated exception into the abandoned
+                // continuation.
+                let popped = seg.frames.pop();
+                if let Some(Frame::EvalReturn(eval_return)) = popped {
+                    if let EvalReturnContinuation::ExpandReturn {
+                        handler_k_handle: Some(handle),
+                    } = *eval_return
+                    {
+                        return self.recover_from_k_handle(handle, error, error_context);
+                    }
+                }
                 continue_raise(error, error_context)
             }
         }
@@ -190,23 +212,7 @@ impl VM {
 
             DoCtrl::Eval { expr } => continue_eval(*expr, error_context),
 
-            DoCtrl::Expand { expr } => {
-                // Evaluate inner, expect Value::Stream, push as frame
-                match *expr {
-                    DoCtrl::Pure { value } => self.push_stream_value(value, error_context),
-                    other => {
-                        // Push ExpandReturn frame so we intercept the result
-                        if let Some(seg_id) = self.current_segment {
-                            if let Some(seg) = self.segments.get_mut(seg_id) {
-                                seg.push_frame(Frame::EvalReturn(Box::new(
-                                    EvalReturnContinuation::ExpandReturn,
-                                )));
-                            }
-                        }
-                        continue_eval(other, error_context)
-                    }
-                }
-            }
+            DoCtrl::Expand { expr } => self.eval_expand(*expr, None, error_context),
 
             DoCtrl::Apply { f, args } => self.eval_apply(*f, args, error_context),
 
@@ -385,12 +391,50 @@ impl VM {
     // Helpers
     // -------------------------------------------------------------------
 
+    /// Evaluate an Expand's inner expr: expect Value::Stream, push as frame.
+    ///
+    /// `handler_k_handle` is Some only when the Expand is a handler-dispatch
+    /// result (the @do wrapper's `Expand(Apply(Pure(thunk), []))` shape from
+    /// eval_perform/eval_perform_with_k). The handle rides in the ExpandReturn
+    /// frame so that BOTH exits of the deferred evaluation consume it: the
+    /// value path moves it onto the resulting Program frame, and the raise
+    /// path (step_raise popping the ExpandReturn frame) discontinues the
+    /// perform-site chain with the exception (#492).
+    fn eval_expand(
+        &mut self,
+        expr: DoCtrl,
+        handler_k_handle: Option<pyo3::Py<crate::continuation::PyK>>,
+        error_context: Option<Vec<Value>>,
+    ) -> StepResult {
+        match expr {
+            DoCtrl::Pure { value } => {
+                self.push_stream_value(value, handler_k_handle, error_context)
+            }
+            other => {
+                // Push ExpandReturn frame so we intercept the result
+                if let Some(seg_id) = self.current_segment {
+                    if let Some(seg) = self.segments.get_mut(seg_id) {
+                        seg.push_frame(Frame::EvalReturn(Box::new(
+                            EvalReturnContinuation::ExpandReturn { handler_k_handle },
+                        )));
+                    }
+                }
+                continue_eval(other, error_context)
+            }
+        }
+    }
+
     /// Push a Value::Stream as a new Program frame on the current fiber.
-    fn push_stream_value(&mut self, value: Value, error_context: Option<Vec<Value>>) -> StepResult {
-        // Consume any k handle stashed by eval_perform/eval_perform_with_k
-        // so the resulting Program frame can recover the original perform-site
-        // chain (via PyK.take()) when its stream raises an uncaught exception.
-        let k_handle = self.pending_handler_k_handle.take();
+    ///
+    /// `k_handle` is the handler-dispatch PyK handle (if any) so the resulting
+    /// Program frame can recover the original perform-site chain (via
+    /// PyK.take()) when its stream raises an uncaught exception.
+    fn push_stream_value(
+        &mut self,
+        value: Value,
+        k_handle: Option<pyo3::Py<crate::continuation::PyK>>,
+        error_context: Option<Vec<Value>>,
+    ) -> StepResult {
         match value {
             Value::Stream(stream) => {
                 if let Some(seg_id) = self.current_segment {
@@ -494,49 +538,50 @@ impl VM {
             // (SPEC-VM-021). We keep a Py<PyK> handle so that, if the
             // handler raises before consuming `k`, we can borrow the PyK,
             // take() the chain, and reattach it for exception propagation
-            // (OCaml 5 semantics). The handle is stashed in
-            // `pending_handler_k_handle` so `push_stream_value` can attach
-            // it to the resulting Program frame.
-            let k_value = pyo3::Python::attach(|py| {
+            // (OCaml 5 semantics). The handle is a dispatch-local: every
+            // arm below consumes or drops it, so it cannot outlive the
+            // dispatch that created it (#492).
+            let (k_value, handle) = pyo3::Python::attach(|py| {
                 let py_k = pyo3::Py::new(
                     py,
                     crate::continuation::PyK::from_continuation(k),
                 )
                 .expect("failed to allocate PyK");
                 let handle = py_k.clone_ref(py);
-                self.pending_handler_k_handle = Some(handle);
-                Value::Opaque(crate::py_shared::PyShared::new(py_k.into_any()))
+                (
+                    Value::Opaque(crate::py_shared::PyShared::new(py_k.into_any())),
+                    handle,
+                )
             });
 
             let outcome = handler_callable.call_handler(vec![effect, k_value]);
 
-            // If push_stream_value never ran (because outcome was Err or
-            // non-Expand), take the handle so it doesn't leak into a future
-            // handler call.
-            let leftover_handle = self.pending_handler_k_handle.take();
-
             match outcome {
+                Ok(DoCtrl::Expand { expr }) => {
+                    // Deferred handler construction (the @do wrapper returns
+                    // Expand(Apply(Pure(thunk), [])) before fn(*args) runs).
+                    // Thread the handle through eval_expand so it lands on the
+                    // ExpandReturn frame (or the Program frame for Pure) and
+                    // is consumed on both the value and the raise path.
+                    self.eval_expand(*expr, Some(handle), error_context)
+                }
                 Ok(doctrl) => {
-                    // Only restore the handle for Expand results (which will
-                    // reach push_stream_value). For Pure/other results that
-                    // bypass push_stream_value, dropping the handle prevents
-                    // the stale-backup-leak bug (the chain stays in PyK and
-                    // is freed when the Python K object is GC'd).
-                    if matches!(doctrl, DoCtrl::Expand { .. }) {
-                        self.pending_handler_k_handle = leftover_handle;
-                    }
+                    // Non-Expand result bypasses push_stream_value: drop the
+                    // handle so it can't leak into a future frame (the
+                    // stale-backup-leak bug). The chain stays in PyK and is
+                    // freed when the Python K object is GC'd.
+                    drop(handle);
                     continue_eval(doctrl, error_context)
                 }
                 Err(VMError::UncaughtException { exception }) => {
-                    // Synchronous Python exception from call_handler itself
-                    // (the @do wrapper's Expand construction raised). Recover
-                    // the chain from the PyK handle.
-                    match leftover_handle {
-                        Some(handle) => {
-                            self.recover_from_k_handle(handle, exception, error_context)
-                        }
-                        None => continue_raise(exception, error_context),
-                    }
+                    // Synchronous Python exception from call_handler itself.
+                    // The handle is still owned here, so route the exception
+                    // to the perform site's dynamic scope: recover the chain
+                    // from the PyK handle and raise into it (OCaml 5:
+                    // discontinue k exn). If the handler already consumed k,
+                    // the PyK is empty and the raise lands on current_segment
+                    // (the outer scope).
+                    self.recover_from_k_handle(handle, exception, error_context)
                 }
                 Err(err) => error_result(err, error_context),
             }
@@ -738,33 +783,32 @@ impl VM {
 
         if handler_callable.is_generator_handler() {
             // Generator handler path — see eval_perform for rationale.
-            let k_value = pyo3::Python::attach(|py| {
+            let (k_value, handle) = pyo3::Python::attach(|py| {
                 let py_k = pyo3::Py::new(
                     py,
                     crate::continuation::PyK::from_continuation(k),
                 )
                 .expect("failed to allocate PyK");
                 let handle = py_k.clone_ref(py);
-                self.pending_handler_k_handle = Some(handle);
-                Value::Opaque(crate::py_shared::PyShared::new(py_k.into_any()))
+                (
+                    Value::Opaque(crate::py_shared::PyShared::new(py_k.into_any())),
+                    handle,
+                )
             });
 
             let outcome = handler_callable.call_handler(vec![effect, k_value]);
-            let leftover_handle = self.pending_handler_k_handle.take();
 
             match outcome {
+                Ok(DoCtrl::Expand { expr }) => {
+                    self.eval_expand(*expr, Some(handle), error_context)
+                }
                 Ok(doctrl) => {
-                    if matches!(doctrl, DoCtrl::Expand { .. }) {
-                        self.pending_handler_k_handle = leftover_handle;
-                    }
+                    drop(handle);
                     continue_eval(doctrl, error_context)
                 }
-                Err(VMError::UncaughtException { exception }) => match leftover_handle {
-                    Some(handle) => {
-                        self.recover_from_k_handle(handle, exception, error_context)
-                    }
-                    None => continue_raise(exception, error_context),
-                },
+                Err(VMError::UncaughtException { exception }) => {
+                    self.recover_from_k_handle(handle, exception, error_context)
+                }
                 Err(err) => error_result(err, error_context),
             }
         } else {
@@ -849,7 +893,9 @@ impl VM {
                 }
             }
             EvalReturnContinuation::TailResumeReturn => continue_send(value, error_context),
-            EvalReturnContinuation::ExpandReturn => self.push_stream_value(value, error_context),
+            EvalReturnContinuation::ExpandReturn { handler_k_handle } => {
+                self.push_stream_value(value, handler_k_handle, error_context)
+            }
             _ => {
                 // Other EvalReturn variants — TODO
                 continue_send(value, error_context)
