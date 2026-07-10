@@ -309,6 +309,71 @@ class TestAwait:
             "(one background loop thread per await_handler instance, #498)"
         )
 
+    def test_await_systemexit_isolated_from_concurrent_runs(self):
+        """#494/#498 review finding: SystemExit raised in one run's awaited
+        coroutine must fail ONLY that run's promise. Re-raising it on the
+        shared bridge loop thread kills the loop, silently hanging every
+        other run's in-flight Await forever (cross-run blast radius)."""
+        import asyncio
+        import threading
+
+        from doeff_core_effects import Await, await_handler
+        from doeff_core_effects.scheduler import scheduled
+
+        b_in_flight = threading.Event()
+
+        async def slow_ok():
+            b_in_flight.set()
+            await asyncio.sleep(0.5)
+            return "B-done"
+
+        async def evil():
+            raise SystemExit(1)
+
+        @do
+        def body_b():
+            return (yield Await(slow_ok()))
+
+        @do
+        def body_a():
+            return (yield Await(evil()))
+
+        results: dict[str, object] = {}
+
+        def run_b() -> None:
+            try:
+                results["b"] = doeff_run(scheduled(await_handler()(body_b())))
+            except BaseException as exc:  # re-checked below
+                results["b_exc"] = exc
+
+        def run_a() -> None:
+            try:
+                results["a"] = doeff_run(scheduled(await_handler()(body_a())))
+            except BaseException as exc:  # re-checked below
+                results["a_exc"] = exc
+
+        # Run B first so its Await(sleep) is in flight on the bridge loop
+        # when run A's coroutine raises SystemExit.
+        tb = threading.Thread(target=run_b, daemon=True)
+        tb.start()
+        assert b_in_flight.wait(timeout=5.0), "run B's Await never reached the bridge loop"
+
+        ta = threading.Thread(target=run_a, daemon=True)
+        ta.start()
+        ta.join(timeout=5.0)
+        assert not ta.is_alive(), "run A hung on Await(SystemExit)"
+        # ep.fail is the propagation channel: the scheduler's task wrapper
+        # catches only Exception, so SystemExit reaches run A's caller.
+        assert isinstance(results.get("a_exc"), SystemExit)
+
+        tb.join(timeout=5.0)
+        assert not tb.is_alive(), (
+            "independent run B hung: SystemExit was re-raised on the shared "
+            "bridge loop thread, killing the loop and orphaning B's "
+            "in-flight Await (cross-run blast radius)"
+        )
+        assert results.get("b") == "B-done"
+
 
 class TestGetExecutionContext:
     def test_get_execution_context(self):
