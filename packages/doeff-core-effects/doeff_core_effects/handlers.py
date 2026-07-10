@@ -15,6 +15,8 @@ writer and slog_handler use lazy state init via Get/Put + Some
 the ``state`` handler to be installed as an outer handler.
 """
 
+import threading as _threading
+
 from doeff import do
 from doeff.program import Pass, Resume
 from doeff.program import handler as _program_handler
@@ -302,44 +304,175 @@ listen_handler.__name__ = "listen_handler"
 listen_handler.__qualname__ = "listen_handler"
 
 
+# --- Shared Await bridge loop (process-global singleton, issues #494/#498) ---
+#
+# One background asyncio loop + daemon thread for ALL await_handler instances,
+# instead of one per instance (which leaked a thread + loop + fds per run).
+
+_await_bridge_lock = _threading.Lock()
+_await_bridge_state = {
+    # (loop, thread) once created; replaced atomically under the lock.
+    "bridge": None,
+    # BaseException that killed the loop thread's run_forever, if any.
+    "thread_error": None,
+    "atexit_registered": False,
+}
+
+
+def _await_bridge_thread_main(loop):
+    """Run the shared bridge loop, capturing whatever kills run_forever."""
+    import asyncio
+
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_forever()
+    except BaseException as e:
+        _await_bridge_state["thread_error"] = e
+        raise
+
+
+def _shutdown_await_bridge():
+    """atexit hook: best-effort drain, stop and close the shared bridge loop.
+
+    Cancels in-flight bridge coroutines (their ``ep.fail(CancelledError)``
+    lands in an already-dead run queue and is ignored), stops the loop, joins
+    the thread briefly, and closes the loop once run_forever has returned.
+    """
+    import asyncio
+
+    with _await_bridge_lock:
+        bridge = _await_bridge_state["bridge"]
+        _await_bridge_state["bridge"] = None
+    if bridge is None:
+        return
+    loop, thread = bridge
+    if thread.is_alive() and not loop.is_closed():
+
+        def _drain_and_stop():
+            for task in asyncio.all_tasks():
+                task.cancel()
+            # Stop in the NEXT callback batch so the cancellations above get
+            # one loop iteration to actually propagate into the coroutines.
+            loop.call_soon(loop.stop)
+
+        loop.call_soon_threadsafe(_drain_and_stop)
+        thread.join(timeout=1.0)
+    if not thread.is_alive() and not loop.is_closed():
+        loop.close()
+
+
+def _get_await_bridge_loop():
+    """Return the process-global bridge loop, (re)creating it if needed.
+
+    Double-checked locking; a loop is unusable when it is closed or its
+    thread died (e.g. SystemExit/KeyboardInterrupt escaped a bridged
+    coroutine and propagated out of run_forever) — in that case a loud
+    warning names the killer exception and a fresh loop is started.
+    """
+    import asyncio
+    import atexit
+    import warnings
+
+    bridge = _await_bridge_state["bridge"]
+    if bridge is not None:
+        loop, thread = bridge
+        if not loop.is_closed() and thread.is_alive():
+            return loop
+    with _await_bridge_lock:
+        bridge = _await_bridge_state["bridge"]
+        if bridge is not None:
+            loop, thread = bridge
+            if not loop.is_closed() and thread.is_alive():
+                return loop
+            # Previous loop is unusable — report loudly and replace it.
+            killer = _await_bridge_state["thread_error"]
+            warnings.warn(
+                "doeff await bridge loop was unusable "
+                f"(closed={loop.is_closed()}, thread_alive={thread.is_alive()}, "
+                f"killed_by={killer!r}); starting a replacement loop",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            if not thread.is_alive() and not loop.is_closed():
+                loop.close()  # reclaim the dead loop's fds
+        new_loop = asyncio.new_event_loop()
+        t = _threading.Thread(
+            target=_await_bridge_thread_main,
+            args=(new_loop,),
+            name="doeff-await-bridge",
+            daemon=True,
+        )
+        t.start()
+        _await_bridge_state["bridge"] = (new_loop, t)
+        _await_bridge_state["thread_error"] = None
+        if not _await_bridge_state["atexit_registered"]:
+            atexit.register(_shutdown_await_bridge)
+            _await_bridge_state["atexit_registered"] = True
+        return new_loop
+
+
+def _observe_await_bridge_future(future):
+    """Done-callback: observe the bridge future so a BaseException that
+    escaped the bridge coroutine is never silently discarded (#494)."""
+    import concurrent.futures
+    import warnings
+
+    try:
+        exc = future.exception()
+    except concurrent.futures.CancelledError:
+        return
+    if exc is not None:
+        warnings.warn(
+            f"doeff Await bridge coroutine terminated with {exc!r} "
+            "(already reported to the waiting doeff task via ep.fail)",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+
 def await_handler():
     """Await handler: runs async coroutines via a background thread with asyncio.
 
     Uses ExternalPromise to bridge async into the scheduler.
     Requires scheduler to be installed.
+
+    All instances share one process-global event loop + daemon thread
+    (#498); the loop is stopped/closed by an atexit hook. The bridge
+    coroutine resolves its promise on EVERY exit, including BaseException
+    such as asyncio.CancelledError (#494) — KeyboardInterrupt/SystemExit are
+    re-raised on the loop thread after failing the promise so process-level
+    intent still propagates.
+
+    Known limitation (#498): cancelling a doeff task does NOT cancel the
+    in-flight bridged coroutine — it keeps running on the shared loop and
+    its late completion is ignored. Fixing that requires scheduler-side
+    cancel propagation to the run_coroutine_threadsafe future.
     """
     import asyncio
-    import threading
 
     from doeff_core_effects.scheduler import CreateExternalPromise, Wait
-
-    # Shared event loop running in a background thread
-    _loop = [None]
-    _lock = threading.Lock()
-
-    def _get_loop():
-        with _lock:
-            if _loop[0] is None or _loop[0].is_closed():
-                loop = asyncio.new_event_loop()
-                t = threading.Thread(target=loop.run_forever, daemon=True)
-                t.start()
-                _loop[0] = loop
-            return _loop[0]
 
     @do
     def handler(effect, k):
         if isinstance(effect, Await):
             ep = yield CreateExternalPromise()
-            loop = _get_loop()
+            loop = _get_await_bridge_loop()
 
             async def run_coro():
                 try:
                     result = await effect.coroutine
-                    ep.complete(result)
-                except Exception as e:
+                except BaseException as e:
+                    # Resolve the promise on EVERY exit — a swallowed
+                    # BaseException (e.g. asyncio.CancelledError) would
+                    # otherwise park the scheduler forever (#494).
                     ep.fail(e)
+                    if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                        raise
+                else:
+                    ep.complete(result)
 
-            asyncio.run_coroutine_threadsafe(run_coro(), loop)
+            fut = asyncio.run_coroutine_threadsafe(run_coro(), loop)
+            fut.add_done_callback(_observe_await_bridge_future)
             value = yield Wait(ep.future)
             result = yield Resume(k, value)
             return result

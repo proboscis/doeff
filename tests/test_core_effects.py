@@ -247,6 +247,68 @@ class TestAwait:
         # 100 tasks x 0.1s sleep = should be ~0.1s if concurrent, not 10s
         assert elapsed < 2.0, f"took {elapsed:.1f}s — not concurrent!"
 
+    def test_await_base_exception_fails_promise_not_hang(self):
+        """#494: a coroutine raising a BaseException (asyncio.CancelledError)
+        must fail the Await promptly — not park the scheduler forever."""
+        import asyncio
+        import threading
+
+        from doeff_core_effects import Await, await_handler
+        from doeff_core_effects.scheduler import scheduled
+
+        async def evil():
+            raise asyncio.CancelledError
+
+        @do
+        def body():
+            v = yield Await(evil())
+            return v
+
+        # Run in a worker thread guarded by a timeout so a regression
+        # (permanent hang on external_queue.get) fails instead of wedging
+        # the test session (pattern: test_scheduler._run_scheduled_with_timeout).
+        error: dict[str, BaseException] = {}
+
+        def worker() -> None:
+            try:
+                doeff_run(scheduled(await_handler()(body())))
+            except BaseException as exc:  # re-checked below
+                error["value"] = exc
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        thread.join(timeout=5.0)
+        assert not thread.is_alive(), (
+            "scheduler hung: BaseException in awaited coroutine never resolved "
+            "its ExternalPromise (#494)"
+        )
+        assert isinstance(error.get("value"), asyncio.CancelledError)
+
+    def test_await_handler_instances_share_one_loop_thread(self):
+        """#498: sequential runs with fresh await_handler() instances must
+        share one process-global loop thread, not leak one thread per run."""
+        import asyncio
+        import threading
+
+        from doeff_core_effects import Await, await_handler
+        from doeff_core_effects.scheduler import scheduled
+
+        @do
+        def body():
+            yield Await(asyncio.sleep(0))
+            return 1
+
+        before = threading.active_count()
+        for _ in range(20):
+            assert doeff_run(scheduled(await_handler()(body()))) == 1
+        after = threading.active_count()
+        # At most +1: the shared bridge loop thread (0 if an earlier test
+        # already created it).
+        assert after - before <= 1, (
+            f"leaked {after - before} threads across 20 runs "
+            "(one background loop thread per await_handler instance, #498)"
+        )
+
 
 class TestGetExecutionContext:
     def test_get_execution_context(self):
