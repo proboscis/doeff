@@ -100,6 +100,17 @@ class Gather(EffectBase):
 
 
 class Wait(EffectBase):
+    """Wait for a Task or Future to resolve.
+
+    ``priority`` controls the priority at which the waiter is re-enqueued
+    when the waitable resolves (#504). ``None`` (default) means the waiter
+    wakes at its own task's spawn priority. For an *external* promise,
+    ``PRIORITY_IDLE`` is a park mode, not a wake priority: the wait is
+    parked without a ready-heap placeholder (so the sim clock driver may
+    run) and the waiter still wakes at its own task priority — an IDLE
+    wake would starve it behind the PRIORITY_EXTERNAL_WAIT shield.
+    """
+
     def __init__(self, task, priority=None):
         super().__init__()
         self.task = task
@@ -307,10 +318,25 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             and tasks.get(owner_tid, {}).get("status") == "cancelled"
         )
 
-    def enqueue_resume(owner_tid, cont, value, priority=PRIORITY_NORMAL):
+    def task_priority(owner_tid):
+        """Stored spawn priority of the owner task; the root (None) is NORMAL.
+
+        Task priority must survive suspension (#493/#504): every wake path
+        that does not have a more specific priority re-enqueues the owner
+        at the priority it was spawned with.
+        """
+        if owner_tid is None:
+            return PRIORITY_NORMAL
+        return tasks[owner_tid]["priority"]
+
+    def enqueue_resume(owner_tid, cont, value, priority=None):
+        if priority is None:
+            priority = task_priority(owner_tid)
         enqueue(("resume", owner_tid, cont, value), priority)
 
-    def enqueue_raise(owner_tid, cont, error, priority=PRIORITY_NORMAL):
+    def enqueue_raise(owner_tid, cont, error, priority=None):
+        if priority is None:
+            priority = task_priority(owner_tid)
         enqueue(("raise", owner_tid, cont, error), priority)
 
     def alloc_task(program, priority=PRIORITY_NORMAL, inner_boundaries=None):
@@ -459,16 +485,17 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         t.pop("inner_boundaries", None)
         t.pop("spawn_site", None)
 
-    def resume_with_waitable_result(owner_tid, waiter_k, key):
+    def resume_with_waitable_result(owner_tid, waiter_k, key, priority=None):
         """Add a ready entry that resumes waiter with the waitable's result.
-        For failed/cancelled, uses ("raise", k, error) so handler can throw."""
+        For failed/cancelled, uses ("raise", k, error) so handler can throw.
+        priority=None wakes the waiter at its own task priority (#504)."""
         status, result = waitable_status(key)
         if status == "completed":
-            enqueue_resume(owner_tid, waiter_k, result)
+            enqueue_resume(owner_tid, waiter_k, result, priority)
         elif status == "failed":
-            enqueue_raise(owner_tid, waiter_k, result)
+            enqueue_raise(owner_tid, waiter_k, result, priority)
         elif status == "cancelled":
-            enqueue_raise(owner_tid, waiter_k, TaskCancelledError())
+            enqueue_raise(owner_tid, waiter_k, TaskCancelledError(), priority)
 
     def remove_gather_waiters(gather_state):
         """Remove unresolved waiter refs for a fail-fast Gather resolution."""
@@ -552,15 +579,19 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         ws = waiters.pop(completed_key, [])
         for w in ws:
             if w[0] == "wait":
-                _, owner_tid, waiter_k = w
-                resume_with_waitable_result(owner_tid, waiter_k, completed_key)
+                _, owner_tid, waiter_k, wake_priority = w
+                resume_with_waitable_result(
+                    owner_tid, waiter_k, completed_key, wake_priority
+                )
             elif w[0] == "wait_external":
                 # Eager wake for a non-IDLE external wait (#490): enqueue the
                 # resume now and claim it so the paired ready-heap placeholder
                 # drops itself instead of resuming a second time.
-                _, owner_tid, waiter_k, claimed = w
+                _, owner_tid, waiter_k, claimed, wake_priority = w
                 claimed[0] = True
-                resume_with_waitable_result(owner_tid, waiter_k, completed_key)
+                resume_with_waitable_result(
+                    owner_tid, waiter_k, completed_key, wake_priority
+                )
             elif w[0] == "gather":
                 _, _owner_tid, gather_state = w
                 wake_gather_waiter(gather_state, completed_key)
@@ -619,7 +650,10 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             tid = alloc_task(effect.program, effect.priority, inner_boundaries=inner_boundaries)
             tasks[tid]["spawn_site"] = spawn_site
             enqueue(("new", tid), effect.priority)
-            enqueue_resume(current_tid, k, Task(tid))  # spawner resumes at normal priority
+            # Spawner resumes at its OWN task priority (#504): a hard-coded
+            # NORMAL here would promote an IDLE spawner above the
+            # PRIORITY_EXTERNAL_WAIT shield and demote a HIGH spawner.
+            enqueue_resume(current_tid, k, Task(tid))
             yield TailEval(pick_next())
 
         elif isinstance(effect, TaskCompleted):
@@ -669,7 +703,13 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                     # promise — drain() wakes it when the promise resolves,
                     # and the clock driver is free to advance sim time.
                     if effect.priority == PRIORITY_IDLE:
-                        waiters.setdefault(wk, []).append(("wait", current_tid, k))
+                        # PRIORITY_IDLE is the park mode, not the wake
+                        # priority: the waiter wakes at its own task priority
+                        # (wake_priority=None). Waking at IDLE would starve
+                        # it behind the PRIORITY_EXTERNAL_WAIT shield.
+                        waiters.setdefault(wk, []).append(
+                            ("wait", current_tid, k, None)
+                        )
                     else:
                         # Register in `waiters` too so the resume is enqueued
                         # by wake_waiters the moment the completion is drained
@@ -680,15 +720,20 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                         # side owns the (one-shot) resume.
                         claimed = [False]
                         waiters.setdefault(wk, []).append(
-                            ("wait_external", current_tid, k, claimed)
+                            ("wait_external", current_tid, k, claimed, effect.priority)
                         )
                         enqueue(
                             ("wait_external", current_tid, k, wk, claimed),
                             PRIORITY_EXTERNAL_WAIT,
                         )
                 else:
-                    # Internal promise: use waiters (resolved by other tasks)
-                    waiters.setdefault(wk, []).append(("wait", current_tid, k))
+                    # Internal waitable: park in `waiters` (resolved by other
+                    # tasks). An explicit Wait priority is honored as the
+                    # wake priority (#504); None wakes at the waiter's own
+                    # task priority.
+                    waiters.setdefault(wk, []).append(
+                        ("wait", current_tid, k, effect.priority)
+                    )
                 yield TailEval(pick_next())
 
         elif isinstance(effect, Gather):
@@ -772,11 +817,16 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             promises[pid]["status"] = "completed"
             promises[pid]["result"] = effect.value
             wake_waiters(("promise", pid))
-            # Re-queue completer at IDLE so woken tasks (NORMAL) always
-            # run first.  The main user is the sim clock driver which is
-            # Spawned at IDLE — without this it would be promoted to
-            # NORMAL and race with the tasks it just woke.
-            enqueue_resume(current_tid, k, None, PRIORITY_IDLE)
+            # Re-queue the completer at its OWN task priority (#493). A
+            # hard-coded IDLE here froze every completer behind pending
+            # non-IDLE external waits (whose ready-heap placeholders block
+            # the loop in _drain_one_external). The sim clock driver still
+            # yields to the tasks it wakes because it is Spawned at
+            # PRIORITY_IDLE (doeff-time sim_time.py) — its stored task
+            # priority, not a demotion at this site, holds it back. Waiters
+            # woken above are enqueued first, so equal-priority completers
+            # still run after the tasks they woke (FIFO within priority).
+            enqueue_resume(current_tid, k, None)
             yield TailEval(pick_next())
 
         elif isinstance(effect, FailPromise):
@@ -784,7 +834,10 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             promises[pid]["status"] = "failed"
             promises[pid]["result"] = effect.error
             wake_waiters(("promise", pid))
-            enqueue_resume(current_tid, k, None, PRIORITY_IDLE)
+            # Same as CompletePromise: the completer keeps its own task
+            # priority (#493); the sim clock driver keeps IDLE via its
+            # spawn priority.
+            enqueue_resume(current_tid, k, None)
             yield TailEval(pick_next())
 
         elif isinstance(effect, CreateExternalPromise):

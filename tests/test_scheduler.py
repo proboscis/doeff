@@ -791,6 +791,168 @@ class TestExternalPromise:
 
 
 # ---------------------------------------------------------------------------
+# Priority survives suspension (#493 / #504)
+# ---------------------------------------------------------------------------
+
+class TestPrioritySurvivesSuspension:
+    """Regressions for #493/#504: wake paths must respect stored task priority."""
+
+    def test_completer_not_demoted_behind_pending_external_wait(self):
+        """Regression for #493: CompletePromise re-queues the completer at its
+        own task priority, not unconditionally at IDLE.
+
+        With the IDLE demotion, the completer's continuation sat below the
+        PRIORITY_EXTERNAL_WAIT placeholder of the pending 1.5s Await, whose
+        pick_next branch blocks the scheduler thread in _drain_one_external —
+        the completer froze for the full Await duration (~1.5s) despite being
+        runnable immediately after CompletePromise.
+        """
+        import asyncio
+        import time
+
+        from doeff_core_effects.effects import Await
+        from doeff_core_effects.handlers import await_handler
+
+        timeline: dict[str, float] = {}
+        t0 = time.perf_counter()
+
+        @do
+        def long_await():
+            yield Await(asyncio.sleep(1.5))
+
+        @do
+        def listener(fut):
+            return (yield Wait(fut))
+
+        @do
+        def completer(p):
+            timeline["complete_performed"] = time.perf_counter() - t0
+            yield CompletePromise(p, 42)
+            timeline["completer_resumed"] = time.perf_counter() - t0
+
+        @do
+        def body():
+            p = yield CreatePromise()
+            tasks = [
+                (yield Spawn(listener(p.future))),
+                (yield Spawn(long_await())),
+                (yield Spawn(completer(p))),
+            ]
+            yield Gather(*tasks)
+
+        doeff_run(scheduled(await_handler()(body())))
+
+        stall = timeline["completer_resumed"] - timeline["complete_performed"]
+        assert stall < 0.5, (
+            f"completer stalled {stall * 1000:.0f}ms behind a pending "
+            f"external wait after CompletePromise (#493)"
+        )
+
+    def test_high_priority_task_woken_before_normal_backlog(self):
+        """Regression for #504: a HIGH task woken after a park is served
+        before NORMAL entries already queued in the ready heap.
+
+        Before the fix, every wake re-enqueued at the enqueue_resume default
+        (NORMAL), so a woken HIGH task went behind the NORMAL backlog (FIFO
+        within the same priority) and the HIGH spawner was demoted to NORMAL
+        after each Spawn.
+        """
+        from doeff_core_effects.scheduler import PRIORITY_HIGH
+
+        order: list[str] = []
+
+        @do
+        def high_waiter(fut):
+            yield Wait(fut)
+            order.append("high")
+
+        @do
+        def normal_task(name):
+            order.append(name)
+
+        @do
+        def coordinator(gate):
+            # Runs at HIGH so the NORMAL spawns below stay queued (backlog)
+            # until the gate completes.
+            t_high = yield Spawn(high_waiter(gate.future), priority=PRIORITY_HIGH)
+            t_n1 = yield Spawn(normal_task("n1"))
+            t_n2 = yield Spawn(normal_task("n2"))
+            yield CompletePromise(gate, None)
+            return [t_high, t_n1, t_n2]
+
+        @do
+        def body():
+            gate = yield CreatePromise()
+            t_coord = yield Spawn(coordinator(gate), priority=PRIORITY_HIGH)
+            tasks = yield Wait(t_coord)
+            yield Gather(*tasks)
+            return order
+
+        result = doeff_run(scheduled(body()))
+        assert result == ["high", "n1", "n2"], (
+            f"woken HIGH task was not served before queued NORMAL backlog: {result}"
+        )
+
+    def test_idle_spawner_not_promoted_above_external_wait_shield(self):
+        """Regression for #504: an IDLE task performing Spawn resumes at IDLE,
+        below the PRIORITY_EXTERNAL_WAIT shield — not at a hard-coded NORMAL
+        above it.
+
+        Before the fix, the spawner resume promoted an IDLE spawner past the
+        shield for one step, so its continuation ran ahead of a pending
+        non-IDLE external wait instead of being held back like every other
+        IDLE entry.
+        """
+        import time
+
+        timeline: dict[str, float] = {}
+        t0 = time.perf_counter()
+
+        @do
+        def noop():
+            return None
+
+        @do
+        def external_waiter(parked_fut, blocking_fut):
+            # Fully parked (no ready-heap placeholder) until idle_spawner
+            # completes parked_fut; then holds the EXTERNAL_WAIT shield
+            # while blocking_fut is pending.
+            yield Wait(parked_fut, priority=PRIORITY_IDLE)
+            return (yield Wait(blocking_fut))
+
+        @do
+        def idle_spawner(parked_ep):
+            parked_ep.complete(None)  # plain queue put, drained at next step
+            yield Spawn(noop())
+            timeline["idle_resumed"] = time.perf_counter() - t0
+
+        @do
+        def body():
+            blocking_ep = yield CreateExternalPromise()
+            parked_ep = yield CreateExternalPromise()
+            t_w = yield Spawn(external_waiter(parked_ep.future, blocking_ep.future))
+            t_i = yield Spawn(idle_spawner(parked_ep), priority=PRIORITY_IDLE)
+
+            def complete_later():
+                time.sleep(0.3)
+                timeline["external_completed"] = time.perf_counter() - t0
+                blocking_ep.complete("done")
+
+            threading.Thread(target=complete_later, daemon=True).start()
+            yield Gather(t_w, t_i)
+            return timeline
+
+        result = doeff_run(scheduled(body()))
+        assert result["idle_resumed"] >= result["external_completed"], (
+            "IDLE spawner resumed at "
+            f"+{result['idle_resumed'] * 1000:.0f}ms, ahead of the pending "
+            "external wait (completed at "
+            f"+{result['external_completed'] * 1000:.0f}ms) — Spawn promoted "
+            "an IDLE task above PRIORITY_EXTERNAL_WAIT (#504)"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Cancel
 # ---------------------------------------------------------------------------
 
