@@ -79,3 +79,36 @@ def test_dismiss_onboarding_answers_screen_reader_trust_prompt_with_y() -> None:
 
     assert dismissed == 1
     assert backend.sent[0] == ("%pane", "y", True, True)
+
+
+def test_dismiss_trust_prompt_survives_screen_reader_banner_rewording() -> None:
+    """Claude Code 2.1.206 reworded the banner to '[Screen Reader Mode: on via
+    flag]'; keying detection on the old banner left the trust prompt
+    undismissed and the agent hung at 'Enter y/n:' (2026-07-10)."""
+    backend = FakeBackend(
+        [
+            "\n".join(
+                [
+                    "[Screen Reader Mode: on via flag]",
+                    "Permission Required: Accessing workspace:",
+                    "/tmp/workspace",
+                    "Quick safety check: Is this a project you created or one you trust?",
+                    "y. Yes, I trust this folder",
+                    "n. No, exit",
+                    "Please answer y or n.",
+                    "Enter y/n:",
+                ]
+            ),
+            "Ready for input",
+        ]
+    )
+
+    dismissed = _dismiss_onboarding_dialogs(
+        "%pane",
+        [r"Choose the text style", r"Yes, I trust this folder"],
+        timeout=2.0,
+        backend=backend,
+    )
+
+    assert dismissed == 1
+    assert backend.sent[0] == ("%pane", "y", True, True)

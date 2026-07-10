@@ -412,9 +412,15 @@ def _dismiss_onboarding_dialogs(
 
 
 def _screen_reader_trust_prompt_visible(output: str) -> bool:
+    # Do NOT key on the screen-reader banner: its wording is Claude Code
+    # version-dependent ("[Accessible screen reader mode: on]" up to ~2.1.204,
+    # "[Screen Reader Mode: on via flag]" from 2.1.206), and a stale banner
+    # match left the trust prompt undismissed — the agent hung at "Enter y/n:"
+    # until the caller's await budget expired (2026-07-10). The textual y/n
+    # prompt lines below only ever appear in the screen-reader rendering of
+    # the trust dialog, so they are the version-stable signal.
     return (
-        "[Accessible screen reader mode: on]" in output
-        and "Quick safety check: Is this a project you created or one you trust?" in output
+        "Quick safety check: Is this a project you created or one you trust?" in output
         and "Please answer y or n." in output
         and "Enter y/n:" in output
     )
