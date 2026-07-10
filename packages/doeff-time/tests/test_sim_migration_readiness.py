@@ -666,18 +666,6 @@ class TestLogFormatterWithMultipleServices:
 
 
 class TestFullMiniBacktest:
-    @pytest.mark.xfail(
-        reason=(
-            "#493: CompletePromise re-queues the completer at PRIORITY_IDLE, "
-            "so after each Publish the feed task loses its turn to the sim "
-            "clock driver — its next Delay(1.0) is computed after the clock "
-            "already advanced to the trade fill (feed publishes at "
-            "1.0/2.5/4.0 instead of 1.0/2.0/3.0, final_time 5.5 not 4.0). "
-            "Verified green with the completer re-queued at its own task "
-            "priority; remove this marker when #493 lands."
-        ),
-        strict=False,
-    )
     def test_price_feed_strategy_execution_pipeline(self) -> None:
         """End-to-end mini-backtest:
         1. Price feed publishes MarketSignals at 1s intervals
