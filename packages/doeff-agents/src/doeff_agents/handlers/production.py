@@ -79,10 +79,69 @@ from doeff_agents.shell import assert_no_forbidden_agent_env, assert_session_env
 RESULT_BLOCK_BEGIN = "DOEFF_AGENT_RESULT_BEGIN"
 RESULT_BLOCK_END = "DOEFF_AGENT_RESULT_END"
 AWAIT_RESULT_CAPTURE_LINES = 1000
+REPORT_RESULT_TOOL_NAME = "report_result"
+
+
+def spec_uses_report_result_transport(spec: AgentSpec) -> bool:
+    """True when a session can carry its result over the in-VM MCP data channel.
+
+    ADR 0035: the byte-faithful result transport is a typed data channel, not a
+    scrape of rendered terminal bytes. A session that already talks to an in-VM
+    MCP server (``mcp_tools`` non-empty) and owes a structured result
+    (``result_schema`` set) gets a ``report_result`` tool on that server; the
+    terminal marker block stays only for sessions with no MCP server, and as an
+    uninstructed legacy fallback.
+    """
+    return bool(spec.mcp_tools) and spec.result_schema is not None
+
+
+def make_report_result_tool(
+    sink: dict[str, object],
+    result_schema: dict[str, object],
+):
+    """Build the in-VM ``report_result`` MCP tool bound to ``sink``.
+
+    The tool validates the payload against ``result_schema`` at report time
+    (schema rejection is immediate and in-band, so the agent can correct and
+    re-call within the same turn) and stores accepted payloads byte-faithfully
+    in ``sink["payload"]`` for result-first reads by ``handle_await_result``.
+    """
+    from doeff import do
+    from doeff.mcp import McpParamSchema, McpToolDef
+
+    @do
+    def _report_result_mcp_handler(result):
+        validation_error = validate_result_payload(result, result_schema)
+        if validation_error is not None:
+            return {"status": "rejected", "validation_error": validation_error}
+        sink["payload"] = result
+        return {"status": "accepted"}
+
+    return McpToolDef(
+        name=REPORT_RESULT_TOOL_NAME,
+        description=(
+            "Report the final structured result of this session. Call exactly "
+            "once when the task is complete; the payload is validated against "
+            "the session result schema and replies status=accepted or "
+            "status=rejected with a validation_error to correct."
+        ),
+        params=(
+            McpParamSchema(
+                name="result",
+                type="object",
+                description="The structured result object satisfying the session result schema.",
+            ),
+        ),
+        handler=_report_result_mcp_handler,
+    )
 
 
 class AgentHandler(ABC):
     """Abstract handler for agent effects."""
+
+    #: True on handlers whose await path performs result-first reads of the
+    #: in-process ``report_result`` sink (currently the tmux transport).
+    supports_inprocess_report_result = False
 
     def handle_agent(self, effect: AgentEffect) -> object:
         """Handle the schema-validated ``agent`` effect."""
@@ -417,8 +476,31 @@ def _retry_message(error: AgentValidationFailure) -> str:
     return f"Cannot continue automatically: {error.message}"
 
 
-def _result_contract_prompt(result_schema: dict[str, object]) -> str:
+def _result_contract_prompt(
+    result_schema: dict[str, object],
+    report_result_server: str | None = None,
+) -> str:
     schema_json = json.dumps(result_schema, ensure_ascii=False, indent=2, sort_keys=True)
+    if report_result_server is not None:
+        # Typed data channel (ADR 0035): the terminal never carries the result,
+        # so TUI line-wrapping cannot corrupt it.
+        return (
+            "\n\n## Structured Result Contract (managed by doeff-agents)\n"
+            "When the task is complete, report exactly one structured result by "
+            f"calling the `{REPORT_RESULT_TOOL_NAME}` MCP tool on the "
+            f"`{report_result_server}` MCP server, passing the result object as "
+            "its `result` argument. Do not create JSON result files in the "
+            "workspace and do not print the result to the terminal; the tool "
+            "call is the only result transport. This is a doeff-agents "
+            "transport detail; the domain task only decides the JSON payload.\n\n"
+            "The result object must satisfy this schema:\n"
+            "```json\n"
+            f"{schema_json}\n"
+            "```\n\n"
+            "The tool validates the payload: on status=rejected, fix the "
+            "payload per the returned validation_error and call the tool "
+            "again. Do not ask the caller how to return the result."
+        )
     return (
         "\n\n## Structured Result Contract (managed by doeff-agents)\n"
         "Before the agent process exits, return exactly one structured result. "
@@ -442,9 +524,10 @@ def _result_contract_prompt(result_schema: dict[str, object]) -> str:
 def _prompt_with_result_contract(
     prompt: str | None,
     result_schema: dict[str, object],
+    report_result_server: str | None = None,
 ) -> str:
     base = prompt or ""
-    return f"{base}{_result_contract_prompt(result_schema)}"
+    return f"{base}{_result_contract_prompt(result_schema, report_result_server)}"
 
 
 def _has_result_block(output: str) -> bool:
@@ -494,12 +577,17 @@ def _parse_result_payload_candidate(raw: str) -> tuple[object | None, str | None
         return None, f"structured result block is not valid JSON: {exc}"
 
 
-def _launch_effect_from_spec(spec: AgentSpec) -> LaunchEffect:
+def _launch_effect_from_spec(
+    spec: AgentSpec,
+    report_result_server: str | None = None,
+) -> LaunchEffect:
     return LaunchEffect(
         session_name=spec.session_id,
         agent_type=spec.agent_type,
         work_dir=spec.work_dir,
-        prompt=_prompt_with_result_contract(spec.prompt, spec.result_schema),
+        prompt=_prompt_with_result_contract(
+            spec.prompt, spec.result_schema, report_result_server
+        ),
         model=spec.model,
         effort=spec.effort,
         bare=spec.bare,
@@ -512,6 +600,8 @@ def _launch_effect_from_spec(spec: AgentSpec) -> LaunchEffect:
 
 class TmuxAgentHandler(AgentHandler):
     """Handler that executes effects using real tmux sessions."""
+
+    supports_inprocess_report_result = True
 
     def __init__(
         self,
@@ -526,6 +616,21 @@ class TmuxAgentHandler(AgentHandler):
         self._session_repository = session_repository or InMemoryAgentSessionRepository()
         self._claude_runtime_policy = claude_runtime_policy or ClaudeRuntimePolicy()
         self._codex_runtime_policy = codex_runtime_policy or CodexRuntimePolicy()
+        # session_id -> {"payload": ...} sinks fed by the in-VM report_result
+        # MCP tool. Registration (before launch) is the single signal that the
+        # session uses the typed result transport; handle_await_result reads
+        # the sink result-first, ahead of any terminal capture.
+        self._result_sinks: dict[str, dict[str, object]] = {}
+
+    def create_result_sink(self, session_id: str) -> dict[str, object]:
+        """Register and return the report_result sink for ``session_id``."""
+        sink: dict[str, object] = {"payload": None}
+        self._result_sinks[session_id] = sink
+        return sink
+
+    def discard_result_sink(self, session_id: str) -> None:
+        """Drop the report_result sink registered for ``session_id``."""
+        self._result_sinks.pop(session_id, None)
 
     def handle_launch(
         self,
@@ -927,6 +1032,7 @@ class TmuxAgentHandler(AgentHandler):
             last_observed_at=now,
         )
         self._sessions.pop(handle.session_id, None)
+        self.discard_result_sink(handle.session_id)
         return self._session_repository.record_snapshot(
             "session_cleaned",
             cleaned,
@@ -941,7 +1047,17 @@ class TmuxAgentHandler(AgentHandler):
         session_id = effect.spec.session_id
         if session_id in self._sessions or self._session_repository.get_session(session_id):
             return L2SessionHandle(session_id=session_id)
-        self.handle_launch(_launch_effect_from_spec(effect.spec), mcp_servers=mcp_servers)
+        # A registered sink means the launch site put a report_result tool on
+        # the session's in-VM MCP server; instruct the typed transport.
+        report_result_server = (
+            effect.spec.mcp_server_name
+            if session_id in self._result_sinks
+            else None
+        )
+        self.handle_launch(
+            _launch_effect_from_spec(effect.spec, report_result_server),
+            mcp_servers=mcp_servers,
+        )
         state = self._sessions[session_id]
         state.result_schema = effect.spec.result_schema
         self._record_snapshot("session_l2_launched", state.handle, state.status)
@@ -964,6 +1080,14 @@ class TmuxAgentHandler(AgentHandler):
             state = self._state_for_handle(effect.handle)
             if state is None:
                 raise SessionNotFoundError(f"Session {effect.handle.session_id} is not registered")
+
+            # Result-first read of the typed report_result transport: the sink
+            # payload is byte-faithful (never rendered by the TUI), already
+            # schema-validated at report time, and wins over any terminal
+            # capture regardless of session liveness (ADR-DOE-AGENTS-002 R4).
+            sink = self._result_sinks.get(effect.handle.session_id)
+            if sink is not None and sink["payload"] is not None:
+                return AwaitOutcome(status=AwaitStatus.EXITED, result=sink["payload"])
 
             # Prefer a captured schema result block over session liveness: a
             # one-shot CLI mode returns to a shell prompt while the tmux
@@ -1017,6 +1141,7 @@ class TmuxAgentHandler(AgentHandler):
     def handle_release_session(self, effect: ReleaseSessionEffect) -> None:
         """Release handler-private state for an L2 session."""
         self._sessions.pop(effect.handle.session_id, None)
+        self.discard_result_sink(effect.handle.session_id)
 
     def _require_snapshot(self, session_id: str) -> AgentSessionSnapshot:
         snapshot = self._session_repository.get_session(session_id)
