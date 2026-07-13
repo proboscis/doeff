@@ -4087,3 +4087,61 @@ rules:
       include:
         - /packages/doeff-conductor/src/**
         - /packages/doeff-agents/src/**
+
+  # === ADR-DOE-CORE-EFFECTS-001: slog observability boundary ===
+
+  - id: no-handler-log-attribute
+    languages: [python]
+    severity: ERROR
+    message: >
+      ADR-DOE-CORE-EFFECTS-001 R3: handler install への mutable 収集属性
+      (.log)は削除済み API。収集は Listen(prog, types=(SlogEffect,)) の
+      値フロー (result, collected) で行う。handler は sink(表示/破棄)に徹する。
+    pattern: install.log = $LOG
+
+  - id: no-effect-message-attribute
+    languages: [python]
+    severity: ERROR
+    message: >
+      ADR-DOE-CORE-EFFECTS-001 R6: WriterTellEffect / SlogEffect に message
+      属性は存在しない(現行 API は .msg / .kwargs)。effect.message 参照は
+      stale API で、実行時 AttributeError になる。
+    patterns:
+      - pattern-either:
+          - pattern: isinstance($E, WriterTellEffect) and isinstance($E.message, $T)
+          - pattern: isinstance($E, SlogEffect) and isinstance($E.message, $T)
+          - pattern: |
+              if not isinstance($E, WriterTellEffect):
+                  ...
+              ...
+              $X = $E.message
+          - pattern: |
+              if not isinstance($E, SlogEffect):
+                  ...
+              ...
+              $X = $E.message
+
+  - id: no-writer-tell-alias-slog
+    languages: [python]
+    severity: ERROR
+    message: >
+      ADR-DOE-CORE-EFFECTS-001 R1: WriterTellEffect を Slog 名で別名 import
+      するのは退役した conflation の再生(memo_handlers 2026-07-13 で実例)。
+      observability は SlogEffect / slog() を使う。
+    patterns:
+      - pattern-either:
+          - pattern: from doeff_core_effects.effects import WriterTellEffect as Slog
+          - pattern: from doeff_core_effects import WriterTellEffect as Slog
+          - pattern: from doeff import WriterTellEffect as Slog
+
+  - id: no-structured-payload-on-writer-tell
+    languages: [python]
+    severity: ERROR
+    message: >
+      ADR-DOE-CORE-EFFECTS-001 R1: 構造化ペイロード付き WriterTellEffect
+      構築は禁止。observability は SlogEffect(msg, **kwargs)、Tell は
+      単一 message のみ(Writer と slog はワイヤ型が分離されている)。
+    patterns:
+      - pattern-either:
+          - pattern: WriterTellEffect($MSG, **$KW)
+          - pattern: WriterTellEffect($MSG, $K=$V)

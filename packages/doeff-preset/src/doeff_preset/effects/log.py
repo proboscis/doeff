@@ -3,9 +3,9 @@
 
 from typing import Any
 
-from doeff import WriterTellEffect
+from doeff import SlogEffect
 
-PRESET_LOG_EFFECT = WriterTellEffect
+PRESET_LOG_EFFECT = SlogEffect
 
 
 def is_structured_log_message(message: object) -> bool:
@@ -14,8 +14,8 @@ def is_structured_log_message(message: object) -> bool:
 
 
 def is_structured_log_effect(effect: object) -> bool:
-    """Return ``True`` for `WriterTellEffect` values with dictionary payloads."""
-    return isinstance(effect, WriterTellEffect) and isinstance(effect.message, dict)
+    """Return ``True`` for `SlogEffect` values (structured observability logs)."""
+    return isinstance(effect, SlogEffect)
 
 
 def coerce_structured_log(message: object) -> dict[str, Any] | None:

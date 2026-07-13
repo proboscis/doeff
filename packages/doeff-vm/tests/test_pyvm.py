@@ -2,10 +2,10 @@
 
 import doeff_vm
 import pytest
-from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects.handlers import listen_handler, reader, state, writer
 from doeff_core_effects.scheduler import Gather, Spawn, scheduled
 
-from doeff import Ask, Get, Put, Tell, do, run
+from doeff import Ask, Get, Listen, Put, Tell, do, run
 
 
 class CustomEffect(doeff_vm.EffectBase):
@@ -202,12 +202,15 @@ def test_current_state_reader_writer_handlers_use_installer_api() -> None:
         yield Tell("done")
         return "ok"
 
-    writer_handler = writer()
+    @do
+    def writer_listened():
+        return (yield Listen(writer_body()))
 
     assert run(state(initial={"counter": 1})(state_body())) == 2
     assert run(reader(env={"name": "Ada"})(reader_body())) == "Ada"
-    assert run(writer_handler(writer_body())) == "ok"
-    assert writer_handler.log == ["starting", "done"]
+    result, collected = run(writer()(listen_handler(writer_listened())))
+    assert result == "ok"
+    assert [e.msg for e in collected] == ["starting", "done"]
 
 
 def test_scheduled_spawn_gather_runs_via_doeff_facade() -> None:

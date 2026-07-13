@@ -162,7 +162,7 @@ def make_memo_rewriter(
     On cache hit: Resume with cached value (outer handler not called).
     On cache miss: re-perform effect → outer handler handles it → store result in cache.
     """
-    from doeff_core_effects.effects import WriterTellEffect as Slog
+    from doeff_core_effects.effects import Slog
 
     @do
     def handler(effect, k):

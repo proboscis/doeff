@@ -70,24 +70,22 @@ def state(initial=None):
 
 
 def writer():
-    """Writer handler: collects Tell(message) into a log list.
+    """Writer sink: consumes Tell(message) silently.
 
-    The log is returned as the handler's result when the body completes.
-    Access via the handler's return value, or inspect handler_log after run.
+    Accumulation flows as values: wrap the section to observe in
+    Listen(program) — its default types collect WriterTellEffect and it
+    returns (result, collected). Handler installs expose no collection
+    attribute (ADR-DOE-CORE-EFFECTS-001 R3).
     """
-    log = []
 
     @do
     def handler(effect, k):
         if isinstance(effect, WriterTellEffect):
-            log.append(effect.msg)
             result = yield Resume(k, None)
             return result
         yield Pass(effect, k)
 
-    install = _program_handler(handler)
-    install.log = log  # expose for inspection
-    return install
+    return _program_handler(handler)
 
 
 @do
@@ -132,26 +130,49 @@ try_handler.__name__ = "try_handler"
 try_handler.__qualname__ = "try_handler"
 
 
-def slog_handler():
-    """Structured log handler: collects Slog messages.
+def _format_slog_line(effect):
+    """One-line plain-text rendering of a SlogEffect: `   LEVEL msg key=value`."""
+    kwargs = dict(effect.kwargs)
+    level = str(kwargs.pop("level", "info")).upper()
+    parts = [f"{level:>8}", str(effect.msg)]
+    parts.extend(f"{key}={value}" for key, value in kwargs.items())
+    return " ".join(parts)
 
-    Returns a handler with a .log attribute containing collected entries.
-    Each entry is a dict with 'msg' and all kwargs.
+
+def slog_handler():
+    """Structured log sink: displays each SlogEffect on stderr and consumes it.
+
+    Contract (ADR-DOE-CORE-EFFECTS-001 R2): installing this handler makes
+    slog output visible. Tell/Writer effects pass through untouched.
+    Capture flows as values via Listen(prog, types=(SlogEffect,));
+    explicit silence is slog_discard_handler().
     """
-    log = []
+    import sys
 
     @do
     def handler(effect, k):
         if isinstance(effect, Slog):
-            entry = {"msg": effect.msg, **effect.kwargs}
-            log.append(entry)
+            print(_format_slog_line(effect), file=sys.stderr)
             result = yield Resume(k, None)
             return result
         yield Pass(effect, k)
 
-    install = _program_handler(handler)
-    install.log = log
-    return install
+    return _program_handler(handler)
+
+
+def slog_discard_handler():
+    """Silent sink for SlogEffect: consumes without display (explicit opt-in,
+    ADR-DOE-CORE-EFFECTS-001 R5). For assertions, capture via
+    Listen(prog, types=(SlogEffect,)) inside the program instead."""
+
+    @do
+    def handler(effect, k):
+        if isinstance(effect, Slog):
+            result = yield Resume(k, None)
+            return result
+        yield Pass(effect, k)
+
+    return _program_handler(handler)
 
 
 @do

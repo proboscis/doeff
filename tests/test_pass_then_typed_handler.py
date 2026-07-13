@@ -5,10 +5,10 @@ Reproduces a bug found in mediagen where the handler stack is:
     default_handlers
       → memo_rewriter (types=None, catch-all, does isinstance+Pass)
         → replace_handler (types=(ReplaceFx,))
-          → WithIntercept(_slog_interceptor, types=(WriterTellEffect,))
+          → WithIntercept(_slog_interceptor, types=(SlogEffect,))
             → program
 
-When the program yields slog (WriterTellEffect/PyTell), WithIntercept intercepts
+When the program yields slog (SlogEffect), WithIntercept intercepts
 it first, then the effect continues outward. The memo_rewriter passes it (not
 AnalyzeFx), and the VM must skip replace_handler (types don't match). The bug was
 that replace_handler received a PyTell, crashing on accessing a field that only
@@ -24,7 +24,7 @@ from doeff import (
     Effect,
     EffectBase,
     EffectGenerator,
-    WriterTellEffect,
+    SlogEffect,
     do,
     run,
     slog,
@@ -50,8 +50,8 @@ class AnalyzeFx(EffectBase):
 
 @do
 def slog_interceptor(effect: Effect):
-    """Intercepts WriterTellEffect, yields GetCallStack (side effect), returns original."""
-    if isinstance(effect, WriterTellEffect) and isinstance(effect.message, dict):
+    """Intercepts SlogEffect, yields GetCallStack (side effect), returns original."""
+    if isinstance(effect, SlogEffect):
         yield doeff_vm.GetCallStack()
     return effect
 
@@ -123,7 +123,7 @@ def _mediagen_stack(program):
     Effect path for slog: program → WithIntercept → memo_rewriter(Pass) → replace_handler
     """
     intercepted = WithIntercept(  # noqa: F821 - legacy removed API reference is intentionally preserved
-        slog_interceptor, program, types=(WriterTellEffect,), mode="include"
+        slog_interceptor, program, types=(SlogEffect,), mode="include"
     )
     wrapped = intercepted
     # memo_rewriter first (innermost), replace_handler wraps it (outer)

@@ -53,6 +53,7 @@ from doeff_core_effects.effects import Listen as Listen
 from doeff_core_effects.effects import Local as Local
 from doeff_core_effects.effects import Put as Put
 from doeff_core_effects.effects import Slog as Slog
+from doeff_core_effects.effects import SlogEffect as SlogEffect
 from doeff_core_effects.effects import Tell as Tell
 from doeff_core_effects.effects import Try as Try
 from doeff_core_effects.effects import WriterTellEffect as WriterTellEffect
