@@ -4198,3 +4198,18 @@ rules:
     paths:
       include:
         - /packages/doeff-core-effects/doeff_core_effects/scheduler.py
+
+  - id: no-doeff-preset-import
+    languages: [python]
+    severity: ERROR
+    message: >
+      ADR-DOE-PRESET-001: doeff-preset は退役済みパッケージ。表示の既定は
+      slog_handler(ADR-DOE-CORE-EFFECTS-001 R2 の stderr terminal sink)、
+      config Ask の既定値はエントリポイントの reader/lazy_ask env で与える。
+      preset 相当の合成が必要なら installer を明示的に重ねる。
+    patterns:
+      - pattern-either:
+          - pattern: import doeff_preset
+          - pattern: import doeff_preset.$X
+          - pattern: from doeff_preset import $X
+          - pattern: from doeff_preset.$SUB import $X
