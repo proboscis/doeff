@@ -37,9 +37,7 @@ legacy = [
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
-    "doeff-preset",
 ]
-examples = ["doeff-preset"]
 
 [project.scripts]
 # Note: doeff-agentic binary is provided by the Rust package (doeff-agentic-cli)
@@ -60,4 +58,3 @@ packages = ["src/doeff_agentic"]
 [tool.uv.sources]
 doeff = { workspace = true }
 doeff-flow = { workspace = true }
-doeff-preset = { workspace = true }

@@ -11,7 +11,7 @@ using the effects-based approach with doeff's async_run entrypoint:
 
 The effects API provides:
 - Composable, testable programs
-- Integration with doeff preset handlers for logging
+- Composable slog_handler (stderr display sink) for visible logging
 - Mock handlers for testing without real tmux
 """
 
@@ -35,7 +35,7 @@ from doeff_agents import (
     configure_mock_session,
     mock_agent_handlers,
 )
-from doeff_preset import preset_handlers
+from doeff_core_effects.handlers import slog_handler
 from doeff_time import Delay
 
 from doeff import do
@@ -127,8 +127,7 @@ async def run_with_mock_handlers() -> None:
     )
 
     result = await run_program(
-        basic_session_workflow(session_name, config),
-        scoped_handlers=(preset_handlers(),),
+        slog_handler(basic_session_workflow(session_name, config)),
         custom_handlers=mock_agent_handlers(),
     )
     print(f"\nResult: {result}")
@@ -159,8 +158,7 @@ async def run_with_real_tmux() -> None:
     session_name = f"demo-{int(time.time())}"
 
     result = await run_program(
-        basic_session_workflow(session_name, config),
-        scoped_handlers=(preset_handlers(),),
+        slog_handler(basic_session_workflow(session_name, config)),
         custom_handlers=agent_effectful_handlers(),
     )
     print(f"\nResult: {result}")

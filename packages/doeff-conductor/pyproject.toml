@@ -39,9 +39,7 @@ dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "httpx>=0.25.0",
-    "doeff-preset",
 ]
-examples = ["doeff-preset"]
 
 [project.scripts]
 conductor = "doeff_conductor.cli:cli"
@@ -64,4 +62,3 @@ doeff-agents = { workspace = true }
 doeff-agentic = { workspace = true }
 doeff-flow = { workspace = true }
 doeff-hy = { workspace = true }
-doeff-preset = { workspace = true }

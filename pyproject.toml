@@ -58,7 +58,6 @@ doeff-agents = { workspace = true }
 doeff-agentic = { workspace = true }
 doeff-conductor = { workspace = true }
 doeff-git = { workspace = true }
-doeff-preset = { workspace = true }
 doeff-vm = { workspace = true }
 doeff-llm = { workspace = true }
 doeff-gemini = { workspace = true }
@@ -130,12 +129,10 @@ dev = [
     "httpx>=0.25.0",
     "doeff-conductor",
     "doeff-agents",
-    "doeff-preset",
     "doeff-llm",
     "doeff-gemini",
     "doeff-openai",
     "doeff-openrouter",
-    "doeff-preset",
     "doeff-vm",
     "doeff-traverse",
     "doeff-time",

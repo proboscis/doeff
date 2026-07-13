@@ -41,7 +41,7 @@ from doeff_agents import (
     configure_mock_session,
     mock_agent_handlers,
 )
-from doeff_preset import preset_handlers
+from doeff_core_effects.handlers import slog_handler
 from doeff_time import Delay, GetTime
 
 from doeff import do
@@ -312,8 +312,7 @@ async def run_monitored_session() -> None:
     )
 
     result = await run_program(
-        monitored_session_workflow(session_name, config),
-        scoped_handlers=(preset_handlers(),),
+        slog_handler(monitored_session_workflow(session_name, config)),
         custom_handlers=mock_agent_handlers(),
     )
     print(f"\nResult: {result}")
@@ -341,7 +340,7 @@ def simulate_events_demo() -> None:
     print("  - Structured data, easily queryable")
     print("  - Accumulated in runtime log")
     print("  - Testable with mock handlers")
-    print("  - Composable with preset_handlers for display")
+    print("  - Composable with slog_handler for display")
 
 
 async def run_with_real_tmux() -> None:
@@ -365,8 +364,7 @@ async def run_with_real_tmux() -> None:
     session_name = f"notifier-{int(time.time())}"
 
     result = await run_program(
-        notification_workflow(session_name, config),
-        scoped_handlers=(preset_handlers(),),
+        slog_handler(notification_workflow(session_name, config)),
         custom_handlers=agent_effectful_handlers(),
     )
     print(f"\nResult: {result}")

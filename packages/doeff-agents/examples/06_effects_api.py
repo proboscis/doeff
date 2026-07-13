@@ -7,7 +7,7 @@ management with doeff async_run integration. Shows:
 
 - @do decorated functions yielding fine-grained effects
 - slog for structured logging
-- preset_handlers for log display
+- slog_handler for log display
 - agent_effectful_handlers for real tmux
 - mock_agent_handlers for testing
 - async_run for execution
@@ -47,7 +47,7 @@ from doeff_agents import (
     run_agent_to_completion,
     with_session,
 )
-from doeff_preset import preset_handlers
+from doeff_core_effects.handlers import slog_handler
 from doeff_time import Delay
 
 from doeff import do, program
@@ -251,8 +251,7 @@ async def run_direct_effects_example() -> None:
     )
 
     result = await run_program(
-        direct_effects_workflow(session_name, config),
-        scoped_handlers=(preset_handlers(),),
+        slog_handler(direct_effects_workflow(session_name, config)),
         custom_handlers=mock_agent_handlers(),
     )
     print(f"\nResult: {result}")
@@ -281,8 +280,7 @@ async def run_high_level_programs_example() -> None:
     )
 
     result = await run_program(
-        high_level_programs_workflow(session_name, config),
-        scoped_handlers=(preset_handlers(),),
+        slog_handler(high_level_programs_workflow(session_name, config)),
         custom_handlers=mock_agent_handlers(),
     )
     print(f"\nResult: {result}")
@@ -311,8 +309,7 @@ async def run_bracket_pattern_example() -> None:
     )
 
     result = await run_program(
-        bracket_pattern_workflow(session_name, config),
-        scoped_handlers=(preset_handlers(),),
+        slog_handler(bracket_pattern_workflow(session_name, config)),
         custom_handlers=mock_agent_handlers(),
     )
     print(f"\nResult: {result}")
@@ -343,8 +340,7 @@ async def run_testing_example() -> None:
     )
 
     result = await run_program(
-        testable_workflow(session_name, config),
-        scoped_handlers=(preset_handlers(),),
+        slog_handler(testable_workflow(session_name, config)),
         custom_handlers=mock_agent_handlers(),
     )
     result_value = result.value if hasattr(type(result), "value") else result
@@ -386,8 +382,7 @@ async def run_with_real_tmux() -> None:
     session_name = f"real-tmux-{int(time.time())}"
 
     result = await run_program(
-        direct_effects_workflow(session_name, config),
-        scoped_handlers=(preset_handlers(),),
+        slog_handler(direct_effects_workflow(session_name, config)),
         custom_handlers=agent_effectful_handlers(),
     )
 

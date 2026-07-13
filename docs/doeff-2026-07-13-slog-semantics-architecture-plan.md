@@ -118,10 +118,11 @@ handler からの direct IO 排除哲学、59 ファイル掃討)。ユーザー
 
 ## Pre-existing 負債の棚卸し(本チェンジ外・要フォローアップ)
 
-- doeff-preset: 17/21 fail(削除済み `default_handlers` / 旧 protocol handler 規約 / 無引数 `Pass()`)→ retire or 全面書き直しの裁定を orch issue へ
+- doeff-preset: 17/21 fail(削除済み `default_handlers` / 旧 protocol handler 規約 / 無引数 `Pass()`)→ **解消済み(2026-07-13 ユーザー裁定: retire)**: ADR-DOE-PRESET-001 でパッケージごと退役。enforcement は `tests/test_doeff_preset_retired.py` + semgrep `no-doeff-preset-import`。examples の残余 rot(`run_program` / `default_handlers`)は別負債として下記に残る
 - doeff-time: 18 fail(`_protocol_handler() missing 'k'` — 旧規約)
 - doeff-flow: collection error(`RunResult` は doeff_vm から削除済み)
 - doeff-notify: 3 fail(`default_handlers` 削除)
+- doeff-agents / doeff-agentic の examples 14 ファイル: 削除済み API(`run_program(scoped_handlers=...)` / `default_handlers`)参照の bit-rot(preset 退役時に doeff_preset 参照のみ除去済み — ADR-DOE-PRESET-001 R4)
 - `tests/architecture/test_no_public_withhandler_shim.py`: `packages/doeff-adr/tests/test_defadr_macros.py` が banned pattern を含む
 - `make lint-semgrep`: 全体 140 pre-existing findings / `memo_handlers.py` F401×2
 

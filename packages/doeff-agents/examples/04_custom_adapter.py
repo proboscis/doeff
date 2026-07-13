@@ -34,7 +34,7 @@ from doeff_agents import (
     mock_agent_handlers,
 )
 from doeff_agents.adapters.base import AgentAdapter, InjectionMethod
-from doeff_preset import preset_handlers
+from doeff_core_effects.handlers import slog_handler
 from doeff_time import Delay
 
 from doeff import do
@@ -286,8 +286,7 @@ async def run_with_mock_handlers() -> None:
     )
 
     result = await run_program(
-        custom_adapter_workflow(session_name, config),
-        scoped_handlers=(preset_handlers(),),
+        slog_handler(custom_adapter_workflow(session_name, config)),
         custom_handlers=mock_agent_handlers(),
     )
     print(f"\nResult: {result}")
@@ -313,8 +312,7 @@ async def run_with_real_tmux() -> None:
     session_name = f"aider-real-{int(time.time())}"
 
     result = await run_program(
-        custom_adapter_workflow(session_name, config),
-        scoped_handlers=(preset_handlers(),),
+        slog_handler(custom_adapter_workflow(session_name, config)),
         custom_handlers=agent_effectful_handlers(),
     )
     print(f"\nResult: {result}")
