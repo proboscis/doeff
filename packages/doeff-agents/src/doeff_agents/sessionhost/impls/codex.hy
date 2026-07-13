@@ -10,14 +10,19 @@
 
 (require doeff-hy.macros [defk deff <- defhandler])
 
+(import json)
+
 (import doeff_agents.sessionhost.effects [
   BuildLaunch
+  BuildResume
+  DiscoverConversation
   PreLaunchSetup
   ClassifyPane
   DeliverMessage
   WireResultChannel
   fs-canonical-path
   fs-compose-home-view
+  fs-list-dir
   fs-read-text
   fs-write-text-atomic
   fs-make-dirs
@@ -74,6 +79,25 @@
   (setv model (.get params "model"))
   (when model
     (.extend args ["--model" model]))
+  args)
+
+
+(deff build-codex-resume-argv [params]
+  {:pre [(: params dict)
+         (in (.get params "resume_mode") #{"resume" "fork"})
+         (: (.get params "conversation") dict)]
+   :post [(: % list)]}
+  "codex の resume / fork argv(ADR-DOE-AGENTS-006 R3)。物理:
+   `codex [OPTIONS] <COMMAND> [ARGS]`(root options は subcommand の前)—
+   fresh launch と同じ基礎配線(--yolo / -c effort / -c mcp / --model)を
+   build-codex-argv と共有し、末尾に `resume <session_id>` /
+   `fork <session_id>` を付ける(codex resume/fork --help 実測 2026-07-13:
+   両 subcommand とも UUID 位置引数を受ける)。fork の新会話 identity は
+   codex 側が鋳造する — 事後発見(DiscoverConversation)。prompt は
+   argv に載せない(live terminal transport のみ)。"
+  (setv args (build-codex-argv params))
+  (setv conv-id (get (get params "conversation") "session_id"))
+  (.extend args [(get params "resume_mode") conv-id])
   args)
 
 
@@ -206,6 +230,65 @@
 
 
 ;; ---------------------------------------------------------------------------
+;; 会話 identity の事後発見(ADR-006 R1 — codex は launch も fork も事後発見)
+;; ---------------------------------------------------------------------------
+
+(defk codex-discover-conversation [params]
+  {:pre [(: params dict)]
+   :post [(: % (| dict None))]}
+  "codex の会話 identity 発見。物理: rollout は
+   `<CODEX_HOME>/sessions/<YYYY>/<MM>/<DD>/rollout-<ts>-<uuid>.jsonl` で、
+   先頭行の session_meta JSON が payload.id(会話 UUID)と payload.cwd を
+   持つ。新しい日付・新しいファイル名から順に読み、cwd が work_dir
+   (raw / canonical の双方を許容 — S12: /tmp は /private/tmp)に一致し
+   exclude_session_ids に無い最初の候補を返す。発見は booting 直後の
+   小さい rollout に対して走る(monitor の level-triggered arm)ため
+   全文読みで実用上足りる。未発見・未解決は None(次 cycle 再試行)。"
+  (setv identity (or (.get params "effective_identity") {}))
+  (setv codex-home (.get identity "CODEX_HOME"))
+  (setv excludes (set (or (.get params "exclude_session_ids") [])))
+  (setv work-dir (get params "work_dir"))
+  (if (is codex-home None)
+      None
+      (do
+        (<- canon (fs-canonical-path work-dir))
+        (setv accepted-cwds #{work-dir canon})
+        (setv sessions-root f"{codex-home}/sessions")
+        (setv candidate-paths [])
+        (<- years (fs-list-dir sessions-root))
+        (for [year (sorted years :reverse True)]
+          (<- months (fs-list-dir f"{sessions-root}/{year}"))
+          (for [month (sorted months :reverse True)]
+            (<- days (fs-list-dir f"{sessions-root}/{year}/{month}"))
+            (for [day (sorted days :reverse True)]
+              (setv day-dir f"{sessions-root}/{year}/{month}/{day}")
+              (<- files (fs-list-dir day-dir))
+              (for [name (sorted files :reverse True)]
+                (when (and (.startswith name "rollout-")
+                           (.endswith name ".jsonl"))
+                  (.append candidate-paths f"{day-dir}/{name}"))))))
+        (setv best None)
+        (for [path candidate-paths]
+          (when (is best None)
+            (<- raw (fs-read-text path))
+            (when (is-not raw None)
+              (setv first-line (get (.split raw "\n" 1) 0))
+              (setv meta None)
+              (try
+                (setv meta (json.loads first-line))
+                (except [Exception]))
+              (when (isinstance meta dict)
+                (setv payload (or (.get meta "payload") {}))
+                (setv conv-id (.get payload "id"))
+                (setv cwd (.get payload "cwd"))
+                (when (and (isinstance conv-id str)
+                           (not-in conv-id excludes)
+                           (in cwd accepted-cwds))
+                  (setv best {"session_id" conv-id "rollout_path" path}))))))
+        best)))
+
+
+;; ---------------------------------------------------------------------------
 ;; per-kind defhandler(R2: 直接束縛と host 束縛の両方で同一モジュール)
 ;; ---------------------------------------------------------------------------
 
@@ -213,6 +296,15 @@
   (BuildLaunch [agent-type params]
     :when (= agent-type "codex")
     (resume (build-codex-argv params)))
+
+  (BuildResume [agent-type params]
+    :when (= agent-type "codex")
+    (resume (build-codex-resume-argv params)))
+
+  (DiscoverConversation [agent-type params]
+    :when (= agent-type "codex")
+    (<- found (codex-discover-conversation params))
+    (resume found))
 
   (PreLaunchSetup [agent-type params]
     :when (= agent-type "codex")
