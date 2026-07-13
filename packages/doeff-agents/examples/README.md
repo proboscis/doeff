@@ -8,7 +8,7 @@ coding agents (Claude, Codex, Gemini) in tmux sessions using the **doeff effects
 All examples use the doeff effects system with `AsyncRuntime`:
 - `@do` decorator for composable generator functions
 - `slog` effects for structured logging
-- `preset_handlers()` for log display
+- `slog_handler` for log display
 - `agent_effectful_handlers()` for real tmux or `mock_agent_handlers()` for testing
 - `AsyncRuntime` for execution
 
@@ -32,7 +32,7 @@ from pathlib import Path
 from doeff import AsyncRuntime, do
 from doeff.effects.writer import slog
 from doeff_time import Delay
-from doeff_preset import preset_handlers
+from doeff_core_effects.handlers import slog_handler
 
 from doeff_agents import (
     AgentType,
@@ -83,7 +83,6 @@ async def main():
     
     # Create runtime with handlers
     handlers = {
-        **preset_handlers(),
         **mock_agent_handlers(),
     }
     runtime = AsyncRuntime(handlers=handlers, initial_store=initial_store)
@@ -94,7 +93,8 @@ async def main():
         prompt="Hello, world!",
     )
     
-    result = await runtime.run(my_agent_workflow(session_name, config))
+    # slog_handler wraps the program: stderr display sink for SlogEffect
+    result = await runtime.run(slog_handler(my_agent_workflow(session_name, config)))
     print(result)
 
 asyncio.run(main())
@@ -108,12 +108,11 @@ For real tmux sessions, use `agent_effectful_handlers()` instead:
 from doeff_agents import agent_effectful_handlers
 
 handlers = {
-    **preset_handlers(),
     **agent_effectful_handlers(),  # Real tmux handlers
 }
 runtime = AsyncRuntime(handlers=handlers)
 
-result = await runtime.run(my_agent_workflow("real-session", config))
+result = await runtime.run(slog_handler(my_agent_workflow("real-session", config)))
 ```
 
 ## Testing with Mock Handlers
@@ -142,12 +141,11 @@ configure_mock_session(
 
 # Create runtime with mock handlers
 handlers = {
-    **preset_handlers(),
     **mock_agent_handlers(),
 }
 runtime = AsyncRuntime(handlers=handlers, initial_store=initial_store)
 
-result = await runtime.run(my_workflow("test-session", config))
+result = await runtime.run(slog_handler(my_workflow("test-session", config)))
 ```
 
 ## Prerequisites
@@ -170,9 +168,9 @@ Before running examples with real tmux, ensure:
 
 3. **doeff packages are installed**:
    ```bash
-   pip install doeff doeff-preset doeff-agents
+   pip install doeff doeff-core-effects doeff-agents
    # or
-   uv add doeff doeff-preset doeff-agents
+   uv add doeff doeff-core-effects doeff-agents
    ```
 
 ## Running Examples

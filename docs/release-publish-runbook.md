@@ -26,8 +26,7 @@ publishing every Python package in this table.
 | `doeff-core-effects` | root runtime dependency | root tag Python dist matrix | 4 |
 | `doeff` | root package | root tag Python dist matrix | 5 |
 | `doeff-time` | public effect package used by `doeff-agents` | root tag Python dist matrix | 6 |
-| `doeff-preset` | public preset package used by examples/extras | root tag Python dist matrix | 7 |
-| `doeff-agents` | public companion package | root tag Python dist matrix | 8 |
+| `doeff-agents` | public companion package | root tag Python dist matrix | 7 |
 
 ### Independent Public Packages
 
@@ -81,8 +80,7 @@ Publish the root tag release in this strict order:
 4. `doeff-core-effects`
 5. `doeff`
 6. `doeff-time`
-7. `doeff-preset`
-8. `doeff-agents`
+7. `doeff-agents`
 
 Independent public packages are published separately. Their dependency order is listed in the
 independent public package table above.
@@ -105,7 +103,7 @@ root tag release table plus `doeff/__init__.py` when the root package version ch
 3. Build and verify distribution metadata for every root tag Python package:
 
 ```bash
-for package in doeff-hy doeff-core-effects doeff doeff-time doeff-preset doeff-agents; do
+for package in doeff-hy doeff-core-effects doeff doeff-time doeff-agents; do
   rm -rf "/tmp/${package}-dist"
   uv build --package "${package}" --wheel --sdist --out-dir "/tmp/${package}-dist"
   uv run python tools/verify_dist_metadata.py \
@@ -138,7 +136,7 @@ uv publish dist/*
 
 # 3. Build and publish root tag Python packages from repo root
 cd ../..
-for package in doeff-hy doeff-core-effects doeff doeff-time doeff-preset doeff-agents; do
+for package in doeff-hy doeff-core-effects doeff doeff-time doeff-agents; do
   rm -rf "/tmp/${package}-dist"
   uv build --package "${package}" --wheel --sdist --out-dir "/tmp/${package}-dist"
   uv run python tools/verify_dist_metadata.py \
@@ -162,7 +160,7 @@ This triggers `.github/workflows/publish.yml`, which will:
 - publish `doeff-vm` via `build-vm.yml` (all platforms)
 - publish `doeff-indexer` via `build-indexer.yml` (all platforms)
 - build wheel and sdist artifacts for `doeff-hy`, `doeff-core-effects`, `doeff`,
-  `doeff-time`, `doeff-preset`, and `doeff-agents`
+  `doeff-time`, and `doeff-agents`
 - verify every Python distribution with `tools/verify_dist_metadata.py`
 - publish the Python packages in the root tag release order
 

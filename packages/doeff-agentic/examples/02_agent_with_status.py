@@ -1,10 +1,10 @@
 """
 Example 02: Agent with Status Updates
 
-Show workflow progress using slog (structured logging) with doeff-preset.
+Show workflow progress using slog (structured logging) with doeff-core-effects.
 
 The slog status is:
-- Displayed to console via rich (from preset_handlers)
+- Displayed to console via rich (from slog_handler)
 - Visible via doeff-agentic watch/ps commands
 
 Run:
@@ -23,7 +23,7 @@ from doeff_agentic import (
     AgenticSendMessage,
 )
 from doeff_agentic.opencode_handler import opencode_handler
-from doeff_preset import preset_handlers
+from doeff_core_effects.handlers import slog_handler
 
 from doeff import do
 
@@ -71,11 +71,9 @@ if __name__ == "__main__":
         print("  doeff-agentic ps")
         print("  doeff-agentic watch <workflow-id>")
         print()
-
-        # Merge preset handlers with opencode handlers
-        # Preset provides: slog display (WriterTellEffect) + config (Ask preset.*)
+        # slog_handler: stderr display sink for SlogEffect (visible logs by default)
         # OpenCode provides: agent session management effects
-        program = preset_handlers()(opencode_handler()(agent_with_status()))
+        program = slog_handler(opencode_handler()(agent_with_status()))
         result = await async_run(program, handlers=default_handlers())
 
         if result.is_err():

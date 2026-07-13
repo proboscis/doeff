@@ -33,7 +33,7 @@ from doeff_agents import (
     mock_agent_handlers,
     with_session,
 )
-from doeff_preset import preset_handlers
+from doeff_core_effects.handlers import slog_handler
 from doeff_time import Delay
 
 from doeff import do
@@ -183,8 +183,7 @@ async def run_interactive_example() -> None:
     )
 
     result = await run_program(
-        run_with_bracket(session_name, config),
-        scoped_handlers=(preset_handlers(),),
+        slog_handler(run_with_bracket(session_name, config)),
         custom_handlers=mock_agent_handlers(),
     )
     print(f"\nResult: {result}")
@@ -213,8 +212,7 @@ async def run_exception_demo() -> None:
     )
 
     result = await run_program(
-        demonstrate_exception_safety(session_name, config),
-        scoped_handlers=(preset_handlers(),),
+        slog_handler(demonstrate_exception_safety(session_name, config)),
         custom_handlers=mock_agent_handlers(),
     )
     print(f"\nResult: {result}")
@@ -241,8 +239,7 @@ async def run_with_real_tmux() -> None:
     session_name = f"factorial-{int(time.time())}"
 
     result = await run_program(
-        run_with_bracket(session_name, config),
-        scoped_handlers=(preset_handlers(),),
+        slog_handler(run_with_bracket(session_name, config)),
         custom_handlers=agent_effectful_handlers(),
     )
     print(f"\nResult: {result}")
