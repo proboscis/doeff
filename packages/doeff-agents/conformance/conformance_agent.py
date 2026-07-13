@@ -182,6 +182,143 @@ def journal(event: str, **data: object) -> None:
         )
 
 
+# ADR-DOE-AGENTS-006 (S21): the conversation/transcript contract. Mirrors the
+# REAL CLIs' conversation physics closely enough for the daemon's identity
+# capture (claude --session-id) and post-boot discovery (codex rollout
+# session_meta cwd-match; fork's CLI-minted identity):
+#   claude: transcript = $CLAUDE_CONFIG_DIR/projects/<mangled realpath cwd>/
+#     <uuid>.jsonl; `--session-id <uuid>` pins the identity, `--resume <id>`
+#     continues that transcript, `--resume <id> --fork-session` mints a new
+#     uuid whose transcript starts as a copy of the parent's.
+#   codex: rollout = $CODEX_HOME/sessions/Y/M/D/rollout-<ts>-<uuid>.jsonl with
+#     a first-line session_meta {payload:{id,cwd}}; `resume <id>` appends to
+#     the existing rollout, `fork <id>` mints a new uuid and copies the parent
+#     rollout body under the new identity.
+# The "conversation" journal event carries mode/id/parent and the INHERITED
+# transcript content — S21's context-preservation assert reads it.
+CONVERSATION: dict[str, object] = {"mode": "none", "transcript": None}
+
+
+def resolve_conversation() -> None:
+    import re as re_mod
+    import uuid as uuid_mod
+
+    # M1 shims exec() this script, so argv[0] never carries the CLI name —
+    # the shim exports CONFORMANCE_KIND instead. argv[0] stays as the M2 /
+    # direct-invocation fallback.
+    kind = os.environ.get("CONFORMANCE_KIND") or Path(sys.argv[0]).name
+    if kind not in ("claude", "codex"):
+        return
+    argv = sys.argv[1:]
+
+    def flag_value(flag: str) -> str | None:
+        if flag not in argv:
+            return None
+        idx = argv.index(flag)
+        return argv[idx + 1] if idx + 1 < len(argv) else None
+
+    parent: str | None = None
+    mode = "fresh"
+    if kind == "claude":
+        parent = flag_value("--resume")
+        if parent is not None:
+            mode = "fork" if "--fork-session" in argv else "resume"
+    else:
+        for sub in ("resume", "fork"):
+            if sub in argv:
+                idx = argv.index(sub)
+                if idx + 1 < len(argv):
+                    parent = argv[idx + 1]
+                    mode = sub
+                break
+
+    inherited = ""
+    if kind == "claude":
+        config_dir = os.environ.get(
+            "CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")
+        )
+        project_dir = (
+            Path(config_dir)
+            / "projects"
+            / re_mod.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.getcwd()))
+        )
+        project_dir.mkdir(parents=True, exist_ok=True)
+        if mode == "fresh":
+            conv = flag_value("--session-id") or uuid_mod.uuid4().hex
+            transcript = project_dir / f"{conv}.jsonl"
+            transcript.write_text(
+                json.dumps({"type": "meta", "id": conv}) + "\n", encoding="utf-8"
+            )
+        elif mode == "resume":
+            conv = str(parent)
+            transcript = project_dir / f"{conv}.jsonl"
+            if transcript.exists():
+                inherited = transcript.read_text(encoding="utf-8")
+        else:
+            conv = uuid_mod.uuid4().hex
+            parent_file = project_dir / f"{parent}.jsonl"
+            if parent_file.exists():
+                inherited = parent_file.read_text(encoding="utf-8")
+            transcript = project_dir / f"{conv}.jsonl"
+            transcript.write_text(inherited, encoding="utf-8")
+    else:
+        codex_home = os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
+        stamp = time.strftime("%Y/%m/%d", time.gmtime())
+        day_dir = Path(codex_home) / "sessions" / stamp
+        day_dir.mkdir(parents=True, exist_ok=True)
+
+        def find_rollout(conv_id: str) -> Path | None:
+            hits = sorted(
+                Path(codex_home).glob(f"sessions/*/*/*/rollout-*-{conv_id}.jsonl")
+            )
+            return hits[-1] if hits else None
+
+        def meta_line(conv_id: str) -> str:
+            return (
+                json.dumps(
+                    {
+                        "type": "session_meta",
+                        "payload": {"id": conv_id, "cwd": os.getcwd()},
+                    }
+                )
+                + "\n"
+            )
+
+        ts = int(time.time() * 1000)
+        if mode == "fresh":
+            conv = uuid_mod.uuid4().hex
+            transcript = day_dir / f"rollout-{ts}-{conv}.jsonl"
+            transcript.write_text(meta_line(conv), encoding="utf-8")
+        elif mode == "resume":
+            conv = str(parent)
+            existing = find_rollout(conv)
+            if existing is not None:
+                transcript = existing
+                inherited = transcript.read_text(encoding="utf-8")
+            else:
+                transcript = day_dir / f"rollout-{ts}-{conv}.jsonl"
+                transcript.write_text(meta_line(conv), encoding="utf-8")
+        else:
+            conv = uuid_mod.uuid4().hex
+            parent_file = find_rollout(str(parent))
+            if parent_file is not None:
+                inherited = parent_file.read_text(encoding="utf-8")
+            transcript = day_dir / f"rollout-{ts}-{conv}.jsonl"
+            body = "".join(inherited.splitlines(keepends=True)[1:])
+            transcript.write_text(meta_line(conv) + body, encoding="utf-8")
+
+    CONVERSATION["mode"] = mode
+    CONVERSATION["transcript"] = str(transcript)
+    journal(
+        "conversation",
+        kind=kind,
+        mode=mode,
+        conversation_id=conv,
+        parent=parent,
+        inherited=inherited,
+    )
+
+
 def render(spec: object) -> None:
     if isinstance(spec, dict):
         text = str(spec["literal"])
@@ -350,6 +487,11 @@ def park() -> None:
 
 def main() -> None:
     journal("started", argv=sys.argv, cwd=os.getcwd())
+    # ADR-006 (S21): establish conversation identity + transcript before any
+    # frame. A resumed/forked incarnation runs the CONFORMANCE_RESUME_SCRIPT
+    # when provided — the fresh script and the revived script are different
+    # acts of the same scenario.
+    resolve_conversation()
     # Bottom-anchor the terminal before any frame: real CLIs render onto an
     # already-scrolled pane, so their text sits in the BOTTOM rows. tmux
     # capture-pane returns the full visible pane including blank rows below
@@ -359,7 +501,12 @@ def main() -> None:
     # tail-limited markers (observed: S8b classified blocked_api because
     # "fatal error" never entered the tail-10 window).
     print("\n" * 30, end="", flush=True)
-    steps = json.loads(SCRIPT.read_text(encoding="utf-8"))
+    script_path = SCRIPT
+    if CONVERSATION["mode"] in ("resume", "fork"):
+        alt = os.environ.get("CONFORMANCE_RESUME_SCRIPT")
+        if alt:
+            script_path = Path(alt)
+    steps = json.loads(script_path.read_text(encoding="utf-8"))
     for step in steps:
         if "render" in step:
             render(step["render"])
@@ -379,6 +526,20 @@ def main() -> None:
             # suppress turn-end.
             print("\n" * int(step["scroll"]), end="", flush=True)
             journal("scrolled", lines=step["scroll"])
+        elif "transcript_note" in step:
+            # ADR-006 (S21): write a marker into the conversation transcript —
+            # a revived incarnation proves context preservation by journaling
+            # this marker back as `inherited`.
+            transcript = CONVERSATION.get("transcript")
+            if transcript:
+                with open(str(transcript), "a", encoding="utf-8") as stream:
+                    stream.write(
+                        json.dumps(
+                            {"type": "note", "text": step["transcript_note"]}
+                        )
+                        + "\n"
+                    )
+            journal("transcript_note", text=step["transcript_note"])
         elif "sleep_s" in step:
             time.sleep(float(step["sleep_s"]))
         elif "record_env" in step:
