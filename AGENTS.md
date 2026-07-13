@@ -97,6 +97,32 @@ When using `orch` to manage agent runs, **NEVER stop a run that is in `wait` or 
 | `failed` / `unknown` | OK to `orch stop` + `orch continue` |
 | `done` / `cancel` | Already terminated |
 
+## Concurrent Sessions — Cooperate via herdr Messaging (CRITICAL)
+
+Multiple agent sessions (including dependency-upgrade agents from downstream
+projects) may work in this repository at the same time. The `~/repos/doeff`
+checkout and its worktrees are shared infrastructure — do not fight over them;
+communicate.
+
+- **Detect**: if the working tree changes under you (HEAD/branch moved, files
+  reverted, an unfamiliar stash like `parked by <session>`, reflog entries you
+  didn't make), another session is likely active. Check
+  `git reflog --date=iso` and `git stash list` before assuming data loss.
+- **Cooperate by actually messaging the other session** via herdr: find its
+  pane with `herdr pane list` (match `cwd`/`label`/`agent_status`), then
+  `herdr pane send-text <pane_id> "<one-line message>"` followed by
+  `herdr pane send-keys <pane_id> enter`. Identify yourself (your own pane id),
+  state facts (commits/stashes/branches, concretely), make requests explicit
+  (including do-NOTs), and name your pane for replies.
+- **Park, don't claim**: prefer a dedicated `git worktree` for branch work;
+  landing works from a worktree via `git push origin <branch>:main` without
+  touching the shared main checkout.
+- **If you must move another session's uncommitted changes aside**, label the
+  stash with your session name (`git stash push -m "parked by <session> <date>"`)
+  AND notify that session's pane.
+- Full protocol and etiquette: shared skill `herdr-comms`
+  (`~/dotfiles/agent/skills/herdr-comms/SKILL.md`).
+
 ## TDD + Semgrep Enforcement Strategy
 
 Every issue that adds, removes, or changes an architectural invariant MUST follow this protocol:
