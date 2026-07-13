@@ -3,14 +3,13 @@
 
 (import pathlib [Path])
 (import pytest)
-(import doeff_core_effects [HttpError HttpRequest HttpResponse])
-(import doeff_core_effects.handlers [await-handler slog-handler])
+(import doeff_core_effects [HttpError HttpRequest HttpResponse Listen SlogEffect])
+(import doeff_core_effects.handlers [await-handler listen-handler slog-handler])
 (import doeff_core_effects.http_handlers [http-production-handler http-fixture-handler])
 (import doeff_hy.http [http-get http-post http-put http-delete http-head])
 (import tests.effects.http_request_support
   [FakeAsyncClient
    handler-name
-   handler-log
    is-doeff-handler
    make-response
    noop-sleep
@@ -64,15 +63,22 @@
   (setv client (FakeAsyncClient
                  [(make-response 200 {"X-Test" "yes"} b"ok" "ok"
                                  "https://example.test/final" 0.2)]))
-  (setv logs (slog-handler))
-  (<- response
-      (logs ((await-handler)
-          ((http-production-handler :client-factory (fn [] client)
-                                    :sleep noop-sleep)
-            (do!
-              (<- resp (HttpRequest "GET" "https://example.test/start"
-                                     :params {"a" "1"}))
-              resp)))))
+  ;; ADR-DOE-CORE-EFFECTS-001 R3: slog の収集は Listen(types=(SlogEffect,)) の値フロー。
+  (<- pair
+      ((slog-handler)
+        (listen-handler
+          ((await-handler)
+            ((http-production-handler :client-factory (fn [] client)
+                                      :sleep noop-sleep)
+              (do!
+                (<- inner-pair
+                    (Listen (do!
+                              (<- resp (HttpRequest "GET" "https://example.test/start"
+                                         :params {"a" "1"}))
+                              resp)
+                            :types #(SlogEffect)))
+                inner-pair))))))
+  (setv #(response entries) pair)
   (assert (= (. response status) 200))
   (assert (= (. response headers) {"X-Test" "yes"}))
   (assert (= (. response content) b"ok"))
@@ -86,14 +92,16 @@
                "content" None
                "timeout" 30.0
                "follow_redirects" True}]))
-  (assert (= (handler-log logs)
-             [{"msg" "http_request"
-               "method" "GET"
-               "url" "https://example.test/start"
-               "status" 200
-               "final_url" "https://example.test/final"
-               "elapsed_seconds" 0.2
-               "attempt" 1}]))
+  (assert (= (len entries) 1))
+  (setv entry (get entries 0))
+  (assert (= entry.msg "http_request"))
+  (assert (= entry.kwargs
+             {"method" "GET"
+              "url" "https://example.test/start"
+              "status" 200
+              "final_url" "https://example.test/final"
+              "elapsed_seconds" 0.2
+              "attempt" 1}))
   (assert (= client.close-calls 1)))
 
 

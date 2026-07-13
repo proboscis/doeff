@@ -18,7 +18,7 @@
 
 (import doeff [DoExpr EffectBase UnhandledEffect])
 (import doeff.program [Pure])
-(import doeff_core_effects.effects [WriterTellEffect])
+(import doeff_core_effects.effects [SlogEffect])
 (import doeff_core_effects.memo-effects [
   MemoExistsEffect MemoGetEffect MemoPutEffect])
 (import doeff_core_effects.memo-policy [RecomputeCost])
@@ -102,14 +102,14 @@
     (if exists
         (do
           (<- value (.get store skey))
-          (<- (WriterTellEffect f"[memo-layer:{label}] HIT key={short-key}..."))
+          (<- (SlogEffect f"[memo-layer:{label}] HIT key={short-key}..."))
           (resume value))
         (do
-          (<- (WriterTellEffect
+          (<- (SlogEffect
                 f"[memo-layer:{label}] MISS key={short-key}... → re-performing"))
           (<- outer (_outer-get effect))
           (<- (.put store skey outer))
-          (<- (WriterTellEffect
+          (<- (SlogEffect
                 f"[memo-layer:{label}] WRITE-THROUGH key={short-key}..."))
           (resume outer))))
 
@@ -117,7 +117,7 @@
     (<- store (_ensure-store cell storage))
     (setv skey (_storage-key key))
     (<- (.put store skey value))
-    (<- (WriterTellEffect
+    (<- (SlogEffect
           f"[memo-layer:{label}] PUT key={(cut skey 0 16)}..."))
     (<- (_broadcast-put effect))
     (resume None)))

@@ -196,7 +196,7 @@ def make_memo_rewriter(
         key_fn: Function to compute storage key from effect.
         recompute_cost: Cost tier for routing (CHEAP -> ephemeral, EXPENSIVE -> durable).
     """
-    from doeff_core_effects.effects import WriterTellEffect as Slog
+    from doeff_core_effects.effects import Slog
     from doeff_core_effects.memo_policy import MemoPolicy
 
     if isinstance(recompute_cost, str):
