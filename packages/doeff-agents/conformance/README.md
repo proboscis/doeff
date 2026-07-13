@@ -141,7 +141,7 @@ snapshot と一致(stable)**」(main.rs:2832, 2932)なので、フレームは
 
 | S20 | result-contract 検証 = JSON Schema 仕様(U1 復元契約): items 違反 payload は report 時 reject → solicitation → in-session fix(ACP steward 実障害の形そのまま)/ meta-schema 違反 schema は session.launch で fail-closed 拒否 | doeff#482 / U1 裁定 | — | P(hy gate のみ — 旧実装は fail-open で基準外) | M2 |
 
-| S21 | resume / fork(ADR-DOE-AGENTS-006): 偽 CLI に transcript 契約(--session-id 受理・rollout 書き・`--resume`/`codex resume|fork` での文脈再開)を追加し、kill → `session.resume` の文脈保持 / fork の系譜と独立性 / identity-unknown の typed 失敗 / 並行 incarnation reject / 世代整合(旧 incarnation の遅延 report が新行を汚さない)を daemon+socket ゲートで検証 | ADR-006 R6 | — | **⬜ PENDING** — 直接束縛ゲートは `tests/sessionhost_resume_deftests.hy` で green 済み。この行が R6 の未消化分の機械可視化(黙った免除にしない — ADR-005 の :problem fact 2 の教訓)。実 CLI 物理(codex resume/fork の受理形・claude --fork-session の transcript 意味論)は `conformance/resume-physics.md` の Phase 0 プローブ実測が先 | M2 |
+| S21 | resume / fork(ADR-DOE-AGENTS-006): 偽 CLI に transcript 契約(--session-id 受理・rollout 書き・`--resume`/`codex resume|fork` での文脈再開)を追加し、kill → `session.resume` の文脈保持 / fork の系譜と独立性 / identity-unknown の typed 失敗 / 並行 incarnation reject / 世代整合(旧 incarnation の遅延 report が新行を汚さない)を daemon+socket ゲートで検証 | ADR-006 R6 | — | P(hy gate のみ — Rust oracle は resume/fork 非対応で基準外)— `conformance/test_s21_resume_fork.py`(実 tmux、claude/codex 両レーン parametrize + identity-unknown)。実 CLI 物理(codex resume/fork の受理形・claude --fork-session の transcript 意味論)は `conformance/resume-physics.md` の Phase 0 プローブ(2026-07-13 実測)で校正済み | M1(claude/codex resume/fork)/ M2(identity-unknown) |
 
 X 項目を P として数えて「oracle green」を主張することは禁止。
 **C0-2 の完了 = 全 P green on Rust + 全 X の expected-red 記録**。

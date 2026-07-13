@@ -731,6 +731,7 @@
            "model" (.get p "model")
            "effort" (.get p "effort")
            "mcp_servers" (or (.get p "mcp_servers") {})
+           "session_env" (or (.get p "session_env") {})
            "socket_path" config.socket-path
            "max_running" config.max-running
            "repl_idle_max_wait_seconds" (env-positive-i64

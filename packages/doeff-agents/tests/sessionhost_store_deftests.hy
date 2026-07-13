@@ -64,7 +64,8 @@
        "prompt_unblock_attempts" "last_output_change_at"
        "effective_identity_json"
        "conversation_json" "generation"
-       "resumed_from_session_id" "forked_from_session_id"])
+       "resumed_from_session_id" "forked_from_session_id"
+       "launch_overlay_json"])
 
 
 (defn make-snap [session-id #** overrides]
