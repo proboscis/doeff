@@ -1,7 +1,7 @@
 """Example runtime helpers for running programs on the doeff public API.
 
 There is deliberately no public bundled default-handler stack (the old
-``default_handlers()`` was removed; doeff-preset was retired by
+``default_handlers()`` was removed; the bundled preset package was retired by
 ADR-DOE-PRESET-001), so this example entry point composes its own — mirroring
 ``doeff.cli.run_services.default_interpreter``. Entry points equip
 ``slog_handler`` so ``yield slog(...)`` in the examples is visible on stderr
