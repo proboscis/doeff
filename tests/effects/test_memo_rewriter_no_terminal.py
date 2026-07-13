@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from doeff_core_effects.handlers import await_handler, slog_handler
+from doeff_core_effects.handlers import await_handler, slog_handler, state
 from doeff_core_effects.memo_handlers import in_memory_memo_handler, make_memo_rewriter
 from doeff_core_effects.scheduler import scheduled
 
@@ -46,7 +46,8 @@ def test_memo_rewriter_uses_storage_without_terminal_and_hits_on_second_call():
     wrapped = _with_handlers(
         program(),
         await_handler(),
-        slog_handler(),
+        state(),
+        slog_handler,
         _lookup_handler(calls),
         in_memory_memo_handler(),
         rewriter,
@@ -68,7 +69,8 @@ def test_memo_rewriter_falls_through_without_memo_storage_and_does_not_cache():
 
     wrapped = _with_handlers(
         program(),
-        slog_handler(),
+        state(),
+        slog_handler,
         _lookup_handler(calls),
         rewriter,
     )

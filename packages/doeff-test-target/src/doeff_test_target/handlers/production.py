@@ -20,6 +20,7 @@ class ProductionFixtureRuntime:
     fallback_env: dict[str, Any] = field(default_factory=dict)
     recorded_events: MutableSequence[str] = field(default_factory=list)
 
+    @do
     def handle_read_value(self, effect: ReadFixtureValue, k):
         if effect.key in self.fallback_env:
             return (yield Resume(k, self.fallback_env[effect.key]))
@@ -27,6 +28,7 @@ class ProductionFixtureRuntime:
         value = yield Ask(effect.key)
         return (yield Resume(k, value))
 
+    @do
     def handle_record_event(self, effect: RecordFixtureEvent, k):
         self.recorded_events.append(effect.message)
         yield Tell(effect.message)
@@ -49,9 +51,9 @@ def production_handlers(
     @do
     def handler(effect: Effect, k: Any):
         if isinstance(effect, ReadFixtureValue):
-            return (yield from active_runtime.handle_read_value(effect, k))
+            return (yield active_runtime.handle_read_value(effect, k))
         if isinstance(effect, RecordFixtureEvent):
-            return (yield from active_runtime.handle_record_event(effect, k))
+            return (yield active_runtime.handle_record_event(effect, k))
         return (yield Pass())
 
     return _program_handler(handler)

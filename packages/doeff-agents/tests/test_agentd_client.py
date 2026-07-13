@@ -34,6 +34,7 @@ from doeff_agents import (
     ensure_agentd,
 )
 from doeff_agents.agentd_client import AgentdSessionList, AgentdSessionParseWarning
+from doeff_agents.runtime import CodexRuntimePolicy
 
 
 @pytest.fixture
@@ -382,16 +383,237 @@ def test_ensure_agentd_starts_daemon_when_canonical_socket_unreachable(
     assert paths.socket_path.parent.is_dir()
 
 
-def test_agentd_command_falls_back_to_workspace_agentd_binary(
+class SilentListener:
+    """Live listener that accepts connections but never answers.
+
+    Models the busy host of the 2026-07-07 ensure-spawn-spiral incident:
+    the writer actor is wedged behind a bulk query, so daemon.status is
+    slow, but the socket listener is alive and owns the exclusivity.
+    """
+
+    def __init__(self, socket_path: Path) -> None:
+        self.socket_path = socket_path
+        self._server: socket.socket | None = None
+        self._conns: list[socket.socket] = []
+        self._thread: threading.Thread | None = None
+
+    def __enter__(self) -> SilentListener:
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(str(self.socket_path))
+        server.listen(8)
+        self._server = server
+
+        def serve() -> None:
+            while True:
+                try:
+                    conn, _addr = server.accept()
+                except OSError:
+                    return
+                self._conns.append(conn)
+
+        self._thread = threading.Thread(target=serve, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        for conn in self._conns:
+            conn.close()
+        if self._server is not None:
+            self._server.close()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        if self.socket_path.exists():
+            self.socket_path.unlink()
+
+
+class BusyThenHealthyAgentdServer:
+    """JSON-line server whose FIRST request goes unanswered.
+
+    Models the busy host from the client's point of view without any
+    test-side clock: the first status probe fails (connection closed
+    with no response — the same `_agentd_status_if_ready` -> None branch
+    a timeout takes), while the listener stays alive and every later
+    request is answered immediately.
+    """
+
+    def __init__(self, socket_path: Path) -> None:
+        self.socket_path = socket_path
+        self._server: socket.socket | None = None
+        self._thread: threading.Thread | None = None
+        self._requests_seen = 0
+        self._lock = threading.Lock()
+
+    def __enter__(self) -> BusyThenHealthyAgentdServer:
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(str(self.socket_path))
+        server.listen(8)
+        self._server = server
+
+        def answer(conn: socket.socket) -> None:
+            with conn:
+                line = conn.makefile("r", encoding="utf-8").readline()
+                if not line:
+                    return
+                with self._lock:
+                    self._requests_seen += 1
+                    first = self._requests_seen == 1
+                if first:
+                    return
+                request = json.loads(line)
+                response = {
+                    "id": request["id"],
+                    "ok": True,
+                    "result": {"state": "running"},
+                }
+                try:
+                    conn.sendall(json.dumps(response).encode("utf-8") + b"\n")
+                except OSError:
+                    return
+
+        def serve() -> None:
+            while True:
+                try:
+                    conn, _addr = server.accept()
+                except OSError:
+                    return
+                threading.Thread(target=answer, args=(conn,), daemon=True).start()
+
+        self._thread = threading.Thread(target=serve, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        if self._server is not None:
+            self._server.close()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        if self.socket_path.exists():
+            self.socket_path.unlink()
+
+
+def test_ensure_agentd_never_spawns_against_live_but_slow_listener(
+    monkeypatch,
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    # Spawn predicate root fix (2026-07-07): slow != dead.  A listener
+    # that accepts connect() but misses the status budget must produce a
+    # LOUD error, never a competing daemon (which steals the lease, dies
+    # on the socket bind, and leaves the lease rotting under a dead pid).
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    paths = default_agentd_paths()
+    paths.socket_path.parent.mkdir(parents=True)
+    starts: list[tuple[tuple[str, ...], Path]] = []
+    monkeypatch.setattr(
+        agentd_client,
+        "_start_agentd_process",
+        lambda command, log_path: starts.append((tuple(command), log_path)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        agentd_client,
+        "AGENTD_BUSY_STATUS_TIMEOUT_SECONDS",
+        0.3,
+        raising=False,
+    )
+
+    with SilentListener(paths.socket_path):
+        with pytest.raises(AgentdUnavailableError) as error:
+            ensure_agentd(
+                daemon_bin="/usr/local/bin/doeff-agentd",
+                client_timeout=0.2,
+            )
+
+    message = str(error.value)
+    assert "refusing to start a competing daemon" in message
+    assert str(paths.socket_path) in message
+    assert starts == []
+
+
+def test_ensure_agentd_waits_out_slow_status_from_live_listener(
+    monkeypatch,
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    # The busy host misses the first probe but answers the long-budget
+    # retry: ensure must return the client without spawning anything.
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    paths = default_agentd_paths()
+    paths.socket_path.parent.mkdir(parents=True)
+    starts: list[tuple[tuple[str, ...], Path]] = []
+    monkeypatch.setattr(
+        agentd_client,
+        "_start_agentd_process",
+        lambda command, log_path: starts.append((tuple(command), log_path)),
+        raising=False,
+    )
+
+    with BusyThenHealthyAgentdServer(paths.socket_path):
+        client = ensure_agentd(client_timeout=0.5)
+
+    assert client.socket_path == paths.socket_path
+    assert starts == []
+
+
+def test_ensure_agentd_spawns_when_socket_file_is_stale(
+    monkeypatch,
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    # A socket file with no listener (ECONNREFUSED) is PROVEN death:
+    # the spawn path stays open for it.
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    paths = default_agentd_paths()
+    paths.socket_path.parent.mkdir(parents=True)
+    stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    stale.bind(str(paths.socket_path))
+    stale.close()
+    starts: list[tuple[tuple[str, ...], Path]] = []
+    monkeypatch.setattr(
+        agentd_client,
+        "_start_agentd_process",
+        lambda command, log_path: starts.append((tuple(command), log_path)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        agentd_client,
+        "_sleep_for_agentd_start",
+        lambda _seconds: None,
+        raising=False,
+    )
+
+    with pytest.raises(AgentdUnavailableError) as error:
+        ensure_agentd(
+            daemon_bin="/usr/local/bin/doeff-agentd",
+            client_timeout=0.2,
+            timeout=0.2,
+        )
+
+    assert "after starting it" in str(error.value)
+    assert len(starts) == 1
+
+
+def test_agentd_command_defaults_to_interpreter_sibling_sessionhost(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    local_bin = tmp_path / "doeff-agentd"
-    local_bin.write_text("#!/bin/sh\n", encoding="utf-8")
-    local_bin.chmod(0o755)
+    # Retirement (DOE-004): the canonical spawn target is the Hy session
+    # host console script installed next to the running interpreter — the
+    # executor ships with the client package, so any env that can import
+    # doeff_agents can start the right daemon.
+    fake_bin_dir = tmp_path / "venv" / "bin"
+    fake_bin_dir.mkdir(parents=True)
+    sibling = fake_bin_dir / "doeff-sessionhost"
+    sibling.write_text("#!/bin/sh\n", encoding="utf-8")
+    sibling.chmod(0o755)
     monkeypatch.delenv("DOEFF_AGENTD_BIN", raising=False)
-    monkeypatch.setattr(agentd_client.shutil, "which", lambda _name: None)
-    monkeypatch.setattr(agentd_client, "_local_agentd_binary_path", lambda: local_bin)
+    monkeypatch.setattr(agentd_client.sys, "executable", str(fake_bin_dir / "python"))
 
     command = agentd_client._agentd_command(
         daemon_bin=None,
@@ -400,8 +622,29 @@ def test_agentd_command_falls_back_to_workspace_agentd_binary(
         max_running=3,
     )
 
-    assert command[0] == str(local_bin)
+    assert command[0] == str(sibling)
     assert command[-1] == "serve"
+
+
+def test_agentd_command_never_resolves_the_retired_rust_binary(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    # No sibling script and nothing on PATH: the bare name is the Hy host,
+    # never the retired Rust "doeff-agentd" (silent-rollback root cause).
+    monkeypatch.delenv("DOEFF_AGENTD_BIN", raising=False)
+    monkeypatch.setattr(agentd_client.sys, "executable", str(tmp_path / "nowhere" / "python"))
+    monkeypatch.setattr(agentd_client.shutil, "which", lambda _name: None)
+
+    command = agentd_client._agentd_command(
+        daemon_bin=None,
+        db_path=tmp_path / "agentd.sqlite",
+        socket_path=tmp_path / "agentd.sock",
+        max_running=3,
+    )
+
+    assert command[0] == "doeff-sessionhost"
+    assert "doeff-agentd" not in command[0]
 
 
 def test_lazy_agentd_client_resolves_daemon_on_first_operation(monkeypatch, tmp_path: Path) -> None:
@@ -510,6 +753,89 @@ def test_daemon_handler_launch_delegates_lifecycle_to_client(monkeypatch, tmp_pa
     assert fake_client.launches[0]["prompt"] == "review this"
     assert fake_client.launches[0]["lifecycle"] == AgentSessionLifecycle.INTERACTIVE
     assert "custom-agent" in fake_client.launches[0]["command"]
+
+
+
+def test_daemon_agent_handler_sends_codex_binding_from_policy(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # ADR-DOE-AGENTS-004 R9: codex auth rides the typed wire binding derived
+    # from the handler binder (constructor policy) — never session_env.
+    monkeypatch.setattr(
+        "doeff_agents.handlers.daemon.get_adapter", lambda _t: FakeAdapter()
+    )
+    fake_client = FakeAgentdClient()
+    handler = DaemonAgentHandler(
+        client=fake_client,
+        codex_runtime_policy=CodexRuntimePolicy(codex_home=tmp_path / "codex-home"),
+    )
+
+    handler.handle_launch(
+        LaunchEffect(
+            session_name="s-codex",
+            agent_type=AgentType.CODEX,
+            work_dir=tmp_path,
+            prompt="do it",
+        )
+    )
+
+    launch = fake_client.launches[0]
+    assert launch["binding"] == {
+        "kind": "codex",
+        "codex_home": str(tmp_path / "codex-home"),
+    }
+    assert "CODEX_HOME" not in (launch["session_env"] or {})
+
+
+def test_daemon_agent_handler_codex_binding_falls_back_to_binder_env(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # The binder process env is binder configuration too (whoever started
+    # the daemon configured it); it backs the policy, never the effect.
+    monkeypatch.setattr(
+        "doeff_agents.handlers.daemon.get_adapter", lambda _t: FakeAdapter()
+    )
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "env-home"))
+    fake_client = FakeAgentdClient()
+    handler = DaemonAgentHandler(client=fake_client)
+
+    handler.handle_launch(
+        LaunchEffect(
+            session_name="s-codex",
+            agent_type=AgentType.CODEX,
+            work_dir=tmp_path,
+            prompt="do it",
+        )
+    )
+
+    assert fake_client.launches[0]["binding"] == {
+        "kind": "codex",
+        "codex_home": str(tmp_path / "env-home"),
+    }
+
+
+def test_daemon_agent_handler_rejects_codex_home_in_session_env(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # R9: session_env is a non-auth overlay — the local guard rejects
+    # binding-owned keys before anything reaches the wire.
+    monkeypatch.setattr(
+        "doeff_agents.handlers.daemon.get_adapter", lambda _t: FakeAdapter()
+    )
+    fake_client = FakeAgentdClient()
+    handler = DaemonAgentHandler(client=fake_client)
+
+    with pytest.raises(ValueError, match="non-auth overlay"):
+        handler.handle_launch(
+            LaunchEffect(
+                session_name="s-codex",
+                agent_type=AgentType.CODEX,
+                work_dir=tmp_path,
+                prompt="do it",
+                session_env={"CODEX_HOME": "/x"},
+            )
+        )
+    assert fake_client.launches == []
 
 
 class FakeAgentdClient:

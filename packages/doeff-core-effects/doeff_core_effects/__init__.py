@@ -36,6 +36,7 @@ from doeff_core_effects.handlers import (  # noqa: F401
     state,
     try_handler,
     writer,
+    writer_log,
 )
 from doeff_core_effects.http_handlers import (  # noqa: F401
     http_fixture_handler,

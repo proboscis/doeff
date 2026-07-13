@@ -14,6 +14,7 @@ from doeff_agents.agentd_client import (
     AgentdClientError,
     AgentdSessionParseWarning,
     AgentdUnavailableError,
+    default_agentd_paths,
     ensure_agentd,
 )
 from doeff_agents.effects import AgentSessionSnapshot
@@ -32,7 +33,7 @@ console = Console()
 
 # All doeff-agents sessions are prefixed with this to distinguish from other tmux sessions
 SESSION_PREFIX = "doeff-"
-AGENTD_UNAVAILABLE_HINT = "agentd が起動していません。doeff-agentd serve を実行してください。"
+AGENTD_UNAVAILABLE_HINT = "agentd が起動していません。doeff-agents agentd ensure(または doeff-sessionhost ... serve)を実行してください。"
 TERMINAL_STATUSES = {
     SessionStatus.DONE,
     SessionStatus.FAILED,
@@ -176,6 +177,35 @@ def cli() -> None:
 @cli.group()
 def agentd() -> None:
     """Manage the doeff-agentd supervisor."""
+
+
+@agentd.command("kinds")
+@click.option("--json", "json_output", is_flag=True, help="Print machine-readable kinds.")
+def agentd_kinds(json_output: bool) -> None:
+    """Print the running host's advertised binding-kind vocabulary.
+
+    Deliberately does NOT ensure/spawn the daemon: kind verification is a
+    read-only observation and must never couple to host liveness (an
+    unreachable host means "no observation", not "start a host").
+    """
+    paths = default_agentd_paths()
+    client = AgentdClient(paths.socket_path, timeout=5.0)
+    try:
+        rows = client.kinds()
+    except (AgentdClientError, OSError) as error:
+        _print_agentd_request_error(error)
+        sys.exit(1)
+
+    payload = {"socket_path": str(paths.socket_path), "kinds": [dict(r) for r in rows]}
+    if json_output:
+        click.echo(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        for row in payload["kinds"]:
+            click.echo(
+                f"{row['kind']} -> agent_type={row.get('agent_type')} "
+                f"required_field={row.get('required_field')} "
+                f"api_version={row.get('api_version')}"
+            )
 
 
 @agentd.command("ensure")

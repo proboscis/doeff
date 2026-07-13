@@ -23,7 +23,7 @@ import time
 
 from doeff_flow import run_workflow
 
-from doeff import do, slog
+from doeff import Ask, do, slog
 
 # =============================================================================
 # Simulated External Services
@@ -36,8 +36,10 @@ def call_external_api(endpoint: str, attempt: int = 1):
     yield slog(step="api", status="calling", endpoint=endpoint, attempt=attempt)
     time.sleep(0.1)
 
-    # Simulate random failures
-    if random.random() < 0.3:  # 30% failure rate
+    # Simulate random failures; rng is injected via Ask so the workflow
+    # stays pure and swappable for a seeded generator under test.
+    rng = yield Ask("random")
+    if rng.random() < 0.3:  # 30% failure rate
         raise ConnectionError(f"Failed to connect to {endpoint}")
 
     yield slog(step="api", status="success", endpoint=endpoint)
@@ -57,8 +59,9 @@ def fetch_orders(user_id: int):
     """Fetch orders for a user."""
     endpoint = f"/users/{user_id}/orders"
     yield call_external_api(endpoint)
+    rng = yield Ask("random")
     return [
-        {"order_id": i, "user_id": user_id, "amount": random.randint(10, 100)}
+        {"order_id": i, "user_id": user_id, "amount": rng.randint(10, 100)}
         for i in range(3)
     ]
 
@@ -171,6 +174,7 @@ def main():
     result1 = run_workflow(
         workflow_with_errors(),
         workflow_id="error-demo",
+        env={"random": random},
     )
 
     if result1.is_ok():

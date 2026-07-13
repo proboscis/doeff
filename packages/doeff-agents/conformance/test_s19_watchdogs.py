@@ -30,10 +30,9 @@ knobs on the daemon process.
 from __future__ import annotations
 
 import json
-import subprocess
 import time
 
-from harness import RESULT_SCHEMA, AgentdHarness
+from harness import RESULT_SCHEMA, AgentdHarness, break_pane_observation_out_of_band
 
 PROMPT = "Produce the conformance structured result."
 
@@ -141,20 +140,10 @@ def test_s19c_stale_observation_reaps_unobservable_session() -> None:
             row = harness.session_row(scenario.session_id)
         assert row["last_observed_at"] is not None, harness.log_text()
 
-        # keep the tmux SESSION alive but kill the monitored PANE: capture
-        # starts failing, last_observed_at freezes, the stale branch fires
-        subprocess.run(
-            ["tmux", "new-window", "-t", scenario.session_id],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        subprocess.run(
-            ["tmux", "kill-pane", "-t", row["pane_id"]],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        # keep the SESSION-liveness answer alive but kill the monitored PANE:
+        # capture starts failing, last_observed_at freezes, the stale branch
+        # fires (backend-aware physics live in the harness helper)
+        break_pane_observation_out_of_band(scenario.session_id, row["pane_id"])
 
         row = _await_row_status(harness, scenario.session_id, ("exited",), timeout_s=20.0)
         assert row["status"] == "exited", (

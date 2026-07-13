@@ -99,6 +99,23 @@ ADR-DOE-CORE-EFFECTS-001 (proposed)
 | CLI 実挙動 | `default_interpreter` 実行で stdout=`RESULT-OK` のみ、stderr=`    INFO cli-visible step=gate` — 当初の「slog が見えない」混乱の解消を実機確認 |
 | ADR status | `proposed` のまま(landing は orch 経由。merge 後に accepted 昇格判断) |
 
+## main 統合(2026-07-13、merge origin/main 時の裁定)
+
+merge 時に判明: main は 0acce3a9(2026-07-09)で同じ .log 廃止を別解で実施済みだった
+(State 収集 + `writer_log()`/`slog_log()` 値フロー、handler の installer 化、
+handler からの direct IO 排除哲学、59 ファイル掃討)。ユーザー裁定による統合形:
+
+- **slog_handler = 表示専用**(installer 形状、stderr 1 行、収集しない)— observability の
+  IO boundary として direct-IO 排除哲学と整合(ShellRun handler と同型)
+- **Tell の蓄積 = main の writer + writer_log()**(State 収集)を正とする
+- **slog_log() は退役**(導入 4 日 — 表示専用 sink に読む state が無い)。slog の収集は
+  `Listen(prog, types=(SlogEffect,))` の値フロー
+- SlogEffect 型分離(本 ADR R1)は main と競合せず採用。handler 不在の Listen/Tell/slog は
+  UnhandledEffect で loud(ユーザー確認済み)
+- 反省として記録: 本チェンジは実装開始前に origin/main との乖離(85 commits)を確認しなかった。
+  同じ結合核の再設計が 4 日前に landing 済みで、merge 時に設計衝突として顕在化した。
+  結合核に触る前に main を fetch して対象サブシステムの履歴を見るのを必須手順とする
+
 ## Pre-existing 負債の棚卸し(本チェンジ外・要フォローアップ)
 
 - doeff-preset: 17/21 fail(削除済み `default_handlers` / 旧 protocol handler 規約 / 無引数 `Pass()`)→ retire or 全面書き直しの裁定を orch issue へ

@@ -11,8 +11,8 @@ here.
   `Spawn`, `Wait`, `Gather`, `Race`, `Try`, cache effects, graph effects, and semaphore effects.
 - For custom handler composition, call a Program -> Program handler installer directly, for example
   `handler(program)`.
-- For builtin runtime behavior, install the sync or async preset with `default_handlers()` or
-  `default_async_handlers()`.
+- For builtin runtime behavior, compose handlers individually — e.g. `writer(state()(prog))` —
+  and run with `run(doexpr)`. For async programs, use `run(scheduled(prog))`.
 - If you need to model a new side effect, define a domain-specific effect type and handle it with
   a dedicated handler installer instead of reaching for a generic `IO(...)` wrapper.
 

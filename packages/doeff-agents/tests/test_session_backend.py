@@ -47,14 +47,8 @@ from doeff_agents.adapters.base import (
 )
 from doeff_agents.adapters.codex import CodexAdapter
 from doeff_agents.effects import AwaitResultEffect, AwaitStatus, LaunchSession
-from doeff_agents.handlers.production import (
-    AWAIT_RESULT_CAPTURE_LINES,
-    _extract_result_payload,
-    _has_complete_result_block,
-    _result_contract_prompt,
-)
 from doeff_agents.result_validation import validate_result_payload
-from doeff_agents.runtime import ClaudeRuntimePolicy
+from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import InMemoryAgentSessionRepository
 from doeff_agents.tmux import TmuxSessionBackend, _output_has_unsubmitted_paste_input, strip_ansi
@@ -433,15 +427,15 @@ def test_tmux_l2_launch_injects_structured_result_contract(monkeypatch, tmp_path
         },
     )
 
+    handler.create_result_sink(spec.session_id)
     handler.handle_launch_session(LaunchSessionEffect(spec=spec))
 
     assert adapter.params
     prompt = adapter.params[0].prompt or ""
     assert "Do the domain task only." in prompt
     assert "Structured Result Contract (managed by doeff-agents)" in prompt
-    assert "DOEFF_AGENT_RESULT_BEGIN" in prompt
-    assert "DOEFF_AGENT_RESULT_END" in prompt
-    assert "DOEFF_AGENT_RESULT_BEGIN\n{}\nDOEFF_AGENT_RESULT_END" not in prompt
+    assert "`report_result` MCP tool" in prompt
+    assert "do not print the result to the terminal" in prompt
     assert "Do not create JSON result files" in prompt
     assert '"ok"' in prompt
     assert "doeff-agents transport detail" in prompt
@@ -483,13 +477,17 @@ def test_tmux_agent_handler_trusts_codex_workspace(monkeypatch, tmp_path: Path) 
     codex_home = tmp_path / "codex-home"
     work_dir = tmp_path / "workspace"
 
-    handler = TmuxAgentHandler(backend=backend)
+    # ADR-DOE-AGENTS-004 R9: CODEX_HOME is binder configuration — injected
+    # at handler construction (CodexRuntimePolicy), never via session_env.
+    handler = TmuxAgentHandler(
+        backend=backend,
+        codex_runtime_policy=CodexRuntimePolicy(codex_home=codex_home),
+    )
     launch = LaunchEffect(
         session_name="codex-worker",
         agent_type=AgentType.CODEX,
         work_dir=work_dir,
         prompt="hello",
-        session_env={"CODEX_HOME": str(codex_home)},
     )
 
     handler.handle_launch(launch)
@@ -498,6 +496,34 @@ def test_tmux_agent_handler_trusts_codex_workspace(monkeypatch, tmp_path: Path) 
         f'[projects."{work_dir}"]\ntrust_level = "trusted"\n'
     )
     assert "export CODEX_HOME=" in backend.sent[0][1]
+
+
+def test_tmux_agent_handler_rejects_codex_home_in_session_env(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # R9: session_env is a non-auth overlay — binding-owned keys are
+    # rejected loudly before any side effect (no tmux session, no trust
+    # write).
+    backend = FakeBackend()
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter",
+        lambda _agent_type: FakeCodexAdapter(),
+    )
+    codex_home = tmp_path / "codex-home"
+
+    handler = TmuxAgentHandler(backend=backend)
+    launch = LaunchEffect(
+        session_name="codex-worker",
+        agent_type=AgentType.CODEX,
+        work_dir=tmp_path / "workspace",
+        prompt="hello",
+        session_env={"CODEX_HOME": str(codex_home)},
+    )
+
+    with pytest.raises(ValueError, match="non-auth overlay"):
+        handler.handle_launch(launch)
+    assert backend.sent == []
+    assert not (codex_home / "config.toml").exists()
 
 
 def test_tmux_agent_handler_injects_codex_mcp_config(monkeypatch, tmp_path: Path) -> None:
@@ -551,7 +577,9 @@ def test_l2_launch_session_injects_mcp_config(monkeypatch, tmp_path: Path) -> No
         mcp_server_name="sbi",
     )
 
-    handle = TmuxAgentHandler(backend=backend).handle_launch_session(
+    handler = TmuxAgentHandler(backend=backend)
+    handler.create_result_sink(spec.session_id)
+    handle = handler.handle_launch_session(
         LaunchSession(spec),
         mcp_servers={"sbi": "http://127.0.0.1:51979/sse"},
     )
@@ -559,216 +587,6 @@ def test_l2_launch_session_injects_mcp_config(monkeypatch, tmp_path: Path) -> No
     assert handle.session_id == "readiness-sbi-executor-0"
     sent_command = backend.sent[0][1]
     assert 'mcp_servers."sbi".url="http://127.0.0.1:51979/sse"' in sent_command
-
-
-def test_l2_await_result_prefers_schema_result_block_while_session_still_exists(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    backend = FakeBackend()
-    monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
-    )
-    work_dir = tmp_path / "workspace"
-    work_dir.mkdir()
-    spec = AgentSpec(
-        run_id="readiness",
-        node_id="sbi-recon",
-        attempt=0,
-        agent_type=AgentType.CLAUDE,
-        work_dir=work_dir,
-        prompt="write account state",
-        result_schema={"type": "object", "required": ["status"]},
-    )
-    handler = TmuxAgentHandler(backend=backend)
-    handle = handler.handle_launch_session(LaunchSession(spec))
-    backend.captures[f"%{handle.session_id}"] = (
-        "agent output still visible\n"
-        "DOEFF_AGENT_RESULT_BEGIN\n"
-        '{"status": "prepared"}\n'
-        "DOEFF_AGENT_RESULT_END\n"
-    )
-
-    outcome = handler.handle_await_result(AwaitResultEffect(handle=handle, timeout_seconds=0.01))
-
-    assert outcome.status == AwaitStatus.EXITED
-    assert outcome.result == {"status": "prepared"}
-
-
-def test_l2_await_result_uses_extended_capture_before_awaiting_input(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    class LineLimitedBackend(FakeBackend):
-        def __init__(self) -> None:
-            super().__init__()
-            self.capture_lines: list[int] = []
-
-        def capture_pane(
-            self,
-            target: str,
-            lines: int = 100,
-            *,
-            strip_ansi_codes: bool = True,
-        ) -> str:
-            self.capture_lines.append(lines)
-            text = self.captures.get(target, "")
-            return "\n".join(text.splitlines()[-lines:])
-
-    backend = LineLimitedBackend()
-    monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
-    )
-    work_dir = tmp_path / "workspace"
-    work_dir.mkdir()
-    spec = AgentSpec(
-        run_id="readiness",
-        node_id="sbi-recon",
-        attempt=0,
-        agent_type=AgentType.CLAUDE,
-        work_dir=work_dir,
-        prompt="write account state",
-        result_schema={"type": "object", "required": ["status"]},
-    )
-    handler = TmuxAgentHandler(backend=backend)
-    handle = handler.handle_launch_session(LaunchSession(spec))
-    backend.captures[f"%{handle.session_id}"] = "\n".join(
-        [
-            "DOEFF_AGENT_RESULT_BEGIN",
-            '{"status": "prepared"}',
-            "DOEFF_AGENT_RESULT_END",
-            *[f"tool noise {idx}" for idx in range(150)],
-            "────────────────────────────────────────────────────────────────",
-            "\u276f\u00a0",
-            "────────────────────────────────────────────────────────────────",
-        ]
-    )
-
-    outcome = handler.handle_await_result(AwaitResultEffect(handle=handle, timeout_seconds=0.01))
-
-    assert outcome.status == AwaitStatus.EXITED
-    assert outcome.result == {"status": "prepared"}
-    assert AWAIT_RESULT_CAPTURE_LINES in backend.capture_lines
-
-
-def test_l2_await_result_uses_transcript_when_result_begin_scrolled_off_screen(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    backend = FakeBackend()
-    monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
-    )
-    work_dir = tmp_path / "workspace"
-    work_dir.mkdir()
-    spec = AgentSpec(
-        run_id="readiness",
-        node_id="sbi-recon",
-        attempt=0,
-        agent_type=AgentType.CLAUDE,
-        work_dir=work_dir,
-        prompt="write account state",
-        result_schema={"type": "object", "required": ["status"]},
-    )
-    handler = TmuxAgentHandler(backend=backend)
-    handle = handler.handle_launch_session(LaunchSession(spec))
-    pane = f"%{handle.session_id}"
-    backend.captures[pane] = (
-        '"reason": "long readiness blocker"}\n'
-        "DOEFF_AGENT_RESULT_END\n"
-        "────────────────────────────────────────────────────────────────\n"
-        "\u276f\u00a0retry the shortable inventory query\n"
-        "────────────────────────────────────────────────────────────────\n"
-    )
-    backend.transcripts[pane] = (
-        "DOEFF_AGENT_RESULT_BEGIN\n"
-        '{"status": "blocked", "reason": "long readiness blocker"}\n'
-        "DOEFF_AGENT_RESULT_END\n"
-        "────────────────────────────────────────────────────────────────\n"
-        "\u276f\u00a0retry the shortable inventory query\n"
-        "────────────────────────────────────────────────────────────────\n"
-    )
-
-    outcome = handler.handle_await_result(AwaitResultEffect(handle=handle, timeout_seconds=0.01))
-
-    assert outcome.status == AwaitStatus.EXITED
-    assert outcome.result == {"status": "blocked", "reason": "long readiness blocker"}
-
-
-def test_l2_await_result_waits_until_result_end_marker(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    backend = FakeBackend()
-    monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
-    )
-    work_dir = tmp_path / "workspace"
-    work_dir.mkdir()
-    spec = AgentSpec(
-        run_id="readiness",
-        node_id="sbi-recon",
-        attempt=0,
-        agent_type=AgentType.CLAUDE,
-        work_dir=work_dir,
-        prompt="write account state",
-        result_schema={"type": "object", "required": ["status"]},
-    )
-    handler = TmuxAgentHandler(backend=backend)
-    handle = handler.handle_launch_session(LaunchSession(spec))
-    pane = f"%{handle.session_id}"
-    backend.captures[pane] = (
-        "DOEFF_AGENT_RESULT_BEGIN\n"
-        '{"status": "still-printing"'
-    )
-
-    outcome = handler.handle_await_result(AwaitResultEffect(handle=handle, timeout_seconds=0.01))
-
-    assert outcome.status == AwaitStatus.TIMED_OUT
-    assert outcome.result is None
-    assert outcome.validation_error is None
-
-
-def test_l2_await_result_ignores_unparseable_raw_transcript_block(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    backend = FakeBackend()
-    monkeypatch.setattr(
-        "doeff_agents.handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
-    )
-    work_dir = tmp_path / "workspace"
-    work_dir.mkdir()
-    spec = AgentSpec(
-        run_id="readiness",
-        node_id="sbi-recon",
-        attempt=0,
-        agent_type=AgentType.CLAUDE,
-        work_dir=work_dir,
-        prompt="write account state",
-        result_schema={"type": "object", "required": ["status"]},
-    )
-    handler = TmuxAgentHandler(backend=backend)
-    handle = handler.handle_launch_session(LaunchSession(spec))
-    pane = f"%{handle.session_id}"
-    backend.captures[pane] = (
-        '"status": "ok"}\n'
-        "DOEFF_AGENT_RESULT_END\n"
-        "────────────────────────────────────────────────────────────────\n"
-        "\u276f\u00a0"
-    )
-    backend.transcripts[pane] = (
-        "DOEFF_AGENT_RESULT_BEGIN\n"
-        "\x1b[48;5;237m"
-        '{"status"\x1b[10G "ok"}\n'
-        "DOEFF_AGENT_RESULT_END\n"
-    )
-
-    outcome = handler.handle_await_result(AwaitResultEffect(handle=handle, timeout_seconds=0.01))
-
-    assert outcome.status == AwaitStatus.TIMED_OUT
-    assert outcome.result is None
-    assert outcome.validation_error is None
 
 
 def test_l2_await_result_does_not_treat_claude_status_footer_as_input(
@@ -791,6 +609,7 @@ def test_l2_await_result_does_not_treat_claude_status_footer_as_input(
         result_schema={"type": "object", "required": ["status"]},
     )
     handler = TmuxAgentHandler(backend=backend)
+    handler.create_result_sink(spec.session_id)
     handle = handler.handle_launch_session(LaunchSession(spec))
     backend.captures[f"%{handle.session_id}"] = (
         "⏺ Bash(uv run pytest packages/doeff-agents/tests -q)\n"
@@ -827,6 +646,7 @@ def test_l2_await_result_does_not_finalize_absent_result_on_live_tmux_shell_prom
         result_schema={"type": "object", "required": ["status"]},
     )
     handler = TmuxAgentHandler(backend=backend)
+    handler.create_result_sink(spec.session_id)
     handle = handler.handle_launch_session(LaunchSession(spec))
     pane = f"%{handle.session_id}"
     backend.captures[pane] = (
@@ -865,6 +685,7 @@ def test_l2_await_result_clears_stale_blocked_state_when_current_footer_is_not_i
         result_schema={"type": "object", "required": ["status"]},
     )
     handler = TmuxAgentHandler(backend=backend)
+    handler.create_result_sink(spec.session_id)
     handle = handler.handle_launch_session(LaunchSession(spec))
     pane = f"%{handle.session_id}"
 
@@ -1084,65 +905,10 @@ def test_tmux_backend_captures_session_transcript_tail(
     assert str(path) in pipe_calls[0][-1]
 
 
-def test_result_payload_extract_does_not_repair_wrapped_json() -> None:
-    # ADR 0035: the non-invertible wrap-repair heuristics
-    # (_normalize_wrapped_json_strings / _normalize_terminal_wrapped_json)
-    # were deleted. A block whose JSON was mangled by a terminal wrap now
-    # surfaces a parse error instead of being silently "repaired" into a
-    # possibly-wrong value; byte-faithful recovery is agentd's report_result
-    # channel, not screen scraping.
-    output = (
-        "done\n"
-        "DOEFF_AGENT_RESULT_BEGIN\n"
-        "{\n"
-        '  "pr_url":"https://github.com/example/\n'
-        '    repo/pull/1"\n'
-        "}\n"
-        "DOEFF_AGENT_RESULT_END\n"
-    )
-
-    payload, error = _extract_result_payload(output)
-
-    assert payload is None
-    assert error is not None
-    assert "not valid JSON" in error
-
-
-def test_result_payload_extract_uses_latest_parseable_block() -> None:
-    output = (
-        "DOEFF_AGENT_RESULT_BEGIN\n"
-        '{"status":"first"}\n'
-        "DOEFF_AGENT_RESULT_END\n"
-        "DOEFF_AGENT_RESULT_BEGIN\n"
-        "\x1b]0;Execute doeff-agents structured result workflow\x07"
-        '{"status"\x1b[10G "broken"}\n'
-        "DOEFF_AGENT_RESULT_END\n"
-    )
-
-    payload, error = _extract_result_payload(output)
-
-    assert error is None
-    assert payload == {"status": "first"}
-
-
-def test_result_contract_prompt_requires_compact_single_line_json() -> None:
-    prompt = _result_contract_prompt({"type": "object", "required": ["status"]})
-
-    assert "compact single-line JSON object" in prompt
-    assert "Do not pretty-print the result JSON" in prompt
-
-
 def test_tmux_strip_ansi_removes_osc_and_csi_controls() -> None:
-    text = "\x1b]0;title\x07DOEFF_AGENT_RESULT_BEGIN\x1b[?25l\n{}"
+    text = "\x1b]0;title\x07OBSERVATION\x1b[?25l\n{}"
 
-    assert strip_ansi(text) == "DOEFF_AGENT_RESULT_BEGIN\n{}"
-
-
-def test_result_block_is_complete_only_after_end_marker() -> None:
-    assert not _has_complete_result_block('DOEFF_AGENT_RESULT_BEGIN\n{"status": "ok"')
-    assert _has_complete_result_block(
-        'DOEFF_AGENT_RESULT_BEGIN\n{"status": "ok"}\nDOEFF_AGENT_RESULT_END'
-    )
+    assert strip_ansi(text) == "OBSERVATION\n{}"
 
 
 def test_result_validation_pattern_rejects_wrapped_identity_fields() -> None:
@@ -1199,17 +965,18 @@ def test_tmux_backend_pastes_literal_prompt_and_resubmits_collapsed_input(
     monkeypatch.setattr("doeff_agents.tmux.time.sleep", lambda _seconds: None)
 
     backend = TmuxSessionBackend()
-    backend.send_keys("%42", "long structured-result prompt", literal=True, enter=True)
+    with pytest.raises(RuntimeError, match="never submitted"):
+        backend.send_keys("%42", "long structured-result prompt", literal=True, enter=True)
 
     command_names = [call[1] for call in calls]
     assert command_names.count("set-buffer") == 1
     assert command_names.count("paste-buffer") == 1
     assert command_names.count("delete-buffer") == 1
-    assert command_names.count("capture-pane") == 3
+    assert command_names.count("capture-pane") == 6
     enter_calls = [
         call for call in calls if call[1:4] == ["send-keys", "-t", "%42"] and call[-1] == "Enter"
     ]
-    assert len(enter_calls) == 4
+    assert len(enter_calls) == 6
 
 
 def test_tmux_backend_rechecks_resubmitted_literal_prompt_until_clear(
@@ -1253,6 +1020,41 @@ def test_tmux_backend_rechecks_resubmitted_literal_prompt_until_clear(
         call for call in calls if call[1:4] == ["send-keys", "-t", "%42"] and call[-1] == "Enter"
     ]
     assert len(enter_calls) == 2
+
+
+def test_unsubmitted_paste_detector_handles_ax_screen_reader_input_line() -> None:
+    # Real pane captures from the 2026-07-09 live incident: --ax-screen-reader
+    # renders the input box as an "input:" line (no "❯" glyph), so the stuck
+    # paste was previously reported as submitted and never rescued.
+    stuck = (
+        "Extended: Fable 5 is included in your weekly limit\n"
+        "Through July 12, you can use up to 50% of your weekly usage limit on\n"
+        "Fable 5. Learn more\n"
+        "bypass permissions on (shift+tab to cycle)\n"
+        "input: [Pasted text #1 +77 lines]\n"
+    )
+    submitted = (
+        "Warping…\n"
+        "bypass permissions on (shift+tab to cycle)  ·  esc to interrupt\n"
+        "input:\n"
+    )
+
+    assert _output_has_unsubmitted_paste_input(stuck)
+    assert not _output_has_unsubmitted_paste_input(submitted)
+
+
+def test_unsubmitted_paste_detector_catches_ax_visible_prompt_text() -> None:
+    output = (
+        "bypass permissions on (shift+tab to cycle)\n"
+        "input: The kabuStation executor appeared to be waiting for input. "
+        "Continue autonomously if safe, or return a blocked/error structured result.\n"
+    )
+    sent_text = (
+        "The kabuStation executor appeared to be waiting for input. "
+        "Continue autonomously if safe, or return a blocked/error structured result."
+    )
+
+    assert _output_has_unsubmitted_paste_input(output, sent_text)
 
 
 def test_unsubmitted_paste_detector_uses_latest_prompt_line() -> None:

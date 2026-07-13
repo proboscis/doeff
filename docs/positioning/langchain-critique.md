@@ -107,14 +107,11 @@ def test_rag_chain(mock_parse, mock_predict, mock_retrieve):
 **doeff approach:**
 ```python
 def test_rag_pipeline():
-    result = run(
-        rag_pipeline("query"),
-        handlers=[
-            StubLLM({"Analyze": "cached analysis"}),
-            InMemoryRetriever({"query": [doc1, doc2]}),
-        ]
-    )
-    assert result.value == expected
+    prog = rag_pipeline("query")
+    prog = InMemoryRetriever({"query": [doc1, doc2]})(prog)
+    prog = StubLLM({"Analyze": "cached analysis"})(prog)
+    result = run(scheduled(prog))
+    assert result == expected
 ```
 
 No patching. No mock objects. No knowledge of implementation internals. Swap the handler, the program doesn't change.

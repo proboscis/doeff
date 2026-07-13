@@ -15,6 +15,7 @@ from doeff_core_effects.scheduler import (
 )
 
 from doeff import Pass, Resume, Transfer, do
+from doeff import handler as _program_handler
 from doeff_time._internals import SimClock, TimeQueue
 from doeff_time.effects import (
     DelayEffect,
@@ -67,7 +68,16 @@ class SimTimeRuntime:
         if self._driver_running:
             return None
         self._driver_running = True
-        yield Spawn(self._clock_driver(), priority=PRIORITY_IDLE)
+        # daemon=True carries two contracts:
+        # - #501: the driver's final IDLE resume (queued right after its
+        #   last CompletePromise) is routinely abandoned when the root body
+        #   returns first — that is this daemon's lifecycle, not lost work,
+        #   so it must not trip the root close-out diagnostic.
+        # - #505: daemon tasks are the only tasks the scheduler's
+        #   PRIORITY_EXTERNAL_WAIT shield may starve, which is exactly what
+        #   keeps this driver from advancing sim time past a pending
+        #   external completion.
+        yield Spawn(self._clock_driver(), priority=PRIORITY_IDLE, daemon=True)
         return None
 
     @do
@@ -153,7 +163,7 @@ def sim_time_handler(
     """Return a virtual-clock handler that delegates core concurrency effects."""
 
     runtime = SimTimeRuntime(start_time=start_time, log_formatter=log_formatter)
-    return runtime._handler
+    return _program_handler(runtime._handler)
 
 
 __all__ = [

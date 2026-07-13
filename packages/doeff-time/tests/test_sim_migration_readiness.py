@@ -29,8 +29,8 @@ from doeff_core_effects import Tell
 from doeff_core_effects.scheduler import Gather, Race, Spawn, Wait
 from doeff_events import Publish, WaitForEvent, event_handler
 from doeff_time import Delay, GetTime, ScheduleAt, SetTime, WaitUntil, sim_time_handler
+from time_test_support import SIM_TIME_EPOCH, listen, run_with_handlers, sim_seconds, sim_time
 
-from conftest import SIM_TIME_EPOCH, listen, run_with_handlers, sim_seconds, sim_time
 from doeff import (
     do,
 )
@@ -318,9 +318,12 @@ class TestRaceTimeVsEvent:
         result = _run_sim_events(_program(), start_time=sim_time(0.0))
         race_result, final_time = result
         assert race_result == "close_requested"
-        # Clock advances to 100.0 because the losing task's WaitUntil(100.0)
-        # is still alive — Race doesn't cancel losers.
-        assert final_time == sim_time(100.0)
+        # The clock stays at 5.0: once the close event wins the Race, the
+        # root program resumes at NORMAL priority and finishes before the
+        # IDLE clock driver can advance to the losing task's
+        # WaitUntil(100.0) entry.  (Race doesn't cancel losers — the 100.0
+        # queue entry simply never fires because the run ends first.)
+        assert final_time == sim_time(5.0)
 
 
 # ---------------------------------------------------------------------------

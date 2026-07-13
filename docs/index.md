@@ -21,10 +21,8 @@ Welcome to the comprehensive documentation for doeff - an algebraic effects syst
 4. **[Async Effects](04-async-effects.md)** - Gather, Spawn, Await for async operations
 5. **[Error Handling](05-error-handling.md)** - Result, Try for error handling
 6. **[Cache System](07-cache-system.md)** - Cache effects with policies and handlers
-7. **[Graph Tracking](08-graph-tracking.md)** - Execution tracking and visualization
-8. **[Advanced Effects](09-advanced-effects.md)** - Gather, Atomic operations
-9. **[Semaphore Effects](21-semaphore-effects.md)** - Create, acquire, and release permits with FIFO fairness
-10. **[WithIntercept](22-with-intercept.md)** - Cross-cutting effect observation across handler boundaries
+7. **[Advanced Effects](09-advanced-effects.md)** - Gather, concurrency patterns
+8. **[Semaphore Effects](21-semaphore-effects.md)** - Create, acquire, and release permits with FIFO fairness
 
 ### Integration & Advanced Topics
 
@@ -43,7 +41,6 @@ Welcome to the comprehensive documentation for doeff - an algebraic effects syst
 ### Specialized Topics
 
 - **[MARKERS.md](MARKERS.md)** - Marker-based Program manipulation
-- **[cache.md](cache.md)** - Detailed cache system documentation
 - **[seedream.md](seedream.md)** - SeeDream integration
 - **[IDE Plugins](ide-plugins.md)** - PyCharm and VS Code extensions
 - **[Program Architecture](program-architecture-overview.md)** - Runtime internals overview
@@ -72,7 +69,7 @@ Key characteristics:
 - **Algebraic effects with handlers**: Define effects as data, handle them with composable, swappable handlers
 - **One-shot continuations**: Each continuation resumes exactly once (unlike multi-shot systems like Koka or Eff)
 - **Rust VM runtime**: High-performance effect handling and continuation management
-- **Batteries-included handlers**: Reader, State, Writer, Future, Result, Cache, Graph tracking — ready to use
+- **Batteries-included handlers**: Reader, State, Writer, Scheduler, Result — ready to use
 - **Generator-based do-notation**: Write effectful code that looks like regular Python
 - **Stack-safe execution**: Trampolining prevents stack overflow
 - **Type safety**: Full type annotations with `.pyi` files
@@ -81,7 +78,10 @@ Key characteristics:
 ## Quick Example
 
 ```python
-from doeff import default_handlers, do, Get, Put, Tell, run
+from doeff import do, run
+from doeff_core_effects import Get, Put, Tell
+from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects.scheduler import scheduled
 
 @do
 def example_workflow():
@@ -97,11 +97,11 @@ def example_workflow():
 
     return count
 
-def main():
-    result = run(example_workflow(), handlers=default_handlers())
-    print(f"Result: {result.value}")
-
-main()
+prog = example_workflow()
+prog = writer(prog)
+prog = state()(prog)
+result = run(scheduled(prog))
+print(f"Result: {result}")  # Result: 42
 ```
 
 ## Learning Path
@@ -122,9 +122,9 @@ main()
 
 ### For Advanced Users
 
-1. **[Advanced Effects](09-advanced-effects.md)** for Gather, Atomic
-2. **[WithIntercept](22-with-intercept.md)** for cross-cutting observation
-3. **[Graph Tracking](08-graph-tracking.md)** for execution visualization
+1. **[Advanced Effects](09-advanced-effects.md)** for Gather, concurrency
+2. **[Semaphore Effects](21-semaphore-effects.md)** for concurrency control
+3. **[Effect Boundaries](17-effect-boundaries.md)** for architecture design
 4. **[API Reference](13-api-reference.md)** for complete API details
 
 ## By Use Case
@@ -148,7 +148,7 @@ main()
 - **[Basic Effects](03-basic-effects.md)** for configuration and local state
 - **[Async Effects](04-async-effects.md)** for external work and concurrency
 - **[Error Handling](05-error-handling.md)** for validation
-- **[WithIntercept](22-with-intercept.md)** for observability and auditing
+- **[Effect Boundaries](17-effect-boundaries.md)** for observability and auditing
 
 ### Testing
 
@@ -157,16 +157,16 @@ main()
 
 ## Effect Quick Reference
 
-| Category | Effects | Chapter |
-|----------|---------|---------|
-| **Reader** | Ask, Local | [03](03-basic-effects.md#reader-effects) |
-| **State** | Get, Put, Modify, AtomicGet, AtomicUpdate | [03](03-basic-effects.md#state-effects), [09](09-advanced-effects.md#atomic-effects) |
-| **Writer** | Tell, Listen, StructuredLog, slog | [03](03-basic-effects.md#writer-effects) |
-| **Future** | Await, Gather | [04](04-async-effects.md) |
-| **Result** | Try | [05](05-error-handling.md) |
-| **Cache** | CacheGet, CachePut | [07](07-cache-system.md) |
-| **Graph** | Step, Annotate, Snapshot, CaptureGraph | [08](08-graph-tracking.md) |
-| **Gather** | Gather | [09](09-advanced-effects.md#gather-effects) |
+| Category | Effects | Source |
+|----------|---------|--------|
+| **Reader** | `Ask`, `Local` | `doeff_core_effects` |
+| **State** | `Get`, `Put` | `doeff_core_effects` |
+| **Writer** | `Tell`, `slog`, `Listen` | `doeff_core_effects` |
+| **Error** | `Try` | `doeff_core_effects` |
+| **Scheduler** | `Spawn`, `Wait`, `Gather`, `Race`, `Cancel` | `doeff_core_effects.scheduler` |
+| **Promise** | `CreatePromise`, `CompletePromise`, `FailPromise` | `doeff_core_effects.scheduler` |
+| **Semaphore** | `CreateSemaphore`, `AcquireSemaphore`, `ReleaseSemaphore` | `doeff_core_effects.scheduler` |
+| **Cache** | `MemoGet`, `CachePut` | `doeff_core_effects.cache_effects` |
 
 ## Common Patterns
 
@@ -182,16 +182,16 @@ def application():
     return result
 ```
 
-### Async + Error Handling
+### Concurrency + Error Handling
 
 ```python
 @do
-def robust_fetch(url):
-    result = yield Try(Await(httpx.get(url)))
-    if result.is_ok():
+def robust_workflow():
+    result = yield Try(risky_operation())
+    if isinstance(result, Ok):
         return result.value
     else:
-        yield Tell(f"Fetch failed: {result.error}")
+        yield Tell(f"Failed: {result.error}")
         return None
 ```
 
@@ -200,8 +200,11 @@ def robust_fetch(url):
 ```python
 @do
 def process_batch(items):
-    tasks = [process_item(item) for item in items]
-    results = yield Gather(*tasks)
+    spawned = []
+    for item in items:
+        task = yield Spawn(process_item(item))
+        spawned.append(task)
+    results = yield Gather(*spawned)
     return {"processed": len(results), "results": results}
 ```
 

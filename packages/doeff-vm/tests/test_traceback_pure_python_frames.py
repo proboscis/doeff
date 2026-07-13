@@ -28,6 +28,9 @@ Example from production:
     The cllm_compute.py:184 frame is completely lost.
 """
 
+from __future__ import annotations
+
+
 import pytest
 from doeff_vm import WithHandler
 

@@ -10,17 +10,17 @@ This chapter defines the doeff execution model:
 ## Program Model
 
 `Program[T]` is the user-facing program type for effectful computations.
-In the type model, `Program[T]` is `DoExpr[T]`.
+In the type model, `Program[T]` is `DoExpr[T]`. It is a virtual type alias
+with no methods — use the standalone constructors `Pure(x)`, `Perform(e)`, etc.
 
 ```python
-class DoExpr(Generic[T]):
-    def map(self, f): ...
-    def flat_map(self, f): ...
-    @staticmethod
-    def pure(value): ...
+# DoExpr is a virtual base type (isinstance check only).
+# No .map(), .flat_map(), or .pure() methods exist on it.
+class DoExpr(metaclass=_DoExprMeta):
+    """isinstance(x, DoExpr) returns True for any program node."""
 
-class DoCtrl(DoExpr[T]):
-    ...
+# DoCtrl subtypes are the concrete IR nodes.
+# Pure, Perform, Expand, WithHandlerType, WithObserve, ...
 
 Program = DoExpr
 ```
@@ -30,13 +30,14 @@ Program = DoExpr
 The execution boundary is explicit:
 
 - `DoExpr[T]`: control expression evaluated by VM
-- `DoCtrl[T]`: concrete control nodes (`Pure`, `Call`, `Map`, `FlatMap`, `Perform`, ...)
+- `DoCtrl` subtypes: concrete control nodes (`Pure`, `Expand`, `Perform`, `WithHandlerType`, `WithObserve`, ...)
 - `EffectValue[T]`: operation payload (`Ask`, `Get`, `Put`, `Tell`, ...)
 
 Effect values are lifted into control IR with `Perform(effect)`.
 
 ```python
-from doeff import Ask, Perform
+from doeff import Perform
+from doeff_core_effects import Ask
 
 expr = Perform(Ask("key"))
 ```
@@ -73,46 +74,45 @@ yield expr  ≡  Bind(expr, λresult. rest_of_program)
 Core control nodes include:
 
 - `Pure(value)` literal node
-- `Call(f, args, kwargs, metadata)` invocation node
-- `Eval(expr, handlers)` scoped evaluation node
-- `Map(source, f)` composition node
-- `FlatMap(source, f)` bind node
+- `Expand(Apply(...))` invocation node — `@do` functions return `Expand` when called
 - `Perform(effect)` effect dispatch node
-- handler scoping node used internally by handler installers
-- continuation/control nodes such as `Resume`, `Transfer`, `Delegate`, `ResumeContinuation`
+- `WithHandlerType(handler, body)` handler scoping node
+- `WithObserve(observer, body)` observation/interception node
+- `Apply(target, args)` function application node
+- `Pass(effect, k)` re-perform to outer handler
+- continuation/control nodes such as `Resume`, `Transfer`, `ResumeThrow`, `TransferThrow`
 
 These nodes are VM syntax, so composition remains in IR.
 
 ## `@do` and Macro Expansion
 
-`@do` returns a `KleisliProgram`. Calling it emits a `Call` node.
+`@do` returns a `Callable[..., Expand]`. Calling it emits an `Expand` node.
 
-`KleisliProgram.__call__()`:
+The `@do` wrapper:
 
-1. Computes argument unwrap policy from annotations.
-2. Lifts unwrapable effect arguments to `Perform(arg)`.
-3. Wraps pass-through values as `Pure(arg)`.
-4. Returns `Call(Pure(func), args, kwargs, metadata)`.
+1. Wraps the generator function in a thunk.
+2. Returns `Expand(Apply(Pure(Callable(thunk)), []))`.
 
 Example:
 
 ```python
-from doeff import Ask, do
+from doeff import do
+from doeff_core_effects import Ask
 
 @do
 def fetch_user(user_id: int):
     db = yield Ask("db")
     return db[user_id]
 
-program = fetch_user(Ask("active_user_id"))
+program = fetch_user(42)
 ```
 
-`program` above is a `DoExpr` (`Call`) that is evaluated by `run`/`async_run`.
+`program` above is a `DoExpr` (`Expand`) that is evaluated by `run`.
 
 ### Non-Generator `@do` Functions
 
 `@do` also supports non-generator functions that use plain `return` and never
-`yield`. In that case, call-time expansion still produces a valid `Call` node,
+`yield`. In that case, call-time expansion still produces a valid `Expand` node,
 and runtime evaluation returns the function result normally.
 
 ### Metadata Preservation
@@ -121,23 +121,6 @@ The decorator preserves normal function metadata so tooling still works:
 `__doc__`, `__name__`, `__qualname__`, `__module__`, `__annotations__`, and
 the inspectable signature. This metadata preservation is part of the public
 behavior contract for `@do`.
-
-### Method Decoration via `__get__`
-
-`KleisliProgram` implements descriptor binding (`__get__`), so `@do` works on
-instance methods the same way as regular Python methods. The bound instance is
-applied at call time before `Call(...)` construction.
-
-### Kleisli `>>` Composition
-
-Kleisli arrows support `>>` composition (alias of `and_then_k`) to chain
-`KleisliProgram` values directly. This is Kleisli-level composition, not VM
-instruction composition.
-
-```python
-fetch_user_posts = fetch_user >> fetch_posts
-program = fetch_user_posts(7)
-```
 
 ## Rust VM Execution Pipeline
 
@@ -155,47 +138,32 @@ Key properties:
 - low-overhead tag-based dispatch in hot paths
 - effect payload fields stay opaque to VM core and are interpreted by handlers
 
-## `run` and `async_run`
+## `run`
 
-Both entrypoints accept:
+`run(doexpr)` is the single entrypoint. It accepts one argument and returns
+the raw result value directly.
 
-- `DoExpr[T]`
-- raw effect values, normalized at the boundary to `Perform(effect)`
+- `DoExpr[T]` — any program node
+- raw effect values are normalized at the boundary to `Perform(effect)`
 
-Conceptual sync runner:
-
-```python
-def run(program, handlers):
-    state = init(program, handlers)
-    while True:
-        out = step(state)
-        if out is Done:
-            return value
-        if out is Failed:
-            raise error
-        if out is Continue:
-            state = out.state
-```
-
-Conceptual async runner:
+For async/concurrent programs, wrap with `scheduled()`:
 
 ```python
-async def async_run(program, handlers):
-    state = init(program, handlers)
-    while True:
-        out = step(state)
-        if out is Done:
-            return value
-        if out is Failed:
-            raise error
-        if out is Continue:
-            state = out.state
-        if out is PythonAsyncSyntaxEscape:
-            resolved = await out.awaitable
-            state = out.resume(resolved)
+from doeff import run
+from doeff_core_effects.scheduler import scheduled
+
+result = run(scheduled(prog))
 ```
 
-`PythonAsyncSyntaxEscape` is handled in the async execution path.
+Conceptual runner:
+
+```python
+def run(doexpr):
+    vm = PyVM()
+    return vm.run(doexpr)
+```
+
+There is no `async_run` — use `run(scheduled(prog))` instead.
 
 ## Handler Contract
 
@@ -204,38 +172,57 @@ Handlers interpret effects with this shape:
 - input: `(effect, k)`
 - output: `DoExpr`
 
+Handlers use `yield Resume(k, value)` to resume the continuation with a value,
+`yield Pass(effect, k)` to forward the effect to an outer handler, or
+`yield effect` to re-perform an effect in the handler body.
+
 If a host handler returns an effect value, runtime normalizes it through `Perform(effect)`
 before continuing.
 
-## WithIntercept Contract
+## WithObserve Contract
 
-`WithIntercept(f, expr, types=None, mode="include")` installs scoped interception for yielded values.
-The interceptor `f` receives the matched yield and must return a `DoExpr`:
+`WithObserve(observer, body)` installs scoped observation for yielded values.
+The observer receives matched yields and can inspect or log them.
 
-- return the original effect/control value to pass through unchanged
-- return a different `Effect` or `Program` to replace dispatch for that step
-- `f` may yield effects itself; those yields skip the same interceptor layer (re-entrancy guard)
+```python
+from doeff import WithObserve
+
+def my_observer(effect, k):
+    print(f"observed: {effect}")
+
+prog = WithObserve(my_observer, body)
+```
 
 ## Composition
 
-IR-level composition primitives:
+Use standalone constructors for building program nodes:
 
-- `Program.pure(x)` -> `Pure(x)`
-- `expr.map(f)` -> `Map(expr, f)`
-- `expr.flat_map(f)` -> `FlatMap(expr, f)`
+- `Pure(x)` — lift a plain value into a program node
+- `Perform(effect)` — lift an effect into a program node
 
 Effect payloads compose after lifting:
 
 ```python
-from doeff import Ask, Perform
+from doeff import Pure, Perform
+from doeff_core_effects import Ask
 
-program = Perform(Ask("key")).map(str.upper)
+program = Perform(Ask("key"))
+```
+
+Handler composition uses the `handler(body)` pattern:
+
+```python
+from doeff_core_effects.handlers import reader, state, writer
+
+prog = writer(state(initial={"count": 0})(body()))
 ```
 
 ## Core Example
 
 ```python
-from doeff import Ask, Get, Put, Tell, default_handlers, do, run
+from doeff import do, run
+from doeff_core_effects import Ask, Get, Put, Tell
+from doeff_core_effects.handlers import reader, state, writer
 
 @do
 def update_counter():
@@ -245,21 +232,20 @@ def update_counter():
     yield Tell(f"counter updated: {current} -> {current + 1}")
     return current + 1
 
-result = run(
-    update_counter(),
-    handlers=default_handlers(),
-    env={"counter_key": "count"},
-    store={"count": 0},
-)
+prog = writer(state(initial={"count": 0})(reader(env={"counter_key": "count"})(update_counter())))
+result = run(prog)
 ```
 
-Here `handlers=default_handlers()` is installing the builtin runtime preset. For custom handler
-composition, prefer direct `handler(program)` calls.
+Here handlers are composed individually: `writer(state()(reader()(prog)))`.
+Each handler is a `Program -> Program` installer. `writer` and `slog_handler` are
+pre-installed handlers (used directly), while `reader(env=...)` and `state(initial=...)`
+are factories that return an installer.
 
 ## Summary
 
-- `Program[T]` is `DoExpr[T]`
+- `Program[T]` is `DoExpr[T]` — a virtual type alias with no methods
 - effect dispatch is explicit via `Perform(effect)`
 - VM evaluates control IR and handlers interpret effect payloads
-- `@do` calls emit `Call` nodes that are evaluated by the runtime
-- `run` and `async_run` share core stepping semantics with different async integration paths
+- `@do` calls emit `Expand` nodes that are evaluated by the runtime
+- `run(doexpr)` takes a single argument and returns the raw value
+- for async/concurrent execution, use `run(scheduled(prog))`

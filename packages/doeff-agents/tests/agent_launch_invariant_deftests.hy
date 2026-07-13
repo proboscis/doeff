@@ -26,6 +26,7 @@
   (setv argv (.launch-command adapter params))
   (assert (= adapter.injection-method InjectionMethod.TMUX))
   (assert (= argv ["claude"
+                   "--ax-screen-reader"
                    "--dangerously-skip-permissions"
                    "--permission-mode"
                    "bypassPermissions"

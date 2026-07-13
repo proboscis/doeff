@@ -129,16 +129,12 @@ def simulated_time_handler(start_time):
     return handler
 
 # Backtest: 10 years of minute data -> runs in seconds
-result = run(
-    mean_reversion_strategy("AAPL", window=20),
-    handlers=[
-        backtest_market_handler(load_csv("AAPL_2015_2025.csv")),
-        simulated_time_handler(start_time=datetime(2015, 1, 1).timestamp()),
-    ],
-    store={"portfolio": {}, "cash": 100_000},
-)
+prog = mean_reversion_strategy("AAPL", window=20)
+prog = simulated_time_handler(start_time=datetime(2015, 1, 1).timestamp())(prog)
+prog = backtest_market_handler(load_csv("AAPL_2015_2025.csv"))(prog)
+result = run(scheduled(prog))
 
-# result.writer_output contains every price check, every trade signal
+# Every price check and trade signal is visible through the effect trace
 # Instant. Deterministic. Reproducible.
 ```
 
@@ -181,14 +177,10 @@ def real_time_handler():
     return handler
 
 # Paper trading: real prices, simulated orders, real time
-result = run(
-    mean_reversion_strategy("AAPL", window=20),
-    handlers=[
-        live_market_handler(),
-        real_time_handler(),
-    ],
-    store={"portfolio": {}, "cash": 100_000},
-)
+prog = mean_reversion_strategy("AAPL", window=20)
+prog = real_time_handler()(prog)
+prog = live_market_handler()(prog)
+result = run(scheduled(prog))
 ```
 
 ## Handler Mode 3: Live Trading (Real Everything)
@@ -221,27 +213,21 @@ def live_execution_handler(broker_client):
     return handler
 
 # Live trading: real everything, with recording for audit
-result = run(
-    mean_reversion_strategy("AAPL", window=20),
-    handlers=[
-        RecordingHandler("trades/live_2026_02_12.json"),  # audit trail
-        live_execution_handler(alpaca_client),
-        real_time_handler(),
-    ],
-)
+prog = mean_reversion_strategy("AAPL", window=20)
+prog = real_time_handler()(prog)
+prog = live_execution_handler(alpaca_client)(prog)
+prog = RecordingHandler("trades/live_2026_02_12.json")(prog)  # audit trail
+result = run(scheduled(prog))
 ```
 
 ## Handler Mode 4: Replay a Live Session as Backtest
 
 ```python
 # Yesterday's live session, replayed instantly for analysis
-result = run(
-    mean_reversion_strategy("AAPL", window=20),
-    handlers=[
-        ReplayHandler("trades/live_2026_02_11.json"),
-        simulated_time_handler(start_time=yesterday_start),
-    ],
-)
+prog = mean_reversion_strategy("AAPL", window=20)
+prog = simulated_time_handler(start_time=yesterday_start)(prog)
+prog = ReplayHandler("trades/live_2026_02_11.json")(prog)
+result = run(scheduled(prog))
 # Same decisions, same prices, but runs in milliseconds instead of hours.
 # Useful for: analyzing why a trade was made, verifying strategy logic,
 # generating reports from recorded data.
@@ -253,23 +239,15 @@ result = run(
 # "What if I had used a 50-period SMA instead of 20?"
 # Replay market data but let the strategy re-decide
 
-result_20 = run(
-    mean_reversion_strategy("AAPL", window=20),
-    handlers=[
-        backtest_market_handler(historical_data),
-        simulated_time_handler(start),
-    ],
-    store={"portfolio": {}, "cash": 100_000},
-)
+prog = mean_reversion_strategy("AAPL", window=20)
+prog = simulated_time_handler(start)(prog)
+prog = backtest_market_handler(historical_data)(prog)
+result_20 = run(scheduled(prog))
 
-result_50 = run(
-    mean_reversion_strategy("AAPL", window=50),  # only this changed
-    handlers=[
-        backtest_market_handler(historical_data),  # same data
-        simulated_time_handler(start),
-    ],
-    store={"portfolio": {}, "cash": 100_000},
-)
+prog = mean_reversion_strategy("AAPL", window=50)  # only this changed
+prog = simulated_time_handler(start)(prog)
+prog = backtest_market_handler(historical_data)(prog)  # same data
+result_50 = run(scheduled(prog))
 
 # Compare P&L, trade count, drawdown — same market, different parameters
 ```
@@ -315,14 +293,11 @@ With effects, each handler manages its own concern:
 Combine with the [Gradio positioning](gradio-prototyping.md) for a live trading dashboard:
 
 ```python
-result = run(
-    mean_reversion_strategy("AAPL"),
-    handlers=[
-        gradio_streaming_handler,    # live chart, trade log, P&L curve
-        live_market_handler(),
-        real_time_handler(),
-    ],
-)
+prog = mean_reversion_strategy("AAPL")
+prog = real_time_handler()(prog)
+prog = live_market_handler()(prog)
+prog = gradio_streaming_handler(prog)    # live chart, trade log, P&L curve
+result = run(scheduled(prog))
 ```
 
 Every `GetPrice`, `PlaceOrder`, and `Tell` pushes to the Gradio UI in real-time. The strategy doesn't know about Gradio. The dashboard is an orthogonal handler.
