@@ -119,7 +119,7 @@ def test_multiple_effects_inside_try_mixed_handlers():
     env = {"model": "gpt-5.4"}
     wrapped = prog()
     # reader (outer) → slog_handler → try_handler → custom_handler (inner)
-    for h in reversed([reader(env=env), slog_handler(), try_handler, custom_handler]):
+    for h in reversed([reader(env=env), slog_handler, try_handler, custom_handler]):
         wrapped = _program_handler(h)(wrapped)
 
     result = run(wrapped)

@@ -70,16 +70,13 @@ def handle_request(user_id: int) -> Program[Response]:
     return Response(user=user, analysis=analysis)
 
 # Logging, cost tracking, retry — all as stacked handlers
-result = run(
-    handle_request(42),
-    handlers=[
-        logging_handler,      # logs ALL effects (DB, LLM, cache)
-        cost_cap_handler,     # caps LLM spend per request
-        retry_handler,        # retries transient failures
-        db_handler,           # provides real DB
-        openai_handler,       # provides real LLM
-    ]
-)
+prog = handle_request(42)
+prog = openai_handler(prog)       # provides real LLM
+prog = db_handler(prog)           # provides real DB
+prog = retry_handler(prog)        # retries transient failures
+prog = cost_cap_handler(prog)     # caps LLM spend per request
+prog = logging_handler(prog)      # logs ALL effects (DB, LLM, cache)
+result = run(scheduled(prog))
 ```
 
 FastAPI middleware sees HTTP requests. doeff handlers see every effect — including LLM calls, DB queries, and cache operations inside your endpoint logic.
@@ -106,11 +103,11 @@ def test_endpoint(mock_llm):
 ```python
 # doeff testing: swap all handlers at once
 def test_handle_request():
-    result = run(handle_request(42), handlers=[
-        StubDB(users={42: fake_user}),
-        StubLLM(responses={"Analyze": "cached analysis"}),
-    ])
-    assert result.value.analysis == "cached analysis"
+    prog = handle_request(42)
+    prog = StubLLM(responses={"Analyze": "cached analysis"})(prog)
+    prog = StubDB(users={42: fake_user})(prog)
+    result = run(scheduled(prog))
+    assert result.analysis == "cached analysis"
 ```
 
 No TestClient. No dependency_overrides. No @patch. One line per fake service.
@@ -123,30 +120,27 @@ doeff doesn't require rewriting your FastAPI app. You can adopt it incrementally
 # Step 1: Use doeff inside a single endpoint
 @app.post("/analyze")
 async def analyze(request: AnalyzeRequest):
-    result = run(
-        analyze_pipeline(request.text),
-        handlers=[openai_handler, cache_handler, db_handler],
-    )
-    return result.value
+    prog = analyze_pipeline(request.text)
+    prog = db_handler(prog)
+    prog = cache_handler(prog)
+    prog = openai_handler(prog)
+    return run(scheduled(prog))
 
 # Step 2: Add recording for debugging
 @app.post("/analyze")
 async def analyze(request: AnalyzeRequest):
-    result = run(
-        analyze_pipeline(request.text),
-        handlers=[
-            RecordingHandler(f"traces/{request.id}.json"),
-            openai_handler, cache_handler, db_handler,
-        ],
-    )
-    return result.value
+    prog = analyze_pipeline(request.text)
+    prog = db_handler(prog)
+    prog = cache_handler(prog)
+    prog = openai_handler(prog)
+    prog = RecordingHandler(f"traces/{request.id}.json")(prog)
+    return run(scheduled(prog))
 
 # Step 3: Replay production issues
 # When a user reports a bug, replay their trace locally
-result = run(
-    analyze_pipeline("the problematic input"),
-    handlers=[ReplayHandler("traces/bug_report_123.json")],
-)
+prog = analyze_pipeline("the problematic input")
+prog = ReplayHandler("traces/bug_report_123.json")(prog)
+result = run(scheduled(prog))
 ```
 
 ## The Pitch

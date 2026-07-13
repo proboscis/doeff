@@ -1,82 +1,59 @@
 # Kleisli Arrows
 
-`@do` produces a `KleisliProgram[P, T]`. Calling that `KleisliProgram` performs
-pure call-time macro expansion and emits a `Call` DoCtrl directly.
+`@do` produces a normal callable. Calling that callable performs
+pure call-time macro expansion and emits an `Expand` DoExpr directly.
 
 ## Table of Contents
 
 - [What `@do` Returns](#what-do-returns)
 - [Call-Time Macro Expansion](#call-time-macro-expansion)
-- [Why Call Is a Macro](#why-call-is-a-macro)
+- [Why Expand Is a Macro](#why-expand-is-a-macro)
 - [KPC Non-Effect Invariant](#kpc-non-effect-invariant)
 - [Annotation-Aware Argument Classification](#annotation-aware-argument-classification)
 - [`@do` Handler Authoring Contract](#do-handler-authoring-contract)
-- [Call Metadata](#call-metadata)
-- [Composability of `Call` DoCtrl](#composability-of-call-doctrl)
-- [Kleisli-Level Composition and Partial Application](#kleisli-level-composition-and-partial-application)
+- [Composition via Nested `@do`](#composition-via-nested-do)
 - [Migration Note](#migration-note)
 - [Best Practices](#best-practices)
 
 ## What `@do` Returns
 
 ```python
-from doeff import Program, do
+from doeff import do
 
 @do
 def add_one(x: int):
     return x + 1
 
 call_expr = add_one(41)
-# call_expr is a Call DoCtrl (Program-shaped DoExpr).
+# call_expr is an Expand DoExpr (program-shaped DoExpr).
 ```
 
 Conceptually:
 
-- `@do` transforms a function into `KleisliProgram[P, T]`
-- `KleisliProgram.__call__` returns `Call[...]`
-- the VM evaluates that `Call` directly
+- `@do` transforms a function into a normal callable
+- Calling it returns an `Expand` object
+- The VM evaluates that `Expand` directly
 
 ## Call-Time Macro Expansion
 
-When you call a `KleisliProgram`, expansion happens synchronously at Python call
+When you call a `@do`-decorated function, expansion happens synchronously at Python call
 time:
 
 1. Load cached auto-unwrap strategy (computed once at decoration time).
 2. Classify each argument using annotation-aware `should_unwrap`.
 3. Convert each argument to a DoExpr node.
-4. Populate call metadata.
-5. Return `Call(Pure(kernel), args, kwargs, metadata)`.
+4. Return an `Expand(...)` DoExpr.
 
 No handlers are consulted during this expansion. The transformation is pure.
 
-### Expansion Pseudocode
+## Why Expand Is a Macro
 
-```python
-def __call__(self, *args, **kwargs):
-    strategy = self._auto_unwrap_strategy
-    do_expr_args = [classify(arg, strategy.should_unwrap_positional(i)) for i, arg in enumerate(args)]
-    do_expr_kwargs = {
-        name: classify(value, strategy.should_unwrap_keyword(name))
-        for name, value in kwargs.items()
-    }
-
-    metadata = {
-        "function_name": self.__name__,
-        "source_file": self.original_func.__code__.co_filename,
-        "source_line": self.original_func.__code__.co_firstlineno,
-        "program_call": None,
-    }
-    return Call(Pure(self.execution_kernel), do_expr_args, do_expr_kwargs, metadata)
-```
-
-## Why Call Is a Macro
-
-`KleisliProgram.__call__` is intentionally a macro step to preserve phase separation:
+Calling a `@do`-decorated function is intentionally a macro step to preserve phase separation:
 Python call-time expansion builds `DoExpr`, and VM runtime evaluation executes `DoExpr`.
 Treating call-construction as an effect introduces a recursion flaw where call dispatch
 must invoke effect handling before the call tree is fully constructed.
 
-The macro model avoids that cycle by constructing `Call(...)` immediately, then letting
+The macro model avoids that cycle by constructing `Expand(...)` immediately, then letting
 standard DoExpr evaluation proceed. Historical removed component matrix details are kept
 in `docs/revision-log.md` so this chapter stays focused on the current model.
 
@@ -86,9 +63,9 @@ in `docs/revision-log.md` so this chapter stays focused on the current model.
 >
 > - It does not extend `PyEffectBase`.
 > - It is never dispatched through `Perform(KPC(...))`.
-> - There is no KPC handler in `default_handlers()` or runtime handler stacks.
+> - There is no KPC handler in the runtime handler stack.
 
-Calling a `KleisliProgram` returns a `Call` DoCtrl directly, and the VM evaluates that
+Calling a `@do`-decorated function returns an `Expand` DoExpr directly, and the VM evaluates that
 DoExpr normally.
 
 ## Annotation-Aware Argument Classification
@@ -123,16 +100,17 @@ DoExpr normally.
 ### Example
 
 ```python
-from doeff import Ask, Program, do
+from doeff import Ask, Pure, do
+from doeff import Program
 
 @do
-def use_values(x: int, raw_program: Program[int]):
+def use_values(x: int, raw_program: Program):
     y = yield raw_program
     return f"{x}:{y}"
 
-call_expr = use_values(Ask("x"), Program.pure(10))
+call_expr = use_values(Ask("x"), Pure(10))
 # x: int -> should_unwrap=True -> Ask("x") becomes Perform(Ask("x"))
-# raw_program: Program[int] -> should_unwrap=False -> Program.pure(10) becomes Pure(...)
+# raw_program: Program -> should_unwrap=False -> Pure(10) becomes Pure(...)
 ```
 
 ## `@do` Handler Authoring Contract
@@ -148,56 +126,15 @@ signature contract:
 If these rules are violated, handler installation fails with `TypeError` at the
 Python API boundary.
 
-## Call Metadata
+## Composition via Nested `@do`
 
-`KleisliProgram.__call__` attaches metadata at call time. The fields are used for
-tracing and stack introspection:
+Since `@do` functions return `Expand` objects with no `.map()`, `.flat_map()`, `.fmap()`,
+`.partial()`, or `>>` operators, composition is done via nested `@do` functions and `yield`:
 
-- `function_name`
-- `source_file`
-- `source_line`
-- `program_call` (optional call context object)
-
-Example access:
+### Sequential Composition
 
 ```python
-@do
-def compute(x: int):
-    return x * 2
-
-call_expr = compute(21)
-meta = call_expr.meta
-print(meta["function_name"])  # compute
-```
-
-## Composability of `Call` DoCtrl
-
-A `Call` is a DoExpr node, so it composes like any other DoExpr.
-
-Semantic shape (SPEC-KPC-001):
-
-```python
-result = fetch_user(42)                          # Call DoCtrl
-mapped = fetch_user(42).map(lambda u: u.name)   # Map(Call(...), f)
-chained = fetch_user(42).flat_map(enrich)       # FlatMap(Call(...), f)
-value = yield fetch_user(42)                    # yield sends Call to VM
-```
-
-The important invariant is the expression shape:
-
-- `fetch_user(42)` returns `Call(...)`
-- mapping/chaining over it yields `Map(Call(...), ...)` or
-  `FlatMap(Call(...), ...)`
-- `run()` evaluates the resulting DoExpr tree directly
-
-## Kleisli-Level Composition and Partial Application
-
-Kleisli-level combinators still work and remain useful:
-
-### `and_then_k` / `>>`
-
-```python
-from doeff import default_handlers, do, run
+from doeff import do, run
 
 @do
 def fetch_user(user_id: int):
@@ -207,28 +144,38 @@ def fetch_user(user_id: int):
 def fetch_posts(user: dict):
     return [f"post-for-{user['name']}"]
 
-fetch_user_posts = fetch_user >> fetch_posts
-result = run(fetch_user_posts(7), default_handlers())
+@do
+def fetch_user_posts(user_id: int):
+    user = yield fetch_user(user_id)
+    posts = yield fetch_posts(user)
+    return posts
+
+result = run(fetch_user_posts(7))
 ```
 
-### `fmap`
+### Mapping Over Results
 
 ```python
 @do
 def get_user():
     return {"id": 1, "name": "Alice"}
 
-get_name = get_user.fmap(lambda user: user["name"])
+@do
+def get_name():
+    user = yield get_user()
+    return user["name"]
 ```
 
-### `partial`
+### Partial Application via Closure
 
 ```python
 @do
 def greet(prefix: str, name: str):
     return f"{prefix}, {name}"
 
-say_hello = greet.partial("Hello")
+@do
+def say_hello(name: str):
+    return (yield greet("Hello", name))
 ```
 
 ### Varargs Auto-Unwrap at Composition Boundaries
@@ -245,11 +192,6 @@ Boundary rules to keep in mind:
   varargs are resolved at that call boundary.
 - Annotating varargs as `Program[...]` or `Effect[...]` sets `should_unwrap=False`,
   so those values are passed through as data.
-- `partial(...)` does not bypass classification. Pre-bound arguments and call-time
-  arguments are merged, then classified by the base Kleisli signature.
-
-This is why varargs-heavy composition can feel surprising: every Kleisli call
-boundary applies its own annotation-driven unwrap policy.
 
 ## Migration Note
 
@@ -261,20 +203,21 @@ This chapter documents only the current call-time macro architecture.
 - Prefer explicit annotations for parameters that should not auto-unwrap.
 - Use `Program[...]`/`Effect[...]` annotations when you need raw objects in the
   function body.
-- Treat `KleisliProgram.__call__` as macro expansion that constructs a DoExpr
+- Treat calling a `@do`-decorated function as macro expansion that constructs a DoExpr
   tree for VM evaluation.
-- Keep reasoning at the DoExpr level: each call produces a `Call` node.
+- Keep reasoning at the DoExpr level: each call produces an `Expand` node.
+- Use nested `@do` functions and `yield` for composition instead of method chaining.
 
 ## Summary
 
 | Topic | Macro Model |
 | --- | --- |
 | KPC identity | Call-time macro |
-| `__call__` result | `Call` DoCtrl |
+| `__call__` result | `Expand` DoExpr |
 | Resolution path | Pure expansion + VM eval |
-| Handler dependency | `Call` executes as regular DoExpr |
+| Handler dependency | `Expand` executes as regular DoExpr |
 | Argument policy | Annotation-aware `should_unwrap` |
-| Metadata | Populated at call time |
+| Composition | Nested `@do` + `yield` |
 
 ## Next Steps
 

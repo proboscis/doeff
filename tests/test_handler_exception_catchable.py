@@ -17,8 +17,9 @@ the VM instead of routing through receive_external_result(Err(...)).
 
 from dataclasses import dataclass
 
+import pytest
 from doeff_core_effects.handlers import try_handler
-from doeff_vm import Err
+from doeff_vm import Err, WithHandler
 
 from doeff import (
     EffectBase,
@@ -242,3 +243,85 @@ def test_pass_delegation_handler_error_caught():
     assert isinstance(result, Err), f"Expected Err, got {result!r}"
     assert isinstance(result.error, RuntimeError)
     assert "outer handler failed" in str(result.error)
+
+
+# ---------------------------------------------------------------------------
+# Tests (#492): deferred @do handler-construction failure must not leave a
+# stale perform-site continuation behind.
+#
+# A wrong-arity @do handler matters because the @do wrapper returns
+# Expand(Apply(Pure(thunk), [])) immediately; the arity TypeError only fires
+# later, inside eval_apply, when the thunk calls fn(*args) — i.e. outside the
+# synchronous dispatch recovery. Pre-fix, the perform-site k handle leaked
+# into a VM-global slot, was adopted by the NEXT @do call's Expand frame, and
+# a later unrelated exception was delivered INTO the long-abandoned victim
+# continuation — whose return value was then silently substituted as the
+# unrelated program's result (the 2026-07-07 exit-0 incident class).
+# ---------------------------------------------------------------------------
+
+
+@do
+def _do_wrong_arity_handler(effect):  # wrong arity: handlers take (effect, k)
+    yield None
+
+
+def test_do_handler_wrong_arity_type_error_catchable():
+    """The deferred arity TypeError routes to the perform site's dynamic scope
+    and is catchable around WithHandler — same as the plain-handler case."""
+
+    @do
+    def victim():
+        yield Ping(label="x")
+        return "victim: no exception"
+
+    @do
+    def program():
+        try:
+            result = yield WithHandler(_do_wrong_arity_handler, victim())
+            return result
+        except TypeError as e:
+            return f"caught: {e}"
+
+    result = run(program())
+    assert result.startswith("caught: "), f"Expected caught TypeError, got {result!r}"
+    assert "positional argument" in result
+
+
+def test_stale_handle_not_adopted_by_next_program():
+    """#492 repro: after catching the arity TypeError, a later unrelated
+    uncaught RuntimeError must propagate out of run() — NOT be delivered into
+    the abandoned victim continuation (which would substitute the victim's
+    return value as the crasher's result)."""
+
+    caught_type_errors: list[TypeError] = []
+
+    @do
+    def victim():
+        try:
+            yield Ping(label="x")
+            return "victim: no exception"
+        except RuntimeError as e:
+            return f"VICTIM CAUGHT WRONG-SCOPE EXCEPTION: {e}"
+
+    @do
+    def crasher():
+        if True:
+            raise RuntimeError("crash in unrelated subprogram")
+        yield  # unreachable, makes it a generator
+
+    @do
+    def main():
+        try:
+            yield WithHandler(_do_wrong_arity_handler, victim())
+        except TypeError as e:
+            caught_type_errors.append(e)
+        r = yield crasher()
+        return ("crasher returned", r)
+
+    with pytest.raises(RuntimeError, match="crash in unrelated subprogram"):
+        run(main())
+
+    assert len(caught_type_errors) == 1, (
+        "the deferred handler-construction arity TypeError must surface "
+        f"exactly once at the dispatch's dynamic scope, got {caught_type_errors!r}"
+    )

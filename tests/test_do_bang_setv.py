@@ -7,14 +7,14 @@ must be accessible after yield.
 
 import hy  # noqa: F401 - activates Hy import hooks for macro tests
 from doeff_core_effects import slog
-from doeff_core_effects.handlers import lazy_ask, slog_handler, writer
+from doeff_core_effects.handlers import lazy_ask, slog_handler, state, writer
 from doeff_core_effects.scheduler import scheduled
 
 from doeff import do, run
 
 
 def _run_program(program):
-    composed = lazy_ask(env={})(writer()(slog_handler()(program)))
+    composed = lazy_ask(env={})(state()(writer(slog_handler(program))))
     return run(scheduled(composed))
 
 

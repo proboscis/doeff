@@ -5,7 +5,6 @@ small: it records ADR specs and executable enforcement specs, then exposes
 assertions that pytest-generated functions can call.
 """
 
-from __future__ import annotations
 
 import json
 import shutil

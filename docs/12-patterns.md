@@ -9,6 +9,9 @@ Common patterns, best practices, and anti-patterns for building robust applicati
 Separate concerns into distinct layers:
 
 ```python
+from doeff import do, Try
+from doeff_core_effects import Ask, Tell
+
 # Domain layer - pure business logic
 @do
 def calculate_order_total(items):
@@ -52,6 +55,9 @@ def get_order_handler(order_id):
 Centralize data access:
 
 ```python
+from doeff import do
+from doeff_core_effects import Ask
+
 @do
 def create_repository(table_name):
     db = yield Ask("database")
@@ -100,6 +106,9 @@ def app():
 Centralized dependency access:
 
 ```python
+from doeff import do
+from doeff_core_effects import Ask
+
 @do
 def create_services():
     return {
@@ -123,6 +132,9 @@ def business_logic():
 Transactional boundary:
 
 ```python
+from doeff import do
+from doeff_core_effects import Ask, Tell
+
 @do
 def unit_of_work(operations):
     db = yield Ask("database")
@@ -163,12 +175,12 @@ This section summarizes the composition guarantees from
 
 ### Effect Combination Matrix
 
-| Outer / Inner | Ask | Get | Put | Tell | Try | Local | Listen | WithIntercept | Gather |
+| Outer / Inner | Ask | Get | Put | Tell | Try | Local | Listen | WithObserve | Gather |
 |---------------|-----|-----|-----|------|------|-------|--------|-----------|--------|
 | **Local**     | Scoped | Propagates | Propagates | Propagates | Propagates | Scoped | Propagates | Propagates | Propagates |
 | **Listen**    | - | - | - | Captured* | - | - | Nested | - | All captured* |
 | **Try**      | - | - | Persists | Persists | Wrapped | Restores | - | - | First error |
-| **WithIntercept** | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform |
+| **WithObserve** | Observe | Observe | Observe | Observe | Observe | Observe | Observe | Observe | Observe |
 | **Gather**    | Inherit | Shared** | Shared** | Merged | Isolated | Inherit | Shared | Propagates | Nested |
 
 Matrix key:
@@ -178,7 +190,7 @@ Matrix key:
 - `Persists`: Side effects persist even when errors occur.
 - `Wrapped`: Result is wrapped in the outer effect's result type.
 - `Restores`: Environment context is restored after inner completion.
-- `Transform`: Effect may be transformed by the outer effect.
+- `Observe`: Effect is observed by the observer function.
 - `Isolated`: Branch-local error handling boundaries apply.
 - `Inherit`: Child inherits parent context snapshot at invocation time.
 - `Shared`: Branches share the same underlying store/runtime resource.
@@ -197,7 +209,7 @@ The following laws from SPEC-EFF-100 apply to all compositions:
 3. **Listen Capture Law**: `Listen` captures `Tell` output ONLY on success; on error it propagates the error.
 4. **Try Non-Rollback Law**: `Try` does NOT roll back state on error.
 5. **Try Environment Restoration Law**: `Try` restores environment context, but not state.
-6. **WithIntercept Transformation Law**: `WithIntercept` transforms effects in nested programs, including `Gather` children.
+6. **WithObserve Observation Law**: `WithObserve` observes effects in nested programs, including `Gather` children.
 7. **Gather Environment Inheritance Law**: `Gather` children inherit parent environment snapshot at invocation.
 8. **Gather Store Sharing Law**: Store sharing under `Gather` is runtime-dependent.
 9. **Gather Error Propagation Law**: First child error propagates; sibling behavior is runtime-dependent.
@@ -217,17 +229,18 @@ The following laws from SPEC-EFF-100 apply to all compositions:
 Wrap operations with consistent error handling:
 
 ```python
+from doeff import Try, do
+from doeff_core_effects import Tell
+
 @do
 def with_error_handling(operation, operation_name):
     yield Tell(f"Starting: {operation_name}")
-    yield Step(f"start_{operation_name}")
     
     safe_result = yield Try(operation())
     if safe_result.is_err():
         yield handle_error(operation_name, safe_result.error)
     result = safe_result.value if safe_result.is_ok() else None
     
-    yield Step(f"end_{operation_name}")
     yield Tell(f"Completed: {operation_name}")
     
     return result
@@ -235,7 +248,6 @@ def with_error_handling(operation, operation_name):
 @do
 def handle_error(operation_name, error):
     yield Tell(f"Error in {operation_name}: {error}")
-    yield Annotate({"error": str(error), "operation": operation_name})
 
 # Usage
 @do
@@ -251,6 +263,10 @@ def app():
 Exponential backoff for retries:
 
 ```python
+from doeff import Await, Try, do
+from doeff_core_effects import Tell
+import asyncio
+
 @do
 def retry_with_exponential_backoff(operation, max_attempts=5):
     for attempt in range(1, max_attempts + 1):
@@ -279,6 +295,9 @@ def fetch_with_retry():
 Ensure cleanup with try/finally:
 
 ```python
+from doeff import do
+from doeff_core_effects import Ask, Tell
+
 @do
 def with_resource(acquire, release, operation):
     resource = yield acquire()
@@ -316,11 +335,13 @@ def use_database_connection():
 Prevent cascading failures:
 
 ```python
+from doeff import Try, do
+from doeff_core_effects import Get, Put, Tell
 from doeff_time import GetTime
 
 @do
 def circuit_breaker(operation, threshold=5, timeout=60):
-    failures = yield AtomicGet("circuit_failures")
+    failures = yield Get("circuit_failures")
     last_failure_time = yield Get("circuit_last_failure")
 
     # Check if circuit is open
@@ -331,7 +352,7 @@ def circuit_breaker(operation, threshold=5, timeout=60):
             raise Exception("Circuit breaker is open")
         else:
             # Reset after timeout
-            yield AtomicUpdate("circuit_failures", lambda _: 0)
+            yield Put("circuit_failures", 0)
             yield Put("circuit_last_failure", None)
     
     # Try operation
@@ -339,11 +360,12 @@ def circuit_breaker(operation, threshold=5, timeout=60):
     
     if safe_result.is_ok():
         # Success - reset counter
-        yield AtomicUpdate("circuit_failures", lambda _: 0)
+        yield Put("circuit_failures", 0)
         return safe_result.value
     else:
         # Failure - update circuit breaker state
-        yield AtomicUpdate("circuit_failures", lambda x: x + 1)
+        current_failures = yield Get("circuit_failures")
+        yield Put("circuit_failures", current_failures + 1)
         yield Put("circuit_last_failure", now)
         raise safe_result.error
 ```
@@ -355,6 +377,9 @@ def circuit_breaker(operation, threshold=5, timeout=60):
 Explicit state transitions:
 
 ```python
+from doeff import do
+from doeff_core_effects import Get, Put, Tell
+
 @do
 def order_state_machine(order_id):
     state = yield Get(f"order_{order_id}_state")
@@ -385,6 +410,8 @@ def order_state_machine(order_id):
 Functional state transformations:
 
 ```python
+from doeff import do
+from doeff_core_effects import Get, Put
 from doeff_time import GetTime
 
 @do
@@ -412,6 +439,9 @@ def change_username(user_id, new_username):
 Save and restore state:
 
 ```python
+from doeff import Try, do
+from doeff_core_effects import Get, Put, Tell
+
 @do
 def with_state_snapshot(operation):
     # Snapshot state
@@ -436,26 +466,24 @@ def with_state_snapshot(operation):
 Fetch multiple resources concurrently:
 
 ```python
+from doeff import Spawn, Gather, do
 from doeff_time import GetTime
 
 @do
 def fetch_user_dashboard(user_id):
-    # Fetch all data in parallel using Gather + dict reconstruction
-    programs = {
-        "user": fetch_user(user_id),
-        "posts": fetch_user_posts(user_id),
-        "followers": fetch_followers(user_id),
-        "notifications": fetch_notifications(user_id)
-    }
-    keys = list(programs.keys())
-    values = yield Gather(*programs.values())
-    results = dict(zip(keys, values))
-    
+    # Spawn all fetches, then gather results
+    t_user = yield Spawn(fetch_user(user_id))
+    t_posts = yield Spawn(fetch_user_posts(user_id))
+    t_followers = yield Spawn(fetch_followers(user_id))
+    t_notifications = yield Spawn(fetch_notifications(user_id))
+
+    results = yield Gather(t_user, t_posts, t_followers, t_notifications)
+
     return {
-        "user": results["user"],
-        "posts": results["posts"],
-        "followers": results["followers"],
-        "notifications": results["notifications"],
+        "user": results[0],
+        "posts": results[1],
+        "followers": results[2],
+        "notifications": results[3],
         "dashboard_loaded_at": yield GetTime()
     }
 ```
@@ -465,6 +493,9 @@ def fetch_user_dashboard(user_id):
 Group operations for efficiency:
 
 ```python
+from doeff import Spawn, Gather, do
+from doeff_core_effects import Tell
+
 @do
 def batch_processor(items, batch_size=100):
     results = []
@@ -473,10 +504,11 @@ def batch_processor(items, batch_size=100):
         batch = items[i:i + batch_size]
         yield Tell(f"Processing batch {i//batch_size + 1}")
 
-        # Use Gather to run Programs in parallel
-        batch_results = yield Gather(*[
-            process_item(item) for item in batch
-        ])
+        # Spawn tasks and gather results
+        tasks = []
+        for item in batch:
+            tasks.append((yield Spawn(process_item(item))))
+        batch_results = yield Gather(*tasks)
 
         results.extend(batch_results)
 
@@ -490,48 +522,51 @@ def batch_processor(items, batch_size=100):
 Verify effects were executed:
 
 ```python
+from doeff import do, run
+from doeff_core_effects import Put, Tell
+from doeff_core_effects.handlers import state, writer
+
 def test_effects_executed():
     @do
     def program():
         yield Put("key", "value")
         yield Tell("Logged message")
-        yield Step("step1")
         return "result"
 
-    from doeff import run, default_handlers
+    # Run with handlers composed individually
+    result = run(writer(state(program())))
 
-    # Run with result
-    result = run(program(), default_handlers())
-
-    # Verify result
-    assert result.is_ok()
-    assert result.value == "result"
+    # run() returns the raw value directly
+    assert result == "result"
 ```
 
 ### Property-Based Testing
 
 ```python
 from hypothesis import given, strategies as st
-from doeff import run, default_handlers
+from doeff import do, run
+from doeff_core_effects import Get, Put
+from doeff_core_effects.handlers import state
 
 @given(st.integers(min_value=0, max_value=1000))
 def test_counter_properties(initial_value):
     @do
     def counter_program():
         yield Put("counter", initial_value)
-        yield Modify("counter", lambda x: x + 1)
+        current = yield Get("counter")
+        yield Put("counter", current + 1)
         result = yield Get("counter")
         return result
 
-    result = run(counter_program(), default_handlers())
+    result = run(state(counter_program()))
 
     # Property: counter should always increment by 1
-    assert result.value == initial_value + 1
+    assert result == initial_value + 1
 ```
 
 ## Anti-Patterns
 
-### ❌ Blocking Operations in Programs
+### Bad: Blocking Operations in Programs
 
 **BAD:**
 ```python
@@ -545,15 +580,17 @@ def bad_program():
 
 **GOOD:**
 ```python
+from doeff import Await, do
+import asyncio
+
 @do
 def good_program():
     # DO: use Await with async
-    import asyncio
     yield Await(asyncio.sleep(5))
     return "done"
 ```
 
-### ❌ Untracked Side Effects
+### Bad: Untracked Side Effects
 
 **BAD:**
 ```python
@@ -568,14 +605,12 @@ def bad_side_effects():
 **GOOD:**
 ```python
 from dataclasses import dataclass
-from doeff import EffectBase
-
+from doeff_vm import EffectBase
 
 @dataclass(frozen=True)
 class WriteFile(EffectBase):
     path: str
     data: str
-
 
 @do
 def good_side_effects():
@@ -584,7 +619,7 @@ def good_side_effects():
     return "done"
 ```
 
-### ❌ Overusing State
+### Bad: Overusing State
 
 **BAD:**
 ```python
@@ -605,7 +640,7 @@ def good_parameter_passing():
     return yield compute(arg1, arg2, arg3)
 ```
 
-### ❌ Ignoring Errors
+### Bad: Ignoring Errors
 
 **BAD:**
 ```python
@@ -617,20 +652,22 @@ def bad_error_handling():
 
 **GOOD:**
 ```python
+from doeff import Try, do
+from doeff_core_effects import Tell
+
 @do
 def good_error_handling():
     result = yield Try(risky_operation())
     
     if result.is_err():
         yield Tell(f"Error occurred: {result.error}")
-        yield Annotate({"error": str(result.error)})
         # Return default value or re-raise
         raise result.error
     
     return result.value
 ```
 
-### ❌ Deep Nesting
+### Bad: Deep Nesting
 
 **BAD:**
 ```python

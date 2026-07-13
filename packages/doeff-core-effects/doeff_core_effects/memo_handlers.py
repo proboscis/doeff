@@ -5,7 +5,6 @@ Replaces the old cache_handlers module with cost-aware routing:
 - EXPENSIVE/IRREPRODUCIBLE effects → durable storage (MinIO, dedicated SQLite)
 """
 
-from __future__ import annotations
 
 import dataclasses
 import hashlib
@@ -206,7 +205,7 @@ def make_memo_rewriter(
     def handler(effect, k):
         if not isinstance(effect, effect_type):
             yield Pass(effect, k)
-            return
+            return None
 
         key = key_fn(effect)
         yield Slog(f"[memo] checking {effect_type.__name__} key={key[:16]}...")

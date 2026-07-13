@@ -183,17 +183,9 @@ impl VM {
     fn inv_detached_chains(&self, violations: &mut Vec<String>) -> DetachedView {
         let mut detached_ids: HashSet<FiberId> = HashSet::new();
 
-        // Roots visible from the VM itself (pending k handle).
-        if let Some(handle) = &self.pending_handler_k_handle {
-            self.scan_k_handle(
-                handle,
-                "VM.pending_handler_k_handle",
-                &mut detached_ids,
-                violations,
-            );
-        }
-
         // Roots inside live arena fibers (frame k handles + scope values).
+        // There is no VM-global pending-handle slot (#492): every dispatch
+        // k handle lives either in a Program frame or an ExpandReturn frame.
         let live_ids: Vec<FiberId> = self.segments.iter().map(|(id, _)| id).collect();
         for id in live_ids {
             if let Some(fiber) = self.segments.get(id) {
@@ -267,6 +259,19 @@ impl VM {
                     self.scan_k_handle(
                         handle,
                         &format!("{origin} (Program.handler_k_handle)"),
+                        detached_ids,
+                        violations,
+                    );
+                }
+            }
+            Frame::EvalReturn(cont) => {
+                if let EvalReturnContinuation::ExpandReturn {
+                    handler_k_handle: Some(handle),
+                } = cont.as_ref()
+                {
+                    self.scan_k_handle(
+                        handle,
+                        &format!("{origin} (ExpandReturn.handler_k_handle)"),
                         detached_ids,
                         violations,
                     );
@@ -410,13 +415,23 @@ impl VM {
                 }
 
                 // Recurse into frames carried by detached fibers that may
-                // carry their own handler_k_handle.
+                // carry their own handler_k_handle (Program frames and
+                // in-flight ExpandReturn frames alike).
                 for frame in &entry.fiber.frames {
-                    if let Frame::Program {
-                        handler_k_handle: Some(nested_handle),
-                        ..
-                    } = frame
-                    {
+                    let nested_handle = match frame {
+                        Frame::Program {
+                            handler_k_handle: Some(handle),
+                            ..
+                        } => Some(handle),
+                        Frame::EvalReturn(cont) => match cont.as_ref() {
+                            EvalReturnContinuation::ExpandReturn {
+                                handler_k_handle: Some(handle),
+                            } => Some(handle),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    if let Some(nested_handle) = nested_handle {
                         self.scan_k_handle(
                             nested_handle,
                             &format!("{origin} → detached fiber {:?}", entry.id),
@@ -479,6 +494,7 @@ impl VM {
 
 #[cfg(test)]
 mod tests {
+    use crate::frame::{EvalReturnContinuation, Frame};
     use crate::ids::Marker;
     use crate::segment::{Fiber, Handler};
     use crate::value::Value;
@@ -544,17 +560,24 @@ mod tests {
     fn properly_detached_chain_holds_invariants() {
         // Python::attach auto-initializes with the `auto-initialize` feature.
         let mut vm = VM::new();
+        let root = vm.alloc_segment(Fiber::new(None));
         let boundary = vm.alloc_segment(Fiber::new(None));
         let body = vm.alloc_segment(Fiber::new(Some(boundary)));
         let chain = vm.segments.detach_chain(body, boundary).unwrap();
         let k = crate::continuation::Continuation::from_chain(chain);
+        // Root the handle where dispatch state lives now (#492): an
+        // in-flight ExpandReturn frame, not a VM-global slot.
         pyo3::Python::attach(|py| {
             let py_k = pyo3::Py::new(
                 py,
                 crate::continuation::PyK::from_continuation(k),
             )
             .unwrap();
-            vm.pending_handler_k_handle = Some(py_k);
+            vm.segments.get_mut(root).unwrap().push_frame(Frame::EvalReturn(
+                Box::new(EvalReturnContinuation::ExpandReturn {
+                    handler_k_handle: Some(py_k),
+                }),
+            ));
         });
         assert!(vm.check_invariants().is_ok());
     }
@@ -564,6 +587,7 @@ mod tests {
         use crate::continuation::{Continuation, DetachedFiber, DetachedFiberChain};
         // Python::attach auto-initializes with the `auto-initialize` feature.
         let mut vm = VM::new();
+        let root = vm.alloc_segment(Fiber::new(None));
         // A fiber that is LIVE in the arena...
         let live = vm.alloc_segment(Fiber::new(None));
         // ...and simultaneously claimed by a detached chain — the
@@ -583,7 +607,11 @@ mod tests {
                 crate::continuation::PyK::from_continuation(k),
             )
             .unwrap();
-            vm.pending_handler_k_handle = Some(py_k);
+            vm.segments.get_mut(root).unwrap().push_frame(Frame::EvalReturn(
+                Box::new(EvalReturnContinuation::ExpandReturn {
+                    handler_k_handle: Some(py_k),
+                }),
+            ));
         });
         let violations = vm.check_invariants().unwrap_err();
         assert!(violations

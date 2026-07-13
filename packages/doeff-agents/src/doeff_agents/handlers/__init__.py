@@ -29,7 +29,7 @@ from doeff_agents.effects import (
     StopEffect,
     StopSessionEffect,
 )
-from doeff_agents.runtime import ClaudeRuntimePolicy
+from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import AgentSessionRepository
 
@@ -170,6 +170,7 @@ def agent_effectful_handler(
     *,
     session_repository: AgentSessionRepository | None = None,
     claude_runtime_policy: ClaudeRuntimePolicy | None = None,
+    codex_runtime_policy: CodexRuntimePolicy | None = None,
 ) -> Any:
     """Return the real tmux handler as a Hy defhandler.
 
@@ -181,6 +182,7 @@ def agent_effectful_handler(
     return _hy_effectful_module().tmux_agent_defhandler(
         session_repository=session_repository,
         claude_runtime_policy=claude_runtime_policy,
+            codex_runtime_policy=codex_runtime_policy,
     )
 
 
@@ -189,6 +191,7 @@ def default_agent_handler(
     backend: SessionBackend,
     session_repository: AgentSessionRepository | None = None,
     claude_runtime_policy: ClaudeRuntimePolicy | None = None,
+    codex_runtime_policy: CodexRuntimePolicy | None = None,
 ) -> AgentHandler:
     """Return the default production AgentHandler without exposing transport class names.
 
@@ -200,6 +203,7 @@ def default_agent_handler(
         backend=backend,
         session_repository=session_repository,
         claude_runtime_policy=claude_runtime_policy,
+            codex_runtime_policy=codex_runtime_policy,
     )
 
 
@@ -213,6 +217,7 @@ def agent_effectful_handlers(
     time_handler: Any | None = None,
     session_repository: AgentSessionRepository | None = None,
     claude_runtime_policy: ClaudeRuntimePolicy | None = None,
+    codex_runtime_policy: CodexRuntimePolicy | None = None,
 ) -> tuple[Any, ...]:
     """Return standard production handlers for real tmux agent workflows.
 
@@ -225,6 +230,7 @@ def agent_effectful_handlers(
         agent_effectful_handler(
             session_repository=session_repository,
             claude_runtime_policy=claude_runtime_policy,
+            codex_runtime_policy=codex_runtime_policy,
         ),
     )
 
@@ -236,6 +242,7 @@ def daemon_agent_handler(
     daemon_bin: str | Path | None = None,
     client: AgentdSessionClient | None = None,
     claude_runtime_policy: ClaudeRuntimePolicy | None = None,
+    codex_runtime_policy: CodexRuntimePolicy | None = None,
     max_running: int = 10,
 ) -> Any:
     """Return the daemon-backed agent handler as a Hy defhandler."""
@@ -250,6 +257,7 @@ def daemon_agent_handler(
     agent_handler = DaemonAgentHandler(
         client=active_client,
         claude_runtime_policy=claude_runtime_policy,
+            codex_runtime_policy=codex_runtime_policy,
     )
     return _hy_effectful_module().agent_handler_defhandler(agent_handler)
 
@@ -261,6 +269,7 @@ def daemon_agent_handlers(
     daemon_bin: str | Path | None = None,
     client: AgentdSessionClient | None = None,
     claude_runtime_policy: ClaudeRuntimePolicy | None = None,
+    codex_runtime_policy: CodexRuntimePolicy | None = None,
     time_handler: Any | None = None,
     max_running: int = 10,
 ) -> tuple[Any, ...]:
@@ -273,6 +282,7 @@ def daemon_agent_handlers(
             daemon_bin=daemon_bin,
             client=client,
             claude_runtime_policy=claude_runtime_policy,
+            codex_runtime_policy=codex_runtime_policy,
             max_running=max_running,
         ),
     )

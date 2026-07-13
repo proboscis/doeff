@@ -26,8 +26,9 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from doeff_flow import run_workflow
+from doeff_time import GetTime
 
-from doeff import do, slog
+from doeff import Ask, do, slog
 
 # =============================================================================
 # Worker Workflows
@@ -65,13 +66,14 @@ def worker_workflow(worker_id: str, num_tasks: int):
     Each worker runs independently and has its own trace.
     """
     yield slog(step="worker", worker_id=worker_id, status="starting", num_tasks=num_tasks)
-    start_time = datetime.now()  # noqa: DTZ005 - existing local wall-clock behavior is intentionally unchanged
+    start_time = yield GetTime()
 
     completed_tasks = []
+    rng = yield Ask("random")
 
     for i in range(num_tasks):
         task_id = f"{worker_id}-task-{i:02d}"
-        complexity = random.randint(2, 5)
+        complexity = rng.randint(2, 5)
 
         yield slog(
             step="worker",
@@ -84,7 +86,8 @@ def worker_workflow(worker_id: str, num_tasks: int):
         completed_tasks.append(result)
         yield slog(step="worker", worker_id=worker_id, status="completed", task_id=task_id)
 
-    elapsed = (datetime.now() - start_time).total_seconds()  # noqa: DTZ005 - existing local wall-clock behavior is intentionally unchanged
+    end_time = yield GetTime()
+    elapsed = (end_time - start_time).total_seconds()
 
     summary = {
         "worker_id": worker_id,
@@ -107,6 +110,7 @@ def run_worker(worker_id: str, num_tasks: int, results: dict):
     result = run_workflow(
         worker_workflow(worker_id, num_tasks),
         workflow_id=f"worker-{worker_id}",
+        env={"random": random},
     )
     results[worker_id] = result
 

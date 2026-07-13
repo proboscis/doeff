@@ -17,7 +17,6 @@ Three views over the same data (chosen by the CLI ``--view`` flag):
   * ``tree``     — per-run phase→node tree + an expanded per-gate panel.
 """
 
-from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass

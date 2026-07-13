@@ -1,16 +1,16 @@
 """ADR-DOE-CORE-EFFECTS-001: slog observability semantics.
 
 slog は SlogEffect(Writer の Tell とは別ワイヤ型)。slog_handler は stderr への
-terminal sink(「入れたらログは見える」が契約)。収集は
-Listen(prog, types=(SlogEffect,)) の値フロー (result, collected) のみが公認経路で、
-handler install への .log 属性 side-channel は削除済み API。
+terminal sink(「入れたらログは見える」が契約)。slog の収集は Listen(prog, types=(SlogEffect,)) の値フロー、
+Tell の蓄積は writer + writer_log()(State 収集)。handler install への
+.log 属性 side-channel は削除済み API(main 0acce3a9 と本 ADR の統合形)。
 
 plan: docs/doeff-2026-07-13-slog-semantics-architecture-plan.md
 """
 
 import pytest
 from doeff_core_effects.effects import Listen, Tell
-from doeff_core_effects.handlers import listen_handler, slog_handler, writer
+from doeff_core_effects.handlers import listen_handler, slog_handler, state, writer
 from doeff_vm import UnhandledEffect
 
 from doeff import do, slog
@@ -41,7 +41,7 @@ class TestSlogVisibleByDefault:
             yield slog("warned", level="warning")
             yield slog("plain")
 
-        doeff_run(slog_handler()(body()))
+        doeff_run(slog_handler(body()))
         err = capsys.readouterr().err
         assert "WARNING" in err
         assert "warned" in err
@@ -62,7 +62,7 @@ class TestSlogTellTypesDisjoint:
         def body():
             return (yield Listen(inner()))
 
-        stack = writer()(slog_handler()(listen_handler(body())))
+        stack = state()(writer(slog_handler(listen_handler(body()))))
         result, collected = doeff_run(stack)
         assert result == "ok"
         assert [e.msg for e in collected] == ["tell-entry"]
@@ -75,7 +75,7 @@ class TestSlogTellTypesDisjoint:
             return "ok"
 
         with pytest.raises(UnhandledEffect):
-            doeff_run(slog_handler()(body()))
+            doeff_run(slog_handler(body()))
 
 
 class TestCaptureFlowsAsValues:
@@ -92,7 +92,7 @@ class TestCaptureFlowsAsValues:
         def body():
             return (yield Listen(inner(), types=(SlogEffect,)))
 
-        result, collected = doeff_run(slog_handler()(listen_handler(body())))
+        result, collected = doeff_run(slog_handler(listen_handler(body())))
         assert result == "r"
         assert len(collected) == 1
         assert collected[0].msg == "captured"
@@ -101,8 +101,8 @@ class TestCaptureFlowsAsValues:
 
     def test_handler_installs_expose_no_log_side_channel(self):
         """R3: handler install に .log 属性(削除済み API)が無い。"""
-        assert not hasattr(slog_handler(), "log")
-        assert not hasattr(writer(), "log")
+        assert not hasattr(slog_handler, "log")
+        assert not hasattr(writer, "log")
 
 
 class TestUnhandledSlogIsLoud:
@@ -119,7 +119,7 @@ class TestUnhandledSlogIsLoud:
 
 class TestExplicitSilence:
     def test_slog_discard_handler_is_silent(self, capsys):
-        """R5: 静音は slog_discard_handler() の明示 opt-in。"""
+        """R5: 静音は slog_discard_handler の明示 opt-in。"""
         from doeff_core_effects import slog_discard_handler
 
         @do
@@ -127,7 +127,7 @@ class TestExplicitSilence:
             yield slog("quiet")
             return "done"
 
-        assert doeff_run(slog_discard_handler()(body())) == "done"
+        assert doeff_run(slog_discard_handler(body())) == "done"
         captured = capsys.readouterr()
         assert captured.err == ""
         assert captured.out == ""

@@ -116,7 +116,7 @@ def cache_handler(storage: DurableStorage):
     def handler(effect, k):
         if not isinstance(effect, (CacheGetEffect, CacheExistsEffect, CachePutEffect)):
             yield Pass(effect, k)
-            return
+            return None
 
         key = _storage_key(effect.key)
 
@@ -168,7 +168,7 @@ def make_memo_rewriter(
     def handler(effect, k):
         if not isinstance(effect, effect_type):
             yield Pass(effect, k)
-            return
+            return None
 
         key = key_fn(effect)
         yield Slog(f"[memo] checking {effect_type.__name__} key={key[:16]}…")

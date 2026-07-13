@@ -1,5 +1,14 @@
 # agentd conformance suite — 契約(C0-1 台本設計)
 
+> **裁定追補(2026-07-06、ACP plan U1 / C 段階 plan 裁定台帳 8)**: 本文書の
+> 「Rust = oracle」は破棄された。Rust 実装は正しさの基準であったことは一度も
+> なく(schema 検証は無裁可 subset の fail-open)、以後は「凍結された旧実装
+> (rollback 可用性のためだけに保存)」と読み替える。**S20 以降、result-contract
+> 検証の正解定義は JSON Schema 仕様**(検証器 = jsonschema 参照実装の輸入、
+> 仕様適合は upstream の公式 JSON-Schema-Test-Suite CI から継承)。suite の
+> canonical gate は CONFORMANCE_AGENTD_BIN = Hy session host。旧実装挙動を
+> expected に固定する parity ピンは(歴史ピンとしても)置かない。
+
 Status: **CONTRACT FIXED(2026-07-05)— physics は Rust agentd
 `packages/doeff-agentd/src/main.rs`(branch adr0035-byte-faithful-transport
 tip)の実走査で確定**。ADR-DOE-AGENTS-004 R4(conformance 先行・Rust =
@@ -93,8 +102,9 @@ checklist (a) の凍結対象の一部**(marker→分類は impl 所有になる
 | F-waiting | `Type your message` 等(raw 一致) | status blocked |
 | F-menu-codex | `› 1. Switch…`(idle glyph でメニュー描画) | idle に偽装したメニュー(R6 の核心) |
 | F-frozen | idle でも active でもない任意画面(pager/login 風) | stall watchdog 対象 |
-| F-trust-dialog | claude trust ダイアログ風フレーム | pre-seed 無しの hang 再現用 |
-| F-dialog-codex-update / F-dialog-bypass / F-dialog-fullscreen / F-dialog-managed | R9 fast-path 対象の 4 ダイアログ(S18 で Rust detector と verbatim 一致まで確定) | 決定的 dismisser の発火確認 |
+| F-dialog-codex-update / F-dialog-bypass / F-dialog-fullscreen / F-dialog-managed | R9 fast-path 対象ダイアログ(S18 で Rust detector と verbatim 一致まで確定) | 決定的 dismisser の発火確認 |
+| F-dialog-trust | claude workspace-trust gate(2026-07-07 実物 frame verbatim。旧 F-trust-dialog を置換 — 旧文言は現行 CLI と乖離・未使用だった) | 5 つ目の R9 dialog(Rust oracle 非在)。dismiss = Enter 単発(既定選択が trust 側)。未 handle だと launch 永久 hang する実障害の再発防止 |
+| F-dialog-unknown | R9 のどの detector にも合致しない架空の startup dialog(idle/active marker も無し) | launch fail-closed の再発防止: R9 外 dialog に prompt を送出して silent hang する旧縮退の禁止(2026-07-07 契約修正) |
 
 turn-end 判定は「idle prompt AND not active AND **500 字 tail が前回
 snapshot と一致(stable)**」(main.rs:2832, 2932)なので、フレームは
@@ -126,8 +136,10 @@ snapshot と一致(stable)**」(main.rs:2832, 2932)なので、フレームは
 | S15 | solicitation 1 回目と 2 回目の間で agentd 再起動 → `result_solicitations_used` が生存し合計 2 で終端(awaiting_response latch は再起動でクリアされる仕様と両立) | 002 law counters-durable | (e) | P | M2 |
 | S16 | 2 session 並走・片方を異常系フレームに → 他方が golden path を完走。tick は panic/error を捕捉して継続(run_worker_tick)。per-session 隔離の粒度は oracle では tick 単位 — Hy 実装は session 単位隔離を満たすこと(観測可能な assert は「他方の完走」で共通) | DOE-004 R3 | (f) | P | M2 |
 | S17 | in-process result endpoint ↔ host endpoint の意味論 parity(per-kind ゲートとの継ぎ目) | ACP plan 補遺 | — | X(C1 後) | — |
-| S18 | R9 fast-path: 4 ダイアログの dismissal keys を journal で受領確認(codex update→Down×2+Enter / bypass→Down,Enter / fullscreen→Down,Enter=Not now / managed→Enter)。**観測物理で契約修正**: codex-update/bypass/fullscreen は `wait_for_repl_idle` のみ(launch 経路 = M1)で発火し M2 では到達不能。managed のみ monitor loop でも発火(main.rs:3604)なので M2 で mid-session 検証。tty は canonical+ICRNL(Enter=`\r`→`\n`、Down+Enter は 1 行で到達 = `\x1b[B` を待つ)。managed の bare Enter は内容で判別不能なので `observed_active_at` set(managed 分岐でしか立たない)を主 assert に | 002 R9 | — | P | M1(update/bypass/fullscreen)/ M2(managed) |
+| S18 | R9 fast-path: 5 ダイアログの dismissal keys を journal で受領確認(codex update→Down×2+Enter / bypass→Down,Enter / fullscreen→Down,Enter=Not now / trust→Enter(既定 Yes,I trust — pre-seed S12 と同じ意図) / managed→Enter)。**観測物理で契約修正**: codex-update/bypass/fullscreen/trust は `wait_for_repl_idle` のみ(launch 経路 = M1)で発火し M2 では到達不能。managed のみ monitor loop でも発火(main.rs:3604)なので M2 で mid-session 検証。tty は canonical+ICRNL(Enter=`\r`→`\n`、Down+Enter は 1 行で到達 = `\x1b[B` を待つ)。managed の bare Enter は内容で判別不能なので `observed_active_at` set(managed 分岐でしか立たない)を主 assert に。trust の bare Enter は順序で証明(dialog 表示中に `\n` が着く → その後にしか prompt paste が match しない)。**trust は Rust oracle 非在**(2026-07-07 のカバレッジ欠落修正 — 実物 frame で detect_dialog=None を実証してから追加)。**fail-closed(2026-07-07 契約修正、oracle からの意図的乖離)**: R9 外の未知 dialog で repl-idle 予算(`DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS`、既定 120s)が尽きたら、旧 oracle の「構わず paste」ではなく typed error で launch を fail させる — prompt 未配送・session row 未永続・作った mux session は掃除(画面 tail をエラーに同梱)。silent hang の構造的禁止 | 002 R9 | — | P | M1(update/bypass/fullscreen/trust/unknown)/ M2(managed) |
 | S19 | launch-timeout watchdog: F-frozen のまま startup 完了マーカーを出さない → `DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS` 超過で failed・TimedOut true / zombie(`{"exit":0}` → idle shell)→ exited・Lost true / stale-observation → exited・Lost true。**stale-obs の black-box 形状**: tmux session は生かしたまま(2 枚目の window を足す)監視対象 pane を帯域外 kill → 以後 tick は `tmux_capture` で abort し `last_observed_at` が凍結、stale 分岐(tmux probe より前)が `DOEFF_AGENTD_STALE_OBSERVATION_SECS` 超過で reap。3 knob は全て env-only なので `extra_env` 経由 | main.rs:3485-3587 | — | P | M2 |
+
+| S20 | result-contract 検証 = JSON Schema 仕様(U1 復元契約): items 違反 payload は report 時 reject → solicitation → in-session fix(ACP steward 実障害の形そのまま)/ meta-schema 違反 schema は session.launch で fail-closed 拒否 | doeff#482 / U1 裁定 | — | P(hy gate のみ — 旧実装は fail-open で基準外) | M2 |
 
 X 項目を P として数えて「oracle green」を主張することは禁止。
 **C0-2 の完了 = 全 P green on Rust + 全 X の expected-red 記録**。

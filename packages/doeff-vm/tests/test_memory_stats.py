@@ -64,3 +64,44 @@ def test_vm_live_counts_return_to_baseline_after_scheduled_handler_chain() -> No
     ]
 
     assert doeff_vm.vm_live_counts() == before
+
+
+def test_arena_slots_reclaimed_when_handler_abandons_continuation() -> None:
+    """#497: a handler that never resumes k (abort-style) drops the detached
+    chain; the chain's arena slots must return to the free list within the
+    run. Before reclamation every abort stranded ~2 vacant-reserved slots,
+    so head fiber indices grew ~2 per abort (max index ~2*N); with
+    reclamation the same few slots are reused and indices stay bounded.
+    """
+    n_aborts = 200
+    head_indices: list[int] = []
+
+    @do
+    def abort_handler(effect, k):
+        if isinstance(effect, SyntheticQuery):
+            head_indices.append(k.to_dict()["head"])
+            return "aborted"
+        yield doeff_vm.Pass(effect, k)
+
+    @do
+    def body():
+        yield SyntheticQuery(key="x")
+        return "unreachable"
+
+    @do
+    def scenario():
+        result = None
+        for _ in range(n_aborts):
+            result = yield doeff_vm.WithHandler(abort_handler, body())
+        return result
+
+    before = doeff_vm.vm_live_counts()
+
+    assert run(scenario()) == "aborted"
+
+    assert doeff_vm.vm_live_counts() == before
+    assert len(head_indices) == n_aborts
+    assert max(head_indices) <= 8, (
+        f"arena slots stranded: max head fiber index {max(head_indices)} "
+        f"after {n_aborts} aborted dispatches (expected bounded slot reuse)"
+    )

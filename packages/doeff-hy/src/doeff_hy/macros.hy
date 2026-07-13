@@ -321,7 +321,15 @@ defk {name}: :post type annotation cannot be an empty string.
   "Build a defn form with pre/post assertion wrappers.
    Works for both plain functions (deff) and generator/kleisli functions (defk).
    Kleisli functions (decorator `_doeff_do`) additionally guard against a bare
-   unperformed effect as the last form (see `_guard-performed`)."
+   unperformed effect as the last form (see `_guard-performed`).
+   A leading docstring is emitted BEFORE the pre-condition asserts so it stays
+   the first statement and becomes the function's __doc__ (a lone string body
+   is left in place — it is the return value, not a docstring)."
+  (setv docstring-forms [])
+  (when (and (> (len real-body) 1)
+             (isinstance (get real-body 0) hy.models.String))
+    (setv docstring-forms [(get real-body 0)])
+    (setv real-body (cut real-body 1 None)))
   (setv pre-code (lfor check (or pre-checks [])
                    (_expand-check check name "pre-condition")))
   (setv kleisli? (any (gfor d decorators (= (str d) "_doeff_do"))))
@@ -335,6 +343,7 @@ defk {name}: :post type annotation cannot be an empty string.
             init-forms (cut real-body 0 -1)
             last-form (get real-body -1)]
         `(defn ~decorators ~name ~params
+           ~@docstring-forms
            ~@pre-code
            ~@init-forms
            (setv _contract_result ~last-form)
@@ -343,6 +352,7 @@ defk {name}: :post type annotation cannot be an empty string.
              ~@post-asserts)
            _contract_result))
       `(defn ~decorators ~name ~params
+         ~@docstring-forms
          ~@pre-code
          ~@real-body)))
 

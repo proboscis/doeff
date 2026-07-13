@@ -69,24 +69,23 @@ h0(h1(h2(program)))
 ## Rust VM Stepping Engine
 
 The step engine is a mode/state machine that repeatedly executes one transition at a time.
-The same engine is used by both `run` and `async_run`.
 
 ```mermaid
 flowchart TD
-    A[run / async_run] --> B{Input kind}
+    A[run] --> B{Input kind}
     B -->|DoExpr| C[Use as root control node]
-    B -->|EffectValue| D[Normalize to Perform(effect)]
+    B -->|EffectValue| D[Normalize to Perform]
     D --> C
     C --> E[Install handler stack from handler installers]
     E --> F[VM step loop]
 
     F --> G{Yield classification}
     G -->|DoCtrl| H[Evaluate DoCtrl]
-    G -->|EffectValue| I[Normalize to Perform(effect)]
+    G -->|EffectValue| I[Normalize to Perform]
     I --> J[Dispatch through handler stack]
 
     H --> K{DoCtrl variant}
-    K -->|Perform(effect)| J
+    K -->|Perform effect| J
     K -->|Other control node| L[Update VM mode/state]
 
     J --> M{Handler action}
@@ -98,7 +97,7 @@ flowchart TD
     O -->|Continue| F
     O -->|NeedsPython| P[Driver executes PythonCall and feeds result]
     P --> F
-    O -->|Done / Failed| Q[Build RunResult]
+    O -->|Done / Failed| Q[Return raw value or raise]
 ```
 
 ## Call Stack Tracking
@@ -112,35 +111,31 @@ that metadata attached.
 `Frame::PythonGenerator` entries.
 This keeps stack reconstruction deterministic in VM state while Python object access remains in the driver.
 
-## Effect Observation (`trace=True`)
+## Effect Observation (`WithObserve`)
 
-`run(..., trace=True)` and `async_run(..., trace=True)` enable VM step tracing in `RunResult.trace`.
-Each entry records step-level execution state:
-
-- `step`
-- `event`
-- `mode`
-- `pending`
-- `dispatch_depth`
-- `result`
+Effect observation is done by wrapping a program with `WithObserve(observer, body)`.
+The observer callback receives each effect dispatched within the body. There is no `trace=True`
+parameter on `run()` — observation is composed into the program like any other handler.
 
 Example:
 
 ```python
-result = run(program, handlers=default_handlers(), trace=True)
-first = result.trace[0]
-# {'step': 1, 'event': 'enter', 'mode': 'Deliver', ...}
-```
+from doeff import run, WithObserve
 
-This trace shows when execution enters `Perform` dispatch and how handler-dispatch depth changes
-during stepping.
+observations = []
+
+def my_observer(effect):
+    observations.append(effect)
+
+result = run(WithObserve(my_observer, program))
+# observations now contains each effect that was dispatched
+```
 
 ## Async Boundary
 
-`PythonAsyncSyntaxEscape` is the VM escape for Python async integration.
-
-- `run(...)`: synchronous stepping path.
-- `async_run(...)`: same step semantics plus async escape/await/resume handling.
+For async programs, use `run(scheduled(program))` where `scheduled` comes from
+`doeff_core_effects.scheduler`. The `scheduled` handler enables cooperative scheduling
+of async tasks within the VM's synchronous step loop.
 
 ## Summary
 
@@ -148,4 +143,7 @@ during stepping.
 - Control and effect payloads are separated.
 - `Perform(effect)` is the sole dispatch boundary.
 - Handlers are a nested stack with deterministic inner-to-outer dispatch.
-- Rust VM stepping is the execution core for both sync and async runners.
+- Rust VM stepping is the execution core.
+- `run(doexpr)` takes a single argument and returns the raw value (or raises on error).
+- Observation uses `WithObserve(observer, body)`, not a trace parameter.
+- Async execution uses `run(scheduled(...))`.

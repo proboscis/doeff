@@ -1,13 +1,21 @@
 """
 Core handlers — reader, state, writer.
 
-Handler factories return Program -> Program installers. Compose them by calling
-the returned handler with the program to wrap:
+Stateless handlers are pre-installed Program -> Program functions.
+Parameterised handlers are factories that return Program -> Program installers.
 
-    prog = state(initial={"count": 0})(body())
+Compose them by calling each handler with the program to wrap:
+
+    prog = writer(state(initial={"count": 0})(body()))
     prog = reader(env={"key": "value"})(prog)
     run(prog)
+
+writer and slog_handler use lazy state init via Get/Put + Some
+(same pattern as Hy defhandler's ``lazy`` clause). They require
+the ``state`` handler to be installed as an outer handler.
 """
+
+import threading as _threading
 
 from doeff import do
 from doeff.program import Pass, Resume
@@ -69,23 +77,53 @@ def state(initial=None):
     return _program_handler(handler)
 
 
-def writer():
-    """Writer sink: consumes Tell(message) silently.
+_WRITER_LOG_KEY = "__doeff_writer_log__"
 
-    Accumulation flows as values: wrap the section to observe in
-    Listen(program) — its default types collect WriterTellEffect and it
-    returns (result, collected). Handler installs expose no collection
-    attribute (ADR-DOE-CORE-EFFECTS-001 R3).
+
+@do
+def _writer_handler(effect, k):
+    """Writer handler: collects Tell(message) into a log list.
+
+    Uses lazy state init via Get/Put + Some (same pattern as Hy
+    defhandler's ``lazy`` clause).  Requires the ``state`` handler
+    to be installed as an outer handler.
+
+    Retrieve the collected log with ``yield writer_log()``.
     """
+    if isinstance(effect, WriterTellEffect):
+        from doeff.result import Some
 
-    @do
-    def handler(effect, k):
-        if isinstance(effect, WriterTellEffect):
-            result = yield Resume(k, None)
-            return result
-        yield Pass(effect, k)
+        cached = yield Get(_WRITER_LOG_KEY)
+        if isinstance(cached, Some):
+            log = cached.value
+        else:
+            log = []
+            yield Put(_WRITER_LOG_KEY, Some(log))
+        log.append(effect.msg)
+        result = yield Resume(k, None)
+        return result
+    yield Pass(effect, k)
 
-    return _program_handler(handler)
+
+writer = _program_handler(_writer_handler)
+writer.__name__ = "writer"
+writer.__qualname__ = "writer"
+
+
+@do
+def writer_log():
+    """Return a snapshot of the current writer log from state.
+
+    Requires state handler.  Returns an empty list if no Tell has
+    been issued yet.  The returned list is a copy — mutations do not
+    affect the handler's internal log.
+    """
+    from doeff.result import Some
+
+    cached = yield Get(_WRITER_LOG_KEY)
+    if isinstance(cached, Some):
+        return list(cached.value)
+    return []
 
 
 @do
@@ -139,40 +177,46 @@ def _format_slog_line(effect):
     return " ".join(parts)
 
 
-def slog_handler():
+@do
+def _slog_handler(effect, k):
     """Structured log sink: displays each SlogEffect on stderr and consumes it.
 
     Contract (ADR-DOE-CORE-EFFECTS-001 R2): installing this handler makes
-    slog output visible. Tell/Writer effects pass through untouched.
+    slog output visible — display is its ONLY job. It is the observability
+    IO boundary; it collects nothing (no state, no side-channel).
     Capture flows as values via Listen(prog, types=(SlogEffect,));
-    explicit silence is slog_discard_handler().
+    explicit silence is slog_discard_handler.
+    (slog_log() is retired: with a display-only sink there is no slog
+    state to read. Tell accumulation stays on writer + writer_log().)
     """
     import sys
 
-    @do
-    def handler(effect, k):
-        if isinstance(effect, Slog):
-            print(_format_slog_line(effect), file=sys.stderr)
-            result = yield Resume(k, None)
-            return result
-        yield Pass(effect, k)
-
-    return _program_handler(handler)
+    if isinstance(effect, Slog):
+        print(_format_slog_line(effect), file=sys.stderr)
+        result = yield Resume(k, None)
+        return result
+    yield Pass(effect, k)
 
 
-def slog_discard_handler():
+slog_handler = _program_handler(_slog_handler)
+slog_handler.__name__ = "slog_handler"
+slog_handler.__qualname__ = "slog_handler"
+
+
+@do
+def _slog_discard_handler(effect, k):
     """Silent sink for SlogEffect: consumes without display (explicit opt-in,
     ADR-DOE-CORE-EFFECTS-001 R5). For assertions, capture via
     Listen(prog, types=(SlogEffect,)) inside the program instead."""
+    if isinstance(effect, Slog):
+        result = yield Resume(k, None)
+        return result
+    yield Pass(effect, k)
 
-    @do
-    def handler(effect, k):
-        if isinstance(effect, Slog):
-            result = yield Resume(k, None)
-            return result
-        yield Pass(effect, k)
 
-    return _program_handler(handler)
+slog_discard_handler = _program_handler(_slog_discard_handler)
+slog_discard_handler.__name__ = "slog_discard_handler"
+slog_discard_handler.__qualname__ = "slog_discard_handler"
 
 
 @do
@@ -261,44 +305,189 @@ listen_handler.__name__ = "listen_handler"
 listen_handler.__qualname__ = "listen_handler"
 
 
+# --- Shared Await bridge loop (process-global singleton, issues #494/#498) ---
+#
+# One background asyncio loop + daemon thread for ALL await_handler instances,
+# instead of one per instance (which leaked a thread + loop + fds per run).
+
+_await_bridge_lock = _threading.Lock()
+_await_bridge_state = {
+    # (loop, thread) once created; replaced atomically under the lock.
+    "bridge": None,
+    # BaseException that killed the loop thread's run_forever, if any.
+    "thread_error": None,
+    "atexit_registered": False,
+}
+
+
+def _await_bridge_thread_main(loop):
+    """Run the shared bridge loop, capturing whatever kills run_forever."""
+    import asyncio
+
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_forever()
+    except BaseException as e:
+        _await_bridge_state["thread_error"] = e
+        raise
+
+
+def _shutdown_await_bridge():
+    """atexit hook: best-effort drain, stop and close the shared bridge loop.
+
+    Cancels in-flight bridge coroutines (their ``ep.fail(CancelledError)``
+    lands in an already-dead run queue and is ignored), stops the loop, joins
+    the thread briefly, and closes the loop once run_forever has returned.
+    """
+    import asyncio
+
+    with _await_bridge_lock:
+        bridge = _await_bridge_state["bridge"]
+        _await_bridge_state["bridge"] = None
+    if bridge is None:
+        return
+    loop, thread = bridge
+    if thread.is_alive() and not loop.is_closed():
+
+        def _drain_and_stop():
+            for task in asyncio.all_tasks():
+                task.cancel()
+            # Stop in the NEXT callback batch so the cancellations above get
+            # one loop iteration to actually propagate into the coroutines.
+            loop.call_soon(loop.stop)
+
+        loop.call_soon_threadsafe(_drain_and_stop)
+        thread.join(timeout=1.0)
+    if not thread.is_alive() and not loop.is_closed():
+        loop.close()
+
+
+def _get_await_bridge_loop():
+    """Return the process-global bridge loop, (re)creating it if needed.
+
+    Double-checked locking. The bridge coroutine never lets an exception
+    escape onto the loop, so the loop is expected to outlive the process;
+    this replacement path is a backstop for external kills only (e.g. user
+    code scheduled its own task on the loop and raised SystemExit, or a
+    forked child inherited a bridge whose thread does not exist). It warns
+    loudly, naming the killer exception, before starting a fresh loop.
+    """
+    import asyncio
+    import atexit
+    import warnings
+
+    bridge = _await_bridge_state["bridge"]
+    if bridge is not None:
+        loop, thread = bridge
+        if not loop.is_closed() and thread.is_alive():
+            return loop
+    with _await_bridge_lock:
+        bridge = _await_bridge_state["bridge"]
+        if bridge is not None:
+            loop, thread = bridge
+            if not loop.is_closed() and thread.is_alive():
+                return loop
+            # Previous loop is unusable — report loudly and replace it.
+            killer = _await_bridge_state["thread_error"]
+            warnings.warn(
+                "doeff await bridge loop was unusable "
+                f"(closed={loop.is_closed()}, thread_alive={thread.is_alive()}, "
+                f"killed_by={killer!r}); starting a replacement loop",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            if not thread.is_alive() and not loop.is_closed():
+                loop.close()  # reclaim the dead loop's fds
+        new_loop = asyncio.new_event_loop()
+        t = _threading.Thread(
+            target=_await_bridge_thread_main,
+            args=(new_loop,),
+            name="doeff-await-bridge",
+            daemon=True,
+        )
+        t.start()
+        _await_bridge_state["bridge"] = (new_loop, t)
+        _await_bridge_state["thread_error"] = None
+        if not _await_bridge_state["atexit_registered"]:
+            atexit.register(_shutdown_await_bridge)
+            _await_bridge_state["atexit_registered"] = True
+        return new_loop
+
+
+def _observe_await_bridge_future(future):
+    """Done-callback: observe the bridge future so a BaseException that
+    escaped the bridge coroutine is never silently discarded (#494)."""
+    import concurrent.futures
+    import warnings
+
+    try:
+        exc = future.exception()
+    except concurrent.futures.CancelledError:
+        return
+    if exc is not None:
+        warnings.warn(
+            f"doeff Await bridge coroutine terminated with {exc!r} "
+            "(already reported to the waiting doeff task via ep.fail)",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+
 def await_handler():
     """Await handler: runs async coroutines via a background thread with asyncio.
 
     Uses ExternalPromise to bridge async into the scheduler.
     Requires scheduler to be installed.
+
+    All instances share one process-global event loop + daemon thread
+    (#498); the loop is stopped/closed by an atexit hook. The bridge
+    coroutine resolves its promise on EVERY exit, including BaseException
+    such as asyncio.CancelledError (#494). ``ep.fail`` is the ONLY
+    propagation channel: the scheduler's task wrapper catches only
+    ``Exception``, so KeyboardInterrupt/SystemExit failed into the promise
+    escape the scheduler and reach the ``run()`` caller's thread. They are
+    deliberately NOT re-raised on the loop thread — that would kill the
+    shared loop (asyncio re-raises them out of ``run_forever``), silently
+    orphaning every other in-flight Await in the process, while gaining
+    nothing: ``threading`` swallows SystemExit on daemon threads.
+
+    Known limitation (#498): cancelling a doeff task does NOT cancel the
+    in-flight bridged coroutine — it keeps running on the shared loop and
+    its late completion is ignored. Fixing that requires scheduler-side
+    cancel propagation to the run_coroutine_threadsafe future.
+
+    Isolation trade-off of the shared loop: a bridged coroutine that blocks
+    the loop (e.g. a synchronous call inside async code) now stalls every
+    run's Awaits process-wide, not just its own run's.
     """
     import asyncio
-    import threading
 
     from doeff_core_effects.scheduler import CreateExternalPromise, Wait
-
-    # Shared event loop running in a background thread
-    _loop = [None]
-    _lock = threading.Lock()
-
-    def _get_loop():
-        with _lock:
-            if _loop[0] is None or _loop[0].is_closed():
-                loop = asyncio.new_event_loop()
-                t = threading.Thread(target=loop.run_forever, daemon=True)
-                t.start()
-                _loop[0] = loop
-            return _loop[0]
 
     @do
     def handler(effect, k):
         if isinstance(effect, Await):
             ep = yield CreateExternalPromise()
-            loop = _get_loop()
+            loop = _get_await_bridge_loop()
 
             async def run_coro():
                 try:
                     result = await effect.coroutine
-                    ep.complete(result)
-                except Exception as e:
+                except BaseException as e:
+                    # Resolve the promise on EVERY exit — a swallowed
+                    # BaseException (e.g. asyncio.CancelledError) would
+                    # otherwise park the scheduler forever (#494).
+                    # Never re-raise here, not even KeyboardInterrupt or
+                    # SystemExit: asyncio would propagate it out of
+                    # run_forever and kill the SHARED loop thread, silently
+                    # hanging every other in-flight Await in the process.
+                    # ep.fail already delivers it to the run() caller.
                     ep.fail(e)
+                else:
+                    ep.complete(result)
 
-            asyncio.run_coroutine_threadsafe(run_coro(), loop)
+            fut = asyncio.run_coroutine_threadsafe(run_coro(), loop)
+            fut.add_done_callback(_observe_await_bridge_future)
             value = yield Wait(ep.future)
             result = yield Resume(k, value)
             return result
@@ -412,7 +601,7 @@ def lazy_ask(env=None, *, strict=False):  # noqa: PLR0915 - baseline cleanup kee
                     # Forward to outer handler so env-var-ask (or other
                     # fallback handlers) can resolve the key.
                     yield Pass(effect, k)
-                    return
+                    return None
 
                 # Plain value — resume directly
                 if not isinstance(raw, Program):
@@ -542,13 +731,13 @@ def env_var_ask(*, prefix="DOEFF_"):
     def handler(effect, k):  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
         if not isinstance(effect, Ask):
             yield Pass(effect, k)
-            return
+            return None
 
         env_key = f"{prefix}{effect.key}"
         raw = os.environ.get(env_key)
         if raw is None:
             yield Pass(effect, k)
-            return
+            return None
 
         # Plain string — no caching, always fresh.
         if not (raw.startswith("{") and raw.endswith("}")):

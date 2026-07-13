@@ -1,13 +1,50 @@
 //! Fiber arena for stable fiber IDs within a run.
 
+use std::sync::{Arc, Mutex};
+
 use crate::continuation::{DetachedFiber, DetachedFiberChain};
 use crate::error::VMError;
 use crate::ids::FiberId;
 use crate::segment::Fiber;
 
+/// Channel through which a dropped `DetachedFiberChain` returns its arena
+/// slot indices for reuse (#497).
+///
+/// This is allocator bookkeeping, NOT fiber ownership (ISSUE-VM-001 G1 /
+/// SPEC-VM-021): no Fiber, chain, or continuation ever flows through it.
+/// The chain's fibers move into Continuation ownership at detach and are
+/// destroyed by the chain's own Drop; only the now-permanently-vacant slot
+/// indices are reported here so the arena can return them to its free list
+/// instead of stranding them until run end. Reports may arrive from
+/// arbitrary Python dealloc points, on any thread — hence the Mutex.
+#[derive(Debug, Default)]
+pub struct SlotReclaimQueue {
+    dropped_slot_indices: Mutex<Vec<usize>>,
+}
+
+impl SlotReclaimQueue {
+    /// Called from `DetachedFiberChain::drop` with the slot indices the
+    /// chain still owned when it was abandoned.
+    pub(crate) fn report_dropped_slots(&self, indices: impl Iterator<Item = usize>) {
+        let mut queue = self.dropped_slot_indices.lock().unwrap();
+        queue.extend(indices);
+    }
+
+    /// Drain all pending reports. Cheap when empty (no allocation).
+    fn take_pending(&self) -> Vec<usize> {
+        let mut queue = self.dropped_slot_indices.lock().unwrap();
+        std::mem::take(&mut *queue)
+    }
+}
+
 pub struct FiberArena {
     fibers: Vec<Option<Fiber>>,
     free_list: Vec<usize>,
+    /// Reclaim reports from detached chains dropped without reattachment
+    /// (#497). Drained back into `free_list` before allocating. Replaced
+    /// wholesale on `clear()` so a chain outliving its run session cannot
+    /// poison the next session's free list.
+    slot_reclaim: Arc<SlotReclaimQueue>,
 }
 
 impl FiberArena {
@@ -15,10 +52,12 @@ impl FiberArena {
         FiberArena {
             fibers: Vec::new(),
             free_list: Vec::new(),
+            slot_reclaim: Arc::new(SlotReclaimQueue::default()),
         }
     }
 
     pub fn alloc(&mut self, fiber: Fiber) -> FiberId {
+        self.reclaim_dropped_chain_slots();
         if let Some(idx) = self.free_list.pop() {
             self.fibers[idx] = Some(fiber);
             FiberId::from_index(idx)
@@ -26,6 +65,31 @@ impl FiberArena {
             let id = FiberId::from_index(self.fibers.len());
             self.fibers.push(Some(fiber));
             id
+        }
+    }
+
+    /// Return slots abandoned by dropped detached chains to the free list.
+    ///
+    /// A detached chain owns its arena slots (single-location law): they
+    /// stay vacant-reserved while the continuation is live. When the chain
+    /// is dropped without reattachment its Drop impl reports the indices to
+    /// `slot_reclaim`; this reconciliation makes them allocatable again
+    /// instead of stranding until `clear()` at run end (#497).
+    pub fn reclaim_dropped_chain_slots(&mut self) {
+        for idx in self.slot_reclaim.take_pending() {
+            #[cfg(feature = "invariant-checks")]
+            {
+                if !matches!(self.fibers.get(idx), Some(None)) {
+                    panic!(
+                        "arena: dropped-chain slot {idx} is not vacant-reserved \
+                         (single-location law violated by reclaim)"
+                    );
+                }
+                if self.free_list.contains(&idx) {
+                    panic!("arena: dropped-chain slot {idx} is already on the free list");
+                }
+            }
+            self.free_list.push(idx);
         }
     }
 
@@ -58,6 +122,7 @@ impl FiberArena {
 
         let mut chain = DetachedFiberChain::new(head, last_fiber, detached);
         let _ = chain.set_tail_parent(None);
+        chain.arm_slot_reclaim(Arc::clone(&self.slot_reclaim));
         Ok(chain)
     }
 
@@ -151,6 +216,10 @@ impl FiberArena {
     pub fn clear(&mut self) {
         self.fibers.clear();
         self.free_list.clear();
+        // Detach from chains that outlive this session: their late drops
+        // report into the replaced queue, which nobody drains — a stale
+        // index from a previous session must never reach the new free list.
+        self.slot_reclaim = Arc::new(SlotReclaimQueue::default());
     }
 
     pub fn shrink_to_fit(&mut self) {
@@ -348,6 +417,94 @@ mod tests {
         assert_eq!(
             arena.get(boundary).and_then(|fiber| fiber.parent),
             Some(unrelated)
+        );
+    }
+
+    #[test]
+    fn test_dropped_chain_slots_are_reclaimed_on_next_alloc() {
+        // #497: a detached chain dropped without reattachment (abort-style
+        // handler, scheduler cancellation) must return its slots to the
+        // free list instead of stranding them until run end.
+        let mut arena = FiberArena::new();
+
+        let boundary = arena.alloc(Fiber::new(None));
+        let body = arena.alloc(Fiber::new(Some(boundary)));
+
+        let chain = arena.detach_chain(body, boundary).unwrap();
+        assert_eq!(arena.len(), 0);
+        assert_eq!(arena.slot_count(), 2);
+
+        drop(chain);
+
+        let reused_a = arena.alloc(Fiber::new(None));
+        let reused_b = arena.alloc(Fiber::new(None));
+        assert!(reused_a.index() < 2, "first alloc must reuse a reclaimed slot");
+        assert!(reused_b.index() < 2, "second alloc must reuse a reclaimed slot");
+        assert_eq!(
+            arena.slot_count(),
+            2,
+            "slot vector must not grow after an abandoned chain is dropped"
+        );
+    }
+
+    #[test]
+    fn test_abort_loop_slot_count_is_bounded() {
+        // #497 regression shape: repeated detach-then-drop cycles (one per
+        // abandoned dispatch) must keep the slot vector bounded.
+        let mut arena = FiberArena::new();
+        for _ in 0..100 {
+            let boundary = arena.alloc(Fiber::new(None));
+            let body = arena.alloc(Fiber::new(Some(boundary)));
+            let chain = arena.detach_chain(body, boundary).unwrap();
+            drop(chain);
+        }
+        assert_eq!(arena.len(), 0);
+        assert_eq!(
+            arena.slot_count(),
+            2,
+            "100 abandoned chains must reuse the same two slots"
+        );
+    }
+
+    #[test]
+    fn test_chain_dropped_after_clear_does_not_poison_next_session() {
+        // A chain can outlive its run session (a Python K held across
+        // run()). Its late drop must not inject stale indices into the
+        // next session's free list.
+        let mut arena = FiberArena::new();
+        let boundary = arena.alloc(Fiber::new(None));
+        let body = arena.alloc(Fiber::new(Some(boundary)));
+        let chain = arena.detach_chain(body, boundary).unwrap();
+
+        arena.clear(); // run session ends while the chain is still owned outside
+
+        let live = arena.alloc(Fiber::new(None));
+        drop(chain); // stale report goes to the orphaned queue
+
+        let next = arena.alloc(Fiber::new(None));
+        assert_ne!(next, live, "stale reclaim must not hand out a live slot");
+        assert!(arena.get(live).is_some(), "live fiber must survive stale drops");
+        assert_eq!(arena.len(), 2);
+    }
+
+    #[test]
+    fn test_attached_chain_does_not_reclaim_slots() {
+        // Consuming a chain via attach_chain must NOT report its slots:
+        // the fibers are live in the arena again.
+        let mut arena = FiberArena::new();
+        let boundary = arena.alloc(Fiber::new(None));
+        let body = arena.alloc(Fiber::new(Some(boundary)));
+        let chain = arena.detach_chain(body, boundary).unwrap();
+
+        arena.attach_chain(chain, None).unwrap();
+        arena.reclaim_dropped_chain_slots();
+
+        assert_eq!(arena.len(), 2);
+        let fresh = arena.alloc(Fiber::new(None));
+        assert_eq!(
+            fresh.index(),
+            2,
+            "no slot may be recycled while its fiber is live"
         );
     }
 }

@@ -71,14 +71,16 @@ The CLI automatically:
 
 ```python
 # myapp/interpreter.py
-from doeff import Program, default_handlers, run
+from doeff import do, run
+from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects.scheduler import scheduled
 
 def my_interpreter(prog: Program) -> any:
     """
     Execute programs for myapp.
     # doeff: interpreter, default
     """
-    return run(prog, handlers=default_handlers()).value
+    return run(scheduled(writer(state()(reader(env={})(prog)))))
 ```
 
 **Step 2**: Mark your environment (optional)
@@ -196,7 +198,7 @@ The CLI searches for functions marked with `# doeff: interpreter, default`:
 # myapp/__init__.py
 def base_interpreter(prog: Program):
     """# doeff: interpreter, default"""
-    return run(prog, handlers=default_handlers()).value
+    return run(scheduled(writer(state()(reader(env={})(prog)))))
 
 # myapp/features/__init__.py
 # (no interpreter)
@@ -243,7 +245,7 @@ Interpreters must:
 ```python
 def my_interpreter(prog: Program):
     """# doeff: interpreter, default"""
-    return run(prog, handlers=default_handlers()).value
+    return run(scheduled(writer(state()(reader(env={})(prog)))))
 ```
 
 **Invalid** (async not allowed):
@@ -352,13 +354,13 @@ def my_interpreter(prog: Program):
     Execute programs with custom settings.
     # doeff: interpreter, default
     """
-    return run(prog, handlers=default_handlers()).value
+    return run(scheduled(writer(state()(reader(env={})(prog)))))
 ```
 
 2. **Inline comment**:
 ```python
 def my_interpreter(prog: Program):  # doeff: interpreter, default
-    return run(prog, handlers=default_handlers()).value
+    return run(scheduled(writer(state()(reader(env={})(prog)))))
 ```
 
 3. **Multi-line signature**:
@@ -497,7 +499,7 @@ myapp/
 # myapp/__init__.py
 def base_interpreter(prog):
     """# doeff: interpreter, default"""
-    return run(prog, handlers=default_handlers()).value
+    return run(scheduled(writer(state()(reader(env={})(prog)))))
 
 # doeff: default
 base_env = Program.pure({'debug': True})
@@ -538,7 +540,7 @@ myapp/
 # myapp/__init__.py
 def base_interpreter(prog):
     """# doeff: interpreter, default"""
-    return run(prog, handlers=default_handlers()).value
+    return run(scheduled(writer(state()(reader(env={})(prog)))))
 
 # doeff: default
 base_env = Program.pure({
@@ -714,7 +716,7 @@ graph TD
 # myapp/__init__.py
 def base_interpreter(prog):
     """# doeff: interpreter, default"""
-    return run(prog, handlers=default_handlers()).value
+    return run(scheduled(writer(state()(reader(env={})(prog)))))
 ```
 
 2. **Or specify manually:**
@@ -929,7 +931,7 @@ def my_interpreter(prog: Program):
 
     # doeff: interpreter, default
     """
-    return run(prog, handlers=default_handlers()).value
+    return run(scheduled(writer(state()(reader(env={})(prog)))))
 ```
 
 **Recommended: Preceding comment for envs**
@@ -1042,12 +1044,12 @@ grep -r "def.*interpreter" --include="*.py"
 ```python
 # Before
 def my_interpreter(prog: Program):
-    return run(prog, handlers=default_handlers()).value
+    return run(scheduled(writer(state()(reader(env={})(prog)))))
 
 # After
 def my_interpreter(prog: Program):
     """# doeff: interpreter, default"""
-    return run(prog, handlers=default_handlers()).value
+    return run(scheduled(writer(state()(reader(env={})(prog)))))
 ```
 
 **Step 3: Test discovery**

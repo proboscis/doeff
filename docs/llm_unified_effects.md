@@ -4,7 +4,7 @@
 
 - `LLMChat`
 - `LLMStreamingChat`
-- `LLMStructuredOutput`
+- `LLMStructuredQuery`
 - `LLMEmbedding`
 
 ## Why
@@ -20,7 +20,7 @@ Handlers inspect `effect.model`:
 2. If not, it yields `Pass()` so the next outer handler can try.
 
 When a handler uses a narrow effect annotation such as `effect: LLMChat` or
-`effect: LLMStructuredOutput`, the installed handler scope also carries a runtime type filter so
+`effect: LLMStructuredQuery`, the installed handler scope also carries a runtime type filter so
 non-matching effects skip the handler entirely.
 
 This enables a single program to call multiple providers by model name.
@@ -31,7 +31,7 @@ This enables a single program to call multiple providers by model name.
 from pydantic import BaseModel
 
 from doeff import do, run
-from doeff_llm.effects import LLMChat, LLMStructuredOutput
+from doeff_llm.effects import LLMChat, LLMStructuredQuery
 from doeff_gemini.handlers import gemini_production_handler
 from doeff_openai.handlers import openai_production_handler
 from doeff_openrouter.handlers import openrouter_production_handler
@@ -44,7 +44,7 @@ class Analysis(BaseModel):
 
 @do
 def workflow():
-    analysis = yield LLMStructuredOutput(
+    analysis = yield LLMStructuredQuery(
         messages=[{"role": "user", "content": "Analyze this code"}],
         response_format=Analysis,
         model="gpt-4o",
@@ -66,11 +66,6 @@ result = run(
             openai_production_handler(workflow()),
         ),
     ),
-    env={
-        "openai_api_key": "...",
-        "gemini_api_key": "...",
-        "openrouter_api_key": "...",
-    },
 )
 ```
 
@@ -83,3 +78,8 @@ Provider-specific effect classes remain for compatibility:
 - `doeff_openrouter.effects.RouterChat`, `RouterStructuredOutput`
 
 They are now deprecated aliases and emit `DeprecationWarning` when instantiated.
+
+## Migration Note
+
+- `LLMStructuredOutput` was renamed to `LLMStructuredQuery`. The old name does not exist in the current API.
+- `run()` takes a single `doexpr` argument and returns the raw value. It does not accept `env=`, `handlers=`, or `trace=` keyword arguments. Environment values should be provided via handler composition (e.g. the `Ask` effect and `lazy_ask` handler).

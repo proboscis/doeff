@@ -1,6 +1,6 @@
 # Cache System
 
-doeff provides a comprehensive caching system with policy-based cache management.
+doeff provides a caching system with policy-based cache management via the `doeff_core_effects` package.
 
 > **Note**: For detailed cache system documentation including policy fields, lifecycle hints, storage options, and custom handlers, see **[cache.md](cache.md)**.
 
@@ -11,28 +11,21 @@ doeff provides a comprehensive caching system with policy-based cache management
 - **`CacheGet(key)`** - Retrieve cached value (raises KeyError on miss)
 - **`CachePut(key, value, **policy)`** - Store value with policy hints
 
-### Cache Decorator
+### Import
 
 ```python
-from doeff import cache, do
-
-@cache(ttl=60, lifecycle=CacheLifecycle.SESSION)
-@do
-def expensive_computation(x: int):
-    yield Tell("Computing (this should only happen once)...")
-    # Expensive work here
-    return x * 2
-
-# First call computes
-result1 = yield expensive_computation(5)  # Computes
-
-# Second call uses cache
-result2 = yield expensive_computation(5)  # From cache
+from doeff_core_effects.cache_effects import CacheGet, CachePut
+from doeff_core_effects.cache_policy import CacheLifecycle, CacheStorage
 ```
 
 ### Manual Cache Control
 
 ```python
+from doeff import do
+from doeff_core_effects import Tell
+from doeff_core_effects.cache_effects import CacheGet, CachePut
+from doeff_core_effects.cache_policy import CacheLifecycle, CacheStorage
+
 @do
 def with_manual_cache():
     try:
@@ -59,9 +52,9 @@ def with_manual_cache():
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `ttl` | int | Time-to-live in seconds |
-| `lifecycle` | CacheLifecycle | SESSION, PERSISTENT, TEMPORARY |
-| `storage` | CacheStorage | MEMORY, DISK, DISTRIBUTED |
+| `ttl` | float | Time-to-live in seconds |
+| `lifecycle` | CacheLifecycle | TRANSIENT, SESSION, PERSISTENT |
+| `storage` | CacheStorage | MEMORY, DISK |
 | `metadata` | dict | Custom metadata |
 
 See [cache.md](cache.md) for complete policy documentation.
@@ -71,16 +64,26 @@ See [cache.md](cache.md) for complete policy documentation.
 ### API Response Caching
 
 ```python
-@cache(ttl=60)
+from doeff import do
+from doeff_core_effects.cache_effects import CacheGet, CachePut
+
 @do
 def fetch_user(user_id: int):
-    response = yield Await(httpx.get(f"/users/{user_id}"))
-    return response.json()
+    try:
+        return (yield CacheGet(f"user_{user_id}"))
+    except KeyError:
+        response = yield Await(httpx.get(f"/users/{user_id}"))
+        data = response.json()
+        yield CachePut(f"user_{user_id}", data, ttl=60)
+        return data
 ```
 
 ### Conditional Caching
 
 ```python
+from doeff import Try, do
+from doeff_core_effects.cache_effects import CacheGet, CachePut
+
 @do
 def smart_cache(key, fresh=False):
     if fresh:
@@ -99,4 +102,4 @@ def smart_cache(key, fresh=False):
 
 - **[cache.md](cache.md)** - Complete cache system documentation
 - **[Patterns](12-patterns.md)** - Cache patterns and best practices
-- **[Advanced Effects](09-advanced-effects.md)** - Gather and Atomic effects
+- **[Advanced Effects](09-advanced-effects.md)** - Spawn, Gather, and concurrency effects

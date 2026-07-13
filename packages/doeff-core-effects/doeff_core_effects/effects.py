@@ -126,7 +126,7 @@ class WriterTellEffect(EffectBase):
 class SlogEffect(EffectBase):
     """Structured log (observability) effect: msg + kwargs.
 
-    This is the wire type for slog(). slog_handler() displays it on stderr;
+    This is the wire type for slog(). slog_handler displays it on stderr;
     capture flows as values via Listen(prog, types=(SlogEffect,)).
     Not a WriterTellEffect: Writer accumulation and observability have
     opposite default behaviors (ADR-DOE-CORE-EFFECTS-001).

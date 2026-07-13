@@ -8,6 +8,7 @@ from doeff_core_effects.handlers import (
     state,
     try_handler,
     writer,
+    writer_log,
 )
 
 from doeff import Pure, do
@@ -79,15 +80,10 @@ class TestWriter:
         def body():
             yield Tell("hello")
             yield Tell("world")
-            return "done"
+            return (yield writer_log())
 
-        @do
-        def listened():
-            return (yield Listen(body()))
-
-        result, collected = doeff_run(writer()(listen_handler(listened())))
-        assert result == "done"
-        assert [e.msg for e in collected] == ["hello", "world"]
+        result = doeff_run(state()(writer(body())))
+        assert result == ["hello", "world"]
 
 
 class TestComposed:
@@ -111,16 +107,13 @@ class TestComposed:
             name = yield Ask("name")
             yield Tell(f"hello {name}")
             yield Put("greeted", True)
-            return (yield Get("greeted"))
+            greeted = yield Get("greeted")
+            log = yield writer_log()
+            return (greeted, log)
 
-        @do
-        def listened():
-            return (yield Listen(body()))
-
-        prog = reader(env={"name": "Bob"})(state()(writer()(listen_handler(listened()))))
-        result, collected = doeff_run(prog)
-        assert result is True
-        assert [e.msg for e in collected] == ["hello Bob"]
+        prog = reader(env={"name": "Bob"})(state()(writer(body())))
+        result = doeff_run(prog)
+        assert result == (True, ["hello Bob"])
 
 
 class TestTry:
@@ -178,7 +171,7 @@ class TestSlog:
         def listened():
             return (yield Listen(body(), types=(Slog,)))
 
-        result, collected = doeff_run(slog_handler()(listen_handler(listened())))
+        result, collected = doeff_run(slog_handler(listen_handler(listened())))
         assert result == "done"
         assert [(e.msg, e.kwargs) for e in collected] == [
             ("hello", {}),
@@ -260,6 +253,133 @@ class TestAwait:
         assert result == list(range(100))
         # 100 tasks x 0.1s sleep = should be ~0.1s if concurrent, not 10s
         assert elapsed < 2.0, f"took {elapsed:.1f}s — not concurrent!"
+
+    def test_await_base_exception_fails_promise_not_hang(self):
+        """#494: a coroutine raising a BaseException (asyncio.CancelledError)
+        must fail the Await promptly — not park the scheduler forever."""
+        import asyncio
+        import threading
+
+        from doeff_core_effects import Await, await_handler
+        from doeff_core_effects.scheduler import scheduled
+
+        async def evil():
+            raise asyncio.CancelledError
+
+        @do
+        def body():
+            v = yield Await(evil())
+            return v
+
+        # Run in a worker thread guarded by a timeout so a regression
+        # (permanent hang on external_queue.get) fails instead of wedging
+        # the test session (pattern: test_scheduler._run_scheduled_with_timeout).
+        error: dict[str, BaseException] = {}
+
+        def worker() -> None:
+            try:
+                doeff_run(scheduled(await_handler()(body())))
+            except BaseException as exc:  # re-checked below
+                error["value"] = exc
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        thread.join(timeout=5.0)
+        assert not thread.is_alive(), (
+            "scheduler hung: BaseException in awaited coroutine never resolved "
+            "its ExternalPromise (#494)"
+        )
+        assert isinstance(error.get("value"), asyncio.CancelledError)
+
+    def test_await_handler_instances_share_one_loop_thread(self):
+        """#498: sequential runs with fresh await_handler() instances must
+        share one process-global loop thread, not leak one thread per run."""
+        import asyncio
+        import threading
+
+        from doeff_core_effects import Await, await_handler
+        from doeff_core_effects.scheduler import scheduled
+
+        @do
+        def body():
+            yield Await(asyncio.sleep(0))
+            return 1
+
+        before = threading.active_count()
+        for _ in range(20):
+            assert doeff_run(scheduled(await_handler()(body()))) == 1
+        after = threading.active_count()
+        # At most +1: the shared bridge loop thread (0 if an earlier test
+        # already created it).
+        assert after - before <= 1, (
+            f"leaked {after - before} threads across 20 runs "
+            "(one background loop thread per await_handler instance, #498)"
+        )
+
+    def test_await_systemexit_isolated_from_concurrent_runs(self):
+        """#494/#498 review finding: SystemExit raised in one run's awaited
+        coroutine must fail ONLY that run's promise. Re-raising it on the
+        shared bridge loop thread kills the loop, silently hanging every
+        other run's in-flight Await forever (cross-run blast radius)."""
+        import asyncio
+        import threading
+
+        from doeff_core_effects import Await, await_handler
+        from doeff_core_effects.scheduler import scheduled
+
+        b_in_flight = threading.Event()
+
+        async def slow_ok():
+            b_in_flight.set()
+            await asyncio.sleep(0.5)
+            return "B-done"
+
+        async def evil():
+            raise SystemExit(1)
+
+        @do
+        def body_b():
+            return (yield Await(slow_ok()))
+
+        @do
+        def body_a():
+            return (yield Await(evil()))
+
+        results: dict[str, object] = {}
+
+        def run_b() -> None:
+            try:
+                results["b"] = doeff_run(scheduled(await_handler()(body_b())))
+            except BaseException as exc:  # re-checked below
+                results["b_exc"] = exc
+
+        def run_a() -> None:
+            try:
+                results["a"] = doeff_run(scheduled(await_handler()(body_a())))
+            except BaseException as exc:  # re-checked below
+                results["a_exc"] = exc
+
+        # Run B first so its Await(sleep) is in flight on the bridge loop
+        # when run A's coroutine raises SystemExit.
+        tb = threading.Thread(target=run_b, daemon=True)
+        tb.start()
+        assert b_in_flight.wait(timeout=5.0), "run B's Await never reached the bridge loop"
+
+        ta = threading.Thread(target=run_a, daemon=True)
+        ta.start()
+        ta.join(timeout=5.0)
+        assert not ta.is_alive(), "run A hung on Await(SystemExit)"
+        # ep.fail is the propagation channel: the scheduler's task wrapper
+        # catches only Exception, so SystemExit reaches run A's caller.
+        assert isinstance(results.get("a_exc"), SystemExit)
+
+        tb.join(timeout=5.0)
+        assert not tb.is_alive(), (
+            "independent run B hung: SystemExit was re-raised on the shared "
+            "bridge loop thread, killing the loop and orphaning B's "
+            "in-flight Await (cross-run blast radius)"
+        )
+        assert results.get("b") == "B-done"
 
 
 class TestGetExecutionContext:

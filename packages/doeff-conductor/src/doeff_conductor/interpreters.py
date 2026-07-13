@@ -1,6 +1,5 @@
 """Named conductor interpreter constants backing public verbs."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 

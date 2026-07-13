@@ -33,13 +33,15 @@
      (interpretation
        "Listen は tee(observer)であって sink ではない — listen_handler は collect した後 Pass で外へ流し続け、types 指定可能な汎用オブザーバである(handlers.py:205-236)。ゆえに sink の意味論変更と収集要求は独立であり、収集は Listen の値フロー (result, collected) で満たせる。handler オブジェクトに mutable 属性を生やす理由は存在しない。これは doeff-agents の『結果は AwaitOutcome.result のみ、side-channel ファイル禁止』と同型の境界規律。")
      (interpretation
-       "VM の『unhandled effect = エラー』は結合核の不変量。Python logging の lastResort 相当を VM に特例として入れると、1 エフェクト型だけ不変量を破る浸食になる。可視性の保証はエントリポイント(CLI・テストハーネス)がハンドラスタックに sink を標準装備することで実現する。")]
+       "VM の『unhandled effect = エラー』は結合核の不変量。Python logging の lastResort 相当を VM に特例として入れると、1 エフェクト型だけ不変量を破る浸食になる。可視性の保証はエントリポイント(CLI・テストハーネス)がハンドラスタックに sink を標準装備することで実現する。")
+     (interpretation
+       "2026-07-13 統合裁定(main 0acce3a9 との merge): main は同じ .log 廃止を『State 収集 + writer_log()/slog_log() 値フロー + handler の installer 化 + handler からの direct IO 排除』で実施済みだった。統合形はユーザー裁定『slog_handler is only for displaying』: slog_handler は表示専用の observability IO boundary(ShellRun handler と同型の境界 handler であり direct-IO 排除哲学と整合)、Tell の蓄積は main の writer + writer_log()(State 収集)を正とし、slog_log() は退役(表示専用 sink に読むべき state が無い。slog の収集は Listen の値フロー)。handler 形状は main の installer 形に統一。")]
   :decision
     [(rule R1 "ワイヤ型分離: slog(msg, **kwargs) は新設 SlogEffect(msg, **kwargs) を返す。Slog エイリアスは SlogEffect を指すよう付け替える。WriterTellEffect は Tell() 専用に戻り、writer() / Listen の既定対象(types=(WriterTellEffect,))は無変更。SlogEffect と WriterTellEffect に継承関係を作らない(isinstance で相互に捕まらないこと)。")
-     (rule R2 "slog_handler() は SlogEffect の terminal sink: rich 非依存の 1 行整形(level kwarg があれば使用、なければ INFO、残り kwargs は key=value)を stderr へ出力して consume(Resume k None)する。『slog_handler を入れたらログは見える』がハンドラ契約。stdout は使わない(プログラム結果専用)。")
-     (rule R3 "handler install に mutable 収集属性(.log 等)を生やす side-channel は全面禁止(削除済み API の正式記録)。writer() も .log を持たない Tell の terminal sink になる。収集が必要な場面は Listen(prog, types=(SlogEffect,)) または Listen(prog)(Tell 収集)の値フロー (result, collected) のみが公認経路。")
-     (rule R4 "unhandled SlogEffect は従来どおり UnhandledEffect(VM に lastResort 特例を入れない)。可視性はエントリポイントの標準装備で保証する: doeff/cli/run_services.py の default_interpreter は slog_handler()(stderr sink)を装備し、テストハーネス(将来の doeff_interpreter fixture を含む)も display sink を既定にする — pytest は stderr を capture するのでテスト出力は汚れず、ログを assert するテストだけ Listen を使う。")
-     (rule R5 "静音は明示 opt-in: slog_discard_handler()(SlogEffect を黙って consume する sink)を提供する。slog_capture_handler は導入しない — 収集結果を返す手段が side-channel 属性しかなく(R3 違反)、Listen の値フローと完全に重複するため。")
+     (rule R2 "slog_handler は SlogEffect の表示専用 terminal sink(installer 形状、main 0acce3a9 に整合): rich 非依存の 1 行整形(level kwarg があれば使用、なければ INFO、残り kwargs は key=value)を stderr へ出力して consume(Resume k None)する。表示が唯一の仕事で、収集は一切しない(state も属性も持たない)。『slog_handler を入れたらログは見える』がハンドラ契約。stdout は使わない(プログラム結果専用)。stderr 書き込みは observability の IO boundary としてこの 1 handler に隔離する。")
+     (rule R3 "handler install に mutable 収集属性(.log 等)を生やす side-channel は全面禁止(削除済み API の正式記録)。収集の公認経路は 2 つ: slog は Listen(prog, types=(SlogEffect,)) の値フロー (result, collected)、Tell は writer(State 収集)+ writer_log() の値フロー(main 0acce3a9 の設計)。slog_log() は退役 — slog_handler が表示専用になった以上、読むべき slog state は存在しない。")
+     (rule R4 "unhandled SlogEffect は従来どおり UnhandledEffect(VM に lastResort 特例を入れない。Listen / Tell も handler 不在なら同様に loud)。可視性はエントリポイントの標準装備で保証する: doeff/cli/run_services.py の default_interpreter は slog_handler(stderr sink)を装備し、テストハーネス(将来の doeff_interpreter fixture を含む)も display sink を既定にする — pytest は stderr を capture するのでテスト出力は汚れず、ログを assert するテストだけ Listen を使う。")
+     (rule R5 "静音は明示 opt-in: slog_discard_handler(SlogEffect を黙って consume する installer 形状の sink)を提供する。slog_capture_handler は導入しない — 収集結果を返す手段が side-channel 属性しかなく(R3 違反)、Listen の値フローと完全に重複するため。")
      (rule R6 "横から WriterTellEffect を isinstance している消費者は型分離に整合させる: sim_time のログ整形は SlogEffect を対象に変更、docker dockerfile.hy は用途に応じて対象型を明示、doeff-preset の表示系は現行 API(.msg/.kwargs、Pass(effect, k))へ修理して rich sink の差し替えとして提供するか退役する。存在しない effect.message 属性の参照は禁止。")]
   :laws
     [(law slog-tell-types-disjoint

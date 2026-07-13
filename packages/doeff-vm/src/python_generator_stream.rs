@@ -7,6 +7,7 @@
 
 use pyo3::exceptions::PyStopIteration;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::types::PyString;
 
 use doeff_vm_core::do_ctrl::DoCtrl;
@@ -18,7 +19,18 @@ use doeff_vm_core::value::Value;
 /// The Rust side uses `is_instance_of::<PyEffectBase>()` for classification.
 ///
 /// Yielding an EffectBase from a generator is implicitly treated as Perform(effect).
-#[pyclass(name = "EffectBase", subclass, dict, module = "doeff_vm.doeff_vm")]
+///
+/// GC note (#500): EffectBase deliberately does NOT declare a pyo3 `dict`
+/// slot. pyo3 0.28 cannot visit a pyclass dict slot from `__traverse__`
+/// (the method only receives `&self`), so a base-owned `__dict__` would be
+/// invisible to the cycle collector — any reference cycle through an
+/// effect's attributes would be permanently uncollectable. Without a base
+/// dict slot, Python subclasses (every real effect is a subclass) get a
+/// CPython-managed `__dict__` which `subtype_traverse`/`subtype_clear`
+/// handle natively, making cycles through effect attributes collectable.
+/// Consequence: direct `EffectBase()` instances have no `__dict__` and
+/// reject attribute assignment — effects must be subclasses (they are).
+#[pyclass(name = "EffectBase", subclass, module = "doeff_vm.doeff_vm")]
 #[derive(Debug)]
 pub struct PyEffectBase;
 
@@ -69,6 +81,17 @@ impl PythonCallable {
     fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyAny>,))> {
         let cls = py.get_type::<Self>().into_any().unbind();
         Ok((cls, (self.callable.clone_ref(py),)))
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.callable)
+    }
+
+    fn __clear__(&mut self, py: Python<'_>) {
+        // Break cycles through the wrapped callable. The object is GC
+        // garbage at this point; any buggy post-clear use fails loudly
+        // ("'NoneType' object is not callable").
+        self.callable = py.None();
     }
 }
 
@@ -160,6 +183,16 @@ impl PyIRStream {
             generator,
             tail_resume_lines: tail_resume_lines.unwrap_or_default(),
         }
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.generator)
+    }
+
+    fn __clear__(&mut self, py: Python<'_>) {
+        // Break cycles through the wrapped generator. The object is GC
+        // garbage at this point; any buggy post-clear use fails loudly.
+        self.generator = py.None();
     }
 }
 
@@ -490,6 +523,38 @@ fn continuation_handlers_value(
     Ok(Value::List(handlers))
 }
 
+fn continuation_boundaries_value(
+    py: Python<'_>,
+    k: &Py<doeff_vm_core::continuation::PyK>,
+    label: &str,
+) -> Result<Value, String> {
+    let k_ref = k.bind(py);
+    let k_borrowed = k_ref.borrow();
+    let Some(doeff_vm_core::OwnedControlContinuation::Started(k)) = k_borrowed.continuation_ref()
+    else {
+        return Err(format!(
+            "{}: continuation has no detached fiber chain",
+            label
+        ));
+    };
+    let boundaries = k
+        .boundary_callables()
+        .ok_or_else(|| format!("{}: continuation has no detached fiber chain", label))?
+        .into_iter()
+        .map(|(kind, callable)| {
+            let kind_name = match kind {
+                doeff_vm_core::BoundaryKind::Handler => "handler",
+                doeff_vm_core::BoundaryKind::Observer => "observer",
+            };
+            Value::List(vec![
+                Value::String(kind_name.to_string()),
+                Value::Callable(callable),
+            ])
+        })
+        .collect();
+    Ok(Value::List(boundaries))
+}
+
 /// Wrap a handler callable as Value::Callable.
 fn wrap_handler(py: Python<'_>, handler: &Py<PyAny>) -> Value {
     let callable = PythonCallable::new(handler.clone_ref(py));
@@ -600,6 +665,10 @@ pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<
     }
     if let Ok(gh) = obj.downcast::<PyGetHandlers>() {
         let value = continuation_handlers_value(py, &gh.get().continuation, "GetHandlers")?;
+        return Ok(DoCtrl::Pure { value });
+    }
+    if let Ok(gb) = obj.downcast::<PyGetBoundaries>() {
+        let value = continuation_boundaries_value(py, &gb.get().continuation, "GetBoundaries")?;
         return Ok(DoCtrl::Pure { value });
     }
     if obj.downcast::<crate::do_expr::PyGetOuterHandlers>().is_ok() {

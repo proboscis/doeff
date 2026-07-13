@@ -15,25 +15,35 @@
 (import doeff_agents.session-backend [SessionBackend])
 (import doeff_agents.monitor [MonitorState SessionStatus
   detect-status hash-content is-waiting-for-input])
-(import doeff_agents.shell [wrap-with-shell-exports])
+(import doeff_agents.shell [wrap-with-shell-exports
+                            assert-session-env-is-non-auth-overlay])
 (import doeff_agents [tmux])
 
 (import shlex)
 
 
-(defhandler codex-handler [* [backend None]]
-  "Codex agent handler — catches LaunchEffect(CODEX) directly."
+(defhandler codex-handler [* [backend None] [codex-home None]]
+  "Codex agent handler — catches LaunchEffect(CODEX) directly.
+
+   R9(ADR-DOE-AGENTS-004): auth は束縛時構成 — CODEX_HOME はこの handler を
+   束縛する者が `codex-home` で注入する(未指定ならプロセス env 継承のまま)。
+   session-env は非 auth overlay で、binding 所有キーの混入は loud に拒否。"
   (lazy-var sessions {})
 
   (LaunchEffect [session-name agent-type work-dir prompt model mcp-tools mcp-server-name effort bare ready-timeout session-env]
     :when (= agent-type AgentType.CODEX)
+    (assert-session-env-is-non-auth-overlay session-env
+      :context "LaunchEffect.session_env (codex-handler)")
+    (setv launch-env (dict (or session-env {})))
+    (when (is-not codex-home None)
+      (setv (get launch-env "CODEX_HOME") (str codex-home)))
     (setv active-backend backend)
     (when (is active-backend None)
       (<- active-backend (Ask SessionBackend)))
     (when mcp-tools
       (raise (NotImplementedError "Codex MCP tools are not supported by codex-handler")))
     (setv session-info (.new-session active-backend
-      (tmux.SessionConfig :session-name session-name :work-dir work-dir :env session-env)))
+      (tmux.SessionConfig :session-name session-name :work-dir work-dir :env launch-env)))
     (setv params (LaunchParams
       :work-dir work-dir
       :prompt prompt
@@ -42,7 +52,7 @@
       :bare bare))
     (setv argv (.launch-command (CodexAdapter) params))
     (.send-keys active-backend session-info.pane-id
-      (wrap-with-shell-exports (shlex.join argv) session-env)
+      (wrap-with-shell-exports (shlex.join argv) launch-env)
       :literal False)
     ;; The task prompt belongs on the live terminal transport, never in argv
     ;; or stdin. This keeps Codex interactive for validation follow-ups.

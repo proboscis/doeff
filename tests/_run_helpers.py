@@ -42,9 +42,9 @@ def default_handlers(env: Any = None, store: Any = None) -> list[Any]:
     return [
         reader(env=env),
         state(initial=initial),
-        writer(),
+        writer,
         try_handler,
-        slog_handler(),
+        slog_handler,
         local_handler,
         listen_handler,
         await_handler(),

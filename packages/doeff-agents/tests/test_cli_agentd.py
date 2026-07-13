@@ -218,7 +218,9 @@ def test_monitoring_commands_fail_loudly_when_agentd_unreachable(
 
     assert result.exit_code == 1
     assert "agentd が起動していません" in result.output
-    assert "doeff-agentd serve" in result.output
+    # retirement (DOE-004 R7): the hint points at the ensure verb / the
+    # canonical Hy host, never the retired Rust binary
+    assert "doeff-sessionhost" in result.output
 
 
 def test_agentd_ensure_json_outputs_readiness_contract(
@@ -264,7 +266,9 @@ def test_agentd_ensure_json_fails_loudly_when_agentd_unreachable(
 
     assert result.exit_code == 1
     assert "agentd が起動していません" in result.output
-    assert "doeff-agentd serve" in result.output
+    # retirement (DOE-004 R7): the hint points at the ensure verb / the
+    # canonical Hy host, never the retired Rust binary
+    assert "doeff-sessionhost" in result.output
 
 
 def _snapshot(
