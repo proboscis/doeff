@@ -8,7 +8,7 @@ from typing import Any
 
 from doeff_secret.effects import DeleteSecret, GetSecret, ListSecrets, SetSecret
 
-from doeff import Effect, Pass, Resume, do
+from doeff import Effect, Pass, Transfer, do
 from doeff import handler as _program_handler
 from doeff_google_secret_manager.client import SecretManagerClient, get_secret_manager_client
 
@@ -59,7 +59,7 @@ class _ProductionSecretRuntime:
         return resolved_project
 
     @do
-    def handle_get_secret(self, effect: GetSecret, k):
+    def get_secret(self, effect: GetSecret):
         resolved_client: SecretManagerClient = yield self.resolve_client()
         resolved_project = self.resolve_project(resolved_client.project)
         version_name = (
@@ -72,10 +72,10 @@ class _ProductionSecretRuntime:
             raise ValueError("Secret Manager response is missing payload data")
         if not isinstance(raw_data, (bytes, bytearray)):
             raise TypeError("Secret Manager payload data must be bytes")
-        return (yield Resume(k, bytes(raw_data)))
+        return bytes(raw_data)
 
     @do
-    def handle_set_secret(self, effect: SetSecret, k):
+    def set_secret(self, effect: SetSecret):
         resolved_client: SecretManagerClient = yield self.resolve_client()
         resolved_project = self.resolve_project(resolved_client.project)
         parent = f"projects/{resolved_project}"
@@ -90,8 +90,8 @@ class _ProductionSecretRuntime:
         )
         version_name = getattr(created_version, "name", None)
         if isinstance(version_name, str) and version_name:
-            return (yield Resume(k, version_name))
-        return (yield Resume(k, secret_name))
+            return version_name
+        return secret_name
 
     def _create_secret_if_missing(
         self,
@@ -112,7 +112,7 @@ class _ProductionSecretRuntime:
                 raise
 
     @do
-    def handle_list_secrets(self, effect: ListSecrets, k):
+    def list_secrets(self, effect: ListSecrets):
         resolved_client: SecretManagerClient = yield self.resolve_client()
         resolved_project = self.resolve_project(resolved_client.project)
         request: dict[str, Any] = {"parent": f"projects/{resolved_project}"}
@@ -128,15 +128,14 @@ class _ProductionSecretRuntime:
             item_name = getattr(item, "name", None)
             if isinstance(item_name, str):
                 secret_ids.append(_extract_secret_id(item_name))
-        return (yield Resume(k, secret_ids))
+        return secret_ids
 
     @do
-    def handle_delete_secret(self, effect: DeleteSecret, k):
+    def delete_secret(self, effect: DeleteSecret):
         resolved_client: SecretManagerClient = yield self.resolve_client()
         resolved_project = self.resolve_project(resolved_client.project)
         secret_name = f"projects/{resolved_project}/secrets/{effect.secret_id}"
         resolved_client.client.delete_secret(request={"name": secret_name})
-        return (yield Resume(k, None))
 
 
 def production_handlers(
@@ -150,14 +149,18 @@ def production_handlers(
 
     @do
     def handler(effect: Effect, k: Any):
+        # The final Transfer happens from THIS frame; the runtime methods
+        # are value-returning sub-programs that COMPLETE before it. A
+        # sub-@do that transfers itself would park this frame forever
+        # (ADR-DOE-CORE-EFFECTS-002).
         if isinstance(effect, GetSecret):
-            return (yield runtime.handle_get_secret(effect, k))
+            return (yield Transfer(k, (yield runtime.get_secret(effect))))
         if isinstance(effect, SetSecret):
-            return (yield runtime.handle_set_secret(effect, k))
+            return (yield Transfer(k, (yield runtime.set_secret(effect))))
         if isinstance(effect, ListSecrets):
-            return (yield runtime.handle_list_secrets(effect, k))
+            return (yield Transfer(k, (yield runtime.list_secrets(effect))))
         if isinstance(effect, DeleteSecret):
-            return (yield runtime.handle_delete_secret(effect, k))
+            return (yield Transfer(k, (yield runtime.delete_secret(effect))))
         yield Pass(effect, k)
 
     return _program_handler(handler)
