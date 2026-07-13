@@ -101,7 +101,13 @@
   #^ (| str None) resumed-from-session-id
   (setv resumed-from-session-id None)
   #^ (| str None) forked-from-session-id
-  (setv forked-from-session-id None))
+  (setv forked-from-session-id None)
+  ;; 非 auth の launch 意図({session_env, model, effort, mcp_servers})。
+  ;; resume はここから再現する(行が launch 意図の家 — auth は
+  ;; effective_identity、意図はここ、と住み分ける)。auth キーは launch
+  ;; admission が session_env から締め出すため構造的に混入しない。
+  #^ (| dict None) launch-overlay
+  (setv launch-overlay None))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] PaneObservation []
