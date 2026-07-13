@@ -356,6 +356,11 @@
               :backend-ref {"session_name" session-name
                             "pane_id" pane-id
                             "command" command-line}
+              ;; ADR-006: 非 auth の launch 意図を行に永続化(resume の復元源)。
+              :launch-overlay {"session_env" session-env
+                               "model" (.get params "model")
+                               "effort" (.get params "effort")
+                               "mcp_servers" (or (.get params "mcp_servers") {})}
               :conversation row-conversation
               :generation (if (is resume-context None)
                               1
@@ -465,6 +470,12 @@
             source.expected-result
             None))
 
+  ;; 非 auth の launch 意図は蘇生元行の launch_overlay から復元し、呼び手の
+  ;; params が per-key で上書きする(行が意図の家 — 呼び手は差分だけ言う)。
+  (setv overlay (or source.launch-overlay {}))
+  (setv overlay-env (dict (or (.get overlay "session_env") {})))
+  (.update overlay-env (or (.get params "session_env") {}))
+
   (setv launch-params
         {"session_id" new-sid
          "session_name" new-name
@@ -472,13 +483,15 @@
          "work_dir" source.work-dir
          "command" None
          "prompt" (.get params "prompt")
-         "model" (.get params "model")
-         "effort" (.get params "effort")
-         "mcp_servers" (or (.get params "mcp_servers") {})
+         "model" (or (.get params "model") (.get overlay "model"))
+         "effort" (or (.get params "effort") (.get overlay "effort"))
+         "mcp_servers" (or (.get params "mcp_servers")
+                           (.get overlay "mcp_servers")
+                           {})
          "skip_trust_setup" False
          "lifecycle" source.lifecycle
          "binding" binding
-         "session_env" {}
+         "session_env" overlay-env
          "expected_result" carried-expected
          "socket_path" (.get params "socket_path" "")
          "max_running" (.get params "max_running")
