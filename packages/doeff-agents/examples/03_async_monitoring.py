@@ -9,7 +9,7 @@ Features shown:
 - async_run for non-blocking execution
 - Parallel session execution with Gather-like patterns
 - Fine-grained effects for monitoring multiple sessions
-- Integration with preset_handlers for logging
+- Integration with slog_handler for logging
 """
 
 import asyncio
@@ -33,7 +33,7 @@ from doeff_agents import (
     configure_mock_session,
     mock_agent_handlers,
 )
-from doeff_preset import preset_handlers
+from doeff_core_effects.handlers import slog_handler
 from doeff_time import Delay
 
 from doeff import do
@@ -217,8 +217,7 @@ async def run_with_mock_runtime() -> None:
     )
 
     result = await run_program(
-        single_session_workflow(session_name, config),
-        scoped_handlers=(preset_handlers(),),
+        slog_handler(single_session_workflow(session_name, config)),
         custom_handlers=mock_agent_handlers(),
     )
     print(f"\nResult: {result}")
@@ -260,8 +259,7 @@ async def run_truly_parallel() -> None:
         )
 
         run_result = await run_program(
-            single_session_workflow(session_name, config),
-            scoped_handlers=(preset_handlers(),),
+            slog_handler(single_session_workflow(session_name, config)),
             custom_handlers=mock_agent_handlers(),
         )
         if hasattr(type(run_result), "value"):
@@ -302,8 +300,7 @@ async def run_with_real_tmux() -> None:
     session_name = f"async-real-{int(time.time())}"
 
     result = await run_program(
-        single_session_workflow(session_name, config),
-        scoped_handlers=(preset_handlers(),),
+        slog_handler(single_session_workflow(session_name, config)),
         custom_handlers=agent_effectful_handlers(),
     )
     print(f"\nResult: {result}")

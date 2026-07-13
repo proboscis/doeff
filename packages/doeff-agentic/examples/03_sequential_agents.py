@@ -19,7 +19,7 @@ from doeff_agentic import (
     AgenticSendMessage,
 )
 from doeff_agentic.opencode_handler import opencode_handler
-from doeff_preset import preset_handlers
+from doeff_core_effects.handlers import slog_handler
 
 from doeff import do
 
@@ -75,11 +75,9 @@ if __name__ == "__main__":
 
         print(f"Starting research workflow for: {topic}")
         print()
-
-        # Merge preset handlers with opencode handlers
-        # Preset provides: slog display (WriterTellEffect) + config (Ask preset.*)
+        # slog_handler: stderr display sink for SlogEffect (visible logs by default)
         # OpenCode provides: agent session management effects
-        program = preset_handlers()(opencode_handler()(research_and_summarize(topic)))
+        program = slog_handler(opencode_handler()(research_and_summarize(topic)))
         result = await async_run(program, handlers=default_handlers())
 
         if result.is_err():

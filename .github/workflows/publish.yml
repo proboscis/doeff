@@ -49,9 +49,6 @@ jobs:
           - package: doeff-time
             artifact: doeff-time-dist
             out-dir: dist-doeff-time
-          - package: doeff-preset
-            artifact: doeff-preset-dist
-            out-dir: dist-doeff-preset
           - package: doeff-agents
             artifact: doeff-agents-dist
             out-dir: dist-doeff-agents
@@ -166,31 +163,9 @@ jobs:
           skip-existing: true
           password: ${{ secrets.PYPI_API_TOKEN }}
 
-  publish-doeff-preset:
-    name: Publish doeff-preset to PyPI
-    needs: [build-python-release-dists, publish-doeff]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
-    steps:
-      - name: Download doeff-preset dist artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: doeff-preset-dist
-          path: dist-doeff-preset
-
-      - name: List doeff-preset artifacts
-        run: ls -la dist-doeff-preset/
-
-      - name: Publish doeff-preset to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist-doeff-preset/
-          skip-existing: true
-          password: ${{ secrets.PYPI_API_TOKEN }}
-
   publish-doeff-agents:
     name: Publish doeff-agents to PyPI
-    needs: [build-python-release-dists, publish-doeff-time, publish-doeff-preset]
+    needs: [build-python-release-dists, publish-doeff-time]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     steps:
