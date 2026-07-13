@@ -20,7 +20,6 @@ In another terminal, when the workflow is waiting:
 
 import time
 
-from doeff.effects.writer import slog
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticEndOfEvents,
@@ -31,9 +30,8 @@ from doeff_agentic import (
     AgenticTimeoutError,
 )
 from doeff_agentic.opencode_handler import opencode_handler
-from doeff_core_effects.handlers import slog_handler
 
-from doeff import do
+from doeff import do, slog
 
 
 def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
@@ -93,7 +91,7 @@ def wait_for_user_input(session_id: str, prompt: str, timeout: float = 300.0):
 def draft_with_approval(task: str):
     """Create a draft and wait for human approval."""
 
-    yield slog(status="drafting", msg="Creating initial draft")
+    yield slog(msg="Creating initial draft", status="drafting")
 
     # Create drafter session
     drafter = yield AgenticCreateSession(name="drafter")
@@ -108,7 +106,7 @@ def draft_with_approval(task: str):
     messages = yield AgenticGetMessages(session_id=drafter.id)
     draft = get_last_assistant_message(messages)
 
-    yield slog(status="waiting-approval", msg="Draft ready for review")
+    yield slog(msg="Draft ready for review", status="waiting-approval")
 
     # Show draft to user
     print("\n" + "=" * 50)
@@ -131,12 +129,12 @@ def draft_with_approval(task: str):
     )
 
     if approval is None:
-        yield slog(status="timeout", msg="No response received")
+        yield slog(msg="No response received", status="timeout")
         return {"status": "timeout", "content": draft}
 
     if approval.lower().startswith("revise"):
         feedback = approval.replace("revise", "").strip(": ")
-        yield slog(status="revising", msg=f"Revising based on: {feedback}")
+        yield slog(msg=f"Revising based on: {feedback}", status="revising")
 
         # Create reviser session
         reviser = yield AgenticCreateSession(name="reviser")
@@ -154,17 +152,17 @@ def draft_with_approval(task: str):
         return {"status": "revised", "content": revised}
 
     if approval.lower() == "reject":
-        yield slog(status="rejected", msg="Draft rejected")
+        yield slog(msg="Draft rejected", status="rejected")
         return {"status": "rejected", "content": draft}
 
-    yield slog(status="approved", msg="Draft approved!")
+    yield slog(msg="Draft approved!", status="approved")
     return {"status": "approved", "content": draft}
 
 
 if __name__ == "__main__":
     import asyncio
 
-    from doeff import async_run, default_handlers
+    from _runtime import run_program
 
     async def main():
         task = "Write a haiku about programming"
@@ -172,16 +170,14 @@ if __name__ == "__main__":
         print("Starting human-in-the-loop workflow...")
         print(f"Task: {task}")
         print()
-        # slog_handler: stderr display sink for SlogEffect (visible logs by default)
         # OpenCode provides: agent session management effects
-        program = slog_handler(opencode_handler()(draft_with_approval(task)))
-        result = await async_run(program, handlers=default_handlers())
-
-        if result.is_err():
+        program = opencode_handler()(draft_with_approval(task))
+        try:
+            output = await run_program(program)
+        except Exception as e:
             print("\n=== Workflow Failed ===")
-            print(result.format())  # Rich error info: effect path, python stack, K stack
+            print(f"Error: {e}")
         else:
-            output = result.value
             print(f"\n=== Result: {output['status'].upper()} ===")
             print(output["content"][:500])
 

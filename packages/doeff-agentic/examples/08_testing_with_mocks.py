@@ -21,8 +21,9 @@ from doeff_agentic import (
     AgenticSendMessage,
 )
 from doeff_agentic.handlers.testing import MockAgenticHandler, mock_handlers
+from doeff_core_effects.scheduler import scheduled
 
-from doeff import default_handlers, do, run
+from doeff import do, run
 
 
 @do
@@ -40,17 +41,15 @@ def mock_conversation():
 
 
 def main() -> int:
-    # Compose the mock protocol handler directly with WithHandler.
+    # Compose the mock protocol handler directly around the program.
     handler_impl = MockAgenticHandler(workflow_name="mock-example")
     program = mock_handlers(handler_impl)(mock_conversation())
-    result = run(program, handlers=default_handlers())
-
-    if result.is_err():
+    try:
+        session_id, status, messages = run(scheduled(program))
+    except Exception as e:
         print("Workflow failed")
-        print(result.format())
+        print(f"Error: {e}")
         return 1
-
-    session_id, status, messages = result.value
     assistant_messages = [m for m in messages if m.role == "assistant"]
     expected_response = "Mock response to: Explain do-notation in one sentence."
 

@@ -16,7 +16,6 @@ from doeff_agentic import (
     AgenticSendMessage,
 )
 from doeff_agentic.opencode_handler import opencode_handler
-from doeff_core_effects.handlers import slog_handler
 
 from doeff import do
 
@@ -48,23 +47,21 @@ def hello_agent():
 if __name__ == "__main__":
     import asyncio
 
-    from doeff import async_run, default_handlers
+    from _runtime import run_program
 
     async def main():
         print("Starting hello_agent workflow...")
         print("This will launch an OpenCode agent session.")
         print()
-        # slog_handler: stderr display sink for SlogEffect (visible logs by default)
         # OpenCode provides: agent session management effects
-        program = slog_handler(opencode_handler()(hello_agent()))
-        result = await async_run(program, handlers=default_handlers())
-
-        if result.is_err():
+        program = opencode_handler()(hello_agent())
+        try:
+            output = await run_program(program)
+        except Exception as e:
             print("\n=== Workflow Failed ===")
-            print(result.format())  # Rich error info: effect path, python stack, K stack
+            print(f"Error: {e}")
         else:
             print("\n=== Agent Output ===")
-            output = result.value
             print(output[:500] if len(output) > 500 else output)
 
     asyncio.run(main())

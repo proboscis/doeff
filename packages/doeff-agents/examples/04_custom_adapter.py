@@ -18,7 +18,6 @@ import time
 from pathlib import Path
 
 from _runtime import run_program
-from doeff.effects.writer import slog
 from doeff_agents import (
     AgentType,
     Capture,
@@ -33,11 +32,10 @@ from doeff_agents import (
     configure_mock_session,
     mock_agent_handlers,
 )
-from doeff_agents.adapters.base import AgentAdapter, InjectionMethod
-from doeff_core_effects.handlers import slog_handler
+from doeff_agents.adapters.base import AgentAdapter, InjectionMethod, LaunchParams
 from doeff_time import Delay
 
-from doeff import do
+from doeff import do, slog
 
 # =============================================================================
 # Example 1: Simple Custom Adapter (terminal prompt injection)
@@ -61,12 +59,12 @@ class AiderAdapter(AgentAdapter):
         """Check if aider is installed."""
         return shutil.which("aider") is not None
 
-    def launch_command(self, cfg: LaunchConfig) -> list[str]:
+    def launch_command(self, params: LaunchParams) -> list[str]:
         """Build the command as an argv list."""
         args = ["aider", "--yes-always"]  # Auto-confirm prompts
 
-        if cfg.profile:
-            args.extend(["--model", cfg.profile])
+        if params.model:
+            args.extend(["--model", params.model])
 
         return args
 
@@ -105,12 +103,12 @@ class ReplitAgentAdapter(AgentAdapter):
     def is_available(self) -> bool:
         return shutil.which("replit-agent") is not None
 
-    def launch_command(self, cfg: LaunchConfig) -> list[str]:
+    def launch_command(self, params: LaunchParams) -> list[str]:
         """Launch command without the prompt (it's sent later via tmux)."""
         args = ["replit-agent"]
 
-        if cfg.profile:
-            args.extend(["--profile", cfg.profile])
+        if params.model:
+            args.extend(["--profile", params.model])
 
         # Note: prompt is NOT included here - it is sent after launch.
         return args
@@ -163,7 +161,7 @@ class ContinueDevAdapter(AgentAdapter):
     def is_available(self) -> bool:
         return shutil.which("continue") is not None
 
-    def launch_command(self, cfg: LaunchConfig) -> list[str]:
+    def launch_command(self, params: LaunchParams) -> list[str]:
         args = ["continue", "chat"]
 
         return args
@@ -192,10 +190,15 @@ def custom_adapter_workflow(session_name: str, config: LaunchConfig):
 
     The adapter is determined by the agent_type in the config.
     """
-    yield slog(step="start", session_name=session_name, agent_type=config.agent_type.value)
+    yield slog("start", session_name=session_name, agent_type=config.agent_type.value)
 
-    handle: SessionHandle = yield Launch(session_name, config)
-    yield slog(step="launched", pane_id=handle.pane_id)
+    handle: SessionHandle = yield Launch(
+        session_name,
+        agent_type=config.agent_type,
+        work_dir=config.work_dir,
+        prompt=config.prompt,
+    )
+    yield slog("launched", session_id=handle.session_id)
 
     final_status = SessionStatus.PENDING
 
@@ -205,7 +208,7 @@ def custom_adapter_workflow(session_name: str, config: LaunchConfig):
             final_status = observation.status
 
             if observation.output_changed:
-                yield slog(step="status", status=observation.status.value)
+                yield slog("status", status=observation.status.value)
 
             if observation.is_terminal:
                 break
@@ -213,7 +216,7 @@ def custom_adapter_workflow(session_name: str, config: LaunchConfig):
             yield Delay(1.0)
 
         output = yield Capture(handle, lines=30)
-        yield slog(step="complete", status=final_status.value)
+        yield slog("complete", status=final_status.value)
 
         return {
             "session_name": session_name,
@@ -251,13 +254,12 @@ def demo_adapter_protocol() -> None:
         print(f"  Status Bar Lines: {adapter.status_bar_lines}")
 
         # Show example command
-        config = LaunchConfig(
-            agent_type=AgentType.CUSTOM,
+        params = LaunchParams(
             work_dir=Path("/tmp"),
             prompt="Hello, World!",
-            profile="gpt-4",
+            model="gpt-4",
         )
-        cmd = adapter.launch_command(config)
+        cmd = adapter.launch_command(params)
         print(f"  Command: {' '.join(cmd)}")
 
 
@@ -271,7 +273,7 @@ async def run_with_mock_handlers() -> None:
 
     configure_mock_session(
         session_name,
-        MockSessionScript([
+        MockSessionScript(observations=[
             (SessionStatus.RUNNING, "Analyzing code..."),
             (SessionStatus.RUNNING, "Making changes..."),
             (SessionStatus.DONE, "Changes complete!\n\nModified: main.py"),
@@ -282,11 +284,11 @@ async def run_with_mock_handlers() -> None:
         agent_type=AgentType.CUSTOM,
         work_dir=Path.cwd(),
         prompt="List the Python files in this directory",
-        profile="gpt-4",
+        model="gpt-4",
     )
 
     result = await run_program(
-        slog_handler(custom_adapter_workflow(session_name, config)),
+        custom_adapter_workflow(session_name, config),
         custom_handlers=mock_agent_handlers(),
     )
     print(f"\nResult: {result}")
@@ -306,13 +308,13 @@ async def run_with_real_tmux() -> None:
         agent_type=AgentType.CUSTOM,
         work_dir=Path.cwd(),
         prompt="List the Python files in this directory",
-        profile="gpt-4",
+        model="gpt-4",
     )
 
     session_name = f"aider-real-{int(time.time())}"
 
     result = await run_program(
-        slog_handler(custom_adapter_workflow(session_name, config)),
+        custom_adapter_workflow(session_name, config),
         custom_handlers=agent_effectful_handlers(),
     )
     print(f"\nResult: {result}")

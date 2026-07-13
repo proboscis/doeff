@@ -5,12 +5,14 @@ coding agents (Claude, Codex, Gemini) in tmux sessions using the **doeff effects
 
 ## Effects-Based Approach
 
-All examples use the doeff effects system with `AsyncRuntime`:
+All examples use the doeff effects system:
 - `@do` decorator for composable generator functions
-- `slog` effects for structured logging
-- `slog_handler` for log display
+- `slog` effects for structured logging (displayed on stderr by `slog_handler`)
 - `agent_effectful_handlers()` for real tmux or `mock_agent_handlers()` for testing
-- `AsyncRuntime` for execution
+- `_runtime.run_program(...)` for execution — an example entry point that
+  composes the standard handler stack (mirroring the CLI `default_interpreter`,
+  including `slog_handler`) and executes it with `run(scheduled(...))`. There
+  is deliberately no public bundled default stack (ADR-DOE-PRESET-001).
 
 ## Examples
 
@@ -18,7 +20,7 @@ All examples use the doeff effects system with `AsyncRuntime`:
 |------|-------------|
 | `01_basic_session.py` | Basic session launch and monitoring with `@do` and fine-grained effects |
 | `02_context_manager.py` | Using `with_session` bracket pattern for safe cleanup |
-| `03_async_monitoring.py` | `AsyncRuntime` usage with multiple sessions and parallel execution |
+| `03_async_monitoring.py` | Multiple sessions and parallel-style execution patterns |
 | `04_custom_adapter.py` | Creating custom agent adapters with the effects API |
 | `05_status_callbacks.py` | Using `slog` effects instead of callbacks for event tracking |
 | `06_effects_api.py` | Complete effects API demonstration with all patterns |
@@ -29,17 +31,16 @@ All examples use the doeff effects system with `AsyncRuntime`:
 import asyncio
 from pathlib import Path
 
-from doeff import AsyncRuntime, do
-from doeff.effects.writer import slog
+from _runtime import run_program
+from doeff import do, slog
 from doeff_time import Delay
-from doeff_core_effects.handlers import slog_handler
 
 from doeff_agents import (
     AgentType,
     Capture,
-    MockSessionScript,
     Launch,
     LaunchConfig,
+    MockSessionScript,
     Monitor,
     SessionStatus,
     Stop,
@@ -49,19 +50,24 @@ from doeff_agents import (
 
 @do
 def my_agent_workflow(session_name: str, config: LaunchConfig):
-    yield slog(step="start", session_name=session_name)
-    
-    handle = yield Launch(session_name, config)
-    
+    yield slog("start", session_name=session_name)
+
+    handle = yield Launch(
+        session_name,
+        agent_type=config.agent_type,
+        work_dir=config.work_dir,
+        prompt=config.prompt,
+    )
+
     try:
         while True:
             observation = yield Monitor(handle)
-            yield slog(step="status", status=observation.status.value)
-            
+            yield slog("status", status=observation.status.value)
+
             if observation.is_terminal:
                 break
             yield Delay(1.0)
-        
+
         output = yield Capture(handle, lines=30)
         return {"status": observation.status.value, "output": output}
     finally:
@@ -69,32 +75,28 @@ def my_agent_workflow(session_name: str, config: LaunchConfig):
 
 async def main():
     session_name = "my-session"
-    
-    # Configure mock session
-    initial_store = {}
+
+    # Configure mock session behavior
     configure_mock_session(
-        initial_store,
         session_name,
-        MockSessionScript([
+        MockSessionScript(observations=[
             (SessionStatus.RUNNING, "Working..."),
             (SessionStatus.DONE, "Complete!"),
         ]),
     )
-    
-    # Create runtime with handlers
-    handlers = {
-        **mock_agent_handlers(),
-    }
-    runtime = AsyncRuntime(handlers=handlers, initial_store=initial_store)
-    
+
     config = LaunchConfig(
         agent_type=AgentType.CLAUDE,
         work_dir=Path.cwd(),
         prompt="Hello, world!",
     )
-    
-    # slog_handler wraps the program: stderr display sink for SlogEffect
-    result = await runtime.run(slog_handler(my_agent_workflow(session_name, config)))
+
+    # run_program composes the standard stack (incl. slog_handler stderr sink)
+    # around the program; agent handlers go innermost via custom_handlers.
+    result = await run_program(
+        my_agent_workflow(session_name, config),
+        custom_handlers=mock_agent_handlers(),
+    )
     print(result)
 
 asyncio.run(main())
@@ -107,12 +109,10 @@ For real tmux sessions, use `agent_effectful_handlers()` instead:
 ```python
 from doeff_agents import agent_effectful_handlers
 
-handlers = {
-    **agent_effectful_handlers(),  # Real tmux handlers
-}
-runtime = AsyncRuntime(handlers=handlers)
-
-result = await runtime.run(slog_handler(my_agent_workflow("real-session", config)))
+result = await run_program(
+    my_agent_workflow("real-session", config),
+    custom_handlers=agent_effectful_handlers(),  # Real tmux handlers
+)
 ```
 
 ## Testing with Mock Handlers
@@ -128,24 +128,19 @@ from doeff_agents import (
 )
 
 # Configure mock session behavior
-initial_store = {}
 configure_mock_session(
-    initial_store,
     "test-session",
-    MockSessionScript([
+    MockSessionScript(observations=[
         (SessionStatus.RUNNING, "Working..."),
         (SessionStatus.BLOCKED, "Need input..."),
         (SessionStatus.DONE, "Complete!"),
     ]),
 )
 
-# Create runtime with mock handlers
-handlers = {
-    **mock_agent_handlers(),
-}
-runtime = AsyncRuntime(handlers=handlers, initial_store=initial_store)
-
-result = await runtime.run(slog_handler(my_workflow("test-session", config)))
+result = await run_program(
+    my_workflow("test-session", config),
+    custom_handlers=mock_agent_handlers(),
+)
 ```
 
 ## Prerequisites
@@ -188,7 +183,12 @@ doeff-agents run --agent claude --work-dir . --prompt "Hello"
 ### Fine-Grained Effects
 
 ```python
-handle = yield Launch(session_name, config)
+handle = yield Launch(
+    session_name,
+    agent_type=config.agent_type,
+    work_dir=config.work_dir,
+    prompt=config.prompt,
+)
 observation = yield Monitor(handle)
 output = yield Capture(handle, lines=50)
 yield Send(handle, "Continue")
@@ -211,9 +211,9 @@ output = yield from with_session(session_name, config, use_session_fn)
 ### Structured Logging with slog
 
 ```python
-yield slog(step="launched", pane_id=handle.pane_id)
-yield slog(step="status_change", old=old.value, new=new.value)
-yield slog(step="complete", status=status.value, iterations=i)
+yield slog("launched", session_id=handle.session_id)
+yield slog("status_change", old=old.value, new=new.value)
+yield slog("complete", status=status.value, iterations=i)
 ```
 
 ## CLI Quick Reference

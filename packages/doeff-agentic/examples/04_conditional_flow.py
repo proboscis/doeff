@@ -11,7 +11,6 @@ Run:
     uv run python examples/04_conditional_flow.py
 """
 
-from doeff.effects.writer import slog
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticGetMessages,
@@ -19,9 +18,8 @@ from doeff_agentic import (
     AgenticSendMessage,
 )
 from doeff_agentic.opencode_handler import opencode_handler
-from doeff_core_effects.handlers import slog_handler
 
-from doeff import do
+from doeff import do, slog
 
 
 def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
@@ -36,7 +34,7 @@ def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
 def review_and_maybe_fix(code: str):
     """Review code and fix if issues are found."""
 
-    yield slog(status="reviewing", msg="Reviewing code")
+    yield slog(msg="Reviewing code", status="reviewing")
 
     # Agent 1: Reviewer
     reviewer = yield AgenticCreateSession(name="reviewer")
@@ -53,10 +51,10 @@ def review_and_maybe_fix(code: str):
     review = get_last_assistant_message(messages)
 
     if "LGTM" in review:
-        yield slog(status="approved", msg="Code looks good!")
+        yield slog(msg="Code looks good!", status="approved")
         return {"status": "approved", "review": review}
 
-    yield slog(status="fixing", msg="Issues found, fixing...")
+    yield slog(msg="Issues found, fixing...", status="fixing")
 
     # Agent 2: Fixer (only invoked if issues found)
     fixer = yield AgenticCreateSession(name="fixer")
@@ -72,7 +70,7 @@ def review_and_maybe_fix(code: str):
     messages = yield AgenticGetMessages(session_id=fixer.id)
     fixed = get_last_assistant_message(messages)
 
-    yield slog(status="complete", msg="Fixes applied")
+    yield slog(msg="Fixes applied", status="complete")
 
     return {"status": "fixed", "review": review, "fixed_code": fixed}
 
@@ -80,7 +78,7 @@ def review_and_maybe_fix(code: str):
 if __name__ == "__main__":
     import asyncio
 
-    from doeff import async_run, default_handlers
+    from _runtime import run_program
 
     async def main():
         # Code with issues to review
@@ -97,16 +95,14 @@ def calculate_average(numbers):
         print("Code to review:")
         print(sample_code)
         print()
-        # slog_handler: stderr display sink for SlogEffect (visible logs by default)
         # OpenCode provides: agent session management effects
-        program = slog_handler(opencode_handler()(review_and_maybe_fix(sample_code)))
-        result = await async_run(program, handlers=default_handlers())
-
-        if result.is_err():
+        program = opencode_handler()(review_and_maybe_fix(sample_code))
+        try:
+            output = await run_program(program)
+        except Exception as e:
             print("\n=== Workflow Failed ===")
-            print(result.format())  # Rich error info: effect path, python stack, K stack
+            print(f"Error: {e}")
         else:
-            output = result.value
             print(f"\n=== Result: {output['status'].upper()} ===")
             if output["status"] == "fixed":
                 print("\nFixed code:")

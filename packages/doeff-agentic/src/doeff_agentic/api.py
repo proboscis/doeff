@@ -370,7 +370,18 @@ class AgenticAPI:
         Returns:
             Workflow ID
         """
-        from doeff import default_handlers, run
+        from doeff import handler as _program_handler
+        from doeff import run
+        from doeff_core_effects.handlers import (
+            await_handler,
+            lazy_ask,
+            listen_handler,
+            slog_handler,
+            state,
+            try_handler,
+            writer,
+        )
+        from doeff_core_effects.scheduler import scheduled
 
         from .handler import with_agentic_effectful_handlers
 
@@ -383,11 +394,23 @@ class AgenticAPI:
             workflow_name=wf_name,
             state_dir=self.state_dir,
         )
+        # Entry-point stack, mirroring doeff.cli.run_services.default_interpreter —
+        # there is deliberately no public bundled default stack (ADR-DOE-PRESET-001).
+        entry_handlers = [
+            lazy_ask(),
+            state(),
+            writer,
+            try_handler,
+            slog_handler,
+            listen_handler,
+            await_handler(),
+        ]
+        for h in reversed(entry_handlers):
+            wrapped = _program_handler(h)(wrapped)
 
         try:
-            # Access .value so failures are raised and handled by the failure path below.
-            run_result = run(wrapped, handlers=default_handlers())
-            _ = run_result.value
+            # run() raises on failure; the failure path below records it.
+            run(scheduled(wrapped))
         except Exception as e:
             # Update workflow as failed
             workflow_info = self.get_workflow(wf_id)

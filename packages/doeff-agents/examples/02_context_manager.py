@@ -18,7 +18,6 @@ import time
 from pathlib import Path
 
 from _runtime import run_program
-from doeff.effects.writer import slog
 from doeff_agents import (
     AgentType,
     Capture,
@@ -33,19 +32,19 @@ from doeff_agents import (
     mock_agent_handlers,
     with_session,
 )
-from doeff_core_effects.handlers import slog_handler
 from doeff_time import Delay
 
-from doeff import do
+from doeff import do, program, slog
 
 
-@do
 def interactive_workflow(handle: SessionHandle):
     """Custom logic to run within a session.
 
-    This function yields effects and is called within with_session bracket.
+    This is a plain generator function (not @do-decorated): with_session
+    drives it directly via the generator protocol (next/send/throw), so it
+    must return a real generator rather than a Program/Expand tree.
     """
-    yield slog(step="interactive", msg="Starting interactive workflow")
+    yield slog(msg="Starting interactive workflow", step="interactive")
 
     max_interactions = 3
     interaction_count = 0
@@ -56,13 +55,13 @@ def interactive_workflow(handle: SessionHandle):
 
         if observation.output_changed:
             yield slog(
-                step="status",
+                "status",
                 iteration=iteration,
                 status=observation.status.value,
             )
 
         if observation.is_terminal:
-            yield slog(step="terminal", status=observation.status.value)
+            yield slog("terminal", status=observation.status.value)
             break
 
         # Interact with the agent when blocked
@@ -72,20 +71,20 @@ def interactive_workflow(handle: SessionHandle):
             # Capture current output to see what the agent did
             output = yield Capture(handle, lines=20)
             yield slog(
-                step="captured",
+                "captured",
                 interaction=interaction_count,
                 preview=output[-300:] if output else "",
             )
 
             # Send follow-up instruction based on interaction count
             if interaction_count == 1:
-                yield slog(step="sending", msg="Add docstring and type hints")
+                yield slog(msg="Add docstring and type hints", step="sending")
                 yield Send(handle, "Add a docstring and type hints to the function.")
             elif interaction_count == 2:
-                yield slog(step="sending", msg="Add test cases")
+                yield slog(msg="Add test cases", step="sending")
                 yield Send(handle, "Add a few test cases to verify the function works.")
             elif interaction_count == 3:
-                yield slog(step="sending", msg="Done, thank you")
+                yield slog(msg="Done, thank you", step="sending")
                 yield Send(handle, "That's perfect, thank you!")
 
         iteration += 1
@@ -93,7 +92,7 @@ def interactive_workflow(handle: SessionHandle):
 
     # Final output
     final_output = yield Capture(handle, lines=50)
-    yield slog(step="final", output_length=len(final_output))
+    yield slog("final", output_length=len(final_output))
 
     return {
         "interactions": interaction_count,
@@ -108,16 +107,13 @@ def run_with_bracket(session_name: str, config: LaunchConfig):
 
     with_session ensures Stop is called even if an exception occurs.
     """
-    yield slog(step="start", session_name=session_name)
+    yield slog("start", session_name=session_name)
 
-    # with_session is a bracket: Launch -> use -> Stop (always)
-    result = yield do(with_session)(
-        session_name,
-        config,
-        interactive_workflow.original_generator,
-    )
+    # with_session is a bracket: Launch -> use -> Stop (always). program()
+    # lifts the plain-generator call into a Program call-tree node.
+    result = yield program(lambda: with_session(session_name, config, interactive_workflow))
 
-    yield slog(step="complete", interactions=result["interactions"])
+    yield slog("complete", interactions=result["interactions"])
     return result
 
 
@@ -127,28 +123,28 @@ def demonstrate_exception_safety(session_name: str, config: LaunchConfig):
 
     The with_session bracket ensures Stop is called in the finally block.
     """
-    yield slog(step="exception_demo", msg="Starting exception safety demo")
+    yield slog(msg="Starting exception safety demo", step="exception_demo")
 
     def raise_after_work(handle: SessionHandle):
         """Inner function that simulates work then raises."""
-        yield slog(step="work", msg="Doing some work...")
+        yield slog(msg="Doing some work...", step="work")
 
         # Monitor once
         observation = yield Monitor(handle)
-        yield slog(step="monitored", status=observation.status.value)
+        yield slog("monitored", status=observation.status.value)
 
         # Simulate some work
         yield Delay(1.0)
 
         # Simulate an error
-        yield slog(step="error", msg="About to raise exception!")
+        yield slog(msg="About to raise exception!", step="error")
         raise RuntimeError("Simulated error during processing!")
 
     try:
-        _ = yield do(with_session)(session_name, config, raise_after_work)
+        _ = yield program(lambda: with_session(session_name, config, raise_after_work))
     except RuntimeError as e:
-        yield slog(step="caught", error=str(e))
-        yield slog(step="cleanup", msg="Session was still cleaned up automatically!")
+        yield slog("caught", error=str(e))
+        yield slog(msg="Session was still cleaned up automatically!", step="cleanup")
         return {"error": str(e), "cleanup_successful": True}
 
     return {"error": None, "cleanup_successful": True}
@@ -165,7 +161,7 @@ async def run_interactive_example() -> None:
     # Configure mock behavior
     configure_mock_session(
         session_name,
-        MockSessionScript([
+        MockSessionScript(observations=[
             (SessionStatus.RUNNING, "Creating factorial function..."),
             (SessionStatus.BLOCKED, "Function created. What next?"),
             (SessionStatus.RUNNING, "Adding docstring and type hints..."),
@@ -183,7 +179,7 @@ async def run_interactive_example() -> None:
     )
 
     result = await run_program(
-        slog_handler(run_with_bracket(session_name, config)),
+        run_with_bracket(session_name, config),
         custom_handlers=mock_agent_handlers(),
     )
     print(f"\nResult: {result}")
@@ -199,7 +195,7 @@ async def run_exception_demo() -> None:
 
     configure_mock_session(
         session_name,
-        MockSessionScript([
+        MockSessionScript(observations=[
             (SessionStatus.RUNNING, "Working..."),
             (SessionStatus.RUNNING, "Still working..."),
         ]),
@@ -212,7 +208,7 @@ async def run_exception_demo() -> None:
     )
 
     result = await run_program(
-        slog_handler(demonstrate_exception_safety(session_name, config)),
+        demonstrate_exception_safety(session_name, config),
         custom_handlers=mock_agent_handlers(),
     )
     print(f"\nResult: {result}")
@@ -239,7 +235,7 @@ async def run_with_real_tmux() -> None:
     session_name = f"factorial-{int(time.time())}"
 
     result = await run_program(
-        slog_handler(run_with_bracket(session_name, config)),
+        run_with_bracket(session_name, config),
         custom_handlers=agent_effectful_handlers(),
     )
     print(f"\nResult: {result}")

@@ -16,7 +16,6 @@ Run:
 
 import time
 
-from doeff.effects.writer import slog
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticEndOfEvents,
@@ -27,9 +26,8 @@ from doeff_agentic import (
     AgenticTimeoutError,
 )
 from doeff_agentic.opencode_handler import opencode_handler
-from doeff_core_effects.handlers import slog_handler
 
-from doeff import do
+from doeff import do, slog
 
 
 def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
@@ -98,7 +96,7 @@ def pr_review_workflow(pr_url: str, require_approval: bool = False):
         require_approval: Whether to require human approval before completing
     """
 
-    yield slog(status="automated-review", msg="Starting automated review")
+    yield slog(msg="Starting automated review", status="automated-review")
 
     # Phase 1: Automated Review
     review_session = yield AgenticCreateSession(
@@ -129,13 +127,13 @@ def pr_review_workflow(pr_url: str, require_approval: bool = False):
 
     if has_issues:
         yield slog(
-            status="issues-found",
             msg="Found issues in review",
+            status="issues-found",
             issues_count=review.count("\n- ") if "\n- " in review else 1,
         )
 
         # Phase 2: Fix Issues
-        yield slog(status="fixing", msg="Attempting to fix issues")
+        yield slog(msg="Attempting to fix issues", status="fixing")
 
         fix_session = yield AgenticCreateSession(name="fix-agent")
 
@@ -155,7 +153,7 @@ def pr_review_workflow(pr_url: str, require_approval: bool = False):
         messages = yield AgenticGetMessages(session_id=fix_session.id)
         fix_result = get_last_assistant_message(messages)
 
-        yield slog(status="fixes-ready", msg="Fixes prepared")
+        yield slog(msg="Fixes prepared", status="fixes-ready")
 
         result = {
             "status": "fixes-prepared",
@@ -163,7 +161,7 @@ def pr_review_workflow(pr_url: str, require_approval: bool = False):
             "fixes": fix_result,
         }
     else:
-        yield slog(status="no-issues", msg="No issues found - LGTM!")
+        yield slog(msg="No issues found - LGTM!", status="no-issues")
         result = {
             "status": "approved",
             "review": review,
@@ -172,7 +170,7 @@ def pr_review_workflow(pr_url: str, require_approval: bool = False):
 
     # Phase 3: Optional Human Approval
     if require_approval:
-        yield slog(status="waiting-approval", msg="Waiting for human review")
+        yield slog(msg="Waiting for human review", status="waiting-approval")
 
         print("\n" + "=" * 60)
         print("REVIEW COMPLETE - AWAITING HUMAN APPROVAL")
@@ -193,14 +191,14 @@ def pr_review_workflow(pr_url: str, require_approval: bool = False):
         )
 
         if approval and approval.lower().strip() == "reject":
-            yield slog(status="rejected", msg="Review rejected by human")
+            yield slog(msg="Review rejected by human", status="rejected")
             result["status"] = "rejected"
             result["human_decision"] = "rejected"
         else:
-            yield slog(status="approved", msg="Review approved by human")
+            yield slog(msg="Review approved by human", status="approved")
             result["human_decision"] = "approved"
 
-    yield slog(status="complete", msg=f"Workflow complete: {result['status']}")
+    yield slog(msg=f"Workflow complete: {result['status']}", status="complete")
 
     return result
 
@@ -209,7 +207,7 @@ if __name__ == "__main__":
     import asyncio
     import sys
 
-    from doeff import async_run, default_handlers
+    from _runtime import run_program
 
     async def main():
         # Use a sample PR URL or accept from command line
@@ -222,40 +220,35 @@ if __name__ == "__main__":
         print(f"PR URL: {pr_url}")
         print(f"Require approval: {require_approval}")
         print()
-        # slog_handler: stderr display sink for SlogEffect (visible logs by default)
         # OpenCode provides: agent session management effects
-        program = slog_handler(opencode_handler()(pr_review_workflow(pr_url, require_approval)))
+        program = opencode_handler()(pr_review_workflow(pr_url, require_approval))
 
         try:
-            result = await async_run(program, handlers=default_handlers())
-
-            if result.is_err():
-                print("\n=== Workflow Failed ===")
-                print(result.format())  # Rich error info: effect path, python stack, K stack
-            else:
-                output = result.value
-
-                print("\n" + "=" * 60)
-                print("WORKFLOW RESULT")
-                print("=" * 60)
-                print(f"Status: {output['status']}")
-                print()
-
-                print("Review:")
-                print("-" * 40)
-                print(output["review"][:500])
-
-                if output["fixes"]:
-                    print()
-                    print("Fixes:")
-                    print("-" * 40)
-                    print(output["fixes"][:500])
-
-                if "human_decision" in output:
-                    print()
-                    print(f"Human Decision: {output['human_decision']}")
-
+            output = await run_program(program)
         except KeyboardInterrupt:
             print("\nWorkflow interrupted")
+        except Exception as e:
+            print("\n=== Workflow Failed ===")
+            print(f"Error: {e}")
+        else:
+            print("\n" + "=" * 60)
+            print("WORKFLOW RESULT")
+            print("=" * 60)
+            print(f"Status: {output['status']}")
+            print()
+
+            print("Review:")
+            print("-" * 40)
+            print(output["review"][:500])
+
+            if output["fixes"]:
+                print()
+                print("Fixes:")
+                print("-" * 40)
+                print(output["fixes"][:500])
+
+            if "human_decision" in output:
+                print()
+                print(f"Human Decision: {output['human_decision']}")
 
     asyncio.run(main())

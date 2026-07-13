@@ -20,7 +20,6 @@ import time
 from pathlib import Path
 
 from _runtime import run_program
-from doeff.effects.writer import slog
 from doeff_agents import (
     AgentType,
     Capture,
@@ -35,10 +34,9 @@ from doeff_agents import (
     configure_mock_session,
     mock_agent_handlers,
 )
-from doeff_core_effects.handlers import slog_handler
 from doeff_time import Delay
 
-from doeff import do
+from doeff import do, slog
 
 
 @do
@@ -48,12 +46,17 @@ def basic_session_workflow(session_name: str, config: LaunchConfig):
     This program yields fine-grained effects that are interpreted
     by the runtime's handlers.
     """
-    yield slog(step="launch", session_name=session_name, work_dir=str(config.work_dir))
-    yield slog(step="launch", agent_type=config.agent_type.value)
+    yield slog("launch", session_name=session_name, work_dir=str(config.work_dir))
+    yield slog("launch", agent_type=config.agent_type.value)
 
     # Launch the session
-    handle: SessionHandle = yield Launch(session_name, config)
-    yield slog(step="launched", pane_id=handle.pane_id)
+    handle: SessionHandle = yield Launch(
+        session_name,
+        agent_type=config.agent_type,
+        work_dir=config.work_dir,
+        prompt=config.prompt,
+    )
+    yield slog("launched", session_id=handle.session_id)
 
     try:
         # Monitor the session until terminal state or timeout
@@ -67,25 +70,25 @@ def basic_session_workflow(session_name: str, config: LaunchConfig):
 
             if observation.output_changed:
                 yield slog(
-                    step="status",
+                    "status",
                     iteration=iteration,
                     status=observation.status.value,
                 )
 
             if observation.is_terminal:
-                yield slog(step="terminal", status=observation.status.value)
+                yield slog("terminal", status=observation.status.value)
                 break
 
             # If blocked (waiting for input), log it
             if observation.status == SessionStatus.BLOCKED:
-                yield slog(step="blocked", msg="Agent is waiting for input")
+                yield slog(msg="Agent is waiting for input", step="blocked")
 
             iteration += 1
             yield Delay(1.0)
 
         # Capture final output
         output: str = yield Capture(handle, lines=30)
-        yield slog(step="output", lines=30, preview=output[-200:] if output else "")
+        yield slog("output", lines=30, preview=output[-200:] if output else "")
 
         return {
             "session_name": session_name,
@@ -96,9 +99,9 @@ def basic_session_workflow(session_name: str, config: LaunchConfig):
 
     finally:
         # Always clean up the session
-        yield slog(step="stopping", session_name=session_name)
+        yield slog("stopping", session_name=session_name)
         yield Stop(handle)
-        yield slog(step="stopped")
+        yield slog("stopped")
 
 
 async def run_with_mock_handlers() -> None:
@@ -112,7 +115,7 @@ async def run_with_mock_handlers() -> None:
     # Configure mock session behavior
     configure_mock_session(
         session_name,
-        MockSessionScript([
+        MockSessionScript(observations=[
             (SessionStatus.BOOTING, "Agent starting..."),
             (SessionStatus.RUNNING, "Processing request..."),
             (SessionStatus.RUNNING, "Listing files..."),
@@ -127,7 +130,7 @@ async def run_with_mock_handlers() -> None:
     )
 
     result = await run_program(
-        slog_handler(basic_session_workflow(session_name, config)),
+        basic_session_workflow(session_name, config),
         custom_handlers=mock_agent_handlers(),
     )
     print(f"\nResult: {result}")
@@ -158,7 +161,7 @@ async def run_with_real_tmux() -> None:
     session_name = f"demo-{int(time.time())}"
 
     result = await run_program(
-        slog_handler(basic_session_workflow(session_name, config)),
+        basic_session_workflow(session_name, config),
         custom_handlers=agent_effectful_handlers(),
     )
     print(f"\nResult: {result}")

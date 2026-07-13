@@ -23,7 +23,7 @@ These examples use the new spec-compliant API:
 | `AgenticGetMessages` | Get messages from a session |
 | `AgenticNextEvent` | Wait for next event from session |
 | `AgenticGetSessionStatus` | Get current status of a session |
-| `opencode_handler()` | Create typed handlers for `WithHandler` composition |
+| `opencode_handler()` | Create an installer: `opencode_handler()(program)` wraps a program |
 
 For parallel execution, use core doeff effects: `Spawn` + `Gather` (see example 06).
 
@@ -31,7 +31,9 @@ For parallel execution, use core doeff effects: `Spawn` + `Gather` (see example 
 
 ```python
 import asyncio
-from doeff import WithHandler, async_run, default_handlers, do
+
+from _runtime import run_program  # examples/_runtime.py: standard handler stack + run(scheduled(...))
+from doeff import do
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticSendMessage,
@@ -57,37 +59,36 @@ def my_workflow():
 
 # Run the workflow
 async def main():
-    handlers = opencode_handler()
-    program = WithHandler(handlers, my_workflow())
-    result = await async_run(program, handlers=default_handlers())
-    print(result.value)  # Access the result value
+    program = opencode_handler()(my_workflow())
+    output = await run_program(program)
+    print(output)
 
 asyncio.run(main())
 ```
 
-### Error Handling with `result.format()`
+`run_program` composes the standard entry-point stack (mirroring the CLI
+`default_interpreter`, including the `slog_handler` stderr sink) around the
+program. There is deliberately no public bundled default stack
+(ADR-DOE-PRESET-001) — outside the examples, compose the installers you need
+explicitly.
 
-When workflows fail, use `result.format()` to get rich debugging information:
+### Error Handling
+
+`run_program` returns the program's value and raises on failure. `run()`
+prints the doeff traceback (effect path + handler chain) to stderr before
+re-raising, so a plain try/except is enough:
 
 ```python
 async def main():
-    handlers = opencode_handler()
-    program = WithHandler(handlers, my_workflow())
-    result = await async_run(program, handlers=default_handlers())
-
-    if result.is_err():
+    program = opencode_handler()(my_workflow())
+    try:
+        output = await run_program(program)
+    except Exception as e:
         print("=== Workflow Failed ===")
-        print(result.format())  # Rich error info with effect path and stack traces
+        print(f"Error: {e}")  # doeff traceback already printed on stderr
     else:
-        print(result.value)
+        print(output)
 ```
-
-The `result.format()` output includes:
-- **Effect path**: Which `@do` functions were called (e.g., `outer() -> inner() -> failing_func()`)
-- **Python stack**: Standard traceback showing where the exception was raised
-- **K stack**: Continuation stack showing active effect handlers (SafeFrame, LocalFrame, etc.)
-
-For even more detail, use `result.format(verbose=True)` which displays a full debug report.
 
 ## Examples
 
@@ -156,7 +157,7 @@ uv run python examples/07_pr_review_workflow.py https://github.com/org/repo/pull
 ```
 
 ### 08. Testing with Mock Handlers
-Effect-based deterministic workflow using `MockAgenticHandler` + `WithHandler`.
+Effect-based deterministic workflow using `MockAgenticHandler` + installer composition.
 ```bash
 uv run python examples/08_testing_with_mocks.py
 ```
@@ -235,7 +236,7 @@ This demonstrates `AgenticCreateSession -> AgenticSendMessage -> AgenticGetMessa
 ```bash
 uv run pytest tests/ -v
 ```
-Runs all 121 unit tests for effects, types, event logging, and state management.
+Runs the unit tests for effects, types, event logging, and state management.
 
 For comprehensive testing documentation, see [docs/testing-guide.md](../docs/testing-guide.md).
 
