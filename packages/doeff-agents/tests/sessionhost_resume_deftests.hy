@@ -391,3 +391,29 @@
                 "exclude_session_ids" []})))
   (assert (= found {"session_id" "conv-x"
                     "rollout_path" f"{root}/2026/07/05/rollout-a-x.jsonl"})))
+
+
+;; ---------------------------------------------------------------------------
+;; launch 意図の復元(行が意図の家)
+;; ---------------------------------------------------------------------------
+
+(deftest test-resume-restores-launch-overlay
+  ;; model / effort / session_env は蘇生元行の launch_overlay から復元され、
+  ;; 呼び手 params が per-key で上書きする。
+  (setv world (LaunchWorld))
+  (seed-source world :launch_overlay {"session_env" {"FOO" "bar"}
+                                      "model" "gpt-5.4"
+                                      "effort" "high"
+                                      "mcp_servers" {}})
+  (setv world.capture-script ["› "])
+  (<- row (run-resume world (resume-params :effort "low")))
+  (setv [pane cmd literal submit] (get world.sent-keys 0))
+  ;; model は overlay から、effort は呼び手上書き
+  (assert (in "--model gpt-5.4" cmd))
+  (assert (in "model_reasoning_effort=\"low\"" cmd))
+  ;; overlay の session_env が tmux env に届く
+  (assert (= (get (get world.tmux-envs "doeff-s1~g2") "FOO") "bar"))
+  ;; 新行の launch_overlay も実効値で永続(resume-of-resume の復元源)
+  (assert (= (get row.launch-overlay "model") "gpt-5.4"))
+  (assert (= (get row.launch-overlay "effort") "low"))
+  (assert (= (get (get row.launch-overlay "session_env") "FOO") "bar")))

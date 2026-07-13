@@ -131,7 +131,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
        #("agent_sessions" "conversation_json" "TEXT")
        #("agent_sessions" "generation" "INTEGER NOT NULL DEFAULT 1")
        #("agent_sessions" "resumed_from_session_id" "TEXT")
-       #("agent_sessions" "forked_from_session_id" "TEXT")])
+       #("agent_sessions" "forked_from_session_id" "TEXT")
+       #("agent_sessions" "launch_overlay_json" "TEXT")])
 
 (setv SNAPSHOT-SELECT
       (+ "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status, "
@@ -141,7 +142,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
          "awaiting_response, observed_active_at, result_payload_json, "
          "result_solicitations_used, prompt_unblock_attempts, last_output_change_at, "
          "effective_identity_json, "
-         "conversation_json, generation, resumed_from_session_id, forked_from_session_id "
+         "conversation_json, generation, resumed_from_session_id, forked_from_session_id, "
+         "launch_overlay_json "
          "FROM agent_sessions"))
 
 
@@ -250,7 +252,10 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
                       (json.loads (get db-row 26)))
    "generation" (int (get db-row 27))
    "resumed_from_session_id" (get db-row 28)
-   "forked_from_session_id" (get db-row 29)})
+   "forked_from_session_id" (get db-row 29)
+   "launch_overlay" (if (is (get db-row 30) None)
+                        None
+                        (json.loads (get db-row 30)))})
 
 (deff snapshot-to-wire-dict [snap]
   {:pre [(: snap dict)]
@@ -303,6 +308,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
   (when (is-not (.get snap "forked_from_session_id") None)
     (setv (get wire "forked_from_session_id")
           (get snap "forked_from_session_id")))
+  (when (is-not (.get snap "launch_overlay") None)
+    (setv (get wire "launch_overlay") (get snap "launch_overlay")))
   wire)
 
 
@@ -343,8 +350,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
        "awaiting_response, observed_active_at, result_payload_json, "
        "result_solicitations_used, prompt_unblock_attempts, last_output_change_at, "
        "effective_identity_json, "
-       "conversation_json, generation, resumed_from_session_id, forked_from_session_id"
-       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+       "conversation_json, generation, resumed_from_session_id, forked_from_session_id, "
+       "launch_overlay_json"
+       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
        "ON CONFLICT(session_id) DO UPDATE SET "
        "session_name = excluded.session_name, "
        "pane_id = excluded.pane_id, "
@@ -374,7 +382,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
        "conversation_json = COALESCE(agent_sessions.conversation_json, excluded.conversation_json), "
        "generation = excluded.generation, "
        "resumed_from_session_id = excluded.resumed_from_session_id, "
-       "forked_from_session_id = excluded.forked_from_session_id")
+       "forked_from_session_id = excluded.forked_from_session_id, "
+       "launch_overlay_json = COALESCE(agent_sessions.launch_overlay_json, excluded.launch_overlay_json)")
     #((get snap "session_id")
       (get snap "session_name")
       (get snap "pane_id")
@@ -418,7 +427,11 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
                       :separators #("," ":")))
       (int (.get snap "generation" 1))
       (.get snap "resumed_from_session_id")
-      (.get snap "forked_from_session_id")))
+      (.get snap "forked_from_session_id")
+      (if (is (.get snap "launch_overlay") None)
+          None
+          (json.dumps (get snap "launch_overlay") :sort-keys True
+                      :separators #("," ":")))))
   None)
 
 (deff db-session-get [conn session-id]
@@ -718,7 +731,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
     :conversation (.get snap "conversation")
     :generation (.get snap "generation" 1)
     :resumed-from-session-id (.get snap "resumed_from_session_id")
-    :forked-from-session-id (.get snap "forked_from_session_id")))
+    :forked-from-session-id (.get snap "forked_from_session_id")
+    :launch-overlay (.get snap "launch_overlay")))
 
 (deff policy-row-patch [row]
   {:pre [(: row SessionRow)]
@@ -753,7 +767,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
    "conversation" row.conversation
    "generation" row.generation
    "resumed_from_session_id" row.resumed-from-session-id
-   "forked_from_session_id" row.forked-from-session-id})
+   "forked_from_session_id" row.forked-from-session-id
+   "launch_overlay" row.launch-overlay})
 
 (deff snapshot-from-policy-row [row]
   {:pre [(: row SessionRow)]
