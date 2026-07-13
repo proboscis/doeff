@@ -477,6 +477,7 @@ class Scenario:
         prompt: str,
         expected_result: dict[str, Any] | None = None,
         extra_env: dict[str, str] | None = None,
+        resume_script: list[dict[str, Any]] | None = None,
     ) -> None:
         """M1 (PATH shadowing): install the conformance agent as `codex` and
         `claude` on a scenario-owned PATH dir and launch WITHOUT `command=`,
@@ -507,13 +508,31 @@ class Scenario:
 
         shim_dir = self.harness.runtime_dir / f"shim-{self.session_id}"
         shim_dir.mkdir(parents=True, exist_ok=True)
-        shim_body = (
-            "#!/bin/sh\n"
-            f"export CONFORMANCE_SCRIPT={shlex.quote(str(self.script_path))}\n"
-            f"export CONFORMANCE_JOURNAL={shlex.quote(str(self.journal_path))}\n"
-            f'exec {shlex.quote(sys.executable)} {shlex.quote(str(AGENT_SCRIPT))} "$@"\n'
-        )
+        # S21: a revived incarnation (resume/fork argv) plays a different act
+        # of the scenario — bake the alternate script into the shim so the
+        # daemon's resume pipeline (which restores the persisted overlay, not
+        # per-launch test env) still reaches it.
+        resume_export = ""
+        if resume_script is not None:
+            resume_path = (
+                self.harness.runtime_dir / f"script-resume-{self.session_id}.json"
+            )
+            resume_path.write_text(json.dumps(resume_script), encoding="utf-8")
+            resume_export = (
+                f"export CONFORMANCE_RESUME_SCRIPT={shlex.quote(str(resume_path))}\n"
+            )
         for name in ("codex", "claude"):
+            # CONFORMANCE_KIND: the shim exec()s the python agent, so
+            # argv[0] is the agent script — the shim's own name is the only
+            # place the kind survives (S21 conversation contract needs it).
+            shim_body = (
+                "#!/bin/sh\n"
+                f"export CONFORMANCE_SCRIPT={shlex.quote(str(self.script_path))}\n"
+                f"export CONFORMANCE_JOURNAL={shlex.quote(str(self.journal_path))}\n"
+                f"export CONFORMANCE_KIND={name}\n"
+                f"{resume_export}"
+                f'exec {shlex.quote(sys.executable)} {shlex.quote(str(AGENT_SCRIPT))} "$@"\n'
+            )
             shim = shim_dir / name
             shim.write_text(shim_body, encoding="utf-8")
             shim.chmod(0o755)
