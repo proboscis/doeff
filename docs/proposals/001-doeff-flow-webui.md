@@ -1,5 +1,16 @@
 # Proposal: doeff-flow — Node-Based WebUI for doeff
 
+> **Note**: This document reflects the state at time of writing (2025-01-29) and some APIs have since changed. Specifically:
+> - `.intercept()` was removed — use `WithObserve(observer, body)` for effect observation
+> - `EffectCallTree`, `EffectObservation`, `EffectCreationContext` were removed
+> - `WGraph`, `WStep`, `WNode` were removed
+> - `graph_snapshot` / `graph_to_html` were removed
+> - `AsyncRuntime` / `SyncRuntime` / `SimulationRuntime` are not real doeff classes — use `run(doexpr)` (single argument, returns raw value) and `run(scheduled(...))` for async
+> - `RunResult` was removed — `run()` returns the raw value directly
+> - `default_handlers()` was removed — compose handlers individually
+>
+> The architectural vision and comparison with ComfyUI remain relevant. Implementation would need to use the current API surface.
+
 **Status**: Draft  
 **Author**: Design discussion (2025-01-29)  
 **Package**: `doeff-flow` (new subpackage)
@@ -25,10 +36,9 @@ ComfyUI demonstrates the value of node-based workflow editors for AI pipelines, 
 doeff already has the primitives for a cleaner solution:
 - `Program[T]` — lazy, composable computations
 - `Effect` — data describing operations
-- `WGraph`, `WStep`, `WNode` — DAG representation
+- `WithObserve` — effect observation
 - `@cache` — memoization
 - `Gather` — parallel execution
-- Effect interception — event emission
 
 ## Design
 
@@ -46,23 +56,23 @@ The missing piece is **metadata** for the UI to know what widgets to render.
 ### Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                            Hy Source                                │
-│   (defnode ...) (defgraph ...)  ──── single source of truth         │
-└───────────────────────────────┬─────────────────────────────────────┘
-                                │
-                    ┌───────────┴───────────┐
-                    ▼                       ▼
-          ┌─────────────────┐     ┌─────────────────┐
-          │   UI Schema     │     │  doeff Program  │
-          │     (JSON)      │     │   (runtime)     │
-          └────────┬────────┘     └────────┬────────┘
-                   │                       │
-                   ▼                       ▼
-          ┌─────────────────┐     ┌─────────────────┐
-          │    Frontend     │◄────│    Runtime      │
-          │   (litegraph)   │ SSE │  (async exec)   │
-          └─────────────────┘     └─────────────────┘
++-----------------------------------------------------------------+
+|                            Hy Source                             |
+|   (defnode ...) (defgraph ...)  --- single source of truth      |
++-------------------------------+---------------------------------+
+                                |
+                    +-----------+-----------+
+                    v                       v
+          +-----------------+     +-----------------+
+          |   UI Schema     |     |  doeff Program  |
+          |     (JSON)      |     |   (runtime)     |
+          +--------+--------+     +--------+--------+
+                   |                       |
+                   v                       v
+          +-----------------+     +-----------------+
+          |    Frontend     |<----|    Runtime      |
+          |   (litegraph)   | SSE |  (async exec)   |
+          +-----------------+     +-----------------+
 ```
 
 ### Hy Macros
@@ -146,26 +156,27 @@ The runtime emits events during execution:
 {:type :graph-done   :output-node "image" :total-ms 3420}
 ```
 
-Using doeff's effect interception:
+Using doeff's `WithObserve`:
 
-```hy
-(defn with-events [program event-sink]
-  (.intercept program
-    (fn [effect]
-      (put! event-sink {:type :effect 
-                        :effect-type (type effect)
-                        :node (current-node)})
-      effect)))
+```python
+from doeff import WithObserve
+
+def with_events(program, event_sink):
+    def observer(effect):
+        event_sink.put({"type": "effect",
+                        "effect_type": type(effect).__name__,
+                        "node": current_node()})
+    return WithObserve(observer, program)
 ```
 
-### Round-Trip: UI ↔ Code
+### Round-Trip: UI <-> Code
 
 The system supports bidirectional conversion:
 
 ```
-Hy Code ──compile──▶ JSON Schema ──render──▶ Web UI
-   ▲                                            │
-   └────────────serialize────────────────────────┘
+Hy Code --compile--> JSON Schema --render--> Web UI
+   ^                                            |
+   +------------serialize-----------------------+
 ```
 
 UI edits can be serialized back to Hy code for version control.
@@ -183,10 +194,10 @@ UI edits can be serialized back to Hy code for version control.
 | **Composability** | None | Full (just functions) |
 | **Testing** | Requires GPU + models | **Mock handlers, instant** |
 | **Caching** | Custom hash logic | doeff `@cache` decorator |
-| **Events** | Bespoke WebSocket | Effect interception |
+| **Events** | Bespoke WebSocket | `WithObserve` |
 | **Error handling** | Try/catch scattered | `Try` effect, structured |
 | **Extensibility** | Monkey-patch nodes | Compose programs |
-| **Round-trip** | UI → JSON only | UI ↔ Hy ↔ JSON |
+| **Round-trip** | UI -> JSON only | UI <-> Hy <-> JSON |
 
 ## Key Architectural Advantage: Complete Mockability
 
@@ -201,63 +212,52 @@ UI edits can be serialized back to Hy code for version control.
 
 ```python
 # Test workflow with mock handlers - NO GPU, NO models, milliseconds
-mock_handlers = {
-    ImageLoad: lambda e, ts, s: ContinueValue(FakeImage(512, 512), ...),
-    Encode: lambda e, ts, s: ContinueValue(FakeEmbedding(), ...),
-    Sample: lambda e, ts, s: ContinueValue(FakeLatent(), ...),
-    Decode: lambda e, ts, s: ContinueValue(FakeImage(1024, 1024), ...),
-}
+from doeff import do, run
+from doeff.program import handler
 
-runtime = AsyncRuntime(handlers=mock_handlers)
+@do
+def mock_image_load_handler(effect, k):
+    from doeff.program import Resume
+    yield Resume(k, FakeImage(512, 512))
+
+@do
+def mock_encode_handler(effect, k):
+    from doeff.program import Resume
+    yield Resume(k, FakeEmbedding())
+
 
 @pytest.mark.asyncio
 async def test_workflow_executes_correct_order():
     """Test graph topology - NO GPU needed."""
     workflow = load_workflow("txt2img.hy")
     executed = []
-    
-    # Track which effects run
-    tracking_runtime = AsyncRuntime(handlers=make_tracking_handlers(executed))
-    await tracking_runtime.run(workflow)
-    
+
+    # Track which effects run via WithObserve
+    from doeff import WithObserve
+    def tracker(effect):
+        executed.append(type(effect).__name__)
+
+    tracked = WithObserve(tracker, workflow)
+    result = run(
+        handler(mock_image_load_handler)(
+            handler(mock_encode_handler)(tracked)
+        )
+    )
+
     assert executed == ["ImageLoad", "Encode", "Sample", "Decode"]
-
-@pytest.mark.asyncio  
-async def test_caching_skips_unchanged_nodes():
-    """Test cache behavior - NO GPU needed."""
-    workflow = load_workflow("txt2img.hy")
-    call_counts = Counter()
-    
-    counting_runtime = AsyncRuntime(handlers=make_counting_handlers(call_counts))
-    await counting_runtime.run(workflow)
-    await counting_runtime.run(workflow)  # Second run
-    
-    assert call_counts["Encode"] == 1  # Cached on second run
-
-@pytest.mark.asyncio
-async def test_error_propagation():
-    """Test error handling - NO GPU needed."""
-    def failing_sample(e, ts, s):
-        raise RuntimeError("Out of memory")
-    
-    runtime = AsyncRuntime(handlers={**mock_handlers, Sample: failing_sample})
-    result = await runtime.run(workflow)
-    
-    assert result.is_err()
-    assert "Out of memory" in str(result.error)
 ```
 
 ### Testing Capability Comparison
 
 | Capability | ComfyUI | doeff-flow |
 |------------|---------|------------|
-| Test workflow logic | ❌ Requires models | ✅ Mock handlers |
-| Test node ordering | ❌ Requires execution | ✅ Inspect Program |
-| Test caching | ❌ Run twice with GPU | ✅ Mock + count |
-| Test error handling | ❌ Force real errors | ✅ Inject failures |
-| Run in CI | ❌ Need GPU runner | ✅ Any CI |
-| Test speed | ❌ Minutes | ✅ Milliseconds |
-| Test parallelism | ❌ Real Gather | ✅ Mock Gather |
+| Test workflow logic | No (requires models) | Yes (mock handlers) |
+| Test node ordering | No (requires execution) | Yes (inspect Program) |
+| Test caching | No (run twice with GPU) | Yes (mock + count) |
+| Test error handling | No (force real errors) | Yes (inject failures) |
+| Run in CI | No (need GPU runner) | Yes (any CI) |
+| Test speed | No (minutes) | Yes (milliseconds) |
+| Test parallelism | No (real Gather) | Yes (mock Gather) |
 
 This is a **fundamental architectural advantage** — workflows created in the WebUI can be tested via CLI with mock handlers, enabling TDD for AI pipelines.
 
@@ -313,32 +313,20 @@ doeff-flow has full language control flow:
 
 ### 4. Debugging & Observability
 
-doeff provides rich introspection out of the box:
-
-| Feature | What It Does |
-|---------|--------------|
-| `EffectCallTree` | Hierarchical view of which `@do` functions produced which effects |
-| `EffectObservation` | Record of every effect executed |
-| `EffectCreationContext` | File, line, function where effect was created |
-| `RuntimeResult` | Full execution trace, logs, state, graph |
-| `WGraph` visualization | vis.js HTML output of computation graph |
+doeff provides observation out of the box via `WithObserve(observer, body)`:
 
 ```python
-result = await runtime.run(workflow)
+from doeff import run, WithObserve
 
-# See exactly what happened
-print(result.call_tree.visualize_ascii())
-# └─ txt2img()
-#    ├─ load_model('sdxl')
-#    │  └─ LoadModel('sdxl')
-#    ├─ encode('a cat')
-#    │  └─ Encode(...)
-#    └─ sample(...)
-#       └─ Sample(...) x20
+observations = []
+def observer(effect):
+    observations.append({"type": type(effect).__name__, "effect": effect})
 
-# Where did the error originate?
-print(result.error.creation_context)
-# File "workflow.hy", line 42, in sample
+result = run(WithObserve(observer, workflow))
+
+# See exactly what effects were dispatched
+for obs in observations:
+    print(obs)
 ```
 
 ComfyUI: Console logs. Good luck tracing errors.
@@ -349,14 +337,17 @@ Since effects are data, executions can be recorded and replayed:
 
 ```python
 # Record execution
-result = await runtime.run(workflow)
-recorded_effects = result.effect_observations
+from doeff import run, WithObserve
 
-# Replay with same effect results — NO GPU!
-replay_handlers = make_replay_handlers(recorded_effects)
-replayed = await AsyncRuntime(handlers=replay_handlers).run(workflow)
+recorded = []
+def recorder(effect):
+    recorded.append(effect)
 
-assert replayed.value == result.value  # Deterministic!
+result = run(WithObserve(recorder, workflow))
+
+# Replay with pre-recorded effect results — NO GPU!
+replay_handler = make_replay_handler(recorded)
+replayed = run(replay_handler(workflow))
 ```
 
 Use cases:
@@ -364,61 +355,40 @@ Use cases:
 - **Time-travel debugging** — step through effect by effect
 - **Golden master testing** — record once, replay forever
 
-### 6. Multiple Runtimes
-
-| Runtime | Use Case |
-|---------|----------|
-| `AsyncRuntime` | Production with real GPU |
-| `SyncRuntime` | Simple scripts, blocking |
-| `SimulationRuntime` | Test with fake/controlled time |
+### 6. Execution Model
 
 ```python
-# Test timeout behavior without actually waiting
-sim_runtime = SimulationRuntime()
+from doeff import run
+from doeff_core_effects.scheduler import scheduled
 
-async def test_timeout():
-    workflow = with_timeout(long_workflow, seconds=30)
-    sim_runtime.advance_time(31)  # Instant!
-    
-    result = await sim_runtime.run(workflow)
-    assert result.is_err()
-    assert "timeout" in str(result.error)
+# Synchronous
+result = run(handler_stack(workflow))
+
+# With async scheduling
+result = run(scheduled(handler_stack(workflow)))
 ```
 
-ComfyUI: One runtime. Real time. Real waiting.
-
-### 7. Effect Interception (Middleware)
+### 7. Effect Observation (Middleware)
 
 Add cross-cutting concerns without modifying nodes:
 
-```hy
-;; Add logging to every effect
-(defn with-logging [program]
-  (.intercept program
-    (fn [effect]
-      (print f"Executing: {effect}")
-      effect)))
+```python
+from doeff import WithObserve
 
-;; Add metrics collection
-(defn with-metrics [program metrics-client]
-  (.intercept program
-    (fn [effect]
-      (.increment metrics-client (type effect))
-      effect)))
+# Add logging to every effect
+def with_logging(program):
+    def log_observer(effect):
+        print(f"Executing: {effect}")
+    return WithObserve(log_observer, program)
 
-;; Add retry logic to all IO effects
-(defn with-retry [program]
-  (.intercept program
-    (fn [effect]
-      (if (io-effect? effect)
-        (retry-effect effect :attempts 3)
-        effect))))
+# Add metrics collection
+def with_metrics(program, metrics_client):
+    def metrics_observer(effect):
+        metrics_client.increment(type(effect).__name__)
+    return WithObserve(metrics_observer, program)
 
-;; Compose middleware
-(-> workflow
-    (with-logging)
-    (with-metrics prometheus)
-    (with-retry))
+# Compose middleware
+result = run(with_logging(with_metrics(workflow, prometheus)))
 ```
 
 ComfyUI: No middleware. Every node handles its own concerns.
@@ -433,14 +403,9 @@ Clean configuration via the `Ask` effect:
         api-key (yield (Ask "api_key"))
         cache-dir (yield (Ask "cache_dir"))]
     ...))
-
-;; Inject different configs per environment
-(runtime.run workflow :env {"model_path" "/prod/models" 
-                            "api_key" (get-secret "PROD_KEY")})
-
-(runtime.run workflow :env {"model_path" "/test/models"
-                            "api_key" "test-key"})
 ```
+
+Environment values are provided via handler composition (e.g. `lazy_ask` handler).
 
 ComfyUI: Hardcoded paths or global configuration.
 
@@ -449,13 +414,13 @@ ComfyUI: Hardcoded paths or global configuration.
 Like a build system (Make, Bazel) — only re-run what changed:
 
 ```python
-result1 = await runtime.run(workflow, inputs={"prompt": "a cat"})
-# Executes: load_model → encode → sample → decode
+result1 = run(handler_stack(workflow_with_prompt("a cat")))
+# Executes: load_model -> encode -> sample -> decode
 
-result2 = await runtime.run(workflow, inputs={"prompt": "a dog"})  
-# Executes: encode → sample → decode  (model already cached!)
+result2 = run(handler_stack(workflow_with_prompt("a dog")))
+# Executes: encode -> sample -> decode  (model already cached!)
 
-result3 = await runtime.run(workflow, inputs={"prompt": "a dog"})
+result3 = run(handler_stack(workflow_with_prompt("a dog")))
 # Executes: nothing (fully cached!)
 ```
 
@@ -470,12 +435,12 @@ Since workflows are just Python/Hy functions:
 
 | Feature | doeff-flow | ComfyUI |
 |---------|------------|---------|
-| Autocomplete | ✅ | ❌ JSON blob |
-| Type checking | ✅ | ❌ String types |
-| Go to definition | ✅ | ❌ |
-| Find references | ✅ | ❌ |
-| Refactoring | ✅ | ❌ |
-| Linting | ✅ | ❌ |
+| Autocomplete | Yes | No (JSON blob) |
+| Type checking | Yes | No (string types) |
+| Go to definition | Yes | No |
+| Find references | Yes | No |
+| Refactoring | Yes | No |
+| Linting | Yes | No |
 
 ### 11. Version Control
 
@@ -509,7 +474,7 @@ redis.publish("gpu-jobs", serialized)
 
 # Worker receives and executes
 workflow = cloudpickle.loads(message)
-result = await runtime.run(workflow)
+result = run(handler_stack(workflow))
 ```
 
 ComfyUI: Tightly coupled to its server architecture.
@@ -518,18 +483,17 @@ ComfyUI: Tightly coupled to its server architecture.
 
 | Strength | ComfyUI | doeff-flow |
 |----------|---------|------------|
-| **Testability** | ❌ GPU required | ✅ Mock handlers |
-| **Composability** | ❌ Flat nodes | ✅ Nested workflows |
-| **Control flow** | ❌ No loops/conditionals | ✅ Full Hy/Python |
-| **Debugging** | ❌ Console logs | ✅ Call tree, traces |
-| **Replay** | ❌ Not possible | ✅ Record/playback |
-| **Multiple runtimes** | ❌ One runtime | ✅ Sync/Async/Sim |
-| **Middleware** | ❌ None | ✅ Effect interception |
-| **Dependency injection** | ❌ Global config | ✅ Ask effect |
-| **Incremental execution** | ⚠️ Basic cache | ✅ Content-addressed |
-| **IDE support** | ❌ JSON blobs | ✅ Full support |
-| **Version control** | ❌ ID soup | ✅ Named symbols |
-| **Distribution** | ❌ Server-coupled | ✅ Serializable |
+| **Testability** | No (GPU required) | Yes (mock handlers) |
+| **Composability** | No (flat nodes) | Yes (nested workflows) |
+| **Control flow** | No (no loops/conditionals) | Yes (full Hy/Python) |
+| **Debugging** | No (console logs) | Yes (WithObserve) |
+| **Replay** | No (not possible) | Yes (record/playback) |
+| **Middleware** | No (none) | Yes (WithObserve) |
+| **Dependency injection** | No (global config) | Yes (Ask effect) |
+| **Incremental execution** | Partial (basic cache) | Yes (content-addressed) |
+| **IDE support** | No (JSON blobs) | Yes (full support) |
+| **Version control** | No (ID soup) | Yes (named symbols) |
+| **Distribution** | No (server-coupled) | Yes (serializable) |
 
 ## Implementation Plan
 
@@ -544,7 +508,7 @@ ComfyUI: Tightly coupled to its server architecture.
 ### Phase 2: Runtime Integration
 
 - [ ] Graph-aware runtime — execute with node-level granularity
-- [ ] Event emission — hook into effect execution
+- [ ] Event emission — hook into effect execution via `WithObserve`
 - [ ] Progress reporting — for long-running operations
 - [ ] Node-level caching — skip unchanged nodes
 
@@ -567,30 +531,30 @@ ComfyUI: Tightly coupled to its server architecture.
 
 ```
 packages/doeff-flow/
-├── src/doeff_flow/
-│   ├── __init__.py
-│   ├── hy/
-│   │   ├── macros.hy        # defnode, defeffect, defgraph
-│   │   ├── widgets.hy       # widget type definitions
-│   │   └── prelude.hy       # common imports
-│   ├── registry.py          # node/effect registry
-│   ├── schema.py            # JSON schema generation
-│   ├── runtime.py           # graph-aware executor
-│   ├── events.py            # event emission
-│   └── server/
-│       ├── __init__.py
-│       ├── api.py           # REST endpoints
-│       └── ws.py            # WebSocket handler
-├── frontend/                # or separate package
-│   ├── package.json
-│   └── src/
-└── examples/
-    ├── nodes/
-    │   ├── image.hy
-    │   ├── text.hy
-    │   └── sampling.hy
-    └── workflows/
-        └── txt2img.hy
++-- src/doeff_flow/
+|   +-- __init__.py
+|   +-- hy/
+|   |   +-- macros.hy        # defnode, defeffect, defgraph
+|   |   +-- widgets.hy       # widget type definitions
+|   |   +-- prelude.hy       # common imports
+|   +-- registry.py          # node/effect registry
+|   +-- schema.py            # JSON schema generation
+|   +-- runtime.py           # graph-aware executor
+|   +-- events.py            # event emission
+|   +-- server/
+|       +-- __init__.py
+|       +-- api.py           # REST endpoints
+|       +-- ws.py            # WebSocket handler
++-- frontend/                # or separate package
+|   +-- package.json
+|   +-- src/
++-- examples/
+    +-- nodes/
+    |   +-- image.hy
+    |   +-- text.hy
+    |   +-- sampling.hy
+    +-- workflows/
+        +-- txt2img.hy
 ```
 
 ## What doeff Already Provides
@@ -598,14 +562,11 @@ packages/doeff-flow/
 | Need | doeff Has |
 |------|-----------|
 | Lazy execution | `Program` is lazy |
-| Effect interception | `.intercept()` |
+| Effect observation | `WithObserve(observer, body)` |
 | Caching | `@cache` decorator |
 | Parallel execution | `Gather` effect |
-| Graph tracking | `WGraph`, `WStep`, `WNode` |
-| Async runtime | `AsyncRuntime` |
-| Effect observation | `EffectObservation` |
-| Call tree | `EffectCallTree` |
-| Visualization | `graph_snapshot.py` → vis.js |
+| Async scheduling | `run(scheduled(...))` |
+| Handler composition | `handler(raw)(body)` stacking |
 
 ## Open Questions
 
@@ -625,15 +586,15 @@ Make every node, edge, and value content-addressed by its hash, like Git/IPFS/Un
 
 ```
 Current (name-based):
-  load_model("sdxl") → cache key = ("load_model", "sdxl")
+  load_model("sdxl") -> cache key = ("load_model", "sdxl")
   Problem: If load_model code changes, cache is stale
 
 Better (content-addressed):
   Node hash = sha256(node_code + dependencies + inputs)
   
   Benefits:
-  - Code change → hash change → auto-invalidate
-  - Identical computations across workflows → deduplicated
+  - Code change -> hash change -> auto-invalidate
+  - Identical computations across workflows -> deduplicated
   - Shareable cache across users (like Nix store)
   - Immutable history (like Git)
   - Distributed storage (like IPFS)
@@ -655,7 +616,7 @@ Instead of "run workflow, skip cached nodes," adopt a **spreadsheet model** wher
 (def image (derived [model prompt] 
               (generate model prompt)))
 
-;; Change prompt → image automatically recomputes
+;; Change prompt -> image automatically recomputes
 (reset! prompt "a dog")
 ;; Only encode + sample + decode run
 ```
@@ -670,21 +631,21 @@ Instead of bidirectional sync between text and UI (which can be lossy), make the
 
 ```
 Current: Bidirectional sync (lossy)
-  Hy Code ←→ Visual UI
+  Hy Code <-> Visual UI
   Comments lost. Formatting lost. Sync bugs.
 
 Future: Projectional editing
-                  ┌─────────────┐
-                  │    AST      │  ← Single source
-                  └─────────────┘
+                  +--------------+
+                  |    AST       |  <- Single source
+                  +--------------+
                    /           \
-                  ↓             ↓
-             ┌────────┐    ┌────────┐
-             │Text    │    │Visual  │  ← Views (projections)
-             │View    │    │View    │
-             └────────┘    └────────┘
+                  v             v
+             +--------+    +--------+
+             |Text    |    |Visual  |  <- Views (projections)
+             |View    |    |View    |
+             +--------+    +--------+
 
-  Edit in either view → updates AST → other view updates
+  Edit in either view -> updates AST -> other view updates
   No sync issues. Perfect round-trip.
 ```
 
@@ -693,17 +654,6 @@ Future: Projectional editing
 ### 4. Multi-Shot Continuations
 
 doeff uses algebraic effects with one-shot continuations. Multi-shot continuations would enable even more composable handling:
-
-```hy
-;; Current: Global handler for effect type
-(runtime.run workflow :handlers {Sample: my_handler})
-
-;; Future: Scoped, composable handlers
-(with-handler [Sample my_handler]
-  (with-handler [Log silent_handler]  ; nested scope!
-    (run inner-workflow))
-  (run outer-workflow))  ; different handler
-```
 
 Multi-shot continuations would enable:
 - **Multi-shot handlers** — run continuation multiple times (doeff currently supports one-shot only)
@@ -719,7 +669,7 @@ Allow incomplete workflows with "holes" that show what's needed:
 ```hy
 (defgraph my-workflow []
   (let [model (yield (load-model "sdxl"))
-        image (yield (generate model ???))]  ; ← typed hole
+        image (yield (generate model ???))]  ; <- typed hole
     image))
 
 ;; System infers: ??? must be type Prompt
@@ -734,27 +684,27 @@ Allow incomplete workflows with "holes" that show what's needed:
 Track where every value came from for debugging and explainability:
 
 ```python
-result = await runtime.run(workflow)
+result = run(handler_stack(workflow))
 
 # Query provenance of any output
 result.provenance(output_image.pixel[100, 100])
-# → "This pixel came from:
-#    → decode(latent[50,50])
-#    → sample(step=17, noise=0.3)  
-#    → encode('detailed fur texture')
-#    → Original prompt word 'fur' at position 3"
+# -> "This pixel came from:
+#    -> decode(latent[50,50])
+#    -> sample(step=17, noise=0.3)  
+#    -> encode('detailed fur texture')
+#    -> Original prompt word 'fur' at position 3"
 ```
 
 ### Implementation Roadmap
 
 | Phase | Enhancement | Effort | Impact |
 |-------|-------------|--------|--------|
-| **Phase 1** | Ship current doeff + Hy design | Done | ★★★★★ |
-| **Phase 2** | Content-addressed cache layer | Medium | ★★★★☆ |
-| **Phase 3** | Incremental computation for preview | High | ★★★★☆ |
-| **Phase 4** | Typed holes for partial workflows | Medium | ★★★☆☆ |
-| **Research** | Multi-shot continuations | Very High | ★★★☆☆ |
-| **Research** | Projectional editing | Very High | ★★★☆☆ |
+| **Phase 1** | Ship current doeff + Hy design | Done | High |
+| **Phase 2** | Content-addressed cache layer | Medium | High |
+| **Phase 3** | Incremental computation for preview | High | High |
+| **Phase 4** | Typed holes for partial workflows | Medium | Medium |
+| **Research** | Multi-shot continuations | Very High | Medium |
+| **Research** | Projectional editing | Very High | Medium |
 
 ### Design Principle
 
@@ -770,8 +720,8 @@ The current design is **principled enough** to be extensible toward these ideals
 - [litegraph.js](https://github.com/jagenjo/litegraph.js) — graph editor library
 
 ### doeff Primitives
-- `doeff/graph_snapshot.py` — existing vis.js integration
-- `doeff/types.py` — `WGraph`/`WStep`/`WNode` DAG primitives
+- `doeff/program.py` — handler installer, `WithHandler`, `WithObserve`
+- `doeff_vm` — `EffectBase`, `PyVM`, VM IR nodes
 - `doeff/effects/` — effect system foundation
 
 ### Future Directions Research

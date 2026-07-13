@@ -32,7 +32,6 @@ from doeff_core_effects.scheduler import scheduled
 from doeff_time.handlers import sim_time_handler
 from doeff_traverse.effects import Inspect, Traverse
 from doeff_traverse.handlers import fail_handler, parallel
-from doeff_vm import WithHandler
 
 from doeff import EffectBase, Pass, Program, Resume, do, run, slog
 from doeff import handler as _program_handler
@@ -108,9 +107,15 @@ def _multi_day_program(n_days: int, n_items_per_day: int) -> Program[int]:
 
 
 def _compose(program, *handlers):
+    """Compose handlers onto program.
+
+    Each handler is a Program -> Program function (the result of
+    ``doeff.handler(raw_handler)`` or a pre-installed handler like
+    ``writer``, ``slog_handler``).
+    """
     wrapped = program
     for h in reversed(handlers):
-        wrapped = WithHandler(h, wrapped)
+        wrapped = h(wrapped)
     return wrapped
 
 
@@ -119,7 +124,7 @@ def _run_multi_day(n_days, n_items_per_day, concurrency=20):
     wrapped = _compose(
         _multi_day_program(n_days, n_items_per_day),
         lazy_ask(env={"config": "test"}),
-        writer(),
+        writer,
         try_handler,
         state(),
         local_handler,
@@ -129,7 +134,7 @@ def _run_multi_day(n_days, n_items_per_day, concurrency=20):
         _make_mock_handler(),
         parallel(concurrency=concurrency),
         fail_handler,
-        slog_handler(),
+        slog_handler,
     )
     return run(scheduled(wrapped))
 

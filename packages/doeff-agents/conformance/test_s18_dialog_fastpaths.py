@@ -3,8 +3,8 @@
 Observed oracle physics (this CORRECTS the original README row, which
 listed S18 as mode M2 for all four dialogs):
 
-  * codex-update / bypass-permissions / fullscreen-renderer are detected
-    and dismissed ONLY inside `wait_for_repl_idle` (main.rs:4138-4161) —
+  * codex-update / bypass-permissions / fullscreen-renderer / trust are
+    detected and dismissed ONLY inside `wait_for_repl_idle` (main.rs:4138-4161) —
     the launch path that runs exclusively for M1 launches (no `command=`,
     main.rs:1791). They are unreachable in M2. They also run inside the
     launch blind window (before the session row exists), so the only
@@ -36,13 +36,19 @@ Dismissal key sequences transcribed from main.rs:3189-3228:
   bypass       -> Down + Enter ("2. Yes, I accept")
   fullscreen   -> Down + Enter ("2. Not now")
   managed      -> Enter
+  trust        -> Enter (default selection is "1. Yes, I trust this
+                  folder"; NO Rust oracle counterpart — added 2026-07-07
+                  after a live frame proved detect_dialog=None left the
+                  launch hanging forever)
 """
 
 from __future__ import annotations
 
 import time
 
-from harness import RESULT_SCHEMA, AgentdHarness
+import pytest
+from doeff_agents.agentd_client import AgentdClientError
+from harness import RESULT_SCHEMA, AgentdHarness, session_exists_out_of_band
 
 PROMPT = "Produce the conformance structured result."
 PAYLOAD = {"summary": "dialog cleared", "ok": True}
@@ -144,6 +150,91 @@ def test_s18_claude_fullscreen_dialog_dismissed_at_launch(tmp_path) -> None:
             idle_frame="F-idle-claude",
             down_count=1,
             extra_env={"CLAUDE_CONFIG_DIR": str(tmp_path / "claude-config")},
+        )
+
+
+def test_s18_claude_trust_dialog_accepted_at_launch(tmp_path) -> None:
+    """The workspace-trust gate ("Is this a project you created or one you
+    trust?") appears whenever claude starts in a cwd whose project entry
+    lacks hasTrustDialogAccepted — including when the pre-seed is bypassed
+    or the CLI decides to re-ask. Undismissed it blocks startup forever:
+    wait_for_repl_idle never sees an idle prompt, degrades at its cap, and
+    the launch pastes the prompt into the dialog. Its default selection is
+    option 1 ("Yes, I trust this folder"), so the dismisser is a bare Enter
+    (same intent as the S12 pre-seed). A bare Enter has no unique bytes, so
+    ordering is the proof: the scenario only advances past the dialog once
+    "\\n" lands while the dialog is on screen, and the prompt paste can only
+    match after that barrier."""
+    with AgentdHarness() as harness:
+        scenario = harness.scenario(
+            "s18-trust",
+            [
+                {"render": "F-dialog-trust"},
+                # the dismisser's Enter (`\r`, ICRNL -> `\n`) is the first
+                # input to reach the pane: nothing is pasted while the
+                # dialog is showing
+                {"await_keys": {"expect": "\n", "timeout_s": 30}},
+                # retire the dialog before rendering the REPL (append-only
+                # pane; wait_for_repl_idle would re-dismiss a visible one)
+                {"scroll": 70},
+                {"render": "F-idle-claude"},
+                {"await_keys": {"expect": PROMPT, "timeout_s": 30}},
+            ],
+        )
+        scenario.launch_m1(
+            agent_type="claude",
+            prompt=PROMPT,
+            expected_result={"payload_schema": RESULT_SCHEMA},
+            extra_env={"CLAUDE_CONFIG_DIR": str(tmp_path / "claude-config")},
+        )
+        assert _matched_keys(scenario, "\n"), (
+            f"trust dismissal Enter never landed\n{harness.log_text()}"
+        )
+        assert _matched_keys(scenario, PROMPT), (
+            f"prompt never pasted after trust dismissal\n{harness.log_text()}"
+        )
+
+
+def test_s18_unknown_dialog_fails_launch_closed(tmp_path) -> None:
+    """A startup dialog OUTSIDE the R9 set must fail the launch with a
+    clear error instead of degrading silently (2026-07-07 contract
+    revision; the frozen oracle pasted the prompt into whatever was on
+    screen after the repl-idle budget, which turned the trust-dialog gap
+    into a silent forever-hang). Contract: the prompt is never delivered,
+    the RPC returns a typed error naming the blocked startup and carrying
+    the screen tail, and the created mux session is cleaned up.
+
+    DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS compresses the 120s repl-idle
+    budget for the test (same env-only knob pattern as the S19 watchdogs).
+    """
+    with AgentdHarness(
+        extra_env={"DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS": "3"}
+    ) as harness:
+        scenario = harness.scenario(
+            "s18-unknown",
+            [
+                # the unknown dialog just sits there — nothing dismisses it
+                {"render": "F-dialog-unknown"},
+            ],
+        )
+        with pytest.raises(AgentdClientError) as excinfo:
+            scenario.launch_m1(
+                agent_type="claude",
+                prompt=PROMPT,
+                expected_result={"payload_schema": RESULT_SCHEMA},
+                extra_env={"CLAUDE_CONFIG_DIR": str(tmp_path / "claude-config")},
+            )
+        message = str(excinfo.value)
+        assert "did not become ready" in message, message
+        # the error carries the screen evidence (what blocked startup)
+        assert "share anonymous usage data" in message.lower(), message
+
+        # no session row was registered (the launch failed before persist)
+        assert harness.client.get_session(scenario.session_id) is None
+
+        # the created mux session was cleaned up, not leaked
+        assert not session_exists_out_of_band(scenario.session_id), (
+            f"failed launch leaked its mux session: {scenario.session_id}"
         )
 
 

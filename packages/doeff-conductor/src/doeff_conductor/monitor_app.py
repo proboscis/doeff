@@ -7,7 +7,6 @@ READ-ONLY: it reads the same journals as the static views and mutates nothing.
 Keys: ↑/↓ navigate · enter/space expand-collapse · r refresh · a all/running · q quit.
 """
 
-from __future__ import annotations
 
 import time
 from pathlib import Path

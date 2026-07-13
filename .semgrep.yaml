@@ -25,6 +25,15 @@ rules:
     paths:
       include:
         - /packages/**
+      exclude:
+        # Prose documentation is never a launch site — the conformance README
+        # must be able to QUOTE the frozen judge default without tripping the
+        # raw-text scan. Code comments stay in scope (reword them instead);
+        # the two intended one-shot sites (the prompt-judge default in the
+        # Rust oracle and its Hy sessionhost port) carry inline nosemgrep
+        # with justification — the judge is an adjudicator subprocess, not
+        # an agent session launch.
+        - '**/*.md'
 
   - id: doeff-agents-no-anthropic-api-key-agent-env
     languages:
@@ -150,6 +159,26 @@ rules:
       include:
         - /packages/doeff-agents/src/doeff_agents/handlers/production.py
 
+  - id: doeff-agents-substrate-clean-impls
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      ADR-DOE-AGENTS-004 R2 (substrate-clean): per-kind impl modules under
+      packages/doeff-agents/src/doeff_agents/sessionhost/impls/ must only
+      yield substrate effects (SessionStore / Tmux / Fs / Env / Clock /
+      Proc). Raw IO — subprocess, sqlite3, open(), os.system — is forbidden
+      here; it belongs to the substrate handlers that interpret those
+      effects.
+    pattern-either:
+      - pattern-regex: '\(\s*import\s[^)]*\b(subprocess|sqlite3)\b'
+      - pattern-regex: '(?m)^\s*(import|from)\s+(subprocess|sqlite3)\b'
+      - pattern-regex: '\bos\.system\b'
+      - pattern-regex: '(?<![\w.])open\s*\('
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/sessionhost/impls/**
+
   - id: no-future-annotations
     languages: [python]
     severity: ERROR
@@ -273,6 +302,15 @@ rules:
     paths:
       include:
         - /packages/doeff-agents/src/**
+      exclude:
+        # The sessionhost store-of-record (C3) inherits the daemon's
+        # agent_sessions schema verbatim from the Rust oracle, and that
+        # schema contains the legacy pr_url COLUMN. Carrying the column for
+        # migrate/SELECT/upsert parity is storage plumbing, not
+        # terminal-text sniffing — the module has no access to pane
+        # captures at all. Sniffing stays banned everywhere else in
+        # doeff-agents/src, including the rest of sessionhost.
+        - /packages/doeff-agents/src/doeff_agents/sessionhost/store.hy
 
   - id: doeff-agents-no-terminal-text-success-status
     languages: [python]
@@ -1431,7 +1469,7 @@ rules:
       rationale: "CESK store ownership — Segment-only scope store, no dual-store sync"
 
   - id: doctrl-variants-require-approval
-    pattern-regex: '(?ms)pub\s+enum\s+DoCtrl\s*\{(?:(?!^\}).)*^\s*(?!Pure\b|Map\b|FlatMap\b|Perform\b|Resume\b|Transfer\b|TransferThrow\b|ResumeThrow\b|Discontinue\b|WithHandler\b|WithIntercept\b|Delegate\b|Pass\b|GetContinuation\b|GetHandlers\b|GetTraceback\b|CreateContinuation\b|ResumeContinuation\b|PythonAsyncSyntaxEscape\b|Apply\b|Expand\b|IRStream\b|Eval\b|EvalInScope\b|AllocVar\b|ReadVar\b|WriteVar\b|WriteVarNonlocal\b|ReadHandlerState\b|WriteHandlerState\b|AppendHandlerLog\b|GetCallStack\b)[A-Za-z_][A-Za-z0-9_]*\s*(\{|,)'
+    pattern-regex: '(?ms)pub\s+enum\s+DoCtrl\s*\{(?:(?!^\}).)*^\s*(?!Pure\b|Eval\b|Expand\b|Apply\b|Perform\b|Resume\b|Transfer\b|ResumeThrow\b|TransferThrow\b|WithHandler\b|Pass\b|Delegate\b|WithObserve\b|GetTraceback\b|GetExecutionContext\b|GetHandlers\b|GetOuterHandlers\b|TailEval\b|AllocVar\b|ReadVar\b|WriteVar\b)[A-Za-z_][A-Za-z0-9_]*\s*(\{|,)'
     paths:
       include:
         - "**/packages/doeff-vm-core/src/do_ctrl.rs"
@@ -4145,3 +4183,18 @@ rules:
       - pattern-either:
           - pattern: WriterTellEffect($MSG, **$KW)
           - pattern: WriterTellEffect($MSG, $K=$V)
+
+  - id: doeff-scheduler-spawn-must-capture-boundaries
+    languages: [generic]
+    severity: ERROR
+    message: >
+      Issue scheduler-spawn-drops-observer-boundary / ADR-DOE-CORE-001: the
+      scheduler must capture the FULL boundary stack at the spawn site via
+      get_inner_boundaries (handlers AND WithObserve observers, nesting order
+      preserved). get_inner_handlers drops observer boundaries, silently
+      breaking subtree observation (e.g. OpenTelemetry effect->span
+      instrumentation) inside Spawn'd tasks.
+    pattern-regex: 'get_inner_handlers'
+    paths:
+      include:
+        - /packages/doeff-core-effects/doeff_core_effects/scheduler.py

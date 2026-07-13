@@ -1,5 +1,7 @@
 """Tests for Pure - the immediate value effect (Pure case of Free monad)."""
 
+from __future__ import annotations
+
 import pytest
 from doeff_vm import Pure
 

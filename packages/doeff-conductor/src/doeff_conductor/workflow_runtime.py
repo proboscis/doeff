@@ -1,6 +1,5 @@
 """Production interpreter for ``WorkflowSpec`` request artifacts."""
 
-from __future__ import annotations
 
 import hashlib
 import json
@@ -77,7 +76,7 @@ class _RuntimeContext:
     # shared by several nodes must bind one workspace, identically across
     # process restarts (resume stability).
     workspace_cache: dict[str, Workspace] = dataclass_field(default_factory=dict)
-    tolerated_losses: list[ToleratedLoss] = dataclass_field(default_factory=list)
+    tolerated_losses: list["ToleratedLoss"] = dataclass_field(default_factory=list)
 
 
 @dataclass(frozen=True)

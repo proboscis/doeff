@@ -115,21 +115,21 @@ def seedream_image_handler(effect: Effect, k: Any):
     if isinstance(effect, SeedreamGenerate):
         if not _is_seedream_model(effect.model):
             yield Pass()
-            return
+            return None
         value = yield _generate_impl(effect)
         return (yield Resume(k, value))
 
     if isinstance(effect, ImageGenerate):
         if not _is_seedream_model(effect.model):
             yield Pass()
-            return
+            return None
         value = yield _image_generate_impl(effect)
         return (yield Resume(k, value))
 
     if isinstance(effect, ImageEdit):
         if not _is_seedream_model(effect.model):
             yield Pass()
-            return
+            return None
         value = yield _image_edit_impl(effect)
         return (yield Resume(k, value))
 
@@ -156,19 +156,19 @@ def production_handlers(
         if isinstance(effect, SeedreamGenerate):
             if not _is_seedream_model(effect.model):
                 yield Pass()
-                return
+                return None
             value = yield active_generate_impl(effect)
             return (yield Resume(k, value))
         if isinstance(effect, ImageGenerate):
             if not _is_seedream_model(effect.model):
                 yield Pass()
-                return
+                return None
             value = yield active_image_generate_impl(effect)
             return (yield Resume(k, value))
         if isinstance(effect, ImageEdit):
             if not _is_seedream_model(effect.model):
                 yield Pass()
-                return
+                return None
             value = yield active_image_edit_impl(effect)
             return (yield Resume(k, value))
         if isinstance(effect, SeedreamStructuredOutput) and structured_impl is not None:

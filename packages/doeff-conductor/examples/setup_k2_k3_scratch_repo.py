@@ -1,6 +1,5 @@
 """Create the scratch repository used by the C7 k2-k3 pilot workflow."""
 
-from __future__ import annotations
 
 import argparse
 import shutil

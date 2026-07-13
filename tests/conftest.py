@@ -42,7 +42,7 @@ def default_handlers(env=None):
     Includes scheduler + lazy_ask for full effect support.
     """
     return [
-        reader(env=env), state(), writer(), try_handler, slog_handler(),
+        reader(env=env), state(), writer, try_handler, slog_handler,
         local_handler, listen_handler, await_handler(), lazy_ask(),
     ]
 

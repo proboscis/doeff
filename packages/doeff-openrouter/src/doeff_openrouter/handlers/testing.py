@@ -136,7 +136,7 @@ def openrouter_mock_handler(
         return (yield Resume(k, payload))
     if isinstance(effect, LLMEmbedding):
         yield Pass(effect, k)
-        return
+        return None
     yield Pass(effect, k)
 
 

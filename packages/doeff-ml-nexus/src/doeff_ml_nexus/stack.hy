@@ -13,6 +13,7 @@
 (import doeff_ml_nexus.handlers.rsync [rsync-handler])
 (import doeff_ml_nexus.handlers.file [write-file-handler])
 (import doeff_docker.handlers.docker [docker-build-handler image-push-handler])
+(import doeff_docker.handlers.shell [shell-run-handler])
 
 
 (defn ml-nexus-interpreter [program * [env None]]  ; doeff: interpreter
@@ -28,12 +29,13 @@
   (run (scheduled
     (with-handlers
       [(reader :env resolved-env)
-       (slog-handler)
-       (writer)
+       slog-handler
+       writer
        resolve-handler
        write-file-handler
        rsync-handler
        image-push-handler
        docker-build-handler
-       docker-run-handler]
+       docker-run-handler
+       shell-run-handler]
       program))))

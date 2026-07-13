@@ -101,7 +101,11 @@ def _read_sse_data(resp) -> str:
     raise AssertionError(f"No data field in SSE event: {buf!r}")
 
 
-def _call_tool_from_agent_side(work_dir: Path) -> dict:
+def _call_tool_from_agent_side(
+    work_dir: Path,
+    tool_name: str = "same-vm-probe",
+    arguments: dict | None = None,
+) -> dict:
     config = json.loads((work_dir / ".mcp.json").read_text(encoding="utf-8"))
     server_url = config["mcpServers"]["probe"]["url"]
     parsed = urlparse(server_url)
@@ -119,7 +123,7 @@ def _call_tool_from_agent_side(work_dir: Path) -> dict:
             "jsonrpc": "2.0",
             "id": 1,
             "method": "tools/call",
-            "params": {"name": "same-vm-probe", "arguments": {}},
+            "params": {"name": tool_name, "arguments": arguments or {}},
         }
     )
     post.request("POST", endpoint, body.encode(), {"Content-Type": "application/json"})
@@ -260,13 +264,15 @@ def test_agent_mcp_loop_runs_while_await_result_is_pending(
 
         def call_tool_and_finish() -> None:
             try:
-                time.sleep(0.2)
+                # Runs on a real threading.Thread racing the doeff VM's
+                # AwaitResult wait; SimulationRuntime only controls the effect
+                # clock, not this background OS thread.
+                time.sleep(0.2)  # nosemgrep: doeff-no-sleep-in-tests
                 holder.append(_call_tool_from_agent_side(tmp_path))
-                pane_id = backend.sessions[handle.session_id]
-                backend.captures[pane_id] = (
-                    "DOEFF_AGENT_RESULT_BEGIN\n"
-                    f"{json.dumps({'status': 'done'})}\n"
-                    "DOEFF_AGENT_RESULT_END\n"
+                _call_tool_from_agent_side(
+                    tmp_path,
+                    tool_name="report_result",
+                    arguments={"result": {"status": "done"}},
                 )
             except Exception as exc:  # pragma: no cover - failure is re-raised below
                 holder.append(exc)

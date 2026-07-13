@@ -50,7 +50,7 @@ def test_observe_sees_program_effects():
         return 42
 
     wrapped = prog()
-    for h in reversed([state(), writer(), slog_handler()]):
+    for h in reversed([state(), writer, slog_handler]):
         wrapped = _program_handler(h)(wrapped)
     wrapped = WithObserve(VMCallable(observer), wrapped)
 
@@ -79,7 +79,7 @@ def test_observe_sees_handler_body_effects():
         return result
 
     wrapped = prog()
-    for h in reversed([state(), writer(), try_handler, slog_handler(), custom_handler]):
+    for h in reversed([state(), writer, try_handler, slog_handler, custom_handler]):
         wrapped = _program_handler(h)(wrapped)
     wrapped = WithObserve(VMCallable(observer), wrapped)
 
@@ -91,3 +91,57 @@ def test_observe_sees_handler_body_effects():
     tell_msgs = [o for o in observed if "tell from handler" in o]
     assert slog_msgs, f"Observer missed handler body slog. Observed: {observed}"
     assert tell_msgs, f"Observer missed handler body Tell. Observed: {observed}"
+
+
+def test_observer_exception_fails_fast():
+    """Regression test for #506: an exception raised by an observer must
+    abort the dispatch and propagate like a handler error — run() raises
+    instead of returning the handled value. A dead tracing/audit layer must
+    be loud, not silently swallowed.
+    """
+    import pytest
+
+    class Ping(EffectBase):
+        pass
+
+    def exploding_observer(effect):
+        raise RuntimeError("observer exploded")
+
+    @do
+    def h(effect, k):
+        return (yield Resume(k, "handled"))
+
+    @do
+    def body():
+        return (yield Ping())
+
+    program = WithObserve(VMCallable(exploding_observer), _program_handler(h)(body()))
+    with pytest.raises(RuntimeError, match="observer exploded"):
+        run(program)
+
+
+def test_observer_exception_is_catchable_at_perform_site():
+    """#506: the observer exception is raised at the perform site, so a
+    try/except around the yield can catch it (same semantics as a
+    synchronous handler exception)."""
+
+    class Ping(EffectBase):
+        pass
+
+    def exploding_observer(effect):
+        raise RuntimeError("observer exploded")
+
+    @do
+    def h(effect, k):
+        return (yield Resume(k, "handled"))
+
+    @do
+    def body():
+        try:
+            yield Ping()
+        except RuntimeError as exc:
+            return f"caught: {exc}"
+        return "not raised"
+
+    program = WithObserve(VMCallable(exploding_observer), _program_handler(h)(body()))
+    assert run(program) == "caught: observer exploded"

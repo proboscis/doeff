@@ -26,7 +26,7 @@ def test_cache_decorator_runs_with_memo_handler_but_no_terminal():
     program = _with_handlers(
         expensive(21),
         await_handler(),
-        slog_handler(),
+        slog_handler,
         in_memory_memo_handler(),
     )
 

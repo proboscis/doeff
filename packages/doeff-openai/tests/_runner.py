@@ -30,6 +30,7 @@ from doeff_core_effects.handlers import (
     state,
     try_handler,
     writer,
+    writer_log,
 )
 from doeff_core_effects.scheduler import scheduled
 from doeff_openai.handlers import calculate_cost_handler
@@ -56,23 +57,16 @@ class RunResult:
 def _build_chain(program: Any, env: dict | None):
     """Build the legacy default handler chain.
 
-    Returns ``(wrapped_program, writer_ref, slog_ref)`` — the two refs let
-    the caller read the accumulated ``WriterTellEffect`` / ``Slog`` log
-    after ``run`` returns. Composition order mirrors the working pattern
-    in ``doeff-traverse/tests/test_traverse_deep_recursion.py`` —
-    ``scheduled`` is the outermost wrapper, and every in-chain
-    ``try_handler`` / ``listen_handler`` / ``state`` / etc. sits inside
-    it so scheduler-owned effects resolve correctly regardless of which
-    Try/Listen scope they're nested in.
+    Returns a single wrapped program.  The writer log is captured inside
+    the program via ``writer_log()`` — no side-channel ``.log`` access.
 
-    ``slog_handler`` is installed but positioned *outside* ``writer`` —
-    writer captures the ``Tell`` stream first (so it shows up in
-    ``RunResult.log``) and then Pass-es through. ``slog_handler`` is
-    retained for tests that explicitly emit structured ``slog`` calls
-    with kwargs.
+    Composition order mirrors ``doeff-traverse/tests`` — ``scheduled``
+    is outermost so scheduler effects resolve regardless of scope.
+
+    ``slog_handler`` is positioned outside ``writer`` — writer captures
+    the ``Tell`` stream and passes through; ``slog_handler`` handles
+    structured ``slog`` calls.
     """
-    writer_h = writer()
-    slog_h = slog_handler()
     wrapped = program
     wrapped = calculate_cost_handler(wrapped)
     wrapped = await_handler()(wrapped)
@@ -80,10 +74,10 @@ def _build_chain(program: Any, env: dict | None):
     wrapped = local_handler(wrapped)
     wrapped = state()(wrapped)
     wrapped = try_handler(wrapped)
-    wrapped = writer_h(wrapped)
-    wrapped = slog_h(wrapped)
+    wrapped = writer(wrapped)
+    wrapped = slog_handler(wrapped)
     wrapped = lazy_ask(env=env or {})(wrapped)
-    return scheduled(wrapped), writer_h, slog_h
+    return scheduled(wrapped)
 
 
 async def run_program(program: Any, env: dict | None = None) -> RunResult:
@@ -96,16 +90,18 @@ async def run_program(program: Any, env: dict | None = None) -> RunResult:
 
     @do
     def _wrap():
-        return (yield Try(program))
+        outcome = yield Try(program)
+        log = yield writer_log()
+        return (outcome, log)
 
-    chain, writer_h, _slog_h = _build_chain(_wrap(), env)
-    outcome = run(chain)
+    chain = _build_chain(_wrap(), env)
+    result = run(chain)
+    outcome, log = result
 
-    log = list(writer_h.log)
     if isinstance(outcome, Ok):
-        return RunResult(value=outcome.value, log=log)
+        return RunResult(value=outcome.value, log=list(log))
     if isinstance(outcome, Err):
-        return RunResult(error=outcome.error, log=log)
+        return RunResult(error=outcome.error, log=list(log))
     raise RuntimeError(
         f"unexpected Try outcome: {type(outcome).__name__} — expected Ok/Err"
     )

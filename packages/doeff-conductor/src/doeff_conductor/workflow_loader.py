@@ -6,7 +6,6 @@ The Python spec IR those macros expand into is an internal compilation
 target — user-supplied ``.py`` workflow files are rejected here.
 """
 
-from __future__ import annotations
 
 import ast
 import importlib.util
