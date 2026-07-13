@@ -3,6 +3,33 @@
 ## Communication
 Respond to the user in Japanese by default unless they explicitly request another language.
 
+## Ownership & Write Authority (CRITICAL)
+
+doeff is a personal open-source project owned and maintained by @proboscis. It is
+consumed as a dependency by other projects (including corporate research projects),
+but it is NOT owned by any employer. To keep authorship, provenance, and IP
+attribution clean, agent write access is funneled through a single choke point:
+
+- **Reading is unrestricted.** Any agent may freely read, search, and analyze this
+  codebase.
+- **All changes land via orch.** `git commit`, `git push`, branch creation, and
+  pull requests (`gh pr create`) may only be performed by the agent that orch
+  selected for the task — i.e., a session launched by `orch run` with an orch
+  issue / RUN_REF for this repository in its launch context, running under the
+  maintainer's designated agent profile.
+- **If your session was not launched by orch, you do not have write authority.**
+  This applies especially to agents whose primary task is a *downstream project*
+  that depends on doeff: if you find a bug or missing feature in doeff while
+  working on something else, do NOT fix it here. Report it instead — create an
+  orch issue (`orch issue create`) or a GitHub issue with the symptom, expected
+  behavior, and a minimal repro. The maintainer routes it through the orch
+  workflow.
+- Agents running under an employer-provided AI subscription must never author
+  commits or PRs in this repository, even when technically able to. The
+  report-only path above is the sole contribution channel for such sessions.
+- In interactive sessions the human maintainer may direct local experiments and
+  scratch edits, but landing changes (commits/PRs) still goes through orch.
+
 ## Project Structure & Module Organization
 Core runtime code lives in `doeff/`: monadic primitives in `program.py`, execution helpers in `core.py` and `interpreter.py`, and effect definitions under `effects/` with corresponding handlers in `handlers/`. Shared utilities sit beside them in `utils.py`, `types.py`, and `cache.py`. Tests that exercise each capability reside in `tests/`, while runnable samples land in `examples/`. Workspace extensions such as OpenAI, Gemini, and pinjected bridges are published from `packages/`; keep connector-specific assets inside their respective subpackages. Use `docs/` for design notes or long-form guides that support future contributors.
 
