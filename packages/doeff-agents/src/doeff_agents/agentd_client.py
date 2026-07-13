@@ -279,6 +279,76 @@ class AgentdClient:
         result = self.request("session.cleanup", {"session_id": session_id})
         return _snapshot_from_result(result)
 
+    def resume_session(
+        self,
+        session_id: str,
+        *,
+        prompt: str | None = None,
+        model: str | None = None,
+        effort: str | None = None,
+        mcp_servers: Mapping[str, str] | None = None,
+        session_env: Mapping[str, str] | None = None,
+    ) -> Mapping[str, Any]:
+        """Host a new incarnation of the session's conversation
+        (ADR-DOE-AGENTS-006 R4). Returns the raw wire snapshot of the NEW
+        session row — callers need the ADR-006 fields (``conversation`` /
+        ``generation`` / ``resumed_from_session_id``) that the typed
+        AgentSessionSnapshot does not carry. Non-auth launch intent
+        (session_env / model / effort / mcp_servers) is restored from the
+        source row's persisted overlay; keyword arguments override per key."""
+        return self._incarnation_request("session.resume", session_id,
+                                         prompt=prompt, model=model,
+                                         effort=effort,
+                                         mcp_servers=mcp_servers,
+                                         session_env=session_env)
+
+    def fork_session(
+        self,
+        session_id: str,
+        *,
+        prompt: str | None = None,
+        model: str | None = None,
+        effort: str | None = None,
+        mcp_servers: Mapping[str, str] | None = None,
+        session_env: Mapping[str, str] | None = None,
+    ) -> Mapping[str, Any]:
+        """Fork the session's conversation into a NEW conversation
+        (ADR-DOE-AGENTS-006 R4; the CLI mints the new native identity —
+        the host discovers it and fills ``conversation`` asynchronously).
+        Returns the raw wire snapshot of the new session row."""
+        return self._incarnation_request("session.fork", session_id,
+                                         prompt=prompt, model=model,
+                                         effort=effort,
+                                         mcp_servers=mcp_servers,
+                                         session_env=session_env)
+
+    def _incarnation_request(
+        self,
+        method: str,
+        session_id: str,
+        *,
+        prompt: str | None,
+        model: str | None,
+        effort: str | None,
+        mcp_servers: Mapping[str, str] | None,
+        session_env: Mapping[str, str] | None,
+    ) -> Mapping[str, Any]:
+        params: dict[str, Any] = {"session_id": session_id}
+        if prompt is not None:
+            params["prompt"] = prompt
+        if model is not None:
+            params["model"] = model
+        if effort is not None:
+            params["effort"] = effort
+        if mcp_servers:
+            params["mcp_servers"] = dict(mcp_servers)
+        if session_env:
+            params["session_env"] = dict(session_env)
+        result = self.request(method, params)
+        if not isinstance(result, Mapping):
+            raise AgentdProtocolError(f"{method} returned a non-object result")
+        return result
+
     def request(
         self,
         method: str,
