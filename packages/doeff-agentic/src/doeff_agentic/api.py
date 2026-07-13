@@ -370,8 +370,6 @@ class AgenticAPI:
         Returns:
             Workflow ID
         """
-        from doeff import handler as _program_handler
-        from doeff import run
         from doeff_core_effects.handlers import (
             await_handler,
             lazy_ask,
@@ -382,6 +380,9 @@ class AgenticAPI:
             writer,
         )
         from doeff_core_effects.scheduler import scheduled
+
+        from doeff import handler as _program_handler
+        from doeff import run
 
         from .handler import with_agentic_effectful_handlers
 
