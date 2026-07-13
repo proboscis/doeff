@@ -9,7 +9,7 @@ from typing import Any
 from doeff_core_effects import Await
 from doeff_core_effects.scheduler import Spawn
 
-from doeff import Pass, Resume, do
+from doeff import Pass, Transfer, do
 from doeff import handler as _program_handler
 from doeff_time.effects import DelayEffect, GetTimeEffect, ScheduleAtEffect, WaitUntilEffect
 
@@ -33,48 +33,36 @@ class AsyncTimeRuntime:
         self._sleep = sleep
 
     @do
-    def _handle_delay(self, effect: DelayEffect, k: Any):
-        wait_seconds = max(0.0, effect.seconds)
-        yield Await(self._sleep(wait_seconds))
-        return (yield Resume(k, None))
-
-    @do
-    def _handle_wait_until(self, effect: WaitUntilEffect, k: Any):
-        wait_seconds = max(0.0, (effect.target - self._now()).total_seconds())
-        yield Await(self._sleep(wait_seconds))
-        return (yield Resume(k, None))
-
-    @do
-    def _handle_get_time(self, _effect: GetTimeEffect, k: Any):
-        return (yield Resume(k, self._now()))
-
-    @do
-    def _handle_schedule_at(self, effect: ScheduleAtEffect, k: Any):
-        wait_seconds = max(0.0, (effect.time - self._now()).total_seconds())
-        sleep = self._sleep
-
-        @do
-        def deferred():
-            yield Await(sleep(wait_seconds))
-            yield effect.program
-
-        # Resume the caller with the spawned Task (same contract as
-        # sim_time_handler) so failures of the deferred program can be
-        # observed via Wait/Gather instead of vanishing on an unwatched
-        # task (#503).
-        task = yield Spawn(deferred())
-        return (yield Resume(k, task))
-
-    @do
     def handle(self, effect: Any, k: Any):
+        # Every clause performs its final Transfer/Pass from THIS frame.
+        # Delegating to a sub-@do that transfers (the pre-2026-07-14 shape)
+        # leaves this frame suspended mid-`yield` forever, pinning the
+        # Task handle and defeating the scheduler's terminal-entry sweep
+        # (ADR-DOE-CORE-EFFECTS-002).
         if isinstance(effect, DelayEffect):
-            return (yield self._handle_delay(effect, k))
+            yield Await(self._sleep(max(0.0, effect.seconds)))
+            return (yield Transfer(k, None))
         if isinstance(effect, WaitUntilEffect):
-            return (yield self._handle_wait_until(effect, k))
+            wait_seconds = max(0.0, (effect.target - self._now()).total_seconds())
+            yield Await(self._sleep(wait_seconds))
+            return (yield Transfer(k, None))
         if isinstance(effect, GetTimeEffect):
-            return (yield self._handle_get_time(effect, k))
+            return (yield Transfer(k, self._now()))
         if isinstance(effect, ScheduleAtEffect):
-            return (yield self._handle_schedule_at(effect, k))
+            wait_seconds = max(0.0, (effect.time - self._now()).total_seconds())
+            sleep = self._sleep
+
+            @do
+            def deferred():
+                yield Await(sleep(wait_seconds))
+                yield effect.program
+
+            # Resume the caller with the spawned Task (same contract as
+            # sim_time_handler) so failures of the deferred program can be
+            # observed via Wait/Gather instead of vanishing on an unwatched
+            # task (#503).
+            task = yield Spawn(deferred())
+            return (yield Transfer(k, task))
         yield Pass(effect, k)
 
 
@@ -86,12 +74,7 @@ def async_time_handler(
     """Return a protocol handler for wall-clock async time semantics."""
 
     runtime = AsyncTimeRuntime(now=now, sleep=sleep)
-
-    @do
-    def handler(effect: Any, k: Any):
-        return (yield runtime.handle(effect, k))
-
-    return _program_handler(handler)
+    return _program_handler(runtime.handle)
 
 
 __all__ = [

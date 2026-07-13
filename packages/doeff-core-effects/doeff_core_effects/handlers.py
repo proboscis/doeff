@@ -18,7 +18,7 @@ the ``state`` handler to be installed as an outer handler.
 import threading as _threading
 
 from doeff import do
-from doeff.program import Pass, Resume
+from doeff.program import Pass, Transfer, TransferThrow
 from doeff.program import handler as _program_handler
 from doeff_core_effects.effects import (
     Ask,
@@ -46,10 +46,8 @@ def reader(env=None):
     def handler(effect, k):
         if isinstance(effect, Ask):
             if effect.key in env:
-                result = yield Resume(k, env[effect.key])
-                return result
-            from doeff.program import ResumeThrow
-            return (yield ResumeThrow(k, KeyError(_missing_key_message(effect.key))))
+                return (yield Transfer(k, env[effect.key]))
+            return (yield TransferThrow(k, KeyError(_missing_key_message(effect.key))))
         yield Pass(effect, k)
 
     return _program_handler(handler)
@@ -66,12 +64,10 @@ def state(initial=None):
     @do
     def handler(effect, k):
         if isinstance(effect, Get):
-            result = yield Resume(k, store.get(effect.key))
-            return result
+            return (yield Transfer(k, store.get(effect.key)))
         elif isinstance(effect, Put):
             store[effect.key] = effect.value
-            result = yield Resume(k, None)
-            return result
+            return (yield Transfer(k, None))
         yield Pass(effect, k)
 
     return _program_handler(handler)
@@ -100,8 +96,7 @@ def _writer_handler(effect, k):
             log = []
             yield Put(_WRITER_LOG_KEY, Some(log))
         log.append(effect.msg)
-        result = yield Resume(k, None)
-        return result
+        return (yield Transfer(k, None))
     yield Pass(effect, k)
 
 
@@ -158,8 +153,7 @@ def _try_handler(effect, k):
                 return Ok(value)
             except Exception as e:
                 return Err(e)
-        result = yield Resume(k, (yield attempt()))
-        return result
+        return (yield Transfer(k, (yield attempt())))
     yield Pass(effect, k)
 
 
@@ -193,8 +187,7 @@ def _slog_handler(effect, k):
 
     if isinstance(effect, Slog):
         print(_format_slog_line(effect), file=sys.stderr)
-        result = yield Resume(k, None)
-        return result
+        return (yield Transfer(k, None))
     yield Pass(effect, k)
 
 
@@ -209,8 +202,7 @@ def _slog_discard_handler(effect, k):
     ADR-DOE-CORE-EFFECTS-001 R5). For assertions, capture via
     Listen(prog, types=(SlogEffect,)) inside the program instead."""
     if isinstance(effect, Slog):
-        result = yield Resume(k, None)
-        return result
+        return (yield Transfer(k, None))
     yield Pass(effect, k)
 
 
@@ -245,7 +237,7 @@ def _local_handler(effect, k):
         @do
         def scope_reader(inner_effect, inner_k):
             if isinstance(inner_effect, Ask) and inner_effect.key in overrides:
-                return (yield Resume(inner_k, overrides[inner_effect.key]))
+                return (yield Transfer(inner_k, overrides[inner_effect.key]))
             yield Pass(inner_effect, inner_k)
 
         # Reinstall inner handlers + local_handler itself (for nested Locals),
@@ -257,7 +249,7 @@ def _local_handler(effect, k):
         prog = _program_handler(scope_reader)(prog)
 
         inner_result = yield prog
-        return (yield Resume(k, inner_result))
+        return (yield Transfer(k, inner_result))
     yield Pass(effect, k)
 
 
@@ -295,8 +287,7 @@ def _listen_handler(effect, k):
         prog = _program_handler(observer_handler)(prog)
 
         inner_result = yield prog
-        result = yield Resume(k, (inner_result, collected))
-        return result
+        return (yield Transfer(k, (inner_result, collected)))
     yield Pass(effect, k)
 
 
@@ -489,8 +480,7 @@ def await_handler():
             fut = asyncio.run_coroutine_threadsafe(run_coro(), loop)
             fut.add_done_callback(_observe_await_bridge_future)
             value = yield Wait(ep.future)
-            result = yield Resume(k, value)
-            return result
+            return (yield Transfer(k, value))
         yield Pass(effect, k)
 
     return _program_handler(handler)
@@ -524,7 +514,7 @@ def lazy_ask(env=None, *, strict=False):  # noqa: PLR0915 - baseline cleanup kee
     3. Miss behavior:
        - strict=False (default): ``Pass(effect, k)`` — delegate to outer
          handler so composition like ``(lazy-ask (env-var-ask ...))`` works.
-       - strict=True: ``ResumeThrow(KeyError)`` — legacy behavior when you
+       - strict=True: ``TransferThrow(KeyError)`` — legacy behavior when you
          want the handler to be authoritative and loud about misses.
 
     If the resolved value is a Program (any DoExpr node — Expand, Perform,
@@ -547,7 +537,6 @@ def lazy_ask(env=None, *, strict=False):  # noqa: PLR0915 - baseline cleanup kee
 
     from doeff import Program
     from doeff.handler_utils import get_inner_handlers
-    from doeff.program import ResumeThrow
     from doeff_core_effects.scheduler import (
         AcquireSemaphore,
         CreateSemaphore,
@@ -595,7 +584,7 @@ def lazy_ask(env=None, *, strict=False):  # noqa: PLR0915 - baseline cleanup kee
                     raw = effective_env[effect.key]
                 else:
                     if strict:
-                        return (yield ResumeThrow(
+                        return (yield TransferThrow(
                             k, KeyError(_missing_key_message(effect.key))
                         ))
                     # Forward to outer handler so env-var-ask (or other
@@ -605,14 +594,14 @@ def lazy_ask(env=None, *, strict=False):  # noqa: PLR0915 - baseline cleanup kee
 
                 # Plain value — resume directly
                 if not isinstance(raw, Program):
-                    return (yield Resume(k, raw))
+                    return (yield Transfer(k, raw))
 
                 # Cache lookup (scope then shared)
                 cached_val, cached_dep = _cache_lookup(effect.key)
                 if cached_val is not None:
                     if eval_stack:
                         eval_stack[-1].update(cached_dep)
-                    return (yield Resume(k, cached_val))
+                    return (yield Transfer(k, cached_val))
 
                 # Create per-key semaphore on first lazy access
                 if effect.key not in sems:
@@ -627,7 +616,7 @@ def lazy_ask(env=None, *, strict=False):  # noqa: PLR0915 - baseline cleanup kee
                     yield ReleaseSemaphore(sems[effect.key])
                     if eval_stack:
                         eval_stack[-1].update(cached_dep)
-                    return (yield Resume(k, cached_val))
+                    return (yield Transfer(k, cached_val))
 
                 # Evaluate the program under this handler so effects
                 # flow through lazy_ask and see the current env.
@@ -649,12 +638,12 @@ def lazy_ask(env=None, *, strict=False):  # noqa: PLR0915 - baseline cleanup kee
                 yield ReleaseSemaphore(sems[effect.key])
 
                 if error is not None:
-                    return (yield ResumeThrow(k, error))
+                    return (yield TransferThrow(k, error))
 
                 _cache_store(effect.key, value, deps)
                 if eval_stack:
                     eval_stack[-1].update(deps)
-                return (yield Resume(k, value))
+                return (yield Transfer(k, value))
 
             elif isinstance(effect, Local):
                 # Create a new handler with merged env and fresh scope cache
@@ -678,8 +667,8 @@ def lazy_ask(env=None, *, strict=False):  # noqa: PLR0915 - baseline cleanup kee
                     error = e
 
                 if error is not None:
-                    return (yield ResumeThrow(k, error))
-                return (yield Resume(k, inner_result))
+                    return (yield TransferThrow(k, error))
+                return (yield Transfer(k, inner_result))
 
             yield Pass(effect, k)
 
@@ -741,12 +730,12 @@ def env_var_ask(*, prefix="DOEFF_"):
 
         # Plain string — no caching, always fresh.
         if not (raw.startswith("{") and raw.endswith("}")):
-            return (yield Resume(k, raw))
+            return (yield Transfer(k, raw))
 
         # {module.path} — cache with raw-value invalidation.
         cached = cache.get(effect.key)
         if cached is not None and cached[0] == raw:
-            return (yield Resume(k, cached[1]))
+            return (yield Transfer(k, cached[1]))
 
         # Per-key semaphore serialises concurrent evals.
         if effect.key not in sems:
@@ -757,7 +746,7 @@ def env_var_ask(*, prefix="DOEFF_"):
         cached = cache.get(effect.key)
         if cached is not None and cached[0] == raw:
             yield ReleaseSemaphore(sems[effect.key])
-            return (yield Resume(k, cached[1]))
+            return (yield Transfer(k, cached[1]))
 
         try:
             path = raw[1:-1].strip()
@@ -786,10 +775,9 @@ def env_var_ask(*, prefix="DOEFF_"):
             cache[effect.key] = (raw, resolved)
         except Exception as e:
             yield ReleaseSemaphore(sems[effect.key])
-            from doeff.program import ResumeThrow
-            return (yield ResumeThrow(k, e))
+            return (yield TransferThrow(k, e))
 
         yield ReleaseSemaphore(sems[effect.key])
-        return (yield Resume(k, resolved))
+        return (yield Transfer(k, resolved))
 
     return _program_handler(handler)

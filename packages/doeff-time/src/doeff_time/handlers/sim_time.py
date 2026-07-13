@@ -14,7 +14,7 @@ from doeff_core_effects.scheduler import (
     Wait,
 )
 
-from doeff import Pass, Resume, Transfer, do
+from doeff import Pass, Transfer, do
 from doeff import handler as _program_handler
 from doeff_time._internals import SimClock, TimeQueue
 from doeff_time.effects import (
@@ -44,12 +44,7 @@ class SimTimeRuntime:
         self._driver_running = False
         self._log_formatter = log_formatter
         self._forwarding_tell = False
-
-        @do
-        def _protocol_handler(effect: Any, k: Any):
-            return (yield self.handle(effect, k))
-
-        self._handler: ProtocolHandler = _protocol_handler
+        self._handler: ProtocolHandler = self.handle
 
     @do
     def _clock_driver(self):
@@ -88,70 +83,49 @@ class SimTimeRuntime:
         yield Wait(promise.future)
 
     @do
-    def _handle_tell(self, effect: WriterTellEffect, k: Any):
-        assert self._log_formatter is not None
-        formatted = self._log_formatter(self._clock.current_time, effect.msg)
-        self._forwarding_tell = True
-        try:
-            result = yield WriterTellEffect(formatted)
-        finally:
-            self._forwarding_tell = False
-        yield Transfer(k, result)
-
-    @do
-    def _handle_delay(self, effect: DelayEffect, k: Any):
-        target_time = self._clock.current_time + timedelta(seconds=effect.seconds)
-        _ = yield self._wait_for_time(target_time)
-
-        return (yield Resume(k, None))
-
-    @do
-    def _handle_wait_until(self, effect: WaitUntilEffect, k: Any):
-        target_time = max(self._clock.current_time, effect.target)
-        _ = yield self._wait_for_time(target_time)
-
-        return (yield Resume(k, None))
-
-    @do
-    def _handle_get_time(self, _effect: GetTimeEffect, k: Any):
-        return (yield Resume(k, self._clock.current_time))
-
-    @do
-    def _handle_schedule_at(self, effect: ScheduleAtEffect, k: Any):
-        @do
-        def deferred():
-            _ = yield self._wait_for_time(effect.time)
-            yield effect.program
-
-        task = yield Spawn(deferred())
-        return (yield Resume(k, task))
-
-    @do
-    def _handle_set_time(self, effect: SetTimeEffect, k: Any):
-        self._clock.set_time(effect.time)
-        if not self._time_queue.empty():
-            _ = yield self._ensure_clock_driver()
-
-        return (yield Resume(k, None))
-
-    @do
     def handle(self, effect: Any, k: Any):
+        # Every clause performs its final Transfer/Pass from THIS frame.
+        # Delegating to a sub-@do that transfers (the pre-2026-07-14 shape)
+        # leaves this frame suspended mid-`yield` forever, pinning the
+        # Task handle and defeating the scheduler's terminal-entry sweep
+        # (ADR-DOE-CORE-EFFECTS-002). Sub-programs that COMPLETE before
+        # the Transfer (_wait_for_time, _ensure_clock_driver) are fine.
         if (
             isinstance(effect, WriterTellEffect)
             and self._log_formatter is not None
             and not self._forwarding_tell
         ):
-            return (yield self._handle_tell(effect, k))
+            formatted = self._log_formatter(self._clock.current_time, effect.msg)
+            self._forwarding_tell = True
+            try:
+                result = yield WriterTellEffect(formatted)
+            finally:
+                self._forwarding_tell = False
+            return (yield Transfer(k, result))
         if isinstance(effect, DelayEffect):
-            return (yield self._handle_delay(effect, k))
+            target_time = self._clock.current_time + timedelta(seconds=effect.seconds)
+            _ = yield self._wait_for_time(target_time)
+            return (yield Transfer(k, None))
         if isinstance(effect, WaitUntilEffect):
-            return (yield self._handle_wait_until(effect, k))
+            target_time = max(self._clock.current_time, effect.target)
+            _ = yield self._wait_for_time(target_time)
+            return (yield Transfer(k, None))
         if isinstance(effect, GetTimeEffect):
-            return (yield self._handle_get_time(effect, k))
+            return (yield Transfer(k, self._clock.current_time))
         if isinstance(effect, ScheduleAtEffect):
-            return (yield self._handle_schedule_at(effect, k))
+
+            @do
+            def deferred():
+                _ = yield self._wait_for_time(effect.time)
+                yield effect.program
+
+            task = yield Spawn(deferred())
+            return (yield Transfer(k, task))
         if isinstance(effect, SetTimeEffect):
-            return (yield self._handle_set_time(effect, k))
+            self._clock.set_time(effect.time)
+            if not self._time_queue.empty():
+                _ = yield self._ensure_clock_driver()
+            return (yield Transfer(k, None))
         yield Pass(effect, k)
 
 
