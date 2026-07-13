@@ -4,7 +4,7 @@ Example 02: Agent with Status Updates
 Show workflow progress using slog (structured logging) with doeff-core-effects.
 
 The slog status is:
-- Displayed to console via rich (from slog_handler)
+- Displayed on stderr by the standard handler stack (run_program)
 - Visible via doeff-agentic watch/ps commands
 
 Run:
@@ -15,7 +15,6 @@ In another terminal:
     doeff-agentic watch <workflow-id>
 """
 
-from doeff.effects.writer import slog
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticGetMessages,
@@ -23,9 +22,8 @@ from doeff_agentic import (
     AgenticSendMessage,
 )
 from doeff_agentic.opencode_handler import opencode_handler
-from doeff_core_effects.handlers import slog_handler
 
-from doeff import do
+from doeff import do, slog
 
 
 def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
@@ -39,7 +37,7 @@ def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
 @do
 def agent_with_status():
     """Workflow with status updates visible in the CLI."""
-    yield slog(status="starting", msg="Launching agent...")
+    yield slog(msg="Launching agent...", status="starting")
 
     # Create session
     session = yield AgenticCreateSession(name="counter")
@@ -55,14 +53,14 @@ def agent_with_status():
     messages = yield AgenticGetMessages(session_id=session.id)
     result = get_last_assistant_message(messages)
 
-    yield slog(status="complete", msg=f"Agent finished: {result[:50]}...")
+    yield slog(msg=f"Agent finished: {result[:50]}...", status="complete")
     return result
 
 
 if __name__ == "__main__":
     import asyncio
 
-    from doeff import async_run, default_handlers
+    from _runtime import run_program
 
     async def main():
         print("Starting agent_with_status workflow...")
@@ -71,18 +69,15 @@ if __name__ == "__main__":
         print("  doeff-agentic ps")
         print("  doeff-agentic watch <workflow-id>")
         print()
-        # slog_handler: stderr display sink for SlogEffect (visible logs by default)
         # OpenCode provides: agent session management effects
-        program = slog_handler(opencode_handler()(agent_with_status()))
-        result = await async_run(program, handlers=default_handlers())
-
-        if result.is_err():
+        program = opencode_handler()(agent_with_status())
+        try:
+            output = await run_program(program)
+        except Exception as e:
             print("\n=== Workflow Failed ===")
-            print(result.format())  # Rich error info: effect path, python stack, K stack
+            print(f"Error: {e}")
         else:
             print("\n=== Agent Output ===")
-            output = result.value
             print(output[:500] if len(output) > 500 else output)
-            print(f"\nCaptured {len(result.log)} slog messages in writer log")
 
     asyncio.run(main())

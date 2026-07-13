@@ -4,16 +4,14 @@ OpenCode handler for doeff-agentic.
 This module provides the handler that uses OpenCode's HTTP API for agent session management.
 
 Usage:
-    import asyncio
-    from doeff import async_run, default_handlers
+    from doeff import run
     from doeff_agentic.opencode_handler import opencode_handler
+    from doeff_core_effects.handlers import slog_handler
+    from doeff_core_effects.scheduler import scheduled
 
-    async def main():
-        handlers = opencode_handler()
-        program = handlers(my_workflow())
-        result = await async_run(program, handlers=default_handlers())
-
-    asyncio.run(main())
+    handlers = opencode_handler()
+    program = slog_handler(handlers(my_workflow()))
+    result = run(scheduled(program))
 """
 
 
@@ -1055,16 +1053,14 @@ def opencode_handler(
         Protocol handler for direct Program -> Program composition.
 
     Usage:
-        import asyncio
-        from doeff import async_run, default_handlers
+        from doeff import run
         from doeff_agentic import opencode_handler
+        from doeff_core_effects.handlers import slog_handler
+        from doeff_core_effects.scheduler import scheduled
 
-        async def main():
-            handlers = opencode_handler()
-            program = handlers(my_workflow())
-            result = await async_run(program, handlers=default_handlers())
-
-        asyncio.run(main())
+        handlers = opencode_handler()
+        program = slog_handler(handlers(my_workflow()))
+        result = run(scheduled(program))
     """
     handler = OpenCodeHandler(
         server_url=server_url,

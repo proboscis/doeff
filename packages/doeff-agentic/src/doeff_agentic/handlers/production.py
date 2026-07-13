@@ -105,14 +105,16 @@ class AgenticHandler:
     - State file management for CLI consumers
     - Workflow observability
 
-    Usage with doeff_vm public API:
-        from doeff import default_handlers, run
+    Usage with doeff public API (compose the entry-point stack you need,
+    e.g. slog_handler/state — see AgenticAPI.run):
+        from doeff import run
+        from doeff_core_effects.scheduler import scheduled
 
         wrapped = with_agentic_effectful_handlers(
             my_workflow(),
             workflow_id="my-workflow",
         )
-        result = run(wrapped, handlers=default_handlers())
+        result = run(scheduled(wrapped))
 
     Usage standalone:
         handler = AgenticHandler(workflow_id="my-workflow")

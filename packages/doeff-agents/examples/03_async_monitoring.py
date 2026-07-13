@@ -9,7 +9,7 @@ Features shown:
 - async_run for non-blocking execution
 - Parallel session execution with Gather-like patterns
 - Fine-grained effects for monitoring multiple sessions
-- Integration with slog_handler for logging
+- Integration with the standard slog display stack
 """
 
 import asyncio
@@ -17,7 +17,6 @@ import time
 from pathlib import Path
 
 from _runtime import run_program
-from doeff.effects.writer import slog
 from doeff_agents import (
     AgentType,
     Capture,
@@ -33,10 +32,9 @@ from doeff_agents import (
     configure_mock_session,
     mock_agent_handlers,
 )
-from doeff_core_effects.handlers import slog_handler
 from doeff_time import Delay
 
-from doeff import do
+from doeff import do, slog
 
 
 @do
@@ -45,10 +43,15 @@ def single_session_workflow(session_name: str, config: LaunchConfig):
 
     Yields effects interpreted by doeff_vm handlers.
     """
-    yield slog(step="start", session_name=session_name)
+    yield slog("start", session_name=session_name)
 
-    handle: SessionHandle = yield Launch(session_name, config)
-    yield slog(step="launched", pane_id=handle.pane_id)
+    handle: SessionHandle = yield Launch(
+        session_name,
+        agent_type=config.agent_type,
+        work_dir=config.work_dir,
+        prompt=config.prompt,
+    )
+    yield slog("launched", session_id=handle.session_id)
 
     final_status = SessionStatus.PENDING
     iteration = 0
@@ -60,12 +63,9 @@ def single_session_workflow(session_name: str, config: LaunchConfig):
 
             if observation.output_changed:
                 yield slog(
-                    step="status_change",
+                    "status_change",
                     status=observation.status.value,
                 )
-
-            if observation.pr_url:
-                yield slog(step="pr_detected", url=observation.pr_url)
 
             if observation.is_terminal:
                 break
@@ -74,7 +74,7 @@ def single_session_workflow(session_name: str, config: LaunchConfig):
             yield Delay(0.5)
 
         output = yield Capture(handle, lines=20)
-        yield slog(step="complete", status=final_status.value)
+        yield slog("complete", status=final_status.value)
 
         return {
             "session_name": session_name,
@@ -97,7 +97,7 @@ def parallel_tasks_workflow(tasks: list[tuple[str, str]]):
 
     For true parallel execution, see run_truly_parallel() below.
     """
-    yield slog(step="parallel_start", task_count=len(tasks))
+    yield slog("parallel_start", task_count=len(tasks))
 
     results = []
 
@@ -109,15 +109,15 @@ def parallel_tasks_workflow(tasks: list[tuple[str, str]]):
         )
 
         session_name = f"parallel-{name_suffix}-{int(time.time())}"
-        yield slog(step="task_start", name=name_suffix)
+        yield slog("task_start", name=name_suffix)
 
         # Run each task (sequentially in this case)
         result = yield single_session_workflow(session_name, config)
         results.append((name_suffix, result))
 
-        yield slog(step="task_complete", name=name_suffix, status=result["status"])
+        yield slog("task_complete", name=name_suffix, status=result["status"])
 
-    yield slog(step="parallel_complete", completed=len(results))
+    yield slog("parallel_complete", completed=len(results))
     return results
 
 
@@ -128,15 +128,20 @@ def interleaved_monitoring_workflow(configs: list[tuple[str, LaunchConfig]]):
     This pattern launches all sessions first, then monitors them
     in a round-robin fashion until all are terminal.
     """
-    yield slog(step="interleaved_start", session_count=len(configs))
+    yield slog("interleaved_start", session_count=len(configs))
 
     # Launch all sessions
     handles: list[tuple[str, SessionHandle]] = []
     for suffix, config in configs:
         session_name = f"interleaved-{suffix}-{int(time.time())}"
-        handle = yield Launch(session_name, config)
+        handle = yield Launch(
+            session_name,
+            agent_type=config.agent_type,
+            work_dir=config.work_dir,
+            prompt=config.prompt,
+        )
         handles.append((suffix, handle))
-        yield slog(step="launched", name=suffix, pane_id=handle.pane_id)
+        yield slog("launched", name=suffix, session_id=handle.session_id)
 
     # Track status for each session
     statuses = {suffix: SessionStatus.PENDING for suffix, _ in handles}
@@ -148,7 +153,7 @@ def interleaved_monitoring_workflow(configs: list[tuple[str, LaunchConfig]]):
         while not all(s in (SessionStatus.DONE, SessionStatus.FAILED, SessionStatus.EXITED)
                       for s in statuses.values()):
             if time.time() - start_time > timeout:
-                yield slog(step="timeout", msg="Timeout reached")
+                yield slog(msg="Timeout reached", step="timeout")
                 break
 
             # Check each session
@@ -159,7 +164,7 @@ def interleaved_monitoring_workflow(configs: list[tuple[str, LaunchConfig]]):
                     if observation.status != statuses[suffix]:
                         statuses[suffix] = observation.status
                         yield slog(
-                            step="status_change",
+                            "status_change",
                             name=suffix,
                             status=observation.status.value,
                         )
@@ -176,14 +181,14 @@ def interleaved_monitoring_workflow(configs: list[tuple[str, LaunchConfig]]):
                 "output": output,
             })
 
-        yield slog(step="interleaved_complete", results_count=len(results))
+        yield slog("interleaved_complete", results_count=len(results))
         return results
 
     finally:
         # Stop all sessions
         for suffix, handle in handles:
             yield Stop(handle)
-            yield slog(step="stopped", name=suffix)
+            yield slog("stopped", name=suffix)
 
 
 async def run_with_mock_runtime() -> None:
@@ -194,7 +199,7 @@ async def run_with_mock_runtime() -> None:
 
     configure_mock_session(
         "async-demo",  # Will be overwritten by actual session name
-        MockSessionScript([
+        MockSessionScript(observations=[
             (SessionStatus.RUNNING, "Writing haiku..."),
             (SessionStatus.DONE, "Code flows like water\nBugs emerge then disappear\nTests pass, peace returns"),
         ]),
@@ -204,7 +209,7 @@ async def run_with_mock_runtime() -> None:
     session_name = f"async-demo-{int(time.time())}"
     configure_mock_session(
         session_name,
-        MockSessionScript([
+        MockSessionScript(observations=[
             (SessionStatus.RUNNING, "Writing haiku..."),
             (SessionStatus.DONE, "Code flows like water\nBugs emerge then disappear\nTests pass, peace returns"),
         ]),
@@ -217,7 +222,7 @@ async def run_with_mock_runtime() -> None:
     )
 
     result = await run_program(
-        slog_handler(single_session_workflow(session_name, config)),
+        single_session_workflow(session_name, config),
         custom_handlers=mock_agent_handlers(),
     )
     print(f"\nResult: {result}")
@@ -246,7 +251,7 @@ async def run_truly_parallel() -> None:
         # Each task gets its own mock configuration
         configure_mock_session(
             session_name,
-            MockSessionScript([
+            MockSessionScript(observations=[
                 (SessionStatus.RUNNING, f"Working on {suffix}..."),
                 (SessionStatus.DONE, f"Completed {suffix}!"),
             ]),
@@ -258,13 +263,10 @@ async def run_truly_parallel() -> None:
             prompt=prompt,
         )
 
-        run_result = await run_program(
-            slog_handler(single_session_workflow(session_name, config)),
+        return await run_program(
+            single_session_workflow(session_name, config),
             custom_handlers=mock_agent_handlers(),
         )
-        if hasattr(type(run_result), "value"):
-            return run_result.value
-        return run_result
 
     # Run all tasks truly in parallel
     start_time = time.time()
@@ -300,7 +302,7 @@ async def run_with_real_tmux() -> None:
     session_name = f"async-real-{int(time.time())}"
 
     result = await run_program(
-        slog_handler(single_session_workflow(session_name, config)),
+        single_session_workflow(session_name, config),
         custom_handlers=agent_effectful_handlers(),
     )
     print(f"\nResult: {result}")

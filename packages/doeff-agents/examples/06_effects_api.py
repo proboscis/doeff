@@ -7,7 +7,7 @@ management with doeff async_run integration. Shows:
 
 - @do decorated functions yielding fine-grained effects
 - slog for structured logging
-- slog_handler for log display
+- the standard slog display stack (installed by run_program)
 - agent_effectful_handlers for real tmux
 - mock_agent_handlers for testing
 - async_run for execution
@@ -24,7 +24,6 @@ import time
 from pathlib import Path
 
 from _runtime import run_program
-from doeff.effects.writer import slog
 from doeff_agents import (
     # Types
     AgentType,
@@ -47,10 +46,9 @@ from doeff_agents import (
     run_agent_to_completion,
     with_session,
 )
-from doeff_core_effects.handlers import slog_handler
 from doeff_time import Delay
 
-from doeff import do, program
+from doeff import do, program, slog
 
 # =============================================================================
 # Example 1: Direct Effect Usage with @do
@@ -63,11 +61,16 @@ def direct_effects_workflow(session_name: str, config: LaunchConfig):
 
     Each yield is an effect that gets interpreted by the runtime's handlers.
     """
-    yield slog(step="example1", msg="Direct Effect Usage")
+    yield slog(msg="Direct Effect Usage", step="example1")
 
     # Launch effect
-    handle: SessionHandle = yield Launch(session_name, config)
-    yield slog(step="launched", session_name=session_name, pane_id=handle.pane_id)
+    handle: SessionHandle = yield Launch(
+        session_name,
+        agent_type=config.agent_type,
+        work_dir=config.work_dir,
+        prompt=config.prompt,
+    )
+    yield slog("launched", session_name=session_name, session_id=handle.session_id)
 
     final_status = SessionStatus.PENDING
 
@@ -76,7 +79,7 @@ def direct_effects_workflow(session_name: str, config: LaunchConfig):
         for iteration in range(10):
             observation: Observation = yield Monitor(handle)
             final_status = observation.status
-            yield slog(step="monitor", iteration=iteration, status=observation.status.value)
+            yield slog("monitor", iteration=iteration, status=observation.status.value)
 
             if observation.is_terminal:
                 break
@@ -86,7 +89,7 @@ def direct_effects_workflow(session_name: str, config: LaunchConfig):
 
         # Capture final output
         output: str = yield Capture(handle, lines=50)
-        yield slog(step="captured", output_length=len(output))
+        yield slog("captured", output_length=len(output))
 
         return {
             "status": final_status.value,
@@ -96,7 +99,7 @@ def direct_effects_workflow(session_name: str, config: LaunchConfig):
     finally:
         # Stop session
         yield Stop(handle)
-        yield slog(step="stopped", session_name=session_name)
+        yield slog("stopped", session_name=session_name)
 
 
 # =============================================================================
@@ -111,7 +114,7 @@ def high_level_programs_workflow(session_name: str, config: LaunchConfig):
     Programs like run_agent_to_completion compose fine-grained effects
     into reusable workflows.
     """
-    yield slog(step="example2", msg="High-Level Programs")
+    yield slog(msg="High-Level Programs", step="example2")
 
     # run_agent_to_completion is a generator that yields effects
     # program() lifts it into a Program so the VM tracks it as one call-tree
@@ -125,7 +128,7 @@ def high_level_programs_workflow(session_name: str, config: LaunchConfig):
     )
 
     yield slog(
-        step="complete",
+        "complete",
         succeeded=result.succeeded,
         status=result.final_status.value,
         iterations=result.iterations,
@@ -135,7 +138,6 @@ def high_level_programs_workflow(session_name: str, config: LaunchConfig):
         "succeeded": result.succeeded,
         "status": result.final_status.value,
         "output": result.output,
-        "pr_url": result.pr_url,
     }
 
 
@@ -150,13 +152,13 @@ def bracket_pattern_workflow(session_name: str, config: LaunchConfig):
 
     with_session ensures Stop is called even on exceptions.
     """
-    yield slog(step="example3", msg="Bracket Pattern (with_session)")
+    yield slog(msg="Bracket Pattern (with_session)", step="example3")
 
     def use_session(handle: SessionHandle):
         """Custom logic to run within the session."""
         # Monitor once
         obs = yield Monitor(handle)
-        yield slog(step="initial_status", status=obs.status.value)
+        yield slog("initial_status", status=obs.status.value)
 
         # Wait for BLOCKED status
         while obs.status != SessionStatus.BLOCKED:
@@ -165,7 +167,7 @@ def bracket_pattern_workflow(session_name: str, config: LaunchConfig):
 
         # Send a follow-up message
         yield Send(handle, "Thanks, that's helpful!")
-        yield slog(step="sent_followup")
+        yield slog("sent_followup")
 
         # Capture output
         output = yield Capture(handle, lines=20)
@@ -174,7 +176,7 @@ def bracket_pattern_workflow(session_name: str, config: LaunchConfig):
     # with_session ensures Stop is called even on error
     output = yield program(lambda: with_session(session_name, config, use_session))
 
-    yield slog(step="bracket_complete", output_length=len(output) if output else 0)
+    yield slog("bracket_complete", output_length=len(output) if output else 0)
 
     return {"output": output}
 
@@ -190,9 +192,14 @@ def testable_workflow(session_name: str, config: LaunchConfig):
 
     mock_agent_handlers allows deterministic testing without real tmux.
     """
-    yield slog(step="example4", msg="Testing with mock handlers")
+    yield slog(msg="Testing with mock handlers", step="example4")
 
-    handle = yield Launch(session_name, config)
+    handle = yield Launch(
+        session_name,
+        agent_type=config.agent_type,
+        work_dir=config.work_dir,
+        prompt=config.prompt,
+    )
 
     observations = []
     final_status = SessionStatus.PENDING
@@ -203,7 +210,7 @@ def testable_workflow(session_name: str, config: LaunchConfig):
             observations.append(obs.status)
             final_status = obs.status
 
-            yield slog(step="observed", status=obs.status.value)
+            yield slog("observed", status=obs.status.value)
 
             if obs.is_terminal:
                 break
@@ -237,7 +244,7 @@ async def run_direct_effects_example() -> None:
 
     configure_mock_session(
         session_name,
-        MockSessionScript([
+        MockSessionScript(observations=[
             (SessionStatus.BOOTING, "Agent starting..."),
             (SessionStatus.RUNNING, "Processing request..."),
             (SessionStatus.DONE, "Task completed!"),
@@ -251,7 +258,7 @@ async def run_direct_effects_example() -> None:
     )
 
     result = await run_program(
-        slog_handler(direct_effects_workflow(session_name, config)),
+        direct_effects_workflow(session_name, config),
         custom_handlers=mock_agent_handlers(),
     )
     print(f"\nResult: {result}")
@@ -267,7 +274,7 @@ async def run_high_level_programs_example() -> None:
 
     configure_mock_session(
         session_name,
-        MockSessionScript([
+        MockSessionScript(observations=[
             (SessionStatus.RUNNING, "Working..."),
             (SessionStatus.DONE, "Complete!"),
         ]),
@@ -280,7 +287,7 @@ async def run_high_level_programs_example() -> None:
     )
 
     result = await run_program(
-        slog_handler(high_level_programs_workflow(session_name, config)),
+        high_level_programs_workflow(session_name, config),
         custom_handlers=mock_agent_handlers(),
     )
     print(f"\nResult: {result}")
@@ -296,7 +303,7 @@ async def run_bracket_pattern_example() -> None:
 
     configure_mock_session(
         session_name,
-        MockSessionScript([
+        MockSessionScript(observations=[
             (SessionStatus.RUNNING, "Processing..."),
             (SessionStatus.BLOCKED, "Need input..."),
         ]),
@@ -309,7 +316,7 @@ async def run_bracket_pattern_example() -> None:
     )
 
     result = await run_program(
-        slog_handler(bracket_pattern_workflow(session_name, config)),
+        bracket_pattern_workflow(session_name, config),
         custom_handlers=mock_agent_handlers(),
     )
     print(f"\nResult: {result}")
@@ -325,7 +332,7 @@ async def run_testing_example() -> None:
 
     configure_mock_session(
         session_name,
-        MockSessionScript([
+        MockSessionScript(observations=[
             (SessionStatus.RUNNING, "Analyzing code..."),
             (SessionStatus.RUNNING, "Found 3 issues..."),
             (SessionStatus.BLOCKED, "Review complete. Approve?"),
@@ -340,10 +347,10 @@ async def run_testing_example() -> None:
     )
 
     result = await run_program(
-        slog_handler(testable_workflow(session_name, config)),
+        testable_workflow(session_name, config),
         custom_handlers=mock_agent_handlers(),
     )
-    result_value = result.value if hasattr(type(result), "value") else result
+    result_value = result
 
     # Verify behavior
     print("\nTest assertions:")
@@ -382,7 +389,7 @@ async def run_with_real_tmux() -> None:
     session_name = f"real-tmux-{int(time.time())}"
 
     result = await run_program(
-        slog_handler(direct_effects_workflow(session_name, config)),
+        direct_effects_workflow(session_name, config),
         custom_handlers=agent_effectful_handlers(),
     )
 

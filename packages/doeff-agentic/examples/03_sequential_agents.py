@@ -11,7 +11,6 @@ Run:
     uv run python examples/03_sequential_agents.py
 """
 
-from doeff.effects.writer import slog
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticGetMessages,
@@ -19,9 +18,8 @@ from doeff_agentic import (
     AgenticSendMessage,
 )
 from doeff_agentic.opencode_handler import opencode_handler
-from doeff_core_effects.handlers import slog_handler
 
-from doeff import do
+from doeff import do, slog
 
 
 def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
@@ -36,7 +34,7 @@ def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
 def research_and_summarize(topic: str):
     """Two-agent workflow: research then summarize."""
 
-    yield slog(status="researching", msg=f"Researching {topic}")
+    yield slog(msg=f"Researching {topic}", status="researching")
 
     # Agent 1: Researcher
     researcher = yield AgenticCreateSession(name="researcher")
@@ -48,7 +46,7 @@ def research_and_summarize(topic: str):
     messages = yield AgenticGetMessages(session_id=researcher.id)
     research = get_last_assistant_message(messages)
 
-    yield slog(status="summarizing", msg="Creating summary")
+    yield slog(msg="Creating summary", status="summarizing")
 
     # Agent 2: Summarizer
     summarizer = yield AgenticCreateSession(name="summarizer")
@@ -60,7 +58,7 @@ def research_and_summarize(topic: str):
     messages = yield AgenticGetMessages(session_id=summarizer.id)
     summary = get_last_assistant_message(messages)
 
-    yield slog(status="complete", msg="Done!")
+    yield slog(msg="Done!", status="complete")
 
     return {"research": research, "summary": summary}
 
@@ -68,23 +66,21 @@ def research_and_summarize(topic: str):
 if __name__ == "__main__":
     import asyncio
 
-    from doeff import async_run, default_handlers
+    from _runtime import run_program
 
     async def main():
         topic = "functional programming"
 
         print(f"Starting research workflow for: {topic}")
         print()
-        # slog_handler: stderr display sink for SlogEffect (visible logs by default)
         # OpenCode provides: agent session management effects
-        program = slog_handler(opencode_handler()(research_and_summarize(topic)))
-        result = await async_run(program, handlers=default_handlers())
-
-        if result.is_err():
+        program = opencode_handler()(research_and_summarize(topic))
+        try:
+            output = await run_program(program)
+        except Exception as e:
             print("\n=== Workflow Failed ===")
-            print(result.format())  # Rich error info: effect path, python stack, K stack
+            print(f"Error: {e}")
         else:
-            output = result.value
             print("\n=== Research ===")
             print(output["research"][:500])
             print("\n=== Summary ===")
