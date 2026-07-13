@@ -5,7 +5,7 @@ import os
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from doeff import Delegate, Effect, Resume, do
+from doeff import Delegate, Effect, Transfer, do
 from doeff import handler as _program_handler
 
 from .effects import GetSecret
@@ -64,7 +64,10 @@ def env_var_handler(
     normalized_prefix = _normalize_prefix(prefix)
 
     @do
-    def handle_get_secret(effect: Effect, k: Any):
+    def handler(effect: Effect, k: Any):
+        # Flat single frame: the final Transfer must come from the
+        # handler's own frame — a sub-@do that transfers would park this
+        # frame forever (ADR-DOE-CORE-EFFECTS-002).
         if not isinstance(effect, GetSecret):
             yield Delegate()
             return None
@@ -77,13 +80,7 @@ def env_var_handler(
         if value is None:
             yield Delegate()
             return None
-        return (yield Resume(k, value))
-
-    @do
-    def handler(effect: Effect, k: Any):
-        if isinstance(effect, GetSecret):
-            return (yield handle_get_secret(effect, k))
-        yield Delegate()
+        return (yield Transfer(k, value))
 
     return _program_handler(handler)
 
@@ -115,7 +112,7 @@ def env_var_handlers(
         )
         if value is None:
             raise KeyError(f"Secret not found in environment variables: {effect.secret_id}")
-        return (yield Resume(k, value))
+        return (yield Transfer(k, value))
 
     return _program_handler(handler)
 
