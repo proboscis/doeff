@@ -13,14 +13,19 @@
 (require doeff-hy.macros [defk deff <- defhandler])
 
 (import json)
+(import re)
+(import uuid)
 
 (import doeff_agents.sessionhost.effects [
   BuildLaunch
+  BuildResume
+  DiscoverConversation
   PreLaunchSetup
   ClassifyPane
   DeliverMessage
   WireResultChannel
   fs-canonical-path
+  fs-list-dir
   fs-read-text
   fs-write-text-atomic
   fs-make-dirs
@@ -71,6 +76,37 @@
     (.extend args ["--mcp-config"
                    (json.dumps {"mcpServers" servers} :separators #("," ":"))
                    "--strict-mcp-config"]))
+  ;; ADR-006 R1: launch 時に鋳造した会話 identity を --session-id で注入する
+  ;; (boot 前に identity が stored fact になる)。resume / fork の argv は
+  ;; build-claude-resume-argv の所有 — ここは fresh launch のみ。
+  (setv conversation (.get params "conversation"))
+  (when (and (isinstance conversation dict)
+             (is (.get params "resume_mode") None))
+    (setv conv-id (.get conversation "session_id"))
+    (when conv-id
+      (.extend args ["--session-id" conv-id])))
+  args)
+
+
+(deff build-claude-resume-argv [params]
+  {:pre [(: params dict)
+         (in (.get params "resume_mode") #{"resume" "fork"})
+         (: (.get params "conversation") dict)]
+   :post [(: % list)]}
+  "claude の resume / fork argv(ADR-DOE-AGENTS-006 R3)。凍結物理:
+   - fresh launch と同じ基礎フラグ群(--dangerously-skip-permissions /
+     --settings / effort / model / mcp-config)を共有し、並行実装を作らない
+   - resume: `--resume <conversation session_id>`
+   - fork: さらに `--fork-session`(claude が新 session ID を鋳造 — 新会話
+     identity は事後発見: DiscoverConversation)
+   - prompt は argv に載せない(BuildLaunch と同一の live-terminal 物理)"
+  (setv base-params (dict params))
+  (.pop base-params "conversation" None)
+  (setv args (build-claude-argv base-params))
+  (setv conv-id (get (get params "conversation") "session_id"))
+  (.extend args ["--resume" conv-id])
+  (when (= (get params "resume_mode") "fork")
+    (.append args "--fork-session"))
   args)
 
 
@@ -132,12 +168,50 @@
   "PreLaunchSetup の claude 実体: 実効 identity の解決(S14 の Hy positive 化 —
    launch program が session 行へ永続化する)+ trust pre-seed
    (skip_trust_setup で trust だけを飛ばす。oracle: gate は launch 側で常時、
-   trust は skip 可能 — claude に hard gate は無い)。"
+   trust は skip 可能 — claude に hard gate は無い)+ ADR-006 R1 の会話
+   identity 鋳造(fresh launch では launch program がこの UUID を
+   --session-id 注入と row.conversation の両方に使う — boot 前に identity が
+   stored fact になる。resume / fork では捨てられる)。"
   (<- resolved (resolve-claude-config-dir params))
   (setv [config-dir warnings] resolved)
   (when (not (.get params "skip_trust_setup" False))
     (<- _ (preseed-claude-trust config-dir (get params "work_dir"))))
-  {"CLAUDE_CONFIG_DIR" config-dir "warnings" warnings})
+  {"CLAUDE_CONFIG_DIR" config-dir
+   "warnings" warnings
+   "conversation" {"session_id" (str (uuid.uuid4))}})
+
+
+;; ---------------------------------------------------------------------------
+;; 会話 identity の事後発見(ADR-006 R1 — claude では fork の新 ID 用)
+;; ---------------------------------------------------------------------------
+
+(defk claude-discover-conversation [params]
+  {:pre [(: params dict)]
+   :post [(: % (| dict None))]}
+  "claude の会話 identity 発見。物理: transcripts は
+   `<CLAUDE_CONFIG_DIR>/projects/<mangled canonical work_dir>/<uuid>.jsonl`
+   (mangle = 非英数字を '-' に置換。project key は S12 と同じく canonicalize
+   済み cwd)。exclude_session_ids(既知の全会話 + fork 親)を除いた候補が
+   ちょうど 1 つのときだけ捕獲する — 複数は曖昧(同 cwd の他 session の
+   可能性)なので None を返し、次 cycle に委ねる(level-triggered)。"
+  (setv identity (or (.get params "effective_identity") {}))
+  (setv config-dir (.get identity "CLAUDE_CONFIG_DIR"))
+  (setv excludes (set (or (.get params "exclude_session_ids") [])))
+  (if (is config-dir None)
+      None
+      (do
+        (<- canon (fs-canonical-path (get params "work_dir")))
+        (setv mangled (re.sub "[^A-Za-z0-9]" "-" canon))
+        (setv project-dir f"{config-dir}/projects/{mangled}")
+        (<- entries (fs-list-dir project-dir))
+        (setv candidates
+              (sorted (lfor name entries
+                            :if (and (.endswith name ".jsonl")
+                                     (not-in (cut name 0 -6) excludes))
+                            (cut name 0 -6))))
+        (if (= (len candidates) 1)
+            {"session_id" (get candidates 0)}
+            None))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -148,6 +222,15 @@
   (BuildLaunch [agent-type params]
     :when (= agent-type "claude")
     (resume (build-claude-argv params)))
+
+  (BuildResume [agent-type params]
+    :when (= agent-type "claude")
+    (resume (build-claude-resume-argv params)))
+
+  (DiscoverConversation [agent-type params]
+    :when (= agent-type "claude")
+    (<- found (claude-discover-conversation params))
+    (resume found))
 
   (PreLaunchSetup [agent-type params]
     :when (= agent-type "claude")
