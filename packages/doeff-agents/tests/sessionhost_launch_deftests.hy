@@ -27,6 +27,7 @@
   SessionStoreGet
   SessionStoreUpsert
   SessionStoreRecordEvent
+  SessionStoreListActive
   TmuxHasSession
   TmuxNewSession
   TmuxCapture
@@ -41,7 +42,9 @@
   FsReadText
   FsWriteTextAtomic
   FsMakeDirs
+  FsListDir
   EnvGet])
+(import doeff_agents.sessionhost.policy [ACTIVE-STATUSES])
 (import doeff_agents.sessionhost.impls.claude_code [claude-code-impl])
 (import doeff_agents.sessionhost.impls.codex [codex-impl])
 (import doeff_agents.sessionhost.launch [
@@ -68,12 +71,18 @@
     (setv self.env {})
     (setv self.canonical {})        ;; path → realpath(FsCanonicalPath の台本)
     (setv self.tmux-envs {})        ;; session-name → new-session に渡った env
+    (setv self.listings {})         ;; path → エントリ名 list(FsListDir の台本)
     (setv self.now (datetime 2026 7 5 12 0 0 :tzinfo timezone.utc))))
 
 
 (defhandler fake-launch-substrate [world]
   (SessionStoreGet [session-id]
     (resume (.get world.rows session-id)))
+  (SessionStoreListActive []
+    (resume (lfor r (list (.values world.rows))
+                  :if (in r.status ACTIVE-STATUSES) r)))
+  (FsListDir [path]
+    (resume (sorted (.get world.listings path []))))
   (SessionStoreUpsert [row]
     (.append world.trace #("upsert" row.session-id))
     (setv (get world.rows row.session-id) row)
@@ -513,3 +522,37 @@
   (assert (= (shell-join ["it's"]) "'it'\\''s'"))
   (assert (= (shell-join [""]) "''"))
   (assert (= (shell-join ["-_./:=@,%+"]) "-_./:=@,%+")))
+
+
+;; ---------------------------------------------------------------------------
+;; ADR-DOE-AGENTS-006 R1: claude の会話 identity 鋳造(launch 時)
+;; ---------------------------------------------------------------------------
+
+(deftest test-launch-claude-mints-conversation
+  ;; 鋳造した UUID が --session-id 注入と row.conversation の両方に同値で
+  ;; 現れる(boot 前に identity が stored fact)。identity 列には混ざらない。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["❯"])
+  (<- row (run-launch world (launch-params
+                              :agent_type "claude"
+                              :binding {"kind" "claude-code"
+                                        "config_dir" "/x/claude"})))
+  (assert (isinstance row.conversation dict))
+  (setv conv-id (get row.conversation "session_id"))
+  (assert conv-id)
+  (setv [pane cmd literal submit] (get world.sent-keys 0))
+  (assert (in f"--session-id {conv-id}" cmd))
+  (assert (= row.generation 1))
+  (assert (is row.resumed-from-session-id None))
+  (assert (is row.forked-from-session-id None))
+  (assert (not-in "conversation" row.effective-identity)))
+
+
+(deftest test-launch-codex-conversation-unknown-until-discovery
+  ;; codex の会話 identity は CLI 側が鋳造する — launch 直後の行は
+  ;; identity-unknown(None)で、捕獲は monitor の発見 arm の仕事。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["codex booting banner" "› "])
+  (<- row (run-launch world (launch-params)))
+  (assert (is row.conversation None))
+  (assert (= row.generation 1)))

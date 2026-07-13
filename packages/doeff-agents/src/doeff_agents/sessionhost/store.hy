@@ -38,7 +38,8 @@
   SessionStoreGet
   SessionStoreUpsert
   SessionStoreResultPayload
-  SessionStoreRecordEvent])
+  SessionStoreRecordEvent
+  SessionStoreKnownConversationIds])
 (import doeff_agents.sessionhost.policy [ACTIVE-STATUSES TERMINAL-STATUSES
                                          parse-iso])
 
@@ -123,7 +124,14 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
        #("agent_sessions" "last_output_change_at" "TEXT")
        ;; C3 拡張(S14): 解決済み実効 identity。additive なので Rust oracle が
        ;; 書いた既存 DB にもそのまま生える。
-       #("agent_sessions" "effective_identity_json" "TEXT")])
+       #("agent_sessions" "effective_identity_json" "TEXT")
+       ;; ADR-DOE-AGENTS-006: 会話 identity(kind 判別 union)+ incarnation
+       ;; 世代 + 系譜。既存行は generation=1・conversation NULL
+       ;; (identity-unknown)として生える。
+       #("agent_sessions" "conversation_json" "TEXT")
+       #("agent_sessions" "generation" "INTEGER NOT NULL DEFAULT 1")
+       #("agent_sessions" "resumed_from_session_id" "TEXT")
+       #("agent_sessions" "forked_from_session_id" "TEXT")])
 
 (setv SNAPSHOT-SELECT
       (+ "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status, "
@@ -132,7 +140,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
          "terminal_cause_json, expected_result_json, retries_used, last_validation_error, "
          "awaiting_response, observed_active_at, result_payload_json, "
          "result_solicitations_used, prompt_unblock_attempts, last_output_change_at, "
-         "effective_identity_json "
+         "effective_identity_json, "
+         "conversation_json, generation, resumed_from_session_id, forked_from_session_id "
          "FROM agent_sessions"))
 
 
@@ -235,7 +244,13 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
    "last_output_change_at" (get db-row 24)
    "effective_identity" (if (is (get db-row 25) None)
                             None
-                            (json.loads (get db-row 25)))})
+                            (json.loads (get db-row 25)))
+   "conversation" (if (is (get db-row 26) None)
+                      None
+                      (json.loads (get db-row 26)))
+   "generation" (int (get db-row 27))
+   "resumed_from_session_id" (get db-row 28)
+   "forked_from_session_id" (get db-row 29)})
 
 (deff snapshot-to-wire-dict [snap]
   {:pre [(: snap dict)]
@@ -277,6 +292,17 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
     (setv (get wire "last_output_change_at") (get snap "last_output_change_at")))
   (when (is-not (.get snap "effective_identity") None)
     (setv (get wire "effective_identity") (get snap "effective_identity")))
+  ;; ADR-006: conversation / lineage は None のとき field ごと省略
+  ;; (identity-unknown を wire で null と区別しない)。generation は常在。
+  (when (is-not (.get snap "conversation") None)
+    (setv (get wire "conversation") (get snap "conversation")))
+  (setv (get wire "generation") (.get snap "generation" 1))
+  (when (is-not (.get snap "resumed_from_session_id") None)
+    (setv (get wire "resumed_from_session_id")
+          (get snap "resumed_from_session_id")))
+  (when (is-not (.get snap "forked_from_session_id") None)
+    (setv (get wire "forked_from_session_id")
+          (get snap "forked_from_session_id")))
   wire)
 
 
@@ -290,7 +316,24 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
   "INSERT … ON CONFLICT DO UPDATE(oracle upsert_snapshot)。COALESCE 保護は
    terminal_cause_json / result_payload_json(oracle :2354/:2360)+ C3 の
    effective_identity_json(launch が一度だけ書く識別情報を後続 upsert が
-   消さない)。他は excluded の last-write-wins。"
+   消さない)+ ADR-006 の conversation_json(発見済み会話 identity を後続
+   upsert が消さない)。他は excluded の last-write-wins。"
+  ;; ADR-DOE-AGENTS-006 law conversation-outlives-incarnation の機械面:
+  ;; terminal に達した行は決して active 系へ戻らない(resume は新しい
+  ;; incarnation 行を作る)。単一 writer のここが唯一の防衛線。
+  (setv guard-sid (get snap "session_id"))
+  (setv guard-row (.fetchone (.execute conn
+                               "SELECT status FROM agent_sessions WHERE session_id = ?"
+                               #(guard-sid))))
+  (when (is-not guard-row None)
+    (setv existing-status (get guard-row 0))
+    (setv incoming-status (get snap "status"))
+    (when (and (in existing-status TERMINAL-STATUSES)
+               (in incoming-status ACTIVE-STATUSES))
+      (raise (RuntimeError
+               (+ f"terminal session row may not be reactivated: '{guard-sid}' "
+                  f"is '{existing-status}' and cannot move to '{incoming-status}' "
+                  "(ADR-DOE-AGENTS-006: resume creates a new incarnation row)")))))
   (.execute conn
     (+ "INSERT INTO agent_sessions ("
        "session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status, "
@@ -299,8 +342,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
        "terminal_cause_json, expected_result_json, retries_used, last_validation_error, "
        "awaiting_response, observed_active_at, result_payload_json, "
        "result_solicitations_used, prompt_unblock_attempts, last_output_change_at, "
-       "effective_identity_json"
-       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+       "effective_identity_json, "
+       "conversation_json, generation, resumed_from_session_id, forked_from_session_id"
+       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
        "ON CONFLICT(session_id) DO UPDATE SET "
        "session_name = excluded.session_name, "
        "pane_id = excluded.pane_id, "
@@ -326,7 +370,11 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
        "result_solicitations_used = excluded.result_solicitations_used, "
        "prompt_unblock_attempts = excluded.prompt_unblock_attempts, "
        "last_output_change_at = excluded.last_output_change_at, "
-       "effective_identity_json = COALESCE(agent_sessions.effective_identity_json, excluded.effective_identity_json)")
+       "effective_identity_json = COALESCE(agent_sessions.effective_identity_json, excluded.effective_identity_json), "
+       "conversation_json = COALESCE(agent_sessions.conversation_json, excluded.conversation_json), "
+       "generation = excluded.generation, "
+       "resumed_from_session_id = excluded.resumed_from_session_id, "
+       "forked_from_session_id = excluded.forked_from_session_id")
     #((get snap "session_id")
       (get snap "session_name")
       (get snap "pane_id")
@@ -363,7 +411,14 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
       (if (is (.get snap "effective_identity") None)
           None
           (json.dumps (get snap "effective_identity") :sort-keys True
-                      :separators #("," ":")))))
+                      :separators #("," ":")))
+      (if (is (.get snap "conversation") None)
+          None
+          (json.dumps (get snap "conversation") :sort-keys True
+                      :separators #("," ":")))
+      (int (.get snap "generation" 1))
+      (.get snap "resumed_from_session_id")
+      (.get snap "forked_from_session_id")))
   None)
 
 (deff db-session-get [conn session-id]
@@ -405,6 +460,17 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
   {:pre [(: conn sqlite3.Connection)]
    :post [(: % int)]}
   (len (db-session-list conn {"status" (sorted ACTIVE-STATUSES)})))
+
+(deff db-known-conversation-ids [conn]
+  {:pre [(: conn sqlite3.Connection)]
+   :post [(: % list)]}
+  "store が知る全会話 ID(terminal 含む全行。ADR-006 発見 arm の除外集合)。"
+  (setv rows (.fetchall (.execute conn
+                          "SELECT conversation_json FROM agent_sessions WHERE conversation_json IS NOT NULL")))
+  (sorted (sfor row rows
+                :setv conv (json.loads (get row 0))
+                :if (isinstance (.get conv "session_id") str)
+                (get conv "session_id"))))
 
 (deff db-current-result-payload [conn session-id]
   {:pre [(: conn sqlite3.Connection) (: session-id str)]
@@ -648,7 +714,11 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
     :effective-identity (.get snap "effective_identity")
     :work-dir (get snap "work_dir")
     :backend-kind (get snap "backend_kind")
-    :backend-ref (get snap "backend_ref")))
+    :backend-ref (get snap "backend_ref")
+    :conversation (.get snap "conversation")
+    :generation (.get snap "generation" 1)
+    :resumed-from-session-id (.get snap "resumed_from_session_id")
+    :forked-from-session-id (.get snap "forked_from_session_id")))
 
 (deff policy-row-patch [row]
   {:pre [(: row SessionRow)]
@@ -679,7 +749,11 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
    "effective_identity" row.effective-identity
    "work_dir" row.work-dir
    "backend_kind" row.backend-kind
-   "backend_ref" (or row.backend-ref {})})
+   "backend_ref" (or row.backend-ref {})
+   "conversation" row.conversation
+   "generation" row.generation
+   "resumed_from_session_id" row.resumed-from-session-id
+   "forked_from_session_id" row.forked-from-session-id})
 
 (deff snapshot-from-policy-row [row]
   {:pre [(: row SessionRow)]
@@ -729,6 +803,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
   (SessionStoreResultPayload [session-id]
     (resume (.submit actor
                      (fn [conn] (db-current-result-payload conn session-id)))))
+
+  (SessionStoreKnownConversationIds []
+    (resume (.submit actor db-known-conversation-ids)))
 
   (SessionStoreRecordEvent [session-id event-type row]
     ;; oracle は event payload に full snapshot を記録する(record_event 呼び

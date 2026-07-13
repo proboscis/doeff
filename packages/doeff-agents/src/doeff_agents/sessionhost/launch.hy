@@ -16,12 +16,15 @@
 
 (require doeff-hy.macros [defk deff <-])
 
+(import re)
+
 (import doeff_agents.sessionhost.effects [
   SessionRow
   PaneObservation
   classify-pane
   deliver-message
   build-launch
+  build-resume
   pre-launch-setup
   wire-result-channel
   session-store-get
@@ -231,12 +234,17 @@
           (command-mentions-codex command-override) "codex"
           True None))
   (setv identity None)
+  (setv minted-conversation None)
   (when (is-not prelaunch-kind None)
     (<- resolved (pre-launch-setup prelaunch-kind params))
     ;; warnings は運用ログ向けの副産物(host が stderr へ出す)— 永続する
     ;; identity(S14 の effective_identity 列)は auth home の解決結果のみ。
+    ;; conversation(ADR-006: claude が launch 時に鋳造する会話 identity)は
+    ;; identity 列ではなく conversation 列の住人なのでここで分離する。
     (setv identity (dict resolved))
-    (.pop identity "warnings" None))
+    (.pop identity "warnings" None)
+    (setv minted-conversation (.pop identity "conversation" None)))
+  (setv resume-context (.get params "resume_context"))
 
   ;; --- result channel 配線 + 起動 command(oracle resolve_launch_command:
   ;; override は verbatim、それ以外は per-kind argv builder)。
@@ -248,7 +256,18 @@
       (<- channel (wire-result-channel agent-type session-id
                                        (.get params "socket_path" "")))
       (setv (get effective-params "result_channel") channel))
-    (<- argv (build-launch agent-type effective-params))
+    ;; ADR-006 R3: incarnation の宿し(この program)は 1 本のまま、argv 構築
+    ;; だけを fresh launch / resume / fork で分岐する。
+    (if (is resume-context None)
+        (do
+          (when (and (= agent-type "claude") (is-not minted-conversation None))
+            (setv (get effective-params "conversation") minted-conversation))
+          (<- argv (build-launch agent-type effective-params)))
+        (do
+          (setv (get effective-params "resume_mode") (get resume-context "mode"))
+          (setv (get effective-params "conversation")
+                (get resume-context "conversation"))
+          (<- argv (build-resume agent-type effective-params))))
     (setv command-line (shell-join argv)))
 
   ;; --- tmux session 作成(禁止 env reject は substrate 所有)+ 起動。
@@ -308,6 +327,18 @@
   ;; work-dir / backend-ref は store-of-record が行作成に要る launch 所有
   ;; field(oracle backend_ref = session_name / pane_id / command、
   ;; main.rs:1813-1816)。
+  ;; ADR-006: 会話 identity の初期値 — resume は親会話(事前確定)、fork は
+  ;; None(CLI が新 ID を鋳造 → DiscoverConversation で事後発見)、fresh の
+  ;; claude は鋳造済み UUID(--session-id 注入と同値)、fresh の codex /
+  ;; 明示 command は None(事後発見)。
+  (setv row-conversation
+        (cond
+          (is-not resume-context None)
+            (if (= (get resume-context "mode") "resume")
+                (get resume-context "conversation")
+                None)
+          (and (= agent-type "claude") (not has-override)) minted-conversation
+          True None))
   (<- now (clock-now))
   (setv row (SessionRow
               :session-id session-id
@@ -324,7 +355,146 @@
               :backend-kind (.get params "backend_kind" "tmux")
               :backend-ref {"session_name" session-name
                             "pane_id" pane-id
-                            "command" command-line}))
+                            "command" command-line}
+              :conversation row-conversation
+              :generation (if (is resume-context None)
+                              1
+                              (get resume-context "generation"))
+              :resumed-from-session-id
+                (when (is-not resume-context None)
+                  (.get resume-context "resumed_from_session_id"))
+              :forked-from-session-id
+                (when (is-not resume-context None)
+                  (.get resume-context "forked_from_session_id"))))
   (<- _ (session-store-upsert row))
   (<- _ (session-store-record-event session-id "session_started" row))
+  row)
+
+
+;; ---------------------------------------------------------------------------
+;; resume / fork program(ADR-DOE-AGENTS-006 R4)
+;; ---------------------------------------------------------------------------
+
+(deff strip-incarnation-suffix [value]
+  {:pre [(: value str)]
+   :post [(: % str)]}
+  "incarnation 命名の基底を得る(末尾の `~g<N>` / `~fork<N>` を 1 つ剥がす)。"
+  (re.sub "~(g|fork)[0-9]+$" "" value))
+
+
+(defk resume-session [params]
+  {:pre [(: params dict)
+         (in (.get params "mode") #{"resume" "fork"})]
+   :post [(: % SessionRow)]}
+  "会話の新しい incarnation を宿す(ADR-006 R4)。resume = 同一会話 ref の
+   新行(generation + 1)/ fork = 新会話の新行(generation 1、CLI が新 ID を
+   鋳造)。admission: 蘇生元の実在 → kind capability → identity-unknown の
+   typed 失敗(R1)→ one-live-incarnation(resume のみ)。宿し自体は
+   launch-session を再利用する — 並行実装を作らない(R3)。auth は蘇生元行の
+   effective_identity から typed binding を再構成する(行が auth の家)。
+   params: session_id(蘇生元)/ mode / prompt? / model? / effort? /
+   mcp_servers? + host 注入(socket_path / max_running / backend_kind /
+   repl_idle_max_wait_seconds)。"
+  (setv source-sid (get params "session_id"))
+  (setv mode (get params "mode"))
+  (<- source (session-store-get source-sid))
+  (when (is source None)
+    (raise (RuntimeError f"session is not registered: {source-sid}")))
+  (when (not-in source.agent-type INTERACTIVE-AGENT-TYPES)
+    (raise (RuntimeError
+             (+ f"session.{mode}: agent_type '{source.agent-type}' does not "
+                f"support {mode} (supported: codex, claude)"))))
+  (setv conv source.conversation)
+  (when (is conv None)
+    (raise (RuntimeError
+             (+ f"session.{mode}: session '{source-sid}' has no stored "
+                "conversation identity (identity-unknown) — it cannot be "
+                "resumed or forked (ADR-DOE-AGENTS-006 R1: revivability is a "
+                "stored fact)"))))
+  (setv conv-id (get conv "session_id"))
+  (when (= mode "resume")
+    (<- active-rows (session-store-list-active))
+    (for [row active-rows]
+      (when (and (is-not row.conversation None)
+                 (= (.get row.conversation "session_id") conv-id))
+        (raise (RuntimeError
+                 (+ f"session.resume: conversation '{conv-id}' already has a "
+                    f"live incarnation '{row.session-id}' "
+                    f"(status {row.status}) — "
+                    "one-live-incarnation-per-conversation "
+                    "(ADR-DOE-AGENTS-006 R4)"))))))
+
+  ;; 新 incarnation の id / name(~g<N> / ~fork<N> 系列。既使用は前進で回避 —
+  ;; 古い incarnation からの resume でも序数が単調に進む)。
+  (setv base-sid (strip-incarnation-suffix source-sid))
+  (setv base-name (strip-incarnation-suffix source.session-name))
+  (setv gen (if (= mode "resume") (+ source.generation 1) 1))
+  (setv counter (if (= mode "resume") gen 1))
+  (setv suffix-kind (if (= mode "resume") "g" "fork"))
+  (setv new-sid f"{base-sid}~{suffix-kind}{counter}")
+  (<- clash (session-store-get new-sid))
+  (while (is-not clash None)
+    (setv counter (+ counter 1))
+    (setv new-sid f"{base-sid}~{suffix-kind}{counter}")
+    (<- next-clash (session-store-get new-sid))
+    (setv clash next-clash))
+  (when (= mode "resume")
+    (setv gen counter))
+  (setv new-name f"{base-name}~{suffix-kind}{counter}")
+
+  ;; auth binding の再構成(行の effective_identity が auth の家)。
+  (setv identity (or source.effective-identity {}))
+  (setv binding
+        (cond
+          (and (= source.agent-type "claude")
+               (is-not (.get identity "CLAUDE_CONFIG_DIR") None))
+            {"kind" "claude-code"
+             "config_dir" (get identity "CLAUDE_CONFIG_DIR")}
+          (and (= source.agent-type "codex")
+               (is-not (.get identity "CODEX_HOME") None))
+            {"kind" "codex"
+             "codex_home" (get identity "CODEX_HOME")}
+          True None))
+
+  ;; 未達成の result contract は resume が引き継ぐ(会話の続きなので)。
+  ;; fork は新しい仕事 — contract は引き継がない。
+  (setv carried-expected
+        (if (and (= mode "resume")
+                 (is-not source.expected-result None)
+                 (is source.result-payload None))
+            source.expected-result
+            None))
+
+  (setv launch-params
+        {"session_id" new-sid
+         "session_name" new-name
+         "agent_type" source.agent-type
+         "work_dir" source.work-dir
+         "command" None
+         "prompt" (.get params "prompt")
+         "model" (.get params "model")
+         "effort" (.get params "effort")
+         "mcp_servers" (or (.get params "mcp_servers") {})
+         "skip_trust_setup" False
+         "lifecycle" source.lifecycle
+         "binding" binding
+         "session_env" {}
+         "expected_result" carried-expected
+         "socket_path" (.get params "socket_path" "")
+         "max_running" (.get params "max_running")
+         "repl_idle_max_wait_seconds" (.get params "repl_idle_max_wait_seconds")
+         "backend_kind" (.get params "backend_kind" "tmux")
+         "resume_context" {"mode" mode
+                           "conversation" conv
+                           "generation" gen
+                           "resumed_from_session_id"
+                             (when (= mode "resume") source-sid)
+                           "forked_from_session_id"
+                             (when (= mode "fork") source-sid)}})
+  (<- row (launch-session launch-params))
+  (<- _ (session-store-record-event row.session-id
+                                    (if (= mode "resume")
+                                        "session_resumed"
+                                        "session_forked")
+                                    row))
   row)
