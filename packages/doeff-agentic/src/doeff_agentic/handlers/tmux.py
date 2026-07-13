@@ -11,18 +11,18 @@ Limitations:
 - Use core Gather/Race effects for parallel execution
 
 Usage:
-    from doeff import default_handlers, run
+    from doeff import run
     from doeff_agentic.tmux_handler import tmux_handler
+    from doeff_core_effects.scheduler import scheduled
 
     handlers = tmux_handler()
     program = handlers(my_workflow())
-    result = run(program, handlers=default_handlers())
+    result = run(scheduled(program))
 """
 
 
 import contextlib
 import hashlib
-import inspect
 import re
 import shutil
 import subprocess
@@ -928,17 +928,13 @@ def _as_protocol_handler(
     def _wrapped(effect: Effect, k: Any):
         result = handler_fn(effect)
 
-        if inspect.isgenerator(result):
-            resolved = yield make_doeff_generator(result)  # noqa: F821 - legacy removed API reference is intentionally preserved
-            return (yield Resume(k, resolved))
-
         if _is_lazy_program_value(result):
             resolved = yield result
             return (yield Resume(k, resolved))
 
         return (yield Resume(k, result))
 
-    return _program_handler(_wrapped)
+    return _wrapped
 
 
 def tmux_handler(
@@ -955,12 +951,13 @@ def tmux_handler(
         Protocol handler for direct Program -> Program composition.
 
     Usage:
-        from doeff import default_handlers, run
+        from doeff import run
         from doeff_agentic import tmux_handler
+        from doeff_core_effects.scheduler import scheduled
 
         handlers = tmux_handler()
         program = handlers(my_workflow())
-        result = run(program, handlers=default_handlers())
+        result = run(scheduled(program))
     """
     handler = TmuxHandler(working_dir=working_dir, backend=backend)
 

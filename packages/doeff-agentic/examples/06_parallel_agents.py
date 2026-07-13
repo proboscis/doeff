@@ -17,7 +17,6 @@ Run:
     uv run python examples/06_parallel_agents.py
 """
 
-from doeff.effects.writer import slog
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticGetMessages,
@@ -25,9 +24,8 @@ from doeff_agentic import (
     AgenticSendMessage,
 )
 from doeff_agentic.opencode_handler import opencode_handler
-from doeff_core_effects.handlers import slog_handler
 
-from doeff import Gather, Spawn, do
+from doeff import Gather, Spawn, do, slog
 
 
 def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
@@ -53,7 +51,7 @@ def run_agent(session_id: str, content: str):
 def multi_perspective_analysis(topic: str):
     """Get multiple perspectives on a topic using parallel agents."""
 
-    yield slog(status="analyzing", msg=f"Getting multiple perspectives on {topic}")
+    yield slog(msg=f"Getting multiple perspectives on {topic}", status="analyzing")
 
     # Create all sessions first
     tech_session = yield AgenticCreateSession(name="tech-analyst")
@@ -63,7 +61,7 @@ def multi_perspective_analysis(topic: str):
     # Spawn concurrent agent tasks
     # Each task sends a message and waits for completion (blocking)
     # Spawn makes them run concurrently
-    yield slog(status="launching", msg="Launching parallel analysis agents")
+    yield slog(msg="Launching parallel analysis agents", status="launching")
 
     tech_task = yield Spawn(
         run_agent(
@@ -85,7 +83,7 @@ def multi_perspective_analysis(topic: str):
     )
 
     # Wait for all to complete and collect results
-    yield slog(status="waiting", msg="Waiting for all agents to complete")
+    yield slog(msg="Waiting for all agents to complete", status="waiting")
     tech_result, biz_result, ux_result = yield Gather(tech_task, biz_task, ux_task)
 
     perspectives = {
@@ -95,7 +93,7 @@ def multi_perspective_analysis(topic: str):
     }
 
     # Synthesize results (single blocking call)
-    yield slog(status="synthesizing", msg="Combining perspectives")
+    yield slog(msg="Combining perspectives", status="synthesizing")
 
     combined = "\n\n".join([f"## {name}\n{text}" for name, text in perspectives.items()])
 
@@ -105,7 +103,7 @@ def multi_perspective_analysis(topic: str):
         f"Synthesize these perspectives into 3 key insights:\n\n{combined}\n\nThen exit.",
     )
 
-    yield slog(status="complete", msg="Analysis complete")
+    yield slog(msg="Analysis complete", status="complete")
 
     return {
         "perspectives": perspectives,
@@ -116,24 +114,21 @@ def multi_perspective_analysis(topic: str):
 if __name__ == "__main__":
     import asyncio
 
-    from doeff import async_run, default_handlers
+    from _runtime import run_program
 
     async def main():
         topic = "AI code assistants"
 
         print(f"Starting multi-perspective analysis: {topic}")
         print()
-        # slog_handler: stderr display sink for SlogEffect (visible logs by default)
         # OpenCode provides: agent session management effects
-        program = slog_handler(opencode_handler()(multi_perspective_analysis(topic)))
-        result = await async_run(program, handlers=default_handlers())
-
-        if result.is_err():
+        program = opencode_handler()(multi_perspective_analysis(topic))
+        try:
+            output = await run_program(program)
+        except Exception as e:
             print("\n=== Workflow Failed ===")
-            print(result.format())  # Rich error info: effect path, python stack, K stack
+            print(f"Error: {e}")
         else:
-            output = result.value
-
             print("\n" + "=" * 50)
             print("ANALYSIS RESULTS")
             print("=" * 50)

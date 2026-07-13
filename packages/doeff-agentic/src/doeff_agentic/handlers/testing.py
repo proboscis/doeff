@@ -1,7 +1,6 @@
 """Mock handlers for doeff-agentic effects used in tests and examples."""
 
 
-import inspect
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -436,15 +435,15 @@ def _is_lazy_program_value(value: object) -> bool:
 
 
 def _as_protocol_handler(handler_fn):
-    """Adapt an effect->value callable to doeff's protocol handler."""
+    """Adapt an effect->value callable to doeff's protocol handler.
+
+    Returns the @do protocol handler itself (called as a sub-program with
+    (effect, k)); only the OUTER dispatching handler is installer-wrapped.
+    """
 
     @do
     def _wrapped(effect: Effect, k: Any):
         result = handler_fn(effect)
-
-        if inspect.isgenerator(result):
-            resolved = yield make_doeff_generator(result)  # noqa: F821 - legacy removed API reference is intentionally preserved
-            return (yield Resume(k, resolved))
 
         if _is_lazy_program_value(result):
             resolved = yield result
@@ -452,7 +451,7 @@ def _as_protocol_handler(handler_fn):
 
         return (yield Resume(k, result))
 
-    return _program_handler(_wrapped)
+    return _wrapped
 
 
 def mock_handlers(
