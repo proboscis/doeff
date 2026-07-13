@@ -23,10 +23,12 @@
   MonitorKnobs
   classify-pane
   deliver-message
+  discover-conversation
   session-store-list-active
   session-store-result-payload
   session-store-upsert
   session-store-record-event
+  session-store-known-conversation-ids
   tmux-has-session
   tmux-pane-current-command
   tmux-capture
@@ -124,16 +126,26 @@
 ;; 照合する(登録時結合はしない — host liveness と registration を結合しない)。
 ;; 照合の機械面は (kind, api_version) のみ。required_field は人間可読ラベル
 ;; (shapes DSL は導入しない — 機械消費者不在の YAGNI 裁定、#15)。
+;; ADR-DOE-AGENTS-006 R5: resume / fork capability の広告。api_version
+;; (BINDING-KIND-API-VERSION)は binding 受理形の契約版なので据え置き —
+;; capability は別軸の additive field(受理形が変わらないのに版を進めると
+;; ACP の verifyBindingKindsOnce が偽の BindingKindUnsupported を報じる)。
+(setv BINDING-KIND-RESUMABLE {"codex" True "claude-code" True})
+(setv BINDING-KIND-FORKABLE {"codex" True "claude-code" True})
+
 (deff binding-kind-advertisement []
   {:pre []
    :post [(: % list)]}
   "kinds.list の result 本体: kind 表から導出した
-   [{kind agent_type required_field api_version}](kind 昇順)。"
+   [{kind agent_type required_field api_version resumable forkable}]
+   (kind 昇順)。"
   (lfor kind (sorted (.keys BINDING-KIND-AGENT-TYPE))
         {"kind" kind
          "agent_type" (get BINDING-KIND-AGENT-TYPE kind)
          "required_field" (binding-kind-shape-label kind)
-         "api_version" (get BINDING-KIND-API-VERSION kind)}))
+         "api_version" (get BINDING-KIND-API-VERSION kind)
+         "resumable" (get BINDING-KIND-RESUMABLE kind)
+         "forkable" (get BINDING-KIND-FORKABLE kind)}))
 
 (deff policy-normalized-env-key [key]
   {:pre [(: key str)]
@@ -524,6 +536,25 @@
       (<- _ (session-store-upsert row))
       (<- _ (session-store-record-event row.session-id "session_exited" row))
       (return row)))
+
+  ;; --- ADR-006 R1: 会話 identity の事後発見(codex の fresh launch と
+  ;; 両 kind の fork は CLI 側が identity を鋳造する)。level-triggered:
+  ;; conversation 未確定の非終端行へ毎 cycle 試みる。除外集合 = store が知る
+  ;; 全会話(terminal 含む — 既知の会話を新会話と誤認しない)。未発見は
+  ;; そのまま続行(次 cycle 再試行)— この arm は status を変えない。
+  (when (and (is None row.conversation)
+             (in row.agent-type #{"claude" "codex"}))
+    (<- known-ids (session-store-known-conversation-ids))
+    (<- found (discover-conversation
+                row.agent-type
+                {"work_dir" row.work-dir
+                 "effective_identity" row.effective-identity
+                 "exclude_session_ids" known-ids}))
+    (when (is-not found None)
+      (setv row (replace row :conversation found))
+      (<- _ (session-store-upsert row))
+      (<- _ (session-store-record-event row.session-id
+                                        "session_conversation_discovered" row))))
 
   ;; --- 観測: capture(100 行窓)+ kind 別 marker 事実。
   (<- output (tmux-capture row.pane-id 100))
