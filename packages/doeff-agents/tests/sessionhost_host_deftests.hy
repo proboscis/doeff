@@ -223,15 +223,21 @@
     (assert (= (get response "id") 9))
     (assert (= (get response "ok") True))
     (setv kinds (get (get response "result") "kinds"))
+    ;; ADR-006 R5: resumable / forkable は capability の additive field。
+    ;; api_version は binding 受理形の契約版なので据え置き(受理形は不変)。
     (assert (= kinds
                [{"kind" "claude-code"
                  "agent_type" "claude"
                  "required_field" "config_dir"
-                 "api_version" "acp.dev/agent-binding/v1"}
+                 "api_version" "acp.dev/agent-binding/v1"
+                 "resumable" True
+                 "forkable" True}
                 {"kind" "codex"
                  "agent_type" "codex"
                  "required_field" "codex_home | auth_file+profile_dir"
-                 "api_version" "acp.dev/agent-binding/v2"}])))
+                 "api_version" "acp.dev/agent-binding/v2"
+                 "resumable" True
+                 "forkable" True}])))
   (with-skeleton check))
 
 

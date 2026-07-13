@@ -42,6 +42,7 @@
   FsReadText
   FsWriteTextAtomic
   FsMakeDirs
+  FsListDir
   EnvGet])
 (import doeff_agents.sessionhost.policy [ACTIVE-STATUSES])
 
@@ -410,6 +411,15 @@
   (FsMakeDirs [path]
     (os.makedirs path :exist-ok True)
     (resume None))
+
+  (FsListDir [path]
+    ;; 発見用の非破壊読み(ADR-006): 不在・非 dir・権限は空 list —
+    ;; discovery は level-triggered に再試行されるので観測不能 = 未発見。
+    (setv entries [])
+    (try
+      (setv entries (sorted (os.listdir path)))
+      (except [OSError]))
+    (resume entries))
 
   (FsComposeHomeView [auth-file profile-dir view-root]
     (resume (compose-home-view auth-file profile-dir view-root)))

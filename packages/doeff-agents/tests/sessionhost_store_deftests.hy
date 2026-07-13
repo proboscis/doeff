@@ -39,6 +39,7 @@
   db-session-list
   db-count-active
   db-current-result-payload
+  db-known-conversation-ids
   db-report-result-guarded-update
   db-clear-awaiting-latches
   db-read-lease
@@ -61,7 +62,9 @@
        "last_validation_error" "awaiting_response" "observed_active_at"
        "result_payload_json" "result_solicitations_used"
        "prompt_unblock_attempts" "last_output_change_at"
-       "effective_identity_json"])
+       "effective_identity_json"
+       "conversation_json" "generation"
+       "resumed_from_session_id" "forked_from_session_id"])
 
 
 (defn make-snap [session-id #** overrides]
@@ -343,3 +346,67 @@
   (setv wire2 (snapshot-to-wire-dict snap2))
   (assert (= (get wire2 "result_payload") "{}"))
   (assert (= (get wire2 "effective_identity") {"CODEX_HOME" "/x"})))
+
+
+;; ---------------------------------------------------------------------------
+;; ADR-DOE-AGENTS-006: conversation / generation / lineage の store 契約
+;; ---------------------------------------------------------------------------
+
+(deftest test-conversation-coalesce-and-lineage-roundtrip
+  ;; 発見済み会話 identity は後続 upsert(None)に消されない(COALESCE)。
+  ;; generation / lineage は roundtrip する。
+  (defn check [conn]
+    (db-upsert-snapshot conn (make-snap "s1"))
+    (db-upsert-snapshot conn (make-snap "s1"
+                               :conversation {"session_id" "conv-1"
+                                              "rollout_path" "/r.jsonl"}))
+    (db-upsert-snapshot conn (make-snap "s1" :status "blocked"))
+    (setv back (db-session-get conn "s1"))
+    (assert (= (get (get back "conversation") "session_id") "conv-1"))
+    (db-upsert-snapshot conn (make-snap "s2"
+                               :generation 3
+                               :resumed_from_session_id "s1"
+                               :conversation {"session_id" "conv-1"}))
+    (setv b2 (db-session-get conn "s2"))
+    (assert (= (get b2 "generation") 3))
+    (assert (= (get b2 "resumed_from_session_id") "s1"))
+    (assert (is (get b2 "forked_from_session_id") None))
+    ;; wire 形: conversation は常在化せず None なら省略、generation は常在
+    (setv wire (snapshot-to-wire-dict (db-session-get conn "s1")))
+    (assert (in "conversation" wire))
+    (assert (= (get wire "generation") 1))
+    (setv wire3 (snapshot-to-wire-dict (make-snap "s3")))
+    (assert (not-in "conversation" wire3))
+    (assert (not-in "resumed_from_session_id" wire3)))
+  (with-tmp-conn check))
+
+
+(deftest test-terminal-row-never-reactivated
+  ;; law conversation-outlives-incarnation の機械面: terminal → active の
+  ;; UPDATE は単一 writer が loud に拒否する(resume は新行を作る)。
+  (defn check [conn]
+    (db-upsert-snapshot conn (make-snap "s1" :status "done"))
+    (setv raised None)
+    (try
+      (db-upsert-snapshot conn (make-snap "s1" :status "running"))
+      (except [e RuntimeError]
+        (setv raised (str e))))
+    (assert (is-not raised None))
+    (assert (in "may not be reactivated" raised))
+    ;; terminal のままの後続 upsert(cleanup 時刻の記録等)は通る
+    (db-upsert-snapshot conn (make-snap "s1" :status "done"
+                               :cleaned_at "2026-07-05T01:00:00+00:00"))
+    (assert (= (get (db-session-get conn "s1") "status") "done")))
+  (with-tmp-conn check))
+
+
+(deftest test-known-conversation-ids
+  ;; terminal 行を含む全行から会話 ID 集合を導出(発見 arm の除外集合)。
+  (defn check [conn]
+    (db-upsert-snapshot conn (make-snap "s1"
+                               :conversation {"session_id" "conv-b"}))
+    (db-upsert-snapshot conn (make-snap "s2" :status "done"
+                               :conversation {"session_id" "conv-a"}))
+    (db-upsert-snapshot conn (make-snap "s3"))
+    (assert (= (db-known-conversation-ids conn) ["conv-a" "conv-b"])))
+  (with-tmp-conn check))

@@ -30,6 +30,8 @@
   SessionStoreUpsert
   SessionStoreResultPayload
   SessionStoreRecordEvent
+  SessionStoreKnownConversationIds
+  DiscoverConversation
   TmuxHasSession
   TmuxPaneCurrentCommand
   TmuxCapture
@@ -100,6 +102,7 @@
     (setv self.proc-calls [])          ;; [(command, stdin)]
     (setv self.judge-script [])        ;; 順に pop される ProcResult 台本
     (setv self.broken-panes (set))     ;; capture が例外を投げる pane(隔離検証用)
+    (setv self.discovered None)        ;; DiscoverConversation の台本(ADR-006)
     (setv self.now (datetime 2026 7 5 12 0 0 :tzinfo timezone.utc))))
 
 
@@ -207,6 +210,17 @@
 
   (SessionStoreResultPayload [session-id]
     (resume (.get world.result-payloads session-id)))
+
+  (SessionStoreKnownConversationIds []
+    ;; ADR-006 発見 arm の除外集合。fake world は rows の conversation から導出。
+    (resume (sorted (sfor r (list (.values world.rows))
+                          :if (is-not r.conversation None)
+                          (get r.conversation "session_id")))))
+
+  (DiscoverConversation [agent-type params]
+    ;; 発見物理は impls の所有(sessionhost_resume_deftests が実 impl を検査
+    ;; する)— policy deftest では台本(world.discovered、既定 None=未発見)。
+    (resume world.discovered))
 
   (SessionStoreRecordEvent [session-id event-type row]
     (.append world.events #(session-id event-type))
@@ -839,3 +853,42 @@
               session-store-record-event tmux-has-session tmux-pane-current-command
               tmux-capture tmux-send-keys tmux-kill-session clock-now proc-run]]
     (assert ctor.__doc__ (str ctor))))
+
+
+;; ---------------------------------------------------------------------------
+;; ADR-DOE-AGENTS-006: 会話 identity の事後発見 arm(level-triggered)
+;; ---------------------------------------------------------------------------
+
+(deftest test-monitor-discovers-conversation
+  ;; conversation 未確定の非終端行は毎 cycle 発見を試み、発見したら行へ書いて
+  ;; session_conversation_discovered を積む。この arm は status を変えない。
+  (setv world (FakeWorld))
+  (setv world.discovered {"session_id" "conv-found" "rollout_path" "/r.jsonl"})
+  (seed world (make-row world) :frame F-ACTIVE-CODEX)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv stored (get world.rows "s1"))
+  (assert (= (get stored.conversation "session_id") "conv-found"))
+  (assert (in #("s1" "session_conversation_discovered") world.events))
+  (assert (= stored.status "running")))
+
+
+(deftest test-monitor-discovery-absent-defers
+  ;; 未発見(None)は行を変えず event も積まない — 次 cycle 再試行。
+  (setv world (FakeWorld))
+  (seed world (make-row world) :frame F-ACTIVE-CODEX)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv stored (get world.rows "s1"))
+  (assert (is stored.conversation None))
+  (assert (not-in #("s1" "session_conversation_discovered") world.events)))
+
+
+(deftest test-monitor-discovery-skips-known-conversation
+  ;; conversation 確定済みの行では発見 arm は走らない(上書きしない)。
+  (setv world (FakeWorld))
+  (setv world.discovered {"session_id" "conv-other"})
+  (seed world (make-row world :conversation {"session_id" "conv-known"})
+        :frame F-ACTIVE-CODEX)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv stored (get world.rows "s1"))
+  (assert (= (get stored.conversation "session_id") "conv-known"))
+  (assert (not-in #("s1" "session_conversation_discovered") world.events)))
