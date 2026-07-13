@@ -1,7 +1,14 @@
 """Tests for core effects — Ask, Get, Put, Tell."""
 
-from doeff_core_effects.effects import Ask, Get, Put, Slog, Tell, Try
-from doeff_core_effects.handlers import reader, slog_handler, state, try_handler, writer
+from doeff_core_effects.effects import Ask, Get, Listen, Put, Slog, Tell, Try
+from doeff_core_effects.handlers import (
+    listen_handler,
+    reader,
+    slog_handler,
+    state,
+    try_handler,
+    writer,
+)
 
 from doeff import Pure, do
 from doeff import run as doeff_run
@@ -68,17 +75,19 @@ class TestState:
 
 class TestWriter:
     def test_tell_collects_messages(self):
-        w = writer()
-
         @do
         def body():
             yield Tell("hello")
             yield Tell("world")
             return "done"
 
-        result = doeff_run(w(body()))
+        @do
+        def listened():
+            return (yield Listen(body()))
+
+        result, collected = doeff_run(writer()(listen_handler(listened())))
         assert result == "done"
-        assert w.log == ["hello", "world"]
+        assert [e.msg for e in collected] == ["hello", "world"]
 
 
 class TestComposed:
@@ -97,8 +106,6 @@ class TestComposed:
 
     def test_all_three(self):
         """Reader + State + Writer composed."""
-        w = writer()
-
         @do
         def body():
             name = yield Ask("name")
@@ -106,9 +113,14 @@ class TestComposed:
             yield Put("greeted", True)
             return (yield Get("greeted"))
 
-        prog = reader(env={"name": "Bob"})(state()(w(body())))
-        assert doeff_run(prog) is True
-        assert w.log == ["hello Bob"]
+        @do
+        def listened():
+            return (yield Listen(body()))
+
+        prog = reader(env={"name": "Bob"})(state()(writer()(listen_handler(listened()))))
+        result, collected = doeff_run(prog)
+        assert result is True
+        assert [e.msg for e in collected] == ["hello Bob"]
 
 
 class TestTry:
@@ -155,20 +167,26 @@ class TestTry:
 
 
 class TestSlog:
-    def test_slog_basic(self):
-        sh = slog_handler()
-
+    def test_slog_capture_via_listen(self, capsys):
         @do
         def body():
             yield Slog("hello")
             yield Slog("event", user="alice", action="login")
             return "done"
 
-        result = doeff_run(sh(body()))
+        @do
+        def listened():
+            return (yield Listen(body(), types=(Slog,)))
+
+        result, collected = doeff_run(slog_handler()(listen_handler(listened())))
         assert result == "done"
-        assert len(sh.log) == 2
-        assert sh.log[0] == {"msg": "hello"}
-        assert sh.log[1] == {"msg": "event", "user": "alice", "action": "login"}
+        assert [(e.msg, e.kwargs) for e in collected] == [
+            ("hello", {}),
+            ("event", {"user": "alice", "action": "login"}),
+        ]
+        err = capsys.readouterr().err
+        assert "hello" in err
+        assert "user=alice" in err
 
 
 class TestAwait:

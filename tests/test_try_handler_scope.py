@@ -8,7 +8,7 @@ Bug reproduction: if a custom effect handler is installed INNER to try_handler,
 effects performed inside Try(program) cannot reach that inner handler.
 """
 from doeff_core_effects import Ask, Try, slog
-from doeff_core_effects.handlers import reader, try_handler, writer
+from doeff_core_effects.handlers import reader, slog_handler, try_handler
 from doeff_vm import EffectBase
 
 from doeff import Pass, Resume, do, run
@@ -107,7 +107,7 @@ def test_multiple_effects_inside_try_mixed_handlers():
     @do
     def inner():
         model = yield Ask("model")        # handled by reader (outer)
-        yield slog(msg="testing")         # handled by writer (outer)
+        yield slog(msg="testing")         # handled by slog_handler (outer)
         result = yield CustomEffect(model) # handled by custom (inner)
         return result
 
@@ -118,8 +118,8 @@ def test_multiple_effects_inside_try_mixed_handlers():
 
     env = {"model": "gpt-5.4"}
     wrapped = prog()
-    # reader (outer) → writer → try_handler → custom_handler (inner)
-    for h in reversed([reader(env=env), writer(), try_handler, custom_handler]):
+    # reader (outer) → slog_handler → try_handler → custom_handler (inner)
+    for h in reversed([reader(env=env), slog_handler(), try_handler, custom_handler]):
         wrapped = _program_handler(h)(wrapped)
 
     result = run(wrapped)

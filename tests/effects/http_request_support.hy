@@ -81,10 +81,6 @@
   (httpx.TimeoutException message))
 
 
-(defn handler-log [handler]
-  handler.log)
-
-
 (defn is-doeff-handler [handler]
   (is handler._doeff_is_handler_fn True))
 

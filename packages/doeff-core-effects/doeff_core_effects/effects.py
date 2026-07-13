@@ -108,9 +108,28 @@ class Try(EffectBase):
 
 
 class WriterTellEffect(EffectBase):
-    """Writer/structured log effect: msg + kwargs.
+    """Writer effect: a single accumulated message.
 
-    This is the wire type for slog() and Tell(). Listen collects these.
+    This is the wire type for Tell() only. Listen collects these by default.
+    Structured observability logs are SlogEffect, a disjoint wire type
+    (ADR-DOE-CORE-EFFECTS-001 R1).
+    """
+
+    def __init__(self, msg):
+        super().__init__()
+        self.msg = msg
+
+    def __repr__(self):
+        return f"Tell({self.msg!r})"
+
+
+class SlogEffect(EffectBase):
+    """Structured log (observability) effect: msg + kwargs.
+
+    This is the wire type for slog(). slog_handler() displays it on stderr;
+    capture flows as values via Listen(prog, types=(SlogEffect,)).
+    Not a WriterTellEffect: Writer accumulation and observability have
+    opposite default behaviors (ADR-DOE-CORE-EFFECTS-001).
     """
 
     def __init__(self, msg, **kwargs):
@@ -126,9 +145,9 @@ class WriterTellEffect(EffectBase):
 
 
 # Convenience alias
-Slog = WriterTellEffect
+Slog = SlogEffect
 
 
 def slog(msg, **kwargs):
-    """Convenience function to create a WriterTellEffect."""
-    return WriterTellEffect(msg, **kwargs)
+    """Convenience function to create a SlogEffect."""
+    return SlogEffect(msg, **kwargs)

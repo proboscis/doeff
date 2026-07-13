@@ -40,8 +40,8 @@ from doeff import (
     MissingEnvKeyError,
     Pass,
     Resume,
+    SlogEffect,
     Tell,
-    WriterTellEffect,
     async_run,
     default_async_handlers,
     default_handlers,
@@ -79,7 +79,7 @@ class TestCanonicalPackageLayout:
     def test_effects_exports_core_effect_metadata(self):
         """effects package should expose metadata even without custom effect classes."""
         assert PRESET_CONFIG_EFFECT is AskEffect
-        assert PRESET_LOG_EFFECT is WriterTellEffect
+        assert PRESET_LOG_EFFECT is SlogEffect
         assert PRESET_CONFIG_KEY_PREFIX == "preset."
         assert is_preset_config_key("preset.log_level")
         assert not is_preset_config_key("other.key")

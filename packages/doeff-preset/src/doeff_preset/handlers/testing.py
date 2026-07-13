@@ -4,7 +4,7 @@
 from collections.abc import Callable
 from typing import Any
 
-from doeff import AskEffect, Effect, Pass, WriterTellEffect, do
+from doeff import AskEffect, Effect, Pass, SlogEffect, do
 from doeff import handler as _program_handler
 from doeff_preset.handlers.config import config_handlers
 
@@ -13,8 +13,8 @@ ProtocolHandler = Callable[[Any, Any], Any]
 
 @do
 def _handle_tell_noop(effect: Effect, _k: Any):
-    """Do not display structured logs during tests; delegate writer behavior."""
-    if not isinstance(effect, WriterTellEffect):
+    """Do not display structured logs during tests; delegate to outer sinks."""
+    if not isinstance(effect, SlogEffect):
         yield Pass()
         return None
     yield Pass()
@@ -33,7 +33,7 @@ def mock_handlers(config_defaults: dict[str, Any] | None = None) -> ProtocolHand
 
     @do
     def handler(effect: Effect, k: Any):
-        if isinstance(effect, WriterTellEffect):
+        if isinstance(effect, SlogEffect):
             return (yield slog_handler(effect, k))
         if isinstance(effect, AskEffect):
             return (yield ask_handler(effect, k))

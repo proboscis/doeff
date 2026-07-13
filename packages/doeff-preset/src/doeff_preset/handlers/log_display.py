@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from doeff import Effect, Pass, WriterTellEffect, do
+from doeff import Effect, Pass, SlogEffect, do
 from doeff import handler as _program_handler
 
 # Global console for log output
@@ -75,10 +75,10 @@ def handle_tell_with_display(
     effect: Effect,
     _k: Any,
 ):
-    """Handle WriterTellEffect with console display for slog messages.
+    """Handle SlogEffect with console display for slog messages.
 
-    If the message is a dict (structured log), displays it to console using rich.
-    Always appends the message to the writer log (normal WriterTellEffect behavior).
+    Displays the structured payload ({"msg": ..., **kwargs}) to console using rich,
+    then passes the effect along to an outer slog sink.
 
     Args:
         effect: The WriterTellEffect to handle.
@@ -87,16 +87,15 @@ def handle_tell_with_display(
     Returns:
         Pass-through to the outer Writer handler after optional display.
     """
-    if not isinstance(effect, WriterTellEffect):
+    if not isinstance(effect, SlogEffect):
         yield Pass()
         return None
 
-    message = effect.message
+    message = {"msg": effect.msg, **effect.kwargs}
 
-    # Display structured logs (dicts) to console
-    if isinstance(message, dict):
-        formatted = format_slog(message)
-        _console.print(formatted)
+    # Display structured logs to console
+    formatted = format_slog(message)
+    _console.print(formatted)
 
     # Delegate to outer Writer handler for normal log accumulation.
     yield Pass()
