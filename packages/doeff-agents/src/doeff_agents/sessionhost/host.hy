@@ -42,7 +42,7 @@
   tmux-send-keys])
 (import doeff_agents.sessionhost.impls.claude_code [claude-code-impl])
 (import doeff_agents.sessionhost.impls.codex [codex-impl])
-(import doeff_agents.sessionhost.launch [launch-session])
+(import doeff_agents.sessionhost.launch [launch-session resume-session])
 (import doeff_agents.sessionhost.policy [
   binding-kind-advertisement
   cause-if-absent
@@ -715,6 +715,31 @@
     (setv sid row.session-id)
     (setv wire (wire-snapshot actor sid))
     (record-command actor sid "session.launch" wire)
+    (return wire))
+
+  ;; ADR-DOE-AGENTS-006 R4: 会話の新 incarnation。program(resume-session)が
+  ;; admission(実在 / capability / identity-unknown / one-live-incarnation)と
+  ;; 系譜・世代を所有し、宿しは launch-session を再利用する。
+  (when (in method #("session.resume" "session.fork"))
+    (setv mode (if (= method "session.resume") "resume" "fork"))
+    (setv p (params-object params method))
+    (setv source-sid (required-str-param p "session_id" method))
+    (setv program-params
+          {"session_id" source-sid
+           "mode" mode
+           "prompt" (.get p "prompt")
+           "model" (.get p "model")
+           "effort" (.get p "effort")
+           "mcp_servers" (or (.get p "mcp_servers") {})
+           "socket_path" config.socket-path
+           "max_running" config.max-running
+           "repl_idle_max_wait_seconds" (env-positive-i64
+                                          "DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS")
+           "backend_kind" config.backend})
+    (setv row (run-hosted config actor (resume-session program-params)))
+    (setv new-sid row.session-id)
+    (setv wire (wire-snapshot actor new-sid))
+    (record-command actor new-sid method wire)
     (return wire))
 
   (when (= method "session.get")

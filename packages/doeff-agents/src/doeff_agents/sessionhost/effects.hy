@@ -88,7 +88,20 @@
   #^ str backend-kind
   (setv backend-kind "tmux")
   #^ (| dict None) backend-ref
-  (setv backend-ref None))
+  (setv backend-ref None)
+  ;; --- ADR-DOE-AGENTS-006: 会話 identity(耐久エンティティ)と incarnation 系譜。
+  ;; conversation = kind 判別 union(claude {"session_id"} / codex
+  ;; {"session_id", "rollout_path"})。None = identity-unknown — その行への
+  ;; resume / fork は typed 失敗(R1)。行は会話の 1 回の宿り(incarnation)で
+  ;; あり、terminal 行は決して再活性しない — 会話が行を乗り換える。
+  #^ (| dict None) conversation
+  (setv conversation None)
+  #^ int generation
+  (setv generation 1)
+  #^ (| str None) resumed-from-session-id
+  (setv resumed-from-session-id None)
+  #^ (| str None) forked-from-session-id
+  (setv forked-from-session-id None))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] PaneObservation []
@@ -212,6 +225,30 @@
   #^ str session-id
   #^ str socket-path)
 
+(defclass [(dataclass :frozen True :kw-only True)] BuildResume [EffectBase]
+  "kind の resume / fork argv を組み立てる(ADR-DOE-AGENTS-006 R3)。
+   params = launch params 相当 + \"resume_mode\"(\"resume\" | \"fork\")+
+   \"conversation\"(親会話 ref、kind 判別 union)。物理: claude =
+   `--resume <uuid>`(fork はさらに `--fork-session`)、codex =
+   `codex resume <uuid>` / `codex fork <uuid>`。BuildLaunch と同じく
+   prompt は決して argv に載せない(live terminal transport のみ)。
+   argv 物理は impls/ の kind モジュール単一所有
+   (law resume-physics-has-one-home)。戻り値: list[str]。"
+  #^ str agent-type
+  #^ dict params)
+
+(defclass [(dataclass :frozen True :kw-only True)] DiscoverConversation [EffectBase]
+  "session の会話 identity を kind 物理で事後発見する(ADR-DOE-AGENTS-006 R1)。
+   codex の launch と両 kind の fork は identity を CLI 側が鋳造するため、
+   事後発見が唯一の捕獲経路 — monitor の level-triggered arm が
+   conversation 未確定の行に対して毎 cycle これを試みる。impl は
+   Fs substrate effect のみで実装する(substrate-clean)。
+   params: {\"work_dir\", \"effective_identity\"(auth home の解決結果),
+   \"exclude_session_ids\"(親会話等、発見対象から除外する id 集合)}。
+   戻り値: conversation dict | None(未発見 — 次 cycle で再試行)。"
+  #^ str agent-type
+  #^ dict params)
+
 
 ;; ===========================================================================
 ;; substrate effects(SessionStore / Tmux / Clock / Proc — DOE-004 R1)
@@ -242,11 +279,18 @@
   "監査 event の追記(session_done / session_failed / session_blocked /
    session_observed / session_result_solicited / session_prompt_unblocked /
    session_prompt_judge_inconclusive / session_stale_reaped /
-   session_launch_timeout / session_exited / session_unsubmitted_paste_resubmitted)。
+   session_launch_timeout / session_exited / session_unsubmitted_paste_resubmitted /
+   session_resumed / session_forked / session_conversation_discovered)。
    戻り値: None。"
   #^ str session-id
   #^ str event-type
   #^ SessionRow row)
+
+(defclass [(dataclass :frozen True :kw-only True)] SessionStoreKnownConversationIds [EffectBase]
+  "store が知る全会話 ID の集合読み(terminal 行を含む全行の conversation_json
+   から。ADR-006 R1 の発見 arm が除外集合として使う — 既知の会話を fork の
+   新会話と誤認しないため)。戻り値: list[str]。"
+  )
 
 (defclass [(dataclass :frozen True :kw-only True)] TmuxHasSession [EffectBase]
   "tmux session の生存確認。戻り値: bool。"
@@ -327,6 +371,12 @@
   "ディレクトリの再帰作成(exist-ok。oracle: fs::create_dir_all)。戻り値: None。"
   #^ str path)
 
+(defclass [(dataclass :frozen True :kw-only True)] FsListDir [EffectBase]
+  "ディレクトリ直下のエントリ名の列挙(ADR-006 の会話 identity 発見用の
+   読み取り面)。不在・非ディレクトリは空 list — raise しない(discovery は
+   level-triggered に再試行されるので、観測不能 = 未発見)。戻り値: list[str]。"
+  #^ str path)
+
 (defclass [(dataclass :frozen True :kw-only True)] FsComposeHomeView [EffectBase]
   "二軸宣言 (auth-file, profile-dir) から home view を実体化する(#15、
    DOE-004 R5 v2 / ACP 0040 R3 後継: 合成 CODEX_HOME は adapter 物理で、
@@ -395,6 +445,20 @@
   (WireResultChannel :agent-type agent-type :session-id session-id
                      :socket-path socket-path))
 
+(deff build-resume [agent-type params]
+  {:pre [(: agent-type str) (: params dict)
+         (in (.get params "resume_mode") #{"resume" "fork"})
+         (: (.get params "conversation") dict)]
+   :post [(: % BuildResume)]}
+  "BuildResume を構築する(ADR-006 R3: resume / fork の kind argv 物理)。"
+  (BuildResume :agent-type agent-type :params params))
+
+(deff discover-conversation [agent-type params]
+  {:pre [(: agent-type str) (: params dict)]
+   :post [(: % DiscoverConversation)]}
+  "DiscoverConversation を構築する(ADR-006 R1: 会話 identity の事後発見)。"
+  (DiscoverConversation :agent-type agent-type :params params))
+
 (deff session-store-list-active []
   {:pre [True]
    :post [(: % SessionStoreListActive)]}
@@ -424,6 +488,12 @@
    :post [(: % SessionStoreRecordEvent)]}
   "SessionStoreRecordEvent を構築する(監査 event 追記)。"
   (SessionStoreRecordEvent :session-id session-id :event-type event-type :row row))
+
+(deff session-store-known-conversation-ids []
+  {:pre [True]
+   :post [(: % SessionStoreKnownConversationIds)]}
+  "SessionStoreKnownConversationIds を構築する(発見 arm の除外集合読み)。"
+  (SessionStoreKnownConversationIds))
 
 (deff tmux-has-session [session-name]
   {:pre [(: session-name str)]
@@ -497,6 +567,12 @@
    :post [(: % FsMakeDirs)]}
   "FsMakeDirs を構築する(exist-ok 再帰作成)。"
   (FsMakeDirs :path path))
+
+(deff fs-list-dir [path]
+  {:pre [(: path str) (> (len path) 0)]
+   :post [(: % FsListDir)]}
+  "FsListDir を構築する(発見用の非破壊読み — 不在は空 list)。"
+  (FsListDir :path path))
 
 (deff fs-compose-home-view [auth-file profile-dir view-root]
   {:pre [(: auth-file str) (> (len auth-file) 0)
