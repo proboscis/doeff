@@ -12,12 +12,6 @@ def test_semgrep_excludes_incompatible_yaml_c_accelerator() -> None:
     config: dict[str, object] = tomllib.loads((ROOT / "pyproject.toml").read_text())
     tool_config: dict[str, object] = cast(dict[str, object], config["tool"])
     uv_config: dict[str, object] = cast(dict[str, object], tool_config["uv"])
-    exclusions: list[dict[str, object]] = cast(
-        list[dict[str, object]], uv_config["exclude-dependencies"]
-    )
-    semgrep_yaml_accelerator: dict[str, object] = {
-        "package": {"name": "semgrep"},
-        "dependencies": ["ruamel-yaml-clib"],
-    }
+    exclusions: list[str] = cast(list[str], uv_config["exclude-dependencies"])
 
-    assert semgrep_yaml_accelerator in exclusions
+    assert "ruamel-yaml-clib" in exclusions

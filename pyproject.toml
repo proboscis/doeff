@@ -47,6 +47,13 @@ include = ["doeff/", "README.md", "LICENSE", "pyproject.toml"]
 packages = ["doeff"]
 
 
+[tool.uv]
+# Semgrep works with ruamel.yaml's pure-Python implementation. Its pinned C accelerator does not
+# build on the repository's default free-threaded Python 3.14, so exclude only that optional path.
+exclude-dependencies = [
+    "ruamel-yaml-clib",
+]
+
 [tool.uv.workspace]
 members = ["packages/*"]
 
@@ -143,4 +150,5 @@ dev = [
     "doeff-hy",
     "doeff-adr",
     "cloudpickle>=3.0",
+    "semgrep>=1.161.0,<2",
 ]
