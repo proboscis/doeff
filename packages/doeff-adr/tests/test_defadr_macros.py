@@ -2,6 +2,7 @@ import importlib
 import sys
 import textwrap
 
+import doeff_adr.registry
 import doeff_hy  # noqa: F401 - registers Hy import hooks
 import pytest
 from doeff_adr.registry import SemgrepSpec, clear_registry, get_adr, get_enforcement
@@ -192,6 +193,28 @@ def test_expected_red_defsemgrep_still_validates_rule_fixtures(tmp_hy_dir):
     )
 
     mod.test_expected_red_rule_defsemgrep()
+
+
+def test_defsemgrep_fails_when_semgrep_executable_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing_executable(_command: str) -> None:
+        return None
+
+    clear_registry()
+    doeff_adr.registry.register_semgrep_enforcement(
+        "missing_semgrep",
+        pattern="forbidden-token",
+        bad=["forbidden-token"],
+        good=["allowed-token"],
+    )
+    monkeypatch.setattr(doeff_adr.registry.shutil, "which", missing_executable)
+
+    try:
+        with pytest.raises(AssertionError, match="semgrep executable is required"):
+            doeff_adr.registry.assert_semgrep_enforcement("missing_semgrep")
+    finally:
+        clear_registry()
 
 
 def test_pytest_plugin_collects_defadr_hy_files(pytester):

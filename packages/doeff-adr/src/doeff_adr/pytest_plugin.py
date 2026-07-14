@@ -1,12 +1,13 @@
 """Pytest plugin for executable ADR Hy files."""
 
-
 import fnmatch
 import importlib
 import importlib.util
+import os
 import sys
+import warnings
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import doeff_hy  # noqa: F401 - registers Hy import hooks
 import pytest
@@ -18,6 +19,25 @@ DEFAULT_FILE_PATTERNS = (
     "docs/adr/defadr_*.hy",
     "docs/adrs/defadr_*.hy",
 )
+IGNORED_DISCOVERY_DIRECTORIES = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".svn",
+        ".tox",
+        ".venv",
+        "__pycache__",
+        "build",
+        "dist",
+        "node_modules",
+        "venv",
+    }
+)
+WiringMode = Literal["off", "warn", "strict"]
+WIRING_MODES = frozenset({"off", "warn", "strict"})
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -26,6 +46,17 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "Glob patterns for executable ADR Hy files collected by doeff-adr.",
         type="linelist",
         default=[],
+    )
+    parser.addini(
+        "doeff_adr_wiring",
+        "How to report executable ADR files that pytest did not collect: off, warn, or strict.",
+        default="warn",
+    )
+    parser.addoption(
+        "--doeff-adr-wiring",
+        choices=sorted(WIRING_MODES),
+        default=None,
+        help="Override doeff-adr wiring verification mode (off, warn, or strict).",
     )
 
 
@@ -36,6 +67,23 @@ def pytest_collect_file(file_path: Any, parent: pytest.Collector) -> pytest.Coll
     if not _should_collect_hy_file(path, parent.config):
         return None
     return DoeffAdrHyFile.from_parent(parent, path=path)
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    mode = _wiring_mode(session.config)
+    if mode == "off":
+        return
+    root = Path(session.config.rootpath)
+    patterns = _file_patterns(session.config)
+    executable_adrs = _discover_executable_adrs(root, patterns)
+    collected_files = {Path(item.path).resolve() for item in session.items}
+    uncollected_adrs = sorted(executable_adrs - collected_files)
+    if not uncollected_adrs:
+        return
+    message = _wiring_message(root, uncollected_adrs, mode)
+    if mode == "strict":
+        raise pytest.UsageError(message)
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
 
 
 class DoeffAdrHyFile(pytest.File):
@@ -58,13 +106,56 @@ def _coerce_path(path: Any) -> Path:
 
 def _should_collect_hy_file(path: Path, config: pytest.Config) -> bool:
     root = Path(config.rootpath)
-    patterns = [*DEFAULT_FILE_PATTERNS, *config.getini("doeff_adr_hy_files")]
+    patterns = _file_patterns(config)
+    return _matches_file_patterns(path, root, patterns)
+
+
+def _file_patterns(config: pytest.Config) -> tuple[str, ...]:
+    return (*DEFAULT_FILE_PATTERNS, *config.getini("doeff_adr_hy_files"))
+
+
+def _matches_file_patterns(path: Path, root: Path, patterns: tuple[str, ...]) -> bool:
     rel = _relative_posix(path, root)
     candidates = {path.name, rel, path.as_posix()}
     return any(
-        fnmatch.fnmatch(candidate, pattern)
-        for pattern in patterns
-        for candidate in candidates
+        fnmatch.fnmatch(candidate, pattern) for pattern in patterns for candidate in candidates
+    )
+
+
+def _wiring_mode(config: pytest.Config) -> WiringMode:
+    command_line_mode = config.getoption("doeff_adr_wiring")
+    configured_mode = command_line_mode or config.getini("doeff_adr_wiring")
+    if configured_mode == "off":
+        return "off"
+    if configured_mode == "warn":
+        return "warn"
+    if configured_mode == "strict":
+        return "strict"
+    choices = ", ".join(sorted(WIRING_MODES))
+    raise pytest.UsageError(f"doeff_adr_wiring must be one of {choices}; got {configured_mode!r}")
+
+
+def _discover_executable_adrs(root: Path, patterns: tuple[str, ...]) -> set[Path]:
+    executable_adrs: set[Path] = set()
+    for directory, directory_names, file_names in os.walk(root):
+        directory_names[:] = sorted(
+            name for name in directory_names if name not in IGNORED_DISCOVERY_DIRECTORIES
+        )
+        for file_name in sorted(file_names):
+            path = Path(directory, file_name)
+            if path.suffix == ".hy" and _matches_file_patterns(path, root, patterns):
+                executable_adrs.add(path.resolve())
+    return executable_adrs
+
+
+def _wiring_message(root: Path, paths: list[Path], mode: WiringMode) -> str:
+    outcome = "failed" if mode == "strict" else "warning"
+    rendered_paths = "\n".join(f"  - {_relative_posix(path, root)}" for path in paths)
+    return (
+        f"doeff-adr wiring verification {outcome}: executable ADR files exist but were not "
+        f"collected:\n{rendered_paths}\n"
+        "Add their directories to pytest testpaths or the CI pytest arguments. "
+        "Use doeff_adr_wiring=off only for an intentional opt-out."
     )
 
 

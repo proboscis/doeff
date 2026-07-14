@@ -99,10 +99,18 @@ def test_verify_wiring_cli_runs_strict_collection(
 
     commands: list[Sequence[str]] = []
 
-    def run_command(command: Sequence[str], *, check: bool) -> subprocess.CompletedProcess[str]:
+    def run_command(
+        command: Sequence[str],
+        *,
+        check: bool,
+        capture_output: bool,
+        text: bool,
+    ) -> subprocess.CompletedProcess[str]:
         assert not check
+        assert capture_output
+        assert text
         commands.append(command)
-        return subprocess.CompletedProcess(command, returncode=0)
+        return subprocess.CompletedProcess(command, returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(doeff_adr.cli.subprocess, "run", run_command)
 
@@ -116,7 +124,7 @@ def test_verify_wiring_cli_runs_strict_collection(
             "pytest",
             "--collect-only",
             "-q",
-            "--doeff-adr-wiring=strict",
             "docs/adr",
+            "--doeff-adr-wiring=strict",
         ]
     ]
