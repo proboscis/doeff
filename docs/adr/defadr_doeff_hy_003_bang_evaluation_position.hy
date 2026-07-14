@@ -12,6 +12,7 @@
 (import dataclasses [dataclass])
 (import types)
 (import hy)
+(import hy.errors)
 (import pytest)
 
 
@@ -113,7 +114,7 @@
   :decision
     [(rule R1 "(! expr) は展開時にその出現位置で (yield expr) に置換される(in-place)。文の直前への hoist による評価位置の移動は行わない。")
      (rule R2 "この置換により、分岐(if/when/cond)・短絡(and/or)・try/except・dict/list/set/tuple/f-string literal・関数引数・let 束縛値・while 条件を含む全ての式位置で、条件性・短絡性・左から右の評価順・例外文脈が保存される。")
-     (rule R3 "yield が構文上置けない位置 — 内包表記(lfor/gfor/dfor/sfor)およびネストした fn/fn/a/defn/defn/a/defclass 本体 — の ! は展開時 SyntaxError とする。エラーメッセージは修正プロンプト形式: 所有マクロ名・行番号・元式・修正テンプレ(事前 <- bind、および for/do または fnk への書き換え)を必ず含む。")
+     (rule R3 "yield が構文上置けない位置 — 内包表記(lfor/gfor/dfor/sfor)およびネストした fn/fn/a/defn/defn/a/defclass 本体 — の ! は展開時エラーとする(マクロが SyntaxError を送出し、Hy が HyMacroExpansionError として表面化する)。エラーメッセージは修正プロンプト形式: 所有マクロ名・行番号・元式・修正テンプレ(事前 <- bind、および for/do または fnk への書き換え)を必ず含む。")
      (rule R4 "独自の do-context を持つフォーム(for/do traverse fnk do! handle defhandler defk deff defp defpp defmcp-tool およびそれらの内部)と quote/quasiquote/defmacro には外側の展開器は立ち入らない。bang の展開はそのフォーム自身のマクロが行う。")
      (rule R5 "(! ...) はちょうど 1 つのフォームを取る。それ以外の arity は展開時 SyntaxError とする(余剰引数の黙殺禁止)。")
      (rule R6 "<- の意味論・ADR-DOE-HY-001 の statement guard の意味論は変えない。")]
@@ -172,29 +173,34 @@
        (assert (= result "caught")
                "try 内の ! の例外が except に届かない(hoist が try 文脈を壊している)"))
      (deftest test-adr-doe-hy-003-comprehension-expansion-error
-       ;; probe 6: 内包表記内の ! → 修正プロンプト付き展開時 SyntaxError
+       ;; probe 6: 内包表記内の ! → 修正プロンプト付き展開時エラー。
+       ;; マクロは SyntaxError を送出し、Hy がマクロ展開エラーとして表面化する
+       ;; (HyMacroExpansionError — Hy の標準ラップ機構)。
        (setv mod (types.ModuleType "_adr_doe_hy_003_lfor_probe"))
        (setv code (+ "(require doeff-hy.macros [defk <-])\n"
                      "(defk bad-lfor [xs]\n"
                      "  {:pre [(: xs list)] :post [(: % list)]}\n"
                      "  (lfor x xs (! (probe-eff x))))"))
-       (with [excinfo (pytest.raises SyntaxError)]
+       (with [excinfo (pytest.raises hy.errors.HyMacroExpansionError)]
          (for [form (hy.read-many code)]
            (hy.eval form :module mod)))
-       ;; 修正プロンプト: for/do への書き換え案内を含むこと
+       ;; 展開時の赤であること + 修正プロンプト: for/do への書き換え案内を含むこと
+       (assert (in "SyntaxError" (str excinfo.value)))
        (assert (in "for/do" (str excinfo.value))
                (+ "展開時エラーに for/do の修正案内が無い: " (str excinfo.value))))
      (deftest test-adr-doe-hy-003-nested-fn-expansion-error
-       ;; probe 7: ネスト fn 内の ! → 修正プロンプト付き展開時 SyntaxError
+       ;; probe 7: ネスト fn 内の ! → 修正プロンプト付き展開時エラー。
+       ;; マクロは SyntaxError を送出し、Hy がマクロ展開エラーとして表面化する。
        (setv mod (types.ModuleType "_adr_doe_hy_003_fn_probe"))
        (setv code (+ "(require doeff-hy.macros [defk <-])\n"
                      "(defk bad-fn [xs]\n"
                      "  {:pre [(: xs list)] :post [(: % list)]}\n"
                      "  (list (map (fn [x] (+ x (! (probe-eff x)))) xs)))"))
-       (with [excinfo (pytest.raises SyntaxError)]
+       (with [excinfo (pytest.raises hy.errors.HyMacroExpansionError)]
          (for [form (hy.read-many code)]
            (hy.eval form :module mod)))
-       ;; 修正プロンプト: fnk への書き換え案内を含むこと
+       ;; 展開時の赤であること + 修正プロンプト: fnk への書き換え案内を含むこと
+       (assert (in "SyntaxError" (str excinfo.value)))
        (assert (in "fnk" (str excinfo.value))
                (+ "展開時エラーに fnk の修正案内が無い: " (str excinfo.value))))
      (deftest test-adr-doe-hy-003-legacy-simple-backcompat

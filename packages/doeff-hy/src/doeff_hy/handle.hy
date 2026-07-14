@@ -128,7 +128,9 @@
   (import doeff-hy.macros [_expand-bangs _is-bind _bind-parts])
 
   ;; Expand <- and ! in lazy body
-  (setv expanded-body (_expand-handler-binds lazy-body))
+  (setv expanded-body
+    (_expand-handler-binds lazy-body
+                           (+ "lazy " (str handler-name) "/" (str lazy-name))))
 
   ;; Separate init steps from value expression
   (setv init-forms (list (cut expanded-body 0 -1)))
@@ -339,35 +341,21 @@
       #((get body-forms 1) (list (cut body-forms 2 None)))
       #(None (list body-forms))))
 
-(defn _expand-handler-binds [forms]
+(defn _expand-handler-binds [forms [owner "handler clause"]]
   "Expand <- and ! in handler clause body.
    (<- name expr) → (setv name (yield expr))  — delegate to outer handler
-   ! in arguments → expanded to <- bindings first"
+   (! expr) → (yield expr) in place [ADR-DOE-HY-003]"
   (import doeff-hy.macros [_is-bind _bind-parts _expand-bangs])
 
   (setv expanded [])
   (for [form forms]
-    (if (_is-bind form)
-        (let [#(nm expr) (_bind-parts form)
-              #(inner-bindings rewritten) (_expand-bangs expr)]
-          ;; Expand inner bangs first
-          (for [b inner-bindings]
-            (let [#(bname bexpr) (_bind-parts b)]
-              (if (is bname None)
-                  (.append expanded `(yield ~bexpr))
-                  (.append expanded `(setv ~bname (yield ~bexpr))))))
-          ;; Then the main bind
+    (setv rewritten (_expand-bangs form owner))
+    (if (_is-bind rewritten)
+        (let [#(nm expr) (_bind-parts rewritten)]
           (if (is nm None)
-              (.append expanded `(yield ~rewritten))
-              (.append expanded `(setv ~nm (yield ~rewritten)))))
-        ;; Not a bind — expand bangs in the form
-        (let [#(inner-bindings rewritten) (_expand-bangs form)]
-          (for [b inner-bindings]
-            (let [#(bname bexpr) (_bind-parts b)]
-              (if (is bname None)
-                  (.append expanded `(yield ~bexpr))
-                  (.append expanded `(setv ~bname (yield ~bexpr))))))
-          (.append expanded rewritten))))
+              (.append expanded `(yield ~expr))
+              (.append expanded `(setv ~nm (yield ~expr)))))
+        (.append expanded rewritten)))
   expanded)
 
 
@@ -399,7 +387,12 @@
   (setv cbody (_tco-seq cbody))
 
   ;; Expand <- and ! bindings → (setv name (yield expr))
-  (setv cbody (_expand-handler-binds cbody))
+  (setv cbody
+    (_expand-handler-binds cbody
+                           (if (is handler-name None)
+                               (+ "handler clause " (str etype))
+                               (+ "defhandler " (str handler-name)
+                                  " clause " (str etype)))))
 
   ;; Check set! violations on lazy-val names
   (when lazy-defs

@@ -497,7 +497,9 @@ deff {name}: {{:post [...]}} is required.
 
 (defmacro defk [name params #* body]
   "Define a kleisli function (@do decorator) with :pre/:post contracts.
-   Supports ! (bang) inline bind: (! expr) is expanded to (<- _tmp expr).
+   Supports ! (bang) inline bind: (! expr) is rewritten IN PLACE to
+   (yield expr), preserving the written evaluation position (conditionality,
+   short-circuit, order, exception context). [ADR-DOE-HY-003]
    No extra imports needed — macro injects its own runtime deps.
 
    (defk my-fn [x y]
@@ -592,19 +594,9 @@ defk {name}: {{:post [...]}} is required.
                  (setv ~(hy.models.Symbol (str lname)) ~val-var)))))))
   ;; Prepend lazy init to body
   (setv real-body (+ lazy-init-forms body-without-lazy))
-  ;; Expand bangs in the real body
-  (setv expanded-forms [])
-  (for [form real-body]
-    (if (_is-bind form)
-        (let [#(nm expr) (_bind-parts form)
-              #(inner-bindings rewritten) (_expand-bangs expr)]
-          (.extend expanded-forms inner-bindings)
-          (if (is nm None)
-              (.append expanded-forms `(<- ~rewritten))
-              (.append expanded-forms `(<- ~nm ~rewritten))))
-        (let [#(inner-bindings rewritten) (_expand-bangs form)]
-          (.extend expanded-forms inner-bindings)
-          (.append expanded-forms rewritten))))
+  ;; Expand bangs in the real body — in-place (yield ...) rewrite [ADR-DOE-HY-003]
+  (setv expanded-forms
+    (lfor form real-body (_expand-bangs form (+ "defk " (str name)))))
   (setv fn-form (_build-fn-with-contracts ['_doeff_do] name params pre-checks post-checks expanded-forms))
   ;; Extra imports for lazy
   (setv lazy-imports
@@ -641,19 +633,8 @@ defk {name}: {{:post [...]}} is required.
 
    With bang:
    (fnk [x y] (+ (! (k1 x)) (! (k2 y))))"
-  ;; Expand bangs in the body (same logic as defk)
-  (setv expanded-forms [])
-  (for [form body]
-    (if (_is-bind form)
-        (let [#(nm expr) (_bind-parts form)
-              #(inner-bindings rewritten) (_expand-bangs expr)]
-          (.extend expanded-forms inner-bindings)
-          (if (is nm None)
-              (.append expanded-forms `(<- ~rewritten))
-              (.append expanded-forms `(<- ~nm ~rewritten))))
-        (let [#(inner-bindings rewritten) (_expand-bangs form)]
-          (.extend expanded-forms inner-bindings)
-          (.append expanded-forms rewritten))))
+  ;; Expand bangs in the body — in-place (yield ...) rewrite [ADR-DOE-HY-003]
+  (setv expanded-forms (lfor form body (_expand-bangs form "fnk")))
   `(do (import doeff.do [do :as _doeff_do])
        (fn [~@params] ((_doeff_do (fn [] (do ~@expanded-forms)))))))
 
@@ -676,7 +657,7 @@ defk {name}: {{:post [...]}} is required.
 
    Supports ! (bang) inline bind:
      (do! (f (! (g x)) (! (h y))))
-   expands (! expr) into (<- _tmp expr) bindings.
+   rewrites each (! expr) in place to (yield expr). [ADR-DOE-HY-003]
 
    Supports :pre/:post contracts with (: name Type) shorthand:
 
@@ -686,19 +667,8 @@ defk {name}: {{:post [...]}} is required.
      (<- resp (http-get url))
      (.json resp))"
   (setv #(pre-checks post-checks real-forms) (_extract-contracts forms))
-  ;; Expand bangs in each form (same logic as defk)
-  (setv expanded-forms [])
-  (for [form real-forms]
-    (if (_is-bind form)
-        (let [#(nm expr) (_bind-parts form)
-              #(inner-bindings rewritten) (_expand-bangs expr)]
-          (.extend expanded-forms inner-bindings)
-          (if (is nm None)
-              (.append expanded-forms `(<- ~rewritten))
-              (.append expanded-forms `(<- ~nm ~rewritten))))
-        (let [#(inner-bindings rewritten) (_expand-bangs form)]
-          (.extend expanded-forms inner-bindings)
-          (.append expanded-forms rewritten))))
+  ;; Expand bangs in each form — in-place (yield ...) rewrite [ADR-DOE-HY-003]
+  (setv expanded-forms (lfor form real-forms (_expand-bangs form "do!")))
   (setv #(bindings body-expr) (_parse-do-body expanded-forms "do!"))
   (setv pre-code (lfor check (or pre-checks [])
                    (_expand-check check "do!" "pre-condition"))
@@ -853,21 +823,15 @@ defk {name}: {{:post [...]}} is required.
         ;; Check if this binding is a (When ...) guard
         (if (_is-when bind)
             (let [pred-expr (get bind 1)
-                  ;; Expand bangs: (When (! (validate x))) →
-                  ;; [(<- _bang_N (validate x))] + rewritten-pred = _bang_N
-                  #(bang-bindings rewritten-pred) (_expand-bangs pred-expr)]
-              (if bang-bindings
-                  ;; Splice bang binds before rewritten When, recurse
-                  (let [new-when (hy.models.Expression
-                                   [(hy.models.Symbol "When") rewritten-pred])
-                        new-bindings (+ (list bang-bindings) [new-when] (list rest))]
-                    (_gen-traverse-body new-bindings body-expr))
-                  ;; No bangs — emit guard directly
-                  (let [inner (_gen-traverse-body rest body-expr)]
-                    `(do
-                       (when (not ~rewritten-pred)
-                         (yield (_doeff_traverse_Skip)))
-                       ~inner))))
+                  ;; In-place bang expansion: (When (! (validate x))) →
+                  ;; (When (yield (validate x))) — evaluated at guard position
+                  ;; [ADR-DOE-HY-003]
+                  rewritten-pred (_expand-bangs pred-expr "for/do")
+                  inner (_gen-traverse-body rest body-expr)]
+              `(do
+                 (when (not ~rewritten-pred)
+                   (yield (_doeff_traverse_Skip)))
+                 ~inner))
             ;; Regular binding
             (let [#(name expr) (_bind-parts bind)]
               (if (_is-iterate expr)
@@ -943,16 +907,9 @@ defk {name}: {{:post [...]}} is required.
 
 
 ;; ---------------------------------------------------------------------------
-;; Internal: ! (bang) inline bind expansion
+;; Internal: ! (bang) inline bind expansion — evaluation-position preserving
+;; [ADR-DOE-HY-003]
 ;; ---------------------------------------------------------------------------
-
-(setv _bang-counter 0)
-
-(defn _fresh-tmp []
-  "Generate a fresh temporary variable name for bang expansion."
-  (global _bang-counter)
-  (setv _bang-counter (+ _bang-counter 1))
-  (hy.models.Symbol (+ "_bang_" (str _bang-counter))))
 
 (defn _is-bang [form]
   "Check if form is (! expr)."
@@ -961,69 +918,154 @@ defk {name}: {{:post [...]}} is required.
        (isinstance (get form 0) hy.models.Symbol)
        (= (str (get form 0)) "!")))
 
-(defn _is-let [form]
-  "Check if form is a (let [...] body...) expression."
-  (and (isinstance form hy.models.Expression)
-       (> (len form) 0)
-       (isinstance (get form 0) hy.models.Symbol)
-       (= (str (get form 0)) "let")))
+;; Forms that own their own do-context (or treat their body as data).
+;; The outer expander must not cross these boundaries: the innermost
+;; do-context macro expands its own bangs. [ADR-DOE-HY-003 R4]
+;; `handle` is special-cased in the walk: its first argument (the wrapped
+;; program) belongs to the ENCLOSING do-context, only its clauses are opaque.
+(setv _BANG-OPAQUE-HEADS
+  #{"for/do" "traverse" "fnk" "do!" "defhandler"
+    "defk" "deff" "defp" "defpp" "deftest" "defmcp-tool"
+    "defmacro" "quote" "quasiquote"})
 
-(defn _is-comprehension [form]
-  "Check if form is (for/do ...) or (traverse ...) — these have
-   their own scope and handle bangs internally."
-  (and (isinstance form hy.models.Expression)
-       (> (len form) 0)
-       (isinstance (get form 0) hy.models.Symbol)
-       (in (str (get form 0)) #{"for/do" "traverse"})))
+;; Python compiles comprehensions to a separate scope where yield is illegal
+;; (SyntaxError since 3.8). A bang here cannot preserve its written position.
+(setv _BANG-COMPREHENSION-HEADS #{"lfor" "gfor" "dfor" "sfor"})
 
-(defn _expand-bangs [form]
-  "Walk an expression, extracting all (! expr) into (<- tmp expr) bindings.
-   Returns #(bindings rewritten-form).
+;; A nested plain function/class is a separate scope: an inline yield there
+;; would silently turn it into a generator instead of performing the effect
+;; in the enclosing do-context.
+(setv _BANG-FN-HEADS #{"fn" "fn/a" "defn" "defn/a" "defclass"})
 
-   let forms are handled specially: bang bindings from within a let body
-   are kept inside the let (not hoisted out), so that let-bound variables
-   remain in scope.
+(defn _bang-node-line [node]
+  (or (getattr node "start_line" None) -1))
 
-   Comprehension forms (for/do, traverse) are opaque — bangs inside
-   them are NOT hoisted, because those macros introduce their own scope
-   (From bindings) and will expand bangs themselves."
-  (setv bindings [])
+(defn _bang-node-src [node]
+  (try (.lstrip (hy.repr node) "'")
+       (except [Exception] (str node))))
 
-  (defn walk [node]
+(defn _bang-arity-msg [owner node]
+  (.format "
+{owner} (line {line}): (! ...) takes exactly one form, got {n}: {src}
+
+  Correct usage:
+
+    (! (effect-expr))
+" :owner owner :line (_bang-node-line node) :n (- (len node) 1)
+  :src (_bang-node-src node)))
+
+(defn _bang-comprehension-msg [owner head node]
+  (setv inner-src (_bang-node-src (get node 1)))
+  (.format "
+{owner} (line {line}): (! ...) inside ({head} ...) cannot preserve its written
+evaluation position — Python compiles {head} to a separate comprehension scope
+where yield is illegal, so the effect cannot be performed at this position.
+
+  Fix — perform the effect before the comprehension and bind the value:
+
+    (<- v {src})
+    ({head} x xs (use v x))
+
+  Fix — or rewrite as for/do, the effectful comprehension (per-item effects;
+  sequential/parallel strategy is chosen by the handler, not the call site):
+
+    (<- results
+      (for/do
+        (<- x (From xs))
+        (<- r {src})
+        r))
+
+  [ADR-DOE-HY-003]
+" :owner owner :line (_bang-node-line node) :head head :src inner-src))
+
+(defn _bang-nested-fn-msg [owner head node]
+  (setv inner-src (_bang-node-src (get node 1)))
+  (.format "
+{owner} (line {line}): (! ...) inside a nested ({head} ...) cannot preserve its
+written evaluation position — the nested {head} is a separate scope, so an
+inline bind there would silently turn it into a generator instead of performing
+the effect in the enclosing do-context.
+
+  Fix — perform the effect before the {head} and close over the value:
+
+    (<- v {src})
+    (fn [x] (use v x))
+
+  Fix — or make the nested function an effectful kleisli with fnk (it returns
+  a Program the caller must bind):
+
+    (fnk [x] (use (! {src}) x))
+
+  [ADR-DOE-HY-003]
+" :owner owner :line (_bang-node-line node) :head head :src inner-src))
+
+(defn _expand-bangs [form [owner "do-context"]]
+  "Rewrite every (! expr) IN PLACE to (yield expr), preserving the written
+   evaluation position: conditionality (if/when/cond), short-circuit (and/or),
+   left-to-right order within a statement, exception context (try), and
+   element positions inside dict/list/set/tuple/f-string literals.
+   Returns the rewritten form. [ADR-DOE-HY-003 R1/R2]
+
+   Positions where yield is syntactically impossible raise SyntaxError at
+   expansion time with a fix prompt (R3): comprehensions (lfor/gfor/dfor/sfor)
+   and nested fn/fn/a/defn/defn/a/defclass bodies.
+
+   Forms that own their own do-context (for/do, traverse, fnk, do!, handle,
+   nested defk/deff/defp/deftest/..., defmacro, quote/quasiquote) are opaque —
+   their own macro expands their bangs (R4)."
+  (defn walk [node ctx]
     (cond
       (_is-bang node)
-        (let [tmp (_fresh-tmp)
-              inner (get node 1)
-              #(inner-bindings rewritten-inner) (_expand-bangs inner)]
-          (.extend bindings inner-bindings)
-          (.append bindings `(<- ~tmp ~rewritten-inner))
-          tmp)
-
-      (_is-let node)
-        (let [let-bindings (get node 1)
-              let-body (cut node 2 None)
-              new-body []]
-          (for [body-form let-body]
-            (setv #(inner-binds rewritten) (_expand-bangs body-form))
-            (.extend new-body inner-binds)
-            (.append new-body rewritten))
-          (hy.models.Expression
-            [(get node 0) let-bindings #* new-body]))
-
-      ;; Don't walk into comprehension forms — they have their own scope
-      (_is-comprehension node)
-        node
+        (do
+          (when (!= (len node) 2)
+            (raise (SyntaxError (_bang-arity-msg owner node))))
+          (when (is-not ctx None)
+            (setv #(kind head) ctx)
+            (raise (SyntaxError
+                     (if (= kind "comprehension")
+                         (_bang-comprehension-msg owner head node)
+                         (_bang-nested-fn-msg owner head node)))))
+          `(yield ~(walk (get node 1) ctx)))
 
       (isinstance node hy.models.Expression)
-        (hy.models.Expression (lfor child node (walk child)))
+        (do
+          (setv head
+            (when (and (> (len node) 0) (isinstance (get node 0) hy.models.Symbol))
+              (str (get node 0))))
+          (cond
+            (and (is-not head None) (in head _BANG-OPAQUE-HEADS))
+              node
+            ;; handle: the wrapped program (arg 1) is evaluated in the
+            ;; ENCLOSING do-context — walk it. The clauses own their own
+            ;; do-context — opaque.
+            (and (= head "handle") (>= (len node) 2))
+              (hy.models.Expression
+                [(get node 0) (walk (get node 1) ctx) #* (cut node 2 None)])
+            True
+              (do
+                (setv new-ctx
+                  (cond
+                    (and (is-not head None) (in head _BANG-COMPREHENSION-HEADS))
+                      #("comprehension" head)
+                    (and (is-not head None) (in head _BANG-FN-HEADS))
+                      #("fn" head)
+                    True ctx))
+                (hy.models.Expression (lfor child node (walk child new-ctx))))))
 
-      (isinstance node hy.models.List)
-        (hy.models.List (lfor child node (walk child)))
+      (isinstance node hy.models.FString)
+        (hy.models.FString (lfor child node (walk child ctx))
+                           :brackets (. node brackets))
+
+      (isinstance node hy.models.FComponent)
+        (hy.models.FComponent (lfor child node (walk child ctx))
+                              :conversion (. node conversion))
+
+      (isinstance node #(hy.models.List hy.models.Tuple hy.models.Set hy.models.Dict))
+        ((type node) (lfor child node (walk child ctx)))
 
       True node))
 
-  (setv result (walk form))
-  #(bindings result))
+  (walk form None))
 
 
 ;; ---------------------------------------------------------------------------
@@ -1136,19 +1178,10 @@ defk {name}: {{:post [...]}} is required.
                [(hy.models.Symbol "_doeff_check_program_return") (hy.models.Symbol "%")
                 (hy.models.String guard-msg) (hy.models.String "require")])])]
           (list post-checks)))))
-  ;; Inline do! expansion: bang-expand, parse, emit generator with contracts
-  (setv expanded-forms [])
-  (for [form real-body]
-    (if (_is-bind form)
-        (let [#(nm expr) (_bind-parts form)
-              #(inner-bindings rewritten) (_expand-bangs expr)]
-          (.extend expanded-forms inner-bindings)
-          (if (is nm None)
-              (.append expanded-forms `(<- ~rewritten))
-              (.append expanded-forms `(<- ~nm ~rewritten))))
-        (let [#(inner-bindings rewritten) (_expand-bangs form)]
-          (.extend expanded-forms inner-bindings)
-          (.append expanded-forms rewritten))))
+  ;; Inline do! expansion: in-place bang rewrite [ADR-DOE-HY-003], parse,
+  ;; emit generator with contracts
+  (setv expanded-forms
+    (lfor form real-body (_expand-bangs form (+ macro-name " " (str name)))))
   (setv #(bindings body-expr) (_parse-do-body expanded-forms macro-name))
   (setv expanded (lfor bind bindings
                    (if (and (isinstance bind tuple) (= (get bind 0) "__plain__"))
@@ -1295,19 +1328,9 @@ defk {name}: {{:post [...]}} is required.
   (setv #(interpreters params-dict env-dict marks skip-if-expr skip-reason real-body)
     (_extract-test-meta body))
 
-  ;; Expand bangs in the body (same as defk/defp)
-  (setv expanded-forms [])
-  (for [form real-body]
-    (if (_is-bind form)
-        (let [#(nm expr) (_bind-parts form)
-              #(inner-bindings rewritten) (_expand-bangs expr)]
-          (.extend expanded-forms inner-bindings)
-          (if (is nm None)
-              (.append expanded-forms `(<- ~rewritten))
-              (.append expanded-forms `(<- ~nm ~rewritten))))
-        (let [#(inner-bindings rewritten) (_expand-bangs form)]
-          (.extend expanded-forms inner-bindings)
-          (.append expanded-forms rewritten))))
+  ;; Expand bangs in the body — in-place (yield ...) rewrite [ADR-DOE-HY-003]
+  (setv expanded-forms
+    (lfor form real-body (_expand-bangs form (+ "deftest " (str name)))))
 
   ;; Build the generator body: convert <- to yield, plain forms as-is
   (setv gen-body [])
@@ -1644,19 +1667,9 @@ defmcp-tool {name}: third argument must be a parameter list [...].
   (setv #(schema-exprs param-syms) (_parse-mcp-params param-list))
   ;; Build handler function name
   (setv handler-name (hy.models.Symbol (+ "_" (str name) "_mcp_handler")))
-  ;; Expand bangs in body (same as defk)
-  (setv expanded-forms [])
-  (for [form body]
-    (if (_is-bind form)
-        (let [#(nm expr) (_bind-parts form)
-              #(inner-bindings rewritten) (_expand-bangs expr)]
-          (.extend expanded-forms inner-bindings)
-          (if (is nm None)
-              (.append expanded-forms `(<- ~rewritten))
-              (.append expanded-forms `(<- ~nm ~rewritten))))
-        (let [#(inner-bindings rewritten) (_expand-bangs form)]
-          (.extend expanded-forms inner-bindings)
-          (.append expanded-forms rewritten))))
+  ;; Expand bangs in body — in-place (yield ...) rewrite [ADR-DOE-HY-003]
+  (setv expanded-forms
+    (lfor form body (_expand-bangs form (+ "defmcp-tool " (str name)))))
   `(do
      (import doeff.do [do :as _doeff_do])
      (import doeff.mcp [McpToolDef McpParamSchema])
