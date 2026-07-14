@@ -143,6 +143,11 @@ class FakeAdapter:
         return True
 
 
+# Ready frame for FakeCodexAdapter launches: the ready gate must see the
+# codex composer before the prompt is pasted.
+CODEX_READY_BOOT_SCREEN = "\u203a Ready for input\n"
+
+
 class FakeCodexAdapter(CodexAdapter):
     def is_available(self) -> bool:
         return True
@@ -158,9 +163,10 @@ class RecordingAdapter(FakeAdapter):
 
 
 class FakeBackend(SessionBackend):
-    def __init__(self) -> None:
+    def __init__(self, boot_screen: str = "$ ") -> None:
         self.available = True
         self.inside = False
+        self.boot_screen = boot_screen
         self.sessions: set[str] = set()
         self.created: list[SessionConfig] = []
         self.sent: list[tuple[str, str, bool, bool]] = []
@@ -182,7 +188,7 @@ class FakeBackend(SessionBackend):
         self.created.append(cfg)
         self.sessions.add(cfg.session_name)
         pane_id = f"%{cfg.session_name}"
-        self.captures[pane_id] = "$ "
+        self.captures[pane_id] = self.boot_screen
         return SessionInfo(
             session_name=cfg.session_name,
             pane_id=pane_id,
@@ -469,7 +475,7 @@ def test_tmux_agent_handler_sends_initial_prompt_via_terminal_transport(
 
 
 def test_tmux_agent_handler_trusts_codex_workspace(monkeypatch, tmp_path: Path) -> None:
-    backend = FakeBackend()
+    backend = FakeBackend(boot_screen=CODEX_READY_BOOT_SCREEN)
     monkeypatch.setattr(
         "doeff_agents.handlers.production.get_adapter",
         lambda _agent_type: FakeCodexAdapter(),
@@ -504,7 +510,7 @@ def test_tmux_agent_handler_rejects_codex_home_in_session_env(
     # R9: session_env is a non-auth overlay — binding-owned keys are
     # rejected loudly before any side effect (no tmux session, no trust
     # write).
-    backend = FakeBackend()
+    backend = FakeBackend(boot_screen=CODEX_READY_BOOT_SCREEN)
     monkeypatch.setattr(
         "doeff_agents.handlers.production.get_adapter",
         lambda _agent_type: FakeCodexAdapter(),
@@ -527,7 +533,7 @@ def test_tmux_agent_handler_rejects_codex_home_in_session_env(
 
 
 def test_tmux_agent_handler_injects_codex_mcp_config(monkeypatch, tmp_path: Path) -> None:
-    backend = FakeBackend()
+    backend = FakeBackend(boot_screen=CODEX_READY_BOOT_SCREEN)
     monkeypatch.setattr(
         "doeff_agents.handlers.production.get_adapter",
         lambda _agent_type: FakeCodexAdapter(),
@@ -553,7 +559,7 @@ def test_tmux_agent_handler_injects_codex_mcp_config(monkeypatch, tmp_path: Path
 
 
 def test_l2_launch_session_injects_mcp_config(monkeypatch, tmp_path: Path) -> None:
-    backend = FakeBackend()
+    backend = FakeBackend(boot_screen=CODEX_READY_BOOT_SCREEN)
     monkeypatch.setattr(
         "doeff_agents.handlers.production.get_adapter",
         lambda _agent_type: FakeCodexAdapter(),
@@ -969,7 +975,8 @@ def test_tmux_backend_pastes_literal_prompt_and_resubmits_collapsed_input(
         backend.send_keys("%42", "long structured-result prompt", literal=True, enter=True)
 
     command_names = [call[1] for call in calls]
-    assert command_names.count("set-buffer") == 1
+    assert command_names.count("load-buffer") == 1
+    assert command_names.count("set-buffer") == 0
     assert command_names.count("paste-buffer") == 1
     assert command_names.count("delete-buffer") == 1
     assert command_names.count("capture-pane") == 6
