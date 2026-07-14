@@ -1,0 +1,14 @@
+➜  workdir claude --ax-screen-reader
+[Screen Reader Mode: on via flag]
+Claude Code v2.1.209
+Welcome back User!
+Fable 5 with xhigh effort · Claude Max · user@example.com's Organization
+/private/tmp/scratchpad/workdir Tips for getting
+started
+Ask Claude to create a new app or clone a repository
+What's new
+Added screen reader mode: opt-in plain-text rendering for screen reader users. Run `claude --ax-screen-reader`, set CLAUDE_AX_SCREEN_READER=1, or add "axScreenReader": true to settings.
+/release-notes for more
+⧉ 00000000-0000-4000-8000-000000000000
+auto mode on (shift+tab to cycle)
+$
