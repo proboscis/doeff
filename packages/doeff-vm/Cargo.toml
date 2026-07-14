@@ -15,6 +15,9 @@ crate-type = ["cdylib"]
 [features]
 default = []
 vm_debug_logs = []
+# ADR-DOE-ENFORCE-001 R4: VM conformance oracle (per-step runtime invariants).
+# Dev builds enable this via `make sync`; release wheels ship without it.
+invariant-checks = ["doeff-vm-core/invariant-checks"]
 
 [dependencies]
 pyo3 = { version = "0.28", features = ["py-clone"] }

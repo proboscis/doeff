@@ -317,6 +317,56 @@ defk {name}: :post type annotation cannot be an empty string.
   result)
 
 
+;; ADR-DOE-HY-001: statement-position bind guard --------------------------------
+;;
+;; defk/do!/defp/deftest の本体で、束縛されず statement 位置に置かれた式が
+;; Program(DoExpr)/EffectBase に評価された場合、それは「作られたが決して走らない」
+;; 計算であり、ほぼ確実にバグである(silent-passthrough)。マクロは statement 位置の
+;; 式形フォームを _guard-statement-value でラップし、初回実行で決定的に fail させる。
+;; auto-bind は採用しない(ADR-DOE-HY-001 R2)。エラーメッセージは書き手エージェント
+;; 向けの修正プロンプトである(R3)。
+
+(setv _STATEMENT-FORM-HEADS
+  #{"setv" "setx" "import" "require" "assert" "del" "raise" "return" "global"
+    "nonlocal" "yield" "await" "for" "while" "with" "with/a" "when" "unless"
+    "if" "do" "cond" "try" "let" "match" "defn" "defn/a" "defclass" "defmacro"
+    "quote" "quasiquote" "unquote" "annotate" "<-" "!" "When" "lazy" "lazy-val"
+    "lazy-var" "set!"})
+
+(defn _guard-statement-value [value owner line source]
+  "ADR-DOE-HY-001 R1 の実行時 guard。statement 位置で評価された値が
+   Program(DoExpr)/EffectBase なら RuntimeError を送出する。それ以外の値は
+   そのまま返す(R4: 非 Program 文は無傷)。"
+  (import doeff [DoExpr EffectBase])
+  (when (isinstance value #(DoExpr EffectBase))
+    (raise (RuntimeError
+             (+ owner " (line " (str line) "): statement-position expression evaluated to an "
+                "unperformed " (. (type value) __name__) " — a bare Program/EffectBase in "
+                "statement position never runs. "
+                "Fix: bind it — (<- _ " source ") — or make it the final body expression. "
+                "[ADR-DOE-HY-001]"))))
+  value)
+
+(defn _wrap-statement-guard [form owner]
+  "statement 位置の式形フォーム(関数呼び出し・シンボル)を _guard-statement-value で
+   ラップして返す。文形式(setv/for/with 等、_STATEMENT-FORM-HEADS)と非式フォームは
+   そのまま返す。owner はエラーメッセージ用の defk/do!/defp/deftest 名。"
+  (setv head (if (and (isinstance form hy.models.Expression) (> (len form) 0))
+                 (str (get form 0))
+                 None))
+  (setv eligible
+    (or (isinstance form hy.models.Symbol)
+        (and (is-not head None) (not (in head _STATEMENT-FORM-HEADS)))))
+  (if eligible
+      (do
+        (setv line (or (getattr form "start_line" None) -1))
+        (setv source
+          (try (.lstrip (hy.repr form) "'")
+               (except [Exception] (str form))))
+        `(_guard-statement-value ~form ~(str owner) ~line ~source))
+      form))
+
+
 (defn _build-fn-with-contracts [decorators name params pre-checks post-checks real-body]
   "Build a defn form with pre/post assertion wrappers.
    Works for both plain functions (deff) and generator/kleisli functions (defk).
@@ -340,7 +390,10 @@ defk {name}: :post type annotation cannot be an empty string.
   (if post-checks
       (let [post-asserts (lfor check post-checks
                            (_expand-check check name "post-condition"))
-            init-forms (cut real-body 0 -1)
+            ;; ADR-DOE-HY-001: kleisli 本体の statement 位置を guard(最終式=返り値は対象外)
+            init-forms (if kleisli?
+                           (lfor f (cut real-body 0 -1) (_wrap-statement-guard f name))
+                           (list (cut real-body 0 -1)))
             last-form (get real-body -1)]
         `(defn ~decorators ~name ~params
            ~@docstring-forms
@@ -531,7 +584,7 @@ defk {name}: {{:post [...]}} is required.
         `(do)))
   `(do
      (import doeff.do [do :as _doeff_do])
-     (import doeff-hy.macros [_guard-performed])
+     (import doeff-hy.macros [_guard-performed _guard-statement-value])
      ~lazy-imports
      ~fn-form
      (setv (. ~name __doeff_body__) '~real-body)
@@ -620,8 +673,8 @@ defk {name}: {{:post [...]}} is required.
                    (_expand-check check "do!" "pre-condition"))
         expanded (lfor bind bindings
                    (if (and (isinstance bind tuple) (= (get bind 0) "__plain__"))
-                       ;; Plain statement (setv, when, for, etc.) — emit as-is
-                       (get bind 1)
+                       ;; Plain statement — ADR-DOE-HY-001 guard(式形のみラップ)
+                       (_wrap-statement-guard (get bind 1) "do!")
                        ;; Effect binding — yield
                        (let [#(name expr) (_bind-parts bind)]
                          (if (is name None)
@@ -631,7 +684,7 @@ defk {name}: {{:post [...]}} is required.
       (let [post-asserts (lfor check post-checks
                            (_expand-check check "do!" "post-condition"))]
         `(do (import doeff.do [do :as _doeff-do])
-             (import doeff-hy.macros [_guard-performed])
+             (import doeff-hy.macros [_guard-performed _guard-statement-value])
              ((_doeff-do (fn []
                ~@pre-code
                ~@expanded
@@ -641,7 +694,7 @@ defk {name}: {{:post [...]}} is required.
                  ~@post-asserts)
                (return _contract_result))))))
       `(do (import doeff.do [do :as _doeff-do])
-           (import doeff-hy.macros [_guard-performed])
+           (import doeff-hy.macros [_guard-performed _guard-statement-value])
            ((_doeff-do (fn []
              ~@pre-code
              ~@expanded
@@ -1066,8 +1119,8 @@ defk {name}: {{:post [...]}} is required.
   (setv #(bindings body-expr) (_parse-do-body expanded-forms macro-name))
   (setv expanded (lfor bind bindings
                    (if (and (isinstance bind tuple) (= (get bind 0) "__plain__"))
-                       ;; Plain statement (import, setv, when, etc.) — emit as-is
-                       (get bind 1)
+                       ;; Plain statement — ADR-DOE-HY-001 guard(式形のみラップ)
+                       (_wrap-statement-guard (get bind 1) (str name))
                        ;; Effect binding — yield
                        (let [#(bname expr) (_bind-parts bind)]
                          (if (is bname None)
@@ -1078,6 +1131,7 @@ defk {name}: {{:post [...]}} is required.
   `(do
      (import inspect)
      (import doeff.do [do :as _doeff_do])
+     (import doeff-hy.macros [_guard-statement-value])
      (defn _doeff_check_program_return [v msg mode]
        "Check Program return value. Raises TypeError on violation. Returns False (for assert)."
        (setv is-program (inspect.isgenerator v))
@@ -1239,9 +1293,9 @@ defk {name}: {{:post [...]}} is required.
         (if (is bname None)
             (.append gen-body `(yield ~expr))
             (.append gen-body `(setv ~bname (yield ~expr)))))
-      ;; Everything else (assert, setv, when, for, print, etc.) — pass through
+      ;; Everything else — ADR-DOE-HY-001 guard(式形のみラップ、文はそのまま)
       True
-      (.append gen-body form)))
+      (.append gen-body (_wrap-statement-guard form (str name)))))
 
   ;; Build the test function
   (setv fn-params (+ [(hy.models.Symbol "doeff_interpreter")] fixture-params))
@@ -1291,9 +1345,11 @@ defk {name}: {{:post [...]}} is required.
     `(do
        (import pytest)
        (import doeff.do [do :as _doeff_do])
+       (import doeff-hy.macros [_guard-statement-value])
        (defn [~@decorators] ~name [~@fn-params] ~fn-body))
     `(do
        (import doeff.do [do :as _doeff_do])
+       (import doeff-hy.macros [_guard-statement-value])
        (defn ~name [~@fn-params] ~fn-body))))
 
 
