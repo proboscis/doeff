@@ -50,7 +50,7 @@ def _merge_python_frames(exc):  # noqa: PLR0912 - baseline cleanup keeps existin
     if tb is None:
         return
     py_frames = []
-    for fs in tb_mod.extract_tb(tb):
+    for fs in tb_mod.StackSummary.extract(tb_mod.walk_tb(tb), lookup_lines=False):
         fn = fs.filename
         if any(p in fn for p in ("/doeff_vm/", "/doeff/do.py", "/doeff/run.py",
                                   "/doeff_core_effects/")):
@@ -89,7 +89,7 @@ def _enrich_exception_traceback(exc):
     if tb is None:
         return
     frames = []
-    for fs in tb_mod.extract_tb(tb):
+    for fs in tb_mod.StackSummary.extract(tb_mod.walk_tb(tb), lookup_lines=False):
         fn = fs.filename
         # Skip doeff VM/framework internals
         if any(p in fn for p in ("/doeff_vm/", "/doeff/do.py", "/doeff/run.py",
