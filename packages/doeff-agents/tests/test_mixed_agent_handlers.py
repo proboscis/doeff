@@ -27,7 +27,13 @@ class FakeTmuxBackend:
         pane_id = f"%fake{self._next_pane}"
         self._next_pane += 1
         self.sessions[cfg.session_name] = {"pane_id": pane_id, "work_dir": cfg.work_dir}
-        self.pane_outputs[pane_id] = ""
+        # Boot straight into a ready REPL frame: the launch paths now
+        # gate prompt delivery on the adapter ready_pattern (the codex
+        # U+203A composer / claude "shift+tab to cycle" footer).
+        self.pane_outputs[pane_id] = (
+            "\u203a Ready for input\n"
+            "bypass permissions on (shift+tab to cycle)\n"
+        )
         return SessionInfo(
             session_name=cfg.session_name,
             pane_id=pane_id,

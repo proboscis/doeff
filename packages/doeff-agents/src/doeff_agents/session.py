@@ -90,7 +90,7 @@ def launch_session(
     session_name: str,
     config: LaunchConfig,
     *,
-    ready_timeout: float = 30.0,
+    ready_timeout: float = 120.0,
     dismiss_trust_dialog: bool = True,
     backend: SessionBackend | None = None,
 ) -> AgentSession:
@@ -171,14 +171,14 @@ def launch_session(
                 )
 
     if adapter.injection_method == InjectionMethod.TMUX:
-        if adapter.ready_pattern and not _wait_for_ready(
-            session_info.pane_id, adapter.ready_pattern, ready_timeout, backend=active_backend
-        ):
-            # Clean up on timeout
-            active_backend.kill_session(session_name)
-            raise AgentReadyTimeoutError(f"Agent did not become ready within {ready_timeout}s")
-        if config.prompt:
-            active_backend.send_keys(session_info.pane_id, config.prompt)
+        deliver_prompt_when_ready(
+            active_backend,
+            session_info.pane_id,
+            adapter,
+            config.prompt,
+            session_name=session_name,
+            ready_timeout=ready_timeout,
+        )
 
     return AgentSession(
         session_name=session_name,
@@ -196,7 +196,7 @@ def session_scope(
     session_name: str,
     config: LaunchConfig,
     *,
-    ready_timeout: float = 30.0,
+    ready_timeout: float = 120.0,
     dismiss_trust_dialog: bool = True,
     backend: SessionBackend | None = None,
 ) -> Iterator[AgentSession]:
@@ -330,6 +330,46 @@ def _wait_for_ready(
             return True
         time.sleep(0.2)
     return False
+
+
+def deliver_prompt_when_ready(
+    backend: SessionBackend,
+    pane_id: str,
+    adapter: AgentAdapter,
+    prompt: str | None,
+    *,
+    session_name: str,
+    ready_timeout: float,
+    timeout_error: type[Exception] = AgentReadyTimeoutError,
+) -> None:
+    """Single choke point for first-prompt delivery over the TMUX transport.
+
+    A prompt may be pasted only after the agent TUI's input composer is
+    visible (``adapter.ready_pattern``). Pasting earlier lets the terminal
+    split a multi-line prompt into per-line submits — or feed it into a
+    login/trust/update dialog — and the session exits 0 without doing any
+    work, a false Succeeded that no retry loop catches (issue
+    agentd-codex-coldstart-paste-race, 2026-07-14). If the composer never
+    appears the launch hard-fails: the session is killed and
+    ``timeout_error`` is raised with the final screen tail as evidence.
+    The wait runs even for prompt-less launches so a returned session is
+    actually able to receive its first message.
+    """
+    if adapter.ready_pattern and not _wait_for_ready(
+        pane_id, adapter.ready_pattern, ready_timeout, backend=backend
+    ):
+        final_frame = backend.capture_pane(pane_id, 40)
+        backend.kill_session(session_name)
+        screen_tail = "\n".join(final_frame.splitlines()[-15:])
+        raise timeout_error(
+            f"Agent did not become ready within {ready_timeout}s — startup is "
+            "blocked before the input composer appeared (cold start, login "
+            "screen, or an undismissed dialog). The prompt was NOT delivered "
+            "and the session was killed. Last screen tail:\n"
+            f"{screen_tail}"
+        )
+    if prompt:
+        backend.send_keys(pane_id, prompt)
 
 
 def _dismiss_onboarding_dialogs(
@@ -488,7 +528,7 @@ async def async_session_scope(
     session_name: str,
     config: LaunchConfig,
     *,
-    ready_timeout: float = 30.0,
+    ready_timeout: float = 120.0,
     backend: SessionBackend | None = None,
 ) -> AsyncIterator[AgentSession]:
     """Async context manager for agent session lifecycle."""

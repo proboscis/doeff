@@ -87,6 +87,87 @@ rules:
         - /packages/doeff-agents/src/doeff_agents/adapters/codex.py
         - /packages/doeff-agents/src/doeff_agents/adapters/gemini.py
 
+  - id: doeff-agents-built-in-adapters-must-declare-ready-pattern
+    languages:
+      - python
+    severity: ERROR
+    message: >
+      Built-in agent adapters must declare a real ready_pattern. With
+      ready_pattern=None the launch paths skip the readiness gate and paste
+      the prompt while the TUI is still starting; a cold codex then splits a
+      multi-line prompt into per-line submits and the session exits 0 without
+      doing any work — a false Succeeded that no retry loop catches (issue
+      agentd-codex-coldstart-paste-race, 2026-07-14).
+    patterns:
+      - pattern-inside: |
+          def ready_pattern(...):
+              ...
+      - pattern: return None
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/adapters/claude.py
+        - /packages/doeff-agents/src/doeff_agents/adapters/codex.py
+        - /packages/doeff-agents/src/doeff_agents/adapters/gemini.py
+        - /tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/adapters/**
+
+  - id: doeff-agents-prompt-paste-must-be-ready-gated
+    languages:
+      - python
+    severity: ERROR
+    message: >
+      First-prompt delivery over the TMUX transport must go through
+      doeff_agents.session.deliver_prompt_when_ready — the single ready-gated
+      choke point. Sending the launch prompt straight to the pane races the
+      agent TUI startup (cold-start per-line splitting, prompts fed into
+      login/trust/update dialogs) and produces silently empty sessions
+      (issue agentd-codex-coldstart-paste-race, 2026-07-14).
+    pattern-either:
+      - pattern: $BACKEND.send_keys($PANE, effect.prompt)
+      - pattern: $BACKEND.send_keys($PANE, effect.prompt, ...)
+      - pattern: $BACKEND.send_keys($PANE, config.prompt)
+      - pattern: $BACKEND.send_keys($PANE, config.prompt, ...)
+    paths:
+      include:
+        - /packages/doeff-agents/src/**
+        - /tests/semgrep/fixtures/python/packages/doeff-agents/src/**
+
+  - id: doeff-agents-hy-prompt-paste-must-be-ready-gated
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      Hy agent handlers must deliver the first prompt through
+      doeff_agents.session.deliver_prompt_when_ready (ready-gated choke
+      point), not raw (.send-keys ... prompt). Ungated paste races the TUI
+      startup and yields falsely-Succeeded empty sessions (issue
+      agentd-codex-coldstart-paste-race, 2026-07-14).
+    pattern-regex: '\(\.send-keys\s+\S+\s+[^\s\)]+\s+(full-)?prompt\)'
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/handlers/claude.hy
+        - /packages/doeff-agents/src/doeff_agents/handlers/codex.hy
+        - /tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/handlers/**
+
+  - id: doeff-agents-paste-buffer-must-be-bracketed
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      tmux paste-buffer must pass -p (bracketed paste). Without it the pasted
+      newlines reach the agent TUI as bare Enter presses, and multi-line
+      prompts survive only by the TUI's timing-dependent burst heuristics —
+      on a cold start they split into per-line submits that the agent
+      acknowledges without executing (issue agentd-codex-coldstart-paste-race,
+      2026-07-14, reproduced live against codex 0.144.4).
+    # Anchors on the "-b" buffer flag so bare string mentions of
+    # "paste-buffer" (log assertions, prose) do not trip the rule.
+    pattern-regex: '"paste-buffer"(?![^\)\]\n]*"-p")[^\)\]\n]*"-b"'
+    paths:
+      include:
+        - /packages/doeff-agents/src/**
+        - /packages/doeff-agentd/src/**
+        - /tests/semgrep/fixtures/python/packages/doeff-agents/src/**
+
   - id: doeff-agents-require-real-claude-result-retry-e2e
     languages:
       - generic
