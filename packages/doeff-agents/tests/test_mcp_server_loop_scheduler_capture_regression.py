@@ -35,23 +35,25 @@ tool call is still parked.
 from __future__ import annotations
 
 import threading
-import time
 from dataclasses import dataclass
 
 import pytest
-
-from doeff import EffectBase, GetHandlers, GetOuterHandlers, Pass, Resume, do, run
-from doeff.mcp import McpToolDef
-from doeff.program import with_handlers
 from doeff_agents.handlers.mcp_server_loop import mcp_server_loop
 from doeff_agents.mcp_server import McpToolRequest, McpToolServer
 from doeff_core_effects.scheduler import (
     PRIORITY_IDLE,
+    CompletePromise,
     CreateExternalPromise,
+    CreatePromise,
+    Promise,
     Spawn,
     Wait,
     scheduled,
 )
+
+from doeff import EffectBase, GetHandlers, GetOuterHandlers, Pass, Resume, do, run
+from doeff.mcp import McpToolDef
+from doeff.program import with_handlers
 
 
 def test_pipeline_exception_propagates_despite_parked_mcp_tool_call():
@@ -64,9 +66,10 @@ def test_pipeline_exception_propagates_despite_parked_mcp_tool_call():
         live at that point (``GetHandlers``/``GetOuterHandlers``), spawns
         ``mcp_server_loop`` with it, dispatches one tool call through the
         real HTTP-thread bridge (``request_queue`` + ``wakeup_mailbox``),
-        idles a few cooperative ticks, then raises.
+        waits for the tool handler's parked signal, then raises.
       - the tool handler cooperatively parks on ``Wait(ep.future,
-        priority=PRIORITY_IDLE)`` via a worker thread — same shape as
+        priority=PRIORITY_IDLE)`` while its worker thread is blocked on an
+        explicit test event — same shape as
         ``_run-blocking-browser-call`` — so it is still in flight when the
         pipeline raises.
       - ``notification_handler`` handles ``TradingEventE`` emitted from the
@@ -89,19 +92,20 @@ def test_pipeline_exception_propagates_despite_parked_mcp_tool_call():
     class TradingEventE(EffectBase):
         kind: str = "pipeline-error"
 
+    release_tool_worker = threading.Event()
+    tool_parked_promise: Promise | None = None
+
     @do
     def device_auth_tool_handler():
         # _run-blocking-browser-call shape: worker thread + IDLE external wait.
         ep = yield CreateExternalPromise()
 
-        def worker():
-            time.sleep(1.0)  # stand-in for the 120s mail poll
-            ep.complete((True, {"status": "not_found", "checked_at": "regression-tool"}))
-
-        threading.Thread(target=worker, daemon=True).start()
-        outcome = yield Wait(ep.future, priority=PRIORITY_IDLE)
-        ok, value = outcome
-        return value
+        # The test controls this worker explicitly so the tool stays parked
+        # until after the pipeline exception has propagated.
+        threading.Thread(target=release_tool_worker.wait, daemon=True).start()
+        assert tool_parked_promise is not None
+        yield CompletePromise(tool_parked_promise, None)
+        return (yield Wait(ep.future, priority=PRIORITY_IDLE))[1]
 
     tool = McpToolDef(
         name="sbi-complete-device-auth-from-mail",
@@ -110,15 +114,16 @@ def test_pipeline_exception_propagates_despite_parked_mcp_tool_call():
         handler=device_auth_tool_handler,
     )
 
-    def http_thread(server, req, delay):
-        time.sleep(delay)
+    def http_thread(server, req):
         server.request_queue.put(req)
         wakeup_ep = server.wakeup_mailbox.get()
         wakeup_ep.complete(None)
 
     @do
     def plan_handler(effect, k):
+        nonlocal tool_parked_promise
         if isinstance(effect, GetPlan):
+            tool_parked_promise = yield CreatePromise()
             inner = yield GetHandlers(k)
             outer = yield GetOuterHandlers()
             captured = list(inner) + list(outer)
@@ -133,13 +138,13 @@ def test_pipeline_exception_propagates_despite_parked_mcp_tool_call():
             # the 'agent' calls the tool before the pipeline-error event
             # finishes; the tool poll is still in flight when we raise below.
             threading.Thread(
-                target=http_thread, args=(server, req, 0.2), daemon=True
+                target=http_thread,
+                args=(server, req),
+                daemon=True,
             ).start()
-            # AwaitResult-style IDLE polling until the blocker condition arrives.
-            for _ in range(3):
-                delay_ep = yield CreateExternalPromise()
-                threading.Timer(0.1, delay_ep.complete, [None]).start()
-                yield Wait(delay_ep.future, priority=PRIORITY_IDLE)
+            # Wait until the tool handler has created and parked on its external
+            # promise before raising the pipeline blocker.
+            yield Wait(tool_parked_promise.future)
             raise RuntimeError(
                 "SBI recon readiness blocker "
                 "failure_kind=sbi_shortable_inventory_ui_mismatch (regression)"
@@ -153,7 +158,11 @@ def test_pipeline_exception_propagates_despite_parked_mcp_tool_call():
             # slack post: external wait completing while the tool poll is
             # still in flight.
             slack_ep = yield CreateExternalPromise()
-            threading.Timer(0.3, slack_ep.complete, ["ok"]).start()
+            threading.Thread(
+                target=slack_ep.complete,
+                args=("ok",),
+                daemon=True,
+            ).start()
             yield Wait(slack_ep.future)
             result = yield Resume(k, None)
             return result
@@ -168,9 +177,12 @@ def test_pipeline_exception_propagates_despite_parked_mcp_tool_call():
             yield TradingEventE()
             raise
 
-    with pytest.raises(RuntimeError, match="sbi_shortable_inventory_ui_mismatch"):
-        run(
-            scheduled(
-                with_handlers([notification_handler, plan_handler], pipeline())
+    try:
+        with pytest.raises(RuntimeError, match="sbi_shortable_inventory_ui_mismatch"):
+            run(
+                scheduled(
+                    with_handlers([notification_handler, plan_handler], pipeline())
+                )
             )
-        )
+    finally:
+        release_tool_worker.set()
