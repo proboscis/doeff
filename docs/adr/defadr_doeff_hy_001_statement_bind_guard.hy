@@ -4,21 +4,31 @@
 
 (require doeff-adr.macros [defadr defsemgrep rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
-(require doeff-hy.macros [deftest defk])
+(require doeff-hy.macros [deftest defk <-])
 (import doeff [run])
 (import pytest)
 
 
-;; ADR-DOE-HY-001 反例の生きた再現体(enforcement が run する)。
-;; `(_probe-inner)` は statement 位置の bare kleisli 呼び出し — Program を生成して破棄する。
-(defk _probe-inner []
-  {:pre [] :post [(: % int)]}
-  1)
+;; ADR-DOE-HY-001 反例と class-level guard scope の生きた再現体(enforcement が run する)。
+;; module-level defk は helper を globals へ import して欠陥をマスクするため、probe は
+;; class 内だけで完結させる。
+(defclass _ClassLevelProbe []
+  (defk inner-method [self]
+    {:pre [(: self "_ClassLevelProbe instance")]
+     :post [(: % int)]}
+    1)
 
-(defk _probe-outer []
-  {:pre [] :post [(: % int)]}
-  (_probe-inner)  ;; ← 罠: 現行マクロは「Plain statement — emit as-is」で素通しする
-  2)
+  (defk bound-method [self]
+    {:pre [(: self "_ClassLevelProbe instance")]
+     :post [(: % int)]}
+    (<- value (.inner-method self))
+    value)
+
+  (defk bare-statement-method [self]
+    {:pre [(: self "_ClassLevelProbe instance")]
+     :post [(: % int)]}
+    (.inner-method self)  ;; ← 罠: bare Program を statement 位置で生成して破棄する
+    2))
 
 
 (defadr ADR-DOE-HY-001
@@ -60,8 +70,15 @@
           (counterexample "do! の最終式手前の bare `(LaunchEffect ...)` — _guard-performed は最終式しか見ないため素通り")])]
   :enforcement
     [(deftest test-adr-doe-hy-001-bare-statement-program-raises
-       ;; RED(2026-07-14): 現行マクロは _probe-outer の bare (_probe-inner) を黙って捨て、
-       ;; run は 2 を返して成功する。R1 実装後、guard が RuntimeError を送出して green。
+       ;; bare (.inner-method probe) は Program を黙って捨ててはならない。
        (with [(pytest.raises RuntimeError)]
-         (run (_probe-outer))))]
+         (run (.bare-statement-method (_ClassLevelProbe)))))
+     (deftest test-adr-doe-hy-001-class-level-defk-guard-scope
+       ;; RED(2026-07-14): helper import が class scope に閉じ込められ、正常な bind 経路も
+       ;; `_guard_performed` の NameError になる。module globals 注入後は正常値を返す。
+       (<- result (.bound-method (_ClassLevelProbe)))
+       (assert (= result 1))
+       ;; statement guard も同じ module globals から解決され、所定の RuntimeError になる。
+       (with [(pytest.raises RuntimeError :match "\\[ADR-DOE-HY-001\\]")]
+         (run (.bare-statement-method (_ClassLevelProbe)))))]
   :plans ["docs/doeff-2026-07-14-agent-first-investment-architecture-plan.md"])
