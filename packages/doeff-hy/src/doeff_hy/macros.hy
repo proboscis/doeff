@@ -497,7 +497,7 @@ deff {name}: {{:post [...]}} is required.
 
 (defmacro defk [name params #* body]
   "Define a kleisli function (@do decorator) with :pre/:post contracts.
-   Supports ! (bang) inline bind: (! expr) is expanded to (<- _tmp expr).
+   Supports ! (bang) inline bind: (! expr) becomes (yield expr) in place.
    No extra imports needed — macro injects its own runtime deps.
 
    (defk my-fn [x y]
@@ -676,7 +676,7 @@ defk {name}: {{:post [...]}} is required.
 
    Supports ! (bang) inline bind:
      (do! (f (! (g x)) (! (h y))))
-   expands (! expr) into (<- _tmp expr) bindings.
+   expands each (! expr) to (yield expr) at the written evaluation position.
 
    Supports :pre/:post contracts with (: name Type) shorthand:
 
@@ -847,35 +847,40 @@ defk {name}: {{:post [...]}} is required.
    Recognizes (When pred) as a guard — emits Skip when falsy.
    Non-Iterate bindings become yield expressions inside the inner defk."
   (if (not bindings)
-      body-expr
+      (let [#(bang-bindings rewritten-body) (_expand-bangs body-expr)]
+        (when bang-bindings
+          (raise (AssertionError
+                   "in-place bang expansion must not emit hoisted bindings")))
+        rewritten-body)
       (let [bind (get bindings 0)
             rest (cut bindings 1 None)]
         ;; Check if this binding is a (When ...) guard
         (if (_is-when bind)
             (let [pred-expr (get bind 1)
-                  ;; Expand bangs: (When (! (validate x))) →
-                  ;; [(<- _bang_N (validate x))] + rewritten-pred = _bang_N
+                  ;; Expand bang in place so short-circuit/evaluation position is preserved.
                   #(bang-bindings rewritten-pred) (_expand-bangs pred-expr)]
-              (if bang-bindings
-                  ;; Splice bang binds before rewritten When, recurse
-                  (let [new-when (hy.models.Expression
-                                   [(hy.models.Symbol "When") rewritten-pred])
-                        new-bindings (+ (list bang-bindings) [new-when] (list rest))]
-                    (_gen-traverse-body new-bindings body-expr))
-                  ;; No bangs — emit guard directly
-                  (let [inner (_gen-traverse-body rest body-expr)]
-                    `(do
-                       (when (not ~rewritten-pred)
-                         (yield (_doeff_traverse_Skip)))
-                       ~inner))))
+              (when bang-bindings
+                (raise (AssertionError
+                         "in-place bang expansion must not emit hoisted bindings")))
+              (let [inner (_gen-traverse-body rest body-expr)]
+                `(do
+                   (when (not ~rewritten-pred)
+                     (yield (_doeff_traverse_Skip)))
+                   ~inner)))
             ;; Regular binding
-            (let [#(name expr) (_bind-parts bind)]
-              (if (_is-iterate expr)
+            (let [#(name expr) (_bind-parts bind)
+                  #(bang-bindings rewritten-expr) (_expand-bangs expr)]
+              (when bang-bindings
+                (raise (AssertionError
+                         "in-place bang expansion must not emit hoisted bindings")))
+              (if (_is-iterate rewritten-expr)
                   ;; CPS: wrap rest + body into a defk, emit Traverse effect
                   ;; NOTE: does NOT yield — the outer <- / defk handles yield
-                  (let [items (_iterate-arg expr)
+                  (let [items (_iterate-arg rewritten-expr)
                         ;; Extract optional :label from (Iterate items :label "name")
-                        label (if (>= (len expr) 4) (get expr 3) None)
+                        label (if (>= (len rewritten-expr) 4)
+                                  (get rewritten-expr 3)
+                                  None)
                         inner-body (_gen-traverse-body rest body-expr)
                         param (if (is name None)
                                   (hy.models.Symbol "_unused")
@@ -891,8 +896,8 @@ defk {name}: {{:post [...]}} is required.
                   ;; Non-Iterate: regular bind
                   (let [inner (_gen-traverse-body rest body-expr)]
                     (if (is name None)
-                        `(do (yield ~expr) ~inner)
-                        `(do (setv ~name (yield ~expr)) ~inner)))))))))
+                        `(do (yield ~rewritten-expr) ~inner)
+                        `(do (setv ~name (yield ~rewritten-expr)) ~inner)))))))))
 
 (defmacro traverse [#* forms]
   "Applicative traverse — batch processing with handler-injected strategy.
@@ -943,87 +948,122 @@ defk {name}: {{:post [...]}} is required.
 
 
 ;; ---------------------------------------------------------------------------
-;; Internal: ! (bang) inline bind expansion
+;; Internal: ! (bang) evaluation-position preserving expansion
 ;; ---------------------------------------------------------------------------
-
-(setv _bang-counter 0)
-
-(defn _fresh-tmp []
-  "Generate a fresh temporary variable name for bang expansion."
-  (global _bang-counter)
-  (setv _bang-counter (+ _bang-counter 1))
-  (hy.models.Symbol (+ "_bang_" (str _bang-counter))))
 
 (defn _is-bang [form]
   "Check if form is (! expr)."
   (and (isinstance form hy.models.Expression)
-       (>= (len form) 2)
+       (> (len form) 0)
        (isinstance (get form 0) hy.models.Symbol)
        (= (str (get form 0)) "!")))
 
-(defn _is-let [form]
-  "Check if form is a (let [...] body...) expression."
-  (and (isinstance form hy.models.Expression)
-       (> (len form) 0)
-       (isinstance (get form 0) hy.models.Symbol)
-       (= (str (get form 0)) "let")))
+(defn _form-head [form]
+  "Return an expression's head symbol as a string, otherwise None."
+  (when (and (isinstance form hy.models.Expression)
+             (> (len form) 0)
+             (isinstance (get form 0) hy.models.Symbol))
+    (str (get form 0))))
 
-(defn _is-comprehension [form]
-  "Check if form is (for/do ...) or (traverse ...) — these have
-   their own scope and handle bangs internally."
-  (and (isinstance form hy.models.Expression)
-       (> (len form) 0)
-       (isinstance (get form 0) hy.models.Symbol)
-       (in (str (get form 0)) #{"for/do" "traverse"})))
+(setv _NATIVE-COMPREHENSION-HEADS #{"lfor" "gfor" "sfor" "dfor"})
+(setv _PLAIN-FUNCTION-HEADS #{"fn" "fn/a" "defn" "defn/a"})
+(setv _BANG-OWNER-HEADS
+  #{"fnk" "do!" "defk" "defp" "defpp" "deftest" "defhandler" "handle"
+    "defmcp-tool" "for/do" "traverse"})
+
+(defn _is-native-comprehension [form]
+  "Check for Python-native comprehensions, whose implicit function scope cannot
+   host a doeff bang yield."
+  (in (_form-head form) _NATIVE-COMPREHENSION-HEADS))
+
+(defn _is-plain-function [form]
+  "Check for a plain nested Python function boundary."
+  (in (_form-head form) _PLAIN-FUNCTION-HEADS))
+
+(defn _is-bang-owner [form]
+  "Check for a macro that owns bang expansion in its own generator scope."
+  (in (_form-head form) _BANG-OWNER-HEADS))
+
+(defn _contains-unowned-bang [form]
+  "Return True when form contains bang outside a nested bang-owning macro."
+  (cond
+    (_is-bang form) True
+    (_is-bang-owner form) False
+    (isinstance form hy.models.Sequence)
+      (any (gfor child form (_contains-unowned-bang child)))
+    True False))
+
+(defn _bang-position-error [kind form]
+  "Raise the actionable expansion error required by ADR-DOE-HY-003."
+  (setv line (. form start_line))
+  (setv source (.lstrip (hy.repr form) "'"))
+  (if (= kind "comprehension")
+      (raise (SyntaxError
+               (+ "[ADR-DOE-HY-003] bang `!` cannot be used inside Python-native "
+                  "lfor/gfor/sfor/dfor comprehension at line " (str line) ". "
+                  "Fix: rewrite it as `(for/do (<- x (From items)) "
+                  "(<- value (effect x)) value)`. Source: " source)))
+      (raise (SyntaxError
+               (+ "[ADR-DOE-HY-003] bang `!` cannot be used inside a plain nested "
+                  "fn/defn at line " (str line) ". Fix: use "
+                  "`(fnk [x] (<- value (effect x)) value)` or move the effect "
+                  "into a defk. Source: " source)))))
+
+(defn _rebuild-sequence [node walk]
+  "Rebuild any Hy Sequence subtype and preserve source/model metadata."
+  (.replace
+    ((type node) (lfor child node (walk child)))
+    node))
+
+(defn _bang-yield [node walk]
+  "Replace one valid (! expr) with an in-place (yield expr) model."
+  (when (!= (len node) 2)
+    (raise (SyntaxError
+             (+ "[ADR-DOE-HY-003] bang `!` takes exactly one expression. "
+                "Fix: write `(! (effect ...))`. Source: "
+                (.lstrip (hy.repr node) "'")))))
+  (.replace
+    (hy.models.Expression
+      [(hy.models.Symbol "yield") (walk (get node 1))])
+    node))
 
 (defn _expand-bangs [form]
-  "Walk an expression, extracting all (! expr) into (<- tmp expr) bindings.
+  "Replace each legal (! expr) with (yield expr) at the same evaluation position.
    Returns #(bindings rewritten-form).
 
-   let forms are handled specially: bang bindings from within a let body
-   are kept inside the let (not hoisted out), so that let-bound variables
-   remain in scope.
-
-   Comprehension forms (for/do, traverse) are opaque — bangs inside
-   them are NOT hoisted, because those macros introduce their own scope
-   (From bindings) and will expand bangs themselves."
-  (setv bindings [])
+   bindings is retained as an always-empty compatibility field for existing
+   macro callers. for/do, fnk, do!, and other bang-owning macros remain opaque
+   so they can expand bangs in their own generator scope. Python-native
+   comprehensions and plain nested functions fail during expansion with an
+   actionable ADR-DOE-HY-003 message."
 
   (defn walk [node]
     (cond
       (_is-bang node)
-        (let [tmp (_fresh-tmp)
-              inner (get node 1)
-              #(inner-bindings rewritten-inner) (_expand-bangs inner)]
-          (.extend bindings inner-bindings)
-          (.append bindings `(<- ~tmp ~rewritten-inner))
-          tmp)
+        (_bang-yield node walk)
 
-      (_is-let node)
-        (let [let-bindings (get node 1)
-              let-body (cut node 2 None)
-              new-body []]
-          (for [body-form let-body]
-            (setv #(inner-binds rewritten) (_expand-bangs body-form))
-            (.extend new-body inner-binds)
-            (.append new-body rewritten))
-          (hy.models.Expression
-            [(get node 0) let-bindings #* new-body]))
+      (_is-native-comprehension node)
+        (do
+          (when (_contains-unowned-bang node)
+            (_bang-position-error "comprehension" node))
+          node)
 
-      ;; Don't walk into comprehension forms — they have their own scope
-      (_is-comprehension node)
+      (_is-plain-function node)
+        (do
+          (when (_contains-unowned-bang node)
+            (_bang-position-error "function" node))
+          node)
+
+      ;; Let nested effect macros compile their own generator scopes.
+      (_is-bang-owner node)
         node
 
-      (isinstance node hy.models.Expression)
-        (hy.models.Expression (lfor child node (walk child)))
-
-      (isinstance node hy.models.List)
-        (hy.models.List (lfor child node (walk child)))
+      (isinstance node hy.models.Sequence)
+        (_rebuild-sequence node walk)
 
       True node))
 
-  (setv result (walk form))
-  #(bindings result))
+  #([] (walk form)))
 
 
 ;; ---------------------------------------------------------------------------

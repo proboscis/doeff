@@ -342,7 +342,7 @@
 (defn _expand-handler-binds [forms]
   "Expand <- and ! in handler clause body.
    (<- name expr) → (setv name (yield expr))  — delegate to outer handler
-   ! in arguments → expanded to <- bindings first"
+   ! in arguments → (yield expr) at the written evaluation position"
   (import doeff-hy.macros [_is-bind _bind-parts _expand-bangs])
 
   (setv expanded [])
@@ -350,7 +350,7 @@
     (if (_is-bind form)
         (let [#(nm expr) (_bind-parts form)
               #(inner-bindings rewritten) (_expand-bangs expr)]
-          ;; Expand inner bangs first
+          ;; Compatibility loop: in-place bang expansion emits no prefix bindings.
           (for [b inner-bindings]
             (let [#(bname bexpr) (_bind-parts b)]
               (if (is bname None)
