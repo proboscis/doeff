@@ -6,8 +6,6 @@ Builds a Program from the RunContext's source form (``hy_source`` /
 This is the default when ``--runner`` is not supplied.
 """
 
-from __future__ import annotations
-
 import json
 import sys
 from typing import Any
@@ -33,10 +31,7 @@ def run_local(ctx: Any) -> int:
     elif ctx.program_ref is not None:
         program = import_symbol(ctx.program_ref)
     else:
-        print(
-            _format_no_source_error(),
-            file=sys.stderr,
-        )
+        sys.stderr.write(f"{_format_no_source_error()}\n")
         return 1
 
     value = _run(program)
@@ -55,12 +50,12 @@ def _render_value(ctx: Any, value: Any) -> None:
             "result": _json_safe(value),
             "result_type": type(value).__name__,
         }
-        print(json.dumps(payload))
+        sys.stdout.write(f"{json.dumps(payload)}\n")
     else:
-        print(value)
+        sys.stdout.write(f"{value}\n")
 
 
-def _json_safe(value: Any) -> Any:
+def _json_safe(value: object) -> object:
     try:
         json.dumps(value)
         return value

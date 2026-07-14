@@ -16,8 +16,6 @@ journaled to CONFORMANCE_JUDGE_JOURNAL (if set) so drivers can assert the
 judge-before-solicitation ordering (R6).
 """
 
-from __future__ import annotations
-
 import json
 import os
 import sys

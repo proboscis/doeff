@@ -30,8 +30,6 @@ default; `extra_serve_args=["--prompt-judge-cmd", ""]` below is redundant
 but kept explicit.
 """
 
-from __future__ import annotations
-
 import json
 
 from harness import RESULT_SCHEMA, AgentdHarness

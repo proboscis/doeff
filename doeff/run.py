@@ -33,7 +33,7 @@ def _enrich_and_print(exception):
         from doeff.traceback import format_default
         tb = format_default(exception)
         if tb is not None:
-            print(tb, file=sys.stderr)
+            sys.stderr.write(f"{tb}\n")
     except Exception:
         pass  # don't mask the original error
 

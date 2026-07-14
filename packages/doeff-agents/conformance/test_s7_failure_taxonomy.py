@@ -37,8 +37,6 @@ landed in-window even before that fix (confirmed empirically); the fix
 makes it robust regardless of prompt length.
 """
 
-from __future__ import annotations
-
 import json
 
 from harness import RESULT_SCHEMA, AgentdHarness
