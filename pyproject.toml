@@ -79,6 +79,7 @@ asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = [
     "tests",
+    "docs/adr",
     "packages/doeff-adr/tests",
     "packages/doeff-time/tests",
     "packages/doeff-vm/tests",
