@@ -17,8 +17,6 @@ consistency with the rest of this suite and to keep the run fully
 deterministic regardless of future script changes.
 """
 
-from __future__ import annotations
-
 import json
 import time
 

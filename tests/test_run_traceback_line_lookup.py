@@ -2,6 +2,7 @@
 
 import linecache
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -53,3 +54,25 @@ def test_run_defers_source_line_lookup_until_traceback_rendering(
     assert line_lookups_at_format_start == []
     assert line_lookups
     assert "raise expected_exception  # rendered-source-line-sentinel" in capsys.readouterr().err
+
+
+def test_source_line_lookup_warns_when_linecache_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Source lookup degradation remains non-fatal but is never silent."""
+
+    def failing_getline(filename: str, lineno: int) -> str:
+        raise OSError(f"cannot read {filename}:{lineno}")
+
+    monkeypatch.setattr(doeff_traceback, "linecache", SimpleNamespace(getline=failing_getline))
+    exception = ValueError("traceback source unavailable")
+    exception.__doeff_traceback__ = [
+        ["frame", "failing_program", "/unavailable/program.py", 17]
+    ]
+
+    with pytest.warns(RuntimeWarning, match=r"/unavailable/program\.py:17"):
+        rendered = doeff_traceback.format_default(exception)
+
+    assert rendered is not None
+    assert "failing_program()" in rendered
+    assert "ValueError: traceback source unavailable" in rendered

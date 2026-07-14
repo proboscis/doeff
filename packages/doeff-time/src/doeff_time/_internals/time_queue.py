@@ -1,9 +1,5 @@
 """Min-heap queue of time-ordered promises."""
 
-# Promise is not generic at runtime; without lazy annotations the
-# Promise[Any] annotations below raise TypeError at import on Python < 3.14.
-from __future__ import annotations
-
 import heapq
 from dataclasses import dataclass
 from datetime import datetime
@@ -13,20 +9,22 @@ from doeff_core_effects.scheduler import Promise
 
 from .validation import ensure_aware_datetime
 
+# ``Promise`` is generic to the type checker but not subscriptable at runtime.
+
 
 @dataclass(frozen=True)
 class TimeQueueEntry:
     time: datetime
     sequence: int
-    promise: Promise[Any]
+    promise: "Promise[Any]"
 
 
 class TimeQueue:
     def __init__(self) -> None:
         self._sequence = 0
-        self._items: list[tuple[datetime, int, Promise[Any]]] = []
+        self._items: "list[tuple[datetime, int, Promise[Any]]]" = []  # noqa: UP037
 
-    def push(self, time: datetime, promise: Promise[Any]) -> None:
+    def push(self, time: datetime, promise: "Promise[Any]") -> None:
         target_time = ensure_aware_datetime(time, name="time")
         self._sequence += 1
         heapq.heappush(self._items, (target_time, self._sequence, promise))

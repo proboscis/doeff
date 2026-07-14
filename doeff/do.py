@@ -9,8 +9,6 @@ The @do decorator — converts a generator function into a program factory.
     prog = my_program(42)  # returns Program[int] (not executed yet)
     result = run(prog)     # execute
 """
-from __future__ import annotations
-
 import ast
 import inspect
 import tokenize

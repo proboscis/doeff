@@ -4,6 +4,7 @@ import contextlib
 import importlib
 import importlib.util
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,12 @@ with contextlib.suppress(ImportError):
     import hy.importer  # noqa: F401 — registers sys.meta_path hook
 
 from doeff.cli.profiling import profile
+
+
+def _require_callable(symbol: object, *, description: str) -> Callable[..., object]:
+    if not callable(symbol):
+        raise TypeError(f"{description} is not callable")
+    return symbol
 
 
 def _load_doeff_config_env() -> str | None:
@@ -40,8 +47,8 @@ def _load_doeff_config_env() -> str | None:
     return None
 
 
-def import_symbol(full_path: str) -> Any:
-    """Import a Python symbol by dotted path (e.g., 'myapp.module:symbol' or 'myapp.module.symbol')."""
+def import_symbol(full_path: str) -> object:
+    """Import a symbol whose concrete type must be narrowed by the caller."""
     # Support colon separator: "module:attr"
     if ":" in full_path:
         module_path, attr_name = full_path.rsplit(":", 1)
@@ -68,6 +75,14 @@ def import_symbol(full_path: str) -> Any:
             if i == 1:
                 raise
     raise ImportError(f"Could not import {full_path}")
+
+
+def import_callable(full_path: str) -> Callable[..., object]:
+    """Import a symbol and fail immediately unless it is callable."""
+    return _require_callable(
+        import_symbol(full_path),
+        description=f"imported symbol {full_path}",
+    )
 
 
 @dataclass
@@ -172,7 +187,7 @@ def resolve_context(ctx: RunContext) -> ResolvedRunContext:
     )
 
 
-def default_interpreter(program: Any) -> Any:
+def default_interpreter(program: object) -> object:
     """Default interpreter: run with standard handlers + scheduler."""
     from doeff_core_effects.handlers import (
         await_handler,
@@ -197,20 +212,23 @@ def default_interpreter(program: Any) -> Any:
     return run(scheduled(wrapped))
 
 
-def execute(resolved: ResolvedRunContext) -> Any:
+def execute(resolved: ResolvedRunContext) -> object:
     """Execute a resolved run context and return the final value."""
     program = resolved.program_instance
 
     # Apply --apply (T -> Program[U]), chained left-to-right
     for ap in resolved.apply_paths:
         with profile(f"Apply: {ap}"):
-            apply_fn = import_symbol(ap)
+            apply_fn = _require_callable(import_symbol(ap), description=f"--apply target {ap}")
             program = apply_fn(program)
 
     # Apply --transform (Program -> Program)
     for tp in resolved.transformer_paths:
         with profile(f"Transform: {tp}"):
-            transform_fn = import_symbol(tp)
+            transform_fn = _require_callable(
+                import_symbol(tp),
+                description=f"--transform target {tp}",
+            )
             program = transform_fn(program)
 
     # Build env Program[dict] from ~/.doeff.py + discovered/explicit envs
@@ -260,7 +278,10 @@ def execute(resolved: ResolvedRunContext) -> Any:
 
     # Run through interpreter — pass env/ctx as keyword args if supported
     with profile("Run interpreter"):
-        interpreter = import_symbol(resolved.interpreter_path)
+        interpreter = _require_callable(
+            import_symbol(resolved.interpreter_path),
+            description=f"interpreter {resolved.interpreter_path}",
+        )
         import inspect
         sig = inspect.signature(interpreter)
         kwargs: dict[str, Any] = {}

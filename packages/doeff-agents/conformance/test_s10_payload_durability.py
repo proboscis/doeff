@@ -37,8 +37,6 @@ and documents why. Confirmed empirically: the raw wire call returns
 `AgentdClientError(..., error_code=-32003)` respectively.
 """
 
-from __future__ import annotations
-
 import json
 
 from doeff_agents.agentd_client import AgentdClientError

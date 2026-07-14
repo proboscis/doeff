@@ -1,6 +1,6 @@
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 import pytest
 from doeff_core_effects.scheduler import Task, Wait
@@ -104,7 +104,8 @@ def test_async_schedule_at_returns_task_and_wait_raises_deferred_failure() -> No
 
     @do
     def program():
-        target = datetime.now(timezone.utc) + timedelta(seconds=0.01)
+        current = yield GetTime()
+        target = current + timedelta(seconds=0.01)
         task = yield ScheduleAt(target, _make_raising_program())
         assert isinstance(task, Task)
         yield Wait(task)
@@ -120,7 +121,8 @@ def test_async_schedule_at_task_is_waitable_on_success() -> None:
 
     @do
     def program():
-        target = datetime.now(timezone.utc) + timedelta(seconds=0.01)
+        current = yield GetTime()
+        target = current + timedelta(seconds=0.01)
         task = yield ScheduleAt(target, _make_marker_program(marker))
         assert isinstance(task, Task)
         yield Wait(task)
@@ -136,7 +138,8 @@ def test_sync_schedule_at_returns_task_and_wait_raises_deferred_failure() -> Non
 
     @do
     def program():
-        target = datetime.now(timezone.utc) + timedelta(seconds=0.01)
+        current = yield GetTime()
+        target = current + timedelta(seconds=0.01)
         task = yield ScheduleAt(target, _make_raising_program())
         assert isinstance(task, Task)
         yield Wait(task)
@@ -152,7 +155,8 @@ def test_sync_schedule_at_task_is_waitable_on_success() -> None:
 
     @do
     def program():
-        target = datetime.now(timezone.utc) + timedelta(seconds=0.01)
+        current = yield GetTime()
+        target = current + timedelta(seconds=0.01)
         task = yield ScheduleAt(target, _make_marker_program(marker))
         assert isinstance(task, Task)
         yield Wait(task)

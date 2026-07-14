@@ -13,8 +13,6 @@ retryable=true — the wire fact ACP's ADR 0042 transient classification
 sits downstream of.
 """
 
-from __future__ import annotations
-
 import json
 import time
 
