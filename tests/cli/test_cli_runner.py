@@ -95,3 +95,15 @@ class TestRunnerErrors:
         # The error should show a complete working example.
         assert "--runner" in msg
         assert "doeff.runners.local" in msg
+
+    def test_non_callable_runner_fails_with_runner_guidance(self):
+        result = run_cli(
+            "--hy",
+            "(Pure 1)",
+            "--runner",
+            "tests.cli.cli_runner_assets.NOT_A_RUNNER",
+        )
+        assert result.returncode != 0
+        msg = result.stderr + result.stdout
+        assert "failed to import --runner" in msg
+        assert "is not callable" in msg

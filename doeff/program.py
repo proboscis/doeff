@@ -51,10 +51,10 @@ def handler(raw_handler):
     return install
 
 
-ProgramHandler = Callable[[Any], Any]
+ProgramHandler = Callable[[object], object]
 
 
-def with_handlers(handlers: Iterable[ProgramHandler], program: Any) -> Any:
+def with_handlers(handlers: Iterable[ProgramHandler], program: object) -> object:
     """Apply a handler stack to a Program.
 
     Handler order is scope order: the first handler is outermost, the last
@@ -74,10 +74,7 @@ def with_handlers(handlers: Iterable[ProgramHandler], program: Any) -> Any:
             is_handler_fn = install_meta._doeff_is_handler_fn
         except AttributeError:
             is_handler_fn = False
-        if is_handler_fn is True:
-            wrapped = install(wrapped)
-        else:
-            wrapped = handler(install)(wrapped)
+        wrapped = install(wrapped) if is_handler_fn is True else handler(install)(wrapped)
     return wrapped
 
 

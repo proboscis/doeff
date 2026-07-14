@@ -321,11 +321,11 @@ def _build_runner_context(args: RunArgs):
 
 def _dispatch_runner(args: RunArgs) -> int:
     """Resolve the runner function and invoke it with a RunnerContext."""
-    from doeff.cli.run_services import import_symbol
+    from doeff.cli.run_services import import_callable
 
     runner_ref = args.runner or _DEFAULT_RUNNER
     try:
-        runner = import_symbol(runner_ref)
+        runner = import_callable(runner_ref)
     except Exception as exc:
         print(
             "Error: failed to import --runner "

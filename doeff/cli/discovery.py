@@ -10,6 +10,9 @@ import logging
 from typing import Any, Protocol, cast
 
 from doeff.cli.profiling import profile
+from doeff.program import Expand, Pure
+
+EnvProgram = Pure | Expand
 
 logger = logging.getLogger(__name__)
 
@@ -24,15 +27,15 @@ class EnvDiscovery(Protocol):
 
 
 class EnvMerger(Protocol):
-    def merge_envs(self, env_sources: list[str]) -> Any: ...
+    def merge_envs(self, env_sources: list[str]) -> EnvProgram: ...
 
 
 class SymbolLoader(Protocol):
-    def load_symbol(self, full_path: str) -> Any: ...
+    def load_symbol(self, full_path: str) -> object: ...
 
 
 class StandardSymbolLoader:
-    def load_symbol(self, full_path: str) -> Any:
+    def load_symbol(self, full_path: str) -> object:
         with profile(f"Load symbol {full_path}", indent=2):
             parts = full_path.split(".")
             for i in range(len(parts), 0, -1):
@@ -140,7 +143,7 @@ class StandardEnvMerger:
     def __init__(self, symbol_loader: SymbolLoader | None = None):
         self.symbol_loader = symbol_loader or StandardSymbolLoader()
 
-    def merge_envs(self, env_sources: list[str]) -> Any:
+    def merge_envs(self, env_sources: list[str]) -> EnvProgram:
         """Merge environment sources left-to-right. Later overrides earlier."""
         with profile("Merge environments", indent=1):
             from doeff.program import Pure
