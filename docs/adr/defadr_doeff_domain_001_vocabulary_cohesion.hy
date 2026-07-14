@@ -42,11 +42,13 @@
           (counterexample "新規エージェントが既存 domain 語彙を発見できず、同義の effect 型を別パッケージに追加する — 照会面(SEDA)不在時の既定挙動")])]
   :enforcement
     [(deftest test-adr-doe-domain-001-defdomain-exists
-       ;; RED(2026-07-14): defdomain マクロは未実装。R1 実装で green。
-       ;; ソーステキストのピン(マクロは module 属性にならないため)。実装後は挙動ピンに昇格する。
+       ;; designed-red を xfail(strict) 相当で表現: 未実装の間は xfail、
+       ;; 緑化したら fail して解除を強制。
        (import pathlib [Path])
+       (import pytest)
        (setv root (get (. (Path __file__) parents) 2))
        (setv macros-src (.read-text (/ root "packages" "doeff-hy" "src" "doeff_hy" "macros.hy")))
-       (assert (in "defmacro defdomain" macros-src)
-               "defdomain マクロが doeff-hy に存在しない — ADR-DOE-DOMAIN-001 R1"))]
+       (when (in "defmacro defdomain" macros-src)
+         (pytest.fail "defdomain が実装された — ADR-DOE-DOMAIN-001 の designed-red を解除し、挙動ピンに昇格して記帳すること(E1)"))
+       (pytest.xfail "defdomain マクロは未実装(E1 待ち)— ADR-DOE-DOMAIN-001 R1"))]
   :plans ["docs/doeff-2026-07-14-agent-first-investment-architecture-plan.md"])

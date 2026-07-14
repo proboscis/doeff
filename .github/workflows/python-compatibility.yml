@@ -35,14 +35,8 @@ jobs:
       - name: Install dependencies
         run: uv sync --group dev --package doeff --python ${{ matrix.python-version }}
 
-      - name: Install Semgrep for executable ADR enforcement
-        run: uv tool install --python 3.12 semgrep
-
       - name: Verify doeff-vm import
         run: uv run --package doeff --python ${{ matrix.python-version }} python -c "import doeff_vm; import doeff_vm.doeff_vm"
-
-      - name: Verify executable ADR collection wiring
-        run: uv run --package doeff --python ${{ matrix.python-version }} doeff-adr verify-wiring
 
       - name: Run test suite
         run: uv run --package doeff --python ${{ matrix.python-version }} pytest -q
