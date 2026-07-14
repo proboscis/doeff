@@ -33,7 +33,7 @@ class TestDoBangReturnsProgram:
         assert result == "hello"
 
     def test_do_bang_with_bang_expansion(self) -> None:
-        """Bang (!) inside do! expands to intermediate bindings."""
+        """Bang (!) inside do! evaluates effects in written expression order."""
 
         @do
         def k1(x: int):

@@ -85,8 +85,9 @@
 
 (defadr ADR-DOE-HY-003
   :title "bang(!) は一時 bind の文頭 hoist ではなく、その場の yield 式へ変換して評価位置を保存する。if/and/or/try/引数/dict literal の制御・順序を越えない。Python generator に安全に変換できない lfor/gfor/sfor/dfor と通常のネスト fn は、修正プロンプト付きの展開時エラーにする"
-  :status "proposed"
-  :scope ["packages/doeff-hy/src/doeff_hy/macros.hy"
+  :status "accepted"
+  :scope [".semgrep.yaml"
+          "packages/doeff-hy/src/doeff_hy/macros.hy"
           "packages/doeff-hy/src/doeff_hy/handle.hy"
           "docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy"]
   :problem
@@ -108,7 +109,7 @@
     [(rule R1 "bang `(! expr)` は、その bang 自身の評価位置にある `(yield expr)` へ変換する。周囲の文頭や suite 先頭へ bind を hoist しない。")
      (rule R2 "walker は Hy の全 Sequence model を辿り、Dict/List/Tuple/Set/FComponent 内でも同じ in-place 変換を行う。")
      (rule R3 "lfor/gfor/sfor/dfor 内の bang は `[ADR-DOE-HY-003]` と for/do への書き換え例を含む SyntaxError にする。")
-     (rule R4 "通常のネスト fn/fn-a/defn/defn-a 内の bang は `[ADR-DOE-HY-003]` と fnk への書き換え例を含む SyntaxError にする。fnk と for/do/traverse は自身のマクロ展開に委譲する。")
+     (rule R4 "通常のネスト fn/fn/a/defn/defn/a 内の bang は `[ADR-DOE-HY-003]` と fnk への書き換え例を含む SyntaxError にする。fnk と for/do/traverse は自身のマクロ展開に委譲する。")
      (rule R5 "単純な statement 内を含む既存の合法 bang は、値と効果回数を変えず後方互換に保つ。")]
   :laws
     [(law bang-preserves-evaluation-position
