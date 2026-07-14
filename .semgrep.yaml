@@ -87,6 +87,25 @@ rules:
         - /packages/doeff-agents/src/doeff_agents/adapters/codex.py
         - /packages/doeff-agents/src/doeff_agents/adapters/gemini.py
 
+  - id: doeff-agents-tmux-adapters-must-gate-prompt-on-ready
+    languages:
+      - python
+    severity: ERROR
+    message: >
+      Codex and Claude TMUX adapters must provide a ready_pattern. Returning
+      None skips the readiness gate and can paste a multiline prompt before
+      cold-start TUI initialization, splitting it into separate submissions
+      while the invocation falsely succeeds (agentd-codex-coldstart-paste-race).
+    patterns:
+      - pattern-inside: |
+          def ready_pattern(...):
+              ...
+      - pattern: return None
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/adapters/claude.py
+        - /packages/doeff-agents/src/doeff_agents/adapters/codex.py
+
   - id: doeff-agents-require-real-claude-result-retry-e2e
     languages:
       - generic
