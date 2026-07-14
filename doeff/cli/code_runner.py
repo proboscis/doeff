@@ -6,7 +6,10 @@ so that `doeff run -c 'yield Ask("key")'` works.
 
 import ast
 from dataclasses import dataclass
-from typing import Any
+from types import CodeType
+from typing import Any, cast
+
+from doeff.program import Expand
 
 
 def _transform_last_expr_to_return(body: list[ast.stmt]) -> list[ast.stmt]:
@@ -68,7 +71,7 @@ def _wrap_in_do_function(tree: ast.Module) -> ast.Module:
 
 @dataclass
 class TransformResult:
-    code: Any
+    code: CodeType
     original_source: str
 
 
@@ -83,7 +86,7 @@ def execute_doeff_code(
     source: str,
     filename: str = "<doeff-code>",
     extra_globals: dict[str, Any] | None = None,
-) -> Any:
+) -> Expand:
     transform_result = transform_doeff_code(source, filename)
     exec_globals: dict[str, Any] = {
         "__name__": "__main__",
@@ -93,4 +96,4 @@ def execute_doeff_code(
     if extra_globals:
         exec_globals.update(extra_globals)
     exec(transform_result.code, exec_globals)
-    return exec_globals.get("__doeff_result__")
+    return cast(Expand, exec_globals["__doeff_result__"])

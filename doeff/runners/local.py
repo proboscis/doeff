@@ -55,7 +55,7 @@ def _render_value(ctx: Any, value: Any) -> None:
         sys.stdout.write(f"{value}\n")
 
 
-def _json_safe(value: Any) -> Any:
+def _json_safe(value: object) -> object:
     try:
         json.dumps(value)
         return value
