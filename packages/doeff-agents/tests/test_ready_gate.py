@@ -66,7 +66,7 @@ PRE_LAUNCH_SHELL_FRAMES = [
     "$ ",
     "$ codex --yolo",
     "➜  workdir codex --yolo",
-    "❯ claude --ax-screen-reader --dangerously-skip-permissions",
+    "\u276f claude --ax-screen-reader --dangerously-skip-permissions",  # starship-style shell prompt
     "bash-5.2$ claude --ax-screen-reader",
 ]
 
@@ -100,7 +100,7 @@ def test_codex_ready_pattern_rejects_login_screen() -> None:
 
 
 def test_codex_ready_pattern_rejects_trust_dialog() -> None:
-    # The trust dialog draws the same `›` marker as the composer, in front
+    # The trust dialog draws the same U+203A marker as the composer, in front
     # of a numbered option.
     assert not _matches(CodexAdapter().ready_pattern, CODEX_TRUST_DIALOG)
 
@@ -592,3 +592,79 @@ def test_claude_hy_handler_pastes_prompt_only_after_ready_frame(tmp_path: Path) 
     prompt_sends = [(t, k, f) for t, k, f in backend.sent if k == PROMPT]
     assert len(prompt_sends) == 1
     assert prompt_sends[0][2] >= frames.index(CLAUDE_READY)
+
+
+# =============================================================================
+# Paste transport: multi-line prompts must be delivered as ONE bracketed
+# paste. Without bracketed paste the newlines act as Enter presses and the
+# receiving TUI falls back to timing-dependent burst heuristics — the very
+# splitting observed in the incident (and reproduced against real codex
+# even after the ready gate passed).
+# =============================================================================
+
+MULTILINE_PROMPT = "line one\nline two\n\nline four"
+
+
+def test_tmux_paste_streams_buffer_via_stdin_and_bracketed_paste(monkeypatch) -> None:
+    import subprocess
+
+    from doeff_agents.tmux import TmuxSessionBackend
+
+    calls: list[tuple[list[str], object]] = []
+
+    def fake_run(args, **kwargs):
+        calls.append((list(args), kwargs.get("input")))
+        if args[1] == "-V":
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        if args[1] == "capture-pane":
+            # Composer is empty after submit: confirm loop exits immediately.
+            return subprocess.CompletedProcess(args, 0, stdout="❯ \n", stderr="")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("doeff_agents.tmux.subprocess.run", fake_run)
+    monkeypatch.setattr("doeff_agents.tmux.time.sleep", lambda _seconds: None)
+
+    backend = TmuxSessionBackend()
+    backend.send_keys("%42", MULTILINE_PROMPT, literal=True, enter=True)
+
+    command_names = [args[1] for args, _input in calls]
+    # argv-passed set-buffer dies at ~16KB (tmux imsg framing) — the content
+    # must stream through load-buffer's stdin (doeff-agentd oracle 33ab4bae).
+    assert "set-buffer" not in command_names
+    load_calls = [(args, i) for args, i in calls if args[1] == "load-buffer"]
+    assert len(load_calls) == 1
+    load_args, load_input = load_calls[0]
+    assert load_args[-1] == "-"
+    assert load_input == MULTILINE_PROMPT
+
+    paste_calls = [args for args, _input in calls if args[1] == "paste-buffer"]
+    assert len(paste_calls) == 1
+    assert "-p" in paste_calls[0], (
+        "paste-buffer must use bracketed paste (-p); raw newlines submit "
+        "per-line and split the prompt into fragments"
+    )
+
+
+def test_sessionhost_paste_uses_bracketed_paste(monkeypatch) -> None:
+    import subprocess as _subprocess
+
+    from doeff_agents.sessionhost import substrate
+
+    calls: list[list[str]] = []
+
+    def fake_run_tmux(_tmux_bin, args):
+        calls.append(list(args))
+        return _subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    def fake_subprocess_run(args, **kwargs):
+        calls.append(list(args[1:]))
+        return _subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(substrate, "run_tmux", fake_run_tmux)
+    monkeypatch.setattr(substrate.subprocess, "run", fake_subprocess_run)
+
+    substrate.tmux_paste_literal_io("tmux", "%7", MULTILINE_PROMPT)
+
+    paste_calls = [args for args in calls if args and args[0] == "paste-buffer"]
+    assert len(paste_calls) == 1
+    assert "-p" in paste_calls[0]
