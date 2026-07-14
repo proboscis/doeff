@@ -347,6 +347,36 @@ defk {name}: :post type annotation cannot be an empty string.
                 "[ADR-DOE-HY-001]"))))
   value)
 
+(defn _doeff-check-program-return [value message mode]
+  "Check defp/defpp's return-color contract. Returns False for use in assert."
+  (setv is-program (inspect.isgenerator value))
+  (when (and (= mode "reject") is-program)
+    (raise (TypeError message)))
+  (when (and (= mode "require") (not is-program))
+    (raise (TypeError message)))
+  False)
+
+(defn _install-guard-globals [wrapped [runtime-globals None]]
+  "Install generated-function runtime helpers in the defining module globals.
+
+   Macro expansion can run in a class body, whose namespace is not part of a
+   method's LEGB lookup. doeff.do.do uses functools.wraps, so descend through
+   __wrapped__ to the generated function and seed its module globals once.
+   setdefault preserves an explicit module-level binding."
+  (setv target wrapped)
+  (while (hasattr target "__wrapped__")
+    (setv target (. target __wrapped__)))
+  (when (not (hasattr target "__globals__"))
+    (raise (TypeError
+             "doeff-hy generated callable has no reachable __globals__")))
+  (setv globals-dict (. target __globals__))
+  (.setdefault globals-dict "_guard_performed" _guard-performed)
+  (.setdefault globals-dict "_guard_statement_value" _guard-statement-value)
+  (.setdefault globals-dict "_doeff_check_program_return" _doeff-check-program-return)
+  (for [#(name value) (.items (or runtime-globals {}))]
+    (.setdefault globals-dict name value))
+  wrapped)
+
 (defn _wrap-statement-guard [form owner]
   "statement 位置の式形フォーム(関数呼び出し・シンボル)を _guard-statement-value で
    ラップして返す。文形式(setv/for/with 等、_STATEMENT-FORM-HEADS)と非式フォームは
@@ -584,9 +614,10 @@ defk {name}: {{:post [...]}} is required.
         `(do)))
   `(do
      (import doeff.do [do :as _doeff_do])
-     (import doeff-hy.macros [_guard-performed _guard-statement-value])
+     (import doeff-hy.macros [_install-guard-globals])
      ~lazy-imports
      ~fn-form
+     (_install-guard-globals ~name)
      (setv (. ~name __doeff_body__) '~real-body)
      (setv (. ~name __doeff_args__) '~params)
      (setv (. ~name __doeff_name__) ~(str name))))
@@ -684,23 +715,25 @@ defk {name}: {{:post [...]}} is required.
       (let [post-asserts (lfor check post-checks
                            (_expand-check check "do!" "post-condition"))]
         `(do (import doeff.do [do :as _doeff-do])
-             (import doeff-hy.macros [_guard-performed _guard-statement-value])
-             ((_doeff-do (fn []
-               ~@pre-code
-               ~@expanded
-               (setv _contract_result ~body-expr)
-               (_guard-performed _contract_result "do!")
-               (let [% _contract_result]
-                 ~@post-asserts)
-               (return _contract_result))))))
+             (import doeff-hy.macros [_install-guard-globals])
+             ((_install-guard-globals
+                (_doeff-do (fn []
+                  ~@pre-code
+                  ~@expanded
+                  (setv _contract_result ~body-expr)
+                  (_guard-performed _contract_result "do!")
+                  (let [% _contract_result]
+                    ~@post-asserts)
+                  (return _contract_result)))))))
       `(do (import doeff.do [do :as _doeff-do])
-           (import doeff-hy.macros [_guard-performed _guard-statement-value])
-           ((_doeff-do (fn []
-             ~@pre-code
-             ~@expanded
-             (setv _contract_result ~body-expr)
-             (_guard-performed _contract_result "do!")
-             (return _contract_result)))))))
+           (import doeff-hy.macros [_install-guard-globals])
+           ((_install-guard-globals
+              (_doeff-do (fn []
+                ~@pre-code
+                ~@expanded
+                (setv _contract_result ~body-expr)
+                (_guard-performed _contract_result "do!")
+                (return _contract_result))))))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -1129,23 +1162,16 @@ defk {name}: {{:post [...]}} is required.
   (setv post-asserts (lfor check post-checks
                        (_expand-check check name "post-condition")))
   `(do
-     (import inspect)
      (import doeff.do [do :as _doeff_do])
-     (import doeff-hy.macros [_guard-statement-value])
-     (defn _doeff_check_program_return [v msg mode]
-       "Check Program return value. Raises TypeError on violation. Returns False (for assert)."
-       (setv is-program (inspect.isgenerator v))
-       (when (and (= mode "reject") is-program)
-         (raise (TypeError msg)))
-       (when (and (= mode "require") (not is-program))
-         (raise (TypeError msg)))
-       False)
-     (setv ~name ((_doeff_do (fn []
-       ~@expanded
-       (setv _contract_result ~body-expr)
-       (let [% _contract_result]
-         ~@post-asserts)
-       (return _contract_result)))))
+     (import doeff-hy.macros [_install-guard-globals])
+     (setv ~name
+       ((_install-guard-globals
+          (_doeff_do (fn []
+            ~@expanded
+            (setv _contract_result ~body-expr)
+            (let [% _contract_result]
+              ~@post-asserts)
+            (return _contract_result))))))
      ;; Preserve S-expr body directly on Program value (DoExpr has __dict__ via pyclass(dict))
      (setv (. ~name __doeff_body__) '~real-body)
      (setv (. ~name __doeff_name__) ~(str name))
@@ -1345,12 +1371,14 @@ defk {name}: {{:post [...]}} is required.
     `(do
        (import pytest)
        (import doeff.do [do :as _doeff_do])
-       (import doeff-hy.macros [_guard-statement-value])
-       (defn [~@decorators] ~name [~@fn-params] ~fn-body))
+       (import doeff-hy.macros [_install-guard-globals])
+       (defn [~@decorators] ~name [~@fn-params] ~fn-body)
+       (_install-guard-globals ~name {"_doeff_do" _doeff_do}))
     `(do
        (import doeff.do [do :as _doeff_do])
-       (import doeff-hy.macros [_guard-statement-value])
-       (defn ~name [~@fn-params] ~fn-body))))
+       (import doeff-hy.macros [_install-guard-globals])
+       (defn ~name [~@fn-params] ~fn-body)
+       (_install-guard-globals ~name {"_doeff_do" _doeff_do}))))
 
 
 ;; ---------------------------------------------------------------------------
