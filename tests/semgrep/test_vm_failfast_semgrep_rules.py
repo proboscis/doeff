@@ -160,6 +160,19 @@ def test_agent_anthropic_api_key_semgrep_rule_detects_env_injection() -> None:
     assert _has_rule(check_ids, "doeff-agents-no-anthropic-api-key-agent-env")
 
 
+def test_tmux_adapter_ready_gate_rule_rejects_none_pattern() -> None:
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-agents/src/doeff_agents/adapters/codex.py",
+        cwd=fixture_root,
+    )
+
+    assert len(
+        _rule_start_lines(results, "doeff-agents-tmux-adapters-must-gate-prompt-on-ready")
+    ) == 1
+
+
 def test_defhandler_must_be_top_level_rule_detects_nested_handler() -> None:
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     results = _semgrep_results(

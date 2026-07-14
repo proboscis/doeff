@@ -26,10 +26,12 @@ def test_claude_ready_pattern_matches_input_prompt_but_not_startup_dialogs() -> 
         "   2. No, exit\n\n"
         "Enter to confirm \u00b7 Esc to cancel\n"
     )
+    screen_reader_login = "Paste code here\ninput:\n"
 
     assert pattern is not None
     assert re.search(pattern, login_screen) is None
     assert re.search(pattern, trust_dialog) is None
+    assert re.search(pattern, screen_reader_login) is None
     assert re.search(pattern, "Claude Code\n\n\u276f\u00a0\n") is not None
     assert re.search(pattern, "bypass permissions on (shift+tab to cycle)\ninput:\n") is not None
 

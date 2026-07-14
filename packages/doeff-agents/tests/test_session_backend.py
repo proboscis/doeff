@@ -48,6 +48,8 @@ from doeff_agents.adapters.base import (
 from doeff_agents.adapters.codex import CodexAdapter
 from doeff_agents.effects import (
     AgentReadyTimeoutError as EffectAgentReadyTimeoutError,
+)
+from doeff_agents.effects import (
     AwaitResultEffect,
     AwaitStatus,
     LaunchSession,
@@ -60,6 +62,12 @@ from doeff_agents.session_store import InMemoryAgentSessionRepository
 from doeff_agents.tmux import TmuxSessionBackend, _output_has_unsubmitted_paste_input, strip_ansi
 
 from doeff.mcp import McpParamSchema, McpToolDef
+
+CODEX_READY_SCREEN = (
+    "OpenAI Codex\n\n"
+    "\u203a Ask Codex to do anything\n"
+    "  gpt-5.5 default \u00b7 /workspace\n"
+)
 
 
 def test_session_api_import_does_not_load_doeff_core() -> None:
@@ -499,12 +507,7 @@ def test_tmux_agent_handler_waits_for_codex_ready_before_sending_multiline_promp
     tmp_path: Path,
 ) -> None:
     login_screen = "Welcome to Codex\n\nPress enter to continue\n"
-    ready_screen = (
-        "OpenAI Codex\n\n"
-        "\u203a Ask Codex to do anything\n"
-        "  gpt-5.5 default \u00b7 /workspace\n"
-    )
-    backend = ScriptedCaptureBackend([login_screen, ready_screen])
+    backend = ScriptedCaptureBackend([login_screen, CODEX_READY_SCREEN])
     monkeypatch.setattr(
         "doeff_agents.handlers.production.get_adapter",
         lambda _agent_type: FakeCodexAdapter(),
@@ -555,7 +558,7 @@ def test_tmux_agent_handler_fails_closed_when_codex_never_becomes_ready(
 
 
 def test_tmux_agent_handler_trusts_codex_workspace(monkeypatch, tmp_path: Path) -> None:
-    backend = FakeBackend()
+    backend = ScriptedCaptureBackend([CODEX_READY_SCREEN])
     monkeypatch.setattr(
         "doeff_agents.handlers.production.get_adapter",
         lambda _agent_type: FakeCodexAdapter(),
@@ -613,7 +616,7 @@ def test_tmux_agent_handler_rejects_codex_home_in_session_env(
 
 
 def test_tmux_agent_handler_injects_codex_mcp_config(monkeypatch, tmp_path: Path) -> None:
-    backend = FakeBackend()
+    backend = ScriptedCaptureBackend([CODEX_READY_SCREEN])
     monkeypatch.setattr(
         "doeff_agents.handlers.production.get_adapter",
         lambda _agent_type: FakeCodexAdapter(),
@@ -639,7 +642,7 @@ def test_tmux_agent_handler_injects_codex_mcp_config(monkeypatch, tmp_path: Path
 
 
 def test_l2_launch_session_injects_mcp_config(monkeypatch, tmp_path: Path) -> None:
-    backend = FakeBackend()
+    backend = ScriptedCaptureBackend([CODEX_READY_SCREEN])
     monkeypatch.setattr(
         "doeff_agents.handlers.production.get_adapter",
         lambda _agent_type: FakeCodexAdapter(),
@@ -1131,7 +1134,7 @@ def test_tmux_backend_rechecks_resubmitted_literal_prompt_until_clear(
 
 def test_unsubmitted_paste_detector_handles_ax_screen_reader_input_line() -> None:
     # Real pane captures from the 2026-07-09 live incident: --ax-screen-reader
-    # renders the input box as an "input:" line (no "❯" glyph), so the stuck
+    # renders the input box as an "input:" line (no classic prompt glyph), so the stuck
     # paste was previously reported as submitted and never rescued.
     stuck = (
         "Extended: Fable 5 is included in your weekly limit\n"

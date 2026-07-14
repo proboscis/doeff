@@ -117,7 +117,14 @@ class ClaudeAdapter:
 
     @property
     def ready_pattern(self) -> str | None:
-        return None
+        # Classic TUI captures use a line-start U+276F prompt. Screen-reader
+        # mode renders an empty ``input:`` row after its permission footer;
+        # requiring that footer avoids mistaking an auth-code input for the
+        # agent prompt.
+        return (
+            r"(?mi)^(?:[>\u276f][ \u00a0]*|"
+            r"[ \t]*bypass permissions[^\n]*\ninput:[ \t]*)$"
+        )
 
     @property
     def trust_dialog_pattern(self) -> str | None:

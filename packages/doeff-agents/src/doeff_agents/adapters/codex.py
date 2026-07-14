@@ -48,7 +48,11 @@ class CodexAdapter:
 
     @property
     def ready_pattern(self) -> str | None:
-        return None
+        # Require both the input row and its adjacent model/cwd footer. The
+        # startup update dialog also uses U+203A for its selected menu item,
+        # but it does not render the model footer and therefore cannot satisfy
+        # this pattern.
+        return r"(?m)^\u203a[ \u00a0].*\n[^\n]*gpt-[^\n]*\u00b7[^\n]*$"
 
     @property
     def status_bar_lines(self) -> int:
