@@ -17,11 +17,39 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from typing import cast
 
 import pytest
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = ROOT / "docs" / "adr" / "semgrep-baseline.json"
+
+
+def test_semgrep_is_declared_as_bounded_dev_dependency() -> None:
+    config: dict[str, object] = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    dependency_groups: dict[str, list[str]] = cast(
+        dict[str, list[str]], config["dependency-groups"]
+    )
+
+    assert "semgrep>=1.161.0,<2" in dependency_groups["dev"]
+
+
+def test_makefile_semgrep_targets_use_project_environment() -> None:
+    makefile: str = (ROOT / "Makefile").read_text()
+
+    assert "command -v semgrep" not in makefile
+    assert makefile.count("uv run semgrep") == 3
+
+
+def test_missing_semgrep_points_to_make_sync(monkeypatch: pytest.MonkeyPatch) -> None:
+    def missing_binary(_name: str) -> None:
+        return None
+
+    monkeypatch.setattr(shutil, "which", missing_binary)
+
+    with pytest.raises(AssertionError, match="make sync"):
+        test_semgrep_findings_match_baseline_ratchet()
 
 
 @pytest.mark.semgrep
