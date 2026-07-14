@@ -618,7 +618,7 @@ def test_tmux_paste_streams_buffer_via_stdin_and_bracketed_paste(monkeypatch) ->
             return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
         if args[1] == "capture-pane":
             # Composer is empty after submit: confirm loop exits immediately.
-            return subprocess.CompletedProcess(args, 0, stdout="❯ \n", stderr="")
+            return subprocess.CompletedProcess(args, 0, stdout="\u276f\u00a0\n", stderr="")
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
     monkeypatch.setattr("doeff_agents.tmux.subprocess.run", fake_run)
