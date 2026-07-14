@@ -1,7 +1,7 @@
 {
   "_comment": "ADR-DOE-ENFORCE-001 R5 anti-drop ratchet の台帳。enforcement 資産の数が黙って減る(または黙って増える)ことを tests/test_enforcement_ledger.py が禁止する。数を変える変更は、この台帳の明示的な更新を同じ変更セットに含めること。",
   "defadr_files": 16,
-  "semgrep_rules": 229,
+  "semgrep_rules": 233,
   "adr_deftest_enforcements": 9,
   "adr_defsemgrep_enforcements": 20,
   "adr_laws": 51
