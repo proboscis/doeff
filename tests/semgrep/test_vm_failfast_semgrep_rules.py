@@ -180,3 +180,19 @@ def test_doeff_agents_rule_rejects_handler_callable_vocabulary() -> None:
     )
 
     assert _has_rule(check_ids, "doeff-agents-no-handler-callable-vocabulary")
+
+
+def test_ready_gate_semgrep_rules_detect_ungated_prompt_paste() -> None:
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    check_ids = _semgrep_rule_ids(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-agents/src",
+        cwd=fixture_root,
+    )
+
+    expected = {
+        "doeff-agents-built-in-adapters-must-declare-ready-pattern",
+        "doeff-agents-prompt-paste-must-be-ready-gated",
+        "doeff-agents-hy-prompt-paste-must-be-ready-gated",
+    }
+    assert all(_has_rule(check_ids, rule_id) for rule_id in expected)
