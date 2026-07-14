@@ -12,6 +12,7 @@ Entries (outermost-first):
 
 import linecache
 import os
+import warnings
 
 _INTERNAL_PATHS = ("/doeff_core_effects/", "/doeff/do.py", "/doeff/run.py", "/doeff_vm/")
 
@@ -108,7 +109,12 @@ def _get_source_line(filename, lineno):
     try:
         line = linecache.getline(filename, lineno)
         return line.strip() if line else None
-    except Exception:
+    except Exception as exc:
+        warnings.warn(
+            f"Could not read traceback source line {filename}:{lineno}: {exc}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return None
 
 
