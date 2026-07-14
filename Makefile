@@ -52,9 +52,12 @@ install:
 
 # Sync dependencies AND rebuild the Rust VM extension.
 # ALWAYS use this instead of bare `uv sync` when Rust sources changed.
+# ADR-DOE-ENFORCE-001 R4 (B3 裁定 2026-07-14): dev ビルドは VM conformance oracle
+# (invariant-checks) を常時有効にする。tests/test_vm_invariant_checks_enabled.py が
+# フラグを hard-fail で検査する(skip 禁止)。
 sync:
 	uv sync --group dev
-	cd packages/doeff-vm && maturin develop --release
+	cd packages/doeff-vm && maturin develop --release --features invariant-checks
 
 pre-commit-install:
 	uv run pre-commit install
@@ -128,6 +131,10 @@ PYTEST_MEM_GUARD_MB ?= 8192
 PYTEST_MEM_GUARD_POLL_INTERVAL ?= 1.0
 PYTEST_MEMORY_ENV := PYTEST_MEM_GUARD_MB=$(PYTEST_MEM_GUARD_MB) \
 	PYTEST_MEM_GUARD_POLL_INTERVAL=$(PYTEST_MEM_GUARD_POLL_INTERVAL)
+
+# ADR-DOE-ENFORCE-001 R4: VM conformance oracle の Rust 側テスト(invariant-checks 有効)。
+test-vm-invariants:
+	cd packages/doeff-vm-core && cargo test --features "invariant-checks python_bridge"
 
 test: bench-smoke
 	$(PYTEST_MEMORY_ENV) uv run pytest
