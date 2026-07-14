@@ -749,7 +749,10 @@ rules:
         - "**/tests/**"
         - "**/examples/**"
 
+  # tombstone(2026-07-14): 退役済みパターン cache-handler-no-result-duck-typing の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: cache-handler-no-result-duck-typing
+    metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
     languages: [python]
     severity: ERROR
     message: >
@@ -849,7 +852,10 @@ rules:
         - /tests/**
         - /packages/**/tests/**
 
+  # tombstone(2026-07-14): 退役済みパターン handler-filter-no-type-hint-fail-open の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: handler-filter-no-type-hint-fail-open
+    metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
     languages: [python]
     severity: ERROR
     message: >
@@ -879,7 +885,10 @@ rules:
       include:
         - /doeff/__init__.py
         - /doeff/types.py
+  # tombstone(2026-07-14): 退役済みパターン no-public-semaphore-lifecycle-hooks の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: no-public-semaphore-lifecycle-hooks
+    metadata:
+      tombstone: "2026-07-14 inventory: 退役済み API/path の回帰墓標"
     languages: [python]
     severity: ERROR
     message: >
@@ -898,7 +907,10 @@ rules:
       include:
         - /doeff/effects/semaphore.py
 
+  # tombstone(2026-07-14): 退役済みパターン no-python-semaphore-handle-class の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: no-python-semaphore-handle-class
+    metadata:
+      tombstone: "2026-07-14 inventory: 退役済み API/path の回帰墓標"
     languages: [python]
     severity: ERROR
     message: >
@@ -911,7 +923,10 @@ rules:
       include:
         - /doeff/effects/semaphore.py
 
+  # tombstone(2026-07-14): 退役済みパターン doeff-pinjected-no-intercept の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: doeff-pinjected-no-intercept
+    metadata:
+      tombstone: "2026-07-14 inventory: 退役済み API/path の回帰墓標"
     languages: [python]
     severity: ERROR
     message: >
@@ -974,7 +989,10 @@ rules:
       category: vm-protocol
       issue: VM-PROTO-006
 
+  # tombstone(2026-07-14): 退役済みパターン no-uv-run-python-execution-context-class の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: no-uv-run-python-execution-context-class
+    metadata:
+      tombstone: "2026-07-14 inventory: 退役済み API/path の回帰墓標"
     languages: [python]
     severity: ERROR
     message: >
@@ -987,7 +1005,10 @@ rules:
       include:
         - "**/doeff/_types_internal.py"
 
+  # tombstone(2026-07-14): 退役済みパターン no-uv-run-python-run-result-class の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: no-uv-run-python-run-result-class
+    metadata:
+      tombstone: "2026-07-14 inventory: 退役済み API/path の回帰墓標"
     languages: [python]
     severity: ERROR
     message: >
@@ -1149,6 +1170,7 @@ rules:
       category: architecture
       rationale: "Cancel state ownership — SPEC-SCHED-001, ISSUE-CORE-502"
 
+  # tombstone(2026-07-14): 退役済みパターン doeff-no-inline-spawn-coercion-wrapper の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: doeff-no-inline-spawn-coercion-wrapper
     pattern: |
       @do
@@ -1168,6 +1190,7 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: 退役済み API/path の回帰墓標"
       category: architecture
       issue: VM-HANDLER-METADATA-001
 
@@ -1196,7 +1219,10 @@ rules:
       include:
         - /packages/doeff-vm/src/pyvm.rs
 
+  # tombstone(2026-07-14): 退役済みパターン no-is-instance-from-in-handlers の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: no-is-instance-from-in-handlers
+    metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
     pattern: is_instance_from($OBJ, $MODULE, $CLASS)
     message: |
       Use obj.is_instance_of::<RustPyClass>() / extract::<PyRef<RustPyClass>>() instead of
@@ -1208,7 +1234,10 @@ rules:
         - "**/packages/doeff-vm/src/handler.rs"
         - "**/packages/doeff-vm/src/scheduler.rs"
 
+  # tombstone(2026-07-14): 退役済みパターン no-state-handler-take-unwrap の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: no-state-handler-take-unwrap
+    metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
     pattern: $X.take().unwrap()
     message: >
       BANNED: StateHandler Modify resume invariants must use explicit expect messages,
@@ -1219,7 +1248,10 @@ rules:
       include:
         - "**/packages/doeff-core-effects/src/handlers/mod.rs"
 
+  # tombstone(2026-07-14): 退役済みパターン no-python-effect-class-shadowing の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: no-python-effect-class-shadowing
+    metadata:
+      tombstone: "2026-07-14 inventory: 退役済み API/path の回帰墓標"
     pattern-either:
       - pattern: |
           class StateGetEffect(EffectBase):
@@ -1332,6 +1364,7 @@ rules:
       issue: VM-DECOMPOSE-002
       principle: SRP, composition-over-inheritance
 
+  # tombstone(2026-07-14): 退役済みパターン vm-decompose-no-use-super-wildcard の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: vm-decompose-no-use-super-wildcard
     pattern: use super::*;
     paths:
@@ -1347,10 +1380,12 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: vm-decomposition
       issue: VM-DECOMPOSE-002
       principle: explicit-dependencies
 
+  # tombstone(2026-07-14): 退役済みパターン vm-decompose-no-pub-fields-on-substructs の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: vm-decompose-no-pub-fields-on-substructs
     patterns:
       - pattern-regex: "\\bpub\\s+[A-Za-z_][A-Za-z0-9_]*\\s*:"
@@ -1368,10 +1403,12 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: vm-decomposition
       issue: VM-DECOMPOSE-002
       principle: ISP, encapsulation
 
+  # tombstone(2026-07-14): 退役済みパターン doeff-no-python-task-id-extraction の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: doeff-no-python-task-id-extraction
     patterns:
       - pattern-inside: |
@@ -1389,6 +1426,7 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: 退役済み API/path の回帰墓標"
       category: architecture
       rationale: "Layer boundary — Python must not inspect Rust handle internals"
 
@@ -1408,6 +1446,7 @@ rules:
       category: architecture
       rationale: "Scheduler state ownership — cancel state lives in Rust"
 
+  # tombstone(2026-07-14): 退役済みパターン scheduler-must-use-transfer-not-resume の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: scheduler-must-use-transfer-not-resume
     patterns:
       - pattern: "DoCtrl::Resume { continuation: $K, value: $V }"
@@ -1427,6 +1466,7 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       spec: SPEC-SCHED-001
       section: "§resume_task, Invariant S1"
 
@@ -1577,6 +1617,7 @@ rules:
       category: architecture
       rationale: "Cleanup must use Python stack unwinding, not the removed Finally DoCtrl."
 
+  # tombstone(2026-07-14): 退役済みパターン doeff-cancel-must-be-effectful の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: doeff-cancel-must-be-effectful
     patterns:
       - pattern-inside: |
@@ -1597,6 +1638,7 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: 退役済み API/path の回帰墓標"
       category: architecture
       rationale: "Cancel must be effectful per SPEC-SCHED-001"
 
@@ -1706,6 +1748,7 @@ rules:
       issue: VM-PROTO-003
       rationale: "No synthetic generator helpers in VM core"
 
+  # tombstone(2026-07-14): 退役済みパターン doeff-vm-proto-003-no-runtime-handler-dunder-probing の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: doeff-vm-proto-003-no-runtime-handler-dunder-probing
     patterns:
       - pattern-either:
@@ -1722,10 +1765,12 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: vm-protocol
       issue: VM-PROTO-003
       rationale: "Eliminate runtime handler metadata probing"
 
+  # tombstone(2026-07-14): 退役済みパターン doeff-traceback-except-must-log の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: doeff-traceback-except-must-log
     patterns:
       - pattern-inside: |
@@ -1782,6 +1827,7 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: traceback-invariant
       issue: VM-FAILFAST-001C
 
@@ -1937,7 +1983,10 @@ rules:
       issue: conductor-fail-fast-swallows
       category: fail-fast
 
+  # tombstone(2026-07-14): 退役済みパターン no-string-match-error-detection の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: no-string-match-error-detection
+    metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
     languages: [python]
     severity: ERROR
     message: >
@@ -1966,9 +2015,6 @@ rules:
 
   - id: doeff-no-handler-import-in-effects
     patterns:
-      - pattern-inside: |
-          # In doeff/effects/ directory
-          ...
       - pattern-either:
           - pattern: from doeff.handlers import $X
           - pattern: from doeff.handlers.$MOD import $X
@@ -1985,6 +2031,7 @@ rules:
       category: architecture
       rationale: "Effects layer must not depend on handlers layer"
 
+  # tombstone(2026-07-14): 退役済みパターン doeff-no-handler-def-in-effects の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: doeff-no-handler-def-in-effects
     patterns:
       - pattern: |
@@ -2003,9 +2050,11 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: architecture
       rationale: "Effects/handlers layer separation"
 
+  # tombstone(2026-07-14): 退役済みパターン doeff-no-handler-def-in-effects-untyped の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: doeff-no-handler-def-in-effects-untyped
     pattern-regex: "(?s)@do\\s*\\ndef\\s+[A-Za-z_][A-Za-z0-9_]*\\(\\s*effect\\s*,\\s*k\\s*\\):"
     paths:
@@ -2017,9 +2066,11 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: architecture
       rationale: "Effects/handlers layer separation"
 
+  # tombstone(2026-07-14): 退役済みパターン doeff-no-runtime-import-in-effects の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: doeff-no-runtime-import-in-effects
     patterns:
       - pattern-either:
@@ -2035,6 +2086,7 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: architecture
 
   - id: doeff-no-handler-modification-in-run
@@ -2055,6 +2107,7 @@ rules:
       category: architecture
       rationale: "Handler immutability invariant — SPEC-EFF-011, ISSUE-CORE-495"
 
+  # tombstone(2026-07-14): 退役済みパターン doeff-no-thread-offload-in-async-run の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: doeff-no-thread-offload-in-async-run
     patterns:
       - pattern: asyncio.to_thread(...)
@@ -2067,6 +2120,7 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: architecture
       rationale: "VM boundary invariant — SPEC-EFF-011, ISSUE-CORE-495"
 
@@ -2452,6 +2506,7 @@ rules:
   # TRACEBACK DEFAULT FORMAT
   # ---------------------------------------------------------------------------
 
+  # tombstone(2026-07-14): 退役済みパターン traceback-must-use-format-default の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: traceback-must-use-format-default
     patterns:
       - pattern-inside: |
@@ -2471,6 +2526,7 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: traceback
       spec: SPEC-TRACE-001
       rationale: "SPEC-TRACE-001 default format requirement"
@@ -2479,6 +2535,7 @@ rules:
   # DOEFF DOEXPR HIERARCHY ENFORCEMENT
   # ---------------------------------------------------------------------------
 
+  # tombstone(2026-07-14): 退役済みパターン doeff-doexpr-root-boundary-python の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: doeff-doexpr-root-boundary-python
     patterns:
       - pattern-inside: |
@@ -2496,6 +2553,7 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: doexpr-hierarchy
       rationale: "run()/async_run() boundary must validate against single DoExpr root"
 
@@ -2592,6 +2650,7 @@ rules:
       issue: ISSUE-CORE-519
       rationale: "WithIntercept is the only supported interception API"
 
+  # tombstone(2026-07-14): 退役済みパターン no-withintercept-python-type-wrapper の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: no-withintercept-python-type-wrapper
     patterns:
       - pattern-inside: |
@@ -2610,13 +2669,14 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: architecture
       rationale: "WithIntercept filtering belongs to Rust VM dispatch"
 
   - id: doeff-doexpr-root-check-to-generator-strict
     patterns:
       - pattern-inside: |
-          fn to_generator_strict($...ARGS) -> $RET {
+          fn to_generator_strict(...) {
               ...
           }
       - pattern-either:
@@ -2675,7 +2735,7 @@ rules:
   - id: doeff-classify-effect-must-lift-to-perform
     patterns:
       - pattern-inside: |
-          fn classify_yielded($...ARGS) -> $RET {
+          fn classify_yielded(...) {
               ...
           }
       - pattern: return Ok(Yielded::Effect($E));
@@ -2691,6 +2751,7 @@ rules:
       category: doexpr-perform
       rationale: "Effect data and dispatch control must be explicitly separated"
 
+  # tombstone(2026-07-14): 退役済みパターン doeff-vm-handle-map-no-anonymous-callmetadata の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: doeff-vm-handle-map-no-anonymous-callmetadata
     patterns:
       - pattern-inside: |
@@ -2709,9 +2770,11 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: vm-protocol
       rationale: "SPEC-VM-PROTOCOL §5.5 and §2 C7 require explicit callback metadata"
 
+  # tombstone(2026-07-14): 退役済みパターン doeff-vm-handle-flat-map-no-anonymous-callmetadata の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: doeff-vm-handle-flat-map-no-anonymous-callmetadata
     patterns:
       - pattern-inside: |
@@ -2730,6 +2793,7 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: vm-protocol
       rationale: "SPEC-VM-PROTOCOL §5.5 and §2 C7 require explicit callback metadata"
 
@@ -2766,7 +2830,7 @@ rules:
     severity: ERROR
 
   - id: vm-no-handler-type-dispatch
-    pattern-regex: 'Handler::Python\\s*\\{'
+    pattern-regex: 'Handler::Python\s*\{'
     message: |
       C9: Handler enum type switching is removed.
       Dispatch must flow through HandlerInvoke trait objects.
@@ -2776,7 +2840,7 @@ rules:
   - id: no-getattr-in-classify-yielded
     patterns:
       - pattern-inside: |
-          fn classify_yielded($...ARGS) -> $RET {
+          fn classify_yielded(...) {
               ...
           }
       - pattern: $OBJ.getattr($ATTR)
@@ -2955,6 +3019,7 @@ rules:
   # SPEC-VM-014 ENFORCEMENT
   # ---------------------------------------------------------------------------
 
+  # tombstone(2026-07-14): 退役済みパターン vm-no-py-import-in-value-traceback の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: vm-no-py-import-in-value-traceback
     pattern-regex: '\.import\("doeff_vm"\)'
     paths:
@@ -2967,6 +3032,7 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: vm-protocol
       spec: SPEC-VM-014
 
@@ -2984,6 +3050,7 @@ rules:
       category: vm-protocol
       spec: SPEC-VM-014
 
+  # tombstone(2026-07-14): 退役済みパターン vm-no-spawn-site-on-py-spawn の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: vm-no-spawn-site-on-py-spawn
     pattern-regex: 'spawn_site.*Option<Py<PyAny>>'
     paths:
@@ -2995,6 +3062,7 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: vm-protocol
       spec: SPEC-VM-014
 
@@ -3126,8 +3194,8 @@ rules:
   - id: doeff-public-api-no-subpackage-imports
     patterns:
       - pattern-either:
-          - pattern-regex: '^from\\s+doeff\\.[A-Za-z0-9_.]+\\s+import\\s+'
-          - pattern-regex: '^import\\s+doeff\\.[A-Za-z0-9_.]+'
+          - pattern-regex: '^from\s+doeff\.[A-Za-z0-9_.]+\s+import\s+'
+          - pattern-regex: '^import\s+doeff\.[A-Za-z0-9_.]+'
     paths:
       include:
         - "**/tests/public_api/**/*.py"
@@ -3144,7 +3212,7 @@ rules:
 
   - id: doeff-public-docs-no-subpackage-imports
     patterns:
-      - pattern-regex: 'from\\s+doeff\\.[A-Za-z0-9_.]+\\s+import\\s+'
+      - pattern-regex: 'from\s+doeff\.[A-Za-z0-9_.]+\s+import\s+'
     paths:
       include:
         - "**/docs/06-io-effects.md"
@@ -3171,6 +3239,7 @@ rules:
   # register, but these rules prevent someone from adding the fields back to
   # the wrong struct.
 
+  # tombstone(2026-07-14): 退役済みパターン vm-scope-no-mode-on-vm-struct の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: vm-scope-no-mode-on-vm-struct
     pattern-regex: 'pub\s+mode\s*:\s*(Mode|Signal)\b'
     paths:
@@ -3184,10 +3253,12 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: vm-g0-no-mode-register-on-vm と完全重複する回帰墓標"
       category: vm-scope-structural
       spec: SPEC-VM-015
       invariant: INV-1
 
+  # tombstone(2026-07-14): 退役済みパターン vm-scope-no-pending-python-on-vm-struct の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: vm-scope-no-pending-python-on-vm-struct
     pattern-regex: 'pub\s+pending_python\s*:\s*Option<PendingPython>'
     paths:
@@ -3200,10 +3271,12 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: vm-scope-structural
       spec: SPEC-VM-015
       invariant: INV-1
 
+  # tombstone(2026-07-14): 退役済みパターン vm-scope-no-pending-error-context-on-vm-struct の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: vm-scope-no-pending-error-context-on-vm-struct
     pattern-regex: 'pub\s+pending_error_context\s*:\s*Option<PyException>'
     paths:
@@ -3216,10 +3289,12 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: vm-scope-structural
       spec: SPEC-VM-015
       invariant: INV-1
 
+  # tombstone(2026-07-14): 退役済みパターン vm-scope-no-eval-depth-on-interceptor-state の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: vm-scope-no-eval-depth-on-interceptor-state
     pattern-regex: 'interceptor_eval_depth\s*:\s*usize'
     paths:
@@ -3232,10 +3307,12 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: vm-scope-structural
       spec: SPEC-VM-015
       invariant: INV-1
 
+  # tombstone(2026-07-14): 退役済みパターン vm-scope-no-skip-stack-on-interceptor-state の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: vm-scope-no-skip-stack-on-interceptor-state
     pattern-regex: 'interceptor_skip_stack\s*:\s*Vec<Marker>'
     paths:
@@ -3248,10 +3325,12 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: vm-scope-structural
       spec: SPEC-VM-015
       invariant: INV-1
 
+  # tombstone(2026-07-14): 退役済みパターン vm-scope-no-saved-mode-on-dispatch-context の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: vm-scope-no-saved-mode-on-dispatch-context
     pattern-regex: 'saved_mode\s*:\s*Mode'
     paths:
@@ -3264,10 +3343,12 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: vm-scope-structural
       spec: SPEC-VM-015
       rejected-approach: save-restore
 
+  # tombstone(2026-07-14): 退役済みパターン vm-scope-no-saved-segment-on-dispatch-context の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: vm-scope-no-saved-segment-on-dispatch-context
     pattern-regex: 'saved_segment\s*:\s*Option<SegmentId>'
     paths:
@@ -3280,6 +3361,7 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: vm-scope-structural
       spec: SPEC-VM-015
       rejected-approach: save-restore
@@ -3288,6 +3370,7 @@ rules:
   # SPEC-VM-017 KLEISLI ENFORCEMENT
   # ---------------------------------------------------------------------------
 
+  # tombstone(2026-07-14): 退役済みパターン kleisli-trait-exists の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: kleisli-trait-exists
     patterns:
       - pattern-regex: 'pub trait Kleisli'
@@ -3297,6 +3380,7 @@ rules:
     languages: [rust]
     severity: INFO
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: vm-architecture
       spec: SPEC-VM-017
       enforcement: existence
@@ -3304,6 +3388,7 @@ rules:
       kleisli.rs must contain 'pub trait Kleisli' (SPEC-VM-017 R1-A).
       This is the IR-level callable: T -> DoExpr[U].
 
+  # tombstone(2026-07-14): 退役済みパターン kleisli-value-variant-exists の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: kleisli-value-variant-exists
     patterns:
       - pattern-regex: 'Kleisli\(crate::kleisli::KleisliRef\)'
@@ -3313,6 +3398,7 @@ rules:
     languages: [rust]
     severity: INFO
     metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
       category: vm-architecture
       spec: SPEC-VM-017
       enforcement: existence
@@ -3388,7 +3474,10 @@ rules:
       CallArg has been removed (SPEC-VM-017 R1-K).
       Apply/Expand args are Vec<DoExpr>. Use DoExpr::Pure { value } for resolved values.
 
+  # tombstone(2026-07-14): 退役済みパターン trace-no-capture-log の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: trace-no-capture-log
+    metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
     pattern: capture_log
     paths:
       include:
@@ -3523,14 +3612,10 @@ rules:
         - "**/packages/doeff-vm-core/src/vm/*.rs"
     patterns:
       - pattern-inside: |
-          fn handle_yield_effect(&mut self, $EFFECT: DispatchEffect) -> StepEvent {
+          fn handle_yield_effect(...) {
               ...
           }
-      - pattern: |
-          match self.start_dispatch($EFFECT) {
-              Ok($EVENT) => $EVENT,
-              Err($ERROR) => StepEvent::Error($ERROR),
-          }
+      - pattern: StepEvent::Error(...)
 
   - id: vm-no-raw-runtime-or-type-throw
     languages: [rust]
@@ -3659,7 +3744,10 @@ rules:
         - "**/tests/**"
     pattern-regex: 'Frame::HandlerDispatch|Frame::DispatchOrigin|(?m)^\s*(HandlerDispatch|DispatchOrigin)\s*\{'
 
+  # tombstone(2026-07-14): 退役済みパターン vm-no-mutating-exception-enrichment-wrapper の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: vm-no-mutating-exception-enrichment-wrapper
+    metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
     languages: [rust]
     severity: ERROR
     message: |
@@ -3698,7 +3786,10 @@ rules:
         - "**/tests/**"
     pattern-regex: '\bActiveChainAssemblyState\b|\bpending_trace_events\b|\bCaptureEvent\b|\btrace_dispatches\b|\bdispatch_order\b|\btransfer_targets\b'
 
+  # tombstone(2026-07-14): 退役済みパターン scheduler-no-global-waiter-retain の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: scheduler-no-global-waiter-retain
+    metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
     languages: [rust]
     severity: ERROR
     message: |
@@ -3709,7 +3800,10 @@ rules:
         - "/packages/doeff-core-effects/src/scheduler/mod.rs"
     pattern-regex: 'self\.waiters\.retain\s*\('
 
+  # tombstone(2026-07-14): 退役済みパターン scheduler-no-global-owner-wait-scan の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: scheduler-no-global-owner-wait-scan
+    metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
     languages: [rust]
     severity: ERROR
     message: |
@@ -3720,7 +3814,10 @@ rules:
         - "/packages/doeff-core-effects/src/scheduler/mod.rs"
     pattern-regex: 'self\.waiters\.values\(\)\.any\s*\('
 
+  # tombstone(2026-07-14): 退役済みパターン scheduler-no-item-rescan-done-check の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: scheduler-no-item-rescan-done-check
+    metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
     languages: [rust]
     severity: ERROR
     message: |
@@ -3731,7 +3828,10 @@ rules:
         - "/packages/doeff-core-effects/src/scheduler/mod.rs"
     pattern-regex: 'items\.iter\(\)\.(all|any)\(\|item\|\s*self\.is_done\(\*item\)\)'
 
+  # tombstone(2026-07-14): 退役済みパターン scheduler-no-external-waiter-iter-scan の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: scheduler-no-external-waiter-iter-scan
+    metadata:
+      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
     languages: [rust]
     severity: ERROR
     message: |
@@ -4073,7 +4173,10 @@ rules:
   # ISSUE-VM-001 / PR G0: VM mutable-state audit
   # ---------------------------------------------------------------------------
 
+  # tombstone(2026-07-14): 退役済みパターン vm-g0-no-mode-register-on-vm の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: vm-g0-no-mode-register-on-vm
+    metadata:
+      tombstone: "2026-07-14 inventory: vm-scope-no-mode-on-vm-struct の重複先となる正規回帰墓標"
     languages: [rust]
     severity: ERROR
     message: |
