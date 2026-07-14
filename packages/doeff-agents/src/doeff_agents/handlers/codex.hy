@@ -17,6 +17,7 @@
   detect-status hash-content is-waiting-for-input])
 (import doeff_agents.shell [wrap-with-shell-exports
                             assert-session-env-is-non-auth-overlay])
+(import doeff_agents.session [deliver-prompt-when-ready])
 (import doeff_agents [tmux])
 
 (import shlex)
@@ -56,8 +57,13 @@
       :literal False)
     ;; The task prompt belongs on the live terminal transport, never in argv
     ;; or stdin. This keeps Codex interactive for validation follow-ups.
-    (when prompt
-      (.send-keys active-backend session-info.pane-id prompt))
+    ;; Delivery is ready-gated: pasting before the composer renders splits
+    ;; the prompt into per-line submits (false Succeeded) — the choke point
+    ;; hard-fails with AgentReadyTimeoutError instead.
+    (deliver-prompt-when-ready active-backend session-info.pane-id
+      (CodexAdapter) prompt
+      :session-name session-name
+      :ready-timeout ready-timeout)
     (setv handle (SessionHandle :session-id session-name))
     (set! sessions (| sessions {session-name
       {"handle" handle

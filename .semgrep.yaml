@@ -148,6 +148,26 @@ rules:
         - /packages/doeff-agents/src/doeff_agents/handlers/codex.hy
         - /tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/handlers/**
 
+  - id: doeff-agents-paste-buffer-must-be-bracketed
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      tmux paste-buffer must pass -p (bracketed paste). Without it the pasted
+      newlines reach the agent TUI as bare Enter presses, and multi-line
+      prompts survive only by the TUI's timing-dependent burst heuristics —
+      on a cold start they split into per-line submits that the agent
+      acknowledges without executing (issue agentd-codex-coldstart-paste-race,
+      2026-07-14, reproduced live against codex 0.144.4).
+    # Anchors on the "-b" buffer flag so bare string mentions of
+    # "paste-buffer" (log assertions, prose) do not trip the rule.
+    pattern-regex: '"paste-buffer"(?![^\)\]\n]*"-p")[^\)\]\n]*"-b"'
+    paths:
+      include:
+        - /packages/doeff-agents/src/**
+        - /packages/doeff-agentd/src/**
+        - /tests/semgrep/fixtures/python/packages/doeff-agents/src/**
+
   - id: doeff-agents-require-real-claude-result-retry-e2e
     languages:
       - generic

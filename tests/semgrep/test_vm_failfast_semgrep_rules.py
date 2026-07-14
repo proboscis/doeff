@@ -194,5 +194,6 @@ def test_ready_gate_semgrep_rules_detect_ungated_prompt_paste() -> None:
         "doeff-agents-built-in-adapters-must-declare-ready-pattern",
         "doeff-agents-prompt-paste-must-be-ready-gated",
         "doeff-agents-hy-prompt-paste-must-be-ready-gated",
+        "doeff-agents-paste-buffer-must-be-bracketed",
     }
     assert all(_has_rule(check_ids, rule_id) for rule_id in expected)
