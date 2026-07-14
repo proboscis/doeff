@@ -23,7 +23,7 @@
   :decision
     [(rule R1 "pytest collection 完了時に、リポジトリ内の実行可能 ADR 候補と実際に収集された item のファイル集合を照合する。")
      (rule R2 "既定モードは warn とし、strict では未収集 ADR を列挙して非ゼロ終了する。明示的な off は局所実行用に残す。")
-     (rule R3 "doeff-adr verify-wiring は strict の collect-only pytest を起動し、CI で一行の配線ゲートとして使えるようにする。")
+     (rule R3 "doeff-adr verify-wiring は strict の collect-only pytest を起動する。外部リポジトリは CI 一行ゲートとして使える。doeff 自身は pytest 正典(ADR-DOE-ENFORCE-001 R1)に従い tests/test_adr_wiring_gate.py で既定ゲートに常時組み込む。")
      (rule R4 "defsemgrep は semgrep executable 不在を skip にせず fail-closed のまま維持する。wiring strict とは別の実行時依存検査として扱う。")]
   :laws
     [(law every-executable-adr-is-collected
@@ -44,4 +44,5 @@
        :good ["parser.addini(\"doeff_adr_wiring\", default=\"warn\")"])]
   :plans ["packages/doeff-adr/tests/test_wiring.py"
           "packages/doeff-adr/README.md"
-          ".github/workflows/python-compatibility.yml"])
+          "tests/test_adr_wiring_gate.py"
+          "docs/doeff-2026-07-14-agent-first-investment-architecture-plan.md"])
