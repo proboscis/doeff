@@ -34,8 +34,6 @@ checks both codex and claude markers), so the session launches as claude
 active marker.
 """
 
-from __future__ import annotations
-
 import json
 import shlex
 import sys

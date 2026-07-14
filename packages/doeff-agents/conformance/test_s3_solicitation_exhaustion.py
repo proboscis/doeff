@@ -17,8 +17,6 @@ disables the judge by default, so `extra_serve_args=["--prompt-judge-cmd",
 ""]` below is redundant but kept explicit for self-documentation.
 """
 
-from __future__ import annotations
-
 import json
 
 from harness import RESULT_SCHEMA, AgentdHarness

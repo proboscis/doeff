@@ -6,8 +6,6 @@ Builds a Program from the RunContext's source form (``hy_source`` /
 This is the default when ``--runner`` is not supplied.
 """
 
-from __future__ import annotations
-
 import json
 import sys
 from typing import Any

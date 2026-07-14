@@ -27,8 +27,6 @@ All three thresholds ride harness.extra_env because they are env-only
 knobs on the daemon process.
 """
 
-from __future__ import annotations
-
 import json
 import time
 

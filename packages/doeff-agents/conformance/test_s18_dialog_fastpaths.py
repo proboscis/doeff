@@ -42,8 +42,6 @@ Dismissal key sequences transcribed from main.rs:3189-3228:
                   launch hanging forever)
 """
 
-from __future__ import annotations
-
 import time
 
 import pytest

@@ -15,8 +15,6 @@
     dir, never the operator's real ~/.claude.
 """
 
-from __future__ import annotations
-
 import subprocess
 import time
 

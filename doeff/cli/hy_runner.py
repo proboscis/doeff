@@ -8,8 +8,6 @@ is prepended automatically so ``do!`` / ``<-`` / ``handle`` /
 ``defhandler`` are available without extra ``require`` lines.
 """
 
-from __future__ import annotations
-
 import sys
 import types
 import uuid

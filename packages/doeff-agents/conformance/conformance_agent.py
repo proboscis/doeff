@@ -29,8 +29,6 @@ reading stdin) — exiting would trip agentd's zombie/idle-shell reaper, which
 is its own scenario (S19), never an accident.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import select
