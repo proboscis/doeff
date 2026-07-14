@@ -46,9 +46,15 @@ from doeff_agents.adapters.base import (
     LaunchParams,
 )
 from doeff_agents.adapters.codex import CodexAdapter
-from doeff_agents.effects import AwaitResultEffect, AwaitStatus, LaunchSession
+from doeff_agents.effects import (
+    AgentReadyTimeoutError as EffectAgentReadyTimeoutError,
+    AwaitResultEffect,
+    AwaitStatus,
+    LaunchSession,
+)
 from doeff_agents.result_validation import validate_result_payload
 from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
+from doeff_agents.session import AgentReadyTimeoutError as SessionAgentReadyTimeoutError
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import InMemoryAgentSessionRepository
 from doeff_agents.tmux import TmuxSessionBackend, _output_has_unsubmitted_paste_input, strip_ansi
@@ -227,6 +233,26 @@ class FakeBackend(SessionBackend):
 
     def list_sessions(self) -> list[str]:
         return sorted(self.sessions)
+
+
+class ScriptedCaptureBackend(FakeBackend):
+    def __init__(self, capture_frames: list[str]) -> None:
+        super().__init__()
+        self.capture_frames = list(capture_frames)
+        self.capture_count = 0
+
+    def capture_pane(
+        self,
+        target: str,
+        lines: int = 100,
+        *,
+        strip_ansi_codes: bool = True,
+    ) -> str:
+        del target, lines, strip_ansi_codes
+        self.capture_count += 1
+        if len(self.capture_frames) > 1:
+            return self.capture_frames.pop(0)
+        return self.capture_frames[0]
 
 
 def _config() -> LaunchConfig:
@@ -466,6 +492,66 @@ def test_tmux_agent_handler_sends_initial_prompt_via_terminal_transport(
     assert "line one" not in sent_command
     assert backend.sent[1] == ("%worker:stdin", prompt, True, True)
     assert not list(tmp_path.glob(".agentd-prompt-*.txt"))
+
+
+def test_tmux_agent_handler_waits_for_codex_ready_before_sending_multiline_prompt(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    login_screen = "Welcome to Codex\n\nPress enter to continue\n"
+    ready_screen = (
+        "OpenAI Codex\n\n"
+        "\u203a Ask Codex to do anything\n"
+        "  gpt-5.5 default \u00b7 /workspace\n"
+    )
+    backend = ScriptedCaptureBackend([login_screen, ready_screen])
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter",
+        lambda _agent_type: FakeCodexAdapter(),
+    )
+    prompt = "一つの依頼です。\n\n```python\nprint('分割しない')\n```"
+
+    handler = TmuxAgentHandler(backend=backend)
+    handler.handle_launch(
+        LaunchEffect(
+            session_name="cold-codex",
+            agent_type=AgentType.CODEX,
+            work_dir=tmp_path,
+            prompt=prompt,
+            ready_timeout=1.0,
+        )
+    )
+
+    assert backend.capture_count == 2
+    assert backend.sent[-1] == ("%cold-codex", prompt, True, True)
+    assert sum(sent_text == prompt for _, sent_text, _, _ in backend.sent) == 1
+
+
+def test_tmux_agent_handler_fails_closed_when_codex_never_becomes_ready(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = ScriptedCaptureBackend(["Welcome to Codex\n\nPress enter to continue\n"])
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter",
+        lambda _agent_type: FakeCodexAdapter(),
+    )
+    prompt = "line one\nline two"
+
+    handler = TmuxAgentHandler(backend=backend)
+    with pytest.raises(EffectAgentReadyTimeoutError, match="did not become ready"):
+        handler.handle_launch(
+            LaunchEffect(
+                session_name="blocked-codex",
+                agent_type=AgentType.CODEX,
+                work_dir=tmp_path,
+                prompt=prompt,
+                ready_timeout=0.01,
+            )
+        )
+
+    assert backend.killed == ["blocked-codex"]
+    assert all(sent_text != prompt for _, sent_text, _, _ in backend.sent)
 
 
 def test_tmux_agent_handler_trusts_codex_workspace(monkeypatch, tmp_path: Path) -> None:
@@ -732,6 +818,27 @@ def test_imperative_session_api_accepts_injected_backend(monkeypatch) -> None:
 
     stop_session(session)
     assert backend.killed == ["worker"]
+
+
+def test_imperative_session_api_fails_closed_when_codex_never_becomes_ready(
+    monkeypatch,
+) -> None:
+    backend = ScriptedCaptureBackend(["Welcome to Codex\n\nPress enter to continue\n"])
+    monkeypatch.setattr(
+        "doeff_agents.session.get_adapter",
+        lambda _agent_type: FakeCodexAdapter(),
+    )
+    config = LaunchConfig(
+        agent_type=AgentType.CODEX,
+        work_dir=Path.cwd(),
+        prompt="line one\nline two",
+    )
+
+    with pytest.raises(SessionAgentReadyTimeoutError, match="did not become ready"):
+        launch_session("imperative-codex", config, ready_timeout=0.01, backend=backend)
+
+    assert backend.killed == ["imperative-codex"]
+    assert all(sent_text != config.prompt for _, sent_text, _, _ in backend.sent)
 
 
 def test_imperative_session_api_rejects_anthropic_api_key_session_env(monkeypatch) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -78,6 +79,28 @@ def test_launch_command_quotes_mcp_server_config() -> None:
 
 def test_codex_adapter_uses_tmux_prompt_injection() -> None:
     assert CodexAdapter().injection_method == InjectionMethod.TMUX
+
+
+def test_codex_ready_pattern_matches_input_prompt_but_not_startup_dialogs() -> None:
+    pattern = CodexAdapter().ready_pattern
+    login_screen = "Welcome to Codex\n\nPress enter to continue\n"
+    update_dialog = (
+        "Update available!\n"
+        "\u203a 1. Update now (runs `npm install -g @openai/codex`)\n"
+        "  2. Skip\n"
+        "  3. Skip until next version\n"
+        "Press enter to continue\n"
+    )
+    ready_screen = (
+        "OpenAI Codex\n\n"
+        "\u203a Ask Codex to do anything\n"
+        "  gpt-5.5 default \u00b7 /workspace\n"
+    )
+
+    assert pattern is not None
+    assert re.search(pattern, login_screen) is None
+    assert re.search(pattern, update_dialog) is None
+    assert re.search(pattern, ready_screen) is not None
 
 
 def test_trust_workspace_persists_project_trust(tmp_path: Path) -> None:

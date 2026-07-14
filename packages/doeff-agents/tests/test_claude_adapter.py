@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -14,6 +15,23 @@ from doeff_agents.adapters.claude import ClaudeAdapter
 
 def test_claude_adapter_uses_tmux_prompt_injection() -> None:
     assert ClaudeAdapter().injection_method == InjectionMethod.TMUX
+
+
+def test_claude_ready_pattern_matches_input_prompt_but_not_startup_dialogs() -> None:
+    pattern = ClaudeAdapter().ready_pattern
+    login_screen = "Select login method\n\nPress Enter to continue\n"
+    trust_dialog = (
+        "Is this a project you created or one you trust?\n\n"
+        " \u276f 1. Yes, I trust this folder\n"
+        "   2. No, exit\n\n"
+        "Enter to confirm \u00b7 Esc to cancel\n"
+    )
+
+    assert pattern is not None
+    assert re.search(pattern, login_screen) is None
+    assert re.search(pattern, trust_dialog) is None
+    assert re.search(pattern, "Claude Code\n\n\u276f\u00a0\n") is not None
+    assert re.search(pattern, "bypass permissions on (shift+tab to cycle)\ninput:\n") is not None
 
 
 def test_launch_command_includes_model_when_provided() -> None:
