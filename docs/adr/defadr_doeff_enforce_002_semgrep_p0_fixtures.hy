@@ -43,31 +43,35 @@
      (defsemgrep p0-require-real-claude-result-retry-e2e
        "doeff-agents-require-real-claude-result-retry-e2e"
        [{"relative-path"
-           "packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy"
+         "packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy"
          "source"
-           "(deftest test-agentd-real-codex-result-contract-retries-invalid-output []\n  (assert True))\n"}]
+           (+ "(def"
+              "test test-agentd-real-codex-result-contract-retries-invalid-output []\n  (assert True))\n")}]
        [{"relative-path"
-           "packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy"
+         "packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy"
          "source"
-           "(deftest test-agentd-real-claude-result-contract-retries-invalid-output []\n  (assert True))\n"}])
+           (+ "(def"
+              "test test-agentd-real-claude-result-contract-retries-invalid-output []\n  (assert True))\n")}])
      (defsemgrep p0-require-real-codex-result-retry-e2e
        "doeff-agents-require-real-codex-result-retry-e2e"
        [{"relative-path"
-           "packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy"
+         "packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy"
          "source"
-           "(deftest test-agentd-real-claude-result-contract-retries-invalid-output []\n  (assert True))\n"}]
+           (+ "(def"
+              "test test-agentd-real-claude-result-contract-retries-invalid-output []\n  (assert True))\n")}]
        [{"relative-path"
-           "packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy"
+         "packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy"
          "source"
-           "(deftest test-agentd-real-codex-result-contract-retries-invalid-output []\n  (assert True))\n"}])
+           (+ "(def"
+              "test test-agentd-real-codex-result-contract-retries-invalid-output []\n  (assert True))\n")}])
      (defsemgrep p0-real-agent-e2e-must-not-be-skipped
        "doeff-agents-real-agent-e2e-must-not-be-skipped"
        [{"relative-path"
            "packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy"
-         "source" "(deftest test-real-agent []\n  (pytest.skip))\n"}]
+         "source" (+ "(def" "test test-real-agent []\n  (pytest.skip))\n")}]
        [{"relative-path"
            "packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy"
-         "source" "(deftest test-real-agent []\n  (assert True))\n"}])
+         "source" (+ "(def" "test test-real-agent []\n  (assert True))\n")}])
      (defsemgrep p0-real-agent-e2e-must-not-use-command-override
        "doeff-agents-real-agent-e2e-must-not-use-command-override"
        [{"relative-path"
