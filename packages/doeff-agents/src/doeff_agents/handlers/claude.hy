@@ -25,6 +25,7 @@
   detect-status hash-content is-waiting-for-input])
 (import doeff_agents.shell [wrap-with-shell-exports
                             assert-session-env-is-non-auth-overlay])
+(import doeff_agents.session [deliver-prompt-when-ready])
 (import doeff_agents [tmux])
 
 (import json)
@@ -150,9 +151,14 @@
       :literal False)
     ;; The task prompt must be typed into the live terminal after Claude
     ;; starts. Never pass it as argv/stdin; that enters one-shot SDK-style
-    ;; modes and breaks validation follow-ups.
-    (when prompt
-      (.send-keys active-backend session-info.pane-id prompt))
+    ;; modes and breaks validation follow-ups. Delivery is ready-gated:
+    ;; pasting before the composer renders splits the prompt into per-line
+    ;; submits (false Succeeded) — the choke point hard-fails with
+    ;; AgentReadyTimeoutError instead.
+    (deliver-prompt-when-ready active-backend session-info.pane-id
+      (ClaudeAdapter) prompt
+      :session-name session-name
+      :ready-timeout ready-timeout)
     ;; 5. Store + resume
     (setv handle (SessionHandle :session-id session-name))
     (set! sessions (| sessions {session-name
