@@ -40,7 +40,7 @@
 | F-5 | deftest は最大 Python 消費者(mediagen)で使用 0 / 260。**:env 経路は doeff 側では機能する**と実証済み(HY-002 roundtrip green)— 残ギャップは消費側配線と語彙拡張(D2) | mediagen conftest / docs/adr/conftest.py |
 | Gap-1 | ~~docs/adr に conftest.py が無い~~ **解消済み(Stage 0)**: `docs/adr/conftest.py` を新設(:env を reader で反映・エラー再送出。ADR-DOE-HY-002 R3 の参照実装) | 2026-07-14 実装 |
 | Gap-2 | T-A1/B3 は green、root testpaths の flip 済みで ADR 検査と wiring 自己検査が既定ゲートに常駐。残る designed-red は DOMAIN-001 の xfail(strict) 相当 1 件のみ(E1 未実装中は xfail、defdomain 実装で緑化したら fail して記帳を強制) | `uv run pytest -q` 2026-07-14 / tests/test_adr_wiring_gate.py |
-| Gap-3 | ~~CORE-002 enforcement blocked~~ **解消(T-C1、2026-07-14)**: 現行 main に per-effect 捕捉は存在しないと確定。回帰ガード deftest green。下流 TRD-002 は旧版への計測 — pin 更新後の再検証を下流へ差し戻し(issue に追記済み) | C1 spike / CORE-002 enforcement |
+| Gap-3 | ~~CORE-002 enforcement blocked~~ **解消(T-C1、2026-07-14)**: 現行 main に per-effect 捕捉は存在しないと確定。回帰ガード deftest green。下流 TRD-002 は 2026-07-14 の現行 pin 再計測で旧疑惑 5 系統がすべて 0 calls となり、旧版限定の問題と確認して resolved 化済み(ema PR #612) | C1 spike / CORE-002 enforcement / ema PR #612 |
 | Gap-4 | `doeff-main-with-handler-stack`(489MB 姉妹 checkout)は 2026-07-11 に main へ完全マージ済みの残骸と判明 — 計画対象外、削除は maintainer 判断 | git merge-base 検証 2026-07-14 |
 
 ## 依存関係(ASCII)
@@ -55,7 +55,7 @@
       ▼              ▼                  ▼               ▼
 [A: bind guard]  [C: trace(再スコープ)] [D: deftest 契約] [E: defdomain/SEDA/適合]
   A1 ✅ 実装済み   C1 ✅ 税は不存在      D1 ✅ 大半完了     E1 defdomain(設計=frontier)
-  A2 下流洗い出し  C2 ✅ 行解決遅延化    D2 シム語彙吸収    E2 SEDA CLI/MCP
+  A2 ✅ 主要部完了  C2 ✅ 行解決遅延化    D2 シム語彙吸収    E2 SEDA CLI/MCP
   (A3 裁定済み)   C3 裁定(優先度低)    D3 mediagen 移行   E3 適合検査
                                         (下流)            (B 完了が前提: R4)
       │
@@ -67,7 +67,7 @@
 
 1. `uv run pytest`(既定 testpaths)が docs/adr の全 defadr enforcement を収集・実行する(ENFORCE-001 law)。
 2. 本計画で追加した red enforcement 4 本が green(HY-001 guard / ENFORCE-001 testpaths+oracle / DOMAIN-001 defdomain)。
-3. ~~ADR-DOE-CORE-002 に実測に基づく enforcement を追加~~ **達成(2026-07-14)**: 回帰ガード green、T-C2 は PR #520 で完了。残: 下流 TRD-002 の再検証。
+3. ~~ADR-DOE-CORE-002 に実測に基づく enforcement を追加~~ **達成(2026-07-14)**: 回帰ガード green、T-C2 は PR #520 で完了。下流 TRD-002 も現行 pin の再計測で旧版限定と確認し、ema PR #612 で resolved 化済み。
 4. ADR-DOE-HY-002 の :env roundtrip が green、かつ mediagen の run_test.py が deftest 語彙で置換可能なことを下流で実証。
 5. 全 5 ADR の :status が "accepted" に昇格(enforcement green が条件)。
 6. semgrep 229 ルール+VM oracle が「バイナリ/feature 不在 = hard fail」で既定ゲートに常駐。
@@ -79,11 +79,11 @@
 | T-B1 | ENFORCE-001 R2 | testpaths に docs/adr 追加 + defadr 収集自己検査を doeff-adr に実装 | test-…-docs-adr-in-default-testpaths が red | root testpaths の flip 実施。`pytest_collection_finish` で全 defadr 候補と session.items を照合する自己検査(既定 warn / strict で非ゼロ終了)と `doeff-adr verify-wiring` CLI を実装し、ADR-DOE-ADR-001 に記録。DOMAIN-001 は xfail(strict) 相当で既定ゲートを green 維持 | **完了(2026-07-14 PR #521)** |
 | T-B2 | ENFORCE-001 R3 | .semgrep.yaml を既定 pytest ゲートで実行 | 手動 make のみ・skip 可能 | tests/test_semgrep_gate.py が 229 ルールを fail-closed で実行。PR #523 で違反 46→0、docs/adr/semgrep-baseline.json を baseline 0 に更新 | ゲート稼働 + 違反解消済み(PR #523、baseline 0)。残: 個別ルールの defsemgrep fixture 化、semgrep の dev 依存化 |
 | T-B3 | ENFORCE-001 R4 | dev ビルド invariant-checks 常時有効 + oracle の pytest 起動 | test-…-vm-oracle-wired が red | **完了(2026-07-14)**: doeff-vm に feature 転送、make sync に --features、PyO3 で invariant_checks_enabled() 公開(doeff_vm/__init__.py 再輸出込み)、tests/test_vm_invariant_checks_enabled.py が hard-fail 常駐(実測 True)。oracle は全 VM 実行で常時演習される。make test-vm-invariants 追加 | **完了** |
-| T-B4 | ENFORCE-001 R5 | enforcement 台帳 ratchet メタテスト | 台帳の黙減が検出されない | **完了(2026-07-14)**: docs/adr/enforcement-ledger.json(defadr 15 / semgrep 229 / deftest 8 / defsemgrep 19 / law 49)+ tests/test_enforcement_ledger.py 等値 ratchet green | **完了** |
-| T-A1 | HY-001 R1-R4 | statement 位置 runtime guard 実装(修正プロンプト形式メッセージ) | test-…-bare-statement-program-raises が red | **完了(2026-07-14)**: macros.hy に _guard-statement-value / _wrap-statement-guard を実装、defk(_build-fn-with-contracts)/do!/defp(_build-defp)/deftest の4 emit サイトに適用。HY-001 green、既定スイート 1094 passed 無回帰 | **完了** |
-| T-A2 | HY-001 R5 | 下流(ema/ACP/mediagen/reactor 系)で guard 有効化 → 休眠 discard 全数洗い出し・修正 | 休眠 bare form 数 未知 | 各リポジトリのスイート green + 洗い出し報告。**⚠️ Hy バイトコード罠**: マクロ変更はソース mtime に映らないため、掃引は必ず `PYTHONPYCACHEPREFIX=<fresh>` か touch で全再コンパイルして走らせること(doeff 自身の検証でこの罠を実踏) | 未着手(codex、リポジトリ毎) |
+| T-B4 | ENFORCE-001 R5 | enforcement 台帳 ratchet メタテスト | 台帳の黙減が検出されない | **完了(2026-07-14)**: docs/adr/enforcement-ledger.json(defadr 15 / semgrep 229 / deftest 9 / defsemgrep 19 / law 49)+ tests/test_enforcement_ledger.py 等値 ratchet green | **完了** |
+| T-A1 | HY-001 R1-R4 | statement 位置 runtime guard 実装(修正プロンプト形式メッセージ) | test-…-bare-statement-program-raises が red | **完了(2026-07-14)**: macros.hy に _guard-statement-value / _wrap-statement-guard を実装、defk(_build-fn-with-contracts)/do!/defp(_build-defp)/deftest の4 emit サイトに適用。HY-001 green、既定スイート 1094 passed 無回帰。**同日後半**: 下流洗い出しで class-level defk の guard ヘルパー解決欠陥を発見し、PR #525 で生成関数の `__wrapped__` チェーンを辿って module `__globals__` へ `setdefault` 注入する根本修正を実施。ADR-DOE-HY-001 に class-level probe を追加 | **完了** |
+| T-A2 | HY-001 R5 | 下流(ema/hypha/ACP/mediagen)で guard 有効化 → 休眠 discard 全数洗い出し・修正 | 休眠 bare form 数 未知 | 各リポジトリのスイート green + 洗い出し報告。**⚠️ Hy バイトコード罠**: マクロ変更はソース mtime に映らないため、掃引は必ず `PYTHONPYCACHEPREFIX=<fresh>` か touch で全再コンパイルして走らせること(doeff 自身の検証でこの罠を実踏) | **主要部完了(2026-07-14 ema PR #613 / hypha PR #5)**。発火 0 件 = 休眠 discard 不在の証明。残: mediagen / ACP(小、ACP は ADR のみ)。reactor / proboscis-reactor は deprecated と裁定され GitHub アーカイブ済みのため対象外 |
 | T-A4 | HY-001 付随 | CPS の鋭い縁(ネスト try 内 `<-`、closure 内 bind)の解消 or 明示エラー化 | ACP ADR0056 facts の回避イディオム | マクロ改善 or 展開時エラー + テスト | 未着手 |
-| T-C1 | CORE-002 R3 | profiling spike: 現行 main の捕捉サイト・コスト内訳の確定、ADR facts 更新 | Gap-3(サイト未特定) | **完了(2026-07-14)**: 現行 main に per-effect 捕捉は存在しない(opt-in effect + エラー経路のみ、linecache は描画時限定。100k Ask 実測で linecache/stack-walk/整形 = 0 呼び出し)。ADR facts 更新済み + 回帰ガード deftest green。**下流 3.7x は旧版への計測 — pin 更新後の再検証を下流 issue に**。副産物: @do の generator 再構築グルーが Python 側時間の ~39%(別 issue 種、本 ADR 対象外) | **完了** |
+| T-C1 | CORE-002 R3 | profiling spike: 現行 main の捕捉サイト・コスト内訳の確定、ADR facts 更新 | Gap-3(サイト未特定) | **完了(2026-07-14)**: 現行 main に per-effect 捕捉は存在しない(opt-in effect + エラー経路のみ、linecache は描画時限定。100k Ask 実測で linecache/stack-walk/整形 = 0 呼び出し)。ADR facts 更新済み + 回帰ガード deftest green。下流 TRD-002 は現行 pin の再計測で旧疑惑 5 系統がすべて 0 calls となり、旧版限定として resolved 化済み(ema PR #612)。副産物: @do の generator 再構築グルーが Python 側時間の ~39%(別 issue 種、本 ADR 対象外) | **完了** |
 | T-C2 | CORE-002 R2(再スコープ) | run.py の traceback 行テキスト解決を `StackSummary.extract(walk_tb(tb), lookup_lines=False)` で遅延化 | 例外1回につき linecache 先読み | `extract_tb` に存在しない lookup_line 引数を使わず等価代替で実装 + 既存テスト green | **完了(2026-07-14 PR #520)** |
 | T-C3 | CORE-002 R3(再スコープ) | GetTraceback/GetExecutionContext の VM 組み込み vs observability handler 化 — perf 根拠は消滅、可観測性設計論のみで裁定 | — | frontier+人間の裁定 | 裁定待ち(優先度低下) |
 | T-D1 | HY-002 R2/R3 | deftest params 忠実受け渡し + docs/adr conftest fixture(:env 反映の参照実装) | — | :env roundtrip **green 済み(Stage 0 実測)**。残作業 = fixture 契約の文書化 + 未対応 params の hard fail | 大半完了 |
@@ -97,7 +97,7 @@
 
 - **Stage 0(完了 / 本セッション)**: 価値評価・理論文書(22 番)・本計画・5 defadr(red enforcement 4 本 + blocked 1 件)作成。A3/B3 裁定記録。
 - **Stage 1(着地済み)**: T-B1/T-B4/T-C1 完了、T-D1 大半完了、T-B2 はゲート稼働 + 違反解消済み。残: T-B2 の defsemgrep fixture 化・semgrep の dev 依存化。
-- **Stage 2**: T-A1 完了。残: T-A2(下流展開、リポジトリ毎に codex)。
+- **Stage 2**: T-A1 完了。T-A2 は ema / hypha の主要部完了。残: mediagen / ACP の小規模 sweep。
 - **Stage 3**: T-C2 完了。残: T-D2 → T-D3(下流 PR)。
 - **Stage 4(設計セッション)**: T-E1 defdomain 設計 + T-C3 裁定を同一 frontier セッションで実施 → T-E2/T-E3 実装。
 - **Stage 5(本計画外・次期計画)**: class 2 新プリミティブ(rate-limit token-bucket scheduler → batching/dedup/hedging)。前提 = 本計画の Gate 1-6。
@@ -143,7 +143,7 @@
   no-sleep-in-tests 2 / silent-except 2)— baseline 等値 ratchet で封じ込め、解消は codex バッチへ。
 - **T-C1 完了・C トラック再スコープ**: 現行 main にトレース税は存在しない(捕捉は opt-in effect +
   エラー経路のみ)。CORE-002 は「修正」から「回帰ガード」へ書き換え済み、ガード green。
-  下流の 3.7x issue は旧版への計測 — pin 更新後の再検証を下流に差し戻す。
+  下流 TRD-002 も現行 pin の再計測で旧版限定と確認し、ema PR #612 で resolved 化済み。
 - **docs/adr 全体**: 38 green + 意図した red 2(ENFORCE-001 testpaths = flip 保留、DOMAIN-001 defdomain = E1 待ち)。
 
 新規・変更ファイル: packages/doeff-hy/src/doeff_hy/macros.hy(guard)、packages/doeff-vm/Cargo.toml・
@@ -166,16 +166,39 @@ docs/adr/enforcement-ledger.json、docs/adr/semgrep-baseline.json、docs/adr/con
 - **PR #523 merged / T-B2 違反解消**: semgrep 違反 46→0、baseline 0。datetime.now 4件を GetTime
   効果へ、sleep 2件を決定的同期へ置換し、no-future-annotations 24件、公開 API の Any 10件、
   traceback の silent except を解消。
-- **現 main の既定 suite**: `uv run pytest -q` は 1149 passed / 86 skipped / 1 xfailed /
-  failed 0。xfail は E1 待ちを表明する DOMAIN-001 のみ。
+- **現 main の既定 suite**: `uv run pytest -q` は 1150 passed / 1 xfailed。xfail は E1 待ちを
+  表明する DOMAIN-001 のみ。
 - **最終記帳値**: enforcement 台帳は defadr_files 16 / adr_defsemgrep_enforcements 20 /
   adr_laws 51、semgrep baseline は 0。
+
+### 追記2(同日夜: 下流展開一巡)
+
+- **T-A2 主要部完了**: proboscis-ema は PR #613 で doeff を 54417d7c に pin し、fresh
+  バイトコードで root suite 843 passed。休眠 discard の発火は 0 件で、SlogEffect wire-type 分離に
+  伴う test-only handler 2 件を修正した。hypha は PR #5 で editable path 依存を git rev pin 化して
+  guard を点検し、発火 0 件を確認。editable が隠していた公開 API ズレ 4 点
+  (WithHandler→with_handlers、slog の Listen 化、scheduler 明示、SessionHandle opaque 化追随)も
+  修正した。reactor / proboscis-reactor は deprecated と裁定され GitHub アーカイブ済みのため
+  sweep 対象外。残る mediagen / ACP は小規模で、ACP は Haskell アプリ、`.hy` は executable ADR
+  のみ。
+- **T-A1 class-level defk 根本修正**: 下流洗い出しで、defclass 内 defk の guard ヘルパー import が
+  class スコープに落ち、メソッド実行時に NameError になる欠陥を発見。doeff PR #525(main =
+  fd849ca0)で生成関数の `__wrapped__` チェーンを辿り、module `__globals__` へ `setdefault` 注入する
+  ゼロランタイムコストの修正を実施した。旧 defp 展開の return-color ヘルパーも同じ機構へ統合し、
+  ADR-DOE-HY-001 に class-level probe deftest を追加(台帳 deftest 8→9)。既定 suite は 1150 passed /
+  1 xfailed。
+- **ema の応急処置除去**: PR #614 で doeff pin を fd849ca0 へ更新し、応急 guard-helper import を
+  7 ファイルから除去。suite 843 passed を維持した。
+- **ISSUE-TRD-002 解消**: ema PR #612 の現行 pin 再計測で、旧疑惑 5 系統
+  (capture_creation_context / stack walk / linecache.getline / sys._getframe / traceback extract)が
+  すべて 0 calls と確認し、issue を「現行 doeff では 3.7倍減速は旧版限定」に改稿して resolved 化。
+  残る主成分は Rust VM dispatch と `@do` generator グルーで、C1 spike と整合する。`@do` グルー
+  ~39% は別 issue 種という記述は引き続き有効。
 
 ## Immediate next action(/goal 実行者へ)
 
 1. frontier+人間の設計セッションで T-E1 defdomain 設計、T-C3 裁定、T-A4、T-D2 を扱う。
-2. T-A2 の下流 sweep を ema / ACP / mediagen / reactor 系で実施する(リポジトリ毎に codex)。
-3. 下流の doeff pin を更新し、ema ISSUE-TRD-002 を再計測する。
-4. T-B2 の残作業として、個別ルールの defsemgrep fixture 化と semgrep の dev 依存化を行う。
-5. T-D2 の設計後に T-D3(mediagen のパイロット deftest 移行)を実施する。
-6. T-E1 の設計後に T-E2(SEDA CLI/MCP)と T-E3(適合検査 3 種)を実装する。
+2. T-A2 の残りとして mediagen / ACP の小規模 sweep を実施する。
+3. T-B2 の残作業として、個別ルールの defsemgrep fixture 化と semgrep の dev 依存化を行う。
+4. T-D2 の設計後に T-D3(mediagen のパイロット deftest 移行)を実施する。
+5. T-E1 の設計後に T-E2(SEDA CLI/MCP)と T-E3(適合検査 3 種)を実装する。
