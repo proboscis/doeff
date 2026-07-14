@@ -17,8 +17,6 @@ The harness serves with `--max-running 4`, so two concurrent sessions
 never trip the admission cap.
 """
 
-from __future__ import annotations
-
 import json
 
 from harness import RESULT_SCHEMA, AgentdHarness

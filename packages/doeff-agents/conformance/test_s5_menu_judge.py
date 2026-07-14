@@ -12,8 +12,6 @@ verdict table travels as env-var prefixes inside the judge command itself —
 no harness change needed.
 """
 
-from __future__ import annotations
-
 import json
 import shlex
 import sys
