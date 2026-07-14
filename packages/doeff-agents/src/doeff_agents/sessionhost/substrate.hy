@@ -209,7 +209,9 @@
                             :input message :capture-output True :text True))
   (when (!= res.returncode 0)
     (raise (RuntimeError "tmux load-buffer failed")))
-  (setv paste (run-tmux tmux-bin ["paste-buffer" "-b" buffer-name "-t" pane-id]))
+  ;; -p = bracketed paste — 生の改行は Enter として届き、TUI のバースト
+  ;; 検出頼みの行分割 submit になる(agentd-codex-coldstart-paste-race)。
+  (setv paste (run-tmux tmux-bin ["paste-buffer" "-p" "-b" buffer-name "-t" pane-id]))
   (run-tmux tmux-bin ["delete-buffer" "-b" buffer-name])
   (when (!= paste.returncode 0)
     (raise (RuntimeError "tmux paste-buffer failed")))

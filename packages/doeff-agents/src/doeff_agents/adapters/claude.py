@@ -9,6 +9,16 @@ from .base import AgentType, InjectionMethod, LaunchParams
 
 logger = logging.getLogger("doeff_agents.claude")
 
+# Readiness = the permission-mode footer is on screen. The adapter always
+# launches with --ax-screen-reader and a non-default permission mode, so the
+# ready REPL prints "<mode> on (shift+tab to cycle)" right above the input
+# prompt (verbatim 2.1.209 capture: tests/data/ready_screens/). The classic
+# U+276F composer marker NEVER renders in screen-reader mode, and dialog
+# screens (trust y/n, bypass accept, theme) do not contain this footer.
+# Do not key on the screen-reader banner: its wording is version-dependent
+# (see _screen_reader_trust_prompt_visible in session.py).
+CLAUDE_READY_PATTERN = r"shift\+tab to cycle"
+
 
 class ClaudeAdapter:
     """Adapter for Claude Code CLI."""
@@ -117,7 +127,7 @@ class ClaudeAdapter:
 
     @property
     def ready_pattern(self) -> str | None:
-        return None
+        return CLAUDE_READY_PATTERN
 
     @property
     def trust_dialog_pattern(self) -> str | None:
