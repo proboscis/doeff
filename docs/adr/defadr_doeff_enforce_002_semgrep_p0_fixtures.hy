@@ -40,6 +40,8 @@
          "source" "command = 'claude --print'\n"}]
        [{"relative-path" "packages/doeff-agents/src/doeff_agents/adapters/claude.py"
          "source" "command = 'claude'\n"}])
+     ;; enforcement-ledger は ADR 本文中の deftest 開始 token を raw count する。
+     ;; fixture 内の Hy source は実 enforcement ではないため token を分割する。
      (defsemgrep p0-require-real-claude-result-retry-e2e
        "doeff-agents-require-real-claude-result-retry-e2e"
        [{"relative-path"
