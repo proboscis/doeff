@@ -34,5 +34,13 @@ fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
         (c.live_segments, c.live_continuations, c.live_ir_streams)
     }
 
+    /// True when the VM was compiled with doeff-vm-core's `invariant-checks`
+    /// feature (the per-step runtime conformance oracle). Dev builds must
+    /// enable it (ADR-DOE-ENFORCE-001 R4); release wheels ship without it.
+    #[pyfn(m)]
+    fn invariant_checks_enabled() -> bool {
+        cfg!(feature = "invariant-checks")
+    }
+
     Ok(())
 }
