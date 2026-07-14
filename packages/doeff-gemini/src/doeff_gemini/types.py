@@ -1,8 +1,5 @@
 """Shared type definitions for the Gemini integration."""
 
-from __future__ import annotations
-
-
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -142,7 +139,7 @@ class GeminiCallResult:
 
     model_name: str
     payload: dict[str, Any]
-    result: Ok[Any] | Err
+    result: "Ok[Any] | Err"
 
 
 @dataclass(frozen=True)

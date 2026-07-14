@@ -24,8 +24,6 @@ Same stall script as S6 (see test_s6_stall_judge.py for the hazard 3/4
 choreography).
 """
 
-from __future__ import annotations
-
 import json
 import time
 

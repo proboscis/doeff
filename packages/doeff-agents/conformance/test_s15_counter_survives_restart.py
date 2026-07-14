@@ -18,8 +18,6 @@ into `AgentdHarness.restart()` itself (retry past LEASE_TTL_SECONDS; see
 test_s10_payload_durability.py and README hazard 5).
 """
 
-from __future__ import annotations
-
 import time
 
 from harness import RESULT_SCHEMA, AgentdHarness

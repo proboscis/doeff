@@ -18,8 +18,6 @@ the glyph appears) returns promptly — this doubles as the M1 smoke assert
 that the PATH shim really shadowed `claude`.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import time

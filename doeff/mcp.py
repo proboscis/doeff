@@ -30,8 +30,6 @@ Usage from Python:
     )
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -83,7 +81,7 @@ class McpToolDef:
     name: str
     description: str
     params: tuple[McpParamSchema, ...]
-    handler: Callable[..., Expand]
+    handler: Callable[..., "Expand"]
 
     def input_schema(self) -> dict[str, Any]:
         """Generate the ``inputSchema`` object for the MCP ``tools/list`` response."""
