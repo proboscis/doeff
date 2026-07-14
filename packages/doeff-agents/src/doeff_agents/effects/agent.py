@@ -334,7 +334,8 @@ class LaunchEffect(AgentEffectBase):
     effort: str | None = None
     bare: bool = False
     lifecycle: AgentSessionLifecycle = AgentSessionLifecycle.RUN_TO_COMPLETION
-    ready_timeout: float = 30.0
+    # Cold-start budget: matches the doeff-agentd oracle's 120s REPL-idle wait.
+    ready_timeout: float = 120.0
     session_env: dict[str, str] | None = None
 
 
@@ -357,7 +358,8 @@ class ClaudeLaunchEffect(AgentEffectBase):
     effort: str | None = None
     bare: bool = False
     lifecycle: AgentSessionLifecycle = AgentSessionLifecycle.RUN_TO_COMPLETION
-    ready_timeout: float = 30.0
+    # Cold-start budget: matches the doeff-agentd oracle's 120s REPL-idle wait.
+    ready_timeout: float = 120.0
     session_env: dict[str, str] | None = None
 
 
@@ -580,7 +582,7 @@ def Launch(  # noqa: N802
     effort: str | None = None,
     bare: bool = False,
     lifecycle: AgentSessionLifecycle = AgentSessionLifecycle.RUN_TO_COMPLETION,
-    ready_timeout: float = 30.0,
+    ready_timeout: float = 120.0,
     session_env: dict[str, str] | None = None,
 ) -> LaunchEffect:
     """Create a Launch effect with flat fields."""
