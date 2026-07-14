@@ -51,7 +51,7 @@ htmlcov/
 .DS_Store
 
 # UV
-uv.lock
+!uv.lock
 .venv/
 
 # Ruff

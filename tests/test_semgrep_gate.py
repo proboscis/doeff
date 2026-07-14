@@ -4,9 +4,9 @@
 起動する集約ゲート。Makefile 版との違い:
 1. fail-closed — semgrep バイナリ不在は skip ではなく hard fail(偽緑の禁止 — ACP で
    「初回実行時に 16 検査が即 red(バイナリ不在)」が起きた失敗様式の再発防止)。
-2. baseline 等値 ratchet — 2026-07-14 の初回実行で既存違反 46 件が見つかったため
-   (docs/adr/semgrep-baseline.json に内訳)、違反数が baseline より「増えたら fail
-   (新規違反)・減ったら fail(baseline を下げる記帳を強制)」。目標は 0。
+2. baseline 等値 ratchet — 違反数が baseline より「増えたら fail(新規違反)・減ったら
+   fail(baseline を下げる記帳を強制)」。2026-07-14 に既存違反を解消し、現在の
+   docs/adr/semgrep-baseline.json は 0 を維持する。
 
 個別ルールの hit/clean fixture 化(defsemgrep installed-rule 形式)と既存違反の解消
 バッチは T-B2 の残作業(codex 委譲)— 本ゲートはその間も 229 ルールが実際に走り、
@@ -17,11 +17,39 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from typing import cast
 
 import pytest
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = ROOT / "docs" / "adr" / "semgrep-baseline.json"
+
+
+def test_semgrep_is_declared_as_bounded_dev_dependency() -> None:
+    config: dict[str, object] = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    dependency_groups: dict[str, list[str]] = cast(
+        dict[str, list[str]], config["dependency-groups"]
+    )
+
+    assert "semgrep>=1.161.0,<2" in dependency_groups["dev"]
+
+
+def test_makefile_semgrep_targets_use_project_environment() -> None:
+    makefile: str = (ROOT / "Makefile").read_text()
+
+    assert "command -v semgrep" not in makefile
+    assert makefile.count("uv run semgrep") == 3
+
+
+def test_missing_semgrep_points_to_make_sync(monkeypatch: pytest.MonkeyPatch) -> None:
+    def missing_binary(_name: str) -> None:
+        return None
+
+    monkeypatch.setattr(shutil, "which", missing_binary)
+
+    with pytest.raises(AssertionError, match="make sync"):
+        test_semgrep_findings_match_baseline_ratchet()
 
 
 @pytest.mark.semgrep
@@ -30,7 +58,7 @@ def test_semgrep_findings_match_baseline_ratchet():
     binary = shutil.which("semgrep")
     assert binary is not None, (
         "semgrep バイナリが見つからない — ADR-DOE-ENFORCE-001 R3 は skip を禁止する。"
-        "`uv tool install semgrep` でインストールすること。"
+        "semgrep は dev 依存に含まれるため、`make sync` を実行すること。"
     )
     proc = subprocess.run(
         [binary, "--config", ".semgrep.yaml", "doeff/", "packages/", "--error", "--quiet", "--json"],

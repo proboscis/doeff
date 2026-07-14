@@ -81,26 +81,15 @@ lint-pyright:
 	@echo "Running pyright..."
 	uv run pyright doeff/
 
-# Semgrep: Architectural pattern enforcement
-# Install semgrep with: uv tool install semgrep
+# Semgrep: Architectural pattern enforcement (installed by make sync)
 lint-semgrep:
 	@echo "Running semgrep architectural rules..."
-	@if command -v semgrep >/dev/null 2>&1; then \
-		semgrep --config .semgrep.yaml doeff/ packages/ --error; \
-	else \
-		echo "Warning: semgrep not installed. Install with: uv tool install semgrep"; \
-		exit 1; \
-	fi
+	uv run semgrep --config .semgrep.yaml doeff/ packages/ --error
 
 # Semgrep: Check docs for deprecated Runtime/Runner API usage
 lint-semgrep-docs:
 	@echo "Running semgrep on documentation..."
-	@if command -v semgrep >/dev/null 2>&1; then \
-		semgrep --config .semgrep.yaml docs/ README.md --error; \
-	else \
-		echo "Warning: semgrep not installed. Install with: uv tool install semgrep"; \
-		exit 1; \
-	fi
+	uv run semgrep --config .semgrep.yaml docs/ README.md --error
 
 # Doeff-linter: Custom Rust-based linter for doeff patterns
 lint-doeff:
@@ -163,12 +152,7 @@ test-all: test test-packages
 
 test-spec-audit-sa002:
 	uv run pytest tests/core/test_sa002_spec_gaps.py
-	@if command -v semgrep >/dev/null 2>&1; then \
-		semgrep --config specs/audits/SA-002/semgrep/rules.yml doeff/ packages/; \
-	else \
-		echo "Warning: semgrep not installed. Install with: uv tool install semgrep"; \
-		exit 1; \
-	fi
+	uv run semgrep --config specs/audits/SA-002/semgrep/rules.yml doeff/ packages/
 
 bench-smoke:
 	uv run python benchmarks/benchmark_runner.py --smoke --no-output
