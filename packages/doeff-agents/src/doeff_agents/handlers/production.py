@@ -2,7 +2,6 @@
 
 import json
 import os
-import re
 import shlex
 import time
 from abc import ABC, abstractmethod
@@ -71,10 +70,14 @@ from doeff_agents.monitor import (
 )
 from doeff_agents.result_validation import validate_result_payload
 from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
-from doeff_agents.session import _dismiss_onboarding_dialogs
+from doeff_agents.session import _dismiss_onboarding_dialogs, deliver_prompt_when_ready
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import AgentSessionRepository, InMemoryAgentSessionRepository
-from doeff_agents.shell import assert_no_forbidden_agent_env, assert_session_env_is_non_auth_overlay, wrap_with_shell_exports
+from doeff_agents.shell import (
+    assert_no_forbidden_agent_env,
+    assert_session_env_is_non_auth_overlay,
+    wrap_with_shell_exports,
+)
 
 REPORT_RESULT_TOOL_NAME = "report_result"
 
@@ -698,15 +701,15 @@ class TmuxAgentHandler(AgentHandler):
             )
 
         if adapter.injection_method == InjectionMethod.TMUX:
-            if adapter.ready_pattern and not self._wait_for_ready(
-                session_info.pane_id, adapter.ready_pattern, effect.ready_timeout
-            ):
-                self._backend.kill_session(effect.session_name)
-                raise AgentReadyTimeoutError(
-                    f"Agent did not become ready within {effect.ready_timeout}s"
-                )
-            if effect.prompt:
-                self._backend.send_keys(session_info.pane_id, effect.prompt)
+            deliver_prompt_when_ready(
+                self._backend,
+                session_info.pane_id,
+                adapter,
+                effect.prompt,
+                session_name=effect.session_name,
+                ready_timeout=effect.ready_timeout,
+                timeout_error=AgentReadyTimeoutError,
+            )
 
         handle = SessionHandle(
             session_id=effect.session_name,
@@ -787,8 +790,16 @@ class TmuxAgentHandler(AgentHandler):
                 timeout=effect.ready_timeout,
                 backend=self._backend,
             )
-        if adapter.injection_method == InjectionMethod.TMUX and effect.prompt:
-            self._backend.send_keys(session_info.pane_id, effect.prompt)
+        if adapter.injection_method == InjectionMethod.TMUX:
+            deliver_prompt_when_ready(
+                self._backend,
+                session_info.pane_id,
+                adapter,
+                effect.prompt,
+                session_name=effect.session_name,
+                ready_timeout=effect.ready_timeout,
+                timeout_error=AgentReadyTimeoutError,
+            )
 
         handle = SessionHandle(
             session_id=effect.session_name,
@@ -1224,16 +1235,6 @@ class TmuxAgentHandler(AgentHandler):
         mcp_json_path.write_text(json.dumps(mcp_config, indent=2))
 
     # -- Helpers -------------------------------------------------------------
-
-    def _wait_for_ready(self, target: str, pattern: str, timeout: float) -> bool:
-        """Wait for agent to be ready for input."""
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            output = self._backend.capture_pane(target, 50)
-            if re.search(pattern, output):
-                return True
-            time.sleep(0.2)
-        return False
 
     def _materialize_task_workspace(self, task) -> None:
         task.work_dir.mkdir(parents=True, exist_ok=True)

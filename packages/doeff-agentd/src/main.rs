@@ -2726,8 +2726,11 @@ fn tmux_paste_literal(config: &Config, target: &str, message: &str) -> Result<()
     if !load_status.success() {
         return Err(anyhow!("tmux load-buffer failed"));
     }
+    // -p = bracketed paste: raw newlines reach the agent TUI as bare Enter
+    // presses and a cold-start multi-line prompt splits into per-line
+    // submits (issue agentd-codex-coldstart-paste-race, 2026-07-14).
     let paste_status = Command::new(&config.tmux_bin)
-        .args(["paste-buffer", "-b", &buffer_name, "-t", target])
+        .args(["paste-buffer", "-p", "-b", &buffer_name, "-t", target])
         .status()
         .context("tmux paste-buffer failed to run")?;
     let _ = Command::new(&config.tmux_bin)

@@ -164,13 +164,26 @@ class TmuxSessionBackend(SessionBackend):
 
     def _paste_literal(self, target: str, text: str) -> None:
         buffer_name = f"doeff-agents-{os.getpid()}-{re.sub(r'[^A-Za-z0-9_]+', '_', target)}"
+        # Buffer content streams through load-buffer's STDIN, never argv:
+        # tmux's client-server protocol caps one command at ~16KB (imsg
+        # framing), so argv-passed set-buffer dies with "command too long"
+        # on large prompts (doeff-agentd oracle 33ab4bae).
         subprocess.run(
-            self._args("set-buffer", "-b", buffer_name, text),
+            self._args("load-buffer", "-b", buffer_name, "-"),
+            input=text,
+            encoding="utf-8",
             check=True,
         )
         try:
+            # -p = bracketed paste. Without it the pasted newlines reach the
+            # agent TUI as bare Enter presses and per-line submits are only
+            # avoided by the TUI's timing-dependent burst heuristics — on a
+            # cold start a multi-paragraph prompt splits into fragments the
+            # agent acknowledges without executing (issue
+            # agentd-codex-coldstart-paste-race, reproduced live even after
+            # the readiness gate passed).
             subprocess.run(
-                self._args("paste-buffer", "-b", buffer_name, "-t", target),
+                self._args("paste-buffer", "-p", "-b", buffer_name, "-t", target),
                 check=True,
             )
         finally:
