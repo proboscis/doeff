@@ -42,7 +42,9 @@
   tmux-send-keys])
 (import doeff_agents.sessionhost.impls.claude_code [claude-code-impl])
 (import doeff_agents.sessionhost.impls.codex [codex-impl])
-(import doeff_agents.sessionhost.launch [launch-session resume-session])
+(import doeff_agents.sessionhost.launch [REPL-IDLE-MAX-WAIT-SECONDS
+                                         launch-session
+                                         resume-session])
 (import doeff_agents.sessionhost.policy [
   binding-kind-advertisement
   cause-if-absent
@@ -922,6 +924,11 @@
                                 LAUNCH-TIMEOUT-SECONDS)
     :stale-observation-seconds (or (env-positive-i64 "DOEFF_AGENTD_STALE_OBSERVATION_SECS")
                                    STALE-OBSERVATION-THRESHOLD-SECONDS)
+    ;; booting 所有権 arm の boot watchdog 予算材料 — launch 側 ready gate と
+    ;; 同じ env knob(issue agentd-session-registration-after-ready-gate)。
+    :repl-idle-max-wait-seconds (or (env-positive-i64
+                                      "DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS")
+                                    REPL-IDLE-MAX-WAIT-SECONDS)
     :judge-cmd config.prompt-judge-cmd))
 
 

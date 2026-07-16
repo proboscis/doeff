@@ -210,9 +210,12 @@
   (assert psubmit)
   (assert (.startswith ptext "do the task"))
   (assert (.endswith ptext RESULT-PROTOCOL-INSTRUCTION))
-  ;; session 行: booting・awaiting latch 武装・実効 identity 永続化(S14)
+  ;; session 行: launch 完了の手渡しで running・awaiting latch 武装・実効
+  ;; identity 永続化(S14)。booting は launch pipeline 所有の in-flight 状態
+  ;; (issue agentd-session-registration-after-ready-gate)— 登録〜配送完了の
+  ;; 間だけ外部に見え、完了 upsert が monitor へ観測を引き渡す。
   (setv stored (get world.rows "s1"))
-  (assert (= stored.status "booting"))
+  (assert (= stored.status "running"))
   (assert stored.awaiting-response)
   (assert (= (get stored.effective-identity "CODEX_HOME") "/x/codex"))
   ;; R7: binding 由来の auth env は host が合成して tmux env に載せる
@@ -488,8 +491,9 @@
   (assert (< (.index trace-kinds "upsert") (.index trace-kinds "capture")))
   ;; session_started event も登録時点で記録済み
   (assert (in #("s1" "session_started") world.events))
-  ;; 成功後の終端状態は従来どおり: booting + awaiting latch 武装
-  (assert (= row.status "booting"))
+  ;; 配送完了の手渡し: running + awaiting latch 武装(booting は launch
+  ;; pipeline 所有の in-flight 状態としてだけ外部に見える)
+  (assert (= row.status "running"))
   (assert row.awaiting-response)
   (assert (= (get world.rows "s1") row)))
 

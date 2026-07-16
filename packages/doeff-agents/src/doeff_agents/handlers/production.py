@@ -675,6 +675,25 @@ class TmuxAgentHandler(AgentHandler):
         )
         session_info = self._backend.new_session(tmux_config)
 
+        # Registration is bookkeeping independent of TUI readiness (issue
+        # agentd-session-registration-after-ready-gate): the BOOTING row must
+        # be externally observable the moment the physical session exists.
+        # The ready gate below guards only prompt delivery; a failure past
+        # this point transitions the row to a terminal state instead of
+        # leaving an unobservable session behind.
+        handle = SessionHandle(
+            session_id=effect.session_name,
+        )
+        self._sessions[effect.session_name] = SessionState(
+            handle=handle,
+            adapter=adapter,
+            pane_id=session_info.pane_id,
+            agent_type=effect.agent_type,
+            work_dir=effect.work_dir,
+            lifecycle=effect.lifecycle,
+        )
+        self._record_snapshot("session_started", handle, SessionStatus.BOOTING)
+
         argv = adapter.launch_command(
             LaunchParams(
                 work_dir=effect.work_dir,
@@ -687,43 +706,35 @@ class TmuxAgentHandler(AgentHandler):
         )
         command = self._wrap_with_shell_exports(shlex.join(argv), agent_env_exports)
 
-        self._backend.send_keys(session_info.pane_id, command, literal=False)
-        # Dismiss onboarding dialogs (trust, theme, auth) if adapter supports them.
-        # The first task prompt must be typed into the running agent, not passed
-        # through argv/stdin. Handle startup UI before sending that prompt.
-        onboarding_patterns = getattr(adapter, "onboarding_patterns", None)
-        if onboarding_patterns:
-            _dismiss_onboarding_dialogs(
-                session_info.pane_id,
-                onboarding_patterns,
-                timeout=effect.ready_timeout,
-                backend=self._backend,
-            )
+        try:
+            self._backend.send_keys(session_info.pane_id, command, literal=False)
+            # Dismiss onboarding dialogs (trust, theme, auth) if adapter supports
+            # them. The first task prompt must be typed into the running agent,
+            # not passed through argv/stdin. Handle startup UI before sending
+            # that prompt.
+            onboarding_patterns = getattr(adapter, "onboarding_patterns", None)
+            if onboarding_patterns:
+                _dismiss_onboarding_dialogs(
+                    session_info.pane_id,
+                    onboarding_patterns,
+                    timeout=effect.ready_timeout,
+                    backend=self._backend,
+                )
 
-        if adapter.injection_method == InjectionMethod.TMUX:
-            deliver_prompt_when_ready(
-                self._backend,
-                session_info.pane_id,
-                adapter,
-                effect.prompt,
-                session_name=effect.session_name,
-                ready_timeout=effect.ready_timeout,
-                timeout_error=AgentReadyTimeoutError,
-            )
+            if adapter.injection_method == InjectionMethod.TMUX:
+                deliver_prompt_when_ready(
+                    self._backend,
+                    session_info.pane_id,
+                    adapter,
+                    effect.prompt,
+                    session_name=effect.session_name,
+                    ready_timeout=effect.ready_timeout,
+                    timeout_error=AgentReadyTimeoutError,
+                )
+        except Exception as error:
+            self._fail_registered_launch(handle, effect.session_name, error)
+            raise
 
-        handle = SessionHandle(
-            session_id=effect.session_name,
-        )
-
-        self._sessions[effect.session_name] = SessionState(
-            handle=handle,
-            adapter=adapter,
-            pane_id=session_info.pane_id,
-            agent_type=effect.agent_type,
-            work_dir=effect.work_dir,
-            lifecycle=effect.lifecycle,
-        )
-        self._record_snapshot("session_started", handle, SessionStatus.BOOTING)
         return handle
 
     def handle_launch_task(self, effect: LaunchTaskEffect) -> SessionHandle:
@@ -762,6 +773,21 @@ class TmuxAgentHandler(AgentHandler):
         )
         session_info = self._backend.new_session(tmux_config)
 
+        # Same registration-before-ready-gate contract as handle_launch
+        # (issue agentd-session-registration-after-ready-gate).
+        handle = SessionHandle(
+            session_id=effect.session_name,
+        )
+        self._sessions[effect.session_name] = SessionState(
+            handle=handle,
+            adapter=adapter,
+            pane_id=session_info.pane_id,
+            agent_type=AgentType.CLAUDE,
+            work_dir=effect.work_dir,
+            lifecycle=effect.lifecycle,
+        )
+        self._record_snapshot("session_started", handle, SessionStatus.BOOTING)
+
         argv = adapter.launch_command(
             LaunchParams(
                 work_dir=effect.work_dir,
@@ -780,39 +806,31 @@ class TmuxAgentHandler(AgentHandler):
                 **self._claude_runtime_policy.bootstrap_exports,
             },
         )
-        self._backend.send_keys(session_info.pane_id, command, literal=False)
+        try:
+            self._backend.send_keys(session_info.pane_id, command, literal=False)
 
-        onboarding_patterns = getattr(adapter, "onboarding_patterns", None)
-        if onboarding_patterns:
-            _dismiss_onboarding_dialogs(
-                session_info.pane_id,
-                onboarding_patterns,
-                timeout=effect.ready_timeout,
-                backend=self._backend,
-            )
-        if adapter.injection_method == InjectionMethod.TMUX:
-            deliver_prompt_when_ready(
-                self._backend,
-                session_info.pane_id,
-                adapter,
-                effect.prompt,
-                session_name=effect.session_name,
-                ready_timeout=effect.ready_timeout,
-                timeout_error=AgentReadyTimeoutError,
-            )
+            onboarding_patterns = getattr(adapter, "onboarding_patterns", None)
+            if onboarding_patterns:
+                _dismiss_onboarding_dialogs(
+                    session_info.pane_id,
+                    onboarding_patterns,
+                    timeout=effect.ready_timeout,
+                    backend=self._backend,
+                )
+            if adapter.injection_method == InjectionMethod.TMUX:
+                deliver_prompt_when_ready(
+                    self._backend,
+                    session_info.pane_id,
+                    adapter,
+                    effect.prompt,
+                    session_name=effect.session_name,
+                    ready_timeout=effect.ready_timeout,
+                    timeout_error=AgentReadyTimeoutError,
+                )
+        except Exception as error:
+            self._fail_registered_launch(handle, effect.session_name, error)
+            raise
 
-        handle = SessionHandle(
-            session_id=effect.session_name,
-        )
-        self._sessions[effect.session_name] = SessionState(
-            handle=handle,
-            adapter=adapter,
-            pane_id=session_info.pane_id,
-            agent_type=AgentType.CLAUDE,
-            work_dir=effect.work_dir,
-            lifecycle=effect.lifecycle,
-        )
-        self._record_snapshot("session_started", handle, SessionStatus.BOOTING)
         return handle
 
     def handle_monitor(self, effect: MonitorEffect) -> Observation:
@@ -1131,6 +1149,30 @@ class TmuxAgentHandler(AgentHandler):
             last_observed_at=now,
             finished_at=now if observation.is_terminal else None,
             output_snippet=observation.output_snippet,
+        )
+
+    def _fail_registered_launch(
+        self,
+        handle: SessionHandle,
+        session_name: str,
+        error: Exception,
+    ) -> None:
+        """Transition a registered launch that failed before completion.
+
+        Once the BOOTING row exists (registration precedes the ready gate,
+        issue agentd-session-registration-after-ready-gate), every launch
+        failure must land the row in a terminal state — a lingering BOOTING
+        row would be the new form of the old "unobservable session" leak.
+        The physical session is killed if the failure path (e.g.
+        deliver_prompt_when_ready's ready timeout) has not already done so.
+        """
+        if self._backend.has_session(session_name):
+            self._backend.kill_session(session_name)
+        self._record_snapshot(
+            "session_failed",
+            handle,
+            SessionStatus.FAILED,
+            output_snippet=str(error),
         )
 
     def _record_snapshot(
