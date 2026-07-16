@@ -197,3 +197,36 @@ def test_ready_gate_semgrep_rules_detect_ungated_prompt_paste() -> None:
         "doeff-agents-paste-buffer-must-be-bracketed",
     }
     assert all(_has_rule(check_ids, rule_id) for rule_id in expected)
+
+
+def test_session_registration_rule_detects_ready_gated_registration() -> None:
+    """Issue agentd-session-registration-after-ready-gate: the BOOTING
+    snapshot recorded only after deliver_prompt_when_ready is the banned
+    pre-fix shape — registration must not wait for TUI readiness."""
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    check_ids = _semgrep_rule_ids(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-agents/src/doeff_agents/handlers/"
+        "registration_after_ready_gate_forbidden.py",
+        cwd=fixture_root,
+    )
+
+    assert _has_rule(
+        check_ids, "doeff-agents-session-registration-must-precede-ready-gate"
+    )
+
+
+def test_repl_ready_wait_rule_detects_discarded_readiness() -> None:
+    """Issue agentd-session-registration-after-ready-gate: a bare
+    `wait_for_repl_idle(...)?;` statement discards the readiness verdict —
+    the paste-anyway launch shape that leaves BOOTING rows behind."""
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/rust"
+    check_ids = _semgrep_rule_ids(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-agentd/src/discarded_repl_readiness_forbidden.rs",
+        cwd=fixture_root,
+    )
+
+    assert _has_rule(
+        check_ids, "doeff-agentd-repl-ready-wait-must-not-discard-readiness"
+    )

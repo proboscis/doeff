@@ -8,9 +8,14 @@
 ;;;   - prompt は argv でなく live REPL へ(wait-for-repl-idle 後に paste)
 ;;;   - expected_result 付き prompt へ result-protocol instruction を追記
 ;;;   - R9 launch dialog の決定的 dismissal(wait-for-repl-idle 内)
-;;;   - repl-idle 予算切れは fail-closed(prompt 未配送・session 掃除・
-;;;     画面 tail 込み typed error — 2026-07-07 契約修正、oracle からの
-;;;     意図的乖離。予算は host 注入 knob で圧縮可)
+;;;   - booting 行の登録は tmux-new-session 直後・ready 待ちの前(登録は TUI
+;;;     readiness に依存しない簿記 — issue
+;;;     agentd-session-registration-after-ready-gate、2026-07-17)
+;;;   - repl-idle 予算切れは fail-closed(prompt 未配送・session kill・
+;;;     画面 tail 込み typed error — 2026-07-07 契約修正)。登録済みの行は
+;;;     terminal(failed / timed_out)へ遷移し booting 残置ゼロ
+;;;     (2026-07-17 改訂 — oracle main.rs と同一契約)。予算は host 注入
+;;;     knob で圧縮可
 ;;;   - 実効 identity の session 行永続化(S14 の Hy positive 化)
 ;;;
 ;;; fake substrate(台本 tmux capture・進む clock・dict store)+ 両 impl を
@@ -98,6 +103,12 @@
     (setv (get world.tmux-envs session-name) (dict env))
     (resume "%7"))
   (TmuxCapture [pane-id lines]
+    ;; capture は launch の gate loop(wait-for-repl-idle / fail 証拠収集)から
+    ;; しか呼ばれない — capture 時点の store 可視状態({sid: status})を trace に
+    ;; 積むと「ready 待ち中に外部から何が見えたか」がそのまま assert できる
+    ;; (issue agentd-session-registration-after-ready-gate の観測点)。
+    (.append world.trace
+             #("capture" (dfor [k v] (.items world.rows) k v.status)))
     (setv world.captures (+ world.captures 1))
     (if world.capture-script
         (resume (if (> (len world.capture-script) 1)
@@ -457,11 +468,42 @@
   (assert (.endswith (get literal-texts 1) RESULT-PROTOCOL-INSTRUCTION)))
 
 
+(deftest test-launch-registers-booting-row-before-repl-idle-wait
+  ;; issue agentd-session-registration-after-ready-gate: 登録は TUI readiness に
+  ;; 依存しない簿記 — tmux-new-session 直後・wait-for-repl-idle の最初の capture
+  ;; より前に booting 行が store で観測可能でなければならない。旧配置(ready 待ち
+  ;; の後ろ)では最大 120s の「session は物理的に在るのに記録が無い」窓が正規に
+  ;; 開き、60s handshake を仮定する外部監視(mediagen engine)から orphan に
+  ;; 見えた(2026-07-14 実測)。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["codex booting banner" "› "])
+  (<- row (run-launch world (launch-params)))
+  ;; wait-for-repl-idle の最初の capture 時点で s1 が booting として可視
+  (setv capture-views (lfor t world.trace :if (= (get t 0) "capture") (get t 1)))
+  (assert capture-views)
+  (assert (= (.get (get capture-views 0) "s1") "booting")
+          "booting 行が ready 待ちの開始前に永続化されていない")
+  ;; trace 順序でも: 最初の upsert が最初の capture より前
+  (setv trace-kinds (lfor t world.trace (get t 0)))
+  (assert (< (.index trace-kinds "upsert") (.index trace-kinds "capture")))
+  ;; session_started event も登録時点で記録済み
+  (assert (in #("s1" "session_started") world.events))
+  ;; 成功後の終端状態は従来どおり: booting + awaiting latch 武装
+  (assert (= row.status "booting"))
+  (assert row.awaiting-response)
+  (assert (= (get world.rows "s1") row)))
+
+
 (deftest test-launch-fails-closed-when-repl-never-idle
   ;; 2026-07-07 契約修正: R9 に無い未知 dialog が startup を塞いだら launch は
   ;; typed error で fail する。旧 oracle は repl-idle 予算切れ後に構わず
   ;; paste していた — trust dialog のカバレッジ欠落がそれで silent hang に
   ;; 化けた実障害(prompt が dialog に送出され session は永遠に待つ)。
+  ;;
+  ;; 2026-07-17 契約改訂(issue agentd-session-registration-after-ready-gate):
+  ;; 「リークさせない」の実現手段が変わった — 行を作らないのではなく、登録済みの
+  ;; booting 行を terminal(failed / timed_out)へ遷移させる。行はリークではなく
+  ;; ライフサイクルとして残り、booting のままの残置はゼロ。
   (setv world (LaunchWorld))
   ;; 未知 dialog: R9 detector のどれにも合致せず、選択行は行頭スペース付き
   ;; ` ❯` なので idle でもない — wait-for-repl-idle は予算切れまで poll する
@@ -485,10 +527,18 @@
   (assert (= (len world.delivered) 0))
   (setv literal-texts (lfor [p t l s] world.sent-keys :if l t))
   (assert (= (len literal-texts) 1))
-  ;; 作った tmux session は片付けられ、session 行も永続化されていない
+  ;; 作った tmux session は片付けられる(既存保証)
   (assert (not-in "doeff-s1" world.tmux-sessions))
   (assert (in #("kill-session" "doeff-s1") world.trace))
-  (assert (not-in "s1" world.rows)))
+  ;; 行はリークではなくライフサイクル: terminal failed(timed_out)へ遷移し、
+  ;; booting 残置ゼロ + session_failed event 記録
+  (setv stored (get world.rows "s1"))
+  (assert (= stored.status "failed"))
+  (assert (is-not stored.finished-at None))
+  (assert (is-not stored.terminal-cause None))
+  (assert (= stored.terminal-cause.category "timed_out"))
+  (assert (in #("s1" "session_failed") world.events))
+  (assert (not (lfor [k v] (.items world.rows) :if (= v.status "booting") k))))
 
 
 (deftest test-launch-repl-idle-budget-knob-injected
