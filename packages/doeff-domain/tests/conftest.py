@@ -5,7 +5,6 @@ from pathlib import Path
 import hy  # noqa: F401 - installs the Hy import hook for test fixtures
 import pytest
 
-
 TESTS_DIRECTORY = Path(__file__).parent
 
 

@@ -1,9 +1,11 @@
+import importlib
+
 from doeff_domain.checks import assert_domain_covered, assert_no_orphan_effects
 from doeff_domain.registry import domain_for_effect
 
 
 def test_core_effect_domains_cover_handlers_and_leave_no_orphan_effects():
-    from doeff_domain import dogfood
+    dogfood = importlib.import_module("doeff_domain.dogfood")
 
     assert dogfood.CORE_EFFECT_DOMAINS
     for domain in dogfood.CORE_EFFECT_DOMAINS:

@@ -24,9 +24,9 @@
 
 
 (defadr ADR-DOE-DOMAIN-001
-  :title "vocabulary cohesion: doeff-hy は凝集単位の宣言 defdomain(effect 型の束 + laws + 期待 handler 面)を提供し、SEDA は CLI/MCP としてエージェントから照会可能にし、適合検査(handler の domain 被覆・Program 使用 effect 集合 ⊆ interpreter 処理集合・domain 外の同義語彙定義の禁止)を defsemgrep/deftest で提供する。IDE 面は非優先 — 書き手はエージェントである"
+  :title "vocabulary cohesion: doeff-domain は凝集単位の宣言 defdomain(effect 型の束 + laws + 期待 handler 面)を opt-in で提供し、SEDA は CLI/MCP としてエージェントから照会可能にし、適合検査(handler の domain 被覆・Program 使用 effect 集合 ⊆ interpreter 処理集合・domain 外 effect の孤児禁止)を提供する。IDE 面は非優先 — 書き手はエージェントである"
   :status "proposed"
-  :scope ["packages/doeff-hy/src/doeff_hy/macros.hy"
+  :scope ["packages/doeff-domain"
           "packages/doeff-effect-analyzer"
           "docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy"]
   :problem
@@ -43,12 +43,21 @@
     [(interpretation
        "OOP の凝集の正体は実行時機構(クラス)ではなく発見可能性である。doeff には effect 型族=インターフェース、handler=実装、handler stack=オブジェクトグラフという暗黙の凝集単位が既にあるが、宣言も強制もされていない。defdomain はこれを宣言に昇格する — 結合するのは語彙と法だけで、実装も状態も結合しない(OOP の密結合の原因を除いた凝集の輸入)。")
      (interpretation
-       "エージェントにとってのドキュメントとは失敗する検査のことである。domain 宣言は (1) エージェントに最初に読ませる 1 ファイルであり、(2) 適合検査の照合対象である。docs は読み飛ばされるが red は必ず読まれる。")]
+       "エージェントにとってのドキュメントとは失敗する検査のことである。domain 宣言は (1) エージェントに最初に読ませる 1 ファイルであり、(2) 適合検査の照合対象である。docs は読み飛ばされるが red は必ず読まれる。")
+     (interpretation
+       "defdomain は完全 opt-in の組織化戦略である。doeff を使うための必須要素ではなく、採用プロジェクトが明示的に宣言モジュールを import し、必要な適合検査を自分のテストへ配線する。doeff の既定利用ゲートへ強制しない。")
+     (interpretation
+       "導入 1 / 包含 ∞: effect クラスは全 registry でちょうど 1 domain の :effects にだけ導入できる一方、:includes による語彙参照はいくつあってもよい。law vocabulary-has-single-home の canonical_declaration は effect の『導入』を意味し、包含を再宣言とは数えない。")
+     (interpretation
+       "handler の処理集合は二層で導出する。doeff-hy defhandler は保存された節構造から導くため宣言と実装がドリフトしない。生 Python handler は @handles 注釈を E1 では信頼し、注釈と実態の照合は将来の SEDA(E2/E3)が担う。:when や条件付き reperform の節は処理参加を示すが、全入力に対する全域性までは保証しない。")
+     (interpretation
+       "適合検査(c)の正直な上限: 述語・用語の真の意味的同義性は静的に判定できない。E1 が fail させられるのは名指し package 内 EffectBase 子孫の孤児とクラス同一性による二重導入までである。非 effect 語彙は :terms 宣言と、採用プロジェクト固有の命名パターン Semgrep を組み合わせる。")]
   :decision
-    [(rule R1 "doeff-hy は凝集単位の宣言マクロ defdomain を提供する: effect 型の束、domain laws、期待される handler 面(どの handler 群がこの語彙を被覆すべきか)を 1 宣言にまとめる。")
+    [(rule R1 "doeff-domain サブパッケージは凝集単位の宣言マクロ defdomain、プロセス内 registry、effect 型の束、domain laws、正典 terms、期待される handler 面を提供する。R1 は 2026-07-17 に E1 で実装済み。doeff-hy / doeff-adr には依存しない。")
      (rule R2 "SEDA は CLI および MCP tool としてエージェントから照会可能にする: 『この Program が実行しうる effect 集合』『この effect 型の handler 所在』『この interpreter の処理集合』。IDE プラグイン面は非優先とする。")
-     (rule R3 "適合検査を defsemgrep / deftest で提供する: (a) handler が宣言 domain の全 effect を被覆する、(b) Program の使用 effect 集合 ⊆ 実行 interpreter の処理集合、(c) domain 宣言の外での同義語彙(同一意味論の述語・effect)の定義を禁止する。")
-     (rule R4 "本 ADR の実装は計画 Stage E であり、Track B(pytest 正典ゲート)の完了を前提とする — 適合検査は走るゲートがあって初めて意味を持つ。")]
+     (rule R3 "opt-in 適合検査を提供する: (a) handler 処理集合の和が domain 自身の :effects を被覆する(:includes は導入元の責務なので対象外)、(b) Program 使用 effect 集合 ⊆ interpreter 処理集合、(c) 名指し package で定義された EffectBase 子孫に domain 外の孤児がない。E1 は (a)(c) を実装済み、(b) は SEDA に依存する E3 待ち。")
+     (rule R4 "本 ADR の実装は計画 Stage E であり、Track B(pytest 正典ゲート)の完了を前提とする — 適合検査は走るゲートがあって初めて意味を持つ。")
+     (rule R5 "2026-07-17 時点で R1 と R3(a)(c) は E1 として実装済み。R2 の SEDA CLI/MCP は E2、R3(b) は E3 で実装する。ADR status は全 Stage E 完了まで proposed を維持する。")]
   :laws
     [(law vocabulary-has-single-home
        :statement "for_all semantic_predicate_or_effect v: canonical_declaration_count(v) == 1 AND declared_in_some_domain(v); duplicate_definitions_detected_by_conformance_check"
