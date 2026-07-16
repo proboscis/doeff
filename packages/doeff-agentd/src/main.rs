@@ -6420,6 +6420,137 @@ Working...
         );
     }
 
+    fn write_launch_fake_tmux(
+        tmp: &tempfile::TempDir,
+        ready_frame: &str,
+        block_on_load: bool,
+    ) -> (String, PathBuf, PathBuf) {
+        let tmux_bin = tmp.path().join("fake-launch-tmux");
+        let load_started = tmp.path().join("load-started");
+        let load_release = tmp.path().join("load-release");
+        let block = if block_on_load {
+            format!(
+                ": > '{started}'\nwhile [ ! -e '{release}' ]; do sleep 0.01; done\n",
+                started = load_started.display(),
+                release = load_release.display(),
+            )
+        } else {
+            String::new()
+        };
+        fs::write(
+            &tmux_bin,
+            format!(
+                "#!/bin/sh\ncase \"$1\" in\n  has-session) exit 1 ;;\n  new-session) printf '%%7\\n' ;;\n  load-buffer) {block}cat >/dev/null ;;\n  capture-pane) printf '%s\\n' '{ready_frame}' ;;\nesac\nexit 0\n"
+            ),
+        )
+        .expect("write launch fake tmux");
+        let mut perms = fs::metadata(&tmux_bin).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&tmux_bin, perms).expect("chmod launch fake tmux");
+        (
+            tmux_bin.to_string_lossy().into_owned(),
+            load_started,
+            load_release,
+        )
+    }
+
+    fn registered_launch_params(session_id: &str) -> LaunchParams {
+        let mut params = launch_params_for("codex", None);
+        params.session_id = String::from(session_id);
+        params.session_name = String::from(session_id);
+        params.session_env.insert(
+            String::from("CODEX_HOME"),
+            String::from("/profiles/company-test"),
+        );
+        params
+    }
+
+    #[test]
+    fn session_launch_registers_booting_row_before_ready_gate() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let observer = Connection::open(&db).expect("observer db");
+        migrate(&observer).expect("migrate");
+        let (tmux_bin, load_started, load_release) =
+            write_launch_fake_tmux(&tmp, "› ready", true);
+        let config = Config {
+            db_path: db.clone(),
+            socket_path: tmp.path().join("agentd.sock"),
+            tmux_bin,
+            monitor_interval: Duration::from_millis(1000),
+            max_running: 4,
+            result_solicitation_limit: DEFAULT_RESULT_SOLICITATION_LIMIT,
+            prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
+            prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
+            prompt_judge_cmd: None,
+        };
+        let params = registered_launch_params("register-before-ready");
+        let launch_db = db.clone();
+        let launch = thread::spawn(move || {
+            let conn = Connection::open(launch_db).expect("launch db");
+            session_launch(&conn, &config, params)
+        });
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !load_started.exists() && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(load_started.exists(), "launch command did not reach fake tmux");
+        let observed = session_get(&observer, "register-before-ready").expect("read during launch");
+        fs::write(&load_release, "release").expect("release launch");
+        let result = launch.join().expect("launch thread");
+
+        assert!(result.is_ok(), "launch should finish after ready frame: {result:?}");
+        let observed = observed.expect("BOOTING row must be visible while launch is blocked");
+        assert_eq!(observed.status, "booting");
+        assert!(!observed.awaiting_response);
+    }
+
+    #[test]
+    fn session_launch_ready_timeout_terminalizes_registered_row() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("db");
+        migrate(&conn).expect("migrate");
+        let (tmux_bin, _load_started, _load_release) =
+            write_launch_fake_tmux(&tmp, "still booting", false);
+        let config = Config {
+            db_path: db,
+            socket_path: tmp.path().join("agentd.sock"),
+            tmux_bin,
+            monitor_interval: Duration::from_millis(1000),
+            max_running: 4,
+            result_solicitation_limit: DEFAULT_RESULT_SOLICITATION_LIMIT,
+            prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
+            prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
+            prompt_judge_cmd: None,
+        };
+
+        let error = session_launch_with_ready_timeout(
+            &conn,
+            &config,
+            registered_launch_params("ready-timeout"),
+            Duration::from_millis(20),
+        )
+        .expect_err("ready timeout must fail launch");
+
+        assert!(error.to_string().contains("did not become ready"));
+        let snapshot = session_get(&conn, "ready-timeout")
+            .expect("read terminal row")
+            .expect("registered row survives as lifecycle history");
+        assert_eq!(snapshot.status, "failed");
+        assert!(snapshot.finished_at.is_some());
+        assert!(snapshot.cleaned_at.is_some());
+        let booting_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM agent_sessions WHERE status = 'booting'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count booting rows");
+        assert_eq!(booting_count, 0);
+    }
+
     // ---- stdio MCP server (report-result-mcp subcommand) ----
 
     #[test]

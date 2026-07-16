@@ -98,6 +98,7 @@
     (setv (get world.tmux-envs session-name) (dict env))
     (resume "%7"))
   (TmuxCapture [pane-id lines]
+    (.append world.trace #("capture" pane-id))
     (setv world.captures (+ world.captures 1))
     (if world.capture-script
         (resume (if (> (len world.capture-script) 1)
@@ -182,6 +183,11 @@
   ;; trust 書き込み(PreLaunchSetup)が tmux new-session より前
   (setv trace-kinds (lfor t world.trace (get t 0)))
   (assert (< (.index trace-kinds "fs-write") (.index trace-kinds "new-session")))
+  ;; 物理 tmux session は ready gate が capture を始める前に store から
+  ;; BOOTING として外部観測できる(handshake 契約)。
+  (assert (< (.index trace-kinds "new-session")
+             (.index trace-kinds "upsert")
+             (.index trace-kinds "capture")))
   ;; 起動 command は shell-join 済み argv(--yolo + channel 配線)で literal+submit
   (setv [pane cmd literal submit] (get world.sent-keys 0))
   (assert (= pane "%7"))
@@ -485,10 +491,16 @@
   (assert (= (len world.delivered) 0))
   (setv literal-texts (lfor [p t l s] world.sent-keys :if l t))
   (assert (= (len literal-texts) 1))
-  ;; 作った tmux session は片付けられ、session 行も永続化されていない
+  ;; 作った tmux session は片付けられ、先行登録した行は terminal へ遷移する
   (assert (not-in "doeff-s1" world.tmux-sessions))
   (assert (in #("kill-session" "doeff-s1") world.trace))
-  (assert (not-in "s1" world.rows)))
+  (setv stored (get world.rows "s1"))
+  (assert (= stored.status "failed"))
+  (assert (is-not stored.finished-at None))
+  (assert (is-not stored.cleaned-at None))
+  (assert (in #("s1" "session_launch_timeout") world.events))
+  (assert (not (any (gfor row (.values world.rows)
+                          (= row.status "booting"))))))
 
 
 (deftest test-launch-repl-idle-budget-knob-injected
