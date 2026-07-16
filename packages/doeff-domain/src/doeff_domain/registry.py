@@ -208,9 +208,9 @@ def get_domain(name: str) -> Domain:
     return _DOMAINS[name]
 
 
-def registered_domains() -> tuple[Domain, ...]:
+def registered_domains() -> list[Domain]:
     """All registered domains, in registration order."""
-    return tuple(_DOMAINS.values())
+    return list(_DOMAINS.values())
 
 
 def domain_names() -> list[str]:

@@ -132,7 +132,7 @@ class TestRegistration:
 
     def test_isolated_registry_starts_empty_and_restores(self):
         with isolated_registry():
-            assert registered_domains() == ()
+            assert registered_domains() == []
             register_domain(make_domain(name="d-temp", effects=[FixtureBeta]))
             assert get_domain("d-temp").name == "d-temp"
         with isolated_registry():

@@ -23,7 +23,7 @@ from collections.abc import Iterable
 import hy
 from doeff_vm import EffectBase
 
-from .registry import DomainCheckError, DomainDefinitionError
+from doeff_domain.registry import DomainCheckError, DomainDefinitionError
 
 HANDLES_ATTRIBUTE = "__doeff_handles__"
 BODY_ATTRIBUTE = "__doeff_body__"

@@ -16,78 +16,78 @@ Public surface:
 
 import hy as _hy  # noqa: F401 — registers the Hy import hook for doeff_domain.macros
 
-from .checks import (
+from doeff_domain.checks import (
     assert_domain_covered as assert_domain_covered,
 )
-from .checks import (
+from doeff_domain.checks import (
     assert_no_orphan_effects as assert_no_orphan_effects,
 )
-from .checks import (
+from doeff_domain.checks import (
     assert_registered_domains_covered as assert_registered_domains_covered,
 )
-from .introspect import (
+from doeff_domain.introspect import (
     BODY_ATTRIBUTE as BODY_ATTRIBUTE,
 )
-from .introspect import (
+from doeff_domain.introspect import (
     HANDLES_ATTRIBUTE as HANDLES_ATTRIBUTE,
 )
-from .introspect import (
+from doeff_domain.introspect import (
     handled_effects as handled_effects,
 )
-from .introspect import (
+from doeff_domain.introspect import (
     handles as handles,
 )
-from .registry import (
+from doeff_domain.registry import (
     Domain as Domain,
 )
-from .registry import (
+from doeff_domain.registry import (
     DomainCheckError as DomainCheckError,
 )
-from .registry import (
+from doeff_domain.registry import (
     DomainCoverageError as DomainCoverageError,
 )
-from .registry import (
+from doeff_domain.registry import (
     DomainDefinitionError as DomainDefinitionError,
 )
-from .registry import (
+from doeff_domain.registry import (
     DomainError as DomainError,
 )
-from .registry import (
+from doeff_domain.registry import (
     DomainLaw as DomainLaw,
 )
-from .registry import (
+from doeff_domain.registry import (
     DomainRegistrationError as DomainRegistrationError,
 )
-from .registry import (
+from doeff_domain.registry import (
     DomainTerm as DomainTerm,
 )
-from .registry import (
+from doeff_domain.registry import (
     DuplicateDomainNameError as DuplicateDomainNameError,
 )
-from .registry import (
+from doeff_domain.registry import (
     DuplicateEffectIntroductionError as DuplicateEffectIntroductionError,
 )
-from .registry import (
+from doeff_domain.registry import (
     OrphanEffectError as OrphanEffectError,
 )
-from .registry import (
+from doeff_domain.registry import (
     clear_registry as clear_registry,
 )
-from .registry import (
+from doeff_domain.registry import (
     domain_names as domain_names,
 )
-from .registry import (
+from doeff_domain.registry import (
     get_domain as get_domain,
 )
-from .registry import (
+from doeff_domain.registry import (
     introducing_domain as introducing_domain,
 )
-from .registry import (
+from doeff_domain.registry import (
     isolated_registry as isolated_registry,
 )
-from .registry import (
+from doeff_domain.registry import (
     register_domain as register_domain,
 )
-from .registry import (
+from doeff_domain.registry import (
     registered_domains as registered_domains,
 )

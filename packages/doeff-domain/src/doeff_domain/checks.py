@@ -22,8 +22,8 @@ from collections.abc import Iterable
 
 from doeff_vm import EffectBase
 
-from .introspect import handled_effects
-from .registry import (
+from doeff_domain.introspect import handled_effects
+from doeff_domain.registry import (
     Domain,
     DomainCheckError,
     DomainCoverageError,
