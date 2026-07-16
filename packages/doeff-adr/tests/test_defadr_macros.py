@@ -123,6 +123,25 @@ def test_defsemgrep_accepts_installed_rule_fixture_form(tmp_hy_dir):
     mod.test_test_installed_future_annotations_rule_defsemgrep()
 
 
+def test_defsemgrep_installed_rule_allows_same_path_for_hit_and_clean(tmp_hy_dir):
+    mod = _write_and_import(
+        tmp_hy_dir,
+        "test_installed_semgrep_same_path.hy",
+        """\
+        (require doeff-adr.macros [defsemgrep])
+
+        (defsemgrep test-installed-agentd-result-key-rule
+          "doeff-agents-agentd-request-requires-result-key"
+          [{"relative-path" "packages/doeff-agents/src/doeff_agents/agentd_client.py"
+            "source" "def request(response):\\n    return response.get('result')\\n"}]
+          [{"relative-path" "packages/doeff-agents/src/doeff_agents/agentd_client.py"
+            "source" "def request(response):\\n    return response['result']\\n"}])
+        """,
+    )
+
+    mod.test_test_installed_agentd_result_key_rule_defsemgrep()
+
+
 def test_accepted_defadr_without_enforcement_fails_contract(tmp_hy_dir):
     mod = _write_and_import(
         tmp_hy_dir,

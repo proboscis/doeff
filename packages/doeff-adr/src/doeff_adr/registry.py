@@ -318,12 +318,18 @@ def _assert_installed_semgrep_enforcement(semgrep: str, spec: SemgrepSpec) -> No
         raise AssertionError(f"{spec.id}: installed defsemgrep requires rule_id=")
     config_path = _resolve_config_path(spec.config)
     _ensure_installed_rule_exists(config_path, spec.installed_rule_id)
-    with tempfile.TemporaryDirectory(prefix="doeff-adr-installed-semgrep-") as tmp:
-        root = Path(tmp)
-        hit_targets = _write_semgrep_structured_fixtures(root, spec.hit_fixtures)
-        clean_targets = _write_semgrep_structured_fixtures(root, spec.clean_fixtures)
-        hit_results = _run_semgrep(semgrep, config_path, hit_targets, cwd=root)
-        clean_results = _run_semgrep(semgrep, config_path, clean_targets, cwd=root)
+    hit_results = _run_installed_semgrep_fixture_set(
+        semgrep,
+        config_path,
+        spec.hit_fixtures,
+        polarity="hit",
+    )
+    clean_results = _run_installed_semgrep_fixture_set(
+        semgrep,
+        config_path,
+        spec.clean_fixtures,
+        polarity="clean",
+    )
     hit_rule_ids = _result_rule_ids(hit_results)
     clean_rule_ids = _result_rule_ids(clean_results)
     if not _has_rule(hit_rule_ids, spec.installed_rule_id):
@@ -335,6 +341,21 @@ def _assert_installed_semgrep_enforcement(semgrep: str, spec: SemgrepSpec) -> No
         raise AssertionError(
             f"{spec.id}: installed semgrep rule fired on clean fixtures: {spec.installed_rule_id}"
         )
+
+
+def _run_installed_semgrep_fixture_set(
+    semgrep: str,
+    config_path: Path,
+    fixtures: tuple[dict[str, str], ...],
+    *,
+    polarity: str,
+) -> list[dict[str, Any]]:
+    with tempfile.TemporaryDirectory(
+        prefix=f"doeff-adr-installed-semgrep-{polarity}-"
+    ) as tmp:
+        root = Path(tmp)
+        targets = _write_semgrep_structured_fixtures(root, fixtures)
+        return _run_semgrep(semgrep, config_path, targets, cwd=root)
 
 
 def _semgrep_config(spec: SemgrepSpec) -> dict[str, Any]:
