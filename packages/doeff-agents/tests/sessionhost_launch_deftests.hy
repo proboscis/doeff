@@ -84,7 +84,7 @@
   (FsListDir [path]
     (resume (sorted (.get world.listings path []))))
   (SessionStoreUpsert [row]
-    (.append world.trace #("upsert" row.session-id))
+    (.append world.trace #("upsert" row.session-id row.status))
     (setv (get world.rows row.session-id) row)
     (resume None))
   (SessionStoreRecordEvent [session-id event-type row]
@@ -494,6 +494,8 @@
   ;; 作った tmux session は片付けられ、先行登録した行は terminal へ遷移する
   (assert (not-in "doeff-s1" world.tmux-sessions))
   (assert (in #("kill-session" "doeff-s1") world.trace))
+  (assert (< (.index world.trace #("upsert" "s1" "failed"))
+             (.index world.trace #("kill-session" "doeff-s1"))))
   (setv stored (get world.rows "s1"))
   (assert (= stored.status "failed"))
   (assert (is-not stored.finished-at None))

@@ -393,6 +393,25 @@ class RegistrationObservingBackend(ScriptedBackend):
         )
 
 
+class CleanupFailingBackend(ScriptedBackend):
+    """Expose lifecycle state when tmux cleanup itself fails."""
+
+    def __init__(
+        self,
+        frames: list[str],
+        repository: InMemoryAgentSessionRepository,
+        session_id: str,
+    ) -> None:
+        super().__init__(frames)
+        self.repository = repository
+        self.session_id = session_id
+        self.snapshot_at_cleanup: AgentSessionSnapshot | None = None
+
+    def kill_session(self, session: str) -> None:
+        self.snapshot_at_cleanup = self.repository.get_session(self.session_id)
+        raise RuntimeError("scripted tmux cleanup failure")
+
+
 def test_handle_launch_registers_booting_snapshot_before_ready_wait(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -454,6 +473,39 @@ def test_handle_launch_codex_hard_fails_when_composer_never_appears(
     assert snapshot.status == SessionStatus.FAILED
     assert snapshot.finished_at is not None
     assert all(stored.status != SessionStatus.BOOTING for stored in repository.snapshots.values())
+
+
+def test_handle_launch_terminalizes_before_failed_tmux_cleanup(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repository = InMemoryAgentSessionRepository()
+    backend = CleanupFailingBackend(
+        frames=["$ ", "$ codex --yolo"],
+        repository=repository,
+        session_id="codex-cleanup-fails",
+    )
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter",
+        lambda _agent_type: ReadyFakeCodexAdapter(),
+    )
+    handler = _production_handler(backend, tmp_path, repository)
+
+    with pytest.raises(EffectsAgentReadyTimeoutError):
+        handler.handle_launch(
+            LaunchEffect(
+                session_name="codex-cleanup-fails",
+                agent_type=AgentType.CODEX,
+                work_dir=tmp_path / "ws",
+                prompt=PROMPT,
+                ready_timeout=0.5,
+            )
+        )
+
+    assert backend.snapshot_at_cleanup is not None
+    assert backend.snapshot_at_cleanup.status == SessionStatus.FAILED
+    snapshot = repository.get_session("codex-cleanup-fails")
+    assert snapshot is not None
+    assert snapshot.status == SessionStatus.FAILED
 
 
 def test_handle_launch_codex_pastes_prompt_only_after_ready_frame(
