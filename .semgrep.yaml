@@ -749,6 +749,54 @@ rules:
         - "**/tests/**"
         - "**/examples/**"
 
+  - id: doeff-hy-no-bang-in-native-comprehension
+    languages: [generic]
+    severity: ERROR
+    message: >
+      ADR-DOE-HY-003 R3: bang cannot preserve its evaluation position inside
+      Python-native lfor/gfor/sfor/dfor comprehensions. Rewrite the computation
+      as for/do with an explicit <- bind so effect order and scope stay visible.
+    pattern-either:
+      - pattern: (lfor ... (! $EFFECT) ...)
+      - pattern: (gfor ... (! $EFFECT) ...)
+      - pattern: (sfor ... (! $EFFECT) ...)
+      - pattern: (dfor ... (! $EFFECT) ...)
+    paths:
+      include:
+        - "**/*.hy"
+        - "**/*.hyk"
+        - "**/*.hyp"
+      exclude:
+        - "**/tests/**"
+        - "**/docs/**"
+        - "**/examples/**"
+        - "**/fixtures/**"
+        - "**/doeff_hy/macros.hy"
+
+  - id: doeff-hy-no-bang-in-plain-nested-function
+    languages: [generic]
+    severity: ERROR
+    message: >
+      ADR-DOE-HY-003 R4: bang inside a plain fn/defn creates the wrong generator
+      boundary. Use fnk/defk for an effectful function and bind the effect
+      explicitly.
+    pattern-either:
+      - pattern: (fn ... (! $EFFECT) ...)
+      - pattern: (fn/a ... (! $EFFECT) ...)
+      - pattern: (defn $NAME ... (! $EFFECT) ...)
+      - pattern: (defn/a $NAME ... (! $EFFECT) ...)
+    paths:
+      include:
+        - "**/*.hy"
+        - "**/*.hyk"
+        - "**/*.hyp"
+      exclude:
+        - "**/tests/**"
+        - "**/docs/**"
+        - "**/examples/**"
+        - "**/fixtures/**"
+        - "**/doeff_hy/macros.hy"
+
   # tombstone(2026-07-14): 退役済みパターン cache-handler-no-result-duck-typing の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: cache-handler-no-result-duck-typing
     metadata:
