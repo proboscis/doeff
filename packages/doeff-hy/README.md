@@ -50,6 +50,17 @@ Extensions are registered automatically when `doeff_hy` is imported.
 | `traverse` | Applicative traverse over collections |
 | `for/do` | SQL-like comprehension with effects |
 
+### Bang evaluation position
+
+`(! effect)` is replaced with a `yield` expression at the position where it is
+written. Branches, `and`/`or` short-circuiting, argument order, `try` suites,
+and literal containers therefore retain normal Python evaluation semantics.
+
+Python-native `lfor`/`gfor`/`sfor`/`dfor` comprehensions and plain nested
+`fn`/`defn` bodies cannot host a doeff bang safely. Macro expansion raises an
+`ADR-DOE-HY-003` `SyntaxError` with a rewrite: use `for/do` plus `<-` for
+effectful iteration, and `fnk` or `defk` for an effectful function.
+
 ## Testing with deftest
 
 `deftest` generates pytest-compatible test functions. Tests use `<-` for effect binding and `assert` for validation.
