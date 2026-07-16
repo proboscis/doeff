@@ -17,6 +17,12 @@ use serde_json::{json, Value};
 
 const DEFAULT_MONITOR_INTERVAL_MS: u64 = 1000;
 const DEFAULT_MAX_RUNNING_SESSIONS: usize = 10;
+/// Launch-path REPL readiness budget (wait_for_repl_idle). Overridable via
+/// the DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS env knob — the same host-owned
+/// knob the Hy session host injects as `repl_idle_max_wait_seconds`
+/// (sessionhost/host.hy), so conformance scenarios compress both
+/// implementations through one name.
+const DEFAULT_REPL_IDLE_MAX_WAIT_SECS: u64 = 120;
 const LEASE_NAME: &str = "doeff-agentd";
 const LEASE_TTL_SECONDS: i64 = 10;
 /// Wait up to 30s for sqlite write locks. The default `busy_timeout = 0`
@@ -199,6 +205,9 @@ struct Config {
     /// ADR-DOE-AGENTS-002 R5: the judge command (`sh -c`); None
     /// disables the judge.
     prompt_judge_cmd: Option<String>,
+    /// Launch-path REPL readiness budget (wait_for_repl_idle) — env knob
+    /// DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS, default 120s.
+    repl_idle_max_wait: Duration,
 }
 
 #[derive(Debug, Serialize)]
@@ -615,6 +624,11 @@ fn parse_args(args: Vec<String>) -> Result<Config> {
         env::var("DOEFF_AGENTD_PROMPT_JUDGE_CMD")
             .unwrap_or_else(|_| String::from(DEFAULT_PROMPT_JUDGE_CMD)),
     );
+    let repl_idle_max_wait = Duration::from_secs(
+        env_positive_i64("DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS")
+            .map(|secs| secs as u64)
+            .unwrap_or(DEFAULT_REPL_IDLE_MAX_WAIT_SECS),
+    );
     let mut command = String::from("serve");
     let mut index = 0;
     while index < args.len() {
@@ -691,6 +705,7 @@ fn parse_args(args: Vec<String>) -> Result<Config> {
         prompt_stall_seconds,
         prompt_unblock_limit,
         prompt_judge_cmd,
+        repl_idle_max_wait,
     })
 }
 
@@ -1804,7 +1819,7 @@ fn session_launch(
             // was a prompt sitting in codex's input box that was
             // never submitted.
             if params.command.is_none() && is_interactive_agent_type(&params.agent_type) {
-                wait_for_repl_idle(config, &pane_id, Duration::from_secs(120))?;
+                wait_for_repl_idle(config, &pane_id, config.repl_idle_max_wait)?;
             }
             tmux_send_keys(config, &pane_id, &full_prompt, true, true)?;
             awaiting_response = true;
@@ -4649,6 +4664,7 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
             prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
             prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
             prompt_judge_cmd: None,
+            repl_idle_max_wait: Duration::from_secs(DEFAULT_REPL_IDLE_MAX_WAIT_SECS),
         };
 
         let output = tmux_capture(&config, "%1", 40).expect("capture");
@@ -4730,6 +4746,7 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
             prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
             prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
             prompt_judge_cmd: None,
+            repl_idle_max_wait: Duration::from_secs(DEFAULT_REPL_IDLE_MAX_WAIT_SECS),
         };
         let err = session_launch(
             &conn,
@@ -4754,6 +4771,222 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
         assert!(err
             .to_string()
             .contains("max running agent sessions reached"));
+    }
+
+    /// Fake tmux for full-path session_launch tests: `new-session` prints a
+    /// pane id, `capture-pane` prints a scripted frame, `kill-session`
+    /// records a marker file, `load-buffer` drains stdin, everything else
+    /// succeeds silently. The frame below never satisfies
+    /// `output_has_agent_idle_prompt` (the `❯` is indented) and matches no
+    /// R9 dialog detector, so the launch sits in its ready wait for the
+    /// whole configured budget — the deterministic stand-in for a cold
+    /// start blocked by an unknown dialog.
+    fn write_never_ready_fake_tmux(dir: &Path) -> (String, PathBuf) {
+        let frame_file = dir.join("frame.txt");
+        fs::write(
+            &frame_file,
+            " Share anonymous usage data with Anthropic?\n \u{276f} 1. Yes, share usage data\n   2. Maybe later\n Enter to confirm · Esc to cancel\n",
+        )
+        .expect("write frame");
+        let kill_marker = dir.join("killed-session.marker");
+        let tmux_bin = dir.join("fake-tmux");
+        fs::write(
+            &tmux_bin,
+            format!(
+                "#!/bin/sh\n\
+                 case \"$1\" in\n\
+                   new-session) printf '%%7\\n' ;;\n\
+                   has-session) exit 1 ;;\n\
+                   capture-pane) cat '{frame}' ;;\n\
+                   kill-session) : > '{marker}' ;;\n\
+                   load-buffer) cat > /dev/null ;;\n\
+                   *) : ;;\n\
+                 esac\n\
+                 exit 0\n",
+                frame = frame_file.display(),
+                marker = kill_marker.display(),
+            ),
+        )
+        .expect("write fake tmux");
+        let mut perms = fs::metadata(&tmux_bin).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&tmux_bin, perms).expect("chmod fake tmux");
+        (tmux_bin.to_string_lossy().into_owned(), kill_marker)
+    }
+
+    fn interactive_launch_params(session_id: &str) -> LaunchParams {
+        LaunchParams {
+            session_id: String::from(session_id),
+            session_name: String::from(session_id),
+            agent_type: String::from("claude"),
+            work_dir: String::from("/tmp"),
+            // No command override: the REAL launch pipeline runs, including
+            // wait_for_repl_idle (main.rs launch ready gate).
+            command: None,
+            prompt: Some(String::from("do the task")),
+            model: None,
+            effort: None,
+            mcp_servers: BTreeMap::new(),
+            skip_trust_setup: true,
+            lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
+            session_env: BTreeMap::new(),
+            expected_result: None,
+        }
+    }
+
+    /// Issue agentd-session-registration-after-ready-gate: registration is
+    /// bookkeeping independent of TUI readiness. The BOOTING row must be
+    /// externally observable (own connection, same sqlite store) WHILE the
+    /// launch is still blocked inside its ready wait — under the old
+    /// ordering the row appeared only after the (up to 120s) gate, so a
+    /// cold start looked like an orphan to sub-minute external monitors
+    /// (mediagen engine's 60s reconciler, observed live 2026-07-14).
+    #[test]
+    fn session_launch_registers_booting_row_before_ready_wait() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (tmux_bin, _kill_marker) = write_never_ready_fake_tmux(tmp.path());
+        let db = tmp.path().join("agentd.sqlite");
+        {
+            let conn = Connection::open(&db).expect("open sqlite");
+            migrate(&conn).expect("migrate");
+        }
+        let config = std::sync::Arc::new(Config {
+            db_path: db.clone(),
+            socket_path: tmp.path().join("agentd.sock"),
+            tmux_bin,
+            monitor_interval: Duration::from_millis(1000),
+            max_running: 4,
+            result_solicitation_limit: DEFAULT_RESULT_SOLICITATION_LIMIT,
+            prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
+            prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
+            prompt_judge_cmd: None,
+            repl_idle_max_wait: Duration::from_secs(6),
+        });
+        let launch_config = std::sync::Arc::clone(&config);
+        let launch_db = db.clone();
+        let launcher = thread::spawn(move || {
+            let conn = Connection::open(&launch_db).expect("open sqlite (launcher)");
+            session_launch(
+                &conn,
+                &launch_config,
+                interactive_launch_params("reg-before-ready"),
+            )
+            .map(|snapshot| snapshot.status)
+            .map_err(|err| err.to_string())
+        });
+
+        let observer = Connection::open(&db).expect("open sqlite (observer)");
+        let mut booting_seen_while_launch_in_flight = false;
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if launcher.is_finished() {
+                break;
+            }
+            if let Some(snapshot) =
+                session_get(&observer, "reg-before-ready").expect("session_get")
+            {
+                assert_eq!(
+                    snapshot.status, "booting",
+                    "the row visible during the ready wait must be BOOTING"
+                );
+                booting_seen_while_launch_in_flight = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        let launch_result = launcher.join().expect("launch thread");
+        assert!(
+            booting_seen_while_launch_in_flight,
+            "no session row was observable while the launch sat in its ready \
+             wait — registration is gated behind TUI readiness \
+             (launch result: {launch_result:?})"
+        );
+        assert!(
+            launch_result.is_err(),
+            "a never-ready launch must fail closed, got {launch_result:?}"
+        );
+    }
+
+    /// Ready timeout is a lifecycle transition, not a leak: the registered
+    /// BOOTING row transitions to terminal `failed` (timed_out cause,
+    /// finished_at set, screen-tail evidence), the tmux session is killed,
+    /// the prompt is never delivered, and zero BOOTING rows remain. This
+    /// replaces the old leak-avoidance ("kill + never persist a row") with
+    /// the same guarantee expressed as observable lifecycle — parity
+    /// contract with sessionhost/launch.hy (fail-closed, 2026-07-07 /
+    /// registration-before-ready, 2026-07-17).
+    #[test]
+    fn session_launch_ready_timeout_marks_row_failed_and_cleans_up() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (tmux_bin, kill_marker) = write_never_ready_fake_tmux(tmp.path());
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        let config = Config {
+            db_path: db.clone(),
+            socket_path: tmp.path().join("agentd.sock"),
+            tmux_bin,
+            monitor_interval: Duration::from_millis(1000),
+            max_running: 4,
+            result_solicitation_limit: DEFAULT_RESULT_SOLICITATION_LIMIT,
+            prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
+            prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
+            prompt_judge_cmd: None,
+            repl_idle_max_wait: Duration::from_secs(1),
+        };
+
+        let err = session_launch(&conn, &config, interactive_launch_params("ready-timeout"))
+            .expect_err("a never-ready launch must fail closed");
+        let message = err.to_string();
+        assert!(
+            message.contains("did not become ready"),
+            "typed error must name the blocked startup: {message}"
+        );
+        assert!(
+            message.to_lowercase().contains("share anonymous usage data"),
+            "typed error must carry the screen-tail evidence: {message}"
+        );
+
+        let snapshot = session_get(&conn, "ready-timeout")
+            .expect("session_get")
+            .expect("ready timeout must transition the row, not erase it");
+        assert_eq!(snapshot.status, "failed");
+        assert!(snapshot.finished_at.is_some());
+        let cause = snapshot.terminal_cause.expect("terminal cause recorded");
+        assert!(matches!(cause.category, TerminalCauseCategory::TimedOut));
+
+        assert!(
+            kill_marker.exists(),
+            "the created tmux session must be killed on ready timeout"
+        );
+
+        let booting_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agent_sessions WHERE status = 'booting'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count booting rows");
+        assert_eq!(booting_rows, 0, "no BOOTING row may be left behind");
+
+        let event_types: Vec<String> = conn
+            .prepare(
+                "SELECT event_type FROM agent_session_events \
+                 WHERE session_id = 'ready-timeout' ORDER BY id",
+            )
+            .expect("prepare events query")
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("query events")
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .expect("collect events");
+        assert!(
+            event_types.contains(&String::from("session_started")),
+            "registration must record session_started: {event_types:?}"
+        );
+        assert!(
+            event_types.contains(&String::from("session_failed")),
+            "the timeout transition must record session_failed: {event_types:?}"
+        );
     }
 
     #[test]
@@ -4813,6 +5046,7 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
             prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
             prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
             prompt_judge_cmd: None,
+            repl_idle_max_wait: Duration::from_secs(DEFAULT_REPL_IDLE_MAX_WAIT_SECS),
         };
 
         monitor_once(&config).expect("monitor_once succeeds via watchdog");
@@ -4900,6 +5134,7 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
             prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
             prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
             prompt_judge_cmd: None,
+            repl_idle_max_wait: Duration::from_secs(DEFAULT_REPL_IDLE_MAX_WAIT_SECS),
         };
 
         monitor_once(&config).expect("monitor_once via launch-timeout watchdog");
@@ -4990,6 +5225,7 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
             prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
             prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
             prompt_judge_cmd: None,
+            repl_idle_max_wait: Duration::from_secs(DEFAULT_REPL_IDLE_MAX_WAIT_SECS),
         };
 
         monitor_once(&config).expect("monitor_once succeeds");
@@ -5060,6 +5296,7 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
             prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
             prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
             prompt_judge_cmd: None,
+            repl_idle_max_wait: Duration::from_secs(DEFAULT_REPL_IDLE_MAX_WAIT_SECS),
         };
 
         monitor_once(&config).expect("monitor_once succeeds");
@@ -6304,6 +6541,7 @@ Working...
             prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
             prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
             prompt_judge_cmd: None,
+            repl_idle_max_wait: Duration::from_secs(DEFAULT_REPL_IDLE_MAX_WAIT_SECS),
         }
     }
 
@@ -6502,6 +6740,7 @@ Working...
             prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
             prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
             prompt_judge_cmd: judge_cmd,
+            repl_idle_max_wait: Duration::from_secs(DEFAULT_REPL_IDLE_MAX_WAIT_SECS),
         }
     }
 

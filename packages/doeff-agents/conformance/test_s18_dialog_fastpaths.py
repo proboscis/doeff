@@ -202,6 +202,13 @@ def test_s18_unknown_dialog_fails_launch_closed(tmp_path) -> None:
     the RPC returns a typed error naming the blocked startup and carrying
     the screen tail, and the created mux session is cleaned up.
 
+    2026-07-17 contract revision (issue
+    agentd-session-registration-after-ready-gate): the session row is
+    registered BEFORE the ready wait (see S22), so the failed launch now
+    leaves a terminal `failed` row (timed_out cause) instead of no row at
+    all — the leak-avoidance guarantee is expressed as a lifecycle
+    transition, and no BOOTING row lingers.
+
     DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS compresses the 120s repl-idle
     budget for the test (same env-only knob pattern as the S19 watchdogs).
     """
@@ -227,8 +234,13 @@ def test_s18_unknown_dialog_fails_launch_closed(tmp_path) -> None:
         # the error carries the screen evidence (what blocked startup)
         assert "share anonymous usage data" in message.lower(), message
 
-        # no session row was registered (the launch failed before persist)
-        assert harness.client.get_session(scenario.session_id) is None
+        # the row registered before the ready wait survives as terminal
+        # `failed` (lifecycle, not leak) — never as a lingering BOOTING row
+        row = harness.session_row(scenario.session_id)
+        assert row["status"] == "failed", row
+        assert row["finished_at"] is not None, row
+        assert row["terminal_cause_json"] is not None, row
+        assert "timed_out" in row["terminal_cause_json"], row
 
         # the created mux session was cleaned up, not leaked
         assert not session_exists_out_of_band(scenario.session_id), (
