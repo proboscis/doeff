@@ -1802,6 +1802,18 @@ fn session_launch(
     backend_ref.insert(String::from("pane_id"), pane_id.clone());
     backend_ref.insert(String::from("command"), command_line.clone());
     let started_at = now_iso();
+    // The awaiting latch is armed FROM REGISTRATION for prompt-delivering
+    // launches: the latch means "a prompt is owed to the agent — do not
+    // evaluate apparent turn-ends", which covers the delivery window too.
+    // The conformance await_monitor_ack protocol (row exists && latch
+    // cleared) relies on this — with registration preceding delivery, an
+    // unarmed latch would make the ack fire before the prompt ever landed
+    // (S6 regression caught live).
+    let will_deliver_prompt = params
+        .prompt
+        .as_ref()
+        .map(|prompt| !prompt.trim().is_empty())
+        .unwrap_or(false);
     let mut snapshot = SessionSnapshot {
         session_id: params.session_id.clone(),
         session_name: params.session_name.clone(),
@@ -1822,7 +1834,7 @@ fn session_launch(
         expected_result: params.expected_result,
         retries_used: 0,
         last_validation_error: None,
-        awaiting_response: false,
+        awaiting_response: will_deliver_prompt,
         observed_active_at: None,
         result_payload: None,
         result_solicitations_used: 0,
@@ -1920,7 +1932,6 @@ fn session_launch(
                 }
             }
             tmux_send_keys(config, &pane_id, &full_prompt, true, true)?;
-            snapshot.awaiting_response = true;
         }
     }
     record_command(
@@ -1933,9 +1944,9 @@ fn session_launch(
     )?;
     // Hand-off to the monitor (launch pipeline complete). BOOTING rows are
     // launch-owned — the monitor's booting arm skips them — so completion
-    // writes "running" (+ the awaiting latch when a prompt was delivered)
-    // to pass observation duty to the monitor loop. The row's existence
-    // was already settled at registration time.
+    // writes "running" to pass observation duty to the monitor loop. The
+    // awaiting latch has been armed since registration; the row's existence
+    // was settled at registration time.
     snapshot.status = String::from("running");
     upsert_snapshot(conn, &snapshot)?;
     Ok(snapshot)
