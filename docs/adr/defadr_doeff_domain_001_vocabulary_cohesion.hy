@@ -5,7 +5,22 @@
 
 (require doeff-adr.macros [defadr defsemgrep rule law])
 (require doeff-hy.macros [deftest])
+(require doeff-domain.macros [defdomain])
 (import doeff-adr.macros [fact interpretation counterexample])
+(import doeff_domain.checks [assert-domain-covered assert-no-orphan-effects])
+(import doeff_domain.handlers [handles])
+(import doeff_domain.registry [Domain register-domain get-domain])
+(import doeff_vm [EffectBase])
+
+
+(defclass _AdrMacroEffect [EffectBase])
+(defclass _AdrCoverageEffect [EffectBase])
+(defclass _AdrOrphanEffect [EffectBase])
+
+
+(defdomain adr-domain-pin
+  :title "ADR DOMAIN-001 macro behavior pin"
+  :effects [_AdrMacroEffect])
 
 
 (defadr ADR-DOE-DOMAIN-001
@@ -41,14 +56,49 @@
          [(counterexample "ACP 核#8: terminal 述語 7 定義・terminal-set 6 定義が並存し、判定が呼び出しサイトごとに発散(2026-07-02 監査で検出、何も fail していなかった)")
           (counterexample "新規エージェントが既存 domain 語彙を発見できず、同義の effect 型を別パッケージに追加する — 照会面(SEDA)不在時の既定挙動")])]
   :enforcement
-    [(deftest test-adr-doe-domain-001-defdomain-exists
-       ;; designed-red を xfail(strict) 相当で表現: 未実装の間は xfail、
-       ;; 緑化したら fail して解除を強制。
-       (import pathlib [Path])
+    [(deftest test-adr-doe-domain-001-defdomain-importable
+       (assert (is (get-domain "adr-domain-pin") adr-domain-pin))
+       (assert (= adr-domain-pin.effects #(_AdrMacroEffect))))
+     (deftest test-adr-doe-domain-001-single-introduction-fails
        (import pytest)
-       (setv root (get (. (Path __file__) parents) 2))
-       (setv macros-src (.read-text (/ root "packages" "doeff-hy" "src" "doeff_hy" "macros.hy")))
-       (when (in "defmacro defdomain" macros-src)
-         (pytest.fail "defdomain が実装された — ADR-DOE-DOMAIN-001 の designed-red を解除し、挙動ピンに昇格して記帳すること(E1)"))
-       (pytest.xfail "defdomain マクロは未実装(E1 待ち)— ADR-DOE-DOMAIN-001 R1"))]
+       (with [error (pytest.raises ValueError)]
+         (register-domain
+           (Domain :name "adr-second-home"
+                   :title "Invalid second home"
+                   :effects [_AdrMacroEffect])))
+       (assert (in "adr-domain-pin" (str error.value)))
+       (assert (in "adr-second-home" (str error.value))))
+     (deftest test-adr-doe-domain-001-coverage-red-green
+       (defn partial-handler [program] program)
+       ((handles _AdrCoverageEffect) partial-handler)
+       (setv green-domain
+         (Domain :name "adr-coverage-green"
+                 :title "Coverage green fixture"
+                 :effects [_AdrCoverageEffect]
+                 :handlers [partial-handler]))
+       (setv red-domain
+         (Domain :name "adr-coverage-red"
+                 :title "Coverage red fixture"
+                 :effects [_AdrCoverageEffect _AdrOrphanEffect]
+                 :handlers [partial-handler]))
+       (assert-domain-covered green-domain)
+       (import pytest)
+       (with [error (pytest.raises AssertionError)]
+         (assert-domain-covered red-domain))
+       (assert (in "_AdrOrphanEffect" (str error.value))))
+     (deftest test-adr-doe-domain-001-orphan-red-green
+       (import pytest)
+       (import sys)
+       (register-domain
+         (Domain :name "adr-coverage-effect-home"
+                 :title "Coverage fixture home"
+                 :effects [_AdrCoverageEffect]))
+       (with [error (pytest.raises AssertionError)]
+         (assert-no-orphan-effects :packages [(get sys.modules __name__)]))
+       (assert (in "_AdrOrphanEffect" (str error.value)))
+       (register-domain
+         (Domain :name "adr-orphan-effect-home"
+                 :title "Orphan fixture home"
+                 :effects [_AdrOrphanEffect]))
+       (assert-no-orphan-effects :packages [(get sys.modules __name__)]))]
   :plans ["docs/doeff-2026-07-14-agent-first-investment-architecture-plan.md"])
