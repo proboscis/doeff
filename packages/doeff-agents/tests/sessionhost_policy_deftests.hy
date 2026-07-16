@@ -584,6 +584,22 @@
 ;; watchdog 群(S19: launch-timeout / stale-observation / zombie)+ 帯域外 kill(S9)
 ;; ---------------------------------------------------------------------------
 
+(deftest test-booting-shell-frame-stays-booting-until-startup-finishes
+  ;; launch は tmux 作成直後・command 送出前に BOOTING 行を公開する。monitor が
+  ;; その短い shell 窓を running → zombie/exited に昇格させてはならない。
+  (setv world (FakeWorld))
+  (seed world (make-row world
+                        :status "booting"
+                        :observed-active-at None
+                        :started-at (iso-at world -1))
+        :frame "$ "
+        :pane_command "zsh")
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "booting"))
+  (assert (= world.capture-count 0))
+  (assert (not-in "doeff-s1" world.killed)))
+
 (deftest test-launch-timeout-watchdog
   ;; F-frozen のまま startup 完了マーカー無し → launch timeout で failed・timed_out true
   (setv world (FakeWorld))
@@ -701,6 +717,22 @@
   (assert (is-not row.observed-active-at None))
   (assert (= row.status "running"))
   (assert (in #("s1" "session_observed") world.events)))
+
+
+(deftest test-managed-dialog-waits-for-launch-prompt-latch
+  ;; 先行登録された BOOTING 行へ monitor が割り込み Enter を送ると、launch の
+  ;; command/prompt transport と競合する。awaiting latch 武装前は触らない。
+  (setv world (FakeWorld))
+  (seed world (make-row world
+                        :status "booting"
+                        :awaiting-response False
+                        :observed-active-at None)
+        :frame F-DIALOG-MANAGED)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= world.sent-keys []))
+  (assert (= row.status "booting"))
+  (assert (is row.observed-active-at None)))
 
 
 ;; ---------------------------------------------------------------------------
