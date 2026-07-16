@@ -136,7 +136,7 @@ snapshot と一致(stable)**」(main.rs:2832, 2932)なので、フレームは
 | S15 | solicitation 1 回目と 2 回目の間で agentd 再起動 → `result_solicitations_used` が生存し合計 2 で終端(awaiting_response latch は再起動でクリアされる仕様と両立) | 002 law counters-durable | (e) | P | M2 |
 | S16 | 2 session 並走・片方を異常系フレームに → 他方が golden path を完走。tick は panic/error を捕捉して継続(run_worker_tick)。per-session 隔離の粒度は oracle では tick 単位 — Hy 実装は session 単位隔離を満たすこと(観測可能な assert は「他方の完走」で共通) | DOE-004 R3 | (f) | P | M2 |
 | S17 | in-process result endpoint ↔ host endpoint の意味論 parity(per-kind ゲートとの継ぎ目) | ACP plan 補遺 | — | X(C1 後) | — |
-| S18 | R9 fast-path: 5 ダイアログの dismissal keys を journal で受領確認(codex update→Down×2+Enter / bypass→Down,Enter / fullscreen→Down,Enter=Not now / trust→Enter(既定 Yes,I trust — pre-seed S12 と同じ意図) / managed→Enter)。**観測物理で契約修正**: codex-update/bypass/fullscreen/trust は `wait_for_repl_idle` のみ(launch 経路 = M1)で発火し M2 では到達不能。managed のみ monitor loop でも発火(main.rs:3604)なので M2 で mid-session 検証。tty は canonical+ICRNL(Enter=`\r`→`\n`、Down+Enter は 1 行で到達 = `\x1b[B` を待つ)。managed の bare Enter は内容で判別不能なので `observed_active_at` set(managed 分岐でしか立たない)を主 assert に。trust の bare Enter は順序で証明(dialog 表示中に `\n` が着く → その後にしか prompt paste が match しない)。**trust は Rust oracle 非在**(2026-07-07 のカバレッジ欠落修正 — 実物 frame で detect_dialog=None を実証してから追加)。**fail-closed(2026-07-07 契約修正、oracle からの意図的乖離)**: R9 外の未知 dialog で repl-idle 予算(`DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS`、既定 120s)が尽きたら、旧 oracle の「構わず paste」ではなく typed error で launch を fail させる — prompt 未配送・session row 未永続・作った mux session は掃除(画面 tail をエラーに同梱)。silent hang の構造的禁止 | 002 R9 | — | P | M1(update/bypass/fullscreen/trust/unknown)/ M2(managed) |
+| S18 | R9 fast-path: 5 ダイアログの dismissal keys を journal で受領確認(codex update→Down×2+Enter / bypass→Down,Enter / fullscreen→Down,Enter=Not now / trust→Enter(既定 Yes,I trust — pre-seed S12 と同じ意図) / managed→Enter)。**観測物理で契約修正**: codex-update/bypass/fullscreen/trust は `wait_for_repl_idle` のみ(launch 経路 = M1)で発火し M2 では到達不能。managed のみ monitor loop でも発火(main.rs:3604)なので M2 で mid-session 検証。tty は canonical+ICRNL(Enter=`\r`→`\n`、Down+Enter は 1 行で到達 = `\x1b[B` を待つ)。managed の bare Enter は内容で判別不能なので `observed_active_at` set(managed 分岐でしか立たない)を主 assert に。trust の bare Enter は順序で証明(dialog 表示中に `\n` が着く → その後にしか prompt paste が match しない)。**trust は Rust oracle 非在**(2026-07-07 のカバレッジ欠落修正 — 実物 frame で detect_dialog=None を実証してから追加)。**fail-closed**: R9 外の未知 dialog で repl-idle 予算(`DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS`、既定 120s)が尽きたら typed error で launch を fail させる — prompt 未配送・`TmuxNewSession` 直後から観測可能な BOOTING 行を failed へ終端化・作った mux session は掃除(画面 tail をエラーに同梱)。silent hang と BOOTING 行残置の構造的禁止 | 002 R9 | — | P | M1(update/bypass/fullscreen/trust/unknown)/ M2(managed) |
 | S19 | launch-timeout watchdog: F-frozen のまま startup 完了マーカーを出さない → `DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS` 超過で failed・TimedOut true / zombie(`{"exit":0}` → idle shell)→ exited・Lost true / stale-observation → exited・Lost true。**stale-obs の black-box 形状**: tmux session は生かしたまま(2 枚目の window を足す)監視対象 pane を帯域外 kill → 以後 tick は `tmux_capture` で abort し `last_observed_at` が凍結、stale 分岐(tmux probe より前)が `DOEFF_AGENTD_STALE_OBSERVATION_SECS` 超過で reap。3 knob は全て env-only なので `extra_env` 経由 | main.rs:3485-3587 | — | P | M2 |
 
 | S20 | result-contract 検証 = JSON Schema 仕様(U1 復元契約): items 違反 payload は report 時 reject → solicitation → in-session fix(ACP steward 実障害の形そのまま)/ meta-schema 違反 schema は session.launch で fail-closed 拒否 | doeff#482 / U1 裁定 | — | P(hy gate のみ — 旧実装は fail-open で基準外) | M2 |
@@ -226,19 +226,18 @@ oracle への変更は「意味論を変えない設定追加」のみ許す(挙
    turn-end に到達しない。idle glyph は capture 100 行内に残留するので、
    stall 系(S6)は 100 行超の scroll で idle glyph を掃き出してから
    凍結フレームを出す。
-4. **launch の盲窓(blind window)**: `session.launch` は prompt の
-   paste + Enter + confirm ループ(main.rs:1794-1830、confirm 再送で
-   最大 ~5s)を**同期的に終えた後**に初めて session 行を upsert する。
-   monitor は行の無い session を観測できないため、この窓の中で描画して
-   退役させたフレームは**存在しなかったのと同じ**。特に
-   `awaiting_response` latch は active marker の観測でしか
-   クリアされない(main.rs:3629)ので、active フレームを盲窓内で
-   scroll してしまうと latch が永久に残り turn-end・judge・solicitation
-   がすべて死ぬ(S5 で実測)。sleep での回避は confirm 再送回数に依存する
-   race — フレーム退役の前に必ず `await_monitor_ack` を挟む。
+4. **launch の所有権 hand-off**: `session.launch` は tmux 作成直後、command
+   送出・ready gate より前に `BOOTING` 行を upsert する。外部 reconciler は
+   この行を即時観測できる一方、内部 monitor は `BOOTING` かつ
+   `awaiting_response=false` の間は pane I/O を行わない。この区間は launch
+   RPC が command/prompt transport を所有し、prompt 配送後の latch 武装で
+   monitor へ hand-off する。`awaiting_response` latch は active marker の
+   観測でしかクリアされないため、台本が active フレームを早く scroll
+   すると turn-end・judge・solicitation が止まる。フレーム退役の前に必ず
+   `await_monitor_ack` を挟み、`BOOTING` 脱出と latch clear の両方を待つ。
    付随物理: 台本 agent は tty echo を切らないので paste された prompt が
    `› ` 行上に残留し、confirm_literal_prompt_submitted が「未送信」と
-   誤検知して Enter を 3 回再送する(= 盲窓が ~3s 伸びる + 余分な `\r` が
+   誤検知して Enter を 3 回再送する(= launch 所有期間が ~3s 伸びる + 余分な `\r` が
    tty バッファに溜まる)。await_keys はこの余分な Enter に耐える設計を
    保つこと。
 5. **MCP relay は数値エラーコードと already_reported を潰す**(S4/S10

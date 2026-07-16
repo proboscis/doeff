@@ -131,6 +131,22 @@ rules:
         - /packages/doeff-agents/src/**
         - /tests/semgrep/fixtures/python/packages/doeff-agents/src/**
 
+  - id: doeff-agents-session-registration-must-precede-ready-gate
+    languages:
+      - python
+    severity: ERROR
+    message: >
+      Register the BOOTING session immediately after new_session and before
+      deliver_prompt_when_ready. A physical tmux session hidden behind the
+      ready wait is externally indistinguishable from an orphan for up to 120
+      seconds, violating the agentd handshake contract
+      (issue agentd-session-registration-after-ready-gate, 2026-07-17).
+    pattern: |
+      $SESSION_INFO = $SELF._backend.new_session(...)
+      ...
+      deliver_prompt_when_ready(...)
+      ...
+      $SELF._sessions[$SESSION_NAME] = SessionState(...)
   - id: doeff-agents-hy-prompt-paste-must-be-ready-gated
     languages:
       - generic

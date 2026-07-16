@@ -193,6 +193,7 @@ def test_ready_gate_semgrep_rules_detect_ungated_prompt_paste() -> None:
     expected = {
         "doeff-agents-built-in-adapters-must-declare-ready-pattern",
         "doeff-agents-prompt-paste-must-be-ready-gated",
+        "doeff-agents-session-registration-must-precede-ready-gate",
         "doeff-agents-hy-prompt-paste-must-be-ready-gated",
         "doeff-agents-paste-buffer-must-be-bracketed",
     }

@@ -6,9 +6,10 @@
 ;;; 凍結された起動の「順序と方針」だけを持つ:
 ;;;   admission(重複 / 既存 tmux)→ per-kind PreLaunchSetup(S11 gate + trust)
 ;;;   → result channel 配線(ADR 0035 reject-at-launch)→ argv 構築 →
-;;;   TmuxNewSession → 起動 command 送出 → wait-for-repl-idle(R9 launch dialog
-;;;   の決定的 dismissal)→ prompt の live REPL 配送(result-protocol instruction
-;;;   追記)→ booting 行 upsert + session_started event。
+;;;   TmuxNewSession → booting 行 upsert + session_started event → 起動 command
+;;;   送出 → wait-for-repl-idle(R9 launch dialog の決定的 dismissal)→ prompt の
+;;;   live REPL 配送(result-protocol instruction 追記)。ready timeout は先行登録行を
+;;;   failed へ終端化してから tmux を清掃する。
 ;;;
 ;;; program は effect を yield するのみで IO を直接呼ばない(substrate-clean)。
 ;;; 呼び手より長生きする部分(socket・writer actor・lease・cycle 起動)は
@@ -17,9 +18,11 @@
 (require doeff-hy.macros [defk deff <-])
 
 (import re)
+(import dataclasses [replace])
 
 (import doeff_agents.sessionhost.effects [
   SessionRow
+  TerminalCause
   PaneObservation
   classify-pane
   deliver-message
@@ -282,55 +285,11 @@
                   k v)))
   (setv effective-env {#** session-env #** binding-env})
   (<- pane-id (tmux-new-session session-name (get params "work_dir") effective-env))
-  (when (.strip command-line)
-    (<- _ (tmux-send-keys pane-id command-line True True)))
 
-  ;; --- prompt の live REPL 配送(argv / print-mode 禁止 — session が task
-  ;; 完了後も生き、monitor が validate / 再促せるように)。
+  ;; --- 物理 session の簿記は TUI readiness と独立。外部 reconciler が
+  ;; ready 待ち(最大 120s)を orphan と誤認しないよう、new-session 直後に
+  ;; BOOTING 行を公開する。awaiting-response は prompt 配送成功後にのみ武装。
   (setv awaiting False)
-  (setv prompt (or (.get params "prompt") ""))
-  (when (.strip prompt)
-    (setv full-prompt
-          (if (is-not expected-result None)
-              (+ prompt RESULT-PROTOCOL-INSTRUCTION)
-              prompt))
-    (when (and (not has-override) (in agent-type INTERACTIVE-AGENT-TYPES))
-      ;; 予算は host 注入 knob(DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS、
-      ;; max_running と同じ注入パターン)が優先、無ければ oracle 定数 120s。
-      (setv repl-idle-max-wait
-            (or (.get params "repl_idle_max_wait_seconds")
-                REPL-IDLE-MAX-WAIT-SECONDS))
-      (<- repl-ready (wait-for-repl-idle agent-type pane-id repl-idle-max-wait))
-      (when (not repl-ready)
-        ;; fail-closed(2026-07-07 契約修正): idle 未達のまま paste すると
-        ;; prompt が R9 外の未知 dialog に送出され session は silent hang に
-        ;; なる(trust dialog 実障害)。paste せず、画面 tail を証拠として
-        ;; 積んだ typed error で launch を fail させ、作った session は
-        ;; 片付ける(行は未永続なので放置すると誰にも観測されないリーク)。
-        (<- final-frame (tmux-capture pane-id 40))
-        (<- _ (tmux-kill-session session-name))
-        (setv tail-lines (cut (.splitlines final-frame) -15 None))
-        (setv screen-tail (.join "\n" tail-lines))
-        (raise (RuntimeError
-                 (+ f"session.launch: {agent-type} REPL did not become ready "
-                    f"within {repl-idle-max-wait}s — startup is blocked by an "
-                    "unrecognized screen (a dialog outside the R9 fast-path "
-                    "set?). The prompt was NOT delivered and the created "
-                    "session was cleaned up. Last screen tail:\n"
-                    screen-tail)))))
-    (if (in agent-type INTERACTIVE-AGENT-TYPES)
-        (<- _ (deliver-message pane-id full-prompt))
-        (<- _ (tmux-send-keys pane-id full-prompt True True)))
-    (setv awaiting True))
-
-  ;; --- booting 行の永続化 + event(実効 identity 込み — S14 の Hy positive 化)。
-  ;; work-dir / backend-ref は store-of-record が行作成に要る launch 所有
-  ;; field(oracle backend_ref = session_name / pane_id / command、
-  ;; main.rs:1813-1816)。
-  ;; ADR-006: 会話 identity の初期値 — resume は親会話(事前確定)、fork は
-  ;; None(CLI が新 ID を鋳造 → DiscoverConversation で事後発見)、fresh の
-  ;; claude は鋳造済み UUID(--session-id 注入と同値)、fresh の codex /
-  ;; 明示 command は None(事後発見)。
   (setv row-conversation
         (cond
           (is-not resume-context None)
@@ -373,6 +332,70 @@
                   (.get resume-context "forked_from_session_id"))))
   (<- _ (session-store-upsert row))
   (<- _ (session-store-record-event session-id "session_started" row))
+
+  (when (.strip command-line)
+    (<- _ (tmux-send-keys pane-id command-line True True)))
+
+  ;; --- prompt の live REPL 配送(argv / print-mode 禁止 — session が task
+  ;; 完了後も生き、monitor が validate / 再促せるように)。
+  (setv prompt (or (.get params "prompt") ""))
+  (when (.strip prompt)
+    (setv full-prompt
+          (if (is-not expected-result None)
+              (+ prompt RESULT-PROTOCOL-INSTRUCTION)
+              prompt))
+    (when (and (not has-override) (in agent-type INTERACTIVE-AGENT-TYPES))
+      ;; 予算は host 注入 knob(DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS、
+      ;; max_running と同じ注入パターン)が優先、無ければ oracle 定数 120s。
+      (setv repl-idle-max-wait
+            (or (.get params "repl_idle_max_wait_seconds")
+                REPL-IDLE-MAX-WAIT-SECONDS))
+      (<- repl-ready (wait-for-repl-idle agent-type pane-id repl-idle-max-wait))
+      (when (not repl-ready)
+        ;; fail-closed(2026-07-07 契約修正): idle 未達のまま paste すると
+        ;; prompt が R9 外の未知 dialog に送出され session は silent hang に
+        ;; なる(trust dialog 実障害)。paste せず、画面 tail を証拠として
+        ;; 積んだ typed error で launch を fail させ、作った session は
+        ;; 片付ける。先行登録した行は failed へ終端化し BOOTING を残さない。
+        (<- final-frame (tmux-capture pane-id 40))
+        (setv tail-lines (cut (.splitlines final-frame) -15 None))
+        (setv screen-tail (.join "\n" tail-lines))
+        (setv reason
+              (+ f"session.launch: {agent-type} REPL did not become ready "
+                 f"within {repl-idle-max-wait}s — startup is blocked by an "
+                 "unrecognized screen (a dialog outside the R9 fast-path "
+                 "set?). The prompt was NOT delivered and the created "
+                 "session cleanup was requested. Last screen tail:\n"
+                 screen-tail))
+        (<- failed-at (clock-now))
+        (setv failed-at-iso (iso-format failed-at))
+        (setv row
+              (replace row
+                       :status "failed"
+                       :last-observed-at failed-at-iso
+                       :finished-at failed-at-iso
+                       :output-snippet screen-tail
+                       :last-validation-error reason
+                       :terminal-cause
+                         (TerminalCause :category "timed_out"
+                                        :reason reason
+                                        :retryable True
+                                        :observed-at failed-at-iso)))
+        (<- _ (session-store-upsert row))
+        (<- _ (session-store-record-event session-id "session_launch_timeout" row))
+        (<- _ (tmux-kill-session session-name))
+        (setv row (replace row :cleaned-at failed-at-iso))
+        (<- _ (session-store-upsert row))
+        (raise (RuntimeError reason))))
+    (if (in agent-type INTERACTIVE-AGENT-TYPES)
+        (<- _ (deliver-message pane-id full-prompt))
+        (<- _ (tmux-send-keys pane-id full-prompt True True)))
+    (setv awaiting True)
+    (setv row (replace row :awaiting-response awaiting))
+    (<- _ (session-store-upsert row)))
+  (when (not (.strip prompt))
+    (setv row (replace row :status "running"))
+    (<- _ (session-store-upsert row)))
   row)
 
 

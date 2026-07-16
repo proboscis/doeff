@@ -64,6 +64,7 @@
     (setv self.tmux-sessions (set))
     (setv self.capture-script [])   ;; 順に消費、尽きたら最後を保持
     (setv self.captures 0)
+    (setv self.snapshots-during-ready-wait [])
     (setv self.trace [])            ;; 効果の時系列(順序 assert 用)
     (setv self.sent-keys [])
     (setv self.delivered [])
@@ -99,6 +100,7 @@
     (resume "%7"))
   (TmuxCapture [pane-id lines]
     (.append world.trace #("capture" pane-id))
+    (.append world.snapshots-during-ready-wait (dict world.rows))
     (setv world.captures (+ world.captures 1))
     (if world.capture-script
         (resume (if (> (len world.capture-script) 1)
@@ -188,6 +190,12 @@
   (assert (< (.index trace-kinds "new-session")
              (.index trace-kinds "upsert")
              (.index trace-kinds "capture")))
+  (assert world.snapshots-during-ready-wait)
+  (setv during-ready-wait (get world.snapshots-during-ready-wait 0))
+  (assert (in "s1" during-ready-wait))
+  (setv during-row (get during-ready-wait "s1"))
+  (assert (is-not during-row None))
+  (assert (= during-row.status "booting"))
   ;; 起動 command は shell-join 済み argv(--yolo + channel 配線)で literal+submit
   (setv [pane cmd literal submit] (get world.sent-keys 0))
   (assert (= pane "%7"))
