@@ -1786,6 +1786,52 @@ fn session_launch(
         &params.work_dir,
         &params.session_env,
     )?;
+    // Register the BOOTING row immediately — after tmux_new_session, BEFORE
+    // the launch command and the readiness wait. Registration is bookkeeping
+    // independent of TUI readiness (issue
+    // agentd-session-registration-after-ready-gate): recording it after the
+    // (up to 120s) ready gate opens a window where the session physically
+    // exists but no external record does, and sub-minute external monitors
+    // classify the launch as an orphan (mediagen engine's 60s reconciler,
+    // observed live 2026-07-14). A failure past this point transitions the
+    // row to a terminal state instead of erasing it — the "nothing exists
+    // unobserved" guarantee expressed as lifecycle. Same contract as
+    // sessionhost/launch.hy (parity pair).
+    let mut backend_ref = BTreeMap::new();
+    backend_ref.insert(String::from("session_name"), params.session_name.clone());
+    backend_ref.insert(String::from("pane_id"), pane_id.clone());
+    backend_ref.insert(String::from("command"), command_line.clone());
+    let started_at = now_iso();
+    let mut snapshot = SessionSnapshot {
+        session_id: params.session_id.clone(),
+        session_name: params.session_name.clone(),
+        pane_id: pane_id.clone(),
+        agent_type: params.agent_type.clone(),
+        work_dir: params.work_dir,
+        lifecycle: params.lifecycle,
+        status: String::from("booting"),
+        backend_kind: String::from("tmux"),
+        backend_ref,
+        started_at,
+        last_observed_at: None,
+        finished_at: None,
+        cleaned_at: None,
+        pr_url: None,
+        output_snippet: None,
+        terminal_cause: None,
+        expected_result: params.expected_result,
+        retries_used: 0,
+        last_validation_error: None,
+        awaiting_response: false,
+        observed_active_at: None,
+        result_payload: None,
+        result_solicitations_used: 0,
+        prompt_unblock_attempts: 0,
+        last_output_change_at: None,
+    };
+    upsert_snapshot(conn, &snapshot)?;
+    record_event(conn, &snapshot.session_id, "session_started", &snapshot)?;
+
     if !command_line.trim().is_empty() {
         tmux_send_keys(config, &pane_id, &command_line, true, true)?;
     }
@@ -1793,7 +1839,6 @@ fn session_launch(
     // as a positional argv or print-mode stdin — so the session survives
     // task completion and the monitor can re-prompt the still-alive agent
     // when the output contract is violated.
-    let mut awaiting_response = false;
     if let Some(prompt) = params.prompt.as_ref() {
         if !prompt.trim().is_empty() {
             // agentd owns the result transmission contract: when an
@@ -1802,7 +1847,7 @@ fn session_launch(
             // file/path/envelope prose.  The launcher's prompt
             // describes WHAT data to report; agentd adds where to
             // put it and how it is validated.
-            let full_prompt = if params.expected_result.is_some() {
+            let full_prompt = if snapshot.expected_result.is_some() {
                 format!(
                     "{prompt}{}",
                     result_protocol_instruction(&params.session_id)
@@ -1819,44 +1864,65 @@ fn session_launch(
             // was a prompt sitting in codex's input box that was
             // never submitted.
             if params.command.is_none() && is_interactive_agent_type(&params.agent_type) {
-                wait_for_repl_idle(config, &pane_id, config.repl_idle_max_wait)?;
+                let repl_ready =
+                    wait_for_repl_idle(config, &pane_id, config.repl_idle_max_wait)?;
+                if !repl_ready {
+                    // Fail closed (2026-07-07 contract revision, ported from
+                    // sessionhost/launch.hy for parity): pasting into an
+                    // unrecognized screen sends the prompt to a dialog
+                    // outside the R9 fast-path set and the session hangs
+                    // silently forever. Kill the session and transition the
+                    // registered BOOTING row to terminal failed (timed_out)
+                    // — a lifecycle transition, never a lingering BOOTING
+                    // row.
+                    let final_frame = tmux_capture(config, &pane_id, 40)?;
+                    tmux_kill_session(config, &params.session_name)?;
+                    let tail_lines: Vec<&str> = final_frame.lines().collect();
+                    let tail_start = tail_lines.len().saturating_sub(15);
+                    let screen_tail = tail_lines[tail_start..].join("\n");
+                    let observed_at = now_iso();
+                    let budget_secs = config.repl_idle_max_wait.as_secs();
+                    snapshot.status = String::from("failed");
+                    snapshot.finished_at = Some(observed_at.clone());
+                    snapshot.last_observed_at = Some(observed_at.clone());
+                    snapshot.output_snippet = Some(screen_tail.clone());
+                    set_terminal_cause_if_absent(
+                        &mut snapshot,
+                        TerminalCauseCategory::TimedOut,
+                        format!(
+                            "{} REPL did not become ready within {budget_secs}s \
+                             (launch ready gate)",
+                            params.agent_type
+                        ),
+                        true,
+                        &observed_at,
+                    );
+                    let message = format!(
+                        "session.launch: {} REPL did not become ready within \
+                         {budget_secs}s — startup is blocked by an unrecognized \
+                         screen (a dialog outside the R9 fast-path set?). The \
+                         prompt was NOT delivered; the tmux session was killed \
+                         and the session row was marked failed (timed_out). \
+                         Last screen tail:\n{screen_tail}",
+                        params.agent_type
+                    );
+                    record_command(
+                        conn,
+                        Some(&snapshot.session_id),
+                        "session.launch",
+                        "failed",
+                        Some(&message),
+                        &snapshot,
+                    )?;
+                    upsert_snapshot(conn, &snapshot)?;
+                    record_event(conn, &snapshot.session_id, "session_failed", &snapshot)?;
+                    return Err(anyhow!(message));
+                }
             }
             tmux_send_keys(config, &pane_id, &full_prompt, true, true)?;
-            awaiting_response = true;
+            snapshot.awaiting_response = true;
         }
     }
-    let mut backend_ref = BTreeMap::new();
-    backend_ref.insert(String::from("session_name"), params.session_name.clone());
-    backend_ref.insert(String::from("pane_id"), pane_id.clone());
-    backend_ref.insert(String::from("command"), command_line.clone());
-    let started_at = now_iso();
-    let snapshot = SessionSnapshot {
-        session_id: params.session_id.clone(),
-        session_name: params.session_name,
-        pane_id,
-        agent_type: params.agent_type,
-        work_dir: params.work_dir,
-        lifecycle: params.lifecycle,
-        status: String::from("booting"),
-        backend_kind: String::from("tmux"),
-        backend_ref,
-        started_at,
-        last_observed_at: None,
-        finished_at: None,
-        cleaned_at: None,
-        pr_url: None,
-        output_snippet: None,
-        terminal_cause: None,
-        expected_result: params.expected_result,
-        retries_used: 0,
-        last_validation_error: None,
-        awaiting_response,
-        observed_active_at: None,
-        result_payload: None,
-        result_solicitations_used: 0,
-        prompt_unblock_attempts: 0,
-        last_output_change_at: None,
-    };
     record_command(
         conn,
         Some(&snapshot.session_id),
@@ -1865,8 +1931,13 @@ fn session_launch(
         None,
         &snapshot,
     )?;
+    // Hand-off to the monitor (launch pipeline complete). BOOTING rows are
+    // launch-owned — the monitor's booting arm skips them — so completion
+    // writes "running" (+ the awaiting latch when a prompt was delivered)
+    // to pass observation duty to the monitor loop. The row's existence
+    // was already settled at registration time.
+    snapshot.status = String::from("running");
     upsert_snapshot(conn, &snapshot)?;
-    record_event(conn, &snapshot.session_id, "session_started", &snapshot)?;
     Ok(snapshot)
 }
 
@@ -3520,6 +3591,56 @@ fn monitor_once(config: &Config) -> Result<()> {
     )?;
     let now = Utc::now();
     for mut snapshot in active {
+        // BOOTING ownership arm (issue
+        // agentd-session-registration-after-ready-gate): a BOOTING row is
+        // owned by the in-flight launch pipeline. Registration now precedes
+        // the ready gate, so while a row is BOOTING the pane shows launch
+        // TRANSPORT intermediate states (bare shell before the command is
+        // typed, a half-pasted prompt) that every observation arm below
+        // misreads as agent behavior — the zombie reaper called a
+        // pre-command zsh pane "exited" and turn-end solicited into a
+        // half-started agent (e2e regression, 2026-07-17). The monitor's
+        // only duty here is the boot watchdog: a BOOTING row whose launch
+        // pipeline died (daemon crash / launcher error mid-launch) must
+        // still reach a terminal state. The budget is launch timeout PLUS
+        // the repl-idle budget, because the ready gate legitimately waits
+        // up to the full repl-idle budget before delivering. Hand-off back
+        // to the monitor is session_launch's completion upsert (status
+        // "running"). Same contract as sessionhost policy.hy.
+        if snapshot.status == "booting" {
+            if let Some(started) = parse_iso_timestamp(Some(snapshot.started_at.as_str())) {
+                let age = now.signed_duration_since(started);
+                let boot_timeout = effective_launch_timeout_seconds()
+                    + config.repl_idle_max_wait.as_secs() as i64;
+                if age > ChronoDuration::seconds(boot_timeout) {
+                    let observed = now_iso();
+                    snapshot.status = String::from("failed");
+                    snapshot.last_observed_at = Some(observed.clone());
+                    snapshot.finished_at.get_or_insert(observed.clone());
+                    let reason = format!(
+                        "launch timeout: launch pipeline did not complete within \
+                         {boot_timeout}s (BOOTING row left behind — launcher died \
+                         mid-launch?)"
+                    );
+                    snapshot.last_validation_error = Some(reason.clone());
+                    set_terminal_cause_if_absent(
+                        &mut snapshot,
+                        TerminalCauseCategory::TimedOut,
+                        reason,
+                        true,
+                        &observed,
+                    );
+                    upsert_snapshot(&conn, &snapshot)?;
+                    record_event(
+                        &conn,
+                        &snapshot.session_id,
+                        "session_launch_timeout",
+                        &snapshot,
+                    )?;
+                }
+            }
+            continue;
+        }
         // Stale-observation watchdog. Runs BEFORE any tmux probe so a
         // hung or misbehaving tmux call cannot prevent the watchdog
         // from firing. Past incident: monitor_loop appeared live in
@@ -4168,7 +4289,13 @@ fn is_interactive_agent_type(agent_type: &str) -> bool {
 /// appears or after `max_wait`, whichever comes first; the caller is
 /// expected to send the keys regardless so a stuck startup at least
 /// fails the normal validation path instead of hanging the RPC.
-fn wait_for_repl_idle(config: &Config, pane_id: &str, max_wait: Duration) -> Result<()> {
+/// Poll the pane until the agent's REPL shows its idle input composer,
+/// dismissing R9 launch dialogs along the way. Returns Ok(true) once the
+/// composer is visible, Ok(false) when the budget runs out — the caller
+/// (session_launch) owns the fail-closed consequence (kill + row failed +
+/// typed error; 2026-07-07 contract revision, parity with
+/// sessionhost/launch.hy wait-for-repl-idle).
+fn wait_for_repl_idle(config: &Config, pane_id: &str, max_wait: Duration) -> Result<bool> {
     let start = std::time::Instant::now();
     let poll_interval = Duration::from_millis(300);
     while start.elapsed() < max_wait {
@@ -4212,11 +4339,11 @@ fn wait_for_repl_idle(config: &Config, pane_id: &str, max_wait: Duration) -> Res
             continue;
         }
         if output_has_agent_idle_prompt(&output) {
-            return Ok(());
+            return Ok(true);
         }
         thread::sleep(poll_interval);
     }
-    Ok(())
+    Ok(false)
 }
 
 fn tail_chars(value: &str, max_chars: usize) -> String {
@@ -4987,6 +5114,127 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
             event_types.contains(&String::from("session_failed")),
             "the timeout transition must record session_failed: {event_types:?}"
         );
+    }
+
+    fn booting_snapshot(session_id: &str, started_at: String) -> SessionSnapshot {
+        SessionSnapshot {
+            session_id: String::from(session_id),
+            session_name: String::from(session_id),
+            pane_id: String::from("%1"),
+            agent_type: String::from("claude"),
+            work_dir: String::from("/tmp"),
+            lifecycle: String::from(LIFECYCLE_RUN_TO_COMPLETION),
+            status: String::from("booting"),
+            backend_kind: String::from("tmux"),
+            backend_ref: BTreeMap::new(),
+            started_at,
+            expected_result: None,
+            retries_used: 0,
+            last_validation_error: None,
+            awaiting_response: false,
+            observed_active_at: None,
+            result_payload: None,
+            result_solicitations_used: 0,
+            prompt_unblock_attempts: 0,
+            last_output_change_at: None,
+            last_observed_at: None,
+            finished_at: None,
+            cleaned_at: None,
+            pr_url: None,
+            output_snippet: None,
+            terminal_cause: None,
+        }
+    }
+
+    fn booting_monitor_config(tmp: &Path, db: PathBuf) -> Config {
+        Config {
+            db_path: db,
+            socket_path: tmp.join("agentd.sock"),
+            // The monitor must never touch tmux for BOOTING rows — pointing
+            // tmux at a binary that always fails makes any probe fail loudly.
+            tmux_bin: String::from("/nonexistent/tmux"),
+            monitor_interval: Duration::from_millis(1000),
+            max_running: 10,
+            result_solicitation_limit: DEFAULT_RESULT_SOLICITATION_LIMIT,
+            prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
+            prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
+            prompt_judge_cmd: None,
+            repl_idle_max_wait: Duration::from_secs(DEFAULT_REPL_IDLE_MAX_WAIT_SECS),
+        }
+    }
+
+    /// BOOTING ownership: a fresh BOOTING row belongs to the in-flight
+    /// launch pipeline. The monitor must leave it alone entirely — no tmux
+    /// probes (the config's tmux binary fails loudly if invoked), no status
+    /// rewrite, no events. Under the pre-fix semantics the zombie reaper /
+    /// turn-end arms misread launch-transport frames (pre-command shell,
+    /// half-pasted prompt) as agent behavior.
+    #[test]
+    fn monitor_once_leaves_booting_rows_to_the_launch_pipeline() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        upsert_snapshot(&conn, &booting_snapshot("boot-owned", now_iso()))
+            .expect("insert booting session");
+        let config = booting_monitor_config(tmp.path(), db);
+
+        monitor_once(&config).expect("monitor_once must not touch tmux for BOOTING rows");
+
+        let row = session_get(&conn, "boot-owned")
+            .expect("session_get")
+            .expect("row still present");
+        assert_eq!(row.status, "booting", "launch-owned row must stay BOOTING");
+        let events: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agent_session_events WHERE session_id = 'boot-owned'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("count events");
+        assert_eq!(events, 0, "the monitor must not record events for launch-owned rows");
+    }
+
+    /// Boot watchdog: a BOOTING row whose launch pipeline died (daemon
+    /// crash / launcher error mid-launch) must still reach a terminal
+    /// state. The budget is launch-timeout + repl-idle budget, because the
+    /// ready gate legitimately holds a launch in flight for the whole
+    /// repl-idle budget.
+    #[test]
+    fn monitor_once_reaps_booting_row_after_boot_timeout() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        let abandoned_at = (Utc::now()
+            - ChronoDuration::seconds(
+                LAUNCH_TIMEOUT_SECONDS + DEFAULT_REPL_IDLE_MAX_WAIT_SECS as i64 + 60,
+            ))
+        .to_rfc3339();
+        upsert_snapshot(&conn, &booting_snapshot("boot-abandoned", abandoned_at))
+            .expect("insert abandoned booting session");
+        let config = booting_monitor_config(tmp.path(), db);
+
+        monitor_once(&config).expect("boot watchdog reaps via sqlite only");
+
+        let row = session_get(&conn, "boot-abandoned")
+            .expect("session_get")
+            .expect("row still present");
+        assert_eq!(row.status, "failed");
+        assert!(row.finished_at.is_some());
+        let cause = row.terminal_cause.expect("terminal cause recorded");
+        assert!(matches!(cause.category, TerminalCauseCategory::TimedOut));
+        let event_types: Vec<String> = conn
+            .prepare(
+                "SELECT event_type FROM agent_session_events \
+                 WHERE session_id = 'boot-abandoned' ORDER BY id",
+            )
+            .expect("prepare events query")
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("query events")
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .expect("collect events");
+        assert_eq!(event_types, vec![String::from("session_launch_timeout")]);
     }
 
     #[test]

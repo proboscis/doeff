@@ -6,9 +6,13 @@
 ;;; 凍結された起動の「順序と方針」だけを持つ:
 ;;;   admission(重複 / 既存 tmux)→ per-kind PreLaunchSetup(S11 gate + trust)
 ;;;   → result channel 配線(ADR 0035 reject-at-launch)→ argv 構築 →
-;;;   TmuxNewSession → 起動 command 送出 → wait-for-repl-idle(R9 launch dialog
-;;;   の決定的 dismissal)→ prompt の live REPL 配送(result-protocol instruction
-;;;   追記)→ booting 行 upsert + session_started event。
+;;;   TmuxNewSession → booting 行 upsert + session_started event(登録は TUI
+;;;   readiness に依存しない簿記 — ready 待ちの前。issue
+;;;   agentd-session-registration-after-ready-gate)→ 起動 command 送出 →
+;;;   wait-for-repl-idle(R9 launch dialog の決定的 dismissal。予算切れは
+;;;   fail-closed: 行を terminal failed へ遷移)→ prompt の live REPL 配送
+;;;   (result-protocol instruction 追記)→ monitor への手渡し upsert
+;;;   (running + awaiting latch — BOOTING は launch pipeline 所有)。
 ;;;
 ;;; program は effect を yield するのみで IO を直接呼ばない(substrate-clean)。
 ;;; 呼び手より長生きする部分(socket・writer actor・lease・cycle 起動)は
@@ -38,10 +42,13 @@
   tmux-kill-session
   clock-now
   clock-sleep])
+(import dataclasses [replace])
+
 (import doeff_agents.sessionhost.policy [
   BINDING-OWNED-ENV-KEYS
   binding-admission-error
   iso-format
+  make-cause
   overlay-env-offenders
   seconds-since])
 
@@ -282,51 +289,16 @@
                   k v)))
   (setv effective-env {#** session-env #** binding-env})
   (<- pane-id (tmux-new-session session-name (get params "work_dir") effective-env))
-  (when (.strip command-line)
-    (<- _ (tmux-send-keys pane-id command-line True True)))
 
-  ;; --- prompt の live REPL 配送(argv / print-mode 禁止 — session が task
-  ;; 完了後も生き、monitor が validate / 再促せるように)。
-  (setv awaiting False)
-  (setv prompt (or (.get params "prompt") ""))
-  (when (.strip prompt)
-    (setv full-prompt
-          (if (is-not expected-result None)
-              (+ prompt RESULT-PROTOCOL-INSTRUCTION)
-              prompt))
-    (when (and (not has-override) (in agent-type INTERACTIVE-AGENT-TYPES))
-      ;; 予算は host 注入 knob(DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS、
-      ;; max_running と同じ注入パターン)が優先、無ければ oracle 定数 120s。
-      (setv repl-idle-max-wait
-            (or (.get params "repl_idle_max_wait_seconds")
-                REPL-IDLE-MAX-WAIT-SECONDS))
-      (<- repl-ready (wait-for-repl-idle agent-type pane-id repl-idle-max-wait))
-      (when (not repl-ready)
-        ;; fail-closed(2026-07-07 契約修正): idle 未達のまま paste すると
-        ;; prompt が R9 外の未知 dialog に送出され session は silent hang に
-        ;; なる(trust dialog 実障害)。paste せず、画面 tail を証拠として
-        ;; 積んだ typed error で launch を fail させ、作った session は
-        ;; 片付ける(行は未永続なので放置すると誰にも観測されないリーク)。
-        (<- final-frame (tmux-capture pane-id 40))
-        (<- _ (tmux-kill-session session-name))
-        (setv tail-lines (cut (.splitlines final-frame) -15 None))
-        (setv screen-tail (.join "\n" tail-lines))
-        (raise (RuntimeError
-                 (+ f"session.launch: {agent-type} REPL did not become ready "
-                    f"within {repl-idle-max-wait}s — startup is blocked by an "
-                    "unrecognized screen (a dialog outside the R9 fast-path "
-                    "set?). The prompt was NOT delivered and the created "
-                    "session was cleaned up. Last screen tail:\n"
-                    screen-tail)))))
-    (if (in agent-type INTERACTIVE-AGENT-TYPES)
-        (<- _ (deliver-message pane-id full-prompt))
-        (<- _ (tmux-send-keys pane-id full-prompt True True)))
-    (setv awaiting True))
-
-  ;; --- booting 行の永続化 + event(実効 identity 込み — S14 の Hy positive 化)。
+  ;; --- booting 行の登録(tmux-new-session 直後・ready 待ちの前 — issue
+  ;; agentd-session-registration-after-ready-gate)。登録は TUI readiness に
+  ;; 依存しない簿記: 物理 session が生まれた瞬間に外部から観測可能でなければ、
+  ;; cold start の ready 待ち(最大 120s)の間 session は誰にも見えず、
+  ;; 60s handshake を仮定する外部監視から orphan に見える(mediagen engine、
+  ;; 2026-07-14 実測)。以降の失敗は行を terminal へ遷移させる(リークでは
+  ;; なくライフサイクル)。実効 identity 込み — S14 の Hy positive 化。
   ;; work-dir / backend-ref は store-of-record が行作成に要る launch 所有
-  ;; field(oracle backend_ref = session_name / pane_id / command、
-  ;; main.rs:1813-1816)。
+  ;; field(oracle backend_ref = session_name / pane_id / command)。
   ;; ADR-006: 会話 identity の初期値 — resume は親会話(事前確定)、fork は
   ;; None(CLI が新 ID を鋳造 → DiscoverConversation で事後発見)、fresh の
   ;; claude は鋳造済み UUID(--session-id 注入と同値)、fresh の codex /
@@ -348,7 +320,7 @@
               :lifecycle lifecycle
               :status "booting"
               :started-at (iso-format now)
-              :awaiting-response awaiting
+              :awaiting-response False
               :expected-result expected-result
               :effective-identity identity
               :work-dir (get params "work_dir")
@@ -373,6 +345,73 @@
                   (.get resume-context "forked_from_session_id"))))
   (<- _ (session-store-upsert row))
   (<- _ (session-store-record-event session-id "session_started" row))
+
+  (when (.strip command-line)
+    (<- _ (tmux-send-keys pane-id command-line True True)))
+
+  ;; --- prompt の live REPL 配送(argv / print-mode 禁止 — session が task
+  ;; 完了後も生き、monitor が validate / 再促せるように)。
+  (setv awaiting False)
+  (setv prompt (or (.get params "prompt") ""))
+  (when (.strip prompt)
+    (setv full-prompt
+          (if (is-not expected-result None)
+              (+ prompt RESULT-PROTOCOL-INSTRUCTION)
+              prompt))
+    (when (and (not has-override) (in agent-type INTERACTIVE-AGENT-TYPES))
+      ;; 予算は host 注入 knob(DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS、
+      ;; max_running と同じ注入パターン)が優先、無ければ oracle 定数 120s。
+      (setv repl-idle-max-wait
+            (or (.get params "repl_idle_max_wait_seconds")
+                REPL-IDLE-MAX-WAIT-SECONDS))
+      (<- repl-ready (wait-for-repl-idle agent-type pane-id repl-idle-max-wait))
+      (when (not repl-ready)
+        ;; fail-closed(2026-07-07 契約修正): idle 未達のまま paste すると
+        ;; prompt が R9 外の未知 dialog に送出され session は silent hang に
+        ;; なる(trust dialog 実障害)。paste せず、画面 tail を証拠として
+        ;; 積んだ typed error で launch を fail させ、作った session は
+        ;; kill する。登録済みの booting 行は terminal(failed / timed_out)へ
+        ;; 遷移して残る —「誰にも観測されない行をリークさせない」保証の
+        ;; ライフサイクル版(issue agentd-session-registration-after-ready-gate、
+        ;; oracle main.rs と同一契約)。
+        (<- final-frame (tmux-capture pane-id 40))
+        (<- _ (tmux-kill-session session-name))
+        (setv tail-lines (cut (.splitlines final-frame) -15 None))
+        (setv screen-tail (.join "\n" tail-lines))
+        (<- fail-now (clock-now))
+        (setv failed-row
+              (replace row
+                       :status "failed"
+                       :finished-at (iso-format fail-now)
+                       :last-observed-at (iso-format fail-now)
+                       :output-snippet screen-tail
+                       :terminal-cause
+                         (make-cause "timed_out"
+                                     (+ f"{agent-type} REPL did not become ready "
+                                        f"within {repl-idle-max-wait}s "
+                                        "(launch ready gate)")
+                                     (iso-format fail-now))))
+        (<- _ (session-store-upsert failed-row))
+        (<- _ (session-store-record-event session-id "session_failed" failed-row))
+        (raise (RuntimeError
+                 (+ f"session.launch: {agent-type} REPL did not become ready "
+                    f"within {repl-idle-max-wait}s — startup is blocked by an "
+                    "unrecognized screen (a dialog outside the R9 fast-path "
+                    "set?). The prompt was NOT delivered; the tmux session was "
+                    "killed and the session row was marked failed (timed_out). "
+                    "Last screen tail:\n"
+                    screen-tail)))))
+    (if (in agent-type INTERACTIVE-AGENT-TYPES)
+        (<- _ (deliver-message pane-id full-prompt))
+        (<- _ (tmux-send-keys pane-id full-prompt True True)))
+    (setv awaiting True))
+
+  ;; --- monitor への手渡し(launch pipeline 完了)。BOOTING は launch pipeline
+  ;; 所有(monitor は boot watchdog 以外触らない — policy.hy booting 所有権 arm)
+  ;; なので、配送完了をもって running + awaiting latch を書き、以降の観測を
+  ;; monitor に引き渡す。行の存在は登録時点で確定済み。
+  (setv row (replace row :status "running" :awaiting-response awaiting))
+  (<- _ (session-store-upsert row))
   row)
 
 

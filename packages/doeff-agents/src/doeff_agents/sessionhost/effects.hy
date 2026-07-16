@@ -167,9 +167,12 @@
 (defclass [(dataclass :frozen True :kw-only True)] MonitorKnobs []
   "testability knob 表(conformance README、契約凍結値):
    stall T 180s / solicitation budget 2 / unblock budget 3 /
-   launch timeout 60s / stale-observation 300s。
-   judge-cmd None = judge 無効 — 既定で無効(ハザード 1: 既定 judge が実 claude を
-   起動する事故の防止。conformance 実行時も同じ既定を維持する)。"
+   launch timeout 60s / stale-observation 300s / repl-idle 予算 120s。
+   judge-cmd None = judge 無効 — ハザード 1: 既定 judge が実 claude を
+   起動する事故の防止。conformance 実行時も同じ既定を維持する)。
+   repl-idle-max-wait-seconds は launch 側 ready gate の予算と同じ値
+   (DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS)— booting 所有権 arm の boot
+   watchdog 予算(launch timeout + repl-idle 予算)の材料。"
   #^ int prompt-stall-seconds
   (setv prompt-stall-seconds 180)
   #^ int result-solicitation-limit
@@ -180,6 +183,8 @@
   (setv launch-timeout-seconds 60)
   #^ int stale-observation-seconds
   (setv stale-observation-seconds 300)
+  #^ int repl-idle-max-wait-seconds
+  (setv repl-idle-max-wait-seconds 120)
   #^ (| str None) judge-cmd
   (setv judge-cmd None))
 
