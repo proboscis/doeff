@@ -8,6 +8,7 @@
 import doeff_hy  # noqa: F401 — .hy fixture module の import hook 登録(test-only)
 import domain_defhandler_fixtures as fixtures
 import pytest
+from doeff_domain import DomainCheckError, DomainDefinitionError, handled_effects, handles
 from domain_test_effects import (
     FixtureAlpha,
     FixtureBeta,
@@ -15,8 +16,6 @@ from domain_test_effects import (
     FixtureGamma,
     plain_installer,
 )
-
-from doeff_domain import DomainCheckError, DomainDefinitionError, handled_effects, handles
 
 
 class TestHandlesAnnotation:

@@ -1,8 +1,6 @@
 """Domain データ構造と registry の意味論 (ADR-DOE-DOMAIN-001 D2/D3)。"""
 
 import pytest
-from domain_test_effects import FixtureAlpha, FixtureBeta, make_effect_class
-
 from doeff_domain import (
     Domain,
     DomainDefinitionError,
@@ -16,6 +14,7 @@ from doeff_domain import (
     register_domain,
     registered_domains,
 )
+from domain_test_effects import FixtureAlpha, FixtureBeta, make_effect_class
 
 
 def make_domain(name="d-fixture", **kwargs):
@@ -121,18 +120,15 @@ class TestRegistration:
         with isolated_registry():
             register_domain(make_domain(name="d-atomic", effects=[FixtureAlpha]))
             with pytest.raises(DuplicateEffectIntroductionError):
-                register_domain(
-                    make_domain(name="d-atomic2", effects=[FixtureBeta, FixtureAlpha])
-                )
+                register_domain(make_domain(name="d-atomic2", effects=[FixtureBeta, FixtureAlpha]))
             with pytest.raises(KeyError):
                 get_domain("d-atomic2")
             with pytest.raises(KeyError):
                 introducing_domain(FixtureBeta)
 
     def test_get_domain_unknown_name_fails_loud(self):
-        with isolated_registry():
-            with pytest.raises(KeyError, match="no-such-domain"):
-                get_domain("no-such-domain")
+        with isolated_registry(), pytest.raises(KeyError, match="no-such-domain"):
+            get_domain("no-such-domain")
 
     def test_isolated_registry_starts_empty_and_restores(self):
         with isolated_registry():

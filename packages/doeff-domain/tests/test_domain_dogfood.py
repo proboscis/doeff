@@ -6,6 +6,7 @@ CacheDeleteEffect は語彙として定義・export されているが、doeff-c
 fail し、この申告の除去を強制する(ratchet)。処置は maintainer 裁定待ち。
 """
 
+import doeff_domain.core_effects_domains as dogfood  # noqa: F401 — import 時に登録
 import pytest
 from doeff_core_effects.cache_effects import CacheDeleteEffect
 from doeff_core_effects.effects import Ask, Get, Local, Put
@@ -16,8 +17,6 @@ from doeff_core_effects.memo_effects import (
     MemoGetEffect,
     MemoPutEffect,
 )
-
-import doeff_domain.core_effects_domains as dogfood  # noqa: F401 — import 時に登録
 from doeff_domain import (
     DomainCoverageError,
     assert_domain_covered,

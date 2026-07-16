@@ -4,8 +4,6 @@ import doeff_hy  # noqa: F401 — .hy fixture module の import hook 登録(test
 import domain_defhandler_fixtures as fixtures
 import domain_orphan_scan_fixture as scan_fixture
 import pytest
-from domain_test_effects import FixtureAlpha, FixtureBeta, make_effect_class
-
 from doeff_domain import (
     Domain,
     DomainCheckError,
@@ -18,6 +16,7 @@ from doeff_domain import (
     isolated_registry,
     register_domain,
 )
+from domain_test_effects import FixtureAlpha, FixtureBeta, make_effect_class
 
 
 class TestCoverage:
@@ -233,6 +232,5 @@ class TestOrphans:
                 )
 
     def test_missing_package_fails_loud(self):
-        with isolated_registry():
-            with pytest.raises(ModuleNotFoundError):
-                assert_no_orphan_effects(["no_such_package_doeff_domain_xyz"])
+        with isolated_registry(), pytest.raises(ModuleNotFoundError):
+            assert_no_orphan_effects(["no_such_package_doeff_domain_xyz"])

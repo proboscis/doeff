@@ -7,14 +7,13 @@ import doeff_hy  # noqa: F401 — .hy fixture module の import hook 登録(test
 import hy
 import hy.macros
 import pytest
-from domain_test_effects import FixtureGamma, make_effect_class
-
 from doeff_domain import (
     DuplicateDomainNameError,
     get_domain,
     introducing_domain,
     isolated_registry,
 )
+from domain_test_effects import FixtureGamma, make_effect_class
 
 
 def _eval_defdomain(code: str, **extra_globals):
@@ -23,9 +22,7 @@ def _eval_defdomain(code: str, **extra_globals):
     sys.modules[module.__name__] = module
     try:
         module.__dict__.update(extra_globals)
-        hy.macros.require(
-            "doeff_domain.macros", module, assignments=[["defdomain", "defdomain"]]
-        )
+        hy.macros.require("doeff_domain.macros", module, assignments=[["defdomain", "defdomain"]])
         result = None
         for form in hy.read_many(code):
             result = hy.eval(form, module.__dict__, module=module)
@@ -67,16 +64,14 @@ def test_defdomain_binds_name_and_defaults():
 
 
 def test_defdomain_requires_title():
-    with isolated_registry():
-        with pytest.raises(Exception, match="defdomain requires :title"):
-            _eval_defdomain("(defdomain macro-missing-title :effects [])")
+    with isolated_registry(), pytest.raises(Exception, match="defdomain requires :title"):
+        _eval_defdomain("(defdomain macro-missing-title :effects [])")
 
 
 def test_defdomain_rejects_unknown_keys():
     # :effect のような typo を黙って捨てない(fail loud)
-    with isolated_registry():
-        with pytest.raises(Exception, match="unknown key"):
-            _eval_defdomain('(defdomain macro-typo-domain :title "t" :effect [])')
+    with isolated_registry(), pytest.raises(Exception, match="unknown key"):
+        _eval_defdomain('(defdomain macro-typo-domain :title "t" :effect [])')
 
 
 def test_defdomain_duplicate_name_raises_at_registration():

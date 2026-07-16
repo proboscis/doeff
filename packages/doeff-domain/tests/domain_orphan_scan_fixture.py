@@ -4,8 +4,8 @@ Defines two EffectBase subclasses and re-exports a third defined elsewhere:
 the scan must count only classes DEFINED here, never re-exports.
 """
 
-from domain_test_effects import FixtureAlpha as ReExportedFixtureAlpha  # noqa: F401
 from doeff_vm import EffectBase
+from domain_test_effects import FixtureAlpha as ReExportedFixtureAlpha  # noqa: F401
 
 
 class OwnedFixtureEffect(EffectBase):
