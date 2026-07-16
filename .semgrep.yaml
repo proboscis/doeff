@@ -207,7 +207,11 @@ rules:
       agentd-session-registration-after-ready-gate). Bind the result and
       fail closed: kill the session, mark the row failed (timed_out), raise
       the typed error — the same contract as sessionhost/launch.hy.
-    pattern: wait_for_repl_idle($CONFIG, $PANE, $WAIT)?;
+    patterns:
+      - pattern: wait_for_repl_idle($CONFIG, $PANE, $WAIT)?
+      # A let-bound readiness verdict is the compliant shape; only the bare
+      # discarding statement is banned.
+      - pattern-not-inside: let $BOUND = $EXPR;
     paths:
       include:
         - /packages/doeff-agentd/src/**
