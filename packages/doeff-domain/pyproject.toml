@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "doeff-domain"
+version = "0.1.0"
+description = "Vocabulary cohesion domains for doeff — defdomain, domain registry, conformance checks"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "doeff-vm>=0.2.0",
+    "hy>=1.2.0",
+]
+
+[project.optional-dependencies]
+# The dogfood declaration module (doeff_domain.core_effects_domains) is the
+# ONLY part of this package allowed to depend on doeff-core-effects
+# (ADR-DOE-DOMAIN-001 D1, one-way).
+dogfood = ["doeff-core-effects>=0.1.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/doeff_domain"]
+
+[tool.uv.sources]
+doeff-vm = { workspace = true }
+doeff-core-effects = { workspace = true }
