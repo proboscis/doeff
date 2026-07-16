@@ -796,6 +796,9 @@ rules:
         - "**/examples/**"
         - "**/fixtures/**"
         - "**/doeff_hy/macros.hy"
+        # 採用実装(#533)では bang 展開機構が macros.hy と handle.hy に跨るため、
+        # 移植元(#534 実装)の macros.hy 除外と同じ意図で handle.hy も除外する。
+        - "**/doeff_hy/handle.hy"
 
   # tombstone(2026-07-14): 退役済みパターン cache-handler-no-result-duck-typing の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: cache-handler-no-result-duck-typing
