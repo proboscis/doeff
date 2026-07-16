@@ -35,16 +35,6 @@ TESTS_DIR = Path(__file__).resolve().parent
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
-from test_ready_gate import (  # noqa: E402
-    CLAUDE_READY,
-    CODEX_MCP_BOOT,
-    CODEX_READY,
-    PROMPT,
-    ReadyFakeClaudeAdapter,
-    ReadyFakeCodexAdapter,
-    ScriptedBackend,
-)
-
 from doeff_agents.adapters.base import AgentType  # noqa: E402
 from doeff_agents.effects.agent import (  # noqa: E402
     AgentReadyTimeoutError as EffectsAgentReadyTimeoutError,
@@ -56,6 +46,15 @@ from doeff_agents.effects.agent import (  # noqa: E402
 from doeff_agents.monitor import SessionStatus  # noqa: E402
 from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy  # noqa: E402
 from doeff_agents.session_store import InMemoryAgentSessionRepository  # noqa: E402
+from test_ready_gate import (  # noqa: E402
+    CLAUDE_READY,
+    CODEX_MCP_BOOT,
+    CODEX_READY,
+    PROMPT,
+    ReadyFakeClaudeAdapter,
+    ReadyFakeCodexAdapter,
+    ScriptedBackend,
+)
 
 
 class RegistrationProbeBackend(ScriptedBackend):
