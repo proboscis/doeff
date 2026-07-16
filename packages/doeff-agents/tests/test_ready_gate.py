@@ -36,15 +36,18 @@ from doeff_agents.effects.agent import (
     AgentReadyTimeoutError as EffectsAgentReadyTimeoutError,
 )
 from doeff_agents.effects.agent import (
+    AgentSessionSnapshot,
     ClaudeLaunchEffect,
     LaunchEffect,
 )
+from doeff_agents.monitor import SessionStatus
 from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
 from doeff_agents.session import (
     AgentReadyTimeoutError,
     launch_session,
 )
 from doeff_agents.session_backend import SessionBackend
+from doeff_agents.session_store import InMemoryAgentSessionRepository
 from doeff_agents.tmux import SessionConfig, SessionInfo
 
 READY_SCREENS = Path(__file__).parent / "data" / "ready_screens"
@@ -346,14 +349,80 @@ def test_launch_session_claude_pastes_prompt_only_after_ready_frame(monkeypatch)
 # =============================================================================
 
 
-def _production_handler(backend: ScriptedBackend, tmp_path: Path):
+def _production_handler(
+    backend: ScriptedBackend,
+    tmp_path: Path,
+    session_repository: InMemoryAgentSessionRepository | None = None,
+):
     from doeff_agents.handlers.production import TmuxAgentHandler
 
     return TmuxAgentHandler(
         backend=backend,
+        session_repository=session_repository,
         codex_runtime_policy=CodexRuntimePolicy(codex_home=tmp_path / "codex-home"),
         claude_runtime_policy=ClaudeRuntimePolicy(agent_home=tmp_path / "agent-home"),
     )
+
+
+class RegistrationObservingBackend(ScriptedBackend):
+    """Observe the public registry from inside the real ready-wait capture."""
+
+    def __init__(
+        self,
+        frames: list[str],
+        repository: InMemoryAgentSessionRepository,
+        session_id: str,
+    ) -> None:
+        super().__init__(frames)
+        self.repository = repository
+        self.session_id = session_id
+        self.snapshots_during_ready_wait: list[AgentSessionSnapshot | None] = []
+
+    def capture_pane(
+        self,
+        target: str,
+        lines: int = 100,
+        *,
+        strip_ansi_codes: bool = True,
+    ) -> str:
+        self.snapshots_during_ready_wait.append(self.repository.get_session(self.session_id))
+        return super().capture_pane(
+            target,
+            lines,
+            strip_ansi_codes=strip_ansi_codes,
+        )
+
+
+def test_handle_launch_registers_booting_snapshot_before_ready_wait(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repository = InMemoryAgentSessionRepository()
+    backend = RegistrationObservingBackend(
+        frames=[CODEX_READY],
+        repository=repository,
+        session_id="codex-register-before-ready",
+    )
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter",
+        lambda _agent_type: ReadyFakeCodexAdapter(),
+    )
+    handler = _production_handler(backend, tmp_path, repository)
+
+    handler.handle_launch(
+        LaunchEffect(
+            session_name="codex-register-before-ready",
+            agent_type=AgentType.CODEX,
+            work_dir=tmp_path / "ws",
+            prompt=PROMPT,
+            ready_timeout=5.0,
+        )
+    )
+
+    assert backend.snapshots_during_ready_wait
+    snapshot = backend.snapshots_during_ready_wait[0]
+    assert snapshot is not None
+    assert snapshot.status == SessionStatus.BOOTING
+    assert repository.events[0].event_type == "session_started"
 
 
 def test_handle_launch_codex_hard_fails_when_composer_never_appears(
@@ -364,7 +433,8 @@ def test_handle_launch_codex_hard_fails_when_composer_never_appears(
         "doeff_agents.handlers.production.get_adapter",
         lambda _agent_type: ReadyFakeCodexAdapter(),
     )
-    handler = _production_handler(backend, tmp_path)
+    repository = InMemoryAgentSessionRepository()
+    handler = _production_handler(backend, tmp_path, repository)
 
     launch = LaunchEffect(
         session_name="codex-cold",
@@ -379,6 +449,11 @@ def test_handle_launch_codex_hard_fails_when_composer_never_appears(
 
     assert PROMPT not in backend.sent_texts()
     assert "codex-cold" in backend.killed
+    snapshot = repository.get_session("codex-cold")
+    assert snapshot is not None
+    assert snapshot.status == SessionStatus.FAILED
+    assert snapshot.finished_at is not None
+    assert all(stored.status != SessionStatus.BOOTING for stored in repository.snapshots.values())
 
 
 def test_handle_launch_codex_pastes_prompt_only_after_ready_frame(
@@ -390,7 +465,8 @@ def test_handle_launch_codex_pastes_prompt_only_after_ready_frame(
         "doeff_agents.handlers.production.get_adapter",
         lambda _agent_type: ReadyFakeCodexAdapter(),
     )
-    handler = _production_handler(backend, tmp_path)
+    repository = InMemoryAgentSessionRepository()
+    handler = _production_handler(backend, tmp_path, repository)
 
     launch = LaunchEffect(
         session_name="codex-warm",
@@ -418,7 +494,8 @@ def test_handle_claude_launch_hard_fails_when_composer_never_appears(
         "doeff_agents.handlers.production.get_adapter",
         lambda _agent_type: ReadyFakeClaudeAdapter(),
     )
-    handler = _production_handler(backend, tmp_path)
+    repository = InMemoryAgentSessionRepository()
+    handler = _production_handler(backend, tmp_path, repository)
 
     launch = ClaudeLaunchEffect(
         session_name="claude-cold",
@@ -432,6 +509,10 @@ def test_handle_claude_launch_hard_fails_when_composer_never_appears(
 
     assert PROMPT not in backend.sent_texts()
     assert "claude-cold" in backend.killed
+    snapshot = repository.get_session("claude-cold")
+    assert snapshot is not None
+    assert snapshot.status == SessionStatus.FAILED
+    assert snapshot.finished_at is not None
 
 
 def test_handle_claude_launch_pastes_prompt_only_after_ready_frame(
