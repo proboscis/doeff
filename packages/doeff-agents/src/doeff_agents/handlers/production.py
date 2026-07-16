@@ -694,19 +694,19 @@ class TmuxAgentHandler(AgentHandler):
         )
         self._record_snapshot("session_started", handle, SessionStatus.BOOTING)
 
-        argv = adapter.launch_command(
-            LaunchParams(
-                work_dir=effect.work_dir,
-                prompt=effect.prompt,
-                model=effect.model,
-                effort=effect.effort,
-                bare=effect.bare,
-                mcp_servers=active_mcp_servers or None,
-            )
-        )
-        command = self._wrap_with_shell_exports(shlex.join(argv), agent_env_exports)
-
         try:
+            argv = adapter.launch_command(
+                LaunchParams(
+                    work_dir=effect.work_dir,
+                    prompt=effect.prompt,
+                    model=effect.model,
+                    effort=effect.effort,
+                    bare=effect.bare,
+                    mcp_servers=active_mcp_servers or None,
+                )
+            )
+            command = self._wrap_with_shell_exports(shlex.join(argv), agent_env_exports)
+
             self._backend.send_keys(session_info.pane_id, command, literal=False)
             # Dismiss onboarding dialogs (trust, theme, auth) if adapter supports
             # them. The first task prompt must be typed into the running agent,
@@ -788,25 +788,25 @@ class TmuxAgentHandler(AgentHandler):
         )
         self._record_snapshot("session_started", handle, SessionStatus.BOOTING)
 
-        argv = adapter.launch_command(
-            LaunchParams(
-                work_dir=effect.work_dir,
-                prompt=effect.prompt,
-                model=effect.model,
-                effort=effect.effort,
-                bare=effect.bare,
-            )
-        )
-        command = self._wrap_with_shell_exports(
-            shlex.join(argv),
-            {
-                **(effect.session_env or {}),
-                "HOME": str(agent_home),
-                "CLAUDE_HOME": str(agent_home / ".claude"),
-                **self._claude_runtime_policy.bootstrap_exports,
-            },
-        )
         try:
+            argv = adapter.launch_command(
+                LaunchParams(
+                    work_dir=effect.work_dir,
+                    prompt=effect.prompt,
+                    model=effect.model,
+                    effort=effect.effort,
+                    bare=effect.bare,
+                )
+            )
+            command = self._wrap_with_shell_exports(
+                shlex.join(argv),
+                {
+                    **(effect.session_env or {}),
+                    "HOME": str(agent_home),
+                    "CLAUDE_HOME": str(agent_home / ".claude"),
+                    **self._claude_runtime_policy.bootstrap_exports,
+                },
+            )
             self._backend.send_keys(session_info.pane_id, command, literal=False)
 
             onboarding_patterns = getattr(adapter, "onboarding_patterns", None)
