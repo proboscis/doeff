@@ -18,6 +18,7 @@ members = [
     "doeff-conductor",
     "doeff-core-effects",
     "doeff-docker",
+    "doeff-domain",
     "doeff-effect-analyzer",
     "doeff-events",
     "doeff-flow",
@@ -411,6 +412,7 @@ dev = [
     { name = "doeff-adr" },
     { name = "doeff-agents" },
     { name = "doeff-conductor" },
+    { name = "doeff-domain" },
     { name = "doeff-gemini" },
     { name = "doeff-hy" },
     { name = "doeff-llm" },
@@ -446,6 +448,7 @@ dev = [
     { name = "doeff-adr", editable = "packages/doeff-adr" },
     { name = "doeff-agents", editable = "packages/doeff-agents" },
     { name = "doeff-conductor", editable = "packages/doeff-conductor" },
+    { name = "doeff-domain", editable = "packages/doeff-domain" },
     { name = "doeff-gemini", editable = "packages/doeff-gemini" },
     { name = "doeff-hy", editable = "packages/doeff-hy" },
     { name = "doeff-llm", editable = "packages/doeff-llm" },
@@ -647,6 +650,23 @@ requires-dist = [
     { name = "doeff-hy", editable = "packages/doeff-hy" },
     { name = "doeff-vm", editable = "packages/doeff-vm" },
     { name = "hy", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "doeff-domain"
+version = "0.1.0"
+source = { editable = "packages/doeff-domain" }
+dependencies = [
+    { name = "doeff-core-effects" },
+    { name = "doeff-vm" },
+    { name = "hy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "doeff-core-effects", editable = "packages/doeff-core-effects" },
+    { name = "doeff-vm", editable = "packages/doeff-vm" },
+    { name = "hy", specifier = ">=1.2.0" },
 ]
 
 [[package]]
