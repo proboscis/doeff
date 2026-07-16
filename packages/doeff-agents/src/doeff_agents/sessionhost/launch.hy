@@ -311,6 +311,13 @@
                 None)
           (and (= agent-type "claude") (not has-override)) minted-conversation
           True None))
+  ;; awaiting latch は登録時点から武装する(prompt を配送する launch のみ)。
+  ;; latch の意味は「agent への prompt が owed — 見かけの turn-end を評価するな」
+  ;; であり、配送中の窓も含む。conformance の await_monitor_ack(行が存在 &&
+  ;; latch クリア)はこれを配送完了 + 監視引き継ぎの同期点として使う — 登録が
+  ;; 先行しても latch が先に武装されていれば ack が早発しない(S6 実測)。
+  (setv prompt (or (.get params "prompt") ""))
+  (setv awaiting (bool (.strip prompt)))
   (<- now (clock-now))
   (setv row (SessionRow
               :session-id session-id
@@ -320,7 +327,7 @@
               :lifecycle lifecycle
               :status "booting"
               :started-at (iso-format now)
-              :awaiting-response False
+              :awaiting-response awaiting
               :expected-result expected-result
               :effective-identity identity
               :work-dir (get params "work_dir")
@@ -351,8 +358,6 @@
 
   ;; --- prompt の live REPL 配送(argv / print-mode 禁止 — session が task
   ;; 完了後も生き、monitor が validate / 再促せるように)。
-  (setv awaiting False)
-  (setv prompt (or (.get params "prompt") ""))
   (when (.strip prompt)
     (setv full-prompt
           (if (is-not expected-result None)
@@ -403,14 +408,13 @@
                     screen-tail)))))
     (if (in agent-type INTERACTIVE-AGENT-TYPES)
         (<- _ (deliver-message pane-id full-prompt))
-        (<- _ (tmux-send-keys pane-id full-prompt True True)))
-    (setv awaiting True))
+        (<- _ (tmux-send-keys pane-id full-prompt True True))))
 
   ;; --- monitor への手渡し(launch pipeline 完了)。BOOTING は launch pipeline
   ;; 所有(monitor は boot watchdog 以外触らない — policy.hy booting 所有権 arm)
-  ;; なので、配送完了をもって running + awaiting latch を書き、以降の観測を
-  ;; monitor に引き渡す。行の存在は登録時点で確定済み。
-  (setv row (replace row :status "running" :awaiting-response awaiting))
+  ;; なので、配送完了をもって running を書き、以降の観測を monitor に引き渡す。
+  ;; awaiting latch は登録時点から armed(上記)。行の存在は登録時点で確定済み。
+  (setv row (replace row :status "running"))
   (<- _ (session-store-upsert row))
   row)
 
