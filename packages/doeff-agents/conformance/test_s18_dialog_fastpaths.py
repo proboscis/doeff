@@ -7,10 +7,10 @@ listed S18 as mode M2 for all four dialogs):
     detected and dismissed ONLY inside `wait_for_repl_idle` (main.rs:4138-4161) —
     the launch path that runs exclusively for M1 launches (no `command=`,
     main.rs:1791). They are unreachable in M2. They also run inside the
-    launch blind window (before the session row exists), so the only
-    observable is the key sequence landing on the fake's tty; the launch
-    then proceeds to paste the prompt into the recovered REPL, which is
-    itself proof the dialog was cleared.
+    launch window after the BOOTING row is published, so the key sequence
+    landing on the fake's tty proves the dialog path ran; the launch then
+    proceeds to paste the prompt into the recovered REPL, which is itself
+    proof the dialog was cleared.
   * managed-settings is the one dialog ALSO handled in the monitor loop
     (main.rs:3604), because it can appear after a turn has started. Its
     monitor-loop dismissal is exercised here in M2, mid-session.
@@ -227,8 +227,14 @@ def test_s18_unknown_dialog_fails_launch_closed(tmp_path) -> None:
         # the error carries the screen evidence (what blocked startup)
         assert "share anonymous usage data" in message.lower(), message
 
-        # no session row was registered (the launch failed before persist)
-        assert harness.client.get_session(scenario.session_id) is None
+        # Registration is physical-session bookkeeping, independent of TUI
+        # readiness. The row is visible during the wait and then terminalized
+        # instead of disappearing or remaining BOOTING forever.
+        row = harness.client.get_session(scenario.session_id)
+        assert row is not None
+        assert row.status.value == "failed", row
+        assert row.finished_at is not None, row
+        assert row.cleaned_at is not None, row
 
         # the created mux session was cleaned up, not leaked
         assert not session_exists_out_of_band(scenario.session_id), (

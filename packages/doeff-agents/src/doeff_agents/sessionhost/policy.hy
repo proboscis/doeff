@@ -537,6 +537,12 @@
       (<- _ (session-store-record-event row.session-id "session_exited" row))
       (return row)))
 
+  ;; BOOTING + latch 未武装の行は launch-session が command/prompt を配送中。
+  ;; 外部監視向けには登録済みだが、内部 monitor が pane を操作すると launch
+  ;; transport と競合するため、配送完了までは launch RPC が所有する。
+  (when (and (= row.status "booting") (not row.awaiting-response))
+    (return row))
+
   ;; --- ADR-006 R1: 会話 identity の事後発見(codex の fresh launch と
   ;; 両 kind の fork は CLI 側が identity を鋳造する)。level-triggered:
   ;; conversation 未確定の非終端行へ毎 cycle 試みる。除外集合 = store が知る

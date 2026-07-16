@@ -351,17 +351,14 @@ def await_keys(expect: str, timeout_s: float) -> bool:
 def await_monitor_ack(timeout_s: float) -> bool:
     """Hold the currently-rendered frame until the monitor has CONSUMED it:
     poll `session.get` over the agentd socket until the session row exists
-    and its `awaiting_response` latch has cleared (main.rs:3629 clears it
-    only on an observed active marker / turn activity).
+    outside the launch-owned BOOTING phase and its `awaiting_response` latch
+    has cleared (only on an observed active marker / turn activity).
 
     Why a wire poll and not a sleep: `session.launch` upserts the session
-    row only AFTER the prompt paste + Enter + confirm loop completes
-    (main.rs:1794-1830, up to ~5s with confirm re-sends), and the monitor
-    cannot observe a session that has no row. A frame rendered and retired
-    inside that blind window never existed as far as agentd is concerned,
-    so any sleep-based hold races the launch tail. This step is the
-    deterministic sync point; scripts retire an active frame (scroll +
-    next frame) only after it returns.
+    row before readiness/prompt delivery.  That initial row deliberately has
+    `status=booting` and an unarmed latch while launch owns pane I/O.  This
+    poll therefore waits for both launch hand-off and monitor consumption;
+    scripts retire an active frame only after it returns.
     """
     import socket as socket_mod
 
@@ -394,7 +391,11 @@ def await_monitor_ack(timeout_s: float) -> bool:
         if line:
             response = json.loads(line)
             snapshot = response.get("result") if response.get("ok") else None
-            if snapshot and not snapshot.get("awaiting_response", False):
+            if (
+                snapshot
+                and snapshot.get("status") != "booting"
+                and not snapshot.get("awaiting_response", False)
+            ):
                 journal("monitor_ack", matched=True, status=snapshot.get("status"))
                 return True
         time.sleep(0.1)
@@ -441,8 +442,8 @@ def report_result(spec: object) -> None:
     )
     resp = ""
     # 200 attempts x 50ms = the same 10s total budget the previous
-    # 40 x 250ms grid gave — the launch confirm loop keeps the session
-    # unregistered for ~4.3s, so the budget must comfortably cover it.
+    # 40 x 250ms grid gave. Registration now precedes the ready gate, but a
+    # report can still race the small new-session -> BOOTING-upsert interval.
     for attempt in range(200):
         resp = rpc(
             {

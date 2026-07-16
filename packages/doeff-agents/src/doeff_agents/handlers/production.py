@@ -573,6 +573,51 @@ class TmuxAgentHandler(AgentHandler):
         """Drop the report_result sink registered for ``session_id``."""
         self._result_sinks.pop(session_id, None)
 
+    def _register_booting_session(
+        self,
+        *,
+        session_name: str,
+        adapter: AgentAdapter,
+        pane_id: str,
+        agent_type: AgentType,
+        work_dir: Path,
+        lifecycle: AgentSessionLifecycle,
+    ) -> SessionHandle:
+        """Publish a physical session before any TUI-readiness wait."""
+        handle = SessionHandle(session_id=session_name)
+        self._sessions[session_name] = SessionState(
+            handle=handle,
+            adapter=adapter,
+            pane_id=pane_id,
+            agent_type=agent_type,
+            work_dir=work_dir,
+            lifecycle=lifecycle,
+        )
+        try:
+            self._record_snapshot("session_started", handle, SessionStatus.BOOTING)
+        except Exception:
+            self._sessions.pop(session_name, None)
+            if self._backend.has_session(session_name):
+                self._backend.kill_session(session_name)
+            raise
+        return handle
+
+    def _fail_registered_launch(self, handle: SessionHandle, error: Exception) -> None:
+        """Clean up a failed startup and retain its terminal lifecycle row."""
+        state = self._sessions[handle.session_id]
+        state.status = SessionStatus.FAILED
+        self._record_snapshot(
+            "session_launch_failed",
+            handle,
+            SessionStatus.FAILED,
+            output_snippet=str(error)[-500:],
+        )
+        if self._backend.has_session(handle.session_id):
+            try:
+                self._backend.kill_session(handle.session_id)
+            except Exception as cleanup_error:
+                raise error from cleanup_error
+
     def handle_launch(
         self,
         effect: LaunchEffect,
@@ -647,12 +692,13 @@ class TmuxAgentHandler(AgentHandler):
             agent_env_exports["CODEX_HOME"] = codex_home
 
         active_mcp_servers: dict[str, str] = dict(mcp_servers or {})
-        if effect.mcp_tools:
-            if not active_mcp_servers or effect.mcp_server_name not in active_mcp_servers:
-                raise AgentLaunchError(
-                    "MCP tools must run inside the caller's doeff VM via "
-                    "mcp_server_loop; no in-VM MCP server URL was provided"
-                )
+        if effect.mcp_tools and (
+            not active_mcp_servers or effect.mcp_server_name not in active_mcp_servers
+        ):
+            raise AgentLaunchError(
+                "MCP tools must run inside the caller's doeff VM via "
+                "mcp_server_loop; no in-VM MCP server URL was provided"
+            )
         # Schema-only sessions carry no domain tools but still need .mcp.json
         # so the agent can reach the report_result server (ADR-DOE-AGENTS-005).
         if active_mcp_servers:
@@ -674,56 +720,56 @@ class TmuxAgentHandler(AgentHandler):
             env=session_env or None,
         )
         session_info = self._backend.new_session(tmux_config)
-
-        argv = adapter.launch_command(
-            LaunchParams(
-                work_dir=effect.work_dir,
-                prompt=effect.prompt,
-                model=effect.model,
-                effort=effect.effort,
-                bare=effect.bare,
-                mcp_servers=active_mcp_servers or None,
-            )
-        )
-        command = self._wrap_with_shell_exports(shlex.join(argv), agent_env_exports)
-
-        self._backend.send_keys(session_info.pane_id, command, literal=False)
-        # Dismiss onboarding dialogs (trust, theme, auth) if adapter supports them.
-        # The first task prompt must be typed into the running agent, not passed
-        # through argv/stdin. Handle startup UI before sending that prompt.
-        onboarding_patterns = getattr(adapter, "onboarding_patterns", None)
-        if onboarding_patterns:
-            _dismiss_onboarding_dialogs(
-                session_info.pane_id,
-                onboarding_patterns,
-                timeout=effect.ready_timeout,
-                backend=self._backend,
-            )
-
-        if adapter.injection_method == InjectionMethod.TMUX:
-            deliver_prompt_when_ready(
-                self._backend,
-                session_info.pane_id,
-                adapter,
-                effect.prompt,
-                session_name=effect.session_name,
-                ready_timeout=effect.ready_timeout,
-                timeout_error=AgentReadyTimeoutError,
-            )
-
-        handle = SessionHandle(
-            session_id=effect.session_name,
-        )
-
-        self._sessions[effect.session_name] = SessionState(
-            handle=handle,
+        handle = self._register_booting_session(
+            session_name=effect.session_name,
             adapter=adapter,
             pane_id=session_info.pane_id,
             agent_type=effect.agent_type,
             work_dir=effect.work_dir,
             lifecycle=effect.lifecycle,
         )
-        self._record_snapshot("session_started", handle, SessionStatus.BOOTING)
+
+        try:
+            argv = adapter.launch_command(
+                LaunchParams(
+                    work_dir=effect.work_dir,
+                    prompt=effect.prompt,
+                    model=effect.model,
+                    effort=effect.effort,
+                    bare=effect.bare,
+                    mcp_servers=active_mcp_servers or None,
+                )
+            )
+            command = self._wrap_with_shell_exports(shlex.join(argv), agent_env_exports)
+
+            self._backend.send_keys(session_info.pane_id, command, literal=False)
+            # Dismiss onboarding dialogs (trust, theme, auth) if adapter supports them.
+            # The first task prompt must be typed into the running agent, not passed
+            # through argv/stdin. Handle startup UI before sending that prompt.
+            onboarding_patterns = getattr(adapter, "onboarding_patterns", None)
+            if onboarding_patterns:
+                _dismiss_onboarding_dialogs(
+                    session_info.pane_id,
+                    onboarding_patterns,
+                    timeout=effect.ready_timeout,
+                    backend=self._backend,
+                )
+
+            if adapter.injection_method == InjectionMethod.TMUX:
+                deliver_prompt_when_ready(
+                    self._backend,
+                    session_info.pane_id,
+                    adapter,
+                    effect.prompt,
+                    session_name=effect.session_name,
+                    ready_timeout=effect.ready_timeout,
+                    timeout_error=AgentReadyTimeoutError,
+                    cleanup_on_timeout=False,
+                )
+        except Exception as error:
+            self._fail_registered_launch(handle, error)
+            raise
+
         return handle
 
     def handle_launch_task(self, effect: LaunchTaskEffect) -> SessionHandle:
@@ -761,58 +807,59 @@ class TmuxAgentHandler(AgentHandler):
             env=effect.session_env,
         )
         session_info = self._backend.new_session(tmux_config)
-
-        argv = adapter.launch_command(
-            LaunchParams(
-                work_dir=effect.work_dir,
-                prompt=effect.prompt,
-                model=effect.model,
-                effort=effect.effort,
-                bare=effect.bare,
-            )
-        )
-        command = self._wrap_with_shell_exports(
-            shlex.join(argv),
-            {
-                **(effect.session_env or {}),
-                "HOME": str(agent_home),
-                "CLAUDE_HOME": str(agent_home / ".claude"),
-                **self._claude_runtime_policy.bootstrap_exports,
-            },
-        )
-        self._backend.send_keys(session_info.pane_id, command, literal=False)
-
-        onboarding_patterns = getattr(adapter, "onboarding_patterns", None)
-        if onboarding_patterns:
-            _dismiss_onboarding_dialogs(
-                session_info.pane_id,
-                onboarding_patterns,
-                timeout=effect.ready_timeout,
-                backend=self._backend,
-            )
-        if adapter.injection_method == InjectionMethod.TMUX:
-            deliver_prompt_when_ready(
-                self._backend,
-                session_info.pane_id,
-                adapter,
-                effect.prompt,
-                session_name=effect.session_name,
-                ready_timeout=effect.ready_timeout,
-                timeout_error=AgentReadyTimeoutError,
-            )
-
-        handle = SessionHandle(
-            session_id=effect.session_name,
-        )
-        self._sessions[effect.session_name] = SessionState(
-            handle=handle,
+        handle = self._register_booting_session(
+            session_name=effect.session_name,
             adapter=adapter,
             pane_id=session_info.pane_id,
             agent_type=AgentType.CLAUDE,
             work_dir=effect.work_dir,
             lifecycle=effect.lifecycle,
         )
-        self._record_snapshot("session_started", handle, SessionStatus.BOOTING)
+
+        try:
+            argv = adapter.launch_command(
+                LaunchParams(
+                    work_dir=effect.work_dir,
+                    prompt=effect.prompt,
+                    model=effect.model,
+                    effort=effect.effort,
+                    bare=effect.bare,
+                )
+            )
+            command = self._wrap_with_shell_exports(
+                shlex.join(argv),
+                {
+                    **(effect.session_env or {}),
+                    "HOME": str(agent_home),
+                    "CLAUDE_HOME": str(agent_home / ".claude"),
+                    **self._claude_runtime_policy.bootstrap_exports,
+                },
+            )
+            self._backend.send_keys(session_info.pane_id, command, literal=False)
+
+            onboarding_patterns = getattr(adapter, "onboarding_patterns", None)
+            if onboarding_patterns:
+                _dismiss_onboarding_dialogs(
+                    session_info.pane_id,
+                    onboarding_patterns,
+                    timeout=effect.ready_timeout,
+                    backend=self._backend,
+                )
+            if adapter.injection_method == InjectionMethod.TMUX:
+                deliver_prompt_when_ready(
+                    self._backend,
+                    session_info.pane_id,
+                    adapter,
+                    effect.prompt,
+                    session_name=effect.session_name,
+                    ready_timeout=effect.ready_timeout,
+                    timeout_error=AgentReadyTimeoutError,
+                    cleanup_on_timeout=False,
+                )
+        except Exception as error:
+            self._fail_registered_launch(handle, error)
+            raise
+
         return handle
 
     def handle_monitor(self, effect: MonitorEffect) -> Observation:

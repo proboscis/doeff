@@ -584,7 +584,7 @@
 ;; watchdog 群(S19: launch-timeout / stale-observation / zombie)+ 帯域外 kill(S9)
 ;; ---------------------------------------------------------------------------
 
-(deftest test-booting-shell-frame-stays-booting-until-startup-finishes
+(deftest test-booting-unarmed-row-remains-launch-owned
   ;; launch は tmux 作成直後・command 送出前に BOOTING 行を公開する。monitor が
   ;; その短い shell 窓を running → zombie/exited に昇格させてはならない。
   (setv world (FakeWorld))

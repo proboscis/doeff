@@ -341,6 +341,7 @@ def deliver_prompt_when_ready(
     session_name: str,
     ready_timeout: float,
     timeout_error: type[Exception] = AgentReadyTimeoutError,
+    cleanup_on_timeout: bool = True,
 ) -> None:
     """Single choke point for first-prompt delivery over the TMUX transport.
 
@@ -350,8 +351,9 @@ def deliver_prompt_when_ready(
     login/trust/update dialog — and the session exits 0 without doing any
     work, a false Succeeded that no retry loop catches (issue
     agentd-codex-coldstart-paste-race, 2026-07-14). If the composer never
-    appears the launch hard-fails: the session is killed and
-    ``timeout_error`` is raised with the final screen tail as evidence.
+    appears the launch hard-fails and ``timeout_error`` is raised with the
+    final screen tail as evidence. Standalone callers keep the default cleanup;
+    registry-owning callers disable it so they can persist terminality first.
     The wait runs even for prompt-less launches so a returned session is
     actually able to receive its first message.
     """
@@ -359,13 +361,14 @@ def deliver_prompt_when_ready(
         pane_id, adapter.ready_pattern, ready_timeout, backend=backend
     ):
         final_frame = backend.capture_pane(pane_id, 40)
-        backend.kill_session(session_name)
+        if cleanup_on_timeout:
+            backend.kill_session(session_name)
         screen_tail = "\n".join(final_frame.splitlines()[-15:])
         raise timeout_error(
             f"Agent did not become ready within {ready_timeout}s — startup is "
             "blocked before the input composer appeared (cold start, login "
             "screen, or an undismissed dialog). The prompt was NOT delivered "
-            "and the session was killed. Last screen tail:\n"
+            "and session cleanup was requested. Last screen tail:\n"
             f"{screen_tail}"
         )
     if prompt:
