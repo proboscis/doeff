@@ -374,15 +374,24 @@
         ;; fail-closed(2026-07-07 契約修正): idle 未達のまま paste すると
         ;; prompt が R9 外の未知 dialog に送出され session は silent hang に
         ;; なる(trust dialog 実障害)。paste せず、画面 tail を証拠として
-        ;; 積んだ typed error で launch を fail させ、作った session は
-        ;; kill する。登録済みの booting 行は terminal(failed / timed_out)へ
-        ;; 遷移して残る —「誰にも観測されない行をリークさせない」保証の
-        ;; ライフサイクル版(issue agentd-session-registration-after-ready-gate、
-        ;; oracle main.rs と同一契約)。
-        (<- final-frame (tmux-capture pane-id 40))
-        (<- _ (tmux-kill-session session-name))
-        (setv tail-lines (cut (.splitlines final-frame) -15 None))
-        (setv screen-tail (.join "\n" tail-lines))
+        ;; 積んだ typed error で launch を fail させる。登録済みの booting 行は
+        ;; terminal(failed / timed_out)へ遷移して残る —「誰にも観測されない
+        ;; 行をリークさせない」保証のライフサイクル版(issue
+        ;; agentd-session-registration-after-ready-gate、oracle main.rs と
+        ;; 同一契約)。
+        ;;
+        ;; terminal-first(#542 レビュー由来の順序): FAILED 行の永続化
+        ;; (+event)を tmux cleanup より先に — capture/kill の失敗が終端化を
+        ;; スキップして booting 残置・typed error のマスクを生まないように。
+        ;; capture は best-effort の証拠収集、cleanup 成否は cleaned-at の
+        ;; 有無で表現(失敗時は NULL のまま・行は既に terminal)。
+        (setv screen-tail "")
+        (try
+          (<- final-frame (tmux-capture pane-id 40))
+          (setv tail-lines (cut (.splitlines final-frame) -15 None))
+          (setv screen-tail (.join "\n" tail-lines))
+          (except [capture-err Exception]
+            (setv screen-tail f"(screen capture failed: {capture-err})")))
         (<- fail-now (clock-now))
         (setv failed-row
               (replace row
@@ -398,13 +407,24 @@
                                      (iso-format fail-now))))
         (<- _ (session-store-upsert failed-row))
         (<- _ (session-store-record-event session-id "session_failed" failed-row))
+        ;; cleanup は終端化の後: 失敗しても行は既に terminal — cleaned-at を
+        ;; NULL のまま残すだけで、typed error は下でそのまま raise される。
+        (setv cleanup-ok True)
+        (try
+          (<- _ (tmux-kill-session session-name))
+          (except [kill-err Exception]
+            (setv cleanup-ok False)))
+        (when cleanup-ok
+          (<- cleaned-now (clock-now))
+          (setv failed-row (replace failed-row :cleaned-at (iso-format cleaned-now)))
+          (<- _ (session-store-upsert failed-row)))
         (raise (RuntimeError
                  (+ f"session.launch: {agent-type} REPL did not become ready "
                     f"within {repl-idle-max-wait}s — startup is blocked by an "
                     "unrecognized screen (a dialog outside the R9 fast-path "
-                    "set?). The prompt was NOT delivered; the tmux session was "
-                    "killed and the session row was marked failed (timed_out). "
-                    "Last screen tail:\n"
+                    "set?). The prompt was NOT delivered; the session row was "
+                    "marked failed (timed_out) and tmux cleanup was attempted "
+                    "(success is recorded as cleaned_at). Last screen tail:\n"
                     screen-tail)))))
     (if (in agent-type INTERACTIVE-AGENT-TYPES)
         (<- _ (deliver-message pane-id full-prompt))

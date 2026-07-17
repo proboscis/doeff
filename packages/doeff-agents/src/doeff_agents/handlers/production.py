@@ -1163,16 +1163,39 @@ class TmuxAgentHandler(AgentHandler):
         issue agentd-session-registration-after-ready-gate), every launch
         failure must land the row in a terminal state — a lingering BOOTING
         row would be the new form of the old "unobservable session" leak.
-        The physical session is killed if the failure path (e.g.
-        deliver_prompt_when_ready's ready timeout) has not already done so.
+
+        Terminal-first (order adopted from PR #542's review): the FAILED
+        snapshot is persisted BEFORE the cleanup attempt, so a failing kill
+        can neither skip terminalization nor mask the original launch error
+        (the caller re-raises it). Cleanup success is recorded as
+        cleaned_at; a failed cleanup leaves cleaned_at unset on an
+        already-terminal row.
         """
-        if self._backend.has_session(session_name):
-            self._backend.kill_session(session_name)
+        import logging
+
         self._record_snapshot(
             "session_failed",
             handle,
             SessionStatus.FAILED,
             output_snippet=str(error),
+        )
+        try:
+            if self._backend.has_session(session_name):
+                self._backend.kill_session(session_name)
+        except Exception as cleanup_error:
+            logging.getLogger("doeff_agents.launch").warning(
+                "ready-timeout cleanup failed for %s: %s "
+                "(row already terminal; cleaned_at left unset)",
+                session_name,
+                cleanup_error,
+            )
+            return
+        self._record_snapshot(
+            "session_cleaned",
+            handle,
+            SessionStatus.FAILED,
+            output_snippet=str(error),
+            cleaned_at=datetime.now(timezone.utc),
         )
 
     def _record_snapshot(
@@ -1182,6 +1205,7 @@ class TmuxAgentHandler(AgentHandler):
         status: SessionStatus,
         *,
         output_snippet: str | None = None,
+        cleaned_at: datetime | None = None,
     ) -> AgentSessionSnapshot:
         now = datetime.now(timezone.utc)
         previous = self._session_repository.get_session(handle.session_id)
@@ -1220,7 +1244,13 @@ class TmuxAgentHandler(AgentHandler):
                 )
                 else None
             ),
-            cleaned_at=previous.cleaned_at if previous is not None else None,
+            cleaned_at=(
+                cleaned_at
+                if cleaned_at is not None
+                else previous.cleaned_at
+                if previous is not None
+                else None
+            ),
             output_snippet=(
                 output_snippet
                 if output_snippet is not None

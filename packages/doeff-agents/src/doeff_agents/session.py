@@ -358,14 +358,27 @@ def deliver_prompt_when_ready(
     if adapter.ready_pattern and not _wait_for_ready(
         pane_id, adapter.ready_pattern, ready_timeout, backend=backend
     ):
+        import logging
+
         final_frame = backend.capture_pane(pane_id, 40)
-        backend.kill_session(session_name)
+        # Terminal-first companion (order adopted from PR #542's review):
+        # the kill is best-effort cleanup — a failing kill must not mask
+        # the typed ready-timeout error, which the caller's launch guard
+        # uses to terminalize the registered session row.
+        try:
+            backend.kill_session(session_name)
+        except Exception as cleanup_error:
+            logging.getLogger("doeff_agents.launch").warning(
+                "ready-timeout cleanup failed for %s: %s",
+                session_name,
+                cleanup_error,
+            )
         screen_tail = "\n".join(final_frame.splitlines()[-15:])
         raise timeout_error(
             f"Agent did not become ready within {ready_timeout}s — startup is "
             "blocked before the input composer appeared (cold start, login "
             "screen, or an undismissed dialog). The prompt was NOT delivered "
-            "and the session was killed. Last screen tail:\n"
+            "and session cleanup was attempted. Last screen tail:\n"
             f"{screen_tail}"
         )
     if prompt:
