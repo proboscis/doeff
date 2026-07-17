@@ -450,12 +450,42 @@
   {:pre [(: row SessionRow) (: knobs MonitorKnobs)]
    :post [(: % SessionRow)]}
   "1 session の level-triggered 再導出(oracle: main.rs monitor_once の 1 行分)。
-   分岐順は凍結物理: stale reap → launch timeout → tmux 生存(result-first)→
+   分岐順は凍結物理: booting 所有権(launch pipeline 所有 — boot watchdog のみ)→
+   stale reap → launch timeout → tmux 生存(result-first)→
    zombie → capture/classify → paste 再送 → managed dialog fast-path →
    latch clear → 分類 → turn-end → result-first → judge-before-solicitation →
    bounded solicitation → stall watchdog → 終端 taxonomy。"
   (<- now (clock-now))
   (setv observed-at (iso-format now))
+
+  ;; --- booting 所有権 arm(issue agentd-session-registration-after-ready-gate):
+  ;; BOOTING 行は in-flight の launch pipeline が所有する。登録が ready gate より
+  ;; 前になったため、配送中の pane は launch transport の中間状態(素の shell・
+  ;; 貼り付け途中の prompt)であり、以降の観測 arm は全て誤読する — zombie
+  ;; reaper が「command 送出前の zsh」を exited と誤判定し、turn-end が
+  ;; 半起動 agent へ solicitation を paste した(2026-07-17 e2e 実障害)。
+  ;; monitor の責務は boot watchdog のみ: launch pipeline が死んで BOOTING が
+  ;; 残置されたら terminal へ(daemon crash mid-launch の受け皿)。予算は
+  ;; launch timeout + repl-idle 予算 — ready gate は正規に repl-idle 予算まで
+  ;; 待つため、それより短いと健全な cold start を reap してしまう。
+  ;; launch 完了時の手渡しは launch-session の running upsert(launch.hy)。
+  (when (= row.status "booting")
+    (setv boot-secs (+ knobs.launch-timeout-seconds
+                       knobs.repl-idle-max-wait-seconds))
+    (setv boot-age (seconds-since now row.started-at))
+    (when (and (is-not boot-age None) (> boot-age boot-secs))
+      (setv reason (+ f"launch timeout: launch pipeline did not complete within "
+                      f"{boot-secs}s (BOOTING row left behind — launcher died "
+                      "mid-launch?)"))
+      (setv row (replace row
+                         :status "failed"
+                         :last-observed-at observed-at
+                         :finished-at (or row.finished-at observed-at)
+                         :last-validation-error reason))
+      (setv row (cause-if-absent row (make-cause "timed_out" reason observed-at)))
+      (<- _ (session-store-upsert row))
+      (<- _ (session-store-record-event row.session-id "session_launch_timeout" row)))
+    (return row))
 
   ;; --- stale-observation watchdog(S19)。どの tmux probe よりも前 —
   ;; tmux が hang しても reap は進む(oracle 実障害: 11h 沈黙の monitor)。
