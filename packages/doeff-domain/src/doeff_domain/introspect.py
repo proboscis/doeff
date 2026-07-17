@@ -7,8 +7,9 @@ can be applied post-hoc to objects owned by other packages.
 Layer 2 — structure: objects produced by doeff-hy's ``defhandler`` carry
 ``__doeff_body__``, the quoted clause list. The handled set is derived from
 each clause's head symbol (= effect type name). Detection is attribute
-duck-typing on purpose: doeff-domain must NOT import doeff-hy (D1). ``lazy``
-clauses are skipped; ``:when``-guarded clauses count as participation
+duck-typing on purpose: doeff-domain must NOT import doeff-hy (D1). Lazy-init
+clauses — all three heads defhandler accepts: ``lazy`` / ``lazy-val`` /
+``lazy-var`` — are skipped; ``:when``-guarded clauses count as participation
 declarations, not totality guarantees.
 
 Name resolution for clause heads: first the attributes of
@@ -27,7 +28,9 @@ from doeff_domain.registry import DomainCheckError, DomainDefinitionError
 
 HANDLES_ATTRIBUTE = "__doeff_handles__"
 BODY_ATTRIBUTE = "__doeff_body__"
-_LAZY_CLAUSE_HEAD = "lazy"
+# defhandler の lazy 初期化節 head 3 種(doeff-hy handle.hy の _is-lazy-clause)。
+# quoted body は書かれたままの Symbol を保持するが、mangle 済み表記も安全側で含める。
+_LAZY_CLAUSE_HEADS = frozenset({"lazy", "lazy-val", "lazy-var", "lazy_val", "lazy_var"})
 
 
 def handles(*effect_classes: type):
@@ -86,7 +89,7 @@ def _effects_from_defhandler_body(handler, vocabulary: tuple[type, ...]) -> froz
     effects: set[type] = set()
     for clause in handler.__doeff_body__:
         head = _clause_head(handler, clause)
-        if head == _LAZY_CLAUSE_HEAD:
+        if head in _LAZY_CLAUSE_HEADS:
             continue
         effects.add(_resolve_effect_name(handler, head, vocabulary))
     return frozenset(effects)

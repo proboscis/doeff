@@ -46,7 +46,7 @@
      (rule R4 "本 ADR の実装は計画 Stage E であり、Track B(pytest 正典ゲート)の完了を前提とする — 適合検査は走るゲートがあって初めて意味を持つ。")
      (rule R5 "裁定(2026-07-17, i): defdomain は完全 opt-in である — doeff 利用の必須要素ではなく組織化戦略であり、既定ゲート(run()/CLI/default interpreter)への強制はしない。適合検査は採用プロジェクトが自分のテストとして配線する。doeff 自身は dogfood として自パッケージ範囲(doeff-core-effects)に採用する。")
      (rule R6 "裁定(2026-07-17, ii): 導入 1 / 包含 ∞ — 1 つの effect クラスは全体でちょうど 1 つの domain の effects(導入)に現れてよい。2 つ目の domain が同じクラスを導入しようとしたら登録時に両 domain 名を明示して即例外。includes による参照はいくつでも可。キーはクラス同一性。")
-     (rule R7 "裁定(2026-07-17, iii): 処理集合の導出は二層 — (1) 注釈層: handles() が付与する __doeff_handles__(生 Python handler の opt-in 宣言。他パッケージの関数へ後付け可。全域性の保証ではなく、実態照合は E2/E3 の SEDA が担う)。(2) 構造層: defhandler 産物の __doeff_body__(quoted 節リスト。属性ダックタイピングで判定し doeff-hy を import しない。ドリフト不能)。lazy 節はスキップし、:when ガードや条件付き reperform を含む節も『処理に参加する宣言』として数える。名前解決は sys.modules[handler.__module__] 属性 → 照合先 domain の effect クラス名との文字列一致の順で試み、どちらも失敗したら検査エラー(fail loud)。どちらの属性も無い handler も検査エラー。")]
+     (rule R7 "裁定(2026-07-17, iii): 処理集合の導出は二層 — (1) 注釈層: handles() が付与する __doeff_handles__(生 Python handler の opt-in 宣言。他パッケージの関数へ後付け可。全域性の保証ではなく、実態照合は E2/E3 の SEDA が担う)。(2) 構造層: defhandler 産物の __doeff_body__(quoted 節リスト。属性ダックタイピングで判定し doeff-hy を import しない。ドリフト不能)。lazy 初期化節(defhandler が認める 3 head: lazy / lazy-val / lazy-var)はスキップし、:when ガードや条件付き reperform を含む節も『処理に参加する宣言』として数える。名前解決は sys.modules[handler.__module__] 属性 → 照合先 domain の effect クラス名との文字列一致の順で試み、どちらも失敗したら検査エラー(fail loud)。どちらの属性も無い handler も検査エラー。")]
   :laws
     [(law vocabulary-has-single-home
        :statement "for_all semantic_predicate_or_effect v: canonical_declaration_count(v) == 1 AND declared_in_some_domain(v); duplicate_definitions_detected_by_conformance_check"
