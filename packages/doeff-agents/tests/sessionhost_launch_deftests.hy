@@ -8,9 +8,14 @@
 ;;;   - prompt は argv でなく live REPL へ(wait-for-repl-idle 後に paste)
 ;;;   - expected_result 付き prompt へ result-protocol instruction を追記
 ;;;   - R9 launch dialog の決定的 dismissal(wait-for-repl-idle 内)
-;;;   - repl-idle 予算切れは fail-closed(prompt 未配送・session 掃除・
-;;;     画面 tail 込み typed error — 2026-07-07 契約修正、oracle からの
-;;;     意図的乖離。予算は host 注入 knob で圧縮可)
+;;;   - booting 行の登録は tmux-new-session 直後・ready 待ちの前(登録は TUI
+;;;     readiness に依存しない簿記 — issue
+;;;     agentd-session-registration-after-ready-gate、2026-07-17)
+;;;   - repl-idle 予算切れは fail-closed(prompt 未配送・session kill・
+;;;     画面 tail 込み typed error — 2026-07-07 契約修正)。登録済みの行は
+;;;     terminal(failed / timed_out)へ遷移し booting 残置ゼロ
+;;;     (2026-07-17 改訂 — oracle main.rs と同一契約)。予算は host 注入
+;;;     knob で圧縮可
 ;;;   - 実効 identity の session 行永続化(S14 の Hy positive 化)
 ;;;
 ;;; fake substrate(台本 tmux capture・進む clock・dict store)+ 両 impl を
@@ -72,6 +77,7 @@
     (setv self.canonical {})        ;; path → realpath(FsCanonicalPath の台本)
     (setv self.tmux-envs {})        ;; session-name → new-session に渡った env
     (setv self.listings {})         ;; path → エントリ名 list(FsListDir の台本)
+    (setv self.kill-broken False)   ;; True: TmuxKillSession が raise(cleanup 失敗)
     (setv self.now (datetime 2026 7 5 12 0 0 :tzinfo timezone.utc))))
 
 
@@ -98,6 +104,12 @@
     (setv (get world.tmux-envs session-name) (dict env))
     (resume "%7"))
   (TmuxCapture [pane-id lines]
+    ;; capture は launch の gate loop(wait-for-repl-idle / fail 証拠収集)から
+    ;; しか呼ばれない — capture 時点の store 可視状態({sid: status})を trace に
+    ;; 積むと「ready 待ち中に外部から何が見えたか」がそのまま assert できる
+    ;; (issue agentd-session-registration-after-ready-gate の観測点)。
+    (.append world.trace
+             #("capture" (dfor [k v] (.items world.rows) k v.status)))
     (setv world.captures (+ world.captures 1))
     (if world.capture-script
         (resume (if (> (len world.capture-script) 1)
@@ -110,6 +122,8 @@
     (resume None))
   (TmuxKillSession [session-name]
     (.append world.trace #("kill-session" session-name))
+    (when world.kill-broken
+      (raise (RuntimeError f"tmux kill-session failed for {session-name}")))
     (.discard world.tmux-sessions session-name)
     (resume None))
   (DeliverMessage [pane-id text]
@@ -199,9 +213,12 @@
   (assert psubmit)
   (assert (.startswith ptext "do the task"))
   (assert (.endswith ptext RESULT-PROTOCOL-INSTRUCTION))
-  ;; session 行: booting・awaiting latch 武装・実効 identity 永続化(S14)
+  ;; session 行: launch 完了の手渡しで running・awaiting latch 武装・実効
+  ;; identity 永続化(S14)。booting は launch pipeline 所有の in-flight 状態
+  ;; (issue agentd-session-registration-after-ready-gate)— 登録〜配送完了の
+  ;; 間だけ外部に見え、完了 upsert が monitor へ観測を引き渡す。
   (setv stored (get world.rows "s1"))
-  (assert (= stored.status "booting"))
+  (assert (= stored.status "running"))
   (assert stored.awaiting-response)
   (assert (= (get stored.effective-identity "CODEX_HOME") "/x/codex"))
   ;; R7: binding 由来の auth env は host が合成して tmux env に載せる
@@ -457,11 +474,43 @@
   (assert (.endswith (get literal-texts 1) RESULT-PROTOCOL-INSTRUCTION)))
 
 
+(deftest test-launch-registers-booting-row-before-repl-idle-wait
+  ;; issue agentd-session-registration-after-ready-gate: 登録は TUI readiness に
+  ;; 依存しない簿記 — tmux-new-session 直後・wait-for-repl-idle の最初の capture
+  ;; より前に booting 行が store で観測可能でなければならない。旧配置(ready 待ち
+  ;; の後ろ)では最大 120s の「session は物理的に在るのに記録が無い」窓が正規に
+  ;; 開き、60s handshake を仮定する外部監視(mediagen engine)から orphan に
+  ;; 見えた(2026-07-14 実測)。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["codex booting banner" "› "])
+  (<- row (run-launch world (launch-params)))
+  ;; wait-for-repl-idle の最初の capture 時点で s1 が booting として可視
+  (setv capture-views (lfor t world.trace :if (= (get t 0) "capture") (get t 1)))
+  (assert capture-views)
+  (assert (= (.get (get capture-views 0) "s1") "booting")
+          "booting 行が ready 待ちの開始前に永続化されていない")
+  ;; trace 順序でも: 最初の upsert が最初の capture より前
+  (setv trace-kinds (lfor t world.trace (get t 0)))
+  (assert (< (.index trace-kinds "upsert") (.index trace-kinds "capture")))
+  ;; session_started event も登録時点で記録済み
+  (assert (in #("s1" "session_started") world.events))
+  ;; 配送完了の手渡し: running + awaiting latch 武装(booting は launch
+  ;; pipeline 所有の in-flight 状態としてだけ外部に見える)
+  (assert (= row.status "running"))
+  (assert row.awaiting-response)
+  (assert (= (get world.rows "s1") row)))
+
+
 (deftest test-launch-fails-closed-when-repl-never-idle
   ;; 2026-07-07 契約修正: R9 に無い未知 dialog が startup を塞いだら launch は
   ;; typed error で fail する。旧 oracle は repl-idle 予算切れ後に構わず
   ;; paste していた — trust dialog のカバレッジ欠落がそれで silent hang に
   ;; 化けた実障害(prompt が dialog に送出され session は永遠に待つ)。
+  ;;
+  ;; 2026-07-17 契約改訂(issue agentd-session-registration-after-ready-gate):
+  ;; 「リークさせない」の実現手段が変わった — 行を作らないのではなく、登録済みの
+  ;; booting 行を terminal(failed / timed_out)へ遷移させる。行はリークではなく
+  ;; ライフサイクルとして残り、booting のままの残置はゼロ。
   (setv world (LaunchWorld))
   ;; 未知 dialog: R9 detector のどれにも合致せず、選択行は行頭スペース付き
   ;; ` ❯` なので idle でもない — wait-for-repl-idle は予算切れまで poll する
@@ -485,10 +534,56 @@
   (assert (= (len world.delivered) 0))
   (setv literal-texts (lfor [p t l s] world.sent-keys :if l t))
   (assert (= (len literal-texts) 1))
-  ;; 作った tmux session は片付けられ、session 行も永続化されていない
+  ;; 作った tmux session は片付けられる(既存保証)
   (assert (not-in "doeff-s1" world.tmux-sessions))
   (assert (in #("kill-session" "doeff-s1") world.trace))
-  (assert (not-in "s1" world.rows)))
+  ;; 行はリークではなくライフサイクル: terminal failed(timed_out)へ遷移し、
+  ;; booting 残置ゼロ + session_failed event 記録
+  (setv stored (get world.rows "s1"))
+  (assert (= stored.status "failed"))
+  (assert (is-not stored.finished-at None))
+  (assert (is-not stored.terminal-cause None))
+  (assert (= stored.terminal-cause.category "timed_out"))
+  (assert (in #("s1" "session_failed") world.events))
+  ;; cleanup 成功は cleaned-at で表現(terminal-first 契約)
+  (assert (is-not stored.cleaned-at None))
+  (assert (not (lfor [k v] (.items world.rows) :if (= v.status "booting") k))))
+
+
+(deftest test-launch-ready-timeout-terminalizes-before-failed-cleanup
+  ;; terminal-first(#542 レビュー由来): FAILED 終端化の永続化は tmux cleanup
+  ;; より先。kill が upsert より先だと、cleanup 失敗(tmux server 死亡・帯域外
+  ;; teardown)で終端化がスキップされ booting 残置 + 元エラーのマスクが起きる。
+  ;; cleanup 失敗は cleaned-at 無し(行は既に terminal)で表現し、raise は
+  ;; ready-timeout の typed error のまま。
+  (setv world (LaunchWorld))
+  (setv world.kill-broken True)
+  (setv unknown-frame (+ " Share anonymous usage data with Anthropic?\n"
+                         " ❯ 1. Yes, share usage data\n"
+                         "   2. Maybe later\n"
+                         " Enter to confirm · Esc to cancel"))
+  (setv world.capture-script [unknown-frame])
+  (setv raised None)
+  (try
+    (<- _ (run-launch world (launch-params
+                              :agent_type "claude"
+                              :binding {"kind" "claude-code"
+                                        "config_dir" "/x/claude"}
+                              :repl_idle_max_wait_seconds 5)))
+    (except [e RuntimeError] (setv raised e)))
+  (assert (is-not raised None))
+  ;; cleanup 失敗が ready-timeout の typed error をマスクしない
+  (assert (in "did not become ready" (str raised)) (str raised))
+  ;; FAILED 終端化は cleanup 試行より先に永続化済み
+  (setv stored (get world.rows "s1"))
+  (assert (= stored.status "failed"))
+  (assert (is-not stored.finished-at None))
+  (assert (= stored.terminal-cause.category "timed_out"))
+  (assert (in #("s1" "session_failed") world.events))
+  ;; cleanup は試行されたが失敗 → cleaned-at は NULL のまま
+  (assert (in #("kill-session" "doeff-s1") world.trace))
+  (assert (is stored.cleaned-at None))
+  (assert (not (lfor [k v] (.items world.rows) :if (= v.status "booting") k))))
 
 
 (deftest test-launch-repl-idle-budget-knob-injected

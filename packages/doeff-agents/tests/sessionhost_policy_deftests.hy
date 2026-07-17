@@ -584,6 +584,58 @@
 ;; watchdog 群(S19: launch-timeout / stale-observation / zombie)+ 帯域外 kill(S9)
 ;; ---------------------------------------------------------------------------
 
+(deftest test-monitor-leaves-booting-row-to-launch-pipeline
+  ;; booting 所有権 arm(issue agentd-session-registration-after-ready-gate):
+  ;; BOOTING 行は in-flight の launch pipeline が所有する — 登録が ready gate
+  ;; より前になったため、配送中の pane は launch transport の中間状態(素の
+  ;; shell 等)であり、観測 arm(zombie reaper・turn-end・solicitation)が
+  ;; 誤読する。monitor は tmux にも store にも一切触れずに素通りする。
+  ;; pane を「command 送出前の zsh + shell の ❯ prompt」にして、旧挙動なら
+  ;; zombie reaper / turn-end が誤発火する最悪フレームで検証する。
+  (setv world (FakeWorld))
+  (seed world (make-row world
+                        :status "booting"
+                        :awaiting-response False
+                        :observed-active-at None
+                        :last-observed-at None
+                        :started-at (iso-at world -5))
+        :frame F-IDLE-CLAUDE :pane-command "zsh")
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "booting"))
+  (assert (= world.capture-count 0))
+  (assert (= world.has-session-calls []))
+  (assert (= world.sent-keys []))
+  (assert (= world.delivered []))
+  (assert (= world.events [])))
+
+
+(deftest test-monitor-reaps-booting-row-after-boot-timeout
+  ;; boot watchdog: launch pipeline が死んで BOOTING が残置されたら terminal へ
+  ;; (daemon crash mid-launch の受け皿)。予算は launch timeout + repl-idle
+  ;; 予算(ready gate は正規に repl-idle 予算まで待つため)。
+  (setv world (FakeWorld))
+  (seed world (make-row world
+                        :status "booting"
+                        :awaiting-response False
+                        :observed-active-at None
+                        :last-observed-at None
+                        :started-at (iso-at world -181))   ;; 60 + 120 + 1
+        :frame F-IDLE-CLAUDE :pane-command "zsh")
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "failed"))
+  (assert (is-not row.finished-at None))
+  (assert (= row.terminal-cause.category "timed_out"))
+  (assert (= row.terminal-cause.retryable True))
+  (assert (in "launch pipeline did not complete within 180s"
+              row.last-validation-error))
+  (assert (in #("s1" "session_launch_timeout") world.events))
+  ;; SQL 直行 reap: tmux には触れない
+  (assert (= world.capture-count 0))
+  (assert (= world.has-session-calls [])))
+
+
 (deftest test-launch-timeout-watchdog
   ;; F-frozen のまま startup 完了マーカー無し → launch timeout で failed・timed_out true
   (setv world (FakeWorld))
