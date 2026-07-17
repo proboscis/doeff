@@ -11,6 +11,7 @@ from doeff import do
 from doeff import handler as _program_handler
 from doeff.program import Pass, Resume
 from doeff_core_effects.cache_effects import (
+    CacheDeleteEffect,
     CacheExists,
     CacheExistsEffect,
     CacheGet,
@@ -114,7 +115,10 @@ def cache_handler(storage: DurableStorage):
 
     @do
     def handler(effect, k):
-        if not isinstance(effect, (CacheGetEffect, CacheExistsEffect, CachePutEffect)):
+        if not isinstance(
+            effect,
+            (CacheGetEffect, CacheExistsEffect, CachePutEffect, CacheDeleteEffect),
+        ):
             yield Pass(effect, k)
             return None
 
@@ -133,6 +137,12 @@ def cache_handler(storage: DurableStorage):
                     from doeff.program import ResumeThrow
                     return (yield ResumeThrow(k, KeyError(effect.key)))
             result = yield Resume(k, value)
+            return result
+
+        if isinstance(effect, CacheDeleteEffect):
+            # Missing-key delete is an idempotent no-op; resume None like Put.
+            yield storage.delete(key)
+            result = yield Resume(k, None)
             return result
 
         # CachePutEffect

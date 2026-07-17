@@ -20,7 +20,7 @@
 (import doeff.program [Pure])
 (import doeff_core_effects.effects [SlogEffect])
 (import doeff_core_effects.memo-effects [
-  MemoExistsEffect MemoGetEffect MemoPutEffect])
+  MemoDeleteEffect MemoExistsEffect MemoGetEffect MemoPutEffect])
 (import doeff_core_effects.memo-policy [RecomputeCost])
 (import doeff_core_effects.storage [DurableStorage])
 (import doeff_core_effects.memo-handlers [
@@ -81,6 +81,19 @@
     (except [UnhandledEffect] None)))
 
 
+(defk _broadcast-delete [memo-effect]
+  "Broadcast MemoDelete to outer layers so every storage layer deletes.
+   Broadcast put / get write-through can place the same key in several
+   layers; deleting only one layer would leave a stale value reachable
+   by MemoGet. UnhandledEffect = outermost layer = broadcast complete."
+  {:pre [(: memo-effect EffectBase)]
+   :post [(: % "always None — broadcast side effect only")]}
+  (try
+    (<- _ memo-effect)
+    None
+    (except [UnhandledEffect] None)))
+
+
 (defhandler _memo-layer-handler [cell storage cost label]
   "Caching-proxy memo layer. See memo-handler factory below."
 
@@ -120,6 +133,15 @@
     (<- (SlogEffect
           f"[memo-layer:{label}] PUT key={(cut skey 0 16)}..."))
     (<- (_broadcast-put effect))
+    (resume None))
+
+  (MemoDeleteEffect [key] :when (_handles? effect cost)
+    (<- store (_ensure-store cell storage))
+    (setv skey (_storage-key key))
+    (<- (.delete store skey))
+    (<- (SlogEffect
+          f"[memo-layer:{label}] DELETE key={(cut skey 0 16)}..."))
+    (<- (_broadcast-delete effect))
     (resume None)))
 
 
