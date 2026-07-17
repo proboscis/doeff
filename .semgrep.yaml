@@ -4448,3 +4448,21 @@ rules:
           - pattern: import doeff_preset.$X
           - pattern: from doeff_preset import $X
           - pattern: from doeff_preset.$SUB import $X
+
+  - id: doeff-domain-no-hy-adr-dependency
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      ADR-DOE-DOMAIN-001 D1: packages/doeff-domain must not depend on doeff-hy
+      or doeff-adr. The two-layer handled-effects derivation reads
+      __doeff_body__ via attribute duck-typing precisely so this package never
+      imports doeff-hy, and domain laws are DomainLaw values (not doeff-adr
+      laws). Tests may import doeff-hy to build real defhandler fixtures;
+      package sources (everything under the doeff_domain namespace) may not.
+    pattern-regex: '\((import|require)\s+doeff[-_](hy|adr)|\b(import|from)\s+doeff_(hy|adr)\b'
+    paths:
+      include:
+        # ターゲット相対で照合される(directory scan では packages/ が prefix に
+        # 含まれない)ため、パッケージ名前空間ディレクトリで指定する。
+        - "**/doeff_domain/**"
