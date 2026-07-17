@@ -64,6 +64,7 @@ the same PR.
 | `doeff-agentd` | experimental service helper | proposed daemon surface is still being designed |
 | `doeff-agentic-cli` | native helper | distributed with the agentic CLI workflow, not a public PyPI package |
 | `doeff-docker` | experimental runtime adapter | no public install contract yet |
+| `doeff-domain` | vocabulary cohesion domain package | new E1 subpackage of ADR-DOE-DOMAIN-001 (status proposed); no public install contract yet |
 | `doeff-ml-nexus` | experimental runtime adapter | no public install contract yet |
 | `doeff-effect-analyzer` | native analysis helper | development tooling, not part of the PyPI user surface |
 | `doeff-linter` | native analysis helper | installed with Cargo tooling, not the PyPI release |
