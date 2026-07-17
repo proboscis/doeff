@@ -77,6 +77,7 @@
     (setv self.canonical {})        ;; path → realpath(FsCanonicalPath の台本)
     (setv self.tmux-envs {})        ;; session-name → new-session に渡った env
     (setv self.listings {})         ;; path → エントリ名 list(FsListDir の台本)
+    (setv self.kill-broken False)   ;; True: TmuxKillSession が raise(cleanup 失敗)
     (setv self.now (datetime 2026 7 5 12 0 0 :tzinfo timezone.utc))))
 
 
@@ -121,6 +122,8 @@
     (resume None))
   (TmuxKillSession [session-name]
     (.append world.trace #("kill-session" session-name))
+    (when world.kill-broken
+      (raise (RuntimeError f"tmux kill-session failed for {session-name}")))
     (.discard world.tmux-sessions session-name)
     (resume None))
   (DeliverMessage [pane-id text]
@@ -542,6 +545,44 @@
   (assert (is-not stored.terminal-cause None))
   (assert (= stored.terminal-cause.category "timed_out"))
   (assert (in #("s1" "session_failed") world.events))
+  ;; cleanup 成功は cleaned-at で表現(terminal-first 契約)
+  (assert (is-not stored.cleaned-at None))
+  (assert (not (lfor [k v] (.items world.rows) :if (= v.status "booting") k))))
+
+
+(deftest test-launch-ready-timeout-terminalizes-before-failed-cleanup
+  ;; terminal-first(#542 レビュー由来): FAILED 終端化の永続化は tmux cleanup
+  ;; より先。kill が upsert より先だと、cleanup 失敗(tmux server 死亡・帯域外
+  ;; teardown)で終端化がスキップされ booting 残置 + 元エラーのマスクが起きる。
+  ;; cleanup 失敗は cleaned-at 無し(行は既に terminal)で表現し、raise は
+  ;; ready-timeout の typed error のまま。
+  (setv world (LaunchWorld))
+  (setv world.kill-broken True)
+  (setv unknown-frame (+ " Share anonymous usage data with Anthropic?\n"
+                         " ❯ 1. Yes, share usage data\n"
+                         "   2. Maybe later\n"
+                         " Enter to confirm · Esc to cancel"))
+  (setv world.capture-script [unknown-frame])
+  (setv raised None)
+  (try
+    (<- _ (run-launch world (launch-params
+                              :agent_type "claude"
+                              :binding {"kind" "claude-code"
+                                        "config_dir" "/x/claude"}
+                              :repl_idle_max_wait_seconds 5)))
+    (except [e RuntimeError] (setv raised e)))
+  (assert (is-not raised None))
+  ;; cleanup 失敗が ready-timeout の typed error をマスクしない
+  (assert (in "did not become ready" (str raised)) (str raised))
+  ;; FAILED 終端化は cleanup 試行より先に永続化済み
+  (setv stored (get world.rows "s1"))
+  (assert (= stored.status "failed"))
+  (assert (is-not stored.finished-at None))
+  (assert (= stored.terminal-cause.category "timed_out"))
+  (assert (in #("s1" "session_failed") world.events))
+  ;; cleanup は試行されたが失敗 → cleaned-at は NULL のまま
+  (assert (in #("kill-session" "doeff-s1") world.trace))
+  (assert (is stored.cleaned-at None))
   (assert (not (lfor [k v] (.items world.rows) :if (= v.status "booting") k))))
 
 

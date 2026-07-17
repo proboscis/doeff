@@ -4919,7 +4919,10 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
     /// R9 dialog detector, so the launch sits in its ready wait for the
     /// whole configured budget — the deterministic stand-in for a cold
     /// start blocked by an unknown dialog.
-    fn write_never_ready_fake_tmux(dir: &Path) -> (String, PathBuf) {
+    fn write_never_ready_fake_tmux_with_kill(
+        dir: &Path,
+        kill_branch: &str,
+    ) -> (String, PathBuf) {
         let frame_file = dir.join("frame.txt");
         fs::write(
             &frame_file,
@@ -4936,13 +4939,13 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
                    new-session) printf '%%7\\n' ;;\n\
                    has-session) exit 1 ;;\n\
                    capture-pane) cat '{frame}' ;;\n\
-                   kill-session) : > '{marker}' ;;\n\
+                   kill-session) {kill_branch} ;;\n\
                    load-buffer) cat > /dev/null ;;\n\
                    *) : ;;\n\
                  esac\n\
                  exit 0\n",
                 frame = frame_file.display(),
-                marker = kill_marker.display(),
+                kill_branch = kill_branch,
             ),
         )
         .expect("write fake tmux");
@@ -4950,6 +4953,11 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
         perms.set_mode(0o755);
         fs::set_permissions(&tmux_bin, perms).expect("chmod fake tmux");
         (tmux_bin.to_string_lossy().into_owned(), kill_marker)
+    }
+
+    fn write_never_ready_fake_tmux(dir: &Path) -> (String, PathBuf) {
+        let marker = dir.join("killed-session.marker");
+        write_never_ready_fake_tmux_with_kill(dir, &format!(": > '{}'", marker.display()))
     }
 
     fn interactive_launch_params(session_id: &str) -> LaunchParams {
@@ -5097,6 +5105,8 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
             kill_marker.exists(),
             "the created tmux session must be killed on ready timeout"
         );
+        // Cleanup succeeded, recorded as cleaned_at (terminal-first contract).
+        assert!(snapshot.cleaned_at.is_some());
 
         let booting_rows: i64 = conn
             .query_row(
@@ -5124,6 +5134,78 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
         assert!(
             event_types.contains(&String::from("session_failed")),
             "the timeout transition must record session_failed: {event_types:?}"
+        );
+    }
+
+    /// Terminal-first (order adopted from PR #542's review): the FAILED row
+    /// is persisted BEFORE any tmux cleanup, so a failing kill can neither
+    /// skip terminalization (BOOTING left behind) nor mask the typed
+    /// ready-timeout error. The failed cleanup shows as cleaned_at NULL on
+    /// an already-terminal row.
+    #[test]
+    fn session_launch_ready_timeout_terminalizes_before_failed_cleanup() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (tmux_bin, _kill_marker) =
+            write_never_ready_fake_tmux_with_kill(tmp.path(), "exit 1");
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        let config = Config {
+            db_path: db.clone(),
+            socket_path: tmp.path().join("agentd.sock"),
+            tmux_bin,
+            monitor_interval: Duration::from_millis(1000),
+            max_running: 4,
+            result_solicitation_limit: DEFAULT_RESULT_SOLICITATION_LIMIT,
+            prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
+            prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
+            prompt_judge_cmd: None,
+            repl_idle_max_wait: Duration::from_secs(1),
+        };
+
+        let err = session_launch(&conn, &config, interactive_launch_params("kill-broken"))
+            .expect_err("a never-ready launch must fail closed");
+        let message = err.to_string();
+        assert!(
+            message.contains("did not become ready"),
+            "a failing cleanup must not mask the ready-timeout error: {message}"
+        );
+
+        let snapshot = session_get(&conn, "kill-broken")
+            .expect("session_get")
+            .expect("failed cleanup must not erase the session record");
+        assert_eq!(
+            snapshot.status, "failed",
+            "the FAILED row must be persisted before the cleanup attempt"
+        );
+        assert!(snapshot.finished_at.is_some());
+        let cause = snapshot.terminal_cause.expect("terminal cause recorded");
+        assert!(matches!(cause.category, TerminalCauseCategory::TimedOut));
+        // Cleanup failed: expressed as the absence of cleaned_at.
+        assert!(snapshot.cleaned_at.is_none());
+
+        let booting_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agent_sessions WHERE status = 'booting'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count booting rows");
+        assert_eq!(booting_rows, 0, "no BOOTING row may be left behind");
+
+        let event_types: Vec<String> = conn
+            .prepare(
+                "SELECT event_type FROM agent_session_events \
+                 WHERE session_id = 'kill-broken' ORDER BY id",
+            )
+            .expect("prepare events query")
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("query events")
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .expect("collect events");
+        assert!(
+            event_types.contains(&String::from("session_failed")),
+            "terminalization must be recorded before cleanup: {event_types:?}"
         );
     }
 

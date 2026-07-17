@@ -111,6 +111,20 @@ def _booting_rows(repository: InMemoryAgentSessionRepository):
     ]
 
 
+class KillFailingBackend(RegistrationProbeBackend):
+    """Backend whose kill_session always fails.
+
+    Models a tmux server that died (or a pane torn down out of band)
+    between the launch and its cleanup — the terminal-first contract
+    (adopted from PR #542's review) requires the FAILED row to be
+    persisted BEFORE any cleanup attempt, so a failing cleanup can
+    neither leave a BOOTING row behind nor mask the launch error.
+    """
+
+    def kill_session(self, session: str) -> None:
+        raise RuntimeError(f"tmux kill-session failed for {session}")
+
+
 # =============================================================================
 # handle_launch (LaunchEffect path)
 # =============================================================================
@@ -190,6 +204,8 @@ def test_handle_launch_ready_timeout_transitions_row_to_failed(
     # Existing #531 guarantees are preserved: prompt undelivered, session killed.
     assert PROMPT not in backend.sent_texts()
     assert "codex-cold-reg" in backend.killed
+    # Cleanup succeeded, recorded as cleaned_at (terminal-first contract).
+    assert row.cleaned_at is not None
 
 
 # =============================================================================
@@ -261,3 +277,49 @@ def test_handle_claude_launch_ready_timeout_transitions_row_to_failed(
 
     assert PROMPT not in backend.sent_texts()
     assert "claude-cold-reg" in backend.killed
+    assert row.cleaned_at is not None
+
+
+# =============================================================================
+# terminal-first: cleanup failure must not skip terminalization
+# (order adopted from PR #542's review)
+# =============================================================================
+
+
+def test_handle_launch_terminalizes_before_failed_tmux_cleanup(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repository = InMemoryAgentSessionRepository()
+    backend = KillFailingBackend(
+        ["$ ", "$ codex --yolo"], repository, "codex-kill-broken"
+    )
+    monkeypatch.setattr(
+        "doeff_agents.handlers.production.get_adapter",
+        lambda _agent_type: ReadyFakeCodexAdapter(),
+    )
+    handler = _handler(backend, repository, tmp_path)
+
+    # The typed ready-timeout error must survive the failing cleanup — the
+    # kill error is logged, never allowed to mask the launch failure.
+    with pytest.raises(EffectsAgentReadyTimeoutError):
+        handler.handle_launch(
+            LaunchEffect(
+                session_name="codex-kill-broken",
+                agent_type=AgentType.CODEX,
+                work_dir=tmp_path / "ws",
+                prompt=PROMPT,
+                ready_timeout=0.5,
+            )
+        )
+
+    # Terminal-first: the FAILED row was persisted BEFORE the cleanup
+    # attempt, so the failing kill cannot leave a BOOTING row behind.
+    row = repository.get_session("codex-kill-broken")
+    assert row is not None, "failed cleanup must not erase the session record"
+    assert row.status is SessionStatus.FAILED
+    assert row.finished_at is not None
+    assert not _booting_rows(repository), "no BOOTING row may be left behind"
+    # Cleanup failed: expressed as the absence of cleaned_at, with the row
+    # already terminal.
+    assert row.cleaned_at is None
+    assert PROMPT not in backend.sent_texts()
