@@ -168,6 +168,55 @@ rules:
         - /packages/doeff-agentd/src/**
         - /tests/semgrep/fixtures/python/packages/doeff-agents/src/**
 
+  - id: doeff-agents-session-registration-must-precede-ready-gate
+    languages:
+      - python
+    severity: ERROR
+    message: >
+      Session registration must precede the ready gate: persist the BOOTING
+      snapshot (`_record_snapshot("session_started", ...)`) immediately after
+      new_session, BEFORE deliver_prompt_when_ready. Registration is
+      bookkeeping independent of TUI readiness — recording it after the (up
+      to 120s) readiness wait opens a window where the session physically
+      exists but no external record does, and sub-minute external monitors
+      classify the launch as an orphan (issue
+      agentd-session-registration-after-ready-gate, 2026-07-14). On ready
+      timeout, transition the registered row to a terminal FAILED state
+      instead of erasing it.
+    pattern: |
+      if $COND:
+          deliver_prompt_when_ready(...)
+      ...
+      $SELF._record_snapshot("session_started", ...)
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/handlers/**
+        - /tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/handlers/**
+
+  - id: doeff-agentd-repl-ready-wait-must-not-discard-readiness
+    languages:
+      - rust
+    severity: ERROR
+    message: >
+      wait_for_repl_idle's readiness result must be handled, never discarded
+      as a bare `wait_for_repl_idle(...)?;` statement. Discarding it re-opens
+      the paste-anyway launch: on budget exhaustion the prompt is pasted into
+      whatever unknown screen blocked startup (silent forever-hang, trust
+      dialog incident 2026-07-07) and the registered BOOTING row is left
+      behind instead of transitioning to terminal failed (issue
+      agentd-session-registration-after-ready-gate). Bind the result and
+      fail closed: kill the session, mark the row failed (timed_out), raise
+      the typed error — the same contract as sessionhost/launch.hy.
+    patterns:
+      - pattern: wait_for_repl_idle($CONFIG, $PANE, $WAIT)?
+      # A let-bound readiness verdict is the compliant shape; only the bare
+      # discarding statement is banned.
+      - pattern-not-inside: let $BOUND = $EXPR;
+    paths:
+      include:
+        - /packages/doeff-agentd/src/**
+        - /tests/semgrep/fixtures/rust/packages/doeff-agentd/src/**
+
   - id: doeff-agents-require-real-claude-result-retry-e2e
     languages:
       - generic
