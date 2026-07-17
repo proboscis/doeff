@@ -54,7 +54,7 @@
 ((handles Local) local-handler)
 ((handles Listen) listen-handler)
 ((handles Await) await-handler)
-((handles CacheGetEffect CachePutEffect CacheExistsEffect) cache-handler)
+((handles CacheGetEffect CachePutEffect CacheDeleteEffect CacheExistsEffect) cache-handler)
 ((handles Spawn TaskCompleted Gather Wait Cancel Race
           CreatePromise CompletePromise FailPromise
           CreateSemaphore AcquireSemaphore ReleaseSemaphore
@@ -161,7 +161,7 @@
   :effects [MemoGetEffect MemoPutEffect MemoDeleteEffect MemoExistsEffect]
   :handlers [_memo-layer-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "MemoDeleteEffect は語彙として定義済みだがどの handler も処理していない(2026-07-17 実測のドリフト)。被覆検査の known_uncovered として申告済み — 処置は maintainer 裁定待ち。")
+  :docs "4 effect 全てを _memo-layer-handler が被覆する(defhandler 構造導出)。MemoDeleteEffect は 2026-07-17 実測のドリフト(未処理)だったが、maintainer 裁定 A(2026-07-18)により MemoDeleteEffect 節(broadcast delete)が実装され解消済み。")
 
 
 (defdomain doeff-cache
@@ -169,4 +169,4 @@
   :effects [CacheGetEffect CachePutEffect CacheDeleteEffect CacheExistsEffect]
   :handlers [cache-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "CacheDeleteEffect は語彙として定義済みだがどの handler も処理していない(2026-07-17 実測のドリフト)。被覆検査の known_uncovered として申告済み — 処置は maintainer 裁定待ち。")
+  :docs "4 effect 全てを cache-handler が被覆する(handles 後付け注釈)。CacheDeleteEffect は 2026-07-17 実測のドリフト(未処理)だったが、maintainer 裁定 A(2026-07-18)により CacheDeleteEffect 分岐が実装され解消済み。")

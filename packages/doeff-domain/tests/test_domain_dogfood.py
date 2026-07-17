@@ -1,9 +1,11 @@
 """D8 dogfood: doeff-core-effects の語彙を domain 宣言し、検査 (a)(c) を配線する。
 
-known_uncovered は実在するドリフトの明示申告である: MemoDeleteEffect /
-CacheDeleteEffect は語彙として定義・export されているが、doeff-core-effects の
-どの handler も処理していない(2026-07-17 調査)。被覆されたら stale 検査が
-fail し、この申告の除去を強制する(ratchet)。処置は maintainer 裁定待ち。
+かつて MemoDeleteEffect / CacheDeleteEffect は語彙として定義・export されながら
+どの handler も処理しない実ドリフトで、known_uncovered として申告されていた
+(2026-07-17 調査)。maintainer 裁定 A(2026-07-18)で両 effect の handler が
+実装され、stale-ratchet の強制どおり申告は除去された — 検査 (a) は申告なしで
+green になる。ratchet 自体の発火は test_stale_known_uncovered_declaration_rejected
+が固定する。
 """
 
 import doeff_domain.core_effects_domains as dogfood  # noqa: F401 — import 時に登録
@@ -18,15 +20,13 @@ from doeff_core_effects.memo_effects import (
     MemoPutEffect,
 )
 from doeff_domain import (
-    DomainCoverageError,
+    DomainCheckError,
     assert_domain_covered,
     assert_no_orphan_effects,
     get_domain,
     handled_effects,
     introducing_domain,
 )
-
-KNOWN_UNCOVERED = {MemoDeleteEffect, CacheDeleteEffect}
 
 DOGFOOD_DOMAIN_NAMES = [
     "doeff-reader",
@@ -51,22 +51,21 @@ def test_all_dogfood_domains_registered():
 
 @pytest.mark.parametrize("name", DOGFOOD_DOMAIN_NAMES)
 def test_dogfood_coverage_green(name):
-    # 検査 (a): 導入 effects ⊆ handlers の処理集合の和(既知ギャップは明示申告)
-    domain = get_domain(name)
-    gaps = tuple(cls for cls in domain.effects if cls in KNOWN_UNCOVERED)
-    assert_domain_covered(domain, known_uncovered=gaps)
+    # 検査 (a): 導入 effects ⊆ handlers の処理集合の和 — 申告なしで green
+    assert_domain_covered(get_domain(name))
 
 
-def test_known_uncovered_gaps_are_real():
-    # 申告なしだと (a) は red — ドリフトが実在する間だけこのピンは立つ
-    for name in ("doeff-memo", "doeff-cache"):
-        with pytest.raises(DomainCoverageError):
-            assert_domain_covered(get_domain(name))
+def test_stale_known_uncovered_declaration_rejected():
+    # ratchet 発火の実証: delete effects は被覆済みになったので、旧 known_uncovered
+    # 申告を残すと stale として fail する(申告除去を強制する機構が働いている)
+    for name, effect in (("doeff-memo", MemoDeleteEffect), ("doeff-cache", CacheDeleteEffect)):
+        with pytest.raises(DomainCheckError, match="stale known_uncovered"):
+            assert_domain_covered(get_domain(name), known_uncovered=[effect])
 
 
 def test_no_orphan_effects_in_core_effects():
     # 検査 (c): doeff_core_effects 全体を import 走査 — 全 EffectBase 子孫が
-    # いずれかの domain に導入されている(delete 系も語彙としては導入済み)
+    # いずれかの domain に導入されている
     assert_no_orphan_effects(["doeff_core_effects"])
 
 
@@ -83,7 +82,10 @@ def test_http_and_memo_domains_use_defhandler_derivation():
     (memo_handler,) = memo.handlers
     assert not hasattr(memo_handler, "__doeff_handles__")
     derived = handled_effects(memo_handler, vocabulary=memo.effects)
-    assert derived == frozenset({MemoExistsEffect, MemoGetEffect, MemoPutEffect})
+    # MemoDeleteEffect 節の追加は構造導出に自動反映される(D6)
+    assert derived == frozenset(
+        {MemoExistsEffect, MemoGetEffect, MemoPutEffect, MemoDeleteEffect}
+    )
 
 
 def test_scope_domain_includes_reader_vocabulary():
