@@ -72,6 +72,15 @@ class TestDefhandlerDerivation:
         derived = handled_effects(fixtures.fixture_lazy_handler)
         assert derived == frozenset({FixtureGamma})
 
+    def test_lazy_val_clause_skipped(self):
+        # lazy 節 head は 3 種(lazy / lazy-val / lazy-var)— 全て処理宣言ではない
+        derived = handled_effects(fixtures.fixture_lazy_val_handler)
+        assert derived == frozenset({FixtureAlpha})
+
+    def test_lazy_var_clause_skipped(self):
+        derived = handled_effects(fixtures.fixture_lazy_var_handler)
+        assert derived == frozenset({FixtureBeta})
+
     def test_when_guard_counts_as_participation(self):
         derived = handled_effects(fixtures.fixture_guarded_handler)
         assert derived == frozenset({FixtureAlpha, FixtureDelta})
