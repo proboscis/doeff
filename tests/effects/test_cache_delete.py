@@ -9,13 +9,13 @@ cache_handler は単層意味論: cache effect を必ず自分で処理し re-pe
 再計算は呼び出し回数カウンタで、実削除は InMemoryStorage.keys() で直接観測する。
 """
 
-from doeff import EffectBase, do
-from doeff import handler as program_handler
-from doeff.program import Pass, Resume
 from doeff_core_effects.cache_effects import CacheDelete, CacheExists, CacheGet, CachePut
 from doeff_core_effects.cache_handlers import cache_handler, make_memo_rewriter
 from doeff_core_effects.storage import InMemoryStorage
 
+from doeff import EffectBase, do
+from doeff import handler as program_handler
+from doeff.program import Pass, Resume
 from tests._run_helpers import run_with_defaults
 
 
