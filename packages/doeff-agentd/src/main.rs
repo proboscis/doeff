@@ -1883,15 +1883,27 @@ fn session_launch(
                     // sessionhost/launch.hy for parity): pasting into an
                     // unrecognized screen sends the prompt to a dialog
                     // outside the R9 fast-path set and the session hangs
-                    // silently forever. Kill the session and transition the
-                    // registered BOOTING row to terminal failed (timed_out)
-                    // — a lifecycle transition, never a lingering BOOTING
-                    // row.
-                    let final_frame = tmux_capture(config, &pane_id, 40)?;
-                    tmux_kill_session(config, &params.session_name)?;
-                    let tail_lines: Vec<&str> = final_frame.lines().collect();
-                    let tail_start = tail_lines.len().saturating_sub(15);
-                    let screen_tail = tail_lines[tail_start..].join("\n");
+                    // silently forever. Transition the registered BOOTING
+                    // row to terminal failed (timed_out) — a lifecycle
+                    // transition, never a lingering BOOTING row.
+                    //
+                    // Terminal-first (order adopted from PR #542's review):
+                    // persist the FAILED row (+event) BEFORE any tmux
+                    // cleanup, so a failing capture/kill can neither skip
+                    // terminalization nor mask the typed error. The screen
+                    // capture is best-effort evidence; cleanup success is
+                    // recorded as cleaned_at (NULL = cleanup failed, row
+                    // already terminal).
+                    let screen_tail = match tmux_capture(config, &pane_id, 40) {
+                        Ok(final_frame) => {
+                            let tail_lines: Vec<&str> = final_frame.lines().collect();
+                            let tail_start = tail_lines.len().saturating_sub(15);
+                            tail_lines[tail_start..].join("\n")
+                        }
+                        Err(capture_err) => {
+                            format!("(screen capture failed: {capture_err:#})")
+                        }
+                    };
                     let observed_at = now_iso();
                     let budget_secs = config.repl_idle_max_wait.as_secs();
                     snapshot.status = String::from("failed");
@@ -1913,8 +1925,9 @@ fn session_launch(
                         "session.launch: {} REPL did not become ready within \
                          {budget_secs}s — startup is blocked by an unrecognized \
                          screen (a dialog outside the R9 fast-path set?). The \
-                         prompt was NOT delivered; the tmux session was killed \
-                         and the session row was marked failed (timed_out). \
+                         prompt was NOT delivered; the session row was marked \
+                         failed (timed_out) and tmux cleanup was attempted \
+                         (success is recorded as cleaned_at). \
                          Last screen tail:\n{screen_tail}",
                         params.agent_type
                     );
@@ -1928,6 +1941,23 @@ fn session_launch(
                     )?;
                     upsert_snapshot(conn, &snapshot)?;
                     record_event(conn, &snapshot.session_id, "session_failed", &snapshot)?;
+                    // Cleanup AFTER terminalization: the row is already
+                    // terminal, so a failing kill only leaves cleaned_at
+                    // NULL (and a warning) — never a BOOTING leak.
+                    match tmux_kill_session(config, &params.session_name) {
+                        Ok(()) => {
+                            snapshot.cleaned_at = Some(now_iso());
+                            upsert_snapshot(conn, &snapshot)?;
+                        }
+                        Err(kill_err) => {
+                            eprintln!(
+                                "doeff-agentd WARNING: ready-timeout cleanup failed \
+                                 for {}: {kill_err:#} (row already terminal; \
+                                 cleaned_at left NULL)",
+                                params.session_id
+                            );
+                        }
+                    }
                     return Err(anyhow!(message));
                 }
             }
