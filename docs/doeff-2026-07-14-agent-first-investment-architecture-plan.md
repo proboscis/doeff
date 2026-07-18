@@ -68,7 +68,7 @@
       ▼              ▼                  ▼               ▼
 [A: bind/bang]   [C: trace(再スコープ)] [D: deftest 契約] [E: defdomain/SEDA/適合]
   A1 ✅ guard      C1 ✅ 税は不存在      D1 ✅ 大半完了     E1 ✅ 実装完了
-  A2 ✅ 主要部     C2 ✅ 行解決遅延化    D2 シム語彙吸収    E2 ✅ 見送り(裁定)
+  A2 ✅ 完了       C2 ✅ 行解決遅延化    D2 シム語彙吸収    E2 ✅ 見送り(裁定)
   A3 ✅ 裁定       C3 ✅ 現状維持裁定    D3 mediagen 移行   E3 列挙契約設計待ち
   A4 ✅ ! 意味論                         (下流)
       │
@@ -94,7 +94,7 @@
 | T-B3 | ENFORCE-001 R4 | dev ビルド invariant-checks 常時有効 + oracle の pytest 起動 | test-…-vm-oracle-wired が red | **完了(2026-07-14)**: doeff-vm に feature 転送、make sync に --features、PyO3 で invariant_checks_enabled() 公開(doeff_vm/__init__.py 再輸出込み)、tests/test_vm_invariant_checks_enabled.py が hard-fail 常駐(実測 True)。oracle は全 VM 実行で常時演習される。make test-vm-invariants 追加 | **完了** |
 | T-B4 | ENFORCE-001 R5 | enforcement 台帳 ratchet メタテスト | 台帳の黙減が検出されない | **完了(2026-07-14)**: docs/adr/enforcement-ledger.json(defadr 15 / semgrep 229 / deftest 9 / defsemgrep 19 / law 49)+ tests/test_enforcement_ledger.py 等値 ratchet green | **完了** |
 | T-A1 | HY-001 R1-R4 | statement 位置 runtime guard 実装(修正プロンプト形式メッセージ) | test-…-bare-statement-program-raises が red | **完了(2026-07-14)**: macros.hy に _guard-statement-value / _wrap-statement-guard を実装、defk(_build-fn-with-contracts)/do!/defp(_build-defp)/deftest の4 emit サイトに適用。HY-001 green、既定スイート 1094 passed 無回帰。**同日後半**: 下流洗い出しで class-level defk の guard ヘルパー解決欠陥を発見し、PR #525 で生成関数の `__wrapped__` チェーンを辿って module `__globals__` へ `setdefault` 注入する根本修正を実施。ADR-DOE-HY-001 に class-level probe を追加 | **完了** |
-| T-A2 | HY-001 R5 | 下流(ema/hypha/ACP/mediagen)で guard 有効化 → 休眠 discard 全数洗い出し・修正 | 休眠 bare form 数 未知 | 各リポジトリのスイート green + 洗い出し報告。**⚠️ Hy バイトコード罠**: マクロ変更はソース mtime に映らないため、掃引は必ず `PYTHONPYCACHEPREFIX=<fresh>` か touch で全再コンパイルして走らせること(doeff 自身の検証でこの罠を実踏) | **主要部完了(2026-07-14 ema PR #613 / hypha PR #5)**。発火 0 件 = 休眠 discard 不在の証明。残: mediagen / ACP(小、ACP は ADR のみ)。reactor / proboscis-reactor は deprecated と裁定され GitHub アーカイブ済みのため対象外 |
+| T-A2 | HY-001 R5 | 下流(ema/hypha/ACP/mediagen)で guard 有効化 → 休眠 discard 全数洗い出し・修正 | 休眠 bare form 数 未知 | 各リポジトリのスイート green + 洗い出し報告。**⚠️ Hy バイトコード罠**: マクロ変更はソース mtime に映らないため、掃引は必ず `PYTHONPYCACHEPREFIX=<fresh>` か touch で全再コンパイルして走らせること(doeff 自身の検証でこの罠を実踏) | **完了(2026-07-18)**。ema PR #613 / hypha PR #5 / mediagen PR #23(`c4a8ea4b`) / ACP PR #39(`99635f9d`) + #40(`b6b74da2`)の全下流で発火 0 件 = 休眠 discard 不在の証明。reactor / proboscis-reactor は deprecated と裁定され GitHub アーカイブ済みのため対象外 |
 | T-A4 | HY-003 | bang(!) の evaluation-position 意味論を保存し、保存不能位置は明示エラー化 | hoist による分岐脱出・短絡無視・評価順逆転・例外文脈喪失 | in-place yield 展開 + 保存不能位置の修正プロンプト付き展開時エラー。ADR-DOE-HY-003 は 10 tests collected(probe 9 + contract 1)。Fable/codex A/B の交差検証後 #533 を採用し #534 を close、#534 の Semgrep 2 規則 + README 節は #533 へ移植 | **完了(2026-07-16 PR #533)** |
 | T-C1 | CORE-002 R3 | profiling spike: 現行 main の捕捉サイト・コスト内訳の確定、ADR facts 更新 | Gap-3(サイト未特定) | **完了(2026-07-14)**: 現行 main に per-effect 捕捉は存在しない(opt-in VM 内省命令 + エラー経路のみ、linecache は描画時限定。100k Ask 実測で linecache/stack-walk/整形 = 0 呼び出し)。ADR facts 更新済み + 回帰ガード deftest green。下流 TRD-002 は現行 pin の再計測で旧疑惑 5 系統がすべて 0 calls となり、旧版限定として resolved 化済み(ema PR #612)。副産物: @do の generator 再構築グルーが Python 側時間の ~39%(別 issue 種、本 ADR 対象外) | **完了** |
 | T-C2 | CORE-002 R2(再スコープ) | run.py の traceback 行テキスト解決を `StackSummary.extract(walk_tb(tb), lookup_lines=False)` で遅延化 | 例外1回につき linecache 先読み | `extract_tb` に存在しない lookup_line 引数を使わず等価代替で実装 + 既存テスト green | **完了(2026-07-14 PR #520)** |
@@ -110,7 +110,7 @@
 
 - **Stage 0(完了 / 本セッション)**: 価値評価・理論文書(22 番)・本計画・5 defadr(red enforcement 4 本 + blocked 1 件)作成。A3/B3 裁定記録。
 - **Stage 1(着地済み)**: T-B1/T-B2/T-B3/T-B4/T-C1 完了、T-D1 大半完了。T-B2 の P1 fixture 拡張は P0 運用経験待ちで保留。
-- **Stage 2**: T-A1/T-A4 完了。T-A2 は ema / hypha の主要部完了。残: mediagen / ACP の小規模 sweep。
+- **Stage 2**: T-A1/T-A4/T-A2 完了。T-A2 は全下流の sweep を 2026-07-18 に完遂。
 - **Stage 3**: T-C2 完了。残: T-D2 → T-D3(下流 PR)。
 - **Stage 4(E1 実装完了、2026-07-17〜18)**: T-E1 defdomain 設計・実装完了(PR #544) + T-C3 現状維持裁定。E1 dogfood が検出した delete-effects ドリフトも handler 追加(PR #546)で解消。裁定後は T-E2 を見送り、T-E3 は interpreter→handler 列挙契約の設計セッション待ち。残る実行対象は T-D2 設計。
 - **Stage 5(本計画外・次期計画)**: class 2 新プリミティブ(rate-limit token-bucket scheduler → batching/dedup/hedging)。前提 = 本計画の Gate 1-6。
@@ -256,6 +256,12 @@ docs/adr/enforcement-ledger.json、docs/adr/semgrep-baseline.json、docs/adr/con
 - **現 HEAD 実測**: enforcement 台帳は defadr_files 18 / semgrep_rules 238 /
   adr_deftest_enforcements 22 / adr_defsemgrep_enforcements 37 / adr_laws 54。`uv run pytest -q` は
   1272 passed / 86 skipped で、xfail は 0。
+- **T-A2 完遂**: mediagen は sweep 発火 0 件で、doeff pin を `b89c62ff` へ更新し、PR #23
+  (`c4a8ea4b`)を merge。ACP も sweep 発火 0 件で、68 bang サイトは現状維持とし、ADR-0056 の bang
+  禁止緩和を採用して PR #39(`99635f9d`)を merge した。closure は version floor 裁定
+  (doeff >= `678c32b7`、pin 不採用)により PR #40(`b6b74da2`)を merge。これにより ema PR #613 /
+  hypha PR #5 / mediagen PR #23 / ACP PR #39 + #40 の全下流で発火 0 件となり、休眠 discard 不在の
+  証明が揃った。
 - **E2 見送り裁定**: 2026-07-18 maintainer 裁定により、SEDA/registry 照会の CLI/MCP 面は見送った。
   根拠は、(1) 核#8 型増殖への実 enforcement を E1 の孤児禁止・被覆・stale-ratchet が既に担い、
   MemoDeleteEffect / CacheDeleteEffect の実ドリフト検出から裁定 A、PR #546 での解消まで実証したこと、
@@ -281,8 +287,7 @@ docs/adr/enforcement-ledger.json、docs/adr/semgrep-baseline.json、docs/adr/con
    移行)へ進む。
 2. E3 前提の interpreter→handler 列挙契約の設計セッションを frontier+人間で実施する。
    worker へ委譲せず、E3 はこの設計後に着手する。
-3. T-A2 の残りである mediagen / ACP の小規模 sweep を継続する。
-4. T-B2 の P1 fixture 拡張は、P0 の運用経験が蓄積するまで引き続き保留する。
+3. T-B2 の P1 fixture 拡張は、P0 の運用経験が蓄積するまで引き続き保留する。
 
 T-E2 は見送りとし、再開条件(エージェントの語彙探索の実失敗)を観測した場合に再起票するため、
 Immediate next action からは外す。
