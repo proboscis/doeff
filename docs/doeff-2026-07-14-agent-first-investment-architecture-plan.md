@@ -256,8 +256,8 @@ docs/adr/enforcement-ledger.json、docs/adr/semgrep-baseline.json、docs/adr/con
 - **現 HEAD 実測**: enforcement 台帳は defadr_files 18 / semgrep_rules 238 /
   adr_deftest_enforcements 22 / adr_defsemgrep_enforcements 37 / adr_laws 54。`uv run pytest -q` は
   1272 passed / 86 skipped で、xfail は 0。
-- **T-A2 完遂**: mediagen は sweep 発火 0 件で、doeff pin を `b89c62ff` へ更新し、PR #23
-  (`c4a8ea4b`)を merge。ACP も sweep 発火 0 件で、68 bang サイトは現状維持とし、ADR-0056 の bang
+- **T-A2 完遂**: mediagen は sweep 発火 0 件で、doeff pin を `a07b6cdd`(基準 `b89c62ff` の
+  子孫)へ更新し、PR #23(`c4a8ea4b`)を merge。ACP も sweep 発火 0 件で、68 bang サイトは現状維持とし、ADR-0056 の bang
   禁止緩和を採用して PR #39(`99635f9d`)を merge した。closure は version floor 裁定
   (doeff >= `678c32b7`、pin 不採用)により PR #40(`b6b74da2`)を merge。これにより ema PR #613 /
   hypha PR #5 / mediagen PR #23 / ACP PR #39 + #40 の全下流で発火 0 件となり、休眠 discard 不在の
