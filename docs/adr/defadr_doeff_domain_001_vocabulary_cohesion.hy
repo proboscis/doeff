@@ -39,10 +39,12 @@
        "裁定(2026-07-17, iv): 検査 (c) の正直な限界 — 述語の真の同義検出は不可能である。effect の孤児禁止(EffectBase 子孫の domain 所属強制)+ :terms の正典宣言 + プロジェクト側の命名パターン semgrep が上限であり、それ以上を約束しない。")
      (interpretation
        [removed]
+     (interpretation
+       [removed]
   :decision
     [(rule R1 "doeff-domain サブパッケージ(packages/doeff-domain)は凝集単位の宣言を提供する: 純データ Domain(name/title/effects/includes/terms/handlers/laws/adrs/docs)、プロセス内 registry(import 時登録・同名再登録は即例外)、宣言マクロ defdomain(Hy モジュール doeff_domain.macros)、生 Python handler 用の opt-in 注釈 handles()、処理集合の二層導出、適合検査 (a)(c)。doeff-domain は doeff-hy / doeff-adr に依存してはならない(doeff_vm.EffectBase と hy への依存は可、doeff-core-effects へは dogfood 宣言モジュールからのみ一方向)。")
-     (rule R2 "SEDA は CLI および MCP tool としてエージェントから照会可能にする: 『この Program が実行しうる effect 集合』『この effect 型の handler 所在』『この interpreter の処理集合』。IDE プラグイン面は非優先とする。(E2 待ち)")
-     (rule R3 "適合検査を defsemgrep / deftest で提供する: (a) handler が宣言 domain の導入 effect を被覆する(includes は導入元 domain の責務)、(b) Program の使用 effect 集合 ⊆ 実行 interpreter の処理集合(E3、SEDA 依存)、(c) domain 宣言の外での同義語彙(同一意味論の述語・effect)の定義を禁止する — 実装形は『名指しパッケージの全 EffectBase 子孫がいずれかの domain に導入されている』検査。")
+     (rule R2 "SEDA の CLI および MCP tool としての照会面『この Program が実行しうる effect 集合』『この effect 型の handler 所在』『この interpreter の処理集合』は見送る。IDE プラグイン面は非優先とする。(E2 見送り、2026-07-18 裁定 — 再開条件 = エージェントが語彙探索に実際に失敗した事例の観測)")
+     (rule R3 "適合検査を defsemgrep / deftest で提供する: (a) handler が宣言 domain の導入 effect を被覆する(includes は導入元 domain の責務)、(b) Program の使用 effect 集合 ⊆ 実行 interpreter の処理集合(E3 — interpreter→handler 列の列挙契約の設計セッション(frontier+人間予約、worker への委譲禁止)後に着手)、(c) domain 宣言の外での同義語彙(同一意味論の述語・effect)の定義を禁止する — 実装形は『名指しパッケージの全 EffectBase 子孫がいずれかの domain に導入されている』検査。")
      (rule R4 "本 ADR の実装は計画 Stage E であり、Track B(pytest 正典ゲート)の完了を前提とする — 適合検査は走るゲートがあって初めて意味を持つ。")
      (rule R5 "裁定(2026-07-17, i): defdomain は完全 opt-in である — doeff 利用の必須要素ではなく組織化戦略であり、既定ゲート(run()/CLI/default interpreter)への強制はしない。適合検査は採用プロジェクトが自分のテストとして配線する。doeff 自身は dogfood として自パッケージ範囲(doeff-core-effects)に採用する。")
      (rule R6 "裁定(2026-07-17, ii): 導入 1 / 包含 ∞ — 1 つの effect クラスは全体でちょうど 1 つの domain の effects(導入)に現れてよい。2 つ目の domain が同じクラスを導入しようとしたら登録時に両 domain 名を明示して即例外。includes による参照はいくつでも可。キーはクラス同一性。")
