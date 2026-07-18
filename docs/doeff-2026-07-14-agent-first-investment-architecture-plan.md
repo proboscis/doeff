@@ -41,12 +41,12 @@
 | # | 事実 / Gap | 根拠 |
 |---|---|---|
 | F-1 | ~~statement 位置素通し~~ **解消(T-A1、2026-07-14)**: 4 emit サイトに guard 実装、HY-001 green、1094 テスト無回帰 | macros.hy(_wrap-statement-guard) |
-| F-2 | ~~pyproject testpaths に docs/adr 不在~~ **解消(T-B1、2026-07-14 PR #521)**: root testpaths に docs/adr を追加(flip 実施)。defadr 収集自己検査と strict 検査が既定 pytest で稼働し、DOMAIN-001 は xfail(strict) 相当で E1 待ちを表明 | pyproject.toml / tests/test_adr_wiring_gate.py |
+| F-2 | ~~pyproject testpaths に docs/adr 不在~~ **解消(T-B1、2026-07-14 PR #521)**: root testpaths に docs/adr を追加(flip 実施)。defadr 収集自己検査と strict 検査が既定 pytest で稼働。E1 着地(PR #544)により DOMAIN-001 の xfail(strict) 相当も撤去され、deftest 5 本 + defsemgrep 1 本が green | pyproject.toml / tests/test_adr_wiring_gate.py / ADR-DOE-DOMAIN-001 |
 | F-3 | ~~oracle 起動経路ゼロ~~ **解消(T-B3、2026-07-14)**: dev ビルド常時有効 + hard-fail pytest 常駐(実測 True) | Makefile / tests/test_vm_invariant_checks_enabled.py |
-| F-4 | ~~semgrep 手動のみ~~ **解消(T-B2、2026-07-16 までに完了)**: dev 依存化 + 1.169.0 pin(#528)、229 規則の棚卸し(#529)、死亡 8 規則の修理 + 46 tombstone 注記(#532)、P0 16 規則の hit/clean fixture 常設(#535)。現 HEAD は 235 規則、baseline 0 | pyproject.toml / uv.lock / docs/semgrep-rules-inventory-2026-07-14.md / ADR-DOE-ENFORCE-002 |
+| F-4 | ~~semgrep 手動のみ~~ **解消(T-B2、2026-07-16 までに完了)**: dev 依存化 + 1.169.0 pin(#528)、229 規則の棚卸し(#529)、死亡 8 規則の修理 + 46 tombstone 注記(#532)、P0 16 規則の hit/clean fixture 常設(#535)。現 HEAD は 238 規則、baseline 0 | pyproject.toml / uv.lock / docs/semgrep-rules-inventory-2026-07-14.md / ADR-DOE-ENFORCE-002 |
 | F-5 | deftest は最大 Python 消費者(mediagen)で使用 0 / 260。**:env 経路は doeff 側では機能する**と実証済み(HY-002 roundtrip green)— 残ギャップは消費側配線と語彙拡張(D2) | mediagen conftest / docs/adr/conftest.py |
 | Gap-1 | ~~docs/adr に conftest.py が無い~~ **解消済み(Stage 0)**: `docs/adr/conftest.py` を新設(:env を reader で反映・エラー再送出。ADR-DOE-HY-002 R3 の参照実装) | 2026-07-14 実装 |
-| Gap-2 | T-A1/B3 は green、root testpaths の flip 済みで ADR 検査と wiring 自己検査が既定ゲートに常駐。残る designed-red は DOMAIN-001 の xfail(strict) 相当 1 件のみ。E1 の設計は確定し、実装 issue `doeff-domain-e1-defdomain` が進行中(実装で green になったら xfail 解除と記帳を強制) | tests/test_adr_wiring_gate.py / `doeff-domain-e1-defdomain` |
+| Gap-2 | ~~T-A1/B3 は green、root testpaths の flip 後に DOMAIN-001 の xfail(strict) 相当 1 件が designed-red として残存~~ **解消(T-E1、2026-07-17 PR #544)**: E1 実装と同時に xfail を撤去し、DOMAIN-001 を deftest 5 本 + defsemgrep 1 本の green ピンへ置換。既定 suite の designed-red / xfail は 0 | tests/test_adr_wiring_gate.py / ADR-DOE-DOMAIN-001 / PR #544 |
 | Gap-3 | ~~CORE-002 enforcement blocked / C3 未裁定~~ **解消(T-C1/T-C3、2026-07-17)**: 現行 main に per-effect 捕捉は存在しないと確定し、回帰ガード deftest green。GetTraceback / GetExecutionContext は effect dispatch を通らない VM 内省命令として現状維持を裁定。下流 TRD-002 も旧版限定として resolved 化済み(ema PR #612) | C1 spike / CORE-002 R3 / ema PR #612 |
 | Gap-4 | `doeff-main-with-handler-stack`(489MB 姉妹 checkout)は 2026-07-11 に main へ完全マージ済みの残骸と判明 — 計画対象外、削除は maintainer 判断 | git merge-base 検証 2026-07-14 |
 | Gap-5 | ~~T-A4 の bang(!) が制御境界を越えて hoist~~ **解消(2026-07-16 PR #533)**: evaluation-position を保存する in-place yield 展開へ修正。ADR-DOE-HY-003 は fresh bytecode で 10 tests collected(probe 9 + ADR contract 1) | ADR-DOE-HY-003 / PR #533 |
@@ -62,10 +62,10 @@
       ┌──────────────┼──────────────────┬───────────────┐
       ▼              ▼                  ▼               ▼
 [A: bind/bang]   [C: trace(再スコープ)] [D: deftest 契約] [E: defdomain/SEDA/適合]
-  A1 ✅ guard      C1 ✅ 税は不存在      D1 ✅ 大半完了     E1 ✅ 設計確定
-  A2 ✅ 主要部     C2 ✅ 行解決遅延化    D2 シム語彙吸収    └ 実装 issue 進行中
-  A3 ✅ 裁定       C3 ✅ 現状維持裁定    D3 mediagen 移行   E2 SEDA CLI/MCP
-  A4 ✅ ! 意味論                         (下流)            E3 残る適合検査(b)
+  A1 ✅ guard      C1 ✅ 税は不存在      D1 ✅ 大半完了     E1 ✅ 実装完了
+  A2 ✅ 主要部     C2 ✅ 行解決遅延化    D2 シム語彙吸収    E2 SEDA CLI/MCP
+  A3 ✅ 裁定       C3 ✅ 現状維持裁定    D3 mediagen 移行   E3 残る適合検査(b)
+  A4 ✅ ! 意味論                         (下流)
       │
       ▼
 [将来(本計画外): class 2 新プリミティブ — rate-limit scheduler / batching / hedging]
@@ -74,17 +74,17 @@
 ## Completion gates(計画全体の完了条件)
 
 1. `uv run pytest`(既定 testpaths)が docs/adr の全 defadr enforcement を収集・実行する(ENFORCE-001 law)。
-2. 本計画で追加した red enforcement 4 本が green(HY-001 guard / ENFORCE-001 testpaths+oracle / DOMAIN-001 defdomain)。
+2. 本計画で追加した red enforcement 4 本が green(HY-001 guard / ENFORCE-001 testpaths+oracle / DOMAIN-001 defdomain)。**達成(2026-07-17)**: DOMAIN-001 の designed-red xfail を撤去し、deftest 5 本 + defsemgrep 1 本の green ピンへ置換。
 3. ~~ADR-DOE-CORE-002 に実測に基づく enforcement を追加~~ **達成(2026-07-14)**: 回帰ガード green、T-C2 は PR #520 で完了。下流 TRD-002 も現行 pin の再計測で旧版限定と確認し、ema PR #612 で resolved 化済み。
 4. ADR-DOE-HY-002 の :env roundtrip が green、かつ mediagen の run_test.py が deftest 語彙で置換可能なことを下流で実証。
 5. 本計画の全 ADR の :status が "accepted" に昇格(enforcement green が条件)。
-6. `.semgrep.yaml` 全 235 規則(現 HEAD 実測)+VM oracle が「バイナリ/feature 不在 = hard fail」で既定ゲートに常駐。
+6. `.semgrep.yaml` 全 238 規則(現 HEAD 実測)+VM oracle が「バイナリ/feature 不在 = hard fail」で既定ゲートに常駐。台帳の現 HEAD 実測は defadr_files 18 / adr_deftest_enforcements 22 / adr_defsemgrep_enforcements 37 / adr_laws 54。
 
 ## Master TODO
 
 | ID | 出典 ADR | 作業 | red 反例(現状) | green 機構 | 状態 |
 |---|---|---|---|---|---|
-| T-B1 | ENFORCE-001 R2 | testpaths に docs/adr 追加 + defadr 収集自己検査を doeff-adr に実装 | test-…-docs-adr-in-default-testpaths が red | root testpaths の flip 実施。`pytest_collection_finish` で全 defadr 候補と session.items を照合する自己検査(既定 warn / strict で非ゼロ終了)と `doeff-adr verify-wiring` CLI を実装し、ADR-DOE-ADR-001 に記録。DOMAIN-001 は xfail(strict) 相当で既定ゲートを green 維持 | **完了(2026-07-14 PR #521)** |
+| T-B1 | ENFORCE-001 R2 | testpaths に docs/adr 追加 + defadr 収集自己検査を doeff-adr に実装 | test-…-docs-adr-in-default-testpaths が red | root testpaths の flip 実施。`pytest_collection_finish` で全 defadr 候補と session.items を照合する自己検査(既定 warn / strict で非ゼロ終了)と `doeff-adr verify-wiring` CLI を実装し、ADR-DOE-ADR-001 に記録。E1 待ちだった DOMAIN-001 の xfail(strict) 相当は PR #544 で green 化・撤去済み | **完了(2026-07-14 PR #521)** |
 | T-B2 | ENFORCE-001 R3 / ENFORCE-002 | .semgrep.yaml を既定 pytest ゲートで実行し、重要規則の生存も証明 | 手動 make のみ・skip 可能。一括 green では規則死亡を検出不能 | baseline 0 の fail-closed gate に加え、dev 依存 + pin(#528)、229 規則棚卸し(#529)、死亡 8 規則修理 + 46 tombstone(#532)、P0 16 規則の hit/clean fixture(#535、installed-rule runner の極性別 temp tree 対応) | **完了**。P1 fixture 拡張は P0 運用経験待ちで保留 |
 | T-B3 | ENFORCE-001 R4 | dev ビルド invariant-checks 常時有効 + oracle の pytest 起動 | test-…-vm-oracle-wired が red | **完了(2026-07-14)**: doeff-vm に feature 転送、make sync に --features、PyO3 で invariant_checks_enabled() 公開(doeff_vm/__init__.py 再輸出込み)、tests/test_vm_invariant_checks_enabled.py が hard-fail 常駐(実測 True)。oracle は全 VM 実行で常時演習される。make test-vm-invariants 追加 | **完了** |
 | T-B4 | ENFORCE-001 R5 | enforcement 台帳 ratchet メタテスト | 台帳の黙減が検出されない | **完了(2026-07-14)**: docs/adr/enforcement-ledger.json(defadr 15 / semgrep 229 / deftest 9 / defsemgrep 19 / law 49)+ tests/test_enforcement_ledger.py 等値 ratchet green | **完了** |
@@ -97,9 +97,9 @@
 | T-D1 | HY-002 R2/R3 | deftest params 忠実受け渡し + docs/adr conftest fixture(:env 反映の参照実装) | — | :env roundtrip **green 済み(Stage 0 実測)**。残作業 = fixture 契約の文書化 + 未対応 params の hard fail | 大半完了 |
 | T-D2 | HY-002 R1 | mediagen run_test.py の要求(部分スタック+差し替え)を deftest 語彙へ吸収 | シムの存在自体 | 語彙追加 + 等価性デモテスト | T-D1 後 |
 | T-D3 | HY-002 R1 受入 | mediagen テストのパイロット deftest 移行(下流 dogfood) | mediagen deftest 0/260 | 下流 PR(mediagen ADR-008 residual 消化) | T-D2 後 |
-| T-E1 | DOMAIN-001 R1/R3(a,c) | defdomain マクロ設計・実装 | test-…-defdomain-exists が red | `packages/doeff-domain` に完全 opt-in で配置。導入 1 / 包含 ∞。handler 処理集合は defhandler の `__doeff_body__` 節構造から自動導出、生 Python handler は `@handles` 注釈 + 将来 SEDA 照合。(a) 被覆・(c) 孤児禁止を同時出荷 | **設計確定(2026-07-17)**。実装 issue `doeff-domain-e1-defdomain` 進行中 |
-| T-E2 | DOMAIN-001 R2/R3(b) | SEDA を CLI/MCP としてエージェント照会可能に(WIP 完成) | 照会面なし | SEDA CLI/MCP + Program 使用 effect 集合・interpreter 処理集合の照会テスト | T-E1 の domain/handler 契約着地後、T-E3 と共同実装 |
-| T-E3 | DOMAIN-001 R3(b) | Program 使用 effect 集合 ⊆ interpreter 処理集合の検査 | 未処理 effect が実行時まで不明 | SEDA と連携した部分集合検査 green | T-E1 後、E2 と共同実装 |
+| T-E1 | DOMAIN-001 R1/R3(a,c) | defdomain マクロ設計・実装 | test-…-defdomain-exists が red | `packages/doeff-domain` に frozen Domain / DomainTerm / DomainLaw + registry、`defdomain`、handler 処理集合の二層導出、適合検査 (a) 被覆・(c) 孤児禁止 + stale-ratchet を実装。core-effects 12 domain の dogfood、deftest 5 本 + defsemgrep 1 本を常駐 | **完了(2026-07-17 PR #544、merge `163b23cc`)** |
+| T-E2 | DOMAIN-001 R2/R3(b) | SEDA を CLI/MCP としてエージェント照会可能に(WIP 完成) | 照会面なし | SEDA CLI/MCP + Program 使用 effect 集合・interpreter 処理集合の照会テスト | **次**: 現状調査 → 設計裁定 → T-E3 と共同実装 |
+| T-E3 | DOMAIN-001 R3(b) | Program 使用 effect 集合 ⊆ interpreter 処理集合の検査 | 未処理 effect が実行時まで不明 | SEDA と連携した部分集合検査 green | T-E2 と共同実装 |
 
 ## 段階計画
 
@@ -107,7 +107,7 @@
 - **Stage 1(着地済み)**: T-B1/T-B2/T-B3/T-B4/T-C1 完了、T-D1 大半完了。T-B2 の P1 fixture 拡張は P0 運用経験待ちで保留。
 - **Stage 2**: T-A1/T-A4 完了。T-A2 は ema / hypha の主要部完了。残: mediagen / ACP の小規模 sweep。
 - **Stage 3**: T-C2 完了。残: T-D2 → T-D3(下流 PR)。
-- **Stage 4(設計セッション完了、2026-07-17)**: T-E1 defdomain 設計確定 + T-C3 現状維持裁定。残: T-E1 実装 issue → T-E2/T-E3、T-D2 設計。
+- **Stage 4(E1 実装完了、2026-07-17〜18)**: T-E1 defdomain 設計・実装完了(PR #544) + T-C3 現状維持裁定。E1 dogfood が検出した delete-effects ドリフトも handler 追加(PR #546)で解消。残: T-E2 SEDA / T-E3 検査(b)の共同実装、T-D2 設計。
 - **Stage 5(本計画外・次期計画)**: class 2 新プリミティブ(rate-limit token-bucket scheduler → batching/dedup/hedging)。前提 = 本計画の Gate 1-6。
 
 ## Subagent spawn strategy(初期計画・履歴)
@@ -136,7 +136,7 @@
 - GitHub Actions の再有効化(予算制約、maintainer 裁定 2026-07-14)。
 - auto-bind の導入(A3 裁定で不採用。再検討するとしても T-A2 完了後の別 ADR)。
 - class 2 新プリミティブ(rate-limit/batching/dedup/hedging)の実装 — 本計画の Gate 達成が前提の次期計画。
-- 本 docs-only 更新内での新規サブパッケージ追加(T-E1 実装 issue が `packages/doeff-domain` を所有)、Haskell client の拡張、multi-shot 方向の検討。
+- 本 docs-only 更新内での `packages/doeff-domain` を含むサブパッケージの追加・変更(T-E1 実装は PR #544 で完了済み)、Haskell client の拡張、multi-shot 方向の検討。
 - `doeff-main-with-handler-stack` checkout の削除(マージ済み残骸と確認済みだが、削除は maintainer 自身が行う)。
 - 本番・下流リポジトリのデプロイ/ライブ系操作。
 
@@ -224,10 +224,38 @@ docs/adr/enforcement-ledger.json、docs/adr/semgrep-baseline.json、docs/adr/con
   (将来 SEDA で照合)。(a) 被覆・(c) 孤児禁止は E1、(b) Program/interpreter 部分集合は E2/E3 で
   出荷する。実装 issue `doeff-domain-e1-defdomain` は起票済みで進行中。
 
+## 進捗記録 2026-07-18(Stage 4 更新)
+
+- **T-E1 完了**: codex 実装 PR #543 と Fable 実装 PR #544 を A/B 並走し、blind 審判 2 本 +
+  オーケストレータの全会一致で #544 を採用、#543 を close。PR #544 は 2026-07-17 に
+  main `163b23cc` として merge された。
+- **`packages/doeff-domain` 出荷**: `registry.py` に frozen Domain / DomainTerm / DomainLaw 純データと
+  プロセス内 registry を実装し、同名再登録を即例外、導入 1 / 包含 ∞ をクラス同一性キーで登録時に
+  強制する。`macros.hy` の `defdomain` は import 時登録・名前束縛・unknown key の fail loud を担う。
+  `introspect.py` は defhandler の `__doeff_body__` 節構造からの自動導出と、生 Python handler の
+  `@handles` 注釈による二層導出を提供する。`checks.py` は (a) 被覆・(c) 孤児禁止と
+  known_uncovered / known_orphans の stale-ratchet を実装し、core-effects は 12 domain で dogfood した。
+- **DOMAIN-001 green 化**: designed-red xfail を撤去し、defdomain-provided /
+  introduce-once-include-freely / coverage-check-red-green / orphan-check-red-green /
+  dogfood-core-effects-green の deftest 5 本と、domain-001-no-hy-adr-dependency の defsemgrep 1 本へ
+  置換した。これにより既定 suite の designed-red / xfail は 0。
+- **E1 dogfood が delete-effects ドリフトを検出・解消**: (a) 被覆検査が、定義・export 済みの
+  `MemoDeleteEffect` / `CacheDeleteEffect` を全 handler が未処理であることを初日に検出した。
+  maintainer 裁定 A(handler 追加)を PR #546(main `b89c62ff`、2026-07-18)で実装した。
+  memo は broadcast Put + get write-through により同一キーが複数層へ保持されることを probe で実証し、
+  単層削除では外層の stale 値が `MemoGet` から再び見えるため、自層削除 + 外層への delete 伝播を採用。
+  単層の cache handler は自層だけを削除する。両 handler とも Put と対称に `None` を resume し、
+  missing-key delete は冪等 no-op とした。
+- **stale-ratchet 一周を実証**: delete-effects の被覆後に known_uncovered 申告を除去し、被覆済みの
+  旧申告を `test_stale_known_uncovered_declaration_rejected` が stale として拒否する回帰テストを常駐させた。
+- **現 HEAD 実測**: enforcement 台帳は defadr_files 18 / semgrep_rules 238 /
+  adr_deftest_enforcements 22 / adr_defsemgrep_enforcements 37 / adr_laws 54。`uv run pytest -q` は
+  1272 passed / 86 skipped で、xfail は 0。
+
 ## Immediate next action(/goal 実行者へ)
 
-1. `doeff-domain-e1-defdomain` で確定済み T-E1 設計を実装し、(a) 被覆・(c) 孤児禁止を出荷する。
-2. T-A2 の残りとして mediagen / ACP の小規模 sweep を実施する。
-3. T-D2 を設計し、その後 T-D3(mediagen のパイロット deftest 移行)を実施する。
-4. T-E1 着地後に T-E2(SEDA CLI/MCP)と T-E3((b) Program/interpreter 部分集合検査)を実装する。
-5. T-B2 の P1 fixture 拡張は、P0 の運用経験が蓄積するまで保留する。
+1. T-E2 の SEDA 現状調査 → 設計裁定 → 実装を進め、T-E3((b) Program/interpreter 部分集合検査)を
+   共同実装する。
+2. T-D2 は設計セッションを待ち、その後 T-D3(mediagen のパイロット deftest 移行)へ進む。
+3. T-A2 の残りである mediagen / ACP の小規模 sweep を継続する。
+4. T-B2 の P1 fixture 拡張は、P0 の運用経験が蓄積するまで引き続き保留する。
