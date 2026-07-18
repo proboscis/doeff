@@ -15,6 +15,11 @@
 > - **C3 = GetTraceback / GetExecutionContext は VM 内省命令のまま現状維持**
 > - **E1 = `packages/doeff-domain` に完全 opt-in で配置**。導入 1 / 包含 ∞、handler 処理集合は二層導出、
 >   適合検査 (a) 被覆・(c) 孤児禁止を E1 で出荷する
+>
+> 裁定済み(2026-07-18 maintainer):
+> - **E2 = 見送り**。再開条件は、エージェントが語彙探索に実際に失敗した事例の観測
+> - **E3 の前提 = interpreter→handler 列の列挙契約設計**。frontier+人間の深い設計議論に予約し、
+>   worker へ委譲しない
 
 ## Source of truth
 
@@ -31,7 +36,7 @@
 | 既存主張 | `docs/20-why-effects-over-di.md` | DI 対比の主張(22 番が理論で補完) |
 | 監査 | `docs/crystallization/erosion-audit-2026-07-02.md` | enforcement 侵食監査(本計画 Track B の根拠) |
 | 既存 issue | `ci-wire-enforcement-layer` / `doeff-adr-wiring-selfcheck` | 監査由来の配線 issue(Track B に吸収) |
-| WIP 資産 | `packages/doeff-effect-analyzer/README.md`, `specs/effect-analyzer/` | SEDA(Track E2 の土台) |
+| WIP 資産 | `packages/doeff-effect-analyzer/README.md`, `specs/effect-analyzer/` | SEDA の WIP 資産。`specs/effect-analyzer/` は不在の幻参照で、実在する spec は `specs/features/effect-analyzer.md`(2026-07-18 調査で確認) |
 | 下流証拠 | proboscis-ema VAULT『doeff Tracing Overhead … 3.7x』/ ISSUE-TRD-185/186 | Track C の実測根拠、scheduler リーク事故 |
 | 下流証拠 | mediagen `tests/support/run_test.py` / ADR-008 §5 | Track D の違反シグナル(シム再発明) |
 | 下流証拠 | agent-control-plane ADR 0056 / 0031 / erosion-audit 核#8 | Track A の gotcha 実証、Track E の増殖実害 |
@@ -63,8 +68,8 @@
       ▼              ▼                  ▼               ▼
 [A: bind/bang]   [C: trace(再スコープ)] [D: deftest 契約] [E: defdomain/SEDA/適合]
   A1 ✅ guard      C1 ✅ 税は不存在      D1 ✅ 大半完了     E1 ✅ 実装完了
-  A2 ✅ 主要部     C2 ✅ 行解決遅延化    D2 シム語彙吸収    E2 SEDA CLI/MCP
-  A3 ✅ 裁定       C3 ✅ 現状維持裁定    D3 mediagen 移行   E3 残る適合検査(b)
+  A2 ✅ 主要部     C2 ✅ 行解決遅延化    D2 シム語彙吸収    E2 ✅ 見送り(裁定)
+  A3 ✅ 裁定       C3 ✅ 現状維持裁定    D3 mediagen 移行   E3 列挙契約設計待ち
   A4 ✅ ! 意味論                         (下流)
       │
       ▼
@@ -98,8 +103,8 @@
 | T-D2 | HY-002 R1 | mediagen run_test.py の要求(部分スタック+差し替え)を deftest 語彙へ吸収 | シムの存在自体 | 語彙追加 + 等価性デモテスト | T-D1 後 |
 | T-D3 | HY-002 R1 受入 | mediagen テストのパイロット deftest 移行(下流 dogfood) | mediagen deftest 0/260 | 下流 PR(mediagen ADR-008 residual 消化) | T-D2 後 |
 | T-E1 | DOMAIN-001 R1/R3(a,c) | defdomain マクロ設計・実装 | test-…-defdomain-exists が red | `packages/doeff-domain` に frozen Domain / DomainTerm / DomainLaw + registry、`defdomain`、handler 処理集合の二層導出、適合検査 (a) 被覆・(c) 孤児禁止 + stale-ratchet を実装。core-effects 12 domain の dogfood、deftest 5 本 + defsemgrep 1 本を常駐 | **完了(2026-07-17 PR #544、merge `163b23cc`)** |
-| T-E2 | DOMAIN-001 R2/R3(b) | SEDA を CLI/MCP としてエージェント照会可能に(WIP 完成) | 照会面なし | SEDA CLI/MCP + Program 使用 effect 集合・interpreter 処理集合の照会テスト | **次**: 現状調査 → 設計裁定 → T-E3 と共同実装 |
-| T-E3 | DOMAIN-001 R3(b) | Program 使用 effect 集合 ⊆ interpreter 処理集合の検査 | 未処理 effect が実行時まで不明 | SEDA と連携した部分集合検査 green | T-E2 と共同実装 |
+| T-E2 | DOMAIN-001 R2/R3(b) | SEDA を CLI/MCP としてエージェント照会可能に(WIP 完成) | 照会面なし | SEDA CLI/MCP + Program 使用 effect 集合・interpreter 処理集合の照会テスト | **見送り(2026-07-18 裁定)**。再開条件 = エージェントの語彙探索の実失敗の観測 |
+| T-E3 | DOMAIN-001 R3(b) | Program 使用 effect 集合 ⊆ interpreter 処理集合の検査 | 未処理 effect が実行時まで不明 | SEDA と連携した部分集合検査 green | interpreter→handler 列挙契約の設計セッション待ち(frontier+人間予約 — worker 委譲禁止) |
 
 ## 段階計画
 
@@ -107,7 +112,7 @@
 - **Stage 1(着地済み)**: T-B1/T-B2/T-B3/T-B4/T-C1 完了、T-D1 大半完了。T-B2 の P1 fixture 拡張は P0 運用経験待ちで保留。
 - **Stage 2**: T-A1/T-A4 完了。T-A2 は ema / hypha の主要部完了。残: mediagen / ACP の小規模 sweep。
 - **Stage 3**: T-C2 完了。残: T-D2 → T-D3(下流 PR)。
-- **Stage 4(E1 実装完了、2026-07-17〜18)**: T-E1 defdomain 設計・実装完了(PR #544) + T-C3 現状維持裁定。E1 dogfood が検出した delete-effects ドリフトも handler 追加(PR #546)で解消。残: T-E2 SEDA / T-E3 検査(b)の共同実装、T-D2 設計。
+- **Stage 4(E1 実装完了、2026-07-17〜18)**: T-E1 defdomain 設計・実装完了(PR #544) + T-C3 現状維持裁定。E1 dogfood が検出した delete-effects ドリフトも handler 追加(PR #546)で解消。裁定後は T-E2 を見送り、T-E3 は interpreter→handler 列挙契約の設計セッション待ち。残る実行対象は T-D2 設計。
 - **Stage 5(本計画外・次期計画)**: class 2 新プリミティブ(rate-limit token-bucket scheduler → batching/dedup/hedging)。前提 = 本計画の Gate 1-6。
 
 ## Subagent spawn strategy(初期計画・履歴)
@@ -251,11 +256,33 @@ docs/adr/enforcement-ledger.json、docs/adr/semgrep-baseline.json、docs/adr/con
 - **現 HEAD 実測**: enforcement 台帳は defadr_files 18 / semgrep_rules 238 /
   adr_deftest_enforcements 22 / adr_defsemgrep_enforcements 37 / adr_laws 54。`uv run pytest -q` は
   1272 passed / 86 skipped で、xfail は 0。
+- **E2 見送り裁定**: 2026-07-18 maintainer 裁定により、SEDA/registry 照会の CLI/MCP 面は見送った。
+  根拠は、(1) 核#8 型増殖への実 enforcement を E1 の孤児禁止・被覆・stale-ratchet が既に担い、
+  MemoDeleteEffect / CacheDeleteEffect の実ドリフト検出から裁定 A、PR #546 での解消まで実証したこと、
+  (2) 照会対象の宣言は `packages/doeff-domain/src/doeff_domain/core_effects_domains.hy` の 1 ファイルに
+  集約され grep 可能で CLI/MCP の限界価値が小さいこと、(3) Evidence Rule に従い証拠なきコストを
+  払わないこと。再開条件は「エージェントが語彙探索に実際に失敗した事例」の観測であり、観測時に
+  再起票する。
+- **SEDA 現状調査**: frontier read-only 調査の原本は
+  `2026-07-18-seda-survey-doeff-e2.md`。Python 解析系は cargo 統合テスト 8 件中 6 件が検出 effect
+  空集合で失敗し、`ask(` 等の文字列 prefix マッチだけで現 API の EffectBase サブクラス + dataclass を
+  認識できない。`specs/features/effect-analyzer.md` も旧 API 前提で、README / spec が参照する
+  `specs/effect-analyzer/` は存在しない幻参照だった。一方、spec 外の Hy 解析系(hy_reader / hy_analyzer)
+  は単体 14/14 green で、PascalCase 認識が現 API の粗い近似となり、E3 左辺の Program 使用 effect
+  集合を推論する土台候補である。handler 所在と interpreter 処理集合は doeff-domain registry の
+  introducing_domain / handled_effects から静的解析なしで答えられる。
+- **E3 の価値は堅持**: Program 使用 effect 集合 ⊆ interpreter 処理集合の検査は残す。ただし、
+  interpreter→handler 列の列挙契約は frontier+人間の深い設計議論に予約し、worker へ委譲しない。
+  E3 はこの設計セッション後に着手する。
 
 ## Immediate next action(/goal 実行者へ)
 
-1. T-E2 の SEDA 現状調査 → 設計裁定 → 実装を進め、T-E3((b) Program/interpreter 部分集合検査)を
-   共同実装する。
-2. T-D2 は設計セッションを待ち、その後 T-D3(mediagen のパイロット deftest 移行)へ進む。
+1. T-D2 の設計セッションを frontier+人間で実施し、その後 T-D3(mediagen のパイロット deftest
+   移行)へ進む。
+2. E3 前提の interpreter→handler 列挙契約の設計セッションを frontier+人間で実施する。
+   worker へ委譲せず、E3 はこの設計後に着手する。
 3. T-A2 の残りである mediagen / ACP の小規模 sweep を継続する。
 4. T-B2 の P1 fixture 拡張は、P0 の運用経験が蓄積するまで引き続き保留する。
+
+T-E2 は見送りとし、再開条件(エージェントの語彙探索の実失敗)を観測した場合に再起票するため、
+Immediate next action からは外す。
