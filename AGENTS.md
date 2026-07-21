@@ -8,27 +8,28 @@ Respond to the user in Japanese by default unless they explicitly request anothe
 doeff is a personal open-source project owned and maintained by @proboscis. It is
 consumed as a dependency by other projects (including corporate research projects),
 but it is NOT owned by any employer. To keep authorship, provenance, and IP
-attribution clean, agent write access is funneled through a single choke point:
+attribution clean, write access is governed by **account routing**:
 
 - **Reading is unrestricted.** Any agent may freely read, search, and analyze this
   codebase.
-- **All changes land via orch.** `git commit`, `git push`, branch creation, and
-  pull requests (`gh pr create`) may only be performed by the agent that orch
-  selected for the task — i.e., a session launched by `orch run` with an orch
-  issue / RUN_REF for this repository in its launch context, running under the
-  maintainer's designated agent profile.
-- **If your session was not launched by orch, you do not have write authority.**
-  This applies especially to agents whose primary task is a *downstream project*
-  that depends on doeff: if you find a bug or missing feature in doeff while
-  working on something else, do NOT fix it here. Report it instead — create an
-  orch issue (`orch issue create`) or a GitHub issue with the symptom, expected
-  behavior, and a minimal repro. The maintainer routes it through the orch
-  workflow.
-- Agents running under an employer-provided AI subscription must never author
-  commits or PRs in this repository, even when technically able to. The
-  report-only path above is the sole contribution channel for such sessions.
-- In interactive sessions the human maintainer may direct local experiments and
-  scratch edits, but landing changes (commits/PRs) still goes through orch.
+- **Write authority = correct account, not a workflow choke point.** `git commit`,
+  `git push`, branch creation, and pull requests may be performed by any agent
+  session running under the maintainer's designated personal (non-employer)
+  profile. This is enforced system-wide by the profile / git-author boundary
+  hooks (company-write-boundary); **orch runs are NOT required for landing
+  changes**. (2026-07-21 maintainer directive: the former "all changes land via
+  orch" rule was a proxy for account routing, which the surrounding system now
+  enforces directly — the choke point is removed.)
+- **Agents running under an employer-provided AI subscription must never author
+  commits or PRs in this repository**, even when technically able to. For such
+  sessions the sole contribution channel is report-only: file a GitHub issue
+  with the symptom, expected behavior, and a minimal repro.
+- **Downstream-task agents: report, don't drive-by fix.** If your primary task
+  is a downstream project that depends on doeff and you find a bug or missing
+  feature here, file an issue instead of fixing it in passing — the maintainer
+  routes it.
+- orch remains available as an execution engine for multi-agent runs; using it
+  is a workflow choice, not a write-authority requirement.
 
 ## Project Structure & Module Organization
 Core runtime code lives in `doeff/`: monadic primitives in `program.py`, the `@do` decorator in `do.py`, execution via `run()` in `run.py`, result types in `result.py`, and handler utilities in `handler_utils.py`. CLI commands are in `cli/` with auto-discovery (`discovery.py`) and execution (`run_services.py`). Effect definitions and handlers live in `packages/doeff-core-effects/` (effects in `effects.py`, handlers in `handlers.py`, scheduler in `scheduler.py`). Tests that exercise each capability reside in `tests/`, while runnable samples land in `examples/`. Workspace extensions such as OpenAI, Gemini, agents, and pinjected bridges are published from `packages/`; keep connector-specific assets inside their respective subpackages. Use `docs/` for design notes or long-form guides that support future contributors.
