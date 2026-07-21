@@ -26,7 +26,8 @@ def test_s24_adopted_id_is_opaque_and_roundtrips() -> None:
             },
         )
         session_id = result["session_id"]
-        assert isinstance(session_id, str) and session_id
+        assert isinstance(session_id, str)
+        assert session_id
 
         # opaque: the id is minted by the sessionhost, not the caller's name
         # (and does not embed it — parsing the id must never recover caller

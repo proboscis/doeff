@@ -4515,3 +4515,60 @@ rules:
         # ターゲット相対で照合される(directory scan では packages/ が prefix に
         # 含まれない)ため、パッケージ名前空間ディレクトリで指定する。
         - "**/doeff_domain/**"
+
+  - id: doeff-agents-adopt-must-not-mutate-substrate
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      ADR-DOE-AGENTS-007 R2 / koine session surface v0 safety clause 2:
+      session.adopt is OBSERVATION-ONLY. The adopt program may probe
+      existence (tmux-has-session) and read/write the store, but must never
+      mutate the substrate — no key sends, no session create/kill, no FS
+      writes, no message delivery. Adoption that touches the seat changes
+      the interactive seat's safety posture, which registry participation
+      must never do.
+    pattern-regex: '\((tmux-send-keys|tmux-new-session|tmux-kill-session|fs-write-text-atomic|deliver-message|TmuxSendKeys|TmuxNewSession|TmuxKillSession|FsWriteTextAtomic|DeliverMessage)\b'
+    paths:
+      include:
+        # ターゲット相対照合(directory scan では packages/ prefix 無し)の
+        # ため **/ 形式で指定する(doeff-domain ルールの教訓)。
+        - "**/sessionhost/adopt.hy"
+        - "**/sessionhost/adopt_mutates_substrate_forbidden.hy"
+
+  - id: doeff-agents-interactive-must-not-be-terminalized
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      ADR-DOE-AGENTS-007 R3 / koine session surface v0 safety clause 1:
+      monitor-session-once must evaluate the reap exemption (reap-exempt —
+      lifecycle=interactive OR adopted rows are unconditionally exempt)
+      BEFORE any arm that terminalizes a row (:status "failed" / "exited").
+      A terminal write reachable before the exemption guard re-opens the
+      five terminalization paths that orphaned adopted seats (launch
+      timeout fired 60s after adoption; the terminal guard then forbids
+      reactivation — the row dies while the seat lives).
+    pattern-regex: '(?s)\(defk monitor-session-once(?:(?!reap-exempt).)*?:status\s+"(failed|exited)"'
+    paths:
+      include:
+        - "**/sessionhost/policy.hy"
+        - "**/sessionhost/monitor_terminalizes_before_exemption_forbidden.hy"
+
+  - id: doeff-agents-turn-rpc-must-not-touch-substrate
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      ADR-DOE-AGENTS-007 R5 / koine turn-stamp-path: the turn RPC
+      (session.turn_open / session.turn_close) is row-lookup + upsert ONLY.
+      The seat's Stop hook writes the stamp fire-and-forget with a hard
+      <=200ms budget, so the receiving side must be structurally incapable
+      of hanging — no Tmux/herdr effects, no message delivery, no
+      subprocesses on this path. Substrate contact here re-introduces the
+      latency source the contract exists to exclude.
+    pattern-regex: '\((tmux-[a-z][a-z-]*|Tmux[A-Za-z]+|deliver-message|DeliverMessage|proc-run|ProcRun|herdr-call)\b'
+    paths:
+      include:
+        - "**/sessionhost/turn.hy"
+        - "**/sessionhost/turn_touches_substrate_forbidden.hy"
