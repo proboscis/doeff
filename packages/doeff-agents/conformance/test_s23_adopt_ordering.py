@@ -14,8 +14,8 @@ gate the Hy sessionhost only (CONFORMANCE_AGENTD_BIN).
 import uuid
 
 import pytest
-from harness import AgentdHarness
 from doeff_agents.agentd_client import AgentdClientError
+from harness import AgentdHarness
 
 ACTIVE_STATUSES = {"pending", "booting", "running", "blocked", "blocked_api"}
 
@@ -58,7 +58,8 @@ def test_s23_adopt_live_pane_registers_adopted_row() -> None:
         assert result["lifecycle"] == "interactive", result
         assert result["status"] in ACTIVE_STATUSES, result
         session_id = result["session_id"]
-        assert isinstance(session_id, str) and session_id, result
+        assert isinstance(session_id, str), result
+        assert session_id, result
 
         row = harness.session_row(session_id)
         assert row["adopted"] == 1, row
