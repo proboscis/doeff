@@ -193,6 +193,51 @@ def break_pane_observation_out_of_band(session_id: str, pane_id: str) -> None:
         raise RuntimeError(f"herdr pane.close failed: {closed['error']}")
 
 
+def create_session_out_of_band(name: str, *, cwd: str | None = None) -> str:
+    """Create a live mux session OUTSIDE the daemon (S23-S27 adopt fixtures).
+
+    The adopted seat's physics: a pane that already exists and that the
+    daemon did not launch. Returns the substrate-native pane reference
+    (`substrate.ref` for session.adopt / the turn descriptor's pane_id).
+
+    tmux: a detached session running the user's shell. herdr: the same
+    workspace.create -> agent.start -> root pane.close dance the sessionhost
+    herdr substrate performs (observed physics, substrate_herdr.hy).
+    """
+    workdir = cwd or os.environ.get("HOME", "/tmp")
+    if SESSIONHOST_BACKEND != "herdr":
+        created = subprocess.run(
+            ["tmux", "new-session", "-d", "-s", name, "-c", workdir,
+             "-P", "-F", "#{pane_id}"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return created.stdout.strip()
+    ws = _herdr_call("workspace.create", {"label": name, "focus": False})
+    if "error" in ws:
+        raise RuntimeError(f"herdr workspace.create failed: {ws['error']}")
+    ws_id = ws["result"]["workspace"]["workspace_id"]
+    root_pane = ws["result"]["root_pane"]["pane_id"]
+    started = _herdr_call(
+        "agent.start",
+        {
+            "name": name,
+            "cwd": workdir,
+            "argv": [os.environ.get("SHELL", "/bin/sh")],
+            "env": {},
+            "workspace_id": ws_id,
+            "focus": False,
+        },
+    )
+    if "error" in started:
+        raise RuntimeError(f"herdr agent.start failed: {started['error']}")
+    closed = _herdr_call("pane.close", {"pane_id": root_pane})
+    if "error" in closed:
+        raise RuntimeError(f"herdr pane.close failed: {closed['error']}")
+    return started["result"]["agent"]["pane_id"]
+
+
 def build_agentd() -> Path:
     """Resolve the daemon binary under test.
 
@@ -341,7 +386,34 @@ class AgentdHarness:
             journal_path=journal_path,
         )
 
+    def adopt_fixture_session(self, name: str) -> str:
+        """Create an out-of-band mux session and register it for teardown.
+
+        Returns the substrate-native pane reference (substrate.ref)."""
+        pane_ref = create_session_out_of_band(name)
+        self._sessions.append(name)
+        return pane_ref
+
+    def substrate_kind(self) -> str:
+        """The substrate binding kind this suite run speaks (koine session
+        surface v0: substrate = {kind, ref})."""
+        return "herdr" if SESSIONHOST_BACKEND == "herdr" else "tmux"
+
     # -- read-only observation ---------------------------------------------
+
+    def session_rows_by_name(self, session_name: str) -> list[dict[str, Any]]:
+        """All rows registered under a session_name (adopt ordering asserts:
+        a failed adopt must leave NO row behind)."""
+        conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(
+                "SELECT * FROM agent_sessions WHERE session_name = ?",
+                (session_name,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
 
     def session_row(self, session_id: str) -> dict[str, Any]:
         conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
@@ -440,11 +512,17 @@ class Scenario:
         prompt: str,
         expected_result: dict[str, Any] | None = None,
         extra_env: dict[str, str] | None = None,
+        lifecycle: Any = None,
     ) -> None:
         """M2 (command override): the conformance agent runs as the pane
-        command; the result channel is spoken via report-result-mcp."""
+        command; the result channel is spoken via report-result-mcp.
+
+        lifecycle defaults to RUN_TO_COMPLETION; S26 passes INTERACTIVE to
+        put the koine reap exemption (safety clause 1) under test."""
         from doeff_agents.adapters.base import AgentSessionLifecycle
 
+        if lifecycle is None:
+            lifecycle = AgentSessionLifecycle.RUN_TO_COMPLETION
         command = (
             f"{shlex.quote(sys.executable)} {shlex.quote(str(AGENT_SCRIPT))}"
         )
@@ -464,7 +542,7 @@ class Scenario:
             work_dir=self.work_dir,
             command=command,
             prompt=prompt,
-            lifecycle=AgentSessionLifecycle.RUN_TO_COMPLETION,
+            lifecycle=lifecycle,
             binding=binding,
             session_env=session_env,
             expected_result=expected_result,
