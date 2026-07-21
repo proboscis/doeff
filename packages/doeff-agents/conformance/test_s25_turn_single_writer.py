@@ -71,7 +71,8 @@ def test_s25_turn_stamp_updates_row() -> None:
         assert closed == {"adopted": True, "session_id": session_id}, closed
         row = harness.session_row(session_id)
         assert row["turn_holder"] == "user", row
-        assert row["turn_since"] is not None and row["turn_since"] != open_since, row
+        assert row["turn_since"] is not None, row
+        assert row["turn_since"] != open_since, row
         assert json.loads(row["turn_wait_json"]) == wait, row
 
         counters = _counters(harness)

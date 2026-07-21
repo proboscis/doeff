@@ -19,6 +19,7 @@
 (require doeff-hy.macros [deff defk <-])
 
 (import dataclasses [dataclass replace])
+(import datetime [datetime timezone])
 (import json)
 (import os)
 (import socket)
@@ -40,8 +41,12 @@
   tmux-has-session
   tmux-kill-session
   tmux-send-keys])
+(import doeff_agents.sessionhost.adopt [AdoptTargetNotFound adopt-program])
 (import doeff_agents.sessionhost.impls.claude_code [claude-code-impl])
 (import doeff_agents.sessionhost.impls.codex [codex-impl])
+(import doeff_agents.sessionhost.turn [TURN-HOLDER-AGENT
+                                       db-turn-stamp
+                                       turn-close-holder])
 (import doeff_agents.sessionhost.launch [REPL-IDLE-MAX-WAIT-SECONDS
                                          launch-session
                                          resume-session])
@@ -52,7 +57,8 @@
   iso-format
   make-cause
   monitor-cycle
-  tail-chars])
+  tail-chars
+  turn-stalled])
 (import doeff_agents.sessionhost.schema [validate-against-schema schema-admission-error])
 (import doeff_agents.sessionhost.substrate [real-substrate])
 (import doeff_agents.sessionhost.substrate_herdr [DEFAULT-HERDR-SOCKET herdr-substrate])
@@ -97,6 +103,18 @@
 (setv RPC-ERR-NO-SUCH-SESSION -32001)
 (setv RPC-ERR-RESULT-REJECTED -32002)
 (setv RPC-ERR-ALREADY-TERMINAL -32003)
+;; koine session surface v0(ADR-DOE-AGENTS-007 R2): koine 由来の新契約は
+;; 数値でなく typed 文字列 error_code を使う(数値表は oracle 凍結語彙 —
+;; 新語彙をそこへ足さない)。
+(setv RPC-ERR-ADOPT-TARGET-NOT-FOUND "adopt_target_not_found")
+
+;; turn 打刻 counters(ADR-007 §4: daemon.status へ additive)。in-memory で
+;; 開始 — 永続化は実測需要が出てから。unadopted は adopt 網羅の計器を兼ねる
+;; (turn-stamp-path 決定 3: 未 adopt 打刻は正直 no-op + 可視 counter)。
+(setv TURN-COUNTERS {"turn_stamp_unadopted" 0 "turn_stamp_resolved" 0})
+
+;; koine 条項 4 の stalled 導出閾値(既定 1800 — 発注元確定 2026-07-21)。
+(setv DEFAULT-TURN-STALL-SECONDS 1800)
 
 ;; session.await_result の timeout 物理(oracle :89-103)。
 (setv DEFAULT-AWAIT-TIMEOUT-SECONDS 600.0)
@@ -345,10 +363,11 @@
   (json.dumps {"id" id "ok" True "result" result} :separators #("," ":")))
 
 (deff err-response [id message code]
-  {:pre [(: id JsonValue) (: message str) (: code (| int None))]
+  {:pre [(: id JsonValue) (: message str) (: code (| int str None))]
    :post [(: % str)]}
   "失敗封筒: error は常に載り、error_code は構造化エラーのみ
-   (skip_serializing_if parity — None のとき field ごと省略)。"
+   (skip_serializing_if parity — None のとき field ごと省略)。
+   koine 由来の新契約(ADR-007)は typed 文字列 code も使う。"
   (setv payload {"id" id "ok" False "error" message})
   (when (is-not code None)
     (setv (get payload "error_code") code))
@@ -550,6 +569,50 @@
     (raise (RuntimeError f"session is not registered: {session-id}")))
   (snapshot-to-wire-dict snap))
 
+
+;; ---------------------------------------------------------------------------
+;; koine wire 導出 field(ADR-DOE-AGENTS-007 R4/R6 — session.get / session.list /
+;; session.adopt の応答にのみ載る。store には決して書かない)
+;; ---------------------------------------------------------------------------
+
+(deff effective-turn-stall-seconds []
+  {:pre [True]
+   :post [(: % int)]}
+  "stalled 導出閾値(use-site の env 読み — 他の watchdog knob と同じ調整口)。"
+  (or (env-positive-i64 "DOEFF_AGENTD_TURN_STALL_SECS")
+      DEFAULT-TURN-STALL-SECONDS))
+
+(defk substrate-present-program [session-name]
+  {:pre [(: session-name str)]
+   :post [(: % bool)]}
+  "鏡原則(koine 条項 3)の突合 probe: 免除行の pane が今も実在するか。
+   台帳は判定を保存せず、読まれるたびに現実を見る(現実が正・台帳は鏡)。"
+  (<- present (tmux-has-session session-name))
+  (bool present))
+
+(deff augment-wire-snapshot [config actor wire]
+  {:pre [(: config HostConfig) (: actor StoreActor) (: wire dict)]
+   :post [(: % dict)]}
+  "wire 導出 field を重ねる(読み出し面の毎回導出 — level-triggered):
+   - stalled: open turn(turn_holder='agent')のまま閾値超過のみ true。
+     close 済み(WAIT 待ち)は経過によらず false。signal only(R4)。
+   - substrate_present / substrate_checked_at: 免除行(adopted または
+     interactive)かつ非終端の行だけに載る突合表示(条項 3 — 消滅 pane を
+     exited と裁定せず、乖離として見せる)。"
+  (setv now (datetime.now timezone.utc))
+  (setv (get wire "stalled")
+        (turn-stalled (.get wire "turn_holder") (.get wire "turn_since")
+                      now (effective-turn-stall-seconds)))
+  (setv exempt (or (bool (.get wire "adopted"))
+                   (= (get wire "lifecycle") "interactive")))
+  (when (and exempt (not (is-terminal-status (get wire "status"))))
+    (setv (get wire "substrate_present")
+          (bool (run-hosted config actor
+                            (substrate-present-program
+                              (get wire "session_name")))))
+    (setv (get wire "substrate_checked_at") (.isoformat now)))
+  wire)
+
 (deff record-command [actor session-id command-type payload]
   {:pre [(: actor StoreActor) (: session-id str) (: command-type str)
          (: payload (| dict str))]
@@ -690,7 +753,9 @@
              "socket_path" config.socket-path
              "max_running" config.max-running
              "active_sessions" (.submit actor db-count-active)
-             "lease" (.submit actor db-read-lease)}))
+             "lease" (.submit actor db-read-lease)
+             ;; ADR-007 §4: turn 打刻 counters(additive・in-memory)。
+             "counters" (dict TURN-COUNTERS)}))
 
   ;; DOE-004 R5(縮小版、2026-07-08): kind 語彙の広告。純粋(store 非依存)
   ;; — control plane の reconciler が登録済み binding と定期照合する読み口。
@@ -749,16 +814,99 @@
     (setv p (params-object params "session.get"))
     (setv sid (required-str-param p "session_id" "session.get"))
     (setv snap (.submit actor (fn [conn] (db-session-get conn sid))))
-    (return (if (is snap None) None (snapshot-to-wire-dict snap))))
+    (return (if (is snap None)
+                None
+                (augment-wire-snapshot config actor (snapshot-to-wire-dict snap)))))
 
   (when (= method "session.list")
     (setv p (params-object params "session.list"))
     (setv filters {"status" (.get p "status")
                    "agent_type" (.get p "agent_type")
                    "backend_kind" (.get p "backend_kind")
-                   "lifecycle" (.get p "lifecycle")})
+                   "lifecycle" (.get p "lifecycle")
+                   ;; ADR-007 §8: adopted filter(bool)— 対話席一覧の主 filter。
+                   "adopted" (.get p "adopted")})
     (setv snaps (.submit actor (fn [conn] (db-session-list conn filters))))
-    (return (lfor s snaps (snapshot-to-wire-dict s))))
+    (return (lfor s snaps
+                  (augment-wire-snapshot config actor
+                                         (snapshot-to-wire-dict s)))))
+
+  ;; --- koine session surface v0(ADR-DOE-AGENTS-007)-------------------------
+
+  (when (= method "session.adopt")
+    (setv p (params-object params "session.adopt"))
+    (setv session-name (required-str-param p "session_name" "session.adopt"))
+    (setv agent-kind (required-str-param p "agent_kind" "session.adopt"))
+    (setv substrate (.get p "substrate"))
+    (when (not (isinstance substrate dict))
+      (raise (RuntimeError
+               "invalid params for session.adopt: missing field `substrate`")))
+    (setv sub-kind (.get substrate "kind"))
+    (setv sub-ref (.get substrate "ref"))
+    (when (or (not (isinstance sub-kind str)) (not (.strip sub-kind)))
+      (raise (RuntimeError
+               "invalid params for session.adopt: substrate.kind must be a non-empty string")))
+    (when (or (not (isinstance sub-ref str)) (not (.strip sub-ref)))
+      (raise (RuntimeError
+               "invalid params for session.adopt: substrate.ref must be a non-empty string")))
+    ;; substrate binding の照合: この host が話す substrate だけを登記できる
+    ;; (koine binding 宣言 — kind 不一致は typed reject、黙って読み替えない)。
+    (when (!= sub-kind config.backend)
+      (raise (RuntimeError
+               (+ f"session.adopt substrate kind {sub-kind !r} does not match "
+                  f"this host's backend {config.backend !r}"))))
+    (setv program-params
+          {"session_name" session-name
+           "substrate_ref" sub-ref
+           "agent_kind" agent-kind
+           "lifecycle" (or (.get p "lifecycle") "interactive")
+           "backend_kind" sub-kind
+           "name" (.get p "name")
+           "work_dir" (.get p "work_dir")})
+    (setv row None)
+    (try
+      (setv row (run-hosted config actor (adopt-program program-params)))
+      (except [e AdoptTargetNotFound]
+        ;; 順序義務の失敗側: 行は作られていない(S23)。
+        (raise (RpcHostError RPC-ERR-ADOPT-TARGET-NOT-FOUND (str e)))))
+    (setv wire (wire-snapshot actor row.session-id))
+    (record-command actor row.session-id "session.adopt" wire)
+    (return (augment-wire-snapshot config actor wire)))
+
+  (when (in method #("session.turn_open" "session.turn_close"))
+    (setv p (params-object params method))
+    (setv descriptor (.get p "descriptor"))
+    (when (not (isinstance descriptor dict))
+      (raise (RuntimeError
+               f"invalid params for {method}: missing field `descriptor`")))
+    (setv pane-id (.get descriptor "pane_id"))
+    (setv agent-name (.get descriptor "agent_name"))
+    (setv pane-id (if (isinstance pane-id str) pane-id None))
+    (setv agent-name (if (isinstance agent-name str) agent-name None))
+    (when (and (is pane-id None) (is agent-name None))
+      (raise (RuntimeError
+               (+ f"invalid params for {method}: descriptor requires "
+                  "pane_id or agent_name"))))
+    ;; holder が open/closed を兼ねる契約(発注元確定 2026-07-21):
+    ;; open = 'agent'(自走中・wait は NULL に戻る)/ close = wait.who
+    ;; (無ければ 'work')。wait は opaque のまま保存(再 parse しない)。
+    (setv wait (if (= method "session.turn_close") (.get p "wait") None))
+    (setv wait-payload (if (isinstance wait dict) wait None))
+    (setv holder (if (= method "session.turn_open")
+                     TURN-HOLDER-AGENT
+                     (turn-close-holder wait-payload)))
+    ;; 行引き + UPDATE の 1 actor op のみ — substrate 不接触(hung を作らない
+    ;; 受け側義務。≤200ms fire-and-forget の hook hot path が相手)。
+    (setv sid (.submit actor
+                       (fn [conn]
+                         (db-turn-stamp conn pane-id agent-name holder
+                                        wait-payload))))
+    (if (is sid None)
+        (setv (get TURN-COUNTERS "turn_stamp_unadopted")
+              (+ (get TURN-COUNTERS "turn_stamp_unadopted") 1))
+        (setv (get TURN-COUNTERS "turn_stamp_resolved")
+              (+ (get TURN-COUNTERS "turn_stamp_resolved") 1)))
+    (return {"adopted" (is-not sid None) "session_id" sid}))
 
   (when (= method "session.capture")
     (setv p (params-object params "session.capture"))
@@ -929,6 +1077,9 @@
     :repl-idle-max-wait-seconds (or (env-positive-i64
                                       "DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS")
                                     REPL-IDLE-MAX-WAIT-SECONDS)
+    ;; koine 条項 4(ADR-007 R4): stalled 導出閾値。wire 導出側
+    ;; (augment-wire-snapshot)と同じ env knob を使う。
+    :turn-stall-seconds (effective-turn-stall-seconds)
     :judge-cmd config.prompt-judge-cmd))
 
 

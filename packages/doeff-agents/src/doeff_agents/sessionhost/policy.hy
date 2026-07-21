@@ -258,6 +258,32 @@
   "RunToCompletion lifecycle か(Kind 2)。"
   (= lifecycle "run_to_completion"))
 
+(deff reap-exempt [row]
+  {:pre [(: row SessionRow)]
+   :post [(: % bool)]}
+  "刈り取り免除(koine session surface v0 安全条項 1 / ADR-DOE-AGENTS-007 R3)。
+   reap は run_to_completion 行だけの opt-in — adopted 行(ownership marker)と
+   非 run_to_completion 行(interactive、および未知 lifecycle: fail-closed —
+   markerless/foreign を刈らない条文の機械面)は監督権裁定(pavo ADR 0003
+   stage 3)まで無条件に刈り取り対象外。"
+  (or (bool row.adopted) (not (is-run-to-completion row.lifecycle))))
+
+(deff turn-stalled [turn-holder turn-since now threshold-seconds]
+  {:pre [(: turn-holder (| str None)) (: turn-since (| str None))
+         (: now datetime) (: threshold-seconds int) (> threshold-seconds 0)]
+   :post [(: % bool)]}
+  "liveness 導出(koine 条項 4 / ADR-DOE-AGENTS-007 R4)。stalled =
+   open turn(holder='agent')のまま threshold 超過、のみ。close 済み
+   (holder=user/work = WAIT 待ち)は経過時間によらず False — 待つのは
+   agora の正常状態。open 打刻の欠落(holder None)も False — turn-open の
+   被覆は部分的(turn-stamp-path 所見 3)なので、open/close の対を前提に
+   した edge-triggered 実装は禁止。level-triggered: wire 出力のたびに
+   ここで再導出し、store には決して書かない。signal only — status 不変。"
+  (when (!= turn-holder "agent")
+    (return False))
+  (setv age (seconds-since now turn-since))
+  (and (is-not age None) (> age threshold-seconds)))
+
 (deff observed-status-from-markers [obs]
   {:pre [(: obs PaneObservation)]
    :post [(: % str) (in % #{"failed" "blocked_api" "blocked" "running"})]}
@@ -457,6 +483,21 @@
    bounded solicitation → stall watchdog → 終端 taxonomy。"
   (<- now (clock-now))
   (setv observed-at (iso-format now))
+
+  ;; --- 刈り取り免除 arm(koine 安全条項 1 / ADR-DOE-AGENTS-007 R3)。
+  ;; どの terminal 化 arm よりも前(booting arm 含む)が契約 — semgrep
+  ;; doeff-agents-interactive-must-not-be-terminalized が「免除判定より前に
+  ;; :status terminal を書く形」を禁止する。免除行に monitor がしてよいのは
+  ;; 観測の記帳のみ: last_observed_at を進めて返す(=「monitor は生きて
+  ;; 評価した上で刈らなかった」の witness — S26 が assert する)。
+  ;; status 遷移 / finished_at・terminal_cause 書き込み / pane kill /
+  ;; solicitation はすべて禁止。pane 消滅との突合(鏡原則・条項 3)は
+  ;; wire 出力時の導出(host augment-wire-snapshot)が担い、台帳は現実を
+  ;; 上書き裁定しない。
+  (when (reap-exempt row)
+    (setv row (replace row :last-observed-at observed-at))
+    (<- _ (session-store-upsert row))
+    (return row))
 
   ;; --- booting 所有権 arm(issue agentd-session-registration-after-ready-gate):
   ;; BOOTING 行は in-flight の launch pipeline が所有する。登録が ready gate より

@@ -19,12 +19,12 @@ a dead monitor would green these tests vacuously).
 
 import time
 
+from doeff_agents.adapters.base import AgentSessionLifecycle
 from harness import (
     AgentdHarness,
     break_pane_observation_out_of_band,
     kill_session_out_of_band,
 )
-from doeff_agents.adapters.base import AgentSessionLifecycle
 
 ACTIVE_STATUSES = {"pending", "booting", "running", "blocked", "blocked_api"}
 PROMPT = "Interactive seat under reap-exemption test."
