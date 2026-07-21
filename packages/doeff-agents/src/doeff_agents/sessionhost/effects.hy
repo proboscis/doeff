@@ -107,7 +107,15 @@
   ;; effective_identity、意図はここ、と住み分ける)。auth キーは launch
   ;; admission が session_env から締め出すため構造的に混入しない。
   #^ (| dict None) launch-overlay
-  (setv launch-overlay None))
+  (setv launch-overlay None)
+  ;; --- koine session surface v0(ADR-DOE-AGENTS-007): adopt 起点の登記か。
+  ;; 安全条項 1 の ownership marker — policy の刈り取り免除判定(reap-exempt)
+  ;; が読む唯一の追加 field。turn_holder / turn_since / turn_wait は policy
+  ;; 契約外(writer は turn RPC のみ・liveness は wire 出力時の導出のみ)
+  ;; なので SessionRow には載せない — monitor の stale な書き戻しが打刻を
+  ;; 上書きする経路を構造的に持たないため。
+  #^ bool adopted
+  (setv adopted False))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] PaneObservation []
@@ -185,6 +193,13 @@
   (setv stale-observation-seconds 300)
   #^ int repl-idle-max-wait-seconds
   (setv repl-idle-max-wait-seconds 120)
+  ;; koine 条項 4(ADR-DOE-AGENTS-007 R4): open turn(holder='agent')の
+  ;; stalled 導出閾値。env knob DOEFF_AGENTD_TURN_STALL_SECS(既定 1800 —
+  ;; 対話席の自走 turn は 15 分を常態的に超える実測に基づく保守初期値。
+  ;; attention ledger の turn 長分布で後日較正)。導出は wire 出力時のみ
+  ;; (store に stalled を書かない・status を変えない — signal only)。
+  #^ int turn-stall-seconds
+  (setv turn-stall-seconds 1800)
   #^ (| str None) judge-cmd
   (setv judge-cmd None))
 
