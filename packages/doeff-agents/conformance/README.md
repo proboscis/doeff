@@ -144,6 +144,19 @@ snapshot と一致(stable)**」(main.rs:2832, 2932)なので、フレームは
 | S21 | resume / fork(ADR-DOE-AGENTS-006): 偽 CLI に transcript 契約(--session-id 受理・rollout 書き・`--resume`/`codex resume|fork` での文脈再開)を追加し、kill → `session.resume` の文脈保持 / fork の系譜と独立性 / identity-unknown の typed 失敗 / 並行 incarnation reject / 世代整合(旧 incarnation の遅延 report が新行を汚さない)を daemon+socket ゲートで検証 | ADR-006 R6 | — | P(hy gate のみ — Rust oracle は resume/fork 非対応で基準外)— `conformance/test_s21_resume_fork.py`(実 tmux、claude/codex 両レーン parametrize + identity-unknown)。実 CLI 物理(codex resume/fork の受理形・claude --fork-session の transcript 意味論)は `conformance/resume-physics.md` の Phase 0 プローブ(2026-07-13 実測)で校正済み | M1(claude/codex resume/fork)/ M2(identity-unknown) |
 | S22 | 登録は ready gate より前(issue agentd-session-registration-after-ready-gate、2026-07-17): `session.launch` が repl-idle 待ちでブロックしている間に booting 行が観測可能(SQLite 帯域外読み — wire に現れない義務の観測例外。handshake < 数秒の回復)。予算切れ後は同じ行が terminal failed(timed_out)へ遷移し booting 残置ゼロ、mux session は terminal-first で掃除(FAILED 永続化 → cleanup、成功は cleaned_at — #542 レビュー由来の順序)。awaiting latch は登録時点から武装(prompt 配送 launch のみ — `await_monitor_ack` の同期点保存) | issue agentd-session-registration-after-ready-gate | — | P(hy gate。oracle main.rs 側は cargo test が同一契約をピン) | M1(unknown dialog で ready 不達) |
 
+| S23 | koine session surface v0: `session.adopt` の順序義務 — 実在確認 → 成功時のみ登記。missing target は typed error(error_code `adopt_target_not_found`・文字列 — koine 由来の新契約は数値表へ足さない)で**行を残さない**。成功は adopted=1・lifecycle 既定 interactive・不透明 id。冪等(同一 substrate.ref の非終端行は既存行を返す)。`session.list` の adopted filter(対話席一覧の主 filter)込み | koine semantics-v0 operations / ADR-DOE-AGENTS-007 R1/R2 | — | **P(hy gate のみ — Rust oracle は koine 非対応で基準外。前例 = S20/S21)** | 帯域外 mux session + wire |
+| S24 | adopted id は不透明: sessionhost 採番(uuid4)・呼び手の名 / substrate.ref を埋め込まない・`session.get(id)` で往復する | koine semantics-v0 resource 表 | — | P(hy gate のみ) | wire |
+| S25 | turn 打刻の単一 writer 面: descriptor {pane_id 第一鍵, agent_name 第二鍵} を sessionhost が adopt 済み非終端行へ解決。turn_open → holder='agent'・wait NULL / turn_close → holder=wait.who(無ければ 'work')・wait は **opaque 保存**(再 parse しない)。未 adopt 打刻 = 正直 no-op(`{"adopted":false}` の ok 応答)+ `daemon.status` counters(turn_stamp_unadopted / turn_stamp_resolved、in-memory)。行を作らない | koine turn-stamp-path / ADR-007 R5 | — | P(hy gate のみ) | wire + SQLite 読み |
+| S26 | **interactive 不刈り(koine 安全条項 1 — 本 stage の中核)**: lifecycle=interactive 行は launch timeout / stale observation / zombie reaper / mux 消滅の 4 条件下でも**非終端のまま**(finished_at / terminal_cause 無し)。last_observed_at の前進を「monitor は生きて評価した上で刈らなかった」witness として assert(dead monitor の空緑を防ぐ)。TDD red 実測 2026-07-21: 実装前は 4 経路すべてが interactive 行を terminal 化した。boot watchdog 経路(mid-launch daemon 死)は M2 から到達不能のため宣言済み gap(免除 arm は booting arm より前に置かれ構造的に守られる) | koine 安全条項 1 / ADR-007 R3 | — | P(hy gate のみ) | M2(lifecycle=interactive) |
+| S27 | 鏡原則(koine 安全条項 3): adopt 席の pane を帯域外 kill → 行は exited 化も削除もされず、`session.get` / `session.list` の wire に導出 field `substrate_present: false` / `substrate_checked_at`(毎読み probe — 保存しない)が載る。adopted filter の一覧にも残る | koine 安全条項 3 / ADR-007 R4 | — | P(hy gate のみ) | wire + 帯域外 kill |
+
+koine 系 wire 導出 field(S23-S27 で凍結): `session.get` / `session.list` /
+`session.adopt` の応答に `stalled`(= turn_holder=='agent' かつ
+now-turn_since > `DOEFF_AGENTD_TURN_STALL_SECS`(既定 1800)。close 済み =
+WAIT 待ちは経過によらず false・signal only)、免除(adopted または
+interactive)かつ非終端の行に `substrate_present` / `substrate_checked_at`。
+store には保存されない(level-triggered 読み出し導出)。
+
 X 項目を P として数えて「oracle green」を主張することは禁止。
 **C0-2 の完了 = 全 P green on Rust + 全 X の expected-red 記録**。
 

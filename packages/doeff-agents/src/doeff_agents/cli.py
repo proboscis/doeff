@@ -242,6 +242,115 @@ def agentd_ensure(json_output: bool) -> None:
         console.print(f"db: {daemon_db}")
 
 
+def _request_or_exit(client: AgentdClient, method: str, params: dict) -> object:
+    try:
+        return client.request(method, params)
+    except (AgentdClientError, OSError) as error:
+        _print_agentd_request_error(error)
+        sys.exit(1)
+
+
+@agentd.command("adopt")
+@click.option("--session-name", required=True, help="Live mux session / herdr agent name.")
+@click.option(
+    "--substrate-kind",
+    required=True,
+    type=click.Choice(["tmux", "herdr"]),
+    help="Substrate binding kind (must match the host backend).",
+)
+@click.option("--substrate-ref", required=True, help="Substrate-native pane reference.")
+@click.option("--agent-kind", required=True, help="Agent vocabulary passthrough (claude/codex/...).")
+@click.option("--lifecycle", default="interactive", show_default=True)
+@click.option("--name", "display_name", default=None, help="Human-readable name.")
+@click.option("--work-dir", default=None)
+def agentd_adopt(
+    session_name: str,
+    substrate_kind: str,
+    substrate_ref: str,
+    agent_kind: str,
+    lifecycle: str,
+    display_name: str | None,
+    work_dir: str | None,
+) -> None:
+    """Register an ALREADY-LIVE seat in the session ledger (koine
+    session.adopt — observation-only; existence is verified before
+    registration, a failed adopt leaves no row)."""
+    client = _agentd_client_or_exit()
+    params: dict = {
+        "session_name": session_name,
+        "substrate": {"kind": substrate_kind, "ref": substrate_ref},
+        "agent_kind": agent_kind,
+        "lifecycle": lifecycle,
+    }
+    if display_name is not None:
+        params["name"] = display_name
+    if work_dir is not None:
+        params["work_dir"] = work_dir
+    result = _request_or_exit(client, "session.adopt", params)
+    click.echo(json.dumps(result, ensure_ascii=False, sort_keys=True))
+
+
+def _turn_descriptor(pane_id: str | None, agent_name: str | None) -> dict:
+    if pane_id is None and agent_name is None:
+        console.print("[red]Error:[/red] provide --pane-id and/or --agent-name")
+        sys.exit(1)
+    descriptor: dict = {}
+    if pane_id is not None:
+        descriptor["pane_id"] = pane_id
+    if agent_name is not None:
+        descriptor["agent_name"] = agent_name
+    return descriptor
+
+
+@agentd.command("turn-open")
+@click.option("--pane-id", default=None, help="Descriptor first key (e.g. HERDR_PANE_ID).")
+@click.option("--agent-name", default=None, help="Descriptor second key (seat/agent name).")
+def agentd_turn_open(pane_id: str | None, agent_name: str | None) -> None:
+    """Stamp turn-open (holder=agent) on the adopted seat resolved from the
+    descriptor. Ops/debug binding — the seat's hook hot path writes the raw
+    socket line instead (<=200ms fire-and-forget; a CLI start-up would
+    break that budget)."""
+    client = _agentd_client_or_exit()
+    result = _request_or_exit(
+        client,
+        "session.turn_open",
+        {"descriptor": _turn_descriptor(pane_id, agent_name)},
+    )
+    click.echo(json.dumps(result, ensure_ascii=False, sort_keys=True))
+
+
+@agentd.command("turn-close")
+@click.option("--pane-id", default=None, help="Descriptor first key (e.g. HERDR_PANE_ID).")
+@click.option("--agent-name", default=None, help="Descriptor second key (seat/agent name).")
+@click.option("--wait-who", default=None, help="WAIT destination (user/work/...).")
+@click.option("--wait-kind", default=None, help="WAIT kind passthrough (decide/review/...).")
+@click.option("--wait-reason", default=None, help="WAIT reason passthrough.")
+def agentd_turn_close(
+    pane_id: str | None,
+    agent_name: str | None,
+    wait_who: str | None,
+    wait_kind: str | None,
+    wait_reason: str | None,
+) -> None:
+    """Stamp turn-close on the adopted seat resolved from the descriptor.
+    holder becomes wait.who (or "work" without a wait); the wait fields are
+    stored opaquely — the parse authority stays with the seat's wait
+    protocol."""
+    client = _agentd_client_or_exit()
+    params: dict = {"descriptor": _turn_descriptor(pane_id, agent_name)}
+    wait: dict = {}
+    if wait_who is not None:
+        wait["who"] = wait_who
+    if wait_kind is not None:
+        wait["kind"] = wait_kind
+    if wait_reason is not None:
+        wait["reason"] = wait_reason
+    if wait:
+        params["wait"] = wait
+    result = _request_or_exit(client, "session.turn_close", params)
+    click.echo(json.dumps(result, ensure_ascii=False, sort_keys=True))
+
+
 @cli.command()
 @click.option(
     "--agent",

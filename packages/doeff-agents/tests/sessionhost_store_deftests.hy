@@ -65,7 +65,11 @@
        "effective_identity_json"
        "conversation_json" "generation"
        "resumed_from_session_id" "forked_from_session_id"
-       "launch_overlay_json"])
+       "launch_overlay_json"
+       ;; koine session surface v0 stage 1(ADR-DOE-AGENTS-007): ownership
+       ;; marker + turn 打刻。adopted は安全条項 1 の opt-in/fail-closed の
+       ;; 機械面、turn_* は席の自己申告打刻(wait は opaque 保存)。
+       "adopted" "turn_holder" "turn_since" "turn_wait_json"])
 
 
 (defn make-snap [session-id #** overrides]

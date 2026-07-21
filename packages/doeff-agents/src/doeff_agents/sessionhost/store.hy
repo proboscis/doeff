@@ -132,7 +132,15 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
        #("agent_sessions" "generation" "INTEGER NOT NULL DEFAULT 1")
        #("agent_sessions" "resumed_from_session_id" "TEXT")
        #("agent_sessions" "forked_from_session_id" "TEXT")
-       #("agent_sessions" "launch_overlay_json" "TEXT")])
+       #("agent_sessions" "launch_overlay_json" "TEXT")
+       ;; koine session surface v0 stage 1(ADR-DOE-AGENTS-007): adopted =
+       ;; 安全条項 1 の ownership marker(opt-in/fail-closed の機械面)、
+       ;; turn_* = 席の自己申告打刻(writer は turn RPC のみ・wait は opaque
+       ;; 保存 — 解釈権威は席側 wait_protocol.py)。
+       #("agent_sessions" "adopted" "INTEGER NOT NULL DEFAULT 0")
+       #("agent_sessions" "turn_holder" "TEXT")
+       #("agent_sessions" "turn_since" "TEXT")
+       #("agent_sessions" "turn_wait_json" "TEXT")])
 
 (setv SNAPSHOT-SELECT
       (+ "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status, "
@@ -143,7 +151,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
          "result_solicitations_used, prompt_unblock_attempts, last_output_change_at, "
          "effective_identity_json, "
          "conversation_json, generation, resumed_from_session_id, forked_from_session_id, "
-         "launch_overlay_json "
+         "launch_overlay_json, "
+         "adopted, turn_holder, turn_since, turn_wait_json "
          "FROM agent_sessions"))
 
 
@@ -255,7 +264,13 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
    "forked_from_session_id" (get db-row 29)
    "launch_overlay" (if (is (get db-row 30) None)
                         None
-                        (json.loads (get db-row 30)))})
+                        (json.loads (get db-row 30)))
+   "adopted" (!= (int (get db-row 31)) 0)
+   "turn_holder" (get db-row 32)
+   "turn_since" (get db-row 33)
+   "turn_wait" (if (is (get db-row 34) None)
+                   None
+                   (json.loads (get db-row 34)))})
 
 (deff snapshot-to-wire-dict [snap]
   {:pre [(: snap dict)]
@@ -310,6 +325,16 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
           (get snap "forked_from_session_id")))
   (when (is-not (.get snap "launch_overlay") None)
     (setv (get wire "launch_overlay") (get snap "launch_overlay")))
+  ;; ADR-007: adopted は常在 bool(ownership marker は不在と false を区別
+  ;; しない)、turn_* は None のとき field ごと省略(未打刻は不可視 — R6 の
+  ;; 既知限界を wire でも正直に)。
+  (setv (get wire "adopted") (bool (.get snap "adopted" False)))
+  (when (is-not (.get snap "turn_holder") None)
+    (setv (get wire "turn_holder") (get snap "turn_holder")))
+  (when (is-not (.get snap "turn_since") None)
+    (setv (get wire "turn_since") (get snap "turn_since")))
+  (when (is-not (.get snap "turn_wait") None)
+    (setv (get wire "turn_wait") (get snap "turn_wait")))
   wire)
 
 
@@ -351,8 +376,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
        "result_solicitations_used, prompt_unblock_attempts, last_output_change_at, "
        "effective_identity_json, "
        "conversation_json, generation, resumed_from_session_id, forked_from_session_id, "
-       "launch_overlay_json"
-       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+       "launch_overlay_json, "
+       "adopted, turn_holder, turn_since, turn_wait_json"
+       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
        "ON CONFLICT(session_id) DO UPDATE SET "
        "session_name = excluded.session_name, "
        "pane_id = excluded.pane_id, "
@@ -383,7 +409,15 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
        "generation = excluded.generation, "
        "resumed_from_session_id = excluded.resumed_from_session_id, "
        "forked_from_session_id = excluded.forked_from_session_id, "
-       "launch_overlay_json = COALESCE(agent_sessions.launch_overlay_json, excluded.launch_overlay_json)")
+       "launch_overlay_json = COALESCE(agent_sessions.launch_overlay_json, excluded.launch_overlay_json), "
+       ;; ADR-007: turn_* も last-write-wins で安全 — 全書き込みが actor で
+       ;; 直列化され、merge 経路(db-merge-policy-row)は actor 内で existing を
+       ;; 再読してから重ねるため、turn RPC の UPDATE を stale な monitor 書き
+       ;; 戻しが巻き戻す隙間は構造的に無い。
+       "adopted = excluded.adopted, "
+       "turn_holder = excluded.turn_holder, "
+       "turn_since = excluded.turn_since, "
+       "turn_wait_json = excluded.turn_wait_json")
     #((get snap "session_id")
       (get snap "session_name")
       (get snap "pane_id")
@@ -431,7 +465,16 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
       (if (is (.get snap "launch_overlay") None)
           None
           (json.dumps (get snap "launch_overlay") :sort-keys True
-                      :separators #("," ":")))))
+                      :separators #("," ":")))
+      ;; .get 既定値: ADR-007 以前の snapshot dict(旧テスト fixture 等)にも
+      ;; additive に振る舞う — 列既定値(adopted=0 / turn_* NULL)と同値。
+      (int (bool (.get snap "adopted" False)))
+      (.get snap "turn_holder")
+      (.get snap "turn_since")
+      (if (is (.get snap "turn_wait") None)
+          None
+          (json.dumps (get snap "turn_wait") :sort-keys True
+                      :separators #("," ":") :ensure-ascii False))))
   None)
 
 (deff db-session-get [conn session-id]
@@ -454,6 +497,12 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
     (setv wanted (.get filters key))
     (when (and (is-not wanted None) (!= wanted (get snap key)))
       (return False)))
+  ;; ADR-007 §8: adopted filter(bool)。対話席一覧の主 filter
+  ;; (adopted=true で adopt 行だけを出す)。
+  (setv adopted-wanted (.get filters "adopted"))
+  (when (and (is-not adopted-wanted None)
+             (!= (bool (.get snap "adopted" False)) (bool adopted-wanted)))
+    (return False))
   True)
 
 (deff db-session-list [conn filters]
@@ -732,7 +781,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
     :generation (.get snap "generation" 1)
     :resumed-from-session-id (.get snap "resumed_from_session_id")
     :forked-from-session-id (.get snap "forked_from_session_id")
-    :launch-overlay (.get snap "launch_overlay")))
+    :launch-overlay (.get snap "launch_overlay")
+    :adopted (bool (.get snap "adopted" False))))
 
 (deff policy-row-patch [row]
   {:pre [(: row SessionRow)]
@@ -768,7 +818,12 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
    "generation" row.generation
    "resumed_from_session_id" row.resumed-from-session-id
    "forked_from_session_id" row.forked-from-session-id
-   "launch_overlay" row.launch-overlay})
+   "launch_overlay" row.launch-overlay
+   ;; ADR-007: adopted は行ごとに不変(adopt が作った行だけ true)なので
+   ;; patch に含めて安全。turn_* は policy 契約外 — patch に含めない
+   ;; (merge 経路では existing の打刻が保存され、新規行は
+   ;; snapshot-from-policy-row が NULL 初期値を与える)。
+   "adopted" row.adopted})
 
 (deff snapshot-from-policy-row [row]
   {:pre [(: row SessionRow)]
@@ -778,6 +833,10 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
   (setv snap (policy-row-patch row))
   (setv (get snap "pr_url") None)
   (setv (get snap "retries_used") 0)
+  ;; ADR-007: 新規行の turn 打刻は未打刻(NULL)から始まる。
+  (setv (get snap "turn_holder") None)
+  (setv (get snap "turn_since") None)
+  (setv (get snap "turn_wait") None)
   snap)
 
 (deff db-merge-policy-row [conn row]
