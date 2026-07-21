@@ -216,6 +216,41 @@ def test_session_registration_rule_detects_ready_gated_registration() -> None:
     )
 
 
+def test_koine_session_surface_rules_detect_forbidden_shapes() -> None:
+    """ADR-DOE-AGENTS-007: the three koine session-surface guards fire on
+    their hit fixtures — adopt mutating the substrate, a monitor arm that
+    terminalizes before the reap exemption, and a turn-stamp path touching
+    the substrate."""
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    check_ids = _semgrep_rule_ids(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-agents/src/doeff_agents/sessionhost",
+        cwd=fixture_root,
+    )
+
+    expected = {
+        "doeff-agents-adopt-must-not-mutate-substrate",
+        "doeff-agents-interactive-must-not-be-terminalized",
+        "doeff-agents-turn-rpc-must-not-touch-substrate",
+    }
+    assert all(_has_rule(check_ids, rule_id) for rule_id in expected), check_ids
+
+
+def test_koine_interactive_terminalize_rule_is_clean_on_fixed_policy() -> None:
+    """The ordering rule must NOT fire on the shipped policy.hy (the reap
+    exemption precedes every terminalizing arm) — guards against the rule
+    rotting into an always-on false positive."""
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy",
+        cwd=REPO_ROOT,
+    )
+    assert (
+        _rule_start_lines(results, "doeff-agents-interactive-must-not-be-terminalized")
+        == set()
+    )
+
+
 def test_repl_ready_wait_rule_detects_discarded_readiness() -> None:
     """Issue agentd-session-registration-after-ready-gate: a bare
     `wait_for_repl_idle(...)?;` statement discards the readiness verdict —

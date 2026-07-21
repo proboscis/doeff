@@ -29,9 +29,14 @@ RPC_ERR_NO_SUCH_SESSION = -32001
 
 
 class AgentdClientError(RuntimeError):
-    """Base error raised by the doeff-agentd client."""
+    """Base error raised by the doeff-agentd client.
 
-    def __init__(self, message: str, *, error_code: int | None = None) -> None:
+    error_code carries the wire `error_code` verbatim: the frozen oracle
+    vocabulary is numeric (-32000..), koine session-surface additions
+    (ADR-DOE-AGENTS-007) are typed strings (e.g. "adopt_target_not_found").
+    """
+
+    def __init__(self, message: str, *, error_code: int | str | None = None) -> None:
         self.error_code = error_code
         super().__init__(message)
 
@@ -384,8 +389,10 @@ class AgentdClient:
             if not isinstance(error, str) or not error:
                 error = "doeff-agentd request failed"
             error_code = response.get("error_code")
-            if error_code is not None and not isinstance(error_code, int):
-                raise AgentdProtocolError("doeff-agentd error_code was not an integer")
+            if error_code is not None and not isinstance(error_code, (int, str)):
+                raise AgentdProtocolError(
+                    "doeff-agentd error_code was not an integer or string"
+                )
             raise AgentdClientError(error, error_code=error_code)
         if "result" not in response:
             raise AgentdProtocolError(
