@@ -1,7 +1,7 @@
 """Schema validation helpers for structured agent results."""
 
-from collections.abc import Mapping, Sequence
 import re
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 

@@ -109,7 +109,7 @@ def is_agent_exited(output: str, ui_patterns: list[str] | None = None) -> bool:
         return True
 
     # Common shell prompt endings (unicode chars are intentional)
-    shell_endings = ["$ ", "% ", "# ", "❯ ", "➜ "]  # noqa: RUF001
+    shell_endings = ["$ ", "% ", "# ", "❯ ", "➜ "]
     return any(last_line.endswith(e) or last_line.rstrip().endswith(e[0]) for e in shell_endings)
 
 
@@ -154,7 +154,7 @@ def has_claude_background_shell_marker(output: str) -> bool:
 
 def has_codex_idle_prompt(output: str) -> bool:
     """Return True when Codex shows its idle prompt/status footer."""
-    has_prompt = any(line.startswith("› ") for line in output.splitlines())  # noqa: RUF001
+    has_prompt = any(line.startswith("› ") for line in output.splitlines())
     has_model_status = any("gpt-" in line and "·" in line for line in output.splitlines())
     return bool(has_prompt and has_model_status)
 

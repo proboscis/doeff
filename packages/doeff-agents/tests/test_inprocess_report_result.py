@@ -13,14 +13,17 @@ bytes.
 
 from __future__ import annotations
 
+import http.client
 import json
 import textwrap
+import threading
+from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
-
-from doeff import run
 from doeff_agents import AgentType
+from doeff_agents.adapters.base import AgentSessionLifecycle, InjectionMethod, LaunchParams
 from doeff_agents.effects import (
     AgentLaunchError,
     AgentSpec,
@@ -29,6 +32,8 @@ from doeff_agents.effects import (
     LaunchSessionEffect,
     SessionHandle,
 )
+from doeff_agents.effects.agent import AwaitResult, LaunchSession, StopSession
+from doeff_agents.handlers import agent_effectful_handler
 from doeff_agents.handlers.production import (
     REPORT_RESULT_TOOL_NAME,
     SessionState,
@@ -38,14 +43,19 @@ from doeff_agents.handlers.production import (
     make_report_result_tool,
     spec_uses_report_result_transport,
 )
+from doeff_agents.mcp_server import McpToolServer
+from doeff_agents.session_backend import SessionBackend
+from doeff_agents.tmux import SessionInfo
+from doeff_core_effects.handlers import lazy_ask, state
+from doeff_core_effects.scheduler import CreateExternalPromise, Wait, scheduled
+
+from doeff import do, run
 
 # Retired marker vocabulary (ADR-DOE-AGENTS-005 R3), reconstructed here only
 # to prove the await path ignores it. Concatenated so the ADR's semgrep
 # tombstone rule does not fire on this regression fixture.
 LEGACY_BEGIN = "DOEFF_AGENT_RESULT" + "_BEGIN"
 LEGACY_END = "DOEFF_AGENT_RESULT" + "_END"
-from doeff_agents.adapters.base import AgentSessionLifecycle
-from doeff_agents.mcp_server import McpToolServer
 
 RESULT_SCHEMA = {
     "type": "object",
@@ -117,17 +127,17 @@ def _handler_with_session(
 
 
 def _spec(tmp_path: Path, **overrides: object) -> AgentSpec:
-    kwargs: dict = dict(
-        run_id="run-rr",
-        node_id="node-rr",
-        attempt=0,
-        agent_type=AgentType.CLAUDE,
-        work_dir=tmp_path,
-        prompt="read state and report",
-        result_schema=RESULT_SCHEMA,
-        mcp_tools=(),
-        mcp_server_name="sbi",
-    )
+    kwargs: dict = {
+        "run_id": "run-rr",
+        "node_id": "node-rr",
+        "attempt": 0,
+        "agent_type": AgentType.CLAUDE,
+        "work_dir": tmp_path,
+        "prompt": "read state and report",
+        "result_schema": RESULT_SCHEMA,
+        "mcp_tools": (),
+        "mcp_server_name": "sbi",
+    }
     kwargs.update(overrides)
     return AgentSpec(**kwargs)
 
@@ -290,20 +300,6 @@ def test_launch_session_without_sink_fails_fast(tmp_path: Path) -> None:
 # LaunchSessionEffect branches in effectful.hy — the first fix landed only in
 # agent-handler-defhandler and this launch path kept marker-mode prompts.
 # ---------------------------------------------------------------------------
-
-import http.client
-import threading
-from datetime import datetime, timezone
-from urllib.parse import urlparse
-
-from doeff import do
-from doeff_agents.adapters.base import InjectionMethod, LaunchParams
-from doeff_agents.effects.agent import AwaitResult, LaunchSession, StopSession
-from doeff_agents.handlers import agent_effectful_handler
-from doeff_agents.session_backend import SessionBackend
-from doeff_agents.tmux import SessionInfo
-from doeff_core_effects.handlers import lazy_ask, state
-from doeff_core_effects.scheduler import CreateExternalPromise, Wait, scheduled
 
 
 class _FakeAdapter:

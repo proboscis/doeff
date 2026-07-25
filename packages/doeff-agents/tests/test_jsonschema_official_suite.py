@@ -18,10 +18,8 @@ Skipped by design (see tests/data/json_schema_test_suite/PROVENANCE.md):
 import json
 from pathlib import Path
 
-import pytest
-
 import doeff_hy  # noqa: F401  # registers the .hy importer
-
+import pytest
 from doeff_agents.sessionhost.schema import validate_against_schema
 
 SUITE_DIR = Path(__file__).resolve().parent / "data" / "json_schema_test_suite" / "draft2020-12"
