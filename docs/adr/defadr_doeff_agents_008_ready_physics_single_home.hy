@@ -23,8 +23,8 @@
        "repl-idle 予算 120s の literal が 2 箇所に定義されていた: launch.hy(コメントは退役 Rust の Duration::from_secs(120) を『oracle 定数』と呼び複製を正当化 — ADR-004 R7/U1『退役 Rust は正しさの基準ではない』と矛盾する言語構造)と effects.hy MonitorKnobs 既定値。boot watchdog 予算(launch timeout + repl-idle 予算)は両者が同値であることに依存しており、drift は watchdog の誤裁定になる。"
        :evidence "sessionhost/launch.hy(移動前 :79-81)/ sessionhost/effects.hy MonitorKnobs repl-idle-max-wait-seconds / sessionhost/host.hy boot watchdog 予算材料")
      (fact
-       "screen-reader trust prompt の物理(version-stable な y/n 行 3 点一致)が session.py に孤立していた — markers.hy の R9 trust dialog(通常 mode)の sibling が別の家に居る形。"
-       :evidence "session.py _screen_reader_trust_prompt_visible(移動前 :467)")
+       "screen-reader trust prompt の物理(version-stable な y/n 行 3 点一致)が session.py に孤立していた — markers.hy の R9 trust dialog(通常 mode)の sibling が別の家に居る形。一本化の検定作図で第 2 の divergence も発見(登記のみ・修正は follow-up): verbatim first-paint capture(claude_screen_reader_trust_dialog.txt)は『Please answer y or n.』を含まず、この述語は初回描画では match しない — 実運用の初回 dismissal は generic onboarding pattern(『Yes, I trust this folder』)側が拾っており、本述語が効くのは入力拒否後の re-prompt のみ。"
+       :evidence "session.py _screen_reader_trust_prompt_visible(移動前 :467)/ tests/data/ready_screens/claude_screen_reader_trust_dialog.txt(first-paint に『Please answer y or n.』非在)")
      (fact
        "一本化の作図中に実 divergence を発見(本 ADR では登記のみ・修正は別 issue): codex trust-dialog frame(`› 1. Yes, continue`)を gate regex は menu 先読みで拒否するが、has-idle-prompt 単独は composer と誤認して受理する。markers.hy の detect-dialog に codex trust 検出は無い(sessionhost は per-kind pre-launch が workspace を事前 trust するため通常この frame に到達しない)が、skip_trust_setup 経路と trust 失敗時に wait-for-repl-idle が prompt を trust menu へ paste しうる潜在穴。fail-open 挙動を expected に固定する歴史ピンは置かない(ADR-004 R8 と同判断)。"
        :evidence "tests/data/ready_screens/codex_trust_dialog.txt(verbatim: `› 1. Yes, continue`)/ launch.hy wait-for-repl-idle / impls/codex.hy codex-pre-launch")]

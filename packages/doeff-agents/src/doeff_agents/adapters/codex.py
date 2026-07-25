@@ -3,24 +3,11 @@
 import shutil
 from pathlib import Path
 
-from .base import AgentType, InjectionMethod, LaunchParams
+import hy  # noqa: F401  # .hy import hook — the readiness physics home is a Hy module
 
-# Readiness = the idle composer is on screen (a line starting with the
-# U+203A prompt marker plus text that is not a numbered menu option) and no
-# MCP-boot status line is visible. Derived from verbatim codex 0.144.4
-# captures (tests/data/ready_screens/) and the doeff-agentd oracle physics:
-#
-# - login screen (no auth in CODEX_HOME) renders its menu with ASCII ">",
-#   never U+203A — it must time out, not match;
-# - trust and update dialogs draw "<U+203A> <digit>. <option>" selection
-#   markers, excluded by the (?!\d+\.[ \t]) lookahead (Enter on the update
-#   dialog's default option starts a global npm upgrade);
-# - the composer is already drawn while "Starting MCP servers (N/M)" is
-#   still on screen, but the input loop is not wired yet — keys sent in
-#   that window leave the prompt sitting unsubmitted (main.rs
-#   wait_for_repl_idle), hence the \A(?!...) exclusion; codex replaces
-#   that status line once MCP startup settles.
-CODEX_READY_PATTERN = r"(?ims)\A(?!.*starting mcp servers).*^\u203a[ \t]+(?!\d+\.[ \t])\S"
+from doeff_agents.sessionhost.impls.ready_physics import CODEX_READY_PATTERN
+
+from .base import AgentType, InjectionMethod, LaunchParams
 
 
 class CodexAdapter:
@@ -71,6 +58,8 @@ class CodexAdapter:
 
     @property
     def ready_pattern(self) -> str | None:
+        # Physics home: sessionhost/impls/ready_physics.hy (ADR-DOE-AGENTS-008
+        # R1) — the idle composer with menu/MCP-boot exclusions.
         return CODEX_READY_PATTERN
 
     @property
