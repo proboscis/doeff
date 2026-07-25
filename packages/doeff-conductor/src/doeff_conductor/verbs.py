@@ -380,7 +380,7 @@ def _minimal_valid_payload(schema: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _minimal_value_for_schema(schema: dict[str, Any]) -> Any:
+def _minimal_value_for_schema(schema: dict[str, Any]) -> Any:  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
     """Generate a minimal value satisfying a JSON sub-schema."""
     if "enum" in schema:
         return schema["enum"][0]

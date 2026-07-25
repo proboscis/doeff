@@ -25,7 +25,6 @@ import pytest
 from doeff_agents.agentd_client import AgentdClientError
 from harness import AgentdHarness
 
-
 IDLE_FRAME = {"claude": "F-idle-claude", "codex": "F-idle-codex"}
 
 
@@ -72,7 +71,7 @@ def _wait_transcript_note(scenario, marker: str, timeout_s: float = 15.0) -> Non
 
 
 @pytest.mark.parametrize("kind", ["claude", "codex"])
-def test_s21_resume_and_fork(kind: str) -> None:
+def test_s21_resume_and_fork(kind: str) -> None:  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
     marker = f"S21-MARKER-{kind.upper()}-G1"
     with AgentdHarness() as harness:
         scenario = harness.scenario(f"s21-{kind}", _fresh_script(kind, marker))
@@ -93,7 +92,8 @@ def test_s21_resume_and_fork(kind: str) -> None:
         conv_id = wire["conversation"]["session_id"]
         assert wire["generation"] == 1
         launched = _journal_conversations(scenario)
-        assert launched and launched[0]["mode"] == "fresh"
+        assert launched
+        assert launched[0]["mode"] == "fresh"
         assert launched[0]["conversation_id"] == conv_id
 
         # gen-1 wrote its marker into the transcript, then dies.
@@ -147,7 +147,8 @@ def test_s21_resume_and_fork(kind: str) -> None:
         fork_events = [
             e for e in _journal_conversations(scenario) if e["mode"] == "fork"
         ]
-        assert fork_events and fork_events[0]["parent"] == conv_id
+        assert fork_events
+        assert fork_events[0]["parent"] == conv_id
         assert marker in fork_events[0]["inherited"]
 
         # (e) generation integrity: the source row is untouched — terminal,

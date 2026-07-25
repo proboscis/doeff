@@ -16,7 +16,7 @@ import json
 import shlex
 import sys
 
-from harness import RESULT_SCHEMA, JUDGE_SCRIPT, AgentdHarness
+from harness import JUDGE_SCRIPT, RESULT_SCHEMA, AgentdHarness
 
 PROMPT = "Resolve the menu then report."
 PAYLOAD = {"summary": "unblocked", "ok": True}
@@ -75,7 +75,7 @@ def test_s5_judge_unblocks_menu_before_solicitation(tmp_path) -> None:
                 {"render": "F-menu-codex"},
                 # wait for the judge's Down arrow (ESC [ B) — see the
                 # verdict table note on why not "\r"
-                {"await_keys": {"expect": "[B", "timeout_s": 30}},
+                {"await_keys": {"expect": "\x1b[B", "timeout_s": 30}},
                 {"render": "F-active-codex"},
                 {"report_result": {"payload": PAYLOAD}},
                 {"render": "F-idle-codex"},
