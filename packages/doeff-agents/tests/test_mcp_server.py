@@ -4,8 +4,8 @@ import http.client
 import json
 import threading
 
-import pytest
 import doeff_agents.mcp_server as mcp_server_module
+import pytest
 from doeff_agents.mcp_server import McpToolServer
 
 from doeff import do, run

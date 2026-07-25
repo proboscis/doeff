@@ -16,10 +16,10 @@ def test_format_default_renders_repeat_count():
     ]
     rendered = format_default(exc)
     assert rendered is not None
-    assert "[×15]" in rendered  # noqa: RUF001 - test fixture intentionally matches the literal rendered glyph
+    assert "[×15]" in rendered
     for line in rendered.split("\n"):
         if "my_body" in line:
-            assert "[×" not in line  # noqa: RUF001 - test fixture intentionally matches the literal rendered glyph
+            assert "[×" not in line
 
 
 def test_format_default_omits_count_for_single():
@@ -31,4 +31,4 @@ def test_format_default_omits_count_for_single():
     ]
     rendered = format_default(exc)
     assert rendered is not None
-    assert "[×" not in rendered  # noqa: RUF001 - test fixture intentionally matches the literal rendered glyph
+    assert "[×" not in rendered

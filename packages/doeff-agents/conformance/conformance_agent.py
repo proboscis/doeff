@@ -29,6 +29,7 @@ reading stdin) — exiting would trip agentd's zombie/idle-shell reaper, which
 is its own scenario (S19), never an accident.
 """
 
+import contextlib
 import json
 import os
 import select
@@ -197,7 +198,7 @@ def journal(event: str, **data: object) -> None:
 CONVERSATION: dict[str, object] = {"mode": "none", "transcript": None}
 
 
-def resolve_conversation() -> None:
+def resolve_conversation() -> None:  # noqa: PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
     import re as re_mod
     import uuid as uuid_mod
 
@@ -318,10 +319,7 @@ def resolve_conversation() -> None:
 
 
 def render(spec: object) -> None:
-    if isinstance(spec, dict):
-        text = str(spec["literal"])
-    else:
-        text = FRAMES[str(spec)]
+    text = str(spec["literal"]) if isinstance(spec, dict) else FRAMES[str(spec)]
     print(text, end="", flush=True)
     journal("rendered", frame=spec)
 
@@ -426,7 +424,8 @@ def report_result(spec: object) -> None:
     )
 
     def rpc(msg: dict[str, object]) -> str:
-        assert proc.stdin is not None and proc.stdout is not None
+        assert proc.stdin is not None
+        assert proc.stdout is not None
         proc.stdin.write(json.dumps(msg) + "\n")
         proc.stdin.flush()
         return proc.stdout.readline()
@@ -467,10 +466,8 @@ def report_result(spec: object) -> None:
         time.sleep(0.05)
     if proc.stdin is not None:
         proc.stdin.close()
-    try:
+    with contextlib.suppress(Exception):
         proc.wait(timeout=10)
-    except Exception:
-        pass
     journal("report_result", spec=spec, response=resp.strip())
 
 
@@ -483,7 +480,7 @@ def park() -> None:
             return
 
 
-def main() -> None:
+def main() -> None:  # noqa: PLR0912 - baseline cleanup keeps existing control flow unchanged
     journal("started", argv=sys.argv, cwd=os.getcwd())
     # ADR-006 (S21): establish conversation identity + transcript before any
     # frame. A resumed/forked incarnation runs the CONFORMANCE_RESUME_SCRIPT

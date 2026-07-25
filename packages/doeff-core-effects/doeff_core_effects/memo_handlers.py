@@ -18,9 +18,7 @@ from doeff import handler as _program_handler
 from doeff.program import Pass, Resume
 from doeff_core_effects.memo_effects import (
     MemoExists,
-    MemoExistsEffect,
     MemoGet,
-    MemoGetEffect,
     MemoPut,
     MemoPutEffect,
 )

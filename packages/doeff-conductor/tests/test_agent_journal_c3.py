@@ -21,8 +21,8 @@ from doeff_conductor.handlers.journaled_agent import JournaledAgentHandler
 from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
 from doeff_conductor.journal import AgentJournal
 from doeff_conductor.replay_keying import ResolvedIdentity
-
 from doeff_core_effects.scheduler import scheduled
+
 from doeff.do import do
 from doeff.run import run
 

@@ -342,7 +342,7 @@ class TestExpansionRejection:
             ],
         )
 
-        with pytest.raises(WorkflowExpansionError, match="quorum.*bind"):
+        with pytest.raises(WorkflowExpansionError, match=r"quorum.*bind"):
             workflow.expand()
 
 
