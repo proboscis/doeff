@@ -110,6 +110,48 @@ rules:
         - /packages/doeff-agents/src/doeff_agents/adapters/gemini.py
         - /tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/adapters/**
 
+  - id: doeff-agents-ready-pattern-literal-outside-physics-home
+    languages:
+      - python
+    severity: ERROR
+    message: >
+      Readiness pattern literals are defined ONLY in the physics home
+      (doeff_agents/sessionhost/impls/ready_physics.hy); adapters import the
+      constant. Re-defining a ready pattern literal in an adapter re-creates
+      the two-homes drift banned by ADR-DOE-AGENTS-004
+      protocol-physics-has-one-home (the 2026-07-05 incident class: the same
+      CLI's physics duplicated across implementations, only one got fixed)
+      — ADR-DOE-AGENTS-008 R1.
+    patterns:
+      - pattern: $PAT = "..."
+      - metavariable-regex:
+          metavariable: $PAT
+          regex: .*READY_PATTERN$
+    paths:
+      include:
+        - "**/doeff_agents/adapters/claude.py"
+        - "**/doeff_agents/adapters/codex.py"
+        - "**/adapters/ready_pattern_literal_forbidden.py"
+
+  - id: doeff-agents-repl-idle-budget-literal-single-home
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      The repl-idle budget default has exactly ONE literal home:
+      doeff_agents/sessionhost/effects.hy (MonitorKnobs knob vocabulary).
+      Re-defining REPL-IDLE-MAX-WAIT-SECONDS elsewhere re-creates the drift
+      between the launch ready gate and the boot-watchdog budget that the
+      retired-Rust "oracle constant" comments used to justify —
+      ADR-DOE-AGENTS-008 R2. Import it from effects instead.
+    pattern: setv REPL-IDLE-MAX-WAIT-SECONDS
+    paths:
+      include:
+        - "**/doeff_agents/sessionhost/**"
+        - "**/sessionhost/repl_idle_budget_literal_forbidden.hy"
+      exclude:
+        - "**/sessionhost/effects.hy"
+
   - id: doeff-agents-prompt-paste-must-be-ready-gated
     languages:
       - python
