@@ -39,6 +39,7 @@ and documents why. Confirmed empirically: the raw wire call returns
 
 import json
 
+import pytest
 from doeff_agents.agentd_client import AgentdClientError
 from harness import RESULT_SCHEMA, AgentdHarness
 
@@ -113,11 +114,10 @@ def test_s10b_report_after_terminal_without_result_is_rejected() -> None:
         row = harness.session_row(scenario.session_id)
         assert row["status"] == "failed", harness.log_text()
 
-        try:
+        # Expected: report_result is rejected as already-terminal (-32003).
+        with pytest.raises(AgentdClientError) as excinfo:
             harness.client.request(
                 "session.report_result",
                 {"session_id": scenario.session_id, "payload": PAYLOAD},
             )
-            raise AssertionError("expected report_result to be rejected as already-terminal")
-        except AgentdClientError as exc:
-            assert exc.error_code == -32003, exc
+        assert excinfo.value.error_code == -32003, excinfo.value

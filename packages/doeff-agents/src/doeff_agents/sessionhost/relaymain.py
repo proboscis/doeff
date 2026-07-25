@@ -75,7 +75,7 @@ def relay_report_result(socket_path: str, session_id: str, payload: Any) -> Any:
         try:
             client.connect(socket_path)
         except OSError as e:
-            raise RuntimeError(f"connecting to agentd socket {socket_path}: {e}")
+            raise RuntimeError(f"connecting to agentd socket {socket_path}: {e}") from e
         request = {
             "id": 1,
             "method": "session.report_result",
