@@ -122,7 +122,7 @@ def test_s13_codex_argv_wiring(tmp_path) -> None:
         args = _started_argv(scenario)
         assert "--yolo" in args, args
 
-        command_arg = f'mcp_servers."doeff_result".command='
+        command_arg = 'mcp_servers."doeff_result".command='
         command_entries = [a for a in args if a.startswith(command_arg)]
         assert len(command_entries) == 1, args
         # Same self-wiring contract as the claude leg: the daemon under test
@@ -146,6 +146,5 @@ def test_s13_codex_argv_wiring(tmp_path) -> None:
         while time.monotonic() < deadline and not env_entries:
             env_entries = [e for e in scenario.journal() if e["event"] == "env"]
             time.sleep(0.2)
-        assert env_entries and env_entries[0]["values"]["CODEX_HOME"] == str(codex_home), (
-            env_entries
-        )
+        assert env_entries, env_entries
+        assert env_entries[0]["values"]["CODEX_HOME"] == str(codex_home), env_entries

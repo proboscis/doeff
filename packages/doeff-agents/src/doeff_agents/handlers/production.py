@@ -647,12 +647,13 @@ class TmuxAgentHandler(AgentHandler):
             agent_env_exports["CODEX_HOME"] = codex_home
 
         active_mcp_servers: dict[str, str] = dict(mcp_servers or {})
-        if effect.mcp_tools:
-            if not active_mcp_servers or effect.mcp_server_name not in active_mcp_servers:
-                raise AgentLaunchError(
-                    "MCP tools must run inside the caller's doeff VM via "
-                    "mcp_server_loop; no in-VM MCP server URL was provided"
-                )
+        if effect.mcp_tools and (
+            not active_mcp_servers or effect.mcp_server_name not in active_mcp_servers
+        ):
+            raise AgentLaunchError(
+                "MCP tools must run inside the caller's doeff VM via "
+                "mcp_server_loop; no in-VM MCP server URL was provided"
+            )
         # Schema-only sessions carry no domain tools but still need .mcp.json
         # so the agent can reach the report_result server (ADR-DOE-AGENTS-005).
         if active_mcp_servers:

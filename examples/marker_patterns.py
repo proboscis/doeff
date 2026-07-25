@@ -7,7 +7,7 @@ doeff marker comments effectively in your codebase.
 
 import functools
 from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Any, Protocol, TypeVar
 
 from doeff import Effect, Program, async_run, default_handlers, do, run
 
@@ -85,8 +85,6 @@ def logged_interpreter(  # doeff: interpreter
 # ============================================================================
 # PATTERN 3: Protocol/Interface Implementation with Markers
 # ============================================================================
-
-from typing import Protocol
 
 
 class Interpreter(Protocol):
@@ -295,7 +293,7 @@ class ProgramManager:
         Property that returns an interpreter function.
         Properties can be marked too.
         """
-        return lambda: self._program.run()
+        return self._program.run
 
     @property
     @do
@@ -349,7 +347,6 @@ def resilient_transform(  # doeff: transform
 # ============================================================================
 
 if __name__ == "__main__":
-    import asyncio
 
     from doeff import Program
 

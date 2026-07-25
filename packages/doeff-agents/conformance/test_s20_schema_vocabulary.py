@@ -32,8 +32,8 @@ import json
 import os
 
 import pytest
-from harness import AgentdHarness
 from doeff_agents.agentd_client import AgentdClientError
+from harness import AgentdHarness
 
 # Transfer-gate seam (harness.build_agentd): S20 requires the canonical Hy
 # host — the retired Rust implementation fail-opens on these keywords

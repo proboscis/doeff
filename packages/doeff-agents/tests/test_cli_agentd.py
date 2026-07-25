@@ -93,8 +93,12 @@ def test_ps_lists_agentd_sessions_not_tmux(
 
 def test_ps_warns_about_unparseable_agentd_rows(
     monkeypatch: pytest.MonkeyPatch,
-    runner: CliRunner,
 ) -> None:
+    # click 8.1's default CliRunner(mix_stderr=True) merges stderr into
+    # result.output and leaves result.stderr unusable (raises ValueError).
+    # This test asserts on result.stderr specifically, so it needs its own
+    # runner with stderr captured separately (issue #530).
+    runner = CliRunner(mix_stderr=False)
     warning = AgentdSessionParseWarning(
         session_name="raw-session",
         field="agent_type",
