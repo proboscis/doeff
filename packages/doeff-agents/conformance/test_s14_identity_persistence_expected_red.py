@@ -32,7 +32,6 @@ import os
 import time
 
 import pytest
-
 from harness import RESULT_SCHEMA, AgentdHarness
 
 PROMPT = "Produce the conformance structured result."
@@ -79,7 +78,8 @@ def _launched_session_row(tmp_path) -> tuple[dict, str]:
         while time.monotonic() < deadline and not env_entries:
             env_entries = [e for e in scenario.journal() if e["event"] == "env"]
             time.sleep(0.2)
-        assert env_entries and env_entries[0]["values"]["CODEX_HOME"] == str(codex_home)
+        assert env_entries
+        assert env_entries[0]["values"]["CODEX_HOME"] == str(codex_home)
 
         return harness.session_row(scenario.session_id), str(codex_home)
 
@@ -98,7 +98,7 @@ def test_s14_expected_red_no_resolved_identity_on_session_row(tmp_path) -> None:
     # EXPECTED-RED (oracle): no identity column exists ...
     identity_columns = [
         column
-        for column in row.keys()
+        for column in row
         if any(fragment in column.lower() for fragment in IDENTITY_COLUMN_FRAGMENTS)
     ]
     assert identity_columns == [], (

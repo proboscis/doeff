@@ -75,7 +75,7 @@ def relay_report_result(socket_path: str, session_id: str, payload: Any) -> Any:
         try:
             client.connect(socket_path)
         except OSError as e:
-            raise RuntimeError(f"connecting to agentd socket {socket_path}: {e}")
+            raise RuntimeError(f"connecting to agentd socket {socket_path}: {e}") from e
         request = {
             "id": 1,
             "method": "session.report_result",
@@ -95,7 +95,7 @@ def relay_report_result(socket_path: str, session_id: str, payload: Any) -> Any:
         client.close()
 
 
-def handle_mcp_message(msg: Any, session_id: str, socket_path: str) -> dict | None:
+def handle_mcp_message(msg: Any, session_id: str, socket_path: str) -> dict | None:  # noqa: PLR0911 - baseline cleanup keeps existing control flow unchanged
     """MCP JSON-RPC 1 message の dispatch(oracle handle_mcp_message :817-856)。
     request には応答、notification(id 無し)には None。"""
     if not isinstance(msg, dict):

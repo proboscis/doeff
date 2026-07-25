@@ -77,7 +77,7 @@ def main() -> int:
 
         try:
             metadata = _read_metadata(artifact)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             print(f"[FAIL] Could not inspect {artifact}: {exc}")
             has_errors = True
             continue

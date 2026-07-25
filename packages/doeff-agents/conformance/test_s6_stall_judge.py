@@ -145,7 +145,8 @@ def test_s6_stall_bounded_judge_exhaustion(tmp_path) -> None:
         assert len(unblocked) == 3, [e["event_type"] for e in events]
 
         judged = _judge_entries(judge_journal)
-        assert len(judged) >= 3 and all(e["verdict"]["blocked"] for e in judged), judged
+        assert len(judged) >= 3, judged
+        assert all(e["verdict"]["blocked"] for e in judged), judged
 
 
 def test_s6_stall_judge_inconclusive_is_bounded_too(tmp_path) -> None:
@@ -189,4 +190,5 @@ def test_s6_stall_judge_inconclusive_is_bounded_too(tmp_path) -> None:
         assert "session_prompt_unblocked" not in types, types
 
         judged = _judge_entries(judge_journal)
-        assert len(judged) >= 3 and not any(e["verdict"]["blocked"] for e in judged), judged
+        assert len(judged) >= 3, judged
+        assert not any(e["verdict"]["blocked"] for e in judged), judged

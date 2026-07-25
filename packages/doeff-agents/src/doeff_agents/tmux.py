@@ -309,7 +309,7 @@ def _output_has_unsubmitted_paste_input(output: str, sent_text: str | None = Non
         # ax-mode input box, so a stuck "[Pasted text ...]" there was
         # reported as submitted and Enter was never retried
         # (2026-07-09 live incident: both broker agents idled for hours).
-        if stripped.startswith(("❯", "›", "input:")):  # noqa: RUF001
+        if stripped.startswith(("❯", "›", "input:")):
             last_prompt_line = stripped
             prompt_index = index
     if "[Pasted text" in last_prompt_line:

@@ -70,7 +70,7 @@ def _render_frame(func_name, source_file, source_line, count=1):
     source_text = _get_source_line(source_file, source_line)
     result = f"\n  {func_name}()  {short_file}:{source_line}"
     if count > 1:
-        result += f"  [×{count}]"  # noqa: RUF001 - traceback format intentionally uses multiplication sign.
+        result += f"  [×{count}]"
     if source_text:
         result += f"\n    {source_text}"
     return result

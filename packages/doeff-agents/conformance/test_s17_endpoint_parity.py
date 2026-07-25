@@ -112,7 +112,7 @@ def _snapshot(session_id: str, *, status: str, expected_result: dict | None) -> 
     }
 
 
-def test_s17_inproc_and_host_result_endpoints_agree(tmp_path) -> None:
+def test_s17_inproc_and_host_result_endpoints_agree(tmp_path) -> None:  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
     # ------------------------------------------------------------------
     # (b) host endpoint: live daemon + relay, wire + agent surfaces
     # ------------------------------------------------------------------
@@ -168,7 +168,8 @@ def test_s17_inproc_and_host_result_endpoints_agree(tmp_path) -> None:
             scenario.session_id, PROCEED_MARKER + "\n", enter=False
         )
         outcome = harness.client.await_result(scenario.session_id, timeout_seconds=25.0)
-        assert outcome.result == PAYLOAD and outcome.validation_error is None
+        assert outcome.result == PAYLOAD
+        assert outcome.validation_error is None
 
         # wire, post-terminal WITH payload: idempotent already_reported —
         # for the repeated valid payload AND for an invalid one (terminal
@@ -250,7 +251,6 @@ def test_s17_inproc_and_host_result_endpoints_agree(tmp_path) -> None:
     # daemon/socket/tmux), same session ids, same payloads, same order
     # ------------------------------------------------------------------
     import hy  # noqa: F401  # registers the .hy importer
-
     from doeff_agents.sessionhost import host as hyhost
     from doeff_agents.sessionhost import store as hystore
 
