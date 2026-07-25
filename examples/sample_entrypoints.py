@@ -26,7 +26,7 @@ def greet(name: str) -> EffectGenerator[str]:
 @do
 def fetch_user(user_id: int) -> EffectGenerator[dict]:
     """Fetch user data. Services are injected via ask."""
-    logger = yield ask("logger")  # Service injection is OK
+    yield ask("logger")  # Service injection is OK
     yield slog(msg=f"Fetching user {user_id}")
     return {"id": user_id, "name": f"User {user_id}"}
 

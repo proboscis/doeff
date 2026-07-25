@@ -519,12 +519,11 @@ def test_ensure_agentd_never_spawns_against_live_but_slow_listener(
         raising=False,
     )
 
-    with SilentListener(paths.socket_path):
-        with pytest.raises(AgentdUnavailableError) as error:
-            ensure_agentd(
-                daemon_bin="/usr/local/bin/doeff-agentd",
-                client_timeout=0.2,
-            )
+    with SilentListener(paths.socket_path), pytest.raises(AgentdUnavailableError) as error:
+        ensure_agentd(
+            daemon_bin="/usr/local/bin/doeff-agentd",
+            client_timeout=0.2,
+        )
 
     message = str(error.value)
     assert "refusing to start a competing daemon" in message

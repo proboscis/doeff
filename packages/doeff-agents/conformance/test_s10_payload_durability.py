@@ -75,7 +75,8 @@ def test_s10a_payload_survives_restart_and_rereport_is_idempotent() -> None:
             f"payload did not survive restart: {post_restart_outcome.result!r}"
         )
         snapshot = harness.client.get_session(scenario.session_id)
-        assert snapshot is not None and snapshot.status.value == "done"
+        assert snapshot is not None
+        assert snapshot.status.value == "done"
 
         # row: still persisted on disk
         row = harness.session_row(scenario.session_id)

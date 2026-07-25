@@ -53,7 +53,8 @@ def test_s1_golden_path() -> None:
         report_entries = [
             entry for entry in scenario.journal() if entry["event"] == "report_result"
         ]
-        assert report_entries and "error" not in json.loads(
+        assert report_entries, f"report_result not accepted: {report_entries}"
+        assert "error" not in json.loads(
             report_entries[0]["response"]
         ).get("result", {}), f"report_result not accepted: {report_entries}"
 

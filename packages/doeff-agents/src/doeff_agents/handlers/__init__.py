@@ -143,7 +143,7 @@ def claude_agent_handler(*, backend=None):
         wrapped = handler(program)
         run(wrapped)
     """
-    import hy  # noqa: F401  # activate Hy import hook
+    import hy  # noqa: F401, F811  # activate Hy import hook (intentionally re-imported per call site)
 
     claude_handler = import_module("doeff_agents.handlers.claude").claude_handler
     return claude_handler(backend=backend)
@@ -151,7 +151,7 @@ def claude_agent_handler(*, backend=None):
 
 def codex_agent_handler(*, backend=None):
     """Codex agent handler (Hy-based architecture)."""
-    import hy  # noqa: F401  # activate Hy import hook
+    import hy  # noqa: F401, F811  # activate Hy import hook (intentionally re-imported per call site)
 
     codex_handler = import_module("doeff_agents.handlers.codex").codex_handler
     return codex_handler(backend=backend)
@@ -161,7 +161,7 @@ _mock_effect_handler = MockAgentHandler()
 
 
 def _hy_effectful_module():
-    import hy  # noqa: F401  # activate Hy import hook
+    import hy  # noqa: F401, F811  # activate Hy import hook (intentionally re-imported per call site)
 
     return import_module("doeff_agents.handlers.effectful")
 

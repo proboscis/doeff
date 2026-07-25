@@ -111,6 +111,13 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "YTT", "B", "A", "COM", "C4", "DTZ", "T10", "ISC", "ICN", "PIE", "PT", "Q", "RSE", "RET", "SIM", "TID", "ARG", "PLE", "PLR", "PLW", "RUF"]
+# ×, ❯, › are legitimate recurring characters, not typos: × is used as a
+# typographic multiplication/repeat-count mark in prose comments (e.g.
+# "Down×2"), while ❯ / › are VERBATIM terminal prompt-cursor glyphs captured
+# from real Claude Code / Codex CLI output in conformance test fixtures
+# (packages/doeff-agents/conformance/conformance_agent.py FRAMES) — they must
+# stay byte-identical to the real terminal glyphs, never normalized to `>`.
+allowed-confusables = ["×", "❯", "›"]
 ignore = [
     "E501",  # line too long - handled by formatter
     "COM812",  # trailing comma

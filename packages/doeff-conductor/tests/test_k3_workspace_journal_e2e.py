@@ -18,7 +18,6 @@ from doeff_conductor.effects.dsl import RandomCall, TimeCall
 from doeff_conductor.handlers.journaled_agent import JournaledAgentHandler
 from doeff_conductor.handlers.journaled_workspace import (
     JournaledWorkspaceHandler,
-    PreCoverageRunError,
 )
 from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
 from doeff_conductor.journal import (
@@ -28,7 +27,6 @@ from doeff_conductor.journal import (
 )
 from doeff_conductor.types import WorkflowStatus, Workspace
 from doeff_conductor.workflow_effect_journal import JournaledWorkflowEffectHandler
-
 
 SHARED_WORKSPACE_WORKFLOW = """
 (require doeff-hy.conductor [defworkflow agent! workspace! <-])

@@ -35,8 +35,8 @@ class FakeBackend:
 def test_dismiss_onboarding_does_not_treat_theme_prompt_as_ready() -> None:
     backend = FakeBackend(
         [
-            "Choose the text style that looks best with your terminal\n❯ 1. Dark mode",  # noqa: RUF001 - test fixture intentionally matches the literal rendered glyph
-            "❯ Ready for input",  # noqa: RUF001 - test fixture intentionally matches the literal rendered glyph
+            "Choose the text style that looks best with your terminal\n❯ 1. Dark mode",
+            "❯ Ready for input",
         ]
     )
 

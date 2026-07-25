@@ -80,7 +80,8 @@ def test_s11b_claude_without_config_dir_warns_only(tmp_path) -> None:
         )
 
         log = harness.log_text()
-        assert "launched without an explicit" in log and "CLAUDE_CONFIG_DIR" in log, log
+        assert "launched without an explicit" in log, log
+        assert "CLAUDE_CONFIG_DIR" in log, log
         assert scenario.session_id in log, log
 
         # the warning path still pre-seeds trust — into the daemon-env

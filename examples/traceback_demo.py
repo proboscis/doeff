@@ -17,7 +17,6 @@ from doeff import (
     AskEffect,
     Delegate,
     Get,
-    Program,
     Put,
     Resume,
     Tell,
@@ -26,7 +25,6 @@ from doeff import (
     do,
     run,
 )
-
 
 # -- programs ----------------------------------------------------------------
 
