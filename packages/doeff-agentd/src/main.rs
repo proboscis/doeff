@@ -3131,6 +3131,31 @@ fn output_has_api_limit_marker(output: &str) -> bool {
         || text.contains("you've hit your limit")
         || text.contains("/rate-limit-options")
         || text.contains("stop and wait for limit to reset")
+        // ACP ADR 0049 R9 (2026-07-26 incident): the live monthly
+        // spend-limit wording is not a superstring of "you've hit your
+        // limit" (the "monthly spend" infix breaks the substring), and
+        // the credits-exhaustion wording was absent entirely.
+        || text.contains("you've hit your monthly spend limit")
+        || text.contains("out of usage credits")
+}
+
+/// ACP ADR 0049 R9 (2026-07-26): behavioural terminals (solicitation
+/// exhaustion, interactive-prompt stall) consult the pane's
+/// provider-limit marker before categorising — a visible limit message
+/// makes the terminal a transient rate limit (retryable) instead of a
+/// deterministic failure, keeping ACP's rotation/failover machinery
+/// (ADR 0042 downstream of the retryable bit) sighted.  This retired
+/// reference implementation has no durable latch (issue #557 is
+/// canonical-Hy-host-only), so only the live capture is consulted.
+fn behavioral_terminal_category(
+    output: &str,
+    fallback: TerminalCauseCategory,
+) -> (TerminalCauseCategory, bool) {
+    if output_has_api_limit_marker(output) {
+        (TerminalCauseCategory::RateLimited, true)
+    } else {
+        (fallback, false)
+    }
 }
 
 fn output_has_waiting_marker(output: &str) -> bool {
@@ -3992,11 +4017,16 @@ fn monitor_once(config: &Config) -> Result<()> {
                             )
                         };
                         snapshot.last_validation_error = Some(reason.clone());
+                        // ACP ADR 0049 R9: a limit message still visible at
+                        // the exhausted turn-end is a transient provider
+                        // limit, not a deterministic run failure.
+                        let (category, retryable) =
+                            behavioral_terminal_category(&output, TerminalCauseCategory::RunFailed);
                         set_terminal_cause_if_absent(
                             &mut snapshot,
-                            TerminalCauseCategory::RunFailed,
+                            category,
                             reason,
-                            false,
+                            retryable,
                             &observed_at,
                         );
                     }
@@ -4088,11 +4118,21 @@ fn monitor_once(config: &Config) -> Result<()> {
                 if let Some(reason) = blocked_failure {
                     observed_status = "failed";
                     snapshot.last_validation_error = Some(reason.clone());
+                    // ACP ADR 0049 R9: consult the provider-limit marker
+                    // before the behavioural category.  Unreachable with a
+                    // live marker under today's branch order (the marker
+                    // classifies blocked_api, which gates this arm out) —
+                    // kept as the categorisation-site invariant the ADR
+                    // freezes.
+                    let (category, retryable) = behavioral_terminal_category(
+                        &output,
+                        TerminalCauseCategory::InteractivePromptBlocked,
+                    );
                     set_terminal_cause_if_absent(
                         &mut snapshot,
-                        TerminalCauseCategory::InteractivePromptBlocked,
+                        category,
                         reason,
-                        false,
+                        retryable,
                         &observed_at,
                     );
                 }
@@ -7222,6 +7262,92 @@ Working...
             reason.contains("after 2 solicitation(s)"),
             "reason names the exhausted budget: {reason}"
         );
+    }
+
+    #[test]
+    fn api_limit_marker_recognises_adr0049_r9_spend_wordings() {
+        // ACP ADR 0049 R9 (2026-07-26 incident): the live monthly
+        // spend-limit wording is not a superstring of "you've hit your
+        // limit" (the "monthly spend" infix breaks the substring match),
+        // and the credits-exhaustion wording was absent entirely.
+        assert!(output_has_api_limit_marker(
+            "You've hit your monthly spend limit. /model to switch models."
+        ));
+        assert!(output_has_api_limit_marker(
+            "You're out of usage credits · buy more credits or upgrade your plan"
+        ));
+    }
+
+    #[test]
+    fn turn_end_exhaustion_with_visible_limit_maps_rate_limited() {
+        // ACP ADR 0049 R9: behavioural terminals (solicitation exhaustion,
+        // prompt stall) must consult the pane's provider-limit marker
+        // before categorising.  A budget-exhausted turn-end whose pane
+        // still shows the limit message is a transient provider limit —
+        // RateLimited retryable=true, not RunFailed — otherwise ACP's
+        // rotation/failover machinery downstream of the retryable bit
+        // (ADR 0042) is blind to the exhaustion.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pane = "You've hit your monthly spend limit. /model to switch models.\n› ";
+        let pane_file = tmp.path().join("pane.txt");
+        fs::write(&pane_file, pane).expect("write pane");
+        let log_file = tmp.path().join("tmux.log");
+        let tmux_bin = write_monitor_fake_tmux(&tmp, &pane_file, &log_file);
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        let mut snapshot = stable_monitor_snapshot(pane, Some(verdict_schema_spec()));
+        snapshot.result_solicitations_used = DEFAULT_RESULT_SOLICITATION_LIMIT;
+        upsert_snapshot(&conn, &snapshot).expect("insert session");
+        let config = monitor_test_config(&tmp, db, tmux_bin, None);
+
+        monitor_once(&config).expect("monitor tick");
+
+        let session = session_get(&conn, "s1").expect("get").expect("exists");
+        assert_eq!(session.status, "failed");
+        let reason = session.last_validation_error.expect("validation error");
+        assert!(
+            reason.contains("without reporting a result via report_result"),
+            "discriminator-facing reason preserved: {reason}"
+        );
+        let cause = session.terminal_cause.expect("terminal cause");
+        assert!(
+            matches!(cause.category, TerminalCauseCategory::RateLimited),
+            "visible provider-limit marker must categorise as RateLimited: {:?}",
+            cause.category
+        );
+        assert!(cause.retryable, "provider-limit terminals are transient");
+    }
+
+    #[test]
+    fn behavioral_terminal_category_consults_marker_before_fallback() {
+        // ACP ADR 0049 R9 at the categorisation site itself, covering the
+        // stall fallback: the stall arm is gated on observed_status ==
+        // "running" so a live marker cannot coexist with a firing stall
+        // arm today — the invariant is frozen here at the helper.
+        let (category, retryable) = behavioral_terminal_category(
+            "You've hit your monthly spend limit.",
+            TerminalCauseCategory::InteractivePromptBlocked,
+        );
+        assert!(matches!(category, TerminalCauseCategory::RateLimited));
+        assert!(retryable);
+
+        let (category, retryable) = behavioral_terminal_category(
+            "Password:",
+            TerminalCauseCategory::InteractivePromptBlocked,
+        );
+        assert!(matches!(
+            category,
+            TerminalCauseCategory::InteractivePromptBlocked
+        ));
+        assert!(!retryable);
+
+        let (category, retryable) = behavioral_terminal_category(
+            "agent output scrolled by\n› ",
+            TerminalCauseCategory::RunFailed,
+        );
+        assert!(matches!(category, TerminalCauseCategory::RunFailed));
+        assert!(!retryable);
     }
 
     #[test]

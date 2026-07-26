@@ -23,6 +23,17 @@ the api-limit marker during the attempt is persisted on the session row
 rate_limited/retryable=true even when the terminal tail is clean.
   S8c: turn-end-without-result path (the incident's exact shape).
   S8d: failure-marker path (S8b with the limit text scrolled out).
+
+S8e (ACP ADR 0049 R9, 2026-07-26, canonical Hy host only): the remaining
+behavioural terminal — the interactive-prompt stall watchdog — must also
+consult the provider-limit observation before categorising, and the marker
+vocabulary must track the LIVE wording: the 2026-07-26 incident's
+"You've hit your monthly spend limit. /model to switch models." matches
+none of the pre-R9 patterns ("you've hit your limit" is broken by the
+"monthly spend" infix). The scenario drives the incident wording through
+the real classifier (F-api-limit-spend), scrolls it out, freezes the pane
+past the stall threshold with the judge disabled, and asserts the typed
+stall failure distills to rate_limited/retryable=true via the latch.
 """
 
 import json
@@ -212,6 +223,75 @@ def test_s8d_failure_after_limit_scrolled_out_maps_rate_limited() -> None:
         row = harness.session_row(scenario.session_id)
         assert LIMIT_TEXT not in (row["output_snippet"] or ""), row["output_snippet"]
         assert row["api_limit_observed_at"] is not None, row
+        cause = json.loads(row["terminal_cause_json"])
+        assert cause["category"] == "rate_limited", cause
+        assert cause["retryable"] is True, cause
+
+
+@pytest.mark.skipif(
+    not HY_GATE,
+    reason=(
+        "S8e asserts the ADR 0049 R9 stall-path distillation via the issue "
+        "#557 durable latch on the canonical Hy host; the retired Rust "
+        "implementation has no latch"
+    ),
+)
+def test_s8e_stall_after_spend_limit_scrolled_out_maps_rate_limited() -> None:
+    """ACP ADR 0049 R9: the stall watchdog's typed failure must consult the
+    provider-limit observation. The scenario also exercises the R9
+    vocabulary end-to-end: F-api-limit-spend is the 2026-07-26 incident
+    wording verbatim, and only the real classifier recognising it produces
+    the blocked_api observation (and hence the latch) this test asserts."""
+    with AgentdHarness(extra_serve_args=["--prompt-stall-secs", "2"]) as harness:
+        scenario = harness.scenario(
+            "s8e",
+            [
+                {"render": "F-idle-claude"},
+                {"await_keys": {"expect": PROMPT, "timeout_s": 30}},
+                # Clear the awaiting_response latch deterministically (same
+                # choreography as S6/S6b) before showing the limit frame.
+                {"render": "F-active-codex"},
+                {"await_monitor_ack": {"timeout_s": 30}},
+                # The live incident wording, recognised (post-R9) by the
+                # real marker vocabulary -> blocked_api + durable latch.
+                # The active marker is still inside the tail-30 window, so
+                # turn-end (and its solicitation budget) never arms here.
+                {"render": "F-api-limit-spend"},
+                # >=2s of static frame at the 100ms tick: the limit-bearing
+                # frame is deterministically observed before scrolling out.
+                {"sleep_s": 2.0},
+                # Purge idle glyph, active marker and limit text from the
+                # 100-line capture window (hazard 3), then freeze on a pane
+                # that is neither idle nor active: stall-watchdog bait.
+                # 200, not 110: like S8d, nothing else lands between the
+                # scroll and the terminal, so the limit text must leave the
+                # 500-char output_snippet window too — blank rows alone
+                # would not do it (S8d's measured note).
+                {"scroll": 200},
+                {"render": "F-frozen"},
+                # Park forever: judge disabled -> the stall site fails
+                # loudly with the typed interactive-prompt-blocked reason.
+            ],
+        )
+        scenario.launch_m2(prompt=PROMPT, expected_result={"payload_schema": RESULT_SCHEMA})
+
+        status = _poll_status(harness, scenario.session_id, "failed", 30.0)
+        assert status == "failed", f"status={status}\n{harness.log_text()}"
+
+        row = harness.session_row(scenario.session_id)
+        # Premise: the limit wording has left every marker window.
+        assert "monthly spend limit" not in (row["output_snippet"] or ""), row["output_snippet"]
+        # The R9 vocabulary really classified the incident wording: the
+        # blocked_api observation was recorded and latched mid-attempt.
+        assert row["api_limit_observed_at"] is not None, row
+        assert any(
+            e["event_type"] == "session_blocked" for e in harness.events(scenario.session_id)
+        ), harness.events(scenario.session_id)
+        # The stall failure stays typed (S6b verbatim reason)...
+        reason = row["last_validation_error"] or ""
+        assert reason.startswith("interactive-prompt-blocked:"), reason
+        assert "no prompt judge configured" in reason, reason
+        # ...but the category distills to the transient provider limit.
         cause = json.loads(row["terminal_cause_json"])
         assert cause["category"] == "rate_limited", cause
         assert cause["retryable"] is True, cause

@@ -854,9 +854,24 @@
     (when (is-not blocked-failure None)
       (setv observed-status "failed")
       (setv row (replace row :last-validation-error blocked-failure))
-      (setv row (cause-if-absent
+      ;; ACP ADR 0049 R9(S8e): 行動系終端は provider-limit 観測を先に見る —
+      ;; attempt 中に blocked_api を観測済み(durable latch、issue #557)なら
+      ;; interactive_prompt_blocked でなく rate_limited/retryable=true
+      ;; (上限下の凍結 pane は transient — ACP rotation/exhaustion の発火面)。
+      ;; 生 marker の同時成立は分類順(api-limit → blocked_api ≠ running)に
+      ;; より stall arm に到達しない — latch が唯一の到達形。
+      (setv row
+            (if (is-not row.api-limit-observed-at None)
+                (cause-if-absent
+                  row (make-cause
+                        "rate_limited"
+                        (+ blocked-failure
+                           "; api-limit marker observed during attempt at "
+                           row.api-limit-observed-at)
+                        observed-at))
+                (cause-if-absent
                   row (make-cause "interactive_prompt_blocked" blocked-failure
-                                  observed-at)))))
+                                  observed-at))))))
 
   ;; --- 書き戻し + 終端 taxonomy + cleanup + event。
   (<- final-row (finalize row observed-status obs output observed-at))
