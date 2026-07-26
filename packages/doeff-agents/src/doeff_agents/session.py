@@ -25,6 +25,7 @@ from .monitor import (
     is_waiting_for_input,
 )
 from .session_backend import SessionBackend
+from .sessionhost.impls.ready_physics import has_claude_screen_reader_trust_prompt
 from .shell import (
     assert_no_forbidden_agent_env,
     assert_session_env_is_non_auth_overlay,
@@ -416,7 +417,7 @@ def _dismiss_onboarding_dialogs(
 
         matched = False
 
-        if _screen_reader_trust_prompt_visible(output):
+        if has_claude_screen_reader_trust_prompt(output):
             logger.info("Onboarding: screen-reader trust prompt — sending y")
             active_backend.send_keys(target, "y")
             dismissed += 1
@@ -462,21 +463,6 @@ def _dismiss_onboarding_dialogs(
 
     logger.info("Onboarding: %d dialogs dismissed", dismissed)
     return dismissed
-
-
-def _screen_reader_trust_prompt_visible(output: str) -> bool:
-    # Do NOT key on the screen-reader banner: its wording is Claude Code
-    # version-dependent ("[Accessible screen reader mode: on]" up to ~2.1.204,
-    # "[Screen Reader Mode: on via flag]" from 2.1.206), and a stale banner
-    # match left the trust prompt undismissed — the agent hung at "Enter y/n:"
-    # until the caller's await budget expired (2026-07-10). The textual y/n
-    # prompt lines below only ever appear in the screen-reader rendering of
-    # the trust dialog, so they are the version-stable signal.
-    return (
-        "Quick safety check: Is this a project you created or one you trust?" in output
-        and "Please answer y or n." in output
-        and "Enter y/n:" in output
-    )
 
 
 def _dismiss_trust_dialog(
