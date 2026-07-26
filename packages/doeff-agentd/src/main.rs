@@ -7225,6 +7225,61 @@ Working...
     }
 
     #[test]
+    fn api_limit_marker_recognises_adr0049_r9_spend_wordings() {
+        // ACP ADR 0049 R9 (2026-07-26 incident): the live monthly
+        // spend-limit wording is not a superstring of "you've hit your
+        // limit" (the "monthly spend" infix breaks the substring match),
+        // and the credits-exhaustion wording was absent entirely.
+        assert!(output_has_api_limit_marker(
+            "You've hit your monthly spend limit. /model to switch models."
+        ));
+        assert!(output_has_api_limit_marker(
+            "You're out of usage credits · buy more credits or upgrade your plan"
+        ));
+    }
+
+    #[test]
+    fn turn_end_exhaustion_with_visible_limit_maps_rate_limited() {
+        // ACP ADR 0049 R9: behavioural terminals (solicitation exhaustion,
+        // prompt stall) must consult the pane's provider-limit marker
+        // before categorising.  A budget-exhausted turn-end whose pane
+        // still shows the limit message is a transient provider limit —
+        // RateLimited retryable=true, not RunFailed — otherwise ACP's
+        // rotation/failover machinery downstream of the retryable bit
+        // (ADR 0042) is blind to the exhaustion.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pane = "You've hit your monthly spend limit. /model to switch models.\n› ";
+        let pane_file = tmp.path().join("pane.txt");
+        fs::write(&pane_file, pane).expect("write pane");
+        let log_file = tmp.path().join("tmux.log");
+        let tmux_bin = write_monitor_fake_tmux(&tmp, &pane_file, &log_file);
+        let db = tmp.path().join("agentd.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        migrate(&conn).expect("migrate");
+        let mut snapshot = stable_monitor_snapshot(pane, Some(verdict_schema_spec()));
+        snapshot.result_solicitations_used = DEFAULT_RESULT_SOLICITATION_LIMIT;
+        upsert_snapshot(&conn, &snapshot).expect("insert session");
+        let config = monitor_test_config(&tmp, db, tmux_bin, None);
+
+        monitor_once(&config).expect("monitor tick");
+
+        let session = session_get(&conn, "s1").expect("get").expect("exists");
+        assert_eq!(session.status, "failed");
+        let reason = session.last_validation_error.expect("validation error");
+        assert!(
+            reason.contains("without reporting a result via report_result"),
+            "discriminator-facing reason preserved: {reason}"
+        );
+        let cause = session.terminal_cause.expect("terminal cause");
+        assert!(
+            matches!(cause.category, TerminalCauseCategory::RateLimited),
+            "visible provider-limit marker must categorise as RateLimited: {:?}",
+            cause.category
+        );
+        assert!(cause.retryable, "provider-limit terminals are transient");
+    }
+
+    #[test]
     fn turn_end_menu_is_unblocked_by_judge_not_solicited() {
         // ADR-DOE-AGENTS-002 R6: a codex menu renders the idle-prompt glyph,
         // so the turn-end site must consult the judge BEFORE pasting the
