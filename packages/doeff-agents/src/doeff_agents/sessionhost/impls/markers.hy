@@ -53,7 +53,13 @@
             (in "you've reached your usage limit" text)
             (in "you've hit your usage limit" text)
             (in "limit reached · resets" text)
-            (in "limit reached ∙ resets" text))))
+            (in "limit reached ∙ resets" text)
+            ;; ACP ADR 0049 R9(2026-07-26 実 incident、Fable 月次枠 0%):
+            ;; 実物文言は "you've hit your limit" に部分一致しない
+            ;; ("monthly spend" が挟まる)。credits 枯渇も同系の実物文言で
+            ;; exhausted 側 = blocked_api が正。
+            (in "you've hit your monthly spend limit" text)
+            (in "out of usage credits" text))))
 
 (deff has-waiting-marker [output]
   {:pre [(: output str)] :post [(: % bool)]}

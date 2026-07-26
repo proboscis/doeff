@@ -3131,6 +3131,31 @@ fn output_has_api_limit_marker(output: &str) -> bool {
         || text.contains("you've hit your limit")
         || text.contains("/rate-limit-options")
         || text.contains("stop and wait for limit to reset")
+        // ACP ADR 0049 R9 (2026-07-26 incident): the live monthly
+        // spend-limit wording is not a superstring of "you've hit your
+        // limit" (the "monthly spend" infix breaks the substring), and
+        // the credits-exhaustion wording was absent entirely.
+        || text.contains("you've hit your monthly spend limit")
+        || text.contains("out of usage credits")
+}
+
+/// ACP ADR 0049 R9 (2026-07-26): behavioural terminals (solicitation
+/// exhaustion, interactive-prompt stall) consult the pane's
+/// provider-limit marker before categorising — a visible limit message
+/// makes the terminal a transient rate limit (retryable) instead of a
+/// deterministic failure, keeping ACP's rotation/failover machinery
+/// (ADR 0042 downstream of the retryable bit) sighted.  This retired
+/// reference implementation has no durable latch (issue #557 is
+/// canonical-Hy-host-only), so only the live capture is consulted.
+fn behavioral_terminal_category(
+    output: &str,
+    fallback: TerminalCauseCategory,
+) -> (TerminalCauseCategory, bool) {
+    if output_has_api_limit_marker(output) {
+        (TerminalCauseCategory::RateLimited, true)
+    } else {
+        (fallback, false)
+    }
 }
 
 fn output_has_waiting_marker(output: &str) -> bool {
@@ -3992,11 +4017,16 @@ fn monitor_once(config: &Config) -> Result<()> {
                             )
                         };
                         snapshot.last_validation_error = Some(reason.clone());
+                        // ACP ADR 0049 R9: a limit message still visible at
+                        // the exhausted turn-end is a transient provider
+                        // limit, not a deterministic run failure.
+                        let (category, retryable) =
+                            behavioral_terminal_category(&output, TerminalCauseCategory::RunFailed);
                         set_terminal_cause_if_absent(
                             &mut snapshot,
-                            TerminalCauseCategory::RunFailed,
+                            category,
                             reason,
-                            false,
+                            retryable,
                             &observed_at,
                         );
                     }
@@ -4088,11 +4118,21 @@ fn monitor_once(config: &Config) -> Result<()> {
                 if let Some(reason) = blocked_failure {
                     observed_status = "failed";
                     snapshot.last_validation_error = Some(reason.clone());
+                    // ACP ADR 0049 R9: consult the provider-limit marker
+                    // before the behavioural category.  Unreachable with a
+                    // live marker under today's branch order (the marker
+                    // classifies blocked_api, which gates this arm out) —
+                    // kept as the categorisation-site invariant the ADR
+                    // freezes.
+                    let (category, retryable) = behavioral_terminal_category(
+                        &output,
+                        TerminalCauseCategory::InteractivePromptBlocked,
+                    );
                     set_terminal_cause_if_absent(
                         &mut snapshot,
-                        TerminalCauseCategory::InteractivePromptBlocked,
+                        category,
                         reason,
-                        false,
+                        retryable,
                         &observed_at,
                     );
                 }
@@ -7277,6 +7317,37 @@ Working...
             cause.category
         );
         assert!(cause.retryable, "provider-limit terminals are transient");
+    }
+
+    #[test]
+    fn behavioral_terminal_category_consults_marker_before_fallback() {
+        // ACP ADR 0049 R9 at the categorisation site itself, covering the
+        // stall fallback: the stall arm is gated on observed_status ==
+        // "running" so a live marker cannot coexist with a firing stall
+        // arm today — the invariant is frozen here at the helper.
+        let (category, retryable) = behavioral_terminal_category(
+            "You've hit your monthly spend limit.",
+            TerminalCauseCategory::InteractivePromptBlocked,
+        );
+        assert!(matches!(category, TerminalCauseCategory::RateLimited));
+        assert!(retryable);
+
+        let (category, retryable) = behavioral_terminal_category(
+            "Password:",
+            TerminalCauseCategory::InteractivePromptBlocked,
+        );
+        assert!(matches!(
+            category,
+            TerminalCauseCategory::InteractivePromptBlocked
+        ));
+        assert!(!retryable);
+
+        let (category, retryable) = behavioral_terminal_category(
+            "agent output scrolled by\n› ",
+            TerminalCauseCategory::RunFailed,
+        );
+        assert!(matches!(category, TerminalCauseCategory::RunFailed));
+        assert!(!retryable);
     }
 
     #[test]
