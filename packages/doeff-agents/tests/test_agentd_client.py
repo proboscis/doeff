@@ -598,6 +598,325 @@ def test_ensure_agentd_spawns_when_socket_file_is_stale(
     assert len(starts) == 1
 
 
+def _write_supervisor_declaration(state_home: Path, payload: Mapping[str, Any]) -> Path:
+    """Write the canonical supervisor declaration file into the state dir."""
+    declaration_path = state_home / "doeff" / "agentd.supervisor.json"
+    declaration_path.parent.mkdir(parents=True, exist_ok=True)
+    declaration_path.write_text(json.dumps(payload), encoding="utf-8")
+    return declaration_path
+
+
+def test_default_agentd_paths_include_supervisor_declaration(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    state_home = tmp_path / "state"
+    runtime_dir = tmp_path / "runtime"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
+
+    paths = default_agentd_paths()
+
+    assert paths.supervisor_path == state_home / "doeff" / "agentd.supervisor.json"
+
+
+def test_ensure_agentd_supervised_socket_refuses_self_spawn_without_kick(
+    monkeypatch,
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    # Single-supervisor principle (issue #558, ACP ADR 0024): when the
+    # canonical socket is DECLARED supervisor-managed, proven listener
+    # absence no longer licenses a self-spawn — a supervisor restart
+    # window (bootout, crash throttle) would otherwise let ensure bind a
+    # rogue unsupervised host and split-brain the store.
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    paths = default_agentd_paths()
+    _write_supervisor_declaration(
+        state_home,
+        {
+            "socket_path": str(paths.socket_path),
+            "supervisor": "launchd",
+            "label": "com.example.doeff-sessionhost",
+        },
+    )
+    starts: list[tuple[tuple[str, ...], Path]] = []
+    monkeypatch.setattr(
+        agentd_client,
+        "_start_agentd_process",
+        lambda command, log_path: starts.append((tuple(command), log_path)),
+        raising=False,
+    )
+
+    with pytest.raises(AgentdUnavailableError) as error:
+        ensure_agentd(daemon_bin="/usr/local/bin/doeff-agentd", client_timeout=0.2)
+
+    message = str(error.value)
+    assert "supervisor" in message
+    assert "com.example.doeff-sessionhost" in message
+    assert "refusing to self-spawn" in message
+    assert starts == []
+
+
+def test_ensure_agentd_supervised_socket_delegates_to_kick_command(
+    monkeypatch,
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    # Declared kick_command is the delegation seam: ensure asks the
+    # supervisor to (re)start the daemon and then waits for readiness.
+    # The command is configuration-injected argv — doeff knows nothing
+    # about launchd or any concrete label.
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    paths = default_agentd_paths()
+    kick_flag = tmp_path / "kicked.flag"
+    _write_supervisor_declaration(
+        state_home,
+        {
+            "socket_path": str(paths.socket_path),
+            "kick_command": [
+                sys.executable,
+                "-c",
+                f"import pathlib; pathlib.Path({str(kick_flag)!r}).write_text('kicked')",
+            ],
+        },
+    )
+    starts: list[tuple[tuple[str, ...], Path]] = []
+    statuses: Iterator[Mapping[str, Any] | None] = iter(
+        [None, {"state": "running", "db_path": str(paths.db_path)}]
+    )
+    monkeypatch.setattr(
+        agentd_client,
+        "_agentd_status_if_ready",
+        lambda client: next(statuses),
+    )
+    monkeypatch.setattr(
+        agentd_client,
+        "_start_agentd_process",
+        lambda command, log_path: starts.append((tuple(command), log_path)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        agentd_client,
+        "_sleep_for_agentd_start",
+        lambda _seconds: None,
+        raising=False,
+    )
+
+    client = ensure_agentd(daemon_bin="/usr/local/bin/doeff-agentd", client_timeout=0.2)
+
+    assert client.socket_path == paths.socket_path
+    assert kick_flag.read_text(encoding="utf-8") == "kicked"
+    assert starts == []
+
+
+def test_ensure_agentd_supervised_kick_failure_is_loud(
+    monkeypatch,
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    paths = default_agentd_paths()
+    _write_supervisor_declaration(
+        state_home,
+        {
+            "socket_path": str(paths.socket_path),
+            "kick_command": [sys.executable, "-c", "import sys; sys.exit(3)"],
+        },
+    )
+    starts: list[tuple[tuple[str, ...], Path]] = []
+    monkeypatch.setattr(
+        agentd_client,
+        "_start_agentd_process",
+        lambda command, log_path: starts.append((tuple(command), log_path)),
+        raising=False,
+    )
+
+    with pytest.raises(AgentdUnavailableError) as error:
+        ensure_agentd(daemon_bin="/usr/local/bin/doeff-agentd", client_timeout=0.2)
+
+    message = str(error.value)
+    assert "supervisor" in message
+    assert "exit code 3" in message
+    assert starts == []
+
+
+def test_ensure_agentd_supervised_kick_then_still_dead_is_loud(
+    monkeypatch,
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    # Kick succeeded but the daemon never became ready within the budget:
+    # loud failure, never a self-spawn fallback.
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    paths = default_agentd_paths()
+    _write_supervisor_declaration(
+        state_home,
+        {
+            "socket_path": str(paths.socket_path),
+            "kick_command": [sys.executable, "-c", "pass"],
+        },
+    )
+    starts: list[tuple[tuple[str, ...], Path]] = []
+    monkeypatch.setattr(
+        agentd_client,
+        "_start_agentd_process",
+        lambda command, log_path: starts.append((tuple(command), log_path)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        agentd_client,
+        "_sleep_for_agentd_start",
+        lambda _seconds: None,
+        raising=False,
+    )
+
+    with pytest.raises(AgentdUnavailableError) as error:
+        ensure_agentd(
+            daemon_bin="/usr/local/bin/doeff-agentd",
+            client_timeout=0.2,
+            timeout=0.2,
+        )
+
+    message = str(error.value)
+    assert "supervisor" in message
+    assert starts == []
+
+
+def test_ensure_agentd_supervisor_declaration_for_other_socket_is_inert(
+    monkeypatch,
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    # The declaration pins ONE canonical socket.  A different target
+    # socket (dev daemon, test harness) keeps the plain spawn path.
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    paths = default_agentd_paths()
+    _write_supervisor_declaration(
+        state_home,
+        {
+            "socket_path": str(tmp_path / "other.sock"),
+            "supervisor": "launchd",
+            "label": "com.example.doeff-sessionhost",
+        },
+    )
+    starts: list[tuple[tuple[str, ...], Path]] = []
+    statuses: Iterator[Mapping[str, Any] | None] = iter(
+        [None, {"state": "running", "db_path": str(paths.db_path)}]
+    )
+    monkeypatch.setattr(
+        agentd_client,
+        "_agentd_status_if_ready",
+        lambda client: next(statuses),
+    )
+    monkeypatch.setattr(
+        agentd_client,
+        "_start_agentd_process",
+        lambda command, log_path: starts.append((tuple(command), log_path)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        agentd_client,
+        "_sleep_for_agentd_start",
+        lambda _seconds: None,
+        raising=False,
+    )
+
+    client = ensure_agentd(daemon_bin="/usr/local/bin/doeff-agentd", client_timeout=0.2)
+
+    assert client.socket_path == paths.socket_path
+    assert len(starts) == 1
+
+
+def test_ensure_agentd_supervised_ready_daemon_needs_no_kick(
+    monkeypatch,
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    # A live, healthy daemon needs neither kick nor spawn regardless of
+    # the declaration.
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    paths = default_agentd_paths()
+    paths.socket_path.parent.mkdir(parents=True, exist_ok=True)
+    kick_flag = tmp_path / "kicked.flag"
+    _write_supervisor_declaration(
+        state_home,
+        {
+            "socket_path": str(paths.socket_path),
+            "kick_command": [
+                sys.executable,
+                "-c",
+                f"import pathlib; pathlib.Path({str(kick_flag)!r}).write_text('kicked')",
+            ],
+        },
+    )
+
+    def handle(request: Mapping[str, Any]) -> Mapping[str, Any]:
+        return {"id": request["id"], "ok": True, "result": {"state": "running"}}
+
+    with OneShotAgentdServer(paths.socket_path, handle):
+        client = ensure_agentd(client_timeout=2.0)
+
+    assert client.socket_path == paths.socket_path
+    assert not kick_flag.exists()
+
+
+def test_ensure_agentd_malformed_supervisor_declaration_is_loud(
+    monkeypatch,
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    # Fail-closed: a declaration that cannot be understood might be
+    # declaring supervision, so ensure must refuse to act (and must
+    # never "fall back" to self-spawn).
+    from doeff_agents.agentd_client import AgentdSupervisorConfigError
+
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    paths = default_agentd_paths()
+    starts: list[tuple[tuple[str, ...], Path]] = []
+    monkeypatch.setattr(
+        agentd_client,
+        "_start_agentd_process",
+        lambda command, log_path: starts.append((tuple(command), log_path)),
+        raising=False,
+    )
+
+    declaration_path = state_home / "doeff" / "agentd.supervisor.json"
+    declaration_path.parent.mkdir(parents=True, exist_ok=True)
+    declaration_path.write_text("{not json", encoding="utf-8")
+    with pytest.raises(AgentdSupervisorConfigError):
+        ensure_agentd(daemon_bin="/usr/local/bin/doeff-agentd", client_timeout=0.2)
+
+    # Unknown keys are typed config errors, not silent no-ops: a typo like
+    # "kick_cmd" must never silently disable delegation.
+    _write_supervisor_declaration(
+        state_home,
+        {
+            "socket_path": str(paths.socket_path),
+            "kick_cmd": ["launchctl", "kickstart", "gui/501/com.example"],
+        },
+    )
+    with pytest.raises(AgentdSupervisorConfigError) as error:
+        ensure_agentd(daemon_bin="/usr/local/bin/doeff-agentd", client_timeout=0.2)
+
+    assert "kick_cmd" in str(error.value)
+    assert starts == []
+
+
 def test_agentd_command_defaults_to_interpreter_sibling_sessionhost(
     monkeypatch,
     tmp_path: Path,

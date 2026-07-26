@@ -248,8 +248,44 @@ def test_agentd_ensure_json_outputs_readiness_contract(
         "socket_path": str(client.socket_path),
         "db_path": str(tmp_path / "agentd.sqlite"),
         "status": client.status_payload,
+        "supervised": False,
     }
     assert client.calls == [("status", None)]
+
+
+def test_agentd_ensure_json_reports_supervised_socket(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    # Ops verification seam for the single-supervisor deployment (issue
+    # #558): `agentd ensure --json` states whether the canonical socket
+    # is declared supervisor-managed, so plist⇔ensure wiring is checkable
+    # with one command.
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    client = FakeAgentdClient([])
+    client.socket_path = tmp_path / "agentd.sock"
+    declaration_path = state_home / "doeff" / "agentd.supervisor.json"
+    declaration_path.parent.mkdir(parents=True)
+    declaration_path.write_text(
+        json.dumps(
+            {
+                "socket_path": str(client.socket_path),
+                "supervisor": "launchd",
+                "label": "com.example.doeff-sessionhost",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cli_module, "ensure_agentd", lambda: client)
+
+    result = runner.invoke(cli, ["agentd", "ensure", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["supervised"] is True
+    assert payload["socket_path"] == str(client.socket_path)
 
 
 def test_agentd_ensure_json_fails_loudly_when_agentd_unreachable(
