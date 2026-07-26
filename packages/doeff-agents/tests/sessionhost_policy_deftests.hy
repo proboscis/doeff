@@ -444,6 +444,63 @@
 
 
 ;; ---------------------------------------------------------------------------
+;; issue #557: api-limit 観測の durable latch と終端分類での蒸留
+;; ---------------------------------------------------------------------------
+
+(deftest test-api-limit-observation-latches-durably
+  ;; S8c 前段: blocked_api 観測は S8a の非終端 semantics を保ったまま、
+  ;; 観測事実を行へ durable に latch する(first-write-wins)
+  (setv world (FakeWorld))
+  (seed world (make-row world) :frame F-API-LIMIT)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "blocked_api"))
+  (assert (is None row.terminal-cause))
+  (assert (is-not row.api-limit-observed-at None))
+  ;; first-write-wins: 2 cycle 目の再観測で打刻は動かない
+  (setv first-latch row.api-limit-observed-at)
+  (setv world.now (+ world.now (timedelta :seconds 30)))
+  (<- outcomes2 (run-cycle world (MonitorKnobs)))
+  (assert (= (. (get world.rows "s1") api-limit-observed-at) first-latch)))
+
+
+(deftest test-solicitation-exhaustion-with-latch-rate-limited
+  ;; S8c: 上限文言が terminal 前に scroll out(終端フレームは素の idle)でも、
+  ;; attempt 中の blocked_api 観測 latch が turn-end-without-result 終端を
+  ;; rate_limited/retryable=true へ蒸留する(issue #557 の実障害形)
+  (setv world (FakeWorld))
+  (seed world (make-row world
+                        :result-solicitations-used 2
+                        :api-limit-observed-at (iso-at world -60)
+                        :output-snippet (tail-chars F-IDLE-CODEX 500))
+        :frame F-IDLE-CODEX)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "failed"))
+  ;; 基底 reason は S3 文言 verbatim のまま(last_validation_error は不変)
+  (assert (= row.last-validation-error
+             "session reached turn-end without reporting a result via report_result (after 2 solicitation(s))"))
+  (assert (= row.terminal-cause.category "rate_limited"))
+  (assert (= row.terminal-cause.retryable True))
+  ;; cause reason は latch の証跡を運ぶ
+  (assert (in "api-limit" row.terminal-cause.reason))
+  (assert (in #("s1" "session_failed") world.events)))
+
+
+(deftest test-failed-output-with-latch-rate-limited
+  ;; S8d: failure marker 単独の終端フレーム(上限文言は scroll out 済み)でも、
+  ;; latch があれば reason 無し failed の output 写像は rate_limited へ
+  (setv world (FakeWorld))
+  (seed world (make-row world :api-limit-observed-at (iso-at world -60))
+        :frame F-FAILED)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "failed"))
+  (assert (= row.terminal-cause.category "rate_limited"))
+  (assert (= row.terminal-cause.retryable True)))
+
+
+;; ---------------------------------------------------------------------------
 ;; judge-before-solicitation(R6)と judge 変種(R7)
 ;; ---------------------------------------------------------------------------
 
