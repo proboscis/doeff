@@ -351,6 +351,31 @@ rules:
       include:
         - /packages/doeff-agents/src/doeff_agents/sessionhost/impls/**
 
+  - id: doeff-agents-agentd-spawn-only-via-ensure-boundary
+    languages: [python]
+    severity: ERROR
+    message: >
+      issue #558 / ACP ADR 0024 / ADR-DOE-AGENTS-004 R10: doeff-agentd
+      (re)start authority is owned exclusively by the supervisor-aware
+      ensure boundary in doeff_agents/agentd_client.py. Calling
+      _start_agentd_process from anywhere else bypasses the supervisor
+      declaration gate (agentd.supervisor.json) and can bind a rogue
+      unsupervised host against a launchd/systemd-managed socket during a
+      supervisor restart window (split-brain). Go through ensure_agentd().
+    pattern-either:
+      - pattern: _start_agentd_process(...)
+      - pattern: agentd_client._start_agentd_process(...)
+      - pattern: from doeff_agents.agentd_client import _start_agentd_process
+    paths:
+      include:
+        - doeff/**
+        - packages/**
+      exclude:
+        - packages/doeff-agents/src/doeff_agents/agentd_client.py
+        - tests/**
+        - packages/**/tests/**
+        - packages/**/conformance/**
+
   - id: no-future-annotations
     languages: [python]
     severity: ERROR
