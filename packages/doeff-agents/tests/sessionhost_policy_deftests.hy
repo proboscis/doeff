@@ -500,6 +500,26 @@
   (assert (= row.terminal-cause.retryable True)))
 
 
+(deftest test-solicitation-exhaustion-live-marker-rate-limited
+  ;; ACP ADR 0049 R9(2026-07-26 実 incident の直接形): 終端 cycle の pane に
+  ;; 上限文言が生きて見えている(事前 latch 無し)。同 cycle の観測が latch を
+  ;; 立ててから budget 超過分類が走る順序(latch arm が turn-end arm より先)を
+  ;; 契約として固定する — marker が立っていれば category は run_failed でなく
+  ;; rate_limited/retryable=true。
+  (setv world (FakeWorld))
+  (setv frame (+ F-API-LIMIT "\n› "))
+  (seed world (make-row world
+                        :result-solicitations-used 2
+                        :output-snippet (tail-chars frame 500))
+        :frame frame)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "failed"))
+  (assert (is-not row.api-limit-observed-at None))
+  (assert (= row.terminal-cause.category "rate_limited"))
+  (assert (= row.terminal-cause.retryable True)))
+
+
 ;; ---------------------------------------------------------------------------
 ;; judge-before-solicitation(R6)と judge 変種(R7)
 ;; ---------------------------------------------------------------------------
@@ -635,6 +655,27 @@
   (assert (= row.status "running"))
   (assert (= row.prompt-unblock-attempts 1))
   (assert (in #("s1" "session_prompt_unblocked") world.events)))
+
+
+(deftest test-stall-with-latch-rate-limited
+  ;; ACP ADR 0049 R9(S8e): 行動系終端の stall でも provider-limit 観測を
+  ;; 先に見る — 上限文言 scroll out 後に凍結した pane(attempt 中の
+  ;; blocked_api 観測が latch 済み)は interactive_prompt_blocked でなく
+  ;; rate_limited/retryable=true(上限下の凍結は transient — ACP
+  ;; rotation/exhaustion の発火面)。生 marker の同時成立は分類順
+  ;; (api-limit → blocked_api ≠ running)により stall arm に到達しない —
+  ;; latch が唯一の到達形。last_validation_error は S6b 文言 verbatim のまま。
+  (setv world (FakeWorld))
+  (seed-stalled world :api_limit_observed_at (iso-at world -400))
+  (<- outcomes (run-cycle world (MonitorKnobs :judge-cmd None)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "failed"))
+  (assert (= row.last-validation-error
+             "interactive-prompt-blocked: pane unchanged for over 180s and no prompt judge configured"))
+  (assert (= row.terminal-cause.category "rate_limited"))
+  (assert (= row.terminal-cause.retryable True))
+  ;; cause reason は latch の証跡を運ぶ(S8c と同じ形)
+  (assert (in "api-limit" row.terminal-cause.reason)))
 
 
 ;; ---------------------------------------------------------------------------

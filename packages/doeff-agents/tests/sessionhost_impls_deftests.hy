@@ -419,6 +419,18 @@
   (assert (not approaching.has-api-limit-marker)))
 
 
+(deftest test-api-limit-marker-adr0049-r9-spend-limit-wordings
+  ;; ACP ADR 0049 R9(2026-07-26 実 incident): Fable 月次枠 0% の実物文言
+  ;; 「You've hit your monthly spend limit. /model to switch models.」は
+  ;; 既存の "you've hit your limit" に部分一致しない("monthly spend" が
+  ;; 挟まる)。credits 枯渇(out of usage credits)も同系の実物文言で
+  ;; 語彙に無かった。両方とも exhausted 側 = blocked_api が正。
+  (for [frame ["You've hit your monthly spend limit. /model to switch models."
+               "You're out of usage credits · buy more credits or upgrade your plan"]]
+    (<- obs (classify-claude frame))
+    (assert obs.has-api-limit-marker f"expected api-limit marker: {frame !r}")))
+
+
 (deftest test-classify-codex-update-dialog-down-steps
   (setv frame-sel1 (+ "✨ Update available!\n"
                       "› 1. Update now (runs npm install)\n"
