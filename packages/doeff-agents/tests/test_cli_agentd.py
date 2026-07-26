@@ -232,6 +232,7 @@ def test_agentd_ensure_json_outputs_readiness_contract(
     runner: CliRunner,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     client = FakeAgentdClient([])
     client.socket_path = tmp_path / "agentd.sock"
     client.status_payload = {

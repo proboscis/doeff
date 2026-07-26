@@ -60,6 +60,19 @@ class AgentdUnavailableError(AgentdClientError):
         super().__init__(message)
 
 
+class AgentdSupervisorConfigError(AgentdClientError):
+    """Raised when the supervisor declaration file exists but is invalid.
+
+    Fail-closed: an unreadable declaration might be declaring supervision,
+    so the ensure boundary refuses to act on it (and never falls back to a
+    self-spawn) until the operator fixes the file.
+    """
+
+    def __init__(self, message: str, *, declaration_path: Path) -> None:
+        self.declaration_path = declaration_path
+        super().__init__(message)
+
+
 @dataclass(frozen=True)
 class AgentdPaths:
     """Default filesystem locations for doeff-agentd state and control socket."""
@@ -67,6 +80,25 @@ class AgentdPaths:
     db_path: Path
     socket_path: Path
     log_path: Path
+    supervisor_path: Path
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentdSupervisorDeclaration:
+    """Machine-level declaration that a socket is supervisor-managed.
+
+    Written by the deployment (e.g. a launchd/systemd unit installer) next
+    to the daemon state.  ``kick_command`` is configuration-injected argv
+    that asks the supervisor to (re)start the daemon — doeff itself stays
+    platform-agnostic and never hardcodes launchd, systemd, or a label.
+    ``supervisor`` and ``label`` are informational (diagnostics only).
+    """
+
+    socket_path: Path
+    kick_command: tuple[str, ...] | None
+    supervisor: str | None
+    label: str | None
+    source_path: Path
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -537,7 +569,101 @@ def default_agentd_paths() -> AgentdPaths:
         db_path=state_dir / "agentd.sqlite",
         socket_path=socket_path,
         log_path=state_dir / "agentd.log",
+        supervisor_path=state_dir / "agentd.supervisor.json",
     )
+
+
+_SUPERVISOR_DECLARATION_KEYS = frozenset(
+    {"socket_path", "kick_command", "supervisor", "label"}
+)
+
+
+def load_supervisor_declaration(
+    declaration_path: Path,
+) -> AgentdSupervisorDeclaration | None:
+    """Load the supervisor declaration, or None when the file is absent.
+
+    The declaration is machine state, not caller state: it lives in the
+    daemon state dir so EVERY ensure caller on the machine sees it, not
+    just processes that inherited some environment variable.  Any defect
+    in an existing file is a typed, loud config error — a typo must never
+    silently re-enable the self-spawn path.
+    """
+    try:
+        raw_text = declaration_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    try:
+        raw = json.loads(raw_text)
+    except json.JSONDecodeError as error:
+        raise AgentdSupervisorConfigError(
+            f"supervisor declaration {declaration_path} is not valid JSON: {error}",
+            declaration_path=declaration_path,
+        ) from error
+    if not isinstance(raw, dict):
+        raise AgentdSupervisorConfigError(
+            f"supervisor declaration {declaration_path} must be a JSON object, "
+            f"got {type(raw).__name__}",
+            declaration_path=declaration_path,
+        )
+    unknown = sorted(set(raw) - _SUPERVISOR_DECLARATION_KEYS)
+    if unknown:
+        raise AgentdSupervisorConfigError(
+            f"supervisor declaration {declaration_path} has unknown keys: "
+            f"{', '.join(unknown)} (allowed: "
+            f"{', '.join(sorted(_SUPERVISOR_DECLARATION_KEYS))})",
+            declaration_path=declaration_path,
+        )
+    socket_value = raw.get("socket_path")
+    if not isinstance(socket_value, str) or not socket_value:
+        raise AgentdSupervisorConfigError(
+            f"supervisor declaration {declaration_path} requires a non-empty "
+            "string socket_path",
+            declaration_path=declaration_path,
+        )
+    kick_value = raw.get("kick_command")
+    kick_command: tuple[str, ...] | None
+    if kick_value is None:
+        kick_command = None
+    elif (
+        isinstance(kick_value, list)
+        and kick_value
+        and all(isinstance(item, str) and item for item in kick_value)
+    ):
+        kick_command = tuple(kick_value)
+    else:
+        raise AgentdSupervisorConfigError(
+            f"supervisor declaration {declaration_path} kick_command must be a "
+            "non-empty list of non-empty strings",
+            declaration_path=declaration_path,
+        )
+    supervisor_value = raw.get("supervisor")
+    if supervisor_value is not None and not isinstance(supervisor_value, str):
+        raise AgentdSupervisorConfigError(
+            f"supervisor declaration {declaration_path} supervisor must be a string",
+            declaration_path=declaration_path,
+        )
+    label_value = raw.get("label")
+    if label_value is not None and not isinstance(label_value, str):
+        raise AgentdSupervisorConfigError(
+            f"supervisor declaration {declaration_path} label must be a string",
+            declaration_path=declaration_path,
+        )
+    return AgentdSupervisorDeclaration(
+        socket_path=Path(socket_value),
+        kick_command=kick_command,
+        supervisor=supervisor_value,
+        label=label_value,
+        source_path=declaration_path,
+    )
+
+
+def agentd_socket_is_supervised(socket_path: str | Path) -> bool:
+    """True iff the canonical declaration pins this exact socket."""
+    declaration = load_supervisor_declaration(default_agentd_paths().supervisor_path)
+    if declaration is None:
+        return False
+    return _normalize_path(declaration.socket_path) == _normalize_path(socket_path)
 
 
 def ensure_agentd(
@@ -577,24 +703,33 @@ def ensure_agentd(
     # competitor against it corrupts the lease and the store, so that
     # path retries with a long budget and then fails loudly instead.
     if _socket_has_live_listener(active_socket_path):
-        status = _agentd_status_from_live_listener(client)
-        if status is not None:
-            _validate_agentd_identity(
-                status,
-                expected_db_path=active_db_path,
-                expected_socket_path=active_socket_path,
-                command=command,
-            )
-            return client
-        raise AgentdUnavailableError(
-            "doeff-agentd has a live listener on "
-            f"{active_socket_path} but did not answer daemon.status within "
-            f"{AGENTD_BUSY_STATUS_TIMEOUT_SECONDS}s; refusing to start a "
-            "competing daemon against a live socket. Inspect the running "
-            "host process and its log instead.\n"
-            f"Log path: {paths.log_path}",
-            socket_path=active_socket_path,
-            start_command=tuple(command),
+        return _client_from_live_listener(
+            client,
+            active_db_path=active_db_path,
+            active_socket_path=active_socket_path,
+            command=command,
+            log_path=paths.log_path,
+        )
+
+    # Single-supervisor principle (issue #558, ACP ADR 0024): proven
+    # listener absence licenses a self-spawn ONLY for unsupervised
+    # sockets.  A declared supervisor (launchd, systemd, ...) owns start
+    # and restart; spawning here during its restart window (bootout,
+    # crash throttle) binds a rogue unsupervised host and split-brains
+    # the store, so ensure delegates via the declared kick command or
+    # fails loudly.
+    declaration = load_supervisor_declaration(paths.supervisor_path)
+    if declaration is not None and _normalize_path(
+        declaration.socket_path
+    ) == _normalize_path(active_socket_path):
+        return _delegate_to_supervisor(
+            client,
+            declaration,
+            active_db_path=active_db_path,
+            active_socket_path=active_socket_path,
+            command=command,
+            log_path=paths.log_path,
+            timeout=timeout,
         )
 
     try:
@@ -630,6 +765,121 @@ def ensure_agentd(
         f"Log path: {paths.log_path}",
         socket_path=active_socket_path,
         start_command=tuple(command),
+    )
+
+
+def _client_from_live_listener(
+    client: AgentdClient,
+    *,
+    active_db_path: Path,
+    active_socket_path: Path,
+    command: list[str],
+    log_path: Path,
+) -> AgentdClient:
+    status = _agentd_status_from_live_listener(client)
+    if status is not None:
+        _validate_agentd_identity(
+            status,
+            expected_db_path=active_db_path,
+            expected_socket_path=active_socket_path,
+            command=command,
+        )
+        return client
+    raise AgentdUnavailableError(
+        "doeff-agentd has a live listener on "
+        f"{active_socket_path} but did not answer daemon.status within "
+        f"{AGENTD_BUSY_STATUS_TIMEOUT_SECONDS}s; refusing to start a "
+        "competing daemon against a live socket. Inspect the running "
+        "host process and its log instead.\n"
+        f"Log path: {log_path}",
+        socket_path=active_socket_path,
+        start_command=tuple(command),
+    )
+
+
+AGENTD_SUPERVISOR_KICK_TIMEOUT_SECONDS: float = 10.0
+
+
+def _supervisor_identity(declaration: AgentdSupervisorDeclaration) -> str:
+    parts = [f"supervisor: {declaration.supervisor or 'undeclared'}"]
+    if declaration.label is not None:
+        parts.append(f"label: {declaration.label}")
+    parts.append(f"declaration: {declaration.source_path}")
+    return ", ".join(parts)
+
+
+def _delegate_to_supervisor(
+    client: AgentdClient,
+    declaration: AgentdSupervisorDeclaration,
+    *,
+    active_db_path: Path,
+    active_socket_path: Path,
+    command: list[str],
+    log_path: Path,
+    timeout: float,
+) -> AgentdClient:
+    identity = _supervisor_identity(declaration)
+    if declaration.kick_command is None:
+        raise AgentdUnavailableError(
+            f"doeff-agentd socket {active_socket_path} is declared "
+            f"supervisor-managed ({identity}) and has no live listener; "
+            "refusing to self-spawn a host the supervisor does not manage. "
+            "Start or restart the daemon through its supervisor (the "
+            "declaration provides no kick_command).\n"
+            f"Log path: {log_path}",
+            socket_path=active_socket_path,
+            start_command=(),
+        )
+
+    kick = list(declaration.kick_command)
+    try:
+        outcome = subprocess.run(
+            kick,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=AGENTD_SUPERVISOR_KICK_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise AgentdUnavailableError(
+            f"doeff-agentd socket {active_socket_path} is supervisor-managed "
+            f"({identity}) and its kick command failed to run: {error}.\n"
+            f"Kick command: {shlex.join(kick)}\n"
+            f"Log path: {log_path}",
+            socket_path=active_socket_path,
+            start_command=declaration.kick_command,
+        ) from error
+    if outcome.returncode != 0:
+        detail = outcome.stderr.strip() or outcome.stdout.strip()
+        raise AgentdUnavailableError(
+            f"doeff-agentd socket {active_socket_path} is supervisor-managed "
+            f"({identity}) and its kick command exited with "
+            f"exit code {outcome.returncode}: {detail}\n"
+            f"Kick command: {shlex.join(kick)}\n"
+            f"Log path: {log_path}",
+            socket_path=active_socket_path,
+            start_command=declaration.kick_command,
+        )
+
+    if _wait_for_agentd_ready(
+        client,
+        expected_db_path=active_db_path,
+        expected_socket_path=active_socket_path,
+        command=command,
+        timeout=timeout,
+    ):
+        return client
+
+    raise AgentdUnavailableError(
+        f"doeff-agentd socket {active_socket_path} is supervisor-managed "
+        f"({identity}); the kick command succeeded but the daemon did not "
+        f"become ready within {timeout}s. Inspect the supervisor state and "
+        "the daemon log.\n"
+        f"Kick command: {shlex.join(kick)}\n"
+        f"Log path: {log_path}",
+        socket_path=active_socket_path,
+        start_command=declaration.kick_command,
     )
 
 
@@ -1009,8 +1259,12 @@ __all__ = [
     "AgentdProtocolError",
     "AgentdSessionList",
     "AgentdSessionParseWarning",
+    "AgentdSupervisorConfigError",
+    "AgentdSupervisorDeclaration",
     "AgentdUnavailableError",
     "LazyAgentdClient",
+    "agentd_socket_is_supervised",
     "default_agentd_paths",
     "ensure_agentd",
+    "load_supervisor_declaration",
 ]

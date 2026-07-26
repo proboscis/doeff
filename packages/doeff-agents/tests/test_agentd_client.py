@@ -692,7 +692,7 @@ def test_ensure_agentd_supervised_socket_delegates_to_kick_command(
     monkeypatch.setattr(
         agentd_client,
         "_agentd_status_if_ready",
-        lambda client: next(statuses),
+        lambda _client: next(statuses),
     )
     monkeypatch.setattr(
         agentd_client,
@@ -817,7 +817,7 @@ def test_ensure_agentd_supervisor_declaration_for_other_socket_is_inert(
     monkeypatch.setattr(
         agentd_client,
         "_agentd_status_if_ready",
-        lambda client: next(statuses),
+        lambda _client: next(statuses),
     )
     monkeypatch.setattr(
         agentd_client,
