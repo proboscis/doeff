@@ -13,7 +13,9 @@ from doeff_agents.agentd_client import (
     AgentdClient,
     AgentdClientError,
     AgentdSessionParseWarning,
+    AgentdSupervisorConfigError,
     AgentdUnavailableError,
+    agentd_socket_is_supervised,
     default_agentd_paths,
     ensure_agentd,
 )
@@ -61,6 +63,9 @@ def _agentd_client_or_exit() -> AgentdClient:
         return ensure_agentd()
     except AgentdUnavailableError as error:
         _print_agentd_unavailable(error)
+        sys.exit(1)
+    except AgentdSupervisorConfigError as error:
+        _print_agentd_request_error(error)
         sys.exit(1)
 
 
@@ -217,6 +222,9 @@ def agentd_ensure(json_output: bool) -> None:
     except AgentdUnavailableError as error:
         _print_agentd_unavailable(error)
         sys.exit(1)
+    except AgentdSupervisorConfigError as error:
+        _print_agentd_request_error(error)
+        sys.exit(1)
 
     try:
         status = dict(client.status())
@@ -227,6 +235,7 @@ def agentd_ensure(json_output: bool) -> None:
     payload = {
         "socket_path": str(client.socket_path),
         "status": status,
+        "supervised": agentd_socket_is_supervised(client.socket_path),
     }
     daemon_db = status.get("db_path")
     if isinstance(daemon_db, str):
@@ -240,6 +249,8 @@ def agentd_ensure(json_output: bool) -> None:
     console.print(f"socket: {client.socket_path}")
     if isinstance(daemon_db, str):
         console.print(f"db: {daemon_db}")
+    if payload["supervised"]:
+        console.print("supervised: true (start/restart is owned by the declared supervisor)")
 
 
 def _request_or_exit(client: AgentdClient, method: str, params: dict) -> object:
