@@ -5,19 +5,13 @@ import logging
 import shutil
 from pathlib import Path
 
+import hy  # noqa: F401  # .hy import hook — the readiness physics home is a Hy module
+
+from doeff_agents.sessionhost.impls.ready_physics import CLAUDE_SCREEN_READER_READY_PATTERN
+
 from .base import AgentType, InjectionMethod, LaunchParams
 
 logger = logging.getLogger("doeff_agents.claude")
-
-# Readiness = the permission-mode footer is on screen. The adapter always
-# launches with --ax-screen-reader and a non-default permission mode, so the
-# ready REPL prints "<mode> on (shift+tab to cycle)" right above the input
-# prompt (verbatim 2.1.209 capture: tests/data/ready_screens/). The classic
-# U+276F composer marker NEVER renders in screen-reader mode, and dialog
-# screens (trust y/n, bypass accept, theme) do not contain this footer.
-# Do not key on the screen-reader banner: its wording is version-dependent
-# (see _screen_reader_trust_prompt_visible in session.py).
-CLAUDE_READY_PATTERN = r"shift\+tab to cycle"
 
 
 class ClaudeAdapter:
@@ -127,7 +121,9 @@ class ClaudeAdapter:
 
     @property
     def ready_pattern(self) -> str | None:
-        return CLAUDE_READY_PATTERN
+        # Physics home: sessionhost/impls/ready_physics.hy (ADR-DOE-AGENTS-008
+        # R1) — readiness in screen-reader mode is the permission-mode footer.
+        return CLAUDE_SCREEN_READER_READY_PATTERN
 
     @property
     def trust_dialog_pattern(self) -> str | None:
