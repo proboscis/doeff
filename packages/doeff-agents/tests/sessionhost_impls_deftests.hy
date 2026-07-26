@@ -402,6 +402,23 @@
   (assert w.has-waiting-marker))
 
 
+(deftest test-api-limit-marker-current-claude-tui-exhausted-wordings
+  ;; issue #557 二次補強: 現行 claude TUI の exhausted 側文言は marker 表に
+  ;; 無かった(2026-07-20 実測)。exhausted 側だけを追補する。
+  (for [frame ["Claude usage limit reached. Your limit will reset at 6pm (Asia/Tokyo)."
+               "You've reached your usage limit · resets Jul 26 at 6am"
+               "You've hit your usage limit. Upgrade to increase your limits."
+               "5-hour limit reached ∙ resets 3am"
+               "Weekly limit reached · resets Jul 29 at 9am"]]
+    (<- obs (classify-claude frame))
+    (assert obs.has-api-limit-marker f"expected api-limit marker: {frame !r}"))
+  ;; approaching 側(まだ動ける)は blocked_api を立ててはならない —
+  ;; issue #557 実測 footer 文言(88% 到達)は marker 非対象
+  (<- approaching (classify-claude
+                    "You've used 88% of your Fable 5 limit · resets Jul 26 at 6am"))
+  (assert (not approaching.has-api-limit-marker)))
+
+
 (deftest test-classify-codex-update-dialog-down-steps
   (setv frame-sel1 (+ "✨ Update available!\n"
                       "› 1. Update now (runs npm install)\n"
