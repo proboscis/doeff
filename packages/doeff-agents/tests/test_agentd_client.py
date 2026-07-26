@@ -917,6 +917,34 @@ def test_ensure_agentd_malformed_supervisor_declaration_is_loud(
     assert starts == []
 
 
+def test_ensure_agentd_malformed_declaration_is_loud_even_with_healthy_daemon(
+    monkeypatch,
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    # Uniform fail-closed semantics: an unparseable declaration might be
+    # declaring ANY socket, so every ensure call on the machine surfaces
+    # the typed config error immediately — not only at the next restart
+    # window (the worst possible moment to discover a config typo).
+    from doeff_agents.agentd_client import AgentdSupervisorConfigError
+
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    paths = default_agentd_paths()
+    paths.socket_path.parent.mkdir(parents=True, exist_ok=True)
+    declaration_path = state_home / "doeff" / "agentd.supervisor.json"
+    declaration_path.parent.mkdir(parents=True, exist_ok=True)
+    declaration_path.write_text("{not json", encoding="utf-8")
+
+    def handle(request: Mapping[str, Any]) -> Mapping[str, Any]:
+        return {"id": request["id"], "ok": True, "result": {"state": "running"}}
+
+    with OneShotAgentdServer(paths.socket_path, handle):
+        with pytest.raises(AgentdSupervisorConfigError):
+            ensure_agentd(client_timeout=2.0)
+
+
 def test_agentd_command_defaults_to_interpreter_sibling_sessionhost(
     monkeypatch,
     tmp_path: Path,
