@@ -32,6 +32,7 @@
 
 (import doeff_agents.sessionhost.effects [
   MonitorKnobs
+  REPL-IDLE-MAX-WAIT-SECONDS
   SessionRow
   clock-now
   session-store-get
@@ -47,8 +48,7 @@
 (import doeff_agents.sessionhost.turn [TURN-HOLDER-AGENT
                                        db-turn-stamp
                                        turn-close-holder])
-(import doeff_agents.sessionhost.launch [REPL-IDLE-MAX-WAIT-SECONDS
-                                         launch-session
+(import doeff_agents.sessionhost.launch [launch-session
                                          resume-session])
 (import doeff_agents.sessionhost.policy [
   binding-kind-advertisement
