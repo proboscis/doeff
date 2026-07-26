@@ -140,7 +140,11 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
        #("agent_sessions" "adopted" "INTEGER NOT NULL DEFAULT 0")
        #("agent_sessions" "turn_holder" "TEXT")
        #("agent_sessions" "turn_since" "TEXT")
-       #("agent_sessions" "turn_wait_json" "TEXT")])
+       #("agent_sessions" "turn_wait_json" "TEXT")
+       ;; issue #557: attempt 中の api-limit 観測の durable latch(初回観測
+       ;; 時刻)。additive migration + COALESCE first-write-wins(terminal_cause
+       ;; と同格の保護 — stale な書き戻しが観測事実を消さない)。
+       #("agent_sessions" "api_limit_observed_at" "TEXT")])
 
 (setv SNAPSHOT-SELECT
       (+ "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status, "
@@ -152,7 +156,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
          "effective_identity_json, "
          "conversation_json, generation, resumed_from_session_id, forked_from_session_id, "
          "launch_overlay_json, "
-         "adopted, turn_holder, turn_since, turn_wait_json "
+         "adopted, turn_holder, turn_since, turn_wait_json, "
+         "api_limit_observed_at "
          "FROM agent_sessions"))
 
 
@@ -270,7 +275,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
    "turn_since" (get db-row 33)
    "turn_wait" (if (is (get db-row 34) None)
                    None
-                   (json.loads (get db-row 34)))})
+                   (json.loads (get db-row 34)))
+   "api_limit_observed_at" (get db-row 35)})
 
 (deff snapshot-to-wire-dict [snap]
   {:pre [(: snap dict)]
@@ -377,8 +383,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
        "effective_identity_json, "
        "conversation_json, generation, resumed_from_session_id, forked_from_session_id, "
        "launch_overlay_json, "
-       "adopted, turn_holder, turn_since, turn_wait_json"
-       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+       "adopted, turn_holder, turn_since, turn_wait_json, "
+       "api_limit_observed_at"
+       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
        "ON CONFLICT(session_id) DO UPDATE SET "
        "session_name = excluded.session_name, "
        "pane_id = excluded.pane_id, "
@@ -417,7 +424,10 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
        "adopted = excluded.adopted, "
        "turn_holder = excluded.turn_holder, "
        "turn_since = excluded.turn_since, "
-       "turn_wait_json = excluded.turn_wait_json")
+       "turn_wait_json = excluded.turn_wait_json, "
+       ;; issue #557: durable latch は first-write-wins — 初回観測時刻が正で、
+       ;; stale な None 書き戻しにも後続観測の再打刻にも動じない。
+       "api_limit_observed_at = COALESCE(agent_sessions.api_limit_observed_at, excluded.api_limit_observed_at)")
     #((get snap "session_id")
       (get snap "session_name")
       (get snap "pane_id")
@@ -474,7 +484,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
       (if (is (.get snap "turn_wait") None)
           None
           (json.dumps (get snap "turn_wait") :sort-keys True
-                      :separators #("," ":") :ensure-ascii False))))
+                      :separators #("," ":") :ensure-ascii False))
+      ;; .get 既定値: issue #557 以前の snapshot dict にも additive に振る舞う。
+      (.get snap "api_limit_observed_at")))
   None)
 
 (deff db-session-get [conn session-id]
@@ -782,7 +794,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
     :resumed-from-session-id (.get snap "resumed_from_session_id")
     :forked-from-session-id (.get snap "forked_from_session_id")
     :launch-overlay (.get snap "launch_overlay")
-    :adopted (bool (.get snap "adopted" False))))
+    :adopted (bool (.get snap "adopted" False))
+    :api-limit-observed-at (.get snap "api_limit_observed_at")))
 
 (deff policy-row-patch [row]
   {:pre [(: row SessionRow)]
@@ -823,7 +836,10 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
    ;; patch に含めて安全。turn_* は policy 契約外 — patch に含めない
    ;; (merge 経路では existing の打刻が保存され、新規行は
    ;; snapshot-from-policy-row が NULL 初期値を与える)。
-   "adopted" row.adopted})
+   "adopted" row.adopted
+   ;; issue #557: durable latch は policy(monitor)が唯一の writer。
+   ;; SQL 側 COALESCE が first-write-wins を最終防衛する。
+   "api_limit_observed_at" row.api-limit-observed-at})
 
 (deff snapshot-from-policy-row [row]
   {:pre [(: row SessionRow)]

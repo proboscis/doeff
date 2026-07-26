@@ -324,18 +324,21 @@
       row
       (replace row :terminal-cause cause)))
 
-(deff failed-output-cause [obs output observed-at]
-  {:pre [(: obs PaneObservation) (: output str) (: observed-at str)]
+(deff failed-output-cause [obs output observed-at limit-latched]
+  {:pre [(: obs PaneObservation) (: output str) (: observed-at str)
+         (: limit-latched bool)]
    :post [(: % TerminalCause)]}
   "reason 無し failed 限定の output 写像(oracle set_failed_output_cause_if_absent、
    ハザード 2: last_validation_error が立つ経路では走らない)。凍結表:
-   api-limit → rate_limited / tail30 に timeout・timed out・deadline → timed_out /
+   api-limit(終端時 marker または attempt 中の durable latch — issue #557 S8d:
+   終端時 tail は racy なので観測済み事実が優先)→ rate_limited /
+   tail30 に timeout・timed out・deadline → timed_out /
    authentication failed → runner_unavailable / invalid json・protocol error →
    protocol_error / その他 → run_failed。"
   (setv lower (tail-lower output 30))
   (setv category
         (cond
-          obs.has-api-limit-marker "rate_limited"
+          (or obs.has-api-limit-marker limit-latched) "rate_limited"
           (or (in "timeout" lower) (in "timed out" lower) (in "deadline" lower))
             "timed_out"
           (in "authentication failed" lower) "runner_unavailable"
@@ -453,7 +456,9 @@
                                                  row.last-validation-error
                                                  observed-at))
                 ;; reason 無し failed のみ output 写像(ハザード 2)
-                (cause-if-absent row (failed-output-cause obs output observed-at)))))
+                (cause-if-absent row (failed-output-cause
+                                       obs output observed-at
+                                       (is-not row.api-limit-observed-at None))))))
     (setv row (replace row :finished-at (or row.finished-at observed-at))))
   (when (and (is-run-to-completion row.lifecycle)
              (in observed-status #{"done" "failed"}))
@@ -631,6 +636,14 @@
   (<- output (tmux-capture row.pane-id 100))
   (<- obs (classify-pane row.agent-type output))
 
+  ;; --- issue #557: api-limit 観測の durable latch(first-write-wins)。
+  ;; 終端時 snapshot は racy(上限文言は scroll out する)— 観測した事実は
+  ;; その場で行へ固定し、以降のどの upsert 経路でも永続化される。終端分類
+  ;; (turn-end budget 超過 / reason 無し failed の output 写像)がこれを
+  ;; 参照して rate_limited/retryable=true へ蒸留する(S8c/S8d)。
+  (when (and obs.has-api-limit-marker (is None row.api-limit-observed-at))
+    (setv row (replace row :api-limit-observed-at observed-at)))
+
   ;; --- paste 残留の Enter 再送(ハザード 4 付随物理)。latch は保持。
   (when (and row.awaiting-response obs.has-unsubmitted-paste)
     (<- _ (tmux-send-keys row.pane-id "Enter" False False))
@@ -764,9 +777,22 @@
                                     (+ "session reached turn-end without reporting a result via report_result"
                                        f" (after {row.result-solicitations-used} solicitation(s))")))
                           (setv row (replace row :last-validation-error reason))
-                          (setv row (cause-if-absent
+                          ;; issue #557(S8c): attempt 中に blocked_api を観測済み
+                          ;; なら rate_limited/retryable=true へ蒸留 — 上限下の
+                          ;; turn-end 無結果は transient(ACP binding-failover の
+                          ;; 発火面)。latch 無しは従来どおり run_failed(S3)。
+                          (setv row
+                                (if (is-not row.api-limit-observed-at None)
+                                    (cause-if-absent
+                                      row (make-cause
+                                            "rate_limited"
+                                            (+ reason
+                                               "; api-limit marker observed during attempt at "
+                                               row.api-limit-observed-at)
+                                            observed-at))
+                                    (cause-if-absent
                                       row (make-cause "run_failed" reason
-                                                      observed-at))))))))))
+                                                      observed-at)))))))))))
       ;; contract 無し RunToCompletion: turn-end 信号を work-end として信頼。
       (when (and turn-ended (is-run-to-completion row.lifecycle))
         (setv observed-status "done")))
