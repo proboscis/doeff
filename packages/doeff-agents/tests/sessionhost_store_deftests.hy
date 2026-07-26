@@ -69,7 +69,11 @@
        ;; koine session surface v0 stage 1(ADR-DOE-AGENTS-007): ownership
        ;; marker + turn 打刻。adopted は安全条項 1 の opt-in/fail-closed の
        ;; 機械面、turn_* は席の自己申告打刻(wait は opaque 保存)。
-       "adopted" "turn_holder" "turn_since" "turn_wait_json"])
+       "adopted" "turn_holder" "turn_since" "turn_wait_json"
+       ;; issue #557: attempt 中の api-limit 観測の durable latch(初回観測
+       ;; 時刻、first-write-wins)。terminal 時 tail-30 は racy — 終端分類は
+       ;; この latch を参照して rate_limited/retryable=true へ蒸留する。
+       "api_limit_observed_at"])
 
 
 (defn make-snap [session-id #** overrides]
@@ -171,6 +175,20 @@
     (db-upsert-snapshot conn (make-snap "s2" :effective_identity None))
     (setv snap (db-session-get conn "s2"))
     (assert (= (get snap "effective_identity") {"CODEX_HOME" "/tmp/codex-home"})))
+  (with-tmp-conn check))
+
+
+(deftest test-api-limit-latch-roundtrip-and-coalesce
+  ;; issue #557: durable latch は行に往復し、stale な None 書き戻しでも
+  ;; 消えない(COALESCE first-write-wins — terminal_cause と同格の保護)
+  (defn check [conn]
+    (db-upsert-snapshot conn (make-snap "s1" :api_limit_observed_at
+                                        "2026-07-20T11:00:00+00:00"))
+    (setv snap (db-session-get conn "s1"))
+    (assert (= (get snap "api_limit_observed_at") "2026-07-20T11:00:00+00:00"))
+    (db-upsert-snapshot conn (make-snap "s1" :api_limit_observed_at None))
+    (setv snap (db-session-get conn "s1"))
+    (assert (= (get snap "api_limit_observed_at") "2026-07-20T11:00:00+00:00")))
   (with-tmp-conn check))
 
 
