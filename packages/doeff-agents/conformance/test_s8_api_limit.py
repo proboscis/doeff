@@ -195,7 +195,12 @@ def test_s8d_failure_after_limit_scrolled_out_maps_rate_limited() -> None:
                 # limit-bearing frame is deterministically observed (and the
                 # latch persisted) before it scrolls out.
                 {"sleep_s": 2.0},
-                {"scroll": 60},
+                # 200 > the 100-line capture window: unlike S8c (where the
+                # solicitation paste echo pads the tail), nothing else lands
+                # between the scroll and the terminal here, so the limit text
+                # must leave the 500-char output_snippet window too — blank
+                # rows alone (~60 chars/line short of it) would not do it.
+                {"scroll": 200},
                 {"render": "F-failed"},
             ],
         )
