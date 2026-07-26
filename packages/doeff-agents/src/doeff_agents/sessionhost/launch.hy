@@ -23,6 +23,7 @@
 (import re)
 
 (import doeff_agents.sessionhost.effects [
+  REPL-IDLE-MAX-WAIT-SECONDS
   SessionRow
   PaneObservation
   classify-pane
@@ -76,9 +77,10 @@
          "`report_result` tool. If the tool responds with a validation error, "
          "fix the payload and call `report_result` again in the same session."))
 
-;; wait-for-repl-idle の上限(oracle: Duration::from_secs(120) 定数)と
-;; poll / 再描画待ち(oracle: 300ms / 800ms)。
-(setv REPL-IDLE-MAX-WAIT-SECONDS 120)
+;; wait-for-repl-idle の上限は knob 語彙の家(effects.hy
+;; REPL-IDLE-MAX-WAIT-SECONDS)から import — literal の再定義は禁止
+;; (ADR-DOE-AGENTS-008 R2)。poll / 再描画待ちは退役 Rust 移植値
+;; 300ms / 800ms(rollback 専用出自 — ADR-DOE-AGENTS-004 R7/U1)。
 (setv REPL-IDLE-POLL-SECONDS 0.3)
 (setv DIALOG-REDRAW-SECONDS 0.8)
 

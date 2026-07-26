@@ -1,12 +1,20 @@
 ;;; F-* marker 物理(ADR-DOE-AGENTS-004 C2) — pane capture のテキスト事実。
 ;;;
-;;; oracle: packages/doeff-agentd/src/main.rs の output_has_*(main.rs:2969-3229)
-;;; を verbatim 移植。marker→検出は impl 所有・分類の順序と意味づけは policy 所有
-;;; (PaneObservation は事実だけを運ぶ)。凍結出典は conformance README の
-;;; F-* 表(CONTRACT FIXED 2026-07-05)。例外: has-claude-trust-dialog のみ
-;;; oracle 非在 — 2026-07-07 の R9 カバレッジ欠落(実物 frame で実証)の修正。
+;;; observation 形式の readiness/idle 物理の家(ADR-DOE-AGENTS-008 R1)。
+;;; gate 形式(単発判定の pattern 文字列・screen-reader trust prompt)は
+;;; doeff-free leaf の ready_physics.hy が家 — codex の両形式の一致は
+;;; tests/test_ready_physics_single_home.py の parity 検定が執行する。
 ;;;
-;;; oracle の検出関数は kind 非依存(codex の `› ` と claude の `❯` を同じ関数が
+;;; 出自: 退役 Rust 実装 packages/doeff-agentd/src/main.rs の output_has_*
+;;; (main.rs:2969-3229)の verbatim 移植 — 退役 Rust は rollback 専用保存で
+;;; あり正しさの基準ではない(ADR-DOE-AGENTS-004 R7/U1)。物理の正当性根拠は
+;;; conformance README の F-* 表(CONTRACT FIXED 2026-07-05)と verbatim
+;;; capture。以下の docstring の「oracle」表記は移植出典関数名の指示のみ。
+;;; marker→検出は impl 所有・分類の順序と意味づけは policy 所有
+;;; (PaneObservation は事実だけを運ぶ)。例外: has-claude-trust-dialog のみ
+;;; 移植元に非在 — 2026-07-07 の R9 カバレッジ欠落(実物 frame で実証)の修正。
+;;;
+;;; 検出関数は kind 非依存(codex の `› ` と claude の `❯` を同じ関数が
 ;;; 見る)なので、ここも共有モジュールとして両 impl から使う。kind 分岐が
 ;;; 生まれたら(C5 opencode)その kind のモジュールへ物理を移す。
 ;;; 純テキスト関数のみ — IO ゼロ(substrate-clean 領域)。
