@@ -181,6 +181,14 @@
   (setv stderr ""))
 
 
+;; repl-idle 予算の既定値 — literal の家はここだけ(ADR-DOE-AGENTS-008 R2、
+;; installed semgrep rule doeff-agents-repl-idle-budget-literal-single-home)。
+;; launch 側 ready gate の予算 fallback(launch.hy)と boot watchdog 予算材料
+;; (host.hy)は import 参照。値の出自は退役 Rust 移植(rollback 専用保存・
+;; 正しさの基準ではない — ADR-DOE-AGENTS-004 R7/U1)。
+(setv REPL-IDLE-MAX-WAIT-SECONDS 120)
+
+
 (defclass [(dataclass :frozen True :kw-only True)] MonitorKnobs []
   "testability knob 表(conformance README、契約凍結値):
    stall T 180s / solicitation budget 2 / unblock budget 3 /
@@ -201,7 +209,7 @@
   #^ int stale-observation-seconds
   (setv stale-observation-seconds 300)
   #^ int repl-idle-max-wait-seconds
-  (setv repl-idle-max-wait-seconds 120)
+  (setv repl-idle-max-wait-seconds REPL-IDLE-MAX-WAIT-SECONDS)
   ;; koine 条項 4(ADR-DOE-AGENTS-007 R4): open turn(holder='agent')の
   ;; stalled 導出閾値。env knob DOEFF_AGENTD_TURN_STALL_SECS(既定 1800 —
   ;; 対話席の自走 turn は 15 分を常態的に超える実測に基づく保守初期値。
