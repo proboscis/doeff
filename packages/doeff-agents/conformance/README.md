@@ -98,7 +98,8 @@ checklist (a) の凍結対象の一部**(marker→分類は impl 所有になる
 | F-active-claude | 最終 `❯` の上の行に `… (` | live spinner = active |
 | F-turn-activity-claude | `⏺` / `⎿` | startup 完了(active ではない) |
 | F-failed | `fatal error` 等(tail 10 行) | status failed |
-| F-api-limit | `rate limit exceeded` / `quota exceeded` 等(tail 30 行。issue #557 で現行 claude TUI の exhausted 側文言 — `usage limit reached` / `limit reached · resets` 等 — を追補。approaching 側 `used NN% … · resets` は対象外) | status blocked_api(観測は行の `api_limit_observed_at` に durable latch — issue #557) |
+| F-api-limit | `rate limit exceeded` / `quota exceeded` 等(tail 30 行。issue #557 で現行 claude TUI の exhausted 側文言 — `usage limit reached` / `limit reached · resets` 等 — を追補。approaching 側 `used NN% … · resets` は対象外。ACP ADR 0049 R9(2026-07-26 実 incident)でさらに `you've hit your monthly spend limit` / `out of usage credits` を追補 — 前者は旧 `you've hit your limit` に部分一致しない) | status blocked_api(観測は行の `api_limit_observed_at` に durable latch — issue #557) |
+| F-api-limit-spend | `You've hit your monthly spend limit. /model to switch models.`(2026-07-26 実 incident verbatim — ACP ADR 0049 R9) | status blocked_api + durable latch(S8e が実分類器経由で語彙を wire 検証) |
 | F-waiting | `Type your message` 等(raw 一致) | status blocked |
 | F-menu-codex | `› 1. Switch…`(idle glyph でメニュー描画) | idle に偽装したメニュー(R6 の核心) |
 | F-frozen | idle でも active でもない任意画面(pager/login 風) | stall watchdog 対象 |
@@ -122,13 +123,14 @@ snapshot と一致(stable)**」(main.rs:2832, 2932)なので、フレームは
 | S3 | solicitation budget(2)超過 → failed・reason `...after 2 solicitation(s)`・cause RunFailed retryable=false(attempt 中に api-limit 観測が latch 済みの場合は S8c が優先: RateLimited true — issue #557) | 002 R2/R8 | (a) | P | M2 |
 | S4 | schema-invalid 報告 → 拒否(agent 可視面 = MCP tool error `isError:true`+schema 文言。**-32002 は daemon wire のみ** — ハザード 5)・`result_payload_json` 非永続 → solicitation 後に valid 報告 → done | 002 R3 / 0035 R4 | — | P | M2 |
 | S5 | F-menu-codex で turn-end 到達 → judge が solicitation より**先**(journal で受領順を確認)→ unblock keys 受領 → 続行 | 002 R5/R6 | — | P | M2 |
-| S6 | F-frozen + stall T 超過 → bounded judge(3)→ failed・reason `interactive-prompt-blocked:` 接頭・cause InteractivePromptBlocked false | 002 R5/R7 | (a) | P | M2 |
+| S6 | F-frozen + stall T 超過 → bounded judge(3)→ failed・reason `interactive-prompt-blocked:` 接頭・cause InteractivePromptBlocked false(attempt 中に api-limit 観測が latch 済みの場合は S8e が優先: RateLimited true — ACP ADR 0049 R9) | 002 R5/R7 | (a) | P | M2 |
 | S6b | judge 無効(空文字)変種: stall 点 = 即 typed failure / turn-end 点 = solicitation へ degrade。judge error(不在パス)変種: stall 点 = typed failure | 002 R7 | — | P | M2 |
 | S7 | F-failed → failed・cause 写像どおり(`authentication failed`→RunnerUnavailable false / `timeout`→TimedOut true / その他→RunFailed false) | taxonomy 凍結 | (a) | P | M2 |
 | S8a | F-api-limit 単独 → status `blocked_api`(**非終端が正** — active_statuses に含まれ、await_result は -32000 timeout。level-triggered: pane が変われば回復し得る) | main.rs:1918/2912 | — | P | M2 |
 | S8b | failure マーカー + api-limit 文言の複合フレーム → failed 時の output 写像で cause **RateLimited retryable=true** が wire に載る(last_validation_error 無しの failed のみ output 写像が走る — main.rs:3895-3905) | ACP ADR 0042 下流 | (a) | P | M2 |
 | S8c | **api-limit durable latch(issue #557、2026-07-26 契約改訂)**: 上限文言が terminal 前に scroll out(終端 tail は素の idle prompt)しても、attempt 中の blocked_api 観測が行の `api_limit_observed_at` に latch され、solicitation budget 超過の turn-end 無結果終端が cause **RateLimited retryable=true** に蒸留される(2026-07-20/23 の ACP steward 艦隊 latch の実障害形。終端時 tail-30 snapshot は racy — 観測済み事実が正) | issue #557 / ACP ADR 0042 下流 | (a) | **X**(Hy gate のみ — 退役 Rust 参照実装は latch 非搭載、issue #555) | M2 |
 | S8d | S8c の failure-marker 経路変種: 上限文言 scroll out 後に failure マーカーで終端 → reason 無し failed の output 写像が終端時 marker ではなく latch を参照して **RateLimited retryable=true** | issue #557 | (a) | **X**(同上) | M2 |
+| S8e | **行動系終端の marker-first + 実物語彙(ACP ADR 0049 R9、2026-07-26 契約改訂)**: F-api-limit-spend(実 incident verbatim)を実分類器が blocked_api + latch と読むこと、および上限文言 scroll out 後の stall 終端(reason は S6b verbatim `interactive-prompt-blocked:` 接頭のまま)が cause **RateLimited retryable=true** に蒸留されることを wire で検証。solicitation 超過側の同蒸留は S8c が既に被覆 | ACP ADR 0049 R9 | (a) | **X**(Hy gate のみ — latch 前提。Rust 参照実装側は語彙 + 生 marker の categorisation-site 検査を cargo test でピン) | M2 |
 | S9 | 帯域外 tmux kill: result 報告済→done(result-first)/ 未報告→exited・cause Lost retryable=true。ACP 側 200 discriminator は ACP EntityReadsSpec 所管(重複させない) | main.rs:3922-3951 | (c) | P | M2 |
 | S10 | 報告済 payload が agentd 再起動後も await_result で読める + 終端後の再報告 = already_reported:true / 未報告終端後の報告 = -32003(**両者とも daemon wire `session.report_result` でのみ観測可** — MCP relay 面では潰れる、ハザード 5) | COALESCE 規律(main.rs:2339) | (d)(e) | P | M2 |
 | S11 | agent_type=codex・CODEX_HOME 無し → **tmux 呼び出し前に** launch Err(tmp root に tmux 痕跡ゼロ・session 行無し・shim 未実行)。claude・CLAUDE_CONFIG_DIR 無し → warning のみ(DOE-003 R3 staged)。**caveat**: pre-launch trust writer は CODEX_HOME/CLAUDE_CONFIG_DIR を **daemon プロセス env** から fallback 参照(main.rs:1500/1553)するため、harness は `extra_env` で daemon にスクラッチ home を渡す(未指定だと実 `~/.codex`/`~/.claude` を汚す) | DOE-003 R1/R3 | (g) | P | M1 |
@@ -197,7 +199,8 @@ scenario 専用 `ZDOTDIR` の rc で shim dir を再 prepend して決定化)。
 | invalid json / protocol error | ProtocolError | **false** |
 | solicitation 超過(turn-end 無結果)+ attempt 中 api-limit 観測(latch) | RateLimited | **true**(issue #557、S8c) |
 | solicitation 超過(turn-end 無結果、latch 無し) | RunFailed | **false** |
-| interactive-prompt stall | InteractivePromptBlocked | **false** |
+| interactive-prompt stall + attempt 中 api-limit 観測(latch) | RateLimited | **true**(ACP ADR 0049 R9、S8e) |
+| interactive-prompt stall(latch 無し) | InteractivePromptBlocked | **false** |
 | その他 failed | RunFailed | **false** |
 
 first-write-wins(set_terminal_cause_if_absent + DB COALESCE)も契約。
@@ -242,7 +245,9 @@ oracle への変更は「意味論を変えない設定追加」のみ許す(挙
    api-limit 分岐と solicitation 超過の明示カテゴリの双方が durable latch
    (`api_limit_observed_at`)を参照する — 終端時 tail-30 snapshot は racy
    なので、attempt 中に一度でも blocked_api を観測した事実が優先する
-   (S8c/S8d)。
+   (S8c/S8d)。ACP ADR 0049 R9(同日)で stall 側の明示カテゴリも同じ
+   latch 参照に揃えた(S8e)— 行動系終端(solicitation 超過・stall)は
+   どちらも provider-limit 観測を fallback カテゴリより先に見る。
 3. **turn-end には stable tail が要る**: フレーム描画後に出力を続けると
    turn-end に到達しない。idle glyph は capture 100 行内に残留するので、
    stall 系(S6)は 100 行超の scroll で idle glyph を掃き出してから
