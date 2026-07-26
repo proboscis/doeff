@@ -115,7 +115,16 @@
   ;; なので SessionRow には載せない — monitor の stale な書き戻しが打刻を
   ;; 上書きする経路を構造的に持たないため。
   #^ bool adopted
-  (setv adopted False))
+  (setv adopted False)
+  ;; issue #557: attempt 中に一度でも blocked_api(api-limit marker)を観測した
+  ;; 事実の durable latch(初回観測時刻)。終端時の tail-30 snapshot は本質的に
+  ;; racy(上限文言は terminal 前に scroll out する)— turn-end-without-result /
+  ;; reason 無し failed の終端分類はこれを参照して rate_limited/retryable=true
+  ;; へ蒸留する。first-write-wins(store は COALESCE 保護)・clear 経路なし
+  ;; (行 = 1 attempt の incarnation なので latch の寿命は attempt と一致)。
+  ;; wire には載せない — 下流(ACP ADR 0042)が読むのは terminal_cause のみ。
+  #^ (| str None) api-limit-observed-at
+  (setv api-limit-observed-at None))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] PaneObservation []

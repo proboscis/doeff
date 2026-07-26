@@ -42,7 +42,7 @@
 (deff has-api-limit-marker [output]
   {:pre [(: output str)] :post [(: % bool)]}
   "provider rate-limit / quota marker(tail 30 行窓、oracle
-   output_has_api_limit_marker)。"
+   output_has_api_limit_marker の 9 パターン + issue #557 の追補)。"
   (setv text (tail-lower output 30))
   (bool (or (in "cost limit reached" text)
             (in "rate limit exceeded" text)
@@ -52,7 +52,16 @@
             (in "resource exhausted" text)
             (in "you've hit your limit" text)
             (in "/rate-limit-options" text)
-            (in "stop and wait for limit to reset" text))))
+            (in "stop and wait for limit to reset" text)
+            ;; issue #557 二次補強: 現行 claude TUI の exhausted 側文言
+            ;; (2026-07-20 実測、旧 9 パターンのどれにも一致しない)。
+            ;; approaching 側(`used NN% of your … limit · resets`)は対象外 —
+            ;; まだ動ける pane を blocked_api にしない。
+            (in "usage limit reached" text)
+            (in "you've reached your usage limit" text)
+            (in "you've hit your usage limit" text)
+            (in "limit reached · resets" text)
+            (in "limit reached ∙ resets" text))))
 
 (deff has-waiting-marker [output]
   {:pre [(: output str)] :post [(: % bool)]}
