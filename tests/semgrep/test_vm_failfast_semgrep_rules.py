@@ -216,6 +216,24 @@ def test_session_registration_rule_detects_ready_gated_registration() -> None:
     )
 
 
+def test_ready_physics_single_home_rules_detect_redefinitions() -> None:
+    """ADR-DOE-AGENTS-008: re-defining a ready-pattern literal in an adapter
+    or the repl-idle budget literal outside effects.hy is the banned
+    two-homes shape (ADR-DOE-AGENTS-004 protocol-physics-has-one-home)."""
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    check_ids = _semgrep_rule_ids(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-agents/src/doeff_agents",
+        cwd=fixture_root,
+    )
+
+    expected = {
+        "doeff-agents-ready-pattern-literal-outside-physics-home",
+        "doeff-agents-repl-idle-budget-literal-single-home",
+    }
+    assert all(_has_rule(check_ids, rule_id) for rule_id in expected), check_ids
+
+
 def test_koine_session_surface_rules_detect_forbidden_shapes() -> None:
     """ADR-DOE-AGENTS-007: the three koine session-surface guards fire on
     their hit fixtures — adopt mutating the substrate, a monitor arm that
