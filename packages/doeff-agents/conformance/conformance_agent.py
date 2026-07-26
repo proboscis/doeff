@@ -60,6 +60,10 @@ FRAMES: dict[str, str] = {
     "F-failed-auth": "\nauthentication failed\n",
     "F-failed-timeout": "\nfatal error: operation timed out\n",
     "F-api-limit": "\nrate limit exceeded — weekly cap reached\n",
+    # ACP ADR 0049 R9 (2026-07-26 incident, verbatim): the live monthly
+    # spend-limit wording — NOT a superstring of the pre-R9 "you've hit
+    # your limit" pattern, which is why the incident went unclassified.
+    "F-api-limit-spend": "\nYou've hit your monthly spend limit. /model to switch models.\n",
     "F-waiting": "\nType your message\n",
     # codex menu rendered with the idle glyph (the R6 core case)
     "F-menu-codex": (
