@@ -687,6 +687,11 @@ def ensure_agentd(
         max_running=max_running,
     )
     _prepare_agentd_paths(active_db_path, active_socket_path, paths.log_path)
+    # Loaded unconditionally so a malformed declaration is a loud, typed
+    # config error on EVERY ensure call — not a surprise at the next
+    # restart window.  An unparseable file might be declaring any socket,
+    # so no call on this machine may treat it as absent.
+    declaration = load_supervisor_declaration(paths.supervisor_path)
     status = _agentd_status_if_ready(client)
     if status is not None:
         _validate_agentd_identity(
@@ -718,7 +723,6 @@ def ensure_agentd(
     # crash throttle) binds a rogue unsupervised host and split-brains
     # the store, so ensure delegates via the declared kick command or
     # fails loudly.
-    declaration = load_supervisor_declaration(paths.supervisor_path)
     if declaration is not None and _normalize_path(
         declaration.socket_path
     ) == _normalize_path(active_socket_path):
