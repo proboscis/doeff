@@ -358,6 +358,51 @@
 
 
 ;; ---------------------------------------------------------------------------
+;; 監査 event は status 遷移でのみ記録(edge-triggered — 2026-07-27 sessionhost
+;; wedge 根治)。blocked のまま静止する行が毎 tick full-snapshot event を注ぎ、
+;; agentd.sqlite が 1.5GB(session_blocked 251k 行 / 1.16GB)へ肥大 → 単一
+;; StoreActor の per-op コスト増で socket 応答不能に至った実 incident の再発
+;; 防止。upsert(state 更新)は level-triggered のまま — 止めるのは journal
+;; 追記のみ。
+;; ---------------------------------------------------------------------------
+
+(deftest test-blocked-quiescent-tick-records-no-event
+  ;; 既に blocked の行が blocked のまま観測される tick は event を書かない。
+  (setv world (FakeWorld))
+  (seed world (make-row world :status "blocked") :frame F-WAITING)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "blocked"))
+  ;; state 更新(upsert)は生きている — 観測時刻は進む
+  (assert (= row.last-observed-at (iso-at world 0)))
+  (assert (not-in #("s1" "session_blocked") world.events)))
+
+
+(deftest test-blocked-transition-records-single-event-across-cycles
+  ;; running → blocked の遷移 tick だけが event を書く。以降の静止 tick は
+  ;; 何 cycle 回しても増えない。
+  (setv world (FakeWorld))
+  (seed world (make-row world) :frame F-WAITING)
+  (<- _ (run-cycle world (MonitorKnobs)))
+  (<- _ (run-cycle world (MonitorKnobs)))
+  (<- _ (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "blocked"))
+  (assert (= 1 (.count world.events #("s1" "session_blocked")))))
+
+
+(deftest test-running-quiescent-tick-records-no-observed-event
+  ;; running のまま働き続ける行も静止 tick では session_observed を書かない。
+  (setv world (FakeWorld))
+  (seed world (make-row world) :frame F-ACTIVE-CODEX)
+  (<- _ (run-cycle world (MonitorKnobs)))
+  (<- _ (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "running"))
+  (assert (not-in #("s1" "session_observed") world.events)))
+
+
+;; ---------------------------------------------------------------------------
 ;; turn-end 判定(idle ∧ 非 active ∧ stable)と solicitation
 ;; ---------------------------------------------------------------------------
 

@@ -137,6 +137,30 @@ def test_agentd_client_launch_sends_interactive_lifecycle(tmp_path: Path) -> Non
     assert server.requests[0]["params"]["lifecycle"] == "interactive"
 
 
+def test_launch_rpc_timeout_tracks_daemon_ready_gate_knob(monkeypatch) -> None:
+    # session.launch RPC の実時間を支配する daemon 側予算は REPL ready gate
+    # (DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS、既定 120s = REPL-IDLE-MAX-WAIT-SECONDS)。
+    # client の launch read-timeout は同じ knob に use-site で追従する。固定 135s の
+    # ままだと、knob で延長された daemon の ready 待ちを client が先に切断して
+    # Broken pipe / AgentRequestFailed になる(2026-07-27 sessionhost wedge incident)。
+    from doeff_agents.agentd_client import (
+        RPC_TIMEOUT_MARGIN_SECONDS,
+        launch_rpc_timeout_seconds,
+    )
+
+    monkeypatch.delenv("DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS", raising=False)
+    assert launch_rpc_timeout_seconds() == 120.0 + RPC_TIMEOUT_MARGIN_SECONDS
+
+    monkeypatch.setenv("DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS", "360")
+    assert launch_rpc_timeout_seconds() == 360.0 + RPC_TIMEOUT_MARGIN_SECONDS
+
+    # oracle env_positive_i64 semantics: 0 以下・parse 失敗は未設定扱い
+    monkeypatch.setenv("DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS", "0")
+    assert launch_rpc_timeout_seconds() == 120.0 + RPC_TIMEOUT_MARGIN_SECONDS
+    monkeypatch.setenv("DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS", "not-a-number")
+    assert launch_rpc_timeout_seconds() == 120.0 + RPC_TIMEOUT_MARGIN_SECONDS
+
+
 def test_agentd_client_list_sessions_accepts_agentd_generic_rows() -> None:
     def handle(request: Mapping[str, Any]) -> Mapping[str, Any]:
         return {
