@@ -11,9 +11,13 @@
 (import json)
 (import os)
 (import shutil)
+(import signal)
 (import socket)
+(import sqlite3)
+(import subprocess)
 (import sys)
 (import tempfile)
+(import time)
 
 (import doeff_agents.sessionhost.host [
   HostConfig
@@ -371,3 +375,99 @@
   (setv params2 (build-launch-program-params bare config))
   (assert (is None (get params2 "binding")))
   (assert (= (get params2 "session_env") {})))
+
+
+;; ---------------------------------------------------------------------------
+;; graceful shutdown の lease 釈放(issue #565)
+;; ---------------------------------------------------------------------------
+
+(defn read-lease-row [db-path]
+  "外部読者として lease 行を読む(不在・未 migrate は None)。"
+  (try
+    (setv conn (sqlite3.connect db-path))
+    (try
+      (setv row (.fetchone (.execute conn
+                                     (+ "SELECT owner_pid, expires_at "
+                                        "FROM agent_daemon_lease "
+                                        "WHERE lease_name = 'doeff-agentd'"))))
+      (if (is row None)
+          None
+          {"owner_pid" (int (get row 0)) "expires_at" (get row 1)})
+      (finally (.close conn)))
+    (except [e sqlite3.OperationalError]
+      None)))
+
+
+(defn spawn-serve [db-path sock-path log-path]
+  "実プロセスの serve を spawn する(hostmain 経由 — console script と同経路)。
+   judge は明示無効(実 claude subprocess を焼かない)。"
+  (setv code (+ "import sys; "
+                f"sys.argv = ['doeff-sessionhost', '--db', {(json.dumps db-path)}, "
+                f"'--socket', {(json.dumps sock-path)}, "
+                "'--prompt-judge-cmd', '', 'serve']; "
+                "from doeff_agents.sessionhost.hostmain import main; main()"))
+  (setv log (open log-path "ab"))
+  (try
+    (subprocess.Popen [sys.executable "-c" code]
+                      :stdout log :stderr subprocess.STDOUT)
+    (finally (.close log))))
+
+
+(defn read-log [log-path]
+  (if (os.path.exists log-path)
+      (with [f (open log-path "rb")]
+        (.decode (.read f) "utf-8" "replace"))
+      ""))
+
+
+(defn wait-for-lease-owner [proc db-path deadline-seconds what log-path]
+  "lease 行が proc.pid 名義になるまで poll。proc の敗死は timeout を待たず
+   log を添えて即 fail(lease-conflict exit 1 の検出面)。"
+  (setv deadline (+ (time.monotonic) deadline-seconds))
+  (while True
+    (setv rc (.poll proc))
+    (when (is-not rc None)
+      (raise (AssertionError
+               f"{what}: daemon died rc={rc}\n--- daemon log ---\n{(read-log log-path)}")))
+    (setv lease (read-lease-row db-path))
+    (when (and (is-not lease None) (= (get lease "owner_pid") proc.pid))
+      (return))
+    (when (>= (time.monotonic) deadline)
+      (raise (AssertionError
+               f"timeout waiting for {what}\n--- daemon log ---\n{(read-log log-path)}")))
+    (time.sleep 0.1)))
+
+
+(deftest test-sigterm-releases-lease-and-successor-binds-immediately
+  ;; issue #565: SIGTERM(launchctl bootout)での graceful shutdown は自
+  ;; owner_pid の lease 行を釈放する。launchd KeepAlive が即 spawn する後継は
+  ;; lease-conflict("doeff-agentd lease is active" exit 1)で敗死せず、TTL
+  ;; 失効を待たずに 1 spawn 目で定着する。socket path は AF_UNIX 104B 上限の
+  ;; ため /tmp 直下に置く。
+  (setv d (tempfile.mkdtemp :dir "/tmp"))
+  (setv proc None)
+  (setv successor None)
+  (try
+    (setv db-path (os.path.join d "agentd.sqlite"))
+    (setv sock-path (os.path.join d "agentd.sock"))
+    (setv log-path (os.path.join d "serve.log"))
+    (setv proc (spawn-serve db-path sock-path log-path))
+    ;; ready = lease 行が自 pid 名義で出現(Hy import 連鎖があるので寛めに待つ)
+    (wait-for-lease-owner proc db-path 30 "initial daemon lease" log-path)
+    ;; SIGTERM → graceful exit(rc 0)+ lease 行の釈放
+    (.send-signal proc signal.SIGTERM)
+    (setv rc (.wait proc :timeout 10))
+    (assert (= rc 0) f"graceful shutdown must exit 0, got {rc}")
+    (assert (is (read-lease-row db-path) None)
+            "lease row must be released on graceful shutdown")
+    ;; 後継の即 spawn(launchd KeepAlive 相当)— 敗死せず定着する
+    (setv successor (spawn-serve db-path sock-path log-path))
+    (wait-for-lease-owner successor db-path 30 "successor daemon lease" log-path)
+    (assert (is (.poll successor) None)
+            "successor must stay alive (no lease-conflict death)")
+    (finally
+      (for [p [proc successor]]
+        (when (and (is-not p None) (is (.poll p) None))
+          (.kill p)
+          (.wait p :timeout 5)))
+      (shutil.rmtree d :ignore-errors True))))

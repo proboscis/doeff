@@ -281,6 +281,30 @@
   (with-tmp-conn check))
 
 
+(deftest test-lease-release-owner-idempotent-and-successor
+  ;; issue #565: graceful shutdown は自 lease を釈放し、後継は TTL 待ちなしで
+  ;; 即 acquire できる。fail-loud acquire(未失効他人名義の拒否)は不変。
+  ;; import はテスト内(red commit が module import ごと他 test を巻き込まない)。
+  (import doeff_agents.sessionhost.store [db-release-lease])
+  (defn check [conn]
+    ;; 自分名義 → 削除される
+    (db-acquire-lease conn 111)
+    (db-release-lease conn 111)
+    (assert (is (db-read-lease conn) None))
+    ;; 冪等: lease 不在の release は no-op(raise しない)
+    (db-release-lease conn 111)
+    (assert (is (db-read-lease conn) None))
+    ;; 釈放後は後継 pid が TTL 待ちなしで即 acquire 成功(本丸 —
+    ;; launchd KeepAlive の即 spawn 後継が敗死しない物理)
+    (db-acquire-lease conn 222)
+    (assert (= (get (db-read-lease conn) "owner_pid") 222))
+    ;; 他 pid 名義の未失効 lease は触らない(生きた二重 host の検出面を
+    ;; release が壊さない)
+    (db-release-lease conn 111)
+    (assert (= (get (db-read-lease conn) "owner_pid") 222)))
+  (with-tmp-conn check))
+
+
 ;; ---------------------------------------------------------------------------
 ;; effect 束縛(StoreActor + sqlite-session-store)
 ;; ---------------------------------------------------------------------------
