@@ -42,6 +42,9 @@
   db-known-conversation-ids
   db-report-result-guarded-update
   db-clear-awaiting-latches
+  db-prune-history
+  db-vacuum-if-bloated
+  actor-prune-history
   db-read-lease
   db-upsert-lease
   db-acquire-lease
@@ -432,4 +435,133 @@
                                :conversation {"session_id" "conv-a"}))
     (db-upsert-snapshot conn (make-snap "s3"))
     (assert (= (db-known-conversation-ids conn) ["conv-a" "conv-b"])))
+  (with-tmp-conn check))
+
+
+;; ---------------------------------------------------------------------------
+;; 2026-07-27 sessionhost wedge 根治: hot path の status filter は SQL 側で
+;; 適用し(idx_agent_sessions_status)、監査履歴(events / commands)は
+;; retention で bounded に保つ。terminal 含む全行の full scan + 外部ソート +
+;; 全行 JSON decode が毎 tick 走り、肥大 DB(1.5GB)で単一 StoreActor を
+;; 飽和させた実 incident の再発防止。
+;; ---------------------------------------------------------------------------
+
+(deftest test-session-list-status-filter-applied-in-sql
+  ;; status filter 付き一覧は WHERE を SQL に押し下げる(terminal 行を
+  ;; 読み・decode しない)。結果集合は従来の Python filter と同値。
+  (defn check [conn]
+    (db-upsert-snapshot conn (make-snap "s1" :status "running"
+                               :started_at "2026-07-05T00:00:03+00:00"))
+    (db-upsert-snapshot conn (make-snap "s2" :status "done"
+                               :started_at "2026-07-05T00:00:02+00:00"))
+    (db-upsert-snapshot conn (make-snap "s3" :status "blocked"
+                               :started_at "2026-07-05T00:00:01+00:00"))
+    (setv statements [])
+    (.set-trace-callback conn (fn [sql] (.append statements sql)))
+    (try
+      (setv snaps (db-session-list conn {"status" ["blocked" "booting"
+                                                   "blocked_api" "running"]}))
+      (finally (.set-trace-callback conn None)))
+    (assert (= (lfor s snaps (get s "session_id")) ["s1" "s3"]))
+    (setv list-sqls (lfor s statements :if (in "FROM agent_sessions" s) s))
+    (assert list-sqls)
+    (for [sql list-sqls]
+      (assert (in "WHERE status IN" sql)
+              f"status filter must be applied in SQL, got: {sql}"))
+    ;; filter 無しは従来どおり全行(API 契約: session.list の無条件一覧)
+    (setv all-snaps (db-session-list conn {}))
+    (assert (= (len all-snaps) 3)))
+  (with-tmp-conn check))
+
+
+(deftest test-prune-history-retention-and-batching
+  ;; cutoff より古い events / commands だけを bounded batch で削除する。
+  ;; 戻り値 = この呼び出しで削除した行数(0 = 収束)。
+  (defn check [conn]
+    (for [[i occurred] (enumerate ["2026-07-01T00:00:00+00:00"
+                                   "2026-07-02T00:00:00+00:00"
+                                   "2026-07-03T00:00:00+00:00"
+                                   "2026-07-20T00:00:00+00:00"
+                                   "2026-07-21T00:00:00+00:00"])]
+      (.execute conn
+                (+ "INSERT INTO agent_session_events "
+                   "(session_id, event_type, occurred_at, payload_json) "
+                   "VALUES (?, ?, ?, ?)")
+                #(f"s{i}" "session_observed" occurred "{}")))
+    (for [[i requested] (enumerate ["2026-07-01T00:00:00+00:00"
+                                    "2026-07-02T00:00:00+00:00"
+                                    "2026-07-20T00:00:00+00:00"])]
+      (.execute conn
+                (+ "INSERT INTO agent_session_commands "
+                   "(session_id, command_type, requested_at, completed_at, "
+                   "status, payload_json, error) "
+                   "VALUES (?, ?, ?, ?, ?, ?, ?)")
+                #(f"s{i}" "session.send" requested requested "completed" "{}" None)))
+    (setv cutoff "2026-07-13T00:00:00+00:00")
+    ;; batch 2: events 2 + commands 2
+    (assert (= (db-prune-history conn cutoff 2) 4))
+    ;; 残りの old: events 1 + commands 0
+    (assert (= (db-prune-history conn cutoff 2) 1))
+    ;; 収束
+    (assert (= (db-prune-history conn cutoff 2) 0))
+    (setv remaining-events
+          (.fetchall (.execute conn
+                               "SELECT occurred_at FROM agent_session_events ORDER BY id")))
+    (assert (= (lfor r remaining-events (get r 0))
+               ["2026-07-20T00:00:00+00:00" "2026-07-21T00:00:00+00:00"]))
+    (setv remaining-commands
+          (.fetchall (.execute conn
+                               "SELECT requested_at FROM agent_session_commands ORDER BY id")))
+    (assert (= (lfor r remaining-commands (get r 0))
+               ["2026-07-20T00:00:00+00:00"])))
+  (with-tmp-conn check))
+
+
+(deftest test-actor-prune-history-converges
+  ;; StoreActor 経由の prune pass: batch を別 op として逐次 submit し
+  ;; (client op が間に割り込める — actor を長時間占有しない)、収束までの
+  ;; 削除合計を返す。
+  (setv d (tempfile.mkdtemp))
+  (try
+    (setv actor (StoreActor (os.path.join d "agentd.sqlite")))
+    (try
+      (.submit actor
+               (fn [conn]
+                 (for [i (range 5)]
+                   (.execute conn
+                             (+ "INSERT INTO agent_session_events "
+                                "(session_id, event_type, occurred_at, payload_json) "
+                                "VALUES (?, ?, ?, ?)")
+                             #(f"s{i}" "session_observed"
+                               "2026-07-01T00:00:00+00:00" "{}")))))
+      (assert (= (actor-prune-history actor "2026-07-13T00:00:00+00:00" 2) 5))
+      (assert (= (.submit actor
+                          (fn [conn]
+                            (get (.fetchone (.execute conn
+                                              "SELECT COUNT(*) FROM agent_session_events"))
+                                 0)))
+                 0))
+      ;; 収束済みの再 pass は 0
+      (assert (= (actor-prune-history actor "2026-07-13T00:00:00+00:00" 2) 0))
+      (finally (.close actor)))
+    (finally (shutil.rmtree d :ignore-errors True))))
+
+
+(deftest test-vacuum-if-bloated-threshold
+  ;; freelist が支配的(かつ絶対量が floor 超)になったときだけ VACUUM する。
+  ;; 小さな健全 DB では走らない(起動毎の全書き換えを避ける)。
+  (defn check [conn]
+    (assert (= (db-vacuum-if-bloated conn) False))
+    ;; ~16MB 注入 → 全削除で freelist を支配的にする
+    (setv blob (* "x" (* 4 1024 1024)))
+    (for [i (range 4)]
+      (.execute conn
+                (+ "INSERT INTO agent_session_events "
+                   "(session_id, event_type, occurred_at, payload_json) "
+                   "VALUES (?, ?, ?, ?)")
+                #(f"s{i}" "session_observed" "2026-07-01T00:00:00+00:00" blob)))
+    (.execute conn "DELETE FROM agent_session_events")
+    (assert (= (db-vacuum-if-bloated conn) True))
+    ;; vacuum 後は freelist が回収済み → 再実行は no-op
+    (assert (= (db-vacuum-if-bloated conn) False)))
   (with-tmp-conn check))
