@@ -119,14 +119,38 @@ class AgentdSessionList:
 
 
 # RPC read-timeout contract.  The daemon BLOCKS on these methods by design:
-# `session.launch` waits for agent readiness (daemon LAUNCH_TIMEOUT_SECONDS,
-# 60s) and `session.await_result` waits up to its caller-supplied budget
+# `session.launch` waits for agent REPL readiness (daemon ready gate,
+# DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS, default 120s) and
+# `session.await_result` waits up to its caller-supplied budget
 # (clamp [1, 3600]).  The client socket timeout must therefore cover the
 # daemon-side budget plus a margin — a short default here silently breaks
 # the protocol (observed live: 10s client timeout vs 60s launch budget ->
 # client disconnect, daemon Broken pipe).
 RPC_TIMEOUT_MARGIN_SECONDS: float = 15.0
-LAUNCH_RPC_TIMEOUT_SECONDS: float = 120.0 + RPC_TIMEOUT_MARGIN_SECONDS
+DAEMON_REPL_IDLE_MAX_WAIT_DEFAULT_SECONDS: float = 120.0
+
+
+def launch_rpc_timeout_seconds() -> float:
+    """session.launch の client read-timeout(daemon ready gate + margin)。
+
+    daemon 側の launch 実時間を支配する予算は REPL ready gate
+    (``DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS``、host.hy が use-site で読む)。
+    client が固定値のままだと、knob で延長された daemon の ready 待ちを
+    client が先に切断して Broken pipe / AgentRequestFailed になる
+    (2026-07-27 sessionhost wedge incident)。同じ knob を同じ解釈
+    (env_positive_i64: 0 以下・parse 失敗は既定 120s)で毎呼び出し読む。
+    """
+    raw = os.environ.get("DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS")
+    budget = DAEMON_REPL_IDLE_MAX_WAIT_DEFAULT_SECONDS
+    if raw is not None:
+        try:
+            parsed: int | None = int(raw.strip())
+        except ValueError:
+            # daemon 側 env_positive_i64 と同値の解釈: parse 失敗は未設定扱い
+            parsed = None
+        if parsed is not None and parsed > 0:
+            budget = float(parsed)
+    return budget + RPC_TIMEOUT_MARGIN_SECONDS
 # PURE TRANSPORT HEARTBEAT (L-K4-3).  This constant bounds ONE
 # session.await_result round-trip and carries no node semantics: expiry
 # means "renew the keep-alive and re-await", never a node failure and
@@ -228,7 +252,7 @@ class AgentdClient:
         result = self.request(
             "session.launch",
             params,
-            read_timeout=LAUNCH_RPC_TIMEOUT_SECONDS,
+            read_timeout=launch_rpc_timeout_seconds(),
         )
         return _snapshot_from_result(result)
 
