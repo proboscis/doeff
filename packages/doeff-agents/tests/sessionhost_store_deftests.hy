@@ -229,7 +229,7 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; lease(TTL・owner guard・SIGTERM 非解放と同型の再取得物理)
+;; lease(TTL・owner guard・graceful 釈放と crash-path バックストップの物理)
 ;; ---------------------------------------------------------------------------
 
 (deftest test-lease-acquire-and-heartbeat
@@ -254,7 +254,8 @@
       (except [e RuntimeError] (setv raised e)))
     (assert (is-not raised None))
     (assert (in "owner changed" (str raised)))
-    ;; 失効 lease は他 pid が取得できる(restart() の TTL 待ち物理)
+    ;; 失効 lease は他 pid が取得できる(SIGKILL / crash 残骸の TTL
+    ;; バックストップ — restart() の retry が頼る物理)
     (.execute conn
               "UPDATE agent_daemon_lease SET expires_at = '2000-01-01T00:00:00+00:00'")
     (db-acquire-lease conn 222)

@@ -335,11 +335,12 @@ class AgentdHarness:
     def restart(self) -> None:
         """Durability probe (S10/S15): bounce the daemon, keep db + sessions.
 
-        The daemon holds a DB lease with a 10s TTL (LEASE_TTL_SECONDS,
-        main.rs:21) and does NOT release it on SIGTERM — a fresh `serve`
-        started inside that window exits early with "lease is active"
-        (acquire_lease_in_transaction, main.rs:1092). Retry past the TTL
-        so restarts are deterministic; discovered by the S10 worker.
+        The daemon holds a DB lease with a 10s TTL (LEASE_TTL_SECONDS).
+        Graceful SIGTERM now releases it (db-release-lease, issue #565), so
+        the fresh `serve` normally binds on the first try. The retry loop
+        stays as the crash-path backstop: a SIGKILLed/crashed predecessor
+        leaves its lease row behind and a fresh `serve` inside that window
+        exits early with "lease is active" until the TTL expires.
         """
         self._terminate()
         deadline = time.monotonic() + 15.0

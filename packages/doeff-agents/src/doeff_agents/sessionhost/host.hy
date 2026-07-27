@@ -22,6 +22,7 @@
 (import datetime [datetime timedelta timezone])
 (import json)
 (import os)
+(import signal)
 (import socket)
 (import sqlite3)
 (import sys)
@@ -74,6 +75,7 @@
   db-read-lease
   db-record-command
   db-record-event
+  db-release-lease
   db-report-result-guarded-update
   db-session-get
   db-session-list
@@ -1056,14 +1058,21 @@
       (print f"doeff-sessionhost {worker} error: {e}" :file sys.stderr))))
 
 
-(defn heartbeat-loop [actor owner-pid]
-  "lease 更新 loop(oracle heartbeat_loop :3454-3460、interval = TTL/3)。"
+(defn heartbeat-loop [actor owner-pid shutdown-event]
+  "lease 更新 loop(oracle heartbeat_loop :3454-3460、interval = TTL/3)。
+   shutdown-event が立ったら打刻をやめる(issue #565): main の finally が
+   釈放した lease を queue 残留 tick が張り直したり disappeared で吠えたり
+   しない。release は event set の**後**に submit されるので、actor 直列化と
+   合わせて「release より後に実行される heartbeat op は必ず event set 済み」
+   が成立する(thunk 内の再検査がその実装点)。"
   (setv interval (max (// LEASE-TTL-SECONDS 3) 1))
-  (while True
+  (while (not (.is-set shutdown-event))
     (run-worker-tick
       "heartbeat"
-      (fn [] (.submit actor (fn [conn] (db-heartbeat-once conn owner-pid)))))
-    (time.sleep interval)))
+      (fn [] (.submit actor (fn [conn]
+                              (when (not (.is-set shutdown-event))
+                                (db-heartbeat-once conn owner-pid))))))
+    (.wait shutdown-event interval)))
 
 
 (deff history-retention-cutoff-iso []
@@ -1145,19 +1154,21 @@
   listener)
 
 
-(deff serve [config actor listener]
-  {:pre [(: config HostConfig) (: actor StoreActor) (: listener socket.socket)]
-   :post [(: % "戻らない(accept loop)")]}
+(deff serve [config actor listener shutdown-event]
+  {:pre [(: config HostConfig) (: actor StoreActor) (: listener socket.socket)
+         (: shutdown-event threading.Event)]
+   :post [(: % "戻らない(accept loop — 脱出は SystemExit / KeyboardInterrupt)")]}
   "monitor / heartbeat thread → accept loop(connection 毎 thread、
    oracle serve :1159-1180)。listener は bind-listener が起動順の先頭で
-   確保済みのものを受け取る。"
+   確保済みのものを受け取る。shutdown-event は heartbeat の停止合図
+   (main の finally が lease 釈放前に立てる — issue #565)。"
   (setv monitor (threading.Thread :target monitor-loop
                                   :args #(config actor)
                                   :daemon True
                                   :name "sessionhost-monitor"))
   (.start monitor)
   (setv heartbeat (threading.Thread :target heartbeat-loop
-                                    :args #(actor (os.getpid))
+                                    :args #(actor (os.getpid) shutdown-event)
                                     :daemon True
                                     :name "sessionhost-heartbeat"))
   (.start heartbeat)
@@ -1180,13 +1191,19 @@
 (defn main []
   "serve entry(console script doeff-sessionhost の serve 経路 — subcommand
    dispatch は hostmain.py 所有で、report-result-mcp は relaymain.py へ
-   Hy import より先に分岐済み)。"
+   Hy import より先に分岐済み)。SIGTERM(launchctl bootout の標準経路)は
+   SystemExit(0) に変換し、finally の lease 釈放へ落とす(issue #565)。"
   (setv raw (list (cut sys.argv 1 None)))
   (setv config (parse-args raw))
   (for [parent [(os.path.dirname config.db-path)
                 (os.path.dirname config.socket-path)]]
     (when parent
       (os.makedirs parent :exist-ok True)))
+  ;; SIGTERM handler は main thread で SystemExit(0) を raise する — accept
+  ;; loop(下の serve)の except 節は OSError のみなので素通りして finally
+  ;; まで届く。bind 前に登録するので、bind 敗死する競合者も clean に死ぬ
+  ;; (lease 未取得 = 釈放対象なし)。
+  (signal.signal signal.SIGTERM (fn [signum frame] (raise (SystemExit 0))))
   ;; 起動順は bind が先(oracle main :581-596 からの意図的乖離、2026-07-07
   ;; ensure spawn スパイラルの根治): socket bind = 排他の実体に負けた競合者は
   ;; store open / lease 取得 / latch clear のどれにも触れずに死ぬ。
@@ -1196,13 +1213,26 @@
   (setv actor (StoreActor config.db-path))
   (setv owner-pid (os.getpid))
   (.submit actor (fn [conn] (db-acquire-lease conn owner-pid)))
-  (.submit actor (fn [conn] (db-clear-awaiting-latches conn)))
-  ;; 監査履歴の retention + 物理回収(2026-07-27 wedge 根治)。VACUUM は
-  ;; 全書き換えなので accept 開始前のここでだけ走る(serve 中は禁止 —
-  ;; actor を数秒占有して client probe を飢えさせない)。
-  (prune-history-tick actor)
-  (when (.submit actor db-vacuum-if-bloated)
-    (print "doeff-sessionhost store vacuum: reclaimed free pages"
-           :file sys.stderr))
-  (serve config actor listener)
+  ;; ここから先は lease の持ち主 — graceful 終了(SIGTERM→SystemExit /
+  ;; SIGINT / 予期せぬ例外)は finally が自 lease を釈放し、launchd
+  ;; KeepAlive の即 spawn 後継が lease-conflict で敗死しない(issue #565)。
+  ;; SIGKILL / crash は従来どおり TTL 失効がバックストップ。
+  (setv shutdown-event (threading.Event))
+  (try
+    (.submit actor (fn [conn] (db-clear-awaiting-latches conn)))
+    ;; 監査履歴の retention + 物理回収(2026-07-27 wedge 根治)。VACUUM は
+    ;; 全書き換えなので accept 開始前のここでだけ走る(serve 中は禁止 —
+    ;; actor を数秒占有して client probe を飢えさせない)。
+    (prune-history-tick actor)
+    (when (.submit actor db-vacuum-if-bloated)
+      (print "doeff-sessionhost store vacuum: reclaimed free pages"
+             :file sys.stderr))
+    (serve config actor listener shutdown-event)
+    (finally
+      ;; event set → release submit の順が要(heartbeat-loop の docstring):
+      ;; release より後に actor で実行される heartbeat op は必ず skip する。
+      (.set shutdown-event)
+      (when (.submit actor (fn [conn] (db-release-lease conn owner-pid)))
+        (print "doeff-sessionhost lease released on shutdown"
+               :file sys.stderr))))
   None)
