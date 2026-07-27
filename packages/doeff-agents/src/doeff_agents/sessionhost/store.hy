@@ -148,7 +148,10 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        ;; issue #557: attempt 中の api-limit 観測の durable latch(初回観測
        ;; 時刻)。additive migration + COALESCE first-write-wins(terminal_cause
        ;; と同格の保護 — stale な書き戻しが観測事実を消さない)。
-       #("agent_sessions" "api_limit_observed_at" "TEXT")])
+       #("agent_sessions" "api_limit_observed_at" "TEXT")
+       ;; ADR-DOE-AGENTS-009: 観測断(supply cut)の最終検出時刻。
+       ;; last-write-wins + None 保護(COALESCE(excluded, existing))。
+       #("agent_sessions" "observation_gap_at" "TEXT")])
 
 (setv SNAPSHOT-SELECT
       (+ "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status, "
@@ -161,7 +164,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
          "conversation_json, generation, resumed_from_session_id, forked_from_session_id, "
          "launch_overlay_json, "
          "adopted, turn_holder, turn_since, turn_wait_json, "
-         "api_limit_observed_at "
+         "api_limit_observed_at, observation_gap_at "
          "FROM agent_sessions"))
 
 
@@ -280,7 +283,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    "turn_wait" (if (is (get db-row 34) None)
                    None
                    (json.loads (get db-row 34)))
-   "api_limit_observed_at" (get db-row 35)})
+   "api_limit_observed_at" (get db-row 35)
+   "observation_gap_at" (get db-row 36)})
 
 (deff snapshot-to-wire-dict [snap]
   {:pre [(: snap dict)]
@@ -388,8 +392,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        "conversation_json, generation, resumed_from_session_id, forked_from_session_id, "
        "launch_overlay_json, "
        "adopted, turn_holder, turn_since, turn_wait_json, "
-       "api_limit_observed_at"
-       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+       "api_limit_observed_at, observation_gap_at"
+       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
        "ON CONFLICT(session_id) DO UPDATE SET "
        "session_name = excluded.session_name, "
        "pane_id = excluded.pane_id, "
@@ -431,7 +435,11 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        "turn_wait_json = excluded.turn_wait_json, "
        ;; issue #557: durable latch は first-write-wins — 初回観測時刻が正で、
        ;; stale な None 書き戻しにも後続観測の再打刻にも動じない。
-       "api_limit_observed_at = COALESCE(agent_sessions.api_limit_observed_at, excluded.api_limit_observed_at)")
+       "api_limit_observed_at = COALESCE(agent_sessions.api_limit_observed_at, excluded.api_limit_observed_at), "
+       ;; ADR-DOE-AGENTS-009: 観測断の刻印は last-write-wins(再検出で前進)
+       ;; だが None 書き戻しでは消えない — COALESCE の引数順が api_limit と
+       ;; 逆(excluded 優先)なのはそのため。
+       "observation_gap_at = COALESCE(excluded.observation_gap_at, agent_sessions.observation_gap_at)")
     #((get snap "session_id")
       (get snap "session_name")
       (get snap "pane_id")
@@ -490,7 +498,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
           (json.dumps (get snap "turn_wait") :sort-keys True
                       :separators #("," ":") :ensure-ascii False))
       ;; .get 既定値: issue #557 以前の snapshot dict にも additive に振る舞う。
-      (.get snap "api_limit_observed_at")))
+      (.get snap "api_limit_observed_at")
+      ;; ADR-DOE-AGENTS-009 以前の snapshot dict にも additive に振る舞う。
+      (.get snap "observation_gap_at")))
   None)
 
 (deff db-session-get [conn session-id]
@@ -700,6 +710,46 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
                      "AND status NOT IN ('done','failed','exited','stopped','cancelled')")
                   #(payload session-id)))
   cursor.rowcount)
+
+
+(deff db-late-result-accept [conn session-id payload accepted-at]
+  {:pre [(: conn sqlite3.Connection) (: session-id str) (: payload str)
+         (: accepted-at str)]
+   :post [(: % int)]}
+  "遅延 result 受理の guarded UPDATE(ADR-DOE-AGENTS-009 R4)。死亡裁定
+   クラス(status=exited)+ result 未永続の行だけに書ける唯一の
+   terminal→terminal 上書き経路: result 到着は死亡推定の反証そのものなので
+   status=done へ、誤裁定の残滓(terminal_cause / last_validation_error)は
+   クリアし、finished_at は受理時刻へ前進する(死亡刻印時刻は誤裁定の時刻 —
+   完了の最初の証拠は result 到着)。upsert の COALESCE(terminal_cause_json
+   first-write-wins)はこの直接 UPDATE を通らないため干渉しない。
+   戻り値 = affected 行数(0 = 既に書かれているか対象外)。"
+  (setv cursor
+        (.execute conn
+                  (+ "UPDATE agent_sessions SET result_payload_json = ?, "
+                     "status = 'done', "
+                     "last_validation_error = NULL, "
+                     "terminal_cause_json = NULL, "
+                     "finished_at = ? "
+                     "WHERE session_id = ? "
+                     "AND result_payload_json IS NULL "
+                     "AND status = 'exited'")
+                  #(payload accepted-at session-id)))
+  cursor.rowcount)
+
+
+(deff db-mark-cleaned [conn session-id cleaned-at]
+  {:pre [(: conn sqlite3.Connection) (: session-id str) (: cleaned-at str)]
+   :post [(: % "None")]}
+  "substrate cleanup の記帳(first-write-wins — finalize の cleaned_at と
+   同義)。遅延 result 受理後の RPC 層 cleanup(ADR-DOE-AGENTS-009 R4)が
+   actor op として呼ぶ。"
+  (.execute conn
+            (+ "UPDATE agent_sessions "
+               "SET cleaned_at = COALESCE(cleaned_at, ?) "
+               "WHERE session_id = ?")
+            #(cleaned-at session-id))
+  None)
 
 
 ;; ---------------------------------------------------------------------------
@@ -914,7 +964,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
     :forked-from-session-id (.get snap "forked_from_session_id")
     :launch-overlay (.get snap "launch_overlay")
     :adopted (bool (.get snap "adopted" False))
-    :api-limit-observed-at (.get snap "api_limit_observed_at")))
+    :api-limit-observed-at (.get snap "api_limit_observed_at")
+    :observation-gap-at (.get snap "observation_gap_at")))
 
 (deff policy-row-patch [row]
   {:pre [(: row SessionRow)]
@@ -958,7 +1009,10 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    "adopted" row.adopted
    ;; issue #557: durable latch は policy(monitor)が唯一の writer。
    ;; SQL 側 COALESCE が first-write-wins を最終防衛する。
-   "api_limit_observed_at" row.api-limit-observed-at})
+   "api_limit_observed_at" row.api-limit-observed-at
+   ;; ADR-DOE-AGENTS-009: 観測断の刻印も policy(monitor)が唯一の writer。
+   ;; SQL 側 COALESCE(excluded, existing)が None 書き戻しから防衛する。
+   "observation_gap_at" row.observation-gap-at})
 
 (deff snapshot-from-policy-row [row]
   {:pre [(: row SessionRow)]
