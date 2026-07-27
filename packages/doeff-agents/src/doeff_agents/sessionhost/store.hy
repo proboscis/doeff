@@ -740,8 +740,11 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
   {:pre [(: conn sqlite3.Connection) (: owner-pid int)]
    :post [(: % "None — 生存 lease は raise")]}
   "BEGIN IMMEDIATE の下で未失効 lease を拒否(oracle acquire_lease)。
-   SIGTERM で解放しない挙動込みで oracle parity — conformance restart() は
-   TTL 失効を待って再取得する(harness.py:131-149)。"
+   graceful shutdown は db-release-lease が自 lease を先に消す(issue #565、
+   oracle の SIGTERM 非解放からの意図的乖離)ので、この fail-loud 検査に
+   かかるのは SIGKILL / crash の残骸(TTL 失効待ち)か生きた二重 host のみ。
+   conformance restart() の TTL retry はその crash-path バックストップ
+   (harness.py)。"
   (.execute conn "BEGIN IMMEDIATE")
   (try
     (setv existing (db-read-lease conn))
@@ -794,6 +797,32 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
       (.execute conn "ROLLBACK")
       (raise)))
   None)
+
+(deff db-release-lease [conn owner-pid]
+  {:pre [(: conn sqlite3.Connection) (: owner-pid int)]
+   :post [(: % bool)]}
+  "graceful shutdown の lease 釈放(issue #565 — oracle からの意図的乖離)。
+   BEGIN IMMEDIATE 下で**自 owner-pid 名義の行だけ**を削除する。冪等
+   (不在は no-op)。他 pid 名義は未失効・失効を問わず触らない — 生きた
+   二重 host の検出面(acquire / heartbeat の fail-loud)を release が
+   壊さないため。TTL は SIGKILL / crash 経路のバックストップとして残る。
+   戻り値 = 釈放したか。"
+  (.execute conn "BEGIN IMMEDIATE")
+  (setv released False)
+  (try
+    (setv current (db-read-lease conn))
+    (when (and (is-not current None)
+               (= (get current "owner_pid") owner-pid))
+      (.execute conn
+                (+ "DELETE FROM agent_daemon_lease "
+                   "WHERE lease_name = ? AND owner_pid = ?")
+                #(LEASE-NAME owner-pid))
+      (setv released True))
+    (.execute conn "COMMIT")
+    (except [e Exception]
+      (.execute conn "ROLLBACK")
+      (raise)))
+  released)
 
 
 ;; ---------------------------------------------------------------------------
