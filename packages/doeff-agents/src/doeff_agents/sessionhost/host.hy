@@ -19,7 +19,7 @@
 (require doeff-hy.macros [deff defk <-])
 
 (import dataclasses [dataclass replace])
-(import datetime [datetime timezone])
+(import datetime [datetime timedelta timezone])
 (import json)
 (import os)
 (import socket)
@@ -63,8 +63,10 @@
 (import doeff_agents.sessionhost.substrate [real-substrate])
 (import doeff_agents.sessionhost.substrate_herdr [DEFAULT-HERDR-SOCKET herdr-substrate])
 (import doeff_agents.sessionhost.store [
+  HISTORY-PRUNE-BATCH-ROWS
   LEASE-TTL-SECONDS
   StoreActor
+  actor-prune-history
   db-acquire-lease
   db-clear-awaiting-latches
   db-count-active
@@ -75,6 +77,7 @@
   db-report-result-guarded-update
   db-session-get
   db-session-list
+  db-vacuum-if-bloated
   snapshot-to-wire-dict
   sqlite-session-store])
 
@@ -88,6 +91,11 @@
 (setv LAUNCH-TIMEOUT-SECONDS 60)
 (setv STALE-OBSERVATION-THRESHOLD-SECONDS 300)
 (setv DEFAULT-RESULT-SOLICITATION-LIMIT 2)
+;; 監査履歴(events / commands)の retention(oracle に無い追加 — 2026-07-27
+;; wedge 根治)。境界より古い行は起動時 + 毎時の prune が刈る。env knob
+;; DOEFF_AGENTD_HISTORY_RETENTION_DAYS(use-site 読み — 他 knob と同じ)。
+(setv HISTORY-RETENTION-DAYS-DEFAULT 14)
+(setv HISTORY-PRUNE-INTERVAL-SECONDS 3600)
 (setv DEFAULT-PROMPT-STALL-SECONDS 180)
 (setv DEFAULT-PROMPT-UNBLOCK-LIMIT 3)
 ;; sh -c 越しに走るので settings JSON は single-quote で word splitting を
@@ -1058,6 +1066,28 @@
     (time.sleep interval)))
 
 
+(deff history-retention-cutoff-iso []
+  {:pre [True]
+   :post [(: % str)]}
+  "監査履歴の retention 境界(now - N days)。knob は use-site 読み
+   (DOEFF_AGENTD_HISTORY_RETENTION_DAYS、他 knob と同じ流儀)。境界は
+   店じまい記録(now-iso)と同じ isoformat なので文字列比較で整合する。"
+  (setv days (or (env-positive-i64 "DOEFF_AGENTD_HISTORY_RETENTION_DAYS")
+                 HISTORY-RETENTION-DAYS-DEFAULT))
+  (.isoformat (- (datetime.now timezone.utc) (timedelta :days days))))
+
+
+(defn prune-history-tick [actor]
+  "監査履歴 prune の 1 pass(起動時 + 毎時)。削除があったときだけ log。"
+  (setv cutoff (history-retention-cutoff-iso))
+  (setv deleted (actor-prune-history actor cutoff HISTORY-PRUNE-BATCH-ROWS))
+  (when (> deleted 0)
+    (print (+ f"doeff-sessionhost history prune: deleted {deleted} audit "
+              f"rows older than {cutoff}")
+           :file sys.stderr))
+  deleted)
+
+
 (deff build-monitor-knobs [config]
   {:pre [(: config HostConfig)]
    :post [(: % MonitorKnobs)]}
@@ -1086,11 +1116,16 @@
 (defn monitor-loop [config actor]
   "monitor loop(oracle monitor_loop :3447-3452)。tick = monitor-cycle
    program の実行 — per-session 隔離は program 所有(policy.hy:622、oracle の
-   tick 隔離より強い)。run-worker-tick は backstop。"
+   tick 隔離より強い)。run-worker-tick は backstop。監査履歴の毎時 prune も
+   ここが持つ(retention 反故 = 無限成長は 2026-07-27 wedge の根)。"
+  (setv next-prune (+ (time.monotonic) HISTORY-PRUNE-INTERVAL-SECONDS))
   (while True
     (run-worker-tick
       "monitor"
       (fn [] (run-hosted config actor (monitor-cycle (build-monitor-knobs config)))))
+    (when (>= (time.monotonic) next-prune)
+      (run-worker-tick "history-prune" (fn [] (prune-history-tick actor)))
+      (setv next-prune (+ (time.monotonic) HISTORY-PRUNE-INTERVAL-SECONDS)))
     (time.sleep config.monitor-interval-seconds)))
 
 
@@ -1162,5 +1197,12 @@
   (setv owner-pid (os.getpid))
   (.submit actor (fn [conn] (db-acquire-lease conn owner-pid)))
   (.submit actor (fn [conn] (db-clear-awaiting-latches conn)))
+  ;; 監査履歴の retention + 物理回収(2026-07-27 wedge 根治)。VACUUM は
+  ;; 全書き換えなので accept 開始前のここでだけ走る(serve 中は禁止 —
+  ;; actor を数秒占有して client probe を飢えさせない)。
+  (prune-history-tick actor)
+  (when (.submit actor db-vacuum-if-bloated)
+    (print "doeff-sessionhost store vacuum: reclaimed free pages"
+           :file sys.stderr))
   (serve config actor listener)
   None)
