@@ -3,14 +3,22 @@
 The driver kills the session's tmux pane directly (bypassing agentd's own
 `session.cancel`/cleanup), simulating an external process death. The next
 monitor tick observes `tmux has-session` failing and takes the
-RESULT-FIRST branch (main.rs:3922-3951):
+RESULT-FIRST branch:
 
   (a) a valid result was already reported before the kill -> `done`,
       payload persisted (the pane's death does not race a landed result)
-  (b) no result was ever reported -> `exited`, cause `Lost`,
-      retryable=true ("tmux session disappeared")
+  (b) no result was ever reported -> `exited`, cause `Vanished`,
+      retryable=true ("tmux session disappeared" — second-evidence death,
+      split from Lost by ADR-DOE-AGENTS-009 R3)
+  (c) late-result acceptance (ADR-DOE-AGENTS-009 R4): a schema-valid
+      `session.report_result` arriving AFTER the death verdict of (b) is
+      accepted — status flips to `done`, the payload persists, the death
+      verdict (terminal_cause) is cleared, and a
+      `session_late_result_accepted` event lands. This is the rescue path
+      for the 2026-07-27 wedge incident where a live agent's result was
+      rejected with -32003 and lost.
 
-Both variants avoid the turn-end branch entirely (no `render` of the
+The kill variants avoid the turn-end branch entirely (no `render` of the
 turn-activity marker, no idle-after-prompt re-render), so
 `--prompt-judge-cmd ""` is not load-bearing here, but it is set anyway for
 consistency with the rest of this suite and to keep the run fully
@@ -24,6 +32,7 @@ from harness import RESULT_SCHEMA, AgentdHarness, kill_session_out_of_band
 
 PROMPT = "Produce the conformance structured result."
 PAYLOAD = {"summary": "reported before kill", "ok": True}
+LATE_PAYLOAD = {"summary": "reported after false terminal", "ok": True}
 
 
 def _kill_pane(session_id: str) -> None:
@@ -66,7 +75,7 @@ def test_s9a_result_first_survives_kill() -> None:
         assert json.loads(row["result_payload_json"]) == PAYLOAD
 
 
-def test_s9b_unreported_kill_is_lost() -> None:
+def test_s9b_unreported_kill_is_vanished() -> None:
     with AgentdHarness(extra_serve_args=["--prompt-judge-cmd", ""]) as harness:
         scenario = harness.scenario(
             "s9b",
@@ -95,8 +104,56 @@ def test_s9b_unreported_kill_is_lost() -> None:
         row = harness.session_row(scenario.session_id)
         assert row["status"] == "exited", f"status={row['status']}\n" + harness.log_text()
         cause = json.loads(row["terminal_cause_json"])
-        assert cause["category"] == "lost", cause
+        assert cause["category"] == "vanished", cause
         assert cause["retryable"] is True, cause
+
+
+def test_s9c_late_result_after_death_verdict_is_accepted() -> None:
+    with AgentdHarness(extra_serve_args=["--prompt-judge-cmd", ""]) as harness:
+        scenario = harness.scenario(
+            "s9c",
+            [
+                {"render": "F-idle-claude"},
+                {"await_keys": {"expect": PROMPT, "timeout_s": 30}},
+                {"sleep_s": 60},
+            ],
+        )
+        scenario.launch_m2(
+            prompt=PROMPT,
+            expected_result={"payload_schema": RESULT_SCHEMA},
+        )
+
+        prompt_entries = _await_journal_event(scenario, "keys", timeout_s=20.0)
+        assert prompt_entries, f"prompt paste never landed\n{harness.log_text()}"
+
+        # drive to the S9b death verdict first
+        kill_session_out_of_band(scenario.session_id)
+        outcome = harness.client.await_result(scenario.session_id, timeout_seconds=20.0)
+        assert outcome.result is None
+        row = harness.session_row(scenario.session_id)
+        assert row["status"] == "exited", f"status={row['status']}\n" + harness.log_text()
+
+        # the "dead" agent's report arrives late (driver speaks the daemon
+        # wire directly — same channel rationale as S10): it must be
+        # accepted, not bounced with -32003
+        wire_response = harness.client.request(
+            "session.report_result",
+            {"session_id": scenario.session_id, "payload": LATE_PAYLOAD},
+        )
+        assert wire_response.get("accepted") is True, wire_response
+        assert wire_response.get("late_result") is True, wire_response
+
+        row = harness.session_row(scenario.session_id)
+        assert row["status"] == "done", f"status={row['status']}\n" + harness.log_text()
+        assert json.loads(row["result_payload_json"]) == LATE_PAYLOAD
+        assert row["terminal_cause_json"] is None, row["terminal_cause_json"]
+
+        types = [e["event_type"] for e in harness.events(scenario.session_id)]
+        assert "session_late_result_accepted" in types, types
+
+        # the rescued result is served on the public boundary
+        outcome = harness.client.await_result(scenario.session_id, timeout_seconds=10.0)
+        assert outcome.result == LATE_PAYLOAD, outcome
 
 
 def _await_journal_event(scenario, event_name: str, *, timeout_s: float) -> list[dict]:

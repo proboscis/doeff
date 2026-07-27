@@ -964,9 +964,10 @@ def test_ensure_agentd_malformed_declaration_is_loud_even_with_healthy_daemon(
     def handle(request: Mapping[str, Any]) -> Mapping[str, Any]:
         return {"id": request["id"], "ok": True, "result": {"state": "running"}}
 
-    with OneShotAgentdServer(paths.socket_path, handle):
-        with pytest.raises(AgentdSupervisorConfigError):
-            ensure_agentd(client_timeout=2.0)
+    with OneShotAgentdServer(paths.socket_path, handle), pytest.raises(
+        AgentdSupervisorConfigError
+    ):
+        ensure_agentd(client_timeout=2.0)
 
 
 def test_agentd_command_defaults_to_interpreter_sibling_sessionhost(
