@@ -22,6 +22,9 @@
 (import doeff_agents.sessionhost.host [
   HostConfig
   DEFAULT-PROMPT-JUDGE-CMD
+  RPC-ERR-ALREADY-TERMINAL
+  RPC-ERR-RESULT-REJECTED
+  RpcHostError
   build-launch-program-params
   parse-args
   default-db-path
@@ -30,8 +33,15 @@
   err-response
   dispatch-line
   prepare-socket-path
+  report-result-op
   main])
-(import doeff_agents.sessionhost.store [StoreActor db-acquire-lease])
+(import doeff_agents.sessionhost.store [
+  StoreActor
+  db-acquire-lease
+  open-conn
+  db-migrate
+  db-upsert-snapshot
+  db-session-get])
 
 
 ;; ---------------------------------------------------------------------------
@@ -471,3 +481,130 @@
           (.kill p)
           (.wait p :timeout 5)))
       (shutil.rmtree d :ignore-errors True))))
+
+
+;; ---------------------------------------------------------------------------
+;; 遅延 result 受理(ADR-DOE-AGENTS-009 R4 — false-lost 後の救済経路)
+;; ---------------------------------------------------------------------------
+
+(defn late-result-snap [session-id #** overrides]
+  "report-result-op 検証用の store-of-record 行。"
+  (setv base {"session_id" session-id
+              "session_name" f"doeff-{session-id}"
+              "pane_id" "%1"
+              "agent_type" "codex"
+              "work_dir" "/tmp/w"
+              "lifecycle" "run_to_completion"
+              "status" "running"
+              "backend_kind" "tmux"
+              "backend_ref" {"session_name" f"doeff-{session-id}"
+                             "pane_id" "%1"
+                             "command" "codex"}
+              "started_at" "2026-07-27T19:27:00+00:00"
+              "last_observed_at" "2026-07-27T20:10:00+00:00"
+              "finished_at" None
+              "cleaned_at" None
+              "pr_url" None
+              "output_snippet" None
+              "terminal_cause" None
+              "expected_result" {"payload_schema" {"type" "object"}}
+              "retries_used" 0
+              "last_validation_error" None
+              "awaiting_response" False
+              "observed_active_at" "2026-07-27T19:27:30+00:00"
+              "result_payload" None
+              "result_solicitations_used" 0
+              "prompt_unblock_attempts" 0
+              "last_output_change_at" None})
+  (.update base overrides)
+  base)
+
+
+(defn with-late-conn [thunk]
+  (setv d (tempfile.mkdtemp))
+  (try
+    (setv conn (open-conn (os.path.join d "late.sqlite")))
+    (db-migrate conn)
+    (thunk conn)
+    (finally
+      (shutil.rmtree d :ignore-errors True))))
+
+
+(deftest test-report-result-accepted-after-death-verdict
+  ;; ADR-DOE-AGENTS-009 R4: 死亡裁定クラス(exited)+ result 未永続 + contract
+  ;; 有りへの遅延 report_result は schema 検証の上で受理される — status=done・
+  ;; payload 永続・terminal_cause / last_validation_error クリア。2026-07-27
+  ;; wedge で実装結果が -32003 拒否により result channel 断になった実 incident
+  ;; (wi_ee07c6a71fa945a5)の救済経路。
+  (defn check [conn]
+    (db-upsert-snapshot conn (late-result-snap "s1"
+      :status "exited"
+      :finished_at "2026-07-27T20:15:00+00:00"
+      :last_validation_error "stale"
+      :terminal_cause {"category" "vanished"
+                       "reason" "tmux session disappeared"
+                       "retryable" True
+                       "observed_at" "2026-07-27T20:15:00+00:00"}))
+    (setv response (report-result-op conn "s1" {"ok" True}))
+    (assert (= (get response "accepted") True))
+    (assert (= (get response "late_result") True))
+    (setv snap (db-session-get conn "s1"))
+    (assert (= (get snap "status") "done"))
+    (assert (= (get snap "result_payload") "{\"ok\":true}"))
+    (assert (is (get snap "terminal_cause") None))
+    (assert (is (get snap "last_validation_error") None))
+    ;; finished_at は受理時刻へ前進する(死亡刻印時刻は誤裁定の時刻)
+    (assert (!= (get snap "finished_at") "2026-07-27T20:15:00+00:00")))
+  (with-late-conn check))
+
+
+(deftest test-late-result-schema-still-validated
+  ;; R4 は受理の門を開くだけで検証は緩めない: schema 不適合は従来どおり
+  ;; -32002 のまま(exited の行でも同じ)。
+  (defn check [conn]
+    (db-upsert-snapshot conn (late-result-snap "s1"
+      :status "exited"
+      :expected_result {"payload_schema" {"type" "object"
+                                          "required" ["summary"]
+                                          "properties" {"summary" {"type" "string"}}}}
+      :terminal_cause {"category" "vanished"
+                       "reason" "tmux session disappeared"
+                       "retryable" True
+                       "observed_at" "2026-07-27T20:15:00+00:00"}))
+    (setv raised None)
+    (try
+      (report-result-op conn "s1" {"nope" 1})
+      (except [e RpcHostError] (setv raised e)))
+    (assert (is-not raised None))
+    (assert (= raised.code RPC-ERR-RESULT-REJECTED))
+    (setv snap (db-session-get conn "s1"))
+    (assert (= (get snap "status") "exited"))
+    (assert (is (get snap "result_payload") None)))
+  (with-late-conn check))
+
+
+(deftest test-late-result-rejected-for-judged-and-operator-verdicts
+  ;; R4 の範囲限定: judged failure(failed)と操作者裁定(cancelled/stopped)
+  ;; は裁定の書き換えになるため従来どおり -32003 で拒否する。
+  (defn check [conn]
+    (for [status ["failed" "cancelled" "stopped"]]
+      (setv sid f"s-{status}")
+      (db-upsert-snapshot conn (late-result-snap sid :status status))
+      (setv raised None)
+      (try
+        (report-result-op conn sid {"ok" True})
+        (except [e RpcHostError] (setv raised e)))
+      (assert (is-not raised None) f"expected -32003 for {status}")
+      (assert (= raised.code RPC-ERR-ALREADY-TERMINAL))))
+  (with-late-conn check))
+
+
+(deftest test-late-result-idempotent-when-already-reported
+  ;; 終端 + payload 既永続は従来どおり idempotent already_reported(exited でも)。
+  (defn check [conn]
+    (db-upsert-snapshot conn (late-result-snap "s1"
+      :status "exited"
+      :result_payload "{\"ok\":true}"))
+    (setv response (report-result-op conn "s1" {"ok" True}))
+    (assert (= response {"accepted" True "already_reported" True})))
+  (with-late-conn check))

@@ -124,7 +124,17 @@
   ;; (行 = 1 attempt の incarnation なので latch の寿命は attempt と一致)。
   ;; wire には載せない — 下流(ACP ADR 0042)が読むのは terminal_cause のみ。
   #^ (| str None) api-limit-observed-at
-  (setv api-limit-observed-at None))
+  (setv api-limit-observed-at None)
+  ;; ADR-DOE-AGENTS-009: 観測断(supply cut)の最終検出時刻。stale watchdog は
+  ;; terminal 化せずここへ刻印する(観測断 ≠ 死亡 — 2026-07-27 wedge の
+  ;; false-lost 根治)。launch-timeout watchdog は watch 窓の基点を
+  ;; max(started_at, observation_gap_at) に取る(観測断は「観測し続けたのに
+  ;; active 未観測」premise を void にする)。last-write-wins(再検出で前進 —
+  ;; gap event の有界化と watch 窓再スタートの基点)+ None 保護(store は
+  ;; COALESCE(excluded, existing))。wire には載せない — 下流(ACP)が読むのは
+  ;; terminal_cause のみ(api_limit_observed_at と同じ扱い)。
+  #^ (| str None) observation-gap-at
+  (setv observation-gap-at None))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] PaneObservation []

@@ -809,30 +809,115 @@
   (assert (= row.status "running")))
 
 
-(deftest test-stale-observation-reaper-before-tmux
-  ;; last_observed_at 凍結 → tmux probe より前に exited・Lost true で reap
+(deftest test-launch-timeout-window-restarts-after-gap
+  ;; ADR-DOE-AGENTS-009 R2: 観測断は「観測し続けたのに active を見ていない」
+  ;; premise を void にする — gap 検出 cycle では started_at 基点の launch
+  ;; timeout を発火させない(wedge 直前に running へ手渡された生存 agent を
+  ;; timed_out で誤終端し ACP transient 自動再試行 = 二重実装を解放する形)。
+  (setv world (FakeWorld))
+  (seed world (make-row world
+                        :started-at (iso-at world -3600)
+                        :observed-active-at None
+                        :last-observed-at (iso-at world -301))
+        :frame F-FROZEN)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "running"))
+  (assert (is row.terminal-cause None))
+  (assert (= row.observation-gap-at (iso-at world 0)))
+  (assert (not-in #("s1" "session_launch_timeout") world.events)))
+
+
+(deftest test-launch-timeout-fires-from-gap-base
+  ;; ADR-DOE-AGENTS-009 R2 の有界性: 供給回復後(last_observed_at 前進済み)、
+  ;; gap 基点から改めて launch timeout 秒の連続観測で active 未観測なら従来
+  ;; どおり reap する — genuinely stuck な session は回復後に必ず終端に至る。
+  (setv world (FakeWorld))
+  (seed world (make-row world
+                        :started-at (iso-at world -3600)
+                        :observed-active-at None
+                        :last-observed-at (iso-at world -1)
+                        :observation-gap-at (iso-at world -61))
+        :frame F-FROZEN)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "failed"))
+  (assert (= row.terminal-cause.category "timed_out"))
+  (assert (= row.terminal-cause.retryable True))
+  (assert (in #("s1" "session_launch_timeout") world.events)))
+
+
+(deftest test-stale-observation-holds-and-records-gap
+  ;; ADR-DOE-AGENTS-009 R1(観測断 ≠ 死亡): last_observed_at 凍結は観測経路の
+  ;; 命題であり死亡命題ではない — terminal 化せず observation_gap_at へ刻印し、
+  ;; session_observation_gap event を記帳して通常 arm へ fall-through する。
+  ;; 生存 agent(F-ACTIVE-CODEX)はそのまま観測が再開され running を保つ。
+  ;; 旧挙動(exited・cause lost・tmux probe 前 reap)は 2026-07-27 wedge で
+  ;; tmux 生存 agent を死亡刻印した実 incident の根因。
   (setv world (FakeWorld))
   (seed world (make-row world :last-observed-at (iso-at world -301))
         :frame F-ACTIVE-CODEX)
   (<- outcomes (run-cycle world (MonitorKnobs)))
   (setv row (get world.rows "s1"))
+  (assert (= row.status "running"))
+  (assert (is row.terminal-cause None))
+  (assert (is row.finished-at None))
+  (assert (= row.observation-gap-at (iso-at world 0)))
+  (assert (in #("s1" "session_observation_gap") world.events))
+  (assert (not-in #("s1" "session_stale_reaped") world.events))
+  ;; 観測は再開される: tmux probe + capture が実際に走った
+  (assert (= world.has-session-calls ["doeff-s1"]))
+  (assert (= world.capture-count 1))
+  ;; 観測成功で last_observed_at も前進する(gap の再検出は止まる)
+  (assert (= row.last-observed-at (iso-at world 0))))
+
+
+(deftest test-stale-observation-gap-event-is-rate-bounded
+  ;; ADR-DOE-AGENTS-009 R1 の journal 有界性(PR #564 肥大の再発防止):
+  ;; 観測が不能なまま(capture が毎 cycle 失敗)でも、gap 検出条件は
+  ;; observation_gap_at 自身で再武装されるため event は 1/stale-secs に有界。
+  (setv world (FakeWorld))
+  (seed world (make-row world :last-observed-at (iso-at world -301))
+        :frame F-ACTIVE-CODEX)
+  (.add world.broken-panes "%1")
+  (<- outcomes1 (run-cycle world (MonitorKnobs)))
+  (<- outcomes2 (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  ;; 供給断のままでは裁定素材が無い — unknown 保持(有界性は ACP deadman)
+  (assert (= row.status "running"))
+  (assert (is row.terminal-cause None))
+  (setv gap-events (lfor e world.events :if (= e #("s1" "session_observation_gap")) e))
+  (assert (= (len gap-events) 1)))
+
+
+(deftest test-stale-observation-with-dead-session-vanishes
+  ;; ADR-DOE-AGENTS-009 R1+R3: 観測断のあとの死亡裁定は第 2 証拠 arm が下す —
+  ;; tmux session が実際に消えていれば同 cycle 内で exited・vanished に到達する
+  ;; (観測断は裁定を遅らせない — 証拠さえあれば即終端)。
+  (setv world (FakeWorld))
+  (seed world (make-row world :last-observed-at (iso-at world -301))
+        :frame F-IDLE-CODEX)
+  (.discard world.tmux-sessions "doeff-s1")
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
   (assert (= row.status "exited"))
-  (assert (= row.terminal-cause.category "lost"))
+  (assert (= row.terminal-cause.category "vanished"))
   (assert (= row.terminal-cause.retryable True))
-  (assert (= row.terminal-cause.reason "no monitor observation for more than 300s"))
-  (assert (in #("s1" "session_stale_reaped") world.events))
-  (assert (= world.capture-count 0))
-  (assert (= world.has-session-calls [])))
+  (assert (= row.terminal-cause.reason "tmux session disappeared"))
+  (assert (in #("s1" "session_observation_gap") world.events))
+  (assert (in #("s1" "session_exited") world.events)))
 
 
 (deftest test-zombie-reaper-idle-shell
-  ;; zombie: pane の foreground が idle shell へ戻った → exited・Lost true
+  ;; zombie: pane の foreground が idle shell へ戻った → exited・Vanished true
+  ;; (第 2 証拠つき死亡 — ADR-DOE-AGENTS-009 R3 で lost から分割。ACP は
+  ;; category≠lost → StatusExited で即時終端し deadman gate を待たない)
   (setv world (FakeWorld))
   (seed world (make-row world) :frame F-IDLE-CODEX :pane-command "zsh")
   (<- outcomes (run-cycle world (MonitorKnobs)))
   (setv row (get world.rows "s1"))
   (assert (= row.status "exited"))
-  (assert (= row.terminal-cause.category "lost"))
+  (assert (= row.terminal-cause.category "vanished"))
   (assert (= row.terminal-cause.retryable True))
   (assert (= row.terminal-cause.reason "tmux pane returned to idle shell: zsh"))
   (assert (= world.capture-count 0))
@@ -853,15 +938,16 @@
   (assert (in #("s1" "session_done") world.events)))
 
 
-(deftest test-tmux-gone-without-result-lost
-  ;; S9: 未報告の帯域外 kill → exited・cause Lost retryable=true
+(deftest test-tmux-gone-without-result-vanished
+  ;; S9: 未報告の帯域外 kill → exited・cause Vanished retryable=true
+  ;; (第 2 証拠つき死亡 — ADR-DOE-AGENTS-009 R3 で lost から分割)
   (setv world (FakeWorld))
   (seed world (make-row world) :frame F-IDLE-CODEX)
   (.discard world.tmux-sessions "doeff-s1")
   (<- outcomes (run-cycle world (MonitorKnobs)))
   (setv row (get world.rows "s1"))
   (assert (= row.status "exited"))
-  (assert (= row.terminal-cause.category "lost"))
+  (assert (= row.terminal-cause.category "vanished"))
   (assert (= row.terminal-cause.retryable True))
   (assert (= row.terminal-cause.reason "tmux session disappeared"))
   (assert (in #("s1" "session_exited") world.events)))
@@ -943,10 +1029,12 @@
   ;; とおり、category は snake_case が真(README の CamelCase はラベル)。
   ;; cancelled は host RPC(session.cancel / cleanup)所有で oracle が
   ;; retryable=false を明示(:1985-1991)。
+  ;; ADR-DOE-AGENTS-009 R3(2026-07-28): lost は表から除去(観測断は terminal
+  ;; cause として構築されない)。証拠つき死亡は vanished(retryable=true)。
   (assert (= TERMINAL-CAUSE-RETRYABLE
              {"rate_limited" True
               "timed_out" True
-              "lost" True
+              "vanished" True
               "runner_unavailable" False
               "protocol_error" False
               "run_failed" False

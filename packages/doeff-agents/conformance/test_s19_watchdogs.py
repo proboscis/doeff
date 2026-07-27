@@ -1,27 +1,36 @@
 """S19 watchdogs (contract README S19, tag P, mode M2).
 
-Three independent reapers, one scenario each:
+Three independent watchdogs, one scenario each:
 
-  (a) launch-timeout (main.rs:3512-3552): the pane never shows a
-      startup-finished signal (no idle glyph, no active marker, no ⏺), so
-      `observed_active_at` stays NULL and the session is failed with
-      cause timed_out retryable=true once `started_at` is older than
-      DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS. F-frozen renders exactly that
+  (a) launch-timeout: the pane never shows a startup-finished signal (no
+      idle glyph, no active marker, no ⏺), so `observed_active_at` stays
+      NULL and the session is failed with cause timed_out retryable=true
+      once `max(started_at, observation_gap_at)` is older than
+      DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS (ADR-DOE-AGENTS-009 R2: an
+      observation gap voids the "watched continuously, never saw active"
+      premise and restarts the window). F-frozen renders exactly that
       "live but never started" shape.
-  (b) zombie idle shell (main.rs:3556-3587): the agent process exits and
-      tmux drops the pane back to its parent shell; `pane_current_command`
-      reads as a known shell -> exited, cause lost retryable=true.
-  (c) stale observation (main.rs:3485-3511): `last_observed_at` stops
-      advancing while the session stays `running`. Black-box reachable
-      shape: the tmux SESSION stays alive (the driver adds a second
-      window) but the monitored PANE is killed out of band -> every
-      monitor tick aborts at `tmux_capture` (the `?` propagates, so
-      nothing refreshes last_observed_at), and the stale branch — which
-      deliberately runs BEFORE any tmux probe — reaps the session once
-      the frozen timestamp is older than the threshold. The 300s
-      constant has no CLI flag; the suite drives it through the
-      semantics-preserving DOEFF_AGENTD_STALE_OBSERVATION_SECS env knob
-      added for exactly this scenario (README knob table).
+  (b) zombie idle shell: the agent process exits and tmux drops the pane
+      back to its parent shell; `pane_current_command` reads as a known
+      shell -> exited, cause vanished retryable=true (second-evidence
+      death — split from lost by ADR-DOE-AGENTS-009 R3).
+  (c) stale observation (ADR-DOE-AGENTS-009 R1 — 2026-07-28 contract
+      revision, root fix for the 2026-07-27 sessionhost wedge false-lost
+      incident): `last_observed_at` stops advancing while the session
+      stays `running`. An observation gap is a proposition about the
+      OBSERVATION SUPPLY, not about the observed agent's death — the
+      watchdog no longer terminalizes. It stamps `observation_gap_at`,
+      records one `session_observation_gap` event (re-armed by the gap
+      stamp itself, so the journal rate is bounded at 1/stale-secs), and
+      falls through to the second-evidence arms (tmux liveness probe /
+      zombie reaper). Black-box shape: the tmux SESSION stays alive (the
+      driver adds a second window) but the monitored PANE is killed out
+      of band -> every tick aborts at `tmux_capture`, no second evidence
+      is obtainable, and the row is HELD at `running` (unknown;
+      boundedness is owned by the engine-side deadman gate, ACP ADR
+      0059). The 300s constant has no CLI flag; the suite drives it
+      through the semantics-preserving DOEFF_AGENTD_STALE_OBSERVATION_SECS
+      env knob (README knob table).
 
 All three thresholds ride harness.extra_env because they are env-only
 knobs on the daemon process.
@@ -101,7 +110,7 @@ def test_s19b_zombie_idle_shell_is_reaped_as_lost() -> None:
             f"status={row['status']}\n" + harness.log_text()
         )
         cause = json.loads(row["terminal_cause_json"])
-        assert cause["category"] == "lost", cause
+        assert cause["category"] == "vanished", cause
         assert cause["retryable"] is True, cause
         assert "idle shell" in (cause.get("reason") or ""), cause
 
@@ -110,7 +119,7 @@ def test_s19b_zombie_idle_shell_is_reaped_as_lost() -> None:
         assert "session_exited" in types, types
 
 
-def test_s19c_stale_observation_reaps_unobservable_session() -> None:
+def test_s19c_stale_observation_holds_unknown_and_records_gap() -> None:
     with AgentdHarness(
         extra_env={"DOEFF_AGENTD_STALE_OBSERVATION_SECS": "2"}
     ) as harness:
@@ -139,21 +148,45 @@ def test_s19c_stale_observation_reaps_unobservable_session() -> None:
         assert row["last_observed_at"] is not None, harness.log_text()
 
         # keep the SESSION-liveness answer alive but kill the monitored PANE:
-        # capture starts failing, last_observed_at freezes, the stale branch
-        # fires (backend-aware physics live in the harness helper)
+        # capture starts failing, last_observed_at freezes, and the gap is
+        # detected — but a supply cut is NOT death evidence (ADR-DOE-AGENTS-009
+        # R1): the row must be HELD at `running` with the gap stamped, not
+        # terminalized as lost.
         break_pane_observation_out_of_band(scenario.session_id, row["pane_id"])
 
-        row = _await_row_status(harness, scenario.session_id, ("exited",), timeout_s=20.0)
-        assert row["status"] == "exited", (
+        # wait until the gap event lands (edge-triggered, bounded journal)
+        deadline = time.monotonic() + 20.0
+        types: list[str] = []
+        while time.monotonic() < deadline:
+            types = [e["event_type"] for e in harness.events(scenario.session_id)]
+            if "session_observation_gap" in types:
+                break
+            time.sleep(0.3)
+        assert "session_observation_gap" in types, (
+            f"events={types}\n" + harness.log_text()
+        )
+        assert "session_stale_reaped" not in types, types
+
+        # unknown is held: no terminal verdict without second evidence
+        row = harness.session_row(scenario.session_id)
+        assert row["status"] == "running", (
             f"status={row['status']}\n" + harness.log_text()
         )
-        cause = json.loads(row["terminal_cause_json"])
-        assert cause["category"] == "lost", cause
-        assert cause["retryable"] is True, cause
-        assert "no monitor observation for more than 2s" in (cause.get("reason") or ""), cause
+        assert row["terminal_cause_json"] is None, row["terminal_cause_json"]
+        assert row["observation_gap_at"] is not None, row
 
-        types = [e["event_type"] for e in harness.events(scenario.session_id)]
-        assert "session_stale_reaped" in types, types
+        # journal rate is bounded: give the monitor a few more ticks and
+        # confirm the gap event did not flood (re-armed by the gap stamp —
+        # at 2s threshold a flood would show many events within 3s)
+        time.sleep(3.0)
+        gap_events = [
+            e
+            for e in harness.events(scenario.session_id)
+            if e["event_type"] == "session_observation_gap"
+        ]
+        assert len(gap_events) <= 3, (
+            f"gap events flooded: {len(gap_events)}\n" + harness.log_text()
+        )
 
-        outcome = harness.client.await_result(scenario.session_id, timeout_seconds=10.0)
+        outcome = harness.client.await_result(scenario.session_id, timeout_seconds=5.0)
         assert outcome.result is None
