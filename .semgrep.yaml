@@ -4639,3 +4639,23 @@ rules:
       include:
         - "**/sessionhost/turn.hy"
         - "**/sessionhost/turn_touches_substrate_forbidden.hy"
+
+  - id: doeff-agents-no-lost-terminal-cause
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      ADR-DOE-AGENTS-009 R1/R3 (observation supply cut is not death — ACP
+      ADR 0067 R6 upstream fix): the `lost` terminal-cause category is
+      retired. An observation gap is a proposition about the observation
+      SUPPLY, never death evidence — stamp observation_gap_at and fall
+      through to the second-evidence arms instead of terminalizing.
+      Evidenced deaths (tmux session disappeared / pane returned to idle
+      shell) use category `vanished`. Constructing a `lost` cause re-opens
+      the 2026-07-27 false-lost wedge: live agents were stamped dead and
+      their report_result bounced with -32003, severing the result channel.
+    pattern-regex: '\(make-cause\s+"lost"'
+    paths:
+      include:
+        - "**/sessionhost/**/*.hy"
+        - "**/sessionhost_*.hy"
