@@ -54,6 +54,7 @@
 (import doeff_agents.sessionhost.policy [
   binding-kind-advertisement
   cause-if-absent
+  is-run-to-completion
   is-terminal-status
   iso-format
   make-cause
@@ -73,6 +74,8 @@
   db-count-active
   db-heartbeat-once
   db-read-lease
+  db-late-result-accept
+  db-mark-cleaned
   db-record-command
   db-record-event
   db-release-lease
@@ -676,20 +679,30 @@
   {:pre [(: conn sqlite3.Connection) (: session-id str) (: payload JsonValue)]
    :post [(: % dict)]}
   "session.report_result の実体(actor 内で 1 op として実行 = 原子的)。
-   終端 + payload 有り = idempotent already_reported / 終端 + 無し = -32003 /
-   contract 無し = error / schema 不適合 = -32002 + session_result_rejected
-   event、payload は永続しない・再検証しない(ADR 0035 R4)/ 適合 =
-   first-write-wins guarded UPDATE(status は書かない — done 化は monitor)。"
+   終端 + payload 有り = idempotent already_reported / 死亡裁定クラス
+   (exited)+ 無し = 遅延受理(ADR-DOE-AGENTS-009 R4: result 到着は死亡推定
+   の反証 — status=done・cause / validation error クリア・finished_at 前進 +
+   session_late_result_accepted event。2026-07-27 wedge で生存 agent の結果が
+   -32003 で失われた実 incident の救済経路)/ その他の終端(judged failure・
+   操作者裁定)+ 無し = -32003 / contract 無し = error / schema 不適合 =
+   -32002 + session_result_rejected event、payload は永続しない・再検証しない
+   (ADR 0035 R4)/ 非終端の適合 = first-write-wins guarded UPDATE(status は
+   書かない — done 化は monitor)。"
   (setv snap (db-session-get conn session-id))
   (when (is snap None)
     (raise (RuntimeError f"session is not registered: {session-id}")))
   (setv status (get snap "status"))
+  (setv late-accept False)
   (when (is-terminal-status status)
     (when (is-not (get snap "result_payload") None)
       (return {"accepted" True "already_reported" True}))
-    (raise (RpcHostError RPC-ERR-ALREADY-TERMINAL
-             (+ f"session '{session-id}' already reached terminal status "
-                f"'{status}' without a result"))))
+    (if (= status "exited")
+        ;; 死亡裁定クラスのみ受理へ fall-through(contract / schema 検査は
+        ;; 通常経路と共有 — 受理の門を開くだけで検証は緩めない)
+        (setv late-accept True)
+        (raise (RpcHostError RPC-ERR-ALREADY-TERMINAL
+                 (+ f"session '{session-id}' already reached terminal status "
+                    f"'{status}' without a result")))))
   (setv spec (get snap "expected_result"))
   (when (or (is spec None) (not (isinstance spec dict)))
     (raise (RuntimeError
@@ -708,6 +721,21 @@
   (setv payload-json (json.dumps payload :sort-keys True
                                  :separators #("," ":")
                                  :ensure-ascii False))
+  (when late-accept
+    (setv accepted-at (.isoformat (datetime.now timezone.utc)))
+    (setv affected (db-late-result-accept conn session-id payload-json accepted-at))
+    (when (= affected 0)
+      (setv fresh (db-session-get conn session-id))
+      (when (and (is-not fresh None) (is-not (get fresh "result_payload") None))
+        (return {"accepted" True "already_reported" True}))
+      (raise (RpcHostError RPC-ERR-ALREADY-TERMINAL
+               (+ f"session '{session-id}' left the death-verdict class before "
+                  "the late result could be recorded"))))
+    (db-record-event conn session-id "session_late_result_accepted"
+                     {"session_id" session-id
+                      "previous_status" status
+                      "previous_terminal_cause" (get snap "terminal_cause")})
+    (return {"accepted" True "late_result" True}))
   (setv affected (db-report-result-guarded-update conn session-id payload-json))
   (when (= affected 0)
     (setv fresh (db-session-get conn session-id))
@@ -719,6 +747,23 @@
   (db-record-event conn session-id "session_result_reported"
                    {"session_id" session-id})
   {"accepted" True})
+
+
+(defk late-result-cleanup-program [session-id]
+  {:pre [(: session-id str)]
+   :post [(: % bool)]}
+  "遅延 result 受理後の substrate cleanup(ADR-DOE-AGENTS-009 R4)。受理は
+   terminal 行への上書きなので monitor はもう触らない — finalize の RTC 終端
+   cleanup と同義を RPC 層で行う(IO は actor op の外 — store actor を tmux で
+   塞がない)。false-lost 救済の行は pane が実際に生きていることがある(それが
+   まさに誤裁定だった)ため、生存確認してから kill する。戻り値 = kill 実行。"
+  (<- row (require-session-row session-id))
+  (when (not (is-run-to-completion row.lifecycle))
+    (return False))
+  (<- exists (tmux-has-session row.session-name))
+  (when exists
+    (<- _ (tmux-kill-session row.session-name)))
+  (bool exists))
 
 
 (deff await-result-blocking [actor session-id timeout-seconds]
@@ -970,7 +1015,15 @@
       (raise (RuntimeError
                "invalid params for session.report_result: missing field `payload`")))
     (setv payload (get p "payload"))
-    (return (.submit actor (fn [conn] (report-result-op conn sid payload)))))
+    (setv response (.submit actor (fn [conn] (report-result-op conn sid payload))))
+    ;; ADR-DOE-AGENTS-009 R4: 遅延受理した行は terminal — monitor は監視外の
+    ;; ため、finalize と同義の RTC substrate cleanup をここで行い記帳する。
+    (when (and (isinstance response dict) (.get response "late_result"))
+      (setv killed (run-hosted config actor (late-result-cleanup-program sid)))
+      (when killed
+        (setv cleaned-at (.isoformat (datetime.now timezone.utc)))
+        (.submit actor (fn [conn] (db-mark-cleaned conn sid cleaned-at)))))
+    (return response))
 
   (raise (RuntimeError f"unknown method: {method}")))
 

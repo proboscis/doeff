@@ -62,10 +62,17 @@
 ;; S3 が cause["category"] == "run_failed" を wire で assert する。README 表の
 ;; CamelCase は enum variant のラベルであって wire 値ではない。C1 がラベルを
 ;; 転記していた parity バグを C3 で是正)。
+;; ADR-DOE-AGENTS-009 R3(2026-07-28): lost は表から除去 — 観測断はもう
+;; terminal cause として構築されない(make-cause の precondition が拒否する)。
+;; 証拠つき死亡(tmux session disappeared / pane returned to idle shell)は
+;; vanished へ分割: ACP decodeSnapshotStatus は category==lost だけを
+;; StatusLost(AgentUnobserved hold — ACP ADR 0067)へ写すため、vanished は
+;; StatusExited として deadman gate を待たず即時終端できる。retryable=true は
+;; 維持(死亡が確証された attempt の再試行は二重実装にならない)。
 (setv TERMINAL-CAUSE-RETRYABLE
       {"rate_limited" True
        "timed_out" True
-       "lost" True
+       "vanished" True
        "runner_unavailable" False
        "protocol_error" False
        "run_failed" False
@@ -492,7 +499,9 @@
    :post [(: % SessionRow)]}
   "1 session の level-triggered 再導出(oracle: main.rs monitor_once の 1 行分)。
    分岐順は凍結物理: booting 所有権(launch pipeline 所有 — boot watchdog のみ)→
-   stale reap → launch timeout → tmux 生存(result-first)→
+   観測断記帳(terminal 化しない — ADR-DOE-AGENTS-009 R1)→ launch timeout
+   (watch 窓基点 = max(started_at, observation_gap_at) — 同 R2)→
+   tmux 生存(result-first)→
    zombie → capture/classify → paste 再送 → managed dialog fast-path →
    latch clear → 分類 → turn-end → result-first → judge-before-solicitation →
    bounded solicitation → stall watchdog → 終端 taxonomy。"
@@ -546,29 +555,44 @@
       (<- _ (session-store-record-event row.session-id "session_launch_timeout" row)))
     (return row))
 
-  ;; --- stale-observation watchdog(S19)。どの tmux probe よりも前 —
-  ;; tmux が hang しても reap は進む(oracle 実障害: 11h 沈黙の monitor)。
+  ;; --- 観測断 watchdog(S19c 改・ADR-DOE-AGENTS-009 R1 — 2026-07-28 契約
+  ;; 改訂)。観測の途絶は観測経路(supply)の命題であり被観測対象の死亡命題
+  ;; ではない — terminal 化しない(旧挙動 exited/lost は 2026-07-27 wedge で
+  ;; 供給断窓の全生存 agent を死亡刻印し、実装結果を result channel ごと
+  ;; 失わせた実 incident の根因)。観測断は observation_gap_at へ刻印して
+  ;; journal に 1 回記帳し(検出条件が gap_at 自身で再武装されるため event
+  ;; 率は 1/stale-secs に有界 — PR #564 の journal 肥大を再発させない)、
+  ;; 死亡裁定は直後の第 2 証拠 arm(tmux 生存 probe / zombie reaper)に
+  ;; 委ねる。probe まで不能なら行は running のまま保持(unknown)— 有界性は
+  ;; engine 側 deadman gate(ACP ADR 0059)が閉じる。
   (setv stale-secs knobs.stale-observation-seconds)
   (setv observation-age (seconds-since now row.last-observed-at))
-  (when (and (is-not observation-age None) (> observation-age stale-secs))
-    (setv row (replace row
-                       :status "exited"
-                       :last-observed-at observed-at
-                       :finished-at (or row.finished-at observed-at)))
-    (setv row (cause-if-absent
-                row (make-cause "lost"
-                                f"no monitor observation for more than {stale-secs}s"
-                                observed-at)))
+  (setv gap-age (seconds-since now row.observation-gap-at))
+  (setv supply-age (cond
+                     (and (is-not observation-age None) (is-not gap-age None))
+                       (min observation-age gap-age)
+                     (is-not gap-age None) gap-age
+                     True observation-age))
+  (when (and (is-not supply-age None) (> supply-age stale-secs))
+    (setv row (replace row :observation-gap-at observed-at))
     (<- _ (session-store-upsert row))
-    (<- _ (session-store-record-event row.session-id "session_stale_reaped" row))
-    (return row))
+    (<- _ (session-store-record-event row.session-id "session_observation_gap" row)))
 
   ;; --- launch-timeout watchdog(S19)。startup 完了マーカー
   ;; (observed_active_at)を一度も見ていない running だけが対象 —
   ;; startup spinner は capture を変え続けるので stale では捕まらない。
+  ;; watch 窓の基点は max(started_at, observation_gap_at)(ADR-DOE-AGENTS-009
+  ;; R2): 「観測し続けたのに active を見ていない」premise は観測断で void に
+  ;; なる(active marker は供給断の窓で流れ去る)ため、供給回復後に改めて
+  ;; launch timeout 秒の連続観測で判定する — genuinely stuck な session は
+  ;; 回復後に従来どおり reap される(有界)。
   (setv launch-secs knobs.launch-timeout-seconds)
   (when (and (= row.status "running") (is None row.observed-active-at))
     (setv startup-age (seconds-since now row.started-at))
+    (setv gap-watch-age (seconds-since now row.observation-gap-at))
+    (when (and (is-not gap-watch-age None)
+               (or (is None startup-age) (< gap-watch-age startup-age)))
+      (setv startup-age gap-watch-age))
     (when (and (is-not startup-age None) (> startup-age launch-secs))
       (setv reason (+ f"launch timeout: never reached active state within {launch-secs}s"
                       " (stuck in startup — likely a hung MCP server)"))
@@ -601,9 +625,12 @@
           (<- _ (session-store-upsert row))
           (<- _ (session-store-record-event row.session-id "session_done" row)))
         (do
+          ;; 第 2 証拠つき死亡(ADR-DOE-AGENTS-009 R3): tmux が応答した上での
+          ;; session 不在は死亡証拠 — vanished で即時終端(観測断の lost とは
+          ;; 別語彙。下流は deadman gate を待たず回収できる)。
           (setv row (replace row :status "exited"))
           (setv row (cause-if-absent
-                      row (make-cause "lost" "tmux session disappeared" observed-at)))
+                      row (make-cause "vanished" "tmux session disappeared" observed-at)))
           (<- _ (session-store-upsert row))
           (<- _ (session-store-record-event row.session-id "session_exited" row))))
     (return row))
@@ -618,8 +645,10 @@
                          :status "exited"
                          :last-observed-at observed-at
                          :finished-at (or row.finished-at observed-at)))
+      ;; 第 2 証拠つき死亡(ADR-DOE-AGENTS-009 R3): pane の foreground 観測は
+      ;; tmux が応答した上での積極証拠 — vanished で即時終端。
       (setv row (cause-if-absent
-                  row (make-cause "lost"
+                  row (make-cause "vanished"
                                   f"tmux pane returned to idle shell: {current-command}"
                                   observed-at)))
       (<- _ (session-store-upsert row))
