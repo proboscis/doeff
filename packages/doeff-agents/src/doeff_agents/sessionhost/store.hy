@@ -108,6 +108,10 @@ CREATE INDEX IF NOT EXISTS idx_agent_sessions_status
   ON agent_sessions(status);
 CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
   ON agent_session_events(session_id, id);
+CREATE INDEX IF NOT EXISTS idx_agent_session_events_occurred
+  ON agent_session_events(occurred_at);
+CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
+  ON agent_session_commands(requested_at);
 ")
 
 (setv ENSURE-COLUMNS
@@ -520,11 +524,29 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
 (deff db-session-list [conn filters]
   {:pre [(: conn sqlite3.Connection) (: filters dict)]
    :post [(: % list)]}
-  "全行を oracle と同じ ORDER BY で読み、Python 側で filter
-   (oracle session_list と同じ構造)。"
-  (setv rows (.fetchall (.execute conn
-                                  (+ SNAPSHOT-SELECT
-                                     " ORDER BY started_at DESC, session_id ASC"))))
+  "oracle と同じ ORDER BY の一覧。filter 意味論は list-query-matches
+   (oracle session_list)のままだが、status だけは SQL 側でも適用する
+   (idx_agent_sessions_status)— 毎 tick の ListActive が terminal 含む
+   全履歴行を full scan + 外部ソート + JSON decode し、肥大 DB で単一
+   StoreActor を飽和させた 2026-07-27 wedge の hot path 根治。"
+  (setv statuses (.get filters "status"))
+  (setv order-by " ORDER BY started_at DESC, session_id ASC")
+  (setv rows
+        (cond
+          (is statuses None)
+          (.fetchall (.execute conn (+ SNAPSHOT-SELECT order-by)))
+          ;; 空集合 filter は SQL の `IN ()` が書けないので構造的に空
+          ;; (従来の Python filter と同値: どの行も一致しない)。
+          (= (len statuses) 0)
+          []
+          True
+          (do
+            (setv placeholders (.join ", " (lfor _ statuses "?")))
+            (.fetchall (.execute conn
+                                 (+ SNAPSHOT-SELECT
+                                    f" WHERE status IN ({placeholders})"
+                                    order-by)
+                                 (tuple statuses))))))
   (lfor row rows
         :setv snap (snapshot-from-db-row row)
         :if (list-query-matches snap filters)
@@ -594,6 +616,74 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
                "WHERE awaiting_response = 1 "
                "AND status NOT IN ('done','failed','exited','stopped','cancelled')"))
   None)
+
+;; ---------------------------------------------------------------------------
+;; 監査履歴の retention(2026-07-27 sessionhost wedge 根治)
+;;
+;; agent_session_events / agent_session_commands は append-only の監査面で、
+;; runtime は読まない(プログラム的読者は conformance harness のみ — テスト
+;; 実行中の新鮮な行だけを見る)。無限成長させると store ファイルが実測
+;; 1.5GB(session_blocked 251k 行 / 1.16GB)まで肥大し、単一 write connection
+;; の I/O 局所性を壊す。retention 境界より古い行を bounded batch で刈り、
+;; ファイルの物理回収(VACUUM)は freelist が支配的なときの起動時のみ行う。
+;; ---------------------------------------------------------------------------
+
+(setv HISTORY-PRUNE-BATCH-ROWS 5000)
+;; VACUUM は全書き換え(1.5GB 実測 ~8s)なので、回収に値する空きがあるとき
+;; だけ: freelist が全 page の 1/4 以上 かつ 絶対量 floor(4KiB page で
+;; ~10MiB)以上。serve 中は走らせない — 起動時(accept 開始前)専用。
+(setv VACUUM-FREELIST-RATIO 0.25)
+(setv VACUUM-FREELIST-FLOOR-PAGES 2560)
+
+(deff db-prune-history [conn cutoff-iso batch-limit]
+  {:pre [(: conn sqlite3.Connection) (: cutoff-iso str)
+         (: batch-limit int) (> batch-limit 0)]
+   :post [(: % int)]}
+  "retention 境界より古い監査行(events / commands)を最大 batch-limit 行ずつ
+   削除する。戻り値 = この呼び出しの削除行数(0 = 収束)。subquery は時刻列
+   index(idx_agent_session_events_occurred / _commands_requested)の range
+   scan — 収束確認も O(index probe) で、肥大テーブルの full scan を actor に
+   持ち込まない。"
+  (setv deleted 0)
+  (for [[table column] [#("agent_session_events" "occurred_at")
+                        #("agent_session_commands" "requested_at")]]
+    (setv cursor (.execute conn
+                           (+ f"DELETE FROM {table} WHERE id IN ("
+                              f"SELECT id FROM {table} WHERE {column} < ? "
+                              "LIMIT ?)")
+                           #(cutoff-iso batch-limit)))
+    (setv deleted (+ deleted cursor.rowcount)))
+  deleted)
+
+(deff actor-prune-history [actor cutoff-iso batch-limit]
+  {:pre [(: actor StoreActor) (: cutoff-iso str)
+         (: batch-limit int) (> batch-limit 0)]
+   :post [(: % int)]}
+  "prune を収束まで回す 1 pass。batch 毎に別 actor op として submit するので
+   client op が間に割り込める — actor を長時間占有しない。戻り値 = 削除合計。"
+  (setv total 0)
+  (while True
+    (setv deleted (.submit actor
+                           (fn [conn] (db-prune-history conn cutoff-iso
+                                                        batch-limit))))
+    (setv total (+ total deleted))
+    (when (= deleted 0)
+      (break)))
+  total)
+
+(deff db-vacuum-if-bloated [conn]
+  {:pre [(: conn sqlite3.Connection)]
+   :post [(: % bool)]}
+  "freelist が支配的なときだけ VACUUM(戻り値 = 実行したか)。健全な DB の
+   起動毎全書き換えを避ける threshold は定数参照。"
+  (setv freelist (get (.fetchone (.execute conn "PRAGMA freelist_count")) 0))
+  (setv pages (get (.fetchone (.execute conn "PRAGMA page_count")) 0))
+  (when (or (< freelist VACUUM-FREELIST-FLOOR-PAGES)
+            (< freelist (* VACUUM-FREELIST-RATIO pages)))
+    (return False))
+  (.execute conn "VACUUM")
+  True)
+
 
 (deff db-report-result-guarded-update [conn session-id payload]
   {:pre [(: conn sqlite3.Connection) (: session-id str) (: payload str)]

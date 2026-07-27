@@ -439,12 +439,21 @@
     (<- _ (tmux-send-keys pane-id key False False)))
   (len keys))
 
-(defk finalize [row observed-status obs output observed-at]
-  {:pre [(: row SessionRow) (: observed-status str)
+(defk finalize [row entry-status observed-status obs output observed-at]
+  {:pre [(: row SessionRow) (: entry-status str) (: observed-status str)
          (: obs PaneObservation) (: output str) (: observed-at str)]
    :post [(: % SessionRow)]}
   "status 書き戻し + 終端処理(taxonomy first-write-wins・finished_at)+
-   RTC 終端 cleanup + upsert + event(oracle monitor_once 末尾)。"
+   RTC 終端 cleanup + upsert + 遷移 event(oracle monitor_once 末尾)。
+
+   監査 event は status 遷移(entry-status ≠ observed-status)でのみ記録する
+   — oracle の毎 tick 記録からの意図的乖離(2026-07-27 wedge 根治)。blocked
+   のまま静止する行が毎秒 full-snapshot event を注いで agentd.sqlite を
+   1.5GB(session_blocked 251k 行 / 1.16GB)へ肥大させ、単一 StoreActor の
+   per-op コスト増から socket 応答不能に至った実 incident の再発防止。
+   state の更新(upsert)は level-triggered のまま — 止めるのは journal
+   追記のみ。conformance(S8 ほか)は event の存在を assert する — 遷移 tick
+   が必ず 1 件書くので契約は保たれる。"
   (setv row (replace row :status observed-status))
   (when (is-terminal-status observed-status)
     (when (= observed-status "failed")
@@ -467,9 +476,10 @@
       (<- _ (tmux-kill-session row.session-name))
       (setv row (replace row :cleaned-at (or row.cleaned-at observed-at)))))
   (<- _ (session-store-upsert row))
-  (<- _ (session-store-record-event row.session-id
-                                    (event-type-for-status observed-status)
-                                    row))
+  (when (!= observed-status entry-status)
+    (<- _ (session-store-record-event row.session-id
+                                      (event-type-for-status observed-status)
+                                      row)))
   row)
 
 
@@ -488,6 +498,9 @@
    bounded solicitation → stall watchdog → 終端 taxonomy。"
   (<- now (clock-now))
   (setv observed-at (iso-format now))
+  ;; 監査 event の遷移判定基準 = この cycle が store から読んだ時点の status
+  ;; (finalize が edge-triggered 記録に使う)。
+  (setv entry-status row.status)
 
   ;; --- 刈り取り免除 arm(koine 安全条項 1 / ADR-DOE-AGENTS-007 R3)。
   ;; どの terminal 化 arm よりも前(booting arm 含む)が契約 — semgrep
@@ -873,8 +886,8 @@
                   row (make-cause "interactive_prompt_blocked" blocked-failure
                                   observed-at))))))
 
-  ;; --- 書き戻し + 終端 taxonomy + cleanup + event。
-  (<- final-row (finalize row observed-status obs output observed-at))
+  ;; --- 書き戻し + 終端 taxonomy + cleanup + 遷移 event。
+  (<- final-row (finalize row entry-status observed-status obs output observed-at))
   final-row)
 
 
