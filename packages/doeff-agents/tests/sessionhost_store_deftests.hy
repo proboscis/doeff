@@ -76,7 +76,12 @@
        ;; issue #557: attempt 中の api-limit 観測の durable latch(初回観測
        ;; 時刻、first-write-wins)。terminal 時 tail-30 は racy — 終端分類は
        ;; この latch を参照して rate_limited/retryable=true へ蒸留する。
-       "api_limit_observed_at"])
+       "api_limit_observed_at"
+       ;; ADR-DOE-AGENTS-009: 観測断(supply cut)の最終検出時刻。stale
+       ;; watchdog はもう terminal 化せずここへ刻印し、launch-timeout の
+       ;; watch 窓は max(started_at, observation_gap_at) を基点に再スタート
+       ;; する。last-write-wins + None 保護(COALESCE(excluded, existing))。
+       "observation_gap_at"])
 
 
 (defn make-snap [session-id #** overrides]
@@ -192,6 +197,28 @@
     (db-upsert-snapshot conn (make-snap "s1" :api_limit_observed_at None))
     (setv snap (db-session-get conn "s1"))
     (assert (= (get snap "api_limit_observed_at") "2026-07-20T11:00:00+00:00")))
+  (with-tmp-conn check))
+
+
+(deftest test-observation-gap-roundtrip-last-write-wins
+  ;; ADR-DOE-AGENTS-009 R1: observation_gap_at は last-write-wins(gap の
+  ;; 再検出で前進する — event 有界化と launch 窓再スタートの基点)だが、
+  ;; None 書き戻しでは消えない(COALESCE(excluded, existing) — 観測断の
+  ;; 事実は行の寿命の間保持される)。
+  (defn check [conn]
+    (db-upsert-snapshot conn (make-snap "s1" :observation_gap_at
+                                        "2026-07-27T20:15:00+00:00"))
+    (setv snap (db-session-get conn "s1"))
+    (assert (= (get snap "observation_gap_at") "2026-07-27T20:15:00+00:00"))
+    ;; 再検出は前進する(last-write-wins)
+    (db-upsert-snapshot conn (make-snap "s1" :observation_gap_at
+                                        "2026-07-27T20:20:00+00:00"))
+    (setv snap (db-session-get conn "s1"))
+    (assert (= (get snap "observation_gap_at") "2026-07-27T20:20:00+00:00"))
+    ;; stale な None 書き戻しでは消えない
+    (db-upsert-snapshot conn (make-snap "s1" :observation_gap_at None))
+    (setv snap (db-session-get conn "s1"))
+    (assert (= (get snap "observation_gap_at") "2026-07-27T20:20:00+00:00")))
   (with-tmp-conn check))
 
 
