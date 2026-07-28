@@ -345,3 +345,45 @@ S1 が flake(`report_result not accepted: []` — journal に report_result
 増えた影響の可能性がある — orch 着地時に CI で再発するなら retry 予算の
 再検討対象(契約自体の弱化はしない)。workspace churn のリークは無し
 (12 テスト後の workspace list はデモ用 1 件のみ)。
+
+## 追補: protocol 17(herdr 0.7.5)での agent.start 改形と名前登録経路(2026-07-29 実測)
+
+観測対象: herdr 0.7.5 / protocol 17(client・server とも。`herdr status` で確認)。
+実測手段: socket 直叩き probe + bundled schema(`herdr api schema --json`、
+`$schema.schemas.request.$defs`)。契機: 既定 pytest の herdr smoke 5 本が
+`HerdrApiError invalid_request: missing field 'kind'` で赤化(doeff issue #556)。
+
+- **`agent.start` は params ごと改形された**。protocol 14 の
+  `{name, cwd, argv, env, workspace_id, focus}`(名前付き pane 生成)から、
+  protocol 17 では `AgentStartParams = {name, kind, pane_id}` 必須
+  (+ optional `args`, `timeout_ms`)の「**既存 shell pane への管理対象 agent
+  起動 + 検出待ち**」へ(CLI help: "Start a supported interactive agent in an
+  existing pane"。`kind` の語彙は pi/claude/codex/gemini/… の 21 種)。
+  旧 payload に `kind` を足しても `missing field 'pane_id'` で拒否(実測)。
+  未知 field(cwd/argv/env/workspace_id/focus)は黙って無視される。
+  → shell pane の名前付き生成には**もう使えない**。
+- **`workspace.create` が `cwd` / `env` を直接受ける**ようになった
+  (`WorkspaceCreateParams = {label?, cwd?, env?, focus?}`)。root pane が
+  指定 cwd の shell として起動し、env 注入も実効(`echo $DOEFF_PROBE` で確認)。
+  → 専用 workspace の root pane がそのまま session pane になり、protocol 14 の
+  「agent.start → root pane close で全幅展開」ダンスは不要になった。
+- **名前登録は `pane.report_agent` → `agent.rename` 経由**。plain shell pane への
+  `agent.rename {target: pane_id, name}` は `agent_not_found`。先に
+  `pane.report_agent {pane_id, source, agent, state}`(外部 authority で agent
+  エントリを作る。`agent` は type: string の自由文字列 — 任意値受理を実測)を
+  打つと rename が通り、`agent.get {target: name}` で解決できる。
+  重複名は rename が **`agent_name_taken`** をネイティブ拒否(protocol 14 の
+  agent.start と同じ error code = tmux duplicate 拒否 parity 維持)。
+- **`pane.clear_agent_authority {pane_id, source}` 後も名前は terminal に残る**
+  (`agent.get` が引き続き解決。kind 表示は消える)。state authority を herdr の
+  画面検出へ返せるので、実 agent 起動後の状態分類・kind 付けは herdr 側が行う。
+- **kill parity 不変**: 唯一 pane の `pane.close` で workspace 自動消滅 +
+  agent 名簿からも消える(`agent.get` → `agent_not_found`、実測)。
+- `pane.read` の語彙は不変(source: visible/recent/recent_unwrapped/detection、
+  format: text/ansi)。`strip_ansi`(default true)が増えたが、format=ansi +
+  自前 strip の既存経路は trailing space 保持込みで green(deftest で確認)。
+
+実装への反映: `substrate_herdr.hy` の `herdr-new-session-io` を
+`workspace.create {label, cwd, env, focus: false}` → `pane.report_agent` →
+`agent.rename` → `pane.clear_agent_authority` に束縛替え(登録途中の失敗は
+workspace.close してから再送出 — dup 拒否 parity の deftest green)。
