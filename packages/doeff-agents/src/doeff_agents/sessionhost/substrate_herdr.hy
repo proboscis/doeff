@@ -9,12 +9,17 @@
 ;;;
 ;;; effect 語彙は Tmux* のまま(改名は成功後の語彙中立化 ADR — 別チェンジ)。
 ;;; 物理の出典は Phase 0 プローブ実測(herdr 0.7.1 / protocol 14、2026-07-07、
-;;; conformance/herdr-physics.md に記録):
+;;; conformance/herdr-physics.md に記録。agent.start の改形と名前登録経路は
+;;; herdr 0.7.5 / protocol 17 で 2026-07-29 再実測 — 同文書の追補):
 ;;;   - transport: newline-JSON over unix socket(~/.config/herdr/herdr.sock)。
 ;;;     request line 全体に ~1MiB 上限(実測境界 1,048,336B OK / 1,049,344B 拒否、
 ;;;     超過は server 側 "api request line is too large" + BrokenPipe)。
-;;;   - agent.start は名前の一意性をネイティブ強制(agent_name_taken)—
-;;;     tmux new-session の duplicate session 拒否と同 parity。
+;;;   - 名前の一意性は herdr がネイティブ強制(agent_name_taken)= tmux
+;;;     new-session の duplicate session 拒否と同 parity。protocol 17
+;;;     (herdr 0.7.5、再実測 2026-07-29 — herdr-physics.md 追補)で
+;;;     agent.start は {name kind pane_id} の「既存 pane への管理対象 agent
+;;;     起動 + 検出待ち」に改形されたため、shell pane の名前登録は
+;;;     pane.report_agent → agent.rename 経由(herdr-new-session-io 参照)。
 ;;;   - pane.read の本文は result.read.text。source 名は underscore
 ;;;     (recent_unwrapped — hyphen は socket で拒否)。
 ;;;   - recent / recent_unwrapped = スクロールバック + 現在画面の tail-N。
@@ -80,6 +85,16 @@
       {"BSpace" "backspace"
        "Home" "ctrl+a"
        "End" "ctrl+e"})
+
+;; protocol 17 の名前登録(pane.report_agent → agent.rename)で使う authority
+;; source と placeholder kind(実測 2026-07-29)。source は報告主体の識別子で、
+;; pane.clear_agent_authority が同じ source を要求する。agent は schema 上
+;; 自由文字列(PaneReportAgentParams.agent は type: string — AgentStartParams
+;; の kind 語彙とは別 field で、任意文字列受理を実測)。rename 直後に authority
+;; を clear すると kind 表示ごと消え、実 agent 起動後は herdr の画面検出が
+;; 正しい kind を付け直すため、shell pane 生成時点の実体に正直な値を使う。
+(setv HERDR-AGENT-AUTHORITY-SOURCE "doeff-sessionhost")
+(setv HERDR-AGENT-PLACEHOLDER-KIND "doeff-shell")
 
 ;; pane.read format=ansi の応答から剥がすエスケープ列: CSI(SGR 含む)/
 ;; OSC(BEL・ST 終端)/その他の ESC シーケンス(ECMA-48: ESC + intermediates
@@ -160,47 +175,55 @@
 (deff herdr-new-session-io [socket-path session-name work-dir env]
   {:pre [(: socket-path str) (: session-name str) (: work-dir str) (: env dict)]
    :post [(: % str)]}
-  "TmuxNewSession の実体: 専用 workspace を作り、その唯一 pane として
-   agent.start(name = session-name、cwd、env 注入、argv = 呼び手 shell —
-   tmux new-session の default-shell parity)。
-   幾何学 parity(実測 2026-07-07): agent.start の既定配置は現在 workspace の
-   active tab への split で、pane 幅が既存 pane 数に反比例して劣化する。
-   狭 pane では TUI dialog が単語単位で折返され markers.hy の部分文字列
-   oracle が全滅する(実 claude bypass dialog で実測)ため、tmux new-session
-   の「常に独立フル幅 grid」を workspace.create → agent.start(workspace_id
-   指定、active tab へ split)→ root shell pane close(残 pane が全幅に展開、
-   実測 101→208 桁)で合成する。workspace は最後の pane close で自動消滅
-   する(実測)ので kill-session 側の追加 cleanup は不要。
+  "TmuxNewSession の実体(herdr 0.7.5 / protocol 17、再実測 2026-07-29 —
+   herdr-physics.md 追補): workspace.create が cwd / env を直接受けるため、
+   専用 workspace の root pane がそのまま session pane になる(常に独立
+   フル幅 grid = tmux new-session の幾何学 parity。旧 protocol 14 の
+   root pane close ダンスは不要)。shell は herdr の既定 shell 起動に委ねる
+   (tmux new-session の default-shell parity)。
+   protocol 14 の agent.start {name cwd argv env workspace_id} は protocol 17
+   で {name kind pane_id} —「既存 shell pane への管理対象 agent 起動 +
+   検出待ち」— に改形され、shell pane の名前付き生成には使えない(旧 payload
+   に kind を足しても missing field pane_id、実測)。名前(TmuxHasSession /
+   TmuxKillSession が agent.get で解決)は pane.report_agent(外部 authority
+   で agent エントリを作る)→ agent.rename(名簿登録 — 重複名は
+   agent_name_taken をネイティブ拒否 = tmux duplicate 拒否 parity)→
+   pane.clear_agent_authority(state authority を画面検出へ返す — 名前は
+   terminal に残る、実測)で登録する。
    禁止 env reject と prompt 抑制 env は tmux 側と同じ substrate 所有。
-   重複名は herdr がネイティブに拒否(agent_name_taken)= tmux parity —
-   その場合は作った workspace を閉じてから元のエラーを再送出する。"
+   登録途中で失敗した場合は作った workspace を閉じてから元のエラーを
+   再送出する。workspace は最後の pane close で自動消滅する(protocol 17
+   でも実測)ので kill-session 側の追加 cleanup は不要。"
   (ensure-no-forbidden-agent-env env)
   (setv effective-env (dict env))
   (for [[key value] SHELL-PROMPT-SUPPRESSING-ENV]
     (when (not-in key effective-env)
       (setv (get effective-env key) value)))
-  (setv shell (or (.get os.environ "SHELL") "/bin/sh"))
   (setv ws-result (herdr-call socket-path "workspace.create"
-                              {"label" session-name "focus" False}))
+                              {"label" session-name
+                               "cwd" work-dir
+                               "env" effective-env
+                               "focus" False}))
   (setv ws-id (get (get ws-result "workspace") "workspace_id"))
-  (setv root-pane-id (get (get ws-result "root_pane") "pane_id"))
-  (setv result None)
+  (setv pane-id (get (get ws-result "root_pane") "pane_id"))
   (try
-    (setv result (herdr-call socket-path "agent.start"
-                             {"name" session-name
-                              "cwd" work-dir
-                              "argv" [shell]
-                              "env" effective-env
-                              "workspace_id" ws-id
-                              "focus" False}))
+    (herdr-call socket-path "pane.report_agent"
+                {"pane_id" pane-id
+                 "source" HERDR-AGENT-AUTHORITY-SOURCE
+                 "agent" HERDR-AGENT-PLACEHOLDER-KIND
+                 "state" "unknown"})
+    (herdr-call socket-path "agent.rename"
+                {"target" pane-id "name" session-name})
+    (herdr-call socket-path "pane.clear_agent_authority"
+                {"pane_id" pane-id
+                 "source" HERDR-AGENT-AUTHORITY-SOURCE})
     (except [Exception]
       (try
         (herdr-call socket-path "workspace.close" {"workspace_id" ws-id})
         (except [Exception]
           None))  ; workspace 掃除は best-effort — 元のエラーを優先して再送出
       (raise)))
-  (herdr-call socket-path "pane.close" {"pane_id" root-pane-id})
-  (get (get result "agent") "pane_id"))
+  pane-id)
 
 (deff herdr-agent-pane-id-io [socket-path session-name]
   {:pre [(: socket-path str) (: session-name str)]
