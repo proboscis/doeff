@@ -17,6 +17,7 @@ from doeff_agents.adapters.codex import trust_workspace_in_codex_home
 from doeff_agents.agentd_client import AgentdClient
 from doeff_agents.claude_home import prepare_claude_home
 from doeff_agents.effects import AgentSessionLifecycle, AwaitStatus
+from sessionhost_bin import resolve_sessionhost_bin
 
 RESULT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -45,13 +46,8 @@ def run_agentd_real_agent_result_report_e2e(
     finalises the session as done — with zero re-prompt retries.
     """
     assert agent_type in REAL_AGENT_TYPES
-    _require_live_binary("cargo")
     _require_live_binary("tmux")
     _require_live_binary(agent_type)
-
-    packages_dir = Path(__file__).resolve().parents[2]
-    agentd_crate = packages_dir / "doeff-agentd"
-    _build_agentd(agentd_crate)
 
     runtime_dir = Path(tempfile.mkdtemp(prefix="agentd-real-e2e-", dir="/tmp"))
     session_id = f"agentd-real-{agent_type}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
@@ -61,7 +57,7 @@ def run_agentd_real_agent_result_report_e2e(
     db_path = runtime_dir / "agentd.sqlite"
     socket_path = runtime_dir / "agentd.sock"
     agentd_log_path = runtime_dir / "agentd.log"
-    agentd_bin = agentd_crate / "target" / "debug" / "doeff-agentd"
+    agentd_bin = resolve_sessionhost_bin()
     agentd_proc: subprocess.Popen[str] | None = None
     try:
         with agentd_log_path.open("w", encoding="utf-8") as agentd_log:
@@ -78,7 +74,7 @@ def run_agentd_real_agent_result_report_e2e(
                     "2",
                     "serve",
                 ],
-                cwd=agentd_crate,
+                cwd=runtime_dir,
                 stdout=agentd_log,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -210,14 +206,6 @@ def _assert_real_claude_auth(claude_json: Path, expected_email: str) -> None:
 def _require_live_binary(name: str) -> None:
     assert shutil.which(name) is not None, (
         f"{name!r} is required for the real-agent result retry E2E test"
-    )
-
-
-def _build_agentd(agentd_crate: Path) -> None:
-    subprocess.run(
-        ["cargo", "build", "--quiet"],
-        cwd=agentd_crate,
-        check=True,
     )
 
 
