@@ -235,30 +235,6 @@ rules:
         - /packages/doeff-agents/src/doeff_agents/handlers/**
         - /tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/handlers/**
 
-  - id: doeff-agentd-repl-ready-wait-must-not-discard-readiness
-    languages:
-      - rust
-    severity: ERROR
-    message: >
-      wait_for_repl_idle's readiness result must be handled, never discarded
-      as a bare `wait_for_repl_idle(...)?;` statement. Discarding it re-opens
-      the paste-anyway launch: on budget exhaustion the prompt is pasted into
-      whatever unknown screen blocked startup (silent forever-hang, trust
-      dialog incident 2026-07-07) and the registered BOOTING row is left
-      behind instead of transitioning to terminal failed (issue
-      agentd-session-registration-after-ready-gate). Bind the result and
-      fail closed: kill the session, mark the row failed (timed_out), raise
-      the typed error — the same contract as sessionhost/launch.hy.
-    patterns:
-      - pattern: wait_for_repl_idle($CONFIG, $PANE, $WAIT)?
-      # A let-bound readiness verdict is the compliant shape; only the bare
-      # discarding statement is banned.
-      - pattern-not-inside: let $BOUND = $EXPR;
-    paths:
-      include:
-        - /packages/doeff-agentd/src/**
-        - /tests/semgrep/fixtures/rust/packages/doeff-agentd/src/**
-
   - id: doeff-agents-require-real-claude-result-retry-e2e
     languages:
       - generic
@@ -395,10 +371,8 @@ rules:
         # 散文(歴史記述)と ADR 法文書(反例 fixture が禁止文字列を含む)は対象外
         - '**/*.md'
         - '**/defadr_*.hy'
-        # crate 本体(issue #575 M3 で削除)と Rust semgrep fixture 樹(M2 で整理)
+        # crate 本体(issue #575 M3 で削除)
         - '**/doeff-agentd/**'
-        # M2 で撤去: Rust fixture path を参照する semgrep テスト(issue #575 M2)
-        - '**/tests/semgrep/test_vm_failfast_semgrep_rules.py'
         # M3 で撤去: 移植出典 docstring(oracle = main.rs:…)の tag 形式再アンカー(issue #575 M3)
         - '**/doeff_agents/sessionhost/**'
         - '**/tests/sessionhost_*.hy'
