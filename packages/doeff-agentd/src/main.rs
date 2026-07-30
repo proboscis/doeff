@@ -5808,6 +5808,135 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
     }
 
     #[test]
+    fn claude_spinner_marker_crosses_composer_border() {
+        // Issue #573 (2026-07-29 live incident, event 1997730): the current
+        // claude TUI fences the input box with full-width horizontal rules,
+        // so the first non-empty line above `❯` is the border — the live
+        // spinner row sits one content row further up.  A detector that
+        // stops at the border reports active=false for every working pane,
+        // which collapses claude turn-end detection onto the stability
+        // guard alone; spinner-tick aliasing then lets turn-end fire on a
+        // RUNNING turn and the judge's Escape destroys the in-flight work.
+        let bordered_working = "s/adr/defadr_0066_merge_lane_land_queue.hy\n\
+             \n\
+             ✦ Cerebrating… (1m 34s · ↓ 2.2k tokens · thought for 39s)\n\
+             \n\
+             ────────────────────────────────────────────────────────────────────────────────\n\
+             ❯ \n\
+             ────────────────────────────────────────────────────────────────────────────────\n\
+             \u{20}\u{20}⏵⏵ bypass permissions on (shift+tab to cycle) · gh auth login for PR status ·\n";
+        assert!(output_has_agent_active_marker(bordered_working));
+
+        // The incident's exact failure shape: the snapshot equalled the
+        // previous tick's 500-char tail (spinner aliasing made the pane
+        // look stable), so the active marker was the last defence and it
+        // must hold turn-end back.
+        let mut snapshot = snapshot_for_lifecycle("run_to_completion", "running");
+        snapshot.output_snippet = Some(tail_chars(bordered_working, 500));
+        assert!(!output_indicates_turn_end(&snapshot, bordered_working));
+
+        // Bordered idle pane: skipping the border must not conjure a
+        // spinner out of ordinary transcript text — turn-end still fires.
+        let bordered_idle = "⏺ done. result written.\n\
+             \n\
+             ────────────────────────────────────────────────────────────────────────────────\n\
+             ❯\u{00A0}\n\
+             ────────────────────────────────────────────────────────────────────────────────\n\
+             \u{20}\u{20}⏵⏵ bypass permissions on (shift+tab to cycle)\n";
+        assert!(!output_has_agent_active_marker(bordered_idle));
+        snapshot.output_snippet = Some(tail_chars(bordered_idle, 500));
+        assert!(output_indicates_turn_end(&snapshot, bordered_idle));
+
+        // Historical spinner rows above the border (turn already produced
+        // output) stay non-live: only the first CONTENT row above the
+        // input box is the live-spinner site.
+        let bordered_history = "✢ Swooping… (1s · thinking)\n\
+             wrote invalid result\n\
+             \n\
+             ──────────\n\
+             ❯\u{00A0}\n\
+             ──────────\n";
+        assert!(!output_has_agent_active_marker(bordered_history));
+    }
+
+    #[test]
+    fn send_unblock_keys_refuses_visibly_busy_pane() {
+        // Issue #573 (incident events 1997731/1997732): the judge answered
+        // "blocked" for a pane whose input line read `❯ Press up to edit
+        // queued messages` — the solicitation stacked behind a RUNNING
+        // turn — and the daemon sent Escape, killing the in-flight work.
+        // Whatever the verdict says, unblock keys must not be delivered
+        // while the pane shows unambiguous busy evidence at send time.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmux_bin = tmp.path().join("fake-tmux");
+        let args_file = tmp.path().join("args.txt");
+        let frame_file = tmp.path().join("frame.txt");
+        fs::write(
+            &frame_file,
+            "✦ Cerebrating… (2m 10s · ↓ 3.1k tokens)\n\
+             \n\
+             ────────────────────────────────────────\n\
+             ❯ Press up to edit queued messages\n\
+             ────────────────────────────────────────\n",
+        )
+        .expect("write busy frame");
+        fs::write(
+            &tmux_bin,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{args}'\n\
+                 if [ \"$1\" = capture-pane ]; then cat '{frame}'; fi\n",
+                args = args_file.display(),
+                frame = frame_file.display()
+            ),
+        )
+        .expect("write fake tmux");
+        let mut perms = fs::metadata(&tmux_bin).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&tmux_bin, perms).expect("chmod fake tmux");
+        let config = Config {
+            db_path: tmp.path().join("agentd.sqlite"),
+            socket_path: tmp.path().join("agentd.sock"),
+            tmux_bin: tmux_bin.to_string_lossy().into_owned(),
+            monitor_interval: Duration::from_millis(1000),
+            max_running: 1,
+            result_solicitation_limit: DEFAULT_RESULT_SOLICITATION_LIMIT,
+            prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
+            prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
+            prompt_judge_cmd: None,
+            repl_idle_max_wait: Duration::from_secs(DEFAULT_REPL_IDLE_MAX_WAIT_SECS),
+        };
+        let keys = vec![String::from("Escape")];
+
+        send_unblock_keys(&config, "%1", &keys).expect("send_unblock_keys busy pane");
+
+        let args = fs::read_to_string(&args_file).unwrap_or_default();
+        assert!(
+            !args.lines().any(|arg| arg == "send-keys"),
+            "unblock keys were sent to a visibly busy pane:\n{args}"
+        );
+
+        // A genuinely blocked pane (codex menu eating input) still gets
+        // the keys — the wall must not disable the unblock path itself.
+        fs::write(
+            &frame_file,
+            "› 1. Switch to gpt-5.4-mini\n\
+             \u{20}\u{20}2. Keep current model\n\
+             \u{20}\u{20}Press enter to confirm\n",
+        )
+        .expect("rewrite menu frame");
+        fs::write(&args_file, "").expect("reset args");
+
+        send_unblock_keys(&config, "%1", &keys).expect("send_unblock_keys menu pane");
+
+        let args = fs::read_to_string(&args_file).expect("read args");
+        assert!(
+            args.lines().any(|arg| arg == "send-keys"),
+            "unblock keys must still reach a genuinely blocked pane:\n{args}"
+        );
+        assert!(args.lines().any(|arg| arg == "Escape"));
+    }
+
+    #[test]
     fn agent_active_marker_recognizes_claude_spinner() {
         // Live claude working pane: spinner verb + `… (` + tick timer.
         assert!(output_has_agent_active_marker(
