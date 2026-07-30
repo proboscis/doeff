@@ -12,8 +12,8 @@
 ;;; adapters から直接 import するとその性質が壊れるため、gate 形式だけを
 ;;; この leaf に分離している。
 ;;;
-;;; 出自: 退役 Rust 実装(packages/doeff-agentd — rollback 専用保存であり
-;;; 正しさの基準ではない: ADR-DOE-AGENTS-004 R7/U1)からの移植 + verbatim
+;;; 出自: 退役 Rust 実装(rollback tag agentd-rust-final に保存 — 正しさの
+;;; 基準ではない: ADR-DOE-AGENTS-004 R7/U1)からの移植 + verbatim
 ;;; capture(tests/data/ready_screens/、codex 0.144.4 / Claude Code 2.1.209)。
 
 

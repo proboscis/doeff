@@ -11,7 +11,6 @@ resolution-markers = [
 members = [
     "doeff",
     "doeff-adr",
-    "doeff-agentd",
     "doeff-agentic",
     "doeff-agentic-cli",
     "doeff-agents",
@@ -487,11 +486,6 @@ requires-dist = [
     { name = "pytest", specifier = ">=8.1.1" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
-
-[[package]]
-name = "doeff-agentd"
-version = "0.1.0"
-source = { virtual = "packages/doeff-agentd" }
 
 [[package]]
 name = "doeff-agentic"
@@ -1836,7 +1830,7 @@ resolution-markers = [
     "python_full_version < '3.13'",
 ]
 dependencies = [
-    { name = "networkx", marker = "python_full_version < '3.14'" },
+    { name = "networkx" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/14/f4/ab90e7d22b38cc1bad5a72683f8739137fa42f9e2336c92b82dee4cea87e/phart-1.1.4.tar.gz", hash = "sha256:2691e31152a938f48d51d5236715811ede80142a5c8b59d24568435f11ba9f2c", size = 264815, upload-time = "2025-01-25T12:59:36.687Z" }
 wheels = [
@@ -1851,7 +1845,7 @@ resolution-markers = [
     "python_full_version >= '3.14'",
 ]
 dependencies = [
-    { name = "networkx", marker = "python_full_version >= '3.14'" },
+    { name = "networkx" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/41/ca/f587424a41e860e97ef6a1e75fd9d33594370130fca3ed343dcf671a0e21/phart-2.0.6.tar.gz", hash = "sha256:3d262d879425c6f4a6acc21e848012e0fbf7d3bc7a5e5b8c83424c4aad536671", size = 645804, upload-time = "2026-06-03T01:22:00.613Z" }
 wheels = [
