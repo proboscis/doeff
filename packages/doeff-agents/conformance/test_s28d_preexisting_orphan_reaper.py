@@ -346,6 +346,28 @@ def test_s28d_counterexample_production_db_path_is_excluded_by_path() -> None:
     assert target.db_path == Path("/tmp/agentd-conf-abc123/agentd.sqlite")
     assert target.socket_path == Path("/tmp/agentd-conf-abc123/agentd.sock")
 
+    # the console script is a shebang file: ps shows the interpreter at
+    # argv[0] and doeff-sessionhost at argv[1] — the VERBATIM shape of the
+    # live leaked population (measured 2026-07-31); note the ps-flattened
+    # empty --prompt-judge-cmd argument
+    shebang_cmd = (
+        "/Users/u/repos/doeff/.venv/bin/python3"
+        " /Users/u/repos/doeff/.venv/bin/doeff-sessionhost"
+        " --db /tmp/agentd-conf-xyaqu22z/agentd.sqlite"
+        " --socket /tmp/agentd-conf-xyaqu22z/agentd.sock"
+        " --monitor-interval-ms 100 --max-running 4 --prompt-judge-cmd  serve"
+    )
+    shebang_target = classify_conformance_daemon(shebang_cmd)
+    assert shebang_target is not None
+    assert shebang_target.db_path == Path("/tmp/agentd-conf-xyaqu22z/agentd.sqlite")
+
+    # ...but a production host in the same shebang shape stays excluded
+    assert classify_conformance_daemon(
+        "/Users/u/repos/doeff/.venv/bin/python3"
+        " /Users/u/repos/doeff/.venv/bin/doeff-sessionhost"
+        f" --db {production_db} --socket /tmp/doeff-agentd.sock serve"
+    ) is None
+
     # a live supervisor (ppid != 1) protects even a conformance-path daemon
     assert select_reapable_orphans([(4242, 4241, conformance_cmd)]) == []
 
