@@ -17,12 +17,14 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -271,6 +273,252 @@ def resolve_agentd_bin() -> Path:
     )
 
 
+# -- pre-existing orphan reaper (S28d) ----------------------------------------
+#
+# S28's env knob (DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED) rides spawn-time env
+# and can never retrofit daemons that already leaked (2026-07-30 host
+# observation: 25 serve processes, all ppid==1, plus 9 parked
+# conformance_agent partners). This reconciler converges the observed end
+# state at every fixture setup: any conformance-owned sessionhost whose
+# supervisor is provably dead (reparented to init) gets its launched
+# non-adopted sessions reaped THROUGH ITS OWN cleanup semantics (wire
+# session.cleanup — the mux session dies and the parked agent dies with it,
+# which no ppid scan could find: the agent's parent is the pane shell), then
+# is terminated, then residual runtime dirs are swept. Safety boundary
+# (pinned by test_s28d counterexamples): ppid != 1 daemons (live concurrent
+# harness — S16) and non-conformance --db paths (production
+# ~/.local/state/doeff/agentd.sqlite; launchd children have ppid==1 by
+# construction, so the PATH is the discriminator) are untouchable, and
+# adopted seats are never cleaned (mirror principle, ADR-DOE-AGENTS-007).
+
+CONFORMANCE_RUNTIME_PREFIX = "/tmp/agentd-conf-"
+# Wire status vocabulary (README S20; policy.hy ACTIVE-STATUSES). Restated as
+# a literal: the driver's dependency discipline forbids importing sessionhost
+# internals, and the wire filter is frozen contract surface anyway.
+_ACTIVE_STATUSES = ("blocked", "blocked_api", "booting", "pending", "running")
+# A /tmp/agentd-conf-* dir younger than this may be a concurrent harness
+# mid-setup (mkdtemp done, daemon not up yet) — never sweep it.
+_RESIDUAL_DIR_GRACE_SECONDS = 300.0
+_ORPHAN_EXIT_WAIT_SECONDS = 10.0
+
+
+@dataclass(frozen=True)
+class ConformanceDaemonTarget:
+    """A sessionhost serve invocation owned by the conformance suite,
+    identified purely by its command line (--db under /tmp/agentd-conf-*)."""
+
+    db_path: Path
+    socket_path: Path
+
+    @property
+    def runtime_dir(self) -> Path:
+        return self.db_path.parent
+
+
+def _argv_flag_value(argv: list[str], flag: str) -> str | None:
+    for index, token in enumerate(argv[:-1]):
+        if token == flag:
+            return argv[index + 1]
+    return None
+
+
+def classify_conformance_daemon(command: str) -> ConformanceDaemonTarget | None:
+    """The safety discriminator: a target IFF the command line is a
+    doeff-sessionhost `serve` whose --db lives under /tmp/agentd-conf-*.
+    Everything else — production hosts (~/.local/state/doeff/agentd.sqlite),
+    other tools mentioning the dir — is None, regardless of ppid."""
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return None
+    # The console script is a shebang file, so ps shows the interpreter as
+    # argv[0] and doeff-sessionhost as argv[1] (measured on the live leaked
+    # population, 2026-07-31); a direct binary would sit at argv[0].
+    if "doeff-sessionhost" not in (Path(token).name for token in argv[:2]):
+        return None
+    if "serve" not in argv:
+        return None
+    db_value = _argv_flag_value(argv, "--db")
+    if db_value is None or not db_value.startswith(CONFORMANCE_RUNTIME_PREFIX):
+        return None
+    db_path = Path(db_value)
+    socket_value = _argv_flag_value(argv, "--socket")
+    socket_path = Path(socket_value) if socket_value else db_path.parent / "agentd.sock"
+    return ConformanceDaemonTarget(db_path=db_path, socket_path=socket_path)
+
+
+def select_reapable_orphans(
+    rows: Iterable[tuple[int, int, str]],
+) -> list[tuple[int, str, ConformanceDaemonTarget]]:
+    """From (pid, ppid, command) process rows, the reapable set: conformance
+    daemons whose supervisor is provably dead (ppid == 1 — orphans reparent
+    to init). ppid != 1 means the supervising pytest is alive and owns its
+    daemon (S16 concurrency physics) — untouchable."""
+    reapable = []
+    for pid, ppid, command in rows:
+        if ppid != 1:
+            continue
+        target = classify_conformance_daemon(command)
+        if target is None:
+            continue
+        reapable.append((pid, command, target))
+    return reapable
+
+
+def _process_rows() -> list[tuple[int, int, str]]:
+    listed = subprocess.run(
+        ["ps", "-eo", "pid=,ppid=,command="],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    rows = []
+    for line in listed.stdout.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) < 3:
+            continue
+        try:
+            pid, ppid = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        rows.append((pid, ppid, parts[2]))
+    return rows
+
+
+def _command_of_pid(pid: int) -> str | None:
+    probe = subprocess.run(
+        ["ps", "-p", str(pid), "-o", "command="],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if probe.returncode != 0:
+        return None
+    text = probe.stdout.strip()
+    return text or None
+
+
+def _cleanup_sessions_via_wire(target: ConformanceDaemonTarget) -> bool:
+    """Reap the daemon's launched active sessions with ITS OWN cleanup
+    semantics (wire session.cleanup: tmux kill + stopped/cancelled + cleaned
+    event). Adopted seats are skipped — the daemon did not create them
+    (mirror principle). Returns False when the wire never answered."""
+    client = AgentdClient(target.socket_path, timeout=5.0)
+    try:
+        listed = client.request("session.list", {"status": list(_ACTIVE_STATUSES)})
+    except Exception as exc:
+        print(
+            f"conformance orphan reaper: wire unreachable at {target.socket_path}"
+            f" ({exc}); falling back to db-driven substrate kill",
+            file=sys.stderr,
+        )
+        return False
+    if not isinstance(listed, list):
+        return False
+    for row in listed:
+        if not isinstance(row, dict):
+            continue
+        if row.get("adopted", False):
+            continue
+        session_id = row.get("session_id")
+        if not isinstance(session_id, str):
+            continue
+        try:
+            client.request("session.cleanup", {"session_id": session_id})
+        except Exception as exc:
+            print(
+                f"conformance orphan reaper: session.cleanup {session_id}"
+                f" failed ({exc}); continuing with the remaining sessions",
+                file=sys.stderr,
+            )
+    return True
+
+
+def _cleanup_sessions_from_db(db_path: Path) -> None:
+    """Wire-dead fallback: read the daemon's OWN db (read-only) for active
+    non-adopted rows and kill their mux sessions out of band — the substrate
+    half of cleanup semantics, so the parked agent still dies in pairs."""
+    placeholders = ",".join("?" for _ in _ACTIVE_STATUSES)
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            "SELECT session_name FROM agent_sessions"
+            f" WHERE adopted = 0 AND status IN ({placeholders})",
+            _ACTIVE_STATUSES,
+        ).fetchall()
+    finally:
+        conn.close()
+    for (session_name,) in rows:
+        kill_session_out_of_band(session_name)
+
+
+def _terminate_orphan_daemon(pid: int, expected_command: str) -> None:
+    """SIGTERM (graceful — releases the db lease, issue #565) with a SIGKILL
+    backstop. Re-reads the pid's command line right before signalling so a
+    recycled pid is never signalled."""
+    if _command_of_pid(pid) != expected_command:
+        return
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    deadline = time.monotonic() + _ORPHAN_EXIT_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.1)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+
+
+def _sweep_residual_runtime_dirs() -> None:
+    """Remove /tmp/agentd-conf-* dirs no live daemon serves. The mtime grace
+    protects a concurrent harness mid-setup (dir created, daemon not up yet):
+    sweeping a live run would corrupt it, leaving one dir costs nothing —
+    the next fixture setup collects it."""
+    in_use = set()
+    for _pid, _ppid, command in _process_rows():
+        target = classify_conformance_daemon(command)
+        if target is not None:
+            in_use.add(target.runtime_dir)
+    now = time.time()
+    for entry in Path("/tmp").glob("agentd-conf-*"):
+        if not entry.is_dir() or entry in in_use:
+            continue
+        try:
+            age = now - entry.stat().st_mtime
+        except OSError:
+            continue
+        if age < _RESIDUAL_DIR_GRACE_SECONDS:
+            continue
+        shutil.rmtree(entry, ignore_errors=True)
+
+
+def reap_preexisting_orphan_daemons() -> None:
+    """Fixture-setup reconciler (S28d): converge to the invariant "no orphan
+    conformance sessionhost after harness startup". Per-daemon failures are
+    reported and isolated (same discipline as the monitor's run_worker_tick:
+    one bad seat must not strand the rest); the live acceptance gate is the
+    end state — both populations at zero."""
+    for pid, command, target in select_reapable_orphans(_process_rows()):
+        try:
+            if not _cleanup_sessions_via_wire(target):
+                _cleanup_sessions_from_db(target.db_path)
+            _terminate_orphan_daemon(pid, command)
+            shutil.rmtree(target.runtime_dir, ignore_errors=True)
+        except Exception as exc:
+            print(
+                f"conformance orphan reaper: daemon pid={pid}"
+                f" db={target.db_path} not fully reaped: {exc}",
+                file=sys.stderr,
+            )
+    _sweep_residual_runtime_dirs()
+
+
 @dataclass
 class AgentdHarness:
     """One scenario = one isolated agentd (own root/db/socket/tmp homes)."""
@@ -297,6 +545,10 @@ class AgentdHarness:
 
     def __enter__(self) -> "AgentdHarness":
         require_binaries()
+        # S28d: converge leaked state BEFORE creating this run's own runtime
+        # dir — pre-existing orphan daemons (and their parked agents) from
+        # SIGKILLed past runs must not accumulate across harness startups.
+        reap_preexisting_orphan_daemons()
         self.agentd_bin = resolve_agentd_bin()
         self.runtime_dir = Path(tempfile.mkdtemp(prefix="agentd-conf-", dir="/tmp"))
         self.db_path = self.runtime_dir / "agentd.sqlite"
