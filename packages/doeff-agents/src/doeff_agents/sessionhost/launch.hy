@@ -1,6 +1,6 @@
 ;;; 共有 session-launch program(ADR-DOE-AGENTS-004 C2)。
 ;;;
-;;; oracle: packages/doeff-agentd/src/main.rs session_launch + wait_for_repl_idle。
+;;; oracle: agentd-rust-final:src/main.rs session_launch + wait_for_repl_idle。
 ;;; kind 別の protocol 物理(argv・trust・gate・marker・dialog キー)は
 ;;; interface effect 越しに per-kind defhandler(impls/)が所有し、この program は
 ;;; 凍結された起動の「順序と方針」だけを持つ:

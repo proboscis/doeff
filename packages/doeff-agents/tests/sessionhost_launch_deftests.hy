@@ -1,6 +1,6 @@
 ;;; 直接束縛 deftest: 共有 launch program(DOE-004 C2)の凍結物理検証。
 ;;;
-;;; oracle: packages/doeff-agentd/src/main.rs session_launch + wait_for_repl_idle。
+;;; oracle: agentd-rust-final:src/main.rs session_launch + wait_for_repl_idle。
 ;;; 凍結物理:
 ;;;   - 重複 session / 既存 tmux session の reject
 ;;;   - S11 ゲートが tmux より前(per-kind PreLaunchSetup 経由)

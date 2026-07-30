@@ -5,7 +5,7 @@
 ;;; doeff-free leaf の ready_physics.hy が家 — codex の両形式の一致は
 ;;; tests/test_ready_physics_single_home.py の parity 検定が執行する。
 ;;;
-;;; 出自: 退役 Rust 実装 packages/doeff-agentd/src/main.rs の output_has_*
+;;; 出自: 退役 Rust 実装 agentd-rust-final:src/main.rs の output_has_*
 ;;; (main.rs:2969-3229)の verbatim 移植 — 退役 Rust は rollback 専用保存で
 ;;; あり正しさの基準ではない(ADR-DOE-AGENTS-004 R7/U1)。物理の正当性根拠は
 ;;; conformance README の F-* 表(CONTRACT FIXED 2026-07-05)と verbatim

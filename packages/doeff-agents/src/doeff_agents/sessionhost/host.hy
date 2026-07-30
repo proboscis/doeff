@@ -1,6 +1,6 @@
 ;;; Hy session host(ADR-DOE-AGENTS-004 C3)— 寿命の外部性の唯一の家。
 ;;;
-;;; oracle = packages/doeff-agentd/src/main.rs。ここが verbatim 移植するのは
+;;; oracle = agentd-rust-final:src/main.rs。ここが verbatim 移植するのは
 ;;; host 層の凍結物理: wire 封筒(独自 JSON-lines、main.rs:210-235)・
 ;;; CLI(parse_args :600-693)・default path(:718-742)・単一インスタンス
 ;;; 拒否(prepare_socket_path :1079-1092)・serve/dispatch(:1159-1301)。
