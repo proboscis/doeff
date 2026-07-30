@@ -36,7 +36,7 @@ from harness import RESULT_SCHEMA, AgentdHarness
 
 PROMPT = "Produce the conformance structured result."
 
-# Transfer-gate seam (harness.build_agentd): set => the Hy host is the
+# Transfer-gate seam (harness.resolve_agentd_bin): set => the Hy host is the
 # daemon under test; unset => the Rust oracle.
 HY_GATE = bool(os.environ.get("CONFORMANCE_AGENTD_BIN"))
 
