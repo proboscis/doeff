@@ -269,17 +269,9 @@ def test_koine_interactive_terminalize_rule_is_clean_on_fixed_policy() -> None:
     )
 
 
-def test_repl_ready_wait_rule_detects_discarded_readiness() -> None:
-    """Issue agentd-session-registration-after-ready-gate: a bare
-    `wait_for_repl_idle(...)?;` statement discards the readiness verdict —
-    the paste-anyway launch shape that leaves BOOTING rows behind."""
-    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/rust"
-    check_ids = _semgrep_rule_ids(
-        REPO_ROOT / ".semgrep.yaml",
-        "packages/doeff-agentd/src/discarded_repl_readiness_forbidden.rs",
-        cwd=fixture_root,
-    )
-
-    assert _has_rule(
-        check_ids, "doeff-agentd-repl-ready-wait-must-not-discard-readiness"
-    )
+# issue #575 M2: doeff-agentd-repl-ready-wait-must-not-discard-readiness の
+# 発火 assert は rule・fixture(tests/semgrep/fixtures/rust/packages/
+# doeff-agentd/)と 3 点セットで退役した — 対象(退役 Rust crate の src)が
+# M3 で消滅し、include が crate src のみの死に rule になるため。readiness
+# discard の不変量は現役側の同契約(sessionhost/launch.hy)の deftest 群が
+# 引き続き守る。rollback 座標 = git tag agentd-rust-final。
