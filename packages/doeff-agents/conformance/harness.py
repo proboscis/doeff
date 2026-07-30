@@ -337,7 +337,17 @@ class AgentdHarness:
             stdout=log,
             stderr=subprocess.STDOUT,
             text=True,
-            env={**os.environ, **self.extra_env} if self.extra_env else None,
+            env={
+                **os.environ,
+                # Out-of-band lifetime boundary (S28): the daemon watches THIS
+                # process and, once it vanishes without `__exit__` (SIGKILLed
+                # pytest, hard crash), reaps its launched sessions and exits.
+                # Teardown-side kills alone cannot close that hole — the hole
+                # IS "teardown never ran" (2026-07-30 host observation: 34
+                # leaked processes, 769MB RSS, oldest 4 days).
+                "DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED": "1",
+                **self.extra_env,
+            },
         )
         self.client = AgentdClient(self.socket_path, timeout=5.0)
         self._wait_ready()
