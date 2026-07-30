@@ -27,7 +27,8 @@ be reproduced by a non-TUI fake agent, so this test proves the positive
 (byte-faithful) direction, which the removed `normalize_wrapped_json_strings`
 heuristic could never guarantee.
 
-Requires a built agentd binary and tmux; skipped otherwise.
+Daemon under test: doeff-sessionhost via sessionhost_bin (issue #575 M2).
+Requires tmux; skipped otherwise.
 """
 
 from __future__ import annotations
@@ -49,6 +50,7 @@ from typing import Any
 import pytest
 from doeff_agents.agentd_client import AgentdClient
 from doeff_agents.effects import AgentSessionLifecycle
+from sessionhost_bin import resolve_sessionhost_bin
 
 RESULT_BLOCK_BEGIN = "DOEFF_AGENT_RESULT_BEGIN"
 RESULT_BLOCK_END = "DOEFF_AGENT_RESULT_END"
@@ -110,13 +112,9 @@ def test_agentd_report_result_is_byte_faithful_through_a_real_tmux_pane(
 
 
 def _run_byte_faithful_e2e(tmp_path: Path) -> dict[str, Any]:
-    _require_binary("cargo")
     _require_binary("tmux")
 
-    packages_dir = Path(__file__).resolve().parents[2]
-    agentd_crate = packages_dir / "doeff-agentd"
-    subprocess.run(["cargo", "build", "--quiet"], cwd=agentd_crate, check=True)
-    agentd_bin = agentd_crate / "target" / "debug" / "doeff-agentd"
+    agentd_bin = resolve_sessionhost_bin()
 
     runtime_dir = Path(tempfile.mkdtemp(prefix="agentd-byte-faithful-", dir="/tmp"))
     session_id = f"byte-faithful-{os.getpid()}-{uuid.uuid4().hex[:8]}"
@@ -146,7 +144,7 @@ def _run_byte_faithful_e2e(tmp_path: Path) -> dict[str, Any]:
                     "2",
                     "serve",
                 ],
-                cwd=agentd_crate,
+                cwd=runtime_dir,
                 stdout=agentd_log,
                 stderr=subprocess.STDOUT,
                 text=True,
