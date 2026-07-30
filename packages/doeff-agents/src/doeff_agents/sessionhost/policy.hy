@@ -437,14 +437,31 @@
       (raise (RuntimeError f"prompt judge verdict invalid: {e}"))))
   verdict)
 
-(defk send-unblock-keys [pane-id keys]
-  {:pre [(: pane-id str) (: keys (| list tuple))]
-   :post [(: % int)]}
-  "検証済み unblock keys を 1 つずつ送出する(oracle send_unblock_keys —
-   キー間 pacing は substrate 所有)。"
-  (for [key keys]
-    (<- _ (tmux-send-keys pane-id key False False)))
-  (len keys))
+(defk send-unblock-keys [row keys]
+  {:pre [(: row SessionRow) (: keys (| list tuple))]
+   :post [(: % bool)]}
+  "検証済み unblock keys を中断キー安全壁越しに送出する(oracle
+   send_unblock_keys + issue #573 の busy veto。キー間 pacing は substrate
+   所有)。judge verdict は stale になりうる capture への LLM の推測で、
+   許可キーには Escape(走行中 turn の不可逆な中断)を含む — 2026-07-29
+   実測で 1 日の invocation の約 1 割が走行中に中断キーを受け、実装作業が
+   丸ごと失われた。verdict がどうであれ、送出直前の fresh capture が明白な
+   busy 証拠を示すなら送らない:
+
+   * live active-work marker(claude spinner / codex working 行)
+   * claude の queued-messages 表示(未消費 queue = turn 走行中)
+
+   本物の blocked pane(menu / dialog / pager / login)はどちらも示さないので
+   unblock 経路そのものは生き続ける。壁なしの送出プリミティブは意図的に
+   存在させない(迂回経路を作らない)。戻り値 = 送出したか(False = veto)。"
+  (<- latest (tmux-capture row.pane-id 100))
+  (<- obs (classify-pane row.agent-type latest))
+  (if (or obs.has-active-marker obs.has-queued-messages)
+      False
+      (do
+        (for [key keys]
+          (<- _ (tmux-send-keys row.pane-id key False False)))
+        True)))
 
 (defk finalize [row entry-status observed-status obs output observed-at]
   {:pre [(: row SessionRow) (: entry-status str) (: observed-status str)
@@ -786,10 +803,18 @@
                           ;; oracle: eprintln して solicitation へ fall through
                           (setv verdict None)))
                       (when (and (is-not verdict None) verdict.blocked)
-                        (<- _ (send-unblock-keys row.pane-id verdict.keys))
+                        ;; issue #573: 送出は安全壁越し。veto = 送出直前の
+                        ;; fresh capture に busy 証拠 — turn-end 読み自体が
+                        ;; stale だったので solicitation も走らせず、次 cycle
+                        ;; の再観測に委ねる。
+                        (<- sent (send-unblock-keys row verdict.keys))
                         (<- _ (session-store-upsert row))
                         (<- _ (session-store-record-event
-                                row.session-id "session_prompt_unblocked" row))
+                                row.session-id
+                                (if sent
+                                    "session_prompt_unblocked"
+                                    "session_prompt_unblock_vetoed")
+                                row))
                         (setv unblocked True)))
                     (when unblocked
                       (return row))
@@ -880,10 +905,17 @@
                            f" and prompt judge failed: {judge-error}"))
                   (if verdict.blocked
                       (do
-                        (<- _ (send-unblock-keys row.pane-id verdict.keys))
+                        ;; issue #573: 送出は安全壁越し。veto = stall 読みと
+                        ;; 送出の間に pane が動き出した — typed failure にも
+                        ;; 落とさず次 cycle の再観測に委ねる。
+                        (<- sent (send-unblock-keys row verdict.keys))
                         (<- _ (session-store-upsert row))
                         (<- _ (session-store-record-event
-                                row.session-id "session_prompt_unblocked" row))
+                                row.session-id
+                                (if sent
+                                    "session_prompt_unblocked"
+                                    "session_prompt_unblock_vetoed")
+                                row))
                         (return row))
                       (do
                         ;; inconclusive も budget を消費して監視継続(R7 —
