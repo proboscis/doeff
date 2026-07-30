@@ -102,6 +102,9 @@
     (setv self.proc-calls [])          ;; [(command, stdin)]
     (setv self.judge-script [])        ;; 順に pop される ProcResult 台本
     (setv self.broken-panes (set))     ;; capture が例外を投げる pane(隔離検証用)
+    (setv self.frame-script {})        ;; pane-id -> capture ごとに pop される
+                                       ;; フレーム列(issue #573: tick 内で画面が
+                                       ;; 変わる pane の台本。尽きたら frames)
     (setv self.discovered None)        ;; DiscoverConversation の台本(ADR-006)
     (setv self.now (datetime 2026 7 5 12 0 0 :tzinfo timezone.utc))))
 
@@ -175,6 +178,11 @@
                      (in "settings requiring approval" lowerall)))
   (setv startup (and (not starting-mcp) (not managed)
                      (or active idle turn-activity)))
+  ;; issue #573: queued-messages 事実(最終 prompt 行の queue 表示)。
+  ;; True の時だけ kwarg を渡す — field が生えるまで既存テストを汚さない。
+  (setv queued-kwargs {})
+  (when (in "Press up to edit queued messages" output)
+    (setv (get queued-kwargs "has_queued_messages") True))
   (PaneObservation
     :has-failure-marker failure
     :has-api-limit-marker api-limit
@@ -185,7 +193,8 @@
     :startup-finished startup
     :has-unsubmitted-paste (in "<unsubmitted-paste>" output)
     :dialog (if managed "managed" None)
-    :dialog-dismiss-keys (if managed #("Enter") #())))
+    :dialog-dismiss-keys (if managed #("Enter") #())
+    #** queued-kwargs))
 
 
 (defhandler fake-substrate [world]
@@ -237,7 +246,10 @@
     (when (in pane-id world.broken-panes)
       (raise (RuntimeError f"tmux capture failed for pane {pane-id}")))
     (setv world.capture-count (+ world.capture-count 1))
-    (resume (.get world.frames pane-id "")))
+    (setv script (.get world.frame-script pane-id))
+    (if script
+        (resume (.pop script 0))
+        (resume (.get world.frames pane-id ""))))
 
   (TmuxSendKeys [pane-id text literal submit]
     (.append world.sent-keys #(pane-id text literal submit))
@@ -627,6 +639,65 @@
 
 
 ;; ---------------------------------------------------------------------------
+;; issue #573: 中断キー安全壁(busy veto)— 誤検知しても不可逆な中断だけは
+;; 飛ばない壁。judge verdict がどうであれ、送出直前の fresh capture が明白な
+;; busy 証拠(live active marker / 未消費 queue)を示すなら中断キーを送らない。
+;; ---------------------------------------------------------------------------
+
+(setv F-BUSY-SPINNER-CLAUDE
+      (+ "✦ Cerebrating… (1m 34s · ↓ 2.2k tokens · thought for 39s)\n"
+         "\n"
+         (* "─" 80) "\n"
+         "❯ \n"
+         (* "─" 80)))
+
+(setv F-QUEUED-CLAUDE
+      (+ (* "─" 80) "\n"
+         "❯ Press up to edit queued messages\n"
+         (* "─" 80)))
+
+
+(deftest test-unblock-keys-vetoed-on-fresh-active-capture
+  ;; issue #573(2026-07-29 実 incident): turn-end 誤検知 → judge が blocked と
+  ;; 誤答 → Escape が走行中 turn を破壊(transcript に [Request interrupted by
+  ;; user])。送出直前の再観測が live spinner を見たら、キーは送らず veto を
+  ;; 記帳して次 cycle の再観測に委ねる。solicitation も走らない(busy 証拠は
+  ;; turn-end 判定そのものの誤りを示す)。
+  (setv world (FakeWorld))
+  (seed world (make-row world :output-snippet (tail-chars F-IDLE-CLAUDE 500))
+        :frame F-IDLE-CLAUDE)
+  ;; capture 1(観測)= idle・stable → turn-end → judge。
+  ;; capture 2(送出直前の再観測)= live spinner。
+  (setv (get world.frame-script "%1") [F-IDLE-CLAUDE F-BUSY-SPINNER-CLAUDE])
+  (.extend world.judge-script [(judge-ok :keys ["Escape"])])
+  (<- outcomes (run-cycle world (MonitorKnobs :judge-cmd "scripted-judge")))
+  (setv row (get world.rows "s1"))
+  (assert (= world.sent-keys []))
+  (assert (in #("s1" "session_prompt_unblock_vetoed") world.events))
+  (assert (not-in #("s1" "session_prompt_unblocked") world.events))
+  (assert (= world.delivered []))
+  (assert (= row.status "running")))
+
+
+(deftest test-unblock-keys-vetoed-on-queued-messages
+  ;; issue #573 event 1997731 現物: `❯ Press up to edit queued messages` =
+  ;; solicitation が composer に積まれ未消費 = agent は明白に busy。この表示を
+  ;; 観測したら中断キーは送らない。
+  (setv world (FakeWorld))
+  (seed world (make-row world :output-snippet (tail-chars F-IDLE-CLAUDE 500))
+        :frame F-IDLE-CLAUDE)
+  (setv (get world.frame-script "%1") [F-IDLE-CLAUDE F-QUEUED-CLAUDE])
+  (.extend world.judge-script [(judge-ok :keys ["Escape"])])
+  (<- outcomes (run-cycle world (MonitorKnobs :judge-cmd "scripted-judge")))
+  (setv row (get world.rows "s1"))
+  (assert (= world.sent-keys []))
+  (assert (in #("s1" "session_prompt_unblock_vetoed") world.events))
+  (assert (not-in #("s1" "session_prompt_unblocked") world.events))
+  (assert (= world.delivered []))
+  (assert (= row.status "running")))
+
+
+;; ---------------------------------------------------------------------------
 ;; interactive-prompt stall watchdog(R5/R7、S6/S6b)
 ;; ---------------------------------------------------------------------------
 
@@ -700,6 +771,22 @@
   (assert (= row.status "running"))
   (assert (= row.prompt-unblock-attempts 1))
   (assert (in #("s1" "session_prompt_unblocked") world.events)))
+
+
+(deftest test-stall-unblock-vetoed-on-fresh-busy-capture
+  ;; issue #573: stall 判定と judge の間に pane が動き出した(送出直前の
+  ;; fresh capture に live active marker)— 中断キーは送らず veto を記帳し、
+  ;; typed failure にも落とさず次 cycle の再観測に委ねる。
+  (setv world (FakeWorld))
+  (seed-stalled world)
+  (setv (get world.frame-script "%1") [F-FROZEN F-BUSY-SPINNER-CLAUDE])
+  (.extend world.judge-script [(judge-ok :keys ["Escape"])])
+  (<- outcomes (run-cycle world (MonitorKnobs :judge-cmd "scripted-judge")))
+  (setv row (get world.rows "s1"))
+  (assert (= world.sent-keys []))
+  (assert (in #("s1" "session_prompt_unblock_vetoed") world.events))
+  (assert (not-in #("s1" "session_prompt_unblocked") world.events))
+  (assert (= row.status "running")))
 
 
 (deftest test-stall-with-latch-rate-limited

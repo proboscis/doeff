@@ -159,6 +159,11 @@
   (setv startup-finished False)
   #^ bool has-unsubmitted-paste
   (setv has-unsubmitted-paste False)
+  ;; issue #573: claude の queued-messages 表示(入力行 `❯ Press up to edit
+  ;; queued messages`)。未消費 queue = turn 走行中の明白な busy 証拠 —
+  ;; policy の中断キー安全壁(send-unblock-keys の busy veto)が参照する。
+  #^ bool has-queued-messages
+  (setv has-queued-messages False)
   #^ (| str None) dialog
   (setv dialog None)
   ;; dialog の決定的 dismissal キー列(R9 fast-path、S18 で Rust detector と
@@ -331,10 +336,10 @@
 (defclass [(dataclass :frozen True :kw-only True)] SessionStoreRecordEvent [EffectBase]
   "監査 event の追記(session_done / session_failed / session_blocked /
    session_observed / session_result_solicited / session_prompt_unblocked /
-   session_prompt_judge_inconclusive / session_stale_reaped /
-   session_launch_timeout / session_exited / session_unsubmitted_paste_resubmitted /
-   session_resumed / session_forked / session_conversation_discovered)。
-   戻り値: None。"
+   session_prompt_unblock_vetoed / session_prompt_judge_inconclusive /
+   session_stale_reaped / session_launch_timeout / session_exited /
+   session_unsubmitted_paste_resubmitted / session_resumed / session_forked /
+   session_conversation_discovered)。戻り値: None。"
   #^ str session-id
   #^ str event-type
   #^ SessionRow row)

@@ -3251,6 +3251,16 @@ fn output_has_agent_active_marker(output: &str) -> bool {
     output_has_live_claude_spinner_marker(output)
 }
 
+/// A row of Claude's composer fence: the current TUI draws full-width
+/// horizontal rules above and below the `❯` input line.  Issue #573: the
+/// live spinner sits ABOVE that fence, so walking up from the input line
+/// must treat border rows like blank rows or the spinner is unreachable
+/// and active-marker detection reports false for every working pane.
+fn line_is_claude_composer_border(line: &str) -> bool {
+    let trimmed = line.trim();
+    !trimmed.is_empty() && trimmed.chars().all(|c| "─━═".contains(c))
+}
+
 fn output_has_live_claude_spinner_marker(output: &str) -> bool {
     let lines: Vec<&str> = output.lines().collect();
     let Some(prompt_index) = lines.iter().rposition(|line| line.starts_with('❯')) else {
@@ -3258,12 +3268,34 @@ fn output_has_live_claude_spinner_marker(output: &str) -> bool {
     };
     for line in lines[..prompt_index].iter().rev() {
         let trimmed = line.trim();
-        if trimmed.is_empty() {
+        if trimmed.is_empty() || line_is_claude_composer_border(line) {
             continue;
         }
+        // Only the first CONTENT row above the input box is the live
+        // spinner site — historical spinner rows further up stay dead.
         return trimmed.contains("… (");
     }
     false
+}
+
+/// Claude's queued-messages marker: a message delivered mid-turn stacks
+/// in the composer and the input line renders as
+/// `❯ Press up to edit queued messages`.  An unconsumed queue is
+/// unambiguous evidence that a turn is still running (issue #573) — the
+/// same last-prompt-line discipline as `output_has_unsubmitted_paste_input`.
+fn output_has_claude_queued_messages(output: &str) -> bool {
+    let lines: Vec<&str> = output.lines().collect();
+    let start = lines.len().saturating_sub(20);
+    let mut last_prompt_line: Option<&str> = None;
+    for line in &lines[start..] {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('❯') || trimmed.starts_with('›') {
+            last_prompt_line = Some(trimmed);
+        }
+    }
+    last_prompt_line
+        .map(|line| line.contains("Press up to edit queued messages"))
+        .unwrap_or(false)
 }
 
 /// Evidence that Claude has actually consumed the injected prompt and
@@ -3557,14 +3589,57 @@ fn judge_interactive_prompt(config: &Config, pane: &str) -> Result<PromptJudgeVe
     parse_prompt_judge_verdict(&reply)
 }
 
+/// Outcome of `send_unblock_keys`: the validated keys were sent, or the
+/// busy wall vetoed the send because the pane showed unambiguous busy
+/// evidence at send time (issue #573).
+#[derive(Debug)]
+enum UnblockKeysOutcome {
+    Sent,
+    VetoedBusy(&'static str),
+}
+
+/// Busy wall for unblock-key sends (issue #573).  A judge verdict is an
+/// LLM guess made against a possibly stale capture, and the keys it may
+/// authorise include `Escape` — which IRREVERSIBLY interrupts a running
+/// turn (2026-07-29 live incident: ~1 in 10 of the day's invocations took
+/// interrupt keys mid-work; at least one implementation run was destroyed
+/// wholesale).  Whatever the verdict says, keys must not be delivered
+/// while the pane shows unambiguous busy evidence:
+///
+/// * a live active-work marker (claude spinner / codex working row), or
+/// * claude's `Press up to edit queued messages` input line — a queued,
+///   unconsumed message means a turn is still running.
+///
+/// A genuinely blocked pane (menu, dialog, pager, login prompt) shows
+/// neither, so the unblock path itself stays available.
+fn unblock_keys_busy_veto(output: &str) -> Option<&'static str> {
+    if output_has_agent_active_marker(output) {
+        return Some("live active-work marker visible");
+    }
+    if output_has_claude_queued_messages(output) {
+        return Some("unconsumed queued messages on the input line");
+    }
+    None
+}
+
 /// Send a validated unblock key sequence, mirroring the pacing of the
-/// hardcoded dialog dismissers (120ms between keys).
-fn send_unblock_keys(config: &Config, pane_id: &str, keys: &[String]) -> Result<()> {
+/// hardcoded dialog dismissers (120ms between keys).  Re-captures the
+/// pane right before sending: the judge round-trip takes seconds and the
+/// verdict may describe a state that no longer exists (issue #573).
+fn send_unblock_keys(
+    config: &Config,
+    pane_id: &str,
+    keys: &[String],
+) -> Result<UnblockKeysOutcome> {
+    let latest = tmux_capture(config, pane_id, 100)?;
+    if let Some(reason) = unblock_keys_busy_veto(&latest) {
+        return Ok(UnblockKeysOutcome::VetoedBusy(reason));
+    }
     for key in keys {
         tmux_send_keys(config, pane_id, key, false, false)?;
         thread::sleep(Duration::from_millis(120));
     }
-    Ok(())
+    Ok(UnblockKeysOutcome::Sent)
 }
 
 /// Extract a human-readable message from a `catch_unwind` panic payload.
@@ -3959,12 +4034,30 @@ fn monitor_once(config: &Config) -> Result<()> {
                             snapshot.prompt_unblock_attempts += 1;
                             match judge_interactive_prompt(config, &output) {
                                 Ok(verdict) if verdict.blocked => {
-                                    send_unblock_keys(config, &snapshot.pane_id, &verdict.keys)?;
+                                    let outcome = send_unblock_keys(
+                                        config,
+                                        &snapshot.pane_id,
+                                        &verdict.keys,
+                                    )?;
                                     upsert_snapshot(&conn, &snapshot)?;
+                                    // Busy veto (issue #573): the pane showed
+                                    // live-work evidence at send time, so the
+                                    // turn-end reading itself was stale — skip
+                                    // solicitation too and re-observe next tick.
+                                    let event_type = match outcome {
+                                        UnblockKeysOutcome::Sent => "session_prompt_unblocked",
+                                        UnblockKeysOutcome::VetoedBusy(reason) => {
+                                            eprintln!(
+                                                "doeff-agentd unblock veto (turn-end) for {}: {reason}",
+                                                snapshot.session_id
+                                            );
+                                            "session_prompt_unblock_vetoed"
+                                        }
+                                    };
                                     record_event(
                                         &conn,
                                         &snapshot.session_id,
-                                        "session_prompt_unblocked",
+                                        event_type,
                                         &snapshot,
                                     )?;
                                     continue;
@@ -4075,14 +4168,23 @@ fn monitor_once(config: &Config) -> Result<()> {
                     snapshot.prompt_unblock_attempts += 1;
                     match judge_interactive_prompt(config, &output) {
                         Ok(verdict) if verdict.blocked => {
-                            send_unblock_keys(config, &snapshot.pane_id, &verdict.keys)?;
+                            let outcome =
+                                send_unblock_keys(config, &snapshot.pane_id, &verdict.keys)?;
                             upsert_snapshot(&conn, &snapshot)?;
-                            record_event(
-                                &conn,
-                                &snapshot.session_id,
-                                "session_prompt_unblocked",
-                                &snapshot,
-                            )?;
+                            // Busy veto (issue #573): the pane came alive
+                            // between the stall reading and the send — no
+                            // typed failure, just re-observe next tick.
+                            let event_type = match outcome {
+                                UnblockKeysOutcome::Sent => "session_prompt_unblocked",
+                                UnblockKeysOutcome::VetoedBusy(reason) => {
+                                    eprintln!(
+                                        "doeff-agentd unblock veto (stall) for {}: {reason}",
+                                        snapshot.session_id
+                                    );
+                                    "session_prompt_unblock_vetoed"
+                                }
+                            };
+                            record_event(&conn, &snapshot.session_id, event_type, &snapshot)?;
                             continue;
                         }
                         Ok(verdict) => {
@@ -5805,6 +5907,166 @@ codex --yolo -c 'model_reasoning_effort=\"xhigh\"' --model gpt-5.5\n\
         let working_t2 = "✢ Swooping… (38s · ↓ 1.2k tokens)\n\n❯\u{00A0}";
         snapshot.output_snippet = Some(working_t1.to_string());
         assert!(!output_indicates_turn_end(&snapshot, working_t2));
+    }
+
+    #[test]
+    fn claude_spinner_marker_crosses_composer_border() {
+        // Issue #573 (2026-07-29 live incident, event 1997730): the current
+        // claude TUI fences the input box with full-width horizontal rules,
+        // so the first non-empty line above `❯` is the border — the live
+        // spinner row sits one content row further up.  A detector that
+        // stops at the border reports active=false for every working pane,
+        // which collapses claude turn-end detection onto the stability
+        // guard alone; spinner-tick aliasing then lets turn-end fire on a
+        // RUNNING turn and the judge's Escape destroys the in-flight work.
+        let bordered_working = "s/adr/defadr_0066_merge_lane_land_queue.hy\n\
+             \n\
+             ✦ Cerebrating… (1m 34s · ↓ 2.2k tokens · thought for 39s)\n\
+             \n\
+             ────────────────────────────────────────────────────────────────────────────────\n\
+             ❯ \n\
+             ────────────────────────────────────────────────────────────────────────────────\n\
+             \u{20}\u{20}⏵⏵ bypass permissions on (shift+tab to cycle) · gh auth login for PR status ·\n";
+        assert!(output_has_agent_active_marker(bordered_working));
+
+        // The incident's exact failure shape: the snapshot equalled the
+        // previous tick's 500-char tail (spinner aliasing made the pane
+        // look stable), so the active marker was the last defence and it
+        // must hold turn-end back.
+        let mut snapshot = snapshot_for_lifecycle("run_to_completion", "running");
+        snapshot.output_snippet = Some(tail_chars(bordered_working, 500));
+        assert!(!output_indicates_turn_end(&snapshot, bordered_working));
+
+        // Bordered idle pane: skipping the border must not conjure a
+        // spinner out of ordinary transcript text — turn-end still fires.
+        let bordered_idle = "⏺ done. result written.\n\
+             \n\
+             ────────────────────────────────────────────────────────────────────────────────\n\
+             ❯\u{00A0}\n\
+             ────────────────────────────────────────────────────────────────────────────────\n\
+             \u{20}\u{20}⏵⏵ bypass permissions on (shift+tab to cycle)\n";
+        assert!(!output_has_agent_active_marker(bordered_idle));
+        snapshot.output_snippet = Some(tail_chars(bordered_idle, 500));
+        assert!(output_indicates_turn_end(&snapshot, bordered_idle));
+
+        // Historical spinner rows above the border (turn already produced
+        // output) stay non-live: only the first CONTENT row above the
+        // input box is the live-spinner site.
+        let bordered_history = "✢ Swooping… (1s · thinking)\n\
+             wrote invalid result\n\
+             \n\
+             ──────────\n\
+             ❯\u{00A0}\n\
+             ──────────\n";
+        assert!(!output_has_agent_active_marker(bordered_history));
+    }
+
+    #[test]
+    fn send_unblock_keys_refuses_visibly_busy_pane() {
+        // Issue #573 (incident events 1997731/1997732): the judge answered
+        // "blocked" for a pane whose input line read `❯ Press up to edit
+        // queued messages` — the solicitation stacked behind a RUNNING
+        // turn — and the daemon sent Escape, killing the in-flight work.
+        // Whatever the verdict says, unblock keys must not be delivered
+        // while the pane shows unambiguous busy evidence at send time.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmux_bin = tmp.path().join("fake-tmux");
+        let args_file = tmp.path().join("args.txt");
+        let frame_file = tmp.path().join("frame.txt");
+        fs::write(
+            &frame_file,
+            "✦ Cerebrating… (2m 10s · ↓ 3.1k tokens)\n\
+             \n\
+             ────────────────────────────────────────\n\
+             ❯ Press up to edit queued messages\n\
+             ────────────────────────────────────────\n",
+        )
+        .expect("write busy frame");
+        fs::write(
+            &tmux_bin,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{args}'\n\
+                 if [ \"$1\" = capture-pane ]; then cat '{frame}'; fi\n",
+                args = args_file.display(),
+                frame = frame_file.display()
+            ),
+        )
+        .expect("write fake tmux");
+        let mut perms = fs::metadata(&tmux_bin).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&tmux_bin, perms).expect("chmod fake tmux");
+        let config = Config {
+            db_path: tmp.path().join("agentd.sqlite"),
+            socket_path: tmp.path().join("agentd.sock"),
+            tmux_bin: tmux_bin.to_string_lossy().into_owned(),
+            monitor_interval: Duration::from_millis(1000),
+            max_running: 1,
+            result_solicitation_limit: DEFAULT_RESULT_SOLICITATION_LIMIT,
+            prompt_stall_seconds: DEFAULT_PROMPT_STALL_SECONDS,
+            prompt_unblock_limit: DEFAULT_PROMPT_UNBLOCK_LIMIT,
+            prompt_judge_cmd: None,
+            repl_idle_max_wait: Duration::from_secs(DEFAULT_REPL_IDLE_MAX_WAIT_SECS),
+        };
+        let keys = vec![String::from("Escape")];
+
+        send_unblock_keys(&config, "%1", &keys).expect("send_unblock_keys busy pane");
+
+        let args = fs::read_to_string(&args_file).unwrap_or_default();
+        assert!(
+            !args.lines().any(|arg| arg == "send-keys"),
+            "unblock keys were sent to a visibly busy pane:\n{args}"
+        );
+
+        // A genuinely blocked pane (codex menu eating input) still gets
+        // the keys — the wall must not disable the unblock path itself.
+        fs::write(
+            &frame_file,
+            "› 1. Switch to gpt-5.4-mini\n\
+             \u{20}\u{20}2. Keep current model\n\
+             \u{20}\u{20}Press enter to confirm\n",
+        )
+        .expect("rewrite menu frame");
+        fs::write(&args_file, "").expect("reset args");
+
+        send_unblock_keys(&config, "%1", &keys).expect("send_unblock_keys menu pane");
+
+        let args = fs::read_to_string(&args_file).expect("read args");
+        assert!(
+            args.lines().any(|arg| arg == "send-keys"),
+            "unblock keys must still reach a genuinely blocked pane:\n{args}"
+        );
+        assert!(args.lines().any(|arg| arg == "Escape"));
+    }
+
+    #[test]
+    fn unblock_busy_veto_recognizes_unambiguous_busy_evidence() {
+        // Live bordered claude spinner → veto.
+        assert!(unblock_keys_busy_veto(
+            "✦ Cerebrating… (1m 34s · ↓ 2.2k tokens)\n\n────────\n❯ \n────────\n"
+        )
+        .is_some());
+        // Queued messages on the input line → veto.
+        assert!(unblock_keys_busy_veto(
+            "────────\n❯ Press up to edit queued messages\n────────\n"
+        )
+        .is_some());
+        // Codex working row → veto.
+        assert!(unblock_keys_busy_veto("Working (12s • esc to interrupt)\n").is_some());
+        // Genuinely blocked panes keep the unblock path: codex menu…
+        assert!(unblock_keys_busy_veto(
+            "› 1. Switch to gpt-5.4-mini\n\
+             \u{20}\u{20}2. Keep current model\n\
+             \u{20}\u{20}Press enter to confirm\n"
+        )
+        .is_none());
+        // …and a frozen pager/login pane.
+        assert!(unblock_keys_busy_veto("Password:\n-- more --\n").is_none());
+        // Queue wording echoed in transcript history (not on the input
+        // line) is not busy evidence.
+        assert!(unblock_keys_busy_veto(
+            "⏺ echoed: Press up to edit queued messages\n\n❯\u{00A0}\n"
+        )
+        .is_none());
     }
 
     #[test]
