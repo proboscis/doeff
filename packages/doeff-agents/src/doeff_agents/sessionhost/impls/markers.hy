@@ -106,10 +106,21 @@
         (bool (or (in "working (" text)
                   (in "esc to interrupt" text))))))
 
+(deff is-claude-composer-border [line]
+  {:pre [(: line str)] :post [(: % bool)]}
+  "claude composer の罫線行(issue #573): 現行 TUI は入力欄を全幅の水平罫線で
+   囲む — strip 後が罫線文字だけの行。spinner 探索では空行と同様に skip する
+   (skip しないと探索が罫線で止まり、稼働中 pane の active-marker が常に
+   false になる — 2026-07-29 実 incident の一次原因)。"
+  (setv trimmed (.strip line))
+  (bool (and trimmed (all (gfor ch trimmed (in ch "─━═"))))))
+
 (deff has-live-claude-spinner [output]
   {:pre [(: output str)] :post [(: % bool)]}
-  "claude の live spinner(oracle output_has_live_claude_spinner_marker):
-   最終 `❯` 行の直上の非空行に `… (`。`❯` が無ければ tail 30 の `… (`。"
+  "claude の live spinner(oracle output_has_live_claude_spinner_marker +
+   issue #573 の罫線跨ぎ): 最終 `❯` 行から上へ、空行と composer 罫線行を
+   skip した最初の本文行に `… (`。`❯` が無ければ tail 30 の `… (`。
+   本文行は 1 行しか見ない — 履歴に残留した過去 spinner 行は live ではない。"
   (setv lines (.splitlines output))
   (setv prompt-index None)
   (for [[index line] (enumerate lines)]
@@ -121,7 +132,7 @@
         (setv found False)
         (for [line (reversed (cut lines 0 prompt-index))]
           (setv trimmed (.strip line))
-          (when trimmed
+          (when (and trimmed (not (is-claude-composer-border line)))
             (setv found (in "… (" trimmed))
             (break)))
         found)))
@@ -156,6 +167,24 @@
       (bool (or (in "[Pasted text" last-prompt-line)
                 (in "[Pasted Content" last-prompt-line)
                 (in "Press up to edit queued messages" last-prompt-line)))))
+
+(deff has-queued-messages [output]
+  {:pre [(: output str)] :post [(: % bool)]}
+  "claude の queued-messages marker(issue #573): mid-turn に配送された
+   message は composer に積まれ、入力行が `❯ Press up to edit queued messages`
+   になる。未消費 queue = turn 走行中の明白な busy 証拠 — 中断キー送出の
+   安全壁が参照する。判定は has-unsubmitted-paste と同じ最終 prompt 行規律
+   (履歴に写った同文言を事実にしない)。"
+  (setv lines (.splitlines output))
+  (setv recent (cut lines (max 0 (- (len lines) 20)) None))
+  (setv last-prompt-line None)
+  (for [line recent]
+    (setv trimmed (.lstrip line))
+    (when (or (.startswith trimmed "❯") (.startswith trimmed "›"))
+      (setv last-prompt-line trimmed)))
+  (if (is None last-prompt-line)
+      False
+      (in "Press up to edit queued messages" last-prompt-line)))
 
 
 ;; ---------------------------------------------------------------------------
@@ -296,5 +325,6 @@
     :has-turn-activity (has-turn-activity output)
     :startup-finished (startup-finished output)
     :has-unsubmitted-paste (has-unsubmitted-paste output)
+    :has-queued-messages (has-queued-messages output)
     :dialog dialog
     :dialog-dismiss-keys dismiss-keys))
