@@ -3,7 +3,7 @@
 ;;; substrate.hy は生 IO の唯一の家 — 純関数(禁止 env・paste 残留検出)は
 ;;; 決定的に、Fs / Env / Clock effect は tmpdir で、tmux effect は実 tmux
 ;;; server での smoke で検証する(tmux 不在時は skip)。oracle:
-;;; packages/doeff-agentd/src/main.rs の ensure_no_forbidden_agent_env /
+;;; agentd-rust-final:src/main.rs の ensure_no_forbidden_agent_env /
 ;;; output_has_unsubmitted_paste_input / tmux_* / fs 物理。
 
 (require doeff-hy.macros [deftest defk deff <-])

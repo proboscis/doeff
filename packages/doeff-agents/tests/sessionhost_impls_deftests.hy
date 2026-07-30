@@ -10,7 +10,7 @@
 ;;;   - F-* marker 分類 + R9 dialog 検出(dismiss keys は impl 所有)
 ;;;
 ;;; fake substrate(dict-backed fs / 台本 env / 記録 tmux)で impl handler を
-;;; 直接束縛する。生 IO ゼロ。oracle: packages/doeff-agentd/src/main.rs
+;;; 直接束縛する。生 IO ゼロ。oracle: agentd-rust-final:src/main.rs
 ;;; build_claude_argv / build_codex_argv / trust_*_workspace /
 ;;; output_has_* / dismiss_*。
 

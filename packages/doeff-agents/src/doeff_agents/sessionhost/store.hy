@@ -1,6 +1,6 @@
 ;;; SQLite store-of-record + writer actor + lease(ADR-DOE-AGENTS-004 C3)。
 ;;;
-;;; oracle = packages/doeff-agentd/src/main.rs:
+;;; oracle = agentd-rust-final:src/main.rs:
 ;;;   migrate(:974-1064、additive ensure_column)/ upsert_snapshot
 ;;;   (:2320-2393、COALESCE は terminal_cause_json と result_payload_json の
 ;;;   2 列のみ)/ row_to_snapshot(:2261-2318)/ session_get / session_list

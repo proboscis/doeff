@@ -4,7 +4,7 @@
 ;;; 台本 Tmux・固定 Clock・台本 judge Proc)で policy program を直接束縛して回す。
 ;;; フレーム語彙・TerminalCause 表・knob 表・文言は conformance README
 ;;; (packages/doeff-agents/conformance/README.md、CONTRACT FIXED 2026-07-05)から
-;;; verbatim 転記。oracle: packages/doeff-agentd/src/main.rs monitor_once。
+;;; verbatim 転記。oracle: agentd-rust-final:src/main.rs monitor_once。
 
 (require doeff-hy.macros [deftest defk deff <- defhandler])
 
