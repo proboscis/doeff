@@ -17,7 +17,7 @@
        :evidence "agent-control-plane ADR 0039 problem facts; ~/.codex/sessions rollout telemetry")
      (fact
        "呼び手側(ACP)の宣言修正だけでは、ACP 外の呼び手・将来の宣言漏れを塞げない。全 agent session は agentd の session.launch を通る — 単一の強制点はそこにある。"
-       :evidence "packages/doeff-agentd/src/main.rs session_launch")]
+       :evidence "agentd-rust-final:src/main.rs session_launch")]
   :context
     [(interpretation
        "auth profile は project/namespace の属性であり、デフォルトは存在しない。欠落は『どこかの都合のいい値で走る』ではなく『明確なエラーで止まる』でなければならない。")
@@ -47,4 +47,4 @@
        :bad ["const DEFAULT_CODEX_HOME: &str = \"/Users/x/.codex/profiles/agent\";"]
        :good ["// auth profile must arrive explicitly via session_env or the launch command"])]
   :plans ["docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy"
-          "packages/doeff-agentd/src/main.rs (session_launch auth gate; cargo test)"])
+          "agentd-rust-final:src/main.rs (session_launch auth gate; cargo test)"])

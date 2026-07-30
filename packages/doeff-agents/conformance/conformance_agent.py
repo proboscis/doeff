@@ -42,7 +42,7 @@ JOURNAL = Path(os.environ["CONFORMANCE_JOURNAL"])
 SCRIPT = Path(os.environ["CONFORMANCE_SCRIPT"])
 
 # Frames reproduce the VERBATIM substrings the Rust monitor classifies on
-# (packages/doeff-agentd/src/main.rs:2775-3229). Frozen vocabulary — see
+# (agentd-rust-final:src/main.rs:2775-3229). Frozen vocabulary — see
 # README「凍結フレーム語彙」. Frames must go quiet after rendering: turn-end
 # additionally requires a STABLE 500-char tail (main.rs:2832/2932).
 FRAMES: dict[str, str] = {

@@ -2,7 +2,7 @@
 ;;;
 ;;; 署名と docstring が契約。凍結物理の出典は
 ;;; packages/doeff-agents/conformance/README.md(CONTRACT FIXED 2026-07-05)と
-;;; oracle = packages/doeff-agentd/src/main.rs。
+;;; oracle = agentd-rust-final:src/main.rs。
 ;;;
 ;;; 二層構造(R1/R2):
 ;;;   - interface effects(BuildLaunch / PreLaunchSetup / ClassifyPane /
