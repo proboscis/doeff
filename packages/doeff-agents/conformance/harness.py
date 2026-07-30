@@ -6,8 +6,11 @@ pytest, and stdlib. SQLite access is READ-ONLY and reserved for obligations
 that do not appear on the wire (payload persistence, counter durability).
 
 Absorbed from tests/agentd_result_retry_e2e_support.py — the proven physics:
-cargo-built agentd, 100ms monitor tick, fake CLI in a real tmux pane,
-result channel spoken via `report-result-mcp`.
+the canonical doeff-sessionhost executor (venv console script), 100ms monitor
+tick, fake CLI in a real tmux pane, result channel spoken via
+`report-result-mcp`. issue #575 M1: the retired Rust build path is gone —
+the daemon under test defaults to the interpreter-adjacent console script
+(ADR-DOE-AGENTS-004 R7), with `CONFORMANCE_AGENTD_BIN` as the explicit seam.
 """
 
 import json
@@ -28,8 +31,6 @@ import pytest
 from doeff_agents.agentd_client import AgentdClient
 
 CONFORMANCE_DIR = Path(__file__).resolve().parent
-PACKAGES_DIR = CONFORMANCE_DIR.parents[1]
-AGENTD_CRATE = PACKAGES_DIR / "doeff-agentd"
 AGENT_SCRIPT = CONFORMANCE_DIR / "conformance_agent.py"
 JUDGE_SCRIPT = CONFORMANCE_DIR / "scripted_judge.py"
 
@@ -53,13 +54,11 @@ SESSIONHOST_BACKEND = os.environ.get("DOEFF_SESSIONHOST_BACKEND", "tmux")
 
 
 def require_binaries() -> None:
-    # Under CONFORMANCE_AGENTD_BIN (see build_agentd) the daemon under test
-    # is not cargo-built, so cargo is not a prerequisite.
+    # The daemon under test is the doeff-sessionhost console script (see
+    # resolve_agentd_bin) — only the terminal multiplexer is a prerequisite.
     mux = "herdr" if SESSIONHOST_BACKEND == "herdr" else "tmux"
-    names = (mux,) if os.environ.get("CONFORMANCE_AGENTD_BIN") else ("cargo", mux)
-    for name in names:
-        if shutil.which(name) is None:
-            pytest.skip(f"{name} is required for the agentd conformance suite")
+    if shutil.which(mux) is None:
+        pytest.skip(f"{mux} is required for the agentd conformance suite")
 
 
 def _herdr_call(method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -238,7 +237,7 @@ def create_session_out_of_band(name: str, *, cwd: str | None = None) -> str:
     return started["result"]["agent"]["pane_id"]
 
 
-def build_agentd() -> Path:
+def resolve_agentd_bin() -> Path:
     """Resolve the daemon binary under test.
 
     Transfer-gate seam (C3): `CONFORMANCE_AGENTD_BIN` points the whole suite
@@ -246,8 +245,11 @@ def build_agentd() -> Path:
     it is reused verbatim as `DOEFF_AGENTD_BIN` for the `report-result-mcp`
     relay, so it must implement the full agentd CLI contract: `serve` with
     the flags below plus the `report-result-mcp` subcommand).  Unset, the
-    suite builds and runs the Rust oracle exactly as before — the seam is
-    infra, not a contract change.
+    suite runs the canonical executor doeff-sessionhost, mirroring the R7
+    spawn order of ensure_agentd (ADR-DOE-AGENTS-004, issue #575 M1):
+    interpreter-adjacent console script first (the venv install — immune to
+    stale PATH tools, issue #556), then PATH.  Unresolvable is a loud
+    AssertionError — no silent fallback (R7).
     """
     override = os.environ.get("CONFORMANCE_AGENTD_BIN")
     if override:
@@ -257,8 +259,16 @@ def build_agentd() -> Path:
                 f"CONFORMANCE_AGENTD_BIN is not an executable file: {path}"
             )
         return path
-    subprocess.run(["cargo", "build", "--quiet"], cwd=AGENTD_CRATE, check=True)
-    return AGENTD_CRATE / "target" / "debug" / "doeff-agentd"
+    sibling = Path(sys.executable).parent / "doeff-sessionhost"
+    if sibling.exists() and os.access(sibling, os.X_OK):
+        return sibling
+    if path_bin := shutil.which("doeff-sessionhost"):
+        return Path(path_bin)
+    raise AssertionError(
+        "doeff-sessionhost console script not found (interpreter-adjacent or"
+        " PATH) — run `make sync`, or point CONFORMANCE_AGENTD_BIN at an"
+        " agentd-compatible executable"
+    )
 
 
 @dataclass
@@ -287,7 +297,7 @@ class AgentdHarness:
 
     def __enter__(self) -> "AgentdHarness":
         require_binaries()
-        self.agentd_bin = build_agentd()
+        self.agentd_bin = resolve_agentd_bin()
         self.runtime_dir = Path(tempfile.mkdtemp(prefix="agentd-conf-", dir="/tmp"))
         self.db_path = self.runtime_dir / "agentd.sqlite"
         self.socket_path = self.runtime_dir / "agentd.sock"
@@ -323,7 +333,7 @@ class AgentdHarness:
                 *self.extra_serve_args,
                 "serve",
             ],
-            cwd=AGENTD_CRATE,
+            cwd=self.runtime_dir,
             stdout=log,
             stderr=subprocess.STDOUT,
             text=True,
