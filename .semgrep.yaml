@@ -397,8 +397,6 @@ rules:
         - '**/defadr_*.hy'
         # crate 本体(issue #575 M3 で削除)と Rust semgrep fixture 樹(M2 で整理)
         - '**/doeff-agentd/**'
-        # M1 で撤去: conformance harness の cargo 既定経路(issue #575 M1)
-        - '**/conformance/harness.py'
         # M2 で撤去: Rust fixture path を参照する semgrep テスト(issue #575 M2)
         - '**/tests/semgrep/test_vm_failfast_semgrep_rules.py'
         # M3 で撤去: 移植出典 docstring(oracle = main.rs:…)の tag 形式再アンカー(issue #575 M3)

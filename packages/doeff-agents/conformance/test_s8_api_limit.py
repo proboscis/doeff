@@ -44,7 +44,7 @@ import pytest
 from doeff_agents.effects import AwaitStatus
 from harness import RESULT_SCHEMA, AgentdHarness
 
-# Transfer-gate seam (harness.build_agentd): the durable api-limit latch is
+# Transfer-gate seam (harness.resolve_agentd_bin): the durable api-limit latch is
 # canonical-Hy-host behavior (issue #557); the retired Rust reference
 # implementation (issue #555) predates it and is not a correctness reference.
 HY_GATE = bool(os.environ.get("CONFORMANCE_AGENTD_BIN"))
