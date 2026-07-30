@@ -8,7 +8,7 @@
   :title "agent 実行は effect 語彙 + kind 別 defhandler に分解し、agentd は『寿命の外部性』だけを提供する Hy 製 session host(session を resource とするミニ control plane)へ再実装する — conformance 先行で Rust を oracle に交代"
   :status "accepted"
   :scope ["packages/doeff-agents"
-          "packages/doeff-agentd(現 Rust = oracle)"
+          "packages/doeff-agentd(退役 Rust — rollback 座標 = git tag agentd-rust-final。in-tree 凍結コピーは持たない: issue #575 M3 で削除)"
           "docs/adr/defadr_doeff_agents_004_effects_session_host.hy"]
   :problem
     [(fact
@@ -32,7 +32,7 @@
      (rule R4 "conformance 先行: Rust agentd を oracle に black-box 契約 suite(mini_conformance 前例)+ 台本駆動の conformance-agent(偽 CLI、実クォータ非消費)を先に整備し、Hy 実装は parity 到達で交代。cargo 93 tests + 2026-07-05 の trust/hooks 傷跡を挙動として結晶化してから Rust を退役する。")
      (rule R5 "host は kinds.list で {kind, apiVersion, スキーマ} を広告し、ACP は宣言時に照合して未知 kind/version を fail-loud 拒否する。wire は有限の versioned 語彙に限る(任意 effect のリモート転送は禁止)。【2026-07-08 縮小裁定(plan 裁定 9)で landed: 広告は {kind, agent_type, required_field, api_version} の有限表のみ — alias 解決や registry 転送は host に持たせない。表と広告関数(policy.hy BINDING-KIND-* 表 + binding-kind-advertisement)がスキーマの単一の家で、host.hy の kinds.list dispatch は純粋・store 非依存。『宣言時に照合』は精密化: ACP 自身の語彙への宣言時 fail-loud は ACP admission(0044 R3)が担い、host 広告とのクロスチェックは ACP daemon の level-triggered 周期照合(verifyBindingKindsOnce → BindingKindUnsupported condition)が担う — 登録と host liveness は結合せず、CLI `doeff-agents agentd kinds` は ensure/spawn しない純 read で host 不達 = 観測なし ≠ 違反。照合 law の家は ACP 0044 kind-verification-is-level-triggered。deftest: sessionhost_host_deftests.hy test-dispatch-kinds-list(表と広告の乖離を red 化)。】【同日 #15 で版が per-kind 化: api_version は BINDING-KIND-API-VERSION 表(claude-code = v1 / codex = v2)。codex v2 = 受理形の拡張({codex_home} XOR {auth_file, profile_dir}、BINDING-KIND-SHAPES)であり、required_field は人間可読ラベルへ(照合の機械面は kind+api_version のみ — shapes DSL は機械消費者不在の YAGNI 棄却)。スキーマを変えながら版を据え置くのは versioned 語彙の形骸化であり本 rule 違反。】")
      (rule R6 "デプロイは frozen 環境から(pin 済み専用 env)。dev venv / target-debug 依存の自己参照(子守りが子守られる開発環境に依存する)を禁止する。")
-     (rule R7 "退役後の正典 executor は doeff-sessionhost: ensure_agentd の spawn 解決は DOEFF_AGENTD_BIN(明示 seam)→ 実行中 interpreter 隣接の console script → PATH の doeff-sessionhost で、退役 Rust binary は解決対象に含めない(silent rollback の根絶、ACP ADR 0045 R5)。Rust binary/source の保存理由は rollback 可用性のみ — 正しさの基準として参照することを禁止する(U1: それは一度も oracle ではなく partial-unreliable-impl だった)。")
+     (rule R7 "退役後の正典 executor は doeff-sessionhost: ensure_agentd の spawn 解決は DOEFF_AGENTD_BIN(明示 seam)→ 実行中 interpreter 隣接の console script → PATH の doeff-sessionhost で、退役 Rust binary は解決対象に含めない(silent rollback の根絶、ACP ADR 0045 R5)。rollback 可用性は git 履歴だけが担う: 退役 Rust の in-tree 凍結コピーは保持せず、削除直前 commit へ打つ tag agentd-rust-final を唯一の rollback 座標とする【2026-07-30 改訂(issue #575 M0): 旧条項『Rust binary/source の保存理由は rollback 可用性のみ』は in-tree 保存を含意し、(a) 素の pytest の退役 gate 束縛(27 件既知 red、#556)、(b) 欠陥修理の二重メンテ(#573/PR #574 — 同一欠陥を Rust/Hy 両実装へ出荷)、(c) 修理が届かず古い欠陥を抱えたままの rollback 先、を生んだため廃止】。正しさの基準として参照する禁止は不変(U1: それは一度も oracle ではなく partial-unreliable-impl だった)。移植出典表記(『oracle = main.rs:行番号』型 docstring)は tag 経由で git 解決可能な agentd-rust-final:src/main.rs:行番号 形式へ再アンカーし(issue #575 M3)、挙動契約の正本は conformance suite(README の F-* 表)に置く。")
      (rule R8 "result-contract 検証の意味論は JSON Schema 仕様が唯一の正(U1 裁定): 検証器は準拠参照実装(jsonschema)の輸入であり、subset を自前実装しない。仕様適合は公式 JSON-Schema-Test-Suite を repo 内に vendor して adapter に直接通すことで検証する(draft2020-12 required 全 1260 case green。skip 21 は全て裁定記録付き: remote レジストリ依存 = 契約は自己完結前提で unresolvable $ref は fail-loud / ECMA \\p regex = admission が launch 時 fail-closed で拒否 — 対 deftest あり)。schema 自体は launch 時に meta-schema で fail-closed 検証(壊れた契約で session を作らない)。旧 Rust 実装の fail-open 挙動を expected に固定するテストは歴史ピンとしても置かない。")
      (rule R9 "公開 launch 面(effect 語彙と wire launch の両方)は auth-blind: auth/profile 物理(CODEX_HOME / CLAUDE_CONFIG_DIR / 生鍵)は typed `binding`(束縛時構成の serialize、kind 判別スキーマ: codex {codex_home} / claude-code {config_dir})でのみ運ぶ。session_env は非 auth overlay に縮む — binding 所有キーの混入は全副作用より前に typed reject(所有権ベース: 既知の悪いキーの列挙は腐るが所有権は腐らない。provider API キーの FORBIDDEN blocklist は substrate 境界の防御として併存)。非 auth の per-launch env(観測フラグ・result channel 配線値など)は overlay として正当であり、handler 構成へ押し込まない(2026-07-07 裁定: env には auth と run 意図の 2 住人が居て、家が違う)。kind 別 auth 材料スキーマは handler の束縛時構成 — ローカル束縛 = main、host 束縛 = binding registry を持つ control plane(ACP 0044 R2/R5 と同じ線)。binding admission は ADR 0044 R3 と同思想: 未知 kind / kind↔agent_type 不整合 / 必須 field 欠落 / 未知 field を typed reject。")
      (rule R10 "単一インスタンス排他の実体は socket bind であり、lease はその影(観測面)。この主従を順序と述語で守る: (a) host 起動順は bind → store open → lease 取得 → latch clear — bind に負けた競合者は store にも lease にも触れずに死ぬ。(b) ensure の spawn 述語は『socket に live listener が居ない』(path 不在 / ECONNREFUSED)のみ — 生きた listener が status probe に遅い場合は長い予算(AGENTD_BUSY_STATUS_TIMEOUT_SECONDS)で再試行し、それでも駄目なら spawn せず loud エラー(slow ≠ dead。証明されない死で競合 host を作らない)。(c) heartbeat は失効した他人名義 lease を再取得する(level-triggered 自己修復 — 盗んで死んだ競合者の残骸から bind 保持者が回復する)が、未失効の他人名義は loud エラーのまま(別 socket 同一 DB 誤構成 = 生きた二重 host の検出面)。判定と upsert は BEGIN IMMEDIATE で原子化。(d) 単一 supervisor 原則(2026-07-26、doeff#558 / ACP ADR 0024 改訂と一括): canonical socket が state dir の agentd.supervisor.json で supervisor 管理下と宣言されている場合、(b) の証明された死でも ensure は self-spawn しない — 起動・再起動の所有者は supervisor(launchd 等)であり、ensure は宣言された kick_command(構成注入 argv — doeff は launchd も label もハードコードしない)への委譲 + readiness 待ちのみを行い、kick_command 不在なら loud fail する。壊れた宣言は fail-closed(typed AgentdSupervisorConfigError)で self-spawn への silent fallback を持たない。宣言は呼び手 env ではなくマシン状態(state dir のファイル)に置く — env を継承しない任意の呼び手が supervisor 停止窓(bootout・crash throttle)に野良 host を bind してしまう穴を env 宣言は塞げない。")
@@ -107,10 +107,24 @@
             "Rust 退役はユーザー GO(2026-07-06)で実行: E.2 の 1 週間無退行窓はユーザー裁定で短縮。Rust は binary/source とも保存 — ただし rollback 可用性のためだけであり、正しさの基準ではない。"
             :evidence "ACP plan U1 / 裁定台帳 8(docs/acp-2026-07-05-agentd-hy-session-host-plan.md)")
           (fact
+            "上記『Rust は binary/source とも保存』は 2026-07-30(issue #575 M0)に改訂: 保存の家は in-tree から git 履歴(削除直前 commit への tag agentd-rust-final)へ移った。現行法は R7 改訂と retired-impl-lives-only-in-git-history law が正本。"
+            :evidence "doeff issue #575 / 本 ADR R7 改訂(2026-07-30)")
+          (fact
             "同日 U1 裁定: Rust 実装の schema 検証は無裁可 subset(items/enum/additionalProperties 等を黙殺 = fail-open)で、parity 移植がこの省略を契約に洗浄していた(ACP steward 実障害で露呈)。修正 = 検証器を jsonschema(参照実装)の輸入に置換し、S20 が復元契約(items 違反の in-session reject→fix / malformed schema の launch 拒否)を凍結。教訓: 契約 enforcement 境界(結合核)の正解定義を sub-frontier 産実装の実測に接地してはならない — 仕様が存在するなら仕様が oracle。"
             :evidence "doeff#482 / conformance test_s20_schema_vocabulary.py / sessionhost/schema.hy / ACP sandbox invocation inv_wi_57cbac033483bed5_a1")]
        :counterexamples
-         [(counterexample "conformance 無しで Hy 版に切り替え、solicitation/turn-end の hardening が退行する")])]
+         [(counterexample "conformance 無しで Hy 版に切り替え、solicitation/turn-end の hardening が退行する")])
+     (law retired-impl-lives-only-in-git-history
+       :statement "retired_implementation => git_history_only(rollback_tag agentd-rust-final); in_tree_frozen_copy_forbidden AND new_code_reference_forbidden(packages/doeff-agentd, doeff_agentd); porting_provenance => tag_qualified_form; behavior_contract_authority => conformance_suite_F_table"
+       :facts
+         [(fact
+            "退役 GO(2026-07-06)後も crate を in-tree 凍結保存した実測コスト: (a) 素の pytest が退役 Rust gate に束縛され 27 件既知 red(#556)、(b) 同一欠陥の二重メンテ — #573 の claude spinner 誤検知修理は Rust/Hy 両実装への二重出荷になった(PR #574)、(c) rollback 先が修理の届かない古い欠陥を抱え続ける地雷。2026-07-30 改訂(issue #575 M0)で in-tree 保存条項を廃し、rollback 座標を削除直前 commit への git tag agentd-rust-final に一本化。契約語彙(agentd_client・agentd.sqlite・socket 名・CONFORMANCE_AGENTD_BIN・wire メソッド名)の改名は issue #575 の射程外で据え置き — 禁止対象は crate path packages/doeff-agentd と module 名 doeff_agentd の 2 形のみ。"
+            :evidence "doeff issue #575(初期棚卸し 2026-07-30)/ #556 / #573 / PR #574")]
+       :counterexamples
+         [(counterexample "退役実装の凍結コピーを in-tree に保持し、現役 sessionhost と退役 Rust の両方へ同一欠陥修理を出荷し続ける(#573/PR #574 の二重メンテ)")
+          (counterexample "conformance / 素の pytest の既定経路が退役実装のビルド(cargo)に束縛され、既知 red を常態化させる(#556)")
+          (counterexample "新規コードが packages/doeff-agentd / doeff_agentd を参照して退役実装への依存を復活させる")
+          (counterexample "rollback tag を打たずに crate を削除し、rollback 可用性を口約束にする")])]
   :enforcement
     ;; C1(effect 語彙 + policy program)と同一チェンジセットで substrate-clean
     ;; を実 enforcement 化。conformance suite ゲートは C0-2 で green 済み
@@ -149,5 +163,25 @@
        [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/impls/cleankind.hy"
          "source" ";; substrate-clean な per-kind impl: substrate effect を yield するのみ\n(defhandler cleankind-handler\n  (ClassifyPane [agent-type output]\n    (resume (classify-frame output)))\n  (DeliverMessage [pane-id text]\n    (<- _ (TmuxSendKeys :pane-id pane-id :text text :literal True :submit True))\n    (resume None)))\n"}
         {"relative-path" "packages/doeff-agents/src/doeff_agents/session_store_sub.py"
-         "source" "# substrate handler 側(impls/ の外)は生 IO を持ってよい\nimport sqlite3\nimport subprocess\n"}])]
-  :plans ["../agent-control-plane 側 master plan: docs/acp-2026-07-05-agentd-hy-session-host-plan.md"])
+         "source" "# substrate handler 側(impls/ の外)は生 IO を持ってよい\nimport sqlite3\nimport subprocess\n"}])
+     ;; R7 改訂(2026-07-30、issue #575 M0): 退役 crate への参照の逆流防止。
+     ;; 禁止は crate path packages/doeff-agentd と module 名 doeff_agentd の
+     ;; 2 形のみ — 契約語彙(agentd_client / DOEFF_AGENTD_BIN / agentd.sqlite /
+     ;; doeff-agentd-<user>.sock 等)は issue #575 の射程外で無罪。散文(.md)と
+     ;; ADR 法文書(defadr_*.hy)は歴史記述として対象外。installed rule 側の
+     ;; paths.exclude には M1(conformance harness)/ M2(semgrep fixtures)/
+     ;; M3(移植出典 docstring 再アンカー)で縮小・撤去する移行 allowlist を持つ。
+     (defsemgrep retired-crate-reference
+       "doeff-agentd-retired-crate-reference-forbidden"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/agentd_revival.py"
+         "source" "# 退役 crate を cargo build する逆流\nimport subprocess\nsubprocess.run(['cargo', 'build'], cwd='packages/doeff-agentd')\n"}
+        {"relative-path" "packages/doeff-agents/tests/test_retired_module_import.py"
+         "source" "from doeff_agentd import serve\n"}]
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/contract_vocab_ok.py"
+         "source" "# agentd 契約語彙は退役対象外(issue #575 射程限定)\nfrom doeff_agents.agentd_client import ensure_agentd\nSOCKET_SUFFIX = 'doeff-agentd-user.sock'\nBIN_ENV = 'DOEFF_AGENTD_BIN'\nDB_NAME = 'agentd.sqlite'\n"}
+        {"relative-path" "packages/doeff-agents/src/doeff_agents/provenance_ok.py"
+         "source" "# 移植出典: agentd-rust-final:src/main.rs:2775(rollback 専用・正しさの基準ではない)\n"}
+        {"relative-path" "docs/history-note.md"
+         "source" "Rust 参照実装は packages/doeff-agentd に住んでいた(退役済み・tag agentd-rust-final)。\n"}])]
+  :plans ["../agent-control-plane 側 master plan: docs/acp-2026-07-05-agentd-hy-session-host-plan.md"
+          "doeff issue #575 — agentd 退役マイルストーン(M0 法改訂+逆流防止 / M1 conformance 既定反転 / M2 テスト再束縛 / M3 crate 削除+rollback tag / M4 全量検証)"])
