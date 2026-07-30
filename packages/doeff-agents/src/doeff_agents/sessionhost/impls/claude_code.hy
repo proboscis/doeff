@@ -1,7 +1,7 @@
 ;;; claude-code per-kind defhandler(ADR-DOE-AGENTS-004 R2、C2)。
 ;;;
 ;;; protocol 物理の単一の家(protocol-physics-has-one-home): oracle =
-;;; packages/doeff-agentd/src/main.rs build_claude_argv / trust_claude_workspace。
+;;; agentd-rust-final:src/main.rs build_claude_argv / trust_claude_workspace。
 ;;; conformance 凍結: S12(trust pre-seed: canonicalized work_dir key・
 ;;; temp+rename)/ S13(--settings disableAllHooks + --mcp-config stdio +
 ;;; --strict-mcp-config・prompt は argv に載らない)/ DOE-003 R3

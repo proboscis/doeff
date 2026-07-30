@@ -20,16 +20,16 @@
        :evidence "acp:issue:issue-defect-bef7dcf947e98cdb resourcePayload.body")
      (fact
        "codex のメニューは idle REPL プロンプトと同じ `› ` グリフで描画される(`output_has_agent_idle_prompt` は `\\n› ` にマッチし、メニュー行 `› 1. Switch…` もマッチする)。現行ヒューリスティックではブロッキングメニューと turn-end を区別できない。"
-       :evidence "packages/doeff-agentd/src/main.rs codex_update_dialog_selected_option / output_has_agent_idle_prompt")
+       :evidence "agentd-rust-final:src/main.rs codex_update_dialog_selected_option / output_has_agent_idle_prompt")
      (fact
        "turn-end で結果が無い場合は『agentd never re-prompts (hard rule 7 / ADR 0035 R4)』として即 fail していた。これは決定的失敗(schema-invalid payload, -32002)と観測(turn-end 時点で result が無い)の混同である。ADR 0035 が retries_used の再プロンプト経路を削除した履歴が示す通り、この区別は明文化しないと再び消される。"
-       :evidence "packages/doeff-agentd/src/main.rs monitor_once turn-end branch (旧コメント)")
+       :evidence "agentd-rust-final:src/main.rs monitor_once turn-end branch (旧コメント)")
      (fact
        "`awaiting_response` latch はデーモン再起動時に一括クリアされる(main() の UPDATE)。bounded ループの回数を latch に載せると再起動で消える。回数は専用の永続カラムに置くしかない。"
-       :evidence "packages/doeff-agentd/src/main.rs main() awaiting_response reset")
+       :evidence "agentd-rust-final:src/main.rs main() awaiting_response reset")
      (fact
        "idle プロンプトに一致しない停止画面(ログインプロンプト、pager、未知のダイアログ)は turn-end に到達せず、pane capture が変わらなくても last_observed_at は毎 tick 更新されるため、既存のどの watchdog も発火しない。session はスロットを永久に占有する。"
-       :evidence "packages/doeff-agentd/src/main.rs monitor_once (last_observed_at は capture 成否のみで更新)")]
+       :evidence "agentd-rust-final:src/main.rs monitor_once (last_observed_at は capture 成否のみで更新)")]
   :context
     [(interpretation
        "agentd が tmux/TUI 境界の唯一の所有者である。ピクセルとキー入力として現れるものはすべて agentd が観測・操作し、上流(doeff-agents / ACP)には型付き status と report_result データチャネルだけが見える。TUI 上の異常への対処を上流や人間に漏らすのは境界違反である。")
@@ -87,4 +87,4 @@
        :bad ["// Deterministic failure — agentd never re-prompts (hard rule 7 / ADR 0035 R4)."]
        :good ["// Schema rejection is final for that payload (no automatic revalidation, ADR 0035 R4);\n// a missing result at turn-end enters the bounded solicitation loop (ADR-DOE-AGENTS-002 R1)."])]
   :plans ["docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy"
-          "packages/doeff-agentd/src/main.rs (monitor_once solicitation + prompt watchdog; cargo test)"])
+          "agentd-rust-final:src/main.rs (monitor_once solicitation + prompt watchdog; cargo test)"])

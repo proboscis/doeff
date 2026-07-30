@@ -207,7 +207,6 @@ rules:
     paths:
       include:
         - /packages/doeff-agents/src/**
-        - /packages/doeff-agentd/src/**
         - /tests/semgrep/fixtures/python/packages/doeff-agents/src/**
 
   - id: doeff-agents-session-registration-must-precede-ready-gate
@@ -371,12 +370,6 @@ rules:
         # 散文(歴史記述)と ADR 法文書(反例 fixture が禁止文字列を含む)は対象外
         - '**/*.md'
         - '**/defadr_*.hy'
-        # crate 本体(issue #575 M3 で削除)
-        - '**/doeff-agentd/**'
-        # M3 で撤去: 移植出典 docstring(oracle = main.rs:…)の tag 形式再アンカー(issue #575 M3)
-        - '**/doeff_agents/sessionhost/**'
-        - '**/tests/sessionhost_*.hy'
-        - '**/conformance/conformance_agent.py'
 
   - id: no-future-annotations
     languages: [python]

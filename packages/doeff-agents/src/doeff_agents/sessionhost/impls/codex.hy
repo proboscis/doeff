@@ -1,6 +1,6 @@
 ;;; codex per-kind defhandler(ADR-DOE-AGENTS-004 R2、C2)。
 ;;;
-;;; protocol 物理の単一の家: oracle = packages/doeff-agentd/src/main.rs
+;;; protocol 物理の単一の家: oracle = agentd-rust-final:src/main.rs
 ;;; build_codex_argv / trust_codex_workspace / session_launch の
 ;;; auth-profile gate。conformance 凍結: S11(CODEX_HOME 明示必須 —
 ;;; tmux 呼び出し前に typed fail)/ S13(-c mcp_servers."doeff_result"

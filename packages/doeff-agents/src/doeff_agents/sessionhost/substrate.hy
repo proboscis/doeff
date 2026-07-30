@@ -2,7 +2,7 @@
 ;;;
 ;;; impls/(per-kind)と policy / launch(共有 program)は substrate effect を
 ;;; yield するのみで、実世界(tmux / FS / clock / 子 process)に触るのはこの
-;;; モジュールだけ。oracle: packages/doeff-agentd/src/main.rs の
+;;; モジュールだけ。oracle: agentd-rust-final:src/main.rs の
 ;;; tmux_* / run_judge_command / fs 物理を verbatim 移植。
 ;;;
 ;;; SessionStore の実体(SQLite 単一 writer actor)は host の外部性で C3 所有 —
