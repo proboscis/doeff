@@ -35,7 +35,7 @@ import pytest
 from doeff_agents.agentd_client import AgentdClientError
 from harness import AgentdHarness
 
-# Transfer-gate seam (harness.build_agentd): S20 requires the canonical Hy
+# Transfer-gate seam (harness.resolve_agentd_bin): S20 requires the canonical Hy
 # host — the retired Rust implementation fail-opens on these keywords
 # (doeff#482) and is not a correctness reference.
 HY_GATE = bool(os.environ.get("CONFORMANCE_AGENTD_BIN"))
