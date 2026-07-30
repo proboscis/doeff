@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 from doeff_agents.agentd_client import AgentdClient
 from doeff_agents.effects import AgentSessionLifecycle
+from sessionhost_bin import resolve_sessionhost_bin
 
 RESULT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -37,12 +38,7 @@ def run_agentd_deterministic_failure_no_retry_e2e(tmp_path: Path) -> dict[str, A
     ADR 0035 R4 / hard rule 7: this deterministic validation failure is NOT
     re-prompted. The session fails on first occurrence with zero retries.
     """
-    _require_binary("cargo")
     _require_binary("tmux")
-
-    packages_dir = Path(__file__).resolve().parents[2]
-    agentd_crate = packages_dir / "doeff-agentd"
-    _build_agentd(agentd_crate)
 
     runtime_dir = Path(tempfile.mkdtemp(prefix="agentd-e2e-", dir="/tmp"))
     session_id = f"agentd-e2e-{os.getpid()}-{uuid.uuid4().hex[:8]}"
@@ -57,7 +53,7 @@ def run_agentd_deterministic_failure_no_retry_e2e(tmp_path: Path) -> dict[str, A
     fake_log_path = work_dir / "fake-agent-events.jsonl"
     command = f"{shlex.quote(sys.executable)} {shlex.quote(str(script_path))}"
 
-    agentd_bin = agentd_crate / "target" / "debug" / "doeff-agentd"
+    agentd_bin = resolve_sessionhost_bin()
     agentd_proc: subprocess.Popen[str] | None = None
     try:
         with agentd_log_path.open("w", encoding="utf-8") as agentd_log:
@@ -74,7 +70,7 @@ def run_agentd_deterministic_failure_no_retry_e2e(tmp_path: Path) -> dict[str, A
                     "2",
                     "serve",
                 ],
-                cwd=agentd_crate,
+                cwd=runtime_dir,
                 stdout=agentd_log,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -130,14 +126,6 @@ def run_agentd_deterministic_failure_no_retry_e2e(tmp_path: Path) -> dict[str, A
 def _require_binary(name: str) -> None:
     if shutil.which(name) is None:
         pytest.skip(f"{name} is required for the agentd tmux E2E test")
-
-
-def _build_agentd(agentd_crate: Path) -> None:
-    subprocess.run(
-        ["cargo", "build", "--quiet"],
-        cwd=agentd_crate,
-        check=True,
-    )
 
 
 def _wait_for_agentd(
