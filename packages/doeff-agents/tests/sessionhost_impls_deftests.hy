@@ -390,6 +390,66 @@
   (assert idle.has-turn-activity))
 
 
+(deftest test-classify-claude-spinner-crosses-composer-border
+  ;; issue #573(2026-07-29 実 incident の pane snapshot 現物): 現行 claude TUI
+  ;; は入力欄を全幅罫線で囲む — `❯` 直上の非空行は罫線になり、live spinner 行は
+  ;; その 1 つ上に居る。罫線で探索が止まると active-marker が常に false になり、
+  ;; turn-end 判定が stability guard 単独に退化 → spinner の秒刻みと monitor
+  ;; 間隔の aliasing で走行中 turn へ solicitation・中断キーが飛ぶ。
+  (setv bordered-working
+        (+ "s/adr/defadr_0066_merge_lane_land_queue.hy\n"
+           "\n"
+           "✦ Cerebrating… (1m 34s · ↓ 2.2k tokens · thought for 39s)\n"
+           "\n"
+           (* "─" 80) "\n"
+           "❯ \n"
+           (* "─" 80) "\n"
+           "  ⏵⏵ bypass permissions on (shift+tab to cycle) · gh auth login for PR status ·\n"))
+  (<- active (classify-claude bordered-working))
+  (assert active.has-active-marker)
+  ;; 枠線付きの idle pane — 罫線 skip が本文から spinner を捏造しないこと
+  (setv bordered-idle
+        (+ "⏺ done. result written.\n"
+           "\n"
+           (* "─" 80) "\n"
+           "❯ \n"
+           (* "─" 80) "\n"
+           "  ⏵⏵ bypass permissions on (shift+tab to cycle)\n"))
+  (<- idle (classify-claude bordered-idle))
+  (assert (not idle.has-active-marker))
+  (assert idle.has-idle-prompt)
+  ;; 歴史 spinner(罫線の上の直近非空行が本文)は live ではない
+  (setv bordered-history
+        (+ "✢ Swooping… (1s · thinking)\n"
+           "wrote invalid result\n"
+           "\n"
+           (* "─" 80) "\n"
+           "❯ \n"
+           (* "─" 80) "\n"))
+  (<- hist (classify-claude bordered-history))
+  (assert (not hist.has-active-marker)))
+
+
+(deftest test-classify-claude-queued-messages-fact
+  ;; issue #573(incident event 1997731 現物): mid-turn に配送された message は
+  ;; composer に積まれ、入力行が `❯ Press up to edit queued messages` になる。
+  ;; 未消費 queue = turn 走行中の明白な busy 証拠 — PaneObservation が事実として
+  ;; 運び、中断キー送出の安全壁が参照する。
+  (setv queued
+        (+ (* "─" 80) "\n"
+           "❯ Press up to edit queued messages\n"
+           (* "─" 80) "\n"))
+  (<- obs (classify-claude queued))
+  (assert obs.has-queued-messages)
+  ;; 素の idle pane に queue 事実は立たない
+  (<- idle (classify-claude "some scroll\n❯ \n"))
+  (assert (not idle.has-queued-messages))
+  ;; 履歴に同文言が写っても最終 prompt 行に居なければ事実にしない
+  (<- hist (classify-claude
+             "⏺ echoed: Press up to edit queued messages\n\n❯ \n"))
+  (assert (not hist.has-queued-messages)))
+
+
 (deftest test-classify-failure-api-waiting-windows
   ;; failure は tail 10 行窓
   (<- f (classify-codex "fatal error: kaboom"))
