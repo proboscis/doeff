@@ -376,6 +376,36 @@ rules:
         - packages/**/tests/**
         - packages/**/conformance/**
 
+  - id: doeff-agentd-retired-crate-reference-forbidden
+    languages: [generic]
+    severity: ERROR
+    message: >
+      ADR-DOE-AGENTS-004 R7 / retired-impl-lives-only-in-git-history law
+      (issue #575): 退役 Rust 参照実装への参照 — crate path
+      packages/doeff-agentd と module 名 doeff_agentd — は禁止。現役実装は
+      doeff-sessionhost(packages/doeff-agents の sessionhost)。rollback
+      座標は git tag agentd-rust-final(in-tree 凍結コピーは持たない —
+      凍結保存は二重メンテ #573/PR#574 と素の pytest の退役 gate 束縛 #556
+      を生んだ)。移植出典表記は agentd-rust-final:src/main.rs:行番号 形式で
+      書く。契約語彙(agentd_client・DOEFF_AGENTD_BIN・agentd.sqlite・
+      doeff-agentd-<user>.sock 等)は issue #575 の射程外で無罪。
+    pattern-regex: 'packages/doeff-agentd|doeff_agentd'
+    paths:
+      exclude:
+        # 散文(歴史記述)と ADR 法文書(反例 fixture が禁止文字列を含む)は対象外
+        - '**/*.md'
+        - '**/defadr_*.hy'
+        # crate 本体(issue #575 M3 で削除)と Rust semgrep fixture 樹(M2 で整理)
+        - '**/doeff-agentd/**'
+        # M1 で撤去: conformance harness の cargo 既定経路(issue #575 M1)
+        - '**/conformance/harness.py'
+        # M2 で撤去: Rust fixture path を参照する semgrep テスト(issue #575 M2)
+        - '**/tests/semgrep/test_vm_failfast_semgrep_rules.py'
+        # M3 で撤去: 移植出典 docstring(oracle = main.rs:…)の tag 形式再アンカー(issue #575 M3)
+        - '**/doeff_agents/sessionhost/**'
+        - '**/tests/sessionhost_*.hy'
+        - '**/conformance/conformance_agent.py'
+
   - id: no-future-annotations
     languages: [python]
     severity: ERROR
