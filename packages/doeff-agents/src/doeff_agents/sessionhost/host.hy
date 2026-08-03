@@ -52,6 +52,7 @@
 (import doeff_agents.sessionhost.launch [launch-session
                                          resume-session])
 (import doeff_agents.sessionhost.policy [
+  ACTIVE-STATUSES
   binding-kind-advertisement
   cause-if-absent
   is-run-to-completion
@@ -110,6 +111,12 @@
 ;; もう 1 箇所は oracle main.rs:164)。
 (setv DEFAULT-PROMPT-JUDGE-CMD
       "claude -p --settings '{\"disableAllHooks\":true}' --model haiku") ; nosemgrep: doeff-agents-no-claude-print-mode
+
+;; out-of-band 寿命境界(orphan boundary)の poll / backstop。oracle に無い
+;; opt-in 追加(意味論不変 — env knob 未設定なら経路ごと不在)。詳細は
+;; orphan-watch-loop の docstring。
+(setv ORPHAN-POLL-INTERVAL-SECONDS 1.0)
+(setv ORPHAN-EXIT-BACKSTOP-SECONDS 10.0)
 
 ;; 構造化 wire エラーコード(oracle :107-120)。
 (setv RPC-ERR-AWAIT-TIMEOUT -32000)
@@ -170,7 +177,11 @@
   #^ str backend
   (setv backend "tmux")
   #^ str herdr-socket
-  (setv herdr-socket DEFAULT-HERDR-SOCKET))
+  (setv herdr-socket DEFAULT-HERDR-SOCKET)
+  ;; out-of-band 寿命境界(opt-in): spawn 元の死で自己終了 + launch 済み
+  ;; session の reap。conformance harness が常時立てる(S28)。
+  #^ bool exit-when-orphaned
+  (setv exit-when-orphaned False))
 
 
 ;; ---------------------------------------------------------------------------
@@ -286,6 +297,10 @@
   (setv backend (.get os.environ "DOEFF_SESSIONHOST_BACKEND" "tmux"))
   (setv herdr-socket (.get os.environ "DOEFF_SESSIONHOST_HERDR_SOCKET"
                            DEFAULT-HERDR-SOCKET))
+  ;; out-of-band 寿命境界(opt-in、env-only — CLI 語彙は oracle parse_args の
+  ;; 凍結物理なので足さない。backend knob と同じ搬送経路)。
+  (setv exit-when-orphaned
+        (= (.get os.environ "DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED" "") "1"))
   (setv command "serve")
   (setv index 0)
   (while (< index (len args))
@@ -361,7 +376,8 @@
     :prompt-unblock-limit prompt-unblock-limit
     :prompt-judge-cmd prompt-judge-cmd
     :backend backend
-    :herdr-socket herdr-socket))
+    :herdr-socket herdr-socket
+    :exit-when-orphaned exit-when-orphaned))
 
 
 ;; ---------------------------------------------------------------------------
@@ -1128,6 +1144,51 @@
     (.wait shutdown-event interval)))
 
 
+(defn reap-launched-sessions [config actor]
+  "orphan 境界の巻き添え回収: この daemon が launch した active session
+   (非 adopted 行)を cleanup 意味論(cleanup-program)で刈る — mux session
+   ごと殺すので pane 内の agent プロセス(conformance_agent 等)が対で消える。
+   adopted 席は daemon が作っていない(鏡原則 — ADR-DOE-AGENTS-007 条項 3)
+   ので触らない。per-session 隔離は run-worker-tick(1 席の失敗で残りを
+   見捨てない)。graceful SIGTERM(restart 耐久 S10/S15 が前提にする
+   「daemon 死 ≠ session 死」)からは呼ばれない — orphan 検出時のみ。"
+  (setv snaps (.submit actor
+                       (fn [conn]
+                         (db-session-list conn
+                                          {"status" (sorted ACTIVE-STATUSES)}))))
+  (for [snap snaps]
+    (when (not (.get snap "adopted" False))
+      (setv sid (get snap "session_id"))
+      (run-worker-tick f"orphan-reap[{sid}]"
+                       (fn [] (run-hosted config actor (cleanup-program sid)))))))
+
+
+(defn orphan-watch-loop [config actor initial-ppid]
+  "out-of-band 寿命境界(env knob DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED=1 の
+   opt-in — conformance S28)。fixture teardown(__exit__)は正しいが pytest
+   ごと SIGKILL されると走らない — その穴を daemon 自身が塞ぐ: spawn 元 =
+   supervisor の死を getppid の変化(orphan は init/launchd へ reparent
+   される)で検出し、(1) launch 済み active session を reap(上)、
+   (2) SIGTERM を自送 — main の SIGTERM handler が SystemExit(0) に変換し、
+   finally の lease 釈放を通る(issue #565 の graceful 経路と同一)。SIGTERM
+   経路が万一 wedge しても backstop の os._exit(1) で有界に退場する(lease は
+   TTL 失効が回収)。launchd 直下の production host は ppid が最初から 1 なの
+   で、この knob を立てて起動してはならない(立てれば即時退場 — それが契約)。"
+  (while True
+    (setv ppid (os.getppid))
+    (when (or (!= ppid initial-ppid) (= ppid 1))
+      (print (+ "doeff-sessionhost supervisor vanished "
+                f"(ppid {initial-ppid} -> {ppid}); reaping launched sessions "
+                "and exiting")
+             :file sys.stderr)
+      (.flush sys.stderr)
+      (run-worker-tick "orphan-reap" (fn [] (reap-launched-sessions config actor)))
+      (os.kill (os.getpid) signal.SIGTERM)
+      (time.sleep ORPHAN-EXIT-BACKSTOP-SECONDS)
+      (os._exit 1))
+    (time.sleep ORPHAN-POLL-INTERVAL-SECONDS)))
+
+
 (deff history-retention-cutoff-iso []
   {:pre [True]
    :post [(: % str)]}
@@ -1225,6 +1286,13 @@
                                     :daemon True
                                     :name "sessionhost-heartbeat"))
   (.start heartbeat)
+  ;; out-of-band 寿命境界(opt-in)— knob 未設定なら thread ごと不在。
+  (when config.exit-when-orphaned
+    (setv orphan-watch (threading.Thread :target orphan-watch-loop
+                                         :args #(config actor (os.getppid))
+                                         :daemon True
+                                         :name "sessionhost-orphan-watch"))
+    (.start orphan-watch))
   (while True
     (try
       (setv #(conn _addr) (.accept listener))

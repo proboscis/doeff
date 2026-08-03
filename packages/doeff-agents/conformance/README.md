@@ -153,6 +153,7 @@ snapshot と一致(stable)**」(main.rs:2832, 2932)なので、フレームは
 | S25 | turn 打刻の単一 writer 面: descriptor {pane_id 第一鍵, agent_name 第二鍵} を sessionhost が adopt 済み非終端行へ解決。turn_open → holder='agent'・wait NULL / turn_close → holder=wait.who(無ければ 'work')・wait は **opaque 保存**(再 parse しない)。未 adopt 打刻 = 正直 no-op(`{"adopted":false}` の ok 応答)+ `daemon.status` counters(turn_stamp_unadopted / turn_stamp_resolved、in-memory)。行を作らない | koine turn-stamp-path / ADR-007 R5 | — | P(hy gate のみ) | wire + SQLite 読み |
 | S26 | **interactive 不刈り(koine 安全条項 1 — 本 stage の中核)**: lifecycle=interactive 行は launch timeout / stale observation / zombie reaper / mux 消滅の 4 条件下でも**非終端のまま**(finished_at / terminal_cause 無し)。last_observed_at の前進を「monitor は生きて評価した上で刈らなかった」witness として assert(dead monitor の空緑を防ぐ)。TDD red 実測 2026-07-21: 実装前は 4 経路すべてが interactive 行を terminal 化した。boot watchdog 経路(mid-launch daemon 死)は M2 から到達不能のため宣言済み gap(免除 arm は booting arm より前に置かれ構造的に守られる) | koine 安全条項 1 / ADR-007 R3 | — | P(hy gate のみ) | M2(lifecycle=interactive) |
 | S27 | 鏡原則(koine 安全条項 3): adopt 席の pane を帯域外 kill → 行は exited 化も削除もされず、`session.get` / `session.list` の wire に導出 field `substrate_present: false` / `substrate_checked_at`(毎読み probe — 保存しない)が載る。adopted filter の一覧にも残る | koine 安全条項 3 / ADR-007 R4 | — | P(hy gate のみ) | wire + 帯域外 kill |
+| S28 | **supervised host lifetime(out-of-band 孤児境界、2026-07-30 host-load-steward 観測起点)**: harness は daemon spawn 時に env knob `DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED=1` を渡し、daemon 自身が spawn 元の死を getppid の変化(orphan は init へ reparent)で監視する。driver が `__exit__` を経ずに死んでも(SIGKILL・ハードクラッシュ)、daemon は launch 済み active session(**非 adopted のみ** — adopted 席は鏡原則で不可侵)を cleanup 意味論で刈ってから lease を釈放して有界時間内に退場する — pane の parked conformance_agent が対で消える。knob 無し = 従来物理(親死亡後も生存。S10/S15 の restart 耐久・launchd 運用の前提)を S28b が pin。graceful SIGTERM 経路は session を刈らない(restart 耐久の不変) | fixture 外の寿命境界(交代ゲートの「寿命の外部性」所管) | — | P(hy gate のみ — 退役 Rust 参照実装は knob 非搭載で基準外) | M2 + 親 SIGKILL(S28a)/ 素の serve + 親死亡(S28b/c) |
 
 koine 系 wire 導出 field(S23-S27 で凍結): `session.get` / `session.list` /
 `session.adopt` の応答に `stalled`(= turn_holder=='agent' かつ
@@ -220,6 +221,7 @@ Hy 実装がこの表を変える場合は ADR 改訂が先(黙った変更は c
 | unblock budget(3) | `--prompt-unblock-attempts` / `DOEFF_AGENTD_PROMPT_UNBLOCK_ATTEMPTS`(main.rs:646 — 実装時走査で実在確認。S6 は既定 3 のまま検証) | ✓ |
 | stale-observation 閾値(300s) | `DOEFF_AGENTD_STALE_OBSERVATION_SECS`(S19 用に oracle へ追加した env-only knob、`effective_stale_observation_threshold_seconds` — 既定 300s・意味論不変。launch timeout と同じく flag 無しの env 専用なので harness は `extra_env` で daemon プロセスに渡す) | ✓(追加済) |
 | wait_for_repl_idle 上限(120s) | 定数 — fake は即 idle を描画するので実害なし | 不要 |
+| 孤児 daemon 自己終了(opt-in) | `DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED=1`(env-only、S28 — harness が spawn 時に常時付与。driver が `__exit__` を経ず死んでも daemon が launch 済み session を刈って有界時間内に退場。production(launchd — ppid が最初から 1)は knob を立てない = 従来どおり生存) | ✓(追加済) |
 
 oracle への変更は「意味論を変えない設定追加」のみ許す(挙動変更禁止)。
 
