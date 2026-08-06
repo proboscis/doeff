@@ -34,7 +34,7 @@
   SessionStoreKnownConversationIds
   TmuxHasSession
   TmuxPaneCurrentCommand
-  TmuxPaneSessionName
+  TmuxSessionPaneIds
   TmuxCapture
   TmuxSendKeys
   TmuxKillSession
@@ -194,8 +194,10 @@
   (TmuxPaneCurrentCommand [pane-id]
     (resume (.get world.pane-commands pane-id)))
 
-  (TmuxPaneSessionName [pane-id]
-    (resume (.get world.pane-sessions pane-id)))
+  (TmuxSessionPaneIds [session-name]
+    (resume (lfor [pid owner] (.items world.pane-sessions)
+                  :if (= owner session-name)
+                  pid)))
 
   (TmuxCapture [pane-id lines]
     (setv world.capture-count (+ world.capture-count 1))
@@ -409,7 +411,7 @@
   (assert (= row.terminal-cause.category "vanished"))
   (assert (= row.terminal-cause.retryable True))
   (assert (in "%1" row.terminal-cause.reason))
-  (assert (in "doeff-s1" row.terminal-cause.reason))
+  (assert (in "no longer belongs to session doeff-s1" row.terminal-cause.reason))
   ;; 帰属不一致の pane へは何も送らない・観測もしない
   (assert (= world.sent-keys []))
   (assert (= world.delivered []))

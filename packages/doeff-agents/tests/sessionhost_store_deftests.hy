@@ -81,7 +81,10 @@
        ;; watchdog はもう terminal 化せずここへ刻印し、launch-timeout の
        ;; watch 窓は max(started_at, observation_gap_at) を基点に再スタート
        ;; する。last-write-wins + None 保護(COALESCE(excluded, existing))。
-       "observation_gap_at"])
+       "observation_gap_at"
+       ;; issue #568(ADR-DOE-AGENTS-010): paste 再送 budget の durable
+       ;; counter + awaiting latch の期限基点。
+       "paste_resubmit_attempts" "awaiting_response_since"])
 
 
 (defn make-snap [session-id #** overrides]
