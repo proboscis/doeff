@@ -4654,3 +4654,22 @@ rules:
       include:
         - "**/sessionhost/**/*.hy"
         - "**/sessionhost_*.hy"
+
+  - id: doeff-agents-terminal-cleanup-single-sweep
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      ADR-DOE-AGENTS-010 R5 (issue #568): substrate cleanup (tmux kill +
+      cleaned_at) is owned by ONE sweep over all terminal uncleaned rows
+      (cleanup-terminal-session-once, driven from monitor-cycle). Attaching
+      a cleanup command to an individual terminal arm re-opens the leak
+      class this rule exists for: cleanup wired to only the done/failed
+      observation path missed 4 of the 5 terminal paths and piled up 26
+      dead tmux sessions holding 6.155 GiB (measured 2026-08-06). Route the
+      row into the sweep instead — every terminal row with cleaned_at NULL
+      is picked up on the next monitor cycle.
+    pattern-regex: '(?s)\(is-run-to-completion row\.lifecycle\).{0,200}\(tmux-kill-session'
+    paths:
+      include:
+        - "**/sessionhost/policy.hy"
