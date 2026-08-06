@@ -42,6 +42,7 @@
   TmuxNewSession
   TmuxHasSession
   TmuxPaneCurrentCommand
+  TmuxSessionPaneIds
   TmuxCapture
   TmuxSendKeys
   TmuxKillSession])
@@ -350,6 +351,13 @@
 
   (TmuxHasSession [session-name]
     (resume (is-not (herdr-agent-pane-id-io socket-path session-name) None)))
+
+  (TmuxSessionPaneIds [session-name]
+    ;; 宛先 pane の帰属観測(ADR-DOE-AGENTS-010 R4)。herdr は agent = pane の
+    ;; 2 層なので、agent 名 → 現 pane の解決がそのまま所有 pane 集合になる
+    ;; (不在は空 list — tmux 側の session 不在 parity)。
+    (setv pane-id (herdr-agent-pane-id-io socket-path session-name))
+    (resume (if (is pane-id None) [] [pane-id])))
 
   (TmuxPaneCurrentCommand [pane-id]
     (resume (herdr-pane-current-command-io socket-path pane-id)))

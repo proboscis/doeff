@@ -134,7 +134,19 @@
   ;; COALESCE(excluded, existing))。wire には載せない — 下流(ACP)が読むのは
   ;; terminal_cause のみ(api_limit_observed_at と同じ扱い)。
   #^ (| str None) observation-gap-at
-  (setv observation-gap-at None))
+  (setv observation-gap-at None)
+  ;; issue #568(ADR-DOE-AGENTS-010 R2): paste 再送補償の durable counter。
+  ;; budget(paste-resubmit-limit)超過は loud typed terminal — 実測 2026-08-06
+  ;; で無上限の再送(32 回 / 13 回)が沈黙 blocked に落ち runner 7/7 を飽和
+  ;; させた。last-write-wins(単一 writer = monitor)。wire には載せない。
+  #^ int paste-resubmit-attempts
+  (setv paste-resubmit-attempts 0)
+  ;; issue #568(ADR-DOE-AGENTS-010 R3): awaiting_response latch の武装時刻
+  ;; (期限の基点)。launch は打刻しない — None は started_at へ fallback
+  ;; (登録時武装 = started_at と同時刻)。solicitation の再武装で更新し、
+  ;; 正の作業証拠で latch と同時に clear する。wire には載せない。
+  #^ (| str None) awaiting-response-since
+  (setv awaiting-response-since None))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] PaneObservation []
@@ -203,11 +215,19 @@
 ;; 正しさの基準ではない — ADR-DOE-AGENTS-004 R7/U1)。
 (setv REPL-IDLE-MAX-WAIT-SECONDS 120)
 
+;; issue #568(ADR-DOE-AGENTS-010 R2/R3)の凍結既定値 — literal の家はここだけ
+;; (REPL-IDLE-MAX-WAIT-SECONDS と同じ規律)。host の env knob
+;; (DOEFF_AGENTD_PASTE_RESUBMIT_LIMIT / DOEFF_AGENTD_AWAITING_RESPONSE_TIMEOUT_SECS)
+;; は import 参照で fallback する。
+(setv PASTE-RESUBMIT-LIMIT 5)
+(setv AWAITING-RESPONSE-TIMEOUT-SECONDS 600)
+
 
 (defclass [(dataclass :frozen True :kw-only True)] MonitorKnobs []
   "testability knob 表(conformance README、契約凍結値):
    stall T 180s / solicitation budget 2 / unblock budget 3 /
-   launch timeout 60s / stale-observation 300s / repl-idle 予算 120s。
+   launch timeout 60s / stale-observation 300s / repl-idle 予算 120s /
+   paste 再送 budget 5 / awaiting 期限 600s。
    judge-cmd None = judge 無効 — ハザード 1: 既定 judge が実 claude を
    起動する事故の防止。conformance 実行時も同じ既定を維持する)。
    repl-idle-max-wait-seconds は launch 側 ready gate の予算と同じ値
@@ -232,6 +252,14 @@
   ;; (store に stalled を書かない・status を変えない — signal only)。
   #^ int turn-stall-seconds
   (setv turn-stall-seconds 1800)
+  ;; issue #568(ADR-DOE-AGENTS-010 R2): 未送信 paste / 添付の Enter 再送
+  ;; budget。超過は typed terminal(沈黙 blocked の禁止)。
+  #^ int paste-resubmit-limit
+  (setv paste-resubmit-limit PASTE-RESUBMIT-LIMIT)
+  ;; issue #568(ADR-DOE-AGENTS-010 R3): awaiting_response latch の期限。
+  ;; 基点 = max(awaiting_response_since | started_at, observation_gap_at)。
+  #^ int awaiting-response-timeout-seconds
+  (setv awaiting-response-timeout-seconds AWAITING-RESPONSE-TIMEOUT-SECONDS)
   #^ (| str None) judge-cmd
   (setv judge-cmd None))
 
@@ -318,6 +346,13 @@
    monitor cycle はこの level-triggered 再読からのみ駆動される(R3)。"
   )
 
+(defclass [(dataclass :frozen True :kw-only True)] SessionStoreListCleanupPending [EffectBase]
+  "単一掃き取り(issue #568 / ADR-DOE-AGENTS-010 R5)の対象集合: 終端 status ∧
+   cleaned_at IS NULL ∧ lifecycle=run_to_completion ∧ 非 adopted の行一覧。
+   刈り取り免除(ADR-DOE-AGENTS-007 安全条項 1)は集合の定義で継承する —
+   対話席・adopt 席の substrate には掃き取りが触れない。戻り値: list[SessionRow]。"
+  )
+
 (defclass [(dataclass :frozen True :kw-only True)] SessionStoreGet [EffectBase]
   "session 行の単読。戻り値: SessionRow | None。"
   #^ str session-id)
@@ -339,7 +374,7 @@
    session_prompt_unblock_vetoed / session_prompt_judge_inconclusive /
    session_stale_reaped / session_launch_timeout / session_exited /
    session_unsubmitted_paste_resubmitted / session_resumed / session_forked /
-   session_conversation_discovered)。戻り値: None。"
+   session_conversation_discovered / session_cleaned)。戻り値: None。"
   #^ str session-id
   #^ str event-type
   #^ SessionRow row)
@@ -358,6 +393,15 @@
   "pane の foreground command 名。戻り値: str | None。zombie 判定
    (idle shell 列挙: zsh/bash/sh/dash/fish/ksh)は policy 所有。"
   #^ str pane-id)
+
+(defclass [(dataclass :frozen True :kw-only True)] TmuxSessionPaneIds [EffectBase]
+  "session が現に所有する pane id の一覧(tmux list-panes -s / herdr は
+   agent の pane 解決)。戻り値: list[str](session 不在は空 list)。宛先
+   pane の帰属検証(issue #568 / ADR-DOE-AGENTS-010 R4 — pane 番号は再利用
+   される)の観測面。帰属の裁定(recorded pane ∉ 集合 = vanished)は
+   policy 所有。session→pane の向きなのは herdr substrate(agent = pane の
+   2 層・pane→agent の逆引き API なし)と対称に実装できるため。"
+  #^ str session-name)
 
 (defclass [(dataclass :frozen True :kw-only True)] TmuxCapture [EffectBase]
   "pane の末尾 LINES 行を capture する(monitor は 100 行窓)。戻り値: str。
@@ -523,6 +567,13 @@
   "SessionStoreListActive を構築する(active_statuses の level-triggered 再読)。"
   (SessionStoreListActive))
 
+(deff session-store-list-cleanup-pending []
+  {:pre [True]
+   :post [(: % SessionStoreListCleanupPending)]}
+  "SessionStoreListCleanupPending を構築する(ADR-DOE-AGENTS-010 R5 の
+   単一掃き取り対象集合)。"
+  (SessionStoreListCleanupPending))
+
 (deff session-store-get [session-id]
   {:pre [(: session-id str)]
    :post [(: % SessionStoreGet)]}
@@ -564,6 +615,12 @@
    :post [(: % TmuxPaneCurrentCommand)]}
   "TmuxPaneCurrentCommand を構築する(zombie 判定の観測面)。"
   (TmuxPaneCurrentCommand :pane-id pane-id))
+
+(deff tmux-session-pane-ids [session-name]
+  {:pre [(: session-name str)]
+   :post [(: % TmuxSessionPaneIds)]}
+  "TmuxSessionPaneIds を構築する(宛先 pane の帰属検証 — ADR-DOE-AGENTS-010 R4)。"
+  (TmuxSessionPaneIds :session-name session-name))
 
 (deff tmux-capture [pane-id lines]
   {:pre [(: pane-id str) (: lines int) (> lines 0)]
