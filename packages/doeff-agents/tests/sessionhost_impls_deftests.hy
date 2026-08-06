@@ -572,6 +572,28 @@
   (assert (not clean.has-unsubmitted-paste)))
 
 
+(deftest test-classify-unsubmitted-attachment-chip
+  ;; issue #568(ADR-DOE-AGENTS-010 R1): [Image #N] 添付チップは prompt 行の
+  ;; 外(直下の行・行頭空白)に描かれる — 空の ❯ prompt + チップ行
+  ;; (2026-07-28 実 wedge の pane 形)を unsubmitted と判定する。検知は
+  ;; composer 領域(最終 prompt 行とそれ以降)を見る。
+  (<- wedged (classify-claude (+ "❯\n"
+                                 "  [Image #150]\n"
+                                 "\n"
+                                 "  ⏵⏵ bypass permissions on (shift+tab to cycle)")))
+  (assert wedged.has-unsubmitted-paste)
+  ;; paste チップ・queued ヒントも prompt 行の直下に落ちる形がある
+  (<- pasted (classify-claude "❯\n  [Pasted text #1 +12 lines]"))
+  (assert pasted.has-unsubmitted-paste)
+  (<- queued (classify-claude "❯\n  Press up to edit queued messages"))
+  (assert queued.has-unsubmitted-paste)
+  ;; 送信済み履歴のチップ(最終 prompt 行より上)は unsubmitted ではない
+  (<- historical (classify-claude (+ "❯ [Image #3]\n"
+                                     "⏺ Read file\n"
+                                     "❯")))
+  (assert (not historical.has-unsubmitted-paste)))
+
+
 ;; ---------------------------------------------------------------------------
 ;; DeliverMessage — live REPL paste + submit(盲窓物理は substrate 所有)
 ;; ---------------------------------------------------------------------------
