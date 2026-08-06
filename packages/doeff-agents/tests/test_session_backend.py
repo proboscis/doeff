@@ -1064,6 +1064,25 @@ def test_unsubmitted_paste_detector_catches_ax_visible_prompt_text() -> None:
     assert _output_has_unsubmitted_paste_input(output, sent_text)
 
 
+def test_unsubmitted_paste_detector_catches_attachment_chip_below_prompt() -> None:
+    # issue #568 (ADR-DOE-AGENTS-010 R1): the [Image #N] attachment chip renders
+    # on the line BELOW the prompt glyph, outside the prompt line itself. The
+    # composer region (last prompt line onward) must be scanned — a prompt-line-
+    # only scan reported the 2026-07-28 live wedge shape as submitted, so Enter
+    # was never retried and the session sat blocked for 2 hours.
+    wedged = (
+        "❯\n"
+        "  [Image #150]\n"
+        "\n"
+        "  ⏵⏵ bypass permissions on (shift+tab to cycle)\n"
+    )
+    assert _output_has_unsubmitted_paste_input(wedged)
+    assert _output_has_unsubmitted_paste_input("❯\n  [Pasted text #1 +12 lines]\n")
+    # history above the last prompt line stays out of scope
+    historical = "❯ [Image #3]\n⏺ done\n❯ \n"
+    assert not _output_has_unsubmitted_paste_input(historical)
+
+
 def test_unsubmitted_paste_detector_uses_latest_prompt_line() -> None:
     historical_paste = (
         "\u276f\u00a0[Pasted text #1 +2 lines]\n"
