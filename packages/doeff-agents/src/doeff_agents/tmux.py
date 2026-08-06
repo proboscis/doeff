@@ -299,7 +299,6 @@ def get_default_backend() -> TmuxSessionBackend:
 
 
 def _output_has_unsubmitted_paste_input(output: str, sent_text: str | None = None) -> bool:
-    last_prompt_line = ""
     prompt_index = -1
     lines = output.splitlines()[-20:]
     for index, line in enumerate(lines):
@@ -310,10 +309,25 @@ def _output_has_unsubmitted_paste_input(output: str, sent_text: str | None = Non
         # reported as submitted and Enter was never retried
         # (2026-07-09 live incident: both broker agents idled for hours).
         if stripped.startswith(("❯", "›", "input:")):
-            last_prompt_line = stripped
             prompt_index = index
-    if "[Pasted text" in last_prompt_line:
-        return True
+    if prompt_index >= 0:
+        # issue #568 (ADR-DOE-AGENTS-010 R1): attachment chips ([Image #N],
+        # collapsed paste chips) render on the lines BELOW the prompt glyph,
+        # so the whole composer region (last prompt line onward) must be
+        # scanned — a prompt-line-only scan reported the 2026-07-28 live
+        # wedge (empty prompt + "  [Image #150]") as submitted. History above
+        # the last prompt line stays out of scope.
+        composer_region = "\n".join(lines[prompt_index:])
+        if any(
+            marker in composer_region
+            for marker in (
+                "[Pasted text",
+                "[Pasted Content",
+                "[Image #",
+                "Press up to edit queued messages",
+            )
+        ):
+            return True
     if not sent_text or prompt_index < 0:
         return False
     prompt_region = _normalize_prompt_text("\n".join(lines[prompt_index:]))
