@@ -32,7 +32,9 @@
 (import doeff [run])
 
 (import doeff_agents.sessionhost.effects [
+  AWAITING-RESPONSE-TIMEOUT-SECONDS
   MonitorKnobs
+  PASTE-RESUBMIT-LIMIT
   REPL-IDLE-MAX-WAIT-SECONDS
   SessionRow
   clock-now
@@ -1233,6 +1235,13 @@
     ;; koine 条項 4(ADR-007 R4): stalled 導出閾値。wire 導出側
     ;; (augment-wire-snapshot)と同じ env knob を使う。
     :turn-stall-seconds (effective-turn-stall-seconds)
+    ;; issue #568(ADR-DOE-AGENTS-010 R2/R3)— conformance 調整口も他 knob と
+    ;; 同じ use-site env 読みの流儀。
+    :paste-resubmit-limit (or (env-positive-i64 "DOEFF_AGENTD_PASTE_RESUBMIT_LIMIT")
+                              PASTE-RESUBMIT-LIMIT)
+    :awaiting-response-timeout-seconds
+      (or (env-positive-i64 "DOEFF_AGENTD_AWAITING_RESPONSE_TIMEOUT_SECS")
+          AWAITING-RESPONSE-TIMEOUT-SECONDS)
     :judge-cmd config.prompt-judge-cmd))
 
 

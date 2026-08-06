@@ -14,26 +14,27 @@ Three independent watchdogs, one scenario each:
       back to its parent shell; `pane_current_command` reads as a known
       shell -> exited, cause vanished retryable=true (second-evidence
       death — split from lost by ADR-DOE-AGENTS-009 R3).
-  (c) stale observation (ADR-DOE-AGENTS-009 R1 — 2026-07-28 contract
-      revision, root fix for the 2026-07-27 sessionhost wedge false-lost
-      incident): `last_observed_at` stops advancing while the session
-      stays `running`. An observation gap is a proposition about the
-      OBSERVATION SUPPLY, not about the observed agent's death — the
-      watchdog no longer terminalizes. It stamps `observation_gap_at`,
-      records one `session_observation_gap` event (re-armed by the gap
-      stamp itself, so the journal rate is bounded at 1/stale-secs), and
-      falls through to the second-evidence arms (tmux liveness probe /
-      zombie reaper). Black-box shape: the tmux SESSION stays alive (the
-      driver adds a second window) but the monitored PANE is killed out
-      of band -> every tick aborts at `tmux_capture`, no second evidence
-      is obtainable, and the row is HELD at `running` (unknown;
-      boundedness is owned by the engine-side deadman gate, ACP ADR
-      0059). The 300s constant has no CLI flag; the suite drives it
-      through the semantics-preserving DOEFF_AGENTD_STALE_OBSERVATION_SECS
-      env knob (README knob table).
+  (c) out-of-band pane kill with the session alive (contract REVISED by
+      issue #568 / ADR-DOE-AGENTS-010 R4 — pane-ownership validation):
+      the monitor now verifies every cycle that the recorded pane_id
+      still belongs to the row's session (`display-message
+      #{session_name}`). A pane that tmux positively reports as gone is
+      SECOND EVIDENCE of death (same class as the zombie shell and the
+      vanished session — tmux answered), NOT a supply cut: the row is
+      terminalized exited + vanished immediately and the terminal sweep
+      cleans the surviving tmux session. Under the pre-#568 contract this
+      shape simulated a supply cut (capture aborting every tick) and the
+      row was held `running` with `observation_gap_at` stamped; that
+      hold-and-stamp semantics for GENUINE supply cuts (probe/capture
+      raising without a positive answer — ADR-DOE-AGENTS-009 R1) is
+      still contract, and is owned by the hy deftest gate
+      (sessionhost_policy_deftests: test-stale-observation-holds-and-
+      records-gap / test-stale-observation-gap-event-is-rate-bounded),
+      because no real-tmux black-box shape can make capture fail while
+      the pane demonstrably exists.
 
-All three thresholds ride harness.extra_env because they are env-only
-knobs on the daemon process.
+All thresholds ride harness.extra_env because they are env-only knobs on
+the daemon process.
 """
 
 import json
@@ -119,10 +120,8 @@ def test_s19b_zombie_idle_shell_is_reaped_as_lost() -> None:
         assert "session_exited" in types, types
 
 
-def test_s19c_stale_observation_holds_unknown_and_records_gap() -> None:
-    with AgentdHarness(
-        extra_env={"DOEFF_AGENTD_STALE_OBSERVATION_SECS": "2"}
-    ) as harness:
+def test_s19c_pane_gone_while_session_alive_is_evidenced_vanish() -> None:
+    with AgentdHarness() as harness:
         scenario = harness.scenario(
             "s19c",
             [
@@ -148,45 +147,35 @@ def test_s19c_stale_observation_holds_unknown_and_records_gap() -> None:
         assert row["last_observed_at"] is not None, harness.log_text()
 
         # keep the SESSION-liveness answer alive but kill the monitored PANE:
-        # capture starts failing, last_observed_at freezes, and the gap is
-        # detected — but a supply cut is NOT death evidence (ADR-DOE-AGENTS-009
-        # R1): the row must be HELD at `running` with the gap stamped, not
-        # terminalized as lost.
+        # tmux now positively reports the recorded pane as gone. That is
+        # second evidence (the observed subject's tty is dead, tmux answered)
+        # — the pane-ownership arm (ADR-DOE-AGENTS-010 R4) terminalizes
+        # exited + vanished immediately instead of holding unknown, and the
+        # terminal sweep (R5) cleans the surviving tmux session.
         break_pane_observation_out_of_band(scenario.session_id, row["pane_id"])
 
-        # wait until the gap event lands (edge-triggered, bounded journal)
-        deadline = time.monotonic() + 20.0
-        types: list[str] = []
-        while time.monotonic() < deadline:
-            types = [e["event_type"] for e in harness.events(scenario.session_id)]
-            if "session_observation_gap" in types:
-                break
-            time.sleep(0.3)
-        assert "session_observation_gap" in types, (
-            f"events={types}\n" + harness.log_text()
-        )
-        assert "session_stale_reaped" not in types, types
-
-        # unknown is held: no terminal verdict without second evidence
-        row = harness.session_row(scenario.session_id)
-        assert row["status"] == "running", (
+        row = _await_row_status(harness, scenario.session_id, ("exited",), timeout_s=15.0)
+        assert row["status"] == "exited", (
             f"status={row['status']}\n" + harness.log_text()
         )
-        assert row["terminal_cause_json"] is None, row["terminal_cause_json"]
-        assert row["observation_gap_at"] is not None, row
+        cause = json.loads(row["terminal_cause_json"])
+        assert cause["category"] == "vanished", cause
+        assert cause["retryable"] is True, cause
+        assert "no longer belongs to session" in (cause.get("reason") or ""), cause
 
-        # journal rate is bounded: give the monitor a few more ticks and
-        # confirm the gap event did not flood (re-armed by the gap stamp —
-        # at 2s threshold a flood would show many events within 3s)
-        time.sleep(3.0)
-        gap_events = [
-            e
-            for e in harness.events(scenario.session_id)
-            if e["event_type"] == "session_observation_gap"
-        ]
-        assert len(gap_events) <= 3, (
-            f"gap events flooded: {len(gap_events)}\n" + harness.log_text()
-        )
+        # never the retired false-lost shape
+        types = [e["event_type"] for e in harness.events(scenario.session_id)]
+        assert "session_exited" in types, types
+        assert "session_stale_reaped" not in types, types
+
+        # the terminal sweep collects the survivor session (cleaned_at is the
+        # sweep's witness; the kill is journaled as session_cleaned)
+        deadline = time.monotonic() + 15.0
+        row = harness.session_row(scenario.session_id)
+        while time.monotonic() < deadline and row["cleaned_at"] is None:
+            time.sleep(0.3)
+            row = harness.session_row(scenario.session_id)
+        assert row["cleaned_at"] is not None, harness.log_text()
 
         outcome = harness.client.await_result(scenario.session_id, timeout_seconds=5.0)
         assert outcome.result is None

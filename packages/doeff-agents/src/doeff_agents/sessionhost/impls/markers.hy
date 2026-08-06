@@ -152,21 +152,29 @@
 
 (deff has-unsubmitted-paste [output]
   {:pre [(: output str)] :post [(: % bool)]}
-  "未 submit の paste 残留(oracle output_has_unsubmitted_paste_input の
-   sent-text=None 面 — monitor 経路はこの面だけを使う): 末尾 20 行の最終
-   prompt 行(❯ / ›)に collapsed paste marker が居る。"
+  "未 submit の paste / 添付残留(oracle output_has_unsubmitted_paste_input の
+   sent-text=None 面 — monitor 経路はこの面だけを使う。issue #568 /
+   ADR-DOE-AGENTS-010 R1 で composer 領域へ拡張): 末尾 20 行の composer 領域
+   (最終 prompt 行 ❯ / › とそれ以降の行)に collapsed paste marker・添付
+   チップ([Image #N])・queued ヒントが居る。添付チップは prompt 行の外
+   (直下の行・行頭空白)に描かれる — prompt 行 1 行だけの走査は空 prompt +
+   チップ形(2026-07-28 実 wedge)に盲目だった。最終 prompt 行より上
+   (送信済み履歴)は対象外のまま。"
   (setv lines (.splitlines output))
   (setv recent (cut lines (max 0 (- (len lines) 20)) None))
-  (setv last-prompt-line None)
-  (for [line recent]
+  (setv last-prompt-index None)
+  (for [[index line] (enumerate recent)]
     (setv trimmed (.lstrip line))
     (when (or (.startswith trimmed "❯") (.startswith trimmed "›"))
-      (setv last-prompt-line trimmed)))
-  (if (is None last-prompt-line)
+      (setv last-prompt-index index)))
+  (if (is None last-prompt-index)
       False
-      (bool (or (in "[Pasted text" last-prompt-line)
-                (in "[Pasted Content" last-prompt-line)
-                (in "Press up to edit queued messages" last-prompt-line)))))
+      (do
+        (setv composer (.join "\n" (cut recent last-prompt-index None)))
+        (bool (or (in "[Pasted text" composer)
+                  (in "[Pasted Content" composer)
+                  (in "[Image #" composer)
+                  (in "Press up to edit queued messages" composer))))))
 
 (deff has-queued-messages [output]
   {:pre [(: output str)] :post [(: % bool)]}
