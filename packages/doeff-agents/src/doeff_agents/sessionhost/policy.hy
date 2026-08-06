@@ -25,12 +25,14 @@
   deliver-message
   discover-conversation
   session-store-list-active
+  session-store-list-cleanup-pending
   session-store-result-payload
   session-store-upsert
   session-store-record-event
   session-store-known-conversation-ids
   tmux-has-session
   tmux-pane-current-command
+  tmux-session-pane-ids
   tmux-capture
   tmux-send-keys
   tmux-kill-session
@@ -468,7 +470,12 @@
          (: obs PaneObservation) (: output str) (: observed-at str)]
    :post [(: % SessionRow)]}
   "status 書き戻し + 終端処理(taxonomy first-write-wins・finished_at)+
-   RTC 終端 cleanup + upsert + 遷移 event(oracle monitor_once 末尾)。
+   upsert + 遷移 event(oracle monitor_once 末尾)。
+
+   substrate cleanup(tmux kill + cleaned_at)はここには無い(issue #568 /
+   ADR-DOE-AGENTS-010 R5): 経路内蔵の片付けは 5 終端経路中 4 経路を漏らし
+   残骸 26 台・6.155 GiB を堆積させた実測の根因 — 片付けは monitor-cycle 末尾の
+   単一掃き取り(cleanup-terminal-session-once)が終端 status を観測して行う。
 
    監査 event は status 遷移(entry-status ≠ observed-status)でのみ記録する
    — oracle の毎 tick 記録からの意図的乖離(2026-07-27 wedge 根治)。blocked
@@ -493,12 +500,6 @@
                                        obs output observed-at
                                        (is-not row.api-limit-observed-at None))))))
     (setv row (replace row :finished-at (or row.finished-at observed-at))))
-  (when (and (is-run-to-completion row.lifecycle)
-             (in observed-status #{"done" "failed"}))
-    (<- still-alive (tmux-has-session row.session-name))
-    (when still-alive
-      (<- _ (tmux-kill-session row.session-name))
-      (setv row (replace row :cleaned-at (or row.cleaned-at observed-at)))))
   (<- _ (session-store-upsert row))
   (when (!= observed-status entry-status)
     (<- _ (session-store-record-event row.session-id
@@ -518,9 +519,10 @@
    分岐順は凍結物理: booting 所有権(launch pipeline 所有 — boot watchdog のみ)→
    観測断記帳(terminal 化しない — ADR-DOE-AGENTS-009 R1)→ launch timeout
    (watch 窓基点 = max(started_at, observation_gap_at) — 同 R2)→
-   tmux 生存(result-first)→
-   zombie → capture/classify → paste 再送 → managed dialog fast-path →
-   latch clear → 分類 → turn-end → result-first → judge-before-solicitation →
+   tmux 生存(result-first)→ 宛先 pane の帰属検証(ADR-DOE-AGENTS-010 R4)→
+   zombie → capture/classify → 有界 paste 再送(同 R2)→
+   managed dialog fast-path → latch clear → awaiting 期限(同 R3)→ 分類 →
+   turn-end → result-first → judge-before-solicitation →
    bounded solicitation → stall watchdog → 終端 taxonomy。"
   (<- now (clock-now))
   (setv observed-at (iso-format now))
@@ -652,6 +654,30 @@
           (<- _ (session-store-record-event row.session-id "session_exited" row))))
     (return row))
 
+  ;; --- 宛先 pane の帰属検証(issue #568 / ADR-DOE-AGENTS-010 R4 — #582 穴
+  ;; a/b の根治)。pane 番号は再利用される(台帳実測 1,483 衝突)ため、
+  ;; row.pane_id が row.session_name の所有 pane 集合に属することを毎 cycle
+  ;; ここで一括検証する — この cycle の全下流送出(Enter 再送・dialog dismiss・
+  ;; 救援キー・督促配達)と観測(capture)は検証済みの宛先にのみ行われる。
+  ;; 帰属の喪失は、直前の has-session probe に応答した substrate の積極観測 =
+  ;; 第 2 証拠つき死亡(ADR-DOE-AGENTS-009 R3 と同クラス)— vanished で即時終端。
+  (<- session-pane-ids (tmux-session-pane-ids row.session-name))
+  (when (not-in row.pane-id session-pane-ids)
+    (setv row (replace row
+                       :status "exited"
+                       :last-observed-at observed-at
+                       :finished-at (or row.finished-at observed-at)))
+    (setv current-panes (if session-pane-ids (.join "," session-pane-ids) "none"))
+    (setv row (cause-if-absent
+                row (make-cause "vanished"
+                                (+ f"tmux pane {row.pane-id} no longer belongs to "
+                                   f"session {row.session-name} "
+                                   f"(current panes: {current-panes})")
+                                observed-at)))
+    (<- _ (session-store-upsert row))
+    (<- _ (session-store-record-event row.session-id "session_exited" row))
+    (return row))
+
   ;; --- zombie reaper(S19): pane の foreground が idle shell へ戻った。
   ;; 早期 boot の shell 瞬間と race しないよう running のみ対象。
   (when (= row.status "running")
@@ -703,16 +729,50 @@
   (when (and obs.has-api-limit-marker (is None row.api-limit-observed-at))
     (setv row (replace row :api-limit-observed-at observed-at)))
 
-  ;; --- paste 残留の Enter 再送(ハザード 4 付随物理)。latch は保持。
-  (when (and row.awaiting-response obs.has-unsubmitted-paste)
-    (<- _ (tmux-send-keys row.pane-id "Enter" False False))
-    (setv row (replace row
-                       :last-observed-at observed-at
-                       :output-snippet (tail-chars output 500)))
-    (<- _ (session-store-upsert row))
-    (<- _ (session-store-record-event row.session-id
-                                      "session_unsubmitted_paste_resubmitted" row))
-    (return row))
+  ;; --- paste / 添付残留の Enter 再送(ハザード 4 付随物理 + issue #568 /
+  ;; ADR-DOE-AGENTS-010 R2 の有界化)。latch は保持。busy 証拠(live active
+  ;; marker / 未消費 queue)がある間は補償しない — 走行中 turn の composer は
+  ;; agent 自身が消費する(#573 の中断キー安全壁と同じ根拠で、誤補償が働く
+  ;; 席を budget 超過 terminal へ導く形を塞ぐ)。budget 超過は loud typed
+  ;; terminal(沈黙 blocked の禁止): 実測 2026-08-06 で無上限の再送(32 回 /
+  ;; 13 回)が無効のまま沈黙し、runner 7/7 が 7 日飽和した。
+  (when (and row.awaiting-response obs.has-unsubmitted-paste
+             (not obs.has-active-marker) (not obs.has-queued-messages))
+    (if (< row.paste-resubmit-attempts knobs.paste-resubmit-limit)
+        (do
+          (setv row (replace row
+                             :paste-resubmit-attempts
+                             (+ row.paste-resubmit-attempts 1)))
+          (<- _ (tmux-send-keys row.pane-id "Enter" False False))
+          (setv row (replace row
+                             :last-observed-at observed-at
+                             :output-snippet (tail-chars output 500)))
+          (<- _ (session-store-upsert row))
+          (<- _ (session-store-record-event row.session-id
+                                            "session_unsubmitted_paste_resubmitted" row))
+          (return row))
+        (do
+          (setv reason (+ "unsubmitted-prompt: composer still holds an "
+                          "unsubmitted prompt/attachment after "
+                          f"{row.paste-resubmit-attempts} Enter resubmit(s)"))
+          (setv row (replace row
+                             :last-observed-at observed-at
+                             :last-validation-error reason))
+          ;; 行動系終端は provider-limit 観測を先に見る(ACP ADR 0049 R9 の
+          ;; 蒸留と同型)— attempt 中の blocked_api latch は rate_limited へ。
+          (setv row
+                (if (is-not row.api-limit-observed-at None)
+                    (cause-if-absent
+                      row (make-cause
+                            "rate_limited"
+                            (+ reason
+                               "; api-limit marker observed during attempt at "
+                               row.api-limit-observed-at)
+                            observed-at))
+                    (cause-if-absent
+                      row (make-cause "timed_out" reason observed-at))))
+          (<- failed-row (finalize row entry-status "failed" obs output observed-at))
+          (return failed-row))))
 
   ;; --- managed-settings dialog fast-path(R9・S18: monitor loop で発火するのは
   ;; managed のみ)。dismissal キー列は per-kind impl 所有(C2 で
@@ -734,13 +794,52 @@
   ;; --- awaiting_response latch は POSITIVE work evidence(active marker /
   ;; turn-activity)でのみ clear(ハザード 4: pane 不安定では clear しない —
   ;; submit→spinner の隙間で turn-end が再武装して budget を焼いた実障害)。
+  ;; 期限の基点(awaiting_response_since)も latch と同時に clear する
+  ;; (ADR-DOE-AGENTS-010 R3)。
   (when (and row.awaiting-response
              (or obs.has-active-marker obs.has-turn-activity))
-    (setv row (replace row :awaiting-response False)))
+    (setv row (replace row :awaiting-response False
+                       :awaiting-response-since None)))
 
   ;; --- startup 完了の初回観測(launch watchdog の解除信号)。
   (when (and (is None row.observed-active-at) obs.startup-finished)
     (setv row (replace row :observed-active-at observed-at)))
+
+  ;; --- awaiting latch の期限(issue #568 / ADR-DOE-AGENTS-010 R3 — #582 穴 c
+  ;; の根治)。『agent への prompt が owed』は期限つきの命題: 正の作業証拠が
+  ;; 期限内に一度も観測されなければ typed terminal — awaiting_response が
+  ;; stall watchdog と turn-end 検出を無効化したまま永久 blocked に沈む形
+  ;; (2026-08-06 実測: 7 席 × 14.7〜44.7h、後続 66 件が 7 日停止)を構造的に
+  ;; 禁止する。基点 = max(awaiting_response_since | started_at,
+  ;; observation_gap_at) — 観測断の窓は『観測し続けたのに証拠が無い』premise
+  ;; を void にする(ADR-DOE-AGENTS-009 R2 と同型)。
+  (when row.awaiting-response
+    (setv awaiting-secs knobs.awaiting-response-timeout-seconds)
+    (setv armed-age (seconds-since now (or row.awaiting-response-since
+                                           row.started-at)))
+    (setv gap-arm-age (seconds-since now row.observation-gap-at))
+    (setv wait-age (if (and (is-not armed-age None) (is-not gap-arm-age None))
+                       (min armed-age gap-arm-age)
+                       armed-age))
+    (when (and (is-not wait-age None) (> wait-age awaiting-secs))
+      (setv reason (+ "awaiting-response timeout: prompt/solicitation was "
+                      "delivered but no work evidence appeared within "
+                      f"{awaiting-secs}s (turn never started)"))
+      (setv row (replace row :last-validation-error reason))
+      ;; 行動系終端は provider-limit 観測を先に見る(S8c/S8e と同じ蒸留)。
+      (setv row
+            (if (is-not row.api-limit-observed-at None)
+                (cause-if-absent
+                  row (make-cause
+                        "rate_limited"
+                        (+ reason
+                           "; api-limit marker observed during attempt at "
+                           row.api-limit-observed-at)
+                        observed-at))
+                (cause-if-absent
+                  row (make-cause "timed_out" reason observed-at))))
+      (<- timed-row (finalize row entry-status "failed" obs output observed-at))
+      (return timed-row)))
 
   ;; --- 凍結分類順: failure → api-limit → waiting → running。
   (setv raw-status (observed-status-from-markers obs))
@@ -830,7 +929,11 @@
                                              (+ row.result-solicitations-used 1)))
                           (<- _ (deliver-message row.pane-id
                                                  RESULT-SOLICITATION-MESSAGE))
-                          (setv row (replace row :awaiting-response True))
+                          ;; 再武装は期限の基点(ADR-DOE-AGENTS-010 R3)も
+                          ;; 再打刻する — 促しごとに有界の待ちが始まる。
+                          (setv row (replace row
+                                             :awaiting-response True
+                                             :awaiting-response-since observed-at))
                           (<- _ (session-store-upsert row))
                           (<- _ (session-store-record-event
                                   row.session-id "session_result_solicited" row))
@@ -947,18 +1050,52 @@
                   row (make-cause "interactive_prompt_blocked" blocked-failure
                                   observed-at))))))
 
-  ;; --- 書き戻し + 終端 taxonomy + cleanup + 遷移 event。
+  ;; --- 書き戻し + 終端 taxonomy + 遷移 event(cleanup は monitor-cycle の
+  ;; 単一掃き取り所有 — ADR-DOE-AGENTS-010 R5)。
   (<- final-row (finalize row entry-status observed-status obs output observed-at))
   final-row)
+
+
+(defk cleanup-terminal-session-once [row active-names]
+  {:pre [(: row SessionRow) (: active-names set)]
+   :post [(: % SessionRow)]}
+  "終端 1 行の substrate cleanup(issue #568 / ADR-DOE-AGENTS-010 R5)。
+   tmux session が生きていれば kill して session_cleaned event を記帳する。
+   ただし active 行が同名を主張しているとき(session 名は呼び手採番で時間軸上
+   再利用され得る)は kill しない — その tmux session はもうこの行のもの
+   ではない(古い残骸行の名で生きている新席を殺さない)。いずれの経路でも
+   cleaned_at を刻む(= 掃き取りが『残骸なし』を確認した witness — 対象集合が
+   有界に収束し、台帳の古い終端行を毎 cycle 再走査しない)。"
+  (<- now (clock-now))
+  (setv observed-at (iso-format now))
+  (setv killed False)
+  (when (not-in row.session-name active-names)
+    (<- alive (tmux-has-session row.session-name))
+    (when alive
+      (<- _ (tmux-kill-session row.session-name))
+      (setv killed True)))
+  (setv row (replace row :cleaned-at (or row.cleaned-at observed-at)))
+  (<- _ (session-store-upsert row))
+  (when killed
+    (<- _ (session-store-record-event row.session-id "session_cleaned" row)))
+  row)
 
 
 (defk monitor-cycle [knobs]
   {:pre [(: knobs MonitorKnobs)]
    :post [(: % dict)]}
-  "monitor cycle = 非終端 session 行の一覧からの level-triggered 再導出(R1/R3)。
+  "monitor cycle = 非終端 session 行の一覧からの level-triggered 再導出(R1/R3)
+   + 終端 session の単一掃き取り(issue #568 / ADR-DOE-AGENTS-010 R5)。
    per-session 隔離(S16 / DOE-004 R3): 1 session の例外は捕捉して次へ進む —
    oracle の tick 単位隔離(run_worker_tick)より細かい session 単位隔離。
-   戻り値: {session-id: 処理後 status | \"error:<ExceptionType>\"}。"
+   戻り値: {session-id: 処理後 status | \"error:<ExceptionType>\"}。
+
+   掃き取りは終端 status という end-state を観測する宣言的 reconciler —
+   終端経路ごとの片付け命令は存在しない(semgrep
+   doeff-agents-terminal-cleanup-single-sweep が旧形を禁止する)。この cycle で
+   終端した行も、過去のどの経路で終端した既存残骸も、同じ 1 本で回収される。
+   active 名の集合は loop の後に再読する — この cycle で終端した行の名を
+   active と誤認して kill を skip しない。"
   (<- rows (session-store-list-active))
   (setv outcomes {})
   (for [row (sorted rows :key (fn [r] r.session-id))]
@@ -968,4 +1105,18 @@
       (except [e Exception]
         (setv (get outcomes row.session-id)
               f"error:{(. (type e) __name__)}"))))
+  ;; --- 終端 session の単一掃き取り(R5)。
+  (<- pending (session-store-list-cleanup-pending))
+  (when pending
+    (<- still-active (session-store-list-active))
+    (setv active-names (sfor r still-active r.session-name))
+    (for [row (sorted pending :key (fn [r] r.session-id))]
+      ;; 防御の二重化(fail-closed): 対象集合の定義(store 側 filter)が
+      ;; 刈り取り免除を落としても、program 側でも免除行には触れない。
+      (when (not (reap-exempt row))
+        (try
+          (<- _ (cleanup-terminal-session-once row active-names))
+          (except [e Exception]
+            (setv (get outcomes f"cleanup:{row.session-id}")
+                  f"error:{(. (type e) __name__)}"))))))
   outcomes)

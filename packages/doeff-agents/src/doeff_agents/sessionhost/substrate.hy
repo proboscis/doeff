@@ -31,6 +31,7 @@
   TmuxNewSession
   TmuxHasSession
   TmuxPaneCurrentCommand
+  TmuxSessionPaneIds
   TmuxCapture
   TmuxSendKeys
   TmuxKillSession
@@ -132,23 +133,26 @@
 (deff unsubmitted-paste-input? [output sent-text]
   {:pre [(: output str) (: sent-text (| str None))]
    :post [(: % bool)]}
-  "未 submit paste の検出(oracle output_has_unsubmitted_paste_input):
-   末尾 20 行の最終 prompt 行に collapsed paste marker、または送出断片が
-   prompt 領域に可視のまま残っている。"
+  "未 submit paste / 添付の検出(oracle output_has_unsubmitted_paste_input +
+   issue #568 / ADR-DOE-AGENTS-010 R1 の composer 領域拡張):
+   末尾 20 行の composer 領域(最終 prompt 行とそれ以降)に collapsed paste
+   marker・添付チップ([Image #N])・queued ヒント、または送出断片が
+   prompt 領域に可視のまま残っている。添付チップは prompt 行の外(直下の行)
+   に描かれる — prompt 行 1 行だけの走査は実 wedge 形に盲目だった。"
   (setv lines (.splitlines output))
   (setv recent (cut lines (max 0 (- (len lines) 20)) None))
-  (setv last-prompt-line None)
   (setv last-prompt-index None)
   (for [[index line] (enumerate recent)]
     (setv trimmed (.lstrip line))
     (when (or (.startswith trimmed "❯") (.startswith trimmed "›"))
-      (setv last-prompt-line trimmed)
       (setv last-prompt-index index)))
-  (when (and (is-not last-prompt-line None)
-             (or (in "[Pasted text" last-prompt-line)
-                 (in "[Pasted Content" last-prompt-line)
-                 (in "Press up to edit queued messages" last-prompt-line)))
-    (return True))
+  (when (is-not last-prompt-index None)
+    (setv composer (.join "\n" (cut recent last-prompt-index None)))
+    (when (or (in "[Pasted text" composer)
+              (in "[Pasted Content" composer)
+              (in "[Image #" composer)
+              (in "Press up to edit queued messages" composer))
+      (return True)))
   (when (or (is None sent-text) (is None last-prompt-index))
     (return False))
   (setv prompt-region
@@ -353,6 +357,18 @@
                         ["display-message" "-p" "-t" pane-id
                          "#{pane_current_command}"]))
     (resume (if (= res.returncode 0) (.strip res.stdout) None)))
+
+  (TmuxSessionPaneIds [session-name]
+    ;; 宛先 pane の帰属観測(ADR-DOE-AGENTS-010 R4): session が現に所有する
+    ;; 全 pane(-s = 全 window)。非 0 = session 不在 → 空 list(直前の
+    ;; has-session probe が応答済みの文脈で呼ばれる — 応答した tmux の否定は
+    ;; 積極証拠)。
+    (setv res (run-tmux tmux-bin
+                        ["list-panes" "-s" "-t" session-name
+                         "-F" "#{pane_id}"]))
+    (resume (if (= res.returncode 0)
+                (lfor line (.splitlines res.stdout) :if (.strip line) (.strip line))
+                [])))
 
   (TmuxCapture [pane-id lines]
     (resume (tmux-capture-io tmux-bin pane-id lines)))

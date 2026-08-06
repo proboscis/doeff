@@ -26,6 +26,7 @@
   DeliverMessage
   WireResultChannel
   SessionStoreListActive
+  SessionStoreListCleanupPending
   SessionStoreGet
   SessionStoreUpsert
   SessionStoreResultPayload
@@ -34,6 +35,7 @@
   DiscoverConversation
   TmuxHasSession
   TmuxPaneCurrentCommand
+  TmuxSessionPaneIds
   TmuxCapture
   TmuxSendKeys
   TmuxKillSession
@@ -58,6 +60,7 @@
   proc-run])
 (import doeff_agents.sessionhost.policy [
   ACTIVE-STATUSES
+  TERMINAL-STATUSES
   RESULT-SOLICITATION-MESSAGE
   TERMINAL-CAUSE-RETRYABLE
   make-cause
@@ -93,6 +96,7 @@
     (setv self.events [])              ;; [(session-id, event-type)]
     (setv self.frames {})              ;; pane-id -> 現在のフレーム(F-*)
     (setv self.pane-commands {})       ;; pane-id -> foreground command
+    (setv self.pane-sessions {})       ;; pane-id -> 帰属 session 名(ADR-010 R4)
     (setv self.tmux-sessions (set))    ;; 生きている tmux session 名
     (setv self.sent-keys [])           ;; [(pane-id, text, literal, submit)]
     (setv self.delivered [])           ;; [(pane-id, text)] — DeliverMessage 受領
@@ -139,10 +143,11 @@
 
 
 (defn seed [world row #** kw]
-  "row を store に置き、tmux session / pane / フレームを生かす。"
+  "row を store に置き、tmux session / pane / フレーム / pane 帰属を生かす。"
   (setv (get world.rows row.session-id) row)
   (.add world.tmux-sessions row.session-name)
   (setv (get world.pane-commands row.pane-id) (.get kw "pane_command" "codex"))
+  (setv (get world.pane-sessions row.pane-id) row.session-name)
   (setv (get world.frames row.pane-id) (.get kw "frame" ""))
   row)
 
@@ -204,6 +209,15 @@
   (SessionStoreListActive []
     (resume (lfor r (list (.values world.rows)) :if (in r.status ACTIVE-STATUSES) r)))
 
+  (SessionStoreListCleanupPending []
+    ;; ADR-010 R5 の対象集合: 終端 ∧ cleaned_at 未刻印 ∧ RTC ∧ 非 adopted。
+    (resume (lfor r (list (.values world.rows))
+                  :if (and (in r.status TERMINAL-STATUSES)
+                           (is r.cleaned-at None)
+                           (= r.lifecycle "run_to_completion")
+                           (not r.adopted))
+                  r)))
+
   (SessionStoreGet [session-id]
     (resume (.get world.rows session-id)))
 
@@ -241,6 +255,11 @@
 
   (TmuxPaneCurrentCommand [pane-id]
     (resume (.get world.pane-commands pane-id)))
+
+  (TmuxSessionPaneIds [session-name]
+    (resume (lfor [pid owner] (.items world.pane-sessions)
+                  :if (= owner session-name)
+                  pid)))
 
   (TmuxCapture [pane-id lines]
     (when (in pane-id world.broken-panes)
@@ -861,9 +880,12 @@
   (assert (in "launch pipeline did not complete within 180s"
               row.last-validation-error))
   (assert (in #("s1" "session_launch_timeout") world.events))
-  ;; SQL 直行 reap: tmux には触れない
+  ;; reap の裁定自体は SQL 直行(pane の観測はしない)
   (assert (= world.capture-count 0))
-  (assert (= world.has-session-calls [])))
+  ;; 片付けは同 cycle の単一掃き取り(ADR-010 R5)— boot 残置も残骸に
+  ;; しない(実測 2026-08-06: この経路の残骸 2 台)。
+  (assert (in "doeff-s1" world.killed))
+  (assert (is-not (. (get world.rows "s1") cleaned-at) None)))
 
 
 (deftest test-launch-timeout-watchdog
@@ -881,9 +903,12 @@
   (assert (= row.terminal-cause.category "timed_out"))
   (assert (= row.terminal-cause.retryable True))
   (assert (in #("s1" "session_launch_timeout") world.events))
-  ;; SQL 直行 reap: tmux には触れない
+  ;; reap の裁定自体は pane を観測しない
   (assert (= world.capture-count 0))
-  (assert (= world.has-session-calls [])))
+  ;; 片付けは同 cycle の単一掃き取り(ADR-010 R5)— launch timeout は
+  ;; 実測 2026-08-06 で残骸 16 台を産んだ最大の漏れ経路だった。
+  (assert (in "doeff-s1" world.killed))
+  (assert (is-not (. (get world.rows "s1") cleaned-at) None)))
 
 
 (deftest test-launch-timeout-disarmed-after-startup

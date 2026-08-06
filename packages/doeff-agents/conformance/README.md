@@ -141,7 +141,7 @@ snapshot と一致(stable)**」(main.rs:2832, 2932)なので、フレームは
 | S16 | 2 session 並走・片方を異常系フレームに → 他方が golden path を完走。tick は panic/error を捕捉して継続(run_worker_tick)。per-session 隔離の粒度は oracle では tick 単位 — Hy 実装は session 単位隔離を満たすこと(観測可能な assert は「他方の完走」で共通) | DOE-004 R3 | (f) | P | M2 |
 | S17 | in-process result endpoint ↔ host endpoint の意味論 parity(per-kind ゲートとの継ぎ目) | ACP plan 補遺 | — | X(C1 後) | — |
 | S18 | R9 fast-path: 5 ダイアログの dismissal keys を journal で受領確認(codex update→Down×2+Enter / bypass→Down,Enter / fullscreen→Down,Enter=Not now / trust→Enter(既定 Yes,I trust — pre-seed S12 と同じ意図) / managed→Enter)。**観測物理で契約修正**: codex-update/bypass/fullscreen/trust は `wait_for_repl_idle` のみ(launch 経路 = M1)で発火し M2 では到達不能。managed のみ monitor loop でも発火(main.rs:3604)なので M2 で mid-session 検証。tty は canonical+ICRNL(Enter=`\r`→`\n`、Down+Enter は 1 行で到達 = `\x1b[B` を待つ)。managed の bare Enter は内容で判別不能なので `observed_active_at` set(managed 分岐でしか立たない)を主 assert に。trust の bare Enter は順序で証明(dialog 表示中に `\n` が着く → その後にしか prompt paste が match しない)。**trust は Rust oracle 非在**(2026-07-07 のカバレッジ欠落修正 — 実物 frame で detect_dialog=None を実証してから追加)。**fail-closed(2026-07-07 契約修正。2026-07-17 に oracle main.rs も同一契約を採用し乖離解消)**: R9 外の未知 dialog で repl-idle 予算(`DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS`、既定 120s)が尽きたら、旧 oracle の「構わず paste」ではなく typed error で launch を fail させる — prompt 未配送、登録済みの booting 行は terminal failed(timed_out)へ遷移(2026-07-17 契約改訂、S22 参照 — 行未永続ではなくライフサイクル)、mux session は terminal-first で掃除(FAILED 永続化 → cleanup。成功は cleaned_at、画面 tail をエラーに同梱)。silent hang の構造的禁止 | 002 R9 | — | P | M1(update/bypass/fullscreen/trust/unknown)/ M2(managed) |
-| S19 | launch-timeout watchdog: F-frozen のまま startup 完了マーカーを出さない → `DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS` 超過で failed・TimedOut true(watch 窓の基点は `max(started_at, observation_gap_at)` — 観測断は「観測し続けたのに active 未観測」premise を void にするため、供給回復後に窓を再スタート。ADR-DOE-AGENTS-009 R2)/ zombie(`{"exit":0}` → idle shell)→ exited・**Vanished** true / **stale-observation は terminal 化しない(2026-07-28 ADR-DOE-AGENTS-009 R1 — 観測断 ≠ 死亡)**: `max(last_observed_at, observation_gap_at)` が `DOEFF_AGENTD_STALE_OBSERVATION_SECS` 超過で `observation_gap_at` 刻印 + `session_observation_gap` event(検出条件が gap_at 自身で再武装され 1/stale-secs に有界)、行は非終端のまま第 2 証拠 arm(tmux 生存 probe / zombie)へ fall-through — probe まで不能なら running のまま unknown 保持(有界性は ACP ADR 0059 deadman gate)。**black-box 形状**: tmux session は生かしたまま(2 枚目の window を足す)監視対象 pane を帯域外 kill → 以後 tick は `tmux_capture` で abort、行は running のまま gap event だけが有界に記帳される。3 knob は全て env-only なので `extra_env` 経由 | ADR-DOE-AGENTS-009 R1/R2 | — | P(stale 分岐は hy gate のみ — 退役 Rust 参照実装は Lost reap のまま基準外) | M2 |
+| S19 | launch-timeout watchdog: F-frozen のまま startup 完了マーカーを出さない → `DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS` 超過で failed・TimedOut true(watch 窓の基点は `max(started_at, observation_gap_at)` — 観測断は「観測し続けたのに active 未観測」premise を void にするため、供給回復後に窓を再スタート。ADR-DOE-AGENTS-009 R2)/ zombie(`{"exit":0}` → idle shell)→ exited・**Vanished** true / **stale-observation は terminal 化しない(2026-07-28 ADR-DOE-AGENTS-009 R1 — 観測断 ≠ 死亡)**: `max(last_observed_at, observation_gap_at)` が `DOEFF_AGENTD_STALE_OBSERVATION_SECS` 超過で `observation_gap_at` 刻印 + `session_observation_gap` event(検出条件が gap_at 自身で再武装され 1/stale-secs に有界)、行は非終端のまま第 2 証拠 arm(tmux 生存 probe / zombie)へ fall-through — probe まで不能なら running のまま unknown 保持(有界性は ACP ADR 0059 deadman gate)。**S19c 改訂(issue #568 / ADR-DOE-AGENTS-010 R4、2026-08-06)**: 旧 black-box 形状(tmux session は生かしたまま監視対象 pane を帯域外 kill)は、宛先 pane の帰属検証により「tmux が応答した上での pane 不在 = 第 2 証拠つき死亡」へ昇格 — 行は unknown 保持ではなく exited + vanished(reason `no longer belongs to session`)で即時終端し、掃き取りが残存 session を回収する。真正の供給断(probe/capture が応答なしで raise)の hold + gap 刻印は契約のまま — その検証の家は hy deftest gate(実 tmux では「pane 実在のまま capture だけ失敗」の black-box 形状が作れないため)。knob は全て env-only なので `extra_env` 経由 | ADR-DOE-AGENTS-009 R1/R2 + ADR-DOE-AGENTS-010 R4 | — | P(stale 分岐は hy gate のみ — 退役 Rust 参照実装は Lost reap のまま基準外) | M2 |
 
 | S20 | result-contract 検証 = JSON Schema 仕様(U1 復元契約): items 違反 payload は report 時 reject → solicitation → in-session fix(ACP steward 実障害の形そのまま)/ meta-schema 違反 schema は session.launch で fail-closed 拒否 | doeff#482 / U1 裁定 | — | P(hy gate のみ — 旧実装は fail-open で基準外) | M2 |
 
@@ -220,10 +220,26 @@ Hy 実装がこの表を変える場合は ADR 改訂が先(黙った変更は c
 | launch timeout(60s) | `DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS` | ✓ |
 | unblock budget(3) | `--prompt-unblock-attempts` / `DOEFF_AGENTD_PROMPT_UNBLOCK_ATTEMPTS`(main.rs:646 — 実装時走査で実在確認。S6 は既定 3 のまま検証) | ✓ |
 | stale-observation 閾値(300s) | `DOEFF_AGENTD_STALE_OBSERVATION_SECS`(S19 用に oracle へ追加した env-only knob、`effective_stale_observation_threshold_seconds` — 既定 300s・意味論不変。launch timeout と同じく flag 無しの env 専用なので harness は `extra_env` で daemon プロセスに渡す) | ✓(追加済) |
+| paste 再送 budget(5) | `DOEFF_AGENTD_PASTE_RESUBMIT_LIMIT`(env-only。issue #568 / ADR-DOE-AGENTS-010 R2 — 未送信 paste / 添付の Enter 再送は有界で、超過は typed terminal failed(timed_out true、latch 済みなら rate_limited)。退役 Rust oracle は無上限 = 基準外) | ✓(Hy のみ) |
+| awaiting 期限(600s) | `DOEFF_AGENTD_AWAITING_RESPONSE_TIMEOUT_SECS`(env-only。同 R3 — awaiting_response latch は期限つき: 基点 = max(awaiting_response_since \| started_at, observation_gap_at)、期限内に正の作業証拠が無ければ typed terminal failed。退役 Rust oracle は無期限 = 基準外) | ✓(Hy のみ) |
 | wait_for_repl_idle 上限(120s) | 定数 — fake は即 idle を描画するので実害なし | 不要 |
 | 孤児 daemon 自己終了(opt-in) | `DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED=1`(env-only、S28 — harness が spawn 時に常時付与。driver が `__exit__` を経ず死んでも daemon が launch 済み session を刈って有界時間内に退場。production(launchd — ppid が最初から 1)は knob を立てない = 従来どおり生存) | ✓(追加済) |
 
 oracle への変更は「意味論を変えない設定追加」のみ許す(挙動変更禁止)。
+
+### cleanup 契約の改訂(issue #568 / ADR-DOE-AGENTS-010 R5、2026-08-06)
+
+substrate cleanup(tmux kill + `cleaned_at`)の家は monitor-cycle 末尾の
+**単一掃き取り**(`cleanup-terminal-session-once` — 対象 = 終端 status ∧
+`cleaned_at` IS NULL ∧ run_to_completion ∧ 非 adopted)。旧契約の
+「finalize 内蔵・done/failed 観測経路のみ」は 5 終端経路中 4 経路を漏らし
+残骸 26 台 / 6.155 GiB を堆積させた実測(2026-08-06)により撤去。oracle
+(退役 Rust)は旧形のまま = この点は基準外。観測面の等価性: done/failed の
+kill + `cleaned_at` は同一 monitor tick 内で従来どおり成立する(S1/S3 の
+黒箱挙動は不変)。launch ready-gate の terminal-first cleanup(S18/S22)は
+launch pipeline 所有として残り、その失敗は掃き取りが次 cycle で修復する。
+経路内蔵の片付けの再導入は installed semgrep rule
+`doeff-agents-terminal-cleanup-single-sweep` が禁止する。
 
 ## Non-goals
 

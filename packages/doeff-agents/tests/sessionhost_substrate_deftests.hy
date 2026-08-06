@@ -76,6 +76,18 @@
   (assert (not (unsubmitted-paste-input? "⏺ working\n❯ " sent))))
 
 
+(deftest test-unsubmitted-paste-attachment-chip-below-prompt
+  ;; issue #568(ADR-DOE-AGENTS-010 R1): 添付チップ([Image #N] / paste チップ)
+  ;; は prompt 行の直下に落ちる形がある — composer 領域(最終 prompt 行以降)で
+  ;; 検出する。confirm ループも monitor と同じ盲点を持っていた。
+  (assert (unsubmitted-paste-input?
+            "❯\n  [Image #150]\n\n  ⏵⏵ bypass permissions on (shift+tab to cycle)"
+            None))
+  (assert (unsubmitted-paste-input? "❯\n  [Pasted text #1 +12 lines]" None))
+  ;; 送信済み履歴(最終 prompt 行より上)は対象外のまま
+  (assert (not (unsubmitted-paste-input? "❯ [Image #3]\n⏺ done\n❯ " None))))
+
+
 ;; ---------------------------------------------------------------------------
 ;; Fs / Env / Clock(実 IO、tmpdir)
 ;; ---------------------------------------------------------------------------

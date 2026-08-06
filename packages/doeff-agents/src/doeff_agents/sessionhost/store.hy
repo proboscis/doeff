@@ -35,6 +35,7 @@
   SessionRow
   TerminalCause
   SessionStoreListActive
+  SessionStoreListCleanupPending
   SessionStoreGet
   SessionStoreUpsert
   SessionStoreResultPayload
@@ -151,7 +152,13 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        #("agent_sessions" "api_limit_observed_at" "TEXT")
        ;; ADR-DOE-AGENTS-009: 観測断(supply cut)の最終検出時刻。
        ;; last-write-wins + None 保護(COALESCE(excluded, existing))。
-       #("agent_sessions" "observation_gap_at" "TEXT")])
+       #("agent_sessions" "observation_gap_at" "TEXT")
+       ;; issue #568(ADR-DOE-AGENTS-010 R2): paste 再送補償の durable counter。
+       ;; last-write-wins(単一 writer = monitor)。
+       #("agent_sessions" "paste_resubmit_attempts" "INTEGER NOT NULL DEFAULT 0")
+       ;; issue #568(ADR-DOE-AGENTS-010 R3): awaiting latch の武装時刻(期限の
+       ;; 基点)。last-write-wins — 正の作業証拠での None clear は意図的な書き。
+       #("agent_sessions" "awaiting_response_since" "TEXT")])
 
 (setv SNAPSHOT-SELECT
       (+ "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status, "
@@ -164,7 +171,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
          "conversation_json, generation, resumed_from_session_id, forked_from_session_id, "
          "launch_overlay_json, "
          "adopted, turn_holder, turn_since, turn_wait_json, "
-         "api_limit_observed_at, observation_gap_at "
+         "api_limit_observed_at, observation_gap_at, "
+         "paste_resubmit_attempts, awaiting_response_since "
          "FROM agent_sessions"))
 
 
@@ -284,7 +292,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
                    None
                    (json.loads (get db-row 34)))
    "api_limit_observed_at" (get db-row 35)
-   "observation_gap_at" (get db-row 36)})
+   "observation_gap_at" (get db-row 36)
+   "paste_resubmit_attempts" (int (get db-row 37))
+   "awaiting_response_since" (get db-row 38)})
 
 (deff snapshot-to-wire-dict [snap]
   {:pre [(: snap dict)]
@@ -392,8 +402,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        "conversation_json, generation, resumed_from_session_id, forked_from_session_id, "
        "launch_overlay_json, "
        "adopted, turn_holder, turn_since, turn_wait_json, "
-       "api_limit_observed_at, observation_gap_at"
-       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+       "api_limit_observed_at, observation_gap_at, "
+       "paste_resubmit_attempts, awaiting_response_since"
+       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
        "ON CONFLICT(session_id) DO UPDATE SET "
        "session_name = excluded.session_name, "
        "pane_id = excluded.pane_id, "
@@ -439,7 +450,13 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        ;; ADR-DOE-AGENTS-009: 観測断の刻印は last-write-wins(再検出で前進)
        ;; だが None 書き戻しでは消えない — COALESCE の引数順が api_limit と
        ;; 逆(excluded 優先)なのはそのため。
-       "observation_gap_at = COALESCE(excluded.observation_gap_at, agent_sessions.observation_gap_at)")
+       "observation_gap_at = COALESCE(excluded.observation_gap_at, agent_sessions.observation_gap_at), "
+       ;; issue #568(ADR-DOE-AGENTS-010): counter は素の last-write-wins、
+       ;; since は None clear が意図的な書き(正の作業証拠での解除)なので
+       ;; COALESCE 保護を持たない — 全書き込みは actor 直列 + merge 経路が
+       ;; existing を再読して重ねるため stale clobber の隙間は無い。
+       "paste_resubmit_attempts = excluded.paste_resubmit_attempts, "
+       "awaiting_response_since = excluded.awaiting_response_since")
     #((get snap "session_id")
       (get snap "session_name")
       (get snap "pane_id")
@@ -500,7 +517,10 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
       ;; .get 既定値: issue #557 以前の snapshot dict にも additive に振る舞う。
       (.get snap "api_limit_observed_at")
       ;; ADR-DOE-AGENTS-009 以前の snapshot dict にも additive に振る舞う。
-      (.get snap "observation_gap_at")))
+      (.get snap "observation_gap_at")
+      ;; issue #568(ADR-DOE-AGENTS-010)以前の snapshot dict にも additive。
+      (int (.get snap "paste_resubmit_attempts" 0))
+      (.get snap "awaiting_response_since")))
   None)
 
 (deff db-session-get [conn session-id]
@@ -567,6 +587,27 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    :post [(: % int)]}
   (len (db-session-list conn {"status" (sorted ACTIVE-STATUSES)})))
 
+(deff db-session-list-cleanup-pending [conn]
+  {:pre [(: conn sqlite3.Connection)]
+   :post [(: % list)]}
+  "単一掃き取り(issue #568 / ADR-DOE-AGENTS-010 R5)の対象集合: 終端 status ∧
+   cleaned_at IS NULL ∧ run_to_completion ∧ 非 adopted。刈り取り免除
+   (ADR-DOE-AGENTS-007 安全条項 1)は SQL で継承する — 対話席・adopt 席の
+   substrate に掃き取りは触れない。cleaned_at の刻印(掃き取り側)で集合が
+   有界に収束するため、毎 tick の再読は idx_agent_sessions_status の range
+   scan + 少数行の decode に留まる。"
+  (setv statuses (sorted TERMINAL-STATUSES))
+  (setv placeholders (.join ", " (lfor _ statuses "?")))
+  (setv rows (.fetchall (.execute conn
+                          (+ SNAPSHOT-SELECT
+                             f" WHERE status IN ({placeholders})"
+                             " AND cleaned_at IS NULL"
+                             " AND lifecycle = 'run_to_completion'"
+                             " AND adopted = 0"
+                             " ORDER BY started_at ASC, session_id ASC")
+                          (tuple statuses))))
+  (lfor row rows (snapshot-from-db-row row)))
+
 (deff db-known-conversation-ids [conn]
   {:pre [(: conn sqlite3.Connection)]
    :post [(: % list)]}
@@ -620,9 +661,12 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
   {:pre [(: conn sqlite3.Connection)]
    :post [(: % "None")]}
   "起動時の awaiting_response latch 全 clear(oracle main :591-596 verbatim —
-   唯一の意図的破棄。latch の意味は死んだ process の再促に束縛されている)。"
+   唯一の意図的破棄。latch の意味は死んだ process の再促に束縛されている)。
+   期限の基点 awaiting_response_since も同時に消す(issue #568 /
+   ADR-DOE-AGENTS-010 R3 — 基点も同じく死んだ process の配送に束縛されている)。"
   (.execute conn
-            (+ "UPDATE agent_sessions SET awaiting_response = 0 "
+            (+ "UPDATE agent_sessions SET awaiting_response = 0, "
+               "awaiting_response_since = NULL "
                "WHERE awaiting_response = 1 "
                "AND status NOT IN ('done','failed','exited','stopped','cancelled')"))
   None)
@@ -965,7 +1009,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
     :launch-overlay (.get snap "launch_overlay")
     :adopted (bool (.get snap "adopted" False))
     :api-limit-observed-at (.get snap "api_limit_observed_at")
-    :observation-gap-at (.get snap "observation_gap_at")))
+    :observation-gap-at (.get snap "observation_gap_at")
+    :paste-resubmit-attempts (int (.get snap "paste_resubmit_attempts" 0))
+    :awaiting-response-since (.get snap "awaiting_response_since")))
 
 (deff policy-row-patch [row]
   {:pre [(: row SessionRow)]
@@ -1012,7 +1058,11 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    "api_limit_observed_at" row.api-limit-observed-at
    ;; ADR-DOE-AGENTS-009: 観測断の刻印も policy(monitor)が唯一の writer。
    ;; SQL 側 COALESCE(excluded, existing)が None 書き戻しから防衛する。
-   "observation_gap_at" row.observation-gap-at})
+   "observation_gap_at" row.observation-gap-at
+   ;; issue #568(ADR-DOE-AGENTS-010): counter / since も policy が唯一の
+   ;; writer(素の last-write-wins — merge 経路が existing を再読して重ねる)。
+   "paste_resubmit_attempts" row.paste-resubmit-attempts
+   "awaiting_response_since" row.awaiting-response-since})
 
 (deff snapshot-from-policy-row [row]
   {:pre [(: row SessionRow)]
@@ -1053,6 +1103,10 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
     (setv snaps (.submit actor
                          (fn [conn]
                            (db-session-list conn {"status" (sorted ACTIVE-STATUSES)}))))
+    (resume (lfor s snaps (snapshot-to-policy-row s))))
+
+  (SessionStoreListCleanupPending []
+    (setv snaps (.submit actor db-session-list-cleanup-pending))
     (resume (lfor s snaps (snapshot-to-policy-row s))))
 
   (SessionStoreGet [session-id]
