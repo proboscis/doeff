@@ -67,6 +67,7 @@
   tail-chars
   tail-lower
   monitor-cycle])
+(import doeff_agents.sessionhost.impls.markers [has-api-limit-marker])
 
 
 ;; ---------------------------------------------------------------------------
@@ -164,10 +165,14 @@
                     (in "agent crashed" lower10)
                     (in "session terminated" lower10)
                     (in "authentication failed" lower10)))
-  (setv api-limit (or (in "rate limit exceeded" lower30)
-                      (in "rate limit reached" lower30)
-                      (in "quota exceeded" lower30)
-                      (in "insufficient quota" lower30)))
+  ;; api-limit だけは oracle 再現でなく実物 markers.hy へ委譲する
+  ;; (ACP ADR 0049 R9 改訂 2026-08-07): 語彙が逐語列挙から族照合へ
+  ;; 進化したため、fake 側の語彙再現は実物との版ずれの温床 — 実物表に
+  ;; 欠落があってもテストだけ green になる盲点(2026-08-06 の 22 件
+  ;; run_failed 落ちと同型)を作る。marker→検出は impl 所有
+  ;; (ADR-DOE-AGENTS-004)であり、fake であるべきは substrate であって
+  ;; marker 物理ではない。
+  (setv api-limit (has-api-limit-marker output))
   (setv waiting (or (in "Type your message" output)
                     (in "tell Claude what to do differently" output)))
   (setv idle (or (.startswith output "› ")
@@ -584,6 +589,29 @@
   ;; rate_limited/retryable=true。
   (setv world (FakeWorld))
   (setv frame (+ F-API-LIMIT "\n› "))
+  (seed world (make-row world
+                        :result-solicitations-used 2
+                        :output-snippet (tail-chars frame 500))
+        :frame frame)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "failed"))
+  (assert (is-not row.api-limit-observed-at None))
+  (assert (= row.terminal-cause.category "rate_limited"))
+  (assert (= row.terminal-cause.retryable True)))
+
+
+(deftest test-solicitation-exhaustion-live-fable-wording-rate-limited
+  ;; ACP ADR 0049 R9 改訂(2026-08-06 実 incident の直接形): 実物告知
+  ;; 「You've reached your Fable 5 limit. /model to switch models.」は
+  ;; 旧逐語 16 語のどれにも部分一致せず、22 件(7/13〜8/6、8/6 単日 16 件)が
+  ;; latch を立てられないまま run_failed/retryable=false で捨てられた。
+  ;; 族照合後: 実物 marker(classify-frame は api-limit を markers.hy へ
+  ;; 委譲)が同 cycle で latch を立て、budget 超過終端が
+  ;; rate_limited/retryable=true へ蒸留される — 表 1 か所の修理で下流の
+  ;; 蒸留分岐が同時に正しくなることの統合検証。
+  (setv world (FakeWorld))
+  (setv frame "You've reached your Fable 5 limit. /model to switch models.\n› ")
   (seed world (make-row world
                         :result-solicitations-used 2
                         :output-snippet (tail-chars frame 500))

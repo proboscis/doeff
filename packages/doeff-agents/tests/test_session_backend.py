@@ -1079,7 +1079,9 @@ def test_unsubmitted_paste_detector_catches_attachment_chip_below_prompt() -> No
     assert _output_has_unsubmitted_paste_input(wedged)
     assert _output_has_unsubmitted_paste_input("❯\n  [Pasted text #1 +12 lines]\n")
     # history above the last prompt line stays out of scope
-    historical = "❯ [Image #3]\n⏺ done\n❯ \n"
+    # (U+00A0 after ❯ is deliberate: claude TUI separates the prompt glyph
+    # with NO-BREAK SPACE — see markers.hy has-idle-prompt)
+    historical = "❯ [Image #3]\n⏺ done\n❯ \n"  # noqa: RUF001
     assert not _output_has_unsubmitted_paste_input(historical)
 
 
