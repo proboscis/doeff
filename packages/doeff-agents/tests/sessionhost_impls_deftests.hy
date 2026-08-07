@@ -491,6 +491,48 @@
     (assert obs.has-api-limit-marker f"expected api-limit marker: {frame !r}")))
 
 
+(deftest test-api-limit-marker-possessive-family-bounded-match
+  ;; ACP ADR 0049 R9 改訂(2026-08-07): 所有格〜limit 間へ provider 可変語
+  ;; (AI 名・プラン名・期間名)が挟まる exhausted 告知の族。逐語列挙は
+  ;; 2026-07-20 / 07-26 / 08-06 と 3 度同型で破れた(8/6 実 incident:
+  ;; 「You've reached your Fable 5 limit. /model to switch models.」が
+  ;; 16 逐語のどれにも部分一致せず、22 件が run_failed/retryable=false で
+  ;; 捨てられた)— 語を足すのではなく、有界可変挿入(空白区切り 0〜4 語・
+  ;; 各語は英数 + 内部ピリオドのみ = 文境界を越えない)を許す族照合で
+  ;; 根治する。
+  (for [frame [;; 2026-08-06 実 incident verbatim(22 件を落とした形)
+               "You've reached your Fable 5 limit. /model to switch models."
+               ;; 2026-07-26 実 incident verbatim(monthly spend 形)も同じ族
+               "You've hit your monthly spend limit. /model to switch models."
+               ;; 2026-07-20 実測(usage limit 形)も同じ族
+               "You've reached your usage limit · resets Jul 26 at 6am"
+               "You've hit your usage limit. Upgrade to increase your limits."
+               ;; 挿入 0 語(旧 "you've hit your limit" 逐語の被覆)
+               "You've hit your limit. Upgrade to continue."
+               ;; 族の一般形: 未知の provider 語でも有界内なら陽性
+               ;;(バージョン番号の内部ピリオドも語として許す)
+               "You've reached your Opus 4.5 weekly limit. /model to switch models."]]
+    (<- obs (classify-claude frame))
+    (assert obs.has-api-limit-marker f"expected api-limit marker: {frame !r}")))
+
+
+(deftest test-api-limit-marker-family-negative-controls
+  ;; 陰性対照: 族照合は無限定の緩い照合(誤検知で健全席を上限扱い =
+  ;; 走行中の席を blocked_api に落とす)であってはならない側の壁。
+  (for [frame [;; approaching 側(まだ動ける)— 動詞 used は族外のまま
+               ;;(issue #557 の対象外規律を族照合後も維持)
+               "You've used 88% of your Fable 5 limit · resets Jul 26 at 6am"
+               ;; 所有格と limit が文境界を越えて共起しても族外
+               ;;(挿入語の内部ピリオド許容は文末ピリオドを含まない)
+               "You've reached your destination. Set a new rate limit in settings."
+               ;; 上限と無関係の通常出力
+               "⏺ done reading the file\n\n❯"
+               "All tests passed. 26 passed in 27.94s"]]
+    (<- obs (classify-claude frame))
+    (assert (not obs.has-api-limit-marker)
+            f"unexpected api-limit marker: {frame !r}")))
+
+
 (deftest test-classify-codex-update-dialog-down-steps
   (setv frame-sel1 (+ "✨ Update available!\n"
                       "› 1. Update now (runs npm install)\n"
