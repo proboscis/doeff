@@ -152,6 +152,26 @@ rules:
       exclude:
         - "**/sessionhost/effects.hy"
 
+  - id: doeff-agents-api-limit-possessive-verbatim-forbidden
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      The possessive api-limit wording family (you've hit/reached your …
+      limit) is matched by the bounded family regex
+      API-LIMIT-EXHAUSTED-FAMILY-RE in sessionhost/impls/markers.hy —
+      ACP ADR 0049 R9 (revised 2026-08-07). Adding a verbatim possessive
+      substring re-creates the enumeration that broke identically three
+      times (2026-07-20 / 07-26 / 08-06 — the last one silently discarded
+      22 limit-death terminals as run_failed/retryable=false). Extend the
+      bounded family regex (and its tests) instead of adding words.
+    patterns:
+      - pattern-regex: 'in "you[''’]ve (hit|reached) your'
+    paths:
+      include:
+        - "**/doeff_agents/sessionhost/impls/markers.hy"
+        - "**/sessionhost/impls/api_limit_possessive_verbatim_forbidden.hy"
+
   - id: doeff-agents-prompt-paste-must-be-ready-gated
     languages:
       - python
