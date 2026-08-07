@@ -21,8 +21,30 @@
 
 (require doeff-hy.macros [deff])
 
+(import re)
+
 (import doeff_agents.sessionhost.effects [PaneObservation])
 (import doeff_agents.sessionhost.policy [tail-lower])
+
+
+;; ACP ADR 0049 R9 改訂(2026-08-07。2026-08-06 実 incident、Fable 週次枠):
+;; 所有格〜limit 間へ provider 可変語(AI 名・プラン名・期間名)が挟まる
+;; exhausted 告知の族。実物告知は「You've reached your Fable 5 limit.
+;; /model to switch models.」のように可変語が差し込まれ、逐語列挙は
+;; 2026-07-20(usage limit 形)/ 07-26(monthly spend 形)/ 08-06(Fable 5
+;; 形・22 件 run_failed 落ち)と 3 度同型で破れた — 語の追加ではなく、
+;; 有界可変挿入だけを許す族照合で根治する。有界の設計:
+;; - 動詞は exhausted 側(hit|reached)のみ — approaching 側(used NN% of
+;;   your … limit)は対象外のまま(まだ動ける pane を blocked_api にしない)
+;; - 挿入は空白区切り 0〜4 語。各語は英数開始・英数と +&- の連なり・
+;;   内部ピリオド(バージョン番号 4.5 等)のみ許す = 文末ピリオドで族が
+;;   切れ、文境界を越えた誤検知(無限定の緩い照合)を構造的に禁じる
+;; 対象は tail-lower 済みテキスト(小文字)。apostrophe は ASCII と U+2019
+;; の両実物形を許す。
+(setv API-LIMIT-EXHAUSTED-FAMILY-RE
+  (re.compile
+    (+ "you['’]ve (?:hit|reached) your"
+       "(?: [a-z0-9][a-z0-9+&-]*(?:\\.[a-z0-9]+)*){0,4} limit\\b")))
 
 
 ;; ---------------------------------------------------------------------------
@@ -42,7 +64,8 @@
 (deff has-api-limit-marker [output]
   {:pre [(: output str)] :post [(: % bool)]}
   "provider rate-limit / quota marker(tail 30 行窓、oracle
-   output_has_api_limit_marker の 9 パターン + issue #557 の追補)。"
+   output_has_api_limit_marker の 9 パターン + issue #557 の追補 +
+   ACP ADR 0049 R9 改訂の所有格族照合)。"
   (setv text (tail-lower output 30))
   (bool (or (in "cost limit reached" text)
             (in "rate limit exceeded" text)
@@ -50,7 +73,6 @@
             (in "quota exceeded" text)
             (in "insufficient quota" text)
             (in "resource exhausted" text)
-            (in "you've hit your limit" text)
             (in "/rate-limit-options" text)
             (in "stop and wait for limit to reset" text)
             ;; issue #557 二次補強: 現行 claude TUI の exhausted 側文言
@@ -58,15 +80,17 @@
             ;; approaching 側(`used NN% of your … limit · resets`)は対象外 —
             ;; まだ動ける pane を blocked_api にしない。
             (in "usage limit reached" text)
-            (in "you've reached your usage limit" text)
-            (in "you've hit your usage limit" text)
             (in "limit reached · resets" text)
             (in "limit reached ∙ resets" text)
-            ;; ACP ADR 0049 R9(2026-07-26 実 incident、Fable 月次枠 0%):
-            ;; 実物文言は "you've hit your limit" に部分一致しない
-            ;; ("monthly spend" が挟まる)。credits 枯渇も同系の実物文言で
-            ;; exhausted 側 = blocked_api が正。
-            (in "you've hit your monthly spend limit" text)
+            ;; ACP ADR 0049 R9 改訂(2026-08-07): 所有格族(you've
+            ;; hit/reached your … limit)は逐語でなく族照合 — 旧逐語 4 語
+            ;; (you've hit your limit / you've reached your usage limit /
+            ;; you've hit your usage limit / you've hit your monthly spend
+            ;; limit)を包含し、provider 可変語の未知形(Fable 5 等)にも
+            ;; 有界内で追従する。
+            (is-not (.search API-LIMIT-EXHAUSTED-FAMILY-RE text) None)
+            ;; credits 枯渇(2026-07-26 実 incident)は所有格族の外の実物
+            ;; 文言 — exhausted 側 = blocked_api が正。
             (in "out of usage credits" text))))
 
 (deff has-waiting-marker [output]
