@@ -56,6 +56,14 @@ exclude-dependencies = [
 
 [tool.uv.workspace]
 members = ["packages/*"]
+# doeff-agentd is a retired Rust crate (efe41e35, #575): git no longer tracks it,
+# but checkouts that ever built it keep untracked残骸 (Cargo.lock / target/) in
+# packages/doeff-agentd/, which the members glob then picks up as a workspace
+# member with no pyproject.toml — breaking resolution for every consumer that
+# references this repo as an editable/path dependency (observed fleet-wide
+# 2026-08-07: dotfiles agentcli "Workspace member doeff-agentd is missing a
+# pyproject.toml"). Excluding it here fixes all such checkouts at once.
+exclude = ["packages/doeff-agentd"]
 
 [tool.uv.sources]
 doeff-indexer = { workspace = true }
