@@ -212,3 +212,9 @@ uv run pytest        # run full test suite
 ## License
 
 MIT License. See `LICENSE`.
+
+## main への着地(2026-08-09〜)
+
+公開(origin main への push)は land queue の窓が行う — 変更は branch を push して `ai land request` で列へ(直 push は guard が block)。
+
+upstream 規約(検証済みでしか main を進めない)は本日から窓の battery が機械強制する。
