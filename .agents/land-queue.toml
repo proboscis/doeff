@@ -1,0 +1,37 @@
+# land-queue 宣言(dotfiles ADR-DOTFILES-017 の機構、repo-local 方策)。
+# 敷設 2026-08-09(land-queue-all-repos-rollout 便 — operator 指示「全部の repo で
+# 利用したい」+ operator 決裁 sha d54350a8)。mixed repo(proboscis/doeff* は
+# company-mixed-repos.txt 登載)— 編集は任意席・著述は個人系。
+#
+# upstream repo 規約の機械化(発注 (4)): 「検証済みでしか main を進めない
+# (test locally → confirm pass → then merge/push)」— 従来は運用規律だったものを、
+# この宣言で『窓の battery green だけが main を進め、公開する』機械強制に置換する。
+# battery 実測 2026-08-09: uv run pytest -m "not e2e" = 1294 passed / 78 skipped /
+# 8 deselected(11m45s)。e2e marker は実 API キー依存につき gate 外(席実測の
+# 分担)。make sync 前置は AGENTS.md 明文(uv sync は Rust VM を確実に再 build
+# しない — stale binary の phantom failure 防止)。
+# 敷設時に main の実赤 1 本(enforcement-ledger semgrep_rules 246≠247 の記帳漏れ)
+# を bootstrap 便で是正済み(テスト自身の処方 = 増加は台帳を上げる)。
+
+[land-queue]
+enabled = true
+base = "main"
+
+[gate]
+full = "make sync && PYTHONUNBUFFERED=1 uv run pytest -q -m 'not e2e'"
+timeout_s = 2700
+
+[gate.tiers]
+"docs/adr/" = "make sync && PYTHONUNBUFFERED=1 uv run pytest -q docs/adr"
+"docs/" = "true"
+"notes/" = "true"
+"README.md" = "true"
+"CHANGELOG.md" = "true"
+".agents/land-queue.toml" = "true"
+
+[policy]
+run_executors = ["landrun-doeff", "landrun-rollout", "machine"]
+auto_run = true
+urgent_slots = 1
+push = "origin"
+base_move_follow_retries = 2
