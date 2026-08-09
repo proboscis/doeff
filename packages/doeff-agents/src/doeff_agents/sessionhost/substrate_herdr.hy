@@ -9,17 +9,19 @@
 ;;;
 ;;; effect 語彙は Tmux* のまま(改名は成功後の語彙中立化 ADR — 別チェンジ)。
 ;;; 物理の出典は Phase 0 プローブ実測(herdr 0.7.1 / protocol 14、2026-07-07、
-;;; conformance/herdr-physics.md に記録。agent.start の改形と名前登録経路は
-;;; herdr 0.7.5 / protocol 17 で 2026-07-29 再実測 — 同文書の追補):
+;;; conformance/herdr-physics.md に記録。agent.start の改形は herdr 0.7.5 /
+;;; protocol 17 で 2026-07-29 再実測、session 同一性アンカーは 2026-08-01 /
+;;; 08-09 再実測 — 同文書の追補):
 ;;;   - transport: newline-JSON over unix socket(~/.config/herdr/herdr.sock)。
 ;;;     request line 全体に ~1MiB 上限(実測境界 1,048,336B OK / 1,049,344B 拒否、
 ;;;     超過は server 側 "api request line is too large" + BrokenPipe)。
-;;;   - 名前の一意性は herdr がネイティブ強制(agent_name_taken)= tmux
-;;;     new-session の duplicate session 拒否と同 parity。protocol 17
-;;;     (herdr 0.7.5、再実測 2026-07-29 — herdr-physics.md 追補)で
-;;;     agent.start は {name kind pane_id} の「既存 pane への管理対象 agent
-;;;     起動 + 検出待ち」に改形されたため、shell pane の名前登録は
-;;;     pane.report_agent → agent.rename 経由(herdr-new-session-io 参照)。
+;;;   - session 同一性のアンカーは workspace label(doeff が workspace.create で
+;;;     所有し、実 agent 起動後も残存 — 実測 2026-08-01/08-09)。herdr の
+;;;     agent 名簿は同一性を担えない: pane 内で実 agent が起動すると ~2 秒で
+;;;     herdr の実 agent 検出が名札を上書きし、agent.get {target: session 名}
+;;;     が agent_not_found になる(実測 2026-08-01 n=3 決定的)。重複 session
+;;;     名の拒否は herdr が label 重複を拒否しない(実測 2026-08-09)ため
+;;;     doeff 側の create-then-verify が所有する(herdr-new-session-io 参照)。
 ;;;   - pane.read の本文は result.read.text。source 名は underscore
 ;;;     (recent_unwrapped — hyphen は socket で拒否)。
 ;;;   - recent / recent_unwrapped = スクロールバック + 現在画面の tail-N。
@@ -86,15 +88,12 @@
        "Home" "ctrl+a"
        "End" "ctrl+e"})
 
-;; protocol 17 の名前登録(pane.report_agent → agent.rename)で使う authority
-;; source と placeholder kind(実測 2026-07-29)。source は報告主体の識別子で、
-;; pane.clear_agent_authority が同じ source を要求する。agent は schema 上
-;; 自由文字列(PaneReportAgentParams.agent は type: string — AgentStartParams
-;; の kind 語彙とは別 field で、任意文字列受理を実測)。rename 直後に authority
-;; を clear すると kind 表示ごと消え、実 agent 起動後は herdr の画面検出が
-;; 正しい kind を付け直すため、shell pane 生成時点の実体に正直な値を使う。
-(setv HERDR-AGENT-AUTHORITY-SOURCE "doeff-sessionhost")
-(setv HERDR-AGENT-PLACEHOLDER-KIND "doeff-shell")
+;; 旧実装(PR #569 まで)が名前登録(pane.report_agent → agent.rename)で
+;; 使った authority source / placeholder kind は撤去済み — agent 名簿への
+;; 登録は行わない。実 agent 起動で herdr の実 agent 検出が ~2 秒で名札を
+;; 上書きするため(実測 2026-08-01 n=3)、agent 名簿は session 同一性を
+;; 担えず、登録は「実 agent 起動までしか持たない名札」という誤解を生む
+;; 死荷重になる。同一性は workspace label(下記 herdr-workspace-id-io)。
 
 ;; pane.read format=ansi の応答から剥がすエスケープ列: CSI(SGR 含む)/
 ;; OSC(BEL・ST 終端)/その他の ESC シーケンス(ECMA-48: ESC + intermediates
@@ -172,28 +171,72 @@
 ;; herdr 生 IO(oracle tmux_* との対応は各 deff の docstring)
 ;; ---------------------------------------------------------------------------
 
+(deff herdr-workspace-order-key [workspace-id]
+  {:pre [(: workspace-id str)]
+   :post [(: % tuple)]}
+  "workspace_id の創出順比較鍵(shortlex: 桁数優先、同桁は ASCII)。
+   herdr の workspace_id は base62 風カウンタで創出順に単調増加する
+   (実測 2026-08-09: 連続 create が w1VS → w1VT → w1VV。番号 1 の古い
+   workspace は w3R と桁が短い)。素の文字列比較は桁境界で創出順を逆転
+   させる(\"w1VS\" < \"w3R\")ため、重複 gate の勝敗判定には使えない。"
+  #((len workspace-id) workspace-id))
+
+(deff herdr-label-workspace-ids-io [socket-path label]
+  {:pre [(: socket-path str) (: label str)]
+   :post [(: % list)]}
+  "label が一致する workspace_id 列(創出順 = shortlex 順)。session 同一性
+   アンカーの解決面: label は doeff が workspace.create で所有し、実 agent
+   起動後も残存する(実測 2026-08-01/08-09 — herdr の agent 名簿と違い
+   実 agent 検出に上書きされない)。"
+  (setv listing (herdr-call socket-path "workspace.list" {}))
+  (sorted (lfor ws (get listing "workspaces")
+                :if (= (.get ws "label") label)
+                (get ws "workspace_id"))
+          :key herdr-workspace-order-key))
+
+(deff herdr-workspace-id-io [socket-path session-name]
+  {:pre [(: socket-path str) (: session-name str)]
+   :post [(: % (| str None))]}
+  "session 名 → workspace_id の解決(不在は None)。TmuxHasSession の bool・
+   TmuxSessionPaneIds の対象・TmuxKillSession の対象が共有する。複数一致
+   (重複 gate の敗者が自分を閉じる前の過渡、または doeff 外の同名 label)は
+   創出順最小 = 重複 gate の勝者に解決する(gate と同じ順序鍵 — 判定と
+   解決が別々の勝者を選ばないこと)。"
+  (setv ids (herdr-label-workspace-ids-io socket-path session-name))
+  (if ids (get ids 0) None))
+
+(deff herdr-session-pane-ids-io [socket-path session-name]
+  {:pre [(: socket-path str) (: session-name str)]
+   :post [(: % list)]}
+  "session 名 → 所有 pane 集合(ADR-DOE-AGENTS-010 R4 の帰属観測)。
+   session = workspace の対応なので pane.list {workspace_id} がそのまま
+   所有 pane 集合になる(不在は空 list — tmux 側の session 不在 parity)。"
+  (setv ws-id (herdr-workspace-id-io socket-path session-name))
+  (when (is ws-id None)
+    (return []))
+  (setv listing (herdr-call socket-path "pane.list" {"workspace_id" ws-id}))
+  (lfor pane (get listing "panes") (get pane "pane_id")))
+
 (deff herdr-new-session-io [socket-path session-name work-dir env]
   {:pre [(: socket-path str) (: session-name str) (: work-dir str) (: env dict)]
    :post [(: % str)]}
-  "TmuxNewSession の実体(herdr 0.7.5 / protocol 17、再実測 2026-07-29 —
-   herdr-physics.md 追補): workspace.create が cwd / env を直接受けるため、
-   専用 workspace の root pane がそのまま session pane になる(常に独立
-   フル幅 grid = tmux new-session の幾何学 parity。旧 protocol 14 の
-   root pane close ダンスは不要)。shell は herdr の既定 shell 起動に委ねる
-   (tmux new-session の default-shell parity)。
-   protocol 14 の agent.start {name cwd argv env workspace_id} は protocol 17
-   で {name kind pane_id} —「既存 shell pane への管理対象 agent 起動 +
-   検出待ち」— に改形され、shell pane の名前付き生成には使えない(旧 payload
-   に kind を足しても missing field pane_id、実測)。名前(TmuxHasSession /
-   TmuxKillSession が agent.get で解決)は pane.report_agent(外部 authority
-   で agent エントリを作る)→ agent.rename(名簿登録 — 重複名は
-   agent_name_taken をネイティブ拒否 = tmux duplicate 拒否 parity)→
-   pane.clear_agent_authority(state authority を画面検出へ返す — 名前は
-   terminal に残る、実測)で登録する。
+  "TmuxNewSession の実体(herdr 0.7.5 / protocol 17): workspace.create が
+   label / cwd / env を直接受けるため、専用 workspace の root pane が
+   そのまま session pane になる(常に独立フル幅 grid = tmux new-session の
+   幾何学 parity)。shell は herdr の既定 shell 起動に委ねる(tmux
+   new-session の default-shell parity)。
+
+   session 同一性のアンカー = workspace label(issue
+   substrate-herdr-session-identity-anchor-r2-607f0c)。旧実装(PR #569)の
+   agent 名簿登録(pane.report_agent → agent.rename)は行わない — pane 内で
+   実 agent が起動すると ~2 秒で herdr の実 agent 検出が名札を上書きし、
+   agent.get で解決不能になる(実測 2026-08-01 n=3 決定的)。label は
+   実 agent 起動後も残存し(同実測)、agent 名の invalid_agent_name 制約
+   (小文字開始・[a-z0-9_-]・32 文字以内)も受けない(実測 2026-08-09:
+   60 文字・大文字・記号入り label を受理)ので session 名を無変換で持てる。
+
    禁止 env reject と prompt 抑制 env は tmux 側と同じ substrate 所有。
-   登録途中で失敗した場合は作った workspace を閉じてから元のエラーを
-   再送出する。workspace は最後の pane close で自動消滅する(protocol 17
-   でも実測)ので kill-session 側の追加 cleanup は不要。"
+   workspace は最後の pane close で自動消滅する(protocol 17 でも実測)。"
   (ensure-no-forbidden-agent-env env)
   (setv effective-env (dict env))
   (for [[key value] SHELL-PROMPT-SUPPRESSING-ENV]
@@ -206,37 +249,29 @@
                                "focus" False}))
   (setv ws-id (get (get ws-result "workspace") "workspace_id"))
   (setv pane-id (get (get ws-result "root_pane") "pane_id"))
-  (try
-    (herdr-call socket-path "pane.report_agent"
-                {"pane_id" pane-id
-                 "source" HERDR-AGENT-AUTHORITY-SOURCE
-                 "agent" HERDR-AGENT-PLACEHOLDER-KIND
-                 "state" "unknown"})
-    (herdr-call socket-path "agent.rename"
-                {"target" pane-id "name" session-name})
-    (herdr-call socket-path "pane.clear_agent_authority"
-                {"pane_id" pane-id
-                 "source" HERDR-AGENT-AUTHORITY-SOURCE})
-    (except [Exception]
-      (try
-        (herdr-call socket-path "workspace.close" {"workspace_id" ws-id})
-        (except [Exception]
-          None))  ; workspace 掃除は best-effort — 元のエラーを優先して再送出
-      (raise)))
+  ;; 重複 session 名の拒否(tmux duplicate 拒否 parity)— doeff 側で所有する。
+  ;; herdr は label 重複をネイティブ拒否しない(実測 2026-08-09: 同 label の
+  ;; workspace.create は 2 つ目も成功)。判定方式 = create-then-verify:
+  ;;   - check-then-create は「確認と作成の間」に TOCTOU 窓が残る(2 呼び手が
+  ;;     同時に不在を確認 → 両方作成 → 二重 session を誰も検出しない)。
+  ;;   - create-then-verify は判定材料が「自分の作成より後の名簿」なので窓が
+  ;;     閉じる: herdr daemon は create を直列化し、workspace は自発的に
+  ;;     消えないため、後から作った側の verify には先に作った側が必ず載る。
+  ;;   - 勝敗は workspace_id の shortlex 順(= 創出順、herdr-workspace-order-key
+  ;;     参照)で「最小 id だけが勝つ」: 同時競合では両者が同じ名簿から同じ
+  ;;     勝者に合意し、敗者は自分の workspace を閉じてから raise する。
+  ;;     先行 session が既にある通常の重複では後発が必ず敗者になる。
+  ;;     どの経路でも label 保持者はちょうど 1 つに収束する。
+  (setv holders (herdr-label-workspace-ids-io socket-path session-name))
+  (when (!= (get holders 0) ws-id)
+    (try
+      (herdr-call socket-path "workspace.close" {"workspace_id" ws-id})
+      (except [Exception]
+        None))  ; 敗者の掃除は best-effort — duplicate エラーの送出を優先する
+    (raise (RuntimeError
+             (+ f"herdr new-session failed: duplicate session: {session-name} "
+                f"(label held by workspace {(get holders 0)})"))))
   pane-id)
-
-(deff herdr-agent-pane-id-io [socket-path session-name]
-  {:pre [(: socket-path str) (: session-name str)]
-   :post [(: % (| str None))]}
-  "名前 → pane_id の解決(agent.get {target})。不在(agent_not_found)は
-   None — TmuxHasSession の bool と TmuxKillSession の対象解決が共有する。"
-  (try
-    (setv result (herdr-call socket-path "agent.get" {"target" session-name}))
-    (except [e HerdrApiError]
-      (when (= e.code "agent_not_found")
-        (return None))
-      (raise)))
-  (get (get result "agent") "pane_id"))
 
 (deff herdr-capture-io [socket-path pane-id lines]
   {:pre [(: socket-path str) (: pane-id str) (: lines int)]
@@ -354,13 +389,15 @@
 (deff herdr-kill-session-io [socket-path session-name]
   {:pre [(: socket-path str) (: session-name str)]
    :post [(: % "None")]}
-  "TmuxKillSession の実体: 名前 → pane_id 解決の上 pane.close。不在は raise
-   (tmux kill-session の非 0 exit と同 parity — cancel / cleanup program は
-   has-session で guard してから呼ぶ)。"
-  (setv pane-id (herdr-agent-pane-id-io socket-path session-name))
-  (when (is pane-id None)
+  "TmuxKillSession の実体: 名前 → workspace 解決の上 workspace.close(全 pane
+   ごと落とす = tmux kill-session の全 window/pane 破棄 parity。旧実装の
+   単一 pane.close と違い、S19c 型の sibling pane が残る workspace も
+   取り残さない)。不在は raise(tmux kill-session の非 0 exit と同 parity —
+   cancel / cleanup program は has-session で guard してから呼ぶ)。"
+  (setv ws-id (herdr-workspace-id-io socket-path session-name))
+  (when (is ws-id None)
     (raise (RuntimeError f"herdr kill-session failed: {session-name}")))
-  (herdr-call socket-path "pane.close" {"pane_id" pane-id})
+  (herdr-call socket-path "workspace.close" {"workspace_id" ws-id})
   None)
 
 
@@ -373,14 +410,10 @@
     (resume (herdr-new-session-io socket-path session-name work-dir env)))
 
   (TmuxHasSession [session-name]
-    (resume (is-not (herdr-agent-pane-id-io socket-path session-name) None)))
+    (resume (is-not (herdr-workspace-id-io socket-path session-name) None)))
 
   (TmuxSessionPaneIds [session-name]
-    ;; 宛先 pane の帰属観測(ADR-DOE-AGENTS-010 R4)。herdr は agent = pane の
-    ;; 2 層なので、agent 名 → 現 pane の解決がそのまま所有 pane 集合になる
-    ;; (不在は空 list — tmux 側の session 不在 parity)。
-    (setv pane-id (herdr-agent-pane-id-io socket-path session-name))
-    (resume (if (is pane-id None) [] [pane-id])))
+    (resume (herdr-session-pane-ids-io socket-path session-name)))
 
   (TmuxPaneCurrentCommand [pane-id]
     (resume (herdr-pane-current-command-io socket-path pane-id)))
