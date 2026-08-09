@@ -173,6 +173,7 @@ rules:
         - "**/sessionhost/impls/api_limit_possessive_verbatim_forbidden.hy"
 
   - id: doeff-agents-provider-failure-verbatim-forbidden
+  - id: doeff-agents-herdr-session-identity-not-agent-name
     languages:
       - generic
     severity: ERROR
@@ -194,6 +195,24 @@ rules:
       include:
         - "**/doeff_agents/sessionhost/impls/markers.hy"
         - "**/sessionhost/impls/provider_failure_verbatim_forbidden.hy"
+      herdr session identity must resolve through the workspace-label anchor
+      (workspace.list label match -> workspace_id -> pane.list /
+      workspace.close), never through the herdr agent-name registry
+      ("agent.get"): herdr's real-agent detection overwrites the agent name
+      plate within ~2s of a real agent starting in the pane (probe
+      2026-08-01, n=3 deterministic), so name-based liveness/capture/kill
+      silently breaks for every session that actually runs an agent — the
+      exact regression behind issue #556 /
+      substrate-herdr-session-identity-anchor-r2-607f0c. Use
+      herdr-workspace-id-io (substrate_herdr.hy) or the label-based
+      out-of-band helpers (conformance/harness.py) instead.
+    patterns:
+      - pattern-regex: '"agent\.get"'
+    paths:
+      include:
+        - "**/doeff_agents/sessionhost/**"
+        - "**/doeff-agents/conformance/**"
+        - "**/sessionhost/herdr_agent_name_identity_forbidden.hy"
 
   - id: doeff-agents-prompt-paste-must-be-ready-gated
     languages:

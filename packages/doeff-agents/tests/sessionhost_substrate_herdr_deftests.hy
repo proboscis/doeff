@@ -19,12 +19,14 @@
   tmux-new-session
   tmux-has-session
   tmux-pane-current-command
+  tmux-session-pane-ids
   tmux-capture
   tmux-send-keys
   tmux-kill-session])
 (import doeff_agents.sessionhost.substrate_herdr [
   DEFAULT-HERDR-SOCKET
   REQUEST-LINE-BYTE-LIMIT
+  HerdrApiError
   herdr-substrate
   herdr-call
   herdr-key-name
@@ -52,6 +54,49 @@
       (.close sock))))
 
 (setv HERDR-AVAILABLE (herdr-server-available?))
+
+
+(deff close-workspaces-with-label [label]
+  {:pre [(: label str)]
+   :post [(: % "None")]}
+  "テスト teardown 専用の帯域外掃除: label が一致する workspace を全部閉じる。
+   kill-session 経路が assert 対象そのものである(壊れた実装だと失敗する)
+   テストでも、live herdr server に workspace を残さないための test-owned
+   経路。best-effort — 掃除の失敗でテスト本体の失敗理由を上書きしない。"
+  (try
+    (setv listing (herdr-call DEFAULT-HERDR-SOCKET "workspace.list" {}))
+    (except [Exception]
+      (return None)))  ; server 不達なら掃除対象も無い
+  (for [ws (get listing "workspaces")]
+    (when (= (.get ws "label") label)
+      (try
+        (herdr-call DEFAULT-HERDR-SOCKET "workspace.close"
+                    {"workspace_id" (get ws "workspace_id")})
+        (except [Exception]
+          None))))  ; best-effort teardown — 本体の失敗理由を優先
+  None)
+
+
+(deff simulate-agent-name-plate-loss [pane-id]
+  {:pre [(: pane-id str)]
+   :post [(: % "None")]}
+  "実 agent 起動時に herdr の実 agent 検出が起こす名札上書きを、検出と同じ
+   API 列(pane.report_agent で authority を取り agent.rename で名札を付替)
+   で模擬する。実測 2026-08-01(probe n=3 決定的): pane 内で実 agent を
+   起動すると 2 秒以内にこの状態遷移が起き、agent.get {target: session 名}
+   は agent_not_found になる。API 列の同型は 2026-08-09 probe で確認
+   (/tmp/probe-rename-607f0c.log — herdr-physics.md 追補に記録)。
+   rename 先は herdr の agent 名制約(小文字開始・[a-z0-9_-]・32 文字以内、
+   実測 2026-08-09 invalid_agent_name)に収める。"
+  (herdr-call DEFAULT-HERDR-SOCKET "pane.report_agent"
+              {"pane_id" pane-id
+               "source" "doeff-deftest-sim"
+               "agent" "claude"
+               "state" "working"})
+  (herdr-call DEFAULT-HERDR-SOCKET "agent.rename"
+              {"target" pane-id
+               "name" f"det-claude-{(os.getpid)}"})
+  None)
 
 
 ;; ---------------------------------------------------------------------------
@@ -181,25 +226,51 @@
 (deftest test-herdr-duplicate-session-rejected
   {:skip-if (not HERDR-AVAILABLE)
    :skip-reason "herdr server not running"}
-  ;; tmux new-session の duplicate 拒否 parity — herdr は agent_name_taken を
-  ;; ネイティブに返す(Phase 0 実測)。
+  ;; tmux new-session の duplicate 拒否 parity。herdr は workspace label の
+  ;; 重複をネイティブに拒否しない(実測 2026-08-09: 同 label の
+  ;; workspace.create は 2 つ目も成功する)ため、重複判定は doeff 側
+  ;; (substrate_herdr の create-then-verify)が所有する。旧実装が依存した
+  ;; agent.rename の agent_name_taken は重複検出として成立しない — 既存
+  ;; session の名札は実 agent 起動で herdr 検出に上書きされ(実測
+  ;; 2026-08-01 n=3)、名札消失後の同名 create が素通りする。
   (setv d (tempfile.mkdtemp))
   (setv session-name f"doeff-herdr-dup-{(os.getpid)}")
   (try
-    (<- _ ((herdr-substrate DEFAULT-HERDR-SOCKET)
-           (tmux-new-session session-name d {})))
+    (<- pane ((herdr-substrate DEFAULT-HERDR-SOCKET)
+              (tmux-new-session session-name d {})))
+    ;; --- (1) 名札が健在な普通の重複: 拒否 + 敗者 workspace の掃除。
     (setv raised None)
     (try
       (<- _ ((herdr-substrate DEFAULT-HERDR-SOCKET)
              (tmux-new-session session-name d {})))
       (except [e RuntimeError] (setv raised e)))
     (assert (is-not raised None))
-    (assert (in "agent_name_taken" (str raised)))
+    (assert (in "duplicate session" (str raised)))
+    ;; --- (2) 名札消失後の重複(実 agent 起動後に相当する最悪ケース):
+    ;;     agent 名簿にはもう session 名が無い — label アンカーの判定だけが
+    ;;     拒否できる(旧実装はここで素通りして二重 session を作った)。
+    (simulate-agent-name-plate-loss pane)
+    (setv raised2 None)
+    (try
+      (<- _ ((herdr-substrate DEFAULT-HERDR-SOCKET)
+             (tmux-new-session session-name d {})))
+      (except [e RuntimeError] (setv raised2 e)))
+    (assert (is-not raised2 None))
+    (assert (in "duplicate session" (str raised2)))
+    ;; --- 敗者は自分の workspace を掃除してから raise する(リーク禁止):
+    ;;     label を持つ workspace は勝者の 1 つだけ残る。
+    (setv listing (herdr-call DEFAULT-HERDR-SOCKET "workspace.list" {}))
+    (setv holders (lfor ws (get listing "workspaces")
+                        :if (= (.get ws "label") session-name)
+                        (get ws "workspace_id")))
+    (assert (= (len holders) 1)
+            f"duplicate loser must clean its workspace, label holders: {holders}")
+    ;; --- 既存 session は重複拒否の巻き添えにならず生きている。
+    (<- alive ((herdr-substrate DEFAULT-HERDR-SOCKET)
+               (tmux-has-session session-name)))
+    (assert alive)
     (finally
-      (try
-        (<- _ ((herdr-substrate DEFAULT-HERDR-SOCKET)
-               (tmux-kill-session session-name)))
-        (except [Exception]))
+      (close-workspaces-with-label session-name)
       (shutil.rmtree d :ignore-errors True))))
 
 
@@ -280,6 +351,81 @@
         (<- _ ((herdr-substrate DEFAULT-HERDR-SOCKET)
                (tmux-kill-session session-name)))
         (except [Exception]))
+      (shutil.rmtree d :ignore-errors True))))
+
+
+(deftest test-herdr-workspace-order-key-shortlex
+  ;; 重複判定 tie-break の順序鍵の pin: herdr の workspace_id は base62 風
+  ;; カウンタで創出順に単調増加する(実測 2026-08-09: 連続 create が
+  ;; w1VS → w1VT → w1VV。古い workspace ほど桁が短い — 番号 1 の workspace が
+  ;; w3R)。素の文字列比較では "w1VS" < "w3R" と創出順が逆転するため、
+  ;; shortlex(桁数優先、同桁は ASCII)で比較する義務を負う。
+  (import doeff_agents.sessionhost.substrate_herdr [herdr-workspace-order-key])
+  (assert (< (herdr-workspace-order-key "w3R") (herdr-workspace-order-key "w1VS")))
+  (assert (< (herdr-workspace-order-key "w1VS") (herdr-workspace-order-key "w1VT")))
+  (assert (< (herdr-workspace-order-key "w1VT") (herdr-workspace-order-key "w1VV")))
+  (assert (= (herdr-workspace-order-key "w1VS") (herdr-workspace-order-key "w1VS"))))
+
+
+(deftest test-herdr-identity-survives-agent-name-loss
+  {:skip-if (not HERDR-AVAILABLE)
+   :skip-reason "herdr server not running"}
+  ;; 本 issue(substrate-herdr-session-identity-anchor-r2-607f0c)の回帰ガード:
+  ;; 実測 2026-08-01(probe n=3 決定的)で、pane 内で実 agent を起動すると
+  ;; 2 秒以内に herdr の実 agent 検出が agent 名札を上書きし、
+  ;; agent.get {target: session 名} が解決不能になる。旧実装(PR #569 まで)は
+  ;; session 同一性を agent 名で解決していたため、実 agent 起動後に生死確認・
+  ;; 帰属観測・kill が全滅した — 当時のテストは agent 起動前までしか見ておらず
+  ;; この破れを検出しなかった(見落としの回帰 pin)。ここでは検出と同じ API 列で
+  ;; 名札消失を模擬し、模擬後も全経路(has-session / session-pane-ids /
+  ;; capture / send / kill)が workspace label アンカーで成立することを直接示す。
+  (setv d (tempfile.mkdtemp))
+  (setv session-name f"doeff-herdr-anchor-{(os.getpid)}")
+  (setv marker f"ANCHOR-DEFTEST-{(os.getpid)}")
+  (try
+    (<- pane ((herdr-substrate DEFAULT-HERDR-SOCKET)
+              (tmux-new-session session-name d {})))
+    ;; shell 起動を待ってから名札を消す(fresh pane は prompt 描画前がある)。
+    (time.sleep 1.0)
+    (simulate-agent-name-plate-loss pane)
+    ;; --- 模擬の実効の直接確認: agent 名での解決はもう成立しない。
+    ;;     (これが成立しないなら模擬が壊れており、以降の assert は無意味。)
+    (setv plate-lost False)
+    (try
+      (herdr-call DEFAULT-HERDR-SOCKET "agent.get" {"target" session-name})
+      (except [e HerdrApiError]
+        (setv plate-lost (= e.code "agent_not_found"))))
+    (assert plate-lost
+            "simulation must remove the agent name plate (agent_not_found)")
+    ;; --- 生死確認(has-session 相当)。
+    (<- alive ((herdr-substrate DEFAULT-HERDR-SOCKET)
+               (tmux-has-session session-name)))
+    (assert alive "has-session must survive agent name-plate loss")
+    ;; --- 帰属観測(ADR-DOE-AGENTS-010 R4 の宛先 pane 解決)。
+    (<- pane-ids ((herdr-substrate DEFAULT-HERDR-SOCKET)
+                  (tmux-session-pane-ids session-name)))
+    (assert (= pane-ids [pane])
+            f"session-pane-ids must resolve the pane after name loss: {pane-ids}")
+    ;; --- send + capture(pane 宛て経路も名札消失の影響を受けないこと)。
+    (<- _ ((herdr-substrate DEFAULT-HERDR-SOCKET)
+           (tmux-send-keys pane f"echo {marker}" True True)))
+    (setv found False)
+    (for [_ (range 10)]
+      (time.sleep 0.5)
+      (<- captured ((herdr-substrate DEFAULT-HERDR-SOCKET)
+                    (tmux-capture pane 50)))
+      (when (in marker captured)
+        (setv found True)
+        (break)))
+    (assert found "send/capture roundtrip must work after name loss")
+    ;; --- kill(名前 → workspace 解決)と消滅確認。
+    (<- _ ((herdr-substrate DEFAULT-HERDR-SOCKET)
+           (tmux-kill-session session-name)))
+    (<- gone ((herdr-substrate DEFAULT-HERDR-SOCKET)
+              (tmux-has-session session-name)))
+    (assert (not gone) "kill-session must terminate the session after name loss")
+    (finally
+      (close-workspaces-with-label session-name)
       (shutil.rmtree d :ignore-errors True))))
 
 
