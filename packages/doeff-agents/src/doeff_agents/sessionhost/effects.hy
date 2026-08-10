@@ -335,6 +335,33 @@
   #^ str agent-type
   #^ dict params)
 
+(defclass [(dataclass :frozen True :kw-only True)] TransplantConversation [EffectBase]
+  "cross-binding resume の transcript transplant 前処理(ADR-DOE-AGENTS-006
+   改訂 R7)。transcript の所在物理は kind 所有(claude = projects jsonl の
+   4 対 / codex = rollout の sessions 相対 path — resume-physics.md
+   2026-08-11 プローブ)なので、per-kind impl が FsLinkArtifact substrate
+   effect で source home → binding home へ symlink を敷設する。発火条件
+   (binding 指定かつ source 行の effective_identity と異なる home)の判定も
+   impl 所有 — 同一 home は no-op {\"ok\" True}。
+   params: {\"conversation\"(source 行の会話 ref), \"work_dir\",
+   \"source_identity\"(source 行の effective_identity), \"binding\"
+   (呼び手指定の typed binding — admission 通過済み)}。
+   戻り値: {\"ok\" True} | {\"ok\" False \"code\" <RESUME-ERR-*>
+   \"message\" str}(source transcript 不在は
+   RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE — program が typed reject にする)。"
+  #^ str agent-type
+  #^ dict params)
+
+
+;; resume / fork の typed reject 語彙(ADR-DOE-AGENTS-006 改訂)。wire の
+;; error_code に verbatim で載る安定文字列 — 機械消費者(ACP Haskell client)は
+;; message substring ではなくこの code を照合する。koine 由来契約の typed 文字列
+;; error_code(adopt_target_not_found)と同系。message 文言は後方互換で自由。
+(setv RESUME-ERR-ONE-LIVE-INCARNATION "one_live_incarnation")
+(setv RESUME-ERR-IDENTITY-UNKNOWN "identity_unknown")
+(setv RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE "transcript_not_discoverable")
+(setv RESUME-ERR-KIND-NOT-SUPPORTED "kind_not_supported")
+
 
 ;; ===========================================================================
 ;; substrate effects(SessionStore / Tmux / Clock / Proc — DOE-004 R1)
@@ -498,6 +525,18 @@
   #^ str profile-dir
   #^ str view-root)
 
+(defclass [(dataclass :frozen True :kw-only True)] FsLinkArtifact [EffectBase]
+  "会話 artifact の cross-home symlink 敷設(ADR-DOE-AGENTS-006 改訂 R7 の
+   transplant プリミティブ — dotfiles agentcli share.py link_session_artifact
+   の意味移植)。物理: source 不在(実体でも symlink でもない)= 触らず
+   \"source-missing\" / target 実在: 同一実体 = no-op \"same-entity\"、
+   別実体 = 触らず \"target-conflict\"(silent 置換はしない — share.py 同型の
+   no-op)/ それ以外 = 親 dir を mkdir して symlink、\"linked\"。冪等。
+   方針判断(必須 artifact の不在を typed reject にする等)は呼び手所有 —
+   substrate は観測結果の 4 値を返すだけ。戻り値: str(上記 4 値)。"
+  #^ str source-path
+  #^ str target-path)
+
 (defclass [(dataclass :frozen True :kw-only True)] EnvGet [EffectBase]
   "呼び手 process env の単読(S11 caveat: trust writer は session_env に無い
    home を process env から fallback 参照する — daemon 束縛では daemon env、
@@ -560,6 +599,13 @@
    :post [(: % DiscoverConversation)]}
   "DiscoverConversation を構築する(ADR-006 R1: 会話 identity の事後発見)。"
   (DiscoverConversation :agent-type agent-type :params params))
+
+(deff transplant-conversation [agent-type params]
+  {:pre [(: agent-type str) (: params dict)]
+   :post [(: % TransplantConversation)]}
+  "TransplantConversation を構築する(ADR-006 改訂 R7: cross-binding
+   transplant 前処理)。"
+  (TransplantConversation :agent-type agent-type :params params))
 
 (deff session-store-list-active []
   {:pre [True]
@@ -696,6 +742,13 @@
    :post [(: % FsComposeHomeView)]}
   "FsComposeHomeView を構築する(#15 二軸 → home view の実体化)。"
   (FsComposeHomeView :auth-file auth-file :profile-dir profile-dir :view-root view-root))
+
+(deff fs-link-artifact [source-path target-path]
+  {:pre [(: source-path str) (> (len source-path) 0)
+         (: target-path str) (> (len target-path) 0)]
+   :post [(: % FsLinkArtifact)]}
+  "FsLinkArtifact を構築する(transplant の symlink 敷設プリミティブ)。"
+  (FsLinkArtifact :source-path source-path :target-path target-path))
 
 (deff env-get [name]
   {:pre [(: name str) (> (len name) 0)]

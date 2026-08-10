@@ -43,6 +43,7 @@
   FsReadText
   FsWriteTextAtomic
   FsMakeDirs
+  FsLinkArtifact
   FsListDir
   EnvGet])
 (import doeff_agents.sessionhost.policy [ACTIVE-STATUSES])
@@ -429,6 +430,28 @@
   (FsMakeDirs [path]
     (os.makedirs path :exist-ok True)
     (resume None))
+
+  (FsLinkArtifact [source-path target-path]
+    ;; agentcli share.py link_session_artifact の意味移植(transplant の
+    ;; symlink 敷設)。source 不在は触らず値で返す(方針判断は呼び手所有)。
+    ;; target の別実体は share.py 同型の no-op — silent 置換はしない。
+    ;; samefile の OSError(broken link 等)は「同一実体と確認できない」の
+    ;; 意味なので conflict 側に倒す(share.py の except OSError: pass と同型)。
+    (setv outcome None)
+    (if (not (or (os.path.exists source-path) (os.path.islink source-path)))
+        (setv outcome "source-missing")
+        (if (or (os.path.exists target-path) (os.path.islink target-path))
+            (do
+              (setv same False)
+              (try
+                (setv same (os.path.samefile target-path source-path))
+                (except [OSError]))
+              (setv outcome (if same "same-entity" "target-conflict")))
+            (do
+              (os.makedirs (os.path.dirname target-path) :exist-ok True)
+              (os.symlink source-path target-path)
+              (setv outcome "linked"))))
+    (resume outcome))
 
   (FsListDir [path]
     ;; 発見用の非破壊読み(ADR-006): 不在・非 dir・権限は空 list —
