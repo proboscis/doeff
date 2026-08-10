@@ -47,6 +47,7 @@
   FsReadText
   FsWriteTextAtomic
   FsMakeDirs
+  FsLinkArtifact
   FsListDir
   EnvGet])
 (import doeff_agents.sessionhost.policy [ACTIVE-STATUSES])
@@ -77,6 +78,7 @@
     (setv self.canonical {})        ;; path → realpath(FsCanonicalPath の台本)
     (setv self.tmux-envs {})        ;; session-name → new-session に渡った env
     (setv self.listings {})         ;; path → エントリ名 list(FsListDir の台本)
+    (setv self.links {})            ;; target → source(FsLinkArtifact の記録)
     (setv self.kill-broken False)   ;; True: TmuxKillSession が raise(cleanup 失敗)
     (setv self.now (datetime 2026 7 5 12 0 0 :tzinfo timezone.utc))))
 
@@ -150,6 +152,25 @@
     (resume None))
   (FsMakeDirs [path]
     (resume None))
+  (FsLinkArtifact [source-path target-path]
+    ;; 実 substrate の share.py 同型意味論の台本版: source は fs / links /
+    ;; listings(dir 台本)のいずれかに実在するときのみ敷設できる。
+    (.append world.trace #("link-artifact" source-path target-path))
+    (setv source-known (or (in source-path world.fs)
+                           (in source-path world.links)
+                           (in source-path world.listings)))
+    (setv outcome
+          (cond
+            (not source-known) "source-missing"
+            (in target-path world.fs) "target-conflict"
+            (in target-path world.links)
+              (if (= (get world.links target-path) source-path)
+                  "same-entity"
+                  "target-conflict")
+            True
+              (do (setv (get world.links target-path) source-path)
+                  "linked")))
+    (resume outcome))
   (EnvGet [name]
     (resume (.get world.env name))))
 

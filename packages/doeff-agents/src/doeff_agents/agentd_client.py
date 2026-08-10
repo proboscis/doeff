@@ -27,6 +27,10 @@ from doeff_agents.monitor import SessionStatus
 RPC_ERR_AWAIT_TIMEOUT = -32000
 RPC_ERR_NO_SUCH_SESSION = -32001
 
+# session.resume の expected_result は「明示 null = 契約なし」を「未指定 = carry」
+# と区別する(ADR-DOE-AGENTS-006 改訂 R4)。未指定の番兵。
+_UNSET: Any = object()
+
 
 class AgentdClientError(RuntimeError):
     """Base error raised by the doeff-agentd client.
@@ -349,6 +353,9 @@ class AgentdClient:
         effort: str | None = None,
         mcp_servers: Mapping[str, str] | None = None,
         session_env: Mapping[str, str] | None = None,
+        binding: Mapping[str, Any] | None = None,
+        new_session_id: str | None = None,
+        expected_result: Mapping[str, Any] | None = _UNSET,
     ) -> Mapping[str, Any]:
         """Host a new incarnation of the session's conversation
         (ADR-DOE-AGENTS-006 R4). Returns the raw wire snapshot of the NEW
@@ -356,12 +363,30 @@ class AgentdClient:
         ``generation`` / ``resumed_from_session_id``) that the typed
         AgentSessionSnapshot does not carry. Non-auth launch intent
         (session_env / model / effort / mcp_servers) is restored from the
-        source row's persisted overlay; keyword arguments override per key."""
+        source row's persisted overlay; keyword arguments override per key.
+
+        Cross-binding extension (ADR-006 revision): ``binding`` overrides the
+        auth home reconstructed from the source row (the host transplants the
+        transcript by symlink when the home differs); ``new_session_id`` names
+        the new incarnation row (server minting ``<base>~g<N>`` when absent);
+        ``expected_result`` overrides the unfulfilled-contract carry — passing
+        it explicitly (even as None) wins over the carry, omitting it keeps
+        the carry."""
+        extra: dict[str, Any] = {}
+        if binding is not None:
+            extra["binding"] = dict(binding)
+        if new_session_id is not None:
+            extra["new_session_id"] = new_session_id
+        if expected_result is not _UNSET:
+            extra["expected_result"] = (
+                dict(expected_result) if expected_result is not None else None
+            )
         return self._incarnation_request("session.resume", session_id,
                                          prompt=prompt, model=model,
                                          effort=effort,
                                          mcp_servers=mcp_servers,
-                                         session_env=session_env)
+                                         session_env=session_env,
+                                         extra=extra)
 
     def fork_session(
         self,
@@ -393,8 +418,11 @@ class AgentdClient:
         effort: str | None,
         mcp_servers: Mapping[str, str] | None,
         session_env: Mapping[str, str] | None,
+        extra: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Any]:
         params: dict[str, Any] = {"session_id": session_id}
+        if extra:
+            params.update(extra)
         if prompt is not None:
             params["prompt"] = prompt
         if model is not None:

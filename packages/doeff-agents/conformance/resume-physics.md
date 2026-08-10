@@ -71,3 +71,56 @@ codex 0.144.1(`codex exec` 非対話 / 対話 `codex fork`)。
 `test_s21_resume_fork.py` は上記物理の偽 CLI 版を daemon+socket ゲートで走らせ、
 kill→resume の文脈保持 / fork の新会話・系譜・独立性 / identity-unknown reject /
 one-live-incarnation reject / 世代整合を検証する(claude・codex 両レーン M1)。
+
+## cross-binding resume の追加プローブ(ADR-DOE-AGENTS-006 改訂 Phase 0)
+
+測定日 2026-08-11。claude 2.1.226(model haiku)、codex-cli 0.145.0-alpha.30
+(`codex exec` / `codex exec resume`)。ACP 枠切れ failover の「別アカウントでの
+同一会話 resume」(決裁 decision-acp-ratelimit-attempt-loss-2026-08-11)に向けた
+transcript transplant の物理校正。
+
+- **(a) transcript 不在の `claude --resume <uuid>` は loud に失敗する**:
+  rc=1、stderr `No conversation found with session ID: <uuid>`。silent な新規
+  会話への縮退はなく、transcript も projects dir も生成されない。
+  → 偽 CLI(conformance_agent.py)の旧挙動「不在でも inherited=\"\" のまま
+  silent 継続」は実物と乖離 — 本改訂で loud exit(rc=1・同文言)に整合させた。
+- **(b) 別 CLAUDE_CONFIG_DIR へ symlink した transcript の `--resume` は文脈を
+  保つ**: 所有 profile A(cryptic)で `--session-id <uuid>` 起動し codeword を
+  記憶させ、**別アカウントの実 profile B**(cryptic-1 — oauth account が A と
+  別)の `projects/<同 mangled key>/` へ transcript を symlink して
+  `CLAUDE_CONFIG_DIR=B claude --resume <uuid>` → codeword を正答
+  (AZURE-KOMOREBI-77)。resume 後も symlink は symlink のまま残り、追記は
+  解決先(A の実体)へ届く(A の transcript が伸びるのを実測)。cc
+  share_resume_session が毎日実働させている物理の機械記録化。
+  - 補足: claude の credential は CLAUDE_CONFIG_DIR ごとに macOS Keychain の
+    `Claude Code-credentials-<hash>` に分離される — transcript transplant は
+    auth を運ばない(auth は binding の責務、transcript は会話の責務)。
+- **(c) codex の cross-home resume は sessions 配下の link で可能**:
+  home B に rollout link が無い `codex exec resume <uuid>` は rc=1 の loud
+  エラー `Error: thread/resume: thread/resume failed: no rollout found for
+  thread id <uuid> (code -32600)`(silent 新規化なし)。source rollout を
+  `<B>/sessions/<同 Y/M/D>/<同 filename>` へ symlink すると resume が成立し
+  文脈を保つ(EMBER-KITSUNE-9 正答)。追記は symlink 解決先(A の実体)へ
+  届き、link は link のまま。conversation_json の rollout_path(絶対 path)を
+  codex 自身が辿ることは**ない** — resume の rollout 発見は常に自 home の
+  `sessions/` 走査であり、cross-home は link の敷設が必須。
+  - 補足: 実測は同一 auth.json(symlink)で実施 — rollout 発見は home 単位で
+    account 非依存(rollout に account は埋まらない)。
+
+### transplant 物理の含意(sessionhost 実装が従う凍結事実)
+
+- claude: source = `<source CLAUDE_CONFIG_DIR>/projects/<mangle(realpath
+  work_dir)>/<conversation.session_id>.jsonl` → target = `<binding
+  config_dir>/projects/<同 key>/<同 uuid>.jsonl` の symlink。周辺 artifact
+  (`projects/<key>/sessions-index.json`・`session-env/<sid>`・
+  `file-history/<sid>`)も同型 link(あれば張る・無ければ skip —
+  dotfiles agentcli share.py の 4 対と同型。所有 profile は source 行の
+  effective_identity で既知なので registry 走査は持ち込まない)。
+- codex: source = conversation_json の rollout_path(絶対)→ target =
+  `<binding の sessions root>/<rollout_path の sessions/ 以下同相対 path>` の
+  symlink。sessions root は native 形 = `<codex_home>/sessions`、二軸形 =
+  `<profile_dir>/sessions`(home view の sessions は bundle 側実体への link —
+  substrate compose-home-view)。
+- source 不在(実体でも解決可能な symlink でもない)は typed reject
+  `transcript_not_discoverable` — 実 CLI の loud 失敗(a)(c1)を launch 前に
+  前倒しする(壊れた宿りを作らない)。

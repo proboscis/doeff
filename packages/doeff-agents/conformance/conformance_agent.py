@@ -197,6 +197,9 @@ def journal(event: str, **data: object) -> None:
 #     a first-line session_meta {payload:{id,cwd}}; `resume <id>` appends to
 #     the existing rollout, `fork <id>` mints a new uuid and copies the parent
 #     rollout body under the new identity.
+# A resume whose transcript/rollout is missing fails LOUD (rc=1, mirrored
+# messages) exactly like the real CLIs (resume-physics.md 2026-08-11 probes
+# (a)/(c)) — no silent fresh-conversation fallback.
 # The "conversation" journal event carries mode/id/parent and the INHERITED
 # transcript content — S21's context-preservation assert reads it.
 CONVERSATION: dict[str, object] = {"mode": "none", "transcript": None}
@@ -255,8 +258,24 @@ def resolve_conversation() -> None:  # noqa: PLR0912, PLR0915 - baseline cleanup
         elif mode == "resume":
             conv = str(parent)
             transcript = project_dir / f"{conv}.jsonl"
-            if transcript.exists():
-                inherited = transcript.read_text(encoding="utf-8")
+            if not transcript.exists():
+                # REAL physics (resume-physics.md 2026-08-11 probe (a)): a
+                # missing transcript fails LOUD (rc=1, no silent fresh
+                # conversation, nothing written). exists() follows symlinks,
+                # so a transplanted link resolves like the real CLI.
+                print(
+                    f"No conversation found with session ID: {conv}",
+                    file=sys.stderr,
+                )
+                journal(
+                    "conversation_error",
+                    kind=kind,
+                    mode=mode,
+                    conversation_id=conv,
+                    reason="transcript-missing",
+                )
+                sys.exit(1)
+            inherited = transcript.read_text(encoding="utf-8")
         else:
             conv = uuid_mod.uuid4().hex
             parent_file = project_dir / f"{parent}.jsonl"
@@ -295,12 +314,27 @@ def resolve_conversation() -> None:  # noqa: PLR0912, PLR0915 - baseline cleanup
         elif mode == "resume":
             conv = str(parent)
             existing = find_rollout(conv)
-            if existing is not None:
-                transcript = existing
-                inherited = transcript.read_text(encoding="utf-8")
-            else:
-                transcript = day_dir / f"rollout-{ts}-{conv}.jsonl"
-                transcript.write_text(meta_line(conv), encoding="utf-8")
+            if existing is None:
+                # REAL physics (resume-physics.md 2026-08-11 probe (c)): a
+                # missing rollout fails LOUD (rc=1) — codex never silently
+                # mints a fresh rollout under the resumed id. Discovery is
+                # always a scan of THIS home's sessions/ tree, so a
+                # cross-home transplant link satisfies it like the real CLI.
+                print(
+                    "Error: thread/resume: thread/resume failed: "
+                    f"no rollout found for thread id {conv} (code -32600)",
+                    file=sys.stderr,
+                )
+                journal(
+                    "conversation_error",
+                    kind=kind,
+                    mode=mode,
+                    conversation_id=conv,
+                    reason="rollout-missing",
+                )
+                sys.exit(1)
+            transcript = existing
+            inherited = transcript.read_text(encoding="utf-8")
         else:
             conv = uuid_mod.uuid4().hex
             parent_file = find_rollout(str(parent))
