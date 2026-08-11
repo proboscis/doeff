@@ -24,6 +24,9 @@
 
 (import doeff_agents.sessionhost.effects [
   REPL-IDLE-MAX-WAIT-SECONDS
+  RESUME-ERR-IDENTITY-UNKNOWN
+  RESUME-ERR-KIND-NOT-SUPPORTED
+  RESUME-ERR-ONE-LIVE-INCARNATION
   SessionRow
   PaneObservation
   classify-pane
@@ -31,6 +34,7 @@
   build-launch
   build-resume
   pre-launch-setup
+  transplant-conversation
   wire-result-channel
   session-store-get
   session-store-list-active
@@ -445,6 +449,16 @@
 ;; resume / fork program(ADR-DOE-AGENTS-006 R4)
 ;; ---------------------------------------------------------------------------
 
+(defclass ResumeRejected [RuntimeError]
+  "session.resume / session.fork の typed reject(ADR-DOE-AGENTS-006 改訂
+   R9)。code は wire の error_code に verbatim で載る安定語彙(effects.hy
+   RESUME-ERR-*)— host dispatch が RpcHostError へ写し、機械消費者(ACP)は
+   message substring ではなく code を照合する。message は後方互換で不変。"
+  (defn __init__ [self code message]
+    (.__init__ RuntimeError self message)
+    (setv self.code code)))
+
+
 (deff strip-incarnation-suffix [value]
   {:pre [(: value str)]
    :post [(: % str)]}
@@ -461,22 +475,26 @@
    鋳造)。admission: 蘇生元の実在 → kind capability → identity-unknown の
    typed 失敗(R1)→ one-live-incarnation(resume のみ)。宿し自体は
    launch-session を再利用する — 並行実装を作らない(R3)。auth は蘇生元行の
-   effective_identity から typed binding を再構成する(行が auth の家)。
+   effective_identity から typed binding を再構成し、呼び手の binding param が
+   それを上書きする(ADR-006 改訂 R4 — cross-binding failover の受け口。
+   home が異なるときは per-kind transplant 前処理が transcript を symlink で
+   敷設する: R7)。typed reject は ResumeRejected(error_code 語彙: R9)。
    params: session_id(蘇生元)/ mode / prompt? / model? / effort? /
-   mcp_servers? + host 注入(socket_path / max_running / backend_kind /
-   repl_idle_max_wait_seconds)。"
+   mcp_servers? / binding? / new_session_id? / expected_result?(+
+   expected_result_specified — 明示 null と未指定の区別)+ host 注入
+   (socket_path / max_running / backend_kind / repl_idle_max_wait_seconds)。"
   (setv source-sid (get params "session_id"))
   (setv mode (get params "mode"))
   (<- source (session-store-get source-sid))
   (when (is source None)
     (raise (RuntimeError f"session is not registered: {source-sid}")))
   (when (not-in source.agent-type INTERACTIVE-AGENT-TYPES)
-    (raise (RuntimeError
+    (raise (ResumeRejected RESUME-ERR-KIND-NOT-SUPPORTED
              (+ f"session.{mode}: agent_type '{source.agent-type}' does not "
                 f"support {mode} (supported: codex, claude)"))))
   (setv conv source.conversation)
   (when (is conv None)
-    (raise (RuntimeError
+    (raise (ResumeRejected RESUME-ERR-IDENTITY-UNKNOWN
              (+ f"session.{mode}: session '{source-sid}' has no stored "
                 "conversation identity (identity-unknown) — it cannot be "
                 "resumed or forked (ADR-DOE-AGENTS-006 R1: revivability is a "
@@ -487,35 +505,62 @@
     (for [row active-rows]
       (when (and (is-not row.conversation None)
                  (= (.get row.conversation "session_id") conv-id))
-        (raise (RuntimeError
+        (raise (ResumeRejected RESUME-ERR-ONE-LIVE-INCARNATION
                  (+ f"session.resume: conversation '{conv-id}' already has a "
                     f"live incarnation '{row.session-id}' "
                     f"(status {row.status}) — "
                     "one-live-incarnation-per-conversation "
                     "(ADR-DOE-AGENTS-006 R4)"))))))
 
-  ;; 新 incarnation の id / name(~g<N> / ~fork<N> 系列。既使用は前進で回避 —
-  ;; 古い incarnation からの resume でも序数が単調に進む)。
-  (setv base-sid (strip-incarnation-suffix source-sid))
-  (setv base-name (strip-incarnation-suffix source.session-name))
-  (setv gen (if (= mode "resume") (+ source.generation 1) 1))
-  (setv counter (if (= mode "resume") gen 1))
-  (setv suffix-kind (if (= mode "resume") "g" "fork"))
-  (setv new-sid f"{base-sid}~{suffix-kind}{counter}")
-  (<- clash (session-store-get new-sid))
-  (while (is-not clash None)
-    (setv counter (+ counter 1))
-    (setv new-sid f"{base-sid}~{suffix-kind}{counter}")
-    (<- next-clash (session-store-get new-sid))
-    (setv clash next-clash))
-  (when (= mode "resume")
-    (setv gen counter))
-  (setv new-name f"{base-name}~{suffix-kind}{counter}")
+  ;; 呼び手 binding の admission(ADR-006 改訂 R4)— launch の R7 admission と
+  ;; 同一実装(policy binding-admission-error)を共有する(複製実装禁止)。
+  ;; 全副作用(transplant の symlink 敷設・tmux)より前に typed reject。
+  (setv requested-binding (.get params "binding"))
+  (when (is-not requested-binding None)
+    (setv requested-binding-error
+          (binding-admission-error requested-binding source.agent-type))
+    (when (is-not requested-binding-error None)
+      (raise (RuntimeError
+               f"session.{mode}: invalid binding — {requested-binding-error}"))))
 
-  ;; auth binding の再構成(行の effective_identity が auth の家)。
+  ;; 新 incarnation の id / name。呼び手指定(new_session_id — ACP は
+  ;; agent_<invocationId> 規約で鋳造する)が優先し、session_name も同値で立つ。
+  ;; 既存 id との重複は launch と同語彙で即 reject(transplant より前 —
+  ;; 副作用ゼロで落とす。launch-session の重複 admission が最終 backstop)。
+  ;; 未指定は従来のサーバー鋳造 ~g<N> / ~fork<N> 系列(既使用は前進で回避 —
+  ;; 古い incarnation からの resume でも序数が単調に進む)。
+  (setv requested-sid (.get params "new_session_id"))
+  (setv gen (if (= mode "resume") (+ source.generation 1) 1))
+  (if (is-not requested-sid None)
+      (do
+        (<- requested-clash (session-store-get requested-sid))
+        (when (is-not requested-clash None)
+          (raise (RuntimeError
+                   f"session is already registered: {requested-sid}")))
+        (setv new-sid requested-sid)
+        (setv new-name requested-sid))
+      (do
+        (setv base-sid (strip-incarnation-suffix source-sid))
+        (setv base-name (strip-incarnation-suffix source.session-name))
+        (setv counter (if (= mode "resume") gen 1))
+        (setv suffix-kind (if (= mode "resume") "g" "fork"))
+        (setv new-sid f"{base-sid}~{suffix-kind}{counter}")
+        (<- clash (session-store-get new-sid))
+        (while (is-not clash None)
+          (setv counter (+ counter 1))
+          (setv new-sid f"{base-sid}~{suffix-kind}{counter}")
+          (<- next-clash (session-store-get new-sid))
+          (setv clash next-clash))
+        (when (= mode "resume")
+          (setv gen counter))
+        (setv new-name f"{base-name}~{suffix-kind}{counter}")))
+
+  ;; auth binding の再構成(行の effective_identity が auth の家)— 呼び手
+  ;; 指定の binding が優先(ADR-006 改訂 R4)。
   (setv identity (or source.effective-identity {}))
   (setv binding
         (cond
+          (is-not requested-binding None) requested-binding
           (and (= source.agent-type "claude")
                (is-not (.get identity "CLAUDE_CONFIG_DIR") None))
             {"kind" "claude-code"
@@ -526,14 +571,35 @@
              "codex_home" (get identity "CODEX_HOME")}
           True None))
 
+  ;; cross-binding transplant 前処理(ADR-006 改訂 R7)。発火判定(同一 home の
+  ;; no-op)と transcript 所在の path 物理は per-kind impl 所有 —
+  ;; resume-physics-has-one-home の延長。source transcript 不在は typed reject
+  ;; (row 不生成 — 実 CLI の loud 失敗を launch 前に前倒しする)。
+  (when (is-not requested-binding None)
+    (<- transplant (transplant-conversation
+                     source.agent-type
+                     {"conversation" conv
+                      "work_dir" source.work-dir
+                      "source_identity" identity
+                      "binding" requested-binding}))
+    (when (not (get transplant "ok"))
+      (raise (ResumeRejected (get transplant "code")
+                             (get transplant "message")))))
+
   ;; 未達成の result contract は resume が引き継ぐ(会話の続きなので)。
-  ;; fork は新しい仕事 — contract は引き継がない。
+  ;; fork は新しい仕事 — contract は引き継がない。呼び手の明示指定
+  ;; (expected_result_specified — 明示 null 含む)は carry より優先
+  ;; (ADR-006 改訂 R4。schema admission は host が launch と共有)。
   (setv carried-expected
         (if (and (= mode "resume")
                  (is-not source.expected-result None)
                  (is source.result-payload None))
             source.expected-result
             None))
+  (setv effective-expected
+        (if (bool (.get params "expected_result_specified" False))
+            (.get params "expected_result")
+            carried-expected))
 
   ;; 非 auth の launch 意図は蘇生元行の launch_overlay から復元し、呼び手の
   ;; params が per-key で上書きする(行が意図の家 — 呼び手は差分だけ言う)。
@@ -557,7 +623,7 @@
          "lifecycle" source.lifecycle
          "binding" binding
          "session_env" overlay-env
-         "expected_result" carried-expected
+         "expected_result" effective-expected
          "socket_path" (.get params "socket_path" "")
          "max_running" (.get params "max_running")
          "repl_idle_max_wait_seconds" (.get params "repl_idle_max_wait_seconds")
