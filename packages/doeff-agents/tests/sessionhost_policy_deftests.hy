@@ -1211,10 +1211,14 @@
   ;; retryable=false を明示(:1985-1991)。
   ;; ADR-DOE-AGENTS-009 R3(2026-07-28): lost は表から除去(観測断は terminal
   ;; cause として構築されない)。証拠つき死亡は vanished(retryable=true)。
+  ;; ADR-DOE-AGENTS-011 R-undelivered-first-class-b5e8(2026-08-12):
+  ;; prompt_undelivered を追加(retryable=true)— 起動段で prompt が一度も
+  ;; 届かなかった attempt は timed_out の一形ではなく独立の分類。
   (assert (= TERMINAL-CAUSE-RETRYABLE
              {"rate_limited" True
               "timed_out" True
               "vanished" True
+              "prompt_undelivered" True
               "runner_unavailable" False
               "protocol_error" False
               "run_failed" False

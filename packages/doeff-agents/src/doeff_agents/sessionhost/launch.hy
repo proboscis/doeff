@@ -9,8 +9,10 @@
 ;;;   TmuxNewSession → booting 行 upsert + session_started event(登録は TUI
 ;;;   readiness に依存しない簿記 — ready 待ちの前。issue
 ;;;   agentd-session-registration-after-ready-gate)→ 起動 command 送出 →
-;;;   wait-for-repl-idle(R9 launch dialog の決定的 dismissal。予算切れは
-;;;   fail-closed: 行を terminal failed へ遷移)→ prompt の live REPL 配送
+;;;   wait-for-launch-ready(R9 launch dialog の決定的 dismissal + 空 composer +
+;;;   貼り付け可能性 probe の 3 条件。予算切れ / probe 不成立は fail-closed:
+;;;   閉語彙の分類と証拠 frame つきで行を terminal failed(prompt_undelivered)
+;;;   へ遷移 — ADR-DOE-AGENTS-011)→ prompt の live REPL 配送
 ;;;   (result-protocol instruction 追記)→ monitor への手渡し upsert
 ;;;   (running + awaiting latch — BOOTING は launch pipeline 所有)。
 ;;;
@@ -27,8 +29,14 @@
   RESUME-ERR-IDENTITY-UNKNOWN
   RESUME-ERR-KIND-NOT-SUPPORTED
   RESUME-ERR-ONE-LIVE-INCARNATION
+  READY-PROBE-TEXT
+  READY-PROBE-CLEAR-KEY
+  READY-GATE-FRAME-RETENTION
+  READY-GATE-FRAME-LINES
   SessionRow
+  PaneFrame
   PaneObservation
+  ReadyGateVerdict
   classify-pane
   deliver-message
   build-launch
@@ -52,7 +60,11 @@
 (import doeff_agents.sessionhost.policy [
   BINDING-OWNED-ENV-KEYS
   binding-admission-error
+  format-evidence-frames
   iso-format
+  launch-not-ready-class
+  launch-not-ready-category
+  launch-not-ready-reason
   make-cause
   overlay-env-offenders
   seconds-since])
@@ -124,47 +136,159 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; wait-for-repl-idle(oracle wait_for_repl_idle — R9 launch dialog 込み)
+;; wait-for-launch-ready(oracle wait_for_repl_idle の後継 — R9 launch dialog +
+;; 貼り付け可能性 probe + 不成立の閉語彙分類。ADR-DOE-AGENTS-011)
 ;; ---------------------------------------------------------------------------
 
-(defk wait-for-repl-idle [agent-type pane-id max-wait-seconds]
+(deff retain-frame [frames at-seconds output]
+  {:pre [(: frames list) (: at-seconds (| int float)) (: output str)]
+   :post [(: % list)]}
+  "証拠 frame の有界保持(ADR-DOE-AGENTS-011 R-evidence-frames-9c17)。
+   保持は先頭(起動直後の画面)を固定し、以降は最新側を入れ替える —
+   『最初にどう見えたか』と『最後にどう見えたか』の両方が残る形。
+   保持数 READY-GATE-FRAME-RETENTION で有界(旧実装は最終 1 枚のみ)。
+   同一 tail の連続は積まない(同じ画面で枠を埋めない)。
+   末尾の空行は tail を取る前に落とす: 旧実装は capture の素の末尾 15 行を
+   残していたため、shell echo だけの画面(実測 294 件)の証拠が『改行 14 個』
+   になり、描画ゼロと区別できなかった(実測 23 件が同じ 14 改行の形)。"
+  (setv lines (.splitlines output))
+  (while (and lines (= (.strip (get lines -1)) ""))
+    (.pop lines))
+  (setv tail (.join "\n" (cut lines (- READY-GATE-FRAME-LINES) None)))
+  (setv frame (PaneFrame :at-seconds (float at-seconds) :text tail))
+  (cond
+    (and frames (= (. (get frames -1) text) tail))
+      (+ (cut frames 0 -1) [frame])
+    (< (len frames) READY-GATE-FRAME-RETENTION)
+      (+ frames [frame])
+    True
+      (+ (cut frames 0 1) (cut frames 2 None) [frame])))
+
+
+(defk wait-for-launch-ready [agent-type pane-id max-wait-seconds]
   {:pre [(: agent-type str) (: pane-id str)
          (: max-wait-seconds (| int float)) (> max-wait-seconds 0)]
-   :post [(: % bool)]}
-  "REPL が入力を受けられる状態(idle prompt 可視)まで poll する。codex は
-   banner + MCP ロードの後にしか input loop が配線されない — その窓に keys を
-   送ると Enter がロード画面に食われ、prompt が入力箱に座ったまま submit
-   されない(oracle 実障害)。R9 launch dialog(codex-update / bypass /
-   fullscreen / trust / managed)は idle 判定より先に検出して決定的 keys で
-   dismiss する(update dialog は `›` 選択 marker を描くため idle と誤認
-   される)。上限到達は False を返すだけ — 呼び手(launch-session)はこれを
-   fail-closed の typed error にする(2026-07-07 契約修正。旧 oracle は
-   構わず送出していたが、R9 外の未知 dialog に prompt が送出されて
-   silent hang になる実障害 — trust dialog — がそれで隠れた)。"
+   :post [(: % ReadyGateVerdict)]}
+  "prompt を配送してよい状態まで poll する(ADR-DOE-AGENTS-011 の 3 条件):
+     (1) idle prompt が可視 — codex は banner + MCP ロードの後にしか input
+         loop が配線されない(oracle 実障害)。R9 launch dialog(codex-update /
+         bypass / fullscreen / trust / managed)は idle 判定より先に検出して
+         決定的 keys で dismiss する(update dialog は `›` 選択 marker を
+         描くため idle と誤認される)。
+     (2) composer が空 — 内容が座ったままの入力欄へ重ね貼りしない。
+     (3) 貼り付け可能性 — 短い probe を bracketed paste し、composer が
+         それを消費した(領域が変化した)ことと、消去キーで空へ戻ることを
+         観測する。『入力欄が描かれた』は reader が我々の byte を消費して
+         いる証拠ではない: 実測 2026-08-11 の 25 席は idle prompt を見て
+         即 paste した prompt が collapsed chip として座り(12 席は chip
+         3〜10 個 = 1 回の bracketed paste の断片化着弾)、Enter は断片の
+         隙間に食われて turn が一度も始まらなかった。
+   予算切れ・probe 不成立は ready=False + 閉語彙 failure-class + 証拠 frame
+   を返すだけ — 呼び手(launch-session)がこれを fail-closed の typed error に
+   する(2026-07-07 契約修正。旧 oracle は構わず送出していたが、R9 外の未知
+   dialog に prompt が送出されて silent hang になる実障害 — trust dialog —
+   がそれで隠れた)。probe の送出も含めて全局面が同じ max-wait-seconds 予算の
+   内側 — 起動段の壁時計は伸びない(ACP ADR 0042 R8 の順序不変量
+   ready gate 120s < orphan grace 150s < launch deadline 180s を保つ)。"
   (<- start (clock-now))
-  (setv idle-seen False)
+  (setv frames [])
+  (setv polls 0)
+  (setv elapsed 0.0)
+  ;; 局面: "idle"(idle + 空 composer 待ち)→ "consume"(probe の消費待ち)
+  ;; → "clear"(probe の消去待ち)→ ready。
+  (setv phase "idle")
+  (setv verdict None)
+  (setv last-output "")
+  (setv last-obs (PaneObservation))
   (setv looping True)
   (while looping
     (<- now (clock-now))
-    (setv elapsed (- now start))
-    (if (>= (.total-seconds elapsed) max-wait-seconds)
+    (setv elapsed (.total-seconds (- now start)))
+    (if (>= elapsed max-wait-seconds)
         (setv looping False)
         (do
           (<- output (tmux-capture pane-id 60))
           (<- obs (classify-pane agent-type output))
+          (setv polls (+ polls 1))
+          (setv last-output output)
+          (setv last-obs obs)
+          (setv frames (retain-frame frames elapsed output))
+          (setv probe-visible
+                (and (is-not obs.composer-text None)
+                     (or (in READY-PROBE-TEXT obs.composer-text)
+                         obs.has-unsubmitted-paste)))
           (cond
+            ;; R9 既知 dialog は決定的キーで dismiss(局面を問わず先に処理)。
             (is-not obs.dialog None)
               (do
                 (for [key obs.dialog-dismiss-keys]
                   (<- _ (tmux-send-keys pane-id key False False)))
                 (<- _ (clock-sleep DIALOG-REDRAW-SECONDS)))
-            obs.has-idle-prompt
+            ;; provider 上限告知は起動段の失敗ではなく枠の話 — 即 loud で
+            ;; failover(ACP ADR 0049)へ渡す。
+            obs.has-api-limit-marker
               (do
-                (setv idle-seen True)
+                (setv verdict "provider-limit-screen")
                 (setv looping False))
+            ;; R9 の外の dialog 形は dismiss を推測しない — 即 loud。
+            ;; idle prompt の有無で条件を緩めない: codex の trust dialog は
+            ;; 選択 marker が `›` なので idle prompt 判定を通過してしまう
+            ;; (verbatim capture codex_trust_dialog.txt)。
+            obs.dialog-shaped
+              (do
+                (setv verdict "unknown-dialog")
+                (setv looping False))
+            (= phase "idle")
+              (cond
+                (and obs.input-loop-wired (not obs.composer-clear))
+                  (do
+                    ;; 誰も掃除しない未送信内容 — 待っても解けないので即 loud。
+                    (setv verdict "composer-occupied")
+                    (setv looping False))
+                obs.input-loop-wired
+                  (do
+                    (<- _ (tmux-send-keys pane-id READY-PROBE-TEXT True False))
+                    (setv phase "consume")
+                    (<- _ (clock-sleep REPL-IDLE-POLL-SECONDS)))
+                True
+                  (<- _ (clock-sleep REPL-IDLE-POLL-SECONDS)))
+            (= phase "consume")
+              (if probe-visible
+                  (do
+                    ;; probe が composer に見えた = reader が我々の byte を
+                    ;; 消費している(literal 形 / collapsed chip 形の両方を
+                    ;; 消費の証拠として受ける)。消去キーは probe の文字数ぶん
+                    ;; (chip 形なら 1 打で消え、残りは空 composer への no-op)。
+                    (for [_ (range (len READY-PROBE-TEXT))]
+                      (<- _ (tmux-send-keys pane-id READY-PROBE-CLEAR-KEY False False)))
+                    (setv phase "clear")
+                    (<- _ (clock-sleep REPL-IDLE-POLL-SECONDS)))
+                  (<- _ (clock-sleep REPL-IDLE-POLL-SECONDS)))
+            (= phase "clear")
+              (if (and obs.composer-clear (not probe-visible))
+                  (do
+                    (setv verdict None)
+                    (setv phase "ready")
+                    (setv looping False))
+                  (<- _ (clock-sleep REPL-IDLE-POLL-SECONDS)))
             True
               (<- _ (clock-sleep REPL-IDLE-POLL-SECONDS))))))
-  idle-seen)
+  ;; 予算切れの分類: probe 局面で切れたならその局面が答え、idle 局面で
+  ;; 切れたなら最後の全 capture の事実束から分類器(policy 所有)が答える。
+  ;; 分類の入力は保持 frame(tail)ではなく capture 全体 — tail だけを見ると
+  ;; shell echo が窓の外へ出て『描画ゼロ』と誤分類する。
+  (setv failure-class
+        (cond
+          (= phase "ready") None
+          (is-not verdict None) verdict
+          (= phase "consume") "paste-not-consumed"
+          (= phase "clear") "composer-not-clearable"
+          True (launch-not-ready-class last-obs last-output)))
+  (ReadyGateVerdict :ready (is failure-class None)
+                    :failure-class failure-class
+                    :frames (tuple frames)
+                    :polls polls
+                    :elapsed-seconds elapsed))
 
 
 ;; ---------------------------------------------------------------------------
@@ -375,8 +499,8 @@
       (setv repl-idle-max-wait
             (or (.get params "repl_idle_max_wait_seconds")
                 REPL-IDLE-MAX-WAIT-SECONDS))
-      (<- repl-ready (wait-for-repl-idle agent-type pane-id repl-idle-max-wait))
-      (when (not repl-ready)
+      (<- gate (wait-for-launch-ready agent-type pane-id repl-idle-max-wait))
+      (when (not gate.ready)
         ;; fail-closed(2026-07-07 契約修正): idle 未達のまま paste すると
         ;; prompt が R9 外の未知 dialog に送出され session は silent hang に
         ;; なる(trust dialog 実障害)。paste せず、画面 tail を証拠として
@@ -391,25 +515,29 @@
         ;; スキップして booting 残置・typed error のマスクを生まないように。
         ;; capture は best-effort の証拠収集、cleanup 成否は cleaned-at の
         ;; 有無で表現(失敗時は NULL のまま・行は既に terminal)。
-        (setv screen-tail "")
-        (try
-          (<- final-frame (tmux-capture pane-id 40))
-          (setv tail-lines (cut (.splitlines final-frame) -15 None))
-          (setv screen-tail (.join "\n" tail-lines))
-          (except [capture-err Exception]
-            (setv screen-tail f"(screen capture failed: {capture-err})")))
+        ;; 証拠は gate が局面ごとに保持した frame 列(ADR-DOE-AGENTS-011
+        ;; R-evidence-frames-9c17 — 受入条件 (g) の保持数増量)。追加 capture は
+        ;; しない: 予算切れ後の 1 枚は既に別の画面かもしれず、gate が見た
+        ;; ものを残すのが逐語性の要件。
+        (setv screen-tail (format-evidence-frames gate.frames))
         (<- fail-now (clock-now))
+        (setv gate-reason
+              (launch-not-ready-reason agent-type repl-idle-max-wait
+                                       gate.failure-class))
         (setv failed-row
               (replace row
                        :status "failed"
                        :finished-at (iso-format fail-now)
                        :last-observed-at (iso-format fail-now)
                        :output-snippet screen-tail
+                       ;; last_validation_error にも同じ reason を置く: DB 面の
+                       ;; 分類(受入条件 (e))はこの 2 列のどちらからでも同じ
+                       ;; class token で 3 分できる。
+                       :last-validation-error gate-reason
                        :terminal-cause
-                         (make-cause "timed_out"
-                                     (+ f"{agent-type} REPL did not become ready "
-                                        f"within {repl-idle-max-wait}s "
-                                        "(launch ready gate)")
+                         (make-cause (launch-not-ready-category
+                                       gate.failure-class)
+                                     gate-reason
                                      (iso-format fail-now))))
         (<- _ (session-store-upsert failed-row))
         (<- _ (session-store-record-event session-id "session_failed" failed-row))
@@ -424,13 +552,21 @@
           (<- cleaned-now (clock-now))
           (setv failed-row (replace failed-row :cleaned-at (iso-format cleaned-now)))
           (<- _ (session-store-upsert failed-row)))
+        ;; typed error の文言は「何が見えていたか」の分類を先頭に置く
+        ;; (旧文言は毎回「unrecognized screen (a dialog outside the R9
+        ;; fast-path set?)」と推測を断定していた — 実測 321 件中 0 件が
+        ;; その形だった。誤った断定は steward の診断を毎回誤らせる)。
+        ;; 「did not become ready」の逐語は保持する: conformance S18/S22 と
+        ;; argus sensor(sensor_sessionhost_health.py)がこの substring で
+        ;; 起動段の失敗を拾っている。
         (raise (RuntimeError
                  (+ f"session.launch: {agent-type} REPL did not become ready "
-                    f"within {repl-idle-max-wait}s — startup is blocked by an "
-                    "unrecognized screen (a dialog outside the R9 fast-path "
-                    "set?). The prompt was NOT delivered; the session row was "
-                    "marked failed (timed_out) and tmux cleanup was attempted "
-                    "(success is recorded as cleaned_at). Last screen tail:\n"
+                    f"within {repl-idle-max-wait}s — launch ready gate failed "
+                    f"[{gate.failure-class}] after {gate.polls} poll(s). "
+                    "The prompt was NOT delivered; the session row was marked "
+                    "failed (prompt_undelivered) and tmux cleanup was attempted "
+                    f"(success is recorded as cleaned_at). Evidence frames "
+                    f"({(len gate.frames)}):\n"
                     screen-tail)))))
     (if (in agent-type INTERACTIVE-AGENT-TYPES)
         (<- _ (deliver-message pane-id full-prompt))

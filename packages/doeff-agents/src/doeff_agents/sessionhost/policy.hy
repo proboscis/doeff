@@ -71,10 +71,21 @@
 ;; StatusLost(AgentUnobserved hold — ACP ADR 0067)へ写すため、vanished は
 ;; StatusExited として deadman gate を待たず即時終端できる。retryable=true は
 ;; 維持(死亡が確証された attempt の再試行は二重実装にならない)。
+;; ADR-DOE-AGENTS-011 R-undelivered-first-class-b5e8(2026-08-12): 未配達 =
+;; 「prompt が agent に一度も届かないまま attempt が起動段で終わった」は
+;; timed_out の一形ではなく独立の分類。timed_out に混ぜている間、下流
+;; (ACP)は『走ったが時間切れ』と『1 turn も走っていない』を区別できず、
+;; 受入条件 (d)(prompt 未達で終端した session を「走った」と数えない)を
+;; 機械で表現できなかった。retryable=true は維持 — 別の機械・別の負荷での
+;; 再試行は二重実装にならない(実測: 同一 issue の再宣言で成功する例が在る)。
+;; 未知 category に対する下流の既定は「CommandNonZeroExit + causeRetryable
+;; 由来の retry 意味論」なので、この追加は旧 engine に対しても無害
+;; (ACP Observed.hs failureKindForCause の `_` 分岐)。
 (setv TERMINAL-CAUSE-RETRYABLE
       {"rate_limited" True
        "timed_out" True
        "vanished" True
+       "prompt_undelivered" True
        "runner_unavailable" False
        "protocol_error" False
        "run_failed" False
@@ -84,6 +95,129 @@
        "cancelled" False})
 
 (setv TERMINAL-CAUSE-CATEGORIES (frozenset (.keys TERMINAL-CAUSE-RETRYABLE)))
+
+
+;; ===========================================================================
+;; 起動段の分類(ADR-DOE-AGENTS-011)
+;; ===========================================================================
+;;
+;; 「起動画面が読めなかった」を分類つきで残す。旧実装は 120s の予算切れを
+;; 単一の固定文言(「startup is blocked by an unrecognized screen (a dialog
+;; outside the R9 fast-path set?)」)で終端しており、事後にどの状態だったかを
+;; 分離できなかった。実測(2026-08-11 断面・launch ready gate 終端 321 件を
+;; 実物 frame で分類)では、その文言が主張する「認識不能画面」は 0 件で、
+;; 294 件が shell echo だけの未描画・24 件が空画面・3 件は最終 frame に
+;; idle prompt が見えている予算競合だった — 文言は全件で誤りだった。
+
+;; 閉語彙。gate は必ずこのどれかで不成立を自己記述する(語彙外は gate error)。
+(setv LAUNCH-NOT-READY-CLASSES
+      #("no-output"              ;; (B) 描画ゼロ — pane に文字が 1 つも無い
+        "no-agent-frame"         ;; (B') agent 未描画 — shell echo だけが在る
+        "provider-limit-screen"  ;; 起動直後に provider 上限告知(枠切れ)
+        "dialog-not-dismissed"   ;; R9 既知 dialog が予算切れまで消えなかった
+        "unknown-dialog"         ;; (A) R9 fast-path の外の dialog(loud)
+        "unrecognized-screen"    ;; (A) 何か描かれているがどの marker にも無い
+        "mcp-boot-window"        ;; 入力欄は描かれたが MCP boot 中(loop 未配線)
+        "composer-occupied"      ;; 入力欄に未送信の内容(チップ)が座っている
+        "paste-not-consumed"     ;; probe を貼ったが composer が消費しない
+        "composer-not-clearable" ;; probe が消えない(消去キーが効かない)
+        "deadline-race"))        ;; 最終 frame では ready — 予算と描画の競合
+
+
+(deff launch-not-ready-class [obs output]
+  {:pre [(: obs PaneObservation) (: output str)]
+   :post [(: % str) (in % LAUNCH-NOT-READY-CLASSES)]}
+  "予算切れ時の最終 frame から起動段の不成立を分類する(閉語彙・情報量の
+   強い順)。probe 局面で判明する 3 類(composer-occupied /
+   paste-not-consumed / composer-not-clearable)は gate が局面から直接
+   宣言する — この関数は『予算が切れた』側の分類だけを担う。"
+  (cond
+    (not (.strip output)) "no-output"
+    (not obs.has-agent-frame) "no-agent-frame"
+    ;; provider 上限は再試行の話ではない(失敗の所有者が provider 側)—
+    ;; ACP ADR 0049 の failover が引き取れるよう最優先で名を与える。
+    ;; 実測: 「What do you want to do? / ❯ 1. Stop and wait for limit to
+    ;; reset」形の告知 dialog は稼働席の画面 283 件中 16 件に実在する。
+    obs.has-api-limit-marker "provider-limit-screen"
+    (is-not obs.dialog None) "dialog-not-dismissed"
+    obs.dialog-shaped "unknown-dialog"
+    (and obs.input-loop-wired (not obs.composer-clear)) "composer-occupied"
+    obs.input-loop-wired "deadline-race"
+    ;; idle prompt は在るが MCP boot 中(input loop 未配線)= 起動が終わって
+    ;; いない画面。旧実装はこの窓に prompt を貼っていた。
+    obs.has-idle-prompt "mcp-boot-window"
+    True "unrecognized-screen"))
+
+
+;; 起動段の terminal reason の書式。DB 面の分類(受入条件 (e))はこの
+;; 接頭辞と class token で行う — 散文の言い換えに依存しない。
+;; 既存の述語 `reason like '%launch ready gate%'` は接頭辞の中に保存されて
+;; いるので、landed 前後の日次件数が同じ predicate で連続して数えられる。
+(setv LAUNCH-READY-GATE-REASON-PREFIX "launch ready gate")
+
+
+(deff launch-not-ready-reason [agent-type budget-seconds failure-class]
+  {:pre [(: agent-type str) (: budget-seconds (| int float))
+         (: failure-class str) (in failure-class LAUNCH-NOT-READY-CLASSES)]
+   :post [(: % str)]}
+  "起動段の terminal reason(単一の家)。形:
+   `launch ready gate [<class>]: <agent> REPL did not become ready within
+   <budget>s; the prompt was never delivered`。
+   class は閉語彙・prompt 未配達の事実は逐語で残す(受入条件 (a)/(d))。"
+  (+ f"{LAUNCH-READY-GATE-REASON-PREFIX} [{failure-class}]: "
+     f"{agent-type} REPL did not become ready within {budget-seconds}s"
+     "; the prompt was never delivered"))
+
+
+(deff launch-not-ready-category [failure-class]
+  {:pre [(: failure-class str) (in failure-class LAUNCH-NOT-READY-CLASSES)]
+   :post [(: % str) (in % TERMINAL-CAUSE-CATEGORIES)]}
+  "起動段の不成立 → TerminalCause category(単一の家)。
+   既定は prompt_undelivered(未配達は独立の分類 —
+   R-undelivered-first-class-b5e8)。provider 上限告知の画面だけは
+   rate_limited へ蒸留する(行動系終端は provider-limit 観測を先に見る、
+   ACP ADR 0049 R9 / policy の S8c-S8e と同型 — 未配達で括ると failover が
+   引き取れず、同じ枠切れへ再試行を積む)。"
+  (if (= failure-class "provider-limit-screen")
+      "rate_limited"
+      "prompt_undelivered"))
+
+
+;; sessionhost が産む timed_out / prompt_undelivered reason の閉語彙分類。
+;; 受入条件 (e) の「timeout は 1 つでなく 3 種」— category=timed_out で
+;; 数えると 3 種が混入する(発注席が現に汚染を出した)。3 種の弁別知識の
+;; 家はこの表 1 つで、読み手(sensor / 集計 / 事後分析)は再実装しない。
+(setv SESSIONHOST-TIMEOUT-KINDS
+      #(#("launch-ready-gate" LAUNCH-READY-GATE-REASON-PREFIX)
+        #("launch-never-active" "launch timeout: never reached active state")
+        #("launch-pipeline-incomplete" "launch timeout: launch pipeline did not complete")
+        #("unsubmitted-prompt" "unsubmitted-prompt:")
+        #("awaiting-response" "awaiting-response timeout:")))
+
+
+(deff sessionhost-timeout-kind [reason]
+  {:pre [(: reason (| str None))] :post [(: % str)]}
+  "reason → 終端の種別 token(閉語彙 + \"unclassified\")。
+   sessionhost が産むどの reason も unclassified に落ちてはならない
+   (ADR-DOE-AGENTS-011 の deftest が全 site の実物 reason を通して検定する)。"
+  (setv text (or reason ""))
+  (setv kind "unclassified")
+  (for [[token prefix] SESSIONHOST-TIMEOUT-KINDS]
+    (when (in prefix text)
+      (setv kind token)
+      (break)))
+  kind)
+
+
+(deff format-evidence-frames [frames]
+  {:pre [(: frames "value")] :post [(: % str)]}
+  "保持 frame 列 → output_snippet 用の逐語ブロック(受入条件 (g): 保持数 1
+   からの増量)。各 frame に gate 開始からの経過秒を付す — 『どの局面の
+   画面か』が事後に置けないと複数保持の価値が出ない。"
+  (setv blocks [])
+  (for [frame frames]
+    (.append blocks (+ f"=== frame @{frame.at-seconds :.1f}s ===\n" frame.text)))
+  (.join "\n" blocks))
 
 
 ;; ===========================================================================
@@ -780,6 +914,11 @@
                              :last-validation-error reason))
           ;; 行動系終端は provider-limit 観測を先に見る(ACP ADR 0049 R9 の
           ;; 蒸留と同型)— attempt 中の blocked_api latch は rate_limited へ。
+          ;; ADR-DOE-AGENTS-011 R-undelivered-first-class-b5e8(010 R2 改訂):
+          ;; 非 api-limit 側の category は timed_out から prompt_undelivered へ。
+          ;; この arm が終端させる行は turn が一度も始まっていない(実測 25 件
+          ;; 全数で turn-activity marker 不在)— 起動段の gate 失敗と同じ
+          ;; 命題であり、2 つの category に割れていると未配達の集計が割れる。
           (setv row
                 (if (is-not row.api-limit-observed-at None)
                     (cause-if-absent
@@ -790,7 +929,7 @@
                                row.api-limit-observed-at)
                             observed-at))
                     (cause-if-absent
-                      row (make-cause "timed_out" reason observed-at))))
+                      row (make-cause "prompt_undelivered" reason observed-at))))
           (<- failed-row (finalize row entry-status "failed" obs output observed-at))
           (return failed-row))))
 

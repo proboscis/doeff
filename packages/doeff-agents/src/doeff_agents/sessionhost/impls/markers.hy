@@ -47,6 +47,32 @@
        "(?: [a-z0-9][a-z0-9+&-]*(?:\\.[a-z0-9]+)*){0,4} limit\\b")))
 
 
+;; composer 領域の走査窓(oracle 移植の tail-20 — ADR-DOE-AGENTS-010 R1)。
+(setv COMPOSER-TAIL-LINES 20)
+
+;; 未送信チップの語彙(ADR-DOE-AGENTS-010 R1 の逐語集合 — 単一の家)。
+(setv UNSUBMITTED-CHIP-MARKERS
+      #("[Pasted text" "[Pasted Content" "[Image #"
+        "Press up to edit queued messages"))
+
+;; TUI 自身が描く罫線文字(ADR-DOE-AGENTS-011 R-frame-class-6f3d)。
+;; welcome box(╭─╮ / │)と composer 枠(全幅の ─)の両方を含む。
+(setv FRAME-BORDER-CHARS "─━═│┃╭╮╰╯┌┐└┘├┤┬┴┼")
+;; 罫線と判定する連続長。実測 321 frame(2026-08-11 断面)で、shell echo
+;; だけの画面と空画面には 8 連の罫線は 1 件も現れなかった(偽陽性 0)。
+(setv FRAME-BORDER-RUN 8)
+
+;; 選択式 dialog の幾何(R9 fast-path の外側も拾う): prompt glyph の直後に
+;; 番号つき option。codex の gate 形式(ready_physics CODEX-READY-PATTERN)が
+;; `(?!\d+\.[ \t])` で ready から排除しているのと同じ物理を、こちらは
+;; 「dialog 形である」の positive 判定として使う。
+(setv DIALOG-OPTION-RE (re.compile r"(?m)^[ \t]*[❯›][ \t ]+\d+\.[ \t]"))
+;; 確認 dialog の文言(kind 横断・小文字比較)。R9 の 5 種はいずれかを含む —
+;; 未知 dialog も同じ確認語彙を使う実測に基づく。
+(setv DIALOG-CONFIRM-PHRASES
+      #("enter to confirm" "press enter to continue" "enter y/n:"))
+
+
 ;; ---------------------------------------------------------------------------
 ;; 基本 marker(oracle output_has_* — 窓幅も凍結物理)
 ;; ---------------------------------------------------------------------------
@@ -174,6 +200,24 @@
    output_has_claude_turn_activity)。"
   (bool (or (in "⏺" output) (in "⎿" output))))
 
+(deff composer-region [output]
+  {:pre [(: output str)] :post [(: % (| str None))]}
+  "composer 領域(末尾 20 行のうち最終 prompt 行 ❯ / › とそれ以降)。
+   prompt 行が無ければ None(= composer は描かれていない)。
+   ADR-DOE-AGENTS-010 R1 の走査規律の単一実装 — has-unsubmitted-paste /
+   composer-prompt-text / is-composer-empty はここから領域を得る(領域抽出の
+   コピーが増えると『最終 prompt 行より上は対象外』が実装ごとに腐る)。"
+  (setv lines (.splitlines output))
+  (setv recent (cut lines (max 0 (- (len lines) COMPOSER-TAIL-LINES)) None))
+  (setv last-prompt-index None)
+  (for [[index line] (enumerate recent)]
+    (setv trimmed (.lstrip line))
+    (when (or (.startswith trimmed "❯") (.startswith trimmed "›"))
+      (setv last-prompt-index index)))
+  (if (is None last-prompt-index)
+      None
+      (.join "\n" (cut recent last-prompt-index None))))
+
 (deff has-unsubmitted-paste [output]
   {:pre [(: output str)] :post [(: % bool)]}
   "未 submit の paste / 添付残留(oracle output_has_unsubmitted_paste_input の
@@ -184,21 +228,40 @@
    (直下の行・行頭空白)に描かれる — prompt 行 1 行だけの走査は空 prompt +
    チップ形(2026-07-28 実 wedge)に盲目だった。最終 prompt 行より上
    (送信済み履歴)は対象外のまま。"
-  (setv lines (.splitlines output))
-  (setv recent (cut lines (max 0 (- (len lines) 20)) None))
-  (setv last-prompt-index None)
-  (for [[index line] (enumerate recent)]
-    (setv trimmed (.lstrip line))
-    (when (or (.startswith trimmed "❯") (.startswith trimmed "›"))
-      (setv last-prompt-index index)))
-  (if (is None last-prompt-index)
+  (setv composer (composer-region output))
+  (if (is None composer)
       False
-      (do
-        (setv composer (.join "\n" (cut recent last-prompt-index None)))
-        (bool (or (in "[Pasted text" composer)
-                  (in "[Pasted Content" composer)
-                  (in "[Image #" composer)
-                  (in "Press up to edit queued messages" composer))))))
+      (bool (any (gfor marker UNSUBMITTED-CHIP-MARKERS (in marker composer))))))
+
+(deff is-composer-clear [output]
+  {:pre [(: output str)] :post [(: % bool)]}
+  "composer に未送信の内容が座っていない(ADR-DOE-AGENTS-011
+   R-paste-ready-a71c): composer 領域が描かれており、未送信チップ
+   (UNSUBMITTED-CHIP-MARKERS)が無い。ready gate の必要条件 — 内容が
+   座ったままの composer へ prompt を重ね貼りすると Enter がどちらを submit
+   するかは未定義で、実測(2026-08-11 の 25 席)では chip が積み上がったまま
+   turn が始まらない wedge に落ちた。
+   ★『prompt 行に文字が無い』は条件に入れない(実物 frame で棄却): codex の
+   ready composer は prompt 行に回転するプレースホルダ(`› Improve
+   documentation in @filename` 等)を描く — 空文字を要求すると codex の
+   launch が構造的に全滅する。未送信内容の語彙は ADR-DOE-AGENTS-010 R1 の
+   チップ集合のみが安定物理。"
+  (and (is-not (composer-region output) None)
+       (not (has-unsubmitted-paste output))))
+
+(deff is-input-loop-wired [output]
+  {:pre [(: output str)] :post [(: % bool)]}
+  "入力 loop が配線済み(ADR-DOE-AGENTS-011 R-paste-ready-a71c): idle prompt が
+   可視 ∧ MCP boot 中でない。gate 形式(ready_physics CODEX-READY-PATTERN)は
+   `\\A(?!.*starting mcp servers)` でこの窓を最初から除いていたが、observation
+   形式は idle prompt 単独で ready を主張していた — 『composer は Starting MCP
+   servers (N/M) が画面に残る間から描かれるが input loop は未配線で、その窓に
+   keys を送ると Enter がロード画面に食われ prompt が入力箱に座ったまま submit
+   されない』という同じ物理(verbatim capture tests/data/ready_screens/
+   codex_mcp_boot.txt)が観測形式では効いていなかった。両形式はこの述語で
+   同じ排除を持つ(ADR-DOE-AGENTS-008 R1 の 2 形式一致)。"
+  (and (has-idle-prompt output)
+       (not (is-starting-mcp-servers output))))
 
 (deff has-queued-messages [output]
   {:pre [(: output str)] :post [(: % bool)]}
@@ -323,6 +386,56 @@
       #("managed" #("Enter"))
     True #(None #())))
 
+;; ---------------------------------------------------------------------------
+;; 起動画面の分類材料(ADR-DOE-AGENTS-011 — oracle 非在の追加物理)
+;; ---------------------------------------------------------------------------
+
+(deff has-frame-border [output]
+  {:pre [(: output str)] :post [(: % bool)]}
+  "TUI 自身が描いた枠線(罫線文字が FRAME-BORDER-RUN 連続)。
+   oracle 非在: 2026-08-11 の実物 frame 321 件から起こした物理。
+   目的は『agent が 1 frame も描いていない』の弁別 — 起動 command の echo と
+   shell prompt だけの画面(実測 294/321)には罫線が構造的に現れない。"
+  (setv run 0)
+  (setv found False)
+  (for [ch output]
+    (if (in ch FRAME-BORDER-CHARS)
+        (do
+          (setv run (+ run 1))
+          (when (>= run FRAME-BORDER-RUN)
+            (setv found True)
+            (break)))
+        (setv run 0)))
+  found)
+
+(deff is-dialog-shaped [output]
+  {:pre [(: output str)] :post [(: % bool)]}
+  "選択式 dialog の幾何(ADR-DOE-AGENTS-011 R-unknown-dialog-loud-4e02):
+   番号つき option 行、または確認文言。detect-dialog が None を返した上で
+   これが True の画面は『R9 fast-path 集合の外の dialog』— 決定的な
+   dismissal キーを持たないので dismiss を推測せず loud に落とす。"
+  (setv lower (.lower output))
+  (bool (or (is-not (.search DIALOG-OPTION-RE output) None)
+            (any (gfor phrase DIALOG-CONFIRM-PHRASES (in phrase lower))))))
+
+(deff has-agent-frame [output]
+  {:pre [(: output str)] :post [(: % bool)]}
+  "agent 自身が frame を描いたか(ADR-DOE-AGENTS-011 R-frame-class-6f3d)。
+   positive 証拠の論理和 — 入力欄 / active / turn / MCP boot 行 / R9 dialog /
+   interactive 待ち marker / 罫線。旧実装は『idle prompt が見えない』だけを
+   知っていたため、描画ゼロと認識不能画面を同一文言で終端していた。"
+  (bool (or (has-idle-prompt output)
+            (has-active-marker output)
+            (has-turn-activity output)
+            (is-starting-mcp-servers output)
+            (has-waiting-marker output)
+            (is-not (get (detect-dialog output) 0) None)
+            ;; dialog の幾何そのものも agent の描画物(codex の login 画面は
+            ;; 罫線も既知 marker も持たず ASCII menu だけを描く — verbatim
+            ;; capture tests/data/ready_screens/codex_login.txt)。
+            (is-dialog-shaped output)
+            (has-frame-border output))))
+
 (deff startup-finished [output]
   {:pre [(: output str)] :post [(: % bool)]}
   "launch watchdog の解除信号(oracle output_indicates_startup_finished):
@@ -359,4 +472,11 @@
     :has-unsubmitted-paste (has-unsubmitted-paste output)
     :has-queued-messages (has-queued-messages output)
     :dialog dialog
-    :dialog-dismiss-keys dismiss-keys))
+    :dialog-dismiss-keys dismiss-keys
+    ;; ADR-DOE-AGENTS-011: 起動段の分類材料も『事実』として同じ束で運ぶ —
+    ;; 分類の順序と意味づけは policy 所有(launch-not-ready-class)。
+    :has-agent-frame (has-agent-frame output)
+    :composer-clear (is-composer-clear output)
+    :composer-text (composer-region output)
+    :input-loop-wired (is-input-loop-wired output)
+    :dialog-shaped (is-dialog-shaped output)))

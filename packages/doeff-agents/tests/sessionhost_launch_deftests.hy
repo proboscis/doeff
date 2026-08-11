@@ -12,10 +12,14 @@
 ;;;     readiness に依存しない簿記 — issue
 ;;;     agentd-session-registration-after-ready-gate、2026-07-17)
 ;;;   - repl-idle 予算切れは fail-closed(prompt 未配送・session kill・
-;;;     画面 tail 込み typed error — 2026-07-07 契約修正)。登録済みの行は
-;;;     terminal(failed / timed_out)へ遷移し booting 残置ゼロ
-;;;     (2026-07-17 改訂 — oracle main.rs と同一契約)。予算は host 注入
-;;;     knob で圧縮可
+;;;     証拠 frame 込み typed error — 2026-07-07 契約修正)。登録済みの行は
+;;;     terminal(failed / prompt_undelivered)へ遷移し booting 残置ゼロ
+;;;     (2026-07-17 改訂 — oracle main.rs と同一契約 / 2026-08-12
+;;;     ADR-DOE-AGENTS-011 で category を prompt_undelivered へ分離)。
+;;;     予算は host 注入 knob で圧縮可
+;;;   - ready の必要条件は 3 つ(ADR-DOE-AGENTS-011): 入力 loop 配線
+;;;     (idle prompt ∧ ¬MCP boot)・composer に未送信内容なし・貼り付け
+;;;     可能性 probe の消費と消去。不成立は閉語彙 class つきで終端
 ;;;   - 実効 identity の session 行永続化(S14 の Hy positive 化)
 ;;;
 ;;; fake substrate(台本 tmux capture・進む clock・dict store)+ 両 impl を
@@ -50,6 +54,7 @@
   FsLinkArtifact
   FsListDir
   EnvGet])
+(import doeff_agents.sessionhost.effects [READY-PROBE-TEXT])
 (import doeff_agents.sessionhost.policy [ACTIVE-STATUSES])
 (import doeff_agents.sessionhost.impls.claude_code [claude-code-impl])
 (import doeff_agents.sessionhost.impls.codex [codex-impl])
@@ -69,6 +74,14 @@
     (setv self.events [])
     (setv self.tmux-sessions (set))
     (setv self.capture-script [])   ;; 順に消費、尽きたら最後を保持
+    ;; composer simulator(ADR-DOE-AGENTS-011): 台本の frame に `{composer}` が
+    ;; 在れば、そこへ「今 composer に座っている文字列」を差し込んで描画する。
+    ;; literal paste は composer へ積まれ、BSpace は 1 文字消し、submit は
+    ;; 空にする — ready gate の貼り付け可能性 probe が観測するのはこの状態。
+    ;; composer-starved=True は「reader が我々の byte を消費しない」pane
+    ;; (2026-08-11 実測の起動段 wedge)の模型: paste が積まれない。
+    (setv self.composer "")
+    (setv self.composer-starved False)
     (setv self.captures 0)
     (setv self.trace [])            ;; 効果の時系列(順序 assert 用)
     (setv self.sent-keys [])
@@ -113,14 +126,23 @@
     (.append world.trace
              #("capture" (dfor [k v] (.items world.rows) k v.status)))
     (setv world.captures (+ world.captures 1))
-    (if world.capture-script
-        (resume (if (> (len world.capture-script) 1)
-                    (.pop world.capture-script 0)
-                    (get world.capture-script 0)))
-        (resume "")))
+    (setv frame (if world.capture-script
+                    (if (> (len world.capture-script) 1)
+                        (.pop world.capture-script 0)
+                        (get world.capture-script 0))
+                    ""))
+    (resume (.replace frame "{composer}" world.composer)))
   (TmuxSendKeys [pane-id text literal submit]
     (.append world.trace #("send-keys" text))
     (.append world.sent-keys #(pane-id text literal submit))
+    ;; composer simulator(上記): literal paste は積む(starved なら消費されない)、
+    ;; BSpace は 1 文字消す、submit は composer を空にする。
+    (when (and literal text (not world.composer-starved))
+      (setv world.composer (+ world.composer text)))
+    (when (and (not literal) (= text "BSpace"))
+      (setv world.composer (cut world.composer 0 -1)))
+    (when submit
+      (setv world.composer ""))
     (resume None))
   (TmuxKillSession [session-name]
     (.append world.trace #("kill-session" session-name))
@@ -195,6 +217,13 @@
   params)
 
 
+(defn prompt-send [world]
+  "配送された prompt の send 記録(= 最後の literal 送出)。
+   ready gate の貼り付け可能性 probe(ADR-DOE-AGENTS-011)が起動 command と
+   prompt の間に literal 送出を 1 本挟むため、固定 index では取れない。"
+  (get (lfor [p t l s] world.sent-keys :if l #(p t l s)) -1))
+
+
 (defk run-launch [world params]
   {:pre [(: world LaunchWorld) (: params dict)]
    :post [(: % "SessionRow(成功時)")]}
@@ -212,7 +241,7 @@
 (deftest test-launch-codex-golden-path
   (setv world (LaunchWorld))
   ;; wait-for-repl-idle: 1 回目は banner(idle 無し)、以後 idle prompt
-  (setv world.capture-script ["codex booting banner" "› "])
+  (setv world.capture-script ["codex booting banner" "› {composer}"])
   (<- row (run-launch world (launch-params)))
   ;; trust 書き込み(PreLaunchSetup)が tmux new-session より前
   (setv trace-kinds (lfor t world.trace (get t 0)))
@@ -225,11 +254,15 @@
   (assert (.startswith cmd "codex --yolo"))
   (assert (in "doeff_result" cmd))
   (assert (in "report-result-mcp" cmd))
-  ;; prompt は wait-for-repl-idle(idle 観測 — capture が実際に走った)後に
+  ;; prompt は ready gate(idle 観測 + 貼り付け可能性 probe)の後に
   ;; DeliverMessage → impl → TmuxSendKeys(literal+submit)で配送され、
-  ;; result-protocol instruction が追記されている
-  (assert (= world.captures 2))
-  (setv [ppane ptext pliteral psubmit] (get world.sent-keys 1))
+  ;; result-protocol instruction が追記されている。
+  ;; capture 4 回 = banner / idle(→ probe 貼り)/ probe 可視(→ 消去)/
+  ;; 消去済み(→ ready)。ADR-DOE-AGENTS-011: 旧 gate は idle の 1 枚で
+  ;; 即 paste しており(capture 2 回)、reader が我々の byte を消費している
+  ;; という証拠を 1 つも持っていなかった。
+  (assert (= world.captures 4))
+  (setv [ppane ptext pliteral psubmit] (prompt-send world))
   (assert pliteral)
   (assert psubmit)
   (assert (.startswith ptext "do the task"))
@@ -250,7 +283,7 @@
 
 (deftest test-launch-claude-uses-claude-impl
   (setv world (LaunchWorld))
-  (setv world.capture-script ["❯"])
+  (setv world.capture-script ["❯ {composer}"])
   (<- row (run-launch world (launch-params
                               :agent_type "claude"
                               :binding {"kind" "claude-code"
@@ -328,7 +361,7 @@
 
 (deftest test-launch-command-override-verbatim
   (setv world (LaunchWorld))
-  (setv world.capture-script ["› "])
+  (setv world.capture-script ["› {composer}"])
   (<- row (run-launch world (launch-params
                               :agent_type "generic"
                               :binding None
@@ -365,7 +398,7 @@
   ;; 非 auth の per-launch env(観測フラグ・result channel の配線値など)は
   ;; overlay として通り、binding 由来 auth env と並んで tmux env に載る。
   (setv world (LaunchWorld))
-  (setv world.capture-script ["› "])
+  (setv world.capture-script ["› {composer}"])
   (<- row (run-launch world (launch-params
                               :session_env {"PYTHONUNBUFFERED" "1"
                                             "DOEFF_RESULT_SESSION_ID" "s1"})))
@@ -435,7 +468,7 @@
   ;; binding が在る限り process env の CODEX_HOME fallback には決して到達
   ;; しない(decoy で pin)。
   (setv world (LaunchWorld))
-  (setv world.capture-script ["codex booting banner" "› "])
+  (setv world.capture-script ["codex booting banner" "› {composer}"])
   (setv (get world.env "XDG_STATE_HOME") "/state")
   (setv (get world.env "CODEX_HOME") "/decoy/never-used")
   (<- row (run-launch world (launch-params
@@ -464,7 +497,7 @@
   ;; の地雷 — 旧 Rust の plain write は貫通していた)。canonicalize を殺すと
   ;; ここが red(mutation ピン)。
   (setv world (LaunchWorld))
-  (setv world.capture-script ["codex booting banner" "› "])
+  (setv world.capture-script ["codex booting banner" "› {composer}"])
   (setv (get world.canonical "/x/codex/config.toml") "/bundle/config.toml")
   (<- row (run-launch world (launch-params)))
   (assert (in #("fs-write" "/bundle/config.toml") world.trace))
@@ -484,15 +517,18 @@
                         "  2. Skip\n"
                         "  3. Skip until next version\n"
                         "Press enter to continue"))
-  (setv world.capture-script [update-frame "› "])
+  (setv world.capture-script [update-frame "› {composer}"])
   (<- row (run-launch world (launch-params)))
-  ;; Down Down Enter が(起動 command の後・prompt 配送の前に)送られている
+  ;; Down Down Enter が(起動 command の後・prompt 配送の前に)送られている。
+  ;; その後ろは ready gate probe の消去打鍵(BSpace × probe 文字数)。
   (setv keys (lfor [p t l s] world.sent-keys :if (not l) t))
-  (assert (= keys ["Down" "Down" "Enter"]))
-  ;; literal 送出は起動 command と prompt の 2 本で、prompt が最後
+  (assert (= (cut keys 0 3) ["Down" "Down" "Enter"]))
+  (assert (= (set (cut keys 3 None)) #{"BSpace"}))
+  ;; literal 送出は起動 command / probe / prompt の 3 本で、prompt が最後
   (setv literal-texts (lfor [p t l s] world.sent-keys :if l t))
-  (assert (= (len literal-texts) 2))
-  (assert (.endswith (get literal-texts 1) RESULT-PROTOCOL-INSTRUCTION)))
+  (assert (= (len literal-texts) 3))
+  (assert (= (get literal-texts 1) READY-PROBE-TEXT))
+  (assert (.endswith (get literal-texts -1) RESULT-PROTOCOL-INSTRUCTION)))
 
 
 (deftest test-launch-registers-booting-row-before-repl-idle-wait
@@ -503,7 +539,7 @@
   ;; 開き、60s handshake を仮定する外部監視(mediagen engine)から orphan に
   ;; 見えた(2026-07-14 実測)。
   (setv world (LaunchWorld))
-  (setv world.capture-script ["codex booting banner" "› "])
+  (setv world.capture-script ["codex booting banner" "› {composer}"])
   (<- row (run-launch world (launch-params)))
   ;; wait-for-repl-idle の最初の capture 時点で s1 が booting として可視
   (setv capture-views (lfor t world.trace :if (= (get t 0) "capture") (get t 1)))
@@ -548,8 +584,12 @@
                                         "config_dir" "/x/claude"})))
     (except [e RuntimeError] (setv raised e)))
   (assert (is-not raised None))
-  ;; エラーは明確に語る: REPL 未 ready・prompt 未配送・画面 tail(証拠)
+  ;; エラーは明確に語る: REPL 未 ready・分類・prompt 未配送・画面 tail(証拠)。
+  ;; ADR-DOE-AGENTS-011: 分類は閉語彙で、この形は「R9 fast-path の外の
+  ;; dialog」= unknown-dialog(旧実装は同じ文言でどの画面でも
+  ;; 「unrecognized screen」と断定していた)。
   (assert (in "did not become ready" (str raised)))
+  (assert (in "[unknown-dialog]" (str raised)) (str raised))
   (assert (in "Share anonymous usage data" (str raised)))
   ;; prompt は一切配送されていない(literal 送出は起動 command の 1 本のみ)
   (assert (= (len world.delivered) 0))
@@ -564,7 +604,11 @@
   (assert (= stored.status "failed"))
   (assert (is-not stored.finished-at None))
   (assert (is-not stored.terminal-cause None))
-  (assert (= stored.terminal-cause.category "timed_out"))
+  ;; ADR-DOE-AGENTS-011 R-undelivered-first-class-b5e8: 起動段で prompt が
+  ;; 一度も届かなかった attempt の category は timed_out ではなく
+  ;; prompt_undelivered(retryable は true のまま)。
+  (assert (= stored.terminal-cause.category "prompt_undelivered"))
+  (assert (= stored.terminal-cause.retryable True))
   (assert (in #("s1" "session_failed") world.events))
   ;; cleanup 成功は cleaned-at で表現(terminal-first 契約)
   (assert (is-not stored.cleaned-at None))
@@ -599,7 +643,7 @@
   (setv stored (get world.rows "s1"))
   (assert (= stored.status "failed"))
   (assert (is-not stored.finished-at None))
-  (assert (= stored.terminal-cause.category "timed_out"))
+  (assert (= stored.terminal-cause.category "prompt_undelivered"))
   (assert (in #("s1" "session_failed") world.events))
   ;; cleanup は試行されたが失敗 → cleaned-at は NULL のまま
   (assert (in #("kill-session" "doeff-s1") world.trace))
@@ -628,6 +672,166 @@
 
 
 ;; ---------------------------------------------------------------------------
+;; ADR-DOE-AGENTS-011: 起動段の分類化 + 貼り付け可能性(反例スイート)
+;;
+;; 出典は 2026-08-11 断面の実測(agentd.sqlite 直読):
+;;   - launch ready gate 終端 341 件の実物 frame 分類 = 描画ゼロ 24 /
+;;     shell echo だけ 314 / 最終 frame が ready 3。旧文言が毎回断定していた
+;;     「unrecognized screen (a dialog outside the R9 fast-path set?)」は 0 件。
+;;   - unsubmitted-prompt 終端 25 件 = idle prompt を見て即 paste した prompt が
+;;     composer に collapsed chip として座り turn は一度も始まらなかった
+;;     (chip 3〜10 個 = 1 回の bracketed paste の断片化着弾が 12 席)。
+;; ---------------------------------------------------------------------------
+
+(defk gate-failure [world params]
+  {:pre [(: world LaunchWorld) (: params dict)]
+   :post [(: % RuntimeError)]}
+  "launch を走らせて typed error を捕える(起動段の不成立ケース共通)。
+   defk なのは run-launch が defk だから — 素の fn から呼ぶと program object が
+   黙って流れて『raise されなかった』になる(doeff-hy の await 規律)。"
+  (setv raised None)
+  (try
+    (<- _ (run-launch world params))
+    (except [e RuntimeError] (setv raised e)))
+  (assert (is-not raised None) "launch が fail-closed しなかった")
+  raised)
+
+
+(deftest test-launch-ready-gate-requires-paste-consumption
+  ;; 根治の中核: 『入力欄が描かれた』は reader が我々の byte を消費している
+  ;; 証拠ではない。composer-starved(paste が積まれない pane)は idle prompt を
+  ;; 描き続けるが probe を消費しない — 旧 gate はこの pane に 1238 行の prompt を
+  ;; 貼って running を書き、5 回の Enter 再送のあと unsubmitted-prompt で死んだ
+  ;; (実測 25 件)。新 gate は prompt を配送せず、probe 局面の名前で終端する。
+  (setv world (LaunchWorld))
+  (setv world.composer-starved True)
+  (setv world.capture-script ["› {composer}"])
+  (<- raised (gate-failure world (launch-params :repl_idle_max_wait_seconds 5)))
+  (assert (in "[paste-not-consumed]" (str raised)) (str raised))
+  ;; literal 送出は起動 command と probe の 2 本だけ — prompt は貼られていない
+  (setv literal-texts (lfor [p t l s] world.sent-keys :if l t))
+  (assert (= (len literal-texts) 2) literal-texts)
+  (assert (= (get literal-texts 1) READY-PROBE-TEXT))
+  (assert (= world.delivered []))
+  ;; 行は terminal(prompt_undelivered)で、reason は自己記述する
+  (setv stored (get world.rows "s1"))
+  (assert (= stored.status "failed"))
+  (assert (= stored.terminal-cause.category "prompt_undelivered"))
+  (assert (in "[paste-not-consumed]" stored.terminal-cause.reason))
+  (assert (in "the prompt was never delivered" stored.terminal-cause.reason))
+  ;; DB 面の分類(受入条件 (e))は last_validation_error からも同じ token で引ける
+  (assert (in "[paste-not-consumed]" stored.last-validation-error)))
+
+
+(deftest test-launch-ready-gate-rejects-mcp-boot-window
+  ;; gate 形式(ready_physics CODEX-READY-PATTERN)は MCP boot 窓を最初から
+  ;; 除いていたのに、observation 形式(この gate)は idle prompt 単独で ready を
+  ;; 主張していた。verbatim capture(tests/data/ready_screens/codex_mcp_boot.txt)
+  ;; と同じ形 = composer は描かれているが input loop 未配線。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["Starting MCP servers (1/2)\n› {composer}"])
+  (<- raised (gate-failure world (launch-params :repl_idle_max_wait_seconds 5)))
+  (assert (in "[mcp-boot-window]" (str raised)) (str raised))
+  ;; probe すら貼らない(この窓に keys を送ると Enter がロード画面に食われる)
+  (setv literal-texts (lfor [p t l s] world.sent-keys :if l t))
+  (assert (= (len literal-texts) 1) literal-texts))
+
+
+(deftest test-launch-ready-gate-refuses-occupied-composer
+  ;; 未送信の内容が座ったままの composer へ重ね貼りしない(前 incarnation の
+  ;; 残留・添付チップ)。待っても誰も掃除しないので即 loud。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["› [Pasted text #1 +12 lines]"])
+  (<- raised (gate-failure world (launch-params :repl_idle_max_wait_seconds 5)))
+  (assert (in "[composer-occupied]" (str raised)) (str raised))
+  (setv literal-texts (lfor [p t l s] world.sent-keys :if l t))
+  (assert (= (len literal-texts) 1) literal-texts)
+  ;; 予算を使い切らずに落ちる(待っても解けない命題)
+  (assert (< world.captures 3) world.captures))
+
+
+(deftest test-launch-ready-gate-separates-blank-screen-from-shell-echo
+  ;; 裁定の主題: (A) 認識できない画面が在る / (B) 何も描画されていない の弁別。
+  ;; 実測ではさらに (B') 「shell echo だけ在る」が 314/341 を占め、旧実装は
+  ;; (B) と (B') を同じ 14 改行の tail で残していた(証拠が消えていた)。
+  (setv blank-world (LaunchWorld))
+  (setv blank-world.capture-script [""])
+  (<- blank-raised (gate-failure blank-world
+                                   (launch-params :repl_idle_max_wait_seconds 5)))
+  (assert (in "[no-output]" (str blank-raised)) (str blank-raised))
+  ;; shell echo だけ(実物 frame の写し — 起動 command の echo + zsh の告知)
+  (setv echo-world (LaunchWorld))
+  (setv echo-world.capture-script
+        [(+ "The default interactive shell is now zsh.\n"
+            "CA-20038667:inv_wi_x s22625$ claude --dangerously-skip-permissions "
+            "--settings '{\"disableAllHooks\":true}' --model claude-opus-5")])
+  (<- echo-raised (gate-failure echo-world
+                                  (launch-params :repl_idle_max_wait_seconds 5)))
+  (assert (in "[no-agent-frame]" (str echo-raised)) (str echo-raised))
+  ;; 証拠は逐語で残る(旧実装は末尾 15 行 = 空行だけを残していた)
+  (setv stored (get echo-world.rows "s1"))
+  (assert (in "$ claude --dangerously-skip-permissions" stored.output-snippet)))
+
+
+(deftest test-launch-ready-gate-loud-on-dialog-outside-fast-path
+  ;; 受入条件 (b): R9 fast-path 集合の外の dialog を 1 件でも観測したら loud。
+  ;; 合成標本 — 実測 367 件の失敗 frame には 1 件も無い(= 今日の live には
+  ;; 標本が無い形。0 標本の区分を「実装済み」と呼ばないため合成で撃つ)。
+  ;; codex の trust dialog は選択 marker が `›` なので idle prompt 判定を
+  ;; 通過する: 判定を idle の有無で緩めてはならない(verbatim capture
+  ;; tests/data/ready_screens/codex_trust_dialog.txt と同じ幾何)。
+  (setv world (LaunchWorld))
+  (setv world.capture-script
+        [(+ "Do you trust the files in this folder?\n"
+            "› 1. Yes, proceed\n"
+            "  2. No, exit\n"
+            "Enter to confirm · Esc to cancel")])
+  (<- raised (gate-failure world (launch-params :repl_idle_max_wait_seconds 5)))
+  (assert (in "[unknown-dialog]" (str raised)) (str raised))
+  ;; dismissal キーを推測して送らない(誤った Enter は選択肢を確定させる)
+  (setv keys (lfor [p t l s] world.sent-keys :if (not l) t))
+  (assert (= keys []) keys)
+  (setv literal-texts (lfor [p t l s] world.sent-keys :if l t))
+  (assert (= (len literal-texts) 1) literal-texts))
+
+
+(deftest test-launch-ready-gate-provider-limit-screen-is-rate-limited
+  ;; 起動直後の provider 上限告知は「起動段の失敗」ではなく枠の話 —
+  ;; category は rate_limited(ACP ADR 0049 の failover が引き取る)。
+  ;; 実物形: 稼働席の画面 283 件中 16 件に実在する告知 dialog。
+  (setv world (LaunchWorld))
+  (setv world.capture-script
+        [(+ "What do you want to do?\n"
+            "› 1. Stop and wait for limit to reset\n"
+            "  2. Ask your admin for more usage\n"
+            "Enter to confirm · Esc to cancel")])
+  (<- raised (gate-failure world (launch-params :repl_idle_max_wait_seconds 5)))
+  (assert (in "[provider-limit-screen]" (str raised)) (str raised))
+  (setv stored (get world.rows "s1"))
+  (assert (= stored.terminal-cause.category "rate_limited"))
+  (assert (= stored.terminal-cause.retryable True)))
+
+
+(deftest test-launch-ready-gate-retains-bounded-evidence-frames
+  ;; 受入条件 (g): 失敗画面の逐語の保持数を 1 件から増やす — ただし有界。
+  ;; 保持は「最初の画面」を固定し最新側を入れ替える(局面の経過秒つき)。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["frame one alpha" "frame two beta"
+                              "frame three gamma" "frame four delta"])
+  (<- raised (gate-failure world (launch-params :repl_idle_max_wait_seconds 5)))
+  (setv stored (get world.rows "s1"))
+  (setv snippet stored.output-snippet)
+  ;; 3 枚(READY-GATE-FRAME-RETENTION)— 1 枚でも無制限でもない
+  (assert (= (.count snippet "=== frame @") 3) snippet)
+  ;; 最初の画面は必ず残る(起動直後に何が見えたか)
+  (assert (in "frame one alpha" snippet) snippet)
+  ;; 最後の画面も残る(尽きた台本は最後の frame を保持し続ける)
+  (assert (in "frame four delta" snippet) snippet)
+  ;; 経過秒が付く(どの局面の画面かが事後に置ける)
+  (assert (in "=== frame @0.0s ===" snippet) snippet))
+
+
+;; ---------------------------------------------------------------------------
 ;; shell-join(oracle shell_quote 物理)
 ;; ---------------------------------------------------------------------------
 
@@ -648,7 +852,7 @@
   ;; 鋳造した UUID が --session-id 注入と row.conversation の両方に同値で
   ;; 現れる(boot 前に identity が stored fact)。identity 列には混ざらない。
   (setv world (LaunchWorld))
-  (setv world.capture-script ["❯"])
+  (setv world.capture-script ["❯ {composer}"])
   (<- row (run-launch world (launch-params
                               :agent_type "claude"
                               :binding {"kind" "claude-code"
@@ -668,7 +872,7 @@
   ;; codex の会話 identity は CLI 側が鋳造する — launch 直後の行は
   ;; identity-unknown(None)で、捕獲は monitor の発見 arm の仕事。
   (setv world (LaunchWorld))
-  (setv world.capture-script ["codex booting banner" "› "])
+  (setv world.capture-script ["codex booting banner" "› {composer}"])
   (<- row (run-launch world (launch-params)))
   (assert (is row.conversation None))
   (assert (= row.generation 1)))
