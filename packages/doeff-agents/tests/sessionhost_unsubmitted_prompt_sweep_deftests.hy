@@ -255,8 +255,13 @@
 
 (deftest test-paste-resubmit-budget-exhaustion-terminalizes
   ;; budget(5)超過 → loud typed terminal: failed・reason 接頭
-  ;; `unsubmitted-prompt:`・cause timed_out retryable=true。同 cycle の
+  ;; `unsubmitted-prompt:`・cause prompt_undelivered retryable=true。同 cycle の
   ;; 掃き取りが tmux を kill し cleaned_at を刻む(無限 blocked の構造的禁止)。
+  ;; ADR-DOE-AGENTS-011 R-undelivered-first-class-b5e8(010 R2 改訂 2026-08-12):
+  ;; category は timed_out から prompt_undelivered へ。この arm が終端させる行は
+  ;; turn が一度も始まっていない(実測 25 件全数で turn-activity marker 不在)—
+  ;; 起動段 gate の失敗と同じ命題であり、2 category に割れていると未配達の
+  ;; 集計が割れる。retryable=true は不変。
   (setv world (FakeWorld))
   (seed world (make-row world
                         :awaiting-response True
@@ -266,7 +271,7 @@
   (setv row (get world.rows "s1"))
   (assert (= row.status "failed"))
   (assert (.startswith row.last-validation-error "unsubmitted-prompt:"))
-  (assert (= row.terminal-cause.category "timed_out"))
+  (assert (= row.terminal-cause.category "prompt_undelivered"))
   (assert (= row.terminal-cause.retryable True))
   (assert (is-not row.finished-at None))
   (assert (in #("s1" "session_failed") world.events))
