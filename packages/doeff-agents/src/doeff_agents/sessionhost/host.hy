@@ -52,7 +52,8 @@
                                        db-turn-stamp
                                        turn-close-holder])
 (import doeff_agents.sessionhost.launch [launch-session
-                                         resume-session])
+                                         resume-session
+                                         ResumeRejected])
 (import doeff_agents.sessionhost.policy [
   ACTIVE-STATUSES
   binding-kind-advertisement
@@ -549,6 +550,22 @@
     (raise (RuntimeError f"invalid params for {method}: missing field `{key}`")))
   value)
 
+(deff admit-expected-result [params method]
+  {:pre [(: params dict) (: method str)]
+   :post [(: % "None — 不適合は raise")]}
+  "doeff#482: 契約 schema の fail-closed admission — meta-schema 違反の
+   payload_schema で session を作らない(検証されない契約を存在させない)。
+   session.launch と session.resume の共有面(ADR-006 改訂 R4:
+   expected_result の受理形は verb 間で複製しない)。"
+  (setv expected (.get params "expected_result"))
+  (when (isinstance expected dict)
+    (setv admission-error (schema-admission-error
+                            (.get expected "payload_schema")))
+    (when (is-not admission-error None)
+      (raise (RuntimeError
+               f"invalid params for {method}: {admission-error}"))))
+  None)
+
 (deff build-launch-program-params [params config]
   {:pre [(: params dict) (: config HostConfig)]
    :post [(: % dict)]}
@@ -559,15 +576,7 @@
     (when (not (isinstance (.get params key) str))
       (raise (RuntimeError
                f"invalid params for session.launch: missing field `{key}`"))))
-  ;; doeff#482: 契約 schema の fail-closed admission — meta-schema 違反の
-  ;; payload_schema で session を作らない(検証されない契約を存在させない)。
-  (setv expected (.get params "expected_result"))
-  (when (isinstance expected dict)
-    (setv admission-error (schema-admission-error
-                            (.get expected "payload_schema")))
-    (when (is-not admission-error None)
-      (raise (RuntimeError
-               f"invalid params for session.launch: {admission-error}"))))
+  (admit-expected-result params "session.launch")
   {"session_id" (get params "session_id")
    "session_name" (get params "session_name")
    "agent_type" (get params "agent_type")
@@ -858,12 +867,31 @@
     (return wire))
 
   ;; ADR-DOE-AGENTS-006 R4: 会話の新 incarnation。program(resume-session)が
-  ;; admission(実在 / capability / identity-unknown / one-live-incarnation)と
-  ;; 系譜・世代を所有し、宿しは launch-session を再利用する。
+  ;; admission(実在 / capability / identity-unknown / one-live-incarnation /
+  ;; binding / new_session_id 重複)と系譜・世代・cross-binding transplant
+  ;; (R7)を所有し、宿しは launch-session を再利用する。typed reject
+  ;; (ResumeRejected)は wire の error_code へ写す(R9 — 機械消費者は
+  ;; message substring でなく code を照合する)。
   (when (in method #("session.resume" "session.fork"))
     (setv mode (if (= method "session.resume") "resume" "fork"))
     (setv p (params-object params method))
     (setv source-sid (required-str-param p "session_id" method))
+    ;; cross-binding 拡張 3 param は resume 専用(ADR-006 改訂 R4)— fork への
+    ;; 指定は fail-closed(黙殺は誤配線を隠す)。
+    (when (= method "session.fork")
+      (for [banned #("binding" "new_session_id" "expected_result")]
+        (when (in banned p)
+          (raise (RuntimeError
+                   (+ f"invalid params for session.fork: `{banned}` is "
+                      "resume-only (ADR-DOE-AGENTS-006 R4)"))))))
+    (when (and (in "new_session_id" p)
+               (not (isinstance (.get p "new_session_id") str)))
+      (raise (RuntimeError
+               "invalid params for session.resume: `new_session_id` must be a string")))
+    ;; expected_result の schema admission は launch と共有(R4 — 明示 null は
+    ;; dict でないため素通り = 契約なしの指定)。
+    (when (= method "session.resume")
+      (admit-expected-result p "session.resume"))
     (setv program-params
           {"session_id" source-sid
            "mode" mode
@@ -872,12 +900,21 @@
            "effort" (.get p "effort")
            "mcp_servers" (or (.get p "mcp_servers") {})
            "session_env" (or (.get p "session_env") {})
+           "binding" (.get p "binding")
+           "new_session_id" (.get p "new_session_id")
+           "expected_result" (.get p "expected_result")
+           "expected_result_specified" (in "expected_result" p)
            "socket_path" config.socket-path
            "max_running" config.max-running
            "repl_idle_max_wait_seconds" (env-positive-i64
                                           "DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS")
            "backend_kind" config.backend})
-    (setv row (run-hosted config actor (resume-session program-params)))
+    (setv row None)
+    (try
+      (setv row (run-hosted config actor (resume-session program-params)))
+      (except [e ResumeRejected]
+        ;; R9: typed reject を構造化封筒へ(message は後方互換で不変)。
+        (raise (RpcHostError e.code (str e)))))
     (setv new-sid row.session-id)
     (setv wire (wire-snapshot actor new-sid))
     (record-command actor new-sid method wire)

@@ -23,8 +23,11 @@
   PreLaunchSetup
   ClassifyPane
   DeliverMessage
+  RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE
+  TransplantConversation
   WireResultChannel
   fs-canonical-path
+  fs-link-artifact
   fs-list-dir
   fs-read-text
   fs-write-text-atomic
@@ -215,6 +218,63 @@
 
 
 ;; ---------------------------------------------------------------------------
+;; cross-binding transplant(ADR-006 改訂 R7 — 別 auth home への会話の持ち出し)
+;; ---------------------------------------------------------------------------
+
+(defk claude-transplant-conversation [params]
+  {:pre [(: params dict)]
+   :post [(: % dict)]}
+  "cross-binding resume の transcript transplant(ADR-DOE-AGENTS-006 改訂
+   R7)。物理 = dotfiles agentcli share.py の 4 対と同型: transcript(必須 —
+   不在は typed 値で返し、resume-session が transcript_not_discoverable の
+   reject にする)+ sessions-index.json / session-env/<sid> /
+   file-history/<sid>(best-effort: あれば張る・無ければ skip)。所有
+   profile は source 行の effective_identity で既知なので registry 走査は
+   持ち込まない。同一 home(binding config_dir = source の
+   CLAUDE_CONFIG_DIR)は no-op。transcript の家は projects/<mangled
+   canonical work_dir>/(resume-physics.md 2026-08-11 プローブ (b):
+   symlink 越しの --resume が文脈を保ち、追記は解決先の実体へ届く)。"
+  (setv binding (get params "binding"))
+  (setv target-dir (get binding "config_dir"))
+  (setv identity (or (.get params "source_identity") {}))
+  (setv source-dir (.get identity "CLAUDE_CONFIG_DIR"))
+  (setv conv-id (get (get params "conversation") "session_id"))
+  (when (is source-dir None)
+    (return {"ok" False
+             "code" RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE
+             "message" (+ "session.resume: the source incarnation of "
+                          f"conversation '{conv-id}' has no recorded "
+                          "CLAUDE_CONFIG_DIR — its transcript cannot be "
+                          "located for a cross-binding transplant "
+                          "(transcript-not-discoverable)")}))
+  (when (= source-dir target-dir)
+    (return {"ok" True "action" "same-home"}))
+  (<- canon (fs-canonical-path (get params "work_dir")))
+  (setv mangled (re.sub "[^A-Za-z0-9]" "-" canon))
+  (setv source-project f"{source-dir}/projects/{mangled}")
+  (setv target-project f"{target-dir}/projects/{mangled}")
+  (<- outcome (fs-link-artifact f"{source-project}/{conv-id}.jsonl"
+                                f"{target-project}/{conv-id}.jsonl"))
+  (when (= outcome "source-missing")
+    (return {"ok" False
+             "code" RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE
+             "message" (+ f"session.resume: transcript "
+                          f"'{source-project}/{conv-id}.jsonl' does not exist "
+                          "(transcript-not-discoverable) — a cross-binding "
+                          "transplant requires the source transcript "
+                          "(resume-physics.md probe (a): the real CLI fails "
+                          "loud without it)")}))
+  ;; 周辺 artifact は best-effort(share.py の残り 3 対と同型)。
+  (<- _ (fs-link-artifact f"{source-project}/sessions-index.json"
+                          f"{target-project}/sessions-index.json"))
+  (<- _ (fs-link-artifact f"{source-dir}/session-env/{conv-id}"
+                          f"{target-dir}/session-env/{conv-id}"))
+  (<- _ (fs-link-artifact f"{source-dir}/file-history/{conv-id}"
+                          f"{target-dir}/file-history/{conv-id}"))
+  {"ok" True "action" outcome})
+
+
+;; ---------------------------------------------------------------------------
 ;; per-kind defhandler(R2: 直接束縛と host 束縛の両方で同一モジュール)
 ;; ---------------------------------------------------------------------------
 
@@ -231,6 +291,11 @@
     :when (= agent-type "claude")
     (<- found (claude-discover-conversation params))
     (resume found))
+
+  (TransplantConversation [agent-type params]
+    :when (= agent-type "claude")
+    (<- transplanted (claude-transplant-conversation params))
+    (resume transplanted))
 
   (PreLaunchSetup [agent-type params]
     :when (= agent-type "claude")
