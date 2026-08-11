@@ -52,6 +52,7 @@
      (rule R2 "paste 再送補償器は有界: SessionRow.paste_resubmit_attempts(durable counter)と knob paste-resubmit-limit(凍結既定 5、env DOEFF_AGENTD_PASTE_RESUBMIT_LIMIT)を持ち、budget 内は Enter 再送 + session_unsubmitted_paste_resubmitted event、超過は typed terminal failure(status=failed・reason 接頭 `unsubmitted-prompt:`・cause timed_out retryable=true、api-limit latch 済みなら rate_limited)。")
      (rule R3 "awaiting_response latch は期限つき: SessionRow.awaiting_response_since(solicitation 再武装で更新・正の作業証拠で latch と同時に clear)と knob awaiting-response-timeout-seconds(凍結既定 600、env DOEFF_AGENTD_AWAITING_RESPONSE_TIMEOUT_SECS)を持つ。期限の基点 = max(awaiting_response_since | started_at, observation_gap_at)。超過は typed terminal failure(status=failed・reason 接頭 `awaiting-response timeout:`・cause timed_out retryable=true、api-limit latch 済みなら rate_limited)。これにより『無限 blocked』は構造的に不能になる(#582 穴 c の根治)。【2026-08-09 関係登記(ACP ADR 3d0ff3 wait-bound-declared-ownership)】この timeout は『返事待ち』2 層構成の第一層(所有)である — ACP 帳簿側の blocked-input-dwell bound(既定 1800s)は sessionhost の裁定が観測経路で届かない場合の backstop であり、順序不変量 = 本 knob の実効値 < ACP backstop bound。本 knob の凍結既定(600)を変える変更は ACP ADR 3d0ff3 の登記値(SESSIONHOST-FIRST-LAYER-TIMEOUT-SECONDS)の改訂と一括出荷する。")
      (rule R4 "宛先 pane の帰属検証: monitor は毎 cycle、tmux 生存確認の直後に TmuxSessionPaneIds(tmux list-panes -s / herdr は agent の pane 解決 — 両 substrate が同じ契約を実装する)で row.session_name の所有 pane 集合を観測し、row.pane_id が属さなければ exited + cause vanished(reason に pane と session を明記)で即時終端する。以降の全送出(Enter 再送・dialog dismiss・救援キー・督促配達)はこの検証を通過した宛先にのみ行われる(#582 穴 a/b の根治)。付随契約改訂: 『session 生存のまま pane が帯域外 kill』の形(旧 conformance S19c が供給断のシミュレーションに使っていた)は、substrate が応答した上での帰属喪失 = 第 2 証拠つき死亡へ昇格する — 供給断(ADR-DOE-AGENTS-009 R1 の hold + gap 刻印)は probe/capture が応答なしで失敗する形に限られ、その検証の家は hy deftest gate に移る。")
+     (rule R-blocked-needs-no-work-evidence-4f1c "観測 status の waiting 腕は作業証拠との連言である: observed-status-from-markers(policy.hy)の凍結分類順は failure → api-limit → (waiting ∧ ¬active) → running であり、live active marker(claude spinner / codex working 行)が見えている観測を blocked と分類してはならない。理由 = has-waiting-marker の判定材料 7 語のうち accept edits / bypass permissions / shift+tab to cycle は現行 claude TUI の permission-mode インジケータ、すなわち作業中も常時描画される常設フッターであり(しかも他 marker が tail 30 行窓なのに waiting だけ capture 全文一致)、単独では『入力待ち』を意味しない。連言に has-turn-activity(⏺ / ⎿)は含めない — あれは idle 画面にも残留する痕跡であって live の作業証拠ではなく(markers.hy の逐語: latch clear と startup watchdog 解除の用途に限る)、含めると一度でも作業した claude 席は二度と blocked にならず本当に固まった席が不可視化する。marker 検出(impl 所有)は不変 — 変わるのは分類(policy 所有)のみで、PaneObservation は両事実を今までどおり並べて運ぶ。挙動契約の正本(conformance README の F-* 表 F-waiting 行)を同便で改訂する。【R3 との関係】第一層 600s は『促したのに正の作業証拠が来ない』を測り、本 rule は『作業証拠が来ているのに blocked と名乗る』を禁じる — 同じ作業証拠の 2 つの用法であり、第二層(ACP backstop)が読む status の意味をこの rule が保証する。")
      (rule R5 "substrate cleanup は単一の掃き取りが所有する: monitor-cycle は per-session loop の後に、終端 status かつ cleaned_at IS NULL かつ run_to_completion かつ非 adopted の全行(SessionStoreListCleanupPending)を掃き取る — tmux session が生きていれば kill(session_cleaned event)、active 行が同名を主張していれば kill せず、いずれも cleaned_at を刻む。finalize 内の inline cleanup は撤去し、monitor の終端 arm に片付け命令を足すことを禁止する(semgrep doeff-agents-terminal-cleanup-single-sweep)。launch ready-gate の inline cleanup(launch.hy)は launch pipeline 所有として残り、その失敗は掃き取りが修復する。")]
   :laws
     [(law composer-region-owns-unsubmitted-vocabulary
@@ -68,6 +69,11 @@
        :counterexamples
          [(counterexample "#582 ep9(2026-08-01): awaiting_response=1 が stall watchdog と turn-end 検出を無効化し、budget 使い切りの死席が finished_at=None のまま恒久静止 — 監督は 1 秒ごとに観測を続けたのに終端へ導く経路がゼロ")
           (counterexample "観測断の窓を期限に数える — 供給断で証拠が構造的に来ない行を timed_out で誤終端する(ADR-DOE-AGENTS-009 の型公理 violation。窓は gap で再スタートする)")])
+     (law blocked-status-requires-absence-of-work-evidence
+       :statement "observed_status(obs) = blocked => waiting_marker(obs) ∧ ¬active_marker(obs) — 常設 UI 文字列は『入力待ち』の証拠ではない。かつ ¬(turn_activity ∈ 連言): 残渣 marker を作業証拠に数えると blocked が到達不能になる"
+       :counterexamples
+         [(counterexample "2026-08-06..12 の壁帯 218 席(agentd.sqlite 直読・寿命 1860..2000s で cancelled): 142 席(65%)は死の 10 秒前まで画面が変化していた — 8〜9 万トークンを走らせている最中の席が『指示が届かなかった席』として片付けられた。真に静止していたのは 51 席のみ。逐語の現物 = session agent_inv_wi_5f3fa0e22242b74d_a1 の死亡時 capture『✶ Whatchamacalliting… (31m 5s · ↓ 91.4k tokens)』+ 常設フッター『⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt』")
+          (counterexample "連言に has-turn-activity(⏺ / ⎿)を入れる: 一度でも作業した claude 席は idle 画面でも痕跡が残るため二度と blocked にならず、2026-08-05..06 の凍結 7 席(22h27m ゼロ生産・composer 空)が status 上『running』として不可視になる — 過剰修正は上流 backstop の前提そのものを壊す")])
      (law delivery-target-must-be-owned
        :statement "monitor_send(keys|message, pane) requires verified(pane belongs_to row.session_name, this cycle); ownership_mismatch_is_evidenced_vanish"
        :counterexamples
@@ -129,6 +135,38 @@
        (assert (not (has-unsubmitted-paste history)))
        (assert (not (unsubmitted-paste-input? history None)))
        (assert (not (_output-has-unsubmitted-paste-input history))))
+     (deftest test-adr-doe-agents-010-blocked-needs-no-work-evidence
+       ;; R-blocked-needs-no-work-evidence-4f1c の機械面(法の連言そのもの)。
+       ;; 分類は純関数なので PaneObservation を直接組んで固定する — 実物 pane
+       ;; からの marker 検出は impls 側 deftest
+       ;; (test-classify-claude-working-pane-carries-both-marker-facts)が
+       ;; 逐語で固定し、cycle 込みの挙動は policy 側 deftest
+       ;; (test-working-pane-with-waiting-footer-stays-running)が固定する。
+       (import doeff_agents.sessionhost.effects [PaneObservation])
+       (import doeff_agents.sessionhost.policy [observed-status-from-markers])
+       ;; 常設フッター(waiting)だけ = 従来どおり blocked。
+       (assert (= "blocked"
+                  (observed-status-from-markers
+                    (PaneObservation :has-waiting-marker True))))
+       ;; 働いている pane(waiting ∧ active)は blocked にしない — 壁帯 142 席。
+       (assert (= "running"
+                  (observed-status-from-markers
+                    (PaneObservation :has-waiting-marker True
+                                     :has-active-marker True))))
+       ;; 残渣 marker(turn-activity)は連言に入らない — 過剰修正の禁止。
+       (assert (= "blocked"
+                  (observed-status-from-markers
+                    (PaneObservation :has-waiting-marker True
+                                     :has-turn-activity True))))
+       ;; 上位の分類順は不変(failure / api-limit は active があっても勝つ)。
+       (assert (= "failed"
+                  (observed-status-from-markers
+                    (PaneObservation :has-failure-marker True
+                                     :has-active-marker True))))
+       (assert (= "blocked_api"
+                  (observed-status-from-markers
+                    (PaneObservation :has-api-limit-marker True
+                                     :has-active-marker True)))))
      (defsemgrep per-arm-cleanup-is-banned
        "doeff-agents-terminal-cleanup-single-sweep"
        [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy"

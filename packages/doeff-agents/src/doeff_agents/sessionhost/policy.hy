@@ -296,13 +296,33 @@
 (deff observed-status-from-markers [obs]
   {:pre [(: obs PaneObservation)]
    :post [(: % str) (in % #{"failed" "blocked_api" "blocked" "running"})]}
-  "凍結分類順: failure → api-limit → waiting → running
-   (oracle observed_status_for_snapshot)。done はここからは決して出ない —
-   work-end は result-first / turn-end 検証だけが決める。"
+  "凍結分類順: failure → api-limit → (waiting ∧ ¬active) → running
+   (oracle observed_status_for_snapshot + 2026-08-12 の作業証拠腕)。done は
+   ここからは決して出ない — work-end は result-first / turn-end 検証だけが決める。
+
+   waiting 腕は作業証拠との連言である(ACP issue 55b1bd の根治)。has-waiting-marker
+   は現行 TUI では『入力待ち』を意味しない: 判定材料 7 語のうち accept edits /
+   bypass permissions / shift+tab to cycle は claude の permission-mode
+   インジケータ = 作業中も常時描画される常設フッターで、しかもこの marker だけ
+   capture 全文一致(他は tail 30 行窓)。結果、全席が起動直後から終了まで
+   blocked と記録され、その状態を『指示未配達』と読む上流の有界 dwell
+   (ACP ADR 9211b3 の 1800s ヒューズ)が働いている席を例外なく終端した —
+   実測 2026-08-06..12 の壁帯 218 席のうち 142 席(65%)は死の 10 秒前まで
+   画面が動いており(8〜9 万トークンの実作業)、真に静止していたのは 51 席のみ。
+   live active marker(claude spinner / codex working 行)が見えている観測は
+   『働いている』が確定事実なので、waiting 語の同時出現は blocked の根拠に
+   ならない。
+
+   has-turn-activity(⏺ / ⎿)は意図的に見ない: あれは idle 画面にも残留する
+   痕跡であって live の作業証拠ではない(markers.hy の逐語)。連言に入れると
+   一度でも作業した claude 席は二度と blocked にならず、本当に固まった席
+   (2026-08-05..06 の 7 席 × 22h27m)が再び不可視になる — latch clear と
+   startup watchdog の用途に限る、という marker 側の契約を status 導出へ
+   持ち込まない。"
   (cond
     obs.has-failure-marker "failed"
     obs.has-api-limit-marker "blocked_api"
-    obs.has-waiting-marker "blocked"
+    (and obs.has-waiting-marker (not obs.has-active-marker)) "blocked"
     True "running"))
 
 (deff event-type-for-status [status]

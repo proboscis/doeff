@@ -430,6 +430,28 @@
   (assert (not hist.has-active-marker)))
 
 
+(deftest test-classify-claude-working-pane-carries-both-marker-facts
+  ;; ACP issue 55b1bd の前提の逐語固定(agentd.sqlite 直読 2026-08-12・
+  ;; session agent_inv_wi_5f3fa0e22242b74d_a1 の死亡時 output_snippet 現物)。
+  ;; この席は 31 分 5 秒・91.4k トークンを走らせている最中に「入力待ちが
+  ;; 1800 秒続いた」として終端された。現物が示す事実は 2 つ同時である:
+  ;;   - waiting marker は True(permission-mode フッターの逐語 3 語が常設)
+  ;;   - active marker も True(罫線を跨いだ live spinner + esc to interrupt)
+  ;; marker 検出はどちらも正しい。誤りは『waiting だけを見て状態を決める』
+  ;; 分類の側にあった(policy 側 deftest
+  ;; test-working-pane-with-waiting-footer-stays-running が連言を固定する)。
+  (setv working-31min
+        (+ "✶ Whatchamacalliting… (31m 5s · ↓ 91.4k tokens)\n"
+           "\n"
+           (* "─" 80) "\n"
+           "❯ \n"
+           (* "─" 80) "\n"
+           "  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ← for age…\n"))
+  (<- obs (classify-claude working-31min))
+  (assert obs.has-waiting-marker)
+  (assert obs.has-active-marker))
+
+
 (deftest test-classify-claude-queued-messages-fact
   ;; issue #573(incident event 1997731 現物): mid-turn に配送された message は
   ;; composer に積まれ、入力行が `❯ Press up to edit queued messages` になる。

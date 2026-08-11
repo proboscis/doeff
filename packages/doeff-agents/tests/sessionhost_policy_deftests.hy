@@ -81,6 +81,13 @@
 (setv F-FAILED "fatal error: kaboom")
 (setv F-API-LIMIT "rate limit exceeded")
 (setv F-WAITING "Type your message")
+;; ACP issue 55b1bd: 働いている pane に waiting 語が同時に居る現物の型
+;; (常設フッター + live spinner)。実物の逐語は impls 側 deftest
+;; test-classify-claude-working-pane-carries-both-marker-facts が固定する —
+;; ここは fake classify-frame の語彙(Type your message / … ()で同じ
+;; 「waiting ∧ active」の同時成立を作る。
+(setv F-WAITING-WHILE-WORKING
+      "✶ Whatchamacalliting… (31m 5s · 91.4k tokens)\nType your message")
 (setv F-MENU-CODEX "› 1. Switch to gpt-5.4-mini\n  2. Keep current model\n  Press enter to confirm")
 (setv F-FROZEN "==> restricted login <==\n-- more --")
 (setv F-DIALOG-MANAGED "Managed settings require approval\nSettings requiring approval:\n  - statusLine")
@@ -391,6 +398,39 @@
   (assert (= row.status "blocked"))
   (assert (is None row.finished-at))
   (assert (in #("s1" "session_blocked") world.events)))
+
+
+(deftest test-working-pane-with-waiting-footer-stays-running
+  ;; ACP issue 55b1bd の根治の固定: waiting 腕は作業証拠との連言である。
+  ;; 現行 claude TUI の waiting 語(accept edits / bypass permissions /
+  ;; shift+tab to cycle)は permission-mode の常設フッターで、起動から終了まで
+  ;; 消えない。旧分類はこれ 1 語で blocked を確定させたため、全席が起動直後から
+  ;; 入力待ちと記録され、その状態を『指示未配達』と読む上流の有界 dwell
+  ;; (ACP ADR 9211b3)が働いている席を終端した — 2026-08-06..12 の壁帯 218 席の
+  ;; うち 142 席(65%)は死の 10 秒前まで画面が動いていた。live active marker が
+  ;; 見えている観測は working が確定事実なので blocked にしない。
+  (setv world (FakeWorld))
+  (seed world (make-row world) :frame F-WAITING-WHILE-WORKING)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "running"))
+  (assert (is None row.finished-at))
+  (assert (not-in #("s1" "session_blocked") world.events)))
+
+
+(deftest test-turn-activity-residue-does-not-mask-blocked
+  ;; 連言に has-turn-activity を入れない、の固定(依頼書の decisions 逐語からの
+  ;; 意図的逸脱 — 実読で確定)。⏺ / ⎿ は idle 画面にも残留する痕跡であって live の
+  ;; 作業証拠ではない(markers.hy の逐語: latch clear と startup watchdog 解除に
+  ;; のみ使う)。連言に入れると一度でも作業した claude 席は二度と blocked に
+  ;; ならず、本当に固まった席(2026-08-05..06 の 7 席 × 22h27m)が再び不可視に
+  ;; なる — 上流の有界 dwell が働く前提そのものを壊す。
+  (setv world (FakeWorld))
+  (seed world (make-row world)
+        :frame (+ F-TURN-ACTIVITY-CLAUDE "\n" F-WAITING))
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "blocked")))
 
 
 ;; ---------------------------------------------------------------------------
