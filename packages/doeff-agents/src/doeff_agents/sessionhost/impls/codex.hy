@@ -19,9 +19,12 @@
   PreLaunchSetup
   ClassifyPane
   DeliverMessage
+  RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE
+  TransplantConversation
   WireResultChannel
   fs-canonical-path
   fs-compose-home-view
+  fs-link-artifact
   fs-list-dir
   fs-read-text
   fs-write-text-atomic
@@ -289,6 +292,66 @@
 
 
 ;; ---------------------------------------------------------------------------
+;; cross-binding transplant(ADR-006 改訂 R7 — 別 auth home への会話の持ち出し)
+;; ---------------------------------------------------------------------------
+
+(defk codex-transplant-conversation [params]
+  {:pre [(: params dict)]
+   :post [(: % dict)]}
+  "cross-binding resume の rollout transplant(ADR-DOE-AGENTS-006 改訂 R7)。
+   物理(resume-physics.md 2026-08-11 プローブ (c)): codex の resume は
+   常に自 home の sessions/ 走査で rollout を発見する — conversation_json の
+   rollout_path(絶対)を CLI が辿ることはない。よって cross-home resume は
+   rollout を `<target sessions root>/<sessions/ 以下同相対 path>` へ symlink
+   する。sessions root は native 形 = <codex_home>/sessions、二軸形 =
+   <profile_dir>/sessions(home view の sessions は bundle 側実体への link —
+   substrate compose-home-view。view 合成前でも安定な実体 path)。
+   同一 home(native 同士の一致)は no-op。二軸形は view 名を再計算しない —
+   transplant は冪等(同一実体は FsLinkArtifact の same-entity no-op)なので
+   発火してよい。rollout 不在は typed 値で返す(reject は resume-session
+   所有)。"
+  (setv binding (get params "binding"))
+  (setv identity (or (.get params "source_identity") {}))
+  (setv conv (get params "conversation"))
+  (setv conv-id (get conv "session_id"))
+  (setv rollout (.get conv "rollout_path"))
+  (setv target-home (.get binding "codex_home"))
+  (setv target-root
+        (if (is-not target-home None)
+            f"{target-home}/sessions"
+            (+ (get binding "profile_dir") "/sessions")))
+  (when (and (is-not target-home None)
+             (= (.get identity "CODEX_HOME") target-home))
+    (return {"ok" True "action" "same-home"}))
+  (when (is rollout None)
+    (return {"ok" False
+             "code" RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE
+             "message" (+ f"session.resume: conversation '{conv-id}' has no "
+                          "recorded rollout_path — its rollout cannot be "
+                          "located for a cross-binding transplant "
+                          "(transcript-not-discoverable)")}))
+  (setv marker "/sessions/")
+  (setv idx (.rfind rollout marker))
+  (when (= idx -1)
+    (return {"ok" False
+             "code" RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE
+             "message" (+ f"session.resume: rollout_path '{rollout}' has no "
+                          "sessions/ segment — the transplant target cannot "
+                          "be derived (transcript-not-discoverable)")}))
+  (setv rel (cut rollout (+ idx (len marker)) None))
+  (<- outcome (fs-link-artifact rollout f"{target-root}/{rel}"))
+  (when (= outcome "source-missing")
+    (return {"ok" False
+             "code" RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE
+             "message" (+ f"session.resume: rollout '{rollout}' does not "
+                          "exist (transcript-not-discoverable) — a "
+                          "cross-binding transplant requires the source "
+                          "rollout (resume-physics.md probe (c): codex fails "
+                          "loud without it)")}))
+  {"ok" True "action" outcome})
+
+
+;; ---------------------------------------------------------------------------
 ;; per-kind defhandler(R2: 直接束縛と host 束縛の両方で同一モジュール)
 ;; ---------------------------------------------------------------------------
 
@@ -305,6 +368,11 @@
     :when (= agent-type "codex")
     (<- found (codex-discover-conversation params))
     (resume found))
+
+  (TransplantConversation [agent-type params]
+    :when (= agent-type "codex")
+    (<- transplanted (codex-transplant-conversation params))
+    (resume transplanted))
 
   (PreLaunchSetup [agent-type params]
     :when (= agent-type "codex")
