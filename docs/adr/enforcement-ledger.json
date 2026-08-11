@@ -3,6 +3,6 @@
   "defadr_files": 22,
   "semgrep_rules": 247,
   "adr_deftest_enforcements": 31,
-  "adr_defsemgrep_enforcements": 45,
-  "adr_laws": 73
+  "adr_defsemgrep_enforcements": 46,
+  "adr_laws": 77
 }
