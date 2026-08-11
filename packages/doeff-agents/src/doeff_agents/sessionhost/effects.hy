@@ -185,7 +185,59 @@
   ;; dismiss_codex_update_dialog の selected-option 依存 Down 数 /
   ;; bypass・fullscreen = Down,Enter / managed = Enter)。
   #^ Any dialog-dismiss-keys
-  (setv dialog-dismiss-keys #()))
+  (setv dialog-dismiss-keys #())
+  ;; ADR-DOE-AGENTS-011 R-frame-class-6f3d: agent 自身が frame を描いたか。
+  ;; 「起動画面が読めなかった」の 2 状態((A) 認識できない画面が在る /
+  ;; (B) 何も描画されていない)を事後に弁別するための事実 — 旧実装は
+  ;; どちらも同一文言「unrecognized screen」で終端し、実測 321 件のうち
+  ;; 318 件が (B) 側(空 24 / shell echo のみ 294)だったことが読めなかった。
+  #^ bool has-agent-frame
+  (setv has-agent-frame False)
+  ;; ADR-DOE-AGENTS-011 R-paste-ready-a71c: composer に未送信の内容が
+  ;; 座っていない(領域が描かれている ∧ 未送信チップなし)。ready gate の
+  ;; 必要条件 — 他人の内容が座っている composer へ prompt を重ね貼りしない。
+  #^ bool composer-clear
+  (setv composer-clear False)
+  ;; ADR-DOE-AGENTS-011 R-paste-ready-a71c: 入力 loop が配線済み
+  ;; (idle prompt 可視 ∧ MCP boot 中でない)。旧 gate は idle prompt 単独で
+  ;; ready を主張し、MCP boot 窓(composer は描かれているが Enter が
+  ;; ロード画面に食われる)を通していた。
+  #^ bool input-loop-wired
+  (setv input-loop-wired False)
+  ;; composer 領域の逐語(最終 prompt 行とそれ以降。未描画は None)。
+  ;; ready gate の probe が「reader が我々の byte を消費したか」を
+  ;; 領域の変化で判定する材料 — 程度ではなく変化の有無だけを使う。
+  #^ (| str None) composer-text
+  (setv composer-text None)
+  ;; ADR-DOE-AGENTS-011 R-unknown-dialog-loud-4e02: 選択式 dialog の幾何
+  ;; (prompt glyph の直後に番号つき option / 確認文言)。R9 fast-path の
+  ;; 外側の dialog を loud に落とす判定材料(dialog=None かつこれが True)。
+  #^ bool dialog-shaped
+  (setv dialog-shaped False))
+
+
+(defclass [(dataclass :frozen True :kw-only True)] PaneFrame []
+  "起動段の証拠 frame 1 枚(ADR-DOE-AGENTS-011 R-evidence-frames-9c17)。
+   at-seconds = gate 開始からの経過秒(どの局面の画面かを事後に置ける)。
+   text = capture の tail(保持数は READY-GATE-FRAME-RETENTION で有界)。"
+  #^ float at-seconds
+  #^ str text)
+
+
+(defclass [(dataclass :frozen True :kw-only True)] ReadyGateVerdict []
+  "launch ready gate の裁定(ADR-DOE-AGENTS-011)。ready=False は必ず
+   failure-class(閉語彙 LAUNCH-NOT-READY-CLASSES)を伴う — 分類なしの
+   不成立は構造的に作れない(旧実装の固定文言への回帰を型で塞ぐ)。
+   frames は保持数 1 の旧実装に対する増量分(受入条件 (g))。"
+  #^ bool ready
+  #^ (| str None) failure-class
+  (setv failure-class None)
+  #^ Any frames
+  (setv frames #())
+  #^ int polls
+  (setv polls 0)
+  #^ float elapsed-seconds
+  (setv elapsed-seconds 0.0))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] JudgeVerdict []
@@ -221,6 +273,26 @@
 ;; は import 参照で fallback する。
 (setv PASTE-RESUBMIT-LIMIT 5)
 (setv AWAITING-RESPONSE-TIMEOUT-SECONDS 600)
+
+;; ADR-DOE-AGENTS-011 の凍結物理 — literal の家はここだけ(上と同じ規律)。
+;; 貼り付け可能性 probe: ready gate は「入力欄が描かれた」ではなく
+;; 「この composer が我々の bracketed paste を消費した」を必要条件にする。
+;; 実測(2026-08-11、25 席の unsubmitted-prompt 終端): idle prompt を見て
+;; 即 paste した prompt が composer に collapsed chip として座り(12 席は
+;; chip 3〜10 個 = 1 回の bracketed paste が断片化して着弾)、Enter は
+;; 断片の隙間に食われて turn は一度も始まらなかった。probe は
+;; 「reader が我々の byte を消費している」ことの唯一の positive 証拠。
+;; text は空白なし ASCII(TUI の折返しで断片化しない)・誤送信しても無害な語。
+(setv READY-PROBE-TEXT "doeff-ready-probe")
+;; probe の消去は文字単位の後退キー(kind 非依存の terminal 物理 — submit の
+;; "Enter" が substrate 所有であるのと同じ層)。collapsed chip 形で着弾した
+;; 場合は 1 打で消えるため、残りの打鍵は空 composer への no-op になる。
+(setv READY-PROBE-CLEAR-KEY "BSpace")
+;; 失敗時に保持する証拠 frame の数(受入条件 (g): 旧実装は 1 件)。
+;; 有界(3)— output_snippet は wire に載る行の列であり無制限に育てない。
+(setv READY-GATE-FRAME-RETENTION 3)
+;; 1 frame あたりの保持行数(旧実装の tail-15 と同値 — 逐語性を落とさない)。
+(setv READY-GATE-FRAME-LINES 15)
 
 
 (defclass [(dataclass :frozen True :kw-only True)] MonitorKnobs []

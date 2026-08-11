@@ -195,6 +195,9 @@ scenario 専用 `ZDOTDIR` の rc で shim dir を再 prepend して決定化)。
 | 事象 | category | retryable |
 |---|---|---|
 | api-limit マーカー(終端時 tail **または** attempt 中の durable latch `api_limit_observed_at` — issue #557) | RateLimited | **true** |
+| **起動段 ready gate の不成立**(ADR-DOE-AGENTS-011 R-undelivered-first-class-b5e8 / R-frame-class-6f3d。閉語彙 class つき reason `launch ready gate [<class>]: … the prompt was never delivered`。class = no-output / no-agent-frame / dialog-not-dismissed / unknown-dialog / unrecognized-screen / mcp-boot-window / composer-occupied / paste-not-consumed / composer-not-clearable / deadline-race) | **PromptUndelivered** | **true** |
+| 起動直後の provider 上限告知画面(class=provider-limit-screen — 失敗の所有者が provider 側なので ACP ADR 0049 の failover へ渡す) | RateLimited | **true** |
+| paste 再送 budget 超過(未送信 prompt。ADR-DOE-AGENTS-010 R2 の 2026-08-12 改訂 — 旧 TimedOut。api-limit latch 済みなら RateLimited) | **PromptUndelivered** | **true** |
 | tail に timeout/timed out/deadline | TimedOut | **true** |
 | launch timeout(watch 窓の基点 = `max(started_at, observation_gap_at)` — ADR-DOE-AGENTS-009 R2) | TimedOut | **true** |
 | zombie(idle shell)/ tmux-gone — 証拠つき死亡(2026-07-28 ADR-DOE-AGENTS-009 R3 で Lost から分割) | Vanished | **true** |
@@ -221,9 +224,11 @@ Hy 実装がこの表を変える場合は ADR 改訂が先(黙った変更は c
 | launch timeout(60s) | `DOEFF_AGENTD_LAUNCH_TIMEOUT_SECS` | ✓ |
 | unblock budget(3) | `--prompt-unblock-attempts` / `DOEFF_AGENTD_PROMPT_UNBLOCK_ATTEMPTS`(main.rs:646 — 実装時走査で実在確認。S6 は既定 3 のまま検証) | ✓ |
 | stale-observation 閾値(300s) | `DOEFF_AGENTD_STALE_OBSERVATION_SECS`(S19 用に oracle へ追加した env-only knob、`effective_stale_observation_threshold_seconds` — 既定 300s・意味論不変。launch timeout と同じく flag 無しの env 専用なので harness は `extra_env` で daemon プロセスに渡す) | ✓(追加済) |
-| paste 再送 budget(5) | `DOEFF_AGENTD_PASTE_RESUBMIT_LIMIT`(env-only。issue #568 / ADR-DOE-AGENTS-010 R2 — 未送信 paste / 添付の Enter 再送は有界で、超過は typed terminal failed(timed_out true、latch 済みなら rate_limited)。退役 Rust oracle は無上限 = 基準外) | ✓(Hy のみ) |
+| paste 再送 budget(5) | `DOEFF_AGENTD_PASTE_RESUBMIT_LIMIT`(env-only。issue #568 / ADR-DOE-AGENTS-010 R2 — 未送信 paste / 添付の Enter 再送は有界で、超過は typed terminal failed(**prompt_undelivered** true、latch 済みなら rate_limited。category は ADR-DOE-AGENTS-011 で timed_out から分離)。退役 Rust oracle は無上限 = 基準外) | ✓(Hy のみ) |
 | awaiting 期限(600s) | `DOEFF_AGENTD_AWAITING_RESPONSE_TIMEOUT_SECS`(env-only。同 R3 — awaiting_response latch は期限つき: 基点 = max(awaiting_response_since \| started_at, observation_gap_at)、期限内に正の作業証拠が無ければ typed terminal failed。退役 Rust oracle は無期限 = 基準外) | ✓(Hy のみ) |
 | wait_for_repl_idle 上限(120s) | 定数 — fake は即 idle を描画するので実害なし | 不要 |
+| ready gate の貼り付け可能性 probe(ADR-DOE-AGENTS-011 R-paste-ready-a71c) | 定数 `READY-PROBE-TEXT` / `READY-PROBE-CLEAR-KEY`(effects.hy が literal の家)。ready は「入力欄が描かれた」ではなく「probe を composer が消費し、消去キーで空へ戻る」— 判定は repl-idle 予算の内側で完結し壁時計を伸ばさない(ACP ADR 0042 R8 の順序不変量を保つ) | 不要(fake は composer を模擬) |
+| 失敗証拠 frame の保持数(3 × 15 行) | 定数 `READY-GATE-FRAME-RETENTION` / `READY-GATE-FRAME-LINES`(同 R-evidence-frames-9c17。旧実装は最終 1 枚のみ) | 不要 |
 | 孤児 daemon 自己終了(opt-in) | `DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED=1`(env-only、S28 — harness が spawn 時に常時付与。driver が `__exit__` を経ず死んでも daemon が launch 済み session を刈って有界時間内に退場。production(launchd — ppid が最初から 1)は knob を立てない = 従来どおり生存) | ✓(追加済) |
 
 oracle への変更は「意味論を変えない設定追加」のみ許す(挙動変更禁止)。

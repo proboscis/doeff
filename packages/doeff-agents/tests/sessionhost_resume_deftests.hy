@@ -86,10 +86,18 @@
 ;; golden path
 ;; ---------------------------------------------------------------------------
 
+
+(defn last-literal-send [world]
+  "配送された prompt の send 記録(= 最後の literal 送出)。ready gate の
+   貼り付け可能性 probe(ADR-DOE-AGENTS-011)が起動 command と prompt の間に
+   literal 送出を 1 本挟むため、固定 index では取れない。"
+  (get (lfor [p t l s] world.sent-keys :if l #(p t l s)) -1))
+
+
 (deftest test-resume-codex-golden-path
   (setv world (LaunchWorld))
   (seed-source world)
-  (setv world.capture-script ["› "])
+  (setv world.capture-script ["› {composer}"])
   (<- row (run-resume world (resume-params)))
   ;; 新 incarnation 行: 同一会話・generation+1・系譜記録
   (assert (= row.session-id "s1~g2"))
@@ -104,7 +112,7 @@
   ;; auth は行の effective_identity から再構成され tmux env に届く
   (assert (= (get (get world.tmux-envs "doeff-s1~g2") "CODEX_HOME") "/x/codex"))
   ;; prompt は live REPL 配送(impl の DeliverMessage → TmuxSendKeys)
-  (setv [ppane ptext pliteral psubmit] (get world.sent-keys 1))
+  (setv [ppane ptext pliteral psubmit] (last-literal-send world))
   (assert (= ptext "continue please"))
   (assert pliteral)
   (assert psubmit)
@@ -123,7 +131,7 @@
                :effective_identity {"CLAUDE_CONFIG_DIR" "/x/claude"}
                :conversation {"session_id" "conv-A"})
   (.add world.tmux-sessions "doeff-s1")
-  (setv world.capture-script ["❯"])
+  (setv world.capture-script ["❯ {composer}"])
   (<- row (run-resume world (resume-params :mode "fork"
                                            :prompt "explore alternative")))
   (assert (= row.session-id "s1~fork1"))
@@ -218,7 +226,7 @@
   (seed-source world)
   (seed-source world :session_id "s1~g2" :session_name "doeff-s1~g2"
                :generation 2)
-  (setv world.capture-script ["› "])
+  (setv world.capture-script ["› {composer}"])
   (<- row (run-resume world (resume-params)))
   (assert (= row.session-id "s1~g3"))
   (assert (= row.generation 3)))
@@ -229,7 +237,7 @@
   (setv world (LaunchWorld))
   (seed-source world :session_id "s1~g2" :session_name "doeff-s1~g2"
                :generation 2)
-  (setv world.capture-script ["› "])
+  (setv world.capture-script ["› {composer}"])
   (<- row (run-resume world (resume-params :session_id "s1~g2")))
   (assert (= row.session-id "s1~g3"))
   (assert (= row.generation 3)))
@@ -239,7 +247,7 @@
   (setv world (LaunchWorld))
   (seed-source world)
   (seed-source world :session_id "s1~fork1" :session_name "doeff-s1~fork1")
-  (setv world.capture-script ["› "])
+  (setv world.capture-script ["› {composer}"])
   (<- row (run-resume world (resume-params :mode "fork")))
   (assert (= row.session-id "s1~fork2"))
   (assert (= row.generation 1)))
@@ -252,11 +260,11 @@
 (deftest test-resume-carries-unfulfilled-contract
   (setv world (LaunchWorld))
   (seed-source world :expected_result {"type" "object"})
-  (setv world.capture-script ["› "])
+  (setv world.capture-script ["› {composer}"])
   (<- row (run-resume world (resume-params)))
   (assert (= row.expected-result {"type" "object"}))
   ;; contract 持ちの prompt には result-protocol instruction が追記される
-  (setv [ppane ptext pliteral psubmit] (get world.sent-keys 1))
+  (setv [ppane ptext pliteral psubmit] (last-literal-send world))
   (assert (.endswith ptext RESULT-PROTOCOL-INSTRUCTION))
   ;; result channel が argv に配線される
   (setv [pane cmd literal submit] (get world.sent-keys 0))
@@ -267,7 +275,7 @@
   (setv world (LaunchWorld))
   (seed-source world :expected_result {"type" "object"}
                :result_payload "{\"ok\":true}")
-  (setv world.capture-script ["› "])
+  (setv world.capture-script ["› {composer}"])
   (<- row (run-resume world (resume-params)))
   (assert (is row.expected-result None)))
 
@@ -275,7 +283,7 @@
 (deftest test-fork-does-not-carry-contract
   (setv world (LaunchWorld))
   (seed-source world :expected_result {"type" "object"})
-  (setv world.capture-script ["› "])
+  (setv world.capture-script ["› {composer}"])
   (<- row (run-resume world (resume-params :mode "fork")))
   (assert (is row.expected-result None)))
 
@@ -405,7 +413,7 @@
                                       "model" "gpt-5.4"
                                       "effort" "high"
                                       "mcp_servers" {}})
-  (setv world.capture-script ["› "])
+  (setv world.capture-script ["› {composer}"])
   (<- row (run-resume world (resume-params :effort "low")))
   (setv [pane cmd literal submit] (get world.sent-keys 0))
   ;; model は overlay から、effort は呼び手上書き
