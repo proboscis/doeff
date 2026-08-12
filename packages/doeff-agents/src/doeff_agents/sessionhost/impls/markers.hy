@@ -119,6 +119,100 @@
             ;; 文言 — exhausted 側 = blocked_api が正。
             (in "out of usage credits" text))))
 
+
+;; ---------------------------------------------------------------------------
+;; provider 由来の非上限終端(ACP ADR 0049 R9 第 3 改訂 — 2026-08-12)
+;; ---------------------------------------------------------------------------
+;; R9 は「行動系の終端でも pane の provider marker を先に見る」を定めたが、
+;; 見る対象が provider-limit 族ただ 1 つに固定されていた。上限以外の provider
+;; 失敗 —— 再認証要求・組織 access 剥奪・文脈枯渇・transport 障害 —— で turn が
+;; 終わった attempt には marker が立たず、run_failed / retryable=false へ落ちる。
+;; 席の判断ではない失敗が「席が結果を報告しなかった」として恒久 gate になる形で、
+;; 上限族に対する #557 / R9 の修理とまったく同じ穴が族の数だけ開いていた。
+;;
+;; 実測(2026-08-12・agentd.sqlite の terminal × 席 transcript の突合):
+;; 所有格族が着地した 2026-08-08 以降の turn-end-without-result 終端 19 件のうち
+;; 12 件(63%)が provider 由来 —— 認証 11(再認証要求 4 / 組織 access 剥奪 7)・
+;; 文脈枯渇 1。同区間の上限族の取りこぼしは 0 件で、残っているのはこの族である。
+;;
+;; 設計の規律は上限族と同じ(R9 (i)(ii)): 逐語列挙ではなく有界可変挿入つきの
+;; 族照合。逐語追随が 3 度破れた事実(2026-07-20 / 07-26 / 08-06)が根拠で、
+;; ここでも実物 frame は同一事象に 2 形あった ——
+;; 「Not logged in · Run /login」(status 行の右詰め)と
+;; 「⎿ Not logged in · Please run /login」(transcript 行)。挿入は同一物理行の
+;; 内側に限る([^\n]{0,40})—— 文境界を越える無限定照合は禁止。
+;;
+;; ★この族は status を動かさない。has-api-limit-marker は blocked_api という
+;; 非終端 status を作る(枠が戻れば動く)が、こちらの族は「この attempt はもう
+;; 動けない」であって待てば解けるものではない。ゆえに
+;; observed-status-from-markers の凍結分類順には入れず、終端 cause の蒸留
+;; (policy の provider-failure 表)にだけ効かせる —— 生きた pane を新しい
+;; 非終端 status へ落とす経路を構造的に作らない。
+
+;; 再認証要求の族。実物 4 形(2026-07-24〜2026-08-12 の pane capture):
+;;   "Not logged in · Run /login" / "Not logged in · Please run /login" /
+;;   "Login expired · Please run /login" / "Please run /login · API Error: 403 …"
+;; 状態語(not logged in / login expired)→ 有界挿入 → /login の形と、
+;; remediation 単独形(please run /login / run /login)の 2 択で覆う。
+(setv PROVIDER-REAUTH-FAMILY-RE
+  (re.compile
+    (+ "(?:not logged in|login expired|session expired)[^\n]{0,40}/login"
+       "|(?:please )?run /login")))
+
+;; 組織側で access を剥がされた族(2026-08-09〜10 実 incident、cryptic-x が
+;; 24h で 7 席を恒久停止させた形)。実物:
+;;   "Your organization has disabled Claude subscription access for Claude Code
+;;    · Use an Anthropic API key or contact your admin to enable access"
+;; 「organization has disabled … access」の間だけを有界可変にする。
+(setv PROVIDER-ACCESS-REVOKED-FAMILY-RE
+  (re.compile "organization has disabled[^\n]{0,40}\\baccess\\b"))
+
+;; 文脈枯渇の族。実物 pane: "Context limit reached · /compact or /clear to
+;; continue"、transcript 側の同事象: "Prompt is too long · the request is
+;; ~1201884 tokens (limit 1000000)"。状態語のみで可変挿入は観測されていない。
+(setv PROVIDER-CONTEXT-EXHAUSTED-FAMILY-RE
+  (re.compile "context limit reached|prompt is too long"))
+
+;; transport 障害の族(provider 側 5xx / 応答中断)。実物:
+;;   "API Error: 500 Internal server error." / "API Error: 529 Overloaded." /
+;;   "API Error: Server error mid-response." / "API Error: Connection lost
+;;    mid-response." / "API Error: Connection closed mid-response."
+;; 4xx は入れない —— 恒久的な拒否(認証・権限)であって再試行の対象ではなく、
+;; 認証形は上の 2 族が先に拾う。
+(setv PROVIDER-TRANSPORT-FAILURE-FAMILY-RE
+  (re.compile
+    (+ "api error:[^\n]{0,60}"
+       "(?:\\b5\\d\\d\\b|mid-response|connection (?:lost|closed)"
+       "|socket connection was closed|overloaded|internal server error)")))
+
+;; 蒸留の族名(policy の provider-failure 表の join key)。値は wire にも行にも
+;; 載る安定 slug —— 新族の追加は「ここに 1 行 + policy の表に 1 行」で閉じる。
+(setv PROVIDER-FAILURE-CLASS-REAUTH "reauth-required")
+(setv PROVIDER-FAILURE-CLASS-ACCESS-REVOKED "access-revoked")
+(setv PROVIDER-FAILURE-CLASS-CONTEXT-EXHAUSTED "context-exhausted")
+(setv PROVIDER-FAILURE-CLASS-TRANSPORT "transport-failure")
+
+
+(deff provider-failure-class [output]
+  {:pre [(: output str)] :post [(: % (| str None))]}
+  "provider 由来の非上限終端事実(tail 30 行窓 — has-api-limit-marker と同窓)。
+   立っていなければ None。上限族はここに含めない —— あちらは非終端 status
+   (blocked_api)を作る別の家で、両方立った観測の優先は policy が決める
+   (凍結順: api-limit → 本族)。族の順序は『確定した状態』を先に、最も一般の
+   transport を最後に置く。"
+  (setv text (tail-lower output 30))
+  (cond
+    (is-not (.search PROVIDER-REAUTH-FAMILY-RE text) None)
+      PROVIDER-FAILURE-CLASS-REAUTH
+    (is-not (.search PROVIDER-ACCESS-REVOKED-FAMILY-RE text) None)
+      PROVIDER-FAILURE-CLASS-ACCESS-REVOKED
+    (is-not (.search PROVIDER-CONTEXT-EXHAUSTED-FAMILY-RE text) None)
+      PROVIDER-FAILURE-CLASS-CONTEXT-EXHAUSTED
+    (is-not (.search PROVIDER-TRANSPORT-FAILURE-FAMILY-RE text) None)
+      PROVIDER-FAILURE-CLASS-TRANSPORT
+    True None))
+
+
 (deff has-waiting-marker [output]
   {:pre [(: output str)] :post [(: % bool)]}
   "interactive 待ち marker(raw 一致、oracle output_has_waiting_marker)。"
@@ -464,6 +558,9 @@
   (PaneObservation
     :has-failure-marker (has-failure-marker output)
     :has-api-limit-marker (has-api-limit-marker output)
+    ;; ACP ADR 0049 R9 第 3 改訂: 上限以外の provider 終端事実。status には
+    ;; 効かせず、終端 cause の蒸留にだけ使う(provider-failure-class 参照)。
+    :provider-failure-class (provider-failure-class output)
     :has-waiting-marker (has-waiting-marker output)
     :has-idle-prompt (has-idle-prompt output)
     :has-active-marker (has-active-marker output)

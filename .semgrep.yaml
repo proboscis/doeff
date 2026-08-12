@@ -172,6 +172,29 @@ rules:
         - "**/doeff_agents/sessionhost/impls/markers.hy"
         - "**/sessionhost/impls/api_limit_possessive_verbatim_forbidden.hy"
 
+  - id: doeff-agents-provider-failure-verbatim-forbidden
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      The non-limit provider-failure families (re-auth demanded / access
+      revoked / context exhausted / transport error) are matched by the
+      bounded family regexes PROVIDER-*-FAMILY-RE in
+      sessionhost/impls/markers.hy — ACP ADR 0049 R9 (third revision,
+      2026-08-12). A verbatim substring test re-creates the enumeration that
+      broke identically three times for the limit family, and the same drift
+      is already on record here: the SAME auth event renders as "Not logged
+      in · Run /login", "Not logged in · Please run /login" and "Login
+      expired · Please run /login" across three real captures. Extend the
+      bounded family regex and add the capture to
+      tests/data/provider_failure_screens/ instead of adding words.
+    patterns:
+      - pattern-regex: 'in "(not logged in|login expired|please run /login|organization has disabled|context limit reached|prompt is too long)'
+    paths:
+      include:
+        - "**/doeff_agents/sessionhost/impls/markers.hy"
+        - "**/sessionhost/impls/provider_failure_verbatim_forbidden.hy"
+
   - id: doeff-agents-prompt-paste-must-be-ready-gated
     languages:
       - python

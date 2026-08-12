@@ -125,6 +125,19 @@
   ;; wire には載せない — 下流(ACP ADR 0042)が読むのは terminal_cause のみ。
   #^ (| str None) api-limit-observed-at
   (setv api-limit-observed-at None)
+  ;; ACP ADR 0049 R9 第 3 改訂(2026-08-12): 上限族の外の provider 失敗を
+  ;; attempt 中に観測した事実の durable latch(族名 + 初回観測時刻の対)。
+  ;; api-limit latch とまったく同じ理由で必要 — 終端時の tail は racy で、
+  ;; 認証断の告知も solicitation の貼り付けや後続描画で押し流される
+  ;; (実測 2026-08-10 wi_86957315d9157a2c: transcript に認証断が在るのに
+  ;;  終端 snapshot は催促文だけだった)。first-write-wins(store は
+  ;; COALESCE 保護)・clear 経路なし・行 = 1 attempt なので寿命は attempt と
+  ;; 一致。wire には載せない — 下流(ACP ADR 0042)が読むのは terminal_cause
+  ;; のみで、族の意味は category へ蒸留してから渡す。
+  #^ (| str None) provider-failure-class
+  (setv provider-failure-class None)
+  #^ (| str None) provider-failure-observed-at
+  (setv provider-failure-observed-at None)
   ;; ADR-DOE-AGENTS-009: 観測断(supply cut)の最終検出時刻。stale watchdog は
   ;; terminal 化せずここへ刻印する(観測断 ≠ 死亡 — 2026-07-27 wedge の
   ;; false-lost 根治)。launch-timeout watchdog は watch 窓の基点を
@@ -159,6 +172,13 @@
   (setv has-failure-marker False)
   #^ bool has-api-limit-marker
   (setv has-api-limit-marker False)
+  ;; ACP ADR 0049 R9 第 3 改訂(2026-08-12): 上限族の外の provider 終端事実
+  ;; (再認証要求 / 組織 access 剥奪 / 文脈枯渇 / transport 障害)の族名。
+  ;; None = 立っていない。bool を族の数だけ増やさず単一 field にしてあるのは、
+  ;; 族の追加が「markers に 1 行 + policy の表に 1 行」で閉じる形を守るため。
+  ;; status には効かせない — 凍結分類順は has-api-limit-marker までで不変。
+  #^ (| str None) provider-failure-class
+  (setv provider-failure-class None)
   #^ bool has-waiting-marker
   (setv has-waiting-marker False)
   #^ bool has-idle-prompt
