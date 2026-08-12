@@ -1,0 +1,9 @@
+s, no files.                     
+  ⎿  Not logged in · Please run /login                                          
+
+✻ Worked for 0s                                                                 
+
+────────────────────────────────────────────────────────────────────────────────
+❯                                                          
+────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents                 
