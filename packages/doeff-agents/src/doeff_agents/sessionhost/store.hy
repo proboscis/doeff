@@ -158,7 +158,12 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        #("agent_sessions" "paste_resubmit_attempts" "INTEGER NOT NULL DEFAULT 0")
        ;; issue #568(ADR-DOE-AGENTS-010 R3): awaiting latch の武装時刻(期限の
        ;; 基点)。last-write-wins — 正の作業証拠での None clear は意図的な書き。
-       #("agent_sessions" "awaiting_response_since" "TEXT")])
+       #("agent_sessions" "awaiting_response_since" "TEXT")
+       ;; ACP ADR 0049 R9 第 3 改訂: 上限族の外の provider 失敗の durable latch
+       ;; (族名 + 初回観測時刻)。api_limit_observed_at と同格の COALESCE
+       ;; first-write-wins 保護 — 観測した事実を後続の書き戻しが消さない。
+       #("agent_sessions" "provider_failure_class" "TEXT")
+       #("agent_sessions" "provider_failure_observed_at" "TEXT")])
 
 (setv SNAPSHOT-SELECT
       (+ "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status, "
@@ -172,7 +177,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
          "launch_overlay_json, "
          "adopted, turn_holder, turn_since, turn_wait_json, "
          "api_limit_observed_at, observation_gap_at, "
-         "paste_resubmit_attempts, awaiting_response_since "
+         "paste_resubmit_attempts, awaiting_response_since, "
+         "provider_failure_class, provider_failure_observed_at "
          "FROM agent_sessions"))
 
 
@@ -294,7 +300,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    "api_limit_observed_at" (get db-row 35)
    "observation_gap_at" (get db-row 36)
    "paste_resubmit_attempts" (int (get db-row 37))
-   "awaiting_response_since" (get db-row 38)})
+   "awaiting_response_since" (get db-row 38)
+   "provider_failure_class" (get db-row 39)
+   "provider_failure_observed_at" (get db-row 40)})
 
 (deff snapshot-to-wire-dict [snap]
   {:pre [(: snap dict)]
@@ -403,8 +411,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        "launch_overlay_json, "
        "adopted, turn_holder, turn_since, turn_wait_json, "
        "api_limit_observed_at, observation_gap_at, "
-       "paste_resubmit_attempts, awaiting_response_since"
-       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+       "paste_resubmit_attempts, awaiting_response_since, "
+       "provider_failure_class, provider_failure_observed_at"
+       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
        "ON CONFLICT(session_id) DO UPDATE SET "
        "session_name = excluded.session_name, "
        "pane_id = excluded.pane_id, "
@@ -456,7 +465,12 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        ;; COALESCE 保護を持たない — 全書き込みは actor 直列 + merge 経路が
        ;; existing を再読して重ねるため stale clobber の隙間は無い。
        "paste_resubmit_attempts = excluded.paste_resubmit_attempts, "
-       "awaiting_response_since = excluded.awaiting_response_since")
+       "awaiting_response_since = excluded.awaiting_response_since, "
+       ;; ACP ADR 0049 R9 第 3 改訂: 上限族の外の provider 失敗 latch も
+       ;; first-write-wins(api_limit_observed_at と同格)。族名と時刻は対で
+       ;; 意味を持つので、同じ COALESCE 規律を両方に掛ける。
+       "provider_failure_class = COALESCE(agent_sessions.provider_failure_class, excluded.provider_failure_class), "
+       "provider_failure_observed_at = COALESCE(agent_sessions.provider_failure_observed_at, excluded.provider_failure_observed_at)")
     #((get snap "session_id")
       (get snap "session_name")
       (get snap "pane_id")
@@ -520,7 +534,10 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
       (.get snap "observation_gap_at")
       ;; issue #568(ADR-DOE-AGENTS-010)以前の snapshot dict にも additive。
       (int (.get snap "paste_resubmit_attempts" 0))
-      (.get snap "awaiting_response_since")))
+      (.get snap "awaiting_response_since")
+      ;; ACP ADR 0049 R9 第 3 改訂以前の snapshot dict にも additive に振る舞う。
+      (.get snap "provider_failure_class")
+      (.get snap "provider_failure_observed_at")))
   None)
 
 (deff db-session-get [conn session-id]
@@ -1011,7 +1028,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
     :api-limit-observed-at (.get snap "api_limit_observed_at")
     :observation-gap-at (.get snap "observation_gap_at")
     :paste-resubmit-attempts (int (.get snap "paste_resubmit_attempts" 0))
-    :awaiting-response-since (.get snap "awaiting_response_since")))
+    :awaiting-response-since (.get snap "awaiting_response_since")
+    :provider-failure-class (.get snap "provider_failure_class")
+    :provider-failure-observed-at (.get snap "provider_failure_observed_at")))
 
 (deff policy-row-patch [row]
   {:pre [(: row SessionRow)]
@@ -1062,7 +1081,11 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    ;; issue #568(ADR-DOE-AGENTS-010): counter / since も policy が唯一の
    ;; writer(素の last-write-wins — merge 経路が existing を再読して重ねる)。
    "paste_resubmit_attempts" row.paste-resubmit-attempts
-   "awaiting_response_since" row.awaiting-response-since})
+   "awaiting_response_since" row.awaiting-response-since
+   ;; ACP ADR 0049 R9 第 3 改訂: provider 失敗 latch も policy(monitor)が
+   ;; 唯一の writer。SQL 側 COALESCE が first-write-wins を最終防衛する。
+   "provider_failure_class" row.provider-failure-class
+   "provider_failure_observed_at" row.provider-failure-observed-at})
 
 (deff snapshot-from-policy-row [row]
   {:pre [(: row SessionRow)]
