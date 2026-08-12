@@ -90,11 +90,41 @@
        "protocol_error" False
        "run_failed" False
        "interactive_prompt_blocked" False
+       ;; ACP ADR 0049 R9 第 3 改訂(2026-08-12): provider 由来の非上限終端。
+       ;; auth_failed = 再認証要求 / 組織 access 剥奪。retryable=true —— この
+       ;; identity が今 provider と話せないという事実であって席の判断ではなく、
+       ;; 人手の再ログイン・admin 操作・binding rotation のいずれでも解ける。
+       ;; 有界 budget を焼き切った先は従来どおり人の gate だが、そこに載る名前が
+       ;; 「席が結果を報告しなかった」ではなく実際の死因になる。
+       "auth_failed" True
+       ;; transport_failed = provider 側 5xx / 応答中断。時間で解ける典型。
+       "transport_failed" True
+       ;; context_exhausted = 文脈枠の枯渇。**retryable=false のまま** ——
+       ;; 同じ封筒での再試行は同じ地点で必ず死ぬ(hard rule 7)。ここで直るのは
+       ;; 再試行可否ではなく名前で、下流は初めて「文脈枯渇」を run_failed から
+       ;; 分離して読める(ACP issue argus-attend-00738c 要件 3 の弁別軸)。
+       "context_exhausted" False
        ;; host RPC(session.cancel / session.cleanup)所有 — oracle は
        ;; retryable=false を明示で渡す(:1985-1991)。
        "cancelled" False})
 
 (setv TERMINAL-CAUSE-CATEGORIES (frozenset (.keys TERMINAL-CAUSE-RETRYABLE)))
+
+;; provider 失敗の族名 → terminal category(ACP ADR 0049 R9 第 3 改訂)。
+;; 検出(どの逐語がどの族か)の家は markers.hy、意味(族が何を意味するか)の
+;; 家はここ —— F-* 契約の「marker→検出は impl 所有 / 分類は policy 所有」を
+;; 族の追加でも守る。新しい族は markers に 1 行 + この表に 1 行で閉じる。
+(setv PROVIDER-FAILURE-TERMINAL-CATEGORY
+      {"reauth-required" "auth_failed"
+       "access-revoked" "auth_failed"
+       "context-exhausted" "context_exhausted"
+       "transport-failure" "transport_failed"})
+
+;; 席に帰属する既定の category(「席が正しく終われなかった」の意味を持つ)。
+;; provider 失敗を観測した attempt はここへ落ちてはならない —— それが本改訂の
+;; 法(provider-failure-never-defaults-to-seat-attribution)。
+(setv SEAT-ATTRIBUTED-DEFAULT-CATEGORIES
+      (frozenset ["run_failed" "interactive_prompt_blocked"]))
 
 
 ;; ===========================================================================
@@ -487,9 +517,53 @@
       row
       (replace row :terminal-cause cause)))
 
-(deff failed-output-cause [obs output observed-at limit-latched]
+(deff action-terminal-cause [row default-category reason observed-at]
+  {:pre [(: row SessionRow) (: default-category str)
+         (in default-category TERMINAL-CAUSE-CATEGORIES)
+         (: reason str) (: observed-at str)]
+   :post [(: % TerminalCause)]}
+  "行動系終端(solicitation 超過 / paste budget / awaiting timeout / stall /
+   reason 無し failed)の cause 蒸留 —— **単一の家**。
+
+   ACP ADR 0049 R9 は『行動系の終端でも pane の provider marker を先に見る』を
+   定めたが、実装はこの 4 行の if/else が 5 箇所へ複写された形で、見る対象も
+   provider-limit 族 1 つに固定されていた。族が 1 つ増えるたび 5 箇所を直す
+   必要がある構造そのものが穴の原因である(compensator proliferation)——
+   本改訂は複写を畳んで、族の追加が『markers に 1 行 + 表に 1 行』で閉じる形に
+   する。
+
+   凍結順:
+     1. api-limit latch  → rate_limited(既存 S8c/S8d の意味論は不変)
+     2. provider 失敗 latch → 族の category(auth_failed / transport_failed /
+        context_exhausted)。ただし **既定が席帰属(run_failed /
+        interactive_prompt_blocked)の時だけ** 上書きする —— 既定が既に
+        provider 側/転送側を名指す transient 分類(prompt_undelivered /
+        timed_out)なら、その分類が別の会計(ADR-DOE-AGENTS-011 の未配達
+        第一級化など)を担っているのでそちらを尊重する。法は『provider 失敗を
+        観測した attempt が席帰属の既定へ落ちない』であって『全部 provider
+        名にする』ではない。
+     3. それ以外 → 既定"
+  (cond
+    (is-not row.api-limit-observed-at None)
+      (make-cause "rate_limited"
+                  (+ reason
+                     "; api-limit marker observed during attempt at "
+                     row.api-limit-observed-at)
+                  observed-at)
+    (and (is-not row.provider-failure-class None)
+         (in default-category SEAT-ATTRIBUTED-DEFAULT-CATEGORIES))
+      (make-cause (get PROVIDER-FAILURE-TERMINAL-CATEGORY
+                       row.provider-failure-class)
+                  (+ reason
+                     f"; provider failure [{row.provider-failure-class}]"
+                     " observed during attempt at "
+                     (str row.provider-failure-observed-at))
+                  observed-at)
+    True (make-cause default-category reason observed-at)))
+
+(deff failed-output-cause [obs output observed-at limit-latched provider-class]
   {:pre [(: obs PaneObservation) (: output str) (: observed-at str)
-         (: limit-latched bool)]
+         (: limit-latched bool) (: provider-class (| str None))]
    :post [(: % TerminalCause)]}
   "reason 無し failed 限定の output 写像(oracle set_failed_output_cause_if_absent、
    ハザード 2: last_validation_error が立つ経路では走らない)。凍結表:
@@ -497,7 +571,12 @@
    終端時 tail は racy なので観測済み事実が優先)→ rate_limited /
    tail30 に timeout・timed out・deadline → timed_out /
    authentication failed → runner_unavailable / invalid json・protocol error →
-   protocol_error / その他 → run_failed。"
+   protocol_error / provider 失敗 latch → 族の category / その他 → run_failed。
+
+   provider 族を **既存の連鎖の最後・run_failed の直前** に置くのは意図的:
+   本改訂が直すのは『席に帰属しない失敗が run_failed に落ちる』ことだけで、
+   既に名前を持っている分類(timed_out / runner_unavailable / protocol_error)の
+   優先順は 1 つも動かさない —— 凍結表の改訂を最小の一手に留める。"
   (setv lower (tail-lower output 30))
   (setv category
         (cond
@@ -507,6 +586,8 @@
           (in "authentication failed" lower) "runner_unavailable"
           (or (in "invalid json" lower) (in "protocol error" lower))
             "protocol_error"
+          (is-not provider-class None)
+            (get PROVIDER-FAILURE-TERMINAL-CATEGORY provider-class)
           True "run_failed"))
   (setv reason (tail-chars (or (.strip output) " ") 500))
   (make-cause category
@@ -645,14 +726,19 @@
       (setv row
             (if (is-not row.last-validation-error None)
                 ;; 明示カテゴリ(solicitation 超過・stall)は reason が先に
-                ;; 書かれている — ここは既書き cause を尊重する保険写像のみ
-                (cause-if-absent row (make-cause "run_failed"
-                                                 row.last-validation-error
-                                                 observed-at))
+                ;; 書かれている — ここは既書き cause を尊重する保険写像のみ。
+                ;; 保険写像も同じ蒸留の家を通す(ACP ADR 0049 R9 第 3 改訂):
+                ;; ここだけ素の run_failed を残すと、cause 未書きの経路が
+                ;; 席帰属の既定へ落ちる裏口として残ってしまう。
+                (cause-if-absent row (action-terminal-cause
+                                       row "run_failed"
+                                       row.last-validation-error
+                                       observed-at))
                 ;; reason 無し failed のみ output 写像(ハザード 2)
                 (cause-if-absent row (failed-output-cause
                                        obs output observed-at
-                                       (is-not row.api-limit-observed-at None))))))
+                                       (is-not row.api-limit-observed-at None)
+                                       row.provider-failure-class)))))
     (setv row (replace row :finished-at (or row.finished-at observed-at))))
   (<- _ (session-store-upsert row))
   (when (!= observed-status entry-status)
@@ -883,6 +969,18 @@
   (when (and obs.has-api-limit-marker (is None row.api-limit-observed-at))
     (setv row (replace row :api-limit-observed-at observed-at)))
 
+  ;; --- ACP ADR 0049 R9 第 3 改訂: 上限族の外の provider 失敗も同じ理由で
+  ;; durable latch する。終端時 tail が racy なのは上限文言に限らない ——
+  ;; 実測 2026-08-10 wi_86957315d9157a2c は transcript に組織 access 剥奪の
+  ;; 逐語が在るのに、終端 snapshot は催促文だけで埋まっていた(告知は
+  ;; solicitation の貼り付けに押し流される)。first-write-wins で族名と
+  ;; 初回観測時刻を対にして固定する。
+  (when (and (is-not obs.provider-failure-class None)
+             (is None row.provider-failure-class))
+    (setv row (replace row
+                       :provider-failure-class obs.provider-failure-class
+                       :provider-failure-observed-at observed-at)))
+
   ;; --- paste / 添付残留の Enter 再送(ハザード 4 付随物理 + issue #568 /
   ;; ADR-DOE-AGENTS-010 R2 の有界化)。latch は保持。busy 証拠(live active
   ;; marker / 未消費 queue)がある間は補償しない — 走行中 turn の composer は
@@ -919,17 +1017,13 @@
           ;; この arm が終端させる行は turn が一度も始まっていない(実測 25 件
           ;; 全数で turn-activity marker 不在)— 起動段の gate 失敗と同じ
           ;; 命題であり、2 つの category に割れていると未配達の集計が割れる。
+          ;; 第 3 改訂で蒸留は単一の家(action-terminal-cause)経由になった。
+          ;; prompt_undelivered は席帰属でない transient なので provider 族に
+          ;; 上書きされない —— 未配達の会計(011)はそのまま保たれる。
           (setv row
-                (if (is-not row.api-limit-observed-at None)
-                    (cause-if-absent
-                      row (make-cause
-                            "rate_limited"
-                            (+ reason
-                               "; api-limit marker observed during attempt at "
-                               row.api-limit-observed-at)
-                            observed-at))
-                    (cause-if-absent
-                      row (make-cause "prompt_undelivered" reason observed-at))))
+                (cause-if-absent
+                  row (action-terminal-cause
+                        row "prompt_undelivered" reason observed-at)))
           (<- failed-row (finalize row entry-status "failed" obs output observed-at))
           (return failed-row))))
 
@@ -985,18 +1079,12 @@
                       "delivered but no work evidence appeared within "
                       f"{awaiting-secs}s (turn never started)"))
       (setv row (replace row :last-validation-error reason))
-      ;; 行動系終端は provider-limit 観測を先に見る(S8c/S8e と同じ蒸留)。
+      ;; 行動系終端は provider 観測を先に見る(S8c/S8e と同じ蒸留 —— 第 3
+      ;; 改訂で単一の家 action-terminal-cause 経由)。timed_out は席帰属でない
+      ;; transient なので provider 族に上書きされない。
       (setv row
-            (if (is-not row.api-limit-observed-at None)
-                (cause-if-absent
-                  row (make-cause
-                        "rate_limited"
-                        (+ reason
-                           "; api-limit marker observed during attempt at "
-                           row.api-limit-observed-at)
-                        observed-at))
-                (cause-if-absent
-                  row (make-cause "timed_out" reason observed-at))))
+            (cause-if-absent
+              row (action-terminal-cause row "timed_out" reason observed-at)))
       (<- timed-row (finalize row entry-status "failed" obs output observed-at))
       (return timed-row)))
 
@@ -1106,22 +1194,19 @@
                                     (+ "session reached turn-end without reporting a result via report_result"
                                        f" (after {row.result-solicitations-used} solicitation(s))")))
                           (setv row (replace row :last-validation-error reason))
-                          ;; issue #557(S8c): attempt 中に blocked_api を観測済み
-                          ;; なら rate_limited/retryable=true へ蒸留 — 上限下の
-                          ;; turn-end 無結果は transient(ACP binding-failover の
-                          ;; 発火面)。latch 無しは従来どおり run_failed(S3)。
+                          ;; issue #557(S8c)+ ACP ADR 0049 R9 第 3 改訂:
+                          ;; attempt 中に観測した provider 事実(上限 latch /
+                          ;; 認証断・transport・文脈枯渇 latch)を先に見る。
+                          ;; どちらも無い時だけ run_failed(S3)—— これが
+                          ;; 「席が結果を報告しなかった」を主張してよい唯一の
+                          ;; 断面である。ledger-integrity-steward の 13 時間
+                          ;; 停止(2026-08-12)はこの arm が認証断を run_failed と
+                          ;; 呼んだために起きた。
                           (setv row
-                                (if (is-not row.api-limit-observed-at None)
-                                    (cause-if-absent
-                                      row (make-cause
-                                            "rate_limited"
-                                            (+ reason
-                                               "; api-limit marker observed during attempt at "
-                                               row.api-limit-observed-at)
-                                            observed-at))
-                                    (cause-if-absent
-                                      row (make-cause "run_failed" reason
-                                                      observed-at)))))))))))
+                                (cause-if-absent
+                                  row (action-terminal-cause
+                                        row "run_failed" reason
+                                        observed-at))))))))))
       ;; contract 無し RunToCompletion: turn-end 信号を work-end として信頼。
       (when (and turn-ended (is-run-to-completion row.lifecycle))
         (setv observed-status "done")))
@@ -1195,19 +1280,14 @@
       ;; interactive_prompt_blocked でなく rate_limited/retryable=true
       ;; (上限下の凍結 pane は transient — ACP rotation/exhaustion の発火面)。
       ;; 生 marker の同時成立は分類順(api-limit → blocked_api ≠ running)に
-      ;; より stall arm に到達しない — latch が唯一の到達形。
+      ;; より stall arm に到達しない — latch が唯一の到達形。第 3 改訂で
+      ;; provider 失敗 latch も同じ家から見る(認証断で凍った pane を
+      ;; interactive_prompt_blocked = 席帰属の確定的失敗と呼ばない)。
       (setv row
-            (if (is-not row.api-limit-observed-at None)
-                (cause-if-absent
-                  row (make-cause
-                        "rate_limited"
-                        (+ blocked-failure
-                           "; api-limit marker observed during attempt at "
-                           row.api-limit-observed-at)
-                        observed-at))
-                (cause-if-absent
-                  row (make-cause "interactive_prompt_blocked" blocked-failure
-                                  observed-at))))))
+            (cause-if-absent
+              row (action-terminal-cause
+                    row "interactive_prompt_blocked" blocked-failure
+                    observed-at)))))
 
   ;; --- 書き戻し + 終端 taxonomy + 遷移 event(cleanup は monitor-cycle の
   ;; 単一掃き取り所有 — ADR-DOE-AGENTS-010 R5)。

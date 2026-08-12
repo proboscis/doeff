@@ -84,7 +84,12 @@
        "observation_gap_at"
        ;; issue #568(ADR-DOE-AGENTS-010): paste 再送 budget の durable
        ;; counter + awaiting latch の期限基点。
-       "paste_resubmit_attempts" "awaiting_response_since"])
+       "paste_resubmit_attempts" "awaiting_response_since"
+       ;; ACP ADR 0049 R9 第 3 改訂: 上限族の外の provider 失敗(再認証要求 /
+       ;; 組織 access 剥奪 / 文脈枯渇 / transport 障害)の durable latch。
+       ;; api_limit_observed_at と同格の COALESCE first-write-wins 保護で、
+       ;; 族名と初回観測時刻を対にして固定する。
+       "provider_failure_class" "provider_failure_observed_at"])
 
 
 (defn make-snap [session-id #** overrides]
@@ -200,6 +205,42 @@
     (db-upsert-snapshot conn (make-snap "s1" :api_limit_observed_at None))
     (setv snap (db-session-get conn "s1"))
     (assert (= (get snap "api_limit_observed_at") "2026-07-20T11:00:00+00:00")))
+  (with-tmp-conn check))
+
+
+(deftest test-provider-failure-latch-roundtrip-and-coalesce
+  ;; ACP ADR 0049 R9 第 3 改訂: 上限族の外の provider 失敗 latch も api-limit
+  ;; と同格の first-write-wins。族名と初回観測時刻は対で意味を持つので、
+  ;; 両方に同じ COALESCE 規律が掛かることを pin する — 片方だけ守られると
+  ;; 「族は分かるが時刻が無い」証跡が生まれ、cause reason が壊れる。
+  (defn check [conn]
+    (db-upsert-snapshot conn (make-snap "s1"
+                                        :provider_failure_class "reauth-required"
+                                        :provider_failure_observed_at
+                                        "2026-08-12T08:23:30+00:00"))
+    (setv snap (db-session-get conn "s1"))
+    (assert (= (get snap "provider_failure_class") "reauth-required"))
+    (assert (= (get snap "provider_failure_observed_at") "2026-08-12T08:23:30+00:00"))
+    ;; stale な None 書き戻し(monitor の定期書き戻し)で消えない
+    (db-upsert-snapshot conn (make-snap "s1"
+                                        :provider_failure_class None
+                                        :provider_failure_observed_at None))
+    (setv snap (db-session-get conn "s1"))
+    (assert (= (get snap "provider_failure_class") "reauth-required"))
+    (assert (= (get snap "provider_failure_observed_at") "2026-08-12T08:23:30+00:00"))
+    ;; 後続の別族の観測でも上書きされない(first-write-wins — 最初に観測した
+    ;; provider 事実が attempt の死因である)
+    (db-upsert-snapshot conn (make-snap "s1"
+                                        :provider_failure_class "transport-failure"
+                                        :provider_failure_observed_at
+                                        "2026-08-12T08:24:00+00:00"))
+    (setv snap (db-session-get conn "s1"))
+    (assert (= (get snap "provider_failure_class") "reauth-required"))
+    ;; 旧 snapshot dict(本改訂以前の writer)にも additive — 欠落は None
+    (db-upsert-snapshot conn (make-snap "s2"))
+    (setv snap (db-session-get conn "s2"))
+    (assert (is (get snap "provider_failure_class") None))
+    (assert (is (get snap "provider_failure_observed_at") None)))
   (with-tmp-conn check))
 
 

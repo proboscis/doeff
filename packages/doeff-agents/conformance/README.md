@@ -205,10 +205,26 @@ scenario 専用 `ZDOTDIR` の rc で shim dir を再 prepend して決定化)。
 | authentication failed | RunnerUnavailable | **false** |
 | invalid json / protocol error | ProtocolError | **false** |
 | solicitation 超過(turn-end 無結果)+ attempt 中 api-limit 観測(latch) | RateLimited | **true**(issue #557、S8c) |
-| solicitation 超過(turn-end 無結果、latch 無し) | RunFailed | **false** |
+| solicitation 超過(turn-end 無結果)+ attempt 中 provider 失敗観測(latch `provider_failure_class`・api-limit latch なし) | 族による: **AuthFailed** / **TransportFailed** / **ContextExhausted** | auth・transport は **true** / context は **false**(ACP ADR 0049 R9 第 3 改訂) |
+| solicitation 超過(turn-end 無結果、latch なし = provider 事実を一度も観測していない) | RunFailed | **false** |
 | interactive-prompt stall + attempt 中 api-limit 観測(latch) | RateLimited | **true**(ACP ADR 0049 R9、S8e) |
-| interactive-prompt stall(latch 無し) | InteractivePromptBlocked | **false** |
+| interactive-prompt stall + attempt 中 provider 失敗観測(latch) | 族による(上と同じ写像) | 同上 |
+| interactive-prompt stall(latch なし) | InteractivePromptBlocked | **false** |
+| その他 failed + provider 失敗観測(latch。既存の名前つき分類 TimedOut / RunnerUnavailable / ProtocolError が先に当たる場合はそちらが勝つ) | 族による(上と同じ写像) | 同上 |
 | その他 failed | RunFailed | **false** |
+
+**ACP ADR 0049 R9 第 3 改訂(2026-08-12)の読み方**: 上の 3 行が足されたのは
+「provider 由来の失敗を席の落ち度として恒久 gate にしない」という 1 つの法
+(`provider-failure-never-defaults-to-seat-attribution`)の帰結で、上書きの対象は
+**席帰属の既定(RunFailed / InteractivePromptBlocked)だけ**。既定が既に transient で
+別の会計を担う分類(PromptUndelivered = 未配達の第一級化 / TimedOut)は族に
+上書きされない。retryable は族ごとで、**ContextExhausted は false のまま** ——
+同じ封筒での再試行は同じ地点で必ず死ぬ(hard rule 7)ので、直るのは再試行可否では
+なく名前である(下流は初めて『文脈枯渇』を RunFailed から分離して読める)。
+族の検出は `PROVIDER-*-FAMILY-RE`(markers.hy)の有界族照合で、逐語列挙は semgrep
+guard `doeff-agents-provider-failure-verbatim-forbidden` が禁じる。実物 capture の
+集合は `tests/data/provider_failure_screens/`(pane snippet と provider 逐語の 2 種・
+出所は各 fixture について test_provider_failure_markers.py に記載)。
 
 first-write-wins(set_terminal_cause_if_absent + DB COALESCE)も契約。
 Hy 実装がこの表を変える場合は ADR 改訂が先(黙った変更は conformance red)。
