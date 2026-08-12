@@ -72,7 +72,7 @@
      (law blocked-status-requires-absence-of-work-evidence
        :statement "observed_status(obs) = blocked => waiting_marker(obs) ∧ ¬active_marker(obs) — 常設 UI 文字列は『入力待ち』の証拠ではない。かつ ¬(turn_activity ∈ 連言): 残渣 marker を作業証拠に数えると blocked が到達不能になる"
        :counterexamples
-         [(counterexample "2026-08-06..12 の壁帯 218 席(agentd.sqlite 直読・寿命 1860..2000s で cancelled): 142 席(65%)は死の 10 秒前まで画面が変化していた — 8〜9 万トークンを走らせている最中の席が『指示が届かなかった席』として片付けられた。真に静止していたのは 51 席のみ。逐語の現物 = session agent_inv_wi_5f3fa0e22242b74d_a1 の死亡時 capture『✶ Whatchamacalliting… (31m 5s · ↓ 91.4k tokens)』+ 常設フッター『⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt』")
+         [(counterexample "2026-08-12 精密化の実測(母集団は打ち切りの理由文で取る — 両 root の failure-reports の『dwelled blocked (awaiting input)』を agentd と突合・186 席・186/186 一致): **175 席(94%)は死の 60 秒前まで画面が変化**していた — 8〜9 万トークンを走らせている最中の席が『指示が届かなかった席』として片付けられた。**bound を超えて静止していた席は 0 件**。⚠ 寿命帯(1860..2000s)で切ると 186 のうち 168 しか入らず、status で failed/exited に絞ると dwell 打ち切りは stopped 着地なので落ちる。逐語の現物 = session agent_inv_wi_5f3fa0e22242b74d_a1 の死亡時 capture『✶ Whatchamacalliting… (31m 5s · ↓ 91.4k tokens)』+ 常設フッター『⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt』")
           (counterexample "連言に has-turn-activity(⏺ / ⎿)を入れる: 一度でも作業した claude 席は idle 画面でも痕跡が残るため二度と blocked にならず、2026-08-05..06 の凍結 7 席(22h27m ゼロ生産・composer 空)が status 上『running』として不可視になる — 過剰修正は上流 backstop の前提そのものを壊す")])
      (law delivery-target-must-be-owned
        :statement "monitor_send(keys|message, pane) requires verified(pane belongs_to row.session_name, this cycle); ownership_mismatch_is_evidenced_vanish"
@@ -148,7 +148,7 @@
        (assert (= "blocked"
                   (observed-status-from-markers
                     (PaneObservation :has-waiting-marker True))))
-       ;; 働いている pane(waiting ∧ active)は blocked にしない — 壁帯 142 席。
+       ;; 働いている pane(waiting ∧ active)は blocked にしない — 打ち切り 186 席中 175 席。
        (assert (= "running"
                   (observed-status-from-markers
                     (PaneObservation :has-waiting-marker True
