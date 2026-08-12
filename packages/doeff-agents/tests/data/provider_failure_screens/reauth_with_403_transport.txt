@@ -1,0 +1,1 @@
+Please run /login · API Error: 403 The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()

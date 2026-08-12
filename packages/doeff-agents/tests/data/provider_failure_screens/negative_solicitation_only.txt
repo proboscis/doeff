@@ -1,0 +1,8 @@
+                                   
+
+────────────────────────────────────────────────────────────────────────────────
+❯ AGENTD RESULT CONTRACT: your turn ended without a report_result call. Call   
+  the report_result MCP tool now with a payload that satisfies the declared     
+  result schema. Do only that — no other actions, no files.
+────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · gh auth login for PR status  

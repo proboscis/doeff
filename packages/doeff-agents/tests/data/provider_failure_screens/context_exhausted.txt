@@ -1,0 +1,9 @@
+hat — no other actions, no files.                     
+  ⎿  Context limit reached · /compact or /clear to continue
+
+✻ Churned for 1s                                                                
+
+────────────────────────────────────────────────────────────────────────────────
+❯                                                          
+────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents                 
