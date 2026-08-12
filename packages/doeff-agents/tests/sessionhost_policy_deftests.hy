@@ -67,7 +67,8 @@
   tail-chars
   tail-lower
   monitor-cycle])
-(import doeff_agents.sessionhost.impls.markers [has-api-limit-marker])
+(import doeff_agents.sessionhost.impls.markers [has-api-limit-marker
+                                                provider-failure-class])
 
 
 ;; ---------------------------------------------------------------------------
@@ -180,6 +181,10 @@
   ;; (ADR-DOE-AGENTS-004)であり、fake であるべきは substrate であって
   ;; marker 物理ではない。
   (setv api-limit (has-api-limit-marker output))
+  ;; ACP ADR 0049 R9 第 3 改訂: provider 失敗族も同じ理由で実物へ委譲する
+  ;; (fake 側で族の逐語を再現すると、実物の族に穴が開いてもテストだけ
+  ;;  green になる — 上の api-limit と同一の版ずれ盲点)。
+  (setv provider-failure (provider-failure-class output))
   (setv waiting (or (in "Type your message" output)
                     (in "tell Claude what to do differently" output)))
   (setv idle (or (.startswith output "› ")
@@ -203,6 +208,7 @@
   (PaneObservation
     :has-failure-marker failure
     :has-api-limit-marker api-limit
+    :provider-failure-class provider-failure
     :has-waiting-marker waiting
     :has-idle-prompt idle
     :has-active-marker active
@@ -662,6 +668,198 @@
   (assert (is-not row.api-limit-observed-at None))
   (assert (= row.terminal-cause.category "rate_limited"))
   (assert (= row.terminal-cause.retryable True)))
+
+
+;; ---------------------------------------------------------------------------
+;; ACP ADR 0049 R9 第 3 改訂: provider 失敗は上限族だけではない
+;; (2026-08-12 ledger-integrity-steward 13 時間停止の根治)
+;; ---------------------------------------------------------------------------
+;;
+;; 反例の実弾: sandbox:responsibility:ledger-integrity-steward の attend が
+;; 2026-08-12T08:24:32Z に "session reached turn-end without reporting a result
+;; via report_result (after 2 solicitation(s))" / run_failed / retryable=false で
+;; 終端し、argus が attendFailureClass=deterministic を刻んで初回 gate に latch、
+;; 13 時間停止した。実際の死因は席の判断ではなく provider の認証断で、
+;; 席 transcript(ecba4783-15f5-4896-949b-c630768f9440)の 08:23:30.507Z に
+;; isApiErrorMessage=true / "Not logged in · Please run /login" が在る。
+;; 上限族しか見ない蒸留がこの族を run_failed へ落としていた。
+;;
+;; 母数(agentd.sqlite の terminal × 席 transcript の突合、2026-08-12 実測):
+;; 所有格族が着地した 2026-08-08 以降の同型終端 19 件中 12 件(63%)が provider
+;; 由来 —— 認証 11 / 文脈枯渇 1。同区間の上限族の取りこぼしは 0 件。
+
+(setv F-REAUTH-REQUIRED "  ⎿ Not logged in · Please run /login")
+(setv F-ACCESS-REVOKED
+      (+ "Your organization has disabled Claude subscription access for "
+         "Claude Code · Use an Anthropic API key instead, or ask your admin "
+         "to enable access"))
+(setv F-CONTEXT-EXHAUSTED "  ⎿ Context limit reached · /compact or /clear to continue")
+
+
+(deftest test-provider-failure-observation-latches-durably
+  ;; 上限 latch(S8c 前段)と同型: 観測した族名と初回時刻を first-write-wins で
+  ;; 行へ固定する。終端 tail が racy なのは上限文言に限らない — 実測
+  ;; 2026-08-10 wi_86957315d9157a2c は transcript に組織 access 剥奪が在るのに
+  ;; 終端 snapshot は催促文だけだった。
+  (setv world (FakeWorld))
+  (setv frame (+ F-REAUTH-REQUIRED "\n› "))
+  (seed world (make-row world) :frame frame)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.provider-failure-class "reauth-required"))
+  (assert (is-not row.provider-failure-observed-at None))
+  ;; ★status は動かさない: provider 失敗族は blocked_api のような非終端
+  ;; status を作らない(生きた pane を新しい status へ落とす経路を作らない)。
+  (assert (= row.status "running"))
+  (assert (is None row.terminal-cause))
+  ;; first-write-wins: 2 cycle 目の再観測で打刻は動かない
+  (setv first-latch row.provider-failure-observed-at)
+  (setv world.now (+ world.now (timedelta :seconds 30)))
+  (<- outcomes2 (run-cycle world (MonitorKnobs)))
+  (assert (= (. (get world.rows "s1") provider-failure-observed-at) first-latch)))
+
+
+(deftest test-solicitation-exhaustion-with-reauth-latch-is-auth-failed
+  ;; ★本改訂の中心反例(ledger-integrity-steward 2026-08-12 の実弾形)。
+  ;; 認証断は終端フレームでは既に押し流されている(催促文が composer を
+  ;; 占めている)— latch 経由が唯一の到達形。旧実装ではここが run_failed /
+  ;; retryable=false = deterministic 恒久 gate だった。
+  (setv world (FakeWorld))
+  (seed world (make-row world
+                        :result-solicitations-used 2
+                        :provider-failure-class "reauth-required"
+                        :provider-failure-observed-at (iso-at world -60)
+                        :output-snippet (tail-chars F-IDLE-CODEX 500))
+        :frame F-IDLE-CODEX)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "failed"))
+  ;; 基底 reason は S3 文言 verbatim のまま(last_validation_error は不変)
+  (assert (= row.last-validation-error
+             "session reached turn-end without reporting a result via report_result (after 2 solicitation(s))"))
+  (assert (= row.terminal-cause.category "auth_failed"))
+  (assert (= row.terminal-cause.retryable True))
+  ;; cause reason は族名の証跡を運ぶ(診断が下流へ届く)
+  (assert (in "reauth-required" row.terminal-cause.reason)))
+
+
+(deftest test-solicitation-exhaustion-live-reauth-wording-is-auth-failed
+  ;; 実物 frame が生きて見えている形(事前 latch 無し)。同 cycle の観測が
+  ;; latch を立ててから budget 超過分類が走る順序を契約として固定する
+  ;; (上限族の live-marker テストと同型)。
+  (setv world (FakeWorld))
+  (setv frame (+ F-REAUTH-REQUIRED "\n› "))
+  (seed world (make-row world
+                        :result-solicitations-used 2
+                        :output-snippet (tail-chars frame 500))
+        :frame frame)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "failed"))
+  (assert (= row.provider-failure-class "reauth-required"))
+  (assert (= row.terminal-cause.category "auth_failed"))
+  (assert (= row.terminal-cause.retryable True)))
+
+
+(deftest test-solicitation-exhaustion-with-access-revoked-is-auth-failed
+  ;; 組織側の access 剥奪(2026-08-09〜10 cryptic-x が 24h で 7 席を恒久停止
+  ;; させた形)。retryable=true —— admin 操作 / binding rotation で解ける事実で
+  ;; あって席の判断ではない。有界 budget を焼き切った先は従来どおり人の gate
+  ;; だが、そこに載る名前が実際の死因になる。
+  (setv world (FakeWorld))
+  (setv frame (+ F-ACCESS-REVOKED "\n› "))
+  (seed world (make-row world
+                        :result-solicitations-used 2
+                        :output-snippet (tail-chars frame 500))
+        :frame frame)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.provider-failure-class "access-revoked"))
+  (assert (= row.terminal-cause.category "auth_failed"))
+  (assert (= row.terminal-cause.retryable True)))
+
+
+(deftest test-solicitation-exhaustion-with-context-exhausted-stays-deterministic
+  ;; ★負の対照 = 本改訂は「provider 由来ならすべて再試行可」ではない。
+  ;; 文脈枯渇は同じ封筒での再試行が同じ地点で必ず死ぬ(hard rule 7)ので
+  ;; retryable=false のまま。直るのは再試行可否ではなく **名前** で、下流は
+  ;; 初めて文脈枯渇を run_failed から分離して読める
+  ;; (ACP issue argus-attend-00738c 要件 3 の弁別軸)。
+  (setv world (FakeWorld))
+  (setv frame (+ F-CONTEXT-EXHAUSTED "\n› "))
+  (seed world (make-row world
+                        :result-solicitations-used 2
+                        :output-snippet (tail-chars frame 500))
+        :frame frame)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.provider-failure-class "context-exhausted"))
+  (assert (= row.terminal-cause.category "context_exhausted"))
+  (assert (= row.terminal-cause.retryable False))
+  ;; run_failed ではない = 「席が結果を報告しなかった」という誤った帰属が消える
+  (assert (!= row.terminal-cause.category "run_failed")))
+
+
+(deftest test-api-limit-latch-outranks-provider-failure-latch
+  ;; 凍結順の pin: 両方立った断面では上限族が勝つ(既存 S8c/S8d の意味論と
+  ;; ACP の provider-exhaustion 述語〔blocked_api / rate_limited〕を動かさない)。
+  (setv world (FakeWorld))
+  (seed world (make-row world
+                        :result-solicitations-used 2
+                        :api-limit-observed-at (iso-at world -90)
+                        :provider-failure-class "reauth-required"
+                        :provider-failure-observed-at (iso-at world -60)
+                        :output-snippet (tail-chars F-IDLE-CODEX 500))
+        :frame F-IDLE-CODEX)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.terminal-cause.category "rate_limited"))
+  (assert (= row.terminal-cause.retryable True)))
+
+
+(deftest test-provider-failure-does-not-override-transient-defaults
+  ;; 法の射程の pin: 上書きするのは **席帰属の既定**(run_failed /
+  ;; interactive_prompt_blocked)だけ。既定が既に transient で別の会計を
+  ;; 担っている場合(prompt_undelivered = ADR-DOE-AGENTS-011 の未配達
+  ;; 第一級化)は、その分類を尊重する — 「provider 由来なら全部 provider 名」
+  ;; にすると未配達の集計が割れる。
+  (setv world (FakeWorld))
+  (setv frame (+ F-REAUTH-REQUIRED "\n<unsubmitted-paste>\n› "))
+  (seed world (make-row world
+                        :awaiting-response True
+                        :paste-resubmit-attempts 5
+                        :output-snippet (tail-chars frame 500))
+        :frame frame)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "failed"))
+  (assert (= row.terminal-cause.category "prompt_undelivered"))
+  (assert (= row.terminal-cause.retryable True)))
+
+
+(deftest test-failed-output-with-provider-failure-latch-is-not-run-failed
+  ;; reason 無し failed の output 写像(S8d と同型)。既存の名前つき分類
+  ;; (timed_out / runner_unavailable / protocol_error)の優先順は動かさず、
+  ;; run_failed へ落ちるはずだった断面だけが族の名前を得る。
+  (setv world (FakeWorld))
+  (seed world (make-row world
+                        :provider-failure-class "transport-failure"
+                        :provider-failure-observed-at (iso-at world -60))
+        :frame F-FAILED)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "failed"))
+  (assert (= row.terminal-cause.category "transport_failed"))
+  (assert (= row.terminal-cause.retryable True)))
+
+
+(deftest test-healthy-frames-never-latch-a-provider-failure
+  ;; 陰性対照: 働いている pane / 素の idle / turn-activity 痕跡だけの画面で
+  ;; 族が立たないこと(健全席を新しい分類へ落とさない)。
+  (for [frame [F-IDLE-CODEX F-IDLE-CLAUDE F-ACTIVE-CODEX F-TURN-ACTIVITY-CLAUDE
+               F-WAITING RESULT-SOLICITATION-MESSAGE]]
+    (assert (is None (provider-failure-class frame))
+            f"healthy frame must not latch a provider failure: {frame !r}")))
 
 
 ;; ---------------------------------------------------------------------------
@@ -1214,11 +1412,21 @@
   ;; ADR-DOE-AGENTS-011 R-undelivered-first-class-b5e8(2026-08-12):
   ;; prompt_undelivered を追加(retryable=true)— 起動段で prompt が一度も
   ;; 届かなかった attempt は timed_out の一形ではなく独立の分類。
+  ;; ACP ADR 0049 R9 第 3 改訂(2026-08-12): provider 由来の非上限終端を 3 つ
+  ;; 追加。auth_failed / transport_failed は retryable=true(identity・転送の
+  ;; 一時状態 = 席の判断ではない)、context_exhausted は **retryable=false の
+  ;; まま**(同じ封筒での再試行は同じ地点で死ぬ — hard rule 7)。追加は
+  ;; additive で後方安全: 未知 category に対する下流の既定は
+  ;; 「CommandNonZeroExit + causeRetryable 由来の retry 意味論」
+  ;; (ACP Observed.hs failureKindForCause の `_` 分岐)。
   (assert (= TERMINAL-CAUSE-RETRYABLE
              {"rate_limited" True
               "timed_out" True
               "vanished" True
               "prompt_undelivered" True
+              "auth_failed" True
+              "transport_failed" True
+              "context_exhausted" False
               "runner_unavailable" False
               "protocol_error" False
               "run_failed" False
