@@ -22,6 +22,11 @@
 ;;;     が agent_not_found になる(実測 2026-08-01 n=3 決定的)。重複 session
 ;;;     名の拒否は herdr が label 重複を拒否しない(実測 2026-08-09)ため
 ;;;     doeff 側の create-then-verify が所有する(herdr-new-session-io 参照)。
+;;;   - **workspace_id は創出順に単調でない**(実測 2026-08-14 — 詳細は
+;;;     herdr-workspace-order-key の docstring と herdr-physics.md)。よって
+;;;     label を持つ workspace 群は「どれが本物か」を選べない集合として扱う:
+;;;     生死 = 非空、帰属観測 = 全 holder の pane 和、kill = 全 holder 閉鎖。
+;;;     順序が要るのは同時作成どうしの合意(gate の事後照合)だけ。
 ;;;   - pane.read の本文は result.read.text。source 名は underscore
 ;;;     (recent_unwrapped — hyphen は socket で拒否)。
 ;;;   - recent / recent_unwrapped = スクロールバック + 現在画面の tail-N。
@@ -93,7 +98,7 @@
 ;; 登録は行わない。実 agent 起動で herdr の実 agent 検出が ~2 秒で名札を
 ;; 上書きするため(実測 2026-08-01 n=3)、agent 名簿は session 同一性を
 ;; 担えず、登録は「実 agent 起動までしか持たない名札」という誤解を生む
-;; 死荷重になる。同一性は workspace label(下記 herdr-workspace-id-io)。
+;; 死荷重になる。同一性は workspace label(下記 herdr-label-workspace-ids-io)。
 
 ;; pane.read format=ansi の応答から剥がすエスケープ列: CSI(SGR 含む)/
 ;; OSC(BEL・ST 終端)/その他の ESC シーケンス(ECMA-48: ESC + intermediates
@@ -202,51 +207,63 @@
        割り込んだ**同時作成どうし**の決着だけに使う。競合者は同じ名簿から
        同じ全順序で同じ勝者を選ぶので、ちょうど 1 つが残る。
      - 作成直後に自分が名簿に居ない = 重複ではない別の失敗(\"vanished\")。
-       旧実装は空 list に (get holders 0) を当てて IndexError にしており、
-       呼び手の RuntimeError 捕捉を素通りしていた。"
+       旧実装は空の保持者一覧の先頭を取って IndexError にしており、呼び手の
+       RuntimeError 捕捉を素通りしていた(保持者一覧の添字参照は semgrep
+       doeff-agents-herdr-label-holders-must-not-be-indexed で恒久禁止)。"
   (cond
     pre-holders "duplicate"
     (not-in ws-id post-holders) "vanished"
     (!= (get (sorted post-holders :key herdr-workspace-order-key) 0) ws-id) "duplicate"
     True "ok"))
 
+(deff herdr-label-holders [listing label]
+  {:pre [(: listing dict) (: label str)]
+   :post [(: % list)]}
+  "workspace.list の応答 + label → その label を持つ workspace_id **集合**
+   (herdr が並べた順のまま)。返り値は集合として扱う契約で、**要素の位置に
+   意味は無い** — 「先頭が本物の session」という読み方をしてはならない
+   (workspace_id は創出順に単調でない: herdr-workspace-order-key の実測)。
+   実際の消費は生死 = 非空判定、帰属 = 全要素の pane 和、kill = 全要素の
+   閉鎖で、いずれも順序に依存しない。"
+  (lfor ws (get listing "workspaces")
+        :if (= (.get ws "label") label)
+        (get ws "workspace_id")))
+
 (deff herdr-label-workspace-ids-io [socket-path label]
   {:pre [(: socket-path str) (: label str)]
    :post [(: % list)]}
-  "label が一致する workspace_id 列(決定的な全順序 = shortlex 順。⚠ 創出順では
-   ない — herdr-workspace-order-key 参照)。session 同一性アンカーの解決面:
-   label は doeff が workspace.create で所有し、実 agent 起動後も残存する
-   (実測 2026-08-01/08-09 — herdr の agent 名簿と違い実 agent 検出に
-   上書きされない)。"
-  (setv listing (herdr-call socket-path "workspace.list" {}))
-  (sorted (lfor ws (get listing "workspaces")
-                :if (= (.get ws "label") label)
-                (get ws "workspace_id"))
-          :key herdr-workspace-order-key))
-
-(deff herdr-workspace-id-io [socket-path session-name]
-  {:pre [(: socket-path str) (: session-name str)]
-   :post [(: % (| str None))]}
-  "session 名 → workspace_id の解決(不在は None)。TmuxHasSession の bool・
-   TmuxSessionPaneIds の対象・TmuxKillSession の対象が共有する。複数一致
-   (同時作成の敗者が自分を閉じる前の過渡、または doeff 外の同名 label)は
-   gate と同じ全順序の先頭 = gate の勝者に解決する(判定と解決が別々の勝者を
-   選ばないことが要件で、その順序が創出順である必要はない —
-   herdr-workspace-order-key 参照)。"
-  (setv ids (herdr-label-workspace-ids-io socket-path session-name))
-  (if ids (get ids 0) None))
+  "label を持つ workspace_id 集合(不在は空 list)。session 同一性アンカーの
+   解決面: label は doeff が workspace.create で所有し、実 agent 起動後も
+   残存する(実測 2026-08-01/08-09 — herdr の agent 名簿と違い実 agent 検出に
+   上書きされない)。順序づけはここでは行わない — 同時作成の合意に全順序が
+   要る場面(herdr-new-session-verdict の事後照合)だけが、その場で
+   herdr-workspace-order-key を適用する。"
+  (herdr-label-holders (herdr-call socket-path "workspace.list" {}) label))
 
 (deff herdr-session-pane-ids-io [socket-path session-name]
   {:pre [(: socket-path str) (: session-name str)]
    :post [(: % list)]}
   "session 名 → 所有 pane 集合(ADR-DOE-AGENTS-010 R4 の帰属観測)。
-   session = workspace の対応なので pane.list {workspace_id} がそのまま
-   所有 pane 集合になる(不在は空 list — tmux 側の session 不在 parity)。"
-  (setv ws-id (herdr-workspace-id-io socket-path session-name))
-  (when (is ws-id None)
-    (return []))
-  (setv listing (herdr-call socket-path "pane.list" {"workspace_id" ws-id}))
-  (lfor pane (get listing "panes") (get pane "pane_id")))
+   label を持つ **全 workspace** の pane.list を連結する — tmux
+   `list-panes -s -t NAME`(その名前の session が現に持つ全 pane)と同じ
+   「名前に帰属する pane 全部」の意味。holder を 1 つ選ぶ実装は、holder が
+   2 つ並んだ状態(同時作成の敗者が自分を閉じる前の過渡・敗者の close 失敗・
+   doeff 外の同名 label・conformance の帯域外 create)で生きた pane を
+   不可視にし、policy.hy の帰属検証(R4)がその席を pane 消失 = vanished と
+   誤って終端する(実測反例 2026-08-14: holder 2 に対し返る pane は 1 つ)。
+   不在は空 list(tmux 側の session 不在 parity)。観測中に holder が
+   消えるのは正常な競合なので、その holder は pane 0 個として扱う
+   (pane.list はその時 workspace_not_found を返す — 実測 2026-08-14)。"
+  (setv pane-ids [])
+  (for [ws-id (herdr-label-workspace-ids-io socket-path session-name)]
+    (try
+      (setv listing (herdr-call socket-path "pane.list" {"workspace_id" ws-id}))
+      (except [e HerdrApiError]
+        (when (!= e.code "workspace_not_found")
+          (raise))
+        (continue)))
+    (.extend pane-ids (lfor pane (get listing "panes") (get pane "pane_id"))))
+  pane-ids)
 
 (deff herdr-new-session-io [socket-path session-name work-dir env]
   {:pre [(: socket-path str) (: session-name str) (: work-dir str) (: env dict)]
@@ -289,9 +306,12 @@
   ;; 段 1 = verdict の pre-holders 節の先出し(規則は同じで、workspace を作る前に
   ;; 適用することで無駄な生成と、close 失敗時の label 二重保持を避ける)。
   (when pre-holders
+    ;; 診断は保持者を全部並べる(1 つ選んで名乗ると「その 1 つが session だ」と
+    ;; 読める — 集合のどれが本物かは id からは決まらない)。
+    (setv incumbents (.join ", " pre-holders))
     (raise (RuntimeError
              (+ f"herdr new-session failed: duplicate session: {session-name} "
-                f"(label held by workspace {(get pre-holders 0)})"))))
+                f"(label held by workspace {incumbents})"))))
   (setv ws-result (herdr-call socket-path "workspace.create"
                               {"label" session-name
                                "cwd" work-dir
@@ -310,10 +330,10 @@
       (raise (RuntimeError
                (+ f"herdr new-session failed: workspace {ws-id} for {session-name} "
                   f"disappeared from workspace.list right after create"))))
+    (setv others (.join ", " (lfor h post-holders :if (!= h ws-id) h)))
     (raise (RuntimeError
              (+ f"herdr new-session failed: duplicate session: {session-name} "
-                f"(label held by workspace "
-                f"{(get (sorted post-holders :key herdr-workspace-order-key) 0)})"))))
+                f"(label held by workspace {others})"))))
   pane-id)
 
 (deff herdr-capture-io [socket-path pane-id lines]
@@ -432,15 +452,26 @@
 (deff herdr-kill-session-io [socket-path session-name]
   {:pre [(: socket-path str) (: session-name str)]
    :post [(: % "None")]}
-  "TmuxKillSession の実体: 名前 → workspace 解決の上 workspace.close(全 pane
-   ごと落とす = tmux kill-session の全 window/pane 破棄 parity。旧実装の
-   単一 pane.close と違い、S19c 型の sibling pane が残る workspace も
-   取り残さない)。不在は raise(tmux kill-session の非 0 exit と同 parity —
-   cancel / cleanup program は has-session で guard してから呼ぶ)。"
-  (setv ws-id (herdr-workspace-id-io socket-path session-name))
-  (when (is ws-id None)
+  "TmuxKillSession の実体: label を持つ workspace を **全部** workspace.close
+   する(1 つの workspace の全 pane ごと落とすのは tmux kill-session の
+   全 window/pane 破棄 parity。旧実装の単一 pane.close と違い S19c 型の
+   sibling pane が残る workspace も取り残さない。加えて holder が複数ある
+   状態でも「その名前の session は消える」= tmux が同名 session を持てない
+   ことの parity)。holder を 1 つ選んで閉じる実装は生きた workspace を残し、
+   呼び手には「殺した」と返る(実測反例 2026-08-14: holder 2 → kill 後も
+   1 つが生存)。不在は raise(tmux kill-session の非 0 exit と同 parity —
+   cancel / cleanup program は has-session で guard してから呼ぶ)。
+   閉鎖中の自然消滅は成功と同義(workspace_not_found のみ飲み込む — 他の
+   error 封筒は呼び手へ上げる)。"
+  (setv holders (herdr-label-workspace-ids-io socket-path session-name))
+  (when (not holders)
     (raise (RuntimeError f"herdr kill-session failed: {session-name}")))
-  (herdr-call socket-path "workspace.close" {"workspace_id" ws-id})
+  (for [ws-id holders]
+    (try
+      (herdr-call socket-path "workspace.close" {"workspace_id" ws-id})
+      (except [e HerdrApiError]
+        (when (!= e.code "workspace_not_found")
+          (raise)))))
   None)
 
 
@@ -453,7 +484,8 @@
     (resume (herdr-new-session-io socket-path session-name work-dir env)))
 
   (TmuxHasSession [session-name]
-    (resume (is-not (herdr-workspace-id-io socket-path session-name) None)))
+    ;; 生死は holder の有無だけで決まる(どれが「本物」かを選ばない)。
+    (resume (bool (herdr-label-workspace-ids-io socket-path session-name))))
 
   (TmuxSessionPaneIds [session-name]
     (resume (herdr-session-pane-ids-io socket-path session-name)))

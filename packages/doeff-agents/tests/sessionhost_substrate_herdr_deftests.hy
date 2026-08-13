@@ -30,6 +30,7 @@
   herdr-substrate
   herdr-call
   herdr-key-name
+  herdr-label-holders
   herdr-request-line
   chunked-send-texts
   normalize-ansi-read])
@@ -257,18 +258,92 @@
       (except [e RuntimeError] (setv raised2 e)))
     (assert (is-not raised2 None))
     (assert (in "duplicate session" (str raised2)))
-    ;; --- 敗者は自分の workspace を掃除してから raise する(リーク禁止):
-    ;;     label を持つ workspace は勝者の 1 つだけ残る。
+    ;; --- 敗者は workspace を作らない/掃除してから raise する(リーク禁止):
+    ;;     label を持つ workspace は **先行 session のもの 1 つだけ**が残る。
+    ;;     「1 つだけ」では不十分 — 破れは「後発が勝者になり先行が孤児化する」
+    ;;     形だったので、残った 1 つが先行の workspace であることまで確かめる。
+    (setv incumbent-ws (get (.split pane ":") 0))
     (setv listing (herdr-call DEFAULT-HERDR-SOCKET "workspace.list" {}))
     (setv holders (lfor ws (get listing "workspaces")
                         :if (= (.get ws "label") session-name)
                         (get ws "workspace_id")))
-    (assert (= (len holders) 1)
-            f"duplicate loser must clean its workspace, label holders: {holders}")
-    ;; --- 既存 session は重複拒否の巻き添えにならず生きている。
+    (assert (= holders [incumbent-ws])
+            f"the incumbent workspace must be the sole survivor, holders: {holders}")
+    ;; --- 既存 session は重複拒否の巻き添えにならず生きており、名前解決も
+    ;;     先行 session の pane を指したままである。
     (<- alive ((herdr-substrate DEFAULT-HERDR-SOCKET)
                (tmux-has-session session-name)))
     (assert alive)
+    (<- pane-ids ((herdr-substrate DEFAULT-HERDR-SOCKET)
+                  (tmux-session-pane-ids session-name)))
+    (assert (= pane-ids [pane])
+            f"name resolution must stay on the incumbent pane: {pane-ids}")
+    (finally
+      (close-workspaces-with-label session-name)
+      (shutil.rmtree d :ignore-errors True))))
+
+
+(deftest test-herdr-label-holders-are-a-set-in-listing-order
+  ;; holder 集合は workspace.list の並びのまま返し、doeff 側で並べ替えない。
+  ;; 並びに意味を持たせないことが契約 — 「先頭が本物」という読み方は
+  ;; workspace_id が創出順に単調でない(w35Z の次の create が w350 になりうる:
+  ;; review 実測 2026-08-13 / w3NZ → w3N0 の実測 2026-08-14 と同じ繰り上がり)
+  ;; 以上、成立しない。
+  (setv listing {"workspaces"
+                 [{"workspace_id" "w35Z" "label" "sess"}
+                  {"workspace_id" "w30R" "label" "other-session"}
+                  {"workspace_id" "w350" "label" "sess"}]})
+  (assert (= (herdr-label-holders listing "sess") ["w35Z" "w350"]))
+  (assert (= (herdr-label-holders listing "other-session") ["w30R"]))
+  (assert (= (herdr-label-holders listing "absent") []))
+  ;; 反例の明示: 字面の順序鍵(shortlex も素の ASCII も)はこの繰り上がり
+  ;; 境界で先行/後発を入れ替える。だから holder の選択には使えない。
+  (assert (= (sorted ["w35Z" "w350"] :key (fn [w] #((len w) w))) ["w350" "w35Z"]))
+  (assert (= (sorted ["w35Z" "w350"]) ["w350" "w35Z"])))
+
+
+(deftest test-herdr-name-resolution-covers-every-label-holder
+  {:skip-if (not HERDR-AVAILABLE)
+   :skip-reason "herdr server not running"}
+  ;; 孤児化・漏れの回帰 pin(review 実測 2026-08-13 / 追試 2026-08-14)。
+  ;; 同じ label を持つ workspace が 2 つ並ぶ状態(同時作成の敗者が閉じる前・
+  ;; 敗者の close 失敗・doeff 外の同名 label・conformance の帯域外 create)で、
+  ;; 名前解決が「1 つを選ぶ」実装だと:
+  ;;   - 帰属観測(ADR-DOE-AGENTS-010 R4)が片方の pane を見失い、policy.hy が
+  ;;     生きた席を pane 消失 = vanished と誤って終端する、
+  ;;   - kill が片方だけを閉じて生きた session を残す(実測の漏れ)。
+  ;; どちらも「どちらを選ぶか」の順序鍵では直らない(字面から創出順は導けない)
+  ;; ので、substrate は全 holder を対象にする集合型であること。
+  ;; 第 2 holder は herdr の workspace.create を直に呼んで作る(doeff の gate は
+  ;; 事前照会で正しく拒否するため、gate 経由ではこの状態を作れない)。
+  (setv d (tempfile.mkdtemp))
+  (setv session-name f"doeff-herdr-holders-{(os.getpid)}")
+  (try
+    (<- pane ((herdr-substrate DEFAULT-HERDR-SOCKET)
+              (tmux-new-session session-name d {})))
+    (setv second (herdr-call DEFAULT-HERDR-SOCKET "workspace.create"
+                             {"label" session-name "cwd" d "focus" False}))
+    (setv second-pane (get (get second "root_pane") "pane_id"))
+    (assert (!= (get (.split pane ":") 0) (get (.split second-pane ":") 0)))
+    ;; --- 帰属観測は全 holder の pane を被覆する(順序は問わない)。
+    (<- pane-ids ((herdr-substrate DEFAULT-HERDR-SOCKET)
+                  (tmux-session-pane-ids session-name)))
+    (assert (= (sorted pane-ids) (sorted [pane second-pane]))
+            f"pane attribution must cover every label holder: {pane-ids}")
+    ;; --- kill は label を持つ workspace を全部閉じる(tmux kill-session の
+    ;;     「その名前の session は消える」parity)。片方だけ閉じる実装は
+    ;;     生きた session を残す = 実測された漏れ。
+    (<- _ ((herdr-substrate DEFAULT-HERDR-SOCKET)
+           (tmux-kill-session session-name)))
+    (setv listing (herdr-call DEFAULT-HERDR-SOCKET "workspace.list" {}))
+    (setv holders (lfor ws (get listing "workspaces")
+                        :if (= (.get ws "label") session-name)
+                        (get ws "workspace_id")))
+    (assert (= holders [])
+            f"kill-session must leave no label holder behind: {holders}")
+    (<- gone ((herdr-substrate DEFAULT-HERDR-SOCKET)
+              (tmux-has-session session-name)))
+    (assert (not gone))
     (finally
       (close-workspaces-with-label session-name)
       (shutil.rmtree d :ignore-errors True))))

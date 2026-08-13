@@ -95,38 +95,34 @@ def _herdr_call(method: str, params: dict[str, Any]) -> dict[str, Any]:
     return json.loads(b"".join(chunks).decode("utf-8").strip())
 
 
-def _herdr_workspace_order_key(workspace_id: str) -> tuple[int, str]:
-    """Creation-order key for herdr workspace ids (shortlex).
-
-    herdr assigns workspace ids from a monotonically increasing base62-style
-    counter (probe 2026-08-09: consecutive creates got w1VS -> w1VT -> w1VV;
-    the oldest workspaces have the shortest ids, e.g. w3R), so shortlex order
-    is creation order while plain string order inverts it at digit
-    boundaries. Mirrors herdr-workspace-order-key in substrate_herdr.hy.
-    """
-    return (len(workspace_id), workspace_id)
-
-
 def _herdr_label_workspace_ids(label: str) -> list[str]:
-    """Workspace ids holding the label, in creation order.
+    """Workspace ids holding the label — a SET, in herdr's listing order.
 
     The herdr session identity anchor is the workspace label
     (substrate_herdr.hy): real-agent detection overwrites the herdr agent
     name plate within ~2s of a real agent starting in the pane (probe
     2026-08-01, n=3 deterministic), so the agent-name registry cannot
     address a live session out of band either.
+
+    The returned order carries NO creation-order meaning, and no caller may
+    index into it: herdr workspace ids are opaque counter ids that are not
+    monotone in creation order (probe 2026-08-14 — the counter carries from
+    letters into digits, e.g. w3NZ -> w3N0 and w3ZZ -> ... -> w303, so a
+    later id can sort before an earlier one under plain ASCII and under
+    shortlex alike). Picking "the" workspace out of the set therefore
+    selects an arbitrary holder — which orphaned a live session and killed
+    the wrong workspace in PR #587's first revision. Consumers stay
+    order-independent instead: sweep every holder (kill) or test
+    non-emptiness (liveness).
     """
     listed = _herdr_call("workspace.list", {})
     if "error" in listed:
         raise RuntimeError(f"herdr workspace.list failed: {listed['error']}")
-    return sorted(
-        (
-            ws["workspace_id"]
-            for ws in listed["result"]["workspaces"]
-            if ws.get("label") == label
-        ),
-        key=_herdr_workspace_order_key,
-    )
+    return [
+        ws["workspace_id"]
+        for ws in listed["result"]["workspaces"]
+        if ws.get("label") == label
+    ]
 
 
 def kill_session_out_of_band(session_id: str) -> None:
