@@ -196,6 +196,25 @@ def test_herdr_agent_name_identity_rule_detects_agent_get_resolution() -> None:
     ) == {11}
 
 
+def test_herdr_label_holders_indexed_rule_detects_arbitrary_holder_pick() -> None:
+    # PR #587 revision: herdr workspace ids are not monotone in creation
+    # order (the counter carries from letters into digits — w3NZ -> w3N0,
+    # w3ZZ -> ... -> w303; probe 2026-08-14), so indexing the holder set
+    # picks an arbitrary workspace: the live session got orphaned, pane
+    # attribution lost a live pane, and kill closed the wrong workspace.
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/"
+        "herdr_label_holders_indexed_forbidden.hy",
+        cwd=fixture_root,
+    )
+
+    assert _rule_start_lines(
+        results, "doeff-agents-herdr-label-holders-must-not-be-indexed"
+    ) == {12}
+
+
 def test_defhandler_must_be_top_level_rule_detects_nested_handler() -> None:
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     results = _semgrep_results(

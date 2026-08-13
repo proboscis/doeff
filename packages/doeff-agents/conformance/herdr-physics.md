@@ -436,20 +436,62 @@ substrate-herdr-session-identity-anchor-r2-607f0c(#556 の系譜)。
     踏むと**後発を勝者に選び重複 session を素通り**させた(全量走行で deftest
     `test-herdr-duplicate-session-rejected` が段 2 で断続的に赤。単独走行では
     反転を踏まないため緑で、前提の破れが見えなかった)。
+  - 反例 3(2026-08-14 追試、繰り上がりを跨いだ長い列): 同一 server の連続
+    create が **w3ZW → w3ZX → w3ZY → w3ZZ → …繰り上がり… → w303 → w304 →
+    w305 → w306**。後から作った w30x 群は ASCII でも shortlex でも先行の
+    w3Zx 群より小さい('0' = 48 < 'Z' = 90)。review 実測の
+    **w35Y → w35Z → w350 → w351** も同じ境界。連続 create の別列
+    **w30G → w30H → w30J → w30K → w30M → w30N → w30P → w30Q** は I/L/O/U を
+    欠く(id 文字集合の観測 — 復号による順序復元も当てにしない根拠)。
   - 現在の shortlex 鍵(`herdr-workspace-order-key`)の用途は**同時作成どうしの
     決定的合意のみ**で、創出順の主張ではない。既存 session の検出は段 1 が担う。
+- **label 保持者は「どれが本物か」を選べない集合として扱う**(この便で追加。
+  順序前提が壊れた時の被害面は gate だけではない — 名前解決の側にも同じ前提が
+  残っていた):
+  - 生死(TmuxHasSession)= 保持者が非空か。
+  - 帰属観測(TmuxSessionPaneIds、ADR-DOE-AGENTS-010 R4)= **全保持者の
+    pane.list の和**(tmux `list-panes -s -t NAME` = その名前に帰属する pane
+    全部、の parity)。1 つを選ぶ実装は、保持者が 2 つ並んだ状態(同時作成の
+    敗者が閉じる前・敗者の close 失敗・doeff 外の同名 label・conformance の
+    帯域外 create)で生きた pane を不可視にし、policy.hy の帰属検証が生きた席を
+    pane 消失 = vanished と誤って終端する。
+  - kill(TmuxKillSession)= **全保持者を workspace.close**(その名前の session
+    が消える、の parity)。
+  - 実測反例(2026-08-14、この節の適用前の実装に対して): 保持者
+    `['w413','w414']` で帰属観測は `['w413:p1']` のみを返し、kill 後も
+    `['w414']` が生き残った(呼び手には「殺した」と返る)。
+  - 消えた workspace への `pane.list` / `workspace.close` は
+    `workspace_not_found`(実測 2026-08-14)。観測・掃き取り中の自然消滅は
+    この code だけを飲み込む(他の error 封筒は呼び手へ上げる)。
+  - conformance harness の帯域外経路も同形(kill = 全保持者掃き取り、
+    liveness = 非空判定)。保持者一覧の添字参照は semgrep
+    `doeff-agents-herdr-label-holders-must-not-be-indexed` で恒久禁止。
+  - read-after-create の即時一貫性は 2026-08-14 probe で 8/8(create 応答直後の
+    workspace.list に必ず自分が載る)= 段 2 の前提。
+  - `workspace.list` の並びは新規が末尾に付き生存分の相対順を保つが、`number` は
+    close で詰め直される密な表示番号(2026-08-14 実測)で永続鍵にはならない。
+    どちらも創出順の代用にはしない。
 - **agent 名には invalid_agent_name 制約がある**(2026-08-09 実測): 小文字
   開始・[a-z0-9_-]・1-32 文字。**workspace label は無制約**(60 文字・
   大文字・記号入りを受理、workspace.list で解決可能)— 旧アンカーは herdr の
   名前制約を doeff session 名へ暗黙に強制していた(label 移行の追加根拠)。
-- **kill parity**: kill-session は label → workspace 解決の上
-  `workspace.close`(全 pane ごと破棄 = tmux kill-session parity。S19c 型の
+- **kill parity**: kill-session は label 保持者を全部 `workspace.close`
+  (1 つの workspace の全 pane ごと破棄 = tmux kill-session parity。S19c 型の
   sibling pane が残る workspace も取り残さない)。conformance harness の
   帯域外経路(kill / liveness / S19c fault injection / adopt fixture)も
-  同アンカーへ移行済み(harness.py)。
+  同アンカー・同じ集合型へ移行済み(harness.py)。
 - 回帰ガード: deftest `test-herdr-identity-survives-agent-name-loss`(名札
   消失後の has-session / session-pane-ids / capture / send / kill)+
   `test-herdr-duplicate-session-rejected`(doeff 側重複判定 — 名札消失後の
-  重複素通りを含む)+ semgrep
+  重複素通りを含む。残存する 1 つが**先行の workspace** であることと、名前解決が
+  先行 pane を指し続けることまで確認)+
+  `test-herdr-new-session-verdict-ignores-id-order`(判定規則が id の順序を
+  既存検出に使わないこと)+
+  `test-herdr-label-holders-are-a-set-in-listing-order`(保持者は並べ替えない・
+  繰り上がり境界 w35Z/w350 の反例つき)+
+  `test-herdr-name-resolution-covers-every-label-holder`(保持者 2 つの状態で
+  帰属観測の被覆と kill の全掃き取り)+ semgrep
   `doeff-agents-herdr-session-identity-not-agent-name`(sessionhost /
-  conformance での agent.get 名前解決の恒久禁止)。
+  conformance での agent.get 名前解決の恒久禁止)+
+  `doeff-agents-herdr-label-holders-must-not-be-indexed`(保持者一覧の
+  添字参照の恒久禁止)。
