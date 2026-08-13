@@ -355,16 +355,47 @@
 
 
 (deftest test-herdr-workspace-order-key-shortlex
-  ;; 重複判定 tie-break の順序鍵の pin: herdr の workspace_id は base62 風
-  ;; カウンタで創出順に単調増加する(実測 2026-08-09: 連続 create が
-  ;; w1VS → w1VT → w1VV。古い workspace ほど桁が短い — 番号 1 の workspace が
-  ;; w3R)。素の文字列比較では "w1VS" < "w3R" と創出順が逆転するため、
-  ;; shortlex(桁数優先、同桁は ASCII)で比較する義務を負う。
+  ;; 同時作成の合意に使う全順序の pin(shortlex: 桁数優先、同桁は ASCII)。
+  ;; ⚠ 創出順の主張ではない — workspace_id は創出順に単調でない(実測
+  ;; 2026-08-14: w3NZ → w3N0 / w3MZ → w3M0。→ deftest
+  ;; test-herdr-new-session-verdict-ignores-id-order)。ここで固定するのは
+  ;; 「競合者どうしが同じ勝者を選べる決定的な全順序であること」だけ。素の
+  ;; 文字列比較は桁境界で順序が変わる("w1VS" < "w3R")ため桁数優先にする。
   (import doeff_agents.sessionhost.substrate_herdr [herdr-workspace-order-key])
   (assert (< (herdr-workspace-order-key "w3R") (herdr-workspace-order-key "w1VS")))
   (assert (< (herdr-workspace-order-key "w1VS") (herdr-workspace-order-key "w1VT")))
   (assert (< (herdr-workspace-order-key "w1VT") (herdr-workspace-order-key "w1VV")))
   (assert (= (herdr-workspace-order-key "w1VS") (herdr-workspace-order-key "w1VS"))))
+
+
+(deftest test-herdr-new-session-verdict-ignores-id-order
+  ;; 回帰 pin(実測 2026-08-14、稼働 herdr 0.7.5 / protocol 17): workspace_id は
+  ;; 創出順に単調ではない。断続的に赤だった全量走行の RPC 記録で、w3NZ の次に
+  ;; 作られた workspace が w3N0 を返し(= 後発のほうが shortlex で先)、独立の
+  ;; 連続 create 実測でも w3MZ の次が w3M0 だった。したがって
+  ;; 「id 最小 = 先行 session」は成立せず、既存 session の検出を id の順序に
+  ;; 委ねると重複 session が素通りする(旧実装の実害 = 全量走行で
+  ;; test-herdr-duplicate-session-rejected が段 2 で断続的に赤。単独走行では
+  ;; 反転を踏まないため緑で、順序前提の破れが見えなかった)。
+  ;;
+  ;; 分担の pin: 既存 session の検出は **事前照会**(作成前の名簿)が担い、
+  ;; 事後照合は「事前照会と作成の間に割り込んだ同時作成」どうしが同じ勝者に
+  ;; 合意するためだけに使う。事後照合の順序鍵は合意のための全順序であって、
+  ;; 創出順の主張ではない。
+  (import doeff_agents.sessionhost.substrate_herdr [herdr-new-session-verdict])
+  ;; ① 既存 session あり + 自分の id のほうが小さい(実測の反転形)= 重複
+  (assert (= (herdr-new-session-verdict "w3M0" ["w3MZ"] ["w3M0" "w3MZ"]) "duplicate"))
+  ;; ② 既存 session あり + 自分の id のほうが大きい = 重複(順序前提でも成立した形)
+  (assert (= (herdr-new-session-verdict "w3N8" ["w3N7"] ["w3N7" "w3N8"]) "duplicate"))
+  ;; ③ 事前は不在(= 同時作成の競合)。決定的な全順序でちょうど 1 人が勝つ。
+  (assert (= (herdr-new-session-verdict "w3N7" [] ["w3N7" "w3N8"]) "ok"))
+  (assert (= (herdr-new-session-verdict "w3N8" [] ["w3N7" "w3N8"]) "duplicate"))
+  ;; ④ 事前も事後も自分だけ = 成立
+  (assert (= (herdr-new-session-verdict "w3N7" [] ["w3N7"]) "ok"))
+  ;; ⑤ 作成直後に自分が名簿から消えた = 重複ではない別の失敗として名乗る
+  ;;    (旧実装は holders 空で (get holders 0) が IndexError になり、
+  ;;     呼び手の RuntimeError 捕捉を素通りしていた。)
+  (assert (= (herdr-new-session-verdict "w3N7" [] []) "vanished")))
 
 
 (deftest test-herdr-identity-survives-agent-name-loss
