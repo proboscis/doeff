@@ -416,17 +416,28 @@ substrate-herdr-session-identity-anchor-r2-607f0c(#556 の系譜)。
   検出と同じ API 列 `pane.report_agent`(別 source)→ `agent.rename` で
   名札上書きと同型の状態遷移を合成できる。deftest
   `test-herdr-identity-survives-agent-name-loss` の模擬はこれ。
-- **herdr は label の重複をネイティブ拒否しない**(2026-08-09 probe): 同一
-  label の workspace.create は 2 つ目も成功する。tmux duplicate 拒否 parity は
-  doeff 側の **create-then-verify** が所有する(先に作ってから label 保持者を
-  数え、創出順最小でなければ自分を閉じて raise)。check-then-create の
-  TOCTOU 窓は「herdr daemon が create を直列化するため、後から作った側の
-  verify には先に作った側が必ず載る」ことで閉じる(根拠はコード近傍 —
-  substrate_herdr.hy herdr-new-session-io)。
-- **workspace_id は base62 風カウンタで創出順に単調増加**(2026-08-09 probe):
-  連続 create が w1VS → w1VT → w1VV、番号 1 の古い workspace は w3R と桁が
-  短い。素の文字列比較は桁境界で創出順が逆転("w1VS" < "w3R")するため、
-  重複 gate の勝敗と複数一致の解決は shortlex(桁数優先)で比較する。
+- **herdr は label の重複をネイティブ拒否しない**(2026-08-09 probe、2026-08-14
+  再確認 — 同 label の 2 つ目の workspace.create は w209 / w20A で成功): tmux
+  duplicate 拒否 parity は doeff 側が所有する。所有の形は **2 段**
+  (substrate_herdr.hy `herdr-new-session-verdict`):
+  - 段 1 = **事前照会**。作成前に label 保持者を数え、1 つでも居れば workspace を
+    作らずに拒否する。既存 session の検出はここが担い、**id の順序に依存しない**。
+  - 段 2 = **事後照合**。段 1 と作成の間に割り込んだ同時作成だけが残る。競合者は
+    同じ名簿から同じ全順序で同じ勝者に合意し、敗者は自分の workspace を閉じて
+    raise する(合意に要るのは全順序であって創出順ではない)。作成直後に自分が
+    名簿に居ない場合は重複ではない別の失敗として名乗る。
+- **⚠ workspace_id は創出順に単調ではない**(2026-08-14 実測 — 2026-08-09 の
+  「base62 風カウンタで単調増加」という記述の**訂正**):
+  - 反例 1(全量走行の RPC 記録・実失敗時): 連続 create が **w3NZ → w3N0**。
+  - 反例 2(独立の連続 create 実測 200 回中 1 回): **w3MZ → w3M0**。
+  - いずれも後発のほうが shortlex で先に来る。旧記述の根拠(w1VS → w1VT → w1VV)は
+    末尾桁の繰り上がりを跨いでおらず、一般には成立しなかった。
+  - 実害: 「id 最小 = 先行 session」に依存した初版の create-then-verify は、反転を
+    踏むと**後発を勝者に選び重複 session を素通り**させた(全量走行で deftest
+    `test-herdr-duplicate-session-rejected` が段 2 で断続的に赤。単独走行では
+    反転を踏まないため緑で、前提の破れが見えなかった)。
+  - 現在の shortlex 鍵(`herdr-workspace-order-key`)の用途は**同時作成どうしの
+    決定的合意のみ**で、創出順の主張ではない。既存 session の検出は段 1 が担う。
 - **agent 名には invalid_agent_name 制約がある**(2026-08-09 実測): 小文字
   開始・[a-z0-9_-]・1-32 文字。**workspace label は無制約**(60 文字・
   大文字・記号入りを受理、workspace.list で解決可能)— 旧アンカーは herdr の

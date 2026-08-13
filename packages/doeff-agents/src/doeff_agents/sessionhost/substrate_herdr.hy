@@ -174,20 +174,50 @@
 (deff herdr-workspace-order-key [workspace-id]
   {:pre [(: workspace-id str)]
    :post [(: % tuple)]}
-  "workspace_id の創出順比較鍵(shortlex: 桁数優先、同桁は ASCII)。
-   herdr の workspace_id は base62 風カウンタで創出順に単調増加する
-   (実測 2026-08-09: 連続 create が w1VS → w1VT → w1VV。番号 1 の古い
-   workspace は w3R と桁が短い)。素の文字列比較は桁境界で創出順を逆転
-   させる(\"w1VS\" < \"w3R\")ため、重複 gate の勝敗判定には使えない。"
+  "workspace_id の決定的な全順序の鍵(shortlex: 桁数優先、同桁は ASCII)。
+
+   ⚠ これは**創出順の主張ではない**。herdr の workspace_id は創出順に単調では
+   ない — 実測 2026-08-14(稼働 herdr 0.7.5 / protocol 17): 連続 create が
+   w3NZ → w3N0、独立の再現で w3MZ → w3M0(いずれも後発のほうが shortlex で
+   先に来る)。初版の docstring はこれを「base62 風カウンタで創出順に単調増加」
+   と書いていたが、根拠の実測(2026-08-09 の w1VS → w1VT → w1VV)は末尾桁の
+   繰り上がりを跨いでおらず、一般には成立しない。
+
+   用途はただ 1 つ = **同時作成どうしが同じ勝者に合意するための規約**
+   (どの全順序でも合意は成立する)。素の文字列比較は桁境界で順序が変わる
+   (\"w1VS\" < \"w3R\")ため、規約としては桁数優先で固定する。
+   既存 session の検出にこの鍵を使ってはならない(→ herdr-new-session-verdict)。"
   #((len workspace-id) workspace-id))
+
+(deff herdr-new-session-verdict [ws-id pre-holders post-holders]
+  {:pre [(: ws-id str) (: pre-holders list) (: post-holders list)]
+   :post [(: % str)]}
+  "new-session の判定(純関数)。\"duplicate\" / \"vanished\" / \"ok\" のいずれか。
+
+   段の分担 — workspace_id が創出順に単調でない(herdr-workspace-order-key の
+   実測)ため、「id 最小 = 先行 session」で既存を検出してはならない:
+     - **事前照会**(pre-holders = 作成前の名簿)が既存 session の検出を担う。
+       1 つでも居れば重複 — id の順序に一切依存しない。
+     - **事後照合**(post-holders = 作成後の名簿)は、事前照会と作成の間に
+       割り込んだ**同時作成どうし**の決着だけに使う。競合者は同じ名簿から
+       同じ全順序で同じ勝者を選ぶので、ちょうど 1 つが残る。
+     - 作成直後に自分が名簿に居ない = 重複ではない別の失敗(\"vanished\")。
+       旧実装は空 list に (get holders 0) を当てて IndexError にしており、
+       呼び手の RuntimeError 捕捉を素通りしていた。"
+  (cond
+    pre-holders "duplicate"
+    (not-in ws-id post-holders) "vanished"
+    (!= (get (sorted post-holders :key herdr-workspace-order-key) 0) ws-id) "duplicate"
+    True "ok"))
 
 (deff herdr-label-workspace-ids-io [socket-path label]
   {:pre [(: socket-path str) (: label str)]
    :post [(: % list)]}
-  "label が一致する workspace_id 列(創出順 = shortlex 順)。session 同一性
-   アンカーの解決面: label は doeff が workspace.create で所有し、実 agent
-   起動後も残存する(実測 2026-08-01/08-09 — herdr の agent 名簿と違い
-   実 agent 検出に上書きされない)。"
+  "label が一致する workspace_id 列(決定的な全順序 = shortlex 順。⚠ 創出順では
+   ない — herdr-workspace-order-key 参照)。session 同一性アンカーの解決面:
+   label は doeff が workspace.create で所有し、実 agent 起動後も残存する
+   (実測 2026-08-01/08-09 — herdr の agent 名簿と違い実 agent 検出に
+   上書きされない)。"
   (setv listing (herdr-call socket-path "workspace.list" {}))
   (sorted (lfor ws (get listing "workspaces")
                 :if (= (.get ws "label") label)
@@ -199,9 +229,10 @@
    :post [(: % (| str None))]}
   "session 名 → workspace_id の解決(不在は None)。TmuxHasSession の bool・
    TmuxSessionPaneIds の対象・TmuxKillSession の対象が共有する。複数一致
-   (重複 gate の敗者が自分を閉じる前の過渡、または doeff 外の同名 label)は
-   創出順最小 = 重複 gate の勝者に解決する(gate と同じ順序鍵 — 判定と
-   解決が別々の勝者を選ばないこと)。"
+   (同時作成の敗者が自分を閉じる前の過渡、または doeff 外の同名 label)は
+   gate と同じ全順序の先頭 = gate の勝者に解決する(判定と解決が別々の勝者を
+   選ばないことが要件で、その順序が創出順である必要はない —
+   herdr-workspace-order-key 参照)。"
   (setv ids (herdr-label-workspace-ids-io socket-path session-name))
   (if ids (get ids 0) None))
 
@@ -242,6 +273,25 @@
   (for [[key value] SHELL-PROMPT-SUPPRESSING-ENV]
     (when (not-in key effective-env)
       (setv (get effective-env key) value)))
+  ;; 重複 session 名の拒否(tmux duplicate 拒否 parity)— doeff 側で所有する。
+  ;; herdr は label 重複をネイティブ拒否しない(実測 2026-08-09: 同 label の
+  ;; workspace.create は 2 つ目も成功)。判定は 2 段(herdr-new-session-verdict):
+  ;;   段 1 = 事前照会。既存 session の検出はこちらが担う。workspace を作る前に
+  ;;     名簿を見て、1 つでも居れば作らずに拒否する — id の順序に依存しない。
+  ;;     初版は create-then-verify 一本で「id 最小 = 先行 session」に依存して
+  ;;     いたが、workspace_id は創出順に単調でない(実測 2026-08-14: w3NZ の
+  ;;     次の create が w3N0)ため、後発が勝者に選ばれて重複が素通りしていた。
+  ;;   段 2 = 事後照合。段 1 と作成の間に割り込んだ**同時作成**だけがここに残る。
+  ;;     競合者は同じ名簿から同じ全順序で同じ勝者に合意するので、ちょうど 1 つが
+  ;;     残る(合意に必要なのは全順序であって創出順ではない)。敗者は自分の
+  ;;     workspace を閉じてから raise する。
+  (setv pre-holders (herdr-label-workspace-ids-io socket-path session-name))
+  ;; 段 1 = verdict の pre-holders 節の先出し(規則は同じで、workspace を作る前に
+  ;; 適用することで無駄な生成と、close 失敗時の label 二重保持を避ける)。
+  (when pre-holders
+    (raise (RuntimeError
+             (+ f"herdr new-session failed: duplicate session: {session-name} "
+                f"(label held by workspace {(get pre-holders 0)})"))))
   (setv ws-result (herdr-call socket-path "workspace.create"
                               {"label" session-name
                                "cwd" work-dir
@@ -249,28 +299,21 @@
                                "focus" False}))
   (setv ws-id (get (get ws-result "workspace") "workspace_id"))
   (setv pane-id (get (get ws-result "root_pane") "pane_id"))
-  ;; 重複 session 名の拒否(tmux duplicate 拒否 parity)— doeff 側で所有する。
-  ;; herdr は label 重複をネイティブ拒否しない(実測 2026-08-09: 同 label の
-  ;; workspace.create は 2 つ目も成功)。判定方式 = create-then-verify:
-  ;;   - check-then-create は「確認と作成の間」に TOCTOU 窓が残る(2 呼び手が
-  ;;     同時に不在を確認 → 両方作成 → 二重 session を誰も検出しない)。
-  ;;   - create-then-verify は判定材料が「自分の作成より後の名簿」なので窓が
-  ;;     閉じる: herdr daemon は create を直列化し、workspace は自発的に
-  ;;     消えないため、後から作った側の verify には先に作った側が必ず載る。
-  ;;   - 勝敗は workspace_id の shortlex 順(= 創出順、herdr-workspace-order-key
-  ;;     参照)で「最小 id だけが勝つ」: 同時競合では両者が同じ名簿から同じ
-  ;;     勝者に合意し、敗者は自分の workspace を閉じてから raise する。
-  ;;     先行 session が既にある通常の重複では後発が必ず敗者になる。
-  ;;     どの経路でも label 保持者はちょうど 1 つに収束する。
-  (setv holders (herdr-label-workspace-ids-io socket-path session-name))
-  (when (!= (get holders 0) ws-id)
+  (setv post-holders (herdr-label-workspace-ids-io socket-path session-name))
+  (setv verdict (herdr-new-session-verdict ws-id [] post-holders))
+  (when (!= verdict "ok")
     (try
       (herdr-call socket-path "workspace.close" {"workspace_id" ws-id})
       (except [Exception]
-        None))  ; 敗者の掃除は best-effort — duplicate エラーの送出を優先する
+        None))  ; 敗者の掃除は best-effort — 失敗の送出を優先する
+    (when (= verdict "vanished")
+      (raise (RuntimeError
+               (+ f"herdr new-session failed: workspace {ws-id} for {session-name} "
+                  f"disappeared from workspace.list right after create"))))
     (raise (RuntimeError
              (+ f"herdr new-session failed: duplicate session: {session-name} "
-                f"(label held by workspace {(get holders 0)})"))))
+                f"(label held by workspace "
+                f"{(get (sorted post-holders :key herdr-workspace-order-key) 0)})"))))
   pane-id)
 
 (deff herdr-capture-io [socket-path pane-id lines]
