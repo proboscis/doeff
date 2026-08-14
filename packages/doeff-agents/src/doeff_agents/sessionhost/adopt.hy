@@ -2,7 +2,8 @@
 ;;;
 ;;; 既に生きている席(pane)の事後登記。observation-only(koine 条項 2):
 ;;; substrate へ許される接触は実在確認(TmuxHasSession — herdr backend では
-;;; substrate_herdr の agent.get に解決される substrate 中立 probe)だけ。
+;;; substrate_herdr の workspace label 解決(herdr-workspace-id-io)に落ちる
+;;; substrate 中立 probe)だけ。
 ;;; 変異 effect — キー送出・session 作成/破棄・FS 書き・配送 — はこの
 ;;; モジュールでは semgrep doeff-agents-adopt-must-not-mutate-substrate が
 ;;; 構造的に禁止する。
