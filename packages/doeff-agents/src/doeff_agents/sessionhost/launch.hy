@@ -60,6 +60,7 @@
 (import doeff_agents.sessionhost.policy [
   BINDING-OWNED-ENV-KEYS
   binding-admission-error
+  counts-toward-launch-capacity
   format-evidence-frames
   iso-format
   launch-not-ready-class
@@ -338,14 +339,22 @@
     (raise (RuntimeError f"session is already registered: {session-id}")))
   ;; max_running admission(oracle :1679-1685 — 重複 check の後・tmux check の
   ;; 前)。host が params["max_running"] に運用上限を注入する。直接束縛では
-  ;; 省略 = 無制限(config を持たない)。
+  ;; 省略 = 無制限(config を持たない)。母数 = launch 所有の行のみ
+  ;; (ADR-DOE-AGENTS-004 capacity-counts-only-launch-owned-rows): adopt の
+  ;; 行は観測の登記であって容量消費ではない — 終端遷移の書き手を持たず単調
+  ;; 増加するため、全行母数は launch の恒久 100% 拒否になる(2026-08-17
+  ;; 実測 32 ≥ 10)。拒否文言の先頭逐語は ACP Scheduler の throttle 分類
+  ;; (infix 照合)が消費する凍結面 — 変更禁止。
   (setv max-running (.get params "max_running"))
   (when (is-not max-running None)
     (<- active-rows (session-store-list-active))
-    (setv active-count (len active-rows))
-    (when (>= active-count max-running)
+    (setv owned-count
+          (len (lfor r active-rows :if (counts-toward-launch-capacity r) r)))
+    (when (>= owned-count max-running)
       (raise (RuntimeError
-               f"max running agent sessions reached: {active-count}/{max-running}"))))
+               (+ f"max running agent sessions reached: {owned-count}/{max-running} "
+                  "(launch-owned rows only; adopted rows are observations, "
+                  "not capacity — ADR-DOE-AGENTS-004)")))))
   (<- tmux-exists (tmux-has-session session-name))
   (when tmux-exists
     (raise (RuntimeError f"tmux session already exists: {session-name}")))
