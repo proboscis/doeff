@@ -191,9 +191,13 @@ def test_herdr_agent_name_identity_rule_detects_agent_get_resolution() -> None:
         cwd=fixture_root,
     )
 
+    # Line 11 = the banned shape; line 34 = kill-path resolution without an
+    # adjacent waiver. Line 22 (the sanctioned existence probe for externally
+    # named seats, directly under ";; registry-existence-probe:") must NOT
+    # fire — ADR-DOE-AGENTS-004 law herdr-session-identity-is-workspace-label.
     assert _rule_start_lines(
         results, "doeff-agents-herdr-session-identity-not-agent-name"
-    ) == {11}
+    ) == {11, 34}
 
 
 def test_herdr_label_holders_indexed_rule_detects_arbitrary_holder_pick() -> None:

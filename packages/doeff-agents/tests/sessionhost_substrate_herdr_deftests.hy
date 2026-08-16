@@ -31,6 +31,7 @@
   herdr-call
   herdr-key-name
   herdr-label-holders
+  herdr-registry-agent-pane-id
   herdr-request-line
   chunked-send-texts
   normalize-ansi-read])
@@ -471,6 +472,97 @@
   ;;    (旧実装は holders 空で (get holders 0) が IndexError になり、
   ;;     呼び手の RuntimeError 捕捉を素通りしていた。)
   (assert (= (herdr-new-session-verdict "w3N7" [] []) "vanished")))
+
+
+(deftest test-herdr-registry-agent-pane-id-requires-exact-name
+  ;; 外部命名席の実在確認(herdr-external-agent-pane-id-io)の純関数部。
+  ;; herdr の AgentTarget は agent 名と pane_id の両方を target に受ける
+  ;; (実測 2026-08-17: agent.get {target: "w4XN:p9"} が解決する)ので、
+  ;; 応答の agent.name が要求名と完全一致する時だけ「その名前の席が居る」。
+  (setv result {"agent" {"name" "s-7bfc5d5028" "pane_id" "w4XN:p9"
+                         "agent" "claude" "agent_status" "working"}})
+  (assert (= (herdr-registry-agent-pane-id result "s-7bfc5d5028") "w4XN:p9"))
+  ;; pane_id を名前として渡した呼び手には None(pane_id は session 名ではない)。
+  (assert (is (herdr-registry-agent-pane-id result "w4XN:p9") None))
+  ;; 別名 / agent 欠落 / pane_id 欠落は None。
+  (assert (is (herdr-registry-agent-pane-id result "coupling-core-review") None))
+  (assert (is (herdr-registry-agent-pane-id {"agent" None} "s-7bfc5d5028") None))
+  (assert (is (herdr-registry-agent-pane-id {"agent" {"name" "s-7bfc5d5028"}}
+                                            "s-7bfc5d5028")
+              None)))
+
+
+(deff name-external-seat [pane-id name]
+  {:pre [(: pane-id str) (: name str)]
+   :post [(: % "None")]}
+  "外部命名席の模擬: doeff の label と無関係な agent 名を herdr の名簿に付ける
+   (`ai` が対話席に付ける席名と同じ経路 = pane.report_agent で authority を
+   取り agent.rename で命名)。名前は herdr の agent 名制約(小文字開始・
+   [a-z0-9_-]・32 文字以内)に収める。"
+  (herdr-call DEFAULT-HERDR-SOCKET "pane.report_agent"
+              {"pane_id" pane-id
+               "source" "doeff-deftest-sim"
+               "agent" "claude"
+               "state" "working"})
+  (herdr-call DEFAULT-HERDR-SOCKET "agent.rename"
+              {"target" pane-id "name" name})
+  None)
+
+
+(deftest test-herdr-external-seat-visible-to-has-session-but-not-killable
+  {:skip-if (not HERDR-AVAILABLE)
+   :skip-reason "herdr server not running"}
+  ;; koine session.adopt / 鏡原則(substrate_present)が見る対話席は、`ai` 等が
+  ;; herdr の名簿に付けた agent 名で呼ばれ、doeff 所有の workspace を持たない
+  ;; (workspace label は repo 名など — 実測 2026-08-17: 自席 = agent 名
+  ;; s-7bfc5d5028 / label "doeff")。label だけで生死を答える実装は、これらの
+  ;; 席を全部「不在」と答えて adopt を全拒否し(adopt_target_not_found)、
+  ;; 既存 adopted 行の substrate_present を一斉に false へ倒す(PR #587 初版で
+  ;; 静的に確認した回帰)。ここでは label ≠ 名前の席を模擬し、
+  ;;   - has-session(名前)= True(名簿の実在確認)
+  ;;   - session-pane-ids(名前)= その pane(帰属観測の被覆)
+  ;;   - kill-session(名前)= raise(doeff が作っていない席は閉じない)
+  ;;   - has-session(pane_id 文字列)= False(pane_id は session 名ではない)
+  ;; を直接示す。teardown は label(doeff 側の test-owned 経路)で閉じる。
+  (setv label f"doeff-herdr-extws-{(os.getpid)}")
+  (setv ext-name f"det-ext-{(os.getpid)}")
+  (try
+    (setv ws (herdr-call DEFAULT-HERDR-SOCKET "workspace.create"
+                         {"label" label "focus" False}))
+    (setv pane (get (get ws "root_pane") "pane_id"))
+    (time.sleep 0.5)
+    (name-external-seat pane ext-name)
+    ;; --- 模擬の実効: 名簿は名前を解決し、label は名前を保持しない。
+    (setv got (herdr-call DEFAULT-HERDR-SOCKET "agent.get" {"target" ext-name}))
+    (assert (= (get (get got "agent") "pane_id") pane) got)
+    (assert (= (herdr-label-holders
+                 (herdr-call DEFAULT-HERDR-SOCKET "workspace.list" {}) ext-name)
+               [])
+            "simulation must not give the external name a label holder")
+    ;; --- has-session(名前)は名簿の実在確認で True。
+    (<- alive ((herdr-substrate DEFAULT-HERDR-SOCKET)
+               (tmux-has-session ext-name)))
+    (assert alive "externally named seat must be visible to has-session")
+    ;; --- 帰属観測は 1 pane を返す。
+    (<- pane-ids ((herdr-substrate DEFAULT-HERDR-SOCKET)
+                  (tmux-session-pane-ids ext-name)))
+    (assert (= pane-ids [pane]) f"session-pane-ids must cover the seat: {pane-ids}")
+    ;; --- pane_id 文字列を名前として渡しても「居る」とは答えない。
+    (<- by-pane ((herdr-substrate DEFAULT-HERDR-SOCKET)
+                 (tmux-has-session pane)))
+    (assert (not by-pane) "pane_id is not a session name")
+    ;; --- kill は doeff 所有でない席を閉じない(raise)。席は生き残る。
+    (setv raised None)
+    (try
+      (<- _ ((herdr-substrate DEFAULT-HERDR-SOCKET)
+             (tmux-kill-session ext-name)))
+      (except [e RuntimeError] (setv raised e)))
+    (assert (is-not raised None) "kill-session must refuse an externally named seat")
+    (<- still ((herdr-substrate DEFAULT-HERDR-SOCKET)
+               (tmux-has-session ext-name)))
+    (assert still "refused kill must leave the external seat alive")
+    (finally
+      (close-workspaces-with-label label))))
 
 
 (deftest test-herdr-identity-survives-agent-name-loss

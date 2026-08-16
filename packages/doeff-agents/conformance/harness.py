@@ -63,12 +63,18 @@ def require_binaries() -> None:
         pytest.skip(f"{mux} is required for the agentd conformance suite")
 
 
-def _herdr_call(method: str, params: dict[str, Any]) -> dict[str, Any]:
+def _herdr_call(
+    method: str, params: dict[str, Any], *, timeout: float = 5.0
+) -> dict[str, Any]:
     """One-shot newline-JSON RPC to the herdr socket (out-of-band fixtures).
 
     Returns the raw envelope ({"result": ...} or {"error": ...}); callers
     decide whether an error is swallowed (best-effort kill) or fatal
-    (fault-injection setup that the test depends on).
+    (fault-injection setup that the test depends on). `timeout` is the
+    per-reply budget; fixture SETUP (not the thing under test) may pass a
+    larger one — herdr's mutating RPCs (workspace.create / pane.report_agent
+    / agent.rename) take 5-9s each on a loaded host (measured 2026-08-17 at
+    load ~120), which is the known #556 quiet-machine limit, not a contract.
     """
     import socket as socket_mod
 
@@ -79,7 +85,7 @@ def _herdr_call(method: str, params: dict[str, Any]) -> dict[str, Any]:
     line = json.dumps({"id": "conf-oob", "method": method, "params": params})
     sock = socket_mod.socket(socket_mod.AF_UNIX, socket_mod.SOCK_STREAM)
     try:
-        sock.settimeout(5.0)
+        sock.settimeout(timeout)
         sock.connect(herdr_socket)
         sock.sendall((line + "\n").encode("utf-8"))
         chunks: list[bytes] = []
@@ -249,6 +255,50 @@ def create_session_out_of_band(name: str, *, cwd: str | None = None) -> str:
     if "error" in ws:
         raise RuntimeError(f"herdr workspace.create failed: {ws['error']}")
     return ws["result"]["root_pane"]["pane_id"]
+
+
+def create_externally_named_seat_out_of_band(name: str, *, cwd: str | None = None) -> str:
+    """Create a live herdr pane that is NOT doeff-owned and is addressed by an
+    agent-registry name that differs from its workspace label (S29 fixture).
+
+    This is the physics of the interactive seats that `ai` etc. launch and
+    that koine session.adopt carries as `session_name`: the herdr agent
+    registry holds the seat name (probe 2026-08-17: own seat = agent name
+    s-7bfc5d5028, workspace label "doeff"), while the workspace label is the
+    repo/project name. Label-only liveness cannot see such a seat, so adopt
+    would reject it (adopt_target_not_found) and every already-adopted row
+    would flip to substrate_present=false — the regression PR #587's first
+    revision would have shipped. The seat is named the same way `ai` names it
+    (pane.report_agent to take authority, then agent.rename). Returns the
+    pane reference; teardown closes the workspace by its label (name + "-ws").
+
+    herdr only — tmux has a single session namespace, so "external name that
+    is not the mux session name" has no tmux analogue.
+    """
+    if SESSIONHOST_BACKEND != "herdr":
+        raise RuntimeError("externally named seats exist on the herdr backend only")
+    workdir = cwd or os.environ.get("HOME", "/tmp")
+    ws = _herdr_call(
+        "workspace.create", {"label": f"{name}-ws", "cwd": workdir, "focus": False},
+        timeout=30.0,
+    )
+    if "error" in ws:
+        raise RuntimeError(f"herdr workspace.create failed: {ws['error']}")
+    pane_id = ws["result"]["root_pane"]["pane_id"]
+    reported = _herdr_call(
+        "pane.report_agent",
+        {"pane_id": pane_id, "source": "doeff-conformance-sim",
+         "agent": "claude", "state": "working"},
+        timeout=30.0,
+    )
+    if "error" in reported:
+        raise RuntimeError(f"herdr pane.report_agent failed: {reported['error']}")
+    renamed = _herdr_call(
+        "agent.rename", {"target": pane_id, "name": name}, timeout=30.0
+    )
+    if "error" in renamed:
+        raise RuntimeError(f"herdr agent.rename failed: {renamed['error']}")
+    return pane_id
 
 
 def resolve_agentd_bin() -> Path:
@@ -678,6 +728,15 @@ class AgentdHarness:
         pane_ref = create_session_out_of_band(name)
         self._sessions.append(name)
         return pane_ref
+
+    def adopt_external_seat_fixture(self, name: str) -> str:
+        """Create an externally named seat (herdr agent-registry name != its
+        workspace label — the `ai` seat physics, S29) and register its
+        workspace label for teardown. Returns the pane reference."""
+        # register the label first: the fixture is a 3-RPC sequence and a
+        # failure after workspace.create must not leak the workspace.
+        self._sessions.append(f"{name}-ws")
+        return create_externally_named_seat_out_of_band(name)
 
     def substrate_kind(self) -> str:
         """The substrate binding kind this suite run speaks (koine session
