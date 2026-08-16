@@ -441,6 +441,19 @@
    stage 3)まで無条件に刈り取り対象外。"
   (or (bool row.adopted) (not (is-run-to-completion row.lifecycle))))
 
+(deff counts-toward-launch-capacity [row]
+  {:pre [(: row SessionRow)]
+   :post [(: % bool)]}
+  "launch の入場検査(max_running)の母数に数える行か(ADR-DOE-AGENTS-004
+   capacity-counts-only-launch-owned-rows)。母数 = launch 所有の行 = 非
+   adopted。adopt(session.adopt)は観測の登記であって容量の消費ではない
+   (ADR-007 R2 — SessionHost はその substrate を作っておらず、鏡原則で
+   刈りもしない。終端遷移の書き手が居ないため adopted の active 行は単調
+   増加する: 全行母数は launch の恒久拒否になる — 2026-08-17 実測 32 ≥ 10)。
+   絞るのは所有であって寿命ではない: launch 起点の行は lifecycle が
+   interactive でも substrate を実際に消費するので数える。"
+  (not (bool row.adopted)))
+
 (deff turn-stalled [turn-holder turn-since now threshold-seconds]
   {:pre [(: turn-holder (| str None)) (: turn-since (| str None))
          (: now datetime) (: threshold-seconds int) (> threshold-seconds 0)]
