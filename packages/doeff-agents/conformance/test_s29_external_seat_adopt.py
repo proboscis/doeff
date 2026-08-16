@@ -22,7 +22,7 @@ import time
 import uuid
 
 import pytest
-
+from doeff_agents.agentd_client import AgentdClient
 from harness import AgentdHarness, kill_session_out_of_band
 
 ACTIVE_STATUSES = {"pending", "booting", "running", "blocked", "blocked_api"}
@@ -34,8 +34,14 @@ def test_s29_externally_named_seat_is_adoptable_and_present() -> None:
             pytest.skip("externally named seats exist on the herdr backend only")
         name = f"s29-ext-{uuid.uuid4().hex[:8]}"
         pane_ref = harness.adopt_external_seat_fixture(name)
+        # adopt / get each probe herdr synchronously (has-session + the
+        # substrate_present reconciliation); on a loaded host one herdr RPC
+        # takes ~5s (measured 2026-08-17 at load ~120), which exceeds the
+        # harness client's 5s default. Latency is not the contract under
+        # test — presence semantics are — so use a patient client here.
+        client = AgentdClient(harness.socket_path, timeout=60.0)
 
-        adopted = harness.client.request(
+        adopted = client.request(
             "session.adopt",
             {
                 "session_name": name,
@@ -47,7 +53,7 @@ def test_s29_externally_named_seat_is_adoptable_and_present() -> None:
         assert adopted["adopted"] is True, adopted
         assert adopted["substrate_present"] is True, adopted
 
-        live = harness.client.request("session.get", {"session_id": session_id})
+        live = client.request("session.get", {"session_id": session_id})
         assert live["substrate_present"] is True, live
         assert live["session_name"] == name, live
 
@@ -55,10 +61,10 @@ def test_s29_externally_named_seat_is_adoptable_and_present() -> None:
         # out of band -> presence flips, row is neither terminalized nor deleted.
         kill_session_out_of_band(f"{name}-ws")
         deadline = time.monotonic() + 10.0
-        wire = harness.client.request("session.get", {"session_id": session_id})
+        wire = client.request("session.get", {"session_id": session_id})
         while time.monotonic() < deadline and wire["substrate_present"] is not False:
             time.sleep(0.3)
-            wire = harness.client.request("session.get", {"session_id": session_id})
+            wire = client.request("session.get", {"session_id": session_id})
         assert wire["substrate_present"] is False, wire
         assert wire["status"] in ACTIVE_STATUSES, wire
         row = harness.session_row(session_id)
