@@ -37,7 +37,8 @@
      (rule R8 "result-contract 検証の意味論は JSON Schema 仕様が唯一の正(U1 裁定): 検証器は準拠参照実装(jsonschema)の輸入であり、subset を自前実装しない。仕様適合は公式 JSON-Schema-Test-Suite を repo 内に vendor して adapter に直接通すことで検証する(draft2020-12 required 全 1260 case green。skip 21 は全て裁定記録付き: remote レジストリ依存 = 契約は自己完結前提で unresolvable $ref は fail-loud / ECMA \\p regex = admission が launch 時 fail-closed で拒否 — 対 deftest あり)。schema 自体は launch 時に meta-schema で fail-closed 検証(壊れた契約で session を作らない)。旧 Rust 実装の fail-open 挙動を expected に固定するテストは歴史ピンとしても置かない。")
      (rule R9 "公開 launch 面(effect 語彙と wire launch の両方)は auth-blind: auth/profile 物理(CODEX_HOME / CLAUDE_CONFIG_DIR / 生鍵)は typed `binding`(束縛時構成の serialize、kind 判別スキーマ: codex {codex_home} / claude-code {config_dir})でのみ運ぶ。session_env は非 auth overlay に縮む — binding 所有キーの混入は全副作用より前に typed reject(所有権ベース: 既知の悪いキーの列挙は腐るが所有権は腐らない。provider API キーの FORBIDDEN blocklist は substrate 境界の防御として併存)。非 auth の per-launch env(観測フラグ・result channel 配線値など)は overlay として正当であり、handler 構成へ押し込まない(2026-07-07 裁定: env には auth と run 意図の 2 住人が居て、家が違う)。kind 別 auth 材料スキーマは handler の束縛時構成 — ローカル束縛 = main、host 束縛 = binding registry を持つ control plane(ACP 0044 R2/R5 と同じ線)。binding admission は ADR 0044 R3 と同思想: 未知 kind / kind↔agent_type 不整合 / 必須 field 欠落 / 未知 field を typed reject。")
      (rule R10 "単一インスタンス排他の実体は socket bind であり、lease はその影(観測面)。この主従を順序と述語で守る: (a) host 起動順は bind → store open → lease 取得 → latch clear — bind に負けた競合者は store にも lease にも触れずに死ぬ。(b) ensure の spawn 述語は『socket に live listener が居ない』(path 不在 / ECONNREFUSED)のみ — 生きた listener が status probe に遅い場合は長い予算(AGENTD_BUSY_STATUS_TIMEOUT_SECONDS)で再試行し、それでも駄目なら spawn せず loud エラー(slow ≠ dead。証明されない死で競合 host を作らない)。(c) heartbeat は失効した他人名義 lease を再取得する(level-triggered 自己修復 — 盗んで死んだ競合者の残骸から bind 保持者が回復する)が、未失効の他人名義は loud エラーのまま(別 socket 同一 DB 誤構成 = 生きた二重 host の検出面)。判定と upsert は BEGIN IMMEDIATE で原子化。(d) 単一 supervisor 原則(2026-07-26、doeff#558 / ACP ADR 0024 改訂と一括): canonical socket が state dir の agentd.supervisor.json で supervisor 管理下と宣言されている場合、(b) の証明された死でも ensure は self-spawn しない — 起動・再起動の所有者は supervisor(launchd 等)であり、ensure は宣言された kick_command(構成注入 argv — doeff は launchd も label もハードコードしない)への委譲 + readiness 待ちのみを行い、kick_command 不在なら loud fail する。壊れた宣言は fail-closed(typed AgentdSupervisorConfigError)で self-spawn への silent fallback を持たない。宣言は呼び手 env ではなくマシン状態(state dir のファイル)に置く — env を継承しない任意の呼び手が supervisor 停止窓(bootout・crash throttle)に野良 host を bind してしまう穴を env 宣言は塞げない。")
-     (rule R11 "store-of-record は wall-clock 稼働時間に比例して成長しない(2026-07-26/27 socket 応答不能 wedge の根治、oracle からの意図的乖離): (a) status 導出系の監査 event は status 遷移(cycle 開始時の行 status ≠ 導出 status)でのみ記録 — 静止 tick は upsert のみで journal に追記しない(oracle は毎 tick 記録: main.rs:4128)。(b) 監査履歴(agent_session_events / agent_session_commands — runtime に読者なし)は retention 境界(DOEFF_AGENTD_HISTORY_RETENTION_DAYS、既定 14 日)で bounded: 起動時 + 毎時に batched prune(batch 毎に別 actor op — client op が割り込める)、物理回収(VACUUM)は freelist が支配的なときの起動時(accept 開始前)のみで serve 中は禁止。(c) hot path の一覧(毎 tick の ListActive)は status filter を SQL 側(idx_agent_sessions_status)で適用し、terminal 履歴行を読まない。実測根拠: 実 incident DB 1.54GB(session_blocked 251k 行 / 1.16GB = 95%)で無 filter 一覧 165ms/回 → filter 化 0.7ms、単一 StoreActor の FIFO queue 遅延が client timeout(probe 1s)を超え agent 起動が全滅した。")]
+     (rule R11 "store-of-record は wall-clock 稼働時間に比例して成長しない(2026-07-26/27 socket 応答不能 wedge の根治、oracle からの意図的乖離): (a) status 導出系の監査 event は status 遷移(cycle 開始時の行 status ≠ 導出 status)でのみ記録 — 静止 tick は upsert のみで journal に追記しない(oracle は毎 tick 記録: main.rs:4128)。(b) 監査履歴(agent_session_events / agent_session_commands — runtime に読者なし)は retention 境界(DOEFF_AGENTD_HISTORY_RETENTION_DAYS、既定 14 日)で bounded: 起動時 + 毎時に batched prune(batch 毎に別 actor op — client op が割り込める)、物理回収(VACUUM)は freelist が支配的なときの起動時(accept 開始前)のみで serve 中は禁止。(c) hot path の一覧(毎 tick の ListActive)は status filter を SQL 側(idx_agent_sessions_status)で適用し、terminal 履歴行を読まない。実測根拠: 実 incident DB 1.54GB(session_blocked 251k 行 / 1.16GB = 95%)で無 filter 一覧 165ms/回 → filter 化 0.7ms、単一 StoreActor の FIFO queue 遅延が client timeout(probe 1s)を超え agent 起動が全滅した。")
+     (rule R12 "herdr substrate(第二 substrate)の同一性と protocol 追随(2026-08-17 改訂・herdr 0.7.5 / protocol 17 実測): (a) doeff 所有 session の同一性アンカーは workspace label(doeff が workspace.create {label, cwd, env} で所有 — protocol 17 は cwd/env を直接受け root pane がそのまま session pane)。生死 = label holder 集合の非空、帰属 = 全 holder の pane 和、kill = 全 holder の閉鎖、重複拒否 = 事前照会 + 同時作成の合意(herdr-new-session-verdict)。holder 集合は順序を持たない(workspace_id は創出順に非単調 — 実測 w3NZ → w3N0)。(b) herdr の agent.start は protocol 17 で {name, kind, pane_id} 必須の『既存 pane で herdr 自身が claude/codex 等を起動して検出を待つ』API に改形された — kind の語彙は herdr が起動する agent 種別で、TmuxNewSession(名前付き shell pane を作り、起動コマンドは doeff が後から送る)には意味論が合わない。よって『kind を送る』のではなく agent.start を呼ばない形が正しい追随(旧 payload + kind でも missing field pane_id — 実測)。(c) herdr の agent 名簿は session 同一性を担えない: pane 内で実 agent が起動すると ~2 秒で herdr の検出が外部の付けた名札を消す(実測 n=4)。名簿を読んでよいのは**外部命名席の実在確認**のただ 1 点 — `ai` 等が名簿に付けた席名(koine session.adopt の session_name)は doeff 所有 workspace を持たず label は repo 名(実測: 自席 = agent 名 s-7bfc5d5028 / label 'doeff')ため、label holder が無い名前に限り agent.get {target: name}(応答の name 完全一致)で has-session / session-pane-ids を答える(herdr-external-agent-pane-id-io — semgrep waiver marker 直下の 1 呼び出し)。kill・重複拒否・doeff 所有の同一性には決して使わず、外部命名席は名前で閉じない(doeff が作っていない席は観測のみ)。実測記録の正本は conformance/herdr-physics.md。")]
   :laws
     [(law protocol-physics-has-one-home
        :statement "protocol_physics(kind) => single_defhandler_module never_duplicated_across_languages"
@@ -137,7 +138,25 @@
           (counterexample "母数はそのままに max_running の値だけ引き上げて対症する(adopted 行は単調増加 — 必ず再発する)")
           (counterexample "容量を空けるために interactive / adopted 行の刈り取りを再導入する(ADR-007 interactive-rows-are-never-reaped 違反)")
           (counterexample "母数を lifecycle(run_to_completion のみ)で絞る(launch 起点の interactive 行は substrate を実際に消費する — 絞るのは所有であって寿命ではない)")
-          (counterexample "拒否文言から先頭逐語 'max running agent sessions reached' を落とす(ACP Scheduler の infix 照合が throttle 分類 — 席の解放と再試行 — に消費している凍結面)")])]
+          (counterexample "拒否文言から先頭逐語 'max running agent sessions reached' を落とす(ACP Scheduler の infix 照合が throttle 分類 — 席の解放と再試行 — に消費している凍結面)")])
+     (law herdr-session-identity-is-workspace-label
+       :statement "herdr_session_identity(doeff_owned) => workspace_label_holders_as_a_set; agent_start_protocol_17 => start_managed_agent_in_existing_pane not_a_named_shell_pane_factory => never_called_by_TmuxNewSession(no_kind_value_is_right); agent_name_registry => existence_probe_only(has_session_disjunct, session_pane_ids_when_no_label_holder) never_identity_never_kill_never_duplicate_gate; externally_named_seats => observed_never_closed_by_name"
+       :facts
+         [(fact
+            "protocol 17(herdr 0.7.5)の agent.start は {name, kind, pane_id} 必須の『既存 pane で herdr 自身が agent を起動して検出を待つ』API(bundled schema $defs.AgentStartParams・稼働 server 実射 2026-07-29 / 08-17)。現 main(protocol 14 形 {name,cwd,argv,env,workspace_id,focus})は missing field `kind`、kind を足しても missing field `pane_id`。kind の語彙は herdr が起動する agent 種別(claude/codex/…)で TmuxNewSession の意味論(名前付き shell pane 生成・起動コマンドは doeff が後送)に合わない。追随 = workspace.create {label, cwd, env}(cwd/env 直受け・root pane = session pane、実射)。"
+            :evidence "conformance/herdr-physics.md 追補(2026-07-29 / 08-14 / 08-17)/ 実 DB 回復確認 2026-08-16 20:19 の launch 拒否文言 `missing field kind at line 1 column 226` / socket 実射 2026-08-17(実在しない名前・無副作用): A 旧 payload → kind 欠落・B +kind → pane_id 欠落・C p17 形 + 実在しない pane → agent_pane_not_found")
+          (fact
+            "外部が付けた agent 名札は pane 内で実 agent が起動すると ~2 秒で herdr の検出に消される(通算 n=4)。workspace label は残る。herdr は label の一意性を強制しない(同 label の 2 つ目も成功)ため重複拒否は doeff 側。workspace_id は創出順に非単調(w3NZ → w3N0)。"
+            :evidence "PR #569 review 2026-08-14 実測(n=4)/ PR #587 改訂 2(w3NZ → w3N0・w3ZZ → w303)/ deftest test-herdr-identity-survives-agent-name-loss・test-herdr-new-session-verdict-ignores-id-order")
+          (fact
+            "`ai` 等が herdr の名簿に付けた席名(koine session.adopt の session_name — dotfiles koine_adopt.py が `herdr agent list` の name をそのまま運ぶ)は doeff 所有の workspace を持たず、workspace label は repo 名(自席 w4XN:p9 = agent 名 s-7bfc5d5028 / label 'doeff'。対話席用 host の台帳は 134 行すべて adopted・session_name = 名簿名)。label だけの has-session は adopt を全拒否(adopt_target_not_found)し既存 adopted 行の substrate_present を一斉 false に倒す(PR #587 初版の未検出回帰 — conformance の adopt fixture は label = 名前の doeff 所有形しか作らなかった)。名簿の agent.get は AgentTarget として pane_id も受けるため応答の name 完全一致で絞る。"
+            :evidence "2026-08-17 実測(herdr agent list / pane list / workspace list の突合・agent.get {target: 'w4XN:p9'} 解決)/ deftest test-herdr-external-seat-visible-to-has-session-but-not-killable・test-herdr-registry-agent-pane-id-requires-exact-name / conformance S29")]
+       :counterexamples
+         [(counterexample "agent.start に kind を 1 field 足して protocol 17 へ『追随』する(missing field pane_id で拒否され、pane_id を足せば herdr が勝手に agent を起動する — TmuxNewSession の意味論違反)")
+          (counterexample "pane.report_agent → agent.rename の名札を session 同一性にする(実 agent 起動 ~2 秒で消える — 生死・帰属・kill が全滅)")
+          (counterexample "has-session を label holder だけで答える(外部命名席が全部『不在』— adopt 全拒否・substrate_present 一斉 false)")
+          (counterexample "外部命名席を名前で kill / 重複 gate の根拠にする(doeff が作っていない席を閉じる・agent.get を waiver marker 外で呼ぶ)")
+          (counterexample "label holder 集合を添字で選ぶ・id 順で先行を決める(workspace_id は創出順に非単調)")])]
   :enforcement
     ;; C1(effect 語彙 + policy program)と同一チェンジセットで substrate-clean
     ;; を実 enforcement 化。conformance suite ゲートは C0-2 で green 済み
@@ -210,6 +229,42 @@
        (assert (is (counts-toward-launch-capacity (mk "interactive" True)) False))
        (assert (is (counts-toward-launch-capacity (mk "run_to_completion" True)) False))
        (assert (is (counts-toward-launch-capacity (mk "interactive" False)) True))
-       (assert (is (counts-toward-launch-capacity (mk "run_to_completion" False)) True)))]
+       (assert (is (counts-toward-launch-capacity (mk "run_to_completion" False)) True)))
+     ;; R12 / law herdr-session-identity-is-workspace-label: installed rule
+     ;; doeff-agents-herdr-session-identity-not-agent-name(.semgrep.yaml)の
+     ;; hit / clean 断面を ADR 側でも pin する。hit = 名簿で同一性・kill を
+     ;; 解決する形(PR #569 の旧形)/ waiver marker の無い agent.get。clean =
+     ;; label 解決 + waiver marker 直下の唯一の実在確認 probe。
+     (defsemgrep herdr-session-identity-not-agent-name
+       "doeff-agents-herdr-session-identity-not-agent-name"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr_name_identity_bad.hy"
+         "source" ";; 名札(agent 名簿)で session 同一性・kill を解決する旧形(PR #569)\n(deff herdr-agent-pane-id-io [socket-path session-name]\n  (get (get (herdr-call socket-path \"agent.get\" {\"target\" session-name}) \"agent\") \"pane_id\"))\n(deff herdr-kill-session-io [socket-path session-name]\n  (herdr-call socket-path \"pane.close\" {\"pane_id\" (herdr-agent-pane-id-io socket-path session-name)}))\n"}
+        {"relative-path" "packages/doeff-agents/conformance/harness_name_identity_bad.py"
+         "source" "def session_exists_out_of_band(session_id: str) -> bool:\n    return 'error' not in _herdr_call(\"agent.get\", {\"target\": session_id})\n"}]
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr_label_ok.hy"
+         "source" ";; 同一性は workspace label(集合)— kill は全 holder の閉鎖\n(deff herdr-kill-session-io [socket-path session-name]\n  (for [ws-id (herdr-label-workspace-ids-io socket-path session-name)]\n    (herdr-call socket-path \"workspace.close\" {\"workspace_id\" ws-id})))\n;; 唯一の実在確認 probe(waiver marker 直下)\n(deff herdr-external-agent-pane-id-io [socket-path name]\n  (try\n    ;; registry-existence-probe: 外部命名席の実在確認だけに許す(同一性・帰属・kill は label)\n    (setv result (herdr-call socket-path \"agent.get\" {\"target\" name}))\n    (except [e HerdrApiError]\n      (when (= e.code \"agent_not_found\") (return None))\n      (raise)))\n  (herdr-registry-agent-pane-id result name))\n"}])
+     (deftest test-adr-doe-agents-004-herdr-identity-pure-rules
+       ;; law herdr-session-identity-is-workspace-label の純関数面(実 herdr
+       ;; 不要): (a) 名簿の実在確認は応答 name の完全一致だけを採る(pane_id
+       ;; target を「その名前の席」と誤認しない)。(b) 重複判定は id の順序に
+       ;; 依存しない — 事前照会に holder が居れば順序に関わらず duplicate、
+       ;; 作成後に自分が居なければ vanished。(c) label holder は集合(listing 順)。
+       (import doeff_agents.sessionhost.substrate_herdr [
+         herdr-registry-agent-pane-id herdr-new-session-verdict herdr-label-holders])
+       (setv reply {"agent" {"name" "s-7bfc5d5028" "pane_id" "w4XN:p9"}})
+       (assert (= (herdr-registry-agent-pane-id reply "s-7bfc5d5028") "w4XN:p9"))
+       (assert (is (herdr-registry-agent-pane-id reply "w4XN:p9") None))
+       (assert (is (herdr-registry-agent-pane-id reply "coupling-core-review") None))
+       ;; 先行 w3NZ・後発 w3N0(shortlex で後発が先) — どちらの並びでも duplicate。
+       (assert (= (herdr-new-session-verdict "w3N0" ["w3NZ"] ["w3NZ" "w3N0"]) "duplicate"))
+       (assert (= (herdr-new-session-verdict "w3N0" ["w3NZ"] ["w3N0" "w3NZ"]) "duplicate"))
+       (assert (= (herdr-new-session-verdict "w3N0" [] []) "vanished"))
+       (assert (= (herdr-new-session-verdict "w3N0" [] ["w3N0"]) "ok"))
+       (assert (= (herdr-label-holders
+                    {"workspaces" [{"workspace_id" "w1" "label" "x"}
+                                   {"workspace_id" "w2" "label" "y"}
+                                   {"workspace_id" "w3" "label" "x"}]}
+                    "x")
+                  ["w1" "w3"])))]
   :plans ["../agent-control-plane 側 master plan: docs/acp-2026-07-05-agentd-hy-session-host-plan.md"
           "doeff issue #575 — agentd 退役マイルストーン(M0 法改訂+逆流防止 / M1 conformance 既定反転 / M2 テスト再束縛 / M3 crate 削除+rollback tag / M4 全量検証)"])
