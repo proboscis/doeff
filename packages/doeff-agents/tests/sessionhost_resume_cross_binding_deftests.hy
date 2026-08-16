@@ -58,7 +58,7 @@
   ;; 周辺 artifact: sessions-index.json は実在(→ link される)、
   ;; session-env / file-history は不在(→ best-effort skip)
   (setv (get world.fs "/x/claude-A/projects/-work-dir/sessions-index.json") "{}")
-  (setv world.capture-script ["❯"])
+  (setv world.capture-script ["❯ {composer}"])
   (<- row (run-resume world (resume-params
                               :binding {"kind" "claude-code"
                                         "config_dir" "/x/claude-B"})))
@@ -88,7 +88,7 @@
   ;; transcript を台本に置かなくても成功する = FS 検査自体が走らない)。
   (setv world (LaunchWorld))
   (seed-source world #** (claude-seed-kwargs))
-  (setv world.capture-script ["❯"])
+  (setv world.capture-script ["❯ {composer}"])
   (<- row (run-resume world (resume-params
                               :binding {"kind" "claude-code"
                                         "config_dir" "/x/claude-A"})))
@@ -147,7 +147,7 @@
                                     "rollout_path" CODEX-ROLLOUT})
   (setv (get world.fs CODEX-ROLLOUT)
         "{\"type\":\"session_meta\",\"payload\":{\"id\":\"conv-1\"}}\n")
-  (setv world.capture-script ["› "])
+  (setv world.capture-script ["› {composer}"])
   (<- row (run-resume world (resume-params
                               :binding {"kind" "codex"
                                         "codex_home" "/y/codex"})))
@@ -186,7 +186,7 @@
 (deftest test-resume-new-session-id-golden
   (setv world (LaunchWorld))
   (seed-source world)
-  (setv world.capture-script ["› "])
+  (setv world.capture-script ["› {composer}"])
   (<- row (run-resume world (resume-params :new_session_id "agent-inv42")))
   ;; 指定 id で row が立ち、session_name も同値。lineage は
   ;; resumed_from_session_id が真実(命名からの導出はしない)。
@@ -222,7 +222,7 @@
 (deftest test-resume-expected-result-explicit-overrides-carry
   (setv world (LaunchWorld))
   (seed-source world :expected_result {"payload_schema" {"type" "object"}})
-  (setv world.capture-script ["› "])
+  (setv world.capture-script ["› {composer}"])
   (<- row (run-resume world (resume-params
                               :expected_result {"payload_schema" {"type" "string"}}
                               :expected_result_specified True)))
@@ -233,7 +233,7 @@
   ;; 明示 null(= key 実在で値 None)は「契約なし」の指定 — carry を落とす。
   (setv world (LaunchWorld))
   (seed-source world :expected_result {"payload_schema" {"type" "object"}})
-  (setv world.capture-script ["› "])
+  (setv world.capture-script ["› {composer}"])
   (<- row (run-resume world (resume-params
                               :expected_result None
                               :expected_result_specified True)))
