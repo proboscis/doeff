@@ -4,8 +4,13 @@
 ;;; 一周: open turn で stalled 導出 → 復帰打刻で clear。close 済み
 ;;; (WAIT 待ち)は経過時間によらず非 stalled・open 打刻の欠落でも成立
 ;;; (turn-stamp-path 所見 3 — edge-triggered 実装の禁止面)。
-;;; 加えて turn.hy の descriptor 解決(pane_id 第一鍵・agent_name 第二鍵・
-;;; adopt 済み非終端行のみ)と 3 列 UPDATE を実 SQLite で検証する。
+;;; 加えて turn.hy の descriptor 解決と 3 列 UPDATE を実 SQLite で検証する。
+;;;
+;;; 波 1-S1(ADR-DOE-AGENTS-007 改訂・law stamp-never-crosses-identities)の
+;;; 解決鍵: pane_id 第一鍵(descriptor が conversation_id を運ぶ時は別会話を
+;;; 名乗る行に落ちない・会話未登記〔NULL〕行は可)→ conversation_id 第二鍵
+;;; (identity 鍵)→ agent_name 第三鍵は descriptor が pane_id も
+;;; conversation_id も運ばない時のみ(吸い込み実弾 2026-08-17 の構造的排除)。
 
 (require doeff-hy.macros [deftest])
 
@@ -102,7 +107,7 @@
   (defn check [conn]
     (db-upsert-snapshot conn (make-adopted-snap "s1"))
     ;; turn-open 打刻(pane_id 第一鍵)
-    (setv sid (db-turn-stamp conn "%s1" None TURN-HOLDER-AGENT None))
+    (setv sid (db-turn-stamp conn "%s1" None None TURN-HOLDER-AGENT None))
     (assert (= sid "s1"))
     (setv snap (db-session-get conn "s1"))
     (assert (= (get snap "turn_holder") "agent"))
@@ -119,15 +124,15 @@
                 True))
     ;; 復帰打刻(再 open)で clear — level-triggered: 新しい turn_since から
     ;; 再導出されるだけで、どこにも stalled は保存されていない
-    (db-turn-stamp conn "%s1" None TURN-HOLDER-AGENT None)
+    (db-turn-stamp conn "%s1" None None TURN-HOLDER-AGENT None)
     (setv snap (db-session-get conn "s1"))
     (assert (is (turn-stalled (get snap "turn_holder") (get snap "turn_since")
                               now 1800)
                 False))
-    ;; close 打刻(agent_name 第二鍵・wait は opaque 保存)→ 放置しても
-    ;; 非 stalled(WAIT 待ちは正常状態)
+    ;; close 打刻(agent_name 鍵 — 素の descriptor 限定・wait は opaque 保存)
+    ;; → 放置しても非 stalled(WAIT 待ちは正常状態)
     (setv wait {"who" "user" "kind" "decide" "reason" "レビュー待ち"})
-    (setv sid2 (db-turn-stamp conn "%wrong-pane" "seat-s1" "user" wait))
+    (setv sid2 (db-turn-stamp conn None "seat-s1" None "user" wait))
     (assert (= sid2 "s1"))
     (setv snap (db-session-get conn "s1"))
     (assert (= (get snap "turn_holder") "user"))
@@ -149,17 +154,53 @@
   (defn check [conn]
     ;; 未 adopt(launch 起点)行は打刻対象にならない
     (db-upsert-snapshot conn (make-adopted-snap "launch1" :adopted False))
-    (assert (is (db-resolve-turn-target conn "%launch1" "seat-launch1") None))
-    (assert (is (db-turn-stamp conn "%launch1" "seat-launch1" "agent" None) None))
+    (assert (is (db-resolve-turn-target conn "%launch1" "seat-launch1" None) None))
+    (assert (is (db-turn-stamp conn "%launch1" "seat-launch1" None "agent" None)
+                None))
     ;; terminal な adopt 行も対象外(打刻が行を蘇生しない)
     (db-upsert-snapshot conn (make-adopted-snap "dead" :status "exited"))
-    (assert (is (db-resolve-turn-target conn "%dead" "seat-dead") None))
-    ;; 生きた adopt 行は pane_id / agent_name のどちらでも解決できる
+    (assert (is (db-resolve-turn-target conn "%dead" "seat-dead" None) None))
+    ;; 生きた adopt 行は pane_id / 素の agent_name のどちらでも解決できる
     (db-upsert-snapshot conn (make-adopted-snap "live"))
-    (assert (= (db-resolve-turn-target conn "%live" None) "live"))
-    (assert (= (db-resolve-turn-target conn None "seat-live") "live"))
+    (assert (= (db-resolve-turn-target conn "%live" None None) "live"))
+    (assert (= (db-resolve-turn-target conn None "seat-live" None) "live"))
     ;; holder 既定(wait 無し close)= work / wait.who があればそれ
     (assert (= (turn-close-holder None) "work"))
     (assert (= (turn-close-holder {"kind" "decide"}) "work"))
     (assert (= (turn-close-holder {"who" "user" "kind" "decide"}) "user")))
+  (with-tmp-conn check))
+
+
+;; ---------------------------------------------------------------------------
+;; 波 1-S1: identity 鍵と名前鍵の適用条件(law stamp-never-crosses-identities)
+;; ---------------------------------------------------------------------------
+
+(deftest test-turn-resolution-identity-keys
+  (defn check [conn]
+    ;; 会話つき行(c1・pane %old)と会話未登記行(NULL・pane %bare)
+    (db-upsert-snapshot conn (make-adopted-snap "old"
+                                                :conversation {"session_id" "c1"}))
+    (db-upsert-snapshot conn (make-adopted-snap "bare"))
+    ;; conversation 第二鍵: pane 未登記でも会話の行へ届く
+    (assert (= (db-resolve-turn-target conn "%moved" None "c1") "old"))
+    (assert (= (db-resolve-turn-target conn None None "c1") "old"))
+    ;; pane 鍵 × 会話合意: 別会話を名乗る stamp は pane 一致でも落ちない
+    (assert (is (db-resolve-turn-target conn "%old" None "c2") None))
+    (assert (= (db-resolve-turn-target conn "%old" None "c1") "old"))
+    ;; NULL 会話行は会話つき stamp を受ける(pre-S1 登記の継続受理)
+    (assert (= (db-resolve-turn-target conn "%bare" None "c9") "bare"))
+    ;; 同一 pane に会話一致行と NULL 行が並ぶ時は一致行が勝つ(鮮度より同一性)
+    (db-upsert-snapshot conn (make-adopted-snap "twin-null"
+                                                :pane_id "%twin"
+                                                :started_at "2026-08-17T02:00:00+00:00"))
+    (db-upsert-snapshot conn (make-adopted-snap "twin-conv"
+                                                :pane_id "%twin"
+                                                :started_at "2026-08-17T01:00:00+00:00"
+                                                :conversation {"session_id" "c3"}))
+    (assert (= (db-resolve-turn-target conn "%twin" None "c3") "twin-conv"))
+    ;; 名前鍵は素の descriptor(pane も conversation も無し)限定 —
+    ;; 識別子を運ぶ打刻の名前 fallback は吸い込み(実弾 2026-08-17)の形
+    (assert (is (db-resolve-turn-target conn "%fresh-pane" "seat-old" None) None))
+    (assert (is (db-resolve-turn-target conn "%fresh-pane" "seat-bare" "c9") None))
+    (assert (= (db-resolve-turn-target conn None "seat-bare" None) "bare")))
   (with-tmp-conn check))
