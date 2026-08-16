@@ -453,6 +453,9 @@
 (setv RESUME-ERR-IDENTITY-UNKNOWN "identity_unknown")
 (setv RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE "transcript_not_discoverable")
 (setv RESUME-ERR-KIND-NOT-SUPPORTED "kind_not_supported")
+;; ADR-DOE-AGENTS-006 改訂 R8: resume が走るべき作業場が実在しない。
+;; 確定的な失敗(再試行しても同じ)なので degrade-to-fresh の対象。
+(setv RESUME-ERR-WORK-DIR-MISSING "work_dir_missing")
 
 
 ;; ===========================================================================
@@ -596,6 +599,19 @@
   "ディレクトリ直下のエントリ名の列挙(ADR-006 の会話 identity 発見用の
    読み取り面)。不在・非ディレクトリは空 list — raise しない(discovery は
    level-triggered に再試行されるので、観測不能 = 未発見)。戻り値: list[str]。"
+  #^ str path)
+
+(defclass [(dataclass :frozen True :kw-only True)] FsDirExists [EffectBase]
+  "ディレクトリの実在の判定(resume の作業場 precondition — ADR-DOE-AGENTS-006
+   改訂 R8)。FsListDir では『不在』と『空ディレクトリ』が同じ空 list に潰れて
+   弁別できないため、実在そのものを問う面を分けて持つ。戻り値: bool。
+
+   なぜ要るか(2026-08-16 実測): resume は work_dir で tmux session を起こすが、
+   前身の作業場は上位(ACP)の回収で先に消えていることがある。
+   `tmux new-session -c <不在 path>` は **黙って $HOME へ落ちる** ので、会話を
+   cwd で索く CLI(claude)は移植済み transcript を構造的に見つけられず、
+   『会話が無い』のまま launch ready gate の 120 秒を空費する。実測 43/43 の
+   resume が全てこの経路で失敗していた。存在を先に問い、不在は typed reject。"
   #^ str path)
 
 (defclass [(dataclass :frozen True :kw-only True)] FsComposeHomeView [EffectBase]
@@ -826,6 +842,12 @@
    :post [(: % FsListDir)]}
   "FsListDir を構築する(発見用の非破壊読み — 不在は空 list)。"
   (FsListDir :path path))
+
+(deff fs-dir-exists [path]
+  {:pre [(: path str) (> (len path) 0)]
+   :post [(: % FsDirExists)]}
+  "FsDirExists を構築する(resume の作業場 precondition — 不在と空を弁別する)。"
+  (FsDirExists :path path))
 
 (deff fs-compose-home-view [auth-file profile-dir view-root]
   {:pre [(: auth-file str) (> (len auth-file) 0)

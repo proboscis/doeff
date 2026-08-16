@@ -230,10 +230,13 @@
    reject にする)+ sessions-index.json / session-env/<sid> /
    file-history/<sid>(best-effort: あれば張る・無ければ skip)。所有
    profile は source 行の effective_identity で既知なので registry 走査は
-   持ち込まない。同一 home(binding config_dir = source の
-   CLAUDE_CONFIG_DIR)は no-op。transcript の家は projects/<mangled
-   canonical work_dir>/(resume-physics.md 2026-08-11 プローブ (b):
-   symlink 越しの --resume が文脈を保ち、追記は解決先の実体へ届く)。"
+   持ち込まない。transcript の家は projects/<mangled canonical work_dir>/
+   (resume-physics.md 2026-08-11 プローブ (b): symlink 越しの --resume が
+   文脈を保ち、追記は解決先の実体へ届く)。
+
+   ADR-006 改訂 R8: 家は **auth home × 作業場** の 2 軸。no-op は両方が同じ時
+   だけで、作業場が動けば同一 home でも移植が要る(params の work_dir =
+   transcript の家 / target_work_dir = これから CLI が索く家)。"
   (setv binding (get params "binding"))
   (setv target-dir (get binding "config_dir"))
   (setv identity (or (.get params "source_identity") {}))
@@ -247,12 +250,19 @@
                           "CLAUDE_CONFIG_DIR — its transcript cannot be "
                           "located for a cross-binding transplant "
                           "(transcript-not-discoverable)")}))
-  (when (= source-dir target-dir)
+  ;; transcript の家は「auth home × 作業場」の 2 軸で決まる。R8 以前はこの
+  ;; 関数が work_dir を 1 つしか持たず、home が同じなら no-op と決めていた —
+  ;; 作業場が変わる resume では移植先が CLI の索き先とずれる。2 軸のどちらかが
+  ;; 動けば移植が要る。
+  (<- source-canon (fs-canonical-path (get params "work_dir")))
+  (<- target-canon (fs-canonical-path
+                     (.get params "target_work_dir" (get params "work_dir"))))
+  (when (and (= source-dir target-dir) (= source-canon target-canon))
     (return {"ok" True "action" "same-home"}))
-  (<- canon (fs-canonical-path (get params "work_dir")))
-  (setv mangled (re.sub "[^A-Za-z0-9]" "-" canon))
-  (setv source-project f"{source-dir}/projects/{mangled}")
-  (setv target-project f"{target-dir}/projects/{mangled}")
+  (setv source-project
+        (+ source-dir "/projects/" (re.sub "[^A-Za-z0-9]" "-" source-canon)))
+  (setv target-project
+        (+ target-dir "/projects/" (re.sub "[^A-Za-z0-9]" "-" target-canon)))
   (<- outcome (fs-link-artifact f"{source-project}/{conv-id}.jsonl"
                                 f"{target-project}/{conv-id}.jsonl"))
   (when (= outcome "source-missing")
