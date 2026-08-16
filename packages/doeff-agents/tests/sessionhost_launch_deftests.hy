@@ -53,6 +53,7 @@
   FsMakeDirs
   FsLinkArtifact
   FsListDir
+  FsDirExists
   EnvGet])
 (import doeff_agents.sessionhost.effects [READY-PROBE-TEXT])
 (import doeff_agents.sessionhost.policy [ACTIVE-STATUSES])
@@ -90,8 +91,13 @@
     (setv self.env {})
     (setv self.canonical {})        ;; path → realpath(FsCanonicalPath の台本)
     (setv self.tmux-envs {})        ;; session-name → new-session に渡った env
+    (setv self.tmux-work-dirs {})   ;; session-name → new-session に渡った作業場
     (setv self.listings {})         ;; path → エントリ名 list(FsListDir の台本)
     (setv self.links {})            ;; target → source(FsLinkArtifact の記録)
+    ;; 実在するディレクトリ(FsDirExists の台本 — ADR-006 改訂 R8)。
+    ;; None = 「何を訊かれても在る」= 既存 deftest の前提を変えない既定。
+    ;; 不在を撃つ試験だけが集合を明示して外す。
+    (setv self.dirs None)
     (setv self.kill-broken False)   ;; True: TmuxKillSession が raise(cleanup 失敗)
     (setv self.now (datetime 2026 7 5 12 0 0 :tzinfo timezone.utc))))
 
@@ -104,6 +110,9 @@
                   :if (in r.status ACTIVE-STATUSES) r)))
   (FsListDir [path]
     (resume (sorted (.get world.listings path []))))
+  (FsDirExists [path]
+    (.append world.trace #("dir-exists" path))
+    (resume (if (is world.dirs None) True (in path world.dirs))))
   (SessionStoreUpsert [row]
     (.append world.trace #("upsert" row.session-id))
     (setv (get world.rows row.session-id) row)
@@ -117,6 +126,9 @@
     (.append world.trace #("new-session" session-name))
     (.add world.tmux-sessions session-name)
     (setv (get world.tmux-envs session-name) (dict env))
+    ;; ADR-006 改訂 R8: どの作業場で起こしたかは検証対象(実 tmux は不在 path
+    ;; を黙って $HOME へ読み替えるので、渡した値そのものを記録して撃つ)。
+    (setv (get world.tmux-work-dirs session-name) work-dir)
     (resume "%7"))
   (TmuxCapture [pane-id lines]
     ;; capture は launch の gate loop(wait-for-repl-idle / fail 証拠収集)から

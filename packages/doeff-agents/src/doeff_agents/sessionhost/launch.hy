@@ -29,6 +29,7 @@
   RESUME-ERR-IDENTITY-UNKNOWN
   RESUME-ERR-KIND-NOT-SUPPORTED
   RESUME-ERR-ONE-LIVE-INCARNATION
+  RESUME-ERR-WORK-DIR-MISSING
   READY-PROBE-TEXT
   READY-PROBE-CLEAR-KEY
   READY-GATE-FRAME-RETENTION
@@ -43,6 +44,7 @@
   build-resume
   pre-launch-setup
   transplant-conversation
+  fs-dir-exists
   wire-result-channel
   session-store-get
   session-store-list-active
@@ -716,17 +718,43 @@
              "codex_home" (get identity "CODEX_HOME")}
           True None))
 
-  ;; cross-binding transplant 前処理(ADR-006 改訂 R7)。発火判定(同一 home の
-  ;; no-op)と transcript 所在の path 物理は per-kind impl 所有 —
-  ;; resume-physics-has-one-home の延長。source transcript 不在は typed reject
-  ;; (row 不生成 — 実 CLI の loud 失敗を launch 前に前倒しする)。
-  (when (is-not requested-binding None)
+  ;; 走る作業場の決定(ADR-006 改訂 R8)。呼び手が渡した work_dir が優先 —
+  ;; 前身の作業場は上位(ACP)の回収で resume より先に消えることがあり、
+  ;; 前身の path に固定すると「消えた作業場」で起こす形になる。呼び手指定が
+  ;; 無い時だけ従来どおり前身の作業場を継ぐ。
+  (setv resume-work-dir (or (.get params "work_dir") source.work-dir))
+
+  ;; 作業場の実在は launch の precondition(ADR-006 改訂 R8)。
+  ;; `tmux new-session -c <不在 path>` は **黙って $HOME へ落ちる** ため、
+  ;; 不在のまま進むと「起動したのに cwd が違う」という観測しづらい形になる。
+  ;; claude は会話を cwd で索くので、cwd が違えば移植済み transcript は
+  ;; 構造的に見つからず、『会話が無い』のまま ready gate の 120 秒を空費する
+  ;; (2026-08-16 実測: resume 43/43 がこの経路)。存在を先に問い、不在は
+  ;; typed reject(確定的失敗 = degrade-to-fresh の対象)。
+  (<- work-dir-live (fs-dir-exists resume-work-dir))
+  (when (not work-dir-live)
+    (raise (ResumeRejected RESUME-ERR-WORK-DIR-MISSING
+             (+ f"session.{mode}: work_dir '{resume-work-dir}' does not exist "
+                "(work-dir-missing) — the incarnation would silently start in "
+                "$HOME (tmux new-session -c falls back) and the conversation, "
+                "which the CLI indexes by cwd, could never be found"))))
+
+  ;; cross-binding transplant 前処理(ADR-006 改訂 R7)。発火判定(同一 home
+  ;; かつ同一作業場の no-op)と transcript 所在の path 物理は per-kind impl
+  ;; 所有 — resume-physics-has-one-home の延長。source transcript 不在は
+  ;; typed reject(row 不生成 — 実 CLI の loud 失敗を launch 前に前倒しする)。
+  ;; work_dir = 前身(transcript の家)/ target_work_dir = これから走る作業場
+  ;; (CLI が索きに行く家)。R8 以前は後者が無く、作業場が変わると移植先が
+  ;; 索き先とずれた。
+  (when (or (is-not requested-binding None)
+            (!= resume-work-dir source.work-dir))
     (<- transplant (transplant-conversation
                      source.agent-type
                      {"conversation" conv
                       "work_dir" source.work-dir
+                      "target_work_dir" resume-work-dir
                       "source_identity" identity
-                      "binding" requested-binding}))
+                      "binding" (or requested-binding binding)}))
     (when (not (get transplant "ok"))
       (raise (ResumeRejected (get transplant "code")
                              (get transplant "message")))))
@@ -756,7 +784,7 @@
         {"session_id" new-sid
          "session_name" new-name
          "agent_type" source.agent-type
-         "work_dir" source.work-dir
+         "work_dir" resume-work-dir
          "command" None
          "prompt" (.get params "prompt")
          "model" (or (.get params "model") (.get overlay "model"))

@@ -904,9 +904,18 @@
     ;; dict でないため素通り = 契約なしの指定)。
     (when (= method "session.resume")
       (admit-expected-result p "session.resume"))
+    ;; ADR-DOE-AGENTS-006 改訂 R8: 呼び手は「これから走らせる作業場」を渡せる。
+    ;; 未指定は従来どおり前身の作業場を継ぐ(後方互換)。前身の作業場は上位の
+    ;; 回収で resume より先に消えることがあり、そこへ固定すると tmux が黙って
+    ;; $HOME へ落ちて会話が索けなくなる(launch.hy の R8 precondition 参照)。
+    (when (and (in "work_dir" p)
+               (not (isinstance (.get p "work_dir") str)))
+      (raise (RuntimeError
+               f"invalid params for {method}: `work_dir` must be a string")))
     (setv program-params
           {"session_id" source-sid
            "mode" mode
+           "work_dir" (.get p "work_dir")
            "prompt" (.get p "prompt")
            "model" (.get p "model")
            "effort" (.get p "effort")

@@ -119,6 +119,87 @@
   (assert (not world.tmux-sessions)))
 
 
+;; ---------------------------------------------------------------------------
+;; 作業場の軸(ADR-DOE-AGENTS-006 改訂 R8)
+;;
+;; 反例の出所は合成ではなく実弾: 2026-08-16 の本番で resume 43/43 が全滅し、
+;; 内訳は 31 件が『会話が無い』・4 件がその他の ready gate 失敗だった。鎖は
+;;   ① 上位(ACP)が前身の作業場を回収で消す
+;;   ② resume は前身の作業場で tmux session を起こす
+;;   ③ `tmux new-session -c <不在>` は黙って $HOME へ落ちる
+;;   ④ claude は会話を cwd で索くので移植済み transcript に構造的に届かない
+;;   ⑤ 『会話が無い』のまま ready gate の 120 秒を空費してから縮退する
+;; ③ が「黙って」なので、②〜⑤ は 1 つも赤くならずに 120 秒だけが消える。
+;; ここで撃つのは ② の入力(呼び手が渡す作業場)と ③ の前段(実在の検問)。
+;; ---------------------------------------------------------------------------
+
+(deftest test-resume-missing-work-dir-rejects-before-tmux
+  ;; 作業場が実在しないなら typed reject(work_dir_missing)で止まる。
+  ;; 「tmux に触れていない」ことまで撃つのが要点 — tmux へ渡してしまうと
+  ;; 黙って $HOME で起動し、失敗ではなく『違う場所での成功』になる。
+  (setv world (LaunchWorld))
+  (seed-source world #** (claude-seed-kwargs))
+  (setv world.dirs #{})            ;; どの作業場も無い
+  (setv raised None)
+  (try
+    (<- _ (run-resume world (resume-params)))
+    (except [e RuntimeError]
+      (setv raised e)))
+  (assert (is-not raised None))
+  (assert (hasattr raised "code"))
+  (assert (= raised.code "work_dir_missing"))
+  ;; 診断は「なぜ致命か」を含む — $HOME 落ちの機序を読み手に渡す
+  (assert (in "$HOME" (str raised)))
+  ;; row 不生成・tmux 不接触・移植も走らない(副作用ゼロで確定的に落ちる)
+  (assert (= (sorted (.keys world.rows)) ["s1"]))
+  (assert (not world.tmux-sessions))
+  (assert (= (len world.links) 0)))
+
+
+(deftest test-resume-runs-in-caller-work-dir-and-transplant-follows
+  ;; 呼び手が新しい作業場を渡したら、そこで起こし、transcript の移植先も
+  ;; そこへ揃える。同一 home でも作業場が動けば移植が要る(索き先は
+  ;; auth home × 作業場 の 2 軸で決まるため)。
+  ;;
+  ;; ⚠ ready gate まで通さない: この fixture の疑似 REPL は本線(origin/main)
+  ;; でも 6 本を落としており(2026-08-17 対照走で確認 — 同ファイルの
+  ;; binding-override / same-home / new-session-id / expected-result 群)、
+  ;; 通そうとすると自便の主張が既存の赤に埋もれる。撃つのは gate より前の
+  ;; 2 点 = tmux へ渡した作業場と、移植の敷設先。どちらも「起きたこと」の
+  ;; 正の証拠なので、gate の失敗を握り潰しても空虚にならない。
+  (setv world (LaunchWorld))
+  (seed-source world #** (claude-seed-kwargs))
+  (setv world.dirs #{"/work/new"})
+  (setv (get world.fs CLAUDE-SOURCE-TRANSCRIPT) "{\"type\":\"meta\"}\n")
+  (try
+    (<- _ (run-resume world (resume-params :work_dir "/work/new")))
+    (except [e RuntimeError]
+      ;; gate 失敗は許容するが、作業場の不在で落ちたのなら別の話 — 弁別する
+      (assert (not (hasattr e "code")))))
+  ;; 起こした先は呼び手の作業場(前身の /work/dir ではない)
+  (assert (= (get world.tmux-work-dirs "doeff-s1~g2") "/work/new"))
+  ;; 移植: 元は前身の作業場の家、先は これから索く作業場の家
+  (assert (= (get world.links "/x/claude-A/projects/-work-new/conv-1.jsonl")
+             CLAUDE-SOURCE-TRANSCRIPT)))
+
+
+(deftest test-resume-work-dir-checked-before-any-side-effect
+  ;; 検問の位置: 実在の判定は tmux より前で、かつ移植より前。
+  ;; 位置が後ろだと「移植だけ済んで起動は $HOME」という半端な状態が残る。
+  (setv world (LaunchWorld))
+  (seed-source world #** (claude-seed-kwargs))
+  (setv world.dirs #{})
+  (try
+    (<- _ (run-resume world (resume-params)))
+    (except [e RuntimeError]))
+  (setv kinds (lfor [k #* _] world.trace k))
+  (assert (in "dir-exists" kinds))
+  ;; 実在判定より後に副作用が 1 つも無い
+  (setv idx (.index kinds "dir-exists"))
+  (assert (not-in "new-session" (cut kinds idx None)))
+  (assert (not-in "upsert" (cut kinds idx None))))
+
+
 (deftest test-resume-binding-admission-shared-with-launch
   ;; binding の admission は launch と同一実装(policy binding-admission-error)
   ;; を共有する — kind↔agent_type 不整合は launch と同語彙で reject し、
