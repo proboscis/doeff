@@ -274,6 +274,11 @@ def _request_or_exit(client: AgentdClient, method: str, params: dict) -> object:
 @click.option("--lifecycle", default="interactive", show_default=True)
 @click.option("--name", "display_name", default=None, help="Human-readable name.")
 @click.option("--work-dir", default=None)
+@click.option(
+    "--conversation-id",
+    default=None,
+    help="Conversation identity (波 1-S1: written to conversation_json).",
+)
 def agentd_adopt(
     session_name: str,
     substrate_kind: str,
@@ -282,6 +287,7 @@ def agentd_adopt(
     lifecycle: str,
     display_name: str | None,
     work_dir: str | None,
+    conversation_id: str | None,
 ) -> None:
     """Register an ALREADY-LIVE seat in the session ledger (koine
     session.adopt — observation-only; existence is verified before
@@ -297,26 +303,41 @@ def agentd_adopt(
         params["name"] = display_name
     if work_dir is not None:
         params["work_dir"] = work_dir
+    if conversation_id is not None:
+        params["conversation_id"] = conversation_id
     result = _request_or_exit(client, "session.adopt", params)
     click.echo(json.dumps(result, ensure_ascii=False, sort_keys=True))
 
 
-def _turn_descriptor(pane_id: str | None, agent_name: str | None) -> dict:
-    if pane_id is None and agent_name is None:
-        console.print("[red]Error:[/red] provide --pane-id and/or --agent-name")
+def _turn_descriptor(
+    pane_id: str | None, agent_name: str | None, conversation_id: str | None
+) -> dict:
+    if pane_id is None and agent_name is None and conversation_id is None:
+        console.print(
+            "[red]Error:[/red] provide --pane-id, --conversation-id and/or --agent-name"
+        )
         sys.exit(1)
     descriptor: dict = {}
     if pane_id is not None:
         descriptor["pane_id"] = pane_id
     if agent_name is not None:
         descriptor["agent_name"] = agent_name
+    if conversation_id is not None:
+        descriptor["conversation_id"] = conversation_id
     return descriptor
 
 
 @agentd.command("turn-open")
 @click.option("--pane-id", default=None, help="Descriptor first key (e.g. HERDR_PANE_ID).")
-@click.option("--agent-name", default=None, help="Descriptor second key (seat/agent name).")
-def agentd_turn_open(pane_id: str | None, agent_name: str | None) -> None:
+@click.option("--agent-name", default=None, help="Descriptor name key (bare descriptors only).")
+@click.option(
+    "--conversation-id",
+    default=None,
+    help="Descriptor identity key (波 1-S1: conversation_json.session_id).",
+)
+def agentd_turn_open(
+    pane_id: str | None, agent_name: str | None, conversation_id: str | None
+) -> None:
     """Stamp turn-open (holder=agent) on the adopted seat resolved from the
     descriptor. Ops/debug binding — the seat's hook hot path writes the raw
     socket line instead (<=200ms fire-and-forget; a CLI start-up would
@@ -325,20 +346,39 @@ def agentd_turn_open(pane_id: str | None, agent_name: str | None) -> None:
     result = _request_or_exit(
         client,
         "session.turn_open",
-        {"descriptor": _turn_descriptor(pane_id, agent_name)},
+        {"descriptor": _turn_descriptor(pane_id, agent_name, conversation_id)},
+    )
+    click.echo(json.dumps(result, ensure_ascii=False, sort_keys=True))
+
+
+@agentd.command("by-conversation")
+@click.option("--conversation-id", required=True, help="Conversation identity to resolve.")
+def agentd_by_conversation(conversation_id: str) -> None:
+    """Resolve conversation_id to its ledger row (波 1-S1 session.by_conversation
+    — probe-free read: newest non-terminal row, else newest terminal row,
+    else null; substrate_present is intentionally absent)."""
+    client = _agentd_client_or_exit()
+    result = _request_or_exit(
+        client, "session.by_conversation", {"conversation_id": conversation_id}
     )
     click.echo(json.dumps(result, ensure_ascii=False, sort_keys=True))
 
 
 @agentd.command("turn-close")
 @click.option("--pane-id", default=None, help="Descriptor first key (e.g. HERDR_PANE_ID).")
-@click.option("--agent-name", default=None, help="Descriptor second key (seat/agent name).")
+@click.option("--agent-name", default=None, help="Descriptor name key (bare descriptors only).")
+@click.option(
+    "--conversation-id",
+    default=None,
+    help="Descriptor identity key (波 1-S1: conversation_json.session_id).",
+)
 @click.option("--wait-who", default=None, help="WAIT destination (user/work/...).")
 @click.option("--wait-kind", default=None, help="WAIT kind passthrough (decide/review/...).")
 @click.option("--wait-reason", default=None, help="WAIT reason passthrough.")
 def agentd_turn_close(
     pane_id: str | None,
     agent_name: str | None,
+    conversation_id: str | None,
     wait_who: str | None,
     wait_kind: str | None,
     wait_reason: str | None,
@@ -348,7 +388,7 @@ def agentd_turn_close(
     stored opaquely — the parse authority stays with the seat's wait
     protocol."""
     client = _agentd_client_or_exit()
-    params: dict = {"descriptor": _turn_descriptor(pane_id, agent_name)}
+    params: dict = {"descriptor": _turn_descriptor(pane_id, agent_name, conversation_id)}
     wait: dict = {}
     if wait_who is not None:
         wait["who"] = wait_who
