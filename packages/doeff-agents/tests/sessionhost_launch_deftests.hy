@@ -356,6 +356,61 @@
 
 
 ;; ---------------------------------------------------------------------------
+;; max_running 容量ガード — 母数 = launch 所有行のみ(ADR-DOE-AGENTS-004
+;; capacity-counts-only-launch-owned-rows)。adopt(session.adopt)の行は
+;; 観測の登記であって容量の消費ではない(ADR-007 R2 — SessionHost はその
+;; substrate を作っていない)。
+;; ---------------------------------------------------------------------------
+
+(defn seed-active-row [world sid adopted]
+  "容量ガード試験の下地 active 行。adopted=True = session.adopt の観測行
+   (実測 2026-08-17 の 32 行はすべてこの形: running・interactive・adopted=1)、
+   False = launch 所有行。"
+  (setv (get world.rows sid)
+        (SessionRow :session-id sid :session-name f"doeff-{sid}"
+                    :pane-id f"%{sid}" :agent-type "claude"
+                    :lifecycle "interactive" :status "running"
+                    :started-at "2026-08-17T00:00:00+00:00"
+                    :adopted adopted)))
+
+
+(deftest test-launch-capacity-ignores-adopted-rows
+  ;; 2026-08-17 実測(agentd-herdr.sqlite: adopted 行 32 ≥ 上限 10 で
+  ;; session.launch 恒久 100% 拒否)の再現形: adopted 行が上限を超えて
+  ;; 何行あっても、launch 所有の空きがあれば launch は通る。
+  (setv world (LaunchWorld))
+  (for [i (range 12)]
+    (seed-active-row world f"adopted-{i}" True))
+  (seed-active-row world "owned-0" False)
+  (setv world.capture-script ["codex booting banner" "› {composer}"])
+  (<- row (run-launch world (launch-params :max_running 10)))
+  (assert (= row.status "running"))
+  ;; 容量判定は観測行に触れない: adopted 行は本便の後も刈られない
+  ;; (刈り取り免除そのものの pin は ADR-007 enforcement / S26)。
+  (for [i (range 12)]
+    (assert (= (. (get world.rows f"adopted-{i}") status) "running"))))
+
+
+(deftest test-launch-capacity-counts-launch-owned-rows
+  ;; launch 所有行が上限に達した時は従来どおり拒否する。文言の先頭逐語
+  ;; "max running agent sessions reached" は ACP の throttle 分類
+  ;; (Scheduler.hs の infix 照合 — 席を解放して後で再試行)が消費する凍結面。
+  ;; 分子も launch 所有行の数(2/2)であって active 全行の数(5/2)ではない。
+  (setv world (LaunchWorld))
+  (seed-active-row world "owned-0" False)
+  (seed-active-row world "owned-1" False)
+  (for [i (range 3)]
+    (seed-active-row world f"adopted-{i}" True))
+  (setv raised None)
+  (try
+    (<- _ (run-launch world (launch-params :max_running 2)))
+    (except [e RuntimeError] (setv raised e)))
+  (assert (in "max running agent sessions reached" (str raised)))
+  (assert (in "2/2" (str raised)))
+  (assert (not-in "new-session" (lfor t world.trace (get t 0)))))
+
+
+;; ---------------------------------------------------------------------------
 ;; command override(escape hatch)
 ;; ---------------------------------------------------------------------------
 
