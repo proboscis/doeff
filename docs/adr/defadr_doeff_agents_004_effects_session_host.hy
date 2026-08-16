@@ -1,6 +1,7 @@
 ;;; Executable ADR: agent 実行 = effects+handlers、agentd = Hy session host.
 
 (require doeff-adr.macros [defadr defsemgrep rule law])
+(require doeff-hy.macros [deftest])
 (import doeff-adr.macros [fact interpretation counterexample])
 
 
@@ -124,7 +125,19 @@
          [(counterexample "退役実装の凍結コピーを in-tree に保持し、現役 sessionhost と退役 Rust の両方へ同一欠陥修理を出荷し続ける(#573/PR #574 の二重メンテ)")
           (counterexample "conformance / 素の pytest の既定経路が退役実装のビルド(cargo)に束縛され、既知 red を常態化させる(#556)")
           (counterexample "新規コードが packages/doeff-agentd / doeff_agentd を参照して退役実装への依存を復活させる")
-          (counterexample "rollback tag を打たずに crate を削除し、rollback 可用性を口約束にする")])]
+          (counterexample "rollback tag を打たずに crate を削除し、rollback 可用性を口約束にする")])
+     (law capacity-counts-only-launch-owned-rows
+       :statement "launch_admission_denominator => active_and_not_adopted_rows_only; adopted_rows_are_observations_not_capacity_consumers; ownership_predicate_not_lifecycle_predicate; cap_breach_remedy_is_never_reaping_exempt_rows_nor_raising_the_cap"
+       :facts
+         [(fact
+            "起点実測(2026-08-17・波 1-S1 席の read-only 診断): 対話席用 SessionHost 台帳(agentd-herdr.sqlite)は active 全 32 行が adopted=1・lifecycle=interactive(登録 = 07-21 の手動一発)で、launch の入場検査(launch.hy の max_running 判定)が active 状態の全行を数えるため 32 ≥ 上限 10 で session.launch が恒久 100% 拒否。根因 = adopted/interactive の行には終端遷移の書き手が居らず(ADR-007 interactive-rows-are-never-reaped が正しく禁止)active 数は単調増加する一方、容量ガードは観測として登記した行を容量消費として数えていた — 母数の型違い。上限値をいくら上げても再発する。根治 = 母数の述語を『launch 所有の行 = active ∧ 非 adopted』へ(policy.hy counts-toward-launch-capacity — reap-exempt と同じ policy 所有の純述語)。lifecycle では絞らない: launch 起点の行は interactive でも substrate を実際に消費する。波 1-S1(adopt の会話別 3 分岐 — 下地再利用で新行が増える)・波 1-S2(登録の定期化 — adopt 行が約 90 枠へ)の両便とも adopted 行を増やす向きで、本 law はその前提(観測の登記は容量に混ざらない)を固定する。"
+            :evidence "波 1-S1 席の実測(会話 ac0301fa-228a-41ad-ae89-2122aec051f8・2026-08-17)/ agentd-herdr.sqlite 32 行断面 / packages/doeff-agents/tests/sessionhost_launch_deftests.hy test-launch-capacity-ignores-adopted-rows・test-launch-capacity-counts-launch-owned-rows")]
+       :counterexamples
+         [(counterexample "入場検査が active 状態の全行(adopted 含む)を数え、観測の登記が launch の容量を食い潰す(2026-08-17 実測: 32 ≥ 10 で session.launch 恒久 100% 拒否)")
+          (counterexample "母数はそのままに max_running の値だけ引き上げて対症する(adopted 行は単調増加 — 必ず再発する)")
+          (counterexample "容量を空けるために interactive / adopted 行の刈り取りを再導入する(ADR-007 interactive-rows-are-never-reaped 違反)")
+          (counterexample "母数を lifecycle(run_to_completion のみ)で絞る(launch 起点の interactive 行は substrate を実際に消費する — 絞るのは所有であって寿命ではない)")
+          (counterexample "拒否文言から先頭逐語 'max running agent sessions reached' を落とす(ACP Scheduler の infix 照合が throttle 分類 — 席の解放と再試行 — に消費している凍結面)")])]
   :enforcement
     ;; C1(effect 語彙 + policy program)と同一チェンジセットで substrate-clean
     ;; を実 enforcement 化。conformance suite ゲートは C0-2 で green 済み
@@ -182,6 +195,21 @@
         {"relative-path" "packages/doeff-agents/src/doeff_agents/provenance_ok.py"
          "source" "# 移植出典: agentd-rust-final:src/main.rs:2775(rollback 専用・正しさの基準ではない)\n"}
         {"relative-path" "docs/history-note.md"
-         "source" "Rust 参照実装は packages/doeff-agentd に住んでいた(退役済み・tag agentd-rust-final)。\n"}])]
+         "source" "Rust 参照実装は packages/doeff-agentd に住んでいた(退役済み・tag agentd-rust-final)。\n"}])
+     (deftest test-adr-doe-agents-004-capacity-denominator-is-launch-owned
+       ;; capacity-counts-only-launch-owned-rows の機械面: 母数の述語は
+       ;; 所有(adopted)で絞り、寿命(lifecycle)では絞らない。
+       ;; adopt = 観測 — lifecycle を問わず容量に数えない。
+       ;; launch 所有 — interactive でも substrate を消費するので数える。
+       (import doeff_agents.sessionhost.effects [SessionRow])
+       (import doeff_agents.sessionhost.policy [counts-toward-launch-capacity])
+       (defn mk [lifecycle adopted]
+         (SessionRow :session-id "adr4cap" :session-name "adr4cap" :pane-id "%0"
+                     :agent-type "claude" :lifecycle lifecycle :status "running"
+                     :started-at "2026-08-17T00:00:00+00:00" :adopted adopted))
+       (assert (is (counts-toward-launch-capacity (mk "interactive" True)) False))
+       (assert (is (counts-toward-launch-capacity (mk "run_to_completion" True)) False))
+       (assert (is (counts-toward-launch-capacity (mk "interactive" False)) True))
+       (assert (is (counts-toward-launch-capacity (mk "run_to_completion" False)) True)))]
   :plans ["../agent-control-plane 側 master plan: docs/acp-2026-07-05-agentd-hy-session-host-plan.md"
           "doeff issue #575 — agentd 退役マイルストーン(M0 法改訂+逆流防止 / M1 conformance 既定反転 / M2 テスト再束縛 / M3 crate 削除+rollback tag / M4 全量検証)"])
