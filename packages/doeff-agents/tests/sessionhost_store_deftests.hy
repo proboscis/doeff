@@ -37,6 +37,7 @@
   db-upsert-snapshot
   db-session-get
   db-session-list
+  db-session-by-conversation
   db-count-active
   db-current-result-payload
   db-known-conversation-ids
@@ -660,4 +661,45 @@
     (assert (= (db-vacuum-if-bloated conn) True))
     ;; vacuum 後は freelist が回収済み → 再実行は no-op
     (assert (= (db-vacuum-if-bloated conn) False)))
+  (with-tmp-conn check))
+
+
+;; ---------------------------------------------------------------------------
+;; 波 1-S1(ADR-DOE-AGENTS-007 改訂): 会話 ID → 行の行引き(store 読みのみ)
+;; ---------------------------------------------------------------------------
+
+(deftest test-session-by-conversation-resolution
+  ;; 解決則(設計 design-conversation-liveness-sessionhost-wave1 付録 4-1
+  ;; 段 A・M0① 契約草案と同語): conversationId → 非終端の最新行、無ければ
+  ;; 最新の terminal 行、どちらも無ければ None。全順序 = started_at DESC,
+  ;; session_id ASC(session.list と同じ)。substrate への接触はゼロ(この
+  ;; 関数は SELECT のみ — probe は呼び手の管轄外)。
+  (defn check [conn]
+    (defn conv [cid] {"session_id" cid})
+    ;; 不在 → None
+    (assert (is (db-session-by-conversation conn "c-none") None))
+    ;; 非終端の最新行が勝つ
+    (db-upsert-snapshot conn (make-snap "a-old" :conversation (conv "c1")
+                                        :started_at "2026-08-17T01:00:00+00:00"))
+    (db-upsert-snapshot conn (make-snap "a-new" :conversation (conv "c1")
+                                        :started_at "2026-08-17T02:00:00+00:00"))
+    (assert (= (get (db-session-by-conversation conn "c1") "session_id") "a-new"))
+    ;; 非終端 > terminal(鮮度より生存優先 — terminal が新しくても非終端が勝つ)
+    (db-upsert-snapshot conn (make-snap "b-live" :conversation (conv "c2")
+                                        :started_at "2026-08-17T01:00:00+00:00"))
+    (db-upsert-snapshot conn (make-snap "b-dead" :conversation (conv "c2")
+                                        :status "exited"
+                                        :started_at "2026-08-17T03:00:00+00:00"))
+    (assert (= (get (db-session-by-conversation conn "c2") "session_id") "b-live"))
+    ;; 非終端が無ければ最新の terminal 行(会話の最後の宿りの記録)
+    (db-upsert-snapshot conn (make-snap "d-1" :conversation (conv "c3")
+                                        :status "done"
+                                        :started_at "2026-08-17T01:00:00+00:00"))
+    (db-upsert-snapshot conn (make-snap "d-2" :conversation (conv "c3")
+                                        :status "exited"
+                                        :started_at "2026-08-17T02:00:00+00:00"))
+    (assert (= (get (db-session-by-conversation conn "c3") "session_id") "d-2"))
+    ;; conversation_json はあるが session_id が別 → 引かない(同一性欄の
+    ;; 完全一致のみ — 部分一致・言及は登記ではない)
+    (assert (is (db-session-by-conversation conn "c") None)))
   (with-tmp-conn check))
