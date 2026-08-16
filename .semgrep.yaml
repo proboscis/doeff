@@ -186,10 +186,24 @@ rules:
       silently breaks for every session that actually runs an agent — the
       exact regression behind issue #556 /
       substrate-herdr-session-identity-anchor-r2-607f0c. Use
-      herdr-workspace-id-io (substrate_herdr.hy) or the label-based
-      out-of-band helpers (conformance/harness.py) instead.
+      herdr-label-workspace-ids-io (substrate_herdr.hy) or the label-based
+      out-of-band helpers (conformance/harness.py) instead. The ONE
+      sanctioned exception is the existence probe for externally named
+      seats (herdr-external-agent-pane-id-io: seats that `ai` etc. named in
+      herdr's agent registry and that koine session.adopt carries as
+      session_name — they own no doeff workspace, so label lookup cannot
+      see them; ADR-DOE-AGENTS-004 law
+      herdr-session-identity-is-workspace-label). That call must sit
+      directly under the waiver comment
+      ";; registry-existence-probe:" and may only feed has-session /
+      session-pane-ids for names WITHOUT a label holder — never kill,
+      never the duplicate gate, never doeff-owned identity.
     patterns:
       - pattern-regex: '"agent\.get"'
+      - pattern-not-inside: |
+          ;; registry-existence-probe: ...
+          ...
+          "agent.get"
     paths:
       include:
         - "**/doeff_agents/sessionhost/**"

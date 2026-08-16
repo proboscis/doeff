@@ -495,3 +495,54 @@ substrate-herdr-session-identity-anchor-r2-607f0c(#556 の系譜)。
   conformance での agent.get 名前解決の恒久禁止)+
   `doeff-agents-herdr-label-holders-must-not-be-indexed`(保持者一覧の
   添字参照の恒久禁止)。
+
+## 追補: 外部命名席と agent 名簿の実在確認(2026-08-17 実測・protocol 17 追随便)
+
+観測対象: herdr 0.7.5 / protocol 17(`herdr status`)。契機: 対話席用 SessionHost
+(agentd-herdr.sqlite)の実 DB 回復確認で `session.launch` が
+`missing field kind at line 1 column 226` で死ぬ(current main の protocol 14 形)。
+実測手段: socket 直叩き probe(実在しない名前・無副作用)+ `herdr agent list` /
+`herdr pane list` / `herdr workspace list` の突合 + 実 DB 読み。
+
+- **agent.start の改形の再確認**(2026-07-29 追補と同結果): 旧 payload → `missing
+  field kind`、+kind → `missing field pane_id`、protocol 17 形 {name, kind,
+  pane_id} で実在しない pane → `agent_pane_not_found`(= 到達すれば herdr が
+  agent を起動しに行く)。kind の語彙は herdr が起動する agent 種別で、名前付き
+  shell pane 生成(TmuxNewSession)には合わない — 「kind を送る」は追随ではない。
+- **外部命名席**: `ai` 等が対話席に付ける席名は herdr の **agent 名簿**(`herdr
+  agent list` の name — 例 `s-7bfc5d5028` / `integration-lead` / `route-…`)に
+  在り、pane label(`herdr pane list` の label — 例 `doeff-herdr17-substrate`)や
+  workspace label(`workspace.list` — 例 `doeff` / `ai-route`)とは別の 3 名前空間。
+  自席 w4XN:p9 = agent 名 `s-7bfc5d5028`・pane label `doeff-herdr17-substrate`・
+  workspace label `doeff`。dotfiles の adopt reconciler(koine_adopt.py)は
+  `herdr agent list` の name を `session.adopt` の session_name にそのまま運ぶ
+  (対話席用 host の台帳は 134 行すべて adopted・session_name = 名簿名)。
+  → workspace label だけで has-session を答えると、これらは全部「不在」= adopt
+  全拒否(adopt_target_not_found)・既存 adopted 行の substrate_present 一斉 false。
+- **agent.get の target は agent 名と pane_id の両方を受ける**(`agent.get
+  {target: "w4XN:p9"}` が同じ住人票を返す)。名前の実在確認として使うときは応答の
+  `agent.name` が要求名と完全一致することを要求する(pane_id を session 名として
+  渡した呼び手に「居る」と答えない)。
+- **stale な名前は正しく agent_not_found**: 台帳の adopted 行 `coupling-core-review`
+  (7/21 登記・pane w3R:p0)は workspace w3R ごと消滅済み(8/3 に `s-c137bf0bab` へ
+  改名復活の痕跡 — dispatch.tsv)。herdr 側の答えは正しく、台帳の adopted 行が
+  herdr の消滅・改名(席名の鋳造 hash 化)に追随しないのは台帳側の別件
+  (ADR-007 R3 = 観測専用・終端の書き手なし)。
+- **負荷時の応答時間**(load average ~120): workspace.create 9.1s /
+  pane.report_agent 4.9s / agent.rename 5.7s / agent.get 5.2s / workspace.list
+  1.3s / workspace.close 0.5s。conformance harness の帯域外 RPC は既定 5s 予算で、
+  この帯では fixture setup が届かない(#556 の静穏機前提と同じ環境限界 —
+  fixture setup 側だけ 30s 予算にした)。
+
+実装への反映: `substrate_herdr.hy` の TmuxHasSession = 「agent 名簿に居る ∨
+label holder が在る」(名簿を先に引くのは費用 — 対話席用 host は外部命名席が
+大半)、TmuxSessionPaneIds = label holder の pane 和、holder が無い名前だけ名簿の
+1 pane。kill・重複 gate・doeff 所有の同一性は label のまま(外部命名席は名前で
+閉じない — kill は raise)。名簿の agent.get は
+`herdr-external-agent-pane-id-io` の 1 呼び出しだけで、semgrep
+`doeff-agents-herdr-session-identity-not-agent-name` の waiver marker
+`;; registry-existence-probe:` 直下に限る。回帰ガード: deftest
+`test-herdr-external-seat-visible-to-has-session-but-not-killable` /
+`test-herdr-registry-agent-pane-id-requires-exact-name`、conformance S29
+(`test_s29_external_seat_adopt.py`)、ADR-DOE-AGENTS-004 law
+`herdr-session-identity-is-workspace-label`(R12)。

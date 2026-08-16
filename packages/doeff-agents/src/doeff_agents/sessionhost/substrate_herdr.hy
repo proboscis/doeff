@@ -22,6 +22,13 @@
 ;;;     が agent_not_found になる(実測 2026-08-01 n=3 決定的)。重複 session
 ;;;     名の拒否は herdr が label 重複を拒否しない(実測 2026-08-09)ため
 ;;;     doeff 側の create-then-verify が所有する(herdr-new-session-io 参照)。
+;;;   - 外部命名席(`ai` 等が herdr の名簿に付けた agent 名で呼ばれる対話席 —
+;;;     koine session.adopt の session_name)は doeff 所有の workspace を持たず、
+;;;     workspace label は repo 名など(実測 2026-08-17: 自席 = agent 名
+;;;     s-7bfc5d5028 / label "doeff")。has-session は「名簿に居る ∨ label
+;;;     holder が在る」、session-pane-ids は label holder が無い名前に限り
+;;;     名簿の pane を返す — 名簿は**実在確認**としてだけ読む
+;;;     (herdr-external-agent-pane-id-io — 同一性・kill には使わない)。
 ;;;   - **workspace_id は創出順に単調でない**(実測 2026-08-14 — 詳細は
 ;;;     herdr-workspace-order-key の docstring と herdr-physics.md)。よって
 ;;;     label を持つ workspace 群は「どれが本物か」を選べない集合として扱う:
@@ -254,8 +261,9 @@
    不在は空 list(tmux 側の session 不在 parity)。観測中に holder が
    消えるのは正常な競合なので、その holder は pane 0 個として扱う
    (pane.list はその時 workspace_not_found を返す — 実測 2026-08-14)。"
+  (setv holders (herdr-label-workspace-ids-io socket-path session-name))
   (setv pane-ids [])
-  (for [ws-id (herdr-label-workspace-ids-io socket-path session-name)]
+  (for [ws-id holders]
     (try
       (setv listing (herdr-call socket-path "pane.list" {"workspace_id" ws-id}))
       (except [e HerdrApiError]
@@ -263,7 +271,58 @@
           (raise))
         (continue)))
     (.extend pane-ids (lfor pane (get listing "panes") (get pane "pane_id"))))
+  ;; 外部命名席(herdr-external-agent-pane-id-io 参照): doeff 所有の workspace が
+  ;; 1 つも無い名前だけ、herdr の agent 名簿で 1 pane に解決する。label holder
+  ;; が在る名前では名簿を見ない — doeff 所有 session の pane 集合に、同名の
+  ;; 外部 agent の pane を混ぜない(R4 が他人の pane を帰属と誤認しない)。
+  (when (not holders)
+    (setv external (herdr-external-agent-pane-id-io socket-path session-name))
+    (when (is-not external None)
+      (.append pane-ids external)))
   pane-ids)
+
+
+(deff herdr-registry-agent-pane-id [result name]
+  {:pre [(: result dict) (: name str)]
+   :post [(: % (| str None))]}
+  "agent.get の応答 + 要求した名前 → その名前を持つ agent の pane_id(純関数)。
+   herdr の AgentTarget は agent 名と pane_id の両方を target に受ける
+   (実測 2026-08-17: agent.get {target: \"w4XN:p9\"} が解決する)ため、
+   応答の agent.name が要求した名前と完全一致する時だけ採用する — pane_id を
+   session 名として渡した呼び手に「その名前の席が居る」と答えない。"
+  (setv agent (.get result "agent"))
+  (when (not (isinstance agent dict))
+    (return None))
+  (when (!= (.get agent "name") name)
+    (return None))
+  (setv pane-id (.get agent "pane_id"))
+  (if (isinstance pane-id str) pane-id None))
+
+(deff herdr-external-agent-pane-id-io [socket-path name]
+  {:pre [(: socket-path str) (: name str)]
+   :post [(: % (| str None))]}
+  "**外部命名席**の実在確認: doeff が作っていない pane に herdr 上で agent 名 =
+   name が付いている席(`ai` 等が herdr の名簿に登録した対話席 — koine の
+   session.adopt が session_name に運ぶのはこの名前で、その workspace label は
+   repo 名などで session 名と一致しない。実測 2026-08-17: 自席 w4XN:p9 は
+   agent 名 s-7bfc5d5028・workspace label \"doeff\")。不在は None。
+
+   これは session **同一性**のアンカーではない — doeff 所有 session の同一性・
+   帰属・kill は workspace label だけで決まる(herdr の実 agent 検出は doeff が
+   付けた名札を ~2 秒で消す — 実測 n=4)。名簿は「その名前の席が今 herdr に
+   居るか」を答えるためだけに読む(観測のみ・変異なし)— 消費者は
+   TmuxHasSession(論理和の片腕)と TmuxSessionPaneIds(label holder が無い
+   名前に限る)の 2 つだけ。この 1 点以外で agent.get を呼ぶことは semgrep
+   doeff-agents-herdr-session-identity-not-agent-name が禁止する(waiver
+   marker は下の 1 行のみ)。"
+  (try
+    ;; registry-existence-probe: 外部命名席の実在確認だけに許す(同一性・帰属・kill は label)
+    (setv result (herdr-call socket-path "agent.get" {"target" name}))
+    (except [e HerdrApiError]
+      (when (= e.code "agent_not_found")
+        (return None))
+      (raise)))
+  (herdr-registry-agent-pane-id result name))
 
 (deff herdr-new-session-io [socket-path session-name work-dir env]
   {:pre [(: socket-path str) (: session-name str) (: work-dir str) (: env dict)]
@@ -484,8 +543,17 @@
     (resume (herdr-new-session-io socket-path session-name work-dir env)))
 
   (TmuxHasSession [session-name]
-    ;; 生死は holder の有無だけで決まる(どれが「本物」かを選ばない)。
-    (resume (bool (herdr-label-workspace-ids-io socket-path session-name))))
+    ;; 生死 = 外部命名席(herdr の agent 名簿に name が居る — koine
+    ;; session.adopt / 鏡原則の substrate_present が見る対話席)、または
+    ;; doeff 所有 session(label holder の有無 — どれが「本物」かは選ばない)。
+    ;; 論理和なので順序は答えを変えない — 名簿を先に引くのは費用: 対話席用
+    ;; host の台帳は外部命名席が大半(adopted 行 134 / 全行 134 — 2026-08-17
+    ;; 実測)で、session.list は行ごとに has-session を probe する(ADR-007
+    ;; R4)。名簿 hit なら 1 RPC で決まり、workspace.list(全 workspace の
+    ;; payload)を毎行引かずに済む。doeff 所有 session はもう片方で解決する。
+    (resume (or (is-not (herdr-external-agent-pane-id-io socket-path session-name)
+                        None)
+                (bool (herdr-label-workspace-ids-io socket-path session-name)))))
 
   (TmuxSessionPaneIds [session-name]
     (resume (herdr-session-pane-ids-io socket-path session-name)))
