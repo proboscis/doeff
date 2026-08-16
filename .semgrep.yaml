@@ -172,6 +172,70 @@ rules:
         - "**/doeff_agents/sessionhost/impls/markers.hy"
         - "**/sessionhost/impls/api_limit_possessive_verbatim_forbidden.hy"
 
+  - id: doeff-agents-herdr-session-identity-not-agent-name
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      herdr session identity must resolve through the workspace-label anchor
+      (workspace.list label match -> workspace_id -> pane.list /
+      workspace.close), never through the herdr agent-name registry
+      ("agent.get"): herdr's real-agent detection overwrites the agent name
+      plate within ~2s of a real agent starting in the pane (probe
+      2026-08-01, n=3 deterministic), so name-based liveness/capture/kill
+      silently breaks for every session that actually runs an agent — the
+      exact regression behind issue #556 /
+      substrate-herdr-session-identity-anchor-r2-607f0c. Use
+      herdr-label-workspace-ids-io (substrate_herdr.hy) or the label-based
+      out-of-band helpers (conformance/harness.py) instead. The ONE
+      sanctioned exception is the existence probe for externally named
+      seats (herdr-external-agent-pane-id-io: seats that `ai` etc. named in
+      herdr's agent registry and that koine session.adopt carries as
+      session_name — they own no doeff workspace, so label lookup cannot
+      see them; ADR-DOE-AGENTS-004 law
+      herdr-session-identity-is-workspace-label). That call must sit
+      directly under the waiver comment
+      ";; registry-existence-probe:" and may only feed has-session /
+      session-pane-ids for names WITHOUT a label holder — never kill,
+      never the duplicate gate, never doeff-owned identity.
+    patterns:
+      - pattern-regex: '"agent\.get"'
+      - pattern-not-inside: |
+          ;; registry-existence-probe: ...
+          ...
+          "agent.get"
+    paths:
+      include:
+        - "**/doeff_agents/sessionhost/**"
+        - "**/doeff-agents/conformance/**"
+        - "**/sessionhost/herdr_agent_name_identity_forbidden.hy"
+
+  - id: doeff-agents-herdr-label-holders-must-not-be-indexed
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      A herdr label's workspace holders are a SET with no distinguished
+      element: workspace ids are not monotone in creation order (probe
+      2026-08-14 — the counter carries from letters into digits, w3NZ ->
+      w3N0 and w3ZZ -> ... -> w303, so a later id sorts before an earlier
+      one under plain ASCII and under shortlex alike). Indexing the holder
+      set picks an arbitrary workspace and re-creates PR #587's first
+      revision: the duplicate gate accepted a duplicate, the live session
+      was orphaned, pane attribution (ADR-DOE-AGENTS-010 R4) lost a live
+      pane, and kill closed the wrong workspace while a live one leaked.
+      Stay order-independent — liveness = holders non-empty, attribution =
+      union over every holder, kill = close every holder, duplicate gate =
+      pre-check plus the consensus clause of herdr-new-session-verdict
+      (substrate_herdr.hy) — and report every holder in diagnostics.
+    patterns:
+      - pattern-regex: '(?:\(get\s+[A-Za-z_-]*holders\s+0\)|holders\[0\])'
+    paths:
+      include:
+        - "**/doeff_agents/sessionhost/substrate_herdr.hy"
+        - "**/doeff-agents/conformance/harness.py"
+        - "**/sessionhost/herdr_label_holders_indexed_forbidden.hy"
+
   - id: doeff-agents-provider-failure-verbatim-forbidden
     languages:
       - generic

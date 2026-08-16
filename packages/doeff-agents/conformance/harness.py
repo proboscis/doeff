@@ -63,12 +63,18 @@ def require_binaries() -> None:
         pytest.skip(f"{mux} is required for the agentd conformance suite")
 
 
-def _herdr_call(method: str, params: dict[str, Any]) -> dict[str, Any]:
+def _herdr_call(
+    method: str, params: dict[str, Any], *, timeout: float = 5.0
+) -> dict[str, Any]:
     """One-shot newline-JSON RPC to the herdr socket (out-of-band fixtures).
 
     Returns the raw envelope ({"result": ...} or {"error": ...}); callers
     decide whether an error is swallowed (best-effort kill) or fatal
-    (fault-injection setup that the test depends on).
+    (fault-injection setup that the test depends on). `timeout` is the
+    per-reply budget; fixture SETUP (not the thing under test) may pass a
+    larger one — herdr's mutating RPCs (workspace.create / pane.report_agent
+    / agent.rename) take 5-9s each on a loaded host (measured 2026-08-17 at
+    load ~120), which is the known #556 quiet-machine limit, not a contract.
     """
     import socket as socket_mod
 
@@ -79,7 +85,7 @@ def _herdr_call(method: str, params: dict[str, Any]) -> dict[str, Any]:
     line = json.dumps({"id": "conf-oob", "method": method, "params": params})
     sock = socket_mod.socket(socket_mod.AF_UNIX, socket_mod.SOCK_STREAM)
     try:
-        sock.settimeout(5.0)
+        sock.settimeout(timeout)
         sock.connect(herdr_socket)
         sock.sendall((line + "\n").encode("utf-8"))
         chunks: list[bytes] = []
@@ -95,13 +101,44 @@ def _herdr_call(method: str, params: dict[str, Any]) -> dict[str, Any]:
     return json.loads(b"".join(chunks).decode("utf-8").strip())
 
 
+def _herdr_label_workspace_ids(label: str) -> list[str]:
+    """Workspace ids holding the label — a SET, in herdr's listing order.
+
+    The herdr session identity anchor is the workspace label
+    (substrate_herdr.hy): real-agent detection overwrites the herdr agent
+    name plate within ~2s of a real agent starting in the pane (probe
+    2026-08-01, n=3 deterministic), so the agent-name registry cannot
+    address a live session out of band either.
+
+    The returned order carries NO creation-order meaning, and no caller may
+    index into it: herdr workspace ids are opaque counter ids that are not
+    monotone in creation order (probe 2026-08-14 — the counter carries from
+    letters into digits, e.g. w3NZ -> w3N0 and w3ZZ -> ... -> w303, so a
+    later id can sort before an earlier one under plain ASCII and under
+    shortlex alike). Picking "the" workspace out of the set therefore
+    selects an arbitrary holder — which orphaned a live session and killed
+    the wrong workspace in PR #587's first revision. Consumers stay
+    order-independent instead: sweep every holder (kill) or test
+    non-emptiness (liveness).
+    """
+    listed = _herdr_call("workspace.list", {})
+    if "error" in listed:
+        raise RuntimeError(f"herdr workspace.list failed: {listed['error']}")
+    return [
+        ws["workspace_id"]
+        for ws in listed["result"]["workspaces"]
+        if ws.get("label") == label
+    ]
+
+
 def kill_session_out_of_band(session_id: str) -> None:
     """Backend-aware out-of-band session kill (S9 + harness teardown).
 
-    tmux: `tmux kill-session -t NAME`. herdr: resolve the agent name to its
-    pane over the socket (`agent.get {target}`) and `pane.close` it — herdr
-    has no name-addressed close. Both paths swallow "not found": the kill is
-    best-effort teardown / S9 fault injection, not an assertion.
+    tmux: `tmux kill-session -t NAME`. herdr: resolve the session name to
+    workspaces by label (the identity anchor) and `workspace.close` every
+    holder — teardown must also sweep a transient duplicate-race loser.
+    Both paths swallow "not found": the kill is best-effort teardown / S9
+    fault injection, not an assertion.
     """
     if SESSIONHOST_BACKEND != "herdr":
         subprocess.run(
@@ -112,20 +149,24 @@ def kill_session_out_of_band(session_id: str) -> None:
         )
         return
     try:
-        got = _herdr_call("agent.get", {"target": session_id})
-        if "error" in got:
-            return
-        _herdr_call("pane.close", {"pane_id": got["result"]["agent"]["pane_id"]})
-    except OSError:
+        holders = _herdr_label_workspace_ids(session_id)
+    except (OSError, RuntimeError):
         return
+    for ws_id in holders:
+        try:
+            _herdr_call("workspace.close", {"workspace_id": ws_id})
+        except OSError:
+            return
 
 
 def session_exists_out_of_band(session_id: str) -> bool:
     """Backend-aware out-of-band liveness probe (load-bearing for cleanup
     asserts: a rejected/failed launch must leave no mux session behind).
 
-    tmux: `tmux has-session -t NAME`. herdr: `agent.get {target}` resolves
-    the name; an error envelope means the agent/pane does not exist.
+    tmux: `tmux has-session -t NAME`. herdr: a workspace holding the session
+    name as its label exists (the identity anchor — the agent-name registry
+    is overwritten by real-agent detection, probe 2026-08-01, and would
+    report false for every session actually running an agent).
     """
     if SESSIONHOST_BACKEND != "herdr":
         probe = subprocess.run(
@@ -136,10 +177,11 @@ def session_exists_out_of_band(session_id: str) -> bool:
         )
         return probe.returncode == 0
     try:
-        got = _herdr_call("agent.get", {"target": session_id})
-    except OSError:
+        return bool(_herdr_label_workspace_ids(session_id))
+    except (OSError, RuntimeError):
+        # Same parity as the pre-anchor probe: an unreachable server or an
+        # error envelope reads as "no session" for cleanup asserts.
         return False
-    return "error" not in got
 
 
 def break_pane_observation_out_of_band(session_id: str, pane_id: str) -> None:
@@ -151,14 +193,15 @@ def break_pane_observation_out_of_band(session_id: str, pane_id: str) -> None:
     tmux: add a second window to the session, then kill the monitored pane —
     the session survives through the new window (`has-session` true).
 
-    herdr: agent == pane (two layers, not tmux's session>window>pane three),
-    so a bare pane.close would delete the agent entry too and the liveness
-    check (agent.get) would fail first. Synthesize the same split state:
-    split a sibling pane, re-report the agent name onto the sibling
-    (pane.report_agent — same namespace as agent.start, measured 2026-07-07),
-    then close the original pane. agent.get then resolves to the sibling
-    (alive) while pane.read on the recorded pane_id fails. Errors raise:
-    this is fault-injection setup the test depends on, not best-effort.
+    herdr: liveness anchors on the workspace label (substrate_herdr.hy), so
+    the split state only needs the workspace to outlive the monitored pane:
+    split a sibling pane (the workspace keeps its label through it), then
+    close the original pane. The label still resolves (alive) while
+    pane.read on the recorded pane_id fails. (The pre-anchor synthesis also
+    re-reported the agent name onto the sibling because liveness used to
+    resolve through the agent-name registry; the label anchor removed that
+    dependency.) Errors raise: this is fault-injection setup the test
+    depends on, not best-effort.
     """
     if SESSIONHOST_BACKEND != "herdr":
         subprocess.run(
@@ -177,18 +220,6 @@ def break_pane_observation_out_of_band(session_id: str, pane_id: str) -> None:
     split = _herdr_call("pane.split", {"pane_id": pane_id, "direction": "right"})
     if "error" in split:
         raise RuntimeError(f"herdr pane.split failed: {split['error']}")
-    sibling = split["result"]["pane"]["pane_id"]
-    reported = _herdr_call(
-        "pane.report_agent",
-        {
-            "pane_id": sibling,
-            "source": "doeff-conformance",
-            "agent": session_id,
-            "state": "idle",
-        },
-    )
-    if "error" in reported:
-        raise RuntimeError(f"herdr pane.report_agent failed: {reported['error']}")
     closed = _herdr_call("pane.close", {"pane_id": pane_id})
     if "error" in closed:
         raise RuntimeError(f"herdr pane.close failed: {closed['error']}")
@@ -202,8 +233,11 @@ def create_session_out_of_band(name: str, *, cwd: str | None = None) -> str:
     (`substrate.ref` for session.adopt / the turn descriptor's pane_id).
 
     tmux: a detached session running the user's shell. herdr: the same
-    workspace.create -> agent.start -> root pane.close dance the sessionhost
-    herdr substrate performs (observed physics, substrate_herdr.hy).
+    workspace.create the sessionhost herdr substrate performs — protocol 17
+    (herdr 0.7.5) takes label/cwd directly and the root pane is the session
+    pane (substrate_herdr.hy; the protocol-14 agent.start -> root pane.close
+    dance is gone, and agent.start itself was reshaped into "start a managed
+    agent in an existing pane" and cannot create named shell panes).
     """
     workdir = cwd or os.environ.get("HOME", "/tmp")
     if SESSIONHOST_BACKEND != "herdr":
@@ -215,28 +249,56 @@ def create_session_out_of_band(name: str, *, cwd: str | None = None) -> str:
             check=True,
         )
         return created.stdout.strip()
-    ws = _herdr_call("workspace.create", {"label": name, "focus": False})
+    ws = _herdr_call(
+        "workspace.create", {"label": name, "cwd": workdir, "focus": False}
+    )
     if "error" in ws:
         raise RuntimeError(f"herdr workspace.create failed: {ws['error']}")
-    ws_id = ws["result"]["workspace"]["workspace_id"]
-    root_pane = ws["result"]["root_pane"]["pane_id"]
-    started = _herdr_call(
-        "agent.start",
-        {
-            "name": name,
-            "cwd": workdir,
-            "argv": [os.environ.get("SHELL", "/bin/sh")],
-            "env": {},
-            "workspace_id": ws_id,
-            "focus": False,
-        },
+    return ws["result"]["root_pane"]["pane_id"]
+
+
+def create_externally_named_seat_out_of_band(name: str, *, cwd: str | None = None) -> str:
+    """Create a live herdr pane that is NOT doeff-owned and is addressed by an
+    agent-registry name that differs from its workspace label (S29 fixture).
+
+    This is the physics of the interactive seats that `ai` etc. launch and
+    that koine session.adopt carries as `session_name`: the herdr agent
+    registry holds the seat name (probe 2026-08-17: own seat = agent name
+    s-7bfc5d5028, workspace label "doeff"), while the workspace label is the
+    repo/project name. Label-only liveness cannot see such a seat, so adopt
+    would reject it (adopt_target_not_found) and every already-adopted row
+    would flip to substrate_present=false — the regression PR #587's first
+    revision would have shipped. The seat is named the same way `ai` names it
+    (pane.report_agent to take authority, then agent.rename). Returns the
+    pane reference; teardown closes the workspace by its label (name + "-ws").
+
+    herdr only — tmux has a single session namespace, so "external name that
+    is not the mux session name" has no tmux analogue.
+    """
+    if SESSIONHOST_BACKEND != "herdr":
+        raise RuntimeError("externally named seats exist on the herdr backend only")
+    workdir = cwd or os.environ.get("HOME", "/tmp")
+    ws = _herdr_call(
+        "workspace.create", {"label": f"{name}-ws", "cwd": workdir, "focus": False},
+        timeout=30.0,
     )
-    if "error" in started:
-        raise RuntimeError(f"herdr agent.start failed: {started['error']}")
-    closed = _herdr_call("pane.close", {"pane_id": root_pane})
-    if "error" in closed:
-        raise RuntimeError(f"herdr pane.close failed: {closed['error']}")
-    return started["result"]["agent"]["pane_id"]
+    if "error" in ws:
+        raise RuntimeError(f"herdr workspace.create failed: {ws['error']}")
+    pane_id = ws["result"]["root_pane"]["pane_id"]
+    reported = _herdr_call(
+        "pane.report_agent",
+        {"pane_id": pane_id, "source": "doeff-conformance-sim",
+         "agent": "claude", "state": "working"},
+        timeout=30.0,
+    )
+    if "error" in reported:
+        raise RuntimeError(f"herdr pane.report_agent failed: {reported['error']}")
+    renamed = _herdr_call(
+        "agent.rename", {"target": pane_id, "name": name}, timeout=30.0
+    )
+    if "error" in renamed:
+        raise RuntimeError(f"herdr agent.rename failed: {renamed['error']}")
+    return pane_id
 
 
 def resolve_agentd_bin() -> Path:
@@ -666,6 +728,15 @@ class AgentdHarness:
         pane_ref = create_session_out_of_band(name)
         self._sessions.append(name)
         return pane_ref
+
+    def adopt_external_seat_fixture(self, name: str) -> str:
+        """Create an externally named seat (herdr agent-registry name != its
+        workspace label — the `ai` seat physics, S29) and register its
+        workspace label for teardown. Returns the pane reference."""
+        # register the label first: the fixture is a 3-RPC sequence and a
+        # failure after workspace.create must not leak the workspace.
+        self._sessions.append(f"{name}-ws")
+        return create_externally_named_seat_out_of_band(name)
 
     def substrate_kind(self) -> str:
         """The substrate binding kind this suite run speaks (koine session
