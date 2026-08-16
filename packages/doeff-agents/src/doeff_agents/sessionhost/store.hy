@@ -203,10 +203,17 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
 (deff db-migrate [conn]
   {:pre [(: conn sqlite3.Connection)]
    :post [(: % "None")]}
-  "schema 適用(oracle migrate: CREATE IF NOT EXISTS + additive ALTER)。"
+  "schema 適用(oracle migrate: CREATE IF NOT EXISTS + additive ALTER)。
+   会話 index は ensure-column の後(conversation_json は additive 列 —
+   fresh DB では ALTER が先に走らないと index が張れない)。波 1-S1 /
+   ADR-DOE-AGENTS-007 R7: 会話 ID → 行の行引き(db-session-by-conversation)
+   と打刻の conversation 鍵を支える expression index。"
   (.executescript conn SCHEMA-BATCH)
   (for [[table column definition] ENSURE-COLUMNS]
     (ensure-column conn table column definition))
+  (.execute conn
+            (+ "CREATE INDEX IF NOT EXISTS idx_agent_sessions_conversation "
+               "ON agent_sessions(json_extract(conversation_json, '$.session_id'))"))
   None)
 
 (deff ensure-column [conn table column definition]
@@ -547,6 +554,30 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
                                  (+ SNAPSHOT-SELECT " WHERE session_id = ?")
                                  #(session-id))))
   (if (is row None) None (snapshot-from-db-row row)))
+
+(deff db-session-by-conversation [conn conversation-id]
+  {:pre [(: conn sqlite3.Connection) (: conversation-id str)
+         (> (len conversation-id) 0)]
+   :post [(: % (| dict None))]}
+  "会話 ID → 行の行引き(波 1-S1 / ADR-DOE-AGENTS-007 R7・law
+   conversation-lookup-never-probes)。解決則 = 非終端の最新行、無ければ
+   最新の terminal 行、無ければ None(会話資源契約草案の解決則の store 面 —
+   conversationId → 生きた宿り高々 1、無ければ最新 terminal 宿り)。
+   同一性欄(conversation_json.session_id)の完全一致のみで引く —
+   部分一致・全欄横断は『言及』を『登記』と読む。SELECT のみ(substrate
+   不接触は構造)。idx_agent_sessions_conversation(expression index)が
+   支える。"
+  (for [statuses [(sorted ACTIVE-STATUSES) (sorted TERMINAL-STATUSES)]]
+    (setv placeholders (.join ", " (lfor _ statuses "?")))
+    (setv row (.fetchone (.execute conn
+                           (+ SNAPSHOT-SELECT
+                              " WHERE json_extract(conversation_json, '$.session_id') = ?"
+                              f" AND status IN ({placeholders})"
+                              " ORDER BY started_at DESC, session_id ASC LIMIT 1")
+                           (tuple (+ [conversation-id] statuses)))))
+    (when (is-not row None)
+      (return (snapshot-from-db-row row))))
+  None)
 
 (deff list-query-matches [snap filters]
   {:pre [(: snap dict) (: filters dict)]
