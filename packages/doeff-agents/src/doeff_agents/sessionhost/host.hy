@@ -86,6 +86,7 @@
   db-report-result-guarded-update
   db-session-get
   db-session-list
+  db-session-by-conversation
   db-vacuum-if-bloated
   snapshot-to-wire-dict
   sqlite-session-store])
@@ -630,6 +631,19 @@
   (<- present (tmux-has-session session-name))
   (bool present))
 
+(deff wire-with-stalled [wire]
+  {:pre [(: wire dict)]
+   :post [(: % dict)]}
+  "stalled 導出のみを重ねる(store 読みだけで決まる level-triggered 面 —
+   R4)。session.by_conversation(R7)はこれだけを使う: substrate_present /
+   substrate_checked_at は意図的に載せない(law
+   conversation-lookup-never-probes — 不在は field 不在で正直に)。"
+  (setv now (datetime.now timezone.utc))
+  (setv (get wire "stalled")
+        (turn-stalled (.get wire "turn_holder") (.get wire "turn_since")
+                      now (effective-turn-stall-seconds)))
+  wire)
+
 (deff augment-wire-snapshot [config actor wire]
   {:pre [(: config HostConfig) (: actor StoreActor) (: wire dict)]
    :post [(: % dict)]}
@@ -639,10 +653,8 @@
    - substrate_present / substrate_checked_at: 免除行(adopted または
      interactive)かつ非終端の行だけに載る突合表示(条項 3 — 消滅 pane を
      exited と裁定せず、乖離として見せる)。"
+  (setv wire (wire-with-stalled wire))
   (setv now (datetime.now timezone.utc))
-  (setv (get wire "stalled")
-        (turn-stalled (.get wire "turn_holder") (.get wire "turn_since")
-                      now (effective-turn-stall-seconds)))
   (setv exempt (or (bool (.get wire "adopted"))
                    (= (get wire "lifecycle") "interactive")))
   (when (and exempt (not (is-terminal-status (get wire "status"))))
@@ -928,6 +940,22 @@
                 None
                 (augment-wire-snapshot config actor (snapshot-to-wire-dict snap)))))
 
+  ;; 波 1-S1(ADR-007 R7): 会話 ID → 行の probe なし行引き口。応答 = wire
+  ;; snapshot + stalled 導出のみ(substrate_present は意図的に不在 — law
+  ;; conversation-lookup-never-probes。読み手は自分の substrate 観測と合成
+  ;; する)。解決則 = 非終端の最新行 → 最新の terminal 行 → null。
+  (when (= method "session.by_conversation")
+    (setv p (params-object params "session.by_conversation"))
+    (setv cid (required-str-param p "conversation_id" "session.by_conversation"))
+    (when (not (.strip cid))
+      (raise (RuntimeError
+               (+ "invalid params for session.by_conversation: "
+                  "conversation_id must be a non-empty string"))))
+    (setv snap (.submit actor (fn [conn] (db-session-by-conversation conn cid))))
+    (return (if (is snap None)
+                None
+                (wire-with-stalled (snapshot-to-wire-dict snap)))))
+
   (when (= method "session.list")
     (setv p (params-object params "session.list"))
     (setv filters {"status" (.get p "status")
@@ -965,6 +993,14 @@
       (raise (RuntimeError
                (+ f"session.adopt substrate kind {sub-kind !r} does not match "
                   f"this host's backend {config.backend !r}"))))
+    ;; 波 1-S1(ADR-007 R2): 任意の conversation_id(非空文字列)。
+    (setv conversation-id (.get p "conversation_id"))
+    (when (and (is-not conversation-id None)
+               (or (not (isinstance conversation-id str))
+                   (not (.strip conversation-id))))
+      (raise (RuntimeError
+               (+ "invalid params for session.adopt: conversation_id must be "
+                  "a non-empty string"))))
     (setv program-params
           {"session_name" session-name
            "substrate_ref" sub-ref
@@ -972,7 +1008,8 @@
            "lifecycle" (or (.get p "lifecycle") "interactive")
            "backend_kind" sub-kind
            "name" (.get p "name")
-           "work_dir" (.get p "work_dir")})
+           "work_dir" (.get p "work_dir")
+           "conversation_id" conversation-id})
     (setv row None)
     (try
       (setv row (run-hosted config actor (adopt-program program-params)))
@@ -991,12 +1028,17 @@
                f"invalid params for {method}: missing field `descriptor`")))
     (setv pane-id (.get descriptor "pane_id"))
     (setv agent-name (.get descriptor "agent_name"))
+    (setv conversation-id (.get descriptor "conversation_id"))
     (setv pane-id (if (isinstance pane-id str) pane-id None))
     (setv agent-name (if (isinstance agent-name str) agent-name None))
-    (when (and (is pane-id None) (is agent-name None))
+    (setv conversation-id (if (isinstance conversation-id str)
+                              conversation-id
+                              None))
+    (when (and (is pane-id None) (is agent-name None)
+               (is conversation-id None))
       (raise (RuntimeError
                (+ f"invalid params for {method}: descriptor requires "
-                  "pane_id or agent_name"))))
+                  "pane_id, conversation_id or agent_name"))))
     ;; holder が open/closed を兼ねる契約(発注元確定 2026-07-21):
     ;; open = 'agent'(自走中・wait は NULL に戻る)/ close = wait.who
     ;; (無ければ 'work')。wait は opaque のまま保存(再 parse しない)。
@@ -1009,7 +1051,8 @@
     ;; 受け側義務。≤200ms fire-and-forget の hook hot path が相手)。
     (setv sid (.submit actor
                        (fn [conn]
-                         (db-turn-stamp conn pane-id agent-name holder
+                         (db-turn-stamp conn pane-id agent-name
+                                        conversation-id holder
                                         wait-payload))))
     (if (is sid None)
         (setv (get TURN-COUNTERS "turn_stamp_unadopted")

@@ -4678,6 +4678,26 @@ rules:
         - "**/sessionhost/turn.hy"
         - "**/sessionhost/turn_touches_substrate_forbidden.hy"
 
+  - id: doeff-agents-turn-name-key-requires-bare-descriptor
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      ADR-DOE-AGENTS-007 R5 (波 1-S1 改訂) / law
+      stamp-never-crosses-identities: the agent_name key of the turn-stamp
+      descriptor resolution may be consulted ONLY when the descriptor
+      carries NEITHER pane_id NOR conversation_id — guard the name branch
+      with `(and (is pane-id None) (is conversation-id None) …)`. An
+      identity-bearing stamp that falls back to the name key can land on a
+      row anchored to a different pane/conversation: the 2026-08-17
+      absorption incident (a dead adopted row named integration-lead
+      swallowed the live seat's stamps, advancing turn_since on a dead
+      conversation row and corrupting every conversation-keyed read).
+    pattern-regex: '\(when\s+\(is-not\s+agent-name\s+None\)'
+    paths:
+      include:
+        - "**/sessionhost/turn.hy"
+
   - id: doeff-agents-no-lost-terminal-cause
     languages:
       - generic
