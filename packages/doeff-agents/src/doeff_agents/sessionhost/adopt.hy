@@ -9,9 +9,17 @@
 ;;;
 ;;; 順序義務(semantics-v0 operations): 実在確認 → 成功時のみ登記。
 ;;; 失敗した adopt は行を残さない(幻 turn-open の再発防止)。
+;;;
+;;; 波 1-S1 改訂(ADR-DOE-AGENTS-007 R2): 任意の conversation_id を受け、
+;;; conversation_json({"session_id" …} — ADR-006 union の identity 成分)へ
+;;; 書く。冪等は会話を考慮した 3 分岐 — 同会話 = 既存行 / 会話未登記 = 補充
+;;; (同一宿りの登記の完成・store の COALESCE first-write-wins が最終防衛)/
+;;; 別会話 = 新行の鋳造(下地再利用 = 新会話の新宿り。既存行の会話 identity は
+;;; 決して書き換えない — 行は会話の 1 回の宿りの記録)。
 
 (require doeff-hy.macros [defk deff <-])
 
+(import dataclasses [replace])
 (import uuid)
 
 (import doeff_agents.sessionhost.effects [
@@ -46,12 +54,19 @@
          (: (.get params "lifecycle") str)
          (: (.get params "backend_kind") str)]
    :post [(: % SessionRow)]}
-  "既に生きている席の事後登記。順序義務: 実在確認 → 登記。冪等: 同一
-   substrate.ref(pane_id 列)の非終端行があれば新規作成せず既存行を返す
-   (再登記しない — 台帳の二重住民を作らない)。"
+  "既に生きている席の事後登記。順序義務: 実在確認 → 登記。冪等は会話を
+   考慮した 3 分岐(ADR-007 R2 波 1-S1 改訂): 同一 substrate.ref の非終端行に
+   (a) 同じ会話が登記済み → 既存行をそのまま返す(書かない)
+   (b) 会話未登記(NULL)→ 会話を補充して返す(同一宿りの登記の完成)
+   (c) 別の会話 → 新行を鋳造(下地再利用 = 新会話の新宿り)。
+   conversation_id を運ばない adopt は従来どおり最新の非終端行を返す。"
   (setv session-name (get params "session_name"))
   (setv substrate-ref (get params "substrate_ref"))
   (setv backend-kind (get params "backend_kind"))
+  (setv conversation-id (.get params "conversation_id"))
+  (setv conversation (if (isinstance conversation-id str)
+                         {"session_id" conversation-id}
+                         None))
 
   ;; --- 実在確認(観測のみ)。失敗はここで typed に止まり、行は作られない。
   (<- alive (tmux-has-session session-name))
@@ -60,12 +75,37 @@
              (+ f"adopt target not found: no live {backend-kind} session "
                 f"named '{session-name}' (substrate.ref {substrate-ref !r})"))))
 
-  ;; --- 冪等: 同一 substrate.ref の非終端行は既存行をそのまま返す
-  ;; (observation-only — 既存行を書き換えもしない)。
+  ;; --- 冪等 3 分岐: 同一 substrate.ref の非終端行を新しい順に見る
+  ;; (started_at DESC, session_id ASC — session.list と同じ全順序)。
   (<- active-rows (session-store-list-active))
-  (for [existing active-rows]
-    (when (= existing.pane-id substrate-ref)
-      (return existing)))
+  (setv pane-rows (lfor r active-rows :if (= r.pane-id substrate-ref) r))
+  (setv pane-rows (sorted pane-rows :key (fn [r] r.session-id)))
+  (setv pane-rows (sorted pane-rows :key (fn [r] (or r.started-at ""))
+                          :reverse True))
+  ;; 会話を運ばない adopt: 従来の冪等(最新の非終端行を返す)。
+  (when (and pane-rows (is conversation None))
+    (return (get pane-rows 0)))
+  ;; (a) 同会話の行が既にある → そのまま返す(observation-only)。
+  ;; (b) の候補 = 会話未登記(NULL)の最新行、も同じ走査で拾う。
+  (setv null-row None)
+  (for [r pane-rows]
+    (when (and (is-not r.conversation None)
+               (= (.get r.conversation "session_id") conversation-id))
+      (return r))
+    (when (and (is null-row None) (is r.conversation None))
+      (setv null-row r)))
+  ;; (b) 会話未登記の最新行 → 補充(同一宿りの登記の完成)。merge upsert は
+  ;; actor 内の read-modify-write・conversation_json は COALESCE
+  ;; first-write-wins なので、競合しても identity が書き換わることは
+  ;; 構造的に無い。event は既存語彙 session_conversation_discovered。
+  (when (is-not null-row None)
+    (setv filled (replace null-row :conversation conversation))
+    (<- _ (session-store-upsert filled))
+    (<- _ (session-store-record-event
+            filled.session-id "session_conversation_discovered" filled))
+    (return filled))
+  ;; (c) pane-rows が全行別会話 = 下地の再利用(新会話の新宿り)、または
+  ;; pane-rows 空 = 初回登記 → どちらも新行の鋳造へ。
 
   ;; --- 登記(実在確認の成功後にのみ到達する)。
   (<- now (clock-now))
@@ -88,6 +128,8 @@
               ;; launch timeout の発火条件そのものなので、刈り取り免除
               ;; (adopted=1)が同じ変更セットに必須(S26)。
               :adopted True
+              ;; 波 1-S1: 会話 identity(呼び手が運んだ時のみ・identity 成分)。
+              :conversation conversation
               :work-dir (or (.get params "work_dir") "")
               :backend-kind backend-kind
               :backend-ref backend-ref))
