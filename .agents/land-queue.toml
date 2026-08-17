@@ -20,7 +20,13 @@ base = "main"
 [gate]
 # full = 日次検証便(ai land verify)と full_paths 便だけが使う(mode = "focus" の間、
 # 窓末では走らない)。
-full = "make sync && PYTHONUNBUFFERED=1 uv run pytest -q -m 'not e2e'"
+# UV_CACHE_DIR lane 分離(operator 発注 route-c4ce3179b0 2026-08-17・方向宣言
+# uv-cache-lock-convoy-root-fix): doeff の窓は自 worktree の .venv を作るため
+# uv sync が構造的に要る(永続 venv 直呼びへは置換できない側)。素の global
+# cache(~/.cache/uv)は艦隊の uvx 並走と同じ lock に並び、飽和帯で make sync
+# だけが 23 分(L29〜L32 の 4 連敗の実測)。窓の系統専用 lane に分けると初回だけ
+# cache が冷えるが、以後は warm のまま艦隊の行列に並ばない。
+full = "UV_CACHE_DIR=$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=$HOME/.cache/uv-lanes/land-doeff PYTHONUNBUFFERED=1 uv run pytest -q -m 'not e2e'"
 # 門の走行の持ち時間 2700→7200(2026-08-17)。実測 = L32 が 2713.4s で時間切れ
 # (4 連敗・Mac 飽和帯)。ADR-DOE-ENFORCE-001 R6 の第 3 の締切の宣言先行便。
 timeout_s = 7200
@@ -62,7 +68,8 @@ join_s = 60
 [gate.tiers]
 # ⚠ mode = "focus" の間、この表は着地の解決に使われない(mode 未宣言への戻しだけが
 # 読む — herdr-hud / ACP と同じ移行残置。撤去は日次 verify 連続緑の再訪条件で別便)。
-"docs/adr/" = "make sync && PYTHONUNBUFFERED=1 uv run pytest -q docs/adr"
+# lane 分離は [gate].full の註と同じ(convoy 根治)。
+"docs/adr/" = "UV_CACHE_DIR=$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=$HOME/.cache/uv-lanes/land-doeff PYTHONUNBUFFERED=1 uv run pytest -q docs/adr"
 "docs/" = "true"
 "notes/" = "true"
 "README.md" = "true"
