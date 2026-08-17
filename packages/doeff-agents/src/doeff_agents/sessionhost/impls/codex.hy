@@ -24,6 +24,7 @@
   WireResultChannel
   fs-canonical-path
   fs-compose-home-view
+  fs-file-exists
   fs-link-artifact
   fs-list-dir
   fs-read-text
@@ -306,10 +307,13 @@
    する。sessions root は native 形 = <codex_home>/sessions、二軸形 =
    <profile_dir>/sessions(home view の sessions は bundle 側実体への link —
    substrate compose-home-view。view 合成前でも安定な実体 path)。
-   同一 home(native 同士の一致)は no-op。二軸形は view 名を再計算しない —
-   transplant は冪等(同一実体は FsLinkArtifact の same-entity no-op)なので
-   発火してよい。rollout 不在は typed 値で返す(reject は resume-session
-   所有)。"
+   同一 home(native 同士の一致)は敷設 no-op — ただし rollout_path が記帳
+   されている行は実在検査だけ同じく走る(R10・2026-08-18: 消えた rollout は
+   CLI の自 home 走査でも見つからず loud 死する — 発注時 typed reject で
+   前倒し。記帳が無い行は CLI が home 走査で解決し得るため検査せず通す)。
+   二軸形は view 名を再計算しない — transplant は冪等(同一実体は
+   FsLinkArtifact の same-entity no-op)なので発火してよい。rollout 不在は
+   typed 値で返す(reject は resume-session 所有)。"
   (setv binding (get params "binding"))
   (setv identity (or (.get params "source_identity") {}))
   (setv conv (get params "conversation"))
@@ -322,7 +326,19 @@
             (+ (get binding "profile_dir") "/sessions")))
   (when (and (is-not target-home None)
              (= (.get identity "CODEX_HOME") target-home))
-    (return {"ok" True "action" "same-home"}))
+    (when (is rollout None)
+      ;; 発見物理は home 走査(rollout_path 非依存)— 記帳が無いだけの
+      ;; 同一 home resume は検査対象を導出できないので通す。
+      (return {"ok" True "action" "same-home"}))
+    (<- rollout-present (fs-file-exists rollout))
+    (if rollout-present
+        (return {"ok" True "action" "same-home"})
+        (return {"ok" False
+                 "code" RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE
+                 "message" (+ f"session.resume: rollout '{rollout}' does not "
+                              "exist (transcript-not-discoverable) — the "
+                              "real CLI fails loud without it "
+                              "(resume-physics.md probe (c))")})))
   (when (is rollout None)
     (return {"ok" False
              "code" RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE
