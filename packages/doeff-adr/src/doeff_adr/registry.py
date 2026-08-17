@@ -301,8 +301,8 @@ def _assert_inline_semgrep_enforcement(semgrep: str, spec: SemgrepSpec) -> None:
         good_dir.mkdir()
         bad_files = _write_inline_fixture_files(bad_dir, spec.bad, spec.languages)
         good_files = _write_inline_fixture_files(good_dir, spec.good, spec.languages)
-        bad_result = _run_semgrep(semgrep, config, bad_files)
-        good_result = _run_semgrep(semgrep, config, good_files)
+        bad_result = _run_semgrep(semgrep, config, bad_files, project_root=root)
+        good_result = _run_semgrep(semgrep, config, good_files, project_root=root)
     if not bad_result:
         raise AssertionError(f"{spec.id}: defsemgrep did not match any bad fixture")
     if good_result:
@@ -355,7 +355,7 @@ def _run_installed_semgrep_fixture_set(
     ) as tmp:
         root = Path(tmp)
         targets = _write_semgrep_structured_fixtures(root, fixtures)
-        return _run_semgrep(semgrep, config_path, targets, cwd=root)
+        return _run_semgrep(semgrep, config_path, targets, cwd=root, project_root=root)
 
 
 def _semgrep_config(spec: SemgrepSpec) -> dict[str, Any]:
@@ -429,10 +429,22 @@ def _run_semgrep(
     paths: list[Path],
     *,
     cwd: Path | None = None,
+    project_root: Path,
 ) -> list[dict[str, Any]]:
     proc = subprocess.run(
         [
             semgrep,
+            # 検査の意味は tree だけで決まる — scanner に network(metrics 送信・
+            # 新版照会)を許すと、到達性や応答時間という機体の事情が検査の実行に
+            # 混入する(オフライン機で hang、飽和網で timeout)。
+            "--metrics=off",
+            "--disable-version-check",
+            # project root は明示宣言する。git metadata からの推論に任せると、
+            # .git の無い検査 tree で root が走査対象 dir 自身に落ち、対象より
+            # 上のセグメントを参照する paths.include だけが無音で死ぬ(zeus 実測
+            # 2026-08-17: 発火する rule としない rule が include の形で割れた)。
+            "--project-root",
+            str(project_root),
             "--quiet",
             "--json",
             "--config",
@@ -446,25 +458,47 @@ def _run_semgrep(
     )
     if proc.returncode not in (0, 1):
         raise AssertionError(f"semgrep failed with exit {proc.returncode}: {proc.stderr}")
-    payload = json.loads(proc.stdout or "{}")
-    return list(payload.get("results", []))
+    # exit 1 は「findings あり」と「起動時 crash」の両方が返す — JSON の実在だけが
+    # scan が本当に走った証拠。走らなかった scan を「発火なし」と黙読すると、
+    # scanner の故障が『rule が発火しない』という偽の赤/緑に化ける(zeus 実測
+    # 2026-08-17: interpreter 不整合で semgrep が import 時に crash し、installed
+    # rule 全滅が『hit fixture に発火しない』と誤診された)。
+    try:
+        payload = json.loads(proc.stdout)
+    except ValueError as exc:
+        raise AssertionError(
+            f"semgrep produced no JSON verdict (exit {proc.returncode}) — "
+            f"the scan did not run; stderr:\n{proc.stderr}"
+        ) from exc
+    if not isinstance(payload, dict) or "results" not in payload:
+        raise AssertionError(
+            f"semgrep JSON output has no results field (exit {proc.returncode}) — "
+            f"stdout:\n{proc.stdout[:2000]}\nstderr:\n{proc.stderr}"
+        )
+    return list(payload["results"])
 
 
 def _resolve_config_path(config: str) -> Path:
     path = Path(config)
     if path.is_absolute():
         return path
-    return _find_repo_root(Path.cwd()) / path
+    return _find_tree_root(Path.cwd(), path) / path
 
 
-def _find_repo_root(start: Path) -> Path:
+def _find_tree_root(start: Path, config: Path) -> Path:
+    """config を実際に持つ最近接の祖先 dir = 検査 tree の root。
+
+    git metadata(.git)を根拠にしない — 検査の意味は tree だけで決まる。
+    遠隔検査 tree は git ls-files の名簿だけを運び .git を持たない(実測
+    2026-08-17 zeus: .git 錨のせいで installed-rule defsemgrep が全滅した)。
+    """
     root = start.resolve()
     while True:
-        if (root / ".git").exists():
+        if (root / config).is_file():
             return root
         parent = root.parent
         if parent == root:
-            raise RuntimeError(f"could not find repository root from {start}")
+            raise RuntimeError(f"could not find semgrep config {config} in any ancestor of {start}")
         root = parent
 
 
