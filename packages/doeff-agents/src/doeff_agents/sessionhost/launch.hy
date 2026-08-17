@@ -29,6 +29,7 @@
   RESUME-ERR-IDENTITY-UNKNOWN
   RESUME-ERR-KIND-NOT-SUPPORTED
   RESUME-ERR-ONE-LIVE-INCARNATION
+  RESUME-ERR-WORKDIR-NOT-FOUND
   READY-PROBE-TEXT
   READY-PROBE-CLEAR-KEY
   READY-GATE-FRAME-RETENTION
@@ -48,6 +49,7 @@
   session-store-list-active
   session-store-upsert
   session-store-record-event
+  fs-dir-exists
   tmux-has-session
   tmux-new-session
   tmux-send-keys
@@ -231,6 +233,14 @@
               (do
                 (setv verdict "provider-limit-screen")
                 (setv looping False))
+            ;; CLI が resume の会話を解決できず loud 終了した画面(ADR-006 R10
+            ;; 第 2 層)— 待って解ける命題ではないので予算を待たず即終端する。
+            ;; 実測 2026-08-16〜17: この形 91 件が全件 120s 待って
+            ;; no-agent-frame に誤分類されていた。
+            obs.has-conversation-not-found-marker
+              (do
+                (setv verdict "conversation-not-found")
+                (setv looping False))
             ;; R9 の外の dialog 形は dismiss を推測しない — 即 loud。
             ;; idle prompt の有無で条件を緩めない: codex の trust dialog は
             ;; 選択 marker が `›` なので idle prompt 判定を通過してしまう
@@ -358,6 +368,21 @@
   (<- tmux-exists (tmux-has-session session-name))
   (when tmux-exists
     (raise (RuntimeError f"tmux session already exists: {session-name}")))
+
+  ;; --- work_dir の物理実在(ADR-DOE-AGENTS-006 R10 — 全副作用より前)。
+  ;; tmux は不在 start-directory を黙って $HOME に差し替える: pane は
+  ;; `CA-…:~` の shell で立ち、claude の cwd 鍵会話解決・trust pre-seed 鍵・
+  ;; transplant 敷設鍵のすべてが実際の cwd と食い違う(2026-08-16〜17 実測
+  ;; 91 件 — 全件 120s 予算切れ no-agent-frame の無名の死に化けた)。
+  (setv work-dir (get params "work_dir"))
+  (<- work-dir-present (fs-dir-exists work-dir))
+  (when (not work-dir-present)
+    (raise (RuntimeError
+             (+ f"session.launch: work_dir does not exist: {work-dir} — "
+                "tmux would silently fall back to $HOME and every cwd-keyed "
+                "physical (claude conversation lookup, trust pre-seed, "
+                "transcript transplant) would target the wrong project "
+                "(ADR-DOE-AGENTS-006 R10)"))))
 
   ;; --- ADR 0035 reject-at-launch: result channel を配線できない agent が
   ;; result contract を持つことは受けない(silent timeout の予約になる)。
@@ -657,6 +682,24 @@
                     "one-live-incarnation-per-conversation "
                     "(ADR-DOE-AGENTS-006 R4)"))))))
 
+  ;; 宿り先 work_dir の物理実在(ADR-006 R10 — 全副作用より前の typed
+  ;; reject)。R4 の source copy 固定は transcript 発見可能性の保証だが、
+  ;; その保証は dir が実在する間しか成立しない: ACP は invocation 終了後に
+  ;; workspace を削除するため、消えた宿り先への再開発注が実在した
+  ;; (2026-08-16〜17 の resume 全滅 91/91 — tmux の $HOME 黙変換 → claude の
+  ;; cwd 鍵会話解決全滅 → 120s 予算切れ no-agent-frame)。宿り先を再建する/
+  ;; 諦めるの政策判定は呼び手(ACP engine)の家 — ここは loud に返すだけ。
+  (<- source-workdir-present (fs-dir-exists source.work-dir))
+  (when (not source-workdir-present)
+    (raise (ResumeRejected RESUME-ERR-WORKDIR-NOT-FOUND
+             (+ f"session.{mode}: work_dir does not exist: "
+                f"{source.work-dir} — the source incarnation's workspace is "
+                "gone, so the conversation cannot be rehosted there (tmux "
+                "would silently fall back to $HOME and the CLI's cwd-keyed "
+                "conversation lookup would fail loud; ADR-DOE-AGENTS-006 "
+                "R10 workdir_not_found). Recreate the workspace or abandon "
+                "the resume — the decision is the caller's."))))
+
   ;; 呼び手 binding の admission(ADR-006 改訂 R4)— launch の R7 admission と
   ;; 同一実装(policy binding-admission-error)を共有する(複製実装禁止)。
   ;; 全副作用(transplant の symlink 敷設・tmux)より前に typed reject。
@@ -716,17 +759,24 @@
              "codex_home" (get identity "CODEX_HOME")}
           True None))
 
-  ;; cross-binding transplant 前処理(ADR-006 改訂 R7)。発火判定(同一 home の
-  ;; no-op)と transcript 所在の path 物理は per-kind impl 所有 —
-  ;; resume-physics-has-one-home の延長。source transcript 不在は typed reject
-  ;; (row 不生成 — 実 CLI の loud 失敗を launch 前に前倒しする)。
-  (when (is-not requested-binding None)
+  ;; transcript の解決可能性検査 + cross-binding transplant 前処理(ADR-006
+  ;; R7/R10)。発火判定(同一 home は敷設 no-op・実在検査のみ)と transcript
+  ;; 所在の path 物理は per-kind impl 所有 — resume-physics-has-one-home の
+  ;; 延長。source transcript 不在は typed reject(row 不生成 — 実 CLI の loud
+  ;; 失敗を launch 前に前倒しする)。R10 改訂(2026-08-18): 呼び手指定の
+  ;; binding だけでなく実効 binding(行からの再構成を含む)で常に走らせる —
+  ;; same-home の resume/fork も transcript の実在を発注時に検査する(旧形は
+  ;; 起動段で死んだ行〔identity 鋳造済み・transcript 未実体化〕の resume を
+  ;; 素通しし、実 CLI の『No conversation found』120s 死に落としていた)。
+  ;; binding を再構成できない行(identity に home が無い)は従来どおり検査
+  ;; なしで通る — transcript の所在自体が導出できないため。
+  (when (is-not binding None)
     (<- transplant (transplant-conversation
                      source.agent-type
                      {"conversation" conv
                       "work_dir" source.work-dir
                       "source_identity" identity
-                      "binding" requested-binding}))
+                      "binding" binding}))
     (when (not (get transplant "ok"))
       (raise (ResumeRejected (get transplant "code")
                              (get transplant "message")))))

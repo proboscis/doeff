@@ -213,6 +213,33 @@
     True None))
 
 
+;; ---------------------------------------------------------------------------
+;; 会話解決失敗(ADR-DOE-AGENTS-006 R10 第 2 層 / ADR-DOE-AGENTS-011 改訂)
+;; ---------------------------------------------------------------------------
+;; resume の会話を CLI が解決できないとき、両 kind とも rc=1 の loud 終了で
+;; 固定文言を出す(resume-physics.md 2026-08-11 プローブ (a)(c) の逐語 —
+;; silent な新規会話への縮退はない、と実測済み):
+;;   claude: `No conversation found with session ID: <uuid>`
+;;   codex:  `Error: thread/resume: … no rollout found for thread id <uuid>`
+;; この画面は待って解ける命題ではない — 起動 gate は予算(120s)を待たず
+;; conversation-not-found class で即終端する。実測 2026-08-16〜17: この形の
+;; 席 91 件が全件予算切れまで待って no-agent-frame に誤分類されていた
+;; (一次原因は work_dir 消失 → tmux の $HOME 黙変換 → cwd 鍵の会話解決
+;; 全滅。根治は R10 の admission 検査で、本 marker は TOCTOU と未知経路の
+;; 正直な名)。status には効かせない — 消費者は起動 gate のみ。
+
+(setv CONVERSATION-NOT-FOUND-MARKERS
+      #("no conversation found with session id"
+        "no rollout found for thread id"))
+
+(deff has-conversation-not-found-marker [output]
+  {:pre [(: output str)] :post [(: % bool)]}
+  "CLI の会話解決失敗の loud 出力(tail 30 行窓 — has-api-limit-marker と
+   同窓)。逐語は resume-physics.md プローブ (a)(c) で凍結済み。"
+  (setv text (tail-lower output 30))
+  (bool (any (gfor marker CONVERSATION-NOT-FOUND-MARKERS (in marker text)))))
+
+
 (deff has-waiting-marker [output]
   {:pre [(: output str)] :post [(: % bool)]}
   "interactive 待ち marker(raw 一致、oracle output_has_waiting_marker)。"
@@ -576,4 +603,7 @@
     :composer-clear (is-composer-clear output)
     :composer-text (composer-region output)
     :input-loop-wired (is-input-loop-wired output)
-    :dialog-shaped (is-dialog-shaped output)))
+    :dialog-shaped (is-dialog-shaped output)
+    ;; ADR-DOE-AGENTS-006 R10 第 2 層: CLI の会話解決失敗の loud 出力。
+    ;; status には効かせない — 消費者は起動 gate のみ。
+    :has-conversation-not-found-marker (has-conversation-not-found-marker output)))
