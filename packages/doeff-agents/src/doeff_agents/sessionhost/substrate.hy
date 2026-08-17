@@ -45,6 +45,7 @@
   FsMakeDirs
   FsLinkArtifact
   FsListDir
+  FsDirExists
   EnvGet])
 (import doeff_agents.sessionhost.policy [ACTIVE-STATUSES])
 
@@ -452,6 +453,12 @@
               (os.symlink source-path target-path)
               (setv outcome "linked"))))
     (resume outcome))
+
+  (FsDirExists [path]
+    ;; resume の作業場 precondition(ADR-006 改訂 R8)。symlink は解決先で
+    ;; 判定する(os.path.isdir は follow する)— tmux -c も解決先へ cd する
+    ;; ので、判定と実行の意味を揃える。
+    (resume (os.path.isdir path)))
 
   (FsListDir [path]
     ;; 発見用の非破壊読み(ADR-006): 不在・非 dir・権限は空 list —
