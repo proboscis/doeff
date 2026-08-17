@@ -19,7 +19,22 @@ base = "main"
 
 [gate]
 full = "make sync && PYTHONUNBUFFERED=1 uv run pytest -q -m 'not e2e'"
-timeout_s = 2700
+# ADR-DOE-ENFORCE-001 R6 の第 3 の締切(2026-08-17 改訂 2700 → 7200)。
+# 締切は 3 つある — 1 テストごとの pytest-timeout、その上に立つ SIGKILL
+# watchdog、そして門の走行そのものの持ち時間(この値)。内側の 2 つは
+# conftest.py で過負荷率に連動するようになったが、この値は連邦の機構
+# (dotfiles land.py)が読む静的な宣言で、負荷に連動する口を持たない。
+#
+# 内側を伸ばすと走行の総時間は必然的に伸びる(60 秒で落ちていた試験が
+# 328 秒まで走れるようになったのだから当然で、これは欠陥ではなく設計)。
+# 2700 秒のままだと、内側の修理は「1 テストの赤」を「走行全体の時間切れ」へ
+# 移し替えるだけになる — 実測 2026-08-17: L26 が 2710.7 秒で timeout。
+# 内訳は Rust の再 build 約 12 分 + 電池 33 分超(load 約 100 帯)。
+#
+# 7200 = 過負荷率が上限(既定 8)に張り付いた走行でも終われる値。負荷が
+# 制御された場所(CI)は PYTEST_DEADLINE_SCALE=off で内側を固定できるので、
+# この値を使い切らない。
+timeout_s = 7200
 
 # R-94ede4bc 投機列車(operator 直接指示 2026-08-17「merge queue の投機テストを
 # 全 repo で適用」— 連邦の機構 = dotfiles land.py・先例 = dotfiles 裁定 2026-08-16
