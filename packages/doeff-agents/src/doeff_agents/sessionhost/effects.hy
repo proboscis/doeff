@@ -371,8 +371,10 @@
 
 (defclass [(dataclass :frozen True :kw-only True)] BuildLaunch [EffectBase]
   "kind の起動 argv を組み立てる。戻り値: list[str]。
-   凍結配線(S13 / 49b3549b 傷跡): claude は
-   `--settings {\"disableAllHooks\":true}` + `--mcp-config`(doeff_result stdio)+
+   凍結配線(S13 / 49b3549b 傷跡): claude は既定で
+   `--settings {\"disableAllHooks\":true}`(params session_hooks = \"inherit\"
+   〔daemon env knob DOEFF_AGENTD_SESSION_HOOKS〕では出さない — 安全 hook まで
+   切れる実測 2026-08-18 の根治)+ `--mcp-config`(doeff_result stdio)+
    `--strict-mcp-config`、codex は `-c mcp_servers.\"doeff_result\".command=` /
    `.args=[...]`。prompt は argv に載せない(live terminal transport のみ)。"
   #^ str agent-type

@@ -311,6 +311,53 @@
   (assert (= (get row.effective-identity "CLAUDE_CONFIG_DIR") "/x/claude")))
 
 
+(deftest test-launch-env-declares-unattended-session-class
+  ;; agentd 起動の会話は無人 — spawn env が AGENT_SESSION_CLASS=unattended を
+  ;; 宣言する(hook 層の会話種別 self-gate 契約の相方 — 2026-08-18
+  ;; route-c03fe34745)。caller overlay の明示は尊重する。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["codex booting banner" "› {composer}"])
+  (<- _ (run-launch world (launch-params)))
+  (assert (= (get (get world.tmux-envs "doeff-s1") "AGENT_SESSION_CLASS")
+             "unattended"))
+  (setv world2 (LaunchWorld))
+  (setv world2.capture-script ["codex booting banner" "› {composer}"])
+  (<- _ (run-launch world2 (launch-params
+                             :session_env {"AGENT_SESSION_CLASS" "attended"})))
+  (assert (= (get (get world2.tmux-envs "doeff-s1") "AGENT_SESSION_CLASS")
+             "attended")))
+
+
+(deftest test-launch-claude-session-hooks-inherit-knob
+  ;; DOEFF_AGENTD_SESSION_HOOKS=inherit: claude argv から
+  ;; --settings {"disableAllHooks":true} が外れ、config-dir 所有者の hook 層へ
+  ;; 委ねる(既定の凍結物理は test-launch-claude-uses-claude-impl がピン)。
+  (setv world (LaunchWorld))
+  (setv (get world.env "DOEFF_AGENTD_SESSION_HOOKS") "inherit")
+  (setv world.capture-script ["❯ {composer}"])
+  (<- row (run-launch world (launch-params
+                              :agent_type "claude"
+                              :binding {"kind" "claude-code"
+                                        "config_dir" "/x/claude"})))
+  (setv [pane cmd literal submit] (get world.sent-keys 0))
+  (assert (.startswith cmd "claude --dangerously-skip-permissions"))
+  (assert (not-in "disableAllHooks" cmd))
+  (assert (not-in "--settings" cmd)))
+
+
+(deftest test-launch-rejects-unknown-session-hooks-vocab
+  ;; 語彙外の DOEFF_AGENTD_SESSION_HOOKS は fail-loud(黙った綴り違いが
+  ;; 「安全 hook 全滅」を無言で復活させるため)。tmux 効果ゼロ。
+  (setv world (LaunchWorld))
+  (setv (get world.env "DOEFF_AGENTD_SESSION_HOOKS") "on")
+  (setv raised None)
+  (try
+    (<- _ (run-launch world (launch-params)))
+    (except [e RuntimeError] (setv raised e)))
+  (assert (in "DOEFF_AGENTD_SESSION_HOOKS" (str raised)))
+  (assert (not-in "new-session" (lfor t world.trace (get t 0)))))
+
+
 ;; ---------------------------------------------------------------------------
 ;; reject 経路(すべて tmux 効果ゼロ)
 ;; ---------------------------------------------------------------------------

@@ -49,6 +49,7 @@
   session-store-list-active
   session-store-upsert
   session-store-record-event
+  env-get
   fs-dir-exists
   tmux-has-session
   tmux-new-session
@@ -417,11 +418,30 @@
     (setv minted-conversation (.pop identity "conversation" None)))
   (setv resume-context (.get params "resume_context"))
 
+  ;; --- session hook 配布の宣言(2026-08-18 ACP 起動会話の安全 hook 全滅の
+  ;; 根治 — route-c03fe34745)。daemon env knob DOEFF_AGENTD_SESSION_HOOKS を
+  ;; use-site で読む(monitor knob と同じ流儀):
+  ;;   未設定 / "disabled" = 従来物理(claude argv に
+  ;;     --settings {"disableAllHooks":true} — 49b3549b 傷跡の既定を変えない)
+  ;;   "inherit" = その pair を argv から外し、config-dir 所有者の hook 層へ
+  ;;     委ねる(hook 層は下の AGENT_SESSION_CLASS で会話種別 self-gate する契約)
+  ;; 語彙外は fail-loud: 黙った綴り違いは「安全 hook 全滅」を無言で復活させる。
+  (<- session-hooks-raw (env-get "DOEFF_AGENTD_SESSION_HOOKS"))
+  (setv session-hooks (or session-hooks-raw "disabled"))
+  (when (not-in session-hooks #{"disabled" "inherit"})
+    (raise (RuntimeError
+             (+ f"session.launch: DOEFF_AGENTD_SESSION_HOOKS='{session-hooks-raw}' "
+                "is not in the vocabulary {disabled, inherit} — refusing to "
+                "guess whether agent sessions receive the config-dir owner's "
+                "hooks (a silent typo here would silently re-disable the "
+                "safety hooks)"))))
+
   ;; --- result channel 配線 + 起動 command(oracle resolve_launch_command:
   ;; override は verbatim、それ以外は per-kind argv builder)。
   (setv command-line command-override)
   (when (not has-override)
     (setv effective-params (dict params))
+    (setv (get effective-params "session_hooks") session-hooks)
     (when (and (is-not expected-result None)
                (in agent-type INTERACTIVE-AGENT-TYPES))
       (<- channel (wire-result-channel agent-type session-id
@@ -451,7 +471,11 @@
             (dfor [k v] (.items identity)
                   :if (and (in k BINDING-OWNED-ENV-KEYS) (isinstance v str))
                   k v)))
-  (setv effective-env {#** session-env #** binding-env})
+  ;; AGENT_SESSION_CLASS: agentd 起動の会話は無人(unattended)であることを
+  ;; env で宣言する(hook 層の会話種別 self-gate 契約の相方 — 上の session
+  ;; hook 註)。caller overlay の明示があればそちらを尊重する。
+  (setv effective-env {"AGENT_SESSION_CLASS" "unattended"
+                       #** session-env #** binding-env})
   (<- pane-id (tmux-new-session session-name (get params "work_dir") effective-env))
 
   ;; --- booting 行の登録(tmux-new-session 直後・ready 待ちの前 — issue
