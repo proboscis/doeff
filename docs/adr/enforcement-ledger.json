@@ -4,5 +4,5 @@
   "semgrep_rules": 251,
   "adr_deftest_enforcements": 38,
   "adr_defsemgrep_enforcements": 47,
-  "adr_laws": 85
+  "adr_laws": 86
 }
