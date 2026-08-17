@@ -3,7 +3,8 @@
 ;;; protocol 物理の単一の家(protocol-physics-has-one-home): oracle =
 ;;; agentd-rust-final:src/main.rs build_claude_argv / trust_claude_workspace。
 ;;; conformance 凍結: S12(trust pre-seed: canonicalized work_dir key・
-;;; temp+rename)/ S13(--settings disableAllHooks + --mcp-config stdio +
+;;; temp+rename)/ S13(--settings disableAllHooks は既定のみ —
+;;; DOEFF_AGENTD_SESSION_HOOKS=inherit で外れる。+ --mcp-config stdio +
 ;;; --strict-mcp-config・prompt は argv に載らない)/ DOE-003 R3
 ;;; (CLAUDE_CONFIG_DIR 無しは warning のみの staged enforcement)。
 ;;;
@@ -49,18 +50,24 @@
   {:pre [(: params dict)]
    :post [(: % list)]}
   "claude の起動 argv。凍結物理:
-   - `--dangerously-skip-permissions` + `--settings {\"disableAllHooks\":true}`
-     (49b3549b 傷跡: 無人 session が config-dir 所有者の Stop-hook 連鎖で
-     turn を切られた実障害 — hooks は human-workflow、agent の契約は
-     result channel)
+   - `--dangerously-skip-permissions` + 既定では
+     `--settings {\"disableAllHooks\":true}`(49b3549b 傷跡: 無人 session が
+     config-dir 所有者の Stop-hook 連鎖で turn を切られた実障害)。
+     ただし params session_hooks = \"inherit\"(daemon env knob
+     DOEFF_AGENTD_SESSION_HOOKS — launch.hy が読む)ではこの pair を出さない:
+     全 hook 無効化は安全側の hook(破壊的 git / pattern kill / push 門)まで
+     切り、ACP 起動会話 241 母集団で発火 0 の実測(2026-08-18
+     route-c03fe34745)。inherit は config-dir 所有者の hook 層が
+     AGENT_SESSION_CLASS=unattended(spawn env — launch.hy)で会話種別
+     self-gate することを契約前提にする。
    - effort → model の順(oracle 順序、無指定はフラグ自体を出さない)
    - caller mcp_servers(sse)+ result channel(stdio)を単一 --mcp-config に
      まとめ、非空なら --strict-mcp-config を付ける
    - prompt は決して argv に載せない(live terminal transport のみ)・
      print mode(-p / --print)不使用"
-  (setv args ["claude"
-              "--dangerously-skip-permissions"
-              "--settings" "{\"disableAllHooks\":true}"])
+  (setv args ["claude" "--dangerously-skip-permissions"])
+  (when (!= (.get params "session_hooks") "inherit")
+    (.extend args ["--settings" "{\"disableAllHooks\":true}"]))
   (setv effort (.get params "effort"))
   (when effort
     (.extend args ["--effort" effort]))

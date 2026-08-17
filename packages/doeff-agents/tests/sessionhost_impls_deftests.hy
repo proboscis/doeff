@@ -2,7 +2,8 @@
 ;;; (DOE-004 C2)。
 ;;;
 ;;; oracle parity の対象(conformance README の凍結物理):
-;;;   - S13: argv 配線(claude --settings disableAllHooks + --mcp-config stdio +
+;;;   - S13: argv 配線(claude --settings disableAllHooks は既定のみ —
+;;;     session_hooks=inherit で外れる。+ --mcp-config stdio +
 ;;;     --strict-mcp-config / codex -c mcp_servers."doeff_result".command/.args。
 ;;;     prompt は argv に載らない・print mode 不使用)
 ;;;   - S12: claude trust pre-seed(canonicalized work_dir key・temp+rename)
@@ -161,6 +162,23 @@
   (assert (not-in "do the task" argv))
   (assert (not-in "-p" argv))
   (assert (not-in "--print" argv)))
+
+
+(deftest test-claude-argv-session-hooks-inherit
+  ;; session_hooks=inherit(daemon env knob DOEFF_AGENTD_SESSION_HOOKS —
+  ;; launch.hy が params へ写す)では --settings {"disableAllHooks":true} を
+  ;; 出さない: 全 hook 無効化は安全側 hook まで切る(2026-08-18 ACP 起動会話で
+  ;; 発火 0 の実測 — route-c03fe34745)。他の凍結物理は既定と同一。
+  (setv world (ImplWorld))
+  (setv params (base-params :agent_type "claude"
+                            :session_hooks "inherit"
+                            :effort "high"
+                            :result_channel (channel-spec)))
+  (<- argv (run-claude world (build-launch "claude" params)))
+  (assert (= (cut argv 0 2) ["claude" "--dangerously-skip-permissions"]))
+  (assert (not-in "--settings" argv))
+  (assert (in "--strict-mcp-config" argv))
+  (assert (not-in "-p" argv)))
 
 
 (deftest test-claude-argv-caller-sse-servers

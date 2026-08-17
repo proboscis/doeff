@@ -6,7 +6,11 @@ its `sys.argv` at startup, so the suite can assert the exact flags a real
 codex/claude would have received:
 
   claude (build_claude_argv, main.rs:1405-1465):
-    --dangerously-skip-permissions, --settings {"disableAllHooks":true},
+    --dangerously-skip-permissions, --settings {"disableAllHooks":true}
+    (default only — DOEFF_AGENTD_SESSION_HOOKS=inherit drops the pair and
+    the spawn env declares AGENT_SESSION_CLASS=unattended for the
+    config-dir owner's class-gated hook layer; 2026-08-18
+    route-c03fe34745),
     --mcp-config <json wiring the agentd-owned doeff_result stdio server>,
     --strict-mcp-config
   codex (build_codex_argv, main.rs:1345-1403):
@@ -94,6 +98,50 @@ def test_s13_claude_argv_wiring_and_m1_golden_path(tmp_path) -> None:
             f"status={row['status']} err={row['last_validation_error']}\n"
             + harness.log_text()
         )
+
+
+def test_s13_claude_argv_session_hooks_inherit(tmp_path) -> None:
+    """DOEFF_AGENTD_SESSION_HOOKS=inherit(daemon env)では claude argv から
+    --settings {"disableAllHooks":true} が外れ(config-dir 所有者の hook 層へ
+    委ねる)、spawn env が AGENT_SESSION_CLASS=unattended を宣言する(hook 層の
+    会話種別 self-gate 契約の相方)。既定(knob 無し)の凍結物理は上の
+    test_s13_claude_argv_wiring_and_m1_golden_path が引き続きピンする。
+    背景: 全 hook 無効化が安全側 hook(破壊的 git / pattern kill / push 門)
+    まで切り、ACP 起動会話 241 母集団で発火 0 の実測(2026-08-18
+    route-c03fe34745)。"""
+    claude_config_dir = tmp_path / "claude-config"
+    with AgentdHarness(
+        extra_env={"DOEFF_AGENTD_SESSION_HOOKS": "inherit"}
+    ) as harness:
+        scenario = harness.scenario(
+            "s13-claude-hooks-inherit",
+            [
+                {"render": "F-idle-claude"},
+                {"await_keys": {"expect": PROMPT, "timeout_s": 30}},
+                {"record_env": ["AGENT_SESSION_CLASS", "CLAUDE_CONFIG_DIR"]},
+            ],
+        )
+        scenario.launch_m1(
+            agent_type="claude",
+            prompt=PROMPT,
+            expected_result={"payload_schema": RESULT_SCHEMA},
+            extra_env={"CLAUDE_CONFIG_DIR": str(claude_config_dir)},
+        )
+
+        args = _started_argv(scenario)
+        assert "--dangerously-skip-permissions" in args, args
+        assert "--settings" not in args, args
+        assert "--strict-mcp-config" in args, args
+
+        deadline = time.monotonic() + 10.0
+        env_entries = []
+        while time.monotonic() < deadline and not env_entries:
+            env_entries = [e for e in scenario.journal() if e["event"] == "env"]
+            time.sleep(0.2)
+        assert env_entries, env_entries
+        assert (
+            env_entries[0]["values"]["AGENT_SESSION_CLASS"] == "unattended"
+        ), env_entries
 
 
 def test_s13_codex_argv_wiring(tmp_path) -> None:
