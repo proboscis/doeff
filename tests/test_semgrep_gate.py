@@ -61,14 +61,41 @@ def test_semgrep_findings_match_baseline_ratchet():
         "semgrep は dev 依存に含まれるため、`make sync` を実行すること。"
     )
     proc = subprocess.run(
-        [binary, "--config", ".semgrep.yaml", "doeff/", "packages/", "--error", "--quiet", "--json"],
+        # --metrics=off --disable-version-check: 検査の実行に network(送信・新版照会)を
+        # 混ぜない — 到達性・応答時間という機体の事情が検査に入るのを断つ。
+        # --project-root=ROOT: root を git metadata からの推論に任せない — .git の無い
+        # 検査 tree では root が走査対象 dir に落ち、上位セグメントを参照する
+        # paths.include を持つ rule が gate から無音で脱落する(zeus 実測 2026-08-17)。
+        [
+            binary,
+            "--metrics=off",
+            "--disable-version-check",
+            "--project-root",
+            str(ROOT),
+            "--config",
+            ".semgrep.yaml",
+            "doeff/",
+            "packages/",
+            "--error",
+            "--quiet",
+            "--json",
+        ],
         cwd=ROOT,
         capture_output=True,
         text=True,
         timeout=600,
         check=False,  # 違反有無は returncode でなく results 数で判定する(baseline ratchet)
     )
-    results = json.loads(proc.stdout)["results"]
+    # exit code は判定に使わない分、JSON の実在が「scan が走った」の唯一の証拠になる。
+    # 起動時 crash(exit 1・stdout 空)を裸の JSONDecodeError にしない(zeus 実測
+    # 2026-08-17: interpreter 不整合の crash が判読不能な赤で報告された)。
+    try:
+        results = json.loads(proc.stdout)["results"]
+    except ValueError as exc:
+        raise AssertionError(
+            f"semgrep produced no JSON verdict (exit {proc.returncode}) — "
+            f"the scan did not run; stderr:\n{proc.stderr}"
+        ) from exc
     baseline = json.loads(BASELINE.read_text())["findings"]
     actual = len(results)
     if actual > baseline:

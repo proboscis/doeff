@@ -84,12 +84,12 @@ lint-pyright:
 # Semgrep: Architectural pattern enforcement (installed by make sync)
 lint-semgrep:
 	@echo "Running semgrep architectural rules..."
-	uv run semgrep --config .semgrep.yaml doeff/ packages/ --error
+	uv run semgrep --metrics=off --disable-version-check --config .semgrep.yaml doeff/ packages/ --error
 
 # Semgrep: Check docs for deprecated Runtime/Runner API usage
 lint-semgrep-docs:
 	@echo "Running semgrep on documentation..."
-	uv run semgrep --config .semgrep.yaml docs/ README.md --error
+	uv run semgrep --metrics=off --disable-version-check --config .semgrep.yaml docs/ README.md --error
 
 # Doeff-linter: Custom Rust-based linter for doeff patterns
 lint-doeff:
@@ -152,7 +152,7 @@ test-all: test test-packages
 
 test-spec-audit-sa002:
 	uv run pytest tests/core/test_sa002_spec_gaps.py
-	uv run semgrep --config specs/audits/SA-002/semgrep/rules.yml doeff/ packages/
+	uv run semgrep --metrics=off --disable-version-check --config specs/audits/SA-002/semgrep/rules.yml doeff/ packages/
 
 bench-smoke:
 	uv run python benchmarks/benchmark_runner.py --smoke --no-output

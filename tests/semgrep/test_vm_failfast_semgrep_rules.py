@@ -19,7 +19,25 @@ def _semgrep_results(config: Path, target: str, *, cwd: Path) -> list[dict[str, 
         pytest.skip("semgrep is not installed")
 
     completed = subprocess.run(
-        [semgrep_bin, "--no-git-ignore", "--config", str(config), "--json", target],
+        # --metrics=off --disable-version-check: 検査の実行に network(送信・新版照会)を
+        # 混ぜない — 到達性・応答時間という機体の事情が検査に入るのを断つ。
+        # --project-root=REPO_ROOT: root を git metadata からの推論に任せない — .git の
+        # 無い検査 tree では root が走査対象 dir 自身に落ち、対象より上のセグメントを
+        # 参照する paths.include だけが無音で死ぬ(zeus 実測 2026-08-17)。root は cwd
+        # (fixture dir)ではなく tree の根 — rule 側の fixtures 写し include
+        # (/tests/semgrep/fixtures/...)は repo-root 相対で書かれている。
+        [
+            semgrep_bin,
+            "--metrics=off",
+            "--disable-version-check",
+            "--project-root",
+            str(REPO_ROOT),
+            "--no-git-ignore",
+            "--config",
+            str(config),
+            "--json",
+            target,
+        ],
         cwd=cwd,
         capture_output=True,
         text=True,
@@ -30,7 +48,16 @@ def _semgrep_results(config: Path, target: str, *, cwd: Path) -> list[dict[str, 
             f"semgrep failed:\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
         )
 
-    payload = json.loads(completed.stdout)
+    # exit 1 は「findings あり」と「起動時 crash」の両方が返す — JSON が読めた時だけ
+    # scan が走ったと言える(zeus 実測 2026-08-17: interpreter 不整合の crash が
+    # exit 1 + 空 stdout で返り、JSONDecodeError の裸の traceback に化けた)。
+    try:
+        payload = json.loads(completed.stdout)
+    except ValueError as exc:
+        raise AssertionError(
+            f"semgrep produced no JSON verdict (exit {completed.returncode}) — "
+            f"the scan did not run; stderr:\n{completed.stderr}"
+        ) from exc
     return cast(list[dict[str, Any]], payload.get("results", []))
 
 
