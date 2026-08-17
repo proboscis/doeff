@@ -3,9 +3,9 @@
 # 利用したい」+ operator 決裁 sha d54350a8)。mixed repo(proboscis/doeff* は
 # company-mixed-repos.txt 登載)— 編集は任意席・著述は個人系。
 #
-# upstream repo 規約の機械化(発注 (4)): 「検証済みでしか main を進めない
-# (test locally → confirm pass → then merge/push)」— 従来は運用規律だったものを、
-# この宣言で『窓の battery green だけが main を進め、公開する』機械強制に置換する。
+# upstream repo 規約の機械化(発注 (4)): 「検証済みでしか main を進めない」は
+# 2026-08-17 の operator 裁定で**着地の門から事後検証へ移った**(下の mode = "focus"
+# の頭注)。テストは減らさない — 走る場所が変わる(日次全量検査 + stable 昇格)。
 # battery 実測 2026-08-09: uv run pytest -m "not e2e" = 1294 passed / 78 skipped /
 # 8 deselected(11m45s)。e2e marker は実 API キー依存につき gate 外(席実測の
 # 分担)。make sync 前置は AGENTS.md 明文(uv sync は Rust VM を確実に再 build
@@ -18,10 +18,28 @@ enabled = true
 base = "main"
 
 [gate]
+# full = 日次検証便(ai land verify)と full_paths 便だけが使う(mode = "focus" の間、
+# 窓末では走らない)。
 full = "make sync && PYTHONUNBUFFERED=1 uv run pytest -q -m 'not e2e'"
 # 門の走行の持ち時間 2700→7200(2026-08-17)。実測 = L32 が 2713.4s で時間切れ
 # (4 連敗・Mac 飽和帯)。ADR-DOE-ENFORCE-001 R6 の第 3 の締切の宣言先行便。
 timeout_s = 7200
+
+# R-7a95702d focus mode(operator 直接指示 2026-08-17「merge queue は 10 分以内・
+# 2700 秒の門は許容範囲外」— 先例 = herdr-hud D568 出荷 B / ACP 同日切替)。
+# operator 裁定 2026-08-17 逐語「mergeにテストは必須じゃない」: 着地の門は merge の
+# 力学(rebase 成立・patch-id 突合・受入検定)のみ。テストは全部事後 =
+# ① 日次全量検査(gate.full を ai land verify が使う — launchd 便は別途敷設)
+# ② 全走が緑の断面だけが stable ブランチ(policy.stable_branch)へ昇格
+# ③ 赤の復旧は fix-forward(容疑名指しの修理便の自動起票)— revert 自動化は不採。
+# 実測根拠: Mac 飽和帯で make sync だけが 23 分・全量が門 2700s に収まらず同一便が
+# 4 連敗(L29〜L32)。恒久解 = 全量検査の zeus/k3s 移設(remote_check 経由・
+# 2026-08-17 実測 = zeus 全量 36s〔-n 8〕。semgrep 執行層 69 検体の機体依存根治が
+# 前提 — route-doeff-semgrep-zeus-181256 起票済み)。
+mode = "focus"
+# focus の恒常部は宣言しない(doeff に横断走査 script なし — 門は力学のみ)。
+# 方策宣言そのものへの変更だけは常時 full battery(自己参照の fail-closed)
+full_paths = [".agents/land-queue.toml"]
 
 # R-94ede4bc 投機列車(operator 直接指示 2026-08-17「merge queue の投機テストを
 # 全 repo で適用」— 連邦の機構 = dotfiles land.py・先例 = dotfiles 裁定 2026-08-16
@@ -30,15 +48,16 @@ timeout_s = 7200
 # 発注する(判定の消費は直列同値・赤 1 便で窓ごと abort する形の根治)。厳密 bool。
 # 戻し方 = この行を外す便を着地させる(既定 off・law opt-in-inert)。
 speculation = true
-# 検査 backend(law policy-in-toml)。重い cold build を重ねて飽和機の load を倍にしない保守初期値。
-# 実測(last_run.speculation)を見て上げる — 恒久解 = L440 の k3s self-hosted
-# runner(external backend 段 2)への移設。
+# 検査 backend(law policy-in-toml)。mode = "focus" で gate 実体が軽くなったため
+# local のままで足りる。恒久解 = k3s self-hosted runner(external backend 段 2)。
 [gate.backend]
 kind = "local"
 max_parallel = 1
 join_s = 60
 
 [gate.tiers]
+# ⚠ mode = "focus" の間、この表は着地の解決に使われない(mode 未宣言への戻しだけが
+# 読む — herdr-hud / ACP と同じ移行残置。撤去は日次 verify 連続緑の再訪条件で別便)。
 "docs/adr/" = "make sync && PYTHONUNBUFFERED=1 uv run pytest -q docs/adr"
 "docs/" = "true"
 "notes/" = "true"
@@ -52,3 +71,5 @@ auto_run = true
 urgent_slots = 1
 push = "origin"
 base_move_follow_retries = 2
+# 日次検証の全走が緑の断面だけが昇格する(R-7a95702d)
+stable_branch = "stable"
