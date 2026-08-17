@@ -233,7 +233,16 @@
   ;; (prompt glyph の直後に番号つき option / 確認文言)。R9 fast-path の
   ;; 外側の dialog を loud に落とす判定材料(dialog=None かつこれが True)。
   #^ bool dialog-shaped
-  (setv dialog-shaped False))
+  (setv dialog-shaped False)
+  ;; ADR-DOE-AGENTS-006 R10 / ADR-DOE-AGENTS-011 改訂(2026-08-18): CLI が
+  ;; 会話を解決できず loud 終了した画面の事実(claude『No conversation found
+  ;; with session ID』/ codex『no rollout found for thread id』—
+  ;; resume-physics.md プローブ (a)(c) の逐語)。status には効かせない —
+  ;; 起動 gate だけが consume し、予算を待たず conversation-not-found class で
+  ;; 即終端する(2026-08-16〜17 実測: この画面の席 91 件が全件 120s 待って
+  ;; no-agent-frame に誤分類されていた)。
+  #^ bool has-conversation-not-found-marker
+  (setv has-conversation-not-found-marker False))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] PaneFrame []
@@ -453,6 +462,12 @@
 (setv RESUME-ERR-IDENTITY-UNKNOWN "identity_unknown")
 (setv RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE "transcript_not_discoverable")
 (setv RESUME-ERR-KIND-NOT-SUPPORTED "kind_not_supported")
+;; ADR-DOE-AGENTS-006 R10(2026-08-18): 宿り先 work_dir(R4 の source copy
+;; 固定)が物理に実在しない再開発注の typed reject。tmux は不在
+;; start-directory を黙って $HOME に差し替えるため、claude の cwd 鍵の会話
+;; 解決(projects/<mangle(cwd)>)ごと別の家を見て『No conversation found』で
+;; 即死する — 2026-08-16〜17 の resume 全滅 91/91 件の一次原因。
+(setv RESUME-ERR-WORKDIR-NOT-FOUND "workdir_not_found")
 
 
 ;; ===========================================================================
@@ -628,6 +643,19 @@
    substrate は観測結果の 4 値を返すだけ。戻り値: str(上記 4 値)。"
   #^ str source-path
   #^ str target-path)
+
+(defclass [(dataclass :frozen True :kw-only True)] FsDirExists [EffectBase]
+  "ディレクトリの実在観測(ADR-DOE-AGENTS-006 R10 — 発注の物理前提検査)。
+   symlink は解決して判定する(解決先が dir なら実在)。FsListDir は不在と
+   空 dir をどちらも空 list に潰すためこの用途に使えない — 空だが実在する
+   work_dir は正当な宿り先。戻り値: bool。"
+  #^ str path)
+
+(defclass [(dataclass :frozen True :kw-only True)] FsFileExists [EffectBase]
+  "ファイルの実在観測(ADR-DOE-AGENTS-006 R10 — same-home resume の
+   transcript 実在検査)。symlink は解決して判定する — 壊れた symlink は
+   不在(R7 の『実体でも symlink 解決先としても不在』と同義)。戻り値: bool。"
+  #^ str path)
 
 (defclass [(dataclass :frozen True :kw-only True)] EnvGet [EffectBase]
   "呼び手 process env の単読(S11 caveat: trust writer は session_env に無い
@@ -841,6 +869,18 @@
    :post [(: % FsLinkArtifact)]}
   "FsLinkArtifact を構築する(transplant の symlink 敷設プリミティブ)。"
   (FsLinkArtifact :source-path source-path :target-path target-path))
+
+(deff fs-dir-exists [path]
+  {:pre [(: path str) (> (len path) 0)]
+   :post [(: % FsDirExists)]}
+  "FsDirExists を構築する(発注の物理前提検査 — ADR-DOE-AGENTS-006 R10)。"
+  (FsDirExists :path path))
+
+(deff fs-file-exists [path]
+  {:pre [(: path str) (> (len path) 0)]
+   :post [(: % FsFileExists)]}
+  "FsFileExists を構築する(transcript 実在検査 — ADR-DOE-AGENTS-006 R10)。"
+  (FsFileExists :path path))
 
 (deff env-get [name]
   {:pre [(: name str) (> (len name) 0)]

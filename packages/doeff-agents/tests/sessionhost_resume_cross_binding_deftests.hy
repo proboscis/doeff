@@ -83,19 +83,43 @@
   (assert (in "--resume conv-1" cmd)))
 
 
-(deftest test-resume-binding-same-home-skips-transplant
-  ;; binding が蘇生元と同一 home なら transplant は発火しない(source
-  ;; transcript を台本に置かなくても成功する = FS 検査自体が走らない)。
+(deftest test-resume-binding-same-home-verifies-without-transplant
+  ;; 同一 home への resume は symlink 敷設(transplant)はしないが、transcript の
+  ;; 実在検査は cross-home と同じく発注時に走る(ADR-DOE-AGENTS-006 R10 —
+  ;; 2026-08-18 契約改訂。旧 pin『FS 検査自体が走らない』は、起動段で死んだ行
+  ;; 〔transcript 未実体化〕の resume を素通しして実 CLI の
+  ;; 『No conversation found』120s 死に落としていた)。
   (setv world (LaunchWorld))
   (seed-source world #** (claude-seed-kwargs))
+  (setv (get world.fs CLAUDE-SOURCE-TRANSCRIPT) "{\"type\":\"meta\"}\n")
   (setv world.capture-script ["❯ {composer}"])
   (<- row (run-resume world (resume-params
                               :binding {"kind" "claude-code"
                                         "config_dir" "/x/claude-A"})))
   (assert (= row.session-id "s1~g2"))
+  ;; 敷設はゼロ(同一 home に link は要らない)
   (assert (= (len world.links) 0))
   (assert (= (get (get world.tmux-envs "doeff-s1~g2") "CLAUDE_CONFIG_DIR")
              "/x/claude-A")))
+
+
+(deftest test-resume-binding-same-home-missing-transcript-rejects
+  ;; 同一 home でも transcript 不在は typed reject(R10)— cross-home の
+  ;; transcript_not_discoverable と同じ語彙・同じ前倒し。
+  (setv world (LaunchWorld))
+  (seed-source world #** (claude-seed-kwargs))
+  (setv raised None)
+  (try
+    (<- _ (run-resume world (resume-params
+                              :binding {"kind" "claude-code"
+                                        "config_dir" "/x/claude-A"})))
+    (except [e RuntimeError]
+      (setv raised e)))
+  (assert (is-not raised None))
+  (assert (hasattr raised "code"))
+  (assert (= raised.code "transcript_not_discoverable"))
+  (assert (= (sorted (.keys world.rows)) ["s1"]))
+  (assert (not world.tmux-sessions)))
 
 
 (deftest test-resume-cross-binding-missing-transcript-rejects

@@ -45,6 +45,8 @@
   FsMakeDirs
   FsLinkArtifact
   FsListDir
+  FsDirExists
+  FsFileExists
   EnvGet])
 (import doeff_agents.sessionhost.policy [ACTIVE-STATUSES])
 
@@ -461,6 +463,16 @@
       (setv entries (sorted (os.listdir path)))
       (except [OSError]))
     (resume entries))
+
+  (FsDirExists [path]
+    ;; ADR-DOE-AGENTS-006 R10(発注の物理前提検査)。isdir は symlink を
+    ;; 解決する — 解決先が dir なら実在、壊れた symlink は不在。
+    (resume (os.path.isdir path)))
+
+  (FsFileExists [path]
+    ;; ADR-DOE-AGENTS-006 R10(transcript 実在検査)。isfile は symlink を
+    ;; 解決する — 壊れた symlink は不在(R7 の意味論と同義)。
+    (resume (os.path.isfile path)))
 
   (FsComposeHomeView [auth-file profile-dir view-root]
     (resume (compose-home-view auth-file profile-dir view-root)))

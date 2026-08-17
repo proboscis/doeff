@@ -53,6 +53,8 @@
   FsMakeDirs
   FsLinkArtifact
   FsListDir
+  FsDirExists
+  FsFileExists
   EnvGet])
 (import doeff_agents.sessionhost.effects [READY-PROBE-TEXT])
 (import doeff_agents.sessionhost.policy [ACTIVE-STATUSES])
@@ -93,6 +95,10 @@
     (setv self.listings {})         ;; path → エントリ名 list(FsListDir の台本)
     (setv self.links {})            ;; target → source(FsLinkArtifact の記録)
     (setv self.kill-broken False)   ;; True: TmuxKillSession が raise(cleanup 失敗)
+    ;; ADR-DOE-AGENTS-006 R10: FsDirExists の台本。既定 = 実在(全 dir が在る
+    ;; 世界)。work_dir 消失(2026-08-17 実測の ACP workspace 削除)を模す
+    ;; テストだけがここへ path を積む。
+    (setv self.missing-dirs (set))
     (setv self.now (datetime 2026 7 5 12 0 0 :tzinfo timezone.utc))))
 
 
@@ -104,6 +110,15 @@
                   :if (in r.status ACTIVE-STATUSES) r)))
   (FsListDir [path]
     (resume (sorted (.get world.listings path []))))
+  (FsDirExists [path]
+    ;; 既定 = 実在。missing-dirs に積まれた path だけ不在(work_dir 消失の模型)。
+    (.append world.trace #("dir-exists" path))
+    (resume (not-in path world.missing-dirs)))
+  (FsFileExists [path]
+    ;; fs(実体台本)か links(敷設済み symlink)に居れば実在 — FsLinkArtifact の
+    ;; source-known と同じ知識面(listings は dir なので見ない)。
+    (.append world.trace #("file-exists" path))
+    (resume (or (in path world.fs) (in path world.links))))
   (SessionStoreUpsert [row]
     (.append world.trace #("upsert" row.session-id))
     (setv (get world.rows row.session-id) row)
@@ -865,6 +880,50 @@
   (setv stored (get world.rows "s1"))
   (assert (= stored.terminal-cause.category "rate_limited"))
   (assert (= stored.terminal-cause.retryable True)))
+
+
+(deftest test-launch-rejects-missing-work-dir
+  ;; ADR-DOE-AGENTS-006 R10: work_dir の物理実在は launch の admission 事実。
+  ;; tmux は不在 start-directory を黙って $HOME に差し替える(2026-08-17 実測
+  ;; 91 件: pane の shell prompt が `CA-…:~` で立ち、claude の cwd 鍵の会話
+  ;; 解決が全滅)。全副作用(trust 書き・tmux・行登録)より前に loud に落とす。
+  (setv world (LaunchWorld))
+  (.add world.missing-dirs "/work/dir")
+  (<- raised (gate-failure world (launch-params)))
+  (assert (in "work_dir does not exist" (str raised)) (str raised))
+  (assert (in "/work/dir" (str raised)))
+  ;; 副作用ゼロ: 行不生成・tmux 不接触・trust 書きなし
+  (assert (= (len world.rows) 0))
+  (assert (not world.tmux-sessions))
+  (setv trace-kinds (lfor t world.trace (get t 0)))
+  (assert (not-in "fs-write" trace-kinds))
+  (assert (not-in "new-session" trace-kinds)))
+
+
+(deftest test-launch-ready-gate-conversation-not-found-fails-fast
+  ;; ADR-DOE-AGENTS-011 改訂(2026-08-18): CLI が会話を解決できないと rc=1 で
+  ;; 即 loud 終了する(resume-physics.md プローブ (a))。この画面は 120s の
+  ;; 予算を待つ命題ではない — 実測 91 件が全件予算切れまで待って
+  ;; no-agent-frame に誤分類されていた。実物 frame の写しで即時の分類を検証。
+  (setv world (LaunchWorld))
+  (setv world.capture-script
+        [(+ "The default interactive shell is now zsh.\n"
+            "CA-20038667:~ s22625$ claude --dangerously-skip-permissions "
+            "--resume 6129f510-70f3-4cac-a29c-3956d5c925a0\n"
+            "No conversation found with session ID: "
+            "6129f510-70f3-4cac-a29c-3956d5c925a0\n"
+            "CA-20038667:~ s22625$")])
+  (<- raised (gate-failure world (launch-params
+                                   :agent_type "claude"
+                                   :binding {"kind" "claude-code"
+                                             "config_dir" "/x/claude"})))
+  (assert (in "[conversation-not-found]" (str raised)) (str raised))
+  ;; 予算を使い切らずに落ちる(最初の観測で確定する命題)
+  (assert (< world.captures 3) world.captures)
+  ;; 未配達の分類は保つ(category は prompt_undelivered)
+  (setv stored (get world.rows "s1"))
+  (assert (= stored.terminal-cause.category "prompt_undelivered"))
+  (assert (in "[conversation-not-found]" stored.last-validation-error)))
 
 
 (deftest test-launch-ready-gate-retains-bounded-evidence-frames

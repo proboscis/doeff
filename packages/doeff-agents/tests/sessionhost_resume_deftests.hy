@@ -130,6 +130,10 @@
   (seed-source world :agent_type "claude" :status "running"
                :effective_identity {"CLAUDE_CONFIG_DIR" "/x/claude"}
                :conversation {"session_id" "conv-A"})
+  ;; R10: fork も親 transcript の実在を発注時に検査する(--resume <親> が
+  ;; 実 CLI の前提)— 台本に親 transcript を置く。
+  (setv (get world.fs "/x/claude/projects/-work-dir/conv-A.jsonl")
+        "{\"type\":\"meta\"}\n")
   (.add world.tmux-sessions "doeff-s1")
   (setv world.capture-script ["❯ {composer}"])
   (<- row (run-resume world (resume-params :mode "fork"
@@ -214,6 +218,89 @@
       (setv raised (str e))))
   (assert (is-not raised None))
   (assert (in "not registered" raised)))
+
+
+(deftest test-resume-rejects-missing-workdir
+  ;; ADR-DOE-AGENTS-006 R10: 宿り先 work_dir(R4 の source copy 固定)が
+  ;; 物理に消えている再開発注は、発注時に typed reject(workdir_not_found)。
+  ;; 実弾 2026-08-16〜17: ACP が自分で削除した workspace へ resume failover を
+  ;; 発注し続け、91 発注が全件 tmux → $HOME 差し替え → 会話解決全滅 →
+  ;; 120s 予算切れ(no-agent-frame)で死んだ。副作用ゼロで落とす。
+  (setv world (LaunchWorld))
+  (seed-source world)
+  (.add world.missing-dirs "/work/dir")
+  (setv raised None)
+  (try
+    (<- _ (run-resume world (resume-params)))
+    (except [e RuntimeError]
+      (setv raised e)))
+  (assert (is-not raised None))
+  (assert (hasattr raised "code"))
+  (assert (= raised.code "workdir_not_found"))
+  (assert (in "work_dir" (str raised)))
+  (assert (in "/work/dir" (str raised)))
+  ;; 副作用ゼロ: 行不生成・tmux 不接触・symlink 不敷設
+  (assert (= (sorted (.keys world.rows)) ["s1"]))
+  (assert (not world.tmux-sessions))
+  (assert (= (len world.links) 0)))
+
+
+(deftest test-fork-rejects-missing-workdir
+  ;; fork も同じ宿り先を使う — 同じ admission(R10)。
+  (setv world (LaunchWorld))
+  (seed-source world)
+  (.add world.missing-dirs "/work/dir")
+  (setv raised None)
+  (try
+    (<- _ (run-resume world (resume-params :mode "fork")))
+    (except [e RuntimeError]
+      (setv raised e)))
+  (assert (is-not raised None))
+  (assert (hasattr raised "code"))
+  (assert (= raised.code "workdir_not_found"))
+  (assert (not world.tmux-sessions)))
+
+
+(deftest test-resume-same-home-claude-missing-transcript-rejects
+  ;; ADR-DOE-AGENTS-006 R10: same-home(binding 未指定)の resume でも
+  ;; transcript の実在は発注時に検査する。会話 identity は launch 時に鋳造
+  ;; される stored fact だが、transcript は最初の turn まで実体化しない —
+  ;; 起動段で死んだ行を resume すると実 CLI は『No conversation found』で
+  ;; rc=1 即死する(resume-physics.md プローブ (a))。発注時 typed reject で
+  ;; 前倒しする。
+  (setv world (LaunchWorld))
+  (seed-source world :agent_type "claude"
+               :effective_identity {"CLAUDE_CONFIG_DIR" "/x/claude"}
+               :conversation {"session_id" "conv-A"})
+  (setv raised None)
+  (try
+    (<- _ (run-resume world (resume-params)))
+    (except [e RuntimeError]
+      (setv raised e)))
+  (assert (is-not raised None))
+  (assert (hasattr raised "code"))
+  (assert (= raised.code "transcript_not_discoverable"))
+  (assert (in "conv-A" (str raised)))
+  (assert (= (sorted (.keys world.rows)) ["s1"]))
+  (assert (not world.tmux-sessions)))
+
+
+(deftest test-resume-same-home-codex-missing-rollout-rejects
+  ;; codex の same-home: rollout_path が記帳されている行は実在を検査する。
+  ;; 消えた rollout は CLI の自 home 走査でも見つからず loud 死する
+  ;; (resume-physics.md プローブ (c))— 発注時 typed reject で前倒し。
+  (setv world (LaunchWorld))
+  (seed-source world :conversation {"session_id" "conv-1"
+                                    "rollout_path" "/x/codex/sessions/2026/07/05/rollout-t1-conv-1.jsonl"})
+  (setv raised None)
+  (try
+    (<- _ (run-resume world (resume-params)))
+    (except [e RuntimeError]
+      (setv raised e)))
+  (assert (is-not raised None))
+  (assert (hasattr raised "code"))
+  (assert (= raised.code "transcript_not_discoverable"))
+  (assert (not world.tmux-sessions)))
 
 
 ;; ---------------------------------------------------------------------------

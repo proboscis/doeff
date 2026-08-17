@@ -59,7 +59,7 @@
        "弁別知識の家: 終端 reason の種別(3 timeout + 未配達 + awaiting)を数える知識は、読み手(sensor / 集計 / 事後分析)がそれぞれ正規表現を書き直す形では腐る。分類は産出側の単一関数が持ち、reason には閉語彙の class token を載せる。既存の観測面が依存している逐語(`did not become ready` / `launch ready gate`)は接頭辞として保存する — argus sensor と conformance S18/S22 がその substring で起動段の失敗を拾っているため、文言の全面改稿は計器を黙らせる。")]
   :decision
     [(rule R-paste-ready-a71c "ready gate の必要条件は 3 つ: (1) 入力 loop 配線(idle prompt 可視 ∧ MCP boot 中でない — markers.hy is-input-loop-wired)、(2) composer に未送信内容なし(is-composer-clear = composer 領域が描かれている ∧ ADR-DOE-AGENTS-010 R1 のチップ不在。prompt 行の本文の空は条件にしない)、(3) 貼り付け可能性(READY-PROBE-TEXT を bracketed paste し、composer 領域にそれが現れる〔literal 形 / collapsed chip 形の両方を消費の証拠とする〕ことと、READY-PROBE-CLEAR-KEY を probe 文字数ぶん送って composer が空へ戻ることを観測する)。3 条件は同一の max-wait 予算の内側で判定し、予算を延長しない。")
-     (rule R-frame-class-6f3d "起動段の不成立は閉語彙 LAUNCH-NOT-READY-CLASSES(no-output / no-agent-frame / provider-limit-screen / dialog-not-dismissed / unknown-dialog / unrecognized-screen / mcp-boot-window / composer-occupied / paste-not-consumed / composer-not-clearable / deadline-race)のいずれかで自己記述する。予算切れ側の分類は policy の launch-not-ready-class が PaneObservation + capture 全体から導出する単一の家で、reason は launch-not-ready-reason が組む(`launch ready gate [<class>]: <agent> REPL did not become ready within <budget>s; the prompt was never delivered`)。原因を断定する固定文言(『unrecognized screen』等)を返す形は禁止。")
+     (rule R-frame-class-6f3d "起動段の不成立は閉語彙 LAUNCH-NOT-READY-CLASSES(no-output / conversation-not-found / no-agent-frame / provider-limit-screen / dialog-not-dismissed / unknown-dialog / unrecognized-screen / mcp-boot-window / composer-occupied / paste-not-consumed / composer-not-clearable / deadline-race)のいずれかで自己記述する。予算切れ側の分類は policy の launch-not-ready-class が PaneObservation + capture 全体から導出する単一の家で、reason は launch-not-ready-reason が組む(`launch ready gate [<class>]: <agent> REPL did not become ready within <budget>s; the prompt was never delivered`)。原因を断定する固定文言(『unrecognized screen』等)を返す形は禁止。【2026-08-18 改訂: conversation-not-found を追加 — CLI が resume の会話を解決できず loud 終了した画面(claude『No conversation found with session ID』/ codex『no rollout found for thread id』・resume-physics.md プローブ (a)(c) の逐語)。この画面は待って解ける命題ではないので gate は provider-limit-screen と同じく予算を待たず即終端する。実測 2026-08-16〜17: この形 91 件が全件 120s 待って no-agent-frame に誤分類されていた(ADR-DOE-AGENTS-006 R10 の第 2 層)。category は prompt_undelivered のまま(未配達の事実は不変 — 根治は 006 R10 の admission 検査で、この class は TOCTOU と未知経路の正直な名)。】")
      (rule R-evidence-frames-9c17 "失敗時の証拠 frame は有界複数保持(READY-GATE-FRAME-RETENTION=3・1 枚 READY-GATE-FRAME-LINES=15 行)。保持は先頭(起動直後)を固定し最新側を入れ替え、各 frame に gate 開始からの経過秒を付す。tail を取る前に末尾の空行を落とす(素の tail は shell echo だけの画面を『改行だけ』に潰し、描画ゼロと区別不能にする)。予算切れ後に追加 capture して 1 枚だけ残す形は禁止 — gate が見た画面を残す。")
      (rule R-unknown-dialog-loud-4e02 "R9 fast-path の外の dialog 形(markers.hy is-dialog-shaped: prompt glyph 直後の番号つき option / 確認文言)を観測したら、dismissal キーを推測せず即 loud に落ちる(class=unknown-dialog)。判定を idle prompt の有無で緩めてはならない — codex の trust dialog は選択 marker が `›` なので idle prompt 判定を通過する。起動直後に provider 上限告知(api-limit marker)を観測した場合は class=provider-limit-screen かつ category=rate_limited(policy の launch-not-ready-category が唯一の家)。")
      (rule R-undelivered-first-class-b5e8 "TerminalCause category に prompt_undelivered(retryable=true)を追加し、prompt が一度も届かなかった終端はこれを使う: (a) 起動段 gate の不成立(provider-limit-screen を除く全 class)、(b) ADR-DOE-AGENTS-010 R2 の paste 再送 budget 超過(同 R2 の `cause timed_out` はここで改訂 — api-limit latch 済みなら rate_limited のまま)。launch は配送が済むまで running を書かない(未配達の attempt を『走った』と数えない)。未知 category に対する下流の既定は CommandNonZeroExit + causeRetryable なので、旧 engine に対しても無害。")
@@ -103,7 +103,8 @@
        ;; 予算は knob 語彙の家のまま(ADR-DOE-AGENTS-008 R2)
        (assert (= effects-mod.REPL-IDLE-MAX-WAIT-SECONDS 120))
        (assert (= policy-mod.LAUNCH-NOT-READY-CLASSES
-                  #("no-output" "no-agent-frame" "provider-limit-screen"
+                  #("no-output" "conversation-not-found" "no-agent-frame"
+                    "provider-limit-screen"
                     "dialog-not-dismissed" "unknown-dialog" "unrecognized-screen"
                     "mcp-boot-window" "composer-occupied" "paste-not-consumed"
                     "composer-not-clearable" "deadline-race")))
@@ -115,6 +116,10 @@
        (assert (= (policy-mod.launch-not-ready-category "no-agent-frame")
                   "prompt_undelivered"))
        (assert (= (policy-mod.launch-not-ready-category "paste-not-consumed")
+                  "prompt_undelivered"))
+       ;; 会話解決失敗も未配達のまま(根治は 006 R10 の admission — この class は
+       ;; 事実の正直な名であって category の新設ではない)
+       (assert (= (policy-mod.launch-not-ready-category "conversation-not-found")
                   "prompt_undelivered")))
      (deftest test-adr-doe-agents-011-classification-covers-measured-shapes
        ;; R-frame-class-6f3d の機械面: 2026-08-11 断面に実在した画面の形が、
@@ -143,7 +148,16 @@
                    "› 1. Stop and wait for limit to reset\n"
                    "  2. Ask your admin for more usage\nEnter to confirm")
               ;; 実測 3 件(最終 frame では ready = 予算と描画の競合)
-              "deadline-race" "────────────────\n❯ \n────────────────"})
+              "deadline-race" "────────────────\n❯ \n────────────────"
+              ;; 実測 91 件の形(2026-08-16〜17 の resume 全滅 — 消えた work_dir
+              ;; で $HOME に立った pane の shell echo + claude の loud 死)
+              "conversation-not-found"
+                (+ "The default interactive shell is now zsh.\n"
+                   "CA-1:~ s22625$ claude --dangerously-skip-permissions "
+                   "--resume 6129f510-70f3-4cac-a29c-3956d5c925a0\n"
+                   "No conversation found with session ID: "
+                   "6129f510-70f3-4cac-a29c-3956d5c925a0\n"
+                   "CA-1:~ s22625$")})
        (for [[expected frame] (.items shapes)]
          (setv obs (classify-output frame))
          (setv actual (launch-not-ready-class obs frame))
