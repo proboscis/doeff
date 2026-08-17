@@ -45,14 +45,30 @@
      (rule R2 "testpaths は docs/adr を含む。さらに defadr 収集自己検査(defadr_*.hy のファイル数と収集された ADR モジュール数の一致検査)を doeff-adr パッケージが所有・提供し、全消費リポジトリが継承する(issue doeff-adr-wiring-selfcheck の根本対処)。")
      (rule R3 ".semgrep.yaml のルールは defsemgrep(installed-rule 形式)経由で既定 pytest 収集に載せる。semgrep バイナリ不在は skip ではなく hard fail。semgrep は dev 依存として `make sync` で必ず入る。")
      (rule R4 "dev ビルドは doeff-vm-core を feature `invariant-checks` + `python_bridge` 有効でビルドする(2026-07-14 B3 裁定)。VM conformance oracle(I1–I8)は pytest から起動される。invariant-checks 無効ビルドでの oracle テストは hard fail(skip 禁止)。")
-     (rule R5 "anti-drop ratchet: enforcement 台帳(defadr 数・law 数・defsemgrep 数・deftest enforcement 数)が黙って減ったら fail するメタテストを既定収集に置く(orch SpecInventorySpec の pytest 版)。台帳の意図的な削減は台帳ファイルの明示的更新を伴う。")]
+     (rule R5 "anti-drop ratchet: enforcement 台帳(defadr 数・law 数・defsemgrep 数・deftest enforcement 数)が黙って減ったら fail するメタテストを既定収集に置く(orch SpecInventorySpec の pytest 版)。台帳の意図的な削減は台帳ファイルの明示的更新を伴う。")
+     [removed]
   :laws
     [(law default-pytest-sees-all-enforcement
        :statement "for_all declared_enforcement e: collected_by(default_pytest, e) AND (missing_dependency(e) => hard_fail, not skip)"
        :counterexamples
          [(counterexample "defadr 10本が testpaths 外で沈黙している現状 — `uv run pytest` は enforcement ゼロのまま緑")
           (counterexample "semgrep 不在の環境で defsemgrep が skip され、229 ルール全滅のままスイートが緑")
-          (counterexample "invariant-checks 無効のリリースビルドに対して oracle テストが skip され、VM 不変量が未検証のまま緑")])]
+          (counterexample "invariant-checks 無効のリリースビルドに対して oracle テストが skip され、VM 不変量が未検証のまま緑")])
+     (law deadline-measures-hang-not-load
+       :statement "effective_deadline == base_deadline * clamp(loadavg1 / ncpu, 1.0, CAP); scaled_together(per_test_deadline, watchdog) AND watchdog > per_test_deadline for_all scales; scale > 1 => announced"
+       :counterexamples
+         [(counterexample
+             "2026-08-17 実測(修理前): 18 コアの機械が load 60〜156 で定常稼働する中、1 テスト 60 秒の定数締切に対し semgrep 単体が load 80 で 29.7 秒を使い、電池全体の負荷が乗ると超える。着地の門が 5 連敗し(毎回ちがう外部プロセス起動テスト)、同じ試験は手つかずの main を単独で回しても同じく落ちた = 枝の欠陥ではなく締切の性質。2 席で 9 回の着地が死に、正しい修理が出荷できなかった")
+          (counterexample
+             "per-test 締切だけを伸ばす — その上に立つ SIGKILL watchdog は定数のままなので、遅い試験 1 本が赤くなる代わりに走行ごと即死し、通った試験の結果まで全部失われる(実測 2026-08-17: PYTEST_TIMEOUT=600 で全数電池が 45% で SIGKILL)。締切は 2 つあり、片方だけ動かすのは動かさないより悪い")
+          (counterexample
+             "ini の締切だけを伸ばし marker(@pytest.mark.timeout)を素のまま残す — pytest-timeout は marker を ini より優先するので、『自分は遅い』と申告した試験 = 外部プロセスを起こす当の試験群だけが取り残される")
+          (counterexample
+             "係数に上限を置かない — 過負荷が青天井の機械では締切が事実上消え、真の hang が永久に落ちない(『busy を hang と誤認する』の裏返しで、今度は hang を busy と誤認する)")
+          (counterexample
+             "伸ばしたことを黙って行う — 8 倍の締切で通った走行は『緑』としか見えず、機械が過負荷であるという同じくらい重要な観測が失われる")
+          (counterexample
+             "内側の 2 つだけ直して門の持ち時間(gate.timeout_s)を据え置く — 内側を伸ばせば走行の総時間は必ず伸びるので、赤の場所が『1 テストの timeout』から『走行全体の時間切れ』へ移るだけで、着地はやはり通らない(実測 2026-08-17: 内側だけ直した便が 2710.7 秒で 2700 秒の門に当たった)。締切は 3 つあり、族として直す")])]
   :enforcement
     [(deftest test-adr-doe-enforce-001-docs-adr-in-default-testpaths
        ;; RED(2026-07-14): pyproject testpaths は docs/adr を含まない。R2 実装で green。
@@ -70,4 +86,43 @@
        (setv makefile (.read-text (/ root "Makefile")))
        (assert (in "invariant-checks" makefile)
                [removed]
+     (deftest test-adr-doe-enforce-001-deadlines-are-load-scaled
+       ;; R6 + law deadline-measures-hang-not-load: 2 つの締切がどちらも
+       ;; 係数に掛かっていること、係数の家が 1 つであること、伸ばした事実を
+       ;; 黙らないことの実在 pin。挙動の実体は tests/test_deadline_load_scaling.py
+       ;; (係数の下限・上限・無効化・watchdog が per-test を追い越さない・
+       ;;  呼び手の明示値を潰さない、の 5 本)。
+       (import pathlib [Path])
+       (setv root (get (. (Path __file__) parents) 2))
+       (setv conftest (.read-text (/ root "conftest.py") :encoding "utf-8"))
+       ;; 係数の単一の家。
+       (assert (in "def deadline_scale(" conftest)
+               "締切の係数の単一の家が root conftest に無い — ADR-DOE-ENFORCE-001 R6")
+       (assert (in "os.getloadavg()" conftest)
+               "係数が機械の過負荷率を読んでいない(定数へ退行している)")
+       (assert (in "PYTEST_DEADLINE_SCALE_CAP" conftest)
+               "係数に上限が無い — 真の hang が有界時間で落ちなくなる")
+       (assert (in "PYTEST_DEADLINE_SCALE" conftest)
+               "無効化の口が無い(負荷を自分で制御する CI が締切を固定できない)")
+       ;; 2 つの締切が一緒に動くこと — watchdog は per-test 締切から導出する。
+       (assert (in "def scaled_watchdog_timeout(" conftest)
+               "watchdog が per-test 締切から導出されていない(片方だけ伸びて SIGKILL 全損になる)")
+       ;; 伸ばした事実を黙らない。
+       (assert (in "deadline scale x" conftest)
+               "係数が 1 を超えた走行が黙っている(過負荷の観測が失われる)")
+       ;; marker の締切も同じ係数に掛かること。
+       (assert (in "def pytest_collection_modifyitems(" conftest)
+               "marker の締切が素のまま残る(pytest-timeout は marker を ini より優先する)")
+       ;; 挙動本体の現存 pin(削除退行を loud にする)。
+       (setv behavioral (/ root "tests/test_deadline_load_scaling.py"))
+       (assert (.exists behavioral)
+               "R6 の挙動本体 tests/test_deadline_load_scaling.py が消えている")
+       ;; 第 3 の締切(門の走行そのものの持ち時間)が、内側を上限まで
+       ;; 伸ばした走行を収容できること — 据え置くと赤の場所が移るだけになる。
+       (import tomllib)
+       (setv land-cfg (tomllib.loads (.read-text (/ root ".agents/land-queue.toml")
+                                                 :encoding "utf-8")))
+       (setv gate-budget (get land-cfg "gate" "timeout_s"))
+       (assert (>= gate-budget 7200)
+               f"門の持ち時間 {gate-budget}s は内側を上限まで伸ばした走行を収容できない — ADR-DOE-ENFORCE-001 R6(締切は 3 つあり族として直す)"))]
   :plans ["docs/doeff-2026-07-14-agent-first-investment-architecture-plan.md"])
