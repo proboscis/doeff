@@ -15,6 +15,8 @@ tag push まで red。
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CRATE_REL = Path("packages") / "doeff-agentd"
 ROLLBACK_TAG = "agentd-rust-final"
@@ -38,6 +40,16 @@ def test_retired_rust_crate_is_absent_from_tree() -> None:
 
 
 def test_rollback_tag_preserves_the_retired_crate() -> None:
+    # この law の主語は git 履歴そのもの — 履歴を運ばない検査 tree(remote_check は
+    # git ls-files の名簿だけを写す・.git 不在)では観測不能なので、fail ではなく
+    # 明示 skip にする(観測できない性質を偽の赤にしない)。git metadata がある
+    # checkout では従来どおり tag 不在 = fail(実測 2026-08-17 zeus・route-3da438e018)。
+    inside_repo = _git("rev-parse", "--git-dir")
+    if inside_repo.returncode != 0:
+        pytest.skip(
+            "git metadata が無い検査 tree — rollback tag は git 履歴の性質で、"
+            "この tree からは観測できない(law の執行は git checkout 側で行われる)"
+        )
     rev = _git("rev-parse", "--verify", f"refs/tags/{ROLLBACK_TAG}")
     assert rev.returncode == 0, (
         f"rollback tag {ROLLBACK_TAG} が見つからない(`git fetch --tags` を実行)— "
