@@ -142,6 +142,10 @@
 ;; 閉語彙。gate は必ずこのどれかで不成立を自己記述する(語彙外は gate error)。
 (setv LAUNCH-NOT-READY-CLASSES
       #("no-output"              ;; (B) 描画ゼロ — pane に文字が 1 つも無い
+        "conversation-not-found" ;; CLI が resume の会話を解決できず loud 終了
+                                 ;; (2026-08-18・ADR-006 R10 第 2 層。実測
+                                 ;; 2026-08-16〜17 の 91 件が no-agent-frame に
+                                 ;; 誤分類されていた形)
         "no-agent-frame"         ;; (B') agent 未描画 — shell echo だけが在る
         "provider-limit-screen"  ;; 起動直後に provider 上限告知(枠切れ)
         "dialog-not-dismissed"   ;; R9 既知 dialog が予算切れまで消えなかった
@@ -163,6 +167,10 @@
    宣言する — この関数は『予算が切れた』側の分類だけを担う。"
   (cond
     (not (.strip output)) "no-output"
+    ;; 会話解決失敗の loud 出力は shell echo だけの画面(agent 未描画)に
+    ;; 現れるため、no-agent-frame より先に名を与える(後に置くと実測 91 件が
+    ;; 全件 no-agent-frame に吸われる — 2026-08-16〜17 の誤分類そのもの)。
+    obs.has-conversation-not-found-marker "conversation-not-found"
     (not obs.has-agent-frame) "no-agent-frame"
     ;; provider 上限は再試行の話ではない(失敗の所有者が provider 側)—
     ;; ACP ADR 0049 の failover が引き取れるよう最優先で名を与える。

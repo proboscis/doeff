@@ -27,6 +27,7 @@
   TransplantConversation
   WireResultChannel
   fs-canonical-path
+  fs-file-exists
   fs-link-artifact
   fs-list-dir
   fs-read-text
@@ -224,16 +225,19 @@
 (defk claude-transplant-conversation [params]
   {:pre [(: params dict)]
    :post [(: % dict)]}
-  "cross-binding resume の transcript transplant(ADR-DOE-AGENTS-006 改訂
-   R7)。物理 = dotfiles agentcli share.py の 4 対と同型: transcript(必須 —
-   不在は typed 値で返し、resume-session が transcript_not_discoverable の
-   reject にする)+ sessions-index.json / session-env/<sid> /
-   file-history/<sid>(best-effort: あれば張る・無ければ skip)。所有
-   profile は source 行の effective_identity で既知なので registry 走査は
-   持ち込まない。同一 home(binding config_dir = source の
-   CLAUDE_CONFIG_DIR)は no-op。transcript の家は projects/<mangled
-   canonical work_dir>/(resume-physics.md 2026-08-11 プローブ (b):
-   symlink 越しの --resume が文脈を保ち、追記は解決先の実体へ届く)。"
+  "transcript の実在検査 + cross-binding transplant(ADR-DOE-AGENTS-006
+   R7/R10)。物理 = dotfiles agentcli share.py の 4 対と同型: transcript
+   (必須 — 不在は typed 値で返し、resume-session が
+   transcript_not_discoverable の reject にする)+ sessions-index.json /
+   session-env/<sid> / file-history/<sid>(best-effort: あれば張る・無ければ
+   skip)。所有 profile は source 行の effective_identity で既知なので
+   registry 走査は持ち込まない。同一 home(binding config_dir = source の
+   CLAUDE_CONFIG_DIR)は敷設 no-op だが実在検査は同じ(R10 — 起動段で死んだ
+   行〔identity 鋳造済み・transcript 未実体化〕の resume を実 CLI の
+   『No conversation found』120s 死に落とさない)。transcript の家は
+   projects/<mangled canonical work_dir>/(resume-physics.md 2026-08-11
+   プローブ (b): symlink 越しの --resume が文脈を保ち、追記は解決先の実体へ
+   届く)。"
   (setv binding (get params "binding"))
   (setv target-dir (get binding "config_dir"))
   (setv identity (or (.get params "source_identity") {}))
@@ -247,19 +251,31 @@
                           "CLAUDE_CONFIG_DIR — its transcript cannot be "
                           "located for a cross-binding transplant "
                           "(transcript-not-discoverable)")}))
-  (when (= source-dir target-dir)
-    (return {"ok" True "action" "same-home"}))
   (<- canon (fs-canonical-path (get params "work_dir")))
   (setv mangled (re.sub "[^A-Za-z0-9]" "-" canon))
   (setv source-project f"{source-dir}/projects/{mangled}")
   (setv target-project f"{target-dir}/projects/{mangled}")
-  (<- outcome (fs-link-artifact f"{source-project}/{conv-id}.jsonl"
+  (setv source-transcript f"{source-project}/{conv-id}.jsonl")
+  ;; R10: 実在検査は same-home / cross-home 共通(symlink は解決先で判定)。
+  (<- transcript-present (fs-file-exists source-transcript))
+  (when (not transcript-present)
+    (return {"ok" False
+             "code" RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE
+             "message" (+ f"session.resume: transcript "
+                          f"'{source-transcript}' does not exist "
+                          "(transcript-not-discoverable) — the real CLI "
+                          "fails loud without it (resume-physics.md probe "
+                          "(a)); rehosting the conversation requires the "
+                          "source transcript")}))
+  (when (= source-dir target-dir)
+    (return {"ok" True "action" "same-home"}))
+  (<- outcome (fs-link-artifact source-transcript
                                 f"{target-project}/{conv-id}.jsonl"))
   (when (= outcome "source-missing")
     (return {"ok" False
              "code" RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE
              "message" (+ f"session.resume: transcript "
-                          f"'{source-project}/{conv-id}.jsonl' does not exist "
+                          f"'{source-transcript}' does not exist "
                           "(transcript-not-discoverable) — a cross-binding "
                           "transplant requires the source transcript "
                           "(resume-physics.md probe (a): the real CLI fails "
