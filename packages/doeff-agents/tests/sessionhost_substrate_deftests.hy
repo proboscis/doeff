@@ -16,6 +16,7 @@
 
 (import doeff_agents.sessionhost.effects [
   fs-canonical-path
+  fs-file-mtime
   fs-read-text
   fs-write-text-atomic
   fs-make-dirs
@@ -115,6 +116,24 @@
     (<- content (drive (fs-read-text target)))
     (assert (= content "{\"ok\": true}"))
     (assert (not (os.path.exists (+ target ".agentd-tmp"))))
+    (finally
+      (shutil.rmtree d :ignore-errors True))))
+
+
+(deftest test-fs-file-mtime
+  ;; ADR-002 R-conversation-evidence: 実在ファイルは epoch 秒(getmtime と
+  ;; 一致)・不在は None(raise しない — probe は反証面であって門ではない)。
+  (setv d (tempfile.mkdtemp))
+  (try
+    (setv target (os.path.join d "conv.jsonl"))
+    ;; 不在は None
+    (<- missing (drive (fs-file-mtime target)))
+    (assert (is None missing))
+    (with [f (open target "w")]
+      (.write f "{}\n"))
+    (<- mt (drive (fs-file-mtime target)))
+    (assert (isinstance mt float))
+    (assert (= mt (os.path.getmtime target)))
     (finally
       (shutil.rmtree d :ignore-errors True))))
 

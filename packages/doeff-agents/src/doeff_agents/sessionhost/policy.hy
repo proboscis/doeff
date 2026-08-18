@@ -24,6 +24,7 @@
   classify-pane
   deliver-message
   discover-conversation
+  probe-conversation-activity
   session-store-list-active
   session-store-list-cleanup-pending
   session-store-result-payload
@@ -1065,13 +1066,47 @@
     (<- _ (session-store-record-event row.session-id "session_observed" row))
     (return row))
 
+  ;; --- 会話記録の鮮度 probe(ADR-DOE-AGENTS-002 R-conversation-evidence):
+  ;; turn 生死のデータ層証拠。pane の描画は CLI 版更新で変わる非契約面で、
+  ;; 走行中の turn を描かない実物(claude CLI 2.1.234、2026-08-18 に 22 件が
+  ;; 走行中のまま約 20 秒で run_failed/deterministic に焼かれた)が観測されて
+  ;; いる — record が書かれている限り turn は生きている。識別素材が揃う
+  ;; kind の行のみ probe し(discover arm と同じ kind 集合)、None は従来の
+  ;; 表示層物理へ fallback(退行ゼロ)。
+  (setv conversation-activity-at None)
+  (when (and (is-not row.conversation None)
+             (in row.agent-type #{"claude" "codex"}))
+    (<- probed (probe-conversation-activity
+                 row.agent-type
+                 {"work_dir" row.work-dir
+                  "effective_identity" row.effective-identity
+                  "conversation" row.conversation}))
+    (setv conversation-activity-at probed))
+  ;; 鮮度窓内の更新 = turn 走行中(turn-end の反証)。
+  (setv conversation-fresh
+        (and (is-not conversation-activity-at None)
+             (< (- (.timestamp now) conversation-activity-at)
+                knobs.conversation-quiescence-seconds)))
+  ;; 配送後の進行 = turn が始まった証拠(awaiting 解除)。margin は配送
+  ;; そのもの(prompt / solicitation の queue 書き込み)が記録の mtime を
+  ;; 動かす分の余白 — 基点は awaiting 期限(R3)と同じ fallback。
+  (setv awaiting-anchor (parse-iso (or row.awaiting-response-since
+                                       row.started-at)))
+  (setv conversation-progressed
+        (and (is-not conversation-activity-at None)
+             (is-not awaiting-anchor None)
+             (> conversation-activity-at
+                (+ (.timestamp awaiting-anchor)
+                   knobs.conversation-progress-margin-seconds))))
+
   ;; --- awaiting_response latch は POSITIVE work evidence(active marker /
-  ;; turn-activity)でのみ clear(ハザード 4: pane 不安定では clear しない —
-  ;; submit→spinner の隙間で turn-end が再武装して budget を焼いた実障害)。
-  ;; 期限の基点(awaiting_response_since)も latch と同時に clear する
-  ;; (ADR-DOE-AGENTS-010 R3)。
+  ;; turn-activity / 会話記録の配送後進行)でのみ clear(ハザード 4: pane
+  ;; 不安定では clear しない — submit→spinner の隙間で turn-end が再武装して
+  ;; budget を焼いた実障害)。期限の基点(awaiting_response_since)も latch と
+  ;; 同時に clear する(ADR-DOE-AGENTS-010 R3)。
   (when (and row.awaiting-response
-             (or obs.has-active-marker obs.has-turn-activity))
+             (or obs.has-active-marker obs.has-turn-activity
+                 conversation-progressed))
     (setv row (replace row :awaiting-response False
                        :awaiting-response-since None)))
 
@@ -1117,10 +1152,19 @@
   (setv stable (and (is-not row.output-snippet None)
                     (= row.output-snippet (tail-chars output 500))))
   (setv output-changed (not stable))
+  ;; turn-end は表示層(idle ∧ ¬active ∧ stable)とデータ層の連言で確定する
+  ;; (ADR-002 R-conversation-evidence / 宣言 sessionhost-liveness-conjunction
+  ;; の同法理: 壊れやすい marker 物理 1 枚に自動終端の権限を預けない):
+  ;; - 会話記録が鮮度窓内に更新されている間は turn 走行中 — 宣言しない。
+  ;; - 自分が送った催促が composer に未消費で座っている(queued messages =
+  ;;   markers.hy が「turn 走行中の明白な busy 証拠」と定義する状態)間は
+  ;;   「催促に応えなかった」は成立しない — 宣言しない。
   (setv turn-ended (and (not row.awaiting-response)
                         obs.has-idle-prompt
                         (not obs.has-active-marker)
-                        stable))
+                        (not obs.has-queued-messages)
+                        stable
+                        (not conversation-fresh)))
   (setv row (replace row
                      :last-observed-at observed-at
                      :output-snippet (tail-chars output 500)))

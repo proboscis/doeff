@@ -19,12 +19,14 @@
   PreLaunchSetup
   ClassifyPane
   DeliverMessage
+  ProbeConversationActivity
   RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE
   TransplantConversation
   WireResultChannel
   fs-canonical-path
   fs-compose-home-view
   fs-file-exists
+  fs-file-mtime
   fs-link-artifact
   fs-list-dir
   fs-read-text
@@ -368,6 +370,26 @@
 
 
 ;; ---------------------------------------------------------------------------
+;; 会話記録の鮮度観測(ADR-002 R-conversation-evidence — turn 生死のデータ層証拠)
+;; ---------------------------------------------------------------------------
+
+(defk codex-conversation-activity [params]
+  {:pre [(: params dict)]
+   :post [(: % (| float None))]}
+  "codex の会話記録の最終更新時刻(epoch 秒)。物理: 会話記録 = rollout
+   (conversation_json の rollout_path、絶対 path — transplant と同じ家)。
+   rollout_path の記帳が無い行は None(従来物理へ fallback — transplant の
+   同一 home 検査と同じ扱い)。"
+  (setv conv (or (.get params "conversation") {}))
+  (setv rollout (.get conv "rollout_path"))
+  (if (is rollout None)
+      None
+      (do
+        (<- activity-at (fs-file-mtime rollout))
+        activity-at)))
+
+
+;; ---------------------------------------------------------------------------
 ;; per-kind defhandler(R2: 直接束縛と host 束縛の両方で同一モジュール)
 ;; ---------------------------------------------------------------------------
 
@@ -394,6 +416,11 @@
     :when (= agent-type "codex")
     (<- identity (codex-pre-launch params))
     (resume identity))
+
+  (ProbeConversationActivity [agent-type params]
+    :when (= agent-type "codex")
+    (<- activity-at (codex-conversation-activity params))
+    (resume activity-at))
 
   (ClassifyPane [agent-type output]
     :when (= agent-type "codex")

@@ -33,6 +33,7 @@
   SessionStoreRecordEvent
   SessionStoreKnownConversationIds
   DiscoverConversation
+  ProbeConversationActivity
   TmuxHasSession
   TmuxPaneCurrentCommand
   TmuxSessionPaneIds
@@ -119,6 +120,10 @@
                                        ;; フレーム列(issue #573: tick 内で画面が
                                        ;; 変わる pane の台本。尽きたら frames)
     (setv self.discovered None)        ;; DiscoverConversation の台本(ADR-006)
+    (setv self.conversation-mtimes {}) ;; conversation session_id -> epoch mtime
+                                       ;; (ProbeConversationActivity の台本 —
+                                       ;; ADR-002 R-conversation-evidence。
+                                       ;; 無記帳は None = probe 不能 fallback)
     (setv self.now (datetime 2026 7 5 12 0 0 :tzinfo timezone.utc))))
 
 
@@ -262,6 +267,13 @@
     ;; 発見物理は impls の所有(sessionhost_resume_deftests が実 impl を検査
     ;; する)— policy deftest では台本(world.discovered、既定 None=未発見)。
     (resume world.discovered))
+
+  (ProbeConversationActivity [agent-type params]
+    ;; 所在物理(transcript / rollout の path)は impls の所有 — policy
+    ;; deftest では台本(conversation session_id → epoch mtime。無記帳は
+    ;; None = probe 不能の fallback 面)。ADR-002 R-conversation-evidence。
+    (setv conv (or (.get params "conversation") {}))
+    (resume (.get world.conversation-mtimes (.get conv "session_id"))))
 
   (SessionStoreRecordEvent [session-id event-type row]
     (.append world.events #(session-id event-type))
@@ -568,6 +580,97 @@
   (assert (= row.terminal-cause.retryable False))
   (assert (in "doeff-s1" world.killed))
   (assert (in #("s1" "session_failed") world.events)))
+
+
+;; ---------------------------------------------------------------------------
+;; ADR-002 R-conversation-evidence: turn 生死のデータ層証拠
+;; (2026-08-18 実弾: claude CLI 2.1.234 が走行中 turn を描かず、表示層のみの
+;;  turn-end 判定が走行中の番人 22 席を約 20 秒で run_failed に焼いた)
+;; ---------------------------------------------------------------------------
+
+(deftest test-turn-end-not-declared-while-conversation-fresh
+  ;; 反例(実弾の再現): pane は idle ∧ stable(走行中 turn が描かれない)
+  ;; でも、会話記録が鮮度窓内に更新されている間は turn-end を宣言しない。
+  (setv world (FakeWorld))
+  (seed world (make-row world
+                        :agent-type "claude"
+                        :conversation {"session_id" "conv-1"}
+                        :output-snippet (tail-chars F-IDLE-CLAUDE 500))
+        :frame F-IDLE-CLAUDE)
+  (setv (get world.conversation-mtimes "conv-1")
+        (- (.timestamp world.now) 5))
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= world.delivered []))
+  (assert (= row.result-solicitations-used 0))
+  (assert (= row.status "running")))
+
+
+(deftest test-turn-end-fires-when-conversation-quiescent
+  ;; 保存対照: 会話記録が鮮度窓の外(静止)なら従来どおり turn-end →
+  ;; solicitation — probe の導入は真の turn-end 検出を遅らせない。
+  (setv world (FakeWorld))
+  (seed world (make-row world
+                        :agent-type "claude"
+                        :conversation {"session_id" "conv-1"}
+                        :output-snippet (tail-chars F-IDLE-CLAUDE 500))
+        :frame F-IDLE-CLAUDE)
+  (setv (get world.conversation-mtimes "conv-1")
+        (- (.timestamp world.now) 300))
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (assert (= (len world.delivered) 1))
+  (assert (= (. (get world.rows "s1") result-solicitations-used) 1)))
+
+
+(deftest test-turn-end-not-declared-while-queued-messages
+  ;; 自分が送った催促が composer に未消費で座っている(queued messages =
+  ;; markers.hy が「turn 走行中の明白な busy 証拠」と定義する状態)間は
+  ;; 「催促に応えなかった」は成立しない — budget 超過の終端にも至らない。
+  (setv world (FakeWorld))
+  (setv queued-frame "❯ Press up to edit queued messages")
+  (seed world (make-row world
+                        :agent-type "claude"
+                        :result-solicitations-used 2
+                        :output-snippet (tail-chars queued-frame 500))
+        :frame queued-frame)
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "running"))
+  (assert (is None row.terminal-cause))
+  (assert (= world.delivered [])))
+
+
+(deftest test-awaiting-cleared-by-conversation-progress
+  ;; 配送後に会話記録が進んだ(margin 超)= turn は始まっている — 描画され
+  ;; なくても awaiting latch を clear する(「turn never started」誤判定の
+  ;; データ層根治)。
+  (setv world (FakeWorld))
+  (seed world (make-row world
+                        :agent-type "claude"
+                        :conversation {"session_id" "conv-1"}
+                        :awaiting-response True
+                        :awaiting-response-since (iso-at world -60))
+        :frame F-IDLE-CLAUDE)
+  (setv (get world.conversation-mtimes "conv-1")
+        (- (.timestamp world.now) 20))
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (assert (= (. (get world.rows "s1") awaiting-response) False)))
+
+
+(deftest test-awaiting-not-cleared-by-delivery-write
+  ;; 反対照: 配送そのもの(prompt / solicitation の queue 書き込み)が動かす
+  ;; mtime(margin 内)は進行ではない — latch は保持される。
+  (setv world (FakeWorld))
+  (seed world (make-row world
+                        :agent-type "claude"
+                        :conversation {"session_id" "conv-1"}
+                        :awaiting-response True
+                        :awaiting-response-since (iso-at world -5))
+        :frame F-IDLE-CLAUDE)
+  (setv (get world.conversation-mtimes "conv-1")
+        (- (.timestamp world.now) 3))
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (assert (= (. (get world.rows "s1") awaiting-response) True)))
 
 
 ;; ---------------------------------------------------------------------------

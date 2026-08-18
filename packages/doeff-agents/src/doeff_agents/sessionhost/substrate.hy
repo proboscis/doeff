@@ -47,6 +47,7 @@
   FsListDir
   FsDirExists
   FsFileExists
+  FsFileMtime
   EnvGet])
 (import doeff_agents.sessionhost.policy [ACTIVE-STATUSES])
 
@@ -473,6 +474,13 @@
     ;; ADR-DOE-AGENTS-006 R10(transcript 実在検査)。isfile は symlink を
     ;; 解決する — 壊れた symlink は不在(R7 の意味論と同義)。
     (resume (os.path.isfile path)))
+
+  (FsFileMtime [path]
+    ;; ADR-002 R-conversation-evidence(会話記録の鮮度読み)。getmtime は
+    ;; symlink を解決する。不在・観測不能(OSError)は None — raise しない
+    ;; (probe は反証面であって門ではない)。
+    (resume (try (os.path.getmtime path)
+                 (except [OSError] None))))
 
   (FsComposeHomeView [auth-file profile-dir view-root]
     (resume (compose-home-view auth-file profile-dir view-root)))
