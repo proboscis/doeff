@@ -75,7 +75,7 @@ def pytest_collection_finish(session: pytest.Session) -> None:
         return
     root = Path(session.config.rootpath)
     patterns = _file_patterns(session.config)
-    executable_adrs = _discover_executable_adrs(root, patterns)
+    executable_adrs = _discover_executable_adrs(root, patterns, _norecurse_dir_patterns(session.config))
     collected_files = {Path(item.path).resolve() for item in session.items}
     uncollected_adrs = sorted(executable_adrs - collected_files)
     if not uncollected_adrs:
@@ -135,11 +135,27 @@ def _wiring_mode(config: pytest.Config) -> WiringMode:
     raise pytest.UsageError(f"doeff_adr_wiring must be one of {choices}; got {configured_mode!r}")
 
 
-def _discover_executable_adrs(root: Path, patterns: tuple[str, ...]) -> set[Path]:
+def _norecurse_dir_patterns(config: pytest.Config) -> tuple[str, ...]:
+    """Directory-name globs pytest itself refuses to collect into (norecursedirs).
+
+    Wiring discovery must stay consistent with what pytest collection *could*
+    reach: a defadr file inside a norecursedirs-matched directory (default
+    includes ``.*`` — e.g. ``.claude/worktrees`` checkout copies) can never be
+    collected, so reporting it as mis-wired is a false positive by construction.
+    """
+    return tuple(config.getini("norecursedirs"))
+
+
+def _discover_executable_adrs(
+    root: Path, patterns: tuple[str, ...], norecurse: tuple[str, ...] = ()
+) -> set[Path]:
     executable_adrs: set[Path] = set()
     for directory, directory_names, file_names in os.walk(root):
         directory_names[:] = sorted(
-            name for name in directory_names if name not in IGNORED_DISCOVERY_DIRECTORIES
+            name
+            for name in directory_names
+            if name not in IGNORED_DISCOVERY_DIRECTORIES
+            and not any(fnmatch.fnmatch(name, pattern) for pattern in norecurse)
         )
         for file_name in sorted(file_names):
             path = Path(directory, file_name)
