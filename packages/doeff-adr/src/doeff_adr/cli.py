@@ -1,9 +1,14 @@
 """Command-line entry point for doeff-adr repository checks."""
 
 import argparse
-import subprocess
 import sys
 from collections.abc import Sequence
+
+from doeff_adr.process import ExternalProcessTimeoutError, run_external_process
+
+# GNU timeout と同じ「時間切れ」の終了コード — pytest 自身の終了コード(0..5)と
+# 衝突しないため、門の呼び出し側が collection の赤と打ち切りを取り違えない。
+TIMEOUT_EXIT_CODE = 124
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -33,12 +38,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             *arguments.pytest_args,
             "--doeff-adr-wiring=strict",
         ]
-        completed: subprocess.CompletedProcess[str] = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        # 打ち切りは「配線検証 OK」ではない — 非ゼロで落として診断を stderr に残す。
+        try:
+            completed = run_external_process(command)
+        except ExternalProcessTimeoutError as exc:
+            sys.stderr.write(
+                f"doeff-adr verify-wiring: pytest --collect-only was killed after "
+                f"{exc.timeout_seconds:g}s without returning — wiring is UNVERIFIED "
+                f"(not verified).\n{exc}\n"
+            )
+            return TIMEOUT_EXIT_CODE
         if completed.returncode == 0:
             print("doeff-adr wiring verified: every executable ADR was collected.")
             return 0
