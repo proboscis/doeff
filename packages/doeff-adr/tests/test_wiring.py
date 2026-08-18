@@ -92,6 +92,41 @@ def test_default_wiring_mode_warns_without_failing(
     assert "docs/adr/defadr_wiring_warn.hy" in output
 
 
+def test_wiring_discovery_skips_norecursedirs_matched_directories(
+    pytester: pytest.Pytester,
+) -> None:
+    # pytest's default norecursedirs includes ".*" — a defadr copy inside a
+    # hidden directory (e.g. .claude/worktrees checkout copies) can never be
+    # collected, so wiring verification must not report it as mis-wired.
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        testpaths = ["docs/adr"]
+        """
+    )
+    _make_executable_adr(pytester, "WIRING-TREE")
+    for part in (".claude", ".claude/worktrees", ".claude/worktrees/wt",
+                 ".claude/worktrees/wt/docs", ".claude/worktrees/wt/docs/adr"):
+        pytester.mkdir(part)
+    pytester.makefile(
+        ".hy",
+        **{
+            ".claude/worktrees/wt/docs/adr/defadr_wiring_copy": """\
+                (require doeff-adr.macros [defadr])
+
+                (defadr ADR-WIRING-COPY
+                  :title "hidden worktree copy"
+                  :status "proposed")
+                """,
+        },
+    )
+
+    result: pytest.RunResult = pytester.runpytest("-q", "--doeff-adr-wiring=strict")
+
+    result.assert_outcomes(passed=1)
+    assert "defadr_wiring_copy" not in _combined_output(result)
+
+
 def test_verify_wiring_cli_runs_strict_collection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
