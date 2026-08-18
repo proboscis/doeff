@@ -24,11 +24,13 @@
   PreLaunchSetup
   ClassifyPane
   DeliverMessage
+  ProbeConversationActivity
   RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE
   TransplantConversation
   WireResultChannel
   fs-canonical-path
   fs-file-exists
+  fs-file-mtime
   fs-link-artifact
   fs-list-dir
   fs-read-text
@@ -226,6 +228,33 @@
 
 
 ;; ---------------------------------------------------------------------------
+;; 会話記録の鮮度観測(ADR-002 R-conversation-evidence — turn 生死のデータ層証拠)
+;; ---------------------------------------------------------------------------
+
+(defk claude-conversation-activity [params]
+  {:pre [(: params dict)]
+   :post [(: % (| float None))]}
+  "claude の会話記録の最終更新時刻(epoch 秒)。物理: transcript は
+   `<CLAUDE_CONFIG_DIR>/projects/<mangled canonical work_dir>/<sid>.jsonl`
+   (claude-discover-conversation / transplant と同じ家)。材料不足
+   (identity / conversation / work_dir の欠け)や実体不在は None —
+   probe は反証面であって門ではなく、None は表示層の従来物理へ fallback
+   する(退行ゼロ)。"
+  (setv identity (or (.get params "effective_identity") {}))
+  (setv config-dir (.get identity "CLAUDE_CONFIG_DIR"))
+  (setv conv (or (.get params "conversation") {}))
+  (setv conv-id (.get conv "session_id"))
+  (setv work-dir (.get params "work_dir"))
+  (if (or (is config-dir None) (is conv-id None) (not work-dir))
+      None
+      (do
+        (<- canon (fs-canonical-path work-dir))
+        (setv mangled (re.sub "[^A-Za-z0-9]" "-" canon))
+        (<- mt (fs-file-mtime f"{config-dir}/projects/{mangled}/{conv-id}.jsonl"))
+        mt)))
+
+
+;; ---------------------------------------------------------------------------
 ;; cross-binding transplant(ADR-006 改訂 R7 — 別 auth home への会話の持ち出し)
 ;; ---------------------------------------------------------------------------
 
@@ -314,6 +343,11 @@
     :when (= agent-type "claude")
     (<- found (claude-discover-conversation params))
     (resume found))
+
+  (ProbeConversationActivity [agent-type params]
+    :when (= agent-type "claude")
+    (<- activity-at (claude-conversation-activity params))
+    (resume activity-at))
 
   (TransplantConversation [agent-type params]
     :when (= agent-type "claude")

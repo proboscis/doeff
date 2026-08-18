@@ -303,6 +303,19 @@
 (setv PASTE-RESUBMIT-LIMIT 5)
 (setv AWAITING-RESPONSE-TIMEOUT-SECONDS 600)
 
+;; turn 生死のデータ層証拠(ADR-DOE-AGENTS-002 R-conversation-evidence)の
+;; 凍結既定値 — literal の家はここだけ(上と同じ規律)。
+;; quiescence: 会話記録(transcript / rollout)の最終更新がこの秒数以内なら
+;; turn は走行中 — pane の描画がどうであれ turn-end を宣言しない。値の根拠:
+;; 実弾(2026-08-18 claude CLI 2.1.234)の誤爆は turn 開始 4〜60 秒での静止
+;; 判定 — 120s はそれを全滅させ、真の turn-end 検出を最大 120s 遅らせるだけ
+;; (result-first が先に勝つので正常席には影響しない)。
+;; margin: awaiting_response の解除に使う「配送後の進行」判定の余白 —
+;; 配送そのもの(prompt / solicitation の queue 書き込み)が transcript の
+;; mtime を動かすため、配送時刻 + margin 以降の更新だけを進行と数える。
+(setv CONVERSATION-QUIESCENCE-SECONDS 120)
+(setv CONVERSATION-PROGRESS-MARGIN-SECONDS 10)
+
 ;; ADR-DOE-AGENTS-011 の凍結物理 — literal の家はここだけ(上と同じ規律)。
 ;; 貼り付け可能性 probe: ready gate は「入力欄が描かれた」ではなく
 ;; 「この composer が我々の bracketed paste を消費した」を必要条件にする。
@@ -361,6 +374,12 @@
   ;; 基点 = max(awaiting_response_since | started_at, observation_gap_at)。
   #^ int awaiting-response-timeout-seconds
   (setv awaiting-response-timeout-seconds AWAITING-RESPONSE-TIMEOUT-SECONDS)
+  ;; ADR-DOE-AGENTS-002 R-conversation-evidence: turn 生死のデータ層証拠。
+  ;; 会話記録の鮮度窓(turn-end の反証)と配送後進行の余白(awaiting 解除)。
+  #^ int conversation-quiescence-seconds
+  (setv conversation-quiescence-seconds CONVERSATION-QUIESCENCE-SECONDS)
+  #^ int conversation-progress-margin-seconds
+  (setv conversation-progress-margin-seconds CONVERSATION-PROGRESS-MARGIN-SECONDS)
   #^ (| str None) judge-cmd
   (setv judge-cmd None))
 
@@ -452,6 +471,22 @@
    戻り値: {\"ok\" True} | {\"ok\" False \"code\" <RESUME-ERR-*>
    \"message\" str}(source transcript 不在は
    RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE — program が typed reject にする)。"
+  #^ str agent-type
+  #^ dict params)
+
+(defclass [(dataclass :frozen True :kw-only True)] ProbeConversationActivity [EffectBase]
+  "会話記録(kind 別 transcript 実体)の最終更新時刻の観測
+   (ADR-DOE-AGENTS-002 R-conversation-evidence)。turn の生死の真理条件は
+   データ層にある — pane の描画は CLI 版更新で変わる非契約面で、走行中の
+   turn を描かない実物(claude CLI 2.1.234、2026-08-18 の 22 件
+   run_failed 誤爆)が観測されている。record が書かれている限り turn は
+   生きている。所在物理は kind 所有(claude = projects jsonl / codex =
+   rollout — TransplantConversation と同じ家)、impl は Fs substrate effect
+   のみで実装する(substrate-clean)。材料不足(identity / conversation /
+   work_dir の欠け)や実体不在は None — probe は反証面であって門ではなく、
+   None は従来の表示層物理へ fallback する。
+   params: {\"work_dir\", \"effective_identity\", \"conversation\"}。
+   戻り値: float(epoch 秒)| None。"
   #^ str agent-type
   #^ dict params)
 
@@ -659,6 +694,15 @@
    不在(R7 の『実体でも symlink 解決先としても不在』と同義)。戻り値: bool。"
   #^ str path)
 
+(defclass [(dataclass :frozen True :kw-only True)] FsFileMtime [EffectBase]
+  "ファイルの最終更新時刻の観測(ADR-DOE-AGENTS-002
+   R-conversation-evidence — 会話記録の鮮度読み)。symlink は解決する
+   (transplant 済み会話の追記は解決先実体へ届く — ADR-006 R7 と同じ物理)。
+   不在・観測不能(OSError)は None — raise しない(probe は反証面であって
+   門ではない。観測不能 = 証拠なし = 従来物理へ fallback)。
+   戻り値: float(epoch 秒)| None。"
+  #^ str path)
+
 (defclass [(dataclass :frozen True :kw-only True)] EnvGet [EffectBase]
   "呼び手 process env の単読(S11 caveat: trust writer は session_env に無い
    home を process env から fallback 参照する — daemon 束縛では daemon env、
@@ -728,6 +772,13 @@
   "TransplantConversation を構築する(ADR-006 改訂 R7: cross-binding
    transplant 前処理)。"
   (TransplantConversation :agent-type agent-type :params params))
+
+(deff probe-conversation-activity [agent-type params]
+  {:pre [(: agent-type str) (: params dict)]
+   :post [(: % ProbeConversationActivity)]}
+  "ProbeConversationActivity を構築する(ADR-002 R-conversation-evidence:
+   turn 生死のデータ層証拠 — 会話記録の最終更新時刻)。"
+  (ProbeConversationActivity :agent-type agent-type :params params))
 
 (deff session-store-list-active []
   {:pre [True]
@@ -883,6 +934,13 @@
    :post [(: % FsFileExists)]}
   "FsFileExists を構築する(transcript 実在検査 — ADR-DOE-AGENTS-006 R10)。"
   (FsFileExists :path path))
+
+(deff fs-file-mtime [path]
+  {:pre [(: path str) (> (len path) 0)]
+   :post [(: % FsFileMtime)]}
+  "FsFileMtime を構築する(会話記録の鮮度読み — ADR-002
+   R-conversation-evidence)。"
+  (FsFileMtime :path path))
 
 (deff env-get [name]
   {:pre [(: name str) (> (len name) 0)]

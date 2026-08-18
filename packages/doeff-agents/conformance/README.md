@@ -107,9 +107,16 @@ checklist (a) の凍結対象の一部**(marker→分類は impl 所有になる
 | F-dialog-trust | claude workspace-trust gate(2026-07-07 実物 frame verbatim。旧 F-trust-dialog を置換 — 旧文言は現行 CLI と乖離・未使用だった) | 5 つ目の R9 dialog(Rust oracle 非在)。dismiss = Enter 単発(既定選択が trust 側)。未 handle だと launch 永久 hang する実障害の再発防止 |
 | F-dialog-unknown | R9 のどの detector にも合致しない架空の startup dialog(idle/active marker も無し) | launch fail-closed の再発防止: R9 外 dialog に prompt を送出して silent hang する旧縮退の禁止(2026-07-07 契約修正) |
 
-turn-end 判定は「idle prompt AND not active AND **500 字 tail が前回
-snapshot と一致(stable)**」(main.rs:2832, 2932)なので、フレームは
-描画後に静止させること(継続出力すると turn-end に到達しない)。
+turn-end 判定は「idle prompt AND not active AND not queued-messages AND
+**500 字 tail が前回 snapshot と一致(stable)** AND 会話記録が静止
+(鮮度窓 `conversation-quiescence-seconds` 内に transcript / rollout の
+更新なし — ADR-DOE-AGENTS-002 R-conversation-evidence-65b8。conversation
+未登記の行は probe = None で表示層のみに fallback するため、conformance の
+fake agent には従来どおり効かない)」なので、フレームは描画後に静止させる
+こと(継続出力すると turn-end に到達しない)。旧形(表示層のみ —
+main.rs:2832, 2932)は 2026-08-18 の claude CLI 2.1.234 描画退行(走行中
+turn を描かない)で走行中の席 22 件を run_failed に焼いたため、データ層の
+反証を連言に加えた。
 
 ## カバレッジ行列(確定版)
 
@@ -242,6 +249,7 @@ Hy 実装がこの表を変える場合は ADR 改訂が先(黙った変更は c
 | stale-observation 閾値(300s) | `DOEFF_AGENTD_STALE_OBSERVATION_SECS`(S19 用に oracle へ追加した env-only knob、`effective_stale_observation_threshold_seconds` — 既定 300s・意味論不変。launch timeout と同じく flag 無しの env 専用なので harness は `extra_env` で daemon プロセスに渡す) | ✓(追加済) |
 | paste 再送 budget(5) | `DOEFF_AGENTD_PASTE_RESUBMIT_LIMIT`(env-only。issue #568 / ADR-DOE-AGENTS-010 R2 — 未送信 paste / 添付の Enter 再送は有界で、超過は typed terminal failed(**prompt_undelivered** true、latch 済みなら rate_limited。category は ADR-DOE-AGENTS-011 で timed_out から分離)。退役 Rust oracle は無上限 = 基準外) | ✓(Hy のみ) |
 | awaiting 期限(600s) | `DOEFF_AGENTD_AWAITING_RESPONSE_TIMEOUT_SECS`(env-only。同 R3 — awaiting_response latch は期限つき: 基点 = max(awaiting_response_since \| started_at, observation_gap_at)、期限内に正の作業証拠が無ければ typed terminal failed。退役 Rust oracle は無期限 = 基準外) | ✓(Hy のみ) |
+| 会話記録の鮮度窓(120s) | `DOEFF_AGENTD_CONVERSATION_QUIESCENCE_SECS`(env-only。ADR-DOE-AGENTS-002 R-conversation-evidence-65b8 — transcript / rollout がこの窓内に更新されている間 turn-end を宣言しない。margin(10s、配送書き込みの余白)は定数 = 運用パラメータではない。conversation 未登記の行には効かない(probe fallback)ので conformance の fake agent は従来どおり。退役 Rust oracle は表示層のみ = 基準外) | ✓(Hy のみ) |
 | wait_for_repl_idle 上限(120s) | 定数 — fake は即 idle を描画するので実害なし | 不要 |
 | ready gate の貼り付け可能性 probe(ADR-DOE-AGENTS-011 R-paste-ready-a71c) | 定数 `READY-PROBE-TEXT` / `READY-PROBE-CLEAR-KEY`(effects.hy が literal の家)。ready は「入力欄が描かれた」ではなく「probe を composer が消費し、消去キーで空へ戻る」— 判定は repl-idle 予算の内側で完結し壁時計を伸ばさない(ACP ADR 0042 R8 の順序不変量を保つ) | 不要(fake は composer を模擬) |
 | 失敗証拠 frame の保持数(3 × 15 行) | 定数 `READY-GATE-FRAME-RETENTION` / `READY-GATE-FRAME-LINES`(同 R-evidence-frames-9c17。旧実装は最終 1 枚のみ) | 不要 |

@@ -33,6 +33,7 @@
 
 (import doeff_agents.sessionhost.effects [
   AWAITING-RESPONSE-TIMEOUT-SECONDS
+  CONVERSATION-QUIESCENCE-SECONDS
   MonitorKnobs
   PASTE-RESUBMIT-LIMIT
   REPL-IDLE-MAX-WAIT-SECONDS
@@ -1322,6 +1323,12 @@
     :awaiting-response-timeout-seconds
       (or (env-positive-i64 "DOEFF_AGENTD_AWAITING_RESPONSE_TIMEOUT_SECS")
           AWAITING-RESPONSE-TIMEOUT-SECONDS)
+    ;; ADR-002 R-conversation-evidence — conformance / 運用の調整口も他 knob と
+    ;; 同じ use-site env 読みの流儀(margin は調整口を持たない — 配送物理の
+    ;; 余白であって運用パラメータではない)。
+    :conversation-quiescence-seconds
+      (or (env-positive-i64 "DOEFF_AGENTD_CONVERSATION_QUIESCENCE_SECS")
+          CONVERSATION-QUIESCENCE-SECONDS)
     :judge-cmd config.prompt-judge-cmd))
 
 
