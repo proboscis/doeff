@@ -107,11 +107,39 @@
   (assert (is config.prompt-judge-cmd None)))
 
 
+(deftest test-parse-args-max-running-unlimited
+  ;; 「上限なし」を言う口(2026-08-19 operator 裁定: 同時走行の上限は ACP の
+  ;; 都合であって sessionhost の性質ではない)。None = admission の check ごと
+  ;; 飛ぶ = 無制限で、これは直接束縛(config を持たない使い方)と同じ形。
+  (for [spelling ["none" "unlimited" "NONE" "Unlimited"]]
+    (setv config (parse-args ["--max-running" spelling "serve"]))
+    (assert (is config.max-running None) f"expected unlimited for {spelling}"))
+  ;; 数値の綴りは従来どおり
+  (assert (= (. (parse-args ["--max-running" "4" "serve"]) max-running) 4))
+  ;; 旗を省略したら従来の既定 10 のまま — 省略へ無制限を割り当てると、省略
+  ;; している既存の呼び手(適合 harness 等)の挙動まで一斉に変わる
+  (assert (= (. (parse-args []) max-running) 10)))
+
+
+(deftest test-parse-args-rejects-max-running-zero
+  ;; 0 は「上限なし」の綴りではない。admission は `owned-count >= max-running`
+  ;; なので 0 は常に真 = 全 launch を恒久 100% 拒否する。無音で全拒否する
+  ;; daemon を作らないため、起動時に loud に落とす。
+  (setv raised None)
+  (try
+    (parse-args ["--max-running" "0" "serve"])
+    (except [e ValueError] (setv raised e)))
+  (assert (is-not raised None) "expected reject for --max-running 0")
+  (assert (in "rejects every launch" (str raised)))
+  (assert (in "--max-running none" (str raised))))
+
+
 (deftest test-parse-args-rejects
   (for [[args fragment]
         [[["--frobnicate"] "unknown argument"]
          [["--tmux"] "--tmux requires a value"]
          [["--prompt-stall-secs" "0"] "must be positive"]
+         [["--max-running" "0"] "rejects every launch"]
          [["status"] "unknown argument"]]]
     (setv raised None)
     (try

@@ -472,6 +472,21 @@
   (assert (not-in "new-session" (lfor t world.trace (get t 0)))))
 
 
+(deftest test-launch-capacity-unlimited-when-max-running-absent
+  ;; 上限なし(max_running None)= admission の check ごと飛ぶ。2026-08-19 の
+  ;; operator 裁定「同時走行の上限は ACP の都合であって sessionhost の性質
+  ;; ではない」の受け口で、直接束縛(config を持たない使い方 = params に key が
+  ;; 載らない)と同じ形。key 自体が無い場合と、key が None で載る場合(host が
+  ;; 上限なしで起動した時の注入形)の両方で通ること。
+  (for [params [(launch-params) (launch-params :max_running None)]]
+    (setv world (LaunchWorld))
+    (for [i (range 50)]
+      (seed-active-row world f"owned-{i}" False))
+    (setv world.capture-script ["codex booting banner" "› {composer}"])
+    (<- row (run-launch world params))
+    (assert (= row.status "running"))))
+
+
 ;; ---------------------------------------------------------------------------
 ;; command override(escape hatch)
 ;; ---------------------------------------------------------------------------

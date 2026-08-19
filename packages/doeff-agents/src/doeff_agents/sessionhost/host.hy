@@ -174,7 +174,13 @@
   #^ str socket-path
   #^ str tmux-bin
   #^ float monitor-interval-seconds
-  #^ int max-running
+  ;; 同時走行の上限。None = 上限なし(admission の check ごと飛ぶ —
+  ;; launch.hy の `(when (is-not max-running None) …)`)。無制限は設計として
+  ;; 正規の形で、抜け道ではない: 直接束縛(host を通さない使い方)では
+  ;; そもそも config が無く、params に key が載らない = 無制限。
+  ;; ⚠ 0 は無制限ではなく全拒否(判定が `owned-count >= max-running` なので
+  ;; 0 は常に真)。CLI は 0 を typed に拒む。
+  #^ (| int None) max-running
   #^ int result-solicitation-limit
   #^ int prompt-stall-seconds
   #^ int prompt-unblock-limit
@@ -330,9 +336,25 @@
       (= arg "--max-running")
       (do (+= index 1)
           (setv raw (required-arg args index "--max-running"))
-          (setv max-running (int raw))
-          (when (< max-running 0)
-            (raise (ValueError "--max-running must be non-negative"))))
+          ;; 「上限なし」を言う口(2026-08-19 operator 裁定: 上限は ACP の
+          ;; 都合であって sessionhost の性質ではない)。運用側は plist の
+          ;; 1 語で無制限を選べる必要があり、旗の省略に無制限を割り当てると
+          ;; 省略している既存の呼び手(適合 harness 等)の挙動まで変わる —
+          ;; だから明示の綴りを足す形にする。
+          (if (in (.lower raw) #{"none" "unlimited"})
+              (setv max-running None)
+              (do
+                (setv max-running (int raw))
+                (when (< max-running 0)
+                  (raise (ValueError "--max-running must be non-negative")))
+                ;; 0 は「上限なし」の綴りではない。素通しすると全 launch が
+                ;; 恒久 100% 拒否になる(`owned-count >= 0` は常に真)ので、
+                ;; 起動時に loud に落とす — 無音で全拒否する daemon を作らない。
+                (when (= max-running 0)
+                  (raise (ValueError
+                           (+ "--max-running 0 rejects every launch "
+                              "(admission is `owned >= max`); use "
+                              "`--max-running none` for unlimited")))))))
       (= arg "--result-solicitations")
       (do (+= index 1)
           (setv raw (required-arg args index "--result-solicitations"))
