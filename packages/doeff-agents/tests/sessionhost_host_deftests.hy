@@ -711,3 +711,37 @@
     (setv response (report-result-op conn "s1" {"ok" True}))
     (assert (= response {"accepted" True "already_reported" True})))
   (with-late-conn check))
+
+
+;; ---------------------------------------------------------------------------
+;; context_file の resume 面(law context-file-rides-the-wire — dispatch admission)
+;; ---------------------------------------------------------------------------
+
+
+(deftest test-dispatch-fork-rejects-context-file
+  ;; fork は新会話 — 前会話の invocation 簿記(context_file)の持ち込みは
+  ;; resume-only の他拡張と同じ fail-closed(黙殺は誤配線を隠す)。
+  (defn check [config actor]
+    (setv req {"id" 1 "method" "session.fork"
+               "params" {"session_id" "s1"
+                         "context_file" {"path" "x.json" "content" {}}}})
+    (setv response (json.loads (dispatch-line (json.dumps req) config actor)))
+    (assert (= (get response "ok") False))
+    (assert (in "resume-only" (get response "error"))))
+  (with-skeleton check))
+
+
+(deftest test-dispatch-resume-admits-context-file-shape
+  ;; resume の context_file は launch と同じ admission(裸ファイル名 +
+  ;; content 必須)を通る — 語彙外は store へ触る前に loud。
+  (defn check [config actor]
+    (for [[bad expected] [[{"path" "a/b.json" "content" {}} "bare file name"]
+                          [{"path" ".acp-context.json"} "content is required"]
+                          ["not-an-object" "must be an object"]]]
+      (setv req {"id" 1 "method" "session.resume"
+                 "params" {"session_id" "s1" "context_file" bad}})
+      (setv response (json.loads (dispatch-line (json.dumps req) config actor)))
+      (setv err (get response "error"))
+      (assert (= (get response "ok") False))
+      (assert (in expected err) f"admission 文言が想定外: {err}")))
+  (with-skeleton check))

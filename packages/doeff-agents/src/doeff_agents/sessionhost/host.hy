@@ -1009,7 +1009,8 @@
     ;; cross-binding 拡張 3 param は resume 専用(ADR-006 改訂 R4)— fork への
     ;; 指定は fail-closed(黙殺は誤配線を隠す)。
     (when (= method "session.fork")
-      (for [banned #("binding" "new_session_id" "expected_result")]
+      (for [banned #("binding" "new_session_id" "expected_result"
+                     "context_file")]
         (when (in banned p)
           (raise (RuntimeError
                    (+ f"invalid params for session.fork: `{banned}` is "
@@ -1021,10 +1022,15 @@
     ;; expected_result の schema admission は launch と共有(R4 — 明示 null は
     ;; dict でないため素通り = 契約なしの指定)。
     (when (= method "session.resume")
-      (admit-expected-result p "session.resume"))
+      (admit-expected-result p "session.resume")
+      ;; law context-file-rides-the-wire の resume 面 — 形の admission は
+      ;; launch と共有(裸ファイル名 + content 必須)。fork は上の banned で
+      ;; fail-closed(新会話に前会話の invocation 簿記を持ち込まない)。
+      (admit-context-file p "session.resume"))
     (setv program-params
           {"session_id" source-sid
            "mode" mode
+           "context_file" (.get p "context_file")
            "prompt" (.get p "prompt")
            "model" (.get p "model")
            "effort" (.get p "effort")

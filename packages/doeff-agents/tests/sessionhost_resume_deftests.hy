@@ -512,3 +512,40 @@
   (assert (= (get row.launch-overlay "model") "gpt-5.4"))
   (assert (= (get row.launch-overlay "effort") "low"))
   (assert (= (get (get row.launch-overlay "session_env") "FOO") "bar")))
+
+
+;; ---------------------------------------------------------------------------
+;; context_file の resume 面(law context-file-rides-the-wire)
+;; ---------------------------------------------------------------------------
+
+
+(deftest test-resume-materializes-context-file-before-spawn
+  ;; 新 invocation の指示メモは resume でも wire で運ばれ、宿り先(蘇生元の
+  ;; work_dir — R4 の cwd 鍵保証で resume はここに宿る)へ spawn 前に実体化
+  ;; される。実装は launch-params への素通し 1 点 — 実体化・順序・path 制約は
+  ;; launch-session の既存の法がそのまま持つ(並行実装を作らない: R3)。
+  (setv world (LaunchWorld))
+  (seed-source world)
+  (setv world.capture-script ["› {composer}"])
+  (<- row (run-resume world (resume-params
+                              :context_file {"path" ".acp-context.json"
+                                             "content" {"work_item_id" "wi-9"
+                                                        "attempt" 2}})))
+  (setv ctx-path "/work/dir/.acp-context.json")
+  (assert (in ctx-path world.fs) "resume の指示メモが宿り先に実体化されていない")
+  (assert (= (json.loads (get world.fs ctx-path))
+             {"work_item_id" "wi-9" "attempt" 2}))
+  ;; 書きは tmux new-session より前(spawn した session が必ず読める)
+  (setv ctx-write-idx (.index world.trace #("fs-write" ctx-path)))
+  (setv spawn-idx (.index (lfor t world.trace (get t 0)) "new-session"))
+  (assert (< ctx-write-idx spawn-idx)
+          "指示メモの書きが spawn より後(session が読めない窓がある)"))
+
+
+(deftest test-resume-without-context-file-writes-nothing
+  ;; context_file 省略の resume は宿り先へ何も書かない(従来挙動の凍結)。
+  (setv world (LaunchWorld))
+  (seed-source world)
+  (setv world.capture-script ["› {composer}"])
+  (<- row (run-resume world (resume-params)))
+  (assert (not-in "/work/dir/.acp-context.json" world.fs)))
