@@ -48,6 +48,7 @@
   FsDirExists
   FsFileExists
   FsFileMtime
+  GitRun
   EnvGet])
 (import doeff_agents.sessionhost.policy [ACTIVE-STATUSES])
 
@@ -469,6 +470,15 @@
     ;; ADR-DOE-AGENTS-006 R10(発注の物理前提検査)。isdir は symlink を
     ;; 解決する — 解決先が dir なら実在、壊れた symlink は不在。
     (resume (os.path.isdir path)))
+
+  (GitRun [repo args]
+    ;; ACP W2(workspace seed の実体化)— subprocess 物理のみ。失敗判断は
+    ;; 呼び手(launch program)所有なので code をそのまま返す(raise しない)。
+    (setv proc (subprocess.run ["git" "-C" repo #* (list args)]
+                               :capture-output True :text True))
+    (resume {"code" proc.returncode
+             "stdout" (or proc.stdout "")
+             "stderr" (or proc.stderr "")}))
 
   (FsFileExists [path]
     ;; ADR-DOE-AGENTS-006 R10(transcript 実在検査)。isfile は symlink を

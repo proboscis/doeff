@@ -53,7 +53,11 @@
   session-store-record-event
   env-get
   fs-dir-exists
+  fs-link-artifact
+  fs-make-dirs
+  fs-read-text
   fs-write-text-atomic
+  git-run
   tmux-has-session
   tmux-new-session
   tmux-send-keys
@@ -310,6 +314,97 @@
 ;; launch program 本体(oracle session_launch の凍結順序)
 ;; ---------------------------------------------------------------------------
 
+(defk link-workspace-sibling-deps [repo workspaces-root]
+  {:pre [(: repo str) (: workspaces-root str)]
+   :post [(: % "None — 不適合は raise")]}
+  "workspace root へ cabal.project の sibling 依存(../<name> 形)を symlink で
+   再現する(ACP engine linkProjectPathDependencies の host 側移植 — worktree の
+   相対 path 依存が root/<name> を指すため、鏡が無いと impl/repair session は
+   build/test 不能で盲走する)。manifest 不在は no-op。宣言された依存の実体
+   不在は loud。既設 link は same-entity なら no-op、別実体への衝突は loud
+   (第 1 波は非破壊 — engine 版の『古い symlink を張り替える』自己修復は
+   持たない。衝突が実測されたら第 2 波で判断)。"
+  (<- manifest (fs-read-text (os.path.join repo "cabal.project")))
+  (when (is manifest None)
+    (return None))
+  (for [token (.split manifest)]
+    (when (and (.startswith token "../")
+               (> (len token) 3)
+               (not-in "/" (cut token 3 None)))
+      (setv sibling-name (cut token 3 None))
+      (setv target (os.path.normpath (os.path.join repo token)))
+      (<- target-is-dir (fs-dir-exists target))
+      (when (not target-is-dir)
+        (raise (RuntimeError
+                 (+ f"workspace seed: cabal.project path dependency {token} "
+                    f"expects directory {target} on this machine — absent"))))
+      (<- outcome (fs-link-artifact target
+                                    (os.path.join workspaces-root sibling-name)))
+      (when (not-in outcome #{"linked" "same-entity"})
+        (raise (RuntimeError
+                 (+ f"workspace seed: sibling link {sibling-name} -> {target} "
+                    f"failed ({outcome}) — 非破壊方針につき既存物は触らない"))))))
+  None)
+
+
+(defk materialize-workspace-seed [seed]
+  {:pre [(: seed dict)]
+   :post [(: % "None — 失敗は raise")]}
+  "workspace seed(ACP W2 — law resolved-materialization)の実体化。launcher
+   (ACP scheduler)は判断(dir / repo / branch|detach / pin sha / 所有 marker)
+   を data で送り、worktree はセッションの走る機械 = この host が作る。
+   launcher 側 twin は存在しない(pod に namespace repo が無い実測 2026-08-21)。
+   冪等: dir 実在は skip(再 launch 互換)。第 1 波は非破壊 — branch 保持等の
+   衝突は除去せず loud(盗み取り・回収 sweeper は第 2 波)。"
+  (setv dir (get seed "dir"))
+  (<- dir-exists (fs-dir-exists dir))
+  (when dir-exists
+    (return None))
+  (setv repo (get seed "repo"))
+  (<- repo-exists (fs-dir-exists repo))
+  (when (not repo-exists)
+    (raise (RuntimeError
+             (+ f"workspace seed: source repo does not exist on this machine: "
+                f"{repo}"))))
+  (setv workspaces-root (os.path.dirname dir))
+  (<- _ (fs-make-dirs workspaces-root))
+  (when (bool (.get seed "link_siblings"))
+    (<- _ (link-workspace-sibling-deps repo workspaces-root)))
+  ;; pin sha の実在 — 不在なら fetch を 1 回だけ試す(それでも無ければ loud)。
+  (setv sha (.get seed "sha"))
+  (when (is-not sha None)
+    (<- probe (git-run repo ["rev-parse" "--verify" "--quiet"
+                             (+ sha "^{commit}")]))
+    (when (!= (get probe "code") 0)
+      (<- _ (git-run repo ["fetch" "--all" "--quiet"]))
+      (<- probe2 (git-run repo ["rev-parse" "--verify" "--quiet"
+                                (+ sha "^{commit}")]))
+      (when (!= (get probe2 "code") 0)
+        (raise (RuntimeError
+                 (+ f"workspace seed: pinned sha {sha} is not known to {repo} "
+                    "even after one fetch — refusing to guess a head"))))))
+  ;; worktree add(mode は host admission 済みの 2 語彙)。
+  (setv mode (get seed "mode"))
+  (setv argv
+        (if (= mode "detached")
+            ["worktree" "add" "--detach" dir sha]
+            (+ ["worktree" "add" "-B" (get seed "branch") dir]
+               (if (is-not sha None) [sha] []))))
+  (<- res (git-run repo argv))
+  (when (!= (get res "code") 0)
+    (setv err (get res "stderr"))
+    (raise (RuntimeError
+             (+ f"workspace seed: git worktree add failed for {dir} "
+                f"(mode={mode}): {err}"))))
+  ;; 所有 marker(内容は launcher が data で送る — 形式の所有は engine 側)。
+  (setv marker (.get seed "owner_marker"))
+  (when (is-not marker None)
+    (<- _ (fs-write-text-atomic (os.path.join dir (get marker "name"))
+                                (get marker "content_text")
+                                ".marker-tmp")))
+  None)
+
+
 (defk launch-session [params]
   {:pre [(: params dict)]
    :post [(: % SessionRow)]}
@@ -372,6 +467,14 @@
   (<- tmux-exists (tmux-has-session session-name))
   (when tmux-exists
     (raise (RuntimeError f"tmux session already exists: {session-name}")))
+
+  ;; --- workspace seed の実体化(ACP W2 — law resolved-materialization)。
+  ;; work_dir 検証より前でなければならない(worktree はこれから生える)。
+  ;; 純粋 admission(lifecycle / 重複 / capacity / tmux)より後 = 拒否される
+  ;; launch のために worktree を作らない。
+  (setv workspace-seed (.get params "workspace_seed"))
+  (when (is-not workspace-seed None)
+    (<- _ (materialize-workspace-seed workspace-seed)))
 
   ;; --- work_dir の物理実在(ADR-DOE-AGENTS-006 R10 — 全副作用より前)。
   ;; tmux は不在 start-directory を黙って $HOME に差し替える: pane は
