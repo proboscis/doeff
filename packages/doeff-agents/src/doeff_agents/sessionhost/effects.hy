@@ -688,6 +688,16 @@
    work_dir は正当な宿り先。戻り値: bool。"
   #^ str path)
 
+(defclass [(dataclass :frozen True :kw-only True)] GitRun [EffectBase]
+  "git の 1 発実行(ACP W2 — workspace seed の実体化にのみ使う制約面。
+   launcher と session host が別機械に分かれた系では、worktree はセッションの
+   走る機械 = この host でしか作れない。launcher は判断を data(workspace_seed)
+   で送り、実行だけがここへ来る)。cwd は repo に固定(`git -C <repo>`)。
+   失敗判断(loud / fetch 再試行)は呼び手 = launch program 所有 — substrate は
+   subprocess 物理のみ。戻り値: {\"code\" int, \"stdout\" str, \"stderr\" str}。"
+  #^ str repo
+  #^ "tuple" args)
+
 (defclass [(dataclass :frozen True :kw-only True)] FsFileExists [EffectBase]
   "ファイルの実在観測(ADR-DOE-AGENTS-006 R10 — same-home resume の
    transcript 実在検査)。symlink は解決して判定する — 壊れた symlink は
@@ -928,6 +938,12 @@
    :post [(: % FsDirExists)]}
   "FsDirExists を構築する(発注の物理前提検査 — ADR-DOE-AGENTS-006 R10)。"
   (FsDirExists :path path))
+
+(deff git-run [repo args]
+  {:pre [(: repo str) (> (len repo) 0) (: args "value")]
+   :post [(: % GitRun)]}
+  "GitRun を構築する(ACP W2 workspace seed の実体化専用)。"
+  (GitRun :repo repo :args (tuple args)))
 
 (deff fs-file-exists [path]
   {:pre [(: path str) (> (len path) 0)]

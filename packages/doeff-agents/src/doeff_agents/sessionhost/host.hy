@@ -24,6 +24,7 @@
 (import os)
 (import signal)
 (import socket)
+(import re)
 (import sqlite3)
 (import sys)
 (import threading)
@@ -618,6 +619,64 @@
              f"invalid params for {method}: context_file.content is required")))
   None)
 
+(deff admit-workspace-seed [params method]
+  {:pre [(: params dict) (: method str)]
+   :post [(: % "None — 不適合は raise")]}
+  "workspace_seed(ACP W2 — law resolved-materialization)の fail-closed
+   admission。受理形 = {repo, dir, mode, sha?, branch?, owner_marker?,
+   link_siblings?}: repo/dir は絶対 path、mode は {detached, branch} の 2 語彙
+   (detached は sha 必須・branch は branch 必須)、sha は hex 形、owner_marker
+   は {name(裸のファイル名), content_text(str)}。"
+  (setv seed (.get params "workspace_seed"))
+  (when (is seed None)
+    (return None))
+  (when (not (isinstance seed dict))
+    (raise (RuntimeError
+             f"invalid params for {method}: workspace_seed must be an object")))
+  (for [key ["repo" "dir"]]
+    (setv value (.get seed key))
+    (when (not (and (isinstance value str) (.startswith value "/")))
+      (raise (RuntimeError
+               (+ f"invalid params for {method}: workspace_seed.{key} must be "
+                  "an absolute path")))))
+  (setv mode (.get seed "mode"))
+  (when (not-in mode #{"detached" "branch"})
+    (raise (RuntimeError
+             (+ f"invalid params for {method}: workspace_seed.mode must be "
+                f"'detached' or 'branch' (got: {mode})"))))
+  (setv sha (.get seed "sha"))
+  (when (is-not sha None)
+    (when (not (and (isinstance sha str) (re.fullmatch r"[0-9a-f]{7,64}" sha)))
+      (raise (RuntimeError
+               (+ f"invalid params for {method}: workspace_seed.sha must be "
+                  "a hex commit id")))))
+  (when (and (= mode "detached") (is sha None))
+    (raise (RuntimeError
+             f"invalid params for {method}: detached workspace_seed requires sha")))
+  (when (= mode "branch")
+    (setv branch (.get seed "branch"))
+    (when (not (and (isinstance branch str) (> (len branch) 0)))
+      (raise (RuntimeError
+               (+ f"invalid params for {method}: branch workspace_seed requires "
+                  "a non-empty branch")))))
+  (setv marker (.get seed "owner_marker"))
+  (when (is-not marker None)
+    (when (not (isinstance marker dict))
+      (raise (RuntimeError
+               (+ f"invalid params for {method}: workspace_seed.owner_marker "
+                  "must be an object"))))
+    (setv name (.get marker "name"))
+    (when (or (not (isinstance name str)) (= name "")
+              (in "/" name) (in "\\" name) (in name #{"." ".."}))
+      (raise (RuntimeError
+               (+ f"invalid params for {method}: workspace_seed.owner_marker.name "
+                  "must be a bare file name"))))
+    (when (not (isinstance (.get marker "content_text") str))
+      (raise (RuntimeError
+               (+ f"invalid params for {method}: workspace_seed.owner_marker"
+                  ".content_text must be a string")))))
+  None)
+
 (deff build-launch-program-params [params config]
   {:pre [(: params dict) (: config HostConfig)]
    :post [(: % dict)]}
@@ -630,6 +689,7 @@
                f"invalid params for session.launch: missing field `{key}`"))))
   (admit-expected-result params "session.launch")
   (admit-context-file params "session.launch")
+  (admit-workspace-seed params "session.launch")
   {"session_id" (get params "session_id")
    "session_name" (get params "session_name")
    "agent_type" (get params "agent_type")
@@ -647,6 +707,9 @@
    ;; law context-file-rides-the-wire(上の admit-context-file 参照): 実体化は
    ;; launch program(spawn 前・work_dir 検査後)が fs-write-text-atomic で行う
    "context_file" (.get params "context_file")
+   ;; ACP W2(law resolved-materialization): 実体化は launch program の
+   ;; materialize-workspace-seed(work_dir 検証の前)
+   "workspace_seed" (.get params "workspace_seed")
    "socket_path" config.socket-path
    "max_running" config.max-running
    ;; repl-idle 予算の env-only knob(S19 watchdog knob と同じ use-site 読み。
