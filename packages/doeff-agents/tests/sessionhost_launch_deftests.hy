@@ -311,6 +311,40 @@
   (assert (= (get row.effective-identity "CLAUDE_CONFIG_DIR") "/x/claude")))
 
 
+(deftest test-launch-materializes-context-file-before-spawn
+  ;; law context-file-rides-the-wire(ACP steward W1b 2026-08-20): launcher が
+  ;; workdir へ直接書く旧法は launcher と session host が別機械に分かれた瞬間に
+  ;; 壊れた(ACP pod の write が Mac にしか無い workdir を指す — 実測 368 launch
+  ;; 失敗/2h)。file は wire(context_file)で運ばれ、session の走る機械 =
+  ;; この host が tmux spawn より前に atomic write で実体化する。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["codex booting banner" "› {composer}"])
+  (<- row (run-launch world (launch-params
+                              :context_file {"path" ".acp-context.json"
+                                             "content" {"work_item_id" "wi-1"
+                                                        "attempt" 2}})))
+  ;; workdir 直下に JSON として実体化されている
+  (setv ctx-path "/work/dir/.acp-context.json")
+  (assert (in ctx-path world.fs))
+  (assert (= (json.loads (get world.fs ctx-path))
+             {"work_item_id" "wi-1" "attempt" 2}))
+  ;; 書きは tmux new-session より前(spawn した session が必ず読める)
+  (setv ctx-write-idx
+        (.index world.trace #("fs-write" ctx-path)))
+  (setv spawn-idx
+        (.index (lfor t world.trace (get t 0)) "new-session"))
+  (assert (< ctx-write-idx spawn-idx)))
+
+
+(deftest test-launch-without-context-file-writes-nothing
+  ;; context_file 省略(payload workdir lane — 実 checkout へ簿記 file を
+  ;; 落とさない法の相方)では workdir へ何も書かれない。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["codex booting banner" "› {composer}"])
+  (<- row (run-launch world (launch-params)))
+  (assert (not-in "/work/dir/.acp-context.json" world.fs)))
+
+
 (deftest test-launch-env-declares-unattended-session-class
   ;; agentd 起動の会話は無人 — spawn env が AGENT_SESSION_CLASS=unattended を
   ;; 宣言する(hook 層の会話種別 self-gate 契約の相方 — 2026-08-18
