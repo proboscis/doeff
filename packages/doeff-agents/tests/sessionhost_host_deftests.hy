@@ -452,6 +452,44 @@
     (assert (in "context_file" (str raised)))))
 
 
+(deftest test-launch-program-params-workspace-seed-admission
+  ;; ACP W2(law resolved-materialization): workspace_seed の fail-closed
+  ;; admission — 絶対 path・mode 2 語彙・detached は sha 必須・branch は
+  ;; branch 必須・sha は hex 形・marker name は裸のファイル名。合格形は素通し。
+  (setv config (HostConfig :db-path "/tmp/x.db" :socket-path "/tmp/x.sock"
+                           :tmux-bin "tmux" :monitor-interval-seconds 1.0
+                           :max-running 4 :result-solicitation-limit 3
+                           :prompt-stall-seconds 90 :prompt-unblock-limit 3
+                           :prompt-judge-cmd DEFAULT-PROMPT-JUDGE-CMD))
+  (setv base {"session_id" "s1" "session_name" "doeff-s1"
+              "agent_type" "codex" "work_dir" "/w"})
+  (setv good {"repo" "/repo/acp" "dir" "/root/ws/inv-1"
+              "mode" "detached" "sha" "abc1234def"
+              "owner_marker" {"name" ".acp-owner.json" "content_text" "{}"}})
+  (setv ok (dict base))
+  (setv (get ok "workspace_seed") good)
+  (assert (= (get (build-launch-program-params ok config) "workspace_seed") good))
+  ;; 省略は None
+  (assert (is None (get (build-launch-program-params (dict base) config)
+                        "workspace_seed")))
+  (for [bad [{"repo" "rel/path" "dir" "/d" "mode" "detached" "sha" "abc1234def"}
+             {"repo" "/r" "dir" "/d" "mode" "steal" "sha" "abc1234def"}
+             {"repo" "/r" "dir" "/d" "mode" "detached"}
+             {"repo" "/r" "dir" "/d" "mode" "branch"}
+             {"repo" "/r" "dir" "/d" "mode" "detached" "sha" "NOT-HEX"}
+             {"repo" "/r" "dir" "/d" "mode" "detached" "sha" "abc1234def"
+              "owner_marker" {"name" "../evil" "content_text" "{}"}}
+             "not-a-dict"]]
+    (setv wire (dict base))
+    (setv (get wire "workspace_seed") bad)
+    (setv raised None)
+    (try
+      (build-launch-program-params wire config)
+      (except [e RuntimeError] (setv raised e)))
+    (assert (is-not raised None) f"expected reject for {bad}")
+    (assert (in "workspace_seed" (str raised)))))
+
+
 ;; ---------------------------------------------------------------------------
 ;; graceful shutdown の lease 釈放(issue #565)
 ;; ---------------------------------------------------------------------------
