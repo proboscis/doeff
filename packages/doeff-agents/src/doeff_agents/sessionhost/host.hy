@@ -590,6 +590,34 @@
                f"invalid params for {method}: {admission-error}"))))
   None)
 
+(deff admit-context-file [params method]
+  {:pre [(: params dict) (: method str)]
+   :post [(: % "None — 不適合は raise")]}
+  "context_file(law context-file-rides-the-wire — ACP steward W1b
+   2026-08-20)の fail-closed admission。受理形 = {path, content}:
+   path は裸のファイル名のみ(separator / '..' / 空は reject — session host は
+   work_dir の外へ 1 歩も書かない)、content は必須(中身は launcher 所有の
+   任意 JSON — host は schema を知らない)。"
+  (setv ctx (.get params "context_file"))
+  (when (is ctx None)
+    (return None))
+  (when (not (isinstance ctx dict))
+    (raise (RuntimeError
+             f"invalid params for {method}: context_file must be an object")))
+  (setv path (.get ctx "path"))
+  (when (not (and (isinstance path str) (> (len path) 0)))
+    (raise (RuntimeError
+             (+ f"invalid params for {method}: context_file.path must be a "
+                "non-empty string"))))
+  (when (or (in "/" path) (in "\\" path) (in path #{"." ".."}))
+    (raise (RuntimeError
+             (+ f"invalid params for {method}: context_file.path must be a "
+                f"bare file name inside work_dir (got: {path})"))))
+  (when (not-in "content" ctx)
+    (raise (RuntimeError
+             f"invalid params for {method}: context_file.content is required")))
+  None)
+
 (deff build-launch-program-params [params config]
   {:pre [(: params dict) (: config HostConfig)]
    :post [(: % dict)]}
@@ -601,6 +629,7 @@
       (raise (RuntimeError
                f"invalid params for session.launch: missing field `{key}`"))))
   (admit-expected-result params "session.launch")
+  (admit-context-file params "session.launch")
   {"session_id" (get params "session_id")
    "session_name" (get params "session_name")
    "agent_type" (get params "agent_type")
@@ -615,6 +644,9 @@
    "binding" (.get params "binding")
    "session_env" (or (.get params "session_env") {})
    "expected_result" (.get params "expected_result")
+   ;; law context-file-rides-the-wire(上の admit-context-file 参照): 実体化は
+   ;; launch program(spawn 前・work_dir 検査後)が fs-write-text-atomic で行う
+   "context_file" (.get params "context_file")
    "socket_path" config.socket-path
    "max_running" config.max-running
    ;; repl-idle 予算の env-only knob(S19 watchdog knob と同じ use-site 読み。
