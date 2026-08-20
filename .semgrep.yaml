@@ -1443,9 +1443,13 @@ rules:
       - pattern-regex: py\.import\("copyreg"\)
       - pattern-regex: getattr\("__newobj__"\)
     paths:
+      # src 直下と src 配下の subdir を両方書く — 片方だけでは届かない側が
+      # 無防備になる(doeff-vm-core は src/vm/ に dispatch/step/handler を持つ)。
       include:
         - "**/packages/doeff-vm/src/*.rs"
+        - "**/packages/doeff-vm/src/**/*.rs"
         - "**/packages/doeff-vm-core/src/*.rs"
+        - "**/packages/doeff-vm-core/src/**/*.rs"
 
   # tombstone(2026-07-14): 退役済みパターン no-is-instance-from-in-handlers の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: no-is-instance-from-in-handlers
