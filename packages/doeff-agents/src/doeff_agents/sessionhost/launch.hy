@@ -952,6 +952,13 @@
          "session_name" new-name
          "agent_type" source.agent-type
          "work_dir" source.work-dir
+         ;; law context-file-rides-the-wire の resume 面: 新 invocation の
+         ;; 指示メモは resume でも wire で運ばれ、宿り先(= source.work-dir —
+         ;; R4 の cwd 鍵保証で resume はここに宿る)へ launch-session の既存
+         ;; 実体化(spawn 前・atomic write)がそのまま書く。素通し 1 点 —
+         ;; 並行実装を作らない(R3)。workspace_seed は素通ししない(resume の
+         ;; 宿り先は再割当でなく蘇生元 dir — seed 対応は宿り先意味論の設計後)
+         "context_file" (.get params "context_file")
          "command" None
          "prompt" (.get params "prompt")
          "model" (or (.get params "model") (.get overlay "model"))
