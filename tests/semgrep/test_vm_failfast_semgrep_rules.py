@@ -347,3 +347,30 @@ def test_copyreg_per_call_resolution_rule_is_clean_on_shipped_source() -> None:
     )
 
     assert _rule_start_lines(results, "doeff-vm-no-per-call-copyreg-resolution") == set()
+
+
+def test_copyreg_per_call_resolution_rule_reaches_vm_crate_subdirectories() -> None:
+    """paths.include は src 直下だけでなく src 配下の subdir にも届く。
+
+    doeff-vm-core は dispatch/step/handler を `src/vm/` に置く。`src/*.rs` だけの
+    include はそこへ届かず、rule が無音で素通りする(禁止形が書けてしまう)。
+    """
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/rust"
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-vm-core/src/vm/dispatch.rs",
+        cwd=fixture_root,
+    )
+
+    assert _rule_start_lines(results, "doeff-vm-no-per-call-copyreg-resolution") == {6, 7}
+
+
+def test_copyreg_per_call_resolution_rule_is_clean_on_shipped_vm_core_subdir() -> None:
+    """出荷中の doeff-vm-core `src/vm/` には発火しない(禁止形は 0 箇所)。"""
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-vm-core/src/vm",
+        cwd=REPO_ROOT,
+    )
+
+    assert _rule_start_lines(results, "doeff-vm-no-per-call-copyreg-resolution") == set()
