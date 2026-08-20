@@ -50,6 +50,7 @@
   FsComposeHomeView
   FsReadText
   FsWriteTextAtomic
+  GitRun
   FsMakeDirs
   FsLinkArtifact
   FsListDir
@@ -99,6 +100,13 @@
     ;; 世界)。work_dir 消失(2026-08-17 実測の ACP workspace 削除)を模す
     ;; テストだけがここへ path を積む。
     (setv self.missing-dirs (set))
+    ;; ACP W2(workspace seed)の git 台本: known-shas に居る sha だけ
+    ;; rev-parse verify が通る。fetch は fetch-adds を known へ合流。
+    ;; worktree add 成功は dir を missing-dirs から外す(実体化の模型)。
+    (setv self.git-calls [])
+    (setv self.git-known-shas (set))
+    (setv self.git-fetch-adds (set))
+    (setv self.git-worktree-fail False)
     (setv self.now (datetime 2026 7 5 12 0 0 :tzinfo timezone.utc))))
 
 
@@ -114,6 +122,30 @@
     ;; 既定 = 実在。missing-dirs に積まれた path だけ不在(work_dir 消失の模型)。
     (.append world.trace #("dir-exists" path))
     (resume (not-in path world.missing-dirs)))
+  (GitRun [repo args]
+    ;; ACP W2 workspace seed の git 台本(実 subprocess ゼロ)。
+    (.append world.trace #("git" (tuple args)))
+    (.append world.git-calls (tuple args))
+    (setv args-l (list args))
+    (cond
+      (= (get args-l 0) "rev-parse")
+        (do
+          (setv sha (.removesuffix (get args-l -1) "^{commit}"))
+          (resume {"code" (if (in sha world.git-known-shas) 0 1)
+                   "stdout" "" "stderr" ""}))
+      (= (get args-l 0) "fetch")
+        (do
+          (.update world.git-known-shas world.git-fetch-adds)
+          (resume {"code" 0 "stdout" "" "stderr" ""}))
+      (= (get args-l 0) "worktree")
+        (if world.git-worktree-fail
+            (resume {"code" 128 "stdout" ""
+                     "stderr" "fatal: branch is already used by worktree (scripted)"})
+            (do
+              (setv dir (get args-l (if (in "--detach" args-l) 3 4)))
+              (.discard world.missing-dirs dir)
+              (resume {"code" 0 "stdout" "" "stderr" ""})))
+      True (resume {"code" 0 "stdout" "" "stderr" ""})))
   (FsFileExists [path]
     ;; fs(実体台本)か links(敷設済み symlink)に居れば実在 — FsLinkArtifact の
     ;; source-known と同じ知識面(listings は dir なので見ない)。
@@ -343,6 +375,104 @@
   (setv world.capture-script ["codex booting banner" "› {composer}"])
   (<- row (run-launch world (launch-params)))
   (assert (not-in "/work/dir/.acp-context.json" world.fs)))
+
+
+(deftest test-launch-materializes-workspace-seed-detached
+  ;; ACP W2(law resolved-materialization): launcher は判断を data で送り、
+  ;; worktree はセッションの走る機械 = この host が work_dir 検証の前に作る。
+  ;; detached 形はレビュー lane の pin 復元(共有 checkout の現在の状態で
+  ;; レビューする縮退の根治)。sibling link・所有 marker も同時に実体化する。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["codex booting banner" "› {composer}"])
+  (.add world.git-known-shas "abc1234def")
+  (.add world.missing-dirs "/acp-root/.acp/workspaces/inv-w2")
+  (setv (get world.fs "/repo/acp/cabal.project")
+        "packages:\n  .\n  ../doeff-agent-haskell\n")
+  ;; sibling の実体(FsLinkArtifact の source-known は listings 台本で名乗る)
+  (setv (get world.listings "/repo/doeff-agent-haskell") ["src"])
+  (<- row (run-launch world (launch-params
+                              :work_dir "/acp-root/.acp/workspaces/inv-w2"
+                              :workspace_seed
+                              {"repo" "/repo/acp"
+                               "dir" "/acp-root/.acp/workspaces/inv-w2"
+                               "mode" "detached"
+                               "sha" "abc1234def"
+                               "link_siblings" True
+                               "owner_marker"
+                               {"name" ".acp-owner.json"
+                                "content_text" "{\"workspacesRoot\": \"/acp-root/.acp/workspaces\", \"invocationId\": \"inv-w2\"}"}})))
+  ;; worktree add --detach が pin sha で走った
+  (assert (in #("worktree" "add" "--detach" "/acp-root/.acp/workspaces/inv-w2"
+                "abc1234def")
+              world.git-calls))
+  ;; 実体化は tmux spawn より前
+  (setv kinds (lfor t world.trace (get t 0)))
+  (assert (< (.index kinds "git") (.index kinds "new-session")))
+  ;; sibling link が workspaces root に生えた
+  (assert (= (.get world.links "/acp-root/.acp/workspaces/doeff-agent-haskell")
+             "/repo/doeff-agent-haskell"))
+  ;; 所有 marker は送られた内容 verbatim
+  (assert (in "workspacesRoot"
+              (get world.fs "/acp-root/.acp/workspaces/inv-w2/.acp-owner.json")))
+  ;; session は生きて立った(work_dir 検証も通過)
+  (assert (= row.status "running")))
+
+
+(deftest test-launch-workspace-seed-skips-when-dir-exists
+  ;; 冪等: dir が既に実在(再 launch)なら git を一切呼ばない。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["codex booting banner" "› {composer}"])
+  (<- row (run-launch world (launch-params
+                              :workspace_seed
+                              {"repo" "/repo/acp"
+                               "dir" "/work/dir"
+                               "mode" "detached"
+                               "sha" "abc1234def"})))
+  (assert (= world.git-calls [])))
+
+
+(deftest test-launch-workspace-seed-unknown-sha-fetch-then-loud
+  ;; pin sha 不在は fetch を 1 回だけ試し、それでも無ければ loud 失敗
+  ;; (head を推測しない)。worktree は作られず session も立たない。
+  (setv world (LaunchWorld))
+  (.add world.missing-dirs "/acp-root/.acp/workspaces/inv-w2")
+  (setv raised None)
+  (try
+    (<- _ (run-launch world (launch-params
+                              :work_dir "/acp-root/.acp/workspaces/inv-w2"
+                              :workspace_seed
+                              {"repo" "/repo/acp"
+                               "dir" "/acp-root/.acp/workspaces/inv-w2"
+                               "mode" "detached"
+                               "sha" "abc1234def"})))
+    (except [e RuntimeError] (setv raised e)))
+  (assert (in "refusing to guess" (str raised)))
+  (assert (in #("fetch" "--all" "--quiet") world.git-calls))
+  (assert (not (any (gfor c world.git-calls (= (get c 0) "worktree")))))
+  (assert (= world.rows {})))
+
+
+(deftest test-launch-workspace-seed-branch-conflict-is-loud
+  ;; 第 1 波は非破壊: branch 保持等の git 衝突は除去せず loud 失敗
+  ;; (盗み取り = 第 2 波の判断)。
+  (setv world (LaunchWorld))
+  (setv world.git-worktree-fail True)
+  (.add world.git-known-shas "abc1234def")
+  (.add world.missing-dirs "/acp-root/.acp/workspaces/inv-w2")
+  (setv raised None)
+  (try
+    (<- _ (run-launch world (launch-params
+                              :work_dir "/acp-root/.acp/workspaces/inv-w2"
+                              :workspace_seed
+                              {"repo" "/repo/acp"
+                               "dir" "/acp-root/.acp/workspaces/inv-w2"
+                               "mode" "branch"
+                               "branch" "impl-issue-x"
+                               "sha" "abc1234def"})))
+    (except [e RuntimeError] (setv raised e)))
+  (assert (in "worktree add failed" (str raised)))
+  (assert (in "already used by worktree" (str raised)))
+  (assert (= world.rows {})))
 
 
 (deftest test-launch-env-declares-unattended-session-class
