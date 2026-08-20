@@ -415,6 +415,43 @@
   (assert (= (get params2 "session_env") {})))
 
 
+(deftest test-launch-program-params-context-file-admission
+  ;; law context-file-rides-the-wire(ACP steward W1b 2026-08-20): 受理形は
+  ;; {path, content}。path は裸のファイル名のみ — session host は work_dir の
+  ;; 外へ 1 歩も書かない(separator / '..' は traversal の口)。合格形は
+  ;; program へ素通し、省略は None。
+  (setv config (HostConfig :db-path "/tmp/x.db" :socket-path "/tmp/x.sock"
+                           :tmux-bin "tmux" :monitor-interval-seconds 1.0
+                           :max-running 4 :result-solicitation-limit 3
+                           :prompt-stall-seconds 90 :prompt-unblock-limit 3
+                           :prompt-judge-cmd DEFAULT-PROMPT-JUDGE-CMD))
+  (setv base {"session_id" "s1" "session_name" "doeff-s1"
+              "agent_type" "codex" "work_dir" "/w"})
+  ;; 合格: 素通し
+  (setv ok (dict base))
+  (setv (get ok "context_file")
+        {"path" ".acp-context.json" "content" {"work_item_id" "wi-1"}})
+  (setv params (build-launch-program-params ok config))
+  (assert (= (get params "context_file")
+             {"path" ".acp-context.json" "content" {"work_item_id" "wi-1"}}))
+  ;; 省略: None
+  (assert (is None (get (build-launch-program-params (dict base) config)
+                        "context_file")))
+  ;; reject: separator つき path(traversal)/ '..' / content 欠落 / 非 dict
+  (for [bad [{"path" "sub/ctx.json" "content" {}}
+             {"path" ".." "content" {}}
+             {"path" ".acp-context.json"}
+             "not-a-dict"]]
+    (setv wire (dict base))
+    (setv (get wire "context_file") bad)
+    (setv raised None)
+    (try
+      (build-launch-program-params wire config)
+      (except [e RuntimeError] (setv raised e)))
+    (assert (is-not raised None) f"expected reject for {bad}")
+    (assert (in "context_file" (str raised)))))
+
+
 ;; ---------------------------------------------------------------------------
 ;; graceful shutdown の lease 釈放(issue #565)
 ;; ---------------------------------------------------------------------------
