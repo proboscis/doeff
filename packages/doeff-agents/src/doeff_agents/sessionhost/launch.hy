@@ -22,6 +22,8 @@
 
 (require doeff-hy.macros [defk deff <-])
 
+(import json)
+(import os)
 (import re)
 
 (import doeff_agents.sessionhost.effects [
@@ -51,6 +53,7 @@
   session-store-record-event
   env-get
   fs-dir-exists
+  fs-write-text-atomic
   tmux-has-session
   tmux-new-session
   tmux-send-keys
@@ -384,6 +387,21 @@
                 "physical (claude conversation lookup, trust pre-seed, "
                 "transcript transplant) would target the wrong project "
                 "(ADR-DOE-AGENTS-006 R10)"))))
+
+  ;; --- context file の実体化(law context-file-rides-the-wire — ACP steward
+  ;; W1b 2026-08-20)。launcher(ACP scheduler)が workdir へ直接書く旧法は、
+  ;; launcher と session host が別機械に分かれた瞬間に壊れた(pod 側の write が
+  ;; Mac にしか無い workdir を指す — 実測 368 launch 失敗/2h)。以後 file は
+  ;; wire(context_file: {path, content})で運び、session の走る機械 = この
+  ;; host が spawn 前に書く。path の裸ファイル名制約は host admission 所有
+  ;; (build-launch-program-params)。work_dir 実在検査の直後 = 旧 launcher の
+  ;; 書き順(残りの admission reject より前に file が実在する)と同位置。
+  (setv context-file (.get params "context_file"))
+  (when (is-not context-file None)
+    (<- _ (fs-write-text-atomic
+            (os.path.join work-dir (get context-file "path"))
+            (json.dumps (get context-file "content") :ensure-ascii False)
+            ".ctx-tmp")))
 
   ;; --- ADR 0035 reject-at-launch: result channel を配線できない agent が
   ;; result contract を持つことは受けない(silent timeout の予約になる)。
