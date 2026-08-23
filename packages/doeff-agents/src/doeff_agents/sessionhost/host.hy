@@ -624,9 +624,14 @@
    :post [(: % "None — 不適合は raise")]}
   "workspace_seed(ACP W2 — law resolved-materialization)の fail-closed
    admission。受理形 = {repo, dir, mode, sha?, branch?, owner_marker?,
-   link_siblings?}: repo/dir は絶対 path、mode は {detached, branch} の 2 語彙
-   (detached は sha 必須・branch は branch 必須)、sha は hex 形、owner_marker
-   は {name(裸のファイル名), content_text(str)}。"
+   link_siblings?, release_stale_holder?, protected_dirs?}: repo/dir は絶対
+   path、mode は {detached, branch} の 2 語彙(detached は sha 必須・branch は
+   branch 必須)、sha は hex 形、owner_marker は {name(裸のファイル名),
+   content_text(str)}。release_stale_holder(ACP ADR 3d81bd — 同名 branch の
+   古い worktree の解除を engine が許可する鍵)は bool で、真なら
+   protected_dirs(engine が生きていると見なす作業場 = 絶対 path の list・
+   空可)が必須 — 保護集合の無い解除は受理しない(fail-closed)。branch 形
+   以外での真は契約違反として拒否(detached は branch を持たない)。"
   (setv seed (.get params "workspace_seed"))
   (when (is seed None)
     (return None))
@@ -675,6 +680,37 @@
       (raise (RuntimeError
                (+ f"invalid params for {method}: workspace_seed.owner_marker"
                   ".content_text must be a string")))))
+  ;; ACP ADR 3d81bd: stale holder の解除の鍵と保護集合。
+  (setv release (.get seed "release_stale_holder"))
+  (when (is-not release None)
+    (when (not (isinstance release bool))
+      (raise (RuntimeError
+               (+ f"invalid params for {method}: workspace_seed"
+                  ".release_stale_holder must be a boolean"))))
+    (when (and release (!= mode "branch"))
+      (raise (RuntimeError
+               (+ f"invalid params for {method}: workspace_seed"
+                  ".release_stale_holder is only valid for mode 'branch' "
+                  "(a detached checkout owns no branch to release)"))))
+    (when (and release (not-in "protected_dirs" seed))
+      (raise (RuntimeError
+               (+ f"invalid params for {method}: workspace_seed"
+                  ".release_stale_holder requires protected_dirs "
+                  "(the launcher's live set — a release without it is "
+                  "refused, fail-closed)")))))
+  (when (in "protected_dirs" seed)
+    (setv protected (get seed "protected_dirs"))
+    (when (not (isinstance protected list))
+      (raise (RuntimeError
+               (+ f"invalid params for {method}: workspace_seed"
+                  ".protected_dirs must be a list of absolute paths"))))
+    (for [entry protected]
+      (when (not (and (isinstance entry str) (.startswith entry "/")))
+        (setv shown (repr entry))
+        (raise (RuntimeError
+                 (+ f"invalid params for {method}: workspace_seed"
+                    ".protected_dirs must be a list of absolute paths "
+                    f"(got: {shown})"))))))
   None)
 
 (deff build-launch-program-params [params config]
