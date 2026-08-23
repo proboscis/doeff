@@ -107,6 +107,13 @@
     (setv self.git-known-shas (set))
     (setv self.git-fetch-adds (set))
     (setv self.git-worktree-fail False)
+    ;; ACP ADR 3d81bd(stale holder の解除)の worktree 登録簿の模型:
+    ;; [{path, branch|None, locked}] — 実 git と同じく 1 branch は 1 worktree
+    ;; だけが持てる(add -B は他 path が持つ branch で 128)。list --porcelain
+    ;; はこの登録簿を描画し、prune は missing-dirs の(locked でない)登録を
+    ;; 畳み、remove --force は locked でない登録を畳み、unlock は locked を
+    ;; 外す。世界の初期状態は空(= 衝突なし)。
+    (setv self.git-worktrees [])
     (setv self.now (datetime 2026 7 5 12 0 0 :tzinfo timezone.utc))))
 
 
@@ -137,14 +144,81 @@
         (do
           (.update world.git-known-shas world.git-fetch-adds)
           (resume {"code" 0 "stdout" "" "stderr" ""}))
-      (= (get args-l 0) "worktree")
+      (and (= (get args-l 0) "worktree") (= (get args-l 1) "prune"))
+        (do
+          ;; dir が消えた(missing-dirs)登録を畳む — locked は残す(実 git の
+          ;; prune と同じ: lock は「消えても畳むな」の印)。
+          (setv world.git-worktrees
+                (lfor wt world.git-worktrees
+                      :if (not (and (in (get wt "path") world.missing-dirs)
+                                    (not (.get wt "locked" False))))
+                      wt))
+          (resume {"code" 0 "stdout" "" "stderr" ""}))
+      (and (= (get args-l 0) "worktree") (= (get args-l 1) "list"))
+        (do
+          (setv stanzas
+                (lfor wt world.git-worktrees
+                      (+ f"worktree {(get wt "path")}\nHEAD 0123456789abcdef\n"
+                         (if (is (.get wt "branch") None)
+                             "detached\n"
+                             f"branch refs/heads/{(get wt "branch")}\n")
+                         (if (in (get wt "path") world.missing-dirs)
+                             "prunable gitdir file points to non-existent location\n"
+                             "")
+                         "\n")))
+          (resume {"code" 0 "stdout" (.join "" stanzas) "stderr" ""}))
+      (and (= (get args-l 0) "worktree") (= (get args-l 1) "remove"))
+        (do
+          (setv target (get args-l -1))
+          (setv hit (lfor wt world.git-worktrees :if (= (get wt "path") target) wt))
+          (cond
+            (not hit)
+              (resume {"code" 128 "stdout" ""
+                       "stderr" f"fatal: '{target}' is not a working tree"})
+            (.get (get hit 0) "locked" False)
+              (resume {"code" 128 "stdout" ""
+                       "stderr" (+ f"fatal: cannot remove a locked working tree, "
+                                   "lock reason: scripted")})
+            True
+              (do
+                (setv world.git-worktrees
+                      (lfor wt world.git-worktrees :if (!= (get wt "path") target) wt))
+                (.add world.missing-dirs target)
+                (resume {"code" 0 "stdout" "" "stderr" ""}))))
+      (and (= (get args-l 0) "worktree") (= (get args-l 1) "unlock"))
+        (do
+          (setv target (get args-l -1))
+          (setv hit (lfor wt world.git-worktrees :if (= (get wt "path") target) wt))
+          (if (and hit (.get (get hit 0) "locked" False))
+              (do (setv (get (get hit 0) "locked") False)
+                  (resume {"code" 0 "stdout" "" "stderr" ""}))
+              (resume {"code" 128 "stdout" ""
+                       "stderr" f"fatal: '{target}' is not locked"})))
+      (and (= (get args-l 0) "worktree") (= (get args-l 1) "add"))
         (if world.git-worktree-fail
             (resume {"code" 128 "stdout" ""
                      "stderr" "fatal: branch is already used by worktree (scripted)"})
             (do
-              (setv dir (get args-l (if (in "--detach" args-l) 3 4)))
-              (.discard world.missing-dirs dir)
-              (resume {"code" 0 "stdout" "" "stderr" ""})))
+              (setv detached? (in "--detach" args-l))
+              (setv dir (get args-l (if detached? 3 4)))
+              (setv branch (if detached? None (get args-l 3)))
+              (setv holders
+                    (lfor wt world.git-worktrees
+                          :if (and (is-not branch None)
+                                   (= (.get wt "branch") branch)
+                                   (!= (get wt "path") dir))
+                          wt))
+              (if holders
+                  (do
+                    (setv holder-path (get (get holders 0) "path"))
+                    (resume {"code" 128 "stdout" ""
+                             "stderr" (+ f"fatal: '{branch}' is already used by "
+                                         f"worktree at '{holder-path}'")}))
+                  (do
+                    (.discard world.missing-dirs dir)
+                    (.append world.git-worktrees
+                             {"path" dir "branch" branch "locked" False})
+                    (resume {"code" 0 "stdout" "" "stderr" ""})))))
       True (resume {"code" 0 "stdout" "" "stderr" ""})))
   (FsFileExists [path]
     ;; fs(実体台本)か links(敷設済み symlink)に居れば実在 — FsLinkArtifact の
@@ -453,8 +527,10 @@
 
 
 (deftest test-launch-workspace-seed-branch-conflict-is-loud
-  ;; 第 1 波は非破壊: branch 保持等の git 衝突は除去せず loud 失敗
-  ;; (盗み取り = 第 2 波の判断)。
+  ;; 鍵(release_stale_holder)の無い seed = ACP ADR 3d81bd より前の engine
+  ;; からの seed: 第 1 波どおり非破壊 — branch 保持等の git 衝突は除去せず
+  ;; loud 失敗(配備順序で挙動が変わらない: host だけ先に新しくなっても
+  ;; 旧 engine の seed には何もしない)。
   (setv world (LaunchWorld))
   (setv world.git-worktree-fail True)
   (.add world.git-known-shas "abc1234def")
@@ -473,6 +549,210 @@
   (assert (in "worktree add failed" (str raised)))
   (assert (in "already used by worktree" (str raised)))
   (assert (= world.rows {})))
+
+
+;; ---------------------------------------------------------------------------
+;; ACP ADR 3d81bd — 同名 branch の stale holder の解除(engine ローカル腕
+;; releaseStaleBranchHolder の host 側の双子)。反例 = 2026-08-23 番人 31 席中
+;; 25 席が "branch feat/impl-sandbox-responsibility-<id> is already used by
+;; worktree at <前回の inv dir>" で 1 日 latch(branch 名は責務ごと固定・第 1 波は
+;; 解除を持たず・engine の回収係は pod に居て host の disk に届かない)。
+;; ---------------------------------------------------------------------------
+
+(setv STALE-ROOT "/acp-root/.acp/workspaces")
+(setv STALE-OLD (+ STALE-ROOT "/inv_wi_r1_a1"))
+(setv STALE-NEW (+ STALE-ROOT "/inv_wi_r1_a2"))
+(setv STALE-BRANCH "feat/impl-sandbox-responsibility-r1")
+
+(defn stale-holder-world [#** overrides]
+  "inv_wi_r1_a1 が STALE-BRANCH を持ったまま残っている世界。新しい invocation
+   inv_wi_r1_a2 が同じ branch で実体化しに来る(= 2 回目の attend)。
+   overrides: holder-path / marker-root(None = marker 無し)/ locked /
+   holder-missing / active-workdir。"
+  (setv holder-path (.get overrides "holder_path" STALE-OLD))
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["codex booting banner" "› {composer}"])
+  (.add world.git-known-shas "abc1234def")
+  (.add world.missing-dirs STALE-NEW)
+  (.append world.git-worktrees
+           {"path" holder-path "branch" STALE-BRANCH
+            "locked" (.get overrides "locked" False)})
+  (when (.get overrides "holder_missing" False)
+    (.add world.missing-dirs holder-path))
+  (setv marker-root (.get overrides "marker_root" STALE-ROOT))
+  (when (is-not marker-root None)
+    (setv (get world.fs (+ holder-path "/.acp-owner.json"))
+          (json.dumps {"workspacesRoot" marker-root "invocationId" "inv_wi_r1_a1"})))
+  (setv active-workdir (.get overrides "active_workdir" None))
+  (when (is-not active-workdir None)
+    (setv (get world.rows "s-live")
+          (SessionRow :session-id "s-live" :session-name "doeff-live"
+                      :pane-id "%3" :agent-type "codex"
+                      :lifecycle "run_to_completion" :status "running"
+                      :started-at "2026-08-23T05:00:00Z"
+                      :work-dir active-workdir)))
+  world)
+
+(defn stale-seed [#** overrides]
+  (setv seed {"repo" "/repo/acp"
+              "dir" STALE-NEW
+              "mode" "branch"
+              "branch" STALE-BRANCH
+              "release_stale_holder" True
+              "protected_dirs" []
+              "owner_marker" {"name" ".acp-owner.json"
+                              "content_text" (json.dumps {"workspacesRoot" STALE-ROOT
+                                                          "invocationId" "inv_wi_r1_a2"})}})
+  (.update seed overrides)
+  seed)
+
+(defn git-worktree-verbs [world]
+  "git-calls のうち worktree 副動詞の列(順序 assert 用)。"
+  (lfor c world.git-calls :if (= (get c 0) "worktree") (get c 1)))
+
+
+(deftest test-launch-workspace-seed-releases-stale-branch-holder
+  ;; 中心反例の再現: 同名 branch を非 protected の古い worktree が持つ seed は、
+  ;; prune → list → remove --force → add の順に走り、session が立つ。
+  (setv world (stale-holder-world))
+  (<- row (run-launch world (launch-params :work_dir STALE-NEW
+                                           :workspace_seed (stale-seed))))
+  (assert (= (git-worktree-verbs world) ["prune" "list" "remove" "add"]))
+  (assert (in #("worktree" "remove" "--force" STALE-OLD) world.git-calls))
+  (assert (in #("worktree" "add" "-B" STALE-BRANCH STALE-NEW) world.git-calls))
+  ;; 古い holder は登録簿から消え、新しい dir が branch を持つ
+  (assert (= (lfor wt world.git-worktrees (get wt "path")) [STALE-NEW]))
+  ;; 所有 marker は新しい dir に書かれた・session は生きて立った
+  (assert (in (+ STALE-NEW "/.acp-owner.json") world.fs))
+  (assert (= row.status "running")))
+
+
+(deftest test-launch-workspace-seed-refuses-engine-protected-holder
+  ;; ① engine の protected_dirs(Running invocation の workdir = live agent の
+  ;; checkout か失効復帰 resume の宛先)に在る holder は畳まない — add の実失敗
+  ;; を理由つきで loud。remove は一度も呼ばれない。
+  (setv world (stale-holder-world))
+  (setv raised None)
+  (try
+    (<- _ (run-launch world (launch-params
+                              :work_dir STALE-NEW
+                              :workspace_seed (stale-seed :protected_dirs [STALE-OLD]))))
+    (except [e RuntimeError] (setv raised e)))
+  (assert (in "already used by worktree" (str raised)))
+  (assert (in "was not released" (str raised)))
+  (assert (in "engine protected set" (str raised)))
+  (assert (not-in "remove" (git-worktree-verbs world)))
+  (assert (= (lfor wt world.git-worktrees (get wt "path")) [STALE-OLD]))
+  (assert (= world.rows {})))
+
+
+(deftest test-launch-workspace-seed-refuses-host-active-session-holder
+  ;; ② この host の active session の work_dir である holder は畳まない(engine
+  ;; の名指しに host の実在知識を union する — 名指しは呼び手・検査は受け手)。
+  (setv world (stale-holder-world :active_workdir STALE-OLD))
+  (setv raised None)
+  (try
+    (<- _ (run-launch world (launch-params :work_dir STALE-NEW
+                                           :workspace_seed (stale-seed))))
+    (except [e RuntimeError] (setv raised e)))
+  (assert (in "active session on this host" (str raised)))
+  (assert (not-in "remove" (git-worktree-verbs world)))
+  ;; 既存の live 行は無傷
+  (assert (= (. (get world.rows "s-live") status) "running")))
+
+
+(deftest test-launch-workspace-seed-refuses-holder-outside-workspaces-root
+  ;; ③ seed の置き場の配下に無い holder(人の worktree・他の置き場)は畳まない。
+  (setv world (stale-holder-world :holder_path "/Users/me/.worktrees/my-feature"
+                                  :marker_root None))
+  (setv raised None)
+  (try
+    (<- _ (run-launch world (launch-params :work_dir STALE-NEW
+                                           :workspace_seed (stale-seed))))
+    (except [e RuntimeError] (setv raised e)))
+  (assert (in "outside the seed's workspaces root" (str raised)))
+  (assert (not-in "remove" (git-worktree-verbs world)))
+  (assert (= (lfor wt world.git-worktrees (get wt "path"))
+             ["/Users/me/.worktrees/my-feature"])))
+
+
+(deftest test-launch-workspace-seed-refuses-foreign-owner-marker
+  ;; ④ 所有 marker が別の workspacesRoot を名乗る holder(他 control plane の
+  ;; 所有 — ACP ADR 0058 R2)は畳まない。
+  (setv world (stale-holder-world :marker_root "/other-root/.acp/workspaces"))
+  (setv raised None)
+  (try
+    (<- _ (run-launch world (launch-params :work_dir STALE-NEW
+                                           :workspace_seed (stale-seed))))
+    (except [e RuntimeError] (setv raised e)))
+  (assert (in "owned by another control plane root" (str raised)))
+  (assert (not-in "remove" (git-worktree-verbs world))))
+
+
+(deftest test-launch-workspace-seed-releases-markerless-holder-under-root
+  ;; 所有 marker が無くても置き場の配下なら畳む(marker 書込前に死んだ自前の
+  ;; 実体化の残骸 — 置き場が所有の証明)。
+  (setv world (stale-holder-world :marker_root None))
+  (<- row (run-launch world (launch-params :work_dir STALE-NEW
+                                           :workspace_seed (stale-seed))))
+  (assert (in "remove" (git-worktree-verbs world)))
+  (assert (= row.status "running")))
+
+
+(deftest test-launch-workspace-seed-release-reaps-registration-whose-dir-is-gone
+  ;; holder の dir が手で消されたのに locked 印で prune が畳めない登録(engine
+  ;; 腕の structural backstop が扱っていた形): unlock → 再 prune で畳み、add
+  ;; が通る。remove は呼ばれない(dir が無いので)。
+  (setv world (stale-holder-world :locked True :holder_missing True :marker_root None))
+  (<- row (run-launch world (launch-params :work_dir STALE-NEW
+                                           :workspace_seed (stale-seed))))
+  (assert (= (git-worktree-verbs world) ["prune" "list" "unlock" "prune" "add"]))
+  (assert (= row.status "running")))
+
+
+(deftest test-launch-workspace-seed-release-remove-failure-is-loud
+  ;; remove --force 自体が失敗(locked な worktree)したら黙って add に進まず loud。
+  (setv world (stale-holder-world :locked True))
+  (setv raised None)
+  (try
+    (<- _ (run-launch world (launch-params :work_dir STALE-NEW
+                                           :workspace_seed (stale-seed))))
+    (except [e RuntimeError] (setv raised e)))
+  (assert (in "releasing stale holder" (str raised)))
+  (assert (in "locked" (str raised)))
+  (assert (not-in "add" (git-worktree-verbs world)))
+  (assert (= world.rows {})))
+
+
+(deftest test-launch-workspace-seed-without-release-key-keeps-first-wave
+  ;; 鍵の無い seed(旧 engine)は解除の git 呼び出し(prune / list / remove)を
+  ;; 一切せず、衝突は第 1 波どおり loud(配備順序に依存しない)。
+  (setv world (stale-holder-world))
+  (setv seed (stale-seed))
+  (del (get seed "release_stale_holder"))
+  (del (get seed "protected_dirs"))
+  (setv raised None)
+  (try
+    (<- _ (run-launch world (launch-params :work_dir STALE-NEW :workspace_seed seed)))
+    (except [e RuntimeError] (setv raised e)))
+  (assert (in "already used by worktree" (str raised)))
+  (assert (= (git-worktree-verbs world) ["add"]))
+  (assert (= world.rows {})))
+
+
+(deftest test-launch-workspace-seed-detached-never-releases
+  ;; detached 形は branch を持たないので解除の対象が無い — 解除の git 呼び出し
+  ;; ゼロで add --detach のみ(同 branch を誰かが持っていても無関係)。
+  (setv world (stale-holder-world :marker_root None))
+  (<- row (run-launch world (launch-params
+                              :work_dir STALE-NEW
+                              :workspace_seed {"repo" "/repo/acp"
+                                               "dir" STALE-NEW
+                                               "mode" "detached"
+                                               "sha" "abc1234def"})))
+  (assert (= (git-worktree-verbs world) ["add"]))
+  (assert (in #("worktree" "add" "--detach" STALE-NEW "abc1234def") world.git-calls))
+  (assert (= row.status "running")))
 
 
 (deftest test-launch-env-declares-unattended-session-class

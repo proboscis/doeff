@@ -490,6 +490,55 @@
     (assert (in "workspace_seed" (str raised)))))
 
 
+(deftest test-launch-program-params-workspace-seed-release-admission
+  ;; ACP ADR 3d81bd: stale holder の解除の鍵(release_stale_holder)と保護集合
+  ;; (protected_dirs)の fail-closed admission — 鍵は bool・真なら branch 形
+  ;; 限定かつ protected_dirs(絶対 path の list・空可)必須。合格形は素通し
+  ;; (engine の data を実行係が改変しない)。
+  (setv config (HostConfig :db-path "/tmp/x.db" :socket-path "/tmp/x.sock"
+                           :tmux-bin "tmux" :monitor-interval-seconds 1.0
+                           :max-running 4 :result-solicitation-limit 3
+                           :prompt-stall-seconds 90 :prompt-unblock-limit 3
+                           :prompt-judge-cmd DEFAULT-PROMPT-JUDGE-CMD))
+  (setv base {"session_id" "s1" "session_name" "doeff-s1"
+              "agent_type" "codex" "work_dir" "/w"})
+  (for [good [{"repo" "/repo/acp" "dir" "/root/ws/inv-2" "mode" "branch"
+               "branch" "feat/impl-x" "release_stale_holder" True
+               "protected_dirs" ["/root/ws/inv-1" "/root/ws/inv-0"]}
+              ;; 空の保護集合も「集合を名指した」形 — 受理
+              {"repo" "/repo/acp" "dir" "/root/ws/inv-2" "mode" "branch"
+               "branch" "feat/impl-x" "release_stale_holder" True
+               "protected_dirs" []}
+              ;; 偽は鍵なしと同義(第 1 波の挙動)— 受理
+              {"repo" "/repo/acp" "dir" "/root/ws/inv-2" "mode" "branch"
+               "branch" "feat/impl-x" "release_stale_holder" False}]]
+    (setv ok (dict base))
+    (setv (get ok "workspace_seed") good)
+    (assert (= (get (build-launch-program-params ok config) "workspace_seed") good)))
+  (for [bad [;; 鍵が bool でない
+             {"repo" "/r" "dir" "/d" "mode" "branch" "branch" "b"
+              "release_stale_holder" "yes" "protected_dirs" []}
+             ;; 真なのに保護集合が無い(fail-closed)
+             {"repo" "/r" "dir" "/d" "mode" "branch" "branch" "b"
+              "release_stale_holder" True}
+             ;; 保護集合が list でない / 相対 path を含む
+             {"repo" "/r" "dir" "/d" "mode" "branch" "branch" "b"
+              "release_stale_holder" True "protected_dirs" "/d"}
+             {"repo" "/r" "dir" "/d" "mode" "branch" "branch" "b"
+              "release_stale_holder" True "protected_dirs" ["rel/path"]}
+             ;; detached に解除の鍵(branch を持たない)
+             {"repo" "/r" "dir" "/d" "mode" "detached" "sha" "abc1234def"
+              "release_stale_holder" True "protected_dirs" []}]]
+    (setv wire (dict base))
+    (setv (get wire "workspace_seed") bad)
+    (setv raised None)
+    (try
+      (build-launch-program-params wire config)
+      (except [e RuntimeError] (setv raised e)))
+    (assert (is-not raised None) f"expected reject for {bad}")
+    (assert (in "workspace_seed" (str raised)))))
+
+
 ;; ---------------------------------------------------------------------------
 ;; graceful shutdown の lease 釈放(issue #565)
 ;; ---------------------------------------------------------------------------

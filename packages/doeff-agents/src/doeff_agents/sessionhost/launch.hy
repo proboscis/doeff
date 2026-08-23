@@ -347,15 +347,210 @@
   None)
 
 
+;; ---------------------------------------------------------------------------
+;; ACP ADR 3d81bd — branch 形の実体化の前段: 同名 branch を既に持つ古い
+;; worktree の解除(engine ローカル腕 Acp.App.Workspace.releaseStaleBranchHolder
+;; の host 側の双子)。
+;;
+;; branch 名は作業ごとに固定(feat/<workflow>-<issue> — argus は責務ごと 1 本)
+;; なので、解除なしでは同じ作業の 2 回目以降の実体化が必ず前回の worktree と
+;; 衝突する。第 1 波(fc66c2da)はこれを持たずに出荷し、engine の回収係は pod
+;; に居て host の disk に届かないため、stale holder は自然には消えなかった —
+;; 反例 = 2026-08-23 番人 31 席中 25 席が丸 1 日 "branch … is already used by
+;; worktree at <前回の inv dir>" で起動段に latch(acp-sandbox の worktree 19 本)。
+;;
+;; 判断と実行の分担(law resolved-materialization を解除にも適用): 解除して
+;; よいか(release_stale_holder)と engine が生きていると見なす作業場の集合
+;; (protected_dirs = Running invocation の workdir)は engine が data で送り、
+;; 実行はこの host が行う。host は engine の名指しに自機の実在知識を union する
+;; (ADR-DOE-AGENTS-006 R10 と同じ「名指しは呼び手・検査は受け手」の分担):
+;;   ① engine の protected_dirs に在る holder は畳まない(live agent の checkout
+;;      か、失効復帰 resume〔ACP ADR a64d9d〕が起こされる予定の作業場)
+;;   ② この host の active session(pending/booting/running/blocked/blocked_api)
+;;      の work_dir は畳まない(物理に使用中)
+;;   ③ seed の置き場(dir の親 = workspaces root)の配下に無い holder は畳まない
+;;      (人の worktree・他の置き場 — この host が実体化した覚えの無い物)
+;;   ④ 所有 marker が在って別の workspacesRoot を名乗る holder は畳まない
+;;      (他 control plane の所有 — ACP ADR 0058 R2 の「reap の権威は marker」)。
+;;      marker 無しで置き場配下なら自前の実体化途中の残骸として畳む。
+;; どれか 1 つでも欠ければ畳まず、続く worktree add の実失敗を理由つきで loud
+;; に返す(engine 腕の「protected holder は no-op で caller が loud」と同じ)。
+;; 鍵(release_stale_holder)の無い seed = 本 ADR より前の engine からの seed は
+;; 第 1 波どおり解除しない(配備順序に依存して挙動が変わらない)。
+;; ---------------------------------------------------------------------------
+
+(defk parse-worktree-list-porcelain [text]
+  {:pre [(: text str)]
+   :post [(: % list)]}
+  "`git worktree list --porcelain` の出力 → [{path, branch|None, detached,
+   prunable}] の list。stanza は空行区切り・先頭行 `worktree <path>`・
+   `branch refs/heads/<name>` か `detached`・`prunable …`(dir 消失など)。
+   未知の行は無視(git の版差に寛容)。"
+  (setv entries [])
+  (setv current None)
+  (for [raw (.splitlines text)]
+    (setv line (.rstrip raw))
+    (cond
+      (.startswith line "worktree ")
+        (do
+          (when (is-not current None)
+            (.append entries current))
+          (setv current {"path" (cut line (len "worktree ") None)
+                         "branch" None
+                         "detached" False
+                         "prunable" False}))
+      (is current None) None
+      (.startswith line "branch refs/heads/")
+        (setv (get current "branch") (cut line (len "branch refs/heads/") None))
+      (= line "detached")
+        (setv (get current "detached") True)
+      (.startswith line "prunable")
+        (setv (get current "prunable") True)
+      True None))
+  (when (is-not current None)
+    (.append entries current))
+  entries)
+
+
+(defk find-branch-holder [entries branch]
+  {:pre [(: entries list) (: branch str)]
+   :post [(: % "dict | None")]}
+  "entries のうち branch を checkout している worktree の entry(無ければ None)。
+   git は 1 branch を同時に 1 worktree にしか許さないので高々 1 件。"
+  (setv found None)
+  (for [entry entries]
+    (when (and (is found None) (= (.get entry "branch") branch))
+      (setv found entry)))
+  found)
+
+
+(defk path-inside-root? [path root]
+  {:pre [(: path str) (: root str)]
+   :post [(: % bool)]}
+  "path が root の配下(root 自身は含まない)か — 文字列正規化のみ(IO なし)。"
+  (setv p (os.path.normpath path))
+  (setv r (os.path.normpath root))
+  (and (!= p r) (.startswith p (+ r os.sep))))
+
+
+(defk workspace-seed-owner-marker-root [holder marker-name]
+  {:pre [(: holder str) (: marker-name "str | None")]
+   :post [(: % "str | None")]}
+  "holder の所有 marker(ACP 0058 R2 の .acp-owner.json 形)が名乗る
+   workspacesRoot。marker 名が無い / file 不在 / JSON でない / 欄が無い は None
+   (= 所有の証明なし)。"
+  (when (is marker-name None)
+    (return None))
+  (<- text (fs-read-text (os.path.join holder marker-name)))
+  (when (is text None)
+    (return None))
+  (setv parsed None)
+  (try
+    (setv parsed (json.loads text))
+    (except [Exception]
+      (setv parsed None)))
+  (when (not (isinstance parsed dict))
+    (return None))
+  (setv root (.get parsed "workspacesRoot"))
+  (if (isinstance root str) root None))
+
+
+(defk host-active-workdirs []
+  {:pre []
+   :post [(: % set)]}
+  "この host で active な session(launch / adopt を問わず)の work_dir の集合 —
+   物理に使用中の作業場。空 work_dir(adopt 行の既定)は数えない。"
+  (<- rows (session-store-list-active))
+  (set (lfor r rows
+             :if (and (isinstance r.work-dir str) (> (len r.work-dir) 0))
+             (os.path.normpath r.work-dir))))
+
+
+(defk release-stale-branch-holder [seed]
+  {:pre [(: seed dict)]
+   :post [(: % dict)]}
+  "branch 形 seed の前段: seed.branch を既に持つ古い worktree を、安全側の
+   4 条件(上の ①〜④)を全て満たす時だけ `git worktree remove --force` で
+   畳む。戻り値 {\"released\" path|None, \"refused\" {path, reason}|None}。
+   remove 自体の失敗は loud(raise)。holder の dir が既に消えて登録だけが
+   残る形(locked 印などで prune が拾えない)は unlock → 再 prune で畳む
+   (engine 腕の structural backstop の git 語彙版 — .git の外科手術はしない)。"
+  (setv repo (get seed "repo"))
+  (setv dir (os.path.normpath (get seed "dir")))
+  (setv branch (get seed "branch"))
+  (setv workspaces-root (os.path.dirname dir))
+  (setv protected (set (lfor p (or (.get seed "protected_dirs") [])
+                             (os.path.normpath p))))
+  (setv marker (.get seed "owner_marker"))
+  (setv marker-name (if (is-not marker None) (.get marker "name") None))
+  ;; 1) 登録だけ残った worktree(dir が手で消された等)を先に畳む。
+  (<- _ (git-run repo ["worktree" "prune" "--expire" "now"]))
+  ;; 2) branch の holder を探す。
+  (<- listed (git-run repo ["worktree" "list" "--porcelain"]))
+  (when (!= (get listed "code") 0)
+    (return {"released" None
+             "refused" {"path" None
+                        "reason" (+ "git worktree list failed: "
+                                    (get listed "stderr"))}}))
+  (<- entries (parse-worktree-list-porcelain (get listed "stdout")))
+  (<- holder (find-branch-holder entries branch))
+  (when (is holder None)
+    (return {"released" None "refused" None}))
+  (setv holder-path (os.path.normpath (get holder "path")))
+  (when (= holder-path dir)
+    ;; 自分の dir の登録が残っていて branch も持っている = 再 launch の形。
+    ;; 呼び手(materialize)は dir 実在なら skip、不在ならここを通る — prune
+    ;; 済みなので dir 不在ならもう一覧に居ない。居るなら add が扱う。
+    (return {"released" None "refused" None}))
+  ;; 3) 安全側の 4 条件。
+  (when (in holder-path protected)
+    (return {"released" None
+             "refused" {"path" holder-path
+                        "reason" "held by a live invocation (engine protected set)"}}))
+  (<- active (host-active-workdirs))
+  (when (in holder-path active)
+    (return {"released" None
+             "refused" {"path" holder-path
+                        "reason" "held by an active session on this host"}}))
+  (<- inside (path-inside-root? holder-path workspaces-root))
+  (when (not inside)
+    (return {"released" None
+             "refused" {"path" holder-path
+                        "reason" (+ "outside the seed's workspaces root "
+                                    f"{workspaces-root}")}}))
+  (<- owner-root (workspace-seed-owner-marker-root holder-path marker-name))
+  (when (and (is-not owner-root None)
+             (!= (os.path.normpath owner-root) (os.path.normpath workspaces-root)))
+    (return {"released" None
+             "refused" {"path" holder-path
+                        "reason" (+ "owned by another control plane root "
+                                    f"{owner-root}")}}))
+  ;; 4) 畳む。dir が実在すれば remove --force、登録だけなら unlock → 再 prune。
+  (<- holder-exists (fs-dir-exists holder-path))
+  (if holder-exists
+      (<- res (git-run repo ["worktree" "remove" "--force" holder-path]))
+      (do
+        (<- _ (git-run repo ["worktree" "unlock" holder-path]))
+        (<- res (git-run repo ["worktree" "prune" "--expire" "now"]))))
+  (when (!= (get res "code") 0)
+    (setv release-err (get res "stderr"))
+    (raise (RuntimeError
+             (+ f"workspace seed: releasing stale holder {holder-path} of branch "
+                f"{branch} failed: {release-err}"))))
+  {"released" holder-path "refused" None})
+
+
 (defk materialize-workspace-seed [seed]
   {:pre [(: seed dict)]
    :post [(: % "None — 失敗は raise")]}
   "workspace seed(ACP W2 — law resolved-materialization)の実体化。launcher
-   (ACP scheduler)は判断(dir / repo / branch|detach / pin sha / 所有 marker)
-   を data で送り、worktree はセッションの走る機械 = この host が作る。
-   launcher 側 twin は存在しない(pod に namespace repo が無い実測 2026-08-21)。
-   冪等: dir 実在は skip(再 launch 互換)。第 1 波は非破壊 — branch 保持等の
-   衝突は除去せず loud(盗み取り・回収 sweeper は第 2 波)。"
+   (ACP scheduler)は判断(dir / repo / branch|detach / pin sha / 所有 marker /
+   解除の可否と保護集合)を data で送り、worktree はセッションの走る機械 =
+   この host が作る。launcher 側 twin は存在しない(pod に namespace repo が
+   無い実測 2026-08-21)。冪等: dir 実在は skip(再 launch 互換)。branch 形は
+   seed.release_stale_holder が真なら同名 branch の古い worktree を安全側の
+   条件つきで先に畳む(ACP ADR 3d81bd — release-stale-branch-holder)。鍵の
+   無い seed は非破壊(衝突は loud)のまま。"
   (setv dir (get seed "dir"))
   (<- dir-exists (fs-dir-exists dir))
   (when dir-exists
@@ -383,8 +578,14 @@
         (raise (RuntimeError
                  (+ f"workspace seed: pinned sha {sha} is not known to {repo} "
                     "even after one fetch — refusing to guess a head"))))))
-  ;; worktree add(mode は host admission 済みの 2 語彙)。
   (setv mode (get seed "mode"))
+  ;; branch 形の前段: 同名 branch の stale holder の解除(ACP ADR 3d81bd)。
+  ;; detached 形は branch を持たないので解除の対象が無い。
+  (setv refused None)
+  (when (and (= mode "branch") (bool (.get seed "release_stale_holder")))
+    (<- outcome (release-stale-branch-holder seed))
+    (setv refused (get outcome "refused")))
+  ;; worktree add(mode は host admission 済みの 2 語彙)。
   (setv argv
         (if (= mode "detached")
             ["worktree" "add" "--detach" dir sha]
@@ -393,9 +594,15 @@
   (<- res (git-run repo argv))
   (when (!= (get res "code") 0)
     (setv err (get res "stderr"))
+    (setv why "")
+    (when (is-not refused None)
+      (setv refused-path (get refused "path"))
+      (setv refused-reason (get refused "reason"))
+      (setv why (+ f" — stale holder {refused-path} was not released: "
+                   f"{refused-reason}")))
     (raise (RuntimeError
              (+ f"workspace seed: git worktree add failed for {dir} "
-                f"(mode={mode}): {err}"))))
+                f"(mode={mode}): {err}{why}"))))
   ;; 所有 marker(内容は launcher が data で送る — 形式の所有は engine 側)。
   (setv marker (.get seed "owner_marker"))
   (when (is-not marker None)
