@@ -619,6 +619,22 @@
              f"invalid params for {method}: context_file.content is required")))
   None)
 
+(deff admit-launch-attribution [params method]
+  {:pre [(: params dict) (: method str)]
+   :post [(: % "None — 不適合は raise")]}
+  "launch_attribution(発注者 = ACP scheduler が申告する帰属 metadata)の
+   admission。器だけ検める(JSON object であること)— 中身は launcher 所有の
+   opaque な id 群で、host は解釈しない(素通し verbatim 保存)。器の検査を
+   落とすと綴り違いの scalar が黙って列に入り、json_extract の読み口が
+   静かに空を返す。"
+  (setv attribution (.get params "launch_attribution"))
+  (when (is attribution None)
+    (return None))
+  (when (not (isinstance attribution dict))
+    (raise (RuntimeError
+             f"invalid params for {method}: launch_attribution must be an object")))
+  None)
+
 (deff admit-workspace-seed [params method]
   {:pre [(: params dict) (: method str)]
    :post [(: % "None — 不適合は raise")]}
@@ -726,6 +742,7 @@
   (admit-expected-result params "session.launch")
   (admit-context-file params "session.launch")
   (admit-workspace-seed params "session.launch")
+  (admit-launch-attribution params "session.launch")
   {"session_id" (get params "session_id")
    "session_name" (get params "session_name")
    "agent_type" (get params "agent_type")
@@ -746,6 +763,9 @@
    ;; ACP W2(law resolved-materialization): 実体化は launch program の
    ;; materialize-workspace-seed(work_dir 検証の前)
    "workspace_seed" (.get params "workspace_seed")
+   ;; 帰属 metadata(opaque — 上の admit-launch-attribution 参照): 保存は
+   ;; launch program が SessionRow に載せ、store が verbatim 永続化する
+   "launch_attribution" (.get params "launch_attribution")
    "socket_path" config.socket-path
    "max_running" config.max-running
    ;; repl-idle 予算の env-only knob(S19 watchdog knob と同じ use-site 読み。
@@ -1046,7 +1066,7 @@
     ;; 指定は fail-closed(黙殺は誤配線を隠す)。
     (when (= method "session.fork")
       (for [banned #("binding" "new_session_id" "expected_result"
-                     "context_file")]
+                     "context_file" "launch_attribution")]
         (when (in banned p)
           (raise (RuntimeError
                    (+ f"invalid params for session.fork: `{banned}` is "
@@ -1062,11 +1082,15 @@
       ;; law context-file-rides-the-wire の resume 面 — 形の admission は
       ;; launch と共有(裸ファイル名 + content 必須)。fork は上の banned で
       ;; fail-closed(新会話に前会話の invocation 簿記を持ち込まない)。
-      (admit-context-file p "session.resume"))
+      (admit-context-file p "session.resume")
+      ;; 帰属 metadata の resume 面(one law, both faces)— 形の admission は
+      ;; launch と共有。fork は banned(帰属も invocation 簿記)。
+      (admit-launch-attribution p "session.resume"))
     (setv program-params
           {"session_id" source-sid
            "mode" mode
            "context_file" (.get p "context_file")
+           "launch_attribution" (.get p "launch_attribution")
            "prompt" (.get p "prompt")
            "model" (.get p "model")
            "effort" (.get p "effort")

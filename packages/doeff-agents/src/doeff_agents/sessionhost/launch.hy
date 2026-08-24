@@ -856,6 +856,10 @@
                                "model" (.get params "model")
                                "effort" (.get params "effort")
                                "mcp_servers" (or (.get params "mcp_servers") {})}
+              ;; 発注者申告の帰属 metadata(opaque verbatim — 解釈しない)。
+              ;; overlay(launch 意図 = resume 復元源)とは別欄: これは
+              ;; 「この走行がどの機能の仕事か」の出自申告で復元には使わない。
+              :launch-attribution (.get params "launch_attribution")
               :conversation row-conversation
               :generation (if (is resume-context None)
                               1
@@ -1166,6 +1170,10 @@
          ;; 並行実装を作らない(R3)。workspace_seed は素通ししない(resume の
          ;; 宿り先は再割当でなく蘇生元 dir — seed 対応は宿り先意味論の設計後)
          "context_file" (.get params "context_file")
+         ;; 帰属 metadata の resume 面(one law, both faces): 新 incarnation は
+         ;; 新しい invocation を宿すので、帰属も呼び手の申告を素通しする
+         ;; (蘇生元行からの復元はしない — 帰属は復元源ではなく出自申告)。
+         "launch_attribution" (.get params "launch_attribution")
          "command" None
          "prompt" (.get params "prompt")
          "model" (or (.get params "model") (.get overlay "model"))

@@ -90,7 +90,10 @@
        ;; 組織 access 剥奪 / 文脈枯渇 / transport 障害)の durable latch。
        ;; api_limit_observed_at と同格の COALESCE first-write-wins 保護で、
        ;; 族名と初回観測時刻を対にして固定する。
-       "provider_failure_class" "provider_failure_observed_at"])
+       "provider_failure_class" "provider_failure_observed_at"
+       ;; 発注者(ACP scheduler)申告の帰属 metadata(opaque verbatim)。
+       ;; 消費者は Mac 側の利用帰属台帳 — 走行 ↔ 機能(action_id 等)の join。
+       "launch_attribution_json"])
 
 
 (defn make-snap [session-id #** overrides]
@@ -242,6 +245,60 @@
     (setv snap (db-session-get conn "s2"))
     (assert (is (get snap "provider_failure_class") None))
     (assert (is (get snap "provider_failure_observed_at") None)))
+  (with-tmp-conn check))
+
+
+(deftest test-launch-attribution-roundtrip-and-coalesce
+  ;; ACP 帰属便(usage-attribution-two-axes 便 2): launch_attribution_json は
+  ;; 発注者(ACP scheduler)が launch の一度だけ申告する opaque な帰属 id 群。
+  ;; conversation_json と同格の verbatim 保存 + COALESCE first-write-wins —
+  ;; monitor の定期書き戻し(None)でも後続の別申告でも変わらない。
+  (defn check [conn]
+    (setv attribution {"work_item_id" "wi_attr"
+                       "invocation_id" "inv_wi_attr_a1"
+                       "action_id" "argus-sensor-run"
+                       "resource_key" "default:agent-responsibility:argus-loop"
+                       "namespace" "default"})
+    (db-upsert-snapshot conn (make-snap "s1" :launch_attribution attribution))
+    (setv snap (db-session-get conn "s1"))
+    ;; verbatim 往復(host は解釈も整形もしない)
+    (assert (= (get snap "launch_attribution") attribution))
+    ;; stale な None 書き戻し(monitor)で消えない
+    (db-upsert-snapshot conn (make-snap "s1" :launch_attribution None))
+    (setv snap (db-session-get conn "s1"))
+    (assert (= (get snap "launch_attribution") attribution))
+    ;; 後続の別申告でも上書きされない(first-write-wins — 帰属は launch 時点の
+    ;; 事実で、書き換わる帰属は台帳の join を静かに壊す)
+    (db-upsert-snapshot conn (make-snap "s1" :launch_attribution
+                                        {"action_id" "someone-else"}))
+    (setv snap (db-session-get conn "s1"))
+    (assert (= (get (get snap "launch_attribution") "action_id")
+               "argus-sensor-run"))
+    ;; 旧 snapshot dict(本便以前の writer)にも additive — 欠落は None
+    (db-upsert-snapshot conn (make-snap "s2"))
+    (setv snap (db-session-get conn "s2"))
+    (assert (is (get snap "launch_attribution") None))
+    ;; SessionRow(policy 面)との往復 — launch が SessionRow で書き、
+    ;; merge 経路(policy-row-patch)が帰属を運ぶことの pin
+    (setv row (snapshot-to-policy-row (db-session-get conn "s1")))
+    (assert (= row.launch-attribution attribution))
+    ;; wire 露出: 申告ありは verbatim、未申告は field ごと省略
+    (assert (= (get (snapshot-to-wire-dict (db-session-get conn "s1"))
+                    "launch_attribution")
+               attribution))
+    (assert (not-in "launch_attribution"
+                    (snapshot-to-wire-dict (db-session-get conn "s2"))))
+    ;; 読み口の expression index(json_extract '$.action_id')が実在し、
+    ;; action_id で行が引ける
+    (setv indexes (sfor r (.fetchall (.execute conn
+                                       "SELECT name FROM sqlite_master WHERE type = 'index'"))
+                        (get r 0)))
+    (assert (in "idx_agent_sessions_launch_attribution_action" indexes))
+    (setv hit (.fetchone (.execute conn
+                           (+ "SELECT session_id FROM agent_sessions "
+                              "WHERE json_extract(launch_attribution_json, '$.action_id') = ?")
+                           #("argus-sensor-run"))))
+    (assert (= (get hit 0) "s1")))
   (with-tmp-conn check))
 
 
