@@ -451,6 +451,28 @@
   (assert (not-in "/work/dir/.acp-context.json" world.fs)))
 
 
+(deftest test-launch-stores-attribution-verbatim
+  ;; ACP 帰属便(usage-attribution-two-axes 便 2): 発注者申告の
+  ;; launch_attribution は行に verbatim で永続化される(host は解釈しない)。
+  ;; 未申告の launch は None のまま — 旧 caller 無傷(additive)。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["codex booting banner" "› {composer}"])
+  (setv attribution {"work_item_id" "wi_attr"
+                     "invocation_id" "inv_wi_attr_a1"
+                     "action_id" "argus-sensor-run"
+                     "resource_key" "default:agent-responsibility:argus-loop"
+                     "namespace" "default"})
+  (<- row (run-launch world (launch-params :launch_attribution attribution)))
+  (setv stored (get world.rows "s1"))
+  (assert (= stored.launch-attribution attribution))
+  ;; 未申告 lane(旧 caller)
+  (setv world2 (LaunchWorld))
+  (setv world2.capture-script ["codex booting banner" "› {composer}"])
+  (<- row2 (run-launch world2 (launch-params :session_id "s2"
+                                             :session_name "doeff-s2")))
+  (assert (is (. (get world2.rows "s2") launch-attribution) None)))
+
+
 (deftest test-launch-materializes-workspace-seed-detached
   ;; ACP W2(law resolved-materialization): launcher は判断を data で送り、
   ;; worktree はセッションの走る機械 = この host が work_dir 検証の前に作る。

@@ -452,6 +452,43 @@
     (assert (in "context_file" (str raised)))))
 
 
+(deftest test-launch-program-params-attribution-admission
+  ;; ACP 帰属便(usage-attribution-two-axes 便 2): launch_attribution は
+  ;; 器だけ検める(JSON object)— 中身は launcher 所有の opaque な id 群で
+  ;; host は解釈しない。合格形は素通し、省略は None、非 object は loud。
+  (setv config (HostConfig :db-path "/tmp/x.db" :socket-path "/tmp/x.sock"
+                           :tmux-bin "tmux" :monitor-interval-seconds 1.0
+                           :max-running 4 :result-solicitation-limit 3
+                           :prompt-stall-seconds 90 :prompt-unblock-limit 3
+                           :prompt-judge-cmd DEFAULT-PROMPT-JUDGE-CMD))
+  (setv base {"session_id" "s1" "session_name" "doeff-s1"
+              "agent_type" "codex" "work_dir" "/w"})
+  ;; 合格: 素通し(verbatim)
+  (setv ok (dict base))
+  (setv (get ok "launch_attribution")
+        {"work_item_id" "wi_attr" "invocation_id" "inv_wi_attr_a1"
+         "action_id" "argus-sensor-run"
+         "resource_key" "default:agent-responsibility:argus-loop"
+         "namespace" "default"})
+  (setv params (build-launch-program-params ok config))
+  (assert (= (get params "launch_attribution")
+             (get ok "launch_attribution")))
+  ;; 省略: None(旧 caller 無傷)
+  (assert (is None (get (build-launch-program-params (dict base) config)
+                        "launch_attribution")))
+  ;; reject: 非 object(綴り違いの scalar が黙って列に入ると json_extract の
+  ;; 読み口が静かに空を返す)
+  (for [bad ["wi_attr" 42 ["wi_attr"]]]
+    (setv wire (dict base))
+    (setv (get wire "launch_attribution") bad)
+    (setv raised None)
+    (try
+      (build-launch-program-params wire config)
+      (except [e RuntimeError] (setv raised e)))
+    (assert (is-not raised None) f"expected reject for {bad}")
+    (assert (in "launch_attribution" (str raised)))))
+
+
 (deftest test-launch-program-params-workspace-seed-admission
   ;; ACP W2(law resolved-materialization): workspace_seed の fail-closed
   ;; admission — 絶対 path・mode 2 語彙・detached は sha 必須・branch は
@@ -793,4 +830,30 @@
       (setv err (get response "error"))
       (assert (= (get response "ok") False))
       (assert (in expected err) f"admission 文言が想定外: {err}")))
+  (with-skeleton check))
+
+
+(deftest test-dispatch-fork-rejects-launch-attribution
+  ;; 帰属も invocation 簿記 — fork(新しい仕事)への持ち込みは context_file
+  ;; と同じ fail-closed(黙殺は誤帰属を隠す)。
+  (defn check [config actor]
+    (setv req {"id" 1 "method" "session.fork"
+               "params" {"session_id" "s1"
+                         "launch_attribution" {"action_id" "x"}}})
+    (setv response (json.loads (dispatch-line (json.dumps req) config actor)))
+    (assert (= (get response "ok") False))
+    (assert (in "resume-only" (get response "error"))))
+  (with-skeleton check))
+
+
+(deftest test-dispatch-resume-admits-launch-attribution-shape
+  ;; resume の launch_attribution は launch と同じ admission(JSON object)を
+  ;; 通る — 非 object は store へ触る前に loud。
+  (defn check [config actor]
+    (setv req {"id" 1 "method" "session.resume"
+               "params" {"session_id" "s1"
+                         "launch_attribution" "not-an-object"}})
+    (setv response (json.loads (dispatch-line (json.dumps req) config actor)))
+    (assert (= (get response "ok") False))
+    (assert (in "launch_attribution must be an object" (get response "error"))))
   (with-skeleton check))

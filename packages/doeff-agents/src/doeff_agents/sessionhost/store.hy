@@ -163,7 +163,12 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        ;; (族名 + 初回観測時刻)。api_limit_observed_at と同格の COALESCE
        ;; first-write-wins 保護 — 観測した事実を後続の書き戻しが消さない。
        #("agent_sessions" "provider_failure_class" "TEXT")
-       #("agent_sessions" "provider_failure_observed_at" "TEXT")])
+       #("agent_sessions" "provider_failure_observed_at" "TEXT")
+       ;; 発注者(ACP scheduler)申告の帰属 metadata(opaque verbatim —
+       ;; conversation_json と同型)。launch の一度きりの書きを COALESCE
+       ;; first-write-wins が守る。消費者は Mac 側の利用帰属台帳
+       ;; (json_extract '$.action_id' の expression index が読みを支える)。
+       #("agent_sessions" "launch_attribution_json" "TEXT")])
 
 (setv SNAPSHOT-SELECT
       (+ "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status, "
@@ -178,7 +183,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
          "adopted, turn_holder, turn_since, turn_wait_json, "
          "api_limit_observed_at, observation_gap_at, "
          "paste_resubmit_attempts, awaiting_response_since, "
-         "provider_failure_class, provider_failure_observed_at "
+         "provider_failure_class, provider_failure_observed_at, "
+         "launch_attribution_json "
          "FROM agent_sessions"))
 
 
@@ -214,6 +220,11 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
   (.execute conn
             (+ "CREATE INDEX IF NOT EXISTS idx_agent_sessions_conversation "
                "ON agent_sessions(json_extract(conversation_json, '$.session_id'))"))
+  ;; 帰属列の読み口(Mac 側の利用帰属台帳が「この action の走行」を引く鍵)。
+  ;; conversation index と同じ理由で ensure-column の後。
+  (.execute conn
+            (+ "CREATE INDEX IF NOT EXISTS idx_agent_sessions_launch_attribution_action "
+               "ON agent_sessions(json_extract(launch_attribution_json, '$.action_id'))"))
   None)
 
 (deff ensure-column [conn table column definition]
@@ -309,7 +320,10 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    "paste_resubmit_attempts" (int (get db-row 37))
    "awaiting_response_since" (get db-row 38)
    "provider_failure_class" (get db-row 39)
-   "provider_failure_observed_at" (get db-row 40)})
+   "provider_failure_observed_at" (get db-row 40)
+   "launch_attribution" (if (is (get db-row 41) None)
+                            None
+                            (json.loads (get db-row 41)))})
 
 (deff snapshot-to-wire-dict [snap]
   {:pre [(: snap dict)]
@@ -364,6 +378,10 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
           (get snap "forked_from_session_id")))
   (when (is-not (.get snap "launch_overlay") None)
     (setv (get wire "launch_overlay") (get snap "launch_overlay")))
+  ;; 帰属 metadata も None のとき field ごと省略(未申告を wire で null と
+  ;; 区別しない — launch_overlay と同じ規律)。
+  (when (is-not (.get snap "launch_attribution") None)
+    (setv (get wire "launch_attribution") (get snap "launch_attribution")))
   ;; ADR-007: adopted は常在 bool(ownership marker は不在と false を区別
   ;; しない)、turn_* は None のとき field ごと省略(未打刻は不可視 — R6 の
   ;; 既知限界を wire でも正直に)。
@@ -419,8 +437,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        "adopted, turn_holder, turn_since, turn_wait_json, "
        "api_limit_observed_at, observation_gap_at, "
        "paste_resubmit_attempts, awaiting_response_since, "
-       "provider_failure_class, provider_failure_observed_at"
-       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+       "provider_failure_class, provider_failure_observed_at, "
+       "launch_attribution_json"
+       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
        "ON CONFLICT(session_id) DO UPDATE SET "
        "session_name = excluded.session_name, "
        "pane_id = excluded.pane_id, "
@@ -477,7 +496,11 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        ;; first-write-wins(api_limit_observed_at と同格)。族名と時刻は対で
        ;; 意味を持つので、同じ COALESCE 規律を両方に掛ける。
        "provider_failure_class = COALESCE(agent_sessions.provider_failure_class, excluded.provider_failure_class), "
-       "provider_failure_observed_at = COALESCE(agent_sessions.provider_failure_observed_at, excluded.provider_failure_observed_at)")
+       "provider_failure_observed_at = COALESCE(agent_sessions.provider_failure_observed_at, excluded.provider_failure_observed_at), "
+       ;; 帰属は launch の一度きりの申告 — 後続 upsert(monitor の書き戻し
+       ;; を含む)が消しても上書きしてもいけない。conversation_json /
+       ;; effective_identity_json と同格の first-write-wins。
+       "launch_attribution_json = COALESCE(agent_sessions.launch_attribution_json, excluded.launch_attribution_json)")
     #((get snap "session_id")
       (get snap "session_name")
       (get snap "pane_id")
@@ -544,7 +567,12 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
       (.get snap "awaiting_response_since")
       ;; ACP ADR 0049 R9 第 3 改訂以前の snapshot dict にも additive に振る舞う。
       (.get snap "provider_failure_class")
-      (.get snap "provider_failure_observed_at")))
+      (.get snap "provider_failure_observed_at")
+      ;; 帰属 metadata(opaque verbatim — conversation と同じ直列化規律)。
+      (if (is (.get snap "launch_attribution") None)
+          None
+          (json.dumps (get snap "launch_attribution") :sort-keys True
+                      :separators #("," ":")))))
   None)
 
 (deff db-session-get [conn session-id]
@@ -1055,6 +1083,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
     :resumed-from-session-id (.get snap "resumed_from_session_id")
     :forked-from-session-id (.get snap "forked_from_session_id")
     :launch-overlay (.get snap "launch_overlay")
+    :launch-attribution (.get snap "launch_attribution")
     :adopted (bool (.get snap "adopted" False))
     :api-limit-observed-at (.get snap "api_limit_observed_at")
     :observation-gap-at (.get snap "observation_gap_at")
@@ -1098,6 +1127,10 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    "resumed_from_session_id" row.resumed-from-session-id
    "forked_from_session_id" row.forked-from-session-id
    "launch_overlay" row.launch-overlay
+   ;; 帰属 metadata は launch が一度だけ書く出自申告。SQL 側 COALESCE
+   ;; first-write-wins が最終防衛する(monitor の書き戻しは None を運ぶ
+   ;; だけなので消えない)。
+   "launch_attribution" row.launch-attribution
    ;; ADR-007: adopted は行ごとに不変(adopt が作った行だけ true)なので
    ;; patch に含めて安全。turn_* は policy 契約外 — patch に含めない
    ;; (merge 経路では existing の打刻が保存され、新規行は
