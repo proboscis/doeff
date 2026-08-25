@@ -619,14 +619,16 @@
              f"invalid params for {method}: context_file.content is required")))
   None)
 
-(deff admit-launch-attribution [params method]
+(defk admit-launch-attribution [params method]
   {:pre [(: params dict) (: method str)]
    :post [(: % "None — 不適合は raise")]}
   "launch_attribution(発注者 = ACP scheduler が申告する帰属 metadata)の
    admission。器だけ検める(JSON object であること)— 中身は launcher 所有の
    opaque な id 群で、host は解釈しない(素通し verbatim 保存)。器の検査を
    落とすと綴り違いの scalar が黙って列に入り、json_extract の読み口が
-   静かに空を返す。"
+   静かに空を返す。ADR-DOE-HY-004 R1(関数語彙は defk のみ)により program
+   として綴るため、ふつうの関数から呼ぶ側は run で実行する — 呼びっぱなしは
+   program を作るだけで検査が走らない。"
   (setv attribution (.get params "launch_attribution"))
   (when (is attribution None)
     (return None))
@@ -742,7 +744,7 @@
   (admit-expected-result params "session.launch")
   (admit-context-file params "session.launch")
   (admit-workspace-seed params "session.launch")
-  (admit-launch-attribution params "session.launch")
+  (run (admit-launch-attribution params "session.launch"))
   {"session_id" (get params "session_id")
    "session_name" (get params "session_name")
    "agent_type" (get params "agent_type")
@@ -1085,7 +1087,7 @@
       (admit-context-file p "session.resume")
       ;; 帰属 metadata の resume 面(one law, both faces)— 形の admission は
       ;; launch と共有。fork は banned(帰属も invocation 簿記)。
-      (admit-launch-attribution p "session.resume"))
+      (run (admit-launch-attribution p "session.resume")))
     (setv program-params
           {"session_id" source-sid
            "mode" mode
