@@ -1,3 +1,4 @@
+use crate::gc::visit_py_field;
 use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
 
@@ -51,7 +52,7 @@ impl PyResultOk {
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.value)
+        visit_py_field(&visit, &self.value)
     }
 }
 
@@ -116,7 +117,7 @@ impl PyResultErr {
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.error)?;
-        visit.call(&self.captured_traceback)
+        visit_py_field(&visit, &self.error)?;
+        visit_py_field(&visit, &self.captured_traceback)
     }
 }
