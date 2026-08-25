@@ -33,5 +33,4 @@ GetOuterHandlers = _ext.GetOuterHandlers
 TailEval = _ext.TailEval
 
 vm_live_counts = _ext.vm_live_counts
-gc_traverse_zeroed_visits = _ext.gc_traverse_zeroed_visits
 invariant_checks_enabled = _ext.invariant_checks_enabled
