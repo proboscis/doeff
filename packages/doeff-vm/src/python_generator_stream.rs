@@ -5,6 +5,7 @@
 //!
 //! The key operation: generator.send(value) → classify the yielded Python object → DoCtrl.
 
+use crate::gc::visit_py_field;
 use pyo3::exceptions::PyStopIteration;
 use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
@@ -84,7 +85,7 @@ impl PythonCallable {
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.callable)
+        visit_py_field(&visit, &self.callable)
     }
 
     fn __clear__(&mut self, py: Python<'_>) {
@@ -186,7 +187,7 @@ impl PyIRStream {
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.generator)
+        visit_py_field(&visit, &self.generator)
     }
 
     fn __clear__(&mut self, py: Python<'_>) {

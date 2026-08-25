@@ -8,7 +8,12 @@
 //! Every class that holds `Py<PyAny>` / `Py<PyK>` fields implements
 //! `__traverse__` so CPython's cycle collector can see through it —
 //! without it, any reference cycle through a program node is permanently
-//! uncollectable. `__clear__` is deliberately NOT implemented: these
+//! uncollectable. Fields MUST be visited through `crate::gc::visit_py_field`
+//! and never through `PyVisit::call`: the collector can reach an instance
+//! whose Rust contents are still zeroed (CPython GC-tracks it in `tp_alloc`,
+//! pyo3 writes the value afterwards) and a null `Py<T>` slot handed to
+//! `visit_decref` segfaults in optimized builds. See the `crate::gc` module
+//! docs for the full mechanism (agora-1 pod `ai usage` rc=-11, 2026-08-26). `__clear__` is deliberately NOT implemented: these
 //! classes are `frozen` (no `&mut self` access, required by the VM's
 //! immutable-program invariant), so their field references cannot be
 //! dropped in-place. That is sound for collection: field cycles cannot be
@@ -22,6 +27,7 @@
 //! `__traverse__` in pyo3 0.28, so a cycle routed exclusively through a
 //! program node's instance `__dict__` is still invisible to the GC.
 
+use crate::gc::visit_py_field;
 use doeff_vm_core::continuation::PyK;
 use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
@@ -51,7 +57,7 @@ impl PyPure {
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.value)
+        visit_py_field(&visit, &self.value)
     }
 }
 
@@ -80,7 +86,7 @@ impl PyPerform {
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.effect)
+        visit_py_field(&visit, &self.effect)
     }
 }
 
@@ -108,8 +114,8 @@ impl PyResume {
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.continuation)?;
-        visit.call(&self.value)
+        visit_py_field(&visit, &self.continuation)?;
+        visit_py_field(&visit, &self.value)
     }
 }
 
@@ -137,8 +143,8 @@ impl PyTransfer {
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.continuation)?;
-        visit.call(&self.value)
+        visit_py_field(&visit, &self.continuation)?;
+        visit_py_field(&visit, &self.value)
     }
 }
 
@@ -168,8 +174,8 @@ impl PyApply {
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.f)?;
-        visit.call(&self.args)
+        visit_py_field(&visit, &self.f)?;
+        visit_py_field(&visit, &self.args)
     }
 }
 
@@ -197,7 +203,7 @@ impl PyExpand {
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.expr)
+        visit_py_field(&visit, &self.expr)
     }
 }
 
@@ -225,8 +231,8 @@ impl PyPass {
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.effect)?;
-        visit.call(&self.continuation)
+        visit_py_field(&visit, &self.effect)?;
+        visit_py_field(&visit, &self.continuation)
     }
 }
 
@@ -270,8 +276,8 @@ impl PyWithHandler {
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.handler)?;
-        visit.call(&self.body)
+        visit_py_field(&visit, &self.handler)?;
+        visit_py_field(&visit, &self.body)
     }
 }
 
@@ -299,8 +305,8 @@ impl PyResumeThrow {
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.continuation)?;
-        visit.call(&self.exception)
+        visit_py_field(&visit, &self.continuation)?;
+        visit_py_field(&visit, &self.exception)
     }
 }
 
@@ -328,8 +334,8 @@ impl PyTransferThrow {
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.continuation)?;
-        visit.call(&self.exception)
+        visit_py_field(&visit, &self.continuation)?;
+        visit_py_field(&visit, &self.exception)
     }
 }
 
@@ -359,8 +365,8 @@ impl PyWithObserve {
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.observer)?;
-        visit.call(&self.body)
+        visit_py_field(&visit, &self.observer)?;
+        visit_py_field(&visit, &self.body)
     }
 }
 
@@ -383,7 +389,7 @@ impl PyGetTraceback {
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.continuation)
+        visit_py_field(&visit, &self.continuation)
     }
 }
 
@@ -432,7 +438,7 @@ impl PyGetHandlers {
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.continuation)
+        visit_py_field(&visit, &self.continuation)
     }
 }
 
@@ -462,7 +468,7 @@ impl PyGetBoundaries {
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.continuation)
+        visit_py_field(&visit, &self.continuation)
     }
 }
 
@@ -512,6 +518,6 @@ impl PyTailEval {
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.expr)
+        visit_py_field(&visit, &self.expr)
     }
 }
