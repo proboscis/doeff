@@ -1399,6 +1399,28 @@ rules:
       category: architecture
       issue: VM-HANDLER-METADATA-001
 
+  - id: doeff-vm-traverse-must-null-guard-py-fields
+    languages: [rust]
+    severity: ERROR
+    message: |
+      GC SAFETY: a `__traverse__` implementation must visit `Py<T>` fields through
+      `crate::gc::visit_py_field`, never through `PyVisit::call` directly.
+
+      CPython GC-tracks a pyclass instance inside `tp_alloc`, while pyo3 writes the
+      Rust value into it only after the base `tp_new` returns. A cycle collection in
+      that window calls `tp_traverse` on all-zero fields. `Py<T>` is `NonNull`, so the
+      null guard inside `PyVisit::call` is folded away by optimized builds and
+      CPython's `visit_decref` dereferences `Py_TYPE(NULL)` — SIGSEGV at 0x8.
+
+      Regression: every `ai usage` observation inside the agora-1 pod died with
+      rc=-11 on CPython 3.11 (2026-08-26), so seat placement ran on
+      `basis:unobserved`. See packages/doeff-vm/src/gc.rs.
+    pattern-regex: (?m)\bvisit\s*\.\s*call\s*\(
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/*.rs"
+        - "**/packages/doeff-vm-core/src/*.rs"
+
   - id: vm-core-no-pyvm-module-export
     languages: [rust]
     severity: ERROR
