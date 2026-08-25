@@ -8,8 +8,10 @@
 //!   - run() entry point
 
 use pyo3::prelude::*;
+use pyo3::types::PyType;
 
 pub mod do_expr;
+pub mod gc;
 pub mod python_generator_stream;
 pub mod pyvm;
 pub mod result;
@@ -40,6 +42,19 @@ fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[pyfn(m)]
     fn invariant_checks_enabled() -> bool {
         cfg!(feature = "invariant-checks")
+    }
+
+    /// Conformance oracle for the GC traverse invariant (see the `gc` module docs):
+    /// run `cls`'s `tp_traverse` against a stand-in instance whose Rust contents are
+    /// still all-zero — the state the cycle collector can observe between `tp_alloc`
+    /// (which GC-tracks the instance) and pyo3 writing the Rust value — and report
+    /// `(visits, null_visits)`.
+    ///
+    /// `null_visits` must be 0. A null handed to CPython's `visit_decref`
+    /// dereferences `Py_TYPE(NULL)` and segfaults (agora-1 pod `ai usage`, 2026-08-26).
+    #[pyfn(m)]
+    fn gc_traverse_zeroed_visits(cls: &Bound<'_, PyType>) -> (usize, usize) {
+        gc::traverse_zeroed_visits(cls)
     }
 
     Ok(())
