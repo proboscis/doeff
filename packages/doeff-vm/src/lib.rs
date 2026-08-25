@@ -52,6 +52,13 @@ fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ///
     /// `null_visits` must be 0. A null handed to CPython's `visit_decref`
     /// dereferences `Py_TYPE(NULL)` and segfaults (agora-1 pod `ai usage`, 2026-08-26).
+    ///
+    /// Deliberately NOT re-exported from `doeff_vm/__init__.py`: that file is
+    /// shared by every ABI-tagged `.so` in the tree, so a name added there turns
+    /// any stale extension build into an import-time `AttributeError` that takes
+    /// down every doeff consumer at once (observed 2026-08-26 — 7 stale `.so`
+    /// files in the checkout, `ai`/`agmsg` unusable). Callers import it from
+    /// `doeff_vm.doeff_vm`, which is version-locked to the extension itself.
     #[pyfn(m)]
     fn gc_traverse_zeroed_visits(cls: &Bound<'_, PyType>) -> (usize, usize) {
         gc::traverse_zeroed_visits(cls)
