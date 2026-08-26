@@ -19,20 +19,28 @@ import subprocess
 import sys
 import textwrap
 
-import doeff_vm
+import doeff_vm.doeff_vm as _extension
 import pytest
 from doeff_vm.doeff_vm import gc_traverse_zeroed_visits
 
-_EXTENSION_MODULE = "doeff_vm.doeff_vm"
-
 
 def _extension_types() -> list[str]:
-    names = []
-    for name in sorted(dir(doeff_vm)):
-        obj = getattr(doeff_vm, name)
-        if isinstance(obj, type) and getattr(obj, "__module__", None) == _EXTENSION_MODULE:
-            names.append(name)
-    return names
+    """Every type the extension module defines.
+
+    The population is read off the extension module itself, never selected by a
+    ``__module__`` string: a ``#[pyclass]`` written without ``module = "..."``
+    reports ``__module__ == "builtins"`` (``K``, ``PyVM`` do today) and an
+    exception minted by ``create_exception!`` reports the package
+    (``UnhandledEffect``). A string filter therefore drops exactly the classes
+    nobody remembered to annotate — the same ones most likely to have been
+    written without the null guard.
+
+    ``doeff_vm.doeff_vm`` is also the right module to read from:
+    ``doeff_vm/__init__.py`` is shared by every ABI-tagged ``.so`` in the tree,
+    while the extension module is version-locked to the oracle imported above
+    (see the ``gc_traverse_zeroed_visits`` note in packages/doeff-vm/src/lib.rs).
+    """
+    return sorted(name for name in dir(_extension) if isinstance(getattr(_extension, name), type))
 
 
 def test_extension_types_are_discoverable() -> None:
@@ -40,9 +48,27 @@ def test_extension_types_are_discoverable() -> None:
     assert len(_extension_types()) >= 15
 
 
+def test_population_covers_every_type_the_extension_defines() -> None:
+    """Guard the guard, second axis: the population must not be a `__module__` filter.
+
+    A `#[pyclass]` declared without `module = "..."` reports
+    `__module__ == "builtins"`, and an exception minted by `create_exception!`
+    reports the package name — so selecting types by `__module__` string silently
+    drops them from the parametrisation while the count assertion above still
+    passes. The population must be read off the extension module itself.
+    """
+    defined = {name for name in dir(_extension) if isinstance(getattr(_extension, name), type)}
+    covered = set(_extension_types())
+    assert defined - covered == set(), (
+        "these extension types are never handed to the traverse oracle: "
+        f"{sorted(defined - covered)}. Their tp_traverse is unchecked, so the "
+        "null-visit defect can return through them unnoticed."
+    )
+
+
 @pytest.mark.parametrize("name", _extension_types())
 def test_traverse_of_zeroed_instance_never_visits_null(name: str) -> None:
-    cls = getattr(doeff_vm, name)
+    cls = getattr(_extension, name)
     visits, nulls = gc_traverse_zeroed_visits(cls)
     assert nulls == 0, (
         f"{name}.__traverse__ handed {nulls}/{visits} null pointers to the visitproc "
