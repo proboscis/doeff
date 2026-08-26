@@ -1417,9 +1417,12 @@ rules:
       `basis:unobserved`. See packages/doeff-vm/src/gc.rs.
     pattern-regex: (?m)\bvisit\s*\.\s*call\s*\(
     paths:
+      # `src/**/*.rs`, not `src/*.rs`: doeff-vm-core keeps most of the VM under
+      # src/vm/, and a top-level-only glob reads as if the crate were covered
+      # while letting a nested `visit.call(` through in silence.
       include:
-        - "**/packages/doeff-vm/src/*.rs"
-        - "**/packages/doeff-vm-core/src/*.rs"
+        - "**/packages/doeff-vm/src/**/*.rs"
+        - "**/packages/doeff-vm-core/src/**/*.rs"
 
   - id: vm-core-no-pyvm-module-export
     languages: [rust]
