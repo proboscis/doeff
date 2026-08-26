@@ -319,3 +319,24 @@ def test_koine_interactive_terminalize_rule_is_clean_on_fixed_policy() -> None:
 # M3 で消滅し、include が crate src のみの死に rule になるため。readiness
 # discard の不変量は現役側の同契約(sessionhost/launch.hy)の deftest 群が
 # 引き続き守る。rollback 座標 = git tag agentd-rust-final。
+
+
+def test_gc_traverse_null_guard_rule_reaches_nested_src_directories() -> None:
+    """The traverse null-guard ban must cover every .rs under both VM crates' src/.
+
+    doeff-vm-core keeps most of the VM under src/vm/, so a `paths.include` written
+    as `src/*.rs` reads as if the crate were covered while a `visit.call(` added one
+    directory down passes lint silently. The defect this rule guards
+    (agora-1 pod `ai usage` rc=-11, 2026-08-26) is a SIGSEGV, so a silent hole in
+    the population is the whole failure mode.
+    """
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/rust"
+    results = _semgrep_results(REPO_ROOT / ".semgrep.yaml", "packages", cwd=fixture_root)
+    rule_id = "doeff-vm-traverse-must-null-guard-py-fields"
+    hit = {
+        str(result["path"]) for result in results if _has_rule({str(result["check_id"])}, rule_id)
+    }
+    assert hit == {
+        "packages/doeff-vm/src/gc_traverse_unguarded.rs",
+        "packages/doeff-vm-core/src/vm/gc_traverse_unguarded.rs",
+    }
