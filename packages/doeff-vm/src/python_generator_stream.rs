@@ -9,6 +9,7 @@ use crate::gc::visit_py_field;
 use pyo3::exceptions::PyStopIteration;
 use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
+use pyo3::sync::PyOnceLock;
 use pyo3::types::PyString;
 
 use doeff_vm_core::do_ctrl::DoCtrl;
@@ -35,6 +36,20 @@ use doeff_vm_core::value::Value;
 #[derive(Debug)]
 pub struct PyEffectBase;
 
+/// `copyreg.__newobj__`, resolved once per process.
+///
+/// Free-threaded CPython 3.14 takes a per-object lock both for `import` and
+/// for module attribute lookup, so resolving this on every `__reduce_ex__`
+/// call makes pickling a contention point instead of a refcount bump.
+/// Measured on 2026-08-07 in a long-lived multi-threaded runtime embedding
+/// this extension: 948 threads parked on the import lock
+/// (_PyMutex_LockTimed → _PyParkingLot_Park → __psynch_cvwait), reached from
+/// PyImport_ImportModuleLevelObject → import_ensure_initialized and from
+/// _Py_module_getattro_impl, with doeff_vm as the caller; the machine paged
+/// out 19.5 GiB. The cell holds the resolved callable so the hot path never
+/// touches the import machinery again.
+static COPYREG_NEWOBJ: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
+
 #[pymethods]
 impl PyEffectBase {
     #[new]
@@ -49,10 +64,14 @@ impl PyEffectBase {
     /// Pickle support: return (copyreg.__newobj__, (cls,), __dict__).
     /// copyreg.__newobj__(cls) calls cls.__new__(cls), then pickle sets
     /// obj.__dict__.update(state) for the third element.
+    ///
+    /// `copyreg.__newobj__` comes from COPYREG_NEWOBJ — resolved once per
+    /// process. Do NOT import or read a module attribute here: this runs on
+    /// every pickle of every effect, and on free-threaded builds those take
+    /// locks (see the COPYREG_NEWOBJ doc comment for the measured wedge).
     fn __reduce_ex__(slf: &Bound<'_, Self>, _protocol: i32) -> PyResult<Py<PyAny>> {
         let py = slf.py();
-        let copyreg = py.import("copyreg")?;
-        let newobj = copyreg.getattr("__newobj__")?;
+        let newobj = COPYREG_NEWOBJ.import(py, "copyreg", "__newobj__")?;
         let cls = slf.get_type();
         let args = pyo3::types::PyTuple::new(py, &[cls.as_any()])?;
         let state = slf.getattr("__dict__")?;

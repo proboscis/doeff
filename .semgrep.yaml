@@ -1446,6 +1446,33 @@ rules:
       include:
         - /packages/doeff-vm/src/pyvm.rs
 
+  - id: doeff-vm-no-per-call-copyreg-resolution
+    languages: [rust]
+    severity: ERROR
+    message: |
+      BANNED: resolving copyreg.__newobj__ per call (py.import("copyreg") /
+      getattr("__newobj__")). pickle hooks run on every effect instance, and
+      on free-threaded CPython 3.14 both import and module attribute lookup
+      take per-object locks — so a per-call resolution turns pickling into a
+      contention point. Measured 2026-08-07 in a long-lived multi-threaded
+      runtime: 948 threads parked on the import lock
+      (_PyMutex_LockTimed → _PyParkingLot_Park), reached from
+      PyImport_ImportModuleLevelObject → import_ensure_initialized and
+      _Py_module_getattro_impl, doeff_vm as the caller; 19.5 GiB paged out.
+      Resolve once into a static PyOnceLock — see COPYREG_NEWOBJ in
+      packages/doeff-vm/src/python_generator_stream.rs.
+    pattern-either:
+      - pattern-regex: py\.import\("copyreg"\)
+      - pattern-regex: getattr\("__newobj__"\)
+    paths:
+      # src 直下と src 配下の subdir を両方書く — 片方だけでは届かない側が
+      # 無防備になる(doeff-vm-core は src/vm/ に dispatch/step/handler を持つ)。
+      include:
+        - "**/packages/doeff-vm/src/*.rs"
+        - "**/packages/doeff-vm/src/**/*.rs"
+        - "**/packages/doeff-vm-core/src/*.rs"
+        - "**/packages/doeff-vm-core/src/**/*.rs"
+
   # tombstone(2026-07-14): 退役済みパターン no-is-instance-from-in-handlers の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
   - id: no-is-instance-from-in-handlers
     metadata:

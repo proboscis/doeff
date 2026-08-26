@@ -319,3 +319,58 @@ def test_koine_interactive_terminalize_rule_is_clean_on_fixed_policy() -> None:
 # M3 で消滅し、include が crate src のみの死に rule になるため。readiness
 # discard の不変量は現役側の同契約(sessionhost/launch.hy)の deftest 群が
 # 引き続き守る。rollback 座標 = git tag agentd-rust-final。
+
+
+def test_copyreg_per_call_resolution_rule_detects_pre_fix_reduce_ex() -> None:
+    """doeff-vm-no-per-call-copyreg-resolution は改修前の __reduce_ex__ 形に発火する。
+
+    2026-08-07 の hypha 常駐 runtime 滞留(948 threads が import 鍵で park)の
+    発生源だった「呼び出しごとの copyreg 解決」の回帰ガード。
+    """
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/rust"
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-vm/src/python_generator_stream.rs",
+        cwd=fixture_root,
+    )
+
+    # py.import("copyreg") と getattr("__newobj__") の 2 行に発火する
+    assert _rule_start_lines(results, "doeff-vm-no-per-call-copyreg-resolution") == {6, 7}
+
+
+def test_copyreg_per_call_resolution_rule_is_clean_on_shipped_source() -> None:
+    """出荷中の python_generator_stream.rs には発火しない(PyOnceLock 化済み)。"""
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-vm/src/python_generator_stream.rs",
+        cwd=REPO_ROOT,
+    )
+
+    assert _rule_start_lines(results, "doeff-vm-no-per-call-copyreg-resolution") == set()
+
+
+def test_copyreg_per_call_resolution_rule_reaches_vm_crate_subdirectories() -> None:
+    """paths.include は src 直下だけでなく src 配下の subdir にも届く。
+
+    doeff-vm-core は dispatch/step/handler を `src/vm/` に置く。`src/*.rs` だけの
+    include はそこへ届かず、rule が無音で素通りする(禁止形が書けてしまう)。
+    """
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/rust"
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-vm-core/src/vm/dispatch.rs",
+        cwd=fixture_root,
+    )
+
+    assert _rule_start_lines(results, "doeff-vm-no-per-call-copyreg-resolution") == {6, 7}
+
+
+def test_copyreg_per_call_resolution_rule_is_clean_on_shipped_vm_core_subdir() -> None:
+    """出荷中の doeff-vm-core `src/vm/` には発火しない(禁止形は 0 箇所)。"""
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-vm-core/src/vm",
+        cwd=REPO_ROOT,
+    )
+
+    assert _rule_start_lines(results, "doeff-vm-no-per-call-copyreg-resolution") == set()
