@@ -130,36 +130,48 @@ def test_wiring_discovery_skips_norecursedirs_matched_directories(
 def test_verify_wiring_cli_runs_strict_collection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import doeff_adr.cli
+    """collect-only の command 形と、その起動に待ちの上限が付くことを同時に検査する。
 
-    commands: list[Sequence[str]] = []
+    起動は doeff_adr.process(外部 process 接触の唯一の層)を通るため、
+    seam は subprocess ではなくその層の subprocess.run に置く — timeout を
+    渡さない起動経路が復活したらここで落ちる。
+    """
+    import doeff_adr.cli
+    import doeff_adr.process
+
+    calls: list[tuple[Sequence[str], float | None]] = []
 
     def run_command(
         command: Sequence[str],
         *,
+        cwd: object,
         check: bool,
         capture_output: bool,
         text: bool,
+        timeout: float | None,
     ) -> subprocess.CompletedProcess[str]:
         assert not check
         assert capture_output
         assert text
-        commands.append(command)
+        calls.append((command, timeout))
         return subprocess.CompletedProcess(command, returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(doeff_adr.cli.subprocess, "run", run_command)
+    monkeypatch.setattr(doeff_adr.process.subprocess, "run", run_command)
 
     exit_code: int = doeff_adr.cli.main(["verify-wiring", "docs/adr"])
 
     assert exit_code == 0
-    assert commands == [
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "--collect-only",
-            "-q",
-            "docs/adr",
-            "--doeff-adr-wiring=strict",
-        ]
+    assert calls == [
+        (
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "--collect-only",
+                "-q",
+                "docs/adr",
+                "--doeff-adr-wiring=strict",
+            ],
+            doeff_adr.process.external_process_timeout_seconds(),
+        )
     ]

@@ -8,13 +8,14 @@ assertions that pytest-generated functions can call.
 
 import json
 import shutil
-import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
+
+from doeff_adr.process import ExternalProcessTimeoutError, run_external_process
 
 AdrStatus = Literal["proposed", "accepted", "superseded", "rejected"]
 EnforcementMode = Literal["green", "expected-red"]
@@ -431,31 +432,36 @@ def _run_semgrep(
     cwd: Path | None = None,
     project_root: Path,
 ) -> list[dict[str, Any]]:
-    proc = subprocess.run(
-        [
-            semgrep,
-            # 検査の意味は tree だけで決まる — scanner に network(metrics 送信・
-            # 新版照会)を許すと、到達性や応答時間という機体の事情が検査の実行に
-            # 混入する(オフライン機で hang、飽和網で timeout)。
-            "--metrics=off",
-            "--disable-version-check",
-            # project root は明示宣言する。git metadata からの推論に任せると、
-            # .git の無い検査 tree で root が走査対象 dir 自身に落ち、対象より
-            # 上のセグメントを参照する paths.include だけが無音で死ぬ(zeus 実測
-            # 2026-08-17: 発火する rule としない rule が include の形で割れた)。
-            "--project-root",
-            str(project_root),
-            "--quiet",
-            "--json",
-            "--config",
-            str(config),
-            *[str(path) for path in paths],
-        ],
-        cwd=cwd,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    command = [
+        semgrep,
+        # 検査の意味は tree だけで決まる — scanner に network(metrics 送信・
+        # 新版照会)を許すと、到達性や応答時間という機体の事情が検査の実行に
+        # 混入する(オフライン機で hang、飽和網で timeout)。hang そのものへの
+        # 待ちの上限は doeff_adr.process が全起動地点に構造として与える。
+        "--metrics=off",
+        "--disable-version-check",
+        # project root は明示宣言する。git metadata からの推論に任せると、
+        # .git の無い検査 tree で root が走査対象 dir 自身に落ち、対象より
+        # 上のセグメントを参照する paths.include だけが無音で死ぬ(zeus 実測
+        # 2026-08-17: 発火する rule としない rule が include の形で割れた)。
+        "--project-root",
+        str(project_root),
+        "--quiet",
+        "--json",
+        "--config",
+        str(config),
+        *[str(path) for path in paths],
+    ]
+    # 上限に達した scan は「findings なし」ではなく「走らなかった scan」— 下の JSON
+    # 実在検査と同じ理由で、大声で落ちる(黙読すると scanner の停止が偽の緑に化ける)。
+    try:
+        proc = run_external_process(command, cwd=cwd)
+    except ExternalProcessTimeoutError as exc:
+        raise AssertionError(
+            f"semgrep produced no JSON verdict — the scan was killed after "
+            f"{exc.timeout_seconds:g}s without returning; command: {exc.command_line}\n"
+            f"{exc}"
+        ) from exc
     if proc.returncode not in (0, 1):
         raise AssertionError(f"semgrep failed with exit {proc.returncode}: {proc.stderr}")
     # exit 1 は「findings あり」と「起動時 crash」の両方が返す — JSON の実在だけが

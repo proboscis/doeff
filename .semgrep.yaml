@@ -4792,3 +4792,29 @@ rules:
     paths:
       include:
         - "**/doeff_adr/**"
+
+  - id: doeff-adr-external-process-must-be-bounded
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      Every external process contact in doeff-adr must go through
+      doeff_adr.process.run_external_process, which always applies a wait
+      bound (DOEFF_ADR_EXTERNAL_PROCESS_TIMEOUT_SECONDS, default 600s) and
+      converts subprocess.TimeoutExpired into a loud ExternalProcessTimeoutError.
+      Calling subprocess / os.system directly makes the bound an optional
+      per-call-site keyword, and every call site in the package had omitted
+      it (measured 2026-08-18: semgrep in registry.py and pytest
+      --collect-only in cli.py, 0 of 2 bounded). A hanging scanner then
+      wedges the ADR gate forever, and with it the CI runs, land queue and
+      agent seats waiting on that gate. Route the launch through
+      run_external_process instead of adding a new raw launch site.
+    pattern-either:
+      - pattern-regex: '(?m)^\s*(import|from)\s+subprocess\b'
+      - pattern-regex: '\bsubprocess\.(run|call|check_call|check_output|Popen)\s*\('
+      - pattern-regex: '\bos\.(system|popen|spawn\w*|exec\w*)\s*\('
+    paths:
+      include:
+        - "**/doeff_adr/**"
+      exclude:
+        - "**/doeff_adr/process.py"
