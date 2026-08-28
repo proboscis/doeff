@@ -1021,6 +1021,27 @@
   (assert (= world.rows {})))
 
 
+(deftest test-launch-rejects-metered-credential-in-overlay
+  ;; operator 裁定 2026-08-26: 従量課金 credential(API キー)はどの経路でも
+  ;; 受けない — 席の認証は定額 profile(typed binding)のみ。判定は形
+  ;; (`*_API_KEY`)なので既知 provider(ANTHROPIC_API_KEY)も未知 provider
+  ;; (SOMETHING_API_KEY)も語彙改訂なしで弾く。副作用ゼロ(行も tmux も
+  ;; 生まれない)。
+  (for [bad-env [{"ANTHROPIC_API_KEY" "sk-ant-x"}
+                 {"OPENAI_API_KEY" "sk-x"}
+                 {"SOMETHING_NEW_API_KEY" "k"}
+                 {"anthropic-api-key" "sk"}]]
+    (setv world (LaunchWorld))
+    (setv raised None)
+    (try
+      (<- row (run-launch world (launch-params :session_env bad-env)))
+      (except [e RuntimeError] (setv raised e)))
+    (assert (is-not raised None) f"expected reject for {bad-env}")
+    (assert (in "metered-billing credentials are forbidden" (str raised)))
+    (assert (= world.trace []))
+    (assert (= world.rows {}))))
+
+
 (deftest test-launch-rejects-foreign-owned-key-in-overlay
   ;; 所有権は kind を跨いで効く: codex launch でも CLAUDE_CONFIG_DIR は
   ;; overlay に住めない(所有権ベース — キー列挙の腐敗を許さない)。
