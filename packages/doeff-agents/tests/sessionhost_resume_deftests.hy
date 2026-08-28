@@ -578,6 +578,23 @@
              "old-action")))
 
 
+(deftest test-resume-rejects-metered-credential-in-overlay
+  ;; 従量課金 credential の締め出しは resume 面でも同じ関所(launch-session)を
+  ;; 通る — 呼び手の session_env にも、蘇生元行の overlay 由来の合成にも効く。
+  (setv world (LaunchWorld))
+  (seed-source world)
+  (setv world.capture-script ["› {composer}"])
+  (setv raised None)
+  (try
+    (<- row (run-resume world (resume-params
+                                :session_env {"ANTHROPIC_API_KEY" "sk-ant-x"})))
+    (except [e RuntimeError] (setv raised e)))
+  (assert (is-not raised None))
+  (assert (in "metered-billing credentials are forbidden" (str raised)))
+  ;; 新 incarnation の行は生まれない
+  (assert (not-in "s1~g2" world.rows)))
+
+
 (deftest test-resume-without-attribution-stays-none
   ;; 未申告の resume は新行の帰属 None(蘇生元からの黙った複写をしない —
   ;; 旧 caller 無傷 + 帰属の偽装なし)。

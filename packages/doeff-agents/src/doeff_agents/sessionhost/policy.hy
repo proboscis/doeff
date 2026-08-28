@@ -343,6 +343,27 @@
                 :if (in (policy-normalized-env-key key) BINDING-OWNED-ENV-KEYS)
                 key)))
 
+;; 従量課金 credential の締め出し(operator 裁定 2026-08-26 —「このシステムで
+;; API キーを利用してはならない。従量課金を利用してはならない」。音声モードは
+;; 唯一の例外だが、この host を通らない)。binding 所有キーと違い「正しい家」が
+;; 存在しない — agent 席の認証は定額(subscription/OAuth)profile のみで、
+;; API キーはどの経路でも運ばれてはならない。判定は綴りの列挙でなく形
+;; (`*_API_KEY`)+ 少数の既知別名 — 新 provider の SOMETHING_API_KEY も
+;; 語彙改訂なしで弾く(過剰包摂側へ倒す fail-closed: 課金でない `FOO_API_KEY`
+;; が誤って弾かれたら loud に見えて直せるが、逆は黙って課金される)。
+(setv METERED-CREDENTIAL-ENV-ALIASES
+      #{"ANTHROPIC_AUTH_TOKEN" "OPENAI_KEY" "GOOGLE_GENAI_KEY"})
+
+(deff metered-credential-env-offenders [session-env]
+  {:pre [(: session-env dict)]
+   :post [(: % list)]}
+  "session_env に居てはならない従量課金 credential 形のキーの列挙。"
+  (sorted (lfor key (.keys session-env)
+                :if (do (setv normalized (policy-normalized-env-key key))
+                        (or (.endswith normalized "_API_KEY")
+                            (in normalized METERED-CREDENTIAL-ENV-ALIASES)))
+                key)))
+
 (deff binding-admission-error [binding agent-type]
   {:pre [(: binding (| dict None)) (: agent-type str)]
    :post [(: % (| str None))]}
