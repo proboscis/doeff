@@ -14,8 +14,11 @@
           "uv.lock"
           "Makefile"
           ".semgrep.yaml"
+          ".pre-commit-config.yaml"
           "packages/doeff-adr/src/doeff_adr"
           "packages/doeff-vm-core/Cargo.toml"
+          "scripts/check_enforcement_ledger.py"
+          "scripts/git-hooks/pre-commit"
           "docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy"]
   :problem
     [(fact
@@ -47,6 +50,7 @@
      (rule R4 "dev ビルドは doeff-vm-core を feature `invariant-checks` + `python_bridge` 有効でビルドする(2026-07-14 B3 裁定)。VM conformance oracle(I1–I8)は pytest から起動される。invariant-checks 無効ビルドでの oracle テストは hard fail(skip 禁止)。")
      (rule R5 "anti-drop ratchet: enforcement 台帳(defadr 数・law 数・defsemgrep 数・deftest enforcement 数)が黙って減ったら fail するメタテストを既定収集に置く(orch SpecInventorySpec の pytest 版)。台帳の意図的な削減は台帳ファイルの明示的更新を伴う。")
      [removed]
+     [removed]
   :laws
     [(law default-pytest-sees-all-enforcement
        :statement "for_all declared_enforcement e: collected_by(default_pytest, e) AND (missing_dependency(e) => hard_fail, not skip)"
@@ -68,7 +72,20 @@
           (counterexample
              "伸ばしたことを黙って行う — 8 倍の締切で通った走行は『緑』としか見えず、機械が過負荷であるという同じくらい重要な観測が失われる")
           (counterexample
-             "内側の 2 つだけ直して門の持ち時間(gate.timeout_s)を据え置く — 内側を伸ばせば走行の総時間は必ず伸びるので、赤の場所が『1 テストの timeout』から『走行全体の時間切れ』へ移るだけで、着地はやはり通らない(実測 2026-08-17: 内側だけ直した便が 2710.7 秒で 2700 秒の門に当たった)。締切は 3 つあり、族として直す")])]
+             "内側の 2 つだけ直して門の持ち時間(gate.timeout_s)を据え置く — 内側を伸ばせば走行の総時間は必ず伸びるので、赤の場所が『1 テストの timeout』から『走行全体の時間切れ』へ移るだけで、着地はやはり通らない(実測 2026-08-17: 内側だけ直した便が 2710.7 秒で 2700 秒の門に当たった)。締切は 3 つあり、族として直す")])
+     (law ledger-checked-at-authoring-time
+       :statement "for_all commit c touching(enforcement_assets): checked_against_ledger(staged_snapshot(c)) before commit_created on hook-installed machines; counting_home(pre_commit_hook) == counting_home(default_pytest_R5) == scripts/check_enforcement_ledger.py"
+       :counterexamples
+         [(counterexample
+             "2026-08-21 実弾: ADR-DOE-HY-004 新設(f47f0a4b)が defadr +1・deftest +2・law +1 を台帳未更新のまま直接 push で main へ運び、着地の窓(力学のみ)も素通り — 初検出が翌朝の日次 verify(doeff-verify-20260821-065005)まで遅れ、無実の 2 便(L43 / L44)が容疑に挙がった")
+          (counterexample
+             "敷設時実弾(2026-08-09): land-queue 敷設の bootstrap で semgrep_rules 246≠247 の記帳漏れが main の実赤として発覚 — 同じ形の 2 度目が今回。個々の著者の不注意ではなく、著述時に何も突合しない構造の欠陥")
+          (counterexample
+             "working tree だけを突合する hook — 台帳を直したが stage し忘れた commit が緑で通り、tree は一致・commit は不一致のまま歴史に入る")
+          (counterexample
+             "勘定の第 2 定義点(hook が独自の regex を持つ)— test と hook の regex が乖離した日から hook 緑 = verify 緑が成立しなくなり、hook は偽の安心を配る装置になる")
+          (counterexample
+             "作り直し(rebase / replay)中も判定する hook — 着地の窓の基底追随が、当便と無関係な中間断面の不一致で塞がれ、land queue が jam する")])]
   :enforcement
     [(deftest test-adr-doe-enforce-001-docs-adr-in-default-testpaths
        ;; RED(2026-07-14): pyproject testpaths は docs/adr を含まない。R2 実装で green。
@@ -124,5 +141,39 @@
                                                  :encoding "utf-8")))
        (setv gate-budget (get land-cfg "gate" "timeout_s"))
        (assert (>= gate-budget 7200)
-               f"門の持ち時間 {gate-budget}s は内側を上限まで伸ばした走行を収容できない — ADR-DOE-ENFORCE-001 R6(締切は 3 つあり族として直す)"))]
+               f"門の持ち時間 {gate-budget}s は内側を上限まで伸ばした走行を収容できない — ADR-DOE-ENFORCE-001 R6(締切は 3 つあり族として直す)"))
+     (deftest test-adr-doe-enforce-001-ledger-authoring-guard-wired
+       ;; R7 + law ledger-checked-at-authoring-time: 台帳突合の著述時配線の実在 pin。
+       ;; 挙動の実体は tests/test_enforcement_ledger_hook.py(勘定の一致・staged 断面・
+       ;; stage し忘れの検出・rebase 中の沈黙・無関係 commit の素通し、の 10 本)。
+       (import pathlib [Path])
+       (setv root (get (. (Path __file__) parents) 2))
+       ;; 勘定の単一の家。
+       (setv checker (/ root "scripts/check_enforcement_ledger.py"))
+       (assert (.exists checker)
+               "勘定の家 scripts/check_enforcement_ledger.py が消えている — ADR-DOE-ENFORCE-001 R7")
+       ;; hook の tracked 原本が家を staged 断面で消費すること。
+       (setv hook (/ root "scripts/git-hooks/pre-commit"))
+       (assert (.exists hook)
+               "hook の tracked 原本 scripts/git-hooks/pre-commit が消えている — R7")
+       (setv hook-text (.read-text hook :encoding "utf-8"))
+       (assert (in "check_enforcement_ledger.py" hook-text)
+               "hook が勘定の家を呼んでいない(第 2 定義点への退行)")
+       (assert (in "--staged" hook-text)
+               "hook が staged 断面を突合していない(stage し忘れを素通しする退行)")
+       ;; pre-commit framework 機体にも同じ検査が入ること。
+       (setv pc (.read-text (/ root ".pre-commit-config.yaml") :encoding "utf-8"))
+       (assert (in "check_enforcement_ledger.py --staged" pc)
+               ".pre-commit-config.yaml に enforcement-ledger 検査が無い — framework 導入機で hook が外れる")
+       ;; 導入経路の実在。
+       (setv makefile (.read-text (/ root "Makefile") :encoding "utf-8"))
+       (assert (in "hooks-install" makefile)
+               "Makefile に hooks-install が無い — hook の導入経路の消失")
+       ;; 挙動本体の現存 pin(削除退行を loud にする)。
+       (assert (.exists (/ root "tests/test_enforcement_ledger_hook.py"))
+               "R7 の挙動本体 tests/test_enforcement_ledger_hook.py が消えている")
+       ;; 既定 pytest の R5 検査が同じ家を消費していること。
+       (setv r5-test (.read-text (/ root "tests/test_enforcement_ledger.py") :encoding "utf-8"))
+       (assert (in "check_enforcement_ledger" r5-test)
+               "R5 検査が勘定の家を消費していない — 第 2 定義点への退行"))]
   :plans ["docs/doeff-2026-07-14-agent-first-investment-architecture-plan.md"])
