@@ -1,0 +1,38 @@
+#!/bin/sh
+# enforcement 台帳の著述時突合(ADR-DOE-ENFORCE-001 R7)。
+# 導入 = make hooks-install(tracked 原本はこのファイル)。
+#
+# なぜ著述時か: 着地の窓は力学のみ(2026-08-17 operator 裁定・mode = "focus")で、
+# 直接 push は窓さえ通らない — どの経路でも commit は必ず著述機の git を通るので、
+# 記帳漏れ(2026-08-21 実弾 f47f0a4b: ADR 新設が台帳未更新で main へ)を構造的に
+# 止められる最初で唯一の点はここ。正典ゲートは R1 のとおり既定 pytest のまま
+# (この hook はその別名 — 日次 verify は残る)。
+set -u
+
+# 作り直し(rebase / cherry-pick / revert / sequencer)中は判定しない —
+# 着地の窓の追随・replay は「既に在る中身を運び直す」操作で、著者はこの
+# process ではない(prepare-commit-msg hook と同じ guard)。
+GITDIR="$(git rev-parse --git-dir 2>/dev/null || true)"
+if [ -n "$GITDIR" ]; then
+  for _st in CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply sequencer; do
+    if [ -e "$GITDIR/$_st" ]; then
+      exit 0
+    fi
+  done
+fi
+
+TOP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[ -n "$TOP" ] || exit 0
+CHECK="$TOP/scripts/check_enforcement_ledger.py"
+# 古い断面には機構が無い — 塞がない。
+[ -f "$CHECK" ] || exit 0
+
+# enforcement 資産に触れない commit は素通し(検査は触った commit に課す)。
+if git diff --cached --quiet -- docs/adr .semgrep.yaml; then
+  exit 0
+fi
+
+# staged 断面(index)を突合する — working tree 突合は「台帳も直したが
+# stage し忘れた」を素通しするため。不一致は commit を止める(--no-verify で
+# 意識的に踏み越えた場合も日次 verify が捕まえる)。
+exec python3 "$CHECK" --staged

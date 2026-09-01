@@ -4,7 +4,7 @@
 
 .PHONY: help install sync lint lint-ruff lint-pyright lint-semgrep lint-semgrep-docs lint-doeff lint-packages \
         test test-unit test-e2e test-packages test-all test-spec-audit-sa002 bench-smoke format check check-repo-hygiene \
-        pre-commit-install clean install-opencode-spec-gap-tdd
+        pre-commit-install hooks-install clean install-opencode-spec-gap-tdd
 
 # Default target
 help:
@@ -15,6 +15,7 @@ help:
 	@echo "  make install           Install all dependencies (including dev)"
 	@echo "  make sync              Install deps + rebuild Rust VM extension"
 	@echo "  make pre-commit-install Install pre-commit hooks"
+	@echo "  make hooks-install     Install raw git pre-commit hook (enforcement ledger, ADR-DOE-ENFORCE-001 R7)"
 	@echo ""
 	@echo "Linting (make lint runs all):"
 	@echo "  make lint              Run ALL linters (core + packages)"
@@ -61,6 +62,15 @@ sync:
 
 pre-commit-install:
 	uv run pre-commit install
+
+# ADR-DOE-ENFORCE-001 R7: enforcement 台帳の著述時突合 hook(tracked 原本 =
+# scripts/git-hooks/pre-commit)。pre-commit framework を使う機体は
+# make pre-commit-install 側でも同じ検査が入る(.pre-commit-config.yaml の
+# enforcement-ledger)— こちらは venv 不要の素の git hook。worktree 共通の
+# hooks dir(git rev-parse --git-path hooks)へ入るので、一度の導入で全 worktree に効く。
+hooks-install:
+	cp scripts/git-hooks/pre-commit "$$(git rev-parse --git-path hooks)/pre-commit"
+	chmod +x "$$(git rev-parse --git-path hooks)/pre-commit"
 
 # =============================================================================
 # Linting - Architectural Enforcement
