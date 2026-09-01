@@ -647,7 +647,7 @@
                 "(ADR-DOE-AGENTS-004 R7)."))))
   ;; 従量課金 credential は binding 所有キーと違い「正しい家」が無い — どの
   ;; 経路でも受けない(operator 裁定 2026-08-26。resume も本関所を通る)。
-  (setv metered-offenders (metered-credential-env-offenders session-env))
+  (<- metered-offenders (metered-credential-env-offenders session-env))
   (when metered-offenders
     (raise (RuntimeError
              (+ "session.launch: metered-billing credentials are forbidden in "

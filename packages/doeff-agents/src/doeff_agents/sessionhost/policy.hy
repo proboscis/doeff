@@ -354,7 +354,7 @@
 (setv METERED-CREDENTIAL-ENV-ALIASES
       #{"ANTHROPIC_AUTH_TOKEN" "OPENAI_KEY" "GOOGLE_GENAI_KEY"})
 
-(deff metered-credential-env-offenders [session-env]
+(defk metered-credential-env-offenders [session-env]
   {:pre [(: session-env dict)]
    :post [(: % list)]}
   "session_env に居てはならない従量課金 credential 形のキーの列挙。"
