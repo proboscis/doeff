@@ -127,6 +127,84 @@ def test_wiring_discovery_skips_norecursedirs_matched_directories(
     assert "defadr_wiring_copy" not in _combined_output(result)
 
 
+def _make_deep_directories(pytester: pytest.Pytester, count: int) -> None:
+    path = ""
+    for index in range(count):
+        path = f"{path}/deep{index}" if path else f"deep{index}"
+        pytester.mkdir(path)
+
+
+def test_wiring_walk_budget_exceeded_warns_loud_in_warn_mode(
+    pytester: pytest.Pytester,
+) -> None:
+    # The wiring walk covers the whole rootdir. When rootdir resolves to a huge
+    # tree (observed 2026-09-02: no ini file anchored a docs/adr suite, rootdir
+    # became $HOME, and every pytest run silently crawled the home directory for
+    # 60+ seconds — minutes under load), the walk must abort loudly instead of
+    # hanging the run without output.
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+        doeff_adr_wiring_max_dirs = "3"
+        """
+    )
+    _make_smoke_test(pytester)
+    _make_deep_directories(pytester, 8)
+
+    result: pytest.RunResult = pytester.runpytest("-q")
+
+    result.assert_outcomes(passed=1, warnings=1)
+    output: str = _combined_output(result)
+    assert "doeff-adr wiring verification warning" in output
+    assert "aborted after walking" in output
+    assert "doeff_adr_wiring_max_dirs" in output
+
+
+def test_wiring_walk_budget_exceeded_fails_strict_mode(
+    pytester: pytest.Pytester,
+) -> None:
+    # strict mode promised a verification; an aborted walk cannot verify, so it
+    # must fail closed rather than pass silently.
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+        doeff_adr_wiring_max_dirs = "3"
+        """
+    )
+    _make_smoke_test(pytester)
+    _make_deep_directories(pytester, 8)
+
+    result: pytest.RunResult = pytester.runpytest("-q", "--doeff-adr-wiring=strict")
+
+    assert result.ret != pytest.ExitCode.OK
+    output: str = _combined_output(result)
+    assert "doeff-adr wiring verification failed" in output
+    assert "aborted after walking" in output
+
+
+def test_wiring_walk_budget_rejects_non_positive_or_garbage_values(
+    pytester: pytest.Pytester,
+) -> None:
+    # An unparsable or non-positive budget silently becoming "unlimited" would
+    # reopen the unbounded-walk hole; the vocabulary is a positive integer only
+    # (the intentional opt-out spelling stays doeff_adr_wiring=off).
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+        doeff_adr_wiring_max_dirs = "unbounded"
+        """
+    )
+    _make_smoke_test(pytester)
+
+    result: pytest.RunResult = pytester.runpytest("-q")
+
+    assert result.ret != pytest.ExitCode.OK
+    assert "doeff_adr_wiring_max_dirs" in _combined_output(result)
+
+
 def test_verify_wiring_cli_runs_strict_collection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
