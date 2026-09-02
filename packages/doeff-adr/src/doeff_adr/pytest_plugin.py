@@ -38,6 +38,20 @@ IGNORED_DISCOVERY_DIRECTORIES = frozenset(
 )
 WiringMode = Literal["off", "warn", "strict"]
 WIRING_MODES = frozenset({"off", "warn", "strict"})
+# The wiring walk covers the whole rootdir. A mis-anchored rootdir (observed
+# 2026-09-02: a docs/adr suite without an ini file resolved rootdir to $HOME and
+# every pytest run silently crawled the home directory for 60+ seconds, minutes
+# under load) must abort loudly instead of hanging the run without output. A
+# healthy project rootdir stays far below this bound.
+DEFAULT_WIRING_MAX_DIRS = 50_000
+
+
+class WiringWalkBudgetError(Exception):
+    """Wiring discovery visited more directories than the configured budget."""
+
+    def __init__(self, dirs_walked: int) -> None:
+        super().__init__(str(dirs_walked))
+        self.dirs_walked = dirs_walked
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -51,6 +65,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "doeff_adr_wiring",
         "How to report executable ADR files that pytest did not collect: off, warn, or strict.",
         default="warn",
+    )
+    parser.addini(
+        "doeff_adr_wiring_max_dirs",
+        "Positive upper bound on directories the wiring verification walk may visit "
+        "before aborting loudly (the walk covers the whole rootdir).",
+        default=str(DEFAULT_WIRING_MAX_DIRS),
     )
     parser.addoption(
         "--doeff-adr-wiring",
@@ -75,7 +95,17 @@ def pytest_collection_finish(session: pytest.Session) -> None:
         return
     root = Path(session.config.rootpath)
     patterns = _file_patterns(session.config)
-    executable_adrs = _discover_executable_adrs(root, patterns, _norecurse_dir_patterns(session.config))
+    max_dirs = _wiring_max_dirs(session.config)
+    try:
+        executable_adrs = _discover_executable_adrs(
+            root, patterns, _norecurse_dir_patterns(session.config), max_dirs=max_dirs
+        )
+    except WiringWalkBudgetError as exc:
+        message = _walk_budget_message(root, exc.dirs_walked, max_dirs, mode)
+        if mode == "strict":
+            raise pytest.UsageError(message) from exc
+        warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+        return
     collected_files = {Path(item.path).resolve() for item in session.items}
     uncollected_adrs = sorted(executable_adrs - collected_files)
     if not uncollected_adrs:
@@ -135,6 +165,29 @@ def _wiring_mode(config: pytest.Config) -> WiringMode:
     raise pytest.UsageError(f"doeff_adr_wiring must be one of {choices}; got {configured_mode!r}")
 
 
+def _wiring_max_dirs(config: pytest.Config) -> int:
+    """Directory budget for the wiring walk. Positive integers only.
+
+    An unparsable or non-positive value silently becoming "unlimited" would
+    reopen the unbounded-walk hole, so the vocabulary is closed: the intentional
+    opt-out spelling stays ``doeff_adr_wiring=off``.
+    """
+    raw = config.getini("doeff_adr_wiring_max_dirs")
+    try:
+        value = int(str(raw).strip())
+    except ValueError:
+        raise pytest.UsageError(
+            f"doeff_adr_wiring_max_dirs must be a positive integer; got {raw!r} "
+            "(use doeff_adr_wiring=off for an intentional opt-out)"
+        ) from None
+    if value <= 0:
+        raise pytest.UsageError(
+            f"doeff_adr_wiring_max_dirs must be a positive integer; got {raw!r} "
+            "(use doeff_adr_wiring=off for an intentional opt-out)"
+        )
+    return value
+
+
 def _norecurse_dir_patterns(config: pytest.Config) -> tuple[str, ...]:
     """Directory-name globs pytest itself refuses to collect into (norecursedirs).
 
@@ -147,10 +200,17 @@ def _norecurse_dir_patterns(config: pytest.Config) -> tuple[str, ...]:
 
 
 def _discover_executable_adrs(
-    root: Path, patterns: tuple[str, ...], norecurse: tuple[str, ...] = ()
+    root: Path,
+    patterns: tuple[str, ...],
+    norecurse: tuple[str, ...] = (),
+    max_dirs: int = DEFAULT_WIRING_MAX_DIRS,
 ) -> set[Path]:
     executable_adrs: set[Path] = set()
-    for directory, directory_names, file_names in os.walk(root):
+    for dirs_walked, (directory, directory_names, file_names) in enumerate(
+        os.walk(root), start=1
+    ):
+        if dirs_walked > max_dirs:
+            raise WiringWalkBudgetError(dirs_walked)
         directory_names[:] = sorted(
             name
             for name in directory_names
@@ -172,6 +232,19 @@ def _wiring_message(root: Path, paths: list[Path], mode: WiringMode) -> str:
         f"collected:\n{rendered_paths}\n"
         "Add their directories to pytest testpaths or the CI pytest arguments. "
         "Use doeff_adr_wiring=off only for an intentional opt-out."
+    )
+
+
+def _walk_budget_message(root: Path, dirs_walked: int, max_dirs: int, mode: WiringMode) -> str:
+    outcome = "failed" if mode == "strict" else "warning"
+    return (
+        f"doeff-adr wiring verification {outcome}: aborted after walking {dirs_walked} "
+        f"directories under rootdir {root} (budget: doeff_adr_wiring_max_dirs = {max_dirs}). "
+        "The verification walk covers the whole rootdir; a rootdir this broad usually means no "
+        "ini file anchors the project and pytest resolved rootdir far above it (e.g. the home "
+        "directory), which makes every run silently crawl the filesystem. Fix: anchor rootdir "
+        "with a pytest.ini/pyproject.toml near the executable ADRs, raise "
+        "doeff_adr_wiring_max_dirs, or set doeff_adr_wiring=off for an intentional opt-out."
     )
 
 
