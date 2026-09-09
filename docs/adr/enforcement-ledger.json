@@ -1,8 +1,8 @@
 {
-  "_comment": "ADR-DOE-ENFORCE-001 R5 anti-drop ratchet の台帳。enforcement 資産の数が黙って減る(または黙って増える)ことを tests/test_enforcement_ledger.py が禁止する。数を変える変更は、この台帳の明示的な更新を同じ変更セットに含めること。",
-  "defadr_files": 23,
+  "_comment": "ADR-DOE-ENFORCE-001 R5 anti-drop ratchet の台帳。enforcement 資産の数が黙って減る(または黙って増える)ことを tests/test_enforcement_ledger.py が禁止する。数を変える変更は、この台帳の明示的な更新を同じ変更セットに含めること。 2026-09-10: f47f0a4b の defadr_doeff_hy_004_defk_only.hy 追加時の記帳漏れ(defadr +1 / deftest +2 / law +1)を既存 _actual_counts と照合して補完。ADR・規則本文と違反baselineは変更しない。",
+  "defadr_files": 24,
   "semgrep_rules": 252,
-  "adr_deftest_enforcements": 39,
+  "adr_deftest_enforcements": 41,
   "adr_defsemgrep_enforcements": 47,
-  "adr_laws": 88
+  "adr_laws": 89
 }

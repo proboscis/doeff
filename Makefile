@@ -97,8 +97,9 @@ lint-doeff:
 	@if command -v doeff-linter >/dev/null 2>&1; then \
 		doeff-linter --no-log doeff/ packages/; \
 	else \
-		echo "Warning: doeff-linter not installed."; \
-		echo "Build with: cd packages/doeff-linter && cargo install --path ."; \
+		echo "doeff-linter が未導入のため検査できません。成功として扱いません。" >&2; \
+		echo "導入: cd packages/doeff-linter && cargo install --path ." >&2; \
+		exit 127; \
 	fi
 
 # Run lint in all subpackages that have Makefiles
