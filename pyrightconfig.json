@@ -1,10 +1,15 @@
 {
-    "include": ["doeff", "packages/doeff-adr/src", "packages/doeff-adr/tests"],
+    "include": [
+        "doeff",
+        "packages/doeff-adr/src",
+        "packages/doeff-adr/tests"
+    ],
     "extraPaths": [
         "packages/doeff-core-effects",
         "packages/doeff-adr/src",
         "packages/doeff-hy/src",
         "packages/doeff-indexer/python",
-        "packages/doeff-vm"
+        "packages/doeff-vm",
+        "packages/doeff-agents/src"
     ]
 }
