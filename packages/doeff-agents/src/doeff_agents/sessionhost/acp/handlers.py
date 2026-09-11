@@ -46,6 +46,9 @@ from doeff_agents.sessionhost.acp.effects import (
     AcpRow,
     AcpStreamPush,
     AcpWatchSse,
+    CaptureFrame,
+    CaptureGone,
+    CaptureOutcome,
     ClockNowMs,
     Conflict,
     CustodyLeaseBorrow,
@@ -604,11 +607,23 @@ class SessionRpc:
             result: JSON = self._client.request("session.get", {"session_id": effect.session_id})
             return Resume(k, None if result is None else session_view_of(result))
         if isinstance(effect, SessionCapture):
-            captured: JSON = self._client.request(
-                "session.capture", {"session_id": effect.session_id, "lines": effect.lines}
-            )
-            return Resume(k, captured if isinstance(captured, str) else "")
+            return Resume(k, self._capture(effect.session_id, effect.lines))
         return Pass(effect, k)
+
+    def _capture(self, session_id: str, lines: int) -> CaptureOutcome:
+        """``session.capture`` → 断面 ``{"text"}``。host が断った(pane も server も無い・行が
+        無い — RPC の error 封筒)なら CaptureGone = 実況の終わりの合図(ADR-DOE-AGENTS-012 R8)。
+        socket の失敗(OSError)は host の答えではないので素通し(tick の縁が持ち越す)。"""
+        try:
+            captured: JSON = self._client.request(
+                "session.capture", {"session_id": session_id, "lines": lines}
+            )
+        except AgentdClientError as error:
+            return CaptureGone(str(error))
+        text = _str_field(_as_object(captured), "text")
+        if text is None:
+            raise RuntimeError(f"agentd: session.capture of {session_id} returned no text")
+        return CaptureFrame(text)
 
     def _incarnate(self, method: str, params: JSONObject) -> SessionOutcome:
         try:

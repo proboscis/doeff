@@ -3,6 +3,10 @@
 ;;; agentd は判断を持たない(設計 第 12.10 節・bounded context F)。ここに在るのは
 ;;;   * 「自分に結ばれた job か」の純関数 1 点(bound-to-me)— job を選ぶ唯一の判定。
 ;;;     選択も優先も無い(該当する行は行の順にすべて受ける)。
+;;;   * 「自分が持つ Running か」(running-on-me)と、その行の次の 1 手(job-step-of:
+;;;     器の現況 → observe | record-end | fail-missing)— job の進みは process の memory ではなく
+;;;     行と器から毎拍導く(ADR-DOE-AGENTS-012 R7)。memory の InFlightJob は cache で、
+;;;     再起動で消えても行から組み直せる(in-flight-job-of の 1 点)。
 ;;;   * 行の欄の写し(charter・inputs・affinity → 起こし方 / status の書き換え / node の
 ;;;     lease の欄)— 判断ではなく契約の綴りの変換。
 ;;;   * transcript の行 → TurnDelta の frame と turn-record の entries(契約
@@ -22,15 +26,20 @@
 (import doeff_agents.sessionhost.acp.effects [
   AGENT-TYPE-LEASE-KIND
   AGENTD-PRINCIPAL
+  AGORA-KINDS-NAMESPACE
   AgentdSettings
   AgentdState
   AcpRow
   CLAUDE-OAUTH-TOKEN-ENV
   DeltaBatch
   InFlightJob
+  JOB-STEP-FAIL-MISSING
+  JOB-STEP-OBSERVE
+  JOB-STEP-RECORD-END
   JSONObject
   JobOutcome
   LaunchPlan
+  LeaseGrant
   NODE-GONE
   PHASE-BOUND
   PHASE-ENDED
@@ -38,6 +47,7 @@
   SESSION-TERMINAL-STATUSES
   SessionView
   TURN-RECORD-ENDED
+  TURN-RECORD-KIND
   WatchAdvance])
 
 
@@ -68,6 +78,64 @@
     (when mine
       (.append out row)))
   (tuple out))
+
+
+;; ---------------------------------------------------------------------------
+;; 自分が持つ Running か — 再起動後の続きを行から導く(R7)
+;; ---------------------------------------------------------------------------
+
+(defk session-id-of-handle [row]
+  {:pre [(: row AcpRow)]
+   :post [(: % (| str None))]}
+  "agentd が claim の時に書いた sessionHandle.sessionId(無ければ None)。"
+  (setv status row.status)
+  (setv handle (if (isinstance status dict) (.get status "sessionHandle") None))
+  (setv session-id (if (isinstance handle dict) (.get handle "sessionId") None))
+  (if (isinstance session-id str) session-id None))
+
+
+(defk running-on-me [row node-name principal]
+  {:pre [(: row AcpRow) (: node-name str) (: principal str)]
+   :post [(: % bool)]}
+  "phase == Running かつ status.binding.node == 自分かつ sessionHandle.stream.owner == 自分の
+   principal — 自分が claim した job(再起動で memory を失っても行が覚えている)。job を選ぶ
+   判定はこれと bound-to-me の 2 つだけで、どちらも binding.node == 自分の行に閉じる。"
+  (setv status row.status)
+  (setv binding (if (isinstance status dict) (.get status "binding") None))
+  (setv handle (if (isinstance status dict) (.get status "sessionHandle") None))
+  (setv stream (if (isinstance handle dict) (.get handle "stream") None))
+  (and (isinstance status dict)
+       (= (.get status "phase") PHASE-RUNNING)
+       (isinstance binding dict)
+       (= (.get binding "node") node-name)
+       (isinstance stream dict)
+       (= (.get stream "owner") principal)))
+
+
+(defk job-rows-running-on [rows node-name principal]
+  {:pre [(: rows tuple) (: node-name str) (: principal str)]
+   :post [(: % tuple)]}
+  "list の行のうち自分が持つ Running の行を、行の順のまま。"
+  (setv out [])
+  (for [row rows]
+    (<- mine bool (running-on-me row node-name principal))
+    (when mine
+      (.append out row)))
+  (tuple out))
+
+
+(defk job-step-of [view]
+  {:pre [(: view (| SessionView None))]
+   :post [(: % str)]}
+  "自分の Running の行の次の 1 手(閉語彙 effects.JobStep)— 器の現況ちょうどから:
+   器に session が無い → fail-missing(記録が在れば ended にし、SessionFailed で Ended)/
+   器が終端 → record-end(記録の腕だけ: turn-record ended・result・phase Ended)/
+   器が走っている → observe(行から InFlightJob を組み観測を続ける)。memory に在る job も
+   無い job も同じ 1 点で決める(行の状態 → 次の 1 手)。"
+  (cond
+    (is view None) JOB-STEP-FAIL-MISSING
+    (in view.status SESSION-TERMINAL-STATUSES) JOB-STEP-RECORD-END
+    True JOB-STEP-OBSERVE))
 
 
 ;; ---------------------------------------------------------------------------
@@ -272,6 +340,45 @@
 ;; ---------------------------------------------------------------------------
 ;; 手番の記録(turn-record)
 ;; ---------------------------------------------------------------------------
+
+(defk turn-record-key-of [job-id]
+  {:pre [(: job-id str)]
+   :post [(: % str)]}
+  "turn-record の行の鍵(identityKey = agentJobId・区画 = agora の kind の区画)。"
+  f"{AGORA-KINDS-NAMESPACE}:{TURN-RECORD-KIND}:{job-id}")
+
+
+(defk in-flight-job-of [row plan view node-name started-ms start-offset lease pending]
+  {:pre [(: row AcpRow) (: plan LaunchPlan) (: view SessionView) (: node-name str)
+         (: started-ms int) (: start-offset int) (: lease (| LeaseGrant None)) (: pending tuple)]
+   :post [(: % InFlightJob)]}
+  "agent-job の行 + 起こし方の写し + 器の眺めから、観測に要る memory の状態を組む 1 点。
+   受けた直後(after-launch)も再起動後の拾い直し(adopt)も同じ形 — 行と器に無い欄
+   (offset・seq・capture の可否)は始まりの値で、発明しない。"
+  (InFlightJob
+    :job-key row.key
+    :job-namespace row.namespace
+    :job-id row.resource-id
+    :subject (str (.get row.spec "subject" row.resource-id))
+    :session-id view.session-id
+    :agent-type view.agent-type
+    :node node-name
+    :profile plan.profile
+    :model plan.model
+    :started-ms started-ms
+    :start-offset start-offset
+    :transcript-offset start-offset
+    :delta-seq 0
+    :lease-id (if (is lease None) None lease.lease-id)
+    :lease-kind (if (is lease None) None lease.kind)
+    :lease-account (if (is lease None) None plan.account)
+    :lease-hold-ms (if (is lease None) None lease.hold-expires-at-ms)
+    :capturing False
+    :stream-gone False
+    :last-frame-ms 0
+    :last-probe-ms 0
+    :pending-conditions pending))
+
 
 (defk turn-record-spec-of [job]
   {:pre [(: job InFlightJob)]
