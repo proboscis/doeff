@@ -65,7 +65,8 @@
    :post [(: % list)]}
   "build-codex-argv の `-c key=value` の対だけ(effort・caller mcp・result channel)。
    root の旗は subcommand(app-server)の前に置く。--model は thread の params で運ぶ
-   (app-server は model を thread/start の欄で受ける)ので argv から外す。"
+   (app-server は model を thread/start の欄で受ける)ので argv から外す。tui の接頭
+   `--yolo` もここで落ちる(`-c` の対だけを拾う)— headless の方策は params(下)。"
   (setv base (build-codex-argv params))
   (setv out [])
   (setv index 0)
@@ -86,12 +87,17 @@
   {:pre [(: params dict)]
    :post [(: % dict)]}
   "codex の headless の起動: {argv, dialogue}。
-   - argv = `codex --yolo <-c …> app-server --listen stdio://`(全面許可の旗は root の
-     旗として残す・意味の正本は Dialogue の thread / turn の params)
+   - argv = `codex <-c …> app-server --listen stdio://`。**全面許可の旗(--yolo / --sandbox /
+     -a / --full-auto)は argv に載せない**: app-server では承認と sandbox の方策は thread /
+     turn の params が正本(headless_protocol.THREAD_FULL_ACCESS / TURN_FULL_ACCESS — dotfiles
+     codex_shim.full_access_app_server と同じ綴り)で、PATH の codex が dotfiles の router shim
+     の機体では旗が政策違反として exit 2 で拒まれる(2026-09-12 の本番の実弾・agora-redesign
+     #37 lane 2d-2)。shim が足す正規形 --dangerously-bypass-approvals-and-sandbox も載せない
+     (shim 自身の不変量)。`-c` の対(effort / mcp / result channel)は tui と共有のまま。
    - dialogue = CodexDialogue(温かい process・initialize → thread/start | thread/resume →
      turn/start・turn/completed で終わり・turn/interrupt で割り込み)。続きの手番
      (resume_mode = \"resume\")は conversation.session_id を thread の id として resume。"
-  (setv argv (+ ["codex" "--yolo"] (codex-root-config-args params) (list CODEX-APP-SERVER-ARGS)))
+  (setv argv (+ ["codex"] (codex-root-config-args params) (list CODEX-APP-SERVER-ARGS)))
   (setv conversation (.get params "conversation"))
   (setv resume-id
         (if (and (= (.get params "resume_mode") "resume") (isinstance conversation dict))
