@@ -168,7 +168,11 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        ;; conversation_json と同型)。launch の一度きりの書きを COALESCE
        ;; first-write-wins が守る。消費者は Mac 側の利用帰属台帳
        ;; (json_extract '$.action_id' の expression index が読みを支える)。
-       #("agent_sessions" "launch_attribution_json" "TEXT")])
+       #("agent_sessions" "launch_attribution_json" "TEXT")
+       ;; 温かい session(lifecycle multi_turn — agentd 段 2 lane 2b-3・ADR-DOE-AGENTS-012
+       ;; R10): monitor が手番の終わりを最初に観測した時刻。level-triggered(次の手番
+       ;; で NULL)・単一 writer = monitor・素の last-write-wins。
+       #("agent_sessions" "turn_ended_at" "TEXT")])
 
 (setv SNAPSHOT-SELECT
       (+ "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status, "
@@ -184,7 +188,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
          "api_limit_observed_at, observation_gap_at, "
          "paste_resubmit_attempts, awaiting_response_since, "
          "provider_failure_class, provider_failure_observed_at, "
-         "launch_attribution_json "
+         "launch_attribution_json, turn_ended_at "
          "FROM agent_sessions"))
 
 
@@ -323,7 +327,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    "provider_failure_observed_at" (get db-row 40)
    "launch_attribution" (if (is (get db-row 41) None)
                             None
-                            (json.loads (get db-row 41)))})
+                            (json.loads (get db-row 41)))
+   "turn_ended_at" (get db-row 42)})
 
 (deff snapshot-to-wire-dict [snap]
   {:pre [(: snap dict)]
@@ -392,6 +397,10 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
     (setv (get wire "turn_since") (get snap "turn_since")))
   (when (is-not (.get snap "turn_wait") None)
     (setv (get wire "turn_wait") (get snap "turn_wait")))
+  ;; 温かい session(multi_turn): 手番の終わりの刻印は None のとき欄ごと省略
+  ;; (run_to_completion / interactive では常に不在 — 未観測を null と区別しない)。
+  (when (is-not (.get snap "turn_ended_at") None)
+    (setv (get wire "turn_ended_at") (get snap "turn_ended_at")))
   wire)
 
 
@@ -438,8 +447,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        "api_limit_observed_at, observation_gap_at, "
        "paste_resubmit_attempts, awaiting_response_since, "
        "provider_failure_class, provider_failure_observed_at, "
-       "launch_attribution_json"
-       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+       "launch_attribution_json, turn_ended_at"
+       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
        "ON CONFLICT(session_id) DO UPDATE SET "
        "session_name = excluded.session_name, "
        "pane_id = excluded.pane_id, "
@@ -500,7 +509,11 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        ;; 帰属は launch の一度きりの申告 — 後続 upsert(monitor の書き戻し
        ;; を含む)が消しても上書きしてもいけない。conversation_json /
        ;; effective_identity_json と同格の first-write-wins。
-       "launch_attribution_json = COALESCE(agent_sessions.launch_attribution_json, excluded.launch_attribution_json)")
+       "launch_attribution_json = COALESCE(agent_sessions.launch_attribution_json, excluded.launch_attribution_json), "
+       ;; 温かい session(multi_turn): 手番の終わりの刻印は level-triggered — None の
+       ;; 書きは「次の手番が走り出した」の事実なので COALESCE 保護を持たない
+       ;; (単一 writer = monitor・merge 経路が existing を再読して重ねる)。
+       "turn_ended_at = excluded.turn_ended_at")
     #((get snap "session_id")
       (get snap "session_name")
       (get snap "pane_id")
@@ -572,7 +585,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
       (if (is (.get snap "launch_attribution") None)
           None
           (json.dumps (get snap "launch_attribution") :sort-keys True
-                      :separators #("," ":")))))
+                      :separators #("," ":")))
+      ;; lane 2b-3 以前の snapshot dict にも additive に振る舞う。
+      (.get snap "turn_ended_at")))
   None)
 
 (deff db-session-get [conn session-id]
@@ -1090,7 +1105,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
     :paste-resubmit-attempts (int (.get snap "paste_resubmit_attempts" 0))
     :awaiting-response-since (.get snap "awaiting_response_since")
     :provider-failure-class (.get snap "provider_failure_class")
-    :provider-failure-observed-at (.get snap "provider_failure_observed_at")))
+    :provider-failure-observed-at (.get snap "provider_failure_observed_at")
+    :turn-ended-at (.get snap "turn_ended_at")))
 
 (deff policy-row-patch [row]
   {:pre [(: row SessionRow)]
@@ -1149,7 +1165,10 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    ;; ACP ADR 0049 R9 第 3 改訂: provider 失敗 latch も policy(monitor)が
    ;; 唯一の writer。SQL 側 COALESCE が first-write-wins を最終防衛する。
    "provider_failure_class" row.provider-failure-class
-   "provider_failure_observed_at" row.provider-failure-observed-at})
+   "provider_failure_observed_at" row.provider-failure-observed-at
+   ;; 温かい session(multi_turn — ADR-DOE-AGENTS-012 R10): 手番の終わりの刻印も
+   ;; policy(monitor)が唯一の writer(level-triggered・素の last-write-wins)。
+   "turn_ended_at" row.turn-ended-at})
 
 (deff snapshot-from-policy-row [row]
   {:pre [(: row SessionRow)]

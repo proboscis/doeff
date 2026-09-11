@@ -88,6 +88,12 @@
 
 (setv LIFECYCLE-RUN-TO-COMPLETION "run_to_completion")
 (setv LIFECYCLE-INTERACTIVE "interactive")
+;; 温かい session(agentd 段 2 lane 2b-3・ADR-DOE-AGENTS-012 R10): 手番の終わりを
+;; 観測する(turn-end の連言が行の turn_ended_at を刻む)が session は片付けない —
+;; 同じ会話の次の手番は session.send で来る。刈り取り免除ではない(死んだ session は
+;; 終端へ)。意味論の家は policy.hy(is-multi-turn / reap-exempt / monitor の turn-end)。
+(setv LIFECYCLE-MULTI-TURN "multi_turn")
+(setv LIFECYCLES #{LIFECYCLE-RUN-TO-COMPLETION LIFECYCLE-INTERACTIVE LIFECYCLE-MULTI-TURN})
 
 ;; agentd が argv を組める(= interface effect の per-kind impl が存在すると
 ;; 契約上約束されている)kind(oracle is_interactive_agent_type)。
@@ -656,10 +662,11 @@
                 "typed `binding` field only (operator ruling 2026-08-26)."))))
 
   ;; --- admission(oracle 順序: lifecycle → 重複 → 既存 tmux)。
-  (when (not-in lifecycle #{LIFECYCLE-RUN-TO-COMPLETION LIFECYCLE-INTERACTIVE})
+  (when (not-in lifecycle LIFECYCLES)
     (raise (RuntimeError
              (+ f"unsupported session lifecycle: {lifecycle} "
-                f"(expected {LIFECYCLE-RUN-TO-COMPLETION} or {LIFECYCLE-INTERACTIVE})"))))
+                f"(expected {LIFECYCLE-RUN-TO-COMPLETION}, {LIFECYCLE-INTERACTIVE} "
+                f"or {LIFECYCLE-MULTI-TURN})"))))
   (<- existing (session-store-get session-id))
   (when (is-not existing None)
     (raise (RuntimeError f"session is already registered: {session-id}")))

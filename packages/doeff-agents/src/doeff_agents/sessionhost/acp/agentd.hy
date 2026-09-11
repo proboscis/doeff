@@ -13,6 +13,14 @@
 ;;; capture の gone は終端の合図で例外ではない(R8)。tick の縁(heartbeat・受け・job ごと)は
 ;;; 互いの I/O の失敗で止まらない(R9)。
 ;;;
+;;; 温かい session(R10・設計 17.4): session は会話の資源で job は手番。会話 → 生きている
+;;; session の対応は行(agent-job の subject と sessionHandle)から導き、Bound の job の起こし方は
+;;; judgment.next-arm-for-job の 1 点(launch | send | resume | defer)。同じ会話の次の手番は
+;;; launch せず session.send(awaiting)だけ。手番の終わりは host の monitor が刻む
+;;; turn_ended_at(policy.hy の turn-end の連言)を job-step-of が読む(turn-end)— session は
+;;; 生かしたまま turn-record を ended・job を Ended にする。idle の寿命は
+;;; AgentdSettings.session_idle_ttl_seconds(heartbeat の拍に sessions-to-retire で片付ける)。
+;;;
 ;;; 書く欄は契約の writers どおり: agent-job の phase / sessionHandle / result / conditions、
 ;;; node の status.lease / status.observations、turn-record の create と status。
 ;;; binding は書かない・Node の行は作らない(scheduling の欄と動詞)。
@@ -48,19 +56,26 @@
   JOB-STEP-FAIL-MISSING
   JOB-STEP-OBSERVE
   JOB-STEP-RECORD-END
+  JOB-STEP-TURN-END
   JobOutcome
+  LIFECYCLE-MULTI-TURN
   LaunchPlan
   LeaseGrant
   LeaseRefused
   LogLine
   MESSAGE-KIND
   MetricLine
+  NEXT-ARM-DEFER
+  NEXT-ARM-RESUME
+  NEXT-ARM-SEND
   NODE-KIND
   Pushed
   Refused
   SessionCapture
+  SessionCleanup
   SessionGet
   SessionLaunch
+  SessionList
   SessionRefused
   SessionResume
   SessionSend
@@ -73,6 +88,7 @@
 (import doeff_agents.sessionhost.acp.judgment [
   capture-verdict
   charter-with-grant
+  cleanup-after-end
   condition-of
   deltas-of
   due
@@ -88,13 +104,18 @@
   launch-plan-of
   lease-renew-due
   message-bodies-of
+  next-arm-for-job
   node-row-named
   node-status-with-lease
   pane-frame
+  recovered-arm-of
   resume-params-of
   resync-due
   running-status-of
+  session-alive
   session-id-of-handle
+  session-observations-of
+  sessions-to-retire
   status-frame
   status-object-of
   transcript-path-of
@@ -102,7 +123,9 @@
   turn-record-key-of
   turn-record-spec-of
   wait-seconds-for
+  warm-candidate-of
   with-job
+  withdrawn-session-ids-of
   without-job])
 
 
@@ -110,14 +133,31 @@
 ;; 参加(join): Node の行は読むだけ・lease と観測を書く
 ;; ---------------------------------------------------------------------------
 
+(defk retire-sessions [session-ids reason]
+  {:pre [(: session-ids tuple) (: reason str)]
+   :post [(: % int)]}
+  "温かい session を片付ける(session.cleanup — pane を消し、非終端なら stopped)。
+   戻り = host が受けた数。"
+  (setv accepted-count 0)
+  (for [session-id session-ids]
+    (<- accepted bool (SessionCleanup :session-id session-id))
+    (when accepted
+      (setv accepted-count (+ accepted-count 1)))
+    (<- (LogLine :text (+ f"agentd: session {session-id} cleaned up ({reason})"
+                               (if accepted "" " — host did not accept")))))
+  accepted-count)
+
+
 (defk join-tick [settings state now-ms]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: now-ms int)]
    :post [(: % AgentdState)]}
-  "自分の Node の行を読み、在れば status.lease と status.observations を書く。無ければ
-   1 行 log して次の周期に読み直す(行を作るのは acp-scheduling — 段 2 では lane 2c の
-   道具 register-node)。"
+  "heartbeat の腕: 自分の Node の行を読み、在れば status.lease と status.observations
+   (行と器から導いた会話の session の一覧)を書き、idle が TTL を過ぎた温かい session を
+   片付ける。無ければ 1 行 log して次の周期に読み直し(行を作るのは acp-scheduling — 段 2
+   では lane 2c の道具 register-node)、node が退いた以上は温かい session を残さない。"
   (<- rows tuple (AcpGet :kind NODE-KIND))
   (<- node (| AcpRow None) (node-row-named rows settings.node-name))
+  (<- views tuple (SessionList :lifecycle LIFECYCLE-MULTI-TURN))
   (setv next (replace state :last-heartbeat-ms now-ms))
   (if (is node None)
       (do
@@ -125,9 +165,22 @@
           (<- (LogLine :text (+ f"agentd: node row {settings.node-name !r} is not in ACP "
                                      "yet (created by acp-scheduling / register-node); "
                                      "re-reading each heartbeat"))))
+        (setv alive [])
+        (for [view views]
+          (<- live bool (session-alive view))
+          (when live
+            (.append alive view.session-id)))
+        (<- (retire-sessions (tuple alive) "node is not in ACP"))
         (replace next :node-missing-logged True))
       (do
-        (<- status dict (node-status-with-lease node settings now-ms (len state.jobs)))
+        ;; 片付けてから観測を書く(観測 = 片付けた後の現況)。
+        (<- expired tuple (sessions-to-retire views now-ms settings.session-idle-ttl-seconds))
+        (<- (retire-sessions expired f"idle past {settings.session-idle-ttl-seconds}s"))
+        (setv kept (tuple (lfor view views :if (not-in view.session-id expired) view)))
+        (<- jobs tuple (AcpGet :kind AGENT-JOB-KIND))
+        (<- observations list
+            (session-observations-of kept jobs settings.node-name settings.principal))
+        (<- status dict (node-status-with-lease node settings now-ms observations))
         (<- outcome (| Written Conflict Refused) (AcpPutStatus :row node :status status))
         (when (isinstance outcome Refused)
           (<- (LogLine :text f"agentd: node lease refused ({outcome.status}): {outcome.error}")))
@@ -179,82 +232,120 @@
               #((get rebuilt 0) lease None))))))
 
 
-(defk claim-job [settings state row now-ms]
-  {:pre [(: settings AgentdSettings) (: state AgentdState) (: row AcpRow) (: now-ms int)]
+(defk incarnate [plan charter arm view]
+  {:pre [(: plan LaunchPlan) (: charter dict) (: arm str) (: view (| SessionView None))]
+   :post [(: % (| SessionView SessionRefused))]}
+  "起こし方の腕を器に写す: send = 既存の session(眺めはそのまま)/ resume = predecessor から
+   cold に起こし直す / launch = charter で起こす。"
+  (cond
+    (and (= arm NEXT-ARM-SEND) (isinstance view SessionView)) view
+    (and (= arm NEXT-ARM-RESUME) (is-not plan.predecessor None))
+    (do
+      (<- params dict (resume-params-of plan.predecessor charter))
+      (<- resumed (| SessionView SessionRefused) (SessionResume :params params))
+      resumed)
+    True
+    (do
+      (<- launched (| SessionView SessionRefused) (SessionLaunch :params charter))
+      launched)))
+
+
+(defk claim-job [settings state rows row previously-deferred now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: rows tuple) (: row AcpRow)
+         (: previously-deferred tuple) (: now-ms int)]
    :post [(: % AgentdState)]}
-  "1 つの Bound の行を受ける: Running + sessionHandle を CAS で書き(負けたら次の list へ)、
-   札を借り、charter で session を起こし(predecessor が在れば resume)、inputs の本文を送り、
-   所要を計器に 1 行、turn-record を作り、status frame を 1 つ押す。"
+  "1 つの Bound の行を受ける: 会話の session の候補(行から)を器で眺め、起こし方を
+   next-arm-for-job の 1 点で決める。defer(会話の session が手番の途中)なら claim せず次の
+   list へ。それ以外は Running + sessionHandle を CAS で書き(負けたら次の list へ)、札を
+   借り、send なら既存の session に・launch / resume なら起こした session に inputs の本文を
+   送り、所要を計器に 1 行、turn-record を作り、status frame を 1 つ押す。"
   (<- plan LaunchPlan (launch-plan-of row))
   (setv job-id row.resource-id)
-  (setv session-id (.get plan.charter "session_id"))
-  (if (not (isinstance session-id str))
-      (do
-        (<- (end-job-now settings row "LaunchFailed" "charter carries no session_id" #() now-ms))
-        state)
-      (do
-        (<- running dict (running-status-of row session-id settings.principal))
-        (<- claimed (| Written Conflict Refused) (AcpPutStatus :row row :status running))
-        (if (not (isinstance claimed Written))
-            (do
-              (<- (LogLine :text f"agentd: claim of job {job-id} did not land ({claimed}); will re-list"))
-              state)
-            (do
-              (<- borrowed tuple (borrow-for settings plan f"agent-job {job-id}"))
-              (setv charter (get borrowed 0))
-              (setv lease (get borrowed 1))
-              (setv refusal (get borrowed 2))
-              (if (is-not refusal None)
-                  (do
-                    (<- (end-job-now settings row "CredentialUnavailable"
-                                            f"custody refused ({refusal.status}): {refusal.error}"
-                                            #() now-ms))
-                    state)
-                  (do
-                    (if (is plan.predecessor None)
-                        (<- outcome (| SessionView SessionRefused) (SessionLaunch :params charter))
-                        (do
-                          (<- params dict (resume-params-of plan.predecessor charter))
-                          (<- outcome (| SessionView SessionRefused) (SessionResume :params params))))
-                    (if (isinstance outcome SessionRefused)
-                        (do
-                          (when (is-not lease None)
-                            (<- (CustodyLeaseRevoke :lease-id lease.lease-id)))
-                          (<- (end-job-now settings row "LaunchFailed" outcome.error #() now-ms))
-                          state)
-                        (do
-                          (<- launched AgentdState
-                              (after-launch settings state row plan outcome lease now-ms))
-                          launched)))))))))
+  (setv subject (str (.get row.spec "subject" job-id)))
+  (<- candidate (| str None)
+      (warm-candidate-of plan rows subject settings.node-name settings.principal))
+  (setv view None)
+  (when (is-not candidate None)
+    (<- looked (| SessionView None) (SessionGet :session-id candidate))
+    (setv view looked))
+  (<- arm str (next-arm-for-job plan view))
+  (setv session-id (if (and (= arm NEXT-ARM-SEND) (isinstance view SessionView))
+                       view.session-id
+                       (.get plan.charter "session_id")))
+  (cond
+    (= arm NEXT-ARM-DEFER)
+    (do
+      (when (not-in job-id previously-deferred)
+        (<- (LogLine :text (+ f"agentd: claim of job {job-id} deferred — session {candidate} of "
+                                   f"conversation {subject} is mid-turn; re-listing"))))
+      (replace state :deferred (+ state.deferred #(job-id))))
+    (not (isinstance session-id str))
+    (do
+      (<- (end-job-now settings row "LaunchFailed" "charter carries no session_id" #() now-ms))
+      state)
+    True
+    (do
+      (<- running dict (running-status-of row session-id settings.principal))
+      (<- claimed (| Written Conflict Refused) (AcpPutStatus :row row :status running))
+      (if (not (isinstance claimed Written))
+          (do
+            (<- (LogLine :text f"agentd: claim of job {job-id} did not land ({claimed}); will re-list"))
+            state)
+          (do
+            (<- borrowed tuple (borrow-for settings plan f"agent-job {job-id}"))
+            (setv charter (get borrowed 0))
+            (setv lease (get borrowed 1))
+            (setv refusal (get borrowed 2))
+            (if (is-not refusal None)
+                (do
+                  (<- (end-job-now settings row "CredentialUnavailable"
+                                          f"custody refused ({refusal.status}): {refusal.error}"
+                                          #() now-ms))
+                  state)
+                (do
+                  (<- outcome (| SessionView SessionRefused) (incarnate plan charter arm view))
+                  (if (isinstance outcome SessionRefused)
+                      (do
+                        (when (is-not lease None)
+                          (<- (CustodyLeaseRevoke :lease-id lease.lease-id)))
+                        (<- (end-job-now settings row "LaunchFailed" outcome.error #() now-ms))
+                        state)
+                      (do
+                        (<- started AgentdState
+                            (after-start settings state row plan outcome lease arm now-ms))
+                        started)))))))))
 
 
-(defk start-offset-of [plan view]
-  {:pre [(: plan LaunchPlan) (: view SessionView)]
+(defk start-offset-of [view arm]
+  {:pre [(: view SessionView) (: arm str)]
    :post [(: % tuple)]}
-  "手番の始まりの transcript の offset と path: resume(predecessor 在り)の手番は前の手番の
+  "手番の始まりの transcript の offset と path: send(温かい)と resume の手番は前の手番の
    行を entries に混ぜない — 今の file の大きさが始まり。戻り = #(path-or-None offset)。"
   (<- canon str (FsCanonicalPath :path view.work-dir))
   (<- path (| str None) (transcript-path-of view canon))
   (setv start-offset 0)
-  (when (and (is-not plan.predecessor None) (is-not path None))
+  (when (and (in arm #{NEXT-ARM-SEND NEXT-ARM-RESUME}) (is-not path None))
     (<- size int (FsFileSize :path path))
     (setv start-offset size))
   #(path start-offset))
 
 
-(defk after-launch [settings state row plan view lease now-ms]
+(defk after-start [settings state row plan view lease arm now-ms]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: row AcpRow) (: plan LaunchPlan)
-         (: view SessionView) (: lease (| LeaseGrant None)) (: now-ms int)]
+         (: view SessionView) (: lease (| LeaseGrant None)) (: arm str) (: now-ms int)]
    :post [(: % AgentdState)]}
-  "session が起きた後: inputs を送る・計器・turn-record・status frame・in-flight に登記。"
+  "手番の始まり(session を起こした後・温かい session ならそのまま): inputs を送る(awaiting —
+   送った本文は owed)・計器・turn-record・status frame・in-flight に登記。手番の始まりの
+   offset は送る前の file の大きさ(send / resume)。"
   (setv job-id row.resource-id)
   (setv pending [])
+  (<- start tuple (start-offset-of view arm))
   (<- inputs tuple (inputs-of row))
   (when inputs
     (<- messages tuple (AcpGet :kind MESSAGE-KIND))
     (<- pair tuple (message-bodies-of messages inputs))
     (for [body (get pair 0)]
-      (<- (SessionSend :session-id view.session-id :text body)))
+      (<- (SessionSend :session-id view.session-id :text body :awaiting True)))
     (when (get pair 1)
       (<- condition dict (condition-of "InputUnavailable"
                                        (+ "messages not found: " (.join ", " (get pair 1)))))
@@ -263,12 +354,13 @@
   (<- (MetricLine :fields {"metric" "agent-job-to-send"
                                   "agentJobId" job-id
                                   "sessionId" view.session-id
+                                  "arm" arm
                                   "createdAtMs" row.created-at-ms
                                   "sentAtMs" sent-ms
                                   "ms" (- sent-ms row.created-at-ms)}))
-  (<- start tuple (start-offset-of plan view))
   (<- job InFlightJob
-      (in-flight-job-of row plan view settings.node-name now-ms (get start 1) lease (tuple pending)))
+      (in-flight-job-of row plan view settings.node-name now-ms sent-ms (get start 1) lease
+                        (tuple pending)))
   (<- spec dict (turn-record-spec-of job))
   (<- created (| Written Conflict Refused)
       (AcpCreate :namespace AGORA-KINDS-NAMESPACE :kind TURN-RECORD-KIND :resource-id job-id :spec spec))
@@ -396,12 +488,14 @@
         (isinstance wrote Written))))
 
 
-(defk finalize-job [settings state job view path now-ms]
+(defk finalize-job [settings state job view path step now-ms]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: job InFlightJob)
-         (: view SessionView) (: path (| str None)) (: now-ms int)]
+         (: view SessionView) (: path (| str None)) (: step str) (: now-ms int)]
    :post [(: % AgentdState)]}
   "手番の終わり(記録の腕): transcript から entries と usage を組み turn-record を ended に、
-   agent-job を Ended(result / conditions)に、status frame ended を押し、札を返す。"
+   agent-job を Ended(result / conditions)に、status frame ended を押し、札を返す。
+   turn-end(温かい session の手番の終わり)は session を生かしたまま。record-end(器が終端)
+   で器が multi_turn なら、host の掃き取りの対象外なので agentd が片付ける。"
   (<- outcome JobOutcome (job-outcome-of view))
   (if (is path None)
       (setv batch (DeltaBatch :frames #() :entries #() :usage None :next-seq 0 :model None))
@@ -434,7 +528,11 @@
                                   "agentJobId" job.job-id
                                   "sessionId" job.session-id
                                   "status" view.status
+                                  "step" step
                                   "ms" (- now-ms job.started-ms)}))
+  (<- retire bool (cleanup-after-end view))
+  (when (and (= step JOB-STEP-RECORD-END) retire)
+    (<- (retire-sessions #(job.session-id) f"session {view.status} at the end of job {job.job-id}")))
   (<- next AgentdState (without-job state job.job-id))
   next)
 
@@ -462,18 +560,18 @@
          (: view (| SessionView None)) (: step str) (: now-ms int)]
    :post [(: % AgentdState)]}
   "job-step-of の答えを腕に写す: fail-missing → 記録と SessionFailed で閉じる /
-   record-end → 記録の腕(finalize)/ observe → memory に置く(観測は次の拍)。"
+   record-end・turn-end → 記録の腕(finalize)/ observe → memory に置く(観測は次の拍)。"
   (cond
     (= step JOB-STEP-FAIL-MISSING)
     (do
       (<- (fail-missing-arm settings job.job-key job.job-id job.pending-conditions job.lease-id now-ms))
       (<- dropped AgentdState (without-job state job.job-id))
       dropped)
-    (and (= step JOB-STEP-RECORD-END) (isinstance view SessionView))
+    (and (in step #{JOB-STEP-RECORD-END JOB-STEP-TURN-END}) (isinstance view SessionView))
     (do
       (<- canon str (FsCanonicalPath :path view.work-dir))
       (<- path (| str None) (transcript-path-of view canon))
-      (<- finished AgentdState (finalize-job settings state job view path now-ms))
+      (<- finished AgentdState (finalize-job settings state job view path step now-ms))
       finished)
     True
     (do
@@ -481,21 +579,36 @@
       kept)))
 
 
+(defk progressed-of [job view]
+  {:pre [(: job InFlightJob) (: view SessionView)]
+   :post [(: % bool)]}
+  "この手番の記録が進んだか(送った本文が届いて手番が始まった証拠)。記録の path を引けない
+   器(材料の欠け)は進みを読めないので True(host の判定だけを信じる)。"
+  (<- canon str (FsCanonicalPath :path view.work-dir))
+  (<- path (| str None) (transcript-path-of view canon))
+  (or (is path None) (> job.transcript-offset job.start-offset)))
+
+
 (defk observe-job [settings state job now-ms]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: job InFlightJob) (: now-ms int)]
    :post [(: % AgentdState)]}
   "走っている 1 つの job の拍: 器の眺め → 次の 1 手(純関数 1 点)。observe なら実況を回し、
    その拍で実況が終わった(capture が gone)なら器を読み直して同じ拍で腕を決める。
-   record-end / fail-missing は実況を撃たずに記録の腕へ(片付いた pane を capture しない)。"
+   record-end / turn-end / fail-missing は実況を撃たずに記録の腕へ(片付いた pane を
+   capture しない)。"
   (<- view (| SessionView None) (SessionGet :session-id job.session-id))
-  (<- step str (job-step-of view))
+  (setv progressed True)
+  (when (isinstance view SessionView)
+    (<- moved bool (progressed-of job view))
+    (setv progressed moved))
+  (<- step str (job-step-of view job.turn-floor-ms progressed))
   (if (and (= step JOB-STEP-OBSERVE) (isinstance view SessionView))
       (do
         (<- current InFlightJob (stream-job settings job view now-ms))
         (if (and current.stream-gone (not job.stream-gone))
             (do
               (<- again (| SessionView None) (SessionGet :session-id job.session-id))
-              (<- step-again str (job-step-of again))
+              (<- step-again str (job-step-of again job.turn-floor-ms progressed))
               (<- settled AgentdState (settle-known settings state current again step-again now-ms))
               settled)
             (do
@@ -523,7 +636,8 @@
         state)
       (do
         (<- view (| SessionView None) (SessionGet :session-id session-id))
-        (<- step str (job-step-of view))
+        ;; 拾い直しは記録の進みを知らない(下限 = 行の createdAt・進み = host の判定だけ)。
+        (<- step str (job-step-of view row.created-at-ms True))
         (if (not (isinstance view SessionView))
             (do
               (<- (fail-missing-arm settings row.key row.resource-id #() None now-ms))
@@ -538,10 +652,11 @@
                 (when (is-not refusal None)
                   (<- (LogLine :text (+ f"agentd: lease for recovered job {row.resource-id} refused "
                                              f"({refusal.status}): {refusal.error}; observing without it")))))
-              (<- start tuple (start-offset-of plan view))
+              (<- recovered-arm str (recovered-arm-of plan))
+              (<- start tuple (start-offset-of view recovered-arm))
               (<- job InFlightJob
                   (in-flight-job-of row plan view settings.node-name row.created-at-ms
-                                    (get start 1) lease #()))
+                                    row.created-at-ms (get start 1) lease #()))
               (<- (LogLine :text f"agentd: recovered running job {row.resource-id} from its row ({step})"))
               (<- settled AgentdState (settle-known settings state job view step now-ms))
               settled)))))
@@ -551,19 +666,48 @@
 ;; 1 tick
 ;; ---------------------------------------------------------------------------
 
+(defk withdraw-sessions [settings state rows]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: rows tuple)]
+   :post [(: % AgentdState)]}
+  "取り下げ(phase Withdrawn — 書き手は scheduling)の行の session を片付ける: 生きていれば
+   session.cleanup、その session を使っている手番の観測をやめ(記録は ended・札は返す)、
+   片付けた id を memory に置いて同じ行に撃ち直さない。agent-job の phase は書かない。"
+  (<- withdrawn tuple (withdrawn-session-ids-of rows settings.node-name settings.principal))
+  (setv current state)
+  (for [session-id withdrawn]
+    (when (not-in session-id current.retired)
+      (<- view (| SessionView None) (SessionGet :session-id session-id))
+      (<- alive bool (session-alive view))
+      (when alive
+        (<- (retire-sessions #(session-id) "agent-job withdrawn")))
+      (for [job (list current.jobs)]
+        (when (= job.session-id session-id)
+          (<- (end-turn-record job.job-id None #()))
+          (when (is-not job.lease-id None)
+            (<- (CustodyLeaseRevoke :lease-id job.lease-id)))
+          (<- (LogLine :text f"agentd: job {job.job-id} withdrawn; stopped observing session {session-id}"))
+          (<- dropped AgentdState (without-job current job.job-id))
+          (setv current dropped)))
+      (setv current (replace current :retired (+ current.retired #(session-id))))))
+  current)
+
+
 (defk receive-bound-jobs [settings state now-ms]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: now-ms int)]
    :post [(: % AgentdState)]}
   "list で自分に結ばれた Bound の行と自分が持つ Running の行を読み、まだ memory に無い行を
-   行の順に受ける(Bound = claim・Running = 行からの拾い直し)。"
+   行の順に受ける(Bound = claim・Running = 行からの拾い直し)。取り下げられた行の session は
+   先に片付ける。claim を持ち越した job(defer)は list ごとに読み直す。"
   (<- rows tuple (AcpGet :kind AGENT-JOB-KIND))
+  (<- withdrawn-handled AgentdState (withdraw-sessions settings state rows))
   (<- bound tuple (job-rows-bound-to rows settings.node-name))
   (<- running tuple (job-rows-running-on rows settings.node-name settings.principal))
-  (<- known set (in-flight-ids state))
-  (setv current state)
+  (<- known set (in-flight-ids withdrawn-handled))
+  (setv previously-deferred withdrawn-handled.deferred)
+  (setv current (replace withdrawn-handled :deferred #()))
   (for [row bound]
     (when (not-in row.resource-id known)
-      (<- current AgentdState (claim-job settings current row now-ms))))
+      (<- current AgentdState (claim-job settings current rows row previously-deferred now-ms))))
   (for [row running]
     (when (not-in row.resource-id known)
       (<- current AgentdState (recover-job settings current row now-ms))))

@@ -494,13 +494,23 @@
   (<- _ (session-store-record-event session-id "session_captured" updated))
   text)
 
-(defk send-program [session-id message literal submit]
-  {:pre [(: session-id str) (: message str) (: literal bool) (: submit bool)]
+(defk send-program [session-id message literal submit awaiting]
+  {:pre [(: session-id str) (: message str) (: literal bool) (: submit bool)
+         (: awaiting bool)]
    :post [(: % SessionRow)]}
   "session.send(oracle session_send :1955-1974): live pane へのキー配送 +
-   session_sent event。"
+   session_sent event。awaiting = true(agentd の温かい手番 — ADR-DOE-AGENTS-012
+   R10)は「送った本文は agent への prompt で owed」を launch の prompt 配送・催促と
+   同じ awaiting latch で立てる: 正の作業証拠が出るまで見かけの turn-end を評価せず、
+   期限(ADR-DOE-AGENTS-010 R3)は配送から数える。既定 false は今日どおりキー配送
+   だけ(operator の郵便・救援キーは prompt とは限らない)。"
   (<- row (require-session-row session-id))
   (<- _ (tmux-send-keys row.pane-id message literal submit))
+  (when awaiting
+    (<- now (clock-now))
+    (setv row (replace row :awaiting-response True
+                           :awaiting-response-since (iso-format now)))
+    (<- _ (session-store-upsert row)))
   (<- _ (session-store-record-event session-id "session_sent" row))
   row)
 
@@ -1260,7 +1270,8 @@
     (setv message (required-str-param p "message" "session.send"))
     (setv enter (bool (.get p "enter" True)))
     (setv literal (bool (.get p "literal" True)))
-    (run-hosted config actor (send-program sid message literal enter))
+    (setv awaiting (bool (.get p "awaiting" False)))
+    (run-hosted config actor (send-program sid message literal enter awaiting))
     (record-command actor sid "session.send" message)
     (return {"sent" True}))
 

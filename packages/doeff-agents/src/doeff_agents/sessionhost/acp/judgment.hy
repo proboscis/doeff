@@ -11,6 +11,10 @@
 ;;;     lease の欄)— 判断ではなく契約の綴りの変換。
 ;;;   * transcript の行 → TurnDelta の frame と turn-record の entries(契約
 ;;;     docs/contracts/turn-delta.json / agora-kinds.json の欄へ写す)。
+;;;   * 温かい session(R10): 会話 → 生きている session の対応は行(agent-job の subject と
+;;;     sessionHandle)から導き、Bound の job の起こし方は next-arm-for-job(launch | send |
+;;;     resume | defer)の 1 点、手番の終わりは job-step-of の turn-end(host が刻んだ
+;;;     turn_ended_at × 手番の始まりの下限 × 記録の進み)、idle の寿命は sessions-to-retire。
 ;;;   * capture の是非(購読者の数 → continue | stop・issue #1 の決定)と待ちの長さ。
 ;;; wire の綴り(kind 名・phase・route)は effects.py だけが持ち、ここは import する。
 ;;; I/O は 1 つも無い(handlers.py が持つ)— 法 (b)(針: この file に job を選ぶ第 2 の
@@ -36,14 +40,23 @@
   JOB-STEP-FAIL-MISSING
   JOB-STEP-OBSERVE
   JOB-STEP-RECORD-END
+  JOB-STEP-TURN-END
   JSONObject
   JobOutcome
+  LIFECYCLE-MULTI-TURN
   LaunchPlan
   LeaseGrant
+  NEXT-ARM-DEFER
+  NEXT-ARM-LAUNCH
+  NEXT-ARM-RESUME
+  NEXT-ARM-SEND
   NODE-GONE
   PHASE-BOUND
   PHASE-ENDED
   PHASE-RUNNING
+  PHASE-WITHDRAWN
+  SESSION-OBSERVED-BUSY
+  SESSION-OBSERVED-IDLE
   SESSION-TERMINAL-STATUSES
   SessionView
   TURN-RECORD-ENDED
@@ -124,18 +137,214 @@
   (tuple out))
 
 
-(defk job-step-of [view]
-  {:pre [(: view (| SessionView None))]
+(defk job-step-of [view floor-ms progressed]
+  {:pre [(: view (| SessionView None)) (: floor-ms int) (: progressed bool)]
    :post [(: % str)]}
   "自分の Running の行の次の 1 手(閉語彙 effects.JobStep)— 器の現況ちょうどから:
    器に session が無い → fail-missing(記録が在れば ended にし、SessionFailed で Ended)/
    器が終端 → record-end(記録の腕だけ: turn-record ended・result・phase Ended)/
-   器が走っている → observe(行から InFlightJob を組み観測を続ける)。memory に在る job も
-   無い job も同じ 1 点で決める(行の状態 → 次の 1 手)。"
+   温かい session(multi_turn)で host が手番の終わり(turn_ended_at)をこの手番の始まりの
+   下限(floor = 本文を送った時刻)より後に刻み、記録が進んでいる(送った本文が届いて手番が
+   始まった証拠 = 前の手番の終わりの stale な観測と区別する)→ turn-end(記録の腕だけ・
+   session は生かす)/ それ以外 → observe。memory に在る job も無い job も同じ 1 点で決める。"
   (cond
     (is view None) JOB-STEP-FAIL-MISSING
     (in view.status SESSION-TERMINAL-STATUSES) JOB-STEP-RECORD-END
+    (and (= view.lifecycle LIFECYCLE-MULTI-TURN)
+         (is-not view.turn-ended-at-ms None)
+         (> view.turn-ended-at-ms floor-ms)
+         progressed)
+    JOB-STEP-TURN-END
     True JOB-STEP-OBSERVE))
+
+
+;; ---------------------------------------------------------------------------
+;; 温かい session — 会話の資源としての session と手番の起こし方(R10)
+;; ---------------------------------------------------------------------------
+
+(defk launch-lifecycle-of [charter]
+  {:pre [(: charter dict)]
+   :post [(: % str)]}
+  "charter が lifecycle を名指せばそれ、無ければ agentd の既定 = multi_turn(session は会話の
+   資源・job は手番 — 手番の終わりで片付けない)。"
+  (setv declared (.get charter "lifecycle"))
+  (if (and (isinstance declared str) declared) declared LIFECYCLE-MULTI-TURN))
+
+
+(defk session-alive [view]
+  {:pre [(: view (| SessionView None))]
+   :post [(: % bool)]}
+  "器に在り、終端でない。"
+  (and (is-not view None) (not-in view.status SESSION-TERMINAL-STATUSES)))
+
+
+(defk session-idle [view]
+  {:pre [(: view (| SessionView None))]
+   :post [(: % bool)]}
+  "温かい session が手番の間に居る(生きている ∧ multi_turn ∧ host が手番の終わりを刻んで
+   いる)= 次の手番を send で受けられる。"
+  (<- alive bool (session-alive view))
+  (and alive
+       (isinstance view SessionView)
+       (= view.lifecycle LIFECYCLE-MULTI-TURN)
+       (is-not view.turn-ended-at-ms None)))
+
+
+(defk session-busy [view]
+  {:pre [(: view (| SessionView None))]
+   :post [(: % bool)]}
+  "温かい session が手番の途中(生きている ∧ multi_turn ∧ 手番の終わりが刻まれていない)。"
+  (<- alive bool (session-alive view))
+  (and alive
+       (isinstance view SessionView)
+       (= view.lifecycle LIFECYCLE-MULTI-TURN)
+       (is view.turn-ended-at-ms None)))
+
+
+(defk handle-owned-by [row node-name principal]
+  {:pre [(: row AcpRow) (: node-name str) (: principal str)]
+   :post [(: % (| str None))]}
+  "自分が claim した行(binding.node == 自分 ∧ sessionHandle.stream.owner == 自分)の
+   sessionHandle.sessionId。phase は問わない(Running でも Ended でも会話の session の記録)。
+   自分の行でなければ None。"
+  (setv status row.status)
+  (setv binding (if (isinstance status dict) (.get status "binding") None))
+  (setv handle (if (isinstance status dict) (.get status "sessionHandle") None))
+  (setv stream (if (isinstance handle dict) (.get handle "stream") None))
+  (if (and (isinstance binding dict)
+           (= (.get binding "node") node-name)
+           (isinstance stream dict)
+           (= (.get stream "owner") principal))
+      (do (<- sid (| str None) (session-id-of-handle row))
+          sid)
+      None))
+
+
+(defk conversation-session-of [rows subject node-name principal]
+  {:pre [(: rows tuple) (: subject str) (: node-name str) (: principal str)]
+   :post [(: % (| str None))]}
+  "会話(agent-job の spec.subject)→ その会話の最後の手番が使った session の id — 行から
+   導く(memory を要らない): 自分が claim した同じ subject の行のうち createdAt が最新の
+   sessionHandle.sessionId。無ければ None。"
+  (setv found None)
+  (setv found-at -1)
+  (for [row rows]
+    (when (= (.get row.spec "subject") subject)
+      (<- sid (| str None) (handle-owned-by row node-name principal))
+      (when (and (is-not sid None) (> row.created-at-ms found-at))
+        (setv found sid)
+        (setv found-at row.created-at-ms))))
+  found)
+
+
+(defk warm-candidate-of [plan rows subject node-name principal]
+  {:pre [(: plan LaunchPlan) (: rows tuple) (: subject str) (: node-name str) (: principal str)]
+   :post [(: % (| str None))]}
+  "次の手番を送れるかもしれない session の id: affinity.predecessor(scheduler の名指し)が
+   在ればそれ、無ければ会話の最後の手番の session(行から)。None = 候補なし(launch)。"
+  (if (is-not plan.predecessor None)
+      plan.predecessor
+      (do (<- sid (| str None) (conversation-session-of rows subject node-name principal))
+          sid)))
+
+
+(defk next-arm-for-job [plan view]
+  {:pre [(: plan LaunchPlan) (: view (| SessionView None))]
+   :post [(: % str)]}
+  "Bound の job の起こし方(閉語彙 effects.NextArm)— 判断はここ 1 点:
+   候補の session が生きて idle → send(温かい・predecessor が生きていればこれが温かい resume)/
+   候補が手番の途中 → defer(claim せず次の list で読み直す — 走っている手番に本文を積まない)/
+   predecessor が在る(が候補は生きていない)→ resume(cold の session.resume)/
+   それ以外 → launch。"
+  (<- idle bool (session-idle view))
+  (<- busy bool (session-busy view))
+  (cond
+    idle NEXT-ARM-SEND
+    busy NEXT-ARM-DEFER
+    (is-not plan.predecessor None) NEXT-ARM-RESUME
+    True NEXT-ARM-LAUNCH))
+
+
+(defk recovered-arm-of [plan]
+  {:pre [(: plan LaunchPlan)]
+   :post [(: % str)]}
+  "拾い直した Running の手番がどう始まっていたか(手番の始まりの offset の読み方): predecessor が
+   在れば resume(前の手番の行を混ぜない)、無ければ launch(file の頭から)。send は拾い直せない
+   (行に送った時刻が無い)ので resume と同じ読み(今の file の大きさ)にはしない — 拾い直しの
+   turn-floor は行の createdAt で、記録の進みは host の判定だけを信じる。"
+  (if (is plan.predecessor None) NEXT-ARM-LAUNCH NEXT-ARM-RESUME))
+
+
+(defk cleanup-after-end [view]
+  {:pre [(: view SessionView)]
+   :post [(: % bool)]}
+  "終端の器を agentd が片付けるか: multi_turn は host の掃き取り(run_to_completion の
+   cleanup)の対象外なので、agentd が起こした資源は agentd が session.cleanup で片付ける。"
+  (= view.lifecycle LIFECYCLE-MULTI-TURN))
+
+
+(defk sessions-to-retire [views now-ms ttl-seconds]
+  {:pre [(: views tuple) (: now-ms int) (: ttl-seconds int)]
+   :post [(: % tuple)]}
+  "idle が TTL を過ぎた温かい session の id(片付ける対象)。時計は引数(effect は呼び手)。"
+  (setv out [])
+  (for [view views]
+    (<- idle bool (session-idle view))
+    (when (and idle
+               (is-not view.turn-ended-at-ms None)
+               (>= now-ms (+ view.turn-ended-at-ms (* 1000 ttl-seconds))))
+      (.append out view.session-id)))
+  (tuple out))
+
+
+(defk withdrawn-session-ids-of [rows node-name principal]
+  {:pre [(: rows tuple) (: node-name str) (: principal str)]
+   :post [(: % tuple)]}
+  "Withdrawn の行のうち自分が claim していた行の session の id(手番の取り下げ — 走っている
+   session を片付ける対象)。"
+  (setv out [])
+  (for [row rows]
+    (setv status row.status)
+    (when (and (isinstance status dict) (= (.get status "phase") PHASE-WITHDRAWN))
+      (<- sid (| str None) (handle-owned-by row node-name principal))
+      (when (and (is-not sid None) (not-in sid out))
+        (.append out sid))))
+  (tuple out))
+
+
+(defk conversation-of-session [rows session-id node-name principal]
+  {:pre [(: rows tuple) (: session-id str) (: node-name str) (: principal str)]
+   :post [(: % (| str None))]}
+  "session の id → その session を使った(最新の)手番の会話(spec.subject)。無ければ None。"
+  (setv found None)
+  (setv found-at -1)
+  (for [row rows]
+    (<- sid (| str None) (handle-owned-by row node-name principal))
+    (when (and (= sid session-id) (> row.created-at-ms found-at))
+      (setv subject (.get row.spec "subject"))
+      (when (isinstance subject str)
+        (setv found subject)
+        (setv found-at row.created-at-ms))))
+  found)
+
+
+(defk session-observations-of [views rows node-name principal]
+  {:pre [(: views tuple) (: rows tuple) (: node-name str) (: principal str)]
+   :post [(: % list)]}
+  "node の status.observations.sessions — 行と器から導いた
+   [{conversationId, sessionId, state}](生きている温かい session だけ・state は idle | busy)。
+   会話の id を引けない session(行が GC で消えた等)は載せない(発明しない)。"
+  (setv out [])
+  (for [view views]
+    (<- alive bool (session-alive view))
+    (when (and alive (= view.lifecycle LIFECYCLE-MULTI-TURN))
+      (<- subject (| str None) (conversation-of-session rows view.session-id node-name principal))
+      (when (is-not subject None)
+        (<- idle bool (session-idle view))
+        (.append out {"conversationId" subject
+                      "sessionId" view.session-id
+                      "state" (if idle SESSION-OBSERVED-IDLE SESSION-OBSERVED-BUSY)}))))
+  out)
 
 
 ;; ---------------------------------------------------------------------------
@@ -208,8 +417,11 @@
                        None))
   (setv profile (.get binding "profile"))
   (setv model (.get charter "model"))
+  (setv charter-out (dict charter))
+  (<- lifecycle str (launch-lifecycle-of charter))
+  (setv (get charter-out "lifecycle") lifecycle)
   (LaunchPlan
-    :charter (dict charter)
+    :charter charter-out
     :predecessor (if (isinstance predecessor str) predecessor None)
     :lease-kind lease-kind
     :account (if (is lease-kind None) None account)
@@ -232,7 +444,8 @@
    :post [(: % dict)]}
   "affinity.predecessor が在る job の session.resume の params: 前の incarnation の
    session_id を名指し、新しい session_id と launch の意図(charter)を運ぶ
-   (host.hy の session.resume の受理形 — resume 専用の欄はそのまま素通し)。"
+   (host.hy の session.resume の受理形 — resume 専用の欄はそのまま素通し)。lifecycle は
+   運ばない — 新しい incarnation は蘇生元の行の lifecycle を継ぐ(launch.hy resume-session)。"
   (setv params {"session_id" predecessor
                 "new_session_id" (.get charter "session_id")})
   (for [key ["prompt" "model" "effort" "mcp_servers" "session_env" "binding"
@@ -322,10 +535,11 @@
 
 
 (defk node-status-with-lease [row settings now-ms sessions]
-  {:pre [(: row AcpRow) (: settings AgentdSettings) (: now-ms int) (: sessions int)]
+  {:pre [(: row AcpRow) (: settings AgentdSettings) (: now-ms int) (: sessions list)]
    :post [(: % dict)]}
   "agentd が書く欄だけを更新した node の status: lease{owner, heartbeatAt, expiresAt} と
-   observations{streamCapability, sessions}。state(scheduling の欄)は写すだけ。"
+   observations{streamCapability, sessions}(sessions = session-observations-of の列)。
+   state(scheduling の欄)は写すだけ。"
   (<- next dict (status-object-of row))
   (setv (get next "lease")
         {"owner" settings.principal
@@ -348,13 +562,15 @@
   f"{AGORA-KINDS-NAMESPACE}:{TURN-RECORD-KIND}:{job-id}")
 
 
-(defk in-flight-job-of [row plan view node-name started-ms start-offset lease pending]
+(defk in-flight-job-of [row plan view node-name started-ms turn-floor-ms start-offset lease pending]
   {:pre [(: row AcpRow) (: plan LaunchPlan) (: view SessionView) (: node-name str)
-         (: started-ms int) (: start-offset int) (: lease (| LeaseGrant None)) (: pending tuple)]
+         (: started-ms int) (: turn-floor-ms int) (: start-offset int)
+         (: lease (| LeaseGrant None)) (: pending tuple)]
    :post [(: % InFlightJob)]}
   "agent-job の行 + 起こし方の写し + 器の眺めから、観測に要る memory の状態を組む 1 点。
-   受けた直後(after-launch)も再起動後の拾い直し(adopt)も同じ形 — 行と器に無い欄
-   (offset・seq・capture の可否)は始まりの値で、発明しない。"
+   受けた直後(after-start)も再起動後の拾い直し(adopt)も同じ形 — 行と器に無い欄
+   (offset・seq・capture の可否)は始まりの値で、発明しない。turn-floor-ms = この手番の
+   始まりの下限(送った時刻・拾い直しは行の createdAt)。"
   (InFlightJob
     :job-key row.key
     :job-namespace row.namespace
@@ -366,6 +582,7 @@
     :profile plan.profile
     :model plan.model
     :started-ms started-ms
+    :turn-floor-ms turn-floor-ms
     :start-offset start-offset
     :transcript-offset start-offset
     :delta-seq 0
