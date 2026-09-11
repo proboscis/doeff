@@ -65,6 +65,8 @@ class FakeAcp:
         self.pushes: list[tuple[str, str, tuple[JSONObject, ...]]] = []
         self.subscribers: dict[str, int] = {}
         self.push_seq: int = 0
+        #: kind → list(AcpGet)で投げる例外(実弾 002 の Connection reset の再現)。
+        self.list_failures: dict[str, Exception] = {}
 
     def put_row(self, row: AcpRow) -> None:
         """test / operator の代わりに行を置く(書き手の判定は無い)。"""
@@ -80,6 +82,9 @@ class FakeAcp:
 
     def _read(self, effect: AcpGet | AcpGetRow | AcpWatchSse) -> object:
         if isinstance(effect, AcpGet):
+            failure = self.list_failures.get(effect.kind)
+            if failure is not None:
+                raise failure
             return tuple(row for row in self.rows.values() if row.kind == effect.kind)
         if isinstance(effect, AcpGetRow):
             return self.rows.get(effect.key)
@@ -196,6 +201,12 @@ class FakeSessions:
         self.sends: list[tuple[str, str]] = []
         self.captures: list[tuple[str, int]] = []
         self.capture_text: str = "❯ \n"
+        #: None = 断面を返す / str = pane も server も無い(理由)— host が capture を断る形。
+        self.capture_gone: str | None = None
+        #: gone の拍で器を終端へ倒す(session.get の後に pane が消える race の再現)。
+        self.finish_on_capture: tuple[str, JSONObject | None] | None = None
+        #: session_id → session.get で投げる例外(器の RPC が落ちた job の再現)。
+        self.failures: dict[str, Exception] = {}
         self.refuse_launch: SessionRefused | None = None
         self.agent_type: str = agent_type
         self.work_dir: str = work_dir
@@ -208,9 +219,16 @@ class FakeSessions:
             self.sends.append((effect.session_id, effect.text))
             return Resume(k, None)
         if isinstance(effect, SessionGet):
+            failure = self.failures.get(effect.session_id)
+            if failure is not None:
+                raise failure
             return Resume(k, self.views.get(effect.session_id))
         if isinstance(effect, SessionCapture):
             self.captures.append((effect.session_id, effect.lines))
+            if self.capture_gone is not None:
+                if self.finish_on_capture is not None:
+                    self.finish(effect.session_id, *self.finish_on_capture)
+                raise RuntimeError(self.capture_gone)
             return Resume(k, self.capture_text)
         return Pass(effect, k)
 
