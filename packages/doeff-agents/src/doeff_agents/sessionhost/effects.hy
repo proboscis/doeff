@@ -21,6 +21,7 @@
 (import datetime [datetime])
 (import typing [Any])
 (import doeff [EffectBase])
+(import doeff_agents.sessionhost.headless_protocol [ClaudeDialogue CodexDialogue])
 
 
 ;; ===========================================================================
@@ -741,6 +742,62 @@
   #^ float seconds)
 
 
+;; --- headless backend(agora-redesign #37・段 2 lane 2d): tui の pane を持たない
+;; 子 process(claude の print mode(-p)の stream-json / codex app-server)の substrate。判断(stdin の
+;; 綴り・手番の終わり・割り込みの伝え方)は headless_protocol.py の Dialogue(純粋)、
+;; 器は headless_process.py、handler は substrate_headless.hy。argv は per-kind impl
+;; (interface effect BuildHeadlessLaunch → impls/headless_argv.hy)。
+
+(defclass [(dataclass :frozen True :kw-only True)] BuildHeadlessLaunch [EffectBase]
+  "kind の headless の起動(argv と stdin / stdout の作法)を組み立てる。戻り値:
+   {\"argv\": list[str], \"dialogue\": Dialogue}。params は launch params 相当
+   (model / effort / mcp_servers / result_channel / session_hooks / work_dir)+
+   \"conversation\"(kind 判別 union)+ \"resume_mode\"(\"resume\" = 続きの
+   手番・None = 会話の最初の手番)。prompt は argv に載せない(stdin の作法 =
+   Dialogue.turn)。物理: claude = print mode(-p)の `--output-format stream-json
+   --include-partial-messages --verbose`(--session-id / --resume)、codex =
+   `codex app-server --listen stdio://`(thread/start / thread/resume は Dialogue)。"
+  #^ str agent-type
+  #^ dict params)
+
+(defclass [(dataclass :frozen True :kw-only True)] HeadlessSpawn [EffectBase]
+  "headless の子 process を起こす(stdin / stdout は pipe・stdout の行は events-path へ
+   1 行 1 event で追記)。禁止 env(ANTHROPIC_API_KEY*)の hard reject は substrate 所有
+   (TmuxNewSession と同じ)。同じ名の生きた process が在れば raise(duplicate parity)。
+   戻り値: pid(int)。"
+  #^ str session-name
+  #^ str work-dir
+  #^ dict env
+  #^ list argv
+  #^ str events-path
+  #^ Any dialogue)
+
+(defclass [(dataclass :frozen True :kw-only True)] HeadlessDeliver [EffectBase]
+  "次の手番の本文を process の stdin へ(綴りは Dialogue.turn — claude は本文 + EOF・
+   codex は turn/start)。戻り値: bool(process が生きていて書けたか)。"
+  #^ str session-name
+  #^ str text)
+
+(defclass [(dataclass :frozen True :kw-only True)] HeadlessPoll [EffectBase]
+  "monitor の拍: 前の拍から読んだ事実(行・手番の終わり・会話の id・型付きの失敗)と
+   process の生死。戻り値: HeadlessObservation | None(名の登記が無い)。"
+  #^ str session-name)
+
+(defclass [(dataclass :frozen True :kw-only True)] HeadlessInterrupt [EffectBase]
+  "走っている手番を止める合図(claude = SIGINT・codex = turn/interrupt)。session は
+   残す。戻り値: bool(合図を出せたか)。"
+  #^ str session-name)
+
+(defclass [(dataclass :frozen True :kw-only True)] HeadlessKill [EffectBase]
+  "process を降ろして登記を消す(stdin の EOF → SIGTERM → SIGKILL の順・猶予つき)。
+   戻り値: bool(登記が在ったか)。"
+  #^ str session-name)
+
+(defclass [(dataclass :frozen True :kw-only True)] HeadlessHasSession [EffectBase]
+  "名の process が登記されて生きているか。戻り値: bool。"
+  #^ str session-name)
+
+
 ;; ===========================================================================
 ;; deff 構築子(署名 = 契約面)
 ;; ===========================================================================
@@ -984,3 +1041,47 @@
    :post [(: % ClockSleep)]}
   "ClockSleep を構築する(poll 間隔・再描画待ち)。"
   (ClockSleep :seconds (float seconds)))
+
+(deff build-headless-launch [agent-type params]
+  {:pre [(: agent-type str) (: params dict)]
+   :post [(: % BuildHeadlessLaunch)]}
+  "BuildHeadlessLaunch を構築する(headless の argv と作法は per-kind impl 所有)。"
+  (BuildHeadlessLaunch :agent-type agent-type :params params))
+
+(deff headless-spawn [session-name work-dir env argv events-path dialogue]
+  {:pre [(: session-name str) (: work-dir str) (: env dict) (: argv list)
+         (: events-path str) (: dialogue (| ClaudeDialogue CodexDialogue))]
+   :post [(: % HeadlessSpawn)]}
+  "HeadlessSpawn を構築する。"
+  (HeadlessSpawn :session-name session-name :work-dir work-dir :env env :argv argv
+                 :events-path events-path :dialogue dialogue))
+
+(deff headless-deliver [session-name text]
+  {:pre [(: session-name str) (: text str)]
+   :post [(: % HeadlessDeliver)]}
+  "HeadlessDeliver を構築する。"
+  (HeadlessDeliver :session-name session-name :text text))
+
+(deff headless-poll [session-name]
+  {:pre [(: session-name str)]
+   :post [(: % HeadlessPoll)]}
+  "HeadlessPoll を構築する。"
+  (HeadlessPoll :session-name session-name))
+
+(deff headless-interrupt [session-name]
+  {:pre [(: session-name str)]
+   :post [(: % HeadlessInterrupt)]}
+  "HeadlessInterrupt を構築する。"
+  (HeadlessInterrupt :session-name session-name))
+
+(deff headless-kill [session-name]
+  {:pre [(: session-name str)]
+   :post [(: % HeadlessKill)]}
+  "HeadlessKill を構築する。"
+  (HeadlessKill :session-name session-name))
+
+(deff headless-has-session [session-name]
+  {:pre [(: session-name str)]
+   :post [(: % HeadlessHasSession)]}
+  "HeadlessHasSession を構築する。"
+  (HeadlessHasSession :session-name session-name))

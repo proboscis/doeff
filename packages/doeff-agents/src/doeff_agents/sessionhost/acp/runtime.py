@@ -21,7 +21,7 @@ from doeff_vm import PyVM, WithHandler
 from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.agentd_client import default_agentd_paths
 from doeff_agents.sessionhost.acp.agentd import agentd_tick
-from doeff_agents.sessionhost.acp.effects import AgentdSettings, AgentdState
+from doeff_agents.sessionhost.acp.effects import AgentdSettings, AgentdState, StreamCapability
 from doeff_agents.sessionhost.acp.handlers import (
     ACP_TOKEN_FILE_ENV,
     ACP_URL_DEFAULT,
@@ -36,7 +36,8 @@ from doeff_agents.sessionhost.acp.handlers import (
     read_secret_file,
     socket_is_listening,
 )
-from doeff_agents.sessionhost.acp.valve import socket_path_override
+from doeff_agents.sessionhost.acp.judgment import stream_capability_of_backend
+from doeff_agents.sessionhost.acp.valve import backend_of, socket_path_override
 
 Dispatcher = Callable[[EffectBase, K], "Resume | Pass"]
 
@@ -49,13 +50,25 @@ TICK_BACKOFF_SECONDS = 1.0
 TICK_BACKOFF_MAX_SECONDS = 30.0
 
 
-def settings_from_env(env: Mapping[str, str]) -> AgentdSettings:
-    """env → 値の宣言(既定値は effects.AgentdSettings の 1 点)。"""
+def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> AgentdSettings:
+    """env → 値の宣言(既定値は effects.AgentdSettings の 1 点)。streamCapability は host の
+    backend(argv / env — valve.backend_of)から導く(headless = events・tmux / herdr = frames —
+    judgment.stream-capability-of-backend の 1 点)。"""
     node_name = (env.get(NODE_NAME_ENV) or platform.node() or "").strip()
     if not node_name:
         raise ValueError(f"{NODE_NAME_ENV} is empty and the machine has no host name")
     homes_root = env.get(HOMES_ROOT_ENV) or os.path.join(_state_home(env), "doeff", "agentd-homes")
-    return AgentdSettings(node_name=node_name, homes_root=homes_root)
+    capability = _stream_capability(backend_of(host_argv, env))
+    return AgentdSettings(node_name=node_name, homes_root=homes_root, stream_capability=capability)
+
+
+def _stream_capability(backend: str) -> StreamCapability:
+    word: object = PyVM().run(stream_capability_of_backend(backend))
+    if word == "events":
+        return "events"
+    if word == "frames":
+        return "frames"
+    return "none"
 
 
 def _state_home(env: Mapping[str, str]) -> str:
@@ -69,6 +82,9 @@ def initial_state() -> AgentdState:
     return AgentdState(
         since=0,
         jobs=(),
+        rows=(),
+        births=(),
+        last_window_seq=0,
         last_heartbeat_ms=None,
         last_resync_ms=None,
         node_missing_logged=False,
@@ -154,7 +170,7 @@ def _stderr(text: str) -> None:
 
 def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> threading.Thread:
     """弁が on の時の 1 点: 前提を検め(札)、host の socket を待ってから loop を回す thread を起こす。"""
-    settings = settings_from_env(env)
+    settings = settings_from_env(env, host_argv)
     socket_path = host_socket_path(host_argv)
     dispatchers, close = real_dispatchers(env, socket_path)
     stop = threading.Event()

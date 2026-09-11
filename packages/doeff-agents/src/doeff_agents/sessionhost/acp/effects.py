@@ -56,10 +56,26 @@ StreamCapability = Literal["events", "frames", "none"]
 #: TurnDelta の種類(docs/contracts/turn-delta.json kinds)。
 DeltaKind = Literal["text", "tool_use", "tool_result", "usage", "status", "frame"]
 #: agent-job の conditions に agentd が書く type の語彙(AgentJob.hs は type を opaque に運ぶ —
-#: 閉語彙は phase だけなので、agentd 側の語をここ 1 点で閉じる)。
+#: 閉語彙は phase だけなので、agentd 側の語をここ 1 点で閉じる)。Interrupted = 取り下げ
+#: (Withdrawn)で走っている手番を止めた(phase は書き手 = 作った側のまま)。
 ConditionType = Literal[
-    "LaunchFailed", "CredentialUnavailable", "InputUnavailable", "SessionFailed"
+    "LaunchFailed", "CredentialUnavailable", "InputUnavailable", "SessionFailed", "Interrupted"
 ]
+CONDITION_INTERRUPTED: ConditionType = "Interrupted"
+#: sessionhost の wire の backend_kind のうち agentd が読む語(host.hy の閉語彙 tmux | herdr |
+#: headless の写し — agora-redesign #37)。headless の session は実況を events file で読み
+#: (backend_ref.events_path)、node の streamCapability は events。
+BACKEND_HEADLESS = "headless"
+#: 実況の材料の種類(judgment.stream-source-of の閉語彙): events = headless の stdout の行
+#: (claude の stream-json / codex の app-server の JSON-RPC)/ transcript = tui の transcript。
+StreamSource = Literal["events", "transcript"]
+STREAM_SOURCE_EVENTS: StreamSource = "events"
+STREAM_SOURCE_TRANSCRIPT: StreamSource = "transcript"
+#: 取り下げ(Withdrawn)を受けた job の腕(judgment.interrupt-arm-for の閉語彙): interrupt =
+#: 手番の途中なので session.interrupt を撃つ / none = 手番は走っていない(合図は要らない)。
+InterruptArm = Literal["interrupt", "none"]
+INTERRUPT_ARM_INTERRUPT: InterruptArm = "interrupt"
+INTERRUPT_ARM_NONE: InterruptArm = "none"
 #: custody の貸出の口の種類(POST /lease/claude | /lease/codex)。
 LeaseKind = Literal["claude", "codex"]
 #: sessionhost の wire の agent_type とその貸出の種類の対応(policy.hy BINDING-KIND-AGENT-TYPE の逆)。
@@ -134,7 +150,8 @@ class AgentdSettings:
     lease_renew_margin_seconds: int = 120
     #: 借りた資格の家の根(claude = CLAUDE_CONFIG_DIR・codex = auth.json の置き場)。
     homes_root: str = ""
-    #: agentd が観測する自分の stream の capability(tmux / herdr の pane = frames)。
+    #: agentd が観測する自分の stream の capability — host の backend から導く(runtime.py の
+    #: 1 点: headless = events・tmux / herdr = frames — judgment.stream-capability-of-backend)。
     stream_capability: StreamCapability = "frames"
     #: 温かい session(multi_turn)の idle の寿命: 手番の終わり(turn_ended_at)からこの秒数を
     #: 過ぎた session は agentd が session.cleanup で片付ける(判断は judgment の純関数・時計は
@@ -161,6 +178,10 @@ class AcpRow:
     payload: JSONObject
     spec: JSONObject
     status: JSONObject | None
+    #: この revision が store に着地した engine の時計(wire の resourceLandedAt・ns 精度・
+    #: None = 欄が無い古い行)。generation 1 の image(SpecApplied の post-image)では行の生まれ —
+    #: 秒の粒度の resourceCreatedAt より正確な「郵便から agent まで」の始点(judgment.birth-ms-of)。
+    landed_at_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -197,6 +218,37 @@ class Pushed:
 PushOutcome: TypeAlias = "Pushed | Refused"
 
 WatchKind = Literal["changed", "gap", "idle", "closed"]
+
+#: watch の拍にどう行を読み直すか(judgment.list-mode-for の閉語彙): full = 全量 list
+#: (周期の保険・gap・接続の張り直し)/ window = 変わった行だけ(``GET /api/event-window`` の
+#: post-image — watch で起きた拍)/ none = 読み直さない(idle)。
+ListMode = Literal["full", "window", "none"]
+LIST_MODE_FULL: ListMode = "full"
+LIST_MODE_WINDOW: ListMode = "window"
+LIST_MODE_NONE: ListMode = "none"
+#: 1 回の event-window の読みの上限(engine の maxEventWindowLimit = 2000)。
+EVENT_WINDOW_LIMIT = 2000
+
+
+@dataclass(frozen=True)
+class EventWindow:
+    """``GET /api/event-window?after=&limit=`` の答え: (after, through] の event の post-image の行
+    (同じ鍵は最後の image・retire は rows に無く retired に鍵)と、続きの cursor。
+    ``complete`` = 窓を読めた(False = cursor が retention の床の下(409)か読めない — 全量 list へ)。
+    ``exhausted`` = through が latest に届いた(False = まだ続きが在る — 次の窓)。"""
+
+    complete: bool
+    through: int
+    latest: int
+    rows: tuple[AcpRow, ...]
+    retired: tuple[str, ...]
+    #: 窓の中で生まれた行(generation 1 の image)の id → 着地の時刻(ms)。同じ鍵の後の image で
+    #: rows から消えても生まれは残す(計器 agent-job-to-send の始点)。
+    births: tuple[tuple[str, int], ...] = ()
+
+    @property
+    def exhausted(self) -> bool:
+        return self.through >= self.latest
 
 
 @dataclass(frozen=True)
@@ -259,6 +311,10 @@ class SessionView:
     #: 温かい session(multi_turn)で host の monitor が手番の終わりを最初に観測した時刻
     #: (wire の turn_ended_at・None = 手番の途中か run_to_completion / interactive)。
     turn_ended_at_ms: int | None
+    #: 器の backend(wire の backend_kind: tmux | herdr | headless)と backend の参照
+    #: (headless = {events_path, pid, argv} — 実況の材料の在処)。
+    backend_kind: str = "tmux"
+    backend_ref: JSONObject | None = None
 
 
 @dataclass(frozen=True)
@@ -379,12 +435,22 @@ class InFlightJob:
 class AgentdState:
     since: int
     jobs: tuple[InFlightJob, ...]
+    #: 知っている agent-job の行(鍵ごとの最新の image)— 全量 list で置き換え、watch の拍の
+    #: event-window で差し替える cache。判断(bound-to-me・会話 → session・withdraw)はこの上で
+    #: 行う。再起動で消えても最初の拍の全量 list で戻る(R7: 正本は行)。
+    rows: tuple[AcpRow, ...]
+    #: agent-job の id → 生まれの着地の時刻(generation 1 の image の landed_at_ms — 計器
+    #: agent-job-to-send の始点)。欄が無い行は created_at_ms に落ちる(judgment.birth-ms-of)。
+    births: tuple[tuple[str, int], ...]
+    #: 行の cache が追いついている event の sequence(次の窓の after)。全量 list の後は
+    #: その拍の since(list は since までの書きを含む)。
+    last_window_seq: int
     #: None = まだ 1 度も(起動直後は即・その後は周期)。
     last_heartbeat_ms: int | None
     last_resync_ms: int | None
     node_missing_logged: bool
-    #: 片付けた session(Withdrawn の行が list に残る間、同じ session に cleanup を撃ち直さない
-    #: ための cache — 再起動で消えても器の現況(終端)から同じ答えに戻る)。
+    #: 取り下げ(Withdrawn)を処理した job の id(行が list に残る間、同じ job に割り込みと
+    #: 記録を撃ち直さないための cache — 再起動で消えても memory に無い job には撃たない)。
     retired: tuple[str, ...]
     #: claim を持ち越した job(会話の session が手番の途中)— log を 1 度にする cache。
     deferred: tuple[str, ...]
@@ -431,6 +497,14 @@ class AcpCreate(EffectBase):
     kind: str
     resource_id: str
     spec: JSONObject
+
+
+@dataclass(frozen=True)
+class AcpEventWindow(EffectBase):
+    """変わった行だけを読む(``GET /api/event-window?after=<since>&limit=``)。結果 = EventWindow。"""
+
+    after: int
+    limit: int
 
 
 @dataclass(frozen=True)
@@ -514,6 +588,14 @@ class SessionList(EffectBase):
 
 
 @dataclass(frozen=True)
+class SessionInterrupt(EffectBase):
+    """``session.interrupt``(走っている手番だけを止める — headless = SIGINT / turn/interrupt・
+    tmux = Escape。session は残す)。結果 = None。agora-redesign #37: withdraw は中断の合図。"""
+
+    session_id: str
+
+
+@dataclass(frozen=True)
 class SessionCleanup(EffectBase):
     """``session.cleanup``(pane を消し、非終端なら stopped)。結果 = bool(host が受けたか)。"""
 
@@ -536,7 +618,24 @@ class SessionTranscript(EffectBase):
     offset: int
 
 
+@dataclass(frozen=True)
+class SessionEvents(EffectBase):
+    """headless の events file(host が stdout の行を 1 行 1 event で追記する実況の正本)を
+    ``offset`` から読む。結果 = TranscriptChunk(完全な行だけ・不在は空文字と同じ offset)。"""
+
+    path: str
+    offset: int
+
+
 # ------------------------------------------------------------------ 要求(時計・計器・file)
+
+
+@dataclass(frozen=True)
+class MintId(EffectBase):
+    """session の id を鋳造する(ULID・26 字 Crockford base32 — 時刻と乱数は handler の I/O)。
+    結果 = str。agentd が起こす session の id は charter(Messaging が組む launch の params)の
+    session_id ではなくこれ(実弾 2026-09-12: charter の固定の id が idle TTL で片付いた後の
+    launch で `session is already registered` に落ちた)。"""
 
 
 @dataclass(frozen=True)

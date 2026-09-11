@@ -34,6 +34,20 @@ rules:
         # with justification — the judge is an adjudicator subprocess, not
         # an agent session launch.
         - '**/*.md'
+        # The sessionhost headless backend (agora-redesign #37, ADR-DOE-AGENTS-012
+        # R11) is the ONE sanctioned print-mode launch site: `claude -p
+        # --output-format stream-json` with the turn end read from the result
+        # line and the next turn resumed by `--resume`. Its home is exactly these
+        # files (argv builder / stdin-stdout protocol / process container /
+        # program / substrate) and their tests; the ban stays in force for every
+        # tui adapter (law print-mode-has-one-home-the-headless-backend).
+        - '**/sessionhost/impls/headless_argv.hy'
+        - '**/sessionhost/headless_protocol.py'
+        - '**/sessionhost/headless_process.py'
+        - '**/sessionhost/headless.hy'
+        - '**/sessionhost/substrate_headless.hy'
+        - '**/tests/test_sessionhost_headless.py'
+        - '**/tests/headless_stubs/**'
 
   - id: doeff-agents-no-anthropic-api-key-agent-env
     languages:
