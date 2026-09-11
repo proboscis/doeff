@@ -44,11 +44,19 @@ Extensions are registered automatically when `doeff_hy` is imported.
 | `defpp` | Define Program[Program[T]] constant |
 | `deftest` | Define effectful test (expands to pytest function) |
 | `do!` | Monadic do block — inline effect sequencing |
-| `<-` | Perform effect, bind result |
+| `<-` | Perform effect, bind result — `(<- name Type effect)` also asserts `isinstance` |
 | `!` | Inline effect bind in argument position |
 | `defpipeline` | Named-stage pipeline composition |
 | `traverse` | Applicative traverse over collections |
 | `for/do` | SQL-like comprehension with effects |
+
+### Typed binding
+
+`(<- name Type effect)` expands to the bind plus `(assert (isinstance name Type) …)`.
+The expansion has one definition point (`_bind-yield` in `macros.hy`) shared by the
+`<-` macro and every body expander that pre-parses `<-` (`do!` / `defp` / `deftest` /
+`for/do` / `traverse` / `defhandler` clauses), so the type contract holds at runtime
+wherever the bind is written. The 2- and 3-element forms add no check.
 
 ### Bang evaluation position
 

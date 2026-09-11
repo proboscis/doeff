@@ -676,11 +676,9 @@ defk {name}: {{:post [...]}} is required.
                    (if (and (isinstance bind tuple) (= (get bind 0) "__plain__"))
                        ;; Plain statement — ADR-DOE-HY-001 guard(式形のみラップ)
                        (_wrap-statement-guard (get bind 1) "do!")
-                       ;; Effect binding — yield
-                       (let [#(name expr) (_bind-parts bind)]
-                         (if (is name None)
-                             `(yield ~expr)
-                             `(setv ~name (yield ~expr)))))))
+                       ;; Effect binding — yield (typed bind keeps its isinstance)
+                       (let [#(name tp expr) (_bind-parts bind)]
+                         (_bind-yield name tp expr)))))
   (if post-checks
       (let [post-asserts (lfor check post-checks
                            (_expand-check check "do!" "post-condition"))]
@@ -714,17 +712,16 @@ defk {name}: {{:post [...]}} is required.
   "Perform an effect. Bind result if name given, optional type contract.
    (<- x (Ask \"key\"))              → (setv x (yield (Ask \"key\")))
    (<- x Type (Ask \"key\"))         → bind + isinstance assertion
-   (<- (slog ...))                   → (yield (slog ...))"
-  (cond
-    (= (len args) 1) `(yield ~(get args 0))
-    (= (len args) 2) `(setv ~(get args 0) (yield ~(get args 1)))
-    (= (len args) 3) (let [nm (get args 0)
-                           tp (get args 1)
-                           expr (get args 2)]
-                       `(do
-                          (setv ~nm (yield ~expr))
-                          (assert (isinstance ~nm ~tp)
-                                  ~(+ "expected " (str tp) ", got " (str nm)))))))
+   (<- (slog ...))                   → (yield (slog ...))
+   The expansion is `_bind-yield` — the same definition point the body
+   expanders (do! / defp / deftest / for/do / defhandler) use, so a typed bind
+   carries the isinstance guarantee wherever it is written."
+  (setv parts (_bind-parts #('<- #* args)))
+  (when (is parts None)
+    (raise (SyntaxError (+ "<-: expected (<- expr) / (<- name expr) / (<- name Type expr), got "
+                           (str (len args)) " arguments"))))
+  (setv #(name tp expr) parts)
+  (_bind-yield name tp expr))
 
 
 ;; ---------------------------------------------------------------------------
@@ -754,13 +751,33 @@ defk {name}: {{:post [...]}} is required.
   (get expr 1))
 
 (defn _bind-parts [form]
-  "Extract (name, expr) from (<- name expr) or (<- name Type expr).
-   For (<- expr), returns (None, expr).
-   For (<- name Type expr), the Type is ignored here (handled by <- macro)."
+  "Extract (name, Type, expr) from a (<- ...) form.
+     (<- expr)           → (None, None, expr)
+     (<- name expr)      → (name, None, expr)
+     (<- name Type expr) → (name, Type, expr)"
   (cond
-    (= (len form) 2) #(None (get form 1))
-    (= (len form) 3) #((get form 1) (get form 2))
-    (= (len form) 4) #((get form 1) (get form 3))))
+    (= (len form) 2) #(None None (get form 1))
+    (= (len form) 3) #((get form 1) None (get form 2))
+    (= (len form) 4) #((get form 1) (get form 2) (get form 3))))
+
+(defn _bind-yield [name tp expr]
+  "Single definition point for the yield form of an effect binding.
+   Used by the <- macro AND by every body expander that pre-parses <- forms
+   (do! / defp / deftest / for/do / traverse / defhandler clauses), so the type contract of a
+   4-element bind is honored at runtime wherever it is written — the shared
+   quality checker (dotfiles agent/quality/hy_dsl.py effect_bind) projects the
+   same isinstance and relies on this guarantee existing.
+     (<- expr)           → (yield expr)
+     (<- name expr)      → (setv name (yield expr))
+     (<- name Type expr) → (do (setv name (yield expr))
+                               (assert (isinstance name Type) \"expected Type, got <actual>\"))"
+  (cond
+    (is name None) `(yield ~expr)
+    (is tp None) `(setv ~name (yield ~expr))
+    True `(do
+            (setv ~name (yield ~expr))
+            (assert (isinstance ~name ~tp)
+                    (+ ~(+ "expected " (str tp) ", got ") (. (type ~name) __name__))))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -833,7 +850,7 @@ defk {name}: {{:post [...]}} is required.
                    (yield (_doeff_traverse_Skip)))
                  ~inner))
             ;; Regular binding
-            (let [#(name expr) (_bind-parts bind)]
+            (let [#(name tp expr) (_bind-parts bind)]
               (if (_is-iterate expr)
                   ;; CPS: wrap rest + body into a defk, emit Traverse effect
                   ;; NOTE: does NOT yield — the outer <- / defk handles yield
@@ -852,11 +869,9 @@ defk {name}: {{:post [...]}} is required.
                         `(_doeff_traverse_Traverse
                            (fn [~param] ((_doeff_do (fn [] (do ~inner-body)))))
                            ~items)))
-                  ;; Non-Iterate: regular bind
+                  ;; Non-Iterate: regular bind (typed bind keeps its isinstance)
                   (let [inner (_gen-traverse-body rest body-expr)]
-                    (if (is name None)
-                        `(do (yield ~expr) ~inner)
-                        `(do (setv ~name (yield ~expr)) ~inner)))))))))
+                    `(do ~(_bind-yield name tp expr) ~inner))))))))
 
 (defmacro traverse [#* forms]
   "Applicative traverse — batch processing with handler-injected strategy.
@@ -1187,11 +1202,9 @@ the effect in the enclosing do-context.
                    (if (and (isinstance bind tuple) (= (get bind 0) "__plain__"))
                        ;; Plain statement — ADR-DOE-HY-001 guard(式形のみラップ)
                        (_wrap-statement-guard (get bind 1) (str name))
-                       ;; Effect binding — yield
-                       (let [#(bname expr) (_bind-parts bind)]
-                         (if (is bname None)
-                             `(yield ~expr)
-                             `(setv ~bname (yield ~expr)))))))
+                       ;; Effect binding — yield (typed bind keeps its isinstance)
+                       (let [#(bname tp expr) (_bind-parts bind)]
+                         (_bind-yield bname tp expr)))))
   (setv post-asserts (lfor check post-checks
                        (_expand-check check name "post-condition")))
   `(do
@@ -1336,12 +1349,11 @@ the effect in the enclosing do-context.
   (setv gen-body [])
   (for [form expanded-forms]
     (cond
-      ;; (<- name expr) → (setv name (yield expr))
+      ;; (<- name expr) → (setv name (yield expr));
+      ;; (<- name Type expr) → same + isinstance assert (see _bind-yield)
       (and (_is-bind form) (is-not (_bind-parts form) None))
-      (let [#(bname expr) (_bind-parts form)]
-        (if (is bname None)
-            (.append gen-body `(yield ~expr))
-            (.append gen-body `(setv ~bname (yield ~expr)))))
+      (let [#(bname tp expr) (_bind-parts form)]
+        (.append gen-body (_bind-yield bname tp expr)))
       ;; Everything else — ADR-DOE-HY-001 guard(式形のみラップ、文はそのまま)
       True
       (.append gen-body (_wrap-statement-guard form (str name)))))
