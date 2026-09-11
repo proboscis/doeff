@@ -5,6 +5,6 @@
         "packages/doeff-adr/src",
         "packages/doeff-hy/src",
         "packages/doeff-indexer/python",
-        "packages/doeff-vm",
-    ],
+        "packages/doeff-vm"
+    ]
 }
