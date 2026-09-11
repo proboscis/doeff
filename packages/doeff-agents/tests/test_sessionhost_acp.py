@@ -609,7 +609,9 @@ def test_running_job_with_a_live_session_is_adopted_and_observed() -> None:
     ended = world.job("s-live")
     assert ended.status is not None
     assert ended.status["phase"] == PHASE_ENDED
-    assert world.custody.revoked == ["lease-1", "lease-2"]
+    # 前の札の id は行に無い(memory だけが知っていた)ので返せない — 預かり所の錠の期限で戻る。
+    # 借り直した札は手番の終わりに返す。
+    assert world.custody.revoked == ["lease-2"]
     assert world.state.jobs == ()
 
 

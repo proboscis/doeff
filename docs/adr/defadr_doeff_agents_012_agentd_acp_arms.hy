@@ -8,6 +8,10 @@
 ;;; 段 2、bounded context F(docs/design/bounded-contexts-2026-09-11.md)、issue #1(capture は
 ;;; 購読者が居る時だけ・購読 0 で止める — operator 承認 2026-09-11)、実装依頼書
 ;;; docs/impl-requests/stage2-lane-prompts/lane-2b-agentd.md 7.(法 (a)〜(e))。
+;;; 改訂 2026-09-12(lane 2b-2・同 lane-2b2-agentd-fix.md): 段 2 の受入の e2e の実弾 2 つ —
+;;; job aj-stage2-e2e-003(片付いた session の capture が例外で tick ごと落ち Running のまま)と
+;;; aj-stage2-e2e-002(ACP の list が落ちて Running のまま孤児・Bound しか拾わないので戻らない)—
+;;; から R7(job の進みは行から導く)・R8(capture の gone は終端の合図)・R9(tick の縁)を足す。
 ;;;
 ;;; 置き場 = packages/doeff-agents/src/doeff_agents/sessionhost/acp/(effects.py = 要求と値の
 ;;; 型・judgment.hy = 純粋な判断・agentd.hy = program・handlers.py = 実 I/O・fake.py = test の
@@ -23,9 +27,10 @@
 (import doeff [run])
 (import doeff_agents.sessionhost.acp.effects
         [AGENT-JOB-KIND AGENT-JOB-NAMESPACE AGORA-KINDS-NAMESPACE AcpRow AgentdSettings
-         AgentdState JSONObject NODE-KIND PHASE-BOUND TURN-RECORD-KIND])
+         AgentdState CaptureGone JSONObject NODE-KIND PHASE-BOUND PHASE-ENDED PHASE-RUNNING
+         TURN-RECORD-KIND])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeSessions])
-(import doeff_agents.sessionhost.acp.judgment [capture-verdict])
+(import doeff_agents.sessionhost.acp.judgment [capture-verdict job-step-of])
 (import doeff_agents.sessionhost.acp.runtime [initial-state run-tick])
 (import doeff_agents.sessionhost.acp.valve [ACP-VALVE-DEFAULT ACP-VALVE-ENV acp-valve])
 
@@ -107,6 +112,18 @@
           :status status))
 
 
+(defn #^ AcpRow running-row [#^ str job-id #^ str node #^ str owner]
+  "agentd が claim した後の行(phase Running + sessionHandle{stream.owner})— 再起動後に
+   list で映る形。"
+  (setv base (bound-row job-id node None "claude" PHASE-RUNNING))
+  (setv #^ JSONObject status (dict (status-of base)))
+  (setv (get status "sessionHandle")
+        {"sessionId" job-id "stream" {"owner" owner "name" job-id}})
+  (AcpRow :namespace base.namespace :key base.key :kind base.kind :resource-id base.resource-id
+          :version base.version :generation base.generation :created-at-ms base.created-at-ms
+          :labels base.labels :payload base.payload :spec base.spec :status status))
+
+
 (defn #^ JSONObject status-of [#^ AcpRow row]
   "行の status(test の読み — 無い行は空)。"
   (setv status row.status)
@@ -119,8 +136,19 @@
   (if (isinstance item dict) item {}))
 
 
+(defn #^ str last-condition-type [#^ JSONObject status]
+  "status.conditions の末尾の type(test の読み — 無ければ空文字)。"
+  (setv conditions (.get status "conditions"))
+  (when (not (isinstance conditions list))
+    (return ""))
+  (when (not conditions)
+    (return ""))
+  (setv last (get conditions -1))
+  (if (isinstance last dict) (str (.get last "type" "")) ""))
+
+
 (defadr ADR-DOE-AGENTS-012
-  :title "sessionhost の agentd の腕: 出口は ACP と custody だけ・判断は『自分に結ばれた job か』の純関数 1 点だけ(binding は書かない)・弁の既定は off・購読 0 で capture が止まる・借りた札は家の中の auth file 以外の平文で disk に残さない"
+  :title "sessionhost の agentd の腕: 出口は ACP と custody だけ・判断は『自分に結ばれた job か』の純関数 1 点だけ(binding は書かない)・弁の既定は off・購読 0 で capture が止まる・借りた札は家の中の auth file 以外の平文で disk に残さない・job の進みは行から導く(自分の Running は再起動後も拾い、次の 1 手は job-step-of の 1 点)・capture の gone は終端の合図で例外ではない・tick の縁は互いの失敗で止まらない"
   :status "accepted"
   :scope ["packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py"
           "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy"
@@ -146,7 +174,13 @@
        :evidence "agora-redesign issue #1(operator 逐語 2026-09-11 \"推奨通りで\")・lane-2a 3.")
      (fact
        "共通の品質検査(dotfiles agent/quality)の Hy の投影は defk / deftest / <- だけを扱い、deff / defhandler を持つ既存 file は欠測(incomplete)になる — host.hy に弁を足すと段 2 の受入(passed)が構造的に満たせない。"
-       :evidence "dotfiles agent/quality/hy_projection.py Lowering.declaration_import(require の macro は未対応)")]
+       :evidence "dotfiles agent/quality/hy_projection.py Lowering.declaration_import(require の macro は未対応)")
+     (fact
+       "段 2 の受入の e2e(2026-09-12 01:3x・~/.cache/acp-stage2-e2e/logs/agentd.log): job 003 は claim → launch → 実況 → turn-record まで成功した後、手番の終わりに sessionhost が session を片付け(run_to_completion の cleanup で pane が消え、唯一の window だったので tmux の server も exit)、agentd の frame の capture が RuntimeError(tmux capture-pane failed: no server running)を上げて tick ごと落ち、job は Running・turn-record は running・result 無しのまま残った。observe の順序が transcript → capture → 終端の判定だったので、器が既に done でも capture を先に撃っていた。"
+       :evidence "agentd.log: `agentd: tick failed: AgentdClientError: tmux capture-pane failed: no server running` × 13 拍・lane-2b2-agentd-fix.md 実弾")
+     (fact
+       "job 002 は本番の pod の入れ替え中に ACP への list が Connection reset by peer で落ち、同じく tick ごと落ちて Running のまま孤児になった。agentd は bound-to-me(phase == Bound)しか拾わず、job の進みを process の memory(InFlightJob)にだけ持っていたので、再起動しても二度と戻らなかった。"
+       :evidence "agentd.log: `agentd: tick failed: RuntimeError: agentd: ACP list of agent-job failed: [Errno 54] Connection reset by peer`・旧 agentd.hy receive-bound-jobs(Bound のみ)")]
   :context
     [(interpretation
        "agentd は sessionhost の隣の名前空間 acp/ に住み、host の socket の client として参加する。host.hy / hostmain.py / impls / policy は 1 行も変えない: 器の口(session.launch / send / capture / get)は公開の RPC で足りるので、腕を host の内側に生やす理由が無い。弁は console script の入口(acp/entry.py — 今日の hostmain.main を包む薄い殻)が持つ。")
@@ -155,14 +189,23 @@
      (interpretation
        "agentd が持つ唯一の判定は『自分に結ばれた job か』(phase == Bound ∧ status.binding.node == 自分)。選択も優先も無く、該当する行は行の順にすべて受ける。binding は scheduling の欄なので読むだけ、Node の行も作らない(writers: create = acp-scheduling)。")
      (interpretation
-       "借りた札の置き場: claude は env(custodian の契約 — 資格 file を書かない)、codex は家の中の auth.json ちょうど(fs-compose-home-view の auth_file の軸)。log・計器・簿に札を出さない。")]
+       "借りた札の置き場: claude は env(custodian の契約 — 資格 file を書かない)、codex は家の中の auth.json ちょうど(fs-compose-home-view の auth_file の軸)。log・計器・簿に札を出さない。")
+     (interpretation
+       "job の進みの正本は行(agent-job の phase・sessionHandle・conditions と turn-record の state)と器の現況(session.get)で、memory の InFlightJob は cache。自分が claim した Running(phase == Running ∧ binding.node == 自分 ∧ sessionHandle.stream.owner == 自分)は memory に無くても resync の拍に拾い、次の 1 手は judgment.job-step-of(器が無い → fail-missing / 終端 → record-end / 走っている → observe)の 1 点で決める。memory に在る job の拍も同じ 1 点を通る。行と器に無い欄(transcript の offset・frame の seq・capture の可否・札の id)は始まりの値で組み直し、発明しない(resume の手番の始まりの offset は今の file の大きさ — 前の手番の行を混ぜない)。")
+     (interpretation
+       "capture の gone は終端の合図: 片付いた session の pane は無く(唯一の window なら tmux の server も無い)、host は session.capture を RPC の error で断る。これは agentd にとって『実況の終わり』で、例外にして tick を落とす理由ではない。SessionCapture の答えは閉語彙 CaptureFrame | CaptureGone で、実 handler が host の断り(AgentdClientError)を gone に写す(host.hy は触らない)。gone の後は capture も購読の読み直しもせず、器の終端で記録の腕へ進む。器が終端の拍はそもそも capture を撃たない(判定を実況より先に読む)。")
+     (interpretation
+       "tick の縁: heartbeat(参加の lease)・受け(list)・job ごとの観測は互いの I/O の失敗(RuntimeError | OSError = effects.IO_FAILURES)で止まらない。失敗は log して次の周期 / 次の拍へ持ち越す(heartbeat と受けは周期の刻印を進めて洪水を避ける)。lease の heartbeat が止まると段 3 の GC が node を gone と読むので、heartbeat は job の腕と独立に走る。I/O より広い例外(bug)は program では捕まえず runtime.run_loop の縁(log + 有界の backoff)へ。")]
   :decision
     [(rule R1 "agentd の出口は ACP(GET /api/resources・POST /api/events・GET /api/watch/stream・POST /api/streams)と custody(POST /lease/*)だけ。agora の台帳 API(/api/state・turn-jobs・seat-*・headless・agmsg)の語を sessionhost の source に置かない。")
-     (rule R2 "job を選ぶ判定は judgment.hy の bound-to-me の 1 点(phase == Bound ∧ binding.node == 自分)。それ以外に job を選ぶ・優先する code を置かない。agent-job の status.binding を agentd は書かない(写して返すだけ)。")
+     (rule R2 "job を選ぶ判定は judgment.hy の bound-to-me(phase == Bound ∧ binding.node == 自分 — 受け)と running-on-me(phase == Running ∧ binding.node == 自分 ∧ sessionHandle.stream.owner == 自分 — 再起動後の拾い直し)の 2 つの述語だけで、どちらも binding.node == 自分の行に閉じる。それ以外に job を選ぶ・優先する code を置かない。agent-job の status.binding を agentd は書かない(写して返すだけ)。")
      (rule R3 "弁の既定は off(valve.py の ACP_VALVE_DEFAULT = False)。on は flag --acp か env DOEFF_AGENTD_ACP=on だけで、語彙の外の値は黙って off に倒さず断る。")
      (rule R4 "frame の capture は購読者が居る時だけ: push の応答の subscribers が 0(か不明)なら capture を止め、周期の status frame で読み直して再開する。判定は judgment.hy の capture-verdict の 1 点。")
      (rule R5 "借りた札は disk の平文に残さない — 例外は家の中の auth file(codex の <homes>/codex/<account>/auth.json・0600)だけ。claude の札は env CLAUDE_CODE_OAUTH_TOKEN で渡し、log と計器には載せない。")
-     (rule R6 "値の宣言は 1 点: lease の TTL と周期・watch の resync・frame の rate・購読の読み直しの周期は effects.AgentdSettings の既定値、URL と札の env の綴りは handlers.py / valve.py。")]
+     (rule R6 "値の宣言は 1 点: lease の TTL と周期・watch の resync・frame の rate・購読の読み直しの周期は effects.AgentdSettings の既定値、URL と札の env の綴りは handlers.py / valve.py。")
+     (rule R7 "job の進みは行から導く: 自分の Running(running-on-me)は memory に無くても resync の拍に拾い、次の 1 手は judgment.hy の job-step-of(器の現況 → observe | record-end | fail-missing・閉語彙 effects.JobStep)の 1 点で決める — memory に在る job の拍も同じ 1 点を通る。record-end は記録の腕(turn-record ended・result・phase Ended)だけを撃ち launch も send もし直さない。fail-missing は記録が在れば ended にし condition SessionFailed で Ended。終端の語彙(SESSION_TERMINAL_STATUSES)を読むのは judgment.hy だけ。")
+     (rule R8 "capture の gone は終端の合図で例外ではない: SessionCapture の答えは閉語彙 CaptureFrame | CaptureGone、実 handler は host の断り(AgentdClientError)を CaptureGone に写す(host.hy / substrate は触らない)。gone の job は capturing = False・stream_gone = True で、以後 capture も購読の読み直しもせず、器の終端(同じ拍に読み直す)で記録の腕へ。器が終端の拍は capture を撃たない(job-step-of を実況より先に読む)。")
+     (rule R9 "tick の縁: heartbeat・受け・job ごとの観測は互いの I/O の失敗(effects.IO_FAILURES = RuntimeError | OSError)で止まらない — program の agentd-tick が 3 つの腕をそれぞれ捕まえ、log して次の周期 / 次の拍へ持ち越す(condition には写さない — 一時の失敗を job の結末にしない)。I/O より広い例外は捕まえない(runtime.run_loop の縁)。")]
   :laws
     [(law agentd-exits-only-to-acp-and-custody
        :statement "for_all source_file f in sessionhost/: agora_ledger_words(code_lines(f)) = ∅ — agentd(sessionhost)が話す相手は ACP と custody だけ"
@@ -184,7 +227,18 @@
      (law borrowed-credentials-never-rest-on-disk-in-plain
        :statement "for_all written_file w: token ∉ w unless w = <homes>/codex/<account>/auth.json — 借りた札は家の中の auth file 以外の平文に残らず、log / 計器にも出ない"
        :counterexamples
-         [(counterexample "claude の access token を CLAUDE_CONFIG_DIR の中の file や log に書く — custodian の契約(env 注入・資格 file を書かない)に反し、家の写しが札の写しになる")])]
+         [(counterexample "claude の access token を CLAUDE_CONFIG_DIR の中の file や log に書く — custodian の契約(env 注入・資格 file を書かない)に反し、家の写しが札の写しになる")])
+     (law job-progress-is-derived-from-rows
+       :statement "for_all agent-job row r: phase(r) = Running ∧ binding.node(r) = self ∧ sessionHandle.stream.owner(r) = self ∧ r ∉ memory ⇒ the next resync settles r by job-step-of(session.get(r)) ∈ {observe, record-end, fail-missing} without a second launch or send — 再起動後の孤児は残らず、判断は judgment.hy の job-step-of の 1 点"
+       :counterexamples
+         [(counterexample "job の進みを process の memory(InFlightJob)にだけ持ち、list では Bound しか拾わない — agentd が落ちた / ACP が一時切れた拍に Running の job が二度と戻らない孤児になる(実弾 002)")
+          (counterexample "拾い直した Running を Bound と同じに扱って launch し直す — 走っている session が 2 つになり、turn-record が二重になる")
+          (counterexample "agentd.hy が終端の語彙を直に読んで record-end を決める — 次の 1 手の判定点が 2 つになり、memory の有無で結末が食い違う")])
+     (law capture-gone-is-a-terminal-signal-not-an-error
+       :statement "SessionCapture ∈ {CaptureFrame, CaptureGone}; CaptureGone ⇒ no exception escapes the job's tick ∧ capturing = False ∧ stream_gone = True ∧ no further SessionCapture ∧ the job ends by the record arm (turn-record ended・phase Ended) once the session is terminal; session terminal at the tick ⇒ SessionCapture is not issued at all"
+       :counterexamples
+         [(counterexample "片付いた session の capture を例外のまま tick に上げる — 器が done で result も在るのに tick ごと落ち、job は Running・turn-record は running のまま(実弾 003)")
+          (counterexample "gone の後も frame の capture や購読の読み直しを続ける — 無い pane への tmux capture の連打")])]
   :enforcement
     [(deftest test-adr-doe-agents-012-no-agora-ledger-words-in-sessionhost
        ;; R1 の針: sessionhost の全 source(acp/ を含む)の code 行に agora の台帳 API の語が無い。
@@ -286,5 +340,105 @@
        (for [line (code-lines (/ ACP-DIR "agentd.hy"))]
          (when (or (in "LogLine" line) (in "MetricLine" line))
            (assert (not-in "access-token" line))
-           (assert (not-in "auth-json" line)))))]
-  :plans ["docs/impl-requests/stage2-lane-prompts/lane-2b-agentd.md(agora-redesign)"])
+           (assert (not-in "auth-json" line)))))
+     (deftest test-adr-doe-agents-012-running-jobs-settle-from-rows
+       ;; R7 の針: 次の 1 手の判定は judgment.hy の job-step-of の 1 点。agentd.hy は終端の語彙
+       ;; (SESSION-TERMINAL-STATUSES)も Running の述語も直に読まず、job-step-of を呼ぶ。
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk job-step-of ") line)) 1))
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk running-on-me ") line)) 1))
+       (assert (= (len (lfor line judgment-lines
+                             :if (re.search r"\((not-)?in view\.status SESSION-TERMINAL-STATUSES\)" line)
+                             line))
+                  2)
+               "終端の語彙を読む述語は judgment.hy の job-outcome-of と job-step-of ちょうど")
+       (for [line agentd-lines]
+         (assert (not-in "SESSION-TERMINAL-STATUSES" line)
+                 f"agentd.hy は終端の語彙を直に読まない(ADR-DOE-AGENTS-012 R7): {line}")
+         (assert (not (and (in "PHASE-RUNNING" line) (in "(= " line)))
+                 f"Running の述語は judgment.hy の running-on-me の 1 点(R2 / R7): {line}"))
+       (assert (>= (len (lfor line agentd-lines :if (in "(job-step-of " line) line)) 2)
+               "observe-job と recover-job は同じ job-step-of を通る")
+       ;; 反例(挙動): 再起動(memory を捨てる)後の最初の tick で自分の Running を行から拾い、
+       ;; 器が終端なら記録の腕だけで閉じる(launch は増えない)。他人の Running は触らない。
+       (setv world (World))
+       (.put-row world.acp (bound-row "s-mine" "mac-1" None "claude" PHASE-BOUND))
+       (.tick world 0)
+       (assert (= (len world.sessions.launches) 1))
+       (setv world.state (initial-state))
+       (.finish world.sessions "s-mine" "done" {"ok" True})
+       (.put-row world.acp (running-row "s-theirs" "someone-else" "agentd"))
+       (.put-row world.acp (running-row "s-not-mine" "mac-1" "other-principal"))
+       (.tick world 1000)
+       (assert (= (len world.sessions.launches) 1))
+       (setv mine (status-of (get world.acp.rows "acp-system:agent-job:s-mine")))
+       (assert (= (get mine "phase") PHASE-ENDED))
+       (assert (= (get mine "result") {"ok" True}))
+       (setv record (status-of (get world.acp.rows "default:turn-record:s-mine")))
+       (assert (= (get record "state") "ended"))
+       (for [job-id ["s-theirs" "s-not-mine"]]
+         (assert (= (get (status-of (get world.acp.rows f"acp-system:agent-job:{job-id}")) "phase")
+                    PHASE-RUNNING)))
+       (assert (= world.state.jobs #()))
+       ;; 器に session が無い Running(実弾 002 の孤児)は SessionFailed で Ended。
+       (setv orphan (World))
+       (.put-row orphan.acp (running-row "s-orphan" "mac-1" "agentd"))
+       (.tick orphan 0)
+       (setv gone (status-of (get orphan.acp.rows "acp-system:agent-job:s-orphan")))
+       (assert (= (get gone "phase") PHASE-ENDED))
+       (assert (= (last-condition-type gone) "SessionFailed"))
+       ;; 純関数の閉語彙。
+       (assert (= (run (job-step-of None)) "fail-missing")))
+     (deftest test-adr-doe-agents-012-capture-gone-is-terminal-and-ticks-do-not-share-failure
+       ;; R8 の針: SessionCapture の答えは閉語彙(agentd.hy の bind の型)・実 handler は host の
+       ;; 断り(AgentdClientError)を CaptureGone に写す・R9 の縁は agentd-tick に 3 つ。
+       (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
+       (setv handler-lines (code-lines (/ ACP-DIR "handlers.py")))
+       (assert (any (gfor line agentd-lines (in "(<- outcome (| CaptureFrame CaptureGone)" line))))
+       (assert (any (gfor line handler-lines (in "except AgentdClientError" line))))
+       (assert (any (gfor line handler-lines (in "return CaptureGone(" line))))
+       (assert (= (len (lfor line agentd-lines :if (in "(except [e IO-FAILURES]" line) line)) 3)
+               "tick の縁は heartbeat・受け・job ごとの 3 つ(ADR-DOE-AGENTS-012 R9)")
+       ;; 反例(挙動): gone は例外にならず、capture を止め、器の終端で Ended と ended。
+       (setv world (World))
+       (.put-row world.acp (bound-row "s-gone" "mac-1" None "claude" PHASE-BOUND))
+       (.tick world 0)
+       (setv (get world.acp.subscribers "s-gone") 1)
+       (.tick world 5000)
+       (setv world.sessions.capture-gone "tmux capture-pane failed: no server running")
+       (.tick world 500)
+       (assert (= world.sessions.captures [#("s-gone" 60)]))
+       (assert (= (lfor line world.local.logs :if (in "tick failed" line) line) []))
+       (assert (is (. (get world.state.jobs 0) stream-gone) True))
+       (.tick world 5000)
+       (assert (= world.sessions.captures [#("s-gone" 60)]))
+       (.finish world.sessions "s-gone" "done" {"ok" True})
+       (.tick world 500)
+       (assert (= (get (status-of (get world.acp.rows "acp-system:agent-job:s-gone")) "phase") PHASE-ENDED))
+       (assert (= (get (status-of (get world.acp.rows "default:turn-record:s-gone")) "state") "ended"))
+       ;; 器が終端の拍は capture を撃たない。
+       (setv quiet (World))
+       (.put-row quiet.acp (bound-row "s-quiet" "mac-1" None "claude" PHASE-BOUND))
+       (.tick quiet 0)
+       (setv (get quiet.acp.subscribers "s-quiet") 1)
+       (.tick quiet 5000)
+       (.finish quiet.sessions "s-quiet" "done" None)
+       (.tick quiet 500)
+       (assert (= quiet.sessions.captures []))
+       (assert (= (get (status-of (get quiet.acp.rows "acp-system:agent-job:s-quiet")) "phase") PHASE-ENDED))
+       ;; R9 の反例(挙動): 1 job の器の RPC が落ちても heartbeat と他の job は進む。
+       (setv shared (World))
+       (.put-row shared.acp (bound-row "s-a" "mac-1" None "claude" PHASE-BOUND))
+       (.put-row shared.acp (bound-row "s-b" "mac-1" None "claude" PHASE-BOUND))
+       (.tick shared 0)
+       (setv (get shared.sessions.failures "s-a") (RuntimeError "socket reset"))
+       (.finish shared.sessions "s-b" "done" None)
+       (.tick shared 30000)
+       (setv node (status-of (get shared.acp.rows "default:node:mac-1")))
+       (assert (= (get (object-at node "lease") "heartbeatAt") 31000))
+       (assert (= (get (status-of (get shared.acp.rows "acp-system:agent-job:s-b")) "phase") PHASE-ENDED))
+       (assert (= (get (status-of (get shared.acp.rows "acp-system:agent-job:s-a")) "phase") PHASE-RUNNING))
+       (assert (in "agentd: job s-a tick failed: RuntimeError: socket reset" shared.local.logs)))]
+  :plans ["docs/impl-requests/stage2-lane-prompts/lane-2b-agentd.md(agora-redesign)"
+          "docs/impl-requests/stage2-lane-prompts/lane-2b2-agentd-fix.md(agora-redesign・改訂 R7〜R9)"])

@@ -17,6 +17,8 @@ from doeff_agents.sessionhost.acp.effects import (
     AcpRow,
     AcpStreamPush,
     AcpWatchSse,
+    CaptureFrame,
+    CaptureGone,
     ClockNowMs,
     Conflict,
     CustodyLeaseBorrow,
@@ -201,7 +203,8 @@ class FakeSessions:
         self.sends: list[tuple[str, str]] = []
         self.captures: list[tuple[str, int]] = []
         self.capture_text: str = "❯ \n"
-        #: None = 断面を返す / str = pane も server も無い(理由)— host が capture を断る形。
+        #: None = 断面を返す / str = pane も server も無い(理由)— host が capture を断った形
+        #: (実 handler は RPC の error 封筒を CaptureGone に写す・fake は同じ値を直に返す)。
         self.capture_gone: str | None = None
         #: gone の拍で器を終端へ倒す(session.get の後に pane が消える race の再現)。
         self.finish_on_capture: tuple[str, JSONObject | None] | None = None
@@ -228,8 +231,8 @@ class FakeSessions:
             if self.capture_gone is not None:
                 if self.finish_on_capture is not None:
                     self.finish(effect.session_id, *self.finish_on_capture)
-                raise RuntimeError(self.capture_gone)
-            return Resume(k, self.capture_text)
+                return Resume(k, CaptureGone(self.capture_gone))
+            return Resume(k, CaptureFrame(self.capture_text))
         return Pass(effect, k)
 
     def _incarnate(self, effect: SessionLaunch | SessionResume) -> SessionView | SessionRefused:

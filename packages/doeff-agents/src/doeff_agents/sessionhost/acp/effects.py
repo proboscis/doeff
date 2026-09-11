@@ -72,6 +72,18 @@ CLAUDE_OAUTH_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 SESSION_TERMINAL_STATUSES: frozenset[str] = frozenset(
     {"done", "failed", "exited", "stopped", "cancelled"}
 )
+#: 自分の Running の行の次の 1 手(judgment.job-step-of の閉語彙 — ADR-DOE-AGENTS-012 R7)。
+#: observe = 器が走っている(行から InFlightJob を組んで観測を続ける)/ record-end = 器が終端
+#: (記録の腕だけ: turn-record ended・result・phase Ended)/ fail-missing = 器に session が無い
+#: (記録が在れば ended にし、condition SessionFailed で Ended)。
+JobStep = Literal["observe", "record-end", "fail-missing"]
+JOB_STEP_OBSERVE: JobStep = "observe"
+JOB_STEP_RECORD_END: JobStep = "record-end"
+JOB_STEP_FAIL_MISSING: JobStep = "fail-missing"
+#: handler が値に写さない I/O の失敗(program の tick の縁 — job ごと・heartbeat・受け — が
+#: 捕まえて log し、次の拍へ持ち越す型)。ACP の HTTP = RuntimeError、器の RPC = AgentdClientError
+#: (RuntimeError の子)、socket / file = OSError。これより広い例外(bug)は runtime.run_loop の縁へ。
+IO_FAILURES: tuple[type[Exception], ...] = (RuntimeError, OSError)
 
 # ------------------------------------------------------------------ 値の宣言(1 点)
 
@@ -240,6 +252,27 @@ class TranscriptChunk:
     offset: int
 
 
+@dataclass(frozen=True)
+class CaptureFrame:
+    """pane の断面(frame の材料)。"""
+
+    text: str
+
+
+@dataclass(frozen=True)
+class CaptureGone:
+    """pane も server も無い — 実況の終わりの合図であって例外ではない(ADR-DOE-AGENTS-012 R8)。
+
+    片付いた session(run_to_completion の cleanup で pane が消え、唯一の window なら tmux の
+    server も exit する)の capture を host が断った形。``reason`` は host の断りの文(log 用)。
+    """
+
+    reason: str
+
+
+CaptureOutcome: TypeAlias = "CaptureFrame | CaptureGone"
+
+
 # ------------------------------------------------------------------ 判断の値(judgment.hy が返す形)
 
 
@@ -302,6 +335,9 @@ class InFlightJob:
     lease_hold_ms: int | None
     #: frame の capture が生きているか(購読 0 で False・読み直しで True へ)。
     capturing: bool
+    #: 実況が終わった(capture が gone を返した)— 以後 capture も購読の読み直しもせず、器の
+    #: 終端を待って記録の腕へ進む。
+    stream_gone: bool
     last_frame_ms: int
     last_probe_ms: int
     #: 手番の途中で判った事実(inputs の欠け等)— Ended の書きで conditions に足す。
@@ -431,7 +467,7 @@ class SessionGet(EffectBase):
 
 @dataclass(frozen=True)
 class SessionCapture(EffectBase):
-    """``session.capture``(pane の断面 = frame の材料)。結果 = str。"""
+    """``session.capture``(pane の断面 = frame の材料)。結果 = CaptureOutcome(断面 | gone)。"""
 
     session_id: str
     lines: int

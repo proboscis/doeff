@@ -16,18 +16,23 @@ from doeff_agents.sessionhost.acp.effects import (
 
 def join_tick(settings: AgentdSettings, state: AgentdState, now_ms: int) -> Program: ...
 def end_job_now(
-    settings: AgentdSettings, row: AcpRow, reason_type: str, reason: str, now_ms: int
+    settings: AgentdSettings,
+    row: AcpRow,
+    reason_type: str,
+    reason: str,
+    pending: tuple,
+    now_ms: int,
 ) -> Program: ...
-def borrow_for(settings: AgentdSettings, plan: LaunchPlan, job_id: str) -> Program: ...
+def borrow_for(settings: AgentdSettings, plan: LaunchPlan, purpose: str) -> Program: ...
 def claim_job(
     settings: AgentdSettings, state: AgentdState, row: AcpRow, now_ms: int
 ) -> Program: ...
+def start_offset_of(plan: LaunchPlan, view: SessionView) -> Program: ...
 def after_launch(
     settings: AgentdSettings,
     state: AgentdState,
     row: AcpRow,
     plan: LaunchPlan,
-    charter: dict,
     view: SessionView,
     lease: LeaseGrant | None,
     now_ms: int,
@@ -40,6 +45,10 @@ def stream_transcript(
     settings: AgentdSettings, job: InFlightJob, path: str, now_ms: int
 ) -> Program: ...
 def capture_frame(settings: AgentdSettings, job: InFlightJob, now_ms: int) -> Program: ...
+def stream_job(
+    settings: AgentdSettings, job: InFlightJob, view: SessionView, now_ms: int
+) -> Program: ...
+def end_turn_record(job_id: str, usage: dict | None, entries: tuple) -> Program: ...
 def finalize_job(
     settings: AgentdSettings,
     state: AgentdState,
@@ -48,8 +57,27 @@ def finalize_job(
     path: str | None,
     now_ms: int,
 ) -> Program: ...
+def fail_missing_arm(
+    settings: AgentdSettings,
+    job_key: str,
+    job_id: str,
+    pending: tuple,
+    lease_id: str | None,
+    now_ms: int,
+) -> Program: ...
+def settle_known(
+    settings: AgentdSettings,
+    state: AgentdState,
+    job: InFlightJob,
+    view: SessionView | None,
+    step: str,
+    now_ms: int,
+) -> Program: ...
 def observe_job(
     settings: AgentdSettings, state: AgentdState, job: InFlightJob, now_ms: int
+) -> Program: ...
+def recover_job(
+    settings: AgentdSettings, state: AgentdState, row: AcpRow, now_ms: int
 ) -> Program: ...
 def receive_bound_jobs(settings: AgentdSettings, state: AgentdState, now_ms: int) -> Program: ...
 def agentd_tick(settings: AgentdSettings, state: AgentdState) -> Program: ...
