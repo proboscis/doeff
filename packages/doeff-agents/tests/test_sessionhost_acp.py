@@ -1253,7 +1253,9 @@ class HeadlessWorld(World):
 
     def __init__(self, agent_type: str = "claude") -> None:
         super().__init__()
-        self.settings = AgentdSettings(node_name=NODE, homes_root=HOMES, stream_capability="events")
+        self.settings = AgentdSettings(
+            node_name=NODE, homes_root=HOMES, backend_kind="headless", stream_capability="events"
+        )
         self.sessions = FakeSessions(
             agent_type=agent_type, backend_kind="headless", events_root="/events"
         )
@@ -1265,7 +1267,9 @@ def test_headless_claude_turn_streams_text_deltas_and_records_entries() -> None:
     world.acp.put_row(bound_job("j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400))
     world.tick()
     sid = world.sid("j-1")
-    assert world.sessions.sends[-1] == (sid, "first", True)
+    # headless の 1 手番目: 郵便は launch の prompt に畳む(send は撃たない — 追補 2026-09-12)
+    assert world.sessions.launches[-1]["prompt"] == "start\n\nfirst"
+    assert world.sessions.sends == []
     node = world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"]
     assert node.status is not None
     observations = node.status["observations"]
@@ -1357,11 +1361,111 @@ def test_headless_codex_turn_streams_deltas_and_records_command_execution() -> N
     assert record.status["usage"] == {"input": 11, "output": 5, "cacheWrite": 0, "cacheRead": 4}
 
 
+def test_first_turn_prompt_of_joins_the_charter_and_the_mail_with_blank_lines() -> None:
+    """純関数: 1 手番目の本文 = charter の prompt(前置き)+ 空行 + 郵便の本文(inputs の順)。
+    郵便が無ければ charter だけ・空の部分は入れない。畳むのは headless の器だけ(判定 1 点)。"""
+    assert run(judgment.first_turn_prompt_of("start", ("a", "b"))) == "start\n\na\n\nb"
+    assert run(judgment.first_turn_prompt_of("start", ())) == "start"
+    assert run(judgment.first_turn_prompt_of("", ("only",))) == "only"
+    assert run(judgment.first_turn_prompt_of("start", ("", "  "))) == "start"
+    assert run(judgment.first_turn_carries_inputs("headless", "launch")) is True
+    assert run(judgment.first_turn_carries_inputs("headless", "resume")) is True
+    assert run(judgment.first_turn_carries_inputs("headless", "send")) is False
+    assert run(judgment.first_turn_carries_inputs("tmux", "launch")) is False
+    assert run(judgment.first_turn_carries_inputs("herdr", "launch")) is False
+
+
+def test_headless_launch_folds_the_mail_into_the_first_turn_and_does_not_send() -> None:
+    """実弾 2026-09-12(agentd-4.log): headless の claude で launch の腕が charter の prompt で
+    1 手番目の process を起こした直後に after-start が郵便を session.send し、host が同じ名で
+    --resume の process を spawn して `headless session already exists` で落ちた(1 手番 1 process)。
+    根 = launch(charter の prompt)と send(郵便)を 2 手番として撃つこと。headless では 1 手番目の
+    本文に郵便を畳み、send は撃たない。turn-record・計器・in-flight は同じ。2 手番目は send。"""
+    world = HeadlessWorld()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400))
+    world.tick()
+    sid = world.sid("j-1")
+    assert world.sessions.launches[-1]["prompt"] == "start\n\nfirst"
+    assert world.sessions.sends == []
+    assert [m["metric"] for m in world.local.metrics] == ["agent-job-to-send"]
+    assert world.local.metrics[-1]["arm"] == "launch"
+    record = world.turn_record("j-1")
+    assert record is not None
+    assert record.status == {"state": "running"}
+    assert len(world.state.jobs) == 1
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_RUNNING
+    # 手番の終わり → job Ended・session は温かいまま
+    world.local.transcripts[f"/events/{sid}.events.jsonl"] = _claude_events(sid, "hello")
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(sid, world.local.now_ms + 100)
+    world.tick(advance_ms=1_000)
+    assert world.state.jobs == ()
+    # 2 手番目は send(郵便の本文だけ・launch は増えない)
+    world.acp.put_row(message("m-2", "second"))
+    world.acp.put_row(bound_job("j-2", inputs=["m-2"], created_at_ms=world.local.now_ms + 700))
+    world.tick(advance_ms=1_000)
+    assert len(world.sessions.launches) == 1
+    assert world.sessions.sends == [(sid, "second", True)]
+    world.local.transcripts[f"/events/{sid}.events.jsonl"] += _claude_events(sid, "again")
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(sid, world.local.now_ms + 100)
+    world.tick(advance_ms=1_000)
+    assert world.state.jobs == ()
+    # predecessor が終端 → cold の resume(--resume)も郵便を prompt に畳み、send は撃たない
+    world.sessions.finish(sid, "exited")
+    world.acp.put_row(message("m-3", "third"))
+    world.acp.put_row(bound_job("j-3", inputs=["m-3"], predecessor=sid))
+    world.tick(advance_ms=1_000)
+    assert len(world.sessions.resumes) == 1
+    assert world.sessions.resumes[0]["prompt"] == "start\n\nthird"
+    assert world.sessions.sends == [(sid, "second", True)]
+    assert world.local.metrics[-1]["metric"] == "agent-job-to-send"
+    assert world.local.metrics[-1]["arm"] == "resume"
+
+
+def test_headless_launch_without_mail_or_with_missing_mail_uses_the_charter_alone() -> None:
+    world = HeadlessWorld()
+    # 郵便が無い job は charter だけ
+    world.acp.put_row(bound_job("j-4", inputs=[], subject="c-quiet"))
+    world.tick()
+    assert world.sessions.launches[-1]["prompt"] == "start"
+    assert world.sessions.sends == []
+    # 郵便が見つからない id は畳めない — condition InputUnavailable は今日どおり
+    world.acp.put_row(bound_job("j-5", inputs=["m-missing"], subject="c-missing"))
+    world.tick(advance_ms=1_000)
+    assert world.sessions.launches[-1]["prompt"] == "start"
+    assert world.sessions.sends == []
+    in_flight = [job for job in world.state.jobs if job.job_id == "j-5"]
+    assert len(in_flight) == 1
+    assert [c["type"] for c in in_flight[0].pending_conditions] == ["InputUnavailable"]
+
+
+def test_tui_launch_still_sends_the_mail_after_the_launch() -> None:
+    """tmux / herdr の器は今日どおり: launch(charter の prompt)の後に郵便を send(pane の paste は
+    手番の途中でも積める)。畳むのは headless だけ(judgment.first-turn-carries-inputs の 1 点)。"""
+    world = World()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"]))
+    world.tick()
+    sid = world.sid("j-1")
+    assert world.sessions.launches[-1]["prompt"] == "start"
+    assert world.sessions.sends == [(sid, "first", True)]
+
+
 def test_stream_capability_is_derived_from_the_host_backend() -> None:
     from doeff_agents.sessionhost.acp.runtime import settings_from_env
 
     env = {"DOEFF_AGENTD_NODE_NAME": NODE, "DOEFF_SESSIONHOST_BACKEND": "headless"}
     assert settings_from_env(env, ()).stream_capability == "events"
+    assert settings_from_env(env, ()).backend_kind == "headless"
+    assert settings_from_env({"DOEFF_AGENTD_NODE_NAME": NODE}, ()).backend_kind == "tmux"
+    assert (
+        settings_from_env({"DOEFF_AGENTD_NODE_NAME": NODE}, ("--backend", "herdr")).backend_kind
+        == "herdr"
+    )
     assert (
         settings_from_env(
             {"DOEFF_AGENTD_NODE_NAME": NODE}, ("--backend", "headless")
