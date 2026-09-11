@@ -93,7 +93,11 @@
        "provider_failure_class" "provider_failure_observed_at"
        ;; 発注者(ACP scheduler)申告の帰属 metadata(opaque verbatim)。
        ;; 消費者は Mac 側の利用帰属台帳 — 走行 ↔ 機能(action_id 等)の join。
-       "launch_attribution_json"])
+       "launch_attribution_json"
+       ;; 温かい session(lifecycle multi_turn — agentd 段 2 lane 2b-3): monitor が
+       ;; 手番の終わり(turn-end の連言)を最初に観測した時刻。level-triggered
+       ;; (次の手番が走ると None)・単一 writer = monitor・素の last-write-wins。
+       "turn_ended_at"])
 
 
 (defn make-snap [session-id #** overrides]
@@ -321,6 +325,24 @@
     (db-upsert-snapshot conn (make-snap "s1" :observation_gap_at None))
     (setv snap (db-session-get conn "s1"))
     (assert (= (get snap "observation_gap_at") "2026-07-27T20:20:00+00:00")))
+  (with-tmp-conn check))
+
+
+(deftest test-turn-ended-at-roundtrip-last-write-wins
+  ;; 温かい session の手番の終わりの刻印は level-triggered: 刻む・保つ・None で消える
+  ;; (COALESCE 保護を持たない — 次の手番が走り出した事実を stale な値で隠さない)。
+  (defn check [conn]
+    (db-upsert-snapshot conn (make-snap "s1" :lifecycle "multi_turn"))
+    (assert (is (get (db-session-get conn "s1") "turn_ended_at") None))
+    (assert (not-in "turn_ended_at" (snapshot-to-wire-dict (db-session-get conn "s1"))))
+    (db-upsert-snapshot conn (make-snap "s1" :lifecycle "multi_turn"
+                                        :turn_ended_at "2026-09-12T03:00:00+00:00"))
+    (setv snap (db-session-get conn "s1"))
+    (assert (= (get snap "turn_ended_at") "2026-09-12T03:00:00+00:00"))
+    (assert (= (get (snapshot-to-wire-dict snap) "turn_ended_at")
+               "2026-09-12T03:00:00+00:00"))
+    (db-upsert-snapshot conn (make-snap "s1" :lifecycle "multi_turn" :turn_ended_at None))
+    (assert (is (get (db-session-get conn "s1") "turn_ended_at") None)))
   (with-tmp-conn check))
 
 

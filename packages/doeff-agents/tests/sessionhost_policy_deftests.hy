@@ -65,9 +65,11 @@
   RESULT-SOLICITATION-MESSAGE
   TERMINAL-CAUSE-RETRYABLE
   make-cause
+  reap-exempt
   tail-chars
   tail-lower
   monitor-cycle])
+(import doeff_agents.sessionhost.host [send-program])
 (import doeff_agents.sessionhost.impls.markers [has-api-limit-marker
                                                 provider-failure-class])
 
@@ -1670,3 +1672,91 @@
   (setv stored (get world.rows "s1"))
   (assert (= (get stored.conversation "session_id") "conv-known"))
   (assert (not-in #("s1" "session_conversation_discovered") world.events)))
+
+
+;; ---------------------------------------------------------------------------
+;; 温かい session(lifecycle multi_turn — agentd 段 2 lane 2b-3・ADR-DOE-AGENTS-012 R10)
+;; ---------------------------------------------------------------------------
+
+(defn seed-warm [world #** overrides]
+  "手番の終わりに片付けない session(multi_turn)の running 行。"
+  (setv defaults {"agent_type" "claude"
+                  "lifecycle" "multi_turn"
+                  "expected_result" None
+                  "conversation" {"session_id" "conv-1"}
+                  "output_snippet" (tail-chars F-IDLE-CLAUDE 500)})
+  (.update defaults overrides)
+  (seed world (make-row world #** defaults) :frame F-IDLE-CLAUDE))
+
+
+(deftest test-multi-turn-turn-end-stamps-turn-ended-at-and-keeps-the-session
+  ;; 手番の終わり(既存の turn-end の連言 = idle ∧ ¬active ∧ stable ∧ 会話記録の静止)は
+  ;; multi_turn では status を done へ倒さず、行の turn_ended_at に観測時刻を刻む。
+  ;; session は生きたまま(pane kill も催促も無し)。
+  (setv world (FakeWorld))
+  (seed-warm world)
+  (setv (get world.conversation-mtimes "conv-1") (- (.timestamp world.now) 300))
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "running"))
+  (assert (= row.turn-ended-at (iso-at world 0)))
+  (assert (= world.killed []))
+  (assert (= world.delivered []))
+  ;; turn-end が続く間は最初の観測時刻を保つ(手番の終わりの時刻 = 最初に観測した拍)。
+  (setv first row.turn-ended-at)
+  (setv world.now (+ world.now (timedelta :seconds 5)))
+  (<- outcomes2 (run-cycle world (MonitorKnobs)))
+  (assert (= (. (get world.rows "s1") turn-ended-at) first))
+  ;; 次の手番が走り出す(active)と turn_ended_at は消える(level-triggered — 手番の
+  ;; 終わりは行から毎拍再導出する・第 2 の判定は無い)。
+  (setv (get world.frames "%1") F-ACTIVE-CODEX)
+  (<- outcomes3 (run-cycle world (MonitorKnobs)))
+  (assert (is (. (get world.rows "s1") turn-ended-at) None)))
+
+
+(deftest test-multi-turn-turn-end-not-stamped-while-awaiting-or-fresh
+  ;; 送った本文が owed(awaiting latch)の間、また会話記録が鮮度窓内の間は手番の終わりを
+  ;; 刻まない — run_to_completion の turn-end と同じ連言(第 2 の判定を発明しない)。
+  (setv world (FakeWorld))
+  (seed-warm world :awaiting-response True :awaiting-response-since (iso-at world -5))
+  (setv (get world.conversation-mtimes "conv-1") (- (.timestamp world.now) 300))
+  (<- outcomes (run-cycle world (MonitorKnobs)))
+  (assert (is (. (get world.rows "s1") turn-ended-at) None))
+  (setv fresh (FakeWorld))
+  (seed-warm fresh)
+  (setv (get fresh.conversation-mtimes "conv-1") (- (.timestamp fresh.now) 5))
+  (<- outcomes2 (run-cycle fresh (MonitorKnobs)))
+  (assert (is (. (get fresh.rows "s1") turn-ended-at) None)))
+
+
+(deftest test-multi-turn-is-monitored-but-not-stall-reaped
+  ;; multi_turn は刈り取り免除ではない(観測され、死んだ session は終端へ)が、手番の間の
+  ;; 長い不変は stall watchdog(run_to_completion の腕)の対象ではない。
+  (setv world (FakeWorld))
+  (assert (not (reap-exempt (make-row world :lifecycle "multi_turn"))))
+  (assert (reap-exempt (make-row world :lifecycle "interactive")))
+  (assert (not (reap-exempt (make-row world :lifecycle "run_to_completion"))))
+  (seed-stalled world :lifecycle "multi_turn" :expected-result None)
+  (<- outcomes (run-cycle world (MonitorKnobs :judge-cmd None)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.status "running"))
+  (assert (is None row.terminal-cause))
+  ;; tmux が消えれば exited(観測の証拠 — interactive のような素通りではない)。
+  (.discard world.tmux-sessions "doeff-s1")
+  (<- outcomes2 (run-cycle world (MonitorKnobs :judge-cmd None)))
+  (assert (= (. (get world.rows "s1") status) "exited")))
+
+
+(deftest test-send-program-arms-the-awaiting-latch-only-when-asked
+  ;; session.send の awaiting = true は「送った本文は agent への prompt で owed」を立てる
+  ;; (launch の prompt 配送・催促と同じ latch)。既定(false)は今日どおりキー配送だけ。
+  (setv world (FakeWorld))
+  (seed-warm world)
+  (<- plain ((fake-substrate world) (send-program "s1" "hello" True True False)))
+  (assert (= (. (get world.rows "s1") awaiting-response) False))
+  (assert (= (len world.sent-keys) 1))
+  (<- armed ((fake-substrate world) (send-program "s1" "hello" True True True)))
+  (setv row (get world.rows "s1"))
+  (assert (= row.awaiting-response True))
+  (assert (= row.awaiting-response-since (iso-at world 0)))
+  (assert (in #("s1" "session_sent") world.events)))
