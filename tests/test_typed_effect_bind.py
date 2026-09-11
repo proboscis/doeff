@@ -3,7 +3,8 @@ guarantee wherever it is written.
 
 The `<-` macro alone emitted `(assert (isinstance name Type) …)` for the
 4-element form, but the body expanders that pre-parse `<-` forms (deftest /
-do! / defp / for/do) went through `_bind-parts`, which dropped the type. A
+do! / defp / for/do / defhandler clauses) went through `_bind-parts`, which
+dropped the type. A
 typed bind at the top level of those bodies was silently untyped at runtime,
 so the shared quality checker (dotfiles agent/quality/hy_dsl.py effect_bind)
 had to project it as `object` — 30+ pyright findings on ACP stage-0 laws.
@@ -31,6 +32,7 @@ from doeff_core_effects.scheduler import scheduled
 from doeff import run
 
 _MACROS = ["<-", "do!", "defp", "deftest", "for/do", "traverse"]
+_HANDLE_MACROS = ["defhandler"]
 
 
 def _macro_module(name: str) -> types.ModuleType:
@@ -41,6 +43,7 @@ def _macro_module(name: str) -> types.ModuleType:
         "lazy_ask": lazy_ask, "Ask": Ask,
     })
     hy.macros.require("doeff_hy.macros", mod, assignments=[[m, m] for m in _MACROS])
+    hy.macros.require("doeff_hy.handle", mod, assignments=[[m, m] for m in _HANDLE_MACROS])
     return mod
 
 
@@ -63,13 +66,14 @@ def _eval(code: str):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("code", [
-    '(<- x str (Eff))',
-    '(do! (<- x str (Eff)) x)',
-    '(defp p {:post [(: % str)]} (<- x str (Eff)) x)',
-    '(deftest test-x (<- x str (Eff)) (assert x))',
-    '(for/do (<- item (From [1 2])) (<- x str (Eff)) x)',
-    '(traverse (<- item (Iterate [1 2])) (<- x str (Eff)) x)',
-], ids=["<-", "do!", "defp", "deftest", "for/do", "traverse"])
+    "(<- x str (Eff))",
+    "(do! (<- x str (Eff)) x)",
+    "(defp p {:post [(: % str)]} (<- x str (Eff)) x)",
+    "(deftest test-x (<- x str (Eff)) (assert x))",
+    "(for/do (<- item (From [1 2])) (<- x str (Eff)) x)",
+    "(traverse (<- item (Iterate [1 2])) (<- x str (Eff)) x)",
+    "(defhandler h (Other [] (<- x str (Eff)) (resume x)))",
+], ids=["<-", "do!", "defp", "deftest", "for/do", "traverse", "defhandler"])
 def test_four_element_bind_emits_isinstance_everywhere(code):
     expanded = _expand(code)
     assert "(setv x (yield (Eff)))" in expanded, expanded
@@ -77,12 +81,13 @@ def test_four_element_bind_emits_isinstance_everywhere(code):
 
 
 @pytest.mark.parametrize("code", [
-    '(<- x (Eff))',
-    '(do! (<- x (Eff)) (<- (Eff)) x)',
-    '(defp p {:post [(: % str)]} (<- x (Eff)) (<- (Eff)) x)',
-    '(deftest test-x (<- x (Eff)) (<- (Eff)) (assert x))',
-    '(for/do (<- item (From [1 2])) (<- x (Eff)) (<- (Eff)) x)',
-], ids=["<-", "do!", "defp", "deftest", "for/do"])
+    "(<- x (Eff))",
+    "(do! (<- x (Eff)) (<- (Eff)) x)",
+    "(defp p {:post [(: % str)]} (<- x (Eff)) (<- (Eff)) x)",
+    "(deftest test-x (<- x (Eff)) (<- (Eff)) (assert x))",
+    "(for/do (<- item (From [1 2])) (<- x (Eff)) (<- (Eff)) x)",
+    "(defhandler h (Other [] (<- x (Eff)) (<- (Eff)) (resume x)))",
+], ids=["<-", "do!", "defp", "deftest", "for/do", "defhandler"])
 def test_two_and_three_element_binds_stay_unchecked(code):
     expanded = _expand(code)
     assert "(yield (Eff))" in expanded, expanded
