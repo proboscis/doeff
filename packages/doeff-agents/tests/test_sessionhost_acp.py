@@ -29,6 +29,7 @@ from doeff_agents.sessionhost.acp.effects import (
     AgentdSettings,
     JSONObject,
     LeaseRefused,
+    SessionView,
 )
 from doeff_agents.sessionhost.acp.fake import Birth, FakeAcp, FakeCustody, FakeLocal, FakeSessions
 from doeff_agents.sessionhost.acp.runtime import initial_state, run_tick
@@ -437,3 +438,271 @@ def test_valve_defaults_off_and_strips_the_flag() -> None:
     assert acp_valve(["serve"], {ACP_VALVE_ENV: "off"}).enabled is False
     with pytest.raises(ValueError, match=r"on\|off"):
         acp_valve(["serve"], {ACP_VALVE_ENV: "yes"})
+
+
+# ---------------------------------------------------------------- 段 2 の直し(agora-redesign #19 の実弾 002 / 003)
+
+
+def running_job(job_id: str, *, owner: str = "agentd", node: str = NODE) -> AcpRow:
+    """agentd が claim した後の行(phase Running + sessionHandle)— 再起動後に list で映る形。"""
+    base = bound_job(job_id, inputs=[], account=None)
+    assert base.status is not None
+    status: JSONObject = dict(base.status)
+    binding = status["binding"]
+    assert isinstance(binding, dict)
+    binding["node"] = node
+    status["phase"] = PHASE_RUNNING
+    status["sessionHandle"] = {"sessionId": job_id, "stream": {"owner": owner, "name": job_id}}
+    return row(AGENT_JOB_NAMESPACE, AGENT_JOB_KIND, job_id, base.spec, status)
+
+
+def turn_record_row(job_id: str) -> AcpRow:
+    return row(
+        AGORA_KINDS_NAMESPACE,
+        TURN_RECORD_KIND,
+        job_id,
+        {
+            "conversationId": "c-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "agentJobId": job_id,
+            "node": NODE,
+            "profile": "personal",
+            "model": "claude-opus-5",
+        },
+        {"state": "running"},
+    )
+
+
+def _start_capturing(world: World, job_id: str) -> None:
+    world.acp.put_row(bound_job(job_id, inputs=[], account=None))
+    world.tick()
+    world.acp.subscribers[job_id] = 1
+    world.tick(advance_ms=5_000)
+    assert world.state.jobs[0].capturing is True
+
+
+def test_capture_gone_is_the_end_of_the_stream_not_an_error() -> None:
+    """(a) 片付いた session の capture(pane も server も無い)は例外ではなく実況の終わり:
+    capture を止め、器が終端になった拍に Ended と turn-record ended を書く。"""
+    world = World()
+    _start_capturing(world, "s-g")
+    world.sessions.capture_gone = "tmux capture-pane failed: no server running"
+    world.tick(advance_ms=500)
+    assert world.sessions.captures == [("s-g", 60)]
+    assert world.state.jobs[0].capturing is False
+    assert world.state.jobs[0].stream_gone is True
+    assert [line for line in world.local.logs if "tick failed" in line] == []
+    assert any("stream of job s-g is gone" in line for line in world.local.logs)
+    # gone の後は capture も購読の読み直しも撃たない(pane が無い)
+    world.tick(advance_ms=5_000)
+    assert world.sessions.captures == [("s-g", 60)]
+    world.sessions.finish("s-g", "done", {"ok": True})
+    world.tick(advance_ms=500)
+    job = world.job("s-g")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_ENDED
+    assert job.status["result"] == {"ok": True}
+    record = world.turn_record("s-g")
+    assert record is not None
+    assert record.status is not None
+    assert record.status["state"] == "ended"
+    assert world.state.jobs == ()
+
+
+def test_capture_gone_with_a_terminal_session_ends_in_the_same_tick() -> None:
+    """(a') session.get の後に pane が消えて器も終端に倒れた(race)— gone の拍で器を読み直し、
+    同じ拍で記録の腕を撃つ。"""
+    world = World()
+    _start_capturing(world, "s-gr")
+    world.sessions.capture_gone = "tmux capture-pane failed: can't find pane"
+    world.sessions.finish_on_capture = ("done", {"ok": 1})
+    world.tick(advance_ms=500)
+    assert world.sessions.captures == [("s-gr", 60)]
+    job = world.job("s-gr")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_ENDED
+    assert job.status["result"] == {"ok": 1}
+    record = world.turn_record("s-gr")
+    assert record is not None
+    assert record.status is not None
+    assert record.status["state"] == "ended"
+    assert world.state.jobs == ()
+
+
+def test_terminal_session_is_recorded_without_a_capture() -> None:
+    """器が終端の拍は実況(capture)を撃たずに記録の腕へ進む(実弾 003 の直接の機序)。"""
+    world = World()
+    _start_capturing(world, "s-t")
+    world.sessions.finish("s-t", "done", {"ok": True})
+    world.sessions.capture_gone = "tmux capture-pane failed: no server running"
+    world.tick(advance_ms=500)
+    assert world.sessions.captures == []
+    job = world.job("s-t")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_ENDED
+
+
+def test_running_job_of_mine_is_recovered_on_the_first_tick_after_restart() -> None:
+    """(b) 再起動(memory を捨てる)後の最初の tick で、自分の Running を行から拾い、器が
+    終端なら記録の腕だけを撃って閉じる(launch も send もし直さない)。"""
+    world = World()
+    world.acp.put_row(bound_job("s-r", inputs=[], account=None))
+    world.tick()
+    assert len(world.sessions.launches) == 1
+    world.state = initial_state()
+    world.sessions.finish("s-r", "done", {"ok": True})
+    world.tick(advance_ms=1_000)
+    assert len(world.sessions.launches) == 1
+    job = world.job("s-r")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_ENDED
+    assert job.status["result"] == {"ok": True}
+    record = world.turn_record("s-r")
+    assert record is not None
+    assert record.status is not None
+    assert record.status["state"] == "ended"
+    assert world.state.jobs == ()
+    assert world.local.metrics[-1]["metric"] == "agent-job-turn"
+
+
+def test_running_job_without_a_session_is_ended_with_session_failed() -> None:
+    """(b') Running の行が在るのに器に session が無い(実弾 002 の孤児)— 記録が在れば ended
+    にし、job は SessionFailed で Ended。"""
+    world = World()
+    world.acp.put_row(running_job("s-orphan"))
+    world.acp.put_row(turn_record_row("s-orphan"))
+    world.tick()
+    job = world.job("s-orphan")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_ENDED
+    assert "result" not in job.status
+    conditions = job.status["conditions"]
+    assert isinstance(conditions, list)
+    last = conditions[-1]
+    assert isinstance(last, dict)
+    assert last["type"] == "SessionFailed"
+    record = world.turn_record("s-orphan")
+    assert record is not None
+    assert record.status is not None
+    assert record.status["state"] == "ended"
+    assert world.sessions.launches == []
+    assert world.state.jobs == ()
+
+
+def test_running_job_with_a_live_session_is_adopted_and_observed() -> None:
+    """(b'') 再起動後に器がまだ走っていれば、行から InFlightJob を組み直し(札は借り直す)、
+    観測を続けて終端で閉じる。"""
+    world = World()
+    world.acp.put_row(bound_job("s-live", inputs=[]))
+    world.tick()
+    assert world.custody.borrowed == [("claude", "acct", "agent-job s-live")]
+    world.state = initial_state()
+    world.tick(advance_ms=1_000)
+    assert len(world.state.jobs) == 1
+    assert world.state.jobs[0].job_id == "s-live"
+    assert len(world.sessions.launches) == 1
+    assert world.custody.borrowed[-1] == ("claude", "acct", "agent-job s-live (recovered)")
+    job = world.job("s-live")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_RUNNING
+    world.sessions.finish("s-live", "done", {"ok": True})
+    world.tick(advance_ms=1_000)
+    ended = world.job("s-live")
+    assert ended.status is not None
+    assert ended.status["phase"] == PHASE_ENDED
+    assert world.custody.revoked == ["lease-1", "lease-2"]
+    assert world.state.jobs == ()
+
+
+def test_running_jobs_of_other_owners_or_nodes_are_left_alone() -> None:
+    world = World()
+    world.acp.put_row(running_job("s-other-node", node="someone-else"))
+    world.acp.put_row(running_job("s-other-owner", owner="not-agentd"))
+    world.tick()
+    for job_id in ("s-other-node", "s-other-owner"):
+        job = world.job(job_id)
+        assert job.status is not None
+        assert job.status["phase"] == PHASE_RUNNING
+    assert world.state.jobs == ()
+
+
+def test_one_job_failure_does_not_stop_the_heartbeat_or_other_jobs() -> None:
+    """(c) 1 job の handler の例外(器の RPC が落ちた)は他の job と参加の heartbeat を止めない —
+    その job は次の拍へ持ち越す。"""
+    world = World()
+    world.acp.put_row(bound_job("s-a", inputs=[], account=None))
+    world.acp.put_row(bound_job("s-b", inputs=[], account=None))
+    world.tick()
+    assert len(world.state.jobs) == 2
+    world.sessions.failures["s-a"] = RuntimeError("socket reset")
+    world.sessions.finish("s-b", "done", {"ok": True})
+    world.tick(advance_ms=30_000)
+    node = world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"]
+    assert node.status is not None
+    lease = node.status["lease"]
+    assert isinstance(lease, dict)
+    assert lease["heartbeatAt"] == 31_000
+    ended = world.job("s-b")
+    assert ended.status is not None
+    assert ended.status["phase"] == PHASE_ENDED
+    still = world.job("s-a")
+    assert still.status is not None
+    assert still.status["phase"] == PHASE_RUNNING
+    assert [job.job_id for job in world.state.jobs] == ["s-a"]
+    assert any(
+        line == "agentd: job s-a tick failed: RuntimeError: socket reset"
+        for line in world.local.logs
+    )
+    del world.sessions.failures["s-a"]
+    world.sessions.finish("s-a", "done", {"ok": True})
+    world.tick(advance_ms=1_000)
+    recovered = world.job("s-a")
+    assert recovered.status is not None
+    assert recovered.status["phase"] == PHASE_ENDED
+    assert world.state.jobs == ()
+
+
+def test_acp_list_failure_does_not_stop_the_observation_of_running_jobs() -> None:
+    """(c') 受け(list)が落ちても(実弾 002 の Connection reset)、走っている job の観測は続く。"""
+    world = World()
+    world.acp.put_row(bound_job("s-c", inputs=[], account=None))
+    world.tick()
+    world.acp.list_failures[AGENT_JOB_KIND] = RuntimeError("Connection reset by peer")
+    world.sessions.finish("s-c", "done", {"ok": True})
+    world.tick(advance_ms=30_000)
+    ended = world.job("s-c")
+    assert ended.status is not None
+    assert ended.status["phase"] == PHASE_ENDED
+    assert any(
+        line == "agentd: receive failed: RuntimeError: Connection reset by peer"
+        for line in world.local.logs
+    )
+
+
+def test_job_step_of_is_the_one_decision_for_a_running_row() -> None:
+    assert run(judgment.job_step_of(None)) == "fail-missing"
+    view = _view("s", "running")
+    assert run(judgment.job_step_of(view)) == "observe"
+    for status in ("done", "failed", "exited", "stopped", "cancelled"):
+        assert run(judgment.job_step_of(_view("s", status))) == "record-end"
+
+
+def _view(session_id: str, status: str) -> SessionView:
+    return SessionView(
+        session_id=session_id,
+        agent_type="claude",
+        status=status,
+        work_dir="/work",
+        lifecycle="run_to_completion",
+        conversation={"session_id": session_id},
+        effective_identity={"CLAUDE_CONFIG_DIR": "/homes/claude/acct"},
+        result_payload=None,
+        terminal_cause=None,
+    )
+
+
+def test_running_on_me_needs_phase_node_and_stream_owner() -> None:
+    mine = running_job("a")
+    assert run(judgment.running_on_me(mine, NODE, "agentd")) is True
+    assert run(judgment.running_on_me(mine, "other", "agentd")) is False
+    assert run(judgment.running_on_me(mine, NODE, "someone")) is False
+    assert run(judgment.running_on_me(bound_job("b", inputs=[]), NODE, "agentd")) is False
