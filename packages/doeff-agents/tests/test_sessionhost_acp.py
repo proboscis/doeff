@@ -43,7 +43,13 @@ TOKEN = "sk-ant-oat01-secret-token"
 
 
 def row(
-    namespace: str, kind: str, resource_id: str, spec: JSONObject, status: JSONObject | None
+    namespace: str,
+    kind: str,
+    resource_id: str,
+    spec: JSONObject,
+    status: JSONObject | None,
+    *,
+    created_at_ms: int = 500,
 ) -> AcpRow:
     return AcpRow(
         namespace=namespace,
@@ -52,7 +58,7 @@ def row(
         resource_id=resource_id,
         version="v1",
         generation=1,
-        created_at_ms=500,
+        created_at_ms=created_at_ms,
         labels={},
         payload={},
         spec=spec,
@@ -60,7 +66,19 @@ def row(
     )
 
 
-def bound_job(job_id: str, *, inputs: list[str], account: str | None = "acct") -> AcpRow:
+CONVERSATION = "c-01ARZ3NDEKTSV4RRFFQ69G5FAV"
+
+
+def bound_job(
+    job_id: str,
+    *,
+    inputs: list[str],
+    account: str | None = "acct",
+    subject: str = CONVERSATION,
+    predecessor: str | None = None,
+    lifecycle: str | None = None,
+    created_at_ms: int = 500,
+) -> AcpRow:
     binding: JSONObject = {"node": NODE, "profile": "personal"}
     if account is not None:
         binding["account"] = account
@@ -72,13 +90,19 @@ def bound_job(job_id: str, *, inputs: list[str], account: str | None = "acct") -
         "prompt": "start",
         "model": "claude-opus-5",
     }
+    if lifecycle is not None:
+        charter["lifecycle"] = lifecycle
     spec: JSONObject = {
-        "subject": "c-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "subject": subject,
         "inputs": list(inputs),
         "charter": charter,
     }
+    if predecessor is not None:
+        spec["affinity"] = {"predecessor": predecessor}
     status: JSONObject = {"phase": PHASE_BOUND, "binding": binding, "conditions": []}
-    return row(AGENT_JOB_NAMESPACE, AGENT_JOB_KIND, job_id, spec, status)
+    return row(
+        AGENT_JOB_NAMESPACE, AGENT_JOB_KIND, job_id, spec, status, created_at_ms=created_at_ms
+    )
 
 
 class World:
@@ -143,7 +167,7 @@ def _assert_joined_and_claimed(world: World) -> None:
     assert isinstance(lease, dict)
     assert lease["owner"] == "agentd"
     assert lease["expiresAt"] == 1_000 + 90 * 1_000
-    assert node.status["observations"] == {"streamCapability": "frames", "sessions": 0}
+    assert node.status["observations"] == {"streamCapability": "frames", "sessions": []}
     assert node.status["state"] == "joined"
 
     job = world.job("s-1")
@@ -164,7 +188,7 @@ def _assert_launched_with_borrowed_token(world: World) -> None:
     assert env[CLAUDE_OAUTH_TOKEN_ENV] == TOKEN
     assert launch["binding"] == {"kind": "claude-code", "config_dir": f"{HOMES}/claude/acct"}
     assert launch["prompt"] == "start"
-    assert world.sessions.sends == [("s-1", "hello agent")]
+    assert world.sessions.sends == [("s-1", "hello agent", True)]
     assert world.local.metrics[0]["metric"] == "agent-job-to-send"
     assert world.local.metrics[0]["ms"] == 1_000 - 500
 
@@ -681,24 +705,42 @@ def test_acp_list_failure_does_not_stop_the_observation_of_running_jobs() -> Non
 
 
 def test_job_step_of_is_the_one_decision_for_a_running_row() -> None:
-    assert run(judgment.job_step_of(None)) == "fail-missing"
+    assert run(judgment.job_step_of(None, 0, True)) == "fail-missing"
     view = _view("s", "running")
-    assert run(judgment.job_step_of(view)) == "observe"
+    assert run(judgment.job_step_of(view, 0, True)) == "observe"
     for status in ("done", "failed", "exited", "stopped", "cancelled"):
-        assert run(judgment.job_step_of(_view("s", status))) == "record-end"
+        assert run(judgment.job_step_of(_view("s", status), 0, True)) == "record-end"
+    # 温かい session(multi_turn)の手番の終わり: 器は生きたまま turn_ended_at が手番の始まり
+    # (floor)より後に付き、記録が進んでいる(自分の本文が届いた証拠)時だけ turn-end。
+    warm = _view("s", "running", lifecycle="multi_turn", turn_ended_at_ms=5_000)
+    assert run(judgment.job_step_of(warm, 4_000, True)) == "turn-end"
+    assert run(judgment.job_step_of(warm, 6_000, True)) == "observe"
+    assert run(judgment.job_step_of(warm, 4_000, False)) == "observe"
+    busy = _view("s", "running", lifecycle="multi_turn", turn_ended_at_ms=None)
+    assert run(judgment.job_step_of(busy, 0, True)) == "observe"
+    # run_to_completion の器は turn_ended_at が付いても turn-end にはならない(終端で record-end)。
+    cold = _view("s", "running", turn_ended_at_ms=5_000)
+    assert run(judgment.job_step_of(cold, 0, True)) == "observe"
 
 
-def _view(session_id: str, status: str) -> SessionView:
+def _view(
+    session_id: str,
+    status: str,
+    *,
+    lifecycle: str = "run_to_completion",
+    turn_ended_at_ms: int | None = None,
+) -> SessionView:
     return SessionView(
         session_id=session_id,
         agent_type="claude",
         status=status,
         work_dir="/work",
-        lifecycle="run_to_completion",
+        lifecycle=lifecycle,
         conversation={"session_id": session_id},
         effective_identity={"CLAUDE_CONFIG_DIR": "/homes/claude/acct"},
         result_payload=None,
         terminal_cause=None,
+        turn_ended_at_ms=turn_ended_at_ms,
     )
 
 
@@ -708,3 +750,292 @@ def test_running_on_me_needs_phase_node_and_stream_owner() -> None:
     assert run(judgment.running_on_me(mine, "other", "agentd")) is False
     assert run(judgment.running_on_me(mine, NODE, "someone")) is False
     assert run(judgment.running_on_me(bound_job("b", inputs=[]), NODE, "agentd")) is False
+
+
+# ---------------------------------------------------------------- 温かい session(段 2・設計 17.4・lane 2b-3)
+
+
+def message(message_id: str, body: str) -> AcpRow:
+    return row(
+        AGORA_KINDS_NAMESPACE,
+        MESSAGE_KIND,
+        message_id,
+        {"id": message_id, "body": body},
+        {"state": "inbox"},
+    )
+
+
+def _run_first_turn(world: World, job_id: str = "j-1") -> str:
+    """手番 1: launch(multi_turn)→ 記録が進む → 手番の終わり(host が turn_ended_at を刻む)
+    → job Ended・session は生きたまま。戻り = transcript の path。"""
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job(job_id, inputs=["m-1"], created_at_ms=world.local.now_ms - 400))
+    world.tick()
+    assert world.sessions.launches[-1]["lifecycle"] == "multi_turn"
+    assert world.sessions.sends[-1] == (job_id, "first", True)
+    path = f"{HOMES}/claude/acct/projects/-work/{job_id}.jsonl"
+    world.local.transcripts[path] = transcript_line("assistant", [{"type": "text", "text": "one"}])
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(job_id, world.local.now_ms + 500)
+    world.tick(advance_ms=1_000)
+    job = world.job(job_id)
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_ENDED
+    assert world.sessions.cleanups == []
+    assert world.sessions.views[job_id].status == "running"
+    assert world.state.jobs == ()
+    return path
+
+
+def test_second_turn_of_the_same_conversation_is_sent_to_the_warm_session() -> None:
+    """同じ会話の次の手番は launch せず send: sessionHandle は既存の session を指し、
+    turn-record は手番ごとに別の行、計器 agent-job-to-send は温かい path で 2 秒未満。"""
+    world = World()
+    path = _run_first_turn(world)
+    world.acp.put_row(message("m-2", "second"))
+    world.acp.put_row(bound_job("j-2", inputs=["m-2"], created_at_ms=world.local.now_ms + 700))
+    world.tick(advance_ms=1_000)
+    assert len(world.sessions.launches) == 1
+    assert world.sessions.resumes == []
+    assert world.sessions.sends[-1] == ("j-1", "second", True)
+    job = world.job("j-2")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_RUNNING
+    assert job.status["sessionHandle"] == {
+        "sessionId": "j-1",
+        "stream": {"owner": "agentd", "name": "j-1"},
+    }
+    record = world.turn_record("j-2")
+    assert record is not None
+    assert record.spec["conversationId"] == CONVERSATION
+    assert record.spec["agentJobId"] == "j-2"
+    to_send = [m for m in world.local.metrics if m["metric"] == "agent-job-to-send"][-1]
+    assert to_send["agentJobId"] == "j-2"
+    assert to_send["sessionId"] == "j-1"
+    assert isinstance(to_send["ms"], int)
+    assert to_send["ms"] < 2_000
+    # 送った直後: 前の手番の turn_ended_at(送りより前)では手番は終わらない。
+    world.tick(advance_ms=500)
+    running = world.job("j-2")
+    assert running.status is not None
+    assert running.status["phase"] == PHASE_RUNNING
+    # 記録が進み(自分の本文が届いた証拠)、host が新しい turn_ended_at を刻むと手番の終わり。
+    world.local.transcripts[path] += transcript_line("assistant", [{"type": "text", "text": "two"}])
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn("j-1", world.local.now_ms + 200)
+    world.tick(advance_ms=1_000)
+    ended = world.job("j-2")
+    assert ended.status is not None
+    assert ended.status["phase"] == PHASE_ENDED
+    record = world.turn_record("j-2")
+    assert record is not None
+    assert record.status is not None
+    assert record.status["state"] == "ended"
+    entries = record.status["entries"]
+    assert isinstance(entries, list)
+    assert [e["text"] for e in entries if isinstance(e, dict)] == ["two"]
+    assert world.sessions.cleanups == []
+    assert world.state.jobs == ()
+
+
+def test_warm_send_stays_under_two_seconds_across_turns() -> None:
+    """温かい path の計器: 5 手番の create → send がすべて 2 秒未満(fake の時計で pin)。"""
+    world = World()
+    path = _run_first_turn(world)
+    samples: list[int] = []
+    for n in range(2, 7):
+        world.acp.put_row(message(f"m-{n}", f"turn {n}"))
+        world.acp.put_row(
+            bound_job(f"j-{n}", inputs=[f"m-{n}"], created_at_ms=world.local.now_ms + 900)
+        )
+        world.tick(advance_ms=1_000)
+        metric = [m for m in world.local.metrics if m["metric"] == "agent-job-to-send"][-1]
+        assert metric["agentJobId"] == f"j-{n}"
+        ms = metric["ms"]
+        assert isinstance(ms, int)
+        samples.append(ms)
+        world.local.transcripts[path] += transcript_line("assistant", [{"type": "text", "text": "x"}])
+        world.tick(advance_ms=1_000)
+        world.sessions.finish_turn("j-1", world.local.now_ms + 100)
+        world.tick(advance_ms=1_000)
+        assert world.state.jobs == ()
+    assert len(world.sessions.launches) == 1
+    assert max(samples) < 2_000
+
+
+def test_a_different_conversation_launches_its_own_session() -> None:
+    world = World()
+    _run_first_turn(world)
+    world.acp.put_row(message("m-x", "other"))
+    world.acp.put_row(bound_job("j-x", inputs=["m-x"], subject="c-other"))
+    world.tick(advance_ms=1_000)
+    assert len(world.sessions.launches) == 2
+    assert world.sessions.launches[-1]["session_id"] == "j-x"
+    assert world.sessions.sends[-1] == ("j-x", "other", True)
+    job = world.job("j-x")
+    assert job.status is not None
+    handle = job.status["sessionHandle"]
+    assert isinstance(handle, dict)
+    assert handle["sessionId"] == "j-x"
+
+
+def test_idle_session_past_the_ttl_is_cleaned_up() -> None:
+    """idle が TTL(値の宣言 1 点 AgentdSettings.session_idle_ttl_seconds)を過ぎた session は
+    agentd が session.cleanup で片付ける(判断は純関数・時計は effect)。"""
+    world = World()
+    _run_first_turn(world)
+    assert world.settings.session_idle_ttl_seconds == 600
+    world.tick(advance_ms=30_000)
+    assert world.sessions.cleanups == []
+    world.tick(advance_ms=600_000)
+    assert world.sessions.cleanups == ["j-1"]
+    # 片付いた後の次の手番は cold launch。
+    world.acp.put_row(message("m-2", "second"))
+    world.acp.put_row(bound_job("j-2", inputs=["m-2"]))
+    world.tick(advance_ms=1_000)
+    assert len(world.sessions.launches) == 2
+    node = world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"]
+    assert node.status is not None
+    observations = node.status["observations"]
+    assert isinstance(observations, dict)
+    assert observations["sessions"] == []
+
+
+def test_node_observations_carry_the_conversation_sessions() -> None:
+    """node の status.observations.sessions = 行から導いた [{conversationId, sessionId, state}]。"""
+    world = World()
+    _run_first_turn(world)
+    world.tick(advance_ms=30_000)
+    node = world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"]
+    assert node.status is not None
+    observations = node.status["observations"]
+    assert isinstance(observations, dict)
+    assert observations["sessions"] == [
+        {"conversationId": CONVERSATION, "sessionId": "j-1", "state": "idle"}
+    ]
+
+
+def test_predecessor_alive_is_sent_and_terminal_predecessor_is_resumed() -> None:
+    world = World()
+    _run_first_turn(world)
+    # (a) predecessor が生きて idle → send(温かい resume)。
+    world.acp.put_row(message("m-2", "second"))
+    world.acp.put_row(bound_job("j-2", inputs=["m-2"], predecessor="j-1"))
+    world.tick(advance_ms=1_000)
+    assert world.sessions.resumes == []
+    assert world.sessions.sends[-1] == ("j-1", "second", True)
+    world.sessions.finish_turn("j-1", world.local.now_ms + 100)
+    path = f"{HOMES}/claude/acct/projects/-work/j-1.jsonl"
+    world.local.transcripts[path] += transcript_line("assistant", [{"type": "text", "text": "y"}])
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn("j-1", world.local.now_ms + 100)
+    world.tick(advance_ms=1_000)
+    assert world.state.jobs == ()
+    # (b) predecessor が終端 → session.resume(cold)。
+    world.sessions.finish("j-1", "exited")
+    world.acp.put_row(message("m-3", "third"))
+    world.acp.put_row(bound_job("j-3", inputs=["m-3"], predecessor="j-1"))
+    world.tick(advance_ms=1_000)
+    assert len(world.sessions.resumes) == 1
+    assert world.sessions.resumes[0]["session_id"] == "j-1"
+    assert world.sessions.resumes[0]["new_session_id"] == "j-3"
+    assert world.sessions.sends[-1] == ("j-3", "third", True)
+
+
+def test_withdrawn_job_cleans_up_its_session_and_stops_observing() -> None:
+    world = World()
+    _run_first_turn(world)
+    world.acp.put_row(message("m-2", "second"))
+    world.acp.put_row(bound_job("j-2", inputs=["m-2"]))
+    world.tick(advance_ms=1_000)
+    assert len(world.state.jobs) == 1
+    running = world.job("j-2")
+    assert running.status is not None
+    withdrawn: JSONObject = dict(running.status)
+    withdrawn["phase"] = "Withdrawn"
+    world.acp.put_row(
+        row(
+            AGENT_JOB_NAMESPACE,
+            AGENT_JOB_KIND,
+            "j-2",
+            running.spec,
+            withdrawn,
+            created_at_ms=running.created_at_ms,
+        )
+    )
+    world.tick(advance_ms=1_000)
+    assert world.sessions.cleanups == ["j-1"]
+    assert world.state.jobs == ()
+    record = world.turn_record("j-2")
+    assert record is not None
+    assert record.status is not None
+    assert record.status["state"] == "ended"
+    job = world.job("j-2")
+    assert job.status is not None
+    assert job.status["phase"] == "Withdrawn"
+    # 次の拍で同じ Withdrawn の行に cleanup を撃ち直さない。
+    world.tick(advance_ms=1_000)
+    assert world.sessions.cleanups == ["j-1"]
+
+
+def test_busy_conversation_session_defers_the_claim() -> None:
+    """会話の session が手番の途中(turn_ended_at 無し)なら次の手番は受けない(Bound のまま・
+    launch も send も無し)— 次の list で読み直す。"""
+    world = World()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"]))
+    world.tick()
+    world.acp.put_row(message("m-2", "second"))
+    world.acp.put_row(bound_job("j-2", inputs=["m-2"]))
+    world.tick(advance_ms=1_000)
+    assert len(world.sessions.launches) == 1
+    assert world.sessions.sends == [("j-1", "first", True)]
+    job = world.job("j-2")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_BOUND
+    assert any("deferred" in line for line in world.local.logs)
+
+
+def test_terminal_warm_session_is_cleaned_up_at_record_end() -> None:
+    """multi_turn の器が終端(awaiting の期限で failed 等)になった手番は、記録の腕の後に
+    agentd が session.cleanup で片付ける(host は multi_turn を掃かない)。"""
+    world = World()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"]))
+    world.tick()
+    world.sessions.finish("j-1", "failed")
+    world.tick(advance_ms=1_000)
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_ENDED
+    assert world.sessions.cleanups == ["j-1"]
+
+
+def test_charter_lifecycle_is_respected_when_declared() -> None:
+    """charter が lifecycle を名指せばそれを使う(run_to_completion の charter は今日どおり
+    1 手番で片付く)。無ければ agentd の既定 multi_turn。"""
+    world = World()
+    world.acp.put_row(bound_job("j-rtc", inputs=[], lifecycle="run_to_completion"))
+    world.tick()
+    assert world.sessions.launches[-1]["lifecycle"] == "run_to_completion"
+    world.sessions.finish("j-rtc", "done", {"ok": True})
+    world.tick(advance_ms=1_000)
+    assert world.sessions.cleanups == []
+
+
+def test_next_arm_for_job_is_the_one_decision() -> None:
+    plan_plain = run(judgment.launch_plan_of(bound_job("a", inputs=[])))
+    plan_pred = run(judgment.launch_plan_of(bound_job("b", inputs=[], predecessor="p")))
+    warm = _view("p", "running", lifecycle="multi_turn", turn_ended_at_ms=10)
+    busy = _view("p", "running", lifecycle="multi_turn", turn_ended_at_ms=None)
+    dead = _view("p", "exited", lifecycle="multi_turn", turn_ended_at_ms=10)
+    assert run(judgment.next_arm_for_job(plan_plain, None)) == "launch"
+    assert run(judgment.next_arm_for_job(plan_plain, warm)) == "send"
+    assert run(judgment.next_arm_for_job(plan_plain, busy)) == "defer"
+    assert run(judgment.next_arm_for_job(plan_plain, dead)) == "launch"
+    assert run(judgment.next_arm_for_job(plan_pred, None)) == "resume"
+    assert run(judgment.next_arm_for_job(plan_pred, warm)) == "send"
+    assert run(judgment.next_arm_for_job(plan_pred, busy)) == "defer"
+    assert run(judgment.next_arm_for_job(plan_pred, dead)) == "resume"
+    assert run(judgment.launch_lifecycle_of({})) == "multi_turn"
+    assert run(judgment.launch_lifecycle_of({"lifecycle": "interactive"})) == "interactive"
