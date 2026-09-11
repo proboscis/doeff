@@ -34,8 +34,12 @@
   AgentdSettings
   AgentdState
   AcpRow
+  BACKEND-HEADLESS
   CLAUDE-OAUTH-TOKEN-ENV
+  CONDITION-INTERRUPTED
   DeltaBatch
+  INTERRUPT-ARM-INTERRUPT
+  INTERRUPT-ARM-NONE
   InFlightJob
   JOB-STEP-FAIL-MISSING
   JOB-STEP-OBSERVE
@@ -44,6 +48,10 @@
   JSONObject
   JobOutcome
   LIFECYCLE-MULTI-TURN
+  LIST-MODE-FULL
+  LIST-MODE-NONE
+  LIST-MODE-WINDOW
+  MESSAGE-KIND
   LaunchPlan
   LeaseGrant
   NEXT-ARM-DEFER
@@ -58,6 +66,8 @@
   SESSION-OBSERVED-BUSY
   SESSION-OBSERVED-IDLE
   SESSION-TERMINAL-STATUSES
+  STREAM-SOURCE-EVENTS
+  STREAM-SOURCE-TRANSCRIPT
   SessionView
   TURN-RECORD-ENDED
   TURN-RECORD-KIND
@@ -312,6 +322,61 @@
   (tuple out))
 
 
+(defk withdrawn-rows-of [rows node-name principal]
+  {:pre [(: rows tuple) (: node-name str) (: principal str)]
+   :post [(: % tuple)]}
+  "Withdrawn の行のうち自分が claim していた行(行の順のまま)— 取り下げ = 走っている手番を
+   止める合図(session は片付けない・idle の寿命は sessions-to-retire)。"
+  (setv out [])
+  (for [row rows]
+    (setv status row.status)
+    (when (and (isinstance status dict) (= (.get status "phase") PHASE-WITHDRAWN))
+      (<- sid (| str None) (handle-owned-by row node-name principal))
+      (when (is-not sid None)
+        (.append out row))))
+  (tuple out))
+
+
+(defk interrupt-arm-for [job view]
+  {:pre [(: job InFlightJob) (: view (| SessionView None))]
+   :post [(: % str)]}
+  "取り下げ(Withdrawn)を受けた自分の job の腕(閉語彙 effects.InterruptArm)— 判断はここ
+   1 点: 器が生きていて、この手番がまだ終わっていない(turn_ended_at が無いか、この手番の
+   始まりの下限より前 = 前の手番の終わり)→ interrupt(session.interrupt を撃つ・session は
+   残す)/ それ以外(器が無い・終端・手番は既に終わっている)→ none。"
+  (<- alive bool (session-alive view))
+  (if (and alive
+           (isinstance view SessionView)
+           (or (is view.turn-ended-at-ms None)
+               (<= view.turn-ended-at-ms job.turn-floor-ms)))
+      INTERRUPT-ARM-INTERRUPT
+      INTERRUPT-ARM-NONE))
+
+
+(defk interrupted-status-of [status]
+  {:pre [(: status dict)]
+   :post [(: % dict)]}
+  "取り下げで止めた手番の agent-job の status: phase は書かない(Withdrawn のまま — 書き手は
+   作った側)、conditions に Interrupted を 1 つ足す(既に在れば足さない)。"
+  (setv next (dict status))
+  (setv existing (.get status "conditions"))
+  (setv conditions (if (isinstance existing list) (list existing) []))
+  (when (not (any (gfor item conditions
+                        (and (isinstance item dict) (= (.get item "type") CONDITION-INTERRUPTED)))))
+    (<- condition dict (condition-of CONDITION-INTERRUPTED "agent-job withdrawn while the turn was running"))
+    (.append conditions condition))
+  (setv (get next "conditions") conditions)
+  next)
+
+
+(defk stream-capability-of-backend [backend]
+  {:pre [(: backend str)]
+   :post [(: % str)]}
+  "node の observations.streamCapability は backend から導く(契約 turn-delta.json capability):
+   headless = events(stdout の行の増分)・tmux / herdr = frames(pane の断面)。"
+  (if (= backend BACKEND-HEADLESS) "events" "frames"))
+
+
 (defk conversation-of-session [rows session-id node-name principal]
   {:pre [(: rows tuple) (: session-id str) (: node-name str) (: principal str)]
    :post [(: % (| str None))]}
@@ -400,7 +465,10 @@
    affinity.predecessor(あれば resume)・binding.account(あれば預かり所から借りる —
    種類は charter の agent_type)・binding.profile と charter.model は turn-record の欄。
    欠けている欄は発明しない: profile は binding に無ければ \"unbound\"(結ばれた profile が
-   無い事実の名)、model は charter に無ければ \"default\"(走行器の既定を使う事実の名)。"
+   無い事実の名)、model は charter に無ければ \"default\"(走行器の既定を使う事実の名)。
+   charter の session_id / session_name は**読まない**(在っても落とす): session の id は agentd が
+   鋳造する(effect MintId → charter-with-session-id)— 作った側の固定の id は片付いた session の
+   行と衝突する(実弾 2026-09-12 `session is already registered`)。"
   (setv spec row.spec)
   (setv charter (.get spec "charter"))
   (when (not (isinstance charter dict))
@@ -418,6 +486,8 @@
   (setv profile (.get binding "profile"))
   (setv model (.get charter "model"))
   (setv charter-out (dict charter))
+  (.pop charter-out "session_id" None)
+  (.pop charter-out "session_name" None)
   (<- lifecycle str (launch-lifecycle-of charter))
   (setv (get charter-out "lifecycle") lifecycle)
   (LaunchPlan
@@ -427,6 +497,17 @@
     :account (if (is lease-kind None) None account)
     :profile (if (and (isinstance profile str) profile) profile "unbound")
     :model (if (and (isinstance model str) model) model "default")))
+
+
+(defk charter-with-session-id [charter session-id]
+  {:pre [(: charter dict) (: session-id str)]
+   :post [(: % dict)]}
+  "鋳造した session の id を charter に据える(session_id と session_name の両方 — sessionhost の
+   器の名も同じ綴り)。sessionHandle.sessionId と stream の name はこの id。"
+  (setv next (dict charter))
+  (setv (get next "session_id") session-id)
+  (setv (get next "session_name") session-id)
+  next)
 
 
 (defk inputs-of [row]
@@ -647,6 +728,22 @@
     True None))
 
 
+(defk stream-source-of [view canonical-work-dir]
+  {:pre [(: view SessionView) (: canonical-work-dir str)]
+   :post [(: % tuple)]}
+  "実況と記録の材料の在処(閉語彙 effects.StreamSource): headless の器は events file
+   (backend_ref.events_path — host が stdout の行を追記する正本)、tui の器は transcript。
+   戻り = #(source path)。材料が欠ければ #(None None)(発明しない)。"
+  (if (= view.backend-kind BACKEND-HEADLESS)
+      (do
+        (setv ref (or view.backend-ref {}))
+        (setv path (.get ref "events_path"))
+        (if (isinstance path str) #(STREAM-SOURCE-EVENTS path) #(None None)))
+      (do
+        (<- path (| str None) (transcript-path-of view canonical-work-dir))
+        (if (is path None) #(None None) #(STREAM-SOURCE-TRANSCRIPT path)))))
+
+
 (defk usage-of-claude-message [usage model]
   {:pre [(: usage dict) (: model (| str None))]
    :post [(: % dict)]}
@@ -712,11 +809,15 @@
   {"agentJobId" job-id "seq" seq "at" at "kind" kind "payload" payload})
 
 
-(defk claude-deltas-of [records job-id seq-start at]
-  {:pre [(: records tuple) (: job-id str) (: seq-start int) (: at int)]
+(defk claude-deltas-of [records job-id seq-start at streamed]
+  {:pre [(: records tuple) (: job-id str) (: seq-start int) (: at int) (: streamed bool)]
    :post [(: % DeltaBatch)]}
-  "claude の transcript の行(assistant の content block・user の tool_result)→ frame と
-   entries。usage は message.id ごとに 1 度だけ数える(1 message が block ごとの行に割れる)。"
+  "claude の行(transcript の jsonl も stream-json の stdout も同じ形: assistant の content
+   block・user の tool_result)→ frame と entries。usage は message.id ごとに 1 度だけ数える
+   (1 message が block ごとの行に割れる)。streamed(headless の events): 本文の chunk は
+   stream_event の text_delta を text frame に写し、完成した assistant の text block は
+   entries だけ(同じ本文を frame で二度流さない)。transcript(streamed = False)は完成した
+   block を text frame に。system / result の行は読まない(手番の終わりは host が読む)。"
   (setv frames [])
   (setv entries [])
   (setv usage None)
@@ -726,6 +827,17 @@
   (for [record records]
     (setv kind (.get record "type"))
     (setv message (.get record "message"))
+    (when (and streamed (= kind "stream_event"))
+      (setv event (.get record "event"))
+      (setv delta (if (isinstance event dict) (.get event "delta") None))
+      (when (and (isinstance event dict)
+                 (= (.get event "type") "content_block_delta")
+                 (isinstance delta dict)
+                 (= (.get delta "type") "text_delta")
+                 (isinstance (.get delta "text") str))
+        (<- chunk-frame dict (delta-frame job-id seq at "text" {"text" (get delta "text")}))
+        (.append frames chunk-frame)
+        (setv seq (+ seq 1))))
     (when (and (in kind #{"assistant" "user"}) (isinstance message dict))
       (setv content (.get message "content"))
       (setv message-model (.get message "model"))
@@ -751,8 +863,9 @@
                 (setv payload {"text" (get block "text")})
                 (when (isinstance message-model str)
                   (setv (get payload "model") message-model))
-                (<- text-frame dict (delta-frame job-id seq at "text" payload))
-                (.append frames text-frame)
+                (when (not streamed)
+                  (<- text-frame dict (delta-frame job-id seq at "text" payload))
+                  (.append frames text-frame))
                 (setv entry {"seq" seq "at" at "kind" "text" "text" (get block "text")})
                 (when (isinstance message-model str)
                   (setv (get entry "model") message-model))
@@ -850,14 +963,108 @@
               :next-seq seq :model None))
 
 
-(defk deltas-of [agent-type text job-id seq-start at]
+(defk codex-event-deltas-of [records job-id seq-start at]
+  {:pre [(: records tuple) (: job-id str) (: seq-start int) (: at int)]
+   :post [(: % DeltaBatch)]}
+  "codex の app-server の通知(JSON-RPC・schema v2)→ frame と entries:
+   item/agentMessage/delta → text frame(本文の chunk)/ item/completed の agentMessage →
+   text の entry(完成した本文 — frame では二度流さない)/ item/completed の commandExecution →
+   tool_use(name = command_execution・summary = command)と tool_result(aggregatedOutput・
+   isError = exitCode ≠ 0)の frame と entries / thread/tokenUsage/updated → usage frame
+   (累計なので最新で置き換える)。応答・他の通知は読まない。"
+  (setv frames [])
+  (setv entries [])
+  (setv usage None)
+  (setv seq seq-start)
+  (for [record records]
+    (setv method (.get record "method"))
+    (setv params (.get record "params"))
+    (when (and (isinstance method str) (isinstance params dict))
+      (setv item (.get params "item"))
+      (cond
+        (and (= method "item/agentMessage/delta") (isinstance (.get params "delta") str))
+        (do
+          (<- chunk-frame dict (delta-frame job-id seq at "text" {"text" (get params "delta")}))
+          (.append frames chunk-frame)
+          (setv seq (+ seq 1)))
+        (and (= method "item/completed") (isinstance item dict)
+             (= (.get item "type") "agentMessage") (isinstance (.get item "text") str))
+        (do
+          (.append entries {"seq" seq "at" at "kind" "text" "text" (get item "text")})
+          (setv seq (+ seq 1)))
+        (and (= method "item/completed") (isinstance item dict)
+             (= (.get item "type") "commandExecution") (isinstance (.get item "command") str))
+        (do
+          (setv tool-id (str (.get item "id" "")))
+          (<- summary str (summary-of (get item "command") 4000))
+          (<- use-frame dict (delta-frame job-id seq at "tool_use"
+                                          {"toolUseId" tool-id "name" "command_execution"
+                                           "summary" summary}))
+          (.append frames use-frame)
+          (.append entries {"seq" seq "at" at "kind" "tool_use"
+                            "toolName" "command_execution" "summary" summary})
+          (setv seq (+ seq 1))
+          (setv output (.get item "aggregatedOutput"))
+          (when (isinstance output str)
+            (<- result-summary str (summary-of output 4000))
+            (setv exit-code (.get item "exitCode"))
+            (<- result-frame dict (delta-frame job-id seq at "tool_result"
+                                               {"toolUseId" tool-id "summary" result-summary
+                                                "bytes" (len (.encode output "utf-8"))
+                                                "isError" (and (isinstance exit-code int)
+                                                               (!= exit-code 0))}))
+            (.append frames result-frame)
+            (.append entries {"seq" seq "at" at "kind" "tool_result" "summary" result-summary})
+            (setv seq (+ seq 1))))
+        (= method "thread/tokenUsage/updated")
+        (do
+          (setv token-usage (.get params "tokenUsage"))
+          (setv total (if (isinstance token-usage dict) (.get token-usage "total") None))
+          (when (isinstance total dict)
+            (setv #^ JSONObject part {"input" (int (or (.get total "inputTokens") 0))
+                                      "output" (int (or (.get total "outputTokens") 0))
+                                      "cacheWrite" (int (or (.get total "cacheWriteInputTokens") 0))
+                                      "cacheRead" (int (or (.get total "cachedInputTokens") 0))})
+            (setv usage part)
+            (<- usage-frame dict (delta-frame job-id seq at "usage" part))
+            (.append frames usage-frame)
+            (setv seq (+ seq 1))))
+        True None)))
+  (DeltaBatch :frames (tuple frames) :entries (tuple entries) :usage usage
+              :next-seq seq :model None))
+
+
+(defk events-to-deltas [agent-type text job-id seq-start at]
   {:pre [(: agent-type str) (: text str) (: job-id str) (: seq-start int) (: at int)]
    :post [(: % DeltaBatch)]}
-  "transcript の追記(text)→ kind 別の TurnDelta の frame と entries。未知の kind は空。"
+  "headless の events file の追記(stdout の行)→ TurnDelta の frame と entries(契約の
+   種類の閉語彙 text / tool_use / tool_result / usage)。claude = stream-json の行、codex =
+   app-server の JSON-RPC の通知。未知の kind は空。"
   (<- records tuple (parse-json-lines text))
   (cond
     (= agent-type "claude")
-    (do (<- claude-batch DeltaBatch (claude-deltas-of records job-id seq-start at))
+    (do (<- claude-batch DeltaBatch (claude-deltas-of records job-id seq-start at True))
+        claude-batch)
+    (= agent-type "codex")
+    (do (<- codex-batch DeltaBatch (codex-event-deltas-of records job-id seq-start at))
+        codex-batch)
+    True (DeltaBatch :frames #() :entries #() :usage None :next-seq seq-start :model None)))
+
+
+(defk deltas-of [agent-type source text job-id seq-start at]
+  {:pre [(: agent-type str) (: source str) (: text str) (: job-id str) (: seq-start int)
+         (: at int)]
+   :post [(: % DeltaBatch)]}
+  "実況の材料の追記(text)→ kind と材料の種類(閉語彙 effects.StreamSource)別の TurnDelta の
+   frame と entries: events = headless の stdout の行(events-to-deltas)、transcript = tui の
+   transcript の行。未知の kind は空。"
+  (when (= source STREAM-SOURCE-EVENTS)
+    (<- streamed DeltaBatch (events-to-deltas agent-type text job-id seq-start at))
+    (return streamed))
+  (<- records tuple (parse-json-lines text))
+  (cond
+    (= agent-type "claude")
+    (do (<- claude-batch DeltaBatch (claude-deltas-of records job-id seq-start at False))
         claude-batch)
     (= agent-type "codex")
     (do (<- codex-batch DeltaBatch (codex-deltas-of records job-id seq-start at))
@@ -929,6 +1136,82 @@
   "list を読み直す拍: sequence が進んだ・gap・接続の張り直し・周期の保険。"
   (<- periodic bool (due state.last-resync-ms now-ms settings.watch-resync-seconds))
   (or (in signal.kind #{"changed" "gap" "closed"}) periodic))
+
+
+(defk list-mode-for [signal state now-ms settings]
+  {:pre [(: signal WatchAdvance) (: state AgentdState) (: now-ms int) (: settings AgentdSettings)]
+   :post [(: % str)]}
+  "行をどう読み直すか(閉語彙 effects.ListMode)— 判断はここ 1 点: 周期の保険が来た・gap・
+   接続の張り直し・まだ 1 度も読んでいない → full(全量 list)/ watch で起きた(changed)→
+   window(変わった行だけ: event-window の post-image)/ idle → none。"
+  (<- periodic bool (due state.last-resync-ms now-ms settings.watch-resync-seconds))
+  (cond
+    (or periodic (in signal.kind #{"gap" "closed"})) LIST-MODE-FULL
+    (= signal.kind "changed") LIST-MODE-WINDOW
+    True LIST-MODE-NONE))
+
+
+(defk rows-of-kind [rows kind]
+  {:pre [(: rows tuple) (: kind str)]
+   :post [(: % tuple)]}
+  "行の列のうち kind の行(行の順のまま)。"
+  (tuple (lfor row rows :if (= row.kind kind) row)))
+
+
+(defk merge-rows [known changed retired]
+  {:pre [(: known tuple) (: changed tuple) (: retired tuple)]
+   :post [(: % tuple)]}
+  "知っている行(鍵ごとの最新の image)に窓の差分を重ねる: changed は鍵で置き換え(無ければ
+   足す)、retired の鍵は消す。順序は鍵の順(決定的)。"
+  (setv by-key {})
+  (for [row known]
+    (setv (get by-key row.key) row))
+  (for [row changed]
+    (setv (get by-key row.key) row))
+  (for [key retired]
+    (.pop by-key key None))
+  (tuple (lfor key (sorted by-key) (get by-key key))))
+
+
+(defk births-of-rows [rows]
+  {:pre [(: rows tuple)]
+   :post [(: % tuple)]}
+  "行の列のうち generation 1 の image(SpecApplied の post-image)の id → 着地の時刻(ms)の対。"
+  (tuple (sorted (lfor row rows
+                       :if (and (= row.generation 1) (is-not row.landed-at-ms None))
+                       #(row.resource-id row.landed-at-ms)))))
+
+
+(defk births-with [births pairs]
+  {:pre [(: births tuple) (: pairs tuple)]
+   :post [(: % tuple)]}
+  "生まれの着地の時刻の表(job の id → ms)に対を足す(既に在る id は変えない — 生まれは 1 度)。"
+  (setv table (dict births))
+  (for [[job-id at-ms] pairs]
+    (when (not-in job-id table)
+      (setv (get table job-id) at-ms)))
+  (tuple (sorted (.items table))))
+
+
+(defk birth-ms-of [row births]
+  {:pre [(: row AcpRow) (: births tuple)]
+   :post [(: % int)]}
+  "計器 agent-job-to-send の始点 = 行の生まれの着地(ns 精度): 生まれの表に在ればそれ、行自身が
+   generation 1 で landed_at_ms を持てばそれ、無ければ今日の値(秒の粒度の createdAt)。"
+  (setv table (dict births))
+  (setv known (.get table row.resource-id))
+  (cond
+    (isinstance known int) known
+    (and (= row.generation 1) (is-not row.landed-at-ms None)) row.landed-at-ms
+    True row.created-at-ms))
+
+
+(defk message-key-of [message-id]
+  {:pre [(: message-id str)]
+   :post [(: % str)]}
+  "Message の行の鍵(identityKey = id・区画 = agora の kind の区画)— inputs の本文は全量の
+   list ではなく鍵で 1 行ずつ読む。"
+  f"{AGORA-KINDS-NAMESPACE}:{MESSAGE-KIND}:{message-id}")
 
 
 (defk lease-renew-due [job now-ms settings]

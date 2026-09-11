@@ -619,24 +619,18 @@
   None)
 
 
-(defk launch-session [params]
+(defk admit-launch [params]
   {:pre [(: params dict)]
-   :post [(: % SessionRow)]}
-  "1 session の launch。params(oracle LaunchParams + R7 binding):
-   session_id / session_name / agent_type / work_dir / lifecycle /
-   binding(typed auth/profile 構成 — ADR-DOE-AGENTS-004 R7)/
-   session_env(非 auth overlay)/ prompt / command(明示 override、
-   escape hatch)/ expected_result / model / effort / mcp_servers /
-   socket_path / skip_trust_setup。戻り値: 永続化済みの booting SessionRow。"
+   :post [(: % "None — 不適合は raise")]}
+  "launch の admission(全副作用より前・oracle の順序): R7 の binding / overlay /
+   従量課金 credential → lifecycle → 重複 → max_running。tmux / headless の器の重複
+   検査は呼び手(器ごと)が続けて行う。tui の launch-session と headless の
+   launch(headless.hy)が同じ 1 点を通る — 並行実装を作らない。"
   (setv session-id (get params "session_id"))
-  (setv session-name (get params "session_name"))
   (setv agent-type (get params "agent_type"))
   (setv lifecycle (get params "lifecycle"))
   (setv binding (.get params "binding"))
   (setv session-env (.get params "session_env" {}))
-  (setv command-override (or (.get params "command") ""))
-  (setv has-override (bool (.strip command-override)))
-  (setv expected-result (.get params "expected_result"))
 
   ;; --- R7 admission(純粋検査 — 全副作用より前): auth は typed binding で
   ;; 運び、session_env は非 auth overlay。binding 所有キーの overlay 混入は
@@ -688,9 +682,21 @@
                (+ f"max running agent sessions reached: {owned-count}/{max-running} "
                   "(launch-owned rows only; adopted rows are observations, "
                   "not capacity — ADR-DOE-AGENTS-004)")))))
-  (<- tmux-exists (tmux-has-session session-name))
-  (when tmux-exists
-    (raise (RuntimeError f"tmux session already exists: {session-name}")))
+  None)
+
+
+(defk prepare-launch-workspace [params]
+  {:pre [(: params dict)]
+   :post [(: % dict)]}
+  "launch の作業場と identity の準備(admission の後・器の起動の前・oracle の順序):
+   workspace seed の実体化 → work_dir の実在 → context file → result 契約の受理 →
+   per-kind PreLaunchSetup(auth home の解決・trust・claude の会話 identity の鋳造)。
+   戻り値: {\"identity\" 実効 identity | None, \"conversation\" 鋳造した会話 | None}。
+   tui の launch-session と headless の launch が同じ 1 点を通る。"
+  (setv agent-type (get params "agent_type"))
+  (setv command-override (or (.get params "command") ""))
+  (setv has-override (bool (.strip command-override)))
+  (setv expected-result (.get params "expected_result"))
 
   ;; --- workspace seed の実体化(ACP W2 — law resolved-materialization)。
   ;; work_dir 検証より前でなければならない(worktree はこれから生える)。
@@ -761,16 +767,20 @@
     (setv identity (dict resolved))
     (.pop identity "warnings" None)
     (setv minted-conversation (.pop identity "conversation" None)))
-  (setv resume-context (.get params "resume_context"))
+  {"identity" identity "conversation" minted-conversation})
 
-  ;; --- session hook 配布の宣言(2026-08-18 ACP 起動会話の安全 hook 全滅の
-  ;; 根治 — route-c03fe34745)。daemon env knob DOEFF_AGENTD_SESSION_HOOKS を
-  ;; use-site で読む(monitor knob と同じ流儀):
-  ;;   未設定 / "disabled" = 従来物理(claude argv に
-  ;;     --settings {"disableAllHooks":true} — 49b3549b 傷跡の既定を変えない)
-  ;;   "inherit" = その pair を argv から外し、config-dir 所有者の hook 層へ
-  ;;     委ねる(hook 層は下の AGENT_SESSION_CLASS で会話種別 self-gate する契約)
-  ;; 語彙外は fail-loud: 黙った綴り違いは「安全 hook 全滅」を無言で復活させる。
+
+(defk session-hooks-mode []
+  {:pre []
+   :post [(: % str)]}
+  "session hook 配布の宣言(2026-08-18 ACP 起動会話の安全 hook 全滅の根治 —
+   route-c03fe34745)。daemon env knob DOEFF_AGENTD_SESSION_HOOKS を use-site で読む
+   (monitor knob と同じ流儀):
+     未設定 / \"disabled\" = 従来物理(claude argv に
+       --settings {\"disableAllHooks\":true} — 49b3549b 傷跡の既定を変えない)
+     \"inherit\" = その pair を argv から外し、config-dir 所有者の hook 層へ
+       委ねる(hook 層は AGENT_SESSION_CLASS で会話種別 self-gate する契約)
+   語彙外は fail-loud: 黙った綴り違いは「安全 hook 全滅」を無言で復活させる。"
   (<- session-hooks-raw (env-get "DOEFF_AGENTD_SESSION_HOOKS"))
   (setv session-hooks (or session-hooks-raw "disabled"))
   (when (not-in session-hooks #{"disabled" "inherit"})
@@ -780,6 +790,55 @@
                 "guess whether agent sessions receive the config-dir owner's "
                 "hooks (a silent typo here would silently re-disable the "
                 "safety hooks)"))))
+  session-hooks)
+
+
+(deff launch-spawn-env [identity session-env]
+  {:pre [(: identity (| dict None)) (: session-env dict)]
+   :post [(: % dict)]}
+  "実効 env = 非 auth overlay ∪ binding 由来 auth env(R7: auth の合成は per-kind impl の
+   解決した identity が唯一の源 — overlay は admission で所有キーを締め出し済みなので
+   衝突は構造的に無い)。AGENT_SESSION_CLASS: agentd 起動の会話は無人(unattended)で
+   あることを env で宣言する(hook 層の会話種別 self-gate 契約の相方)。caller overlay の
+   明示があればそちらを尊重する。tui(tmux)と headless の両方の器がこの 1 点で env を組む。"
+  (setv binding-env
+        (if (is identity None)
+            {}
+            (dfor [k v] (.items identity)
+                  :if (and (in k BINDING-OWNED-ENV-KEYS) (isinstance v str))
+                  k v)))
+  {"AGENT_SESSION_CLASS" "unattended" #** session-env #** binding-env})
+
+
+(defk launch-session [params]
+  {:pre [(: params dict)]
+   :post [(: % SessionRow)]}
+  "1 session の launch。params(oracle LaunchParams + R7 binding):
+   session_id / session_name / agent_type / work_dir / lifecycle /
+   binding(typed auth/profile 構成 — ADR-DOE-AGENTS-004 R7)/
+   session_env(非 auth overlay)/ prompt / command(明示 override、
+   escape hatch)/ expected_result / model / effort / mcp_servers /
+   socket_path / skip_trust_setup。戻り値: 永続化済みの booting SessionRow。
+   admission(admit-launch)→ tmux の重複 → 作業場と identity
+   (prepare-launch-workspace)→ argv → tmux の起動 → ready gate → prompt の配送。"
+  (setv session-id (get params "session_id"))
+  (setv session-name (get params "session_name"))
+  (setv agent-type (get params "agent_type"))
+  (setv lifecycle (get params "lifecycle"))
+  (setv session-env (.get params "session_env" {}))
+  (setv command-override (or (.get params "command") ""))
+  (setv has-override (bool (.strip command-override)))
+  (setv expected-result (.get params "expected_result"))
+
+  (<- _ (admit-launch params))
+  (<- tmux-exists (tmux-has-session session-name))
+  (when tmux-exists
+    (raise (RuntimeError f"tmux session already exists: {session-name}")))
+  (<- prepared (prepare-launch-workspace params))
+  (setv identity (get prepared "identity"))
+  (setv minted-conversation (get prepared "conversation"))
+  (setv resume-context (.get params "resume_context"))
+  (<- session-hooks (session-hooks-mode))
 
   ;; --- result channel 配線 + 起動 command(oracle resolve_launch_command:
   ;; override は verbatim、それ以外は per-kind argv builder)。
@@ -807,20 +866,8 @@
     (setv command-line (shell-join argv)))
 
   ;; --- tmux session 作成(禁止 env reject は substrate 所有)+ 起動。
-  ;; 実効 env = 非 auth overlay ∪ binding 由来 auth env(R7: auth の合成は
-  ;; per-kind impl の解決した identity が唯一の源 — overlay は admission で
-  ;; 所有キーを締め出し済みなので衝突は構造的に無い)。
-  (setv binding-env
-        (if (is identity None)
-            {}
-            (dfor [k v] (.items identity)
-                  :if (and (in k BINDING-OWNED-ENV-KEYS) (isinstance v str))
-                  k v)))
-  ;; AGENT_SESSION_CLASS: agentd 起動の会話は無人(unattended)であることを
-  ;; env で宣言する(hook 層の会話種別 self-gate 契約の相方 — 上の session
-  ;; hook 註)。caller overlay の明示があればそちらを尊重する。
-  (setv effective-env {"AGENT_SESSION_CLASS" "unattended"
-                       #** session-env #** binding-env})
+  ;; 実効 env は launch-spawn-env の 1 点(tui と headless で同じ組み方)。
+  (setv effective-env (launch-spawn-env identity session-env))
   (<- pane-id (tmux-new-session session-name (get params "work_dir") effective-env))
 
   ;; --- booting 行の登録(tmux-new-session 直後・ready 待ちの前 — issue
@@ -1214,7 +1261,16 @@
                              (when (= mode "resume") source-sid)
                            "forked_from_session_id"
                              (when (= mode "fork") source-sid)}})
-  (<- row (launch-session launch-params))
+  ;; 宿しは backend ごと(host の config が params に運ぶ backend_kind の 1 点):
+  ;; headless は tui の ready gate / paste を持たない別の program(headless.hy —
+  ;; admission と identity の準備は上の 2 つの defk を共有する)。
+  (setv incarnate launch-session)
+  (when (= (.get launch-params "backend_kind") "headless")
+    ;; headless.hy はこの module の admit-launch / prepare-launch-workspace を import する
+    ;; ので、module の頭で import すると循環する — 宿しの拍に引く。
+    (import doeff_agents.sessionhost.headless [headless-launch-session])
+    (setv incarnate headless-launch-session))
+  (<- row (incarnate launch-params))
   (<- _ (session-store-record-event row.session-id
                                     (if (= mode "resume")
                                         "session_resumed"

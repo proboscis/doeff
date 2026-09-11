@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "_comment": "共通の品質検査(dotfiles agent/code_quality.py)の module 契約。初回の登録は段 2 の agentd(sessionhost/acp/・agora-redesign #19 / #20)だけ — 既存の sessionhost(deff / defhandler を持つ Hy)は投影の対象外なので include に入れず、依存先としてだけ宣言する。",
+  "_comment": "共通の品質検査(dotfiles agent/code_quality.py)の module 契約。初回の登録は段 2 の agentd(sessionhost/acp/・agora-redesign #19 / #20)だけ — 既存の sessionhost(deff / defhandler を持つ Hy)は投影の対象外なので include に入れず、依存先としてだけ宣言する。 段 2 lane 2d(agora-redesign #37)で headless backend の Python の module(headless_protocol / headless_process)と検を足す — headless.hy / substrate_headless.hy / impls/headless_argv.hy は deff / defhandler を持つ Hy なので、既存の sessionhost と同じく投影の対象外(依存先としてだけ宣言)。",
   "include": [
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/__init__.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py",
@@ -14,7 +14,10 @@
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/runtime.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/entry.py",
     "packages/doeff-agents/tests/test_sessionhost_acp.py",
-    "docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy"
+    "docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/headless_protocol.py",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/headless_process.py",
+    "packages/doeff-agents/tests/test_sessionhost_headless.py"
   ],
   "exclude": [],
   "baseline": ".agents/code-quality-baseline.json",
@@ -122,7 +125,7 @@
         "packages/doeff-agents/src/doeff_agents/sessionhost/acp/runtime.py",
         "packages/doeff-agents/src/doeff_agents/sessionhost/acp/__init__.py"
       ],
-      "responsibility": "agentd の composition root: env から値を読み、実 I/O の handler を選び、host の socket を待って tick の loop を daemon thread で回す。test は run_tick を fake の handler で呼ぶ",
+      "responsibility": "agentd の composition root: env から値を読み、実 I/O の handler を選び、host の socket を待って tick の loop を daemon thread で回す。test は run_tick を fake の handler で呼ぶ。streamCapability は host の backend から導く(valve.backend_of → judgment.stream-capability-of-backend)",
       "layer": "runtime",
       "public": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/acp/runtime.py",
@@ -133,7 +136,8 @@
         "agentd-programs",
         "agentd-handlers",
         "agentd-valve",
-        "agentd-client"
+        "agentd-client",
+        "agentd-judgment"
       ],
       "typed": true
     },
@@ -224,6 +228,118 @@
       "layer": "io",
       "public": [
         "packages/doeff-agents/src/doeff_agents/agentd_client.py"
+      ],
+      "allow": [],
+      "typed": false
+    },
+    {
+      "name": "sessionhost-headless-protocol",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/headless_protocol.py"
+      ],
+      "responsibility": "headless backend の stdin / stdout の作法(純粋・I/O なし): claude の stream-json(prompt は stdin + EOF・result で手番の終わり・SIGINT で割り込み)と codex app-server の JSON-RPC(initialize → thread/start | resume → turn/start・turn/completed・turn/interrupt・server 要求の方策の表)の状態機械(Dialogue)、手番の次の 1 手の判断(turn_verdict)。効果は値(Step / TurnInput / Interrupt)で返す",
+      "layer": "pure",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/headless_protocol.py"
+      ],
+      "allow": [],
+      "typed": true
+    },
+    {
+      "name": "sessionhost-headless-process",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/headless_process.py"
+      ],
+      "responsibility": "headless backend の器(I/O): 子 process の起動・stdin の書き手 thread・stdout の読み手 thread(events file への追記・Dialogue の効果の運搬・観測の束)・SIGINT・kill・session の名の登記簿。判断を持たない(Dialogue の効果の値を運ぶだけ)",
+      "layer": "io",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/headless_process.py"
+      ],
+      "allow": [
+        "sessionhost-headless-protocol"
+      ],
+      "typed": true
+    },
+    {
+      "name": "sessionhost-headless-tests",
+      "paths": [
+        "packages/doeff-agents/tests/test_sessionhost_headless.py"
+      ],
+      "responsibility": "headless backend の焦点の検: 純粋な作法・器(替え玉の claude / codex の実 process)・host の RPC(backend=headless・tmpdir の store)・実 binary の --help の smoke",
+      "layer": "runtime",
+      "public": [],
+      "allow": [
+        "sessionhost-headless-protocol",
+        "sessionhost-headless-process",
+        "sessionhost-host",
+        "sessionhost-headless",
+        "sessionhost-headless-argv",
+        "sessionhost-store"
+      ],
+      "typed": true
+    },
+    {
+      "name": "sessionhost-host",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/host.pyi"
+      ],
+      "responsibility": "sessionhost の host(RPC の dispatch・handler stack・monitor loop — deff / defhandler の Hy・既存 + backend=headless の分岐。依存先として宣言・検が触る面の pyi)",
+      "layer": "runtime",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/host.pyi"
+      ],
+      "allow": [
+        "sessionhost-store"
+      ],
+      "typed": false
+    },
+    {
+      "name": "sessionhost-headless",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/headless.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/headless.pyi"
+      ],
+      "responsibility": "headless backend の program(defk・effect の列): launch / send / interrupt / cancel / cleanup / capture / monitor。判断は headless_protocol の純関数、I/O は substrate_headless(deff を持つ Hy は投影の対象外 — 依存先として宣言・pyi は検が触る面)",
+      "layer": "effects",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/headless.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/headless.pyi"
+      ],
+      "allow": [
+        "sessionhost-headless-protocol"
+      ],
+      "typed": false
+    },
+    {
+      "name": "sessionhost-headless-argv",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/impls/headless_argv.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/impls/headless_argv.pyi"
+      ],
+      "responsibility": "headless の起動 argv と作法の per-kind 組み立て(claude の print mode の唯一の家・codex app-server)— deff / defhandler の Hy(依存先として宣言・pyi は検が触る面)",
+      "layer": "pure",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/impls/headless_argv.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/impls/headless_argv.pyi"
+      ],
+      "allow": [
+        "sessionhost-headless-protocol"
+      ],
+      "typed": false
+    },
+    {
+      "name": "sessionhost-store",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/store.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/store.pyi"
+      ],
+      "responsibility": "sessionhost の store(SQLite actor・既存 — 変えない。依存先として宣言・pyi は検が触る StoreActor だけ)",
+      "layer": "io",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/store.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/store.pyi"
       ],
       "allow": [],
       "typed": false

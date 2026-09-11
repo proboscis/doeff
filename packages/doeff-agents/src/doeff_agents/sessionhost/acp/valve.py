@@ -15,6 +15,10 @@ ACP_VALVE_DEFAULT = False
 _VALVE_WORDS: dict[str, bool] = {"on": True, "off": False}
 #: host の socket の flag(oracle parse_args の綴り — 値が無い時は host と同じく既定へ)。
 HOST_SOCKET_FLAG = "--socket"
+#: host の backend の flag と env(host.hy parse-args と同じ綴り — flag が優先・既定 tmux)。
+HOST_BACKEND_FLAG = "--backend"
+HOST_BACKEND_ENV = "DOEFF_SESSIONHOST_BACKEND"
+HOST_BACKEND_DEFAULT = "tmux"
 
 
 @dataclass(frozen=True)
@@ -46,3 +50,15 @@ def socket_path_override(host_argv: Sequence[str]) -> str | None:
         if arg == HOST_SOCKET_FLAG and index + 1 < len(host_argv):
             return host_argv[index + 1]
     return None
+
+
+def backend_of(host_argv: Sequence[str], env: Mapping[str, str]) -> str:
+    """host が話す backend(``--backend <kind>`` が優先・無ければ env・無ければ tmux)— host.hy
+    parse-args と同じ解決順。agentd の streamCapability はここから導く(headless = events)。"""
+    for index, arg in enumerate(host_argv):
+        if arg == HOST_BACKEND_FLAG and index + 1 < len(host_argv):
+            return host_argv[index + 1]
+    raw = env.get(HOST_BACKEND_ENV)
+    if raw is None or raw.strip() == "":
+        return HOST_BACKEND_DEFAULT
+    return raw.strip()

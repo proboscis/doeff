@@ -40,6 +40,7 @@ from doeff_agents.agentd_client import AgentdClient, AgentdClientError, launch_r
 from doeff_agents.sessionhost.acp.effects import (
     JSON,
     AcpCreate,
+    AcpEventWindow,
     AcpGet,
     AcpGetRow,
     AcpPutStatus,
@@ -53,6 +54,7 @@ from doeff_agents.sessionhost.acp.effects import (
     Conflict,
     CustodyLeaseBorrow,
     CustodyLeaseRevoke,
+    EventWindow,
     FsCanonicalPath,
     FsFileSize,
     FsWritePrivateText,
@@ -62,12 +64,15 @@ from doeff_agents.sessionhost.acp.effects import (
     LeaseRefused,
     LogLine,
     MetricLine,
+    MintId,
     Pushed,
     PushOutcome,
     Refused,
     SessionCapture,
     SessionCleanup,
+    SessionEvents,
     SessionGet,
+    SessionInterrupt,
     SessionLaunch,
     SessionList,
     SessionOutcome,
@@ -163,6 +168,7 @@ def decode_row(value: JSON) -> AcpRow | None:
     generation = _int_field(value, "resourceGeneration")
     spec = value.get("resourceSpecJson")
     status = value.get("resourceStatusJson")
+    landed = _str_field(value, "resourceLandedAt")
     return AcpRow(
         namespace=namespace,
         key=key,
@@ -175,6 +181,42 @@ def decode_row(value: JSON) -> AcpRow | None:
         payload=_as_object(value.get("resourcePayload")),
         spec=spec if isinstance(spec, dict) else {},
         status=status if isinstance(status, dict) else None,
+        landed_at_ms=None if landed is None else _epoch_ms_of_iso(landed),
+    )
+
+
+def decode_event_window(after: int, body: JSONObject) -> EventWindow:
+    """``GET /api/event-window`` の応答 → EventWindow(post-image は鍵ごとの最後・delete は retired)。"""
+    through = _int_field(body, "through")
+    latest = _int_field(body, "latestSequence")
+    events = body.get("events")
+    rows: dict[str, AcpRow] = {}
+    retired: dict[str, None] = {}
+    births: dict[str, int] = {}
+    for event in events if isinstance(events, list) else []:
+        deltas = event.get("postDeltas") if isinstance(event, dict) else None
+        for delta in deltas if isinstance(deltas, list) else []:
+            if not isinstance(delta, dict):
+                continue
+            key = _str_field(delta, "key")
+            if delta.get("op") == "delete":
+                if key is not None:
+                    rows.pop(key, None)
+                    retired[key] = None
+                continue
+            row = decode_row(delta.get("image"))
+            if row is not None:
+                rows[row.key] = row
+                retired.pop(row.key, None)
+                if row.generation == 1 and row.landed_at_ms is not None:
+                    births.setdefault(row.resource_id, row.landed_at_ms)
+    return EventWindow(
+        complete=True,
+        through=through if through is not None else after,
+        latest=latest if latest is not None else (through if through is not None else after),
+        rows=tuple(rows.values()),
+        retired=tuple(retired),
+        births=tuple(sorted(births.items())),
     )
 
 
@@ -345,17 +387,19 @@ class AcpHttp:
         self._watch: WatchReader | None = None
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
-        if isinstance(effect, (AcpGet, AcpGetRow, AcpWatchSse)):
+        if isinstance(effect, (AcpGet, AcpGetRow, AcpEventWindow, AcpWatchSse)):
             return Resume(k, self._read(effect))
         if isinstance(effect, (AcpPutStatus, AcpCreate, AcpStreamPush)):
             return Resume(k, self._write(effect))
         return Pass(effect, k)
 
-    def _read(self, effect: AcpGet | AcpGetRow | AcpWatchSse) -> object:
+    def _read(self, effect: AcpGet | AcpGetRow | AcpEventWindow | AcpWatchSse) -> object:
         if isinstance(effect, AcpGet):
             return self._list(effect.kind)
         if isinstance(effect, AcpGetRow):
             return self._row(effect.key)
+        if isinstance(effect, AcpEventWindow):
+            return self._event_window(effect.after, effect.limit)
         return self._watch_take(effect.since, effect.wait_seconds)
 
     def _write(self, effect: AcpPutStatus | AcpCreate | AcpStreamPush) -> object:
@@ -399,6 +443,24 @@ class AcpHttp:
                 f"agentd: ACP read of {key} failed ({reply.status}): {_error_text(reply)}"
             )
         return decode_row(reply.body)
+
+    def _event_window(self, after: int, limit: int) -> EventWindow:
+        """変わった行だけ(cursor-only の窓)。409(cursor が retention の床の下)と到達不能は
+        complete = False(呼び手は全量 list に落ちる)、それ以外の断りは RuntimeError(tick の縁)。"""
+        reply = _http_json(
+            "GET",
+            f"{self._base_url}/api/event-window?after={after}&limit={limit}",
+            self._headers,
+            None,
+            HTTP_TIMEOUT_SECONDS,
+        )
+        if reply.status in (0, 409):
+            return EventWindow(complete=False, through=after, latest=after, rows=(), retired=())
+        if reply.status != 200:
+            raise RuntimeError(
+                f"agentd: ACP event-window after {after} failed ({reply.status}): {_error_text(reply)}"
+            )
+        return decode_event_window(after, reply.body)
 
     def _post_event(self, body: JSONObject) -> WriteOutcome:
         reply = _http_json(
@@ -565,6 +627,7 @@ def session_view_of(result: JSON) -> SessionView | None:
     identity = snapshot.get("effective_identity")
     cause = snapshot.get("terminal_cause")
     turn_ended = _str_field(snapshot, "turn_ended_at")
+    backend_ref = snapshot.get("backend_ref")
     return SessionView(
         session_id=session_id,
         agent_type=agent_type,
@@ -576,6 +639,8 @@ def session_view_of(result: JSON) -> SessionView | None:
         result_payload=snapshot.get("result_payload"),
         terminal_cause=cause if isinstance(cause, dict) else None,
         turn_ended_at_ms=None if turn_ended is None else _epoch_ms_of_iso(turn_ended),
+        backend_kind=_str_field(snapshot, "backend_kind") or "tmux",
+        backend_ref=backend_ref if isinstance(backend_ref, dict) else None,
     )
 
 
@@ -592,18 +657,26 @@ class SessionRpc:
         self._client = AgentdClient(socket_path)
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
-        if isinstance(effect, (SessionLaunch, SessionResume, SessionSend, SessionCleanup)):
+        if isinstance(
+            effect, (SessionLaunch, SessionResume, SessionSend, SessionInterrupt, SessionCleanup)
+        ):
             return Resume(k, self._act(effect))
         if isinstance(effect, (SessionGet, SessionList, SessionCapture)):
             return Resume(k, self._look(effect))
         return Pass(effect, k)
 
-    def _act(self, effect: SessionLaunch | SessionResume | SessionSend | SessionCleanup) -> object:
-        """器を動かす要求(起こす・送る・片付ける)。"""
+    def _act(
+        self,
+        effect: SessionLaunch | SessionResume | SessionSend | SessionInterrupt | SessionCleanup,
+    ) -> object:
+        """器を動かす要求(起こす・送る・止める・片付ける)。"""
         if isinstance(effect, SessionLaunch):
             return self._incarnate("session.launch", effect.params)
         if isinstance(effect, SessionResume):
             return self._incarnate("session.resume", effect.params)
+        if isinstance(effect, SessionInterrupt):
+            self._client.request("session.interrupt", {"session_id": effect.session_id})
+            return None
         if isinstance(effect, SessionSend):
             self._client.request(
                 "session.send",
@@ -671,13 +744,35 @@ class SessionRpc:
 # ------------------------------------------------------------------ 時計・計器・file の handler
 
 
+#: ULID の Crockford base32(I / L / O / U を除く 32 字)。
+_CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def mint_ulid(now_ms: int, entropy: bytes) -> str:
+    """ULID(26 字): 48 bit の時刻(ms)+ 80 bit の乱数を Crockford base32 で。純関数 —
+    時刻と乱数は呼び手(handler)が渡す。"""
+    if len(entropy) != 10:
+        raise ValueError(f"ULID entropy must be 10 bytes, got {len(entropy)}")
+    value = ((now_ms & ((1 << 48) - 1)) << 80) | int.from_bytes(entropy, "big")
+    out: list[str] = []
+    for _ in range(26):
+        out.append(_CROCKFORD[value & 31])
+        value >>= 5
+    return "".join(reversed(out))
+
+
 class LocalIo:
-    """時計・計器(stdout の JSON 行)・log(stderr)・file の読み書き。"""
+    """時計・計器(stdout の JSON 行)・log(stderr)・file の読み書き・id の鋳造。"""
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
+        if isinstance(effect, MintId):
+            return Resume(k, mint_ulid(int(time.time() * 1000), os.urandom(10)))
         if isinstance(effect, (ClockNowMs, MetricLine, LogLine)):
             return Resume(k, self._observe(effect))
-        if isinstance(effect, (FsCanonicalPath, FsFileSize, FsWritePrivateText, SessionTranscript)):
+        if isinstance(
+            effect,
+            (FsCanonicalPath, FsFileSize, FsWritePrivateText, SessionTranscript, SessionEvents),
+        ):
             return Resume(k, self._file(effect))
         return Pass(effect, k)
 
@@ -695,7 +790,12 @@ class LocalIo:
         return None
 
     def _file(
-        self, effect: FsCanonicalPath | FsFileSize | FsWritePrivateText | SessionTranscript
+        self,
+        effect: FsCanonicalPath
+        | FsFileSize
+        | FsWritePrivateText
+        | SessionTranscript
+        | SessionEvents,
     ) -> object:
         if isinstance(effect, FsCanonicalPath):
             return os.path.realpath(effect.path)
@@ -715,7 +815,8 @@ def _file_size(path: str) -> int:
 
 
 def read_transcript(path: str, offset: int) -> TranscriptChunk:
-    """``offset`` から完全な行だけを読む(途中の行は次回へ残す)。不在は空。"""
+    """``offset`` から完全な行だけを読む(途中の行は次回へ残す)。不在は空。transcript も
+    headless の events file も同じ読み(1 行 1 JSON の追記 file)。"""
     try:
         with open(path, "rb") as handle:
             handle.seek(offset)

@@ -70,6 +70,19 @@
 (import doeff_agents.sessionhost.schema [validate-against-schema schema-admission-error])
 (import doeff_agents.sessionhost.substrate [real-substrate])
 (import doeff_agents.sessionhost.substrate_herdr [DEFAULT-HERDR-SOCKET herdr-substrate])
+(import doeff_agents.sessionhost.substrate_headless [HEADLESS-REGISTRY headless-substrate])
+(import doeff_agents.sessionhost.impls.headless_argv [headless-argv-impl])
+(import doeff_agents.sessionhost.effects [headless-kill])
+(import doeff_agents.sessionhost.headless [
+  HEADLESS-BACKEND-KIND
+  EVENT-SESSION-INTERRUPTED
+  headless-cancel-program
+  headless-capture-program
+  headless-cleanup-program
+  headless-interrupt-program
+  headless-launch-session
+  headless-monitor-cycle
+  headless-send-program])
 (import doeff_agents.sessionhost.store [
   HISTORY-PRUNE-BATCH-ROWS
   LEASE-TTL-SECONDS
@@ -190,6 +203,10 @@
   (setv backend "tmux")
   #^ str herdr-socket
   (setv herdr-socket DEFAULT-HERDR-SOCKET)
+  ;; backend=headless の実況の正本(events file)の置き場。既定は
+  ;; $XDG_STATE_HOME/doeff/headless(store DB と同じ解決系)。
+  #^ str headless-events-root
+  (setv headless-events-root "")
   ;; out-of-band 寿命境界(opt-in): spawn 元の死で自己終了 + launch 済み
   ;; session の reap。conformance harness が常時立てる(S28)。
   #^ bool exit-when-orphaned
@@ -248,6 +265,13 @@
    :post [(: % str)]}
   "$XDG_STATE_HOME/doeff/agentd.sqlite(oracle default_db_path :718-720)。"
   (os.path.join (xdg-state-home) "doeff" "agentd.sqlite"))
+
+(deff default-headless-events-root []
+  {:pre [True]
+   :post [(: % str)]}
+  "$XDG_STATE_HOME/doeff/headless(headless backend の events file の置き場 —
+   env knob DOEFF_SESSIONHOST_HEADLESS_DIR で上書き)。"
+  (os.path.join (xdg-state-home) "doeff" "headless"))
 
 (deff default-socket-path []
   {:pre [True]
@@ -309,6 +333,9 @@
   (setv backend (.get os.environ "DOEFF_SESSIONHOST_BACKEND" "tmux"))
   (setv herdr-socket (.get os.environ "DOEFF_SESSIONHOST_HERDR_SOCKET"
                            DEFAULT-HERDR-SOCKET))
+  ;; headless backend(agora-redesign #37): events file の置き場も env knob。
+  (setv headless-events-root (.get os.environ "DOEFF_SESSIONHOST_HEADLESS_DIR"
+                                   (default-headless-events-root)))
   ;; out-of-band 寿命境界(opt-in、env-only — CLI 語彙は oracle parse_args の
   ;; 凍結物理なので足さない。backend knob と同じ搬送経路)。
   (setv exit-when-orphaned
@@ -391,8 +418,8 @@
     (+= index 1))
   (when (!= command "serve")
     (raise (ValueError f"unsupported command: {command}")))
-  (when (not-in backend #{"tmux" "herdr"})
-    (raise (ValueError f"unsupported backend: {backend} (expected tmux|herdr)")))
+  (when (not-in backend #{"tmux" "herdr" HEADLESS-BACKEND-KIND})
+    (raise (ValueError f"unsupported backend: {backend} (expected tmux|herdr|headless)")))
   (HostConfig
     :db-path (or db-path (default-db-path))
     :socket-path (or socket-path (default-socket-path))
@@ -405,6 +432,7 @@
     :prompt-judge-cmd prompt-judge-cmd
     :backend backend
     :herdr-socket herdr-socket
+    :headless-events-root headless-events-root
     :exit-when-orphaned exit-when-orphaned))
 
 
@@ -465,9 +493,22 @@
                 program)))
   (when (= config.backend "herdr")
     (setv inner ((herdr-substrate config.herdr-socket) inner)))
+  ;; backend=headless(agora-redesign #37): headless の substrate(子 process)と
+  ;; kind 別の headless argv(print mode の唯一の家)を real-substrate の内側に挿す。
+  ;; Tmux* effect は headless の program からは出ない(非 headless の substrate は素通し)。
+  (when (= config.backend HEADLESS-BACKEND-KIND)
+    (setv inner ((headless-substrate HEADLESS-REGISTRY)
+                 ((headless-argv-impl) inner))))
   (run ((sqlite-session-store actor)
         ((real-substrate config.tmux-bin)
          inner))))
+
+
+(deff headless-backend? [config]
+  {:pre [(: config HostConfig)]
+   :post [(: % bool)]}
+  "この host が headless backend を話すか(RPC の program の選択の 1 点)。"
+  (= config.backend HEADLESS-BACKEND-KIND))
 
 
 (defk require-session-row [session-id]
@@ -533,6 +574,23 @@
                                       now-str)))
   (<- _ (session-store-upsert updated))
   (<- _ (session-store-record-event session-id "session_cancelled" updated))
+  updated)
+
+(defk interrupt-program [session-id]
+  {:pre [(: session-id str)]
+   :post [(: % SessionRow)]}
+  "session.interrupt(tmux / herdr): 走っている手番だけを止める(Escape の送出 — claude /
+   codex の tui は Escape で今の手番を中断して idle に戻る)。session は残す: 手番の終わりは
+   monitor の turn-end の連言が turn_ended_at に刻む(温かい session — ADR-DOE-AGENTS-012
+   R10)。session.cancel(終端)とは別の動詞(agora-redesign #37: withdraw = 中断の合図)。"
+  (<- row (require-session-row session-id))
+  (<- exists (tmux-has-session row.session-name))
+  (when exists
+    (<- _ (tmux-send-keys row.pane-id "Escape" False False)))
+  (<- now (clock-now))
+  (setv updated (replace row :last-observed-at (iso-format now)))
+  (<- _ (session-store-upsert updated))
+  (<- _ (session-store-record-event session-id EVENT-SESSION-INTERRUPTED updated))
   updated)
 
 (defk cleanup-program [session-id]
@@ -784,7 +842,9 @@
    ;; 未設定なら None → launch.hy が oracle 定数 120s に fallback)。
    "repl_idle_max_wait_seconds" (env-positive-i64
                                   "DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS")
-   "backend_kind" config.backend})
+   "backend_kind" config.backend
+   ;; headless backend の実況の正本の置き場(headless.hy が events file を作る)。
+   "events_root" config.headless-events-root})
 
 
 (deff wire-snapshot [actor session-id]
@@ -985,6 +1045,9 @@
   (<- row (require-session-row session-id))
   (when (not (is-run-to-completion row.lifecycle))
     (return False))
+  (when (= row.backend-kind HEADLESS-BACKEND-KIND)
+    (<- killed (headless-kill row.session-name))
+    (return (bool killed)))
   (<- exists (tmux-has-session row.session-name))
   (when exists
     (<- _ (tmux-kill-session row.session-name)))
@@ -1058,7 +1121,10 @@
                 "enforcement follows once callers migrate)")
              :file sys.stderr)
       (.flush sys.stderr))
-    (setv row (run-hosted config actor (launch-session program-params)))
+    (setv row (run-hosted config actor
+                          (if (headless-backend? config)
+                              (headless-launch-session program-params)
+                              (launch-session program-params))))
     (setv sid row.session-id)
     (setv wire (wire-snapshot actor sid))
     (record-command actor sid "session.launch" wire)
@@ -1116,7 +1182,8 @@
            "max_running" config.max-running
            "repl_idle_max_wait_seconds" (env-positive-i64
                                           "DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS")
-           "backend_kind" config.backend})
+           "backend_kind" config.backend
+           "events_root" config.headless-events-root})
     (setv row None)
     (try
       (setv row (run-hosted config actor (resume-session program-params)))
@@ -1261,7 +1328,10 @@
     (setv p (params-object params "session.capture"))
     (setv sid (required-str-param p "session_id" "session.capture"))
     (setv lines (int (.get p "lines" 100)))
-    (setv text (run-hosted config actor (capture-program sid lines)))
+    (setv text (run-hosted config actor
+                           (if (headless-backend? config)
+                               (headless-capture-program sid lines)
+                               (capture-program sid lines))))
     (return {"text" text}))
 
   (when (= method "session.send")
@@ -1271,14 +1341,33 @@
     (setv enter (bool (.get p "enter" True)))
     (setv literal (bool (.get p "literal" True)))
     (setv awaiting (bool (.get p "awaiting" False)))
-    (run-hosted config actor (send-program sid message literal enter awaiting))
+    (run-hosted config actor
+                (if (headless-backend? config)
+                    (headless-send-program sid message awaiting)
+                    (send-program sid message literal enter awaiting)))
     (record-command actor sid "session.send" message)
     (return {"sent" True}))
+
+  ;; agora-redesign #37: 走っている手番だけを止め、session は残す(withdraw = 中断の
+  ;; 合図)。cancel(終端)とは別の動詞 — 1 つの動詞に「終端」と「残す」を同居させない。
+  (when (= method "session.interrupt")
+    (setv p (params-object params "session.interrupt"))
+    (setv sid (required-str-param p "session_id" "session.interrupt"))
+    (run-hosted config actor
+                (if (headless-backend? config)
+                    (headless-interrupt-program sid)
+                    (interrupt-program sid)))
+    (setv wire (wire-snapshot actor sid))
+    (record-command actor sid "session.interrupt" wire)
+    (return wire))
 
   (when (= method "session.cancel")
     (setv p (params-object params "session.cancel"))
     (setv sid (required-str-param p "session_id" "session.cancel"))
-    (run-hosted config actor (cancel-program sid))
+    (run-hosted config actor
+                (if (headless-backend? config)
+                    (headless-cancel-program sid)
+                    (cancel-program sid)))
     (setv wire (wire-snapshot actor sid))
     (record-command actor sid "session.cancel" wire)
     (return wire))
@@ -1286,7 +1375,10 @@
   (when (= method "session.cleanup")
     (setv p (params-object params "session.cleanup"))
     (setv sid (required-str-param p "session_id" "session.cleanup"))
-    (run-hosted config actor (cleanup-program sid))
+    (run-hosted config actor
+                (if (headless-backend? config)
+                    (headless-cleanup-program sid)
+                    (cleanup-program sid)))
     (setv wire (wire-snapshot actor sid))
     (record-command actor sid "session.cleanup" wire)
     (return wire))
@@ -1439,7 +1531,10 @@
     (when (not (.get snap "adopted" False))
       (setv sid (get snap "session_id"))
       (run-worker-tick f"orphan-reap[{sid}]"
-                       (fn [] (run-hosted config actor (cleanup-program sid)))))))
+                       (fn [] (run-hosted config actor
+                                          (if (headless-backend? config)
+                                              (headless-cleanup-program sid)
+                                              (cleanup-program sid))))))))
 
 
 (defn orphan-watch-loop [config actor initial-ppid]
@@ -1537,7 +1632,10 @@
   (while True
     (run-worker-tick
       "monitor"
-      (fn [] (run-hosted config actor (monitor-cycle (build-monitor-knobs config)))))
+      (fn [] (run-hosted config actor
+                         (if (headless-backend? config)
+                             (headless-monitor-cycle)
+                             (monitor-cycle (build-monitor-knobs config))))))
     (when (>= (time.monotonic) next-prune)
       (run-worker-tick "history-prune" (fn [] (prune-history-tick actor)))
       (setv next-prune (+ (time.monotonic) HISTORY-PRUNE-INTERVAL-SECONDS)))
