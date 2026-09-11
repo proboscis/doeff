@@ -41,7 +41,7 @@ dev = [
 
 [project.scripts]
 doeff-agents = "doeff_agents.cli:cli"
-doeff-sessionhost = "doeff_agents.sessionhost.hostmain:main"
+doeff-sessionhost = "doeff_agents.sessionhost.acp.entry:main"
 
 [project.urls]
 Homepage = "https://github.com/proboscis/doeff"

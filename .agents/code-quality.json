@@ -1,0 +1,249 @@
+{
+  "version": 1,
+  "_comment": "共通の品質検査(dotfiles agent/code_quality.py)の module 契約。初回の登録は段 2 の agentd(sessionhost/acp/・agora-redesign #19 / #20)だけ — 既存の sessionhost(deff / defhandler を持つ Hy)は投影の対象外なので include に入れず、依存先としてだけ宣言する。",
+  "include": [
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/__init__.py",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.pyi",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.pyi",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/handlers.py",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/fake.py",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/valve.py",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/runtime.py",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/entry.py",
+    "packages/doeff-agents/tests/test_sessionhost_acp.py",
+    "docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy"
+  ],
+  "exclude": [],
+  "baseline": ".agents/code-quality-baseline.json",
+  "source_roots": {
+    "python": [
+      "packages/doeff-agents/src"
+    ]
+  },
+  "modules": [
+    {
+      "name": "agentd-effects",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py"
+      ],
+      "responsibility": "agentd の要求(ACP の読み書き・watch・中継の push・custody の貸出・器の RPC・時計と file)と値の型。wire の綴り(kind 名・phase・principal)と値の宣言(AgentdSettings)の 1 点。data だけで I/O を行わない",
+      "layer": "effects",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py"
+      ],
+      "allow": [],
+      "typed": true
+    },
+    {
+      "name": "agentd-judgment",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.pyi"
+      ],
+      "responsibility": "agentd の純粋な判断(defk・bind ゼロ): 自分に結ばれた job か(唯一の判定)・status / charter / node の欄の写し・transcript → TurnDelta と entries・capture の是非・待ちの長さ。I/O の import なし",
+      "layer": "pure",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.pyi"
+      ],
+      "allow": [
+        "agentd-effects"
+      ],
+      "typed": true
+    },
+    {
+      "name": "agentd-programs",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.pyi"
+      ],
+      "responsibility": "agentd の program(defk・effect の列): 参加の heartbeat・Bound の受け(Running + 借用 + launch + inputs)・実況(transcript / frame)・記録(turn-record)・手番の終わり。1 tick = agentd-tick。判断と I/O を持たない",
+      "layer": "effects",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.pyi"
+      ],
+      "allow": [
+        "agentd-effects",
+        "agentd-judgment"
+      ],
+      "typed": true
+    },
+    {
+      "name": "agentd-handlers",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/handlers.py"
+      ],
+      "responsibility": "agentd の要求を実世界で扱う handler: ACP の HTTP(bearer)・watch の SSE の読み手・custody の HTTP(借り手札)・器(sessionhost の RPC client)・時計 / 計器 / file。判断を持たない",
+      "layer": "io",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/handlers.py"
+      ],
+      "allow": [
+        "agentd-effects",
+        "agentd-client"
+      ],
+      "typed": true
+    },
+    {
+      "name": "agentd-fake",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/fake.py"
+      ],
+      "responsibility": "agentd の要求を memory で受ける fake の handler(test と法の反例)。HTTP も socket も無い",
+      "layer": "io",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/fake.py"
+      ],
+      "allow": [
+        "agentd-effects"
+      ],
+      "typed": true
+    },
+    {
+      "name": "agentd-valve",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/valve.py"
+      ],
+      "responsibility": "agentd の弁(--acp / DOEFF_AGENTD_ACP)の判定 — 既定 off の値の宣言の 1 点。純関数",
+      "layer": "pure",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/valve.py"
+      ],
+      "allow": [],
+      "typed": true
+    },
+    {
+      "name": "agentd-runtime",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/runtime.py",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/__init__.py"
+      ],
+      "responsibility": "agentd の composition root: env から値を読み、実 I/O の handler を選び、host の socket を待って tick の loop を daemon thread で回す。test は run_tick を fake の handler で呼ぶ",
+      "layer": "runtime",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/runtime.py",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/__init__.py"
+      ],
+      "allow": [
+        "agentd-effects",
+        "agentd-programs",
+        "agentd-handlers",
+        "agentd-valve",
+        "agentd-client"
+      ],
+      "typed": true
+    },
+    {
+      "name": "agentd-entry",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/entry.py"
+      ],
+      "responsibility": "console script doeff-sessionhost の入口: 弁(serve --acp / DOEFF_AGENTD_ACP)が on なら agentd の thread を起こし、残りは今日の hostmain.main へ渡す",
+      "layer": "runtime",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/entry.py"
+      ],
+      "allow": [
+        "agentd-valve",
+        "agentd-runtime",
+        "sessionhost-hostmain",
+        "sessionhost-relaymain"
+      ],
+      "typed": true
+    },
+    {
+      "name": "sessionhost-hostmain",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/hostmain.py"
+      ],
+      "responsibility": "console script の今日の入口(report-result-mcp の分岐と Hy の host の起動・既存 — 変えない。依存先として宣言)",
+      "layer": "runtime",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/hostmain.py"
+      ],
+      "allow": [],
+      "typed": false
+    },
+    {
+      "name": "agentd-tests",
+      "paths": [
+        "packages/doeff-agents/tests/test_sessionhost_acp.py"
+      ],
+      "responsibility": "agentd の焦点の検(fake の handler の e2e・判断の純関数・弁)",
+      "layer": "runtime",
+      "public": [],
+      "allow": [
+        "agentd-effects",
+        "agentd-judgment",
+        "agentd-fake",
+        "agentd-runtime",
+        "agentd-valve"
+      ],
+      "typed": true
+    },
+    {
+      "name": "adr-agents-012",
+      "paths": [
+        "docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy"
+      ],
+      "responsibility": "ADR-DOE-AGENTS-012(agentd の腕)の法と針(deftest)",
+      "layer": "runtime",
+      "public": [],
+      "allow": [
+        "agentd-effects",
+        "agentd-judgment",
+        "agentd-fake",
+        "agentd-runtime",
+        "agentd-valve"
+      ],
+      "typed": true
+    },
+    {
+      "name": "sessionhost-relaymain",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/relaymain.py"
+      ],
+      "responsibility": "report-result-mcp の stdio relay(既存・依存先として宣言)",
+      "layer": "runtime",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/relaymain.py"
+      ],
+      "allow": [],
+      "typed": false
+    },
+    {
+      "name": "agentd-client",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/agentd_client.py"
+      ],
+      "responsibility": "sessionhost の RPC client(既存・依存先として宣言)",
+      "layer": "io",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/agentd_client.py"
+      ],
+      "allow": [],
+      "typed": false
+    }
+  ],
+  "tools": [
+    {
+      "name": "pyright",
+      "languages": [
+        "python",
+        "hy"
+      ],
+      "command": [
+        "sh",
+        "-c",
+        "exec sh \"$HOME/dotfiles/agent/venv-run.sh\" \"$PWD\" python -m pyright \"$@\"",
+        "doeff-pyright",
+        "{files}"
+      ],
+      "timeout": 120
+    }
+  ]
+}
