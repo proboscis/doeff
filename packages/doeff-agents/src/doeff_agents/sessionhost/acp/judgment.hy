@@ -510,6 +510,38 @@
   next)
 
 
+(defk first-turn-carries-inputs [backend-kind arm]
+  {:pre [(: backend-kind str) (: arm str)]
+   :post [(: % bool)]}
+  "起こす手番の本文に inputs の郵便を畳むか — 判定はここ 1 点(R16): host の backend が headless
+   ∧ 腕が起こす腕(launch / resume)。headless の器は 1 手番 = 1 prompt(claude は 1 手番 1 process・
+   codex は turn/start が手番)で、走っている手番の途中に次の本文を積めない(実弾 2026-09-12:
+   launch の直後の send が同じ名で --resume を spawn し `headless session already exists`)。
+   send の腕(温かい session)は起こさないので畳む先が無い(郵便の本文だけを send)。tui(tmux /
+   herdr)は launch の後に send(pane の paste は手番の途中でも積める)で今日どおり。"
+  (and (= backend-kind BACKEND-HEADLESS) (in arm #{NEXT-ARM-LAUNCH NEXT-ARM-RESUME})))
+
+
+(defk first-turn-prompt-of [charter-prompt bodies]
+  {:pre [(: charter-prompt str) (: bodies tuple)]
+   :post [(: % str)]}
+  "1 手番目の本文: charter の prompt(前置き)と郵便の本文(inputs の順)を空行で区切って 1 つに。
+   郵便が無ければ charter だけ・空白だけの部分は入れない。"
+  (.join "\n\n" (lfor part (+ [charter-prompt] (list bodies)) :if (.strip part) part)))
+
+
+(defk charter-with-first-turn [charter bodies]
+  {:pre [(: charter dict) (: bodies tuple)]
+   :post [(: % dict)]}
+  "charter の prompt を 1 手番目の本文(first-turn-prompt-of)に据える。launch も resume
+   (resume-params-of が charter の prompt を運ぶ)も同じ 1 点を通る。"
+  (setv next (dict charter))
+  (setv prompt (.get charter "prompt"))
+  (<- folded str (first-turn-prompt-of (if (isinstance prompt str) prompt "") bodies))
+  (setv (get next "prompt") folded)
+  next)
+
+
 (defk inputs-of [row]
   {:pre [(: row AcpRow)]
    :post [(: % tuple)]}

@@ -51,15 +51,21 @@ TICK_BACKOFF_MAX_SECONDS = 30.0
 
 
 def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> AgentdSettings:
-    """env → 値の宣言(既定値は effects.AgentdSettings の 1 点)。streamCapability は host の
-    backend(argv / env — valve.backend_of)から導く(headless = events・tmux / herdr = frames —
-    judgment.stream-capability-of-backend の 1 点)。"""
+    """env → 値の宣言(既定値は effects.AgentdSettings の 1 点)。host の backend(argv / env —
+    valve.backend_of)はここで 1 度だけ読み、backend_kind とそこから導く streamCapability
+    (headless = events・tmux / herdr = frames — judgment.stream-capability-of-backend の 1 点)の
+    両方に据える。"""
     node_name = (env.get(NODE_NAME_ENV) or platform.node() or "").strip()
     if not node_name:
         raise ValueError(f"{NODE_NAME_ENV} is empty and the machine has no host name")
     homes_root = env.get(HOMES_ROOT_ENV) or os.path.join(_state_home(env), "doeff", "agentd-homes")
-    capability = _stream_capability(backend_of(host_argv, env))
-    return AgentdSettings(node_name=node_name, homes_root=homes_root, stream_capability=capability)
+    backend = backend_of(host_argv, env)
+    return AgentdSettings(
+        node_name=node_name,
+        homes_root=homes_root,
+        backend_kind=backend,
+        stream_capability=_stream_capability(backend),
+    )
 
 
 def _stream_capability(backend: str) -> StreamCapability:
