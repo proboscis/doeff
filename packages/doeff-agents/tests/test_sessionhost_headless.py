@@ -294,9 +294,11 @@ def _shim_would_refuse(argv: list[str]) -> list[str]:
     refused: list[str] = []
     after_config = False
     for arg in argv:
-        if arg in SHIM_FORBIDDEN_FLAGS or arg.startswith(SHIM_FORBIDDEN_PREFIXES):
-            refused.append(arg)
-        elif after_config and arg.startswith(SHIM_FORBIDDEN_CONFIG_KEYS):
+        if (
+            arg in SHIM_FORBIDDEN_FLAGS
+            or arg.startswith(SHIM_FORBIDDEN_PREFIXES)
+            or (after_config and arg.startswith(SHIM_FORBIDDEN_CONFIG_KEYS))
+        ):
             refused.append(arg)
         after_config = arg in ("-c", "--config")
     return refused
