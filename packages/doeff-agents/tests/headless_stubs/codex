@@ -7,11 +7,42 @@ thread/tokenUsage/updated・turn/completed)を流す。DOEFF_HEADLESS_STUB_DELAY
 turn/completed の前で待つ(その間の turn/interrupt で status interrupted)。API は撃かない。
 DOEFF_HEADLESS_STUB_ASK=1 なら手番の途中で server → client の要求(item/tool/requestUserInput)
 を 1 つ投げる(断られる方の検)。
+
+この Mac の PATH の codex は dotfiles の router shim(agentcli/codex_shim.py)で、sandbox /
+approval の旗を政策違反として exit 2 で拒む(2026-09-12 の本番の実弾: `--yolo` で
+`process exited with code 2 before the turn ended`)。替え玉も同じ綴りを同じ形で拒む —
+shim の _is_forbidden_override の写し(module は import しない)。
 """
 import json
 import os
 import sys
 import threading
+
+SHIM_FORBIDDEN_FLAGS = ("-s", "--sandbox", "-a", "--full-auto", "--yolo")
+SHIM_FORBIDDEN_PREFIXES = ("--sandbox=", "-s=", "--ask-for-approval=", "-a=")
+SHIM_FORBIDDEN_CONFIG_KEYS = (
+    "sandbox_mode=", "sandbox_permissions=", "sandbox_workspace_write.", "approval_policy=",
+)
+SHIM_REFUSAL = ("codex-router: sandbox and approval overrides are forbidden; "
+                "Codex must run unsandboxed with approval policy never")
+
+
+def refuse_like_the_router_shim(args):
+    """shim と同じ拒否: 禁止の旗 / `-c` の直後の sandbox・approval の本文があれば exit 2。"""
+    after_config = False
+    for arg in args:
+        body = arg
+        for prefix in ("--config=", "-c="):
+            if arg.startswith(prefix):
+                body = arg[len(prefix):]
+                break
+        if (arg in SHIM_FORBIDDEN_FLAGS or arg.startswith(SHIM_FORBIDDEN_PREFIXES)
+                or body.startswith(SHIM_FORBIDDEN_CONFIG_KEYS)
+                or (after_config and arg.startswith(SHIM_FORBIDDEN_CONFIG_KEYS))):
+            sys.stderr.write(SHIM_REFUSAL + "\n")
+            sys.stderr.flush()
+            sys.exit(2)
+        after_config = arg in ("-c", "--config")
 
 
 def _emit(obj):
@@ -72,6 +103,7 @@ def main():
     if "--help" in args:
         sys.stdout.write("stub codex\n")
         return 0
+    refuse_like_the_router_shim(args)
     thread_id = None
     for raw in sys.stdin:
         raw = raw.strip()

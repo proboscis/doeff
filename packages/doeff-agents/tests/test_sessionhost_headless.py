@@ -265,7 +265,6 @@ def test_headless_argv_is_print_mode_with_partial_messages() -> None:
     )
     assert codex["argv"] == [
         "codex",
-        "--yolo",
         "-c",
         'model_reasoning_effort="high"',
         "app-server",
@@ -275,6 +274,92 @@ def test_headless_argv_is_print_mode_with_partial_messages() -> None:
     codex_dialogue = codex["dialogue"]
     assert isinstance(codex_dialogue, CodexDialogue)
     assert codex_dialogue.plan.model == "gpt-5"
+
+
+#: dotfiles の router shim(agentcli/codex_shim.py _is_forbidden_override)が政策違反として
+#: 拒む綴り(2026-09-12 の実弾: PATH の codex が shim で `--yolo` が exit 2)。shim の module は
+#: import しない — 検は綴りの写しを持ち、shim と同じ語彙であることを註で結ぶ。
+SHIM_FORBIDDEN_FLAGS = ("-s", "--sandbox", "-a", "--full-auto", "--yolo")
+SHIM_FORBIDDEN_PREFIXES = ("--sandbox=", "-s=", "--ask-for-approval=", "-a=")
+SHIM_FORBIDDEN_CONFIG_KEYS = (
+    "sandbox_mode=",
+    "sandbox_permissions=",
+    "sandbox_workspace_write.",
+    "approval_policy=",
+)
+
+
+def _shim_would_refuse(argv: list[str]) -> list[str]:
+    """router shim が拒む要素(1 要素の述語 + `-c` の直後の本文)。"""
+    refused: list[str] = []
+    after_config = False
+    for arg in argv:
+        if arg in SHIM_FORBIDDEN_FLAGS or arg.startswith(SHIM_FORBIDDEN_PREFIXES):
+            refused.append(arg)
+        elif after_config and arg.startswith(SHIM_FORBIDDEN_CONFIG_KEYS):
+            refused.append(arg)
+        after_config = arg in ("-c", "--config")
+    return refused
+
+
+def test_codex_headless_argv_carries_no_override_the_router_shim_refuses() -> None:
+    """agora-redesign #37 lane 2d-2: 全面許可の旗は argv に載せない(shim が exit 2 で拒む)。
+    方策は app-server の thread / turn の params が正本 — 綴りは shim の
+    full_access_app_server と同値(headless_protocol.THREAD_FULL_ACCESS / TURN_FULL_ACCESS)。"""
+    built = headless_argv.build_codex_headless(
+        {
+            "work_dir": "/w",
+            "model": "gpt-5",
+            "effort": "high",
+            "mcp_servers": {"caller": "http://127.0.0.1:1/mcp"},
+            "result_channel": {"command": "doeff-report", "args": ["--sock", "/s"]},
+        }
+    )
+    argv = built["argv"]
+    assert isinstance(argv, list)
+    assert argv[0] == "codex"
+    assert argv[-3:] == ["app-server", "--listen", "stdio://"]
+    assert _shim_would_refuse(argv) == []
+    assert "--dangerously-bypass-approvals-and-sandbox" not in argv  # shim 自身が足す正規形
+    # `-c` の対(effort・caller mcp・result channel)はそのまま — shim は sandbox / approval だけ拒む
+    configs = [argv[i + 1] for i, arg in enumerate(argv) if arg == "-c"]
+    assert configs[0] == 'model_reasoning_effort="high"'
+    assert any(body.startswith('mcp_servers."caller".url=') for body in configs)
+    assert any(body.startswith('mcp_servers."doeff_result".command=') for body in configs)
+    assert "--model" not in argv  # model は thread の params
+    # 方策は params で運ぶ: thread/start
+    dialogue = built["dialogue"]
+    assert isinstance(dialogue, CodexDialogue)
+    opening = dialogue.opening()
+    init_reply = dialogue.on_line({"id": _rpc(opening[0])["id"], "result": {}})
+    thread_start = _rpc(init_reply.sends[1])
+    assert thread_start["method"] == "thread/start"
+    thread_params = _obj(thread_start, "params")
+    assert thread_params["approvalPolicy"] == "never"
+    assert thread_params["sandbox"] == "danger-full-access"
+    assert thread_params["model"] == "gpt-5"
+    # turn/start
+    dialogue.on_line({"id": thread_start["id"], "result": {"thread": {"id": "thr-1"}}})
+    turn_start = _rpc(dialogue.turn("hi").sends[0])
+    assert turn_start["method"] == "turn/start"
+    assert _obj(turn_start, "params")["sandboxPolicy"] == {"type": "dangerFullAccess"}
+    # 続きの手番(resume)の thread/resume も同じ方策
+    resumed = headless_argv.build_codex_headless(
+        {"work_dir": "/w", "resume_mode": "resume", "conversation": {"session_id": "thr-old"}}
+    )
+    resumed_argv = resumed["argv"]
+    assert isinstance(resumed_argv, list)
+    assert _shim_would_refuse(resumed_argv) == []
+    resumed_dialogue = resumed["dialogue"]
+    assert isinstance(resumed_dialogue, CodexDialogue)
+    resume_opening = resumed_dialogue.opening()
+    resume_reply = resumed_dialogue.on_line({"id": _rpc(resume_opening[0])["id"], "result": {}})
+    thread_resume = _rpc(resume_reply.sends[1])
+    assert thread_resume["method"] == "thread/resume"
+    resume_params = _obj(thread_resume, "params")
+    assert resume_params["threadId"] == "thr-old"
+    assert resume_params["approvalPolicy"] == "never"
+    assert resume_params["sandbox"] == "danger-full-access"
 
 
 # ---------------------------------------------------------------- 2. 器(実 process の替え玉)
@@ -592,6 +677,9 @@ def test_host_headless_codex_round_trip_is_warm(headless_host: Host) -> None:
     assert isinstance(launched, dict)
     assert _text(launched, "backend_kind") == "headless"
     assert not _has(launched, "conversation")  # codex の thread の id は応答で知る
+    # 替え玉の codex は router shim と同じ綴りを拒む(tests/headless_stubs/codex)— 起こした argv
+    # に shim の禁止の旗が在れば 1 手番目が exit 2 で落ちる(2026-09-12 の本番の実弾の形)
+    assert _shim_would_refuse(_texts(_obj(launched, "backend_ref"), "argv")) == []
     ended = _wait_turn_end(headless_host, "h-3")
     assert _text(ended, "status") == "running"
     assert ended["conversation"] == {"session_id": "thr-stub-1"}
