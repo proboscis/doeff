@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""codex app-server(JSON-RPC over stdio・schema v2)の替え玉 — 検の PATH に置く。
+
+initialize / thread/start / thread/resume / turn/start / turn/interrupt に実物と同じ形で
+答え、手番の実況(turn/started・item/agentMessage/delta・item/completed・
+thread/tokenUsage/updated・turn/completed)を流す。DOEFF_HEADLESS_STUB_DELAY 秒だけ
+turn/completed の前で待つ(その間の turn/interrupt で status interrupted)。API は撃かない。
+DOEFF_HEADLESS_STUB_ASK=1 なら手番の途中で server → client の要求(item/tool/requestUserInput)
+を 1 つ投げる(断られる方の検)。
+"""
+import json
+import os
+import sys
+import threading
+
+
+def _emit(obj):
+    with EMIT_LOCK:
+        sys.stdout.write(json.dumps(obj) + "\n")
+        sys.stdout.flush()
+
+
+EMIT_LOCK = threading.Lock()
+INTERRUPT = threading.Event()
+TURN_COUNTER = [0]
+
+
+def run_turn(thread_id, turn_id, text):
+    _emit({"jsonrpc": "2.0", "method": "turn/started",
+           "params": {"threadId": thread_id, "turn": {"id": turn_id}}})
+    item_id = f"item-{turn_id}"
+    _emit({"jsonrpc": "2.0", "method": "item/started",
+           "params": {"threadId": thread_id, "turnId": turn_id,
+                      "item": {"id": item_id, "type": "agentMessage", "text": ""}}})
+    for piece in (text[:5], text[5:]):
+        _emit({"jsonrpc": "2.0", "method": "item/agentMessage/delta",
+               "params": {"threadId": thread_id, "turnId": turn_id, "itemId": item_id,
+                          "delta": piece}})
+    if os.environ.get("DOEFF_HEADLESS_STUB_ASK") == "1":
+        _emit({"jsonrpc": "2.0", "id": "srv-1", "method": "item/tool/requestUserInput",
+               "params": {"threadId": thread_id, "turnId": turn_id, "itemId": "q-1"}})
+    delay = float(os.environ.get("DOEFF_HEADLESS_STUB_DELAY", "0") or "0")
+    if delay and INTERRUPT.wait(delay):
+        _emit({"jsonrpc": "2.0", "method": "turn/completed",
+               "params": {"threadId": thread_id,
+                          "turn": {"id": turn_id, "status": "interrupted"}}})
+        return
+    if INTERRUPT.is_set():
+        _emit({"jsonrpc": "2.0", "method": "turn/completed",
+               "params": {"threadId": thread_id,
+                          "turn": {"id": turn_id, "status": "interrupted"}}})
+        return
+    _emit({"jsonrpc": "2.0", "method": "item/completed",
+           "params": {"threadId": thread_id, "turnId": turn_id,
+                      "item": {"id": item_id, "type": "agentMessage", "text": text}}})
+    _emit({"jsonrpc": "2.0", "method": "item/completed",
+           "params": {"threadId": thread_id, "turnId": turn_id,
+                      "item": {"id": f"cmd-{turn_id}", "type": "commandExecution",
+                               "command": "echo hi", "aggregatedOutput": "hi\n",
+                               "exitCode": 0, "status": "completed"}}})
+    _emit({"jsonrpc": "2.0", "method": "thread/tokenUsage/updated",
+           "params": {"threadId": thread_id,
+                      "tokenUsage": {"total": {"inputTokens": 11, "cachedInputTokens": 4,
+                                               "cacheWriteInputTokens": 0,
+                                               "outputTokens": 5}}}})
+    _emit({"jsonrpc": "2.0", "method": "turn/completed",
+           "params": {"threadId": thread_id, "turn": {"id": turn_id, "status": "completed"}}})
+
+
+def main():
+    args = sys.argv[1:]
+    if "--help" in args:
+        sys.stdout.write("stub codex\n")
+        return 0
+    thread_id = None
+    for raw in sys.stdin:
+        raw = raw.strip()
+        if not raw:
+            continue
+        msg = json.loads(raw)
+        method = msg.get("method")
+        rid = msg.get("id")
+        params = msg.get("params") or {}
+        if method == "initialize":
+            _emit({"jsonrpc": "2.0", "id": rid, "result": {"userAgent": "stub"}})
+        elif method == "initialized":
+            pass
+        elif method == "thread/start":
+            thread_id = "thr-stub-1"
+            _emit({"jsonrpc": "2.0", "id": rid, "result": {"thread": {"id": thread_id}}})
+        elif method == "thread/resume":
+            thread_id = params.get("threadId")
+            _emit({"jsonrpc": "2.0", "id": rid, "result": {"thread": {"id": thread_id}}})
+        elif method == "turn/start":
+            TURN_COUNTER[0] += 1
+            turn_id = f"turn-{TURN_COUNTER[0]}"
+            INTERRUPT.clear()
+            _emit({"jsonrpc": "2.0", "id": rid, "result": {"turn": {"id": turn_id}}})
+            text = "echo: " + str((params.get("input") or [{}])[0].get("text", ""))
+            threading.Thread(target=run_turn, args=(thread_id, turn_id, text),
+                             daemon=True).start()
+        elif method == "turn/interrupt":
+            INTERRUPT.set()
+            _emit({"jsonrpc": "2.0", "id": rid, "result": {}})
+        elif rid is not None and ("result" in msg or "error" in msg):
+            pass  # client → server の応答(断りなど)
+    # EOF: 実物と同じく自分で降りる
+    threading.Event().wait(0.05)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -9,6 +9,7 @@ HTTP も socket も tmux も無い。
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 
 import hy  # noqa: F401  # registers the .hy importer
 import pytest
@@ -83,8 +84,10 @@ def bound_job(
     if account is not None:
         binding["account"] = account
     charter: JSONObject = {
-        "session_id": job_id,
-        "session_name": job_id,
+        # charter の id は agentd が読まない(session の id は agentd が鋳造する — 2026-09-12 追補 2)。
+        # 読んだら検が割れるよう、job の id とも鋳造の綴り(sid-<n>)とも違う綴りにする。
+        "session_id": f"charter-{job_id}",
+        "session_name": f"charter-{job_id}",
         "agent_type": "claude",
         "work_dir": "/work",
         "prompt": "start",
@@ -139,6 +142,16 @@ class World:
     def turn_record(self, job_id: str) -> AcpRow | None:
         return self.acp.rows.get(f"{AGORA_KINDS_NAMESPACE}:{TURN_RECORD_KIND}:{job_id}")
 
+    def sid(self, job_id: str) -> str:
+        """job が使っている session の id(行の sessionHandle — agentd が鋳造した綴り)。"""
+        status = self.job(job_id).status
+        assert status is not None
+        handle = status["sessionHandle"]
+        assert isinstance(handle, dict)
+        session_id = handle["sessionId"]
+        assert isinstance(session_id, str)
+        return session_id
+
     def pushed_kinds(self) -> list[str]:
         return [str(frame["kind"]) for _owner, _name, frames in self.acp.pushes for frame in frames]
 
@@ -174,8 +187,8 @@ def _assert_joined_and_claimed(world: World) -> None:
     assert job.status is not None
     assert job.status["phase"] == PHASE_RUNNING
     assert job.status["sessionHandle"] == {
-        "sessionId": "s-1",
-        "stream": {"owner": "agentd", "name": "s-1"},
+        "sessionId": "sid-1",
+        "stream": {"owner": "agentd", "name": "sid-1"},
     }
     assert job.status["binding"] == {"node": NODE, "profile": "personal", "account": "acct"}
 
@@ -188,7 +201,9 @@ def _assert_launched_with_borrowed_token(world: World) -> None:
     assert env[CLAUDE_OAUTH_TOKEN_ENV] == TOKEN
     assert launch["binding"] == {"kind": "claude-code", "config_dir": f"{HOMES}/claude/acct"}
     assert launch["prompt"] == "start"
-    assert world.sessions.sends == [("s-1", "hello agent", True)]
+    assert launch["session_id"] == "sid-1"
+    assert launch["session_name"] == "sid-1"
+    assert world.sessions.sends == [("sid-1", "hello agent", True)]
     assert world.local.metrics[0]["metric"] == "agent-job-to-send"
     assert world.local.metrics[0]["ms"] == 1_000 - 500
 
@@ -252,7 +267,7 @@ def test_agentd_round_trip_join_bound_running_delta_ended() -> None:
     _assert_launched_with_borrowed_token(world)
 
     # tick 2: transcript の追記 → TurnDelta(text + usage)。購読 0 のまま = capture は呼ばれない
-    path = f"{HOMES}/claude/acct/projects/-work/s-1.jsonl"
+    path = f"{HOMES}/claude/acct/projects/-work/sid-1.jsonl"
     world.local.transcripts[path] = transcript_line(
         "assistant",
         [{"type": "text", "text": "working on it"}],
@@ -271,15 +286,15 @@ def test_agentd_round_trip_join_bound_running_delta_ended() -> None:
     assert world.state.jobs[0].capturing is False
 
     # tick 3〜4: 購読者が現れると status frame の読み直しで capture が始まる(2〜5 Hz)
-    world.acp.subscribers["s-1"] = 1
+    world.acp.subscribers["sid-1"] = 1
     world.tick(advance_ms=5_000)
     assert world.state.jobs[0].capturing is True
     world.tick(advance_ms=500)
-    assert world.sessions.captures == [("s-1", 60)]
+    assert world.sessions.captures == [("sid-1", 60)]
     assert world.pushed_kinds()[-1] == "frame"
 
     # tick 5: 手番の終わり → turn-record ended(entries + usage)・agent-job Ended(result)・札の返却
-    world.sessions.finish("s-1", "done", {"ok": True})
+    world.sessions.finish("sid-1", "done", {"ok": True})
     world.tick(advance_ms=500)
     _assert_ended(world)
 
@@ -305,7 +320,7 @@ def test_failed_session_ends_the_job_with_a_condition_and_no_result() -> None:
     world.acp.put_row(bound_job("s-2", inputs=[], account=None))
     world.tick()
     assert world.custody.borrowed == []
-    world.sessions.finish("s-2", "failed")
+    world.sessions.finish(world.sid("s-2"), "failed")
     world.tick(advance_ms=1_000)
     job = world.job("s-2")
     assert job.status is not None
@@ -424,7 +439,7 @@ def test_deltas_of_claude_folds_blocks_and_counts_usage_once_per_message() -> No
         )
         + transcript_line("user", [{"type": "tool_result", "tool_use_id": "t1", "content": "a\nb"}])
     )
-    batch = run(judgment.deltas_of("claude", text, "job", 10, 777))
+    batch = run(judgment.deltas_of("claude", "transcript", text, "job", 10, 777))
     assert [frame["kind"] for frame in batch.frames] == ["usage", "tool_use", "text", "tool_result"]
     assert [entry["kind"] for entry in batch.entries] == ["tool_use", "text", "tool_result"]
     assert batch.usage == {
@@ -499,7 +514,7 @@ def turn_record_row(job_id: str) -> AcpRow:
 def _start_capturing(world: World, job_id: str) -> None:
     world.acp.put_row(bound_job(job_id, inputs=[], account=None))
     world.tick()
-    world.acp.subscribers[job_id] = 1
+    world.acp.subscribers[world.sid(job_id)] = 1
     world.tick(advance_ms=5_000)
     assert world.state.jobs[0].capturing is True
 
@@ -511,15 +526,15 @@ def test_capture_gone_is_the_end_of_the_stream_not_an_error() -> None:
     _start_capturing(world, "s-g")
     world.sessions.capture_gone = "tmux capture-pane failed: no server running"
     world.tick(advance_ms=500)
-    assert world.sessions.captures == [("s-g", 60)]
+    assert world.sessions.captures == [(world.sid("s-g"), 60)]
     assert world.state.jobs[0].capturing is False
     assert world.state.jobs[0].stream_gone is True
     assert [line for line in world.local.logs if "tick failed" in line] == []
     assert any("stream of job s-g is gone" in line for line in world.local.logs)
     # gone の後は capture も購読の読み直しも撃たない(pane が無い)
     world.tick(advance_ms=5_000)
-    assert world.sessions.captures == [("s-g", 60)]
-    world.sessions.finish("s-g", "done", {"ok": True})
+    assert world.sessions.captures == [(world.sid("s-g"), 60)]
+    world.sessions.finish(world.sid("s-g"), "done", {"ok": True})
     world.tick(advance_ms=500)
     job = world.job("s-g")
     assert job.status is not None
@@ -540,7 +555,7 @@ def test_capture_gone_with_a_terminal_session_ends_in_the_same_tick() -> None:
     world.sessions.capture_gone = "tmux capture-pane failed: can't find pane"
     world.sessions.finish_on_capture = ("done", {"ok": 1})
     world.tick(advance_ms=500)
-    assert world.sessions.captures == [("s-gr", 60)]
+    assert world.sessions.captures == [(world.sid("s-gr"), 60)]
     job = world.job("s-gr")
     assert job.status is not None
     assert job.status["phase"] == PHASE_ENDED
@@ -556,7 +571,7 @@ def test_terminal_session_is_recorded_without_a_capture() -> None:
     """器が終端の拍は実況(capture)を撃たずに記録の腕へ進む(実弾 003 の直接の機序)。"""
     world = World()
     _start_capturing(world, "s-t")
-    world.sessions.finish("s-t", "done", {"ok": True})
+    world.sessions.finish(world.sid("s-t"), "done", {"ok": True})
     world.sessions.capture_gone = "tmux capture-pane failed: no server running"
     world.tick(advance_ms=500)
     assert world.sessions.captures == []
@@ -573,7 +588,7 @@ def test_running_job_of_mine_is_recovered_on_the_first_tick_after_restart() -> N
     world.tick()
     assert len(world.sessions.launches) == 1
     world.state = initial_state()
-    world.sessions.finish("s-r", "done", {"ok": True})
+    world.sessions.finish(world.sid("s-r"), "done", {"ok": True})
     world.tick(advance_ms=1_000)
     assert len(world.sessions.launches) == 1
     job = world.job("s-r")
@@ -628,7 +643,7 @@ def test_running_job_with_a_live_session_is_adopted_and_observed() -> None:
     job = world.job("s-live")
     assert job.status is not None
     assert job.status["phase"] == PHASE_RUNNING
-    world.sessions.finish("s-live", "done", {"ok": True})
+    world.sessions.finish(world.sid("s-live"), "done", {"ok": True})
     world.tick(advance_ms=1_000)
     ended = world.job("s-live")
     assert ended.status is not None
@@ -659,8 +674,8 @@ def test_one_job_failure_does_not_stop_the_heartbeat_or_other_jobs() -> None:
     world.acp.put_row(bound_job("s-b", inputs=[], account=None))
     world.tick()
     assert len(world.state.jobs) == 2
-    world.sessions.failures["s-a"] = RuntimeError("socket reset")
-    world.sessions.finish("s-b", "done", {"ok": True})
+    world.sessions.failures[world.sid("s-a")] = RuntimeError("socket reset")
+    world.sessions.finish(world.sid("s-b"), "done", {"ok": True})
     world.tick(advance_ms=30_000)
     node = world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"]
     assert node.status is not None
@@ -678,8 +693,8 @@ def test_one_job_failure_does_not_stop_the_heartbeat_or_other_jobs() -> None:
         line == "agentd: job s-a tick failed: RuntimeError: socket reset"
         for line in world.local.logs
     )
-    del world.sessions.failures["s-a"]
-    world.sessions.finish("s-a", "done", {"ok": True})
+    del world.sessions.failures[world.sid("s-a")]
+    world.sessions.finish(world.sid("s-a"), "done", {"ok": True})
     world.tick(advance_ms=1_000)
     recovered = world.job("s-a")
     assert recovered.status is not None
@@ -693,7 +708,7 @@ def test_acp_list_failure_does_not_stop_the_observation_of_running_jobs() -> Non
     world.acp.put_row(bound_job("s-c", inputs=[], account=None))
     world.tick()
     world.acp.list_failures[AGENT_JOB_KIND] = RuntimeError("Connection reset by peer")
-    world.sessions.finish("s-c", "done", {"ok": True})
+    world.sessions.finish(world.sid("s-c"), "done", {"ok": True})
     world.tick(advance_ms=30_000)
     ended = world.job("s-c")
     assert ended.status is not None
@@ -772,17 +787,20 @@ def _run_first_turn(world: World, job_id: str = "j-1") -> str:
     world.acp.put_row(bound_job(job_id, inputs=["m-1"], created_at_ms=world.local.now_ms - 400))
     world.tick()
     assert world.sessions.launches[-1]["lifecycle"] == "multi_turn"
-    assert world.sessions.sends[-1] == (job_id, "first", True)
-    path = f"{HOMES}/claude/acct/projects/-work/{job_id}.jsonl"
+    sid = world.sid(job_id)
+    assert sid != job_id
+    assert world.sessions.launches[-1]["session_id"] == sid
+    assert world.sessions.sends[-1] == (sid, "first", True)
+    path = f"{HOMES}/claude/acct/projects/-work/{sid}.jsonl"
     world.local.transcripts[path] = transcript_line("assistant", [{"type": "text", "text": "one"}])
     world.tick(advance_ms=1_000)
-    world.sessions.finish_turn(job_id, world.local.now_ms + 500)
+    world.sessions.finish_turn(sid, world.local.now_ms + 500)
     world.tick(advance_ms=1_000)
     job = world.job(job_id)
     assert job.status is not None
     assert job.status["phase"] == PHASE_ENDED
     assert world.sessions.cleanups == []
-    assert world.sessions.views[job_id].status == "running"
+    assert world.sessions.views[sid].status == "running"
     assert world.state.jobs == ()
     return path
 
@@ -797,13 +815,14 @@ def test_second_turn_of_the_same_conversation_is_sent_to_the_warm_session() -> N
     world.tick(advance_ms=1_000)
     assert len(world.sessions.launches) == 1
     assert world.sessions.resumes == []
-    assert world.sessions.sends[-1] == ("j-1", "second", True)
+    warm = world.sid("j-1")
+    assert world.sessions.sends[-1] == (warm, "second", True)
     job = world.job("j-2")
     assert job.status is not None
     assert job.status["phase"] == PHASE_RUNNING
     assert job.status["sessionHandle"] == {
-        "sessionId": "j-1",
-        "stream": {"owner": "agentd", "name": "j-1"},
+        "sessionId": warm,
+        "stream": {"owner": "agentd", "name": warm},
     }
     record = world.turn_record("j-2")
     assert record is not None
@@ -811,7 +830,7 @@ def test_second_turn_of_the_same_conversation_is_sent_to_the_warm_session() -> N
     assert record.spec["agentJobId"] == "j-2"
     to_send = [m for m in world.local.metrics if m["metric"] == "agent-job-to-send"][-1]
     assert to_send["agentJobId"] == "j-2"
-    assert to_send["sessionId"] == "j-1"
+    assert to_send["sessionId"] == warm
     assert isinstance(to_send["ms"], int)
     assert to_send["ms"] < 2_000
     # 送った直後: 前の手番の turn_ended_at(送りより前)では手番は終わらない。
@@ -822,7 +841,7 @@ def test_second_turn_of_the_same_conversation_is_sent_to_the_warm_session() -> N
     # 記録が進み(自分の本文が届いた証拠)、host が新しい turn_ended_at を刻むと手番の終わり。
     world.local.transcripts[path] += transcript_line("assistant", [{"type": "text", "text": "two"}])
     world.tick(advance_ms=1_000)
-    world.sessions.finish_turn("j-1", world.local.now_ms + 200)
+    world.sessions.finish_turn(warm, world.local.now_ms + 200)
     world.tick(advance_ms=1_000)
     ended = world.job("j-2")
     assert ended.status is not None
@@ -858,7 +877,7 @@ def test_warm_send_stays_under_two_seconds_across_turns() -> None:
             "assistant", [{"type": "text", "text": "x"}]
         )
         world.tick(advance_ms=1_000)
-        world.sessions.finish_turn("j-1", world.local.now_ms + 100)
+        world.sessions.finish_turn(world.sid("j-1"), world.local.now_ms + 100)
         world.tick(advance_ms=1_000)
         assert world.state.jobs == ()
     assert len(world.sessions.launches) == 1
@@ -872,13 +891,10 @@ def test_a_different_conversation_launches_its_own_session() -> None:
     world.acp.put_row(bound_job("j-x", inputs=["m-x"], subject="c-other"))
     world.tick(advance_ms=1_000)
     assert len(world.sessions.launches) == 2
-    assert world.sessions.launches[-1]["session_id"] == "j-x"
-    assert world.sessions.sends[-1] == ("j-x", "other", True)
-    job = world.job("j-x")
-    assert job.status is not None
-    handle = job.status["sessionHandle"]
-    assert isinstance(handle, dict)
-    assert handle["sessionId"] == "j-x"
+    other = world.sid("j-x")
+    assert other != world.sid("j-1")
+    assert world.sessions.launches[-1]["session_id"] == other
+    assert world.sessions.sends[-1] == (other, "other", True)
 
 
 def test_idle_session_past_the_ttl_is_cleaned_up() -> None:
@@ -890,12 +906,17 @@ def test_idle_session_past_the_ttl_is_cleaned_up() -> None:
     world.tick(advance_ms=30_000)
     assert world.sessions.cleanups == []
     world.tick(advance_ms=600_000)
-    assert world.sessions.cleanups == ["j-1"]
-    # 片付いた後の次の手番は cold launch。
+    assert world.sessions.cleanups == [world.sid("j-1")]
+    # 片付いた後の次の手番は cold launch — 新しく鋳造した id(片付いた行と衝突しない)。
     world.acp.put_row(message("m-2", "second"))
     world.acp.put_row(bound_job("j-2", inputs=["m-2"]))
     world.tick(advance_ms=1_000)
     assert len(world.sessions.launches) == 2
+    assert world.sid("j-2") != world.sid("j-1")
+    assert world.sessions.launches[-1]["session_id"] == world.sid("j-2")
+    job2 = world.job("j-2")
+    assert job2.status is not None
+    assert job2.status["phase"] == PHASE_RUNNING
     node = world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"]
     assert node.status is not None
     observations = node.status["observations"]
@@ -913,38 +934,43 @@ def test_node_observations_carry_the_conversation_sessions() -> None:
     observations = node.status["observations"]
     assert isinstance(observations, dict)
     assert observations["sessions"] == [
-        {"conversationId": CONVERSATION, "sessionId": "j-1", "state": "idle"}
+        {"conversationId": CONVERSATION, "sessionId": world.sid("j-1"), "state": "idle"}
     ]
 
 
 def test_predecessor_alive_is_sent_and_terminal_predecessor_is_resumed() -> None:
     world = World()
     _run_first_turn(world)
+    first = world.sid("j-1")
     # (a) predecessor が生きて idle → send(温かい resume)。
     world.acp.put_row(message("m-2", "second"))
-    world.acp.put_row(bound_job("j-2", inputs=["m-2"], predecessor="j-1"))
+    world.acp.put_row(bound_job("j-2", inputs=["m-2"], predecessor=first))
     world.tick(advance_ms=1_000)
     assert world.sessions.resumes == []
-    assert world.sessions.sends[-1] == ("j-1", "second", True)
-    world.sessions.finish_turn("j-1", world.local.now_ms + 100)
-    path = f"{HOMES}/claude/acct/projects/-work/j-1.jsonl"
+    assert world.sessions.sends[-1] == (first, "second", True)
+    world.sessions.finish_turn(first, world.local.now_ms + 100)
+    path = f"{HOMES}/claude/acct/projects/-work/{first}.jsonl"
     world.local.transcripts[path] += transcript_line("assistant", [{"type": "text", "text": "y"}])
     world.tick(advance_ms=1_000)
-    world.sessions.finish_turn("j-1", world.local.now_ms + 100)
+    world.sessions.finish_turn(first, world.local.now_ms + 100)
     world.tick(advance_ms=1_000)
     assert world.state.jobs == ()
-    # (b) predecessor が終端 → session.resume(cold)。
-    world.sessions.finish("j-1", "exited")
+    # (b) predecessor が終端 → session.resume(cold)— 新しい incarnation の id も鋳造。
+    world.sessions.finish(first, "exited")
     world.acp.put_row(message("m-3", "third"))
-    world.acp.put_row(bound_job("j-3", inputs=["m-3"], predecessor="j-1"))
+    world.acp.put_row(bound_job("j-3", inputs=["m-3"], predecessor=first))
     world.tick(advance_ms=1_000)
     assert len(world.sessions.resumes) == 1
-    assert world.sessions.resumes[0]["session_id"] == "j-1"
-    assert world.sessions.resumes[0]["new_session_id"] == "j-3"
-    assert world.sessions.sends[-1] == ("j-3", "third", True)
+    assert world.sessions.resumes[0]["session_id"] == first
+    assert world.sessions.resumes[0]["new_session_id"] == world.sid("j-3")
+    assert world.sid("j-3") != first
+    assert world.sessions.sends[-1] == (world.sid("j-3"), "third", True)
 
 
-def test_withdrawn_job_cleans_up_its_session_and_stops_observing() -> None:
+def test_withdrawn_job_interrupts_the_turn_and_keeps_the_session_warm() -> None:
+    """取り下げ(Withdrawn)は中断の合図(agora-redesign #37): 手番の途中なら session.interrupt を
+    1 回撃ち、turn-record は ended・agent-job には condition Interrupted(phase は Withdrawn の
+    まま)、session は片付けない(温かいまま — 次の手番は send)。"""
     world = World()
     _run_first_turn(world)
     world.acp.put_row(message("m-2", "second"))
@@ -966,7 +992,8 @@ def test_withdrawn_job_cleans_up_its_session_and_stops_observing() -> None:
         )
     )
     world.tick(advance_ms=1_000)
-    assert world.sessions.cleanups == ["j-1"]
+    assert world.sessions.interrupts == [world.sid("j-1")]
+    assert world.sessions.cleanups == []
     assert world.state.jobs == ()
     record = world.turn_record("j-2")
     assert record is not None
@@ -975,9 +1002,43 @@ def test_withdrawn_job_cleans_up_its_session_and_stops_observing() -> None:
     job = world.job("j-2")
     assert job.status is not None
     assert job.status["phase"] == "Withdrawn"
-    # 次の拍で同じ Withdrawn の行に cleanup を撃ち直さない。
+    conditions = job.status["conditions"]
+    assert isinstance(conditions, list)
+    assert [item["type"] for item in conditions if isinstance(item, dict)] == ["Interrupted"]
+    assert world.pushed_kinds()[-1] == "status"
+    # 次の拍で同じ Withdrawn の行に割り込みを撃ち直さない・session は生きたまま
     world.tick(advance_ms=1_000)
-    assert world.sessions.cleanups == ["j-1"]
+    assert world.sessions.interrupts == [world.sid("j-1")]
+    assert world.sessions.views[world.sid("j-1")].status == "running"
+
+
+def test_withdrawn_job_whose_turn_already_ended_is_not_interrupted() -> None:
+    """手番が既に終わっている(turn_ended_at がこの手番の始まりより後)job の取り下げは
+    割り込まない(判断は interrupt-arm-for の 1 点)— 記録は ended・条件は Interrupted。"""
+    world = World()
+    _run_first_turn(world)
+    world.acp.put_row(message("m-2", "second"))
+    world.acp.put_row(bound_job("j-2", inputs=["m-2"]))
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(world.sid("j-1"), world.local.now_ms + 100)
+    running = world.job("j-2")
+    assert running.status is not None
+    withdrawn: JSONObject = dict(running.status)
+    withdrawn["phase"] = "Withdrawn"
+    world.acp.put_row(
+        row(
+            AGENT_JOB_NAMESPACE,
+            AGENT_JOB_KIND,
+            "j-2",
+            running.spec,
+            withdrawn,
+            created_at_ms=running.created_at_ms,
+        )
+    )
+    world.tick(advance_ms=1_000)
+    assert world.sessions.interrupts == []
+    assert world.sessions.cleanups == []
+    assert world.state.jobs == ()
 
 
 def test_busy_conversation_session_defers_the_claim() -> None:
@@ -991,7 +1052,7 @@ def test_busy_conversation_session_defers_the_claim() -> None:
     world.acp.put_row(bound_job("j-2", inputs=["m-2"]))
     world.tick(advance_ms=1_000)
     assert len(world.sessions.launches) == 1
-    assert world.sessions.sends == [("j-1", "first", True)]
+    assert world.sessions.sends == [(world.sid("j-1"), "first", True)]
     job = world.job("j-2")
     assert job.status is not None
     assert job.status["phase"] == PHASE_BOUND
@@ -1005,12 +1066,12 @@ def test_terminal_warm_session_is_cleaned_up_at_record_end() -> None:
     world.acp.put_row(message("m-1", "first"))
     world.acp.put_row(bound_job("j-1", inputs=["m-1"]))
     world.tick()
-    world.sessions.finish("j-1", "failed")
+    world.sessions.finish(world.sid("j-1"), "failed")
     world.tick(advance_ms=1_000)
     job = world.job("j-1")
     assert job.status is not None
     assert job.status["phase"] == PHASE_ENDED
-    assert world.sessions.cleanups == ["j-1"]
+    assert world.sessions.cleanups == [world.sid("j-1")]
 
 
 def test_charter_lifecycle_is_respected_when_declared() -> None:
@@ -1020,7 +1081,7 @@ def test_charter_lifecycle_is_respected_when_declared() -> None:
     world.acp.put_row(bound_job("j-rtc", inputs=[], lifecycle="run_to_completion"))
     world.tick()
     assert world.sessions.launches[-1]["lifecycle"] == "run_to_completion"
-    world.sessions.finish("j-rtc", "done", {"ok": True})
+    world.sessions.finish(world.sid("j-rtc"), "done", {"ok": True})
     world.tick(advance_ms=1_000)
     assert world.sessions.cleanups == []
 
@@ -1041,3 +1102,473 @@ def test_next_arm_for_job_is_the_one_decision() -> None:
     assert run(judgment.next_arm_for_job(plan_pred, dead)) == "resume"
     assert run(judgment.launch_lifecycle_of({})) == "multi_turn"
     assert run(judgment.launch_lifecycle_of({"lifecycle": "interactive"})) == "interactive"
+
+
+# ---------------------------------------------------------------- headless backend(events の実況・agora-redesign #37)
+
+
+def _stream_line(obj: Mapping[str, object]) -> str:
+    return json.dumps(obj) + "\n"
+
+
+def _claude_events(session_id: str, text: str) -> str:
+    """claude の print mode(-p・--output-format stream-json --include-partial-messages)の 1 手番の行。"""
+    usage = {
+        "input_tokens": 3,
+        "output_tokens": 7,
+        "cache_creation_input_tokens": 1,
+        "cache_read_input_tokens": 2,
+    }
+    return "".join(
+        [
+            _stream_line({"type": "system", "subtype": "init", "session_id": session_id}),
+            _stream_line(
+                {
+                    "type": "stream_event",
+                    "event": {
+                        "type": "content_block_delta",
+                        "index": 0,
+                        "delta": {"type": "text_delta", "text": text[:3]},
+                    },
+                }
+            ),
+            _stream_line(
+                {
+                    "type": "stream_event",
+                    "event": {
+                        "type": "content_block_delta",
+                        "index": 0,
+                        "delta": {"type": "text_delta", "text": text[3:]},
+                    },
+                }
+            ),
+            _stream_line(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "id": "msg_1",
+                        "role": "assistant",
+                        "model": "claude-opus-5",
+                        "content": [
+                            {"type": "text", "text": text},
+                            {
+                                "type": "tool_use",
+                                "id": "t1",
+                                "name": "Bash",
+                                "input": {"command": "ls"},
+                            },
+                        ],
+                        "usage": usage,
+                    },
+                }
+            ),
+            _stream_line(
+                {
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}],
+                    },
+                }
+            ),
+            _stream_line(
+                {"type": "result", "subtype": "success", "is_error": False, "usage": usage}
+            ),
+        ]
+    )
+
+
+def _codex_events(thread_id: str, text: str) -> str:
+    """codex app-server(JSON-RPC)の 1 手番の行(応答 + 通知)。"""
+    return "".join(
+        [
+            _stream_line({"id": "thread/start#2", "result": {"thread": {"id": thread_id}}}),
+            _stream_line(
+                {"method": "turn/started", "params": {"threadId": thread_id, "turn": {"id": "t1"}}}
+            ),
+            _stream_line(
+                {
+                    "method": "item/agentMessage/delta",
+                    "params": {"threadId": thread_id, "itemId": "i1", "delta": text[:3]},
+                }
+            ),
+            _stream_line(
+                {
+                    "method": "item/agentMessage/delta",
+                    "params": {"threadId": thread_id, "itemId": "i1", "delta": text[3:]},
+                }
+            ),
+            _stream_line(
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "threadId": thread_id,
+                        "item": {"id": "i1", "type": "agentMessage", "text": text},
+                    },
+                }
+            ),
+            _stream_line(
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "threadId": thread_id,
+                        "item": {
+                            "id": "c1",
+                            "type": "commandExecution",
+                            "command": "echo hi",
+                            "aggregatedOutput": "hi\n",
+                            "exitCode": 0,
+                        },
+                    },
+                }
+            ),
+            _stream_line(
+                {
+                    "method": "thread/tokenUsage/updated",
+                    "params": {
+                        "threadId": thread_id,
+                        "tokenUsage": {
+                            "total": {
+                                "inputTokens": 11,
+                                "cachedInputTokens": 4,
+                                "cacheWriteInputTokens": 0,
+                                "outputTokens": 5,
+                            }
+                        },
+                    },
+                }
+            ),
+            _stream_line(
+                {
+                    "method": "turn/completed",
+                    "params": {"threadId": thread_id, "turn": {"id": "t1", "status": "completed"}},
+                }
+            ),
+        ]
+    )
+
+
+class HeadlessWorld(World):
+    """backend=headless の器(events file が実況の正本・pane は無い)。"""
+
+    def __init__(self, agent_type: str = "claude") -> None:
+        super().__init__()
+        self.settings = AgentdSettings(node_name=NODE, homes_root=HOMES, stream_capability="events")
+        self.sessions = FakeSessions(
+            agent_type=agent_type, backend_kind="headless", events_root="/events"
+        )
+
+
+def test_headless_claude_turn_streams_text_deltas_and_records_entries() -> None:
+    world = HeadlessWorld()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400))
+    world.tick()
+    sid = world.sid("j-1")
+    assert world.sessions.sends[-1] == (sid, "first", True)
+    node = world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"]
+    assert node.status is not None
+    observations = node.status["observations"]
+    assert isinstance(observations, dict)
+    assert observations["streamCapability"] == "events"
+    # events の追記 → text の delta が 1 行ずつ frame に・完成した本文は entry だけ
+    world.local.transcripts[f"/events/{sid}.events.jsonl"] = _claude_events(sid, "hello world")
+    world.acp.subscribers[sid] = 1
+    world.tick(advance_ms=1_000)
+    frames = [frame for _o, _n, batch in world.acp.pushes for frame in batch]
+    texts = [frame["payload"] for frame in frames if frame["kind"] == "text"]
+    assert texts == [{"text": "hel"}, {"text": "lo world"}]
+    assert [
+        frame["kind"] for frame in frames if frame["kind"] in {"tool_use", "tool_result", "usage"}
+    ] == [
+        "usage",
+        "tool_use",
+        "tool_result",
+    ]
+    # pane は無い: 購読者が居ても capture は撃たない・frame の種類も出ない
+    world.tick(advance_ms=500)
+    assert world.sessions.captures == []
+    assert "frame" not in world.pushed_kinds()
+    # 手番の終わり(host が result の行で刻む)→ turn-record の entries と usage
+    world.sessions.finish_turn(sid, world.local.now_ms + 100)
+    world.tick(advance_ms=1_000)
+    record = world.turn_record("j-1")
+    assert record is not None
+    assert record.status is not None
+    assert record.status["state"] == "ended"
+    entries = record.status["entries"]
+    assert isinstance(entries, list)
+    assert [entry["kind"] for entry in entries if isinstance(entry, dict)] == [
+        "text",
+        "tool_use",
+        "tool_result",
+    ]
+    first_entry = entries[0]
+    assert isinstance(first_entry, dict)
+    assert first_entry["text"] == "hello world"
+    assert record.status["usage"] == {
+        "input": 3,
+        "output": 7,
+        "cacheWrite": 1,
+        "cacheRead": 2,
+        "model": "claude-opus-5",
+    }
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_ENDED
+    assert world.sessions.views[sid].status == "running"
+
+
+def test_headless_codex_turn_streams_deltas_and_records_command_execution() -> None:
+    world = HeadlessWorld(agent_type="codex")
+    world.acp.put_row(message("m-1", "first"))
+    charter_job = bound_job("j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400)
+    charter = charter_job.spec["charter"]
+    assert isinstance(charter, dict)
+    charter["agent_type"] = "codex"
+    charter["binding"] = {"kind": "codex", "codex_home": "/bundle"}
+    world.custody = FakeCustody(auth_jsons={"acct": '{"tokens": {}}'})
+    world.acp.put_row(charter_job)
+    world.tick()
+    sid = world.sid("j-1")
+    world.local.transcripts[f"/events/{sid}.events.jsonl"] = _codex_events("thr-1", "hi there")
+    world.tick(advance_ms=1_000)
+    frames = [frame for _o, _n, batch in world.acp.pushes for frame in batch]
+    assert [frame["payload"] for frame in frames if frame["kind"] == "text"] == [
+        {"text": "hi "},
+        {"text": "there"},
+    ]
+    tool_use = [frame["payload"] for frame in frames if frame["kind"] == "tool_use"]
+    assert tool_use == [{"toolUseId": "c1", "name": "command_execution", "summary": "echo hi"}]
+    usage = [frame["payload"] for frame in frames if frame["kind"] == "usage"]
+    assert usage == [{"input": 11, "output": 5, "cacheWrite": 0, "cacheRead": 4}]
+    world.sessions.finish_turn(sid, world.local.now_ms + 100)
+    world.tick(advance_ms=1_000)
+    record = world.turn_record("j-1")
+    assert record is not None
+    assert record.status is not None
+    entries = record.status["entries"]
+    assert isinstance(entries, list)
+    assert [entry["kind"] for entry in entries if isinstance(entry, dict)] == [
+        "text",
+        "tool_use",
+        "tool_result",
+    ]
+    assert record.status["usage"] == {"input": 11, "output": 5, "cacheWrite": 0, "cacheRead": 4}
+
+
+def test_stream_capability_is_derived_from_the_host_backend() -> None:
+    from doeff_agents.sessionhost.acp.runtime import settings_from_env
+
+    env = {"DOEFF_AGENTD_NODE_NAME": NODE, "DOEFF_SESSIONHOST_BACKEND": "headless"}
+    assert settings_from_env(env, ()).stream_capability == "events"
+    assert (
+        settings_from_env(
+            {"DOEFF_AGENTD_NODE_NAME": NODE}, ("--backend", "headless")
+        ).stream_capability
+        == "events"
+    )
+    assert settings_from_env({"DOEFF_AGENTD_NODE_NAME": NODE}, ()).stream_capability == "frames"
+    assert (
+        settings_from_env(
+            {"DOEFF_AGENTD_NODE_NAME": NODE}, ("--backend", "herdr")
+        ).stream_capability
+        == "frames"
+    )
+
+
+def test_interrupt_arm_for_is_the_one_decision() -> None:
+    from doeff_agents.sessionhost.acp.effects import InFlightJob
+
+    def job(floor_ms: int) -> InFlightJob:
+        return InFlightJob(
+            job_key="k",
+            job_namespace="n",
+            job_id="j",
+            subject="c",
+            session_id="s",
+            agent_type="claude",
+            node=NODE,
+            profile="p",
+            model="m",
+            started_ms=floor_ms,
+            turn_floor_ms=floor_ms,
+            start_offset=0,
+            transcript_offset=0,
+            delta_seq=0,
+            lease_id=None,
+            lease_kind=None,
+            lease_account=None,
+            lease_hold_ms=None,
+            capturing=False,
+            stream_gone=False,
+            last_frame_ms=0,
+            last_probe_ms=0,
+            pending_conditions=(),
+        )
+
+    def view(status: str, turn_ended_at_ms: int | None) -> SessionView:
+        return SessionView(
+            session_id="s",
+            agent_type="claude",
+            status=status,
+            work_dir="/w",
+            lifecycle="multi_turn",
+            conversation=None,
+            effective_identity=None,
+            result_payload=None,
+            terminal_cause=None,
+            turn_ended_at_ms=turn_ended_at_ms,
+        )
+
+    assert run(judgment.interrupt_arm_for(job(1_000), view("running", None))) == "interrupt"
+    assert run(judgment.interrupt_arm_for(job(1_000), view("running", 500))) == "interrupt"
+    assert run(judgment.interrupt_arm_for(job(1_000), view("running", 1_500))) == "none"
+    assert run(judgment.interrupt_arm_for(job(1_000), view("done", None))) == "none"
+    assert run(judgment.interrupt_arm_for(job(1_000), None)) == "none"
+
+
+# ---------------------------------------------------------------- watch の拍は差分の読み・計器の始点は生まれの着地(2026-09-12 追補)
+
+
+def test_watch_wake_reads_the_event_window_not_the_full_list() -> None:
+    """watch で起きた拍は agent-job の全量 list も郵便の全量 list も撃たず、event-window の
+    post-image(変わった行)と鍵での郵便の読みだけで claim → send まで進む。全量 list は最初の拍
+    (まだ 1 度も読んでいない)と周期の保険だけ。"""
+    world = World()
+    world.tick()  # 最初の拍: 全量 list(周期の保険の初回)
+    assert world.acp.lists.count(AGENT_JOB_KIND) == 1
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400))
+    world.tick(advance_ms=1_000)  # watch: changed → window
+    assert world.acp.lists.count(AGENT_JOB_KIND) == 1
+    assert MESSAGE_KIND not in world.acp.lists
+    assert world.sessions.sends[-1] == (world.sid("j-1"), "first", True)
+    assert [job.job_id for job in world.state.jobs] == ["j-1"]
+    # 窓が読めない(retention の床の下)拍は全量 list に落ちる
+    world.acp.window_incomplete = True
+    world.acp.put_row(message("m-2", "second"))
+    world.tick(advance_ms=1_000)
+    assert world.acp.lists.count(AGENT_JOB_KIND) == 2
+    # 周期の保険(watch_resync_seconds)でも全量 list
+    world.acp.window_incomplete = False
+    world.tick(advance_ms=31_000)
+    assert world.acp.lists.count(AGENT_JOB_KIND) == 3
+
+
+def test_agent_job_to_send_starts_from_the_birth_landing_not_the_second_granular_created_at() -> (
+    None
+):
+    """計器 agent-job-to-send の始点 = 生まれの event(generation 1 の image)の landed_at(ns 精度)。
+    行の createdAt(秒の粒度)は欄が無い時の値。"""
+    world = World()
+    world.tick()
+    born = bound_job("j-1", inputs=[], created_at_ms=1_000)  # createdAt は秒の粒度
+    assert born.status is not None
+    pending: JSONObject = dict(born.status)
+    pending["phase"] = "Pending"
+    pending.pop("binding", None)
+    world.acp.put_row(
+        AcpRow(
+            namespace=born.namespace,
+            key=born.key,
+            kind=born.kind,
+            resource_id=born.resource_id,
+            version=born.version,
+            generation=1,
+            created_at_ms=1_000,
+            labels={},
+            payload={},
+            spec=born.spec,
+            status=pending,
+            landed_at_ms=1_437,
+        )
+    )
+    bound = AcpRow(
+        namespace=born.namespace,
+        key=born.key,
+        kind=born.kind,
+        resource_id=born.resource_id,
+        version=born.version,
+        generation=2,
+        created_at_ms=1_000,
+        labels={},
+        payload={},
+        spec=born.spec,
+        status=born.status,
+        landed_at_ms=1_900,
+    )
+    world.acp.put_row(bound)
+    world.local.now_ms = 2_500
+    world.tick()
+    metric = [line for line in world.local.metrics if line["metric"] == "agent-job-to-send"][-1]
+    assert metric["createdAtMs"] == 1_437
+    assert metric["ms"] == 2_500 - 1_437
+    # 欄が無い行(古い journal)は今日の値に落ちる
+    assert run(judgment.birth_ms_of(born, ())) == 1_000
+
+
+# ---------------------------------------------------------------- session の id は agentd が鋳造(2026-09-12 追補 2)
+
+
+def test_session_id_is_minted_by_agentd_and_the_charter_id_is_ignored() -> None:
+    """charter の session_id / session_name(Messaging が組む launch の params)は読まない:
+    起こす session の id は MintId の 1 点(fake は sid-<n>)。sessionHandle と stream の name も
+    その id。"""
+    world = World()
+    world.acp.put_row(bound_job("j-1", inputs=[]))
+    world.tick()
+    launch = world.sessions.launches[-1]
+    assert launch["session_id"] == "sid-1"
+    assert launch["session_name"] == "sid-1"
+    assert "charter-j-1" not in json.dumps(launch)
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["sessionHandle"] == {
+        "sessionId": "sid-1",
+        "stream": {"owner": "agentd", "name": "sid-1"},
+    }
+    plan = run(judgment.launch_plan_of(bound_job("j-9", inputs=[])))
+    assert "session_id" not in plan.charter
+    assert "session_name" not in plan.charter
+
+
+def test_after_the_idle_ttl_the_next_job_launches_with_a_fresh_id_and_within_the_ttl_it_is_sent() -> (
+    None
+):
+    """実弾 2026-09-12: 温かい session が idle TTL で片付いた後、次の job が charter の固定の id で
+    `session is already registered` に落ちて LaunchFailed で Ended した。鋳造した id は片付いた
+    行(host に登記のまま残る)と衝突しない。TTL 内の同じ会話は send。"""
+    world = World()
+    _run_first_turn(world)
+    first = world.sid("j-1")
+    # TTL 内: 同じ会話の次の手番は send(launch しない)
+    world.acp.put_row(message("m-2", "second"))
+    world.acp.put_row(bound_job("j-2", inputs=["m-2"]))
+    world.tick(advance_ms=1_000)
+    assert len(world.sessions.launches) == 1
+    assert world.sessions.sends[-1] == (first, "second", True)
+    world.sessions.finish_turn(first, world.local.now_ms + 100)
+    path = f"{HOMES}/claude/acct/projects/-work/{first}.jsonl"
+    world.local.transcripts[path] += transcript_line("assistant", [{"type": "text", "text": "two"}])
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(first, world.local.now_ms + 100)
+    world.tick(advance_ms=1_000)
+    assert world.state.jobs == ()
+    # TTL 超過: 片付く(行は host に登記のまま残る = fake も同じ意味論)
+    world.tick(advance_ms=601_000)
+    assert world.sessions.cleanups == [first]
+    assert world.sessions.views[first].status == "stopped"
+    # 次の job: 新しい id で launch に成功(charter の id は同じ固定の綴りのまま)
+    world.acp.put_row(message("m-3", "third"))
+    world.acp.put_row(bound_job("j-3", inputs=["m-3"]))
+    world.tick(advance_ms=1_000)
+    assert len(world.sessions.launches) == 2
+    third = world.sid("j-3")
+    assert third != first
+    job = world.job("j-3")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_RUNNING
+    assert world.sessions.sends[-1] == (third, "third", True)
+    conditions = job.status["conditions"]
+    assert conditions == []

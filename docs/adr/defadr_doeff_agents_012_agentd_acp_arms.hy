@@ -19,6 +19,15 @@
 ;;; 第 17.4 節の「温かい session」(会話の session を手番の間も生かし、次の手番は send だけ)を
 ;;; R10 として足す。
 ;;;
+;;; 改訂 2026-09-12(lane 2d・同 lane-2d-headless-backend.md・agora-redesign #37): operator 指示
+;;; 逐語 "make sure to have claude/codex headless mode support with streaming and interrupt support"。
+;;; sessionhost の backend は tmux | herdr(tui の pane)だけで、headless(claude -p stream-json /
+;;; codex app-server)が無く、実況は pane の frame と transcript 由来、取り下げ(Withdrawn)は
+;;; session の片付けだった。R11(headless backend・print mode の唯一の家)・R12(events の実況は
+;;; 純関数の写像・streamCapability は backend から)・R13(withdraw は中断の合図・session は残す)・
+;;; R14(追補: watch の拍は差分の読み・計器の始点は生まれの着地 — 本番の温かい path の実測
+;;; create → send p50 4.7 s / p99 5.3 s と、agent-job の resourceCreatedAt が秒の粒度である実測)を足す。
+;;;
 ;;; 置き場 = packages/doeff-agents/src/doeff_agents/sessionhost/acp/(effects.py = 要求と値の
 ;;; 型・judgment.hy = 純粋な判断・agentd.hy = program・handlers.py = 実 I/O・fake.py = test の
 ;;; handler・valve.py = 弁・runtime.py = composition root・entry.py = console script の入口)。
@@ -39,7 +48,7 @@
          AgentdState CaptureGone JSONObject MESSAGE-KIND NODE-KIND PHASE-BOUND PHASE-ENDED
          PHASE-RUNNING TURN-RECORD-KIND])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeSessions])
-(import doeff_agents.sessionhost.acp.judgment [capture-verdict job-step-of])
+(import doeff_agents.sessionhost.acp.judgment [capture-verdict job-step-of stream-capability-of-backend])
 (import doeff_agents.sessionhost.acp.runtime [initial-state run-tick])
 (import doeff_agents.sessionhost.acp.valve [ACP-VALVE-DEFAULT ACP-VALVE-ENV acp-valve])
 
@@ -108,7 +117,9 @@
   (setv #^ JSONObject binding {"node" node "profile" "personal"})
   (when (is-not account None)
     (setv (get binding "account") account))
-  (setv #^ JSONObject charter {"session_id" job-id "session_name" job-id "agent_type" agent-type
+  ;; charter の id は agentd が読まない(鋳造する — 追補 2)。読んだら針が割れる綴りにする。
+  (setv #^ JSONObject charter {"session_id" f"charter-{job-id}" "session_name" f"charter-{job-id}"
+                               "agent_type" agent-type
                                "work_dir" "/work" "prompt" "go"
                                "binding" {"kind" "codex" "codex_home" "/bundle"}})
   (setv #^ JSONObject spec {"subject" job-id "inputs" [] "charter" charter})
@@ -172,6 +183,12 @@
           :labels base.labels :payload base.payload :spec base.spec :status status))
 
 
+(defn #^ str sid-of [#^ World world #^ str job-id]
+  "job が使っている session の id(行の sessionHandle — agentd が鋳造した綴り。charter の id ではない)。"
+  (setv status (status-of (get world.acp.rows f"acp-system:agent-job:{job-id}")))
+  (str (get (object-at status "sessionHandle") "sessionId")))
+
+
 (defn #^ JSONObject status-of [#^ AcpRow row]
   "行の status(test の読み — 無い行は空)。"
   (setv status row.status)
@@ -196,7 +213,7 @@
 
 
 (defadr ADR-DOE-AGENTS-012
-  :title "sessionhost の agentd の腕: 出口は ACP と custody だけ・判断は『自分に結ばれた job か』の純関数 1 点だけ(binding は書かない)・弁の既定は off・購読 0 で capture が止まる・借りた札は家の中の auth file 以外の平文で disk に残さない・job の進みは行から導く(自分の Running は再起動後も拾い、次の 1 手は job-step-of の 1 点)・capture の gone は終端の合図で例外ではない・tick の縁は互いの失敗で止まらない・session は会話の資源で job は手番(同じ会話の次の手番は launch せず send・判断は next-arm-for-job の 1 点・idle の寿命は値の宣言 1 点)"
+  :title "sessionhost の agentd の腕: 出口は ACP と custody だけ・判断は『自分に結ばれた job か』の純関数 1 点だけ(binding は書かない)・弁の既定は off・購読 0 で capture が止まる・借りた札は家の中の auth file 以外の平文で disk に残さない・job の進みは行から導く(自分の Running は再起動後も拾い、次の 1 手は job-step-of の 1 点)・capture の gone は終端の合図で例外ではない・tick の縁は互いの失敗で止まらない・session は会話の資源で job は手番(同じ会話の次の手番は launch せず send・判断は next-arm-for-job の 1 点・idle の寿命は値の宣言 1 点)・headless backend(print mode の家は 1 つ・events の写像は純関数・withdraw は中断の合図・watch の拍は差分の読み)"
   :status "accepted"
   :scope ["packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py"
           "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy"
@@ -211,7 +228,14 @@
           "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy"
           "packages/doeff-agents/src/doeff_agents/sessionhost/effects.hy"
           "packages/doeff-agents/src/doeff_agents/sessionhost/store.hy"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy"]
+          "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy"
+          "packages/doeff-agents/src/doeff_agents/sessionhost/headless.hy"
+          "packages/doeff-agents/src/doeff_agents/sessionhost/headless_protocol.py"
+          "packages/doeff-agents/src/doeff_agents/sessionhost/headless_process.py"
+          "packages/doeff-agents/src/doeff_agents/sessionhost/substrate_headless.hy"
+          "packages/doeff-agents/src/doeff_agents/sessionhost/impls/headless_argv.hy"
+          "packages/doeff-agents/tests/test_sessionhost_headless.py"
+          ".semgrep.yaml"]
   :problem
     [(fact
        "今日の手番の配車は agora(herdr-hud daemon)の turn-jobs / turn-dispatcher / headless fleet が持ち、sessionhost は観測されるだけ(sessionhost-client.ts:56)で、agent-job を受ける腕も TurnRecord / TurnDelta を書く腕も custody から借りる腕も無い。"
@@ -239,7 +263,13 @@
        :evidence "~/.cache/acp-stage2-e2e/logs/agentd-2.log の計器 agent-job-to-send(ms 16880 / 11802 …)・lane-2b3-warm-session.md")
      (fact
        "sessionhost に『手番の終わりで片付けず、かつ手番の終わりを観測する』lifecycle は無かった: run_to_completion は turn-end で done へ倒れ cleanup で pane が消える、interactive は monitor の最初の腕(reap-exempt)で観測ごと素通りされ turn-end の連言が評価されない。turn_open / turn_close の hook の打刻は adopted の行にしか落ちない(turn.hy db-resolve-turn-target)ので agentd が起こす session には使えない。"
-       :evidence "policy.hy monitor-session-once(reap-exempt の腕・turn-ended の連言・is-run-to-completion の分岐)・turn.hy")]
+       :evidence "policy.hy monitor-session-once(reap-exempt の腕・turn-ended の連言・is-run-to-completion の分岐)・turn.hy")
+     (fact
+       "sessionhost の backend の閉語彙は tmux | herdr(host.hy)で headless が無い。段 2 の agentd は tmux で claude の tui を起こし、frames(pane の断面)と transcript 由来の text / usage を実況にしていた。agora の headless fleet(k8s Job + dotfiles agentcli/headless.py: claude -p --output-format stream-json・codex app-server)は sessionhost を通らない別系。取り下げ(Withdrawn)は agentd が session.cleanup で片付けていた(手番の中断ではない)。"
+       :evidence "agora-redesign issue #37・host.hy parse-args の backend の閉語彙・旧 agentd.hy withdraw-sessions")
+     (fact
+       "本番の温かい path の実測(2026-09-12): arm=send で create → send が p50 4.7 s / p99 5.3 s。agent-job の行の resourceCreatedAt は秒の粒度(`2026-09-11T18:42:10Z`)で、生まれの event(SpecApplied)の post-image の resourceLandedAt / envelope の eventObservedAt は ns 精度(`18:42:10.91213204Z`)。watch で起きた拍に agentd は agent-job と message を全量 list していた(GET /api/resources?kind= = loadCurrentState の全 state)。"
+       :evidence "計画の会話の追補 2026-09-12・ACP `GET /api/event-window?after=5215004&limit=1` の実測・src/Acp/App/Server.hs の event-window(cursor-only・postDeltas の post-image)")]
   :context
     [(interpretation
        "agentd は sessionhost の隣の名前空間 acp/ に住み、host の socket の client として参加する。host.hy / hostmain.py / impls / policy は 1 行も変えない: 器の口(session.launch / send / capture / get)は公開の RPC で足りるので、腕を host の内側に生やす理由が無い。弁は console script の入口(acp/entry.py — 今日の hostmain.main を包む薄い殻)が持つ。")
@@ -260,7 +290,15 @@
      (interpretation
        "手番の終わりの検出は session の生死と切り離す: 器の lifecycle に multi_turn を足し、policy.hy の monitor が既存の turn-end の連言(idle ∧ ¬active ∧ stable ∧ 会話記録の静止 ∧ ¬awaiting)の結果を行の turn_ended_at に刻む(level-triggered・最初の観測時刻を保ち、次の手番が走ると None・writer は monitor だけ)。agentd は job-step-of の 1 点で『turn_ended_at がこの手番の始まりの下限(本文を送った時刻)より後 ∧ 記録が進んだ(送った本文が届いた証拠)』を turn-end と読み、turn-record を ended・job を Ended にして session は生かす。send は host の awaiting latch を立てる(送った本文は owed)ので、見かけの turn-end は正の作業証拠が出るまで評価されない — 第 2 の判定は作らない。")
      (interpretation
-       "session の寿命: idle が AgentdSettings.session_idle_ttl_seconds(既定 600)を過ぎた温かい session は heartbeat の拍に sessions-to-retire(純関数・時計は effect)で選び session.cleanup で片付ける。agent-job の Withdrawn(取り下げ)と node の退役(行が無い)でも片付ける。multi_turn の器が終端(awaiting の期限で failed 等)になった手番は、host の掃き取り(run_to_completion の cleanup)の対象外なので agentd が記録の後に片付ける。GC の全体は段 3。")]
+       "session の寿命: idle が AgentdSettings.session_idle_ttl_seconds(既定 600)を過ぎた温かい session は heartbeat の拍に sessions-to-retire(純関数・時計は effect)で選び session.cleanup で片付ける。node の退役(行が無い)でも片付ける。multi_turn の器が終端(awaiting の期限で failed 等)になった手番は、host の掃き取り(run_to_completion の cleanup)の対象外なので agentd が記録の後に片付ける。GC の全体は段 3。")
+     (interpretation
+       "headless backend(R11): tui の launch(ready gate・paste・pane の marker)は headless に当てはまらないので、sessionhost に専用の program(headless.hy)と substrate(Headless* effect → headless_process.py の子 process)を足し、host.hy は backend の分岐だけ(RPC の語彙 launch / send / get / capture / cancel / cleanup は同じ意味)。stdin / stdout の作法(claude = prompt を stdin に書いて閉じ result の行で終わり・codex = app-server の JSON-RPC)と「手番の途中か」の判断は headless_protocol.py の Dialogue と turn_verdict の純関数 1 点。claude の print mode(-p)は tui の adapter に禁じられた形(semgrep doeff-agents-no-claude-print-mode)なので、その唯一の家を impls/headless_argv.hy に閉じ、semgrep の除外もその家と headless の substrate / program / 検だけ。claude は 1 手番 1 process(次の手番は --resume の process を同じ session の名で起こし直す — 温かい = 会話の資源としての行と events file が続く)、codex は app-server の process を生かす。")
+     (interpretation
+       "割り込み(R13): cancel(終端)と「手番だけ止めて session は残す」は 1 つの動詞に同居できないので、新しい動詞 session.interrupt(headless = SIGINT / turn/interrupt・tmux = Escape)を両 backend に足す。agentd は Withdrawn(書き手 = 作った側)を watch で受け、自分の走っている job なら interrupt-arm-for の 1 点で session.interrupt を撃ち、turn-record を ended(ここまでの entries と usage)、agent-job に condition Interrupted(phase は書かない)、session は片付けない(idle の寿命は sessions-to-retire)。取り下げは片付けの合図ではなく中断の合図。")
+     (interpretation
+       "events の実況(R12): headless の器は stdout の行を events file(backend_ref.events_path・1 行 1 event)に追記し、agentd はそこから offset で読んで純関数 events-to-deltas で TurnDelta に写す(text の delta は 1 行ずつ frame に、完成した本文は entries に — 同じ本文を frame で二度流さない)。pane は無いので frame の capture は撃たない。node の observations.streamCapability は host の backend から導く(headless = events・tmux / herdr = frames)。")
+     (interpretation
+       "差分の読みと計器の始点(R14): watch で起きた拍は agent-job の全量 list ではなく ACP の event-window(cursor-only・(after, through] の post-image)で変わった行だけを読み、知っている行の cache(AgentdState.rows)に差し替える。全量 list は最初の拍・周期の保険(watch_resync_seconds)・gap・接続の張り直し・窓が retention の床の下(409)の時だけ。郵便の本文は鍵で 1 行ずつ読む。計器 agent-job-to-send の始点は行の生まれの着地(generation 1 の image の resourceLandedAt・ns 精度)で、欄が無ければ今日の値(秒の粒度の createdAt)。")]
   :decision
     [(rule R1 "agentd の出口は ACP(GET /api/resources・POST /api/events・GET /api/watch/stream・POST /api/streams)と custody(POST /lease/*)だけ。agora の台帳 API(/api/state・turn-jobs・seat-*・headless・agmsg)の語を sessionhost の source に置かない。")
      (rule R2 "job を選ぶ判定は judgment.hy の bound-to-me(phase == Bound ∧ binding.node == 自分 — 受け)と running-on-me(phase == Running ∧ binding.node == 自分 ∧ sessionHandle.stream.owner == 自分 — 再起動後の拾い直し)の 2 つの述語だけで、どちらも binding.node == 自分の行に閉じる。それ以外に job を選ぶ・優先する code を置かない。agent-job の status.binding を agentd は書かない(写して返すだけ)。")
@@ -271,6 +309,11 @@
      (rule R7 "job の進みは行から導く: 自分の Running(running-on-me)は memory に無くても resync の拍に拾い、次の 1 手は judgment.hy の job-step-of(器の現況 → observe | record-end | fail-missing・閉語彙 effects.JobStep)の 1 点で決める — memory に在る job の拍も同じ 1 点を通る。record-end は記録の腕(turn-record ended・result・phase Ended)だけを撃ち launch も send もし直さない。fail-missing は記録が在れば ended にし condition SessionFailed で Ended。終端の語彙(SESSION_TERMINAL_STATUSES)を読むのは judgment.hy だけ。")
      (rule R8 "capture の gone は終端の合図で例外ではない: SessionCapture の答えは閉語彙 CaptureFrame | CaptureGone、実 handler は host の断り(AgentdClientError)を CaptureGone に写す(host.hy / substrate は触らない)。gone の job は capturing = False・stream_gone = True で、以後 capture も購読の読み直しもせず、器の終端(同じ拍に読み直す)で記録の腕へ。器が終端の拍は capture を撃たない(job-step-of を実況より先に読む)。")
      (rule R9 "tick の縁: heartbeat・受け・job ごとの観測は互いの I/O の失敗(effects.IO_FAILURES = RuntimeError | OSError)で止まらない — program の agentd-tick が 3 つの腕をそれぞれ捕まえ、log して次の周期 / 次の拍へ持ち越す(condition には写さない — 一時の失敗を job の結末にしない)。I/O より広い例外は捕まえない(runtime.run_loop の縁)。")
+     (rule R11 "headless backend: host の backend の閉語彙は tmux | herdr | headless。headless の器は専用の program(sessionhost/headless.hy)と substrate(effects.hy の Headless* → substrate_headless.hy → headless_process.py)で、host.hy は backend の分岐だけ(RPC の語彙は同じ意味・session.interrupt を足す)。stdin / stdout の作法と手番の判断は headless_protocol.py の Dialogue / turn_verdict の純関数 1 点。claude の print mode の argv の家は impls/headless_argv.hy ちょうどで、semgrep doeff-agents-no-claude-print-mode の除外もその家と headless の substrate / program / 検だけ。admission と identity の準備は tui の launch と共有する(launch.hy admit-launch / prepare-launch-workspace)。")
+     (rule R12 "events の実況: agentd は headless の器の実況を events file(wire の backend_ref.events_path)から offset で読み(SessionEvents)、純関数 judgment.events-to-deltas(claude = stream-json・codex = app-server の通知)で契約の種類の閉語彙(text / tool_use / tool_result / usage)の TurnDelta に写す。text の delta は 1 行ずつ frame、完成した本文は entries だけ。headless の器に pane の capture は撃たない。node の observations.streamCapability は host の backend から導く(judgment.stream-capability-of-backend の 1 点: headless = events・それ以外 = frames)。")
+     (rule R13 "withdraw は中断の合図: 自分の走っている job の行が Withdrawn(書き手 = 作った側)になったら、judgment.interrupt-arm-for の 1 点で手番の途中なら session.interrupt(headless = SIGINT / turn/interrupt・tmux = Escape・session は残す)を撃ち、turn-record を ended(ここまでの entries と usage)、agent-job の conditions に Interrupted(phase は書かない)。session.cleanup は撃たない(温かい session は残す — 寿命は sessions-to-retire)。")
+     (rule R14 "watch の拍は差分の読み・計器の始点は生まれの着地: 行の読み直しの様式は judgment.list-mode-for の 1 点(full = 最初の拍・周期の保険・gap・接続の張り直し / window = watch で起きた拍 = GET /api/event-window の post-image で AgentdState.rows を差し替え・窓が読めなければ full に落ちる / none = idle)。郵便の本文は鍵で 1 行ずつ読む(全量 list しない)。計器 agent-job-to-send の createdAtMs は judgment.birth-ms-of の 1 点(生まれの表 → generation 1 の image の landed_at_ms → 今日の値 created_at_ms)。")
+     (rule R15 "session の id は agentd が鋳造する: 起こす session の id(session_id と session_name・sessionHandle.sessionId・stream の name)は effect MintId(ULID・時刻と乱数は handler)の答えで、charter(Messaging が組む launch の params)の session_id / session_name は読まない(judgment.launch-plan-of が落とす・据えるのは charter-with-session-id の 1 点)。実弾 2026-09-12: 温かい session が idle TTL で片付いた後、charter の固定の id の launch が `session is already registered`(host は片付いた行を登記のまま残す)に落ちて LaunchFailed で Ended した。")
      (rule R10 "session は会話の資源・job は手番(温かい session・設計 17.4): 会話 → 生きている session の対応は行(自分が claim した同じ subject の agent-job の sessionHandle)と器の現況から導き、Bound の job の起こし方は judgment.hy の next-arm-for-job(閉語彙 effects.NextArm = launch | send | resume | defer)の 1 点で決める — 同じ会話の生きて idle な session が在れば launch せず session.send(awaiting)だけ、sessionHandle はその session を指し、turn-record は手番ごと。手番の終わりは器の lifecycle multi_turn(launch.hy の閉語彙に足した語)で policy.hy の monitor が既存の turn-end の連言から行の turn_ended_at に刻み、agentd は job-step-of の turn-end(turn_ended_at > 手番の始まりの下限 ∧ 記録の進み)で読む — status は倒さず session は生かす。idle の寿命は AgentdSettings.session_idle_ttl_seconds の 1 点で、超過・Withdrawn・node の退役で session.cleanup。計器 agent-job-to-send は create → send のまま(温かい path で p99 < 2 秒)。")]
   :laws
     [(law agentd-exits-only-to-acp-and-custody
@@ -316,6 +359,33 @@
        :counterexamples
          [(counterexample "agentd.hy が『予め resume か launch か』を自分で分岐し、judgment にも同じ分岐を持つ — 判定点が 2 つになり memory の有無で起こし方が食い違う")
           (counterexample "agentd が transcript の落ち着きを自分で数えて手番の終わりを宣言する — policy.hy の turn-end の連言(会話記録の鮮度窓・queued messages・awaiting)を持たない第 2 の判定で、走行中の手番を終わりと読む")])
+     (law print-mode-has-one-home-the-headless-backend
+       :statement "the spelling of claude's print mode (`-p` in an argv) appears in sessionhost/ exactly in impls/headless_argv.hy; host.hy's backend vocabulary is {tmux, herdr, headless} and every RPC arm chooses the headless program by the one predicate headless-backend?; the semgrep rule doeff-agents-no-claude-print-mode excludes only the headless home (argv / protocol / process / program / substrate / tests)"
+       :counterexamples
+         [(counterexample "tui の adapter(impls/claude_code.hy)に -p を足す — 1 手番で process が死に、monitor が result を validate / 再促できない(ADR-DOE-AGENTS-002 の禁止そのもの)")
+          (counterexample "semgrep の除外を packages/** に広げる — print mode の禁止が死に、次の one-shot の launch site が黙って通る")])
+     (law headless-events-are-mapped-by-one-pure-function
+       :statement "for_all headless session s (backend_kind = headless): the live stream of s is read from backend_ref.events_path (SessionEvents) and mapped to TurnDelta by judgment.events-to-deltas; text deltas become text frames one per line and completed text becomes entries only; SessionCapture is never issued for s; AgentdSettings.stream_capability = events iff the host backend is headless"
+       :counterexamples
+         [(counterexample "headless の器に pane の capture を撃つ — 無い pane への capture が gone で毎拍落ちる(実弾 003 の headless 版)")
+          (counterexample "完成した assistant の本文を text frame でも流す — 画面に同じ本文が delta と全文で二度出る")
+          (counterexample "streamCapability を値の宣言の literal に固定する — headless の node が frames を名乗り、画面が端末の眺めで chat の block を描けない")])
+     (law withdraw-is-an-interrupt-signal-not-a-cleanup
+       :statement "for_all withdrawn agent-job row r I am observing: interrupt-arm-for(job, session.get) = interrupt ⇒ exactly one session.interrupt(r.sessionHandle) and no session.cleanup; turn-record(r) = ended; conditions(r) ∋ Interrupted; phase(r) stays Withdrawn; the session stays alive for the next send"
+       :counterexamples
+         [(counterexample "取り下げで session.cleanup を撃つ — 温かい session が死に、次の手番が cold の launch(tmux の tui で約 10 秒)に戻る")
+          (counterexample "agentd が Withdrawn の行の phase を書く — 書き手は作った側(withdraw の権限)で、agentd の書きは断られるか二重の終端になる")
+          (counterexample "手番が既に終わっている job に割り込む — 次の手番(別の job)の途中の session に Escape / SIGINT が飛ぶ")])
+     (law watch-wake-reads-changed-rows-and-latency-starts-at-birth
+       :statement "for_all watch wake with kind = changed: agentd issues AcpEventWindow(after = last_window_seq) and no AcpGet(agent-job) unless the window is incomplete; message bodies are read by key (AcpGetRow) and never by AcpGet(message); the metric agent-job-to-send.createdAtMs = birth-ms-of(row, births) = the generation-1 landed_at_ms when known, else the row's created_at_ms"
+       :counterexamples
+         [(counterexample "watch で起きるたびに agent-job と message を全量 list する — loadCurrentState の全 state を 2 度読み、温かい path の p99 が 2 秒を超える(実測 p50 4.7 s)")
+          (counterexample "createdAtMs を秒の粒度の resourceCreatedAt から取る — 計器が最大 1 秒ずれ、2 秒の受入を測れない")])
+     (law session-id-is-minted-by-agentd
+       :statement "for_all claim that launches or resumes: session_id(launch params) = MintId() ∧ session_id ∉ {charter.session_id, charter.session_name, agent-job id}; sessionHandle.sessionId = stream.name = that id; after a session was cleaned up (its row stays registered in the host) the next job of the conversation launches with a fresh id and is not refused"
+       :counterexamples
+         [(counterexample "charter の固定の session_id で launch する — idle TTL で片付いた行が host に登記のまま残り、次の launch が `session is already registered` で LaunchFailed(実弾 2026-09-12 aj 031〜033)")
+          (counterexample "agentd.hy が id を自分で組む(時刻や job の id から)— 純関数の外で id が生まれ、fake で反例を撃てない")])
      (law idle-session-ttl-is-declared-once
        :statement "the idle lifetime of a warm session is AgentdSettings.session_idle_ttl_seconds and nothing else; idle(s) ∧ now ≥ turn_ended_at(s) + ttl ⇒ session.cleanup(s) at the next heartbeat; the choice is judgment.sessions-to-retire (pure) and the clock is an effect"
        :counterexamples
@@ -394,10 +464,10 @@
        (.tick world 500)
        (.tick world 500)
        (assert (= world.sessions.captures []))
-       (setv (get world.acp.subscribers "s-cap") 1)
+       (setv (get world.acp.subscribers (sid-of world "s-cap")) 1)
        (.tick world 5000)
        (.tick world 500)
-       (assert (= world.sessions.captures [#("s-cap" 60)])))
+       (assert (= world.sessions.captures [#((sid-of world "s-cap") 60)])))
      (deftest test-adr-doe-agents-012-borrowed-credentials-not-on-disk-in-plain
        ;; claude: 札は env に乗り、file には 1 つも書かれない。
        (setv world (World))
@@ -449,7 +519,7 @@
        (.tick world 0)
        (assert (= (len world.sessions.launches) 1))
        (setv world.state (initial-state))
-       (.finish world.sessions "s-mine" "done" {"ok" True})
+       (.finish world.sessions (sid-of world "s-mine") "done" {"ok" True})
        (.put-row world.acp (running-row "s-theirs" "someone-else" "agentd"))
        (.put-row world.acp (running-row "s-not-mine" "mac-1" "other-principal"))
        (.tick world 1000)
@@ -486,16 +556,17 @@
        (setv world (World))
        (.put-row world.acp (bound-row "s-gone" "mac-1" None "claude" PHASE-BOUND))
        (.tick world 0)
-       (setv (get world.acp.subscribers "s-gone") 1)
+       (setv gone-sid (sid-of world "s-gone"))
+       (setv (get world.acp.subscribers gone-sid) 1)
        (.tick world 5000)
        (setv world.sessions.capture-gone "tmux capture-pane failed: no server running")
        (.tick world 500)
-       (assert (= world.sessions.captures [#("s-gone" 60)]))
+       (assert (= world.sessions.captures [#(gone-sid 60)]))
        (assert (= (lfor line world.local.logs :if (in "tick failed" line) line) []))
        (assert (is (. (get world.state.jobs 0) stream-gone) True))
        (.tick world 5000)
-       (assert (= world.sessions.captures [#("s-gone" 60)]))
-       (.finish world.sessions "s-gone" "done" {"ok" True})
+       (assert (= world.sessions.captures [#(gone-sid 60)]))
+       (.finish world.sessions gone-sid "done" {"ok" True})
        (.tick world 500)
        (assert (= (get (status-of (get world.acp.rows "acp-system:agent-job:s-gone")) "phase") PHASE-ENDED))
        (assert (= (get (status-of (get world.acp.rows "default:turn-record:s-gone")) "state") "ended"))
@@ -503,9 +574,9 @@
        (setv quiet (World))
        (.put-row quiet.acp (bound-row "s-quiet" "mac-1" None "claude" PHASE-BOUND))
        (.tick quiet 0)
-       (setv (get quiet.acp.subscribers "s-quiet") 1)
+       (setv (get quiet.acp.subscribers (sid-of quiet "s-quiet")) 1)
        (.tick quiet 5000)
-       (.finish quiet.sessions "s-quiet" "done" None)
+       (.finish quiet.sessions (sid-of quiet "s-quiet") "done" None)
        (.tick quiet 500)
        (assert (= quiet.sessions.captures []))
        (assert (= (get (status-of (get quiet.acp.rows "acp-system:agent-job:s-quiet")) "phase") PHASE-ENDED))
@@ -514,8 +585,8 @@
        (.put-row shared.acp (bound-row "s-a" "mac-1" None "claude" PHASE-BOUND))
        (.put-row shared.acp (bound-row "s-b" "mac-1" None "claude" PHASE-BOUND))
        (.tick shared 0)
-       (setv (get shared.sessions.failures "s-a") (RuntimeError "socket reset"))
-       (.finish shared.sessions "s-b" "done" None)
+       (setv (get shared.sessions.failures (sid-of shared "s-a")) (RuntimeError "socket reset"))
+       (.finish shared.sessions (sid-of shared "s-b") "done" None)
        (.tick shared 30000)
        (setv node (status-of (get shared.acp.rows "default:node:mac-1")))
        (assert (= (get (object-at node "lease") "heartbeatAt") 31000))
@@ -559,13 +630,15 @@
        (run-warm-turn world "t-1" "conv-a" "first")
        (assert (= (len world.sessions.launches) 1))
        (assert (= world.sessions.cleanups []))
+       (setv warm-sid (sid-of world "t-1"))
+       (assert (!= warm-sid "t-1") "session の id は agentd が鋳造する(charter / job の id ではない)")
        (run-warm-turn world "t-2" "conv-a" "second")
        (assert (= (len world.sessions.launches) 1))
        (assert (= world.sessions.resumes []))
-       (assert (= (get world.sessions.sends -1) #("t-1" "second" True)))
+       (assert (= (get world.sessions.sends -1) #(warm-sid "second" True)))
        (setv second (status-of (get world.acp.rows "acp-system:agent-job:t-2")))
        (assert (= (get second "phase") PHASE-ENDED))
-       (assert (= (get (object-at second "sessionHandle") "sessionId") "t-1"))
+       (assert (= (get (object-at second "sessionHandle") "sessionId") warm-sid))
        (assert (= (get (status-of (get world.acp.rows "default:turn-record:t-2")) "state") "ended"))
        (setv warm-metrics (lfor m world.local.metrics
                                 :if (and (= (get m "metric") "agent-job-to-send") (= (get m "agentJobId") "t-2"))
@@ -575,9 +648,159 @@
        (assert (< warm-ms 2000))
        (run-warm-turn world "t-3" "conv-b" "other")
        (assert (= (len world.sessions.launches) 2))
-       (assert (= (get (get world.sessions.launches 1) "session_id") "t-3"))
+       (assert (= (get (get world.sessions.launches 1) "session_id") (sid-of world "t-3")))
        (.tick world 700000)
-       (assert (= (sorted world.sessions.cleanups) ["t-1" "t-3"])))]
+       (assert (= (sorted world.sessions.cleanups) (sorted [warm-sid (sid-of world "t-3")])))
+       ;; 追補 2 の反例: 片付いた後の次の job は新しい id で launch に成功する(charter の固定の
+       ;; id で `session is already registered` に落ちない)。
+       (run-warm-turn world "t-4" "conv-a" "again")
+       (assert (= (len world.sessions.launches) 3))
+       (assert (!= (sid-of world "t-4") warm-sid))
+       (assert (= (get (status-of (get world.acp.rows "acp-system:agent-job:t-4")) "phase") PHASE-ENDED)))
+     (deftest test-adr-doe-agents-012-session-id-is-minted-by-agentd
+       ;; R15 の針: MintId を撃つ点は agentd.hy の claim-job の 1 つ、charter の id を落とすのは
+       ;; launch-plan-of、据えるのは charter-with-session-id の 1 点。反例(挙動): launch の
+       ;; session_id は charter の綴りでも job の id でもなく、鋳造の綴り。
+       (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
+       (assert (= (len (lfor line agentd-lines :if (in "(MintId)" line) line)) 1))
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk charter-with-session-id ") line)) 1))
+       (assert (any (gfor line judgment-lines (in "(.pop charter-out \"session_id\" None)" line))))
+       (setv world (World))
+       (.put-row world.acp (bound-row "m-1" "mac-1" None "claude" PHASE-BOUND))
+       (.tick world 0)
+       (setv launch (get world.sessions.launches 0))
+       (setv minted (sid-of world "m-1"))
+       (assert (= (get launch "session_id") minted))
+       (assert (= (get launch "session_name") minted))
+       (assert (not-in minted #{"m-1" "charter-m-1"}))
+       (assert (not-in "charter-m-1" (str launch))))
+     (deftest test-adr-doe-agents-012-print-mode-has-one-home
+       ;; R11 の針: print mode の argv の綴り(`"-p" "--output-format"` / `"--print"`)は
+       ;; impls/headless_argv.hy だけ(tmux の -p は capture-pane / paste-buffer の旗で別物)。host.hy の backend の
+       ;; 閉語彙と分岐の述語は 1 点。semgrep の除外は headless の家だけ。
+       (setv hits [])
+       (for [path (source-files)]
+         (when (= path.suffix ".hy")
+           (for [line (code-lines path)]
+             (when (re.search r"\"-p\"\s+\"--output-format\"|\"--print\"" line)
+               (.append hits (str (.relative-to path SESSIONHOST-DIR)))))))
+       (assert (= (sorted (set hits)) ["impls/headless_argv.hy"])
+               f"print mode の argv の家は impls/headless_argv.hy ちょうど: {hits}")
+       (setv host-lines (code-lines (/ SESSIONHOST-DIR "host.hy")))
+       (assert (any (gfor line host-lines (in "#{\"tmux\" \"herdr\" HEADLESS-BACKEND-KIND}" line))))
+       (assert (= (len (lfor line host-lines :if (.startswith line "(deff headless-backend? ") line)) 1))
+       (assert (>= (len (lfor line host-lines :if (in "(headless-backend? config)" line) line)) 7)
+               "launch / capture / send / interrupt / cancel / cleanup / monitor の分岐は述語 1 点を読む")
+       (setv semgrep (.read-text (/ (. (Path __file__) parent parent parent) ".semgrep.yaml") :encoding "utf-8"))
+       (setv rule (get (.split semgrep "  - id: doeff-agents-no-claude-print-mode") 1))
+       (setv rule (get (.split rule "  - id: ") 0))
+       (for [home ["impls/headless_argv.hy" "headless_protocol.py" "headless_process.py"
+                   "headless.hy" "substrate_headless.hy" "test_sessionhost_headless.py"]]
+         (assert (in home rule) f"semgrep の除外は headless の家 {home} を名指す"))
+       (assert (not-in "**/doeff_agents/**" rule) "除外を package 全体へ広げない"))
+     (deftest test-adr-doe-agents-012-headless-events-are-the-live-stream
+       ;; R12 の針: capability は backend から(純関数)。反例(挙動): headless の器では text の
+       ;; delta が 1 行ずつ frame になり、完成した本文は entries だけ、capture は撃たない。
+       (assert (= (run (stream-capability-of-backend "headless")) "events"))
+       (assert (= (run (stream-capability-of-backend "tmux")) "frames"))
+       (assert (= (run (stream-capability-of-backend "herdr")) "frames"))
+       (setv world (World))
+       (setv world.settings (AgentdSettings :node-name "mac-1" :homes-root "/homes" :stream-capability "events"))
+       (setv world.sessions (FakeSessions :backend-kind "headless" :events-root "/events"))
+       (.put-row world.acp (message-row "m-h" "hello"))
+       (.put-row world.acp (turn-row "h-1" "conv-h" "m-h" 500))
+       (.tick world 0)
+       (setv h-sid (sid-of world "h-1"))
+       (setv node (status-of (get world.acp.rows "default:node:mac-1")))
+       (assert (= (get (object-at node "observations") "streamCapability") "events"))
+       (setv (get world.local.transcripts f"/events/{h-sid}.events.jsonl")
+             (+ "{\"type\": \"stream_event\", \"event\": {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"ab\"}}}\n"
+                "{\"type\": \"stream_event\", \"event\": {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"cd\"}}}\n"
+                "{\"type\": \"assistant\", \"message\": {\"role\": \"assistant\", \"id\": \"m\", \"content\": [{\"type\": \"text\", \"text\": \"abcd\"}]}}\n"))
+       (setv (get world.acp.subscribers h-sid) 1)
+       (.tick world 1000)
+       (.tick world 500)
+       (setv kinds (lfor [_o _n frames] world.acp.pushes frame frames (get frame "kind")))
+       (assert (= (lfor k kinds :if (= k "text") k) ["text" "text"]))
+       (assert (not-in "frame" kinds))
+       (assert (= world.sessions.captures []))
+       (.finish-turn world.sessions h-sid (+ world.local.now-ms 100))
+       (.tick world 1000)
+       (setv record (status-of (get world.acp.rows "default:turn-record:h-1")))
+       (assert (= (get record "state") "ended"))
+       (setv entries (get record "entries"))
+       (assert (isinstance entries list))
+       (assert (= (lfor e entries :if (isinstance e dict) (get e "kind")) ["text"]))
+       (setv first-entry (get entries 0))
+       (assert (isinstance first-entry dict))
+       (assert (= (get first-entry "text") "abcd")))
+     (deftest test-adr-doe-agents-012-withdraw-is-an-interrupt-signal
+       ;; R13 の針: 割り込みの判定は judgment.hy の interrupt-arm-for の 1 点、agentd.hy の
+       ;; withdraw の腕に SessionCleanup は無い。反例(挙動): 取り下げ → interrupt 1 回・
+       ;; cleanup 0・turn-record ended・Interrupted・phase は Withdrawn・session は生きたまま。
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk interrupt-arm-for ") line)) 1))
+       (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
+       (setv block "")
+       (for [line agentd-lines]
+         (when (.startswith line "(defk ")
+           (setv block (get (.split line) 1)))
+         (when (in block #{"interrupt-job" "withdraw-jobs"})
+           (assert (not-in "SessionCleanup" line) f"取り下げは片付けない(R13): {block}: {line}")
+           (assert (not-in "retire-sessions" line) f"取り下げは片付けない(R13): {block}: {line}")))
+       (setv world (World))
+       (run-warm-turn world "w-1" "conv-w" "first")
+       (.put-row world.acp (message-row "m-w2" "second"))
+       (.put-row world.acp (turn-row "w-2" "conv-w" "m-w2" (- world.local.now-ms 300)))
+       (.tick world 1000)
+       (setv running (get world.acp.rows "acp-system:agent-job:w-2"))
+       (setv withdrawn (dict (status-of running)))
+       (setv (get withdrawn "phase") "Withdrawn")
+       (.put-row world.acp (AcpRow :namespace running.namespace :key running.key :kind running.kind
+                                   :resource-id running.resource-id :version running.version
+                                   :generation running.generation :created-at-ms running.created-at-ms
+                                   :labels running.labels :payload running.payload :spec running.spec
+                                   :status withdrawn))
+       (.tick world 1000)
+       (setv w-sid (sid-of world "w-1"))
+       (assert (= world.sessions.interrupts [w-sid]))
+       (assert (= world.sessions.cleanups []))
+       (assert (= (get (status-of (get world.acp.rows "default:turn-record:w-2")) "state") "ended"))
+       (setv after (status-of (get world.acp.rows "acp-system:agent-job:w-2")))
+       (assert (= (get after "phase") "Withdrawn"))
+       (assert (= (last-condition-type after) "Interrupted"))
+       (assert (= (. (get world.sessions.views w-sid) status) "running"))
+       (.tick world 1000)
+       (assert (= world.sessions.interrupts [w-sid])))
+     (deftest test-adr-doe-agents-012-watch-wake-reads-the-window-and-birth-landing
+       ;; R14 の針: 様式の判定は list-mode-for の 1 点・計器の始点は birth-ms-of の 1 点。
+       ;; 反例(挙動): watch で起きた拍は agent-job も message も全量 list せず、計器は生まれの着地。
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk list-mode-for ") line)) 1))
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk birth-ms-of ") line)) 1))
+       (for [line (code-lines (/ ACP-DIR "agentd.hy"))]
+         (assert (not-in "(AcpGet :kind MESSAGE-KIND)" line) "郵便は鍵で 1 行ずつ読む(R14)"))
+       (setv world (World))
+       (.tick world 0)
+       (assert (= (.count world.acp.lists "agent-job") 1))
+       (.put-row world.acp (message-row "m-b" "born"))
+       (setv base (bound-row "b-1" "mac-1" None "claude" PHASE-BOUND))
+       (.put-row world.acp (AcpRow :namespace base.namespace :key base.key :kind base.kind
+                                   :resource-id base.resource-id :version base.version :generation 1
+                                   :created-at-ms 1000 :labels {} :payload {} :spec base.spec
+                                   :status {"phase" "Pending"} :landed-at-ms 1437))
+       (.put-row world.acp (AcpRow :namespace base.namespace :key base.key :kind base.kind
+                                   :resource-id base.resource-id :version base.version :generation 2
+                                   :created-at-ms 1000 :labels {} :payload {} :spec base.spec
+                                   :status base.status :landed-at-ms 1900))
+       (.tick world 1500)
+       (assert (= (.count world.acp.lists "agent-job") 1) "watch の拍は全量 list しない")
+       (assert (not-in "message" world.acp.lists))
+       (setv metric (get (lfor m world.local.metrics :if (= (get m "metric") "agent-job-to-send") m) -1))
+       (assert (= (get metric "createdAtMs") 1437))
+       (assert (= (get metric "ms") (- 2500 1437))))]
   :plans ["docs/impl-requests/stage2-lane-prompts/lane-2b-agentd.md(agora-redesign)"
           "docs/impl-requests/stage2-lane-prompts/lane-2b2-agentd-fix.md(agora-redesign・改訂 R7〜R9)"
-          "docs/impl-requests/stage2-lane-prompts/lane-2b3-warm-session.md(agora-redesign・改訂 R10)"])
+          "docs/impl-requests/stage2-lane-prompts/lane-2b3-warm-session.md(agora-redesign・改訂 R10)"
+          "docs/impl-requests/stage2-lane-prompts/lane-2d-headless-backend.md(agora-redesign・改訂 R11〜R14)"])
