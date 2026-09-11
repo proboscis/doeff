@@ -28,6 +28,13 @@
 ;;; R14(追補: watch の拍は差分の読み・計器の始点は生まれの着地 — 本番の温かい path の実測
 ;;; create → send p50 4.7 s / p99 5.3 s と、agent-job の resourceCreatedAt が秒の粒度である実測)を足す。
 ;;;
+;;; 改訂 2026-09-12(lane 2d-2・同 lane-2d2-codex-headless-shim.md の追補): 本番の e2e で headless の
+;;; claude の launch の腕が charter の prompt で 1 手番目の process を起こした直後に、after-start が
+;;; inputs の郵便を session.send し、host が同じ session の名で --resume の process を spawn して
+;;; `headless session already exists` で落ちた(1 手番 1 process — 走っている手番の途中に次を
+;;; 起こせない)。根 = launch(charter の prompt)と send(郵便)を 2 手番として撃つこと。R16
+;;; (headless の起こす手番は郵便を 1 手番目の本文に畳む・send は撃たない)を足す。tui は今日どおり。
+;;;
 ;;; 置き場 = packages/doeff-agents/src/doeff_agents/sessionhost/acp/(effects.py = 要求と値の
 ;;; 型・judgment.hy = 純粋な判断・agentd.hy = program・handlers.py = 実 I/O・fake.py = test の
 ;;; handler・valve.py = 弁・runtime.py = composition root・entry.py = console script の入口)。
@@ -298,7 +305,9 @@
      (interpretation
        "events の実況(R12): headless の器は stdout の行を events file(backend_ref.events_path・1 行 1 event)に追記し、agentd はそこから offset で読んで純関数 events-to-deltas で TurnDelta に写す(text の delta は 1 行ずつ frame に、完成した本文は entries に — 同じ本文を frame で二度流さない)。pane は無いので frame の capture は撃たない。node の observations.streamCapability は host の backend から導く(headless = events・tmux / herdr = frames)。")
      (interpretation
-       "差分の読みと計器の始点(R14): watch で起きた拍は agent-job の全量 list ではなく ACP の event-window(cursor-only・(after, through] の post-image)で変わった行だけを読み、知っている行の cache(AgentdState.rows)に差し替える。全量 list は最初の拍・周期の保険(watch_resync_seconds)・gap・接続の張り直し・窓が retention の床の下(409)の時だけ。郵便の本文は鍵で 1 行ずつ読む。計器 agent-job-to-send の始点は行の生まれの着地(generation 1 の image の resourceLandedAt・ns 精度)で、欄が無ければ今日の値(秒の粒度の createdAt)。")]
+       "差分の読みと計器の始点(R14): watch で起きた拍は agent-job の全量 list ではなく ACP の event-window(cursor-only・(after, through] の post-image)で変わった行だけを読み、知っている行の cache(AgentdState.rows)に差し替える。全量 list は最初の拍・周期の保険(watch_resync_seconds)・gap・接続の張り直し・窓が retention の床の下(409)の時だけ。郵便の本文は鍵で 1 行ずつ読む。計器 agent-job-to-send の始点は行の生まれの着地(generation 1 の image の resourceLandedAt・ns 精度)で、欄が無ければ今日の値(秒の粒度の createdAt)。")
+     (interpretation
+       "headless の 1 手番目(R16): headless の器は 1 手番 = 1 prompt(claude は 1 手番 1 process・codex は turn/start が手番)で、走っている手番の途中に次の本文を積めない。tui の launch → send(pane の paste は手番の途中でも積める)をそのまま撃つと、launch(charter の prompt)が 1 手番目を起こした直後の send が同じ名の --resume の process を起こそうとして落ちる(実弾 2026-09-12 agentd-4.log)。⇒ 起こす手番(launch / resume)の本文は charter の prompt(前置き)と inputs の郵便の本文を空行で 1 つに畳んだ文(judgment.first-turn-prompt-of)で、after-start は send を撃たない。畳むかの判定は judgment.first-turn-carries-inputs(host の backend が headless ∧ 腕が launch / resume)の 1 点で、backend は AgentdSettings.backend_kind(composition root が host の argv / env から導く — streamCapability と同じ源)。send の腕(温かい session)は今日どおり郵便の本文だけ。tui は今日どおり launch の後に send。")]
   :decision
     [(rule R1 "agentd の出口は ACP(GET /api/resources・POST /api/events・GET /api/watch/stream・POST /api/streams)と custody(POST /lease/*)だけ。agora の台帳 API(/api/state・turn-jobs・seat-*・headless・agmsg)の語を sessionhost の source に置かない。")
      (rule R2 "job を選ぶ判定は judgment.hy の bound-to-me(phase == Bound ∧ binding.node == 自分 — 受け)と running-on-me(phase == Running ∧ binding.node == 自分 ∧ sessionHandle.stream.owner == 自分 — 再起動後の拾い直し)の 2 つの述語だけで、どちらも binding.node == 自分の行に閉じる。それ以外に job を選ぶ・優先する code を置かない。agent-job の status.binding を agentd は書かない(写して返すだけ)。")
@@ -314,6 +323,7 @@
      (rule R13 "withdraw は中断の合図: 自分の走っている job の行が Withdrawn(書き手 = 作った側)になったら、judgment.interrupt-arm-for の 1 点で手番の途中なら session.interrupt(headless = SIGINT / turn/interrupt・tmux = Escape・session は残す)を撃ち、turn-record を ended(ここまでの entries と usage)、agent-job の conditions に Interrupted(phase は書かない)。session.cleanup は撃たない(温かい session は残す — 寿命は sessions-to-retire)。")
      (rule R14 "watch の拍は差分の読み・計器の始点は生まれの着地: 行の読み直しの様式は judgment.list-mode-for の 1 点(full = 最初の拍・周期の保険・gap・接続の張り直し / window = watch で起きた拍 = GET /api/event-window の post-image で AgentdState.rows を差し替え・窓が読めなければ full に落ちる / none = idle)。郵便の本文は鍵で 1 行ずつ読む(全量 list しない)。計器 agent-job-to-send の createdAtMs は judgment.birth-ms-of の 1 点(生まれの表 → generation 1 の image の landed_at_ms → 今日の値 created_at_ms)。")
      (rule R15 "session の id は agentd が鋳造する: 起こす session の id(session_id と session_name・sessionHandle.sessionId・stream の name)は effect MintId(ULID・時刻と乱数は handler)の答えで、charter(Messaging が組む launch の params)の session_id / session_name は読まない(judgment.launch-plan-of が落とす・据えるのは charter-with-session-id の 1 点)。実弾 2026-09-12: 温かい session が idle TTL で片付いた後、charter の固定の id の launch が `session is already registered`(host は片付いた行を登記のまま残す)に落ちて LaunchFailed で Ended した。")
+     (rule R16 "headless の起こす手番は郵便を 1 手番目の本文に畳む: host の backend が headless(AgentdSettings.backend_kind — runtime.settings_from_env が valve.backend_of から導く 1 点・streamCapability と同じ源)なら、launch / resume の腕は charter の prompt(前置き)と inputs の郵便の本文を judgment.first-turn-prompt-of(空行区切り・郵便が無ければ charter だけ)で 1 つに畳んで起こし、after-start は session.send を撃たない。判定は judgment.first-turn-carries-inputs(backend ∧ 腕)の 1 点。send の腕(温かい session)は郵便の本文だけを send。tui(tmux / herdr)は今日どおり launch の後に send。turn-record の create・計器 agent-job-to-send・in-flight の登記は腕に依らず同じ。実弾 2026-09-12: launch の直後の send が `headless session already exists` で tick ごと落ち、turn-record が作られず job は拾い直しの腕へ。")
      (rule R10 "session は会話の資源・job は手番(温かい session・設計 17.4): 会話 → 生きている session の対応は行(自分が claim した同じ subject の agent-job の sessionHandle)と器の現況から導き、Bound の job の起こし方は judgment.hy の next-arm-for-job(閉語彙 effects.NextArm = launch | send | resume | defer)の 1 点で決める — 同じ会話の生きて idle な session が在れば launch せず session.send(awaiting)だけ、sessionHandle はその session を指し、turn-record は手番ごと。手番の終わりは器の lifecycle multi_turn(launch.hy の閉語彙に足した語)で policy.hy の monitor が既存の turn-end の連言から行の turn_ended_at に刻み、agentd は job-step-of の turn-end(turn_ended_at > 手番の始まりの下限 ∧ 記録の進み)で読む — status は倒さず session は生かす。idle の寿命は AgentdSettings.session_idle_ttl_seconds の 1 点で、超過・Withdrawn・node の退役で session.cleanup。計器 agent-job-to-send は create → send のまま(温かい path で p99 < 2 秒)。")]
   :laws
     [(law agentd-exits-only-to-acp-and-custody
@@ -370,6 +380,12 @@
          [(counterexample "headless の器に pane の capture を撃つ — 無い pane への capture が gone で毎拍落ちる(実弾 003 の headless 版)")
           (counterexample "完成した assistant の本文を text frame でも流す — 画面に同じ本文が delta と全文で二度出る")
           (counterexample "streamCapability を値の宣言の literal に固定する — headless の node が frames を名乗り、画面が端末の眺めで chat の block を描けない")])
+     (law headless-first-turn-carries-the-mail
+       :statement "for_all Bound job j claimed by launch or resume on a host whose backend is headless (AgentdSettings.backend_kind = headless): the prompt of session.launch / session.resume = first-turn-prompt-of(charter.prompt, bodies(inputs(j))) (blank-line joined・charter only when inputs are empty) ∧ no SessionSend is issued for j; on a tui host the launch prompt = charter.prompt ∧ SessionSend(bodies) follows; the send arm sends bodies only on every host; the decision is judgment.first-turn-carries-inputs alone"
+       :counterexamples
+         [(counterexample "headless の launch の後に郵便を session.send する — claude は 1 手番 1 process なので host が同じ名で --resume を spawn し `headless session already exists` で tick が落ちる(実弾 2026-09-12 agentd-4.log)・codex は走っている turn に turn/start を積む")
+          (counterexample "agentd.hy が backend の語を自分で比較して畳む / 畳まないを分ける — 判定点が judgment と 2 つになり、backend の語彙が増えた日に片方だけ直る")
+          (counterexample "tui でも郵便を charter に畳む — 温かい send の path と cold の launch で本文の届き方が変わり、ready gate の paste 物理(context_file・composer)の前提が崩れる")])
      (law withdraw-is-an-interrupt-signal-not-a-cleanup
        :statement "for_all withdrawn agent-job row r I am observing: interrupt-arm-for(job, session.get) = interrupt ⇒ exactly one session.interrupt(r.sessionHandle) and no session.cleanup; turn-record(r) = ended; conditions(r) ∋ Interrupted; phase(r) stays Withdrawn; the session stays alive for the next send"
        :counterexamples
@@ -706,7 +722,7 @@
        (assert (= (run (stream-capability-of-backend "tmux")) "frames"))
        (assert (= (run (stream-capability-of-backend "herdr")) "frames"))
        (setv world (World))
-       (setv world.settings (AgentdSettings :node-name "mac-1" :homes-root "/homes" :stream-capability "events"))
+       (setv world.settings (AgentdSettings :node-name "mac-1" :homes-root "/homes" :backend-kind "headless" :stream-capability "events"))
        (setv world.sessions (FakeSessions :backend-kind "headless" :events-root "/events"))
        (.put-row world.acp (message-row "m-h" "hello"))
        (.put-row world.acp (turn-row "h-1" "conv-h" "m-h" 500))
@@ -799,8 +815,36 @@
        (assert (not-in "message" world.acp.lists))
        (setv metric (get (lfor m world.local.metrics :if (= (get m "metric") "agent-job-to-send") m) -1))
        (assert (= (get metric "createdAtMs") 1437))
-       (assert (= (get metric "ms") (- 2500 1437))))]
+       (assert (= (get metric "ms") (- 2500 1437))))
+     (deftest test-adr-doe-agents-012-headless-first-turn-carries-the-mail
+       ;; R16 の針: 畳むかの判定は judgment.hy の first-turn-carries-inputs の 1 点・本文の畳みは
+       ;; first-turn-prompt-of の 1 点。agentd.hy は backend の語(BACKEND-HEADLESS / "headless")を
+       ;; 比較しない。反例(挙動): headless の器では launch の prompt に郵便が畳まれ send は 0、
+       ;; tui の器では launch の prompt は charter のままで send に郵便が乗る。
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk first-turn-carries-inputs ") line)) 1))
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk first-turn-prompt-of ") line)) 1))
+       (for [line (code-lines (/ ACP-DIR "agentd.hy"))]
+         (assert (not-in "BACKEND-HEADLESS" line) f"agentd.hy は backend の語を比較しない(R16): {line}")
+         (assert (not-in "\"headless\"" line) f"agentd.hy は backend の語を比較しない(R16): {line}"))
+       (setv headless (World))
+       (setv headless.settings (AgentdSettings :node-name "mac-1" :homes-root "/homes" :backend-kind "headless" :stream-capability "events"))
+       (setv headless.sessions (FakeSessions :backend-kind "headless" :events-root "/events"))
+       (.put-row headless.acp (message-row "m-f" "hello"))
+       (.put-row headless.acp (turn-row "f-1" "conv-f" "m-f" 500))
+       (.tick headless 0)
+       (assert (= (get (get headless.sessions.launches -1) "prompt") "go\n\nhello"))
+       (assert (= headless.sessions.sends []))
+       (assert (is-not (.get headless.acp.rows "default:turn-record:f-1") None))
+       (assert (= (len headless.state.jobs) 1))
+       (setv tui (World))
+       (.put-row tui.acp (message-row "m-t" "hello"))
+       (.put-row tui.acp (turn-row "t-1" "conv-t" "m-t" 500))
+       (.tick tui 0)
+       (assert (= (get (get tui.sessions.launches -1) "prompt") "go"))
+       (assert (= tui.sessions.sends [#((sid-of tui "t-1") "hello" True)])))]
   :plans ["docs/impl-requests/stage2-lane-prompts/lane-2b-agentd.md(agora-redesign)"
           "docs/impl-requests/stage2-lane-prompts/lane-2b2-agentd-fix.md(agora-redesign・改訂 R7〜R9)"
           "docs/impl-requests/stage2-lane-prompts/lane-2b3-warm-session.md(agora-redesign・改訂 R10)"
-          "docs/impl-requests/stage2-lane-prompts/lane-2d-headless-backend.md(agora-redesign・改訂 R11〜R14)"])
+          "docs/impl-requests/stage2-lane-prompts/lane-2d-headless-backend.md(agora-redesign・改訂 R11〜R14)"
+          "docs/impl-requests/stage2-lane-prompts/lane-2d2-codex-headless-shim.md(agora-redesign・追補 R16)"])
