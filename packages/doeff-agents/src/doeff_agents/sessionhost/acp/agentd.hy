@@ -21,6 +21,11 @@
 ;;; 生かしたまま turn-record を ended・job を Ended にする。idle の寿命は
 ;;; AgentdSettings.session_idle_ttl_seconds(heartbeat の拍に sessions-to-retire で片付ける)。
 ;;;
+;;; headless の 1 手番目(R16): headless の器は 1 手番 = 1 prompt で、走っている手番の途中に次の本文を
+;;; 積めない。起こす腕(launch / resume)は inputs の郵便を charter の prompt に畳んで起こし(判定は
+;;; judgment.first-turn-carries-inputs・畳みは first-turn-prompt-of の 1 点)、after-start は send を
+;;; 撃たない。tui は今日どおり launch の後に send。郵便の読み(mail-of)は腕を選んだ後・起こす前。
+;;;
 ;;; 書く欄は契約の writers どおり: agent-job の phase / sessionHandle / result / conditions、
 ;;; node の status.lease / status.observations、turn-record の create と status。
 ;;; binding は書かない・Node の行は作らない(scheduling の欄と動詞)。
@@ -101,6 +106,7 @@
   births-of-rows
   births-with
   capture-verdict
+  charter-with-first-turn
   charter-with-grant
   charter-with-session-id
   cleanup-after-end
@@ -108,6 +114,7 @@
   deltas-of
   due
   ended-status-of
+  first-turn-carries-inputs
   frame-lines-of
   in-flight-ids
   in-flight-job-of
@@ -276,9 +283,11 @@
   "1 つの Bound の行を受ける: 会話の session の候補(行から)を器で眺め、起こし方を
    next-arm-for-job の 1 点で決める。defer(会話の session が手番の途中)なら claim せず次の
    list へ。それ以外は Running + sessionHandle を CAS で書き(負けたら次の list へ)、札を
-   借り、send なら既存の session に・launch / resume なら起こした session に inputs の本文を
-   送り、所要を計器に 1 行、turn-record を作り、status frame を 1 つ押す。
-   起こす session の id は agentd が鋳造する(MintId — charter の id は読まない)。"
+   借り、inputs の郵便の本文を届ける — headless の起こす腕(launch / resume)は charter の prompt に
+   畳んで起こし(1 手番 = 1 prompt・判定は first-turn-carries-inputs の 1 点)、それ以外(tui の
+   起こす腕・温かい send)は起こした / 既存の session に send — 所要を計器に 1 行、turn-record を
+   作り、status frame を 1 つ押す。起こす session の id は agentd が鋳造する(MintId — charter の
+   id は読まない)。"
   (<- plan LaunchPlan (launch-plan-of row))
   (setv job-id row.resource-id)
   (setv subject (str (.get row.spec "subject" job-id)))
@@ -317,6 +326,12 @@
             (<- (LogLine :text f"agentd: claim of job {job-id} did not land ({claimed}); will re-list"))
             state)
           (do
+            (<- mail tuple (mail-of row))
+            (<- folds bool (first-turn-carries-inputs settings.backend-kind arm))
+            (when folds
+              (<- folded dict (charter-with-first-turn plan.charter (get mail 0)))
+              (setv plan (replace plan :charter folded)))
+            (setv to-send (if folds #() (get mail 0)))
             (<- borrowed tuple (borrow-for settings plan f"agent-job {job-id}"))
             (setv charter (get borrowed 0))
             (setv lease (get borrowed 1))
@@ -337,8 +352,25 @@
                         state)
                       (do
                         (<- started AgentdState
-                            (after-start settings state row plan outcome lease arm now-ms))
+                            (after-start settings state row plan outcome lease arm now-ms
+                                         to-send (get mail 1)))
                         started)))))))))
+
+
+(defk mail-of [row]
+  {:pre [(: row AcpRow)]
+   :post [(: % tuple)]}
+  "inputs の郵便の本文と見つからなかった id: #(bodies missing)。本文は鍵で 1 行ずつ読む
+   (郵便の全量 list を watch の拍ごとに撃たない — R14)。"
+  (<- inputs tuple (inputs-of row))
+  (setv found [])
+  (for [input-id inputs]
+    (<- key str (message-key-of input-id))
+    (<- message (| AcpRow None) (AcpGetRow :key key))
+    (when (is-not message None)
+      (.append found message)))
+  (<- pair tuple (message-bodies-of (tuple found) inputs))
+  pair)
 
 
 (defk start-offset-of [view arm]
@@ -357,32 +389,24 @@
   #(path start-offset))
 
 
-(defk after-start [settings state row plan view lease arm now-ms]
+(defk after-start [settings state row plan view lease arm now-ms bodies missing]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: row AcpRow) (: plan LaunchPlan)
-         (: view SessionView) (: lease (| LeaseGrant None)) (: arm str) (: now-ms int)]
+         (: view SessionView) (: lease (| LeaseGrant None)) (: arm str) (: now-ms int)
+         (: bodies tuple) (: missing tuple)]
    :post [(: % AgentdState)]}
-  "手番の始まり(session を起こした後・温かい session ならそのまま): inputs を送る(awaiting —
-   送った本文は owed)・計器・turn-record・status frame・in-flight に登記。手番の始まりの
-   offset は送る前の file の大きさ(send / resume)。"
+  "手番の始まり(session を起こした後・温かい session ならそのまま): 郵便の本文(bodies — headless の
+   起こす腕では空: 本文は起こした prompt に畳んである)を送る(awaiting — 送った本文は owed)・
+   見つからなかった id(missing)は condition InputUnavailable・計器・turn-record・status frame・
+   in-flight に登記。手番の始まりの offset は送る前の file の大きさ(send / resume)。"
   (setv job-id row.resource-id)
   (setv pending [])
   (<- start tuple (start-offset-of view arm))
-  (<- inputs tuple (inputs-of row))
-  (when inputs
-    ;; inputs の本文は鍵で 1 行ずつ読む(郵便の全量 list を watch の拍ごとに撃たない)。
-    (setv found [])
-    (for [input-id inputs]
-      (<- key str (message-key-of input-id))
-      (<- message (| AcpRow None) (AcpGetRow :key key))
-      (when (is-not message None)
-        (.append found message)))
-    (<- pair tuple (message-bodies-of (tuple found) inputs))
-    (for [body (get pair 0)]
-      (<- (SessionSend :session-id view.session-id :text body :awaiting True)))
-    (when (get pair 1)
-      (<- condition dict (condition-of "InputUnavailable"
-                                       (+ "messages not found: " (.join ", " (get pair 1)))))
-      (.append pending condition)))
+  (for [body bodies]
+    (<- (SessionSend :session-id view.session-id :text body :awaiting True)))
+  (when missing
+    (<- condition dict (condition-of "InputUnavailable"
+                                     (+ "messages not found: " (.join ", " missing))))
+    (.append pending condition))
   (<- sent-ms int (ClockNowMs))
   ;; 始点 = 行の生まれの着地(generation 1 の image の landed_at・ns 精度 — 秒の粒度の
   ;; createdAt ではない。判断は birth-ms-of の 1 点・欄が無ければ今日の値)。

@@ -34,6 +34,7 @@ def claim_job(
     previously_deferred: tuple,
     now_ms: int,
 ) -> Program: ...
+def mail_of(row: AcpRow) -> Program: ...
 def start_offset_of(view: SessionView, arm: str) -> Program: ...
 def after_start(
     settings: AgentdSettings,
@@ -44,6 +45,8 @@ def after_start(
     lease: LeaseGrant | None,
     arm: str,
     now_ms: int,
+    bodies: tuple,
+    missing: tuple,
 ) -> Program: ...
 def push_frames(settings: AgentdSettings, job: InFlightJob, frames: tuple) -> Program: ...
 def probe_subscribers(

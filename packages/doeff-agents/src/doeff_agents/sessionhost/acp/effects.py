@@ -150,6 +150,11 @@ class AgentdSettings:
     lease_renew_margin_seconds: int = 120
     #: 借りた資格の家の根(claude = CLAUDE_CONFIG_DIR・codex = auth.json の置き場)。
     homes_root: str = ""
+    #: host の backend(wire の閉語彙 tmux | herdr | headless の写し — agentd が読む語は
+    #: BACKEND_HEADLESS だけ)。composition root(runtime.settings_from_env)が host の argv / env
+    #: (valve.backend_of)から導く 1 点で、stream_capability も同じ源から導く。headless の器は
+    #: 起こす手番の本文に inputs の郵便を畳む(judgment.first-turn-carries-inputs — R16)。
+    backend_kind: str = "tmux"
     #: agentd が観測する自分の stream の capability — host の backend から導く(runtime.py の
     #: 1 点: headless = events・tmux / herdr = frames — judgment.stream-capability-of-backend)。
     stream_capability: StreamCapability = "frames"
