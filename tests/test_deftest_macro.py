@@ -287,3 +287,58 @@ class TestDeftestFileTypes:
             (deftest test-in-hyp (assert True))
         """)
         assert callable(mod.test_in_hyp)
+
+
+# ---------------------------------------------------------------------------
+# Typed binding — (<- name Type expr) at the top level of a deftest body
+# ---------------------------------------------------------------------------
+
+class TestDeftestTypedBind:
+    """deftest の先頭階の (<- name Type expr) は <- macro と同じ isinstance の保証を出す。
+
+    deftest は本体の <- を自分で読んで yield へ書き換えるため、型欄が捨てられ
+    (<- x str eff) が実行時に無検査だった。共通の品質検査(dotfiles
+    agent/quality/hy_dsl.py effect_bind)はその実態に合わせて型を object に投影
+    せざるを得ず、ACP の段 0 の法で native-type が 30 件以上出た。定義点は
+    macros.hy の _bind-yield 1 つ(<- macro / do! / defp / for/do と共有)。
+    """
+
+    def _import(self, tmp_hy_dir, filename, body):
+        (tmp_hy_dir / filename).write_text(textwrap.dedent("""\
+            (require doeff-hy.macros [deftest <-])
+            (import test-deftest-macro [GetValue])
+        """) + textwrap.dedent(body))
+        sys.modules.pop(filename.removesuffix(".hy"), None)
+        importlib.invalidate_caches()
+        sys.path_importer_cache.clear()
+        return importlib.import_module(filename.removesuffix(".hy"))
+
+    def test_typed_bind_passes_when_type_matches(self, tmp_hy_dir):
+        mod = self._import(tmp_hy_dir, "typed_ok_test.hy", """\
+            (deftest test-typed-ok
+              (<- price float (GetValue :key "price"))
+              (<- name str (GetValue :key "name"))
+              (assert (= price 100.0))
+              (assert (= name "TestCo")))
+        """)
+        mod.test_typed_ok(stub_interpreter)
+
+    def test_typed_bind_fails_when_type_mismatches(self, tmp_hy_dir):
+        """型違いは束縛の直後に AssertionError — 後続の assert に届く前に落ちる。"""
+        mod = self._import(tmp_hy_dir, "typed_bad_test.hy", """\
+            (deftest test-typed-bad
+              (<- price str (GetValue :key "price"))
+              (assert False "unreachable: isinstance guard must fire first"))
+        """)
+        with pytest.raises(AssertionError, match=r"expected str, got float"):
+            mod.test_typed_bad(stub_interpreter)
+
+    def test_untyped_bind_is_unchanged(self, tmp_hy_dir):
+        """2 要素・3 要素の形は今日のまま(型検査を足さない)。"""
+        mod = self._import(tmp_hy_dir, "untyped_test.hy", """\
+            (deftest test-untyped
+              (<- price (GetValue :key "price"))
+              (<- (GetValue :key "name"))
+              (assert (= price 100.0)))
+        """)
+        mod.test_untyped(stub_interpreter)
