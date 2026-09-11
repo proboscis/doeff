@@ -124,6 +124,13 @@
   ;; 上書きする経路を構造的に持たないため。
   #^ bool adopted
   (setv adopted False)
+  ;; 温かい session(lifecycle multi_turn — agentd 段 2 lane 2b-3・ADR-DOE-AGENTS-012
+  ;; R10): monitor が手番の終わり(turn-end の連言)を最初に観測した時刻。
+  ;; level-triggered(次の手番が走ると None)・単一 writer = monitor・素の
+  ;; last-write-wins(COALESCE 保護を持たない — 走り出した事実を stale な値で隠さない)。
+  ;; wire には None のとき欄ごと省略。run_to_completion / interactive では常に None。
+  #^ (| str None) turn-ended-at
+  (setv turn-ended-at None)
   ;; issue #557: attempt 中に一度でも blocked_api(api-limit marker)を観測した
   ;; 事実の durable latch(初回観測時刻)。終端時の tail-30 snapshot は本質的に
   ;; racy(上限文言は terminal 前に scroll out する)— turn-end-without-result /

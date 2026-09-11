@@ -461,15 +461,27 @@
   "RunToCompletion lifecycle か(Kind 2)。"
   (= lifecycle "run_to_completion"))
 
+(deff is-multi-turn [lifecycle]
+  {:pre [(: lifecycle str)]
+   :post [(: % bool)]}
+  "温かい session(agentd 段 2 lane 2b-3・ADR-DOE-AGENTS-012 R10): 手番の終わりは
+   観測する(turn-end の連言が turn_ended_at を刻む)が status を done へ倒さず
+   session を片付けない — 同じ会話の次の手番は session.send で来る。監視される
+   (刈り取り免除ではない — 死んだ session は終端へ)が、手番の間の長い不変は
+   stall watchdog(run_to_completion の腕)の対象ではない。"
+  (= lifecycle "multi_turn"))
+
 (deff reap-exempt [row]
   {:pre [(: row SessionRow)]
    :post [(: % bool)]}
   "刈り取り免除(koine session surface v0 安全条項 1 / ADR-DOE-AGENTS-007 R3)。
-   reap は run_to_completion 行だけの opt-in — adopted 行(ownership marker)と
-   非 run_to_completion 行(interactive、および未知 lifecycle: fail-closed —
-   markerless/foreign を刈らない条文の機械面)は監督権裁定(pavo ADR 0003
-   stage 3)まで無条件に刈り取り対象外。"
-  (or (bool row.adopted) (not (is-run-to-completion row.lifecycle))))
+   reap は launch が所有する lifecycle(run_to_completion・multi_turn)だけの
+   opt-in — adopted 行(ownership marker)とそれ以外の lifecycle(interactive、
+   および未知 lifecycle: fail-closed — markerless/foreign を刈らない条文の
+   機械面)は監督権裁定(pavo ADR 0003 stage 3)まで無条件に刈り取り対象外。"
+  (or (bool row.adopted)
+      (not (or (is-run-to-completion row.lifecycle)
+               (is-multi-turn row.lifecycle)))))
 
 (deff counts-toward-launch-capacity [row]
   {:pre [(: row SessionRow)]
@@ -1296,6 +1308,15 @@
       ;; contract 無し RunToCompletion: turn-end 信号を work-end として信頼。
       (when (and turn-ended (is-run-to-completion row.lifecycle))
         (setv observed-status "done")))
+
+  ;; --- 温かい session(multi_turn — ADR-DOE-AGENTS-012 R10): 同じ turn-end の連言を
+  ;; 「この手番が終わった」の事実として行に刻む(status は倒さない・session は生かす)。
+  ;; level-triggered: 終わりが続く間は最初に観測した拍の時刻を保ち、次の手番が走り出す
+  ;; (連言が崩れる)と None に戻る — 読み手(agentd)は行から毎拍再導出し、第 2 の
+  ;; 判定を持たない。writer は monitor だけ。
+  (when (is-multi-turn row.lifecycle)
+    (setv row (replace row :turn-ended-at
+                       (if turn-ended (or row.turn-ended-at observed-at) None))))
 
   ;; --- interactive-prompt stall watchdog(R5/R7、S6/S6b): stall T 超えの
   ;; 凍結 pane(active でも idle でもない)は turn-end 検出が永遠に見えない —

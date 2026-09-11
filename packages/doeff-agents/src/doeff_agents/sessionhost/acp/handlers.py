@@ -66,8 +66,10 @@ from doeff_agents.sessionhost.acp.effects import (
     PushOutcome,
     Refused,
     SessionCapture,
+    SessionCleanup,
     SessionGet,
     SessionLaunch,
+    SessionList,
     SessionOutcome,
     SessionRefused,
     SessionResume,
@@ -562,6 +564,7 @@ def session_view_of(result: JSON) -> SessionView | None:
     conversation = snapshot.get("conversation")
     identity = snapshot.get("effective_identity")
     cause = snapshot.get("terminal_cause")
+    turn_ended = _str_field(snapshot, "turn_ended_at")
     return SessionView(
         session_id=session_id,
         agent_type=agent_type,
@@ -572,6 +575,7 @@ def session_view_of(result: JSON) -> SessionView | None:
         effective_identity=_str_map(identity),
         result_payload=snapshot.get("result_payload"),
         terminal_cause=cause if isinstance(cause, dict) else None,
+        turn_ended_at_ms=None if turn_ended is None else _epoch_ms_of_iso(turn_ended),
     )
 
 
@@ -588,10 +592,18 @@ class SessionRpc:
         self._client = AgentdClient(socket_path)
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
+        if isinstance(effect, (SessionLaunch, SessionResume, SessionSend, SessionCleanup)):
+            return Resume(k, self._act(effect))
+        if isinstance(effect, (SessionGet, SessionList, SessionCapture)):
+            return Resume(k, self._look(effect))
+        return Pass(effect, k)
+
+    def _act(self, effect: SessionLaunch | SessionResume | SessionSend | SessionCleanup) -> object:
+        """器を動かす要求(起こす・送る・片付ける)。"""
         if isinstance(effect, SessionLaunch):
-            return Resume(k, self._incarnate("session.launch", effect.params))
+            return self._incarnate("session.launch", effect.params)
         if isinstance(effect, SessionResume):
-            return Resume(k, self._incarnate("session.resume", effect.params))
+            return self._incarnate("session.resume", effect.params)
         if isinstance(effect, SessionSend):
             self._client.request(
                 "session.send",
@@ -600,15 +612,32 @@ class SessionRpc:
                     "message": effect.text,
                     "literal": True,
                     "enter": True,
+                    "awaiting": effect.awaiting,
                 },
             )
-            return Resume(k, None)
+            return None
+        return self._cleanup(effect.session_id)
+
+    def _look(self, effect: SessionGet | SessionList | SessionCapture) -> object:
+        """器を眺める要求(1 つ・一覧・pane の断面)。"""
         if isinstance(effect, SessionGet):
             result: JSON = self._client.request("session.get", {"session_id": effect.session_id})
-            return Resume(k, None if result is None else session_view_of(result))
-        if isinstance(effect, SessionCapture):
-            return Resume(k, self._capture(effect.session_id, effect.lines))
-        return Pass(effect, k)
+            return None if result is None else session_view_of(result)
+        if isinstance(effect, SessionList):
+            listed: JSON = self._client.request("session.list", {"lifecycle": effect.lifecycle})
+            items: list[JSON] = listed if isinstance(listed, list) else []
+            views = [session_view_of(item) for item in items]
+            return tuple(view for view in views if view is not None)
+        return self._capture(effect.session_id, effect.lines)
+
+    def _cleanup(self, session_id: str) -> bool:
+        """``session.cleanup`` → 受けたか。host の断り(RPC の error 封筒 — 行が無い等)は
+        False(片付ける物が無い)。socket の失敗(OSError)は素通し(tick の縁が持ち越す)。"""
+        try:
+            self._client.request("session.cleanup", {"session_id": session_id})
+        except AgentdClientError:
+            return False
+        return True
 
     def _capture(self, session_id: str, lines: int) -> CaptureOutcome:
         """``session.capture`` → 断面 ``{"text"}``。host が断った(pane も server も無い・行が

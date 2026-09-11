@@ -72,14 +72,35 @@ CLAUDE_OAUTH_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 SESSION_TERMINAL_STATUSES: frozenset[str] = frozenset(
     {"done", "failed", "exited", "stopped", "cancelled"}
 )
-#: 自分の Running の行の次の 1 手(judgment.job-step-of の閉語彙 — ADR-DOE-AGENTS-012 R7)。
+#: 自分の Running の行の次の 1 手(judgment.job-step-of の閉語彙 — ADR-DOE-AGENTS-012 R7 / R10)。
 #: observe = 器が走っている(行から InFlightJob を組んで観測を続ける)/ record-end = 器が終端
 #: (記録の腕だけ: turn-record ended・result・phase Ended)/ fail-missing = 器に session が無い
-#: (記録が在れば ended にし、condition SessionFailed で Ended)。
-JobStep = Literal["observe", "record-end", "fail-missing"]
+#: (記録が在れば ended にし、condition SessionFailed で Ended)/ turn-end = 温かい session の
+#: 手番の終わり(器は生きたまま turn_ended_at が手番の始まりより後に付いた: 記録の腕だけを撃ち、
+#: session は片付けない)。
+JobStep = Literal["observe", "record-end", "fail-missing", "turn-end"]
 JOB_STEP_OBSERVE: JobStep = "observe"
 JOB_STEP_RECORD_END: JobStep = "record-end"
 JOB_STEP_FAIL_MISSING: JobStep = "fail-missing"
+JOB_STEP_TURN_END: JobStep = "turn-end"
+#: sessionhost の lifecycle の語のうち agentd が使うもの(launch.hy LIFECYCLE-* の写し)。
+#: multi_turn = 温かい session(手番の終わりで片付けない — 同じ会話の次の手番は send)。
+#: charter に lifecycle が無い時の agentd の既定(judgment.launch-lifecycle-of の 1 点)。
+LIFECYCLE_MULTI_TURN = "multi_turn"
+#: Bound の job の起こし方(judgment.next-arm-for-job の閉語彙 — ADR-DOE-AGENTS-012 R10)。
+#: send = 会話の session が生きて idle(温かい)/ resume = predecessor が在るが生きていない
+#: (cold の session.resume)/ launch = 会話の session が無い / defer = 会話の session が手番の
+#: 途中(claim せず次の list で読み直す — 走っている手番に本文を積まない)。
+NextArm = Literal["launch", "send", "resume", "defer"]
+NEXT_ARM_LAUNCH: NextArm = "launch"
+NEXT_ARM_SEND: NextArm = "send"
+NEXT_ARM_RESUME: NextArm = "resume"
+NEXT_ARM_DEFER: NextArm = "defer"
+#: node の status.observations.sessions の state(段 3 の契約の追補で閉語彙になる予定 —
+#: それまで agentd 側の語: idle = 手番の間 / busy = 手番の途中)。
+SessionObservationState = Literal["idle", "busy"]
+SESSION_OBSERVED_IDLE: SessionObservationState = "idle"
+SESSION_OBSERVED_BUSY: SessionObservationState = "busy"
 #: handler が値に写さない I/O の失敗(program の tick の縁 — job ごと・heartbeat・受け — が
 #: 捕まえて log し、次の拍へ持ち越す型)。ACP の HTTP = RuntimeError、器の RPC = AgentdClientError
 #: (RuntimeError の子)、socket / file = OSError。これより広い例外(bug)は runtime.run_loop の縁へ。
@@ -115,6 +136,10 @@ class AgentdSettings:
     homes_root: str = ""
     #: agentd が観測する自分の stream の capability(tmux / herdr の pane = frames)。
     stream_capability: StreamCapability = "frames"
+    #: 温かい session(multi_turn)の idle の寿命: 手番の終わり(turn_ended_at)からこの秒数を
+    #: 過ぎた session は agentd が session.cleanup で片付ける(判断は judgment の純関数・時計は
+    #: effect・掃きは heartbeat の拍)。値の宣言はここ 1 点。
+    session_idle_ttl_seconds: int = 600
 
 
 # ------------------------------------------------------------------ ACP の値
@@ -231,6 +256,9 @@ class SessionView:
     effective_identity: dict[str, str] | None
     result_payload: JSON
     terminal_cause: JSONObject | None
+    #: 温かい session(multi_turn)で host の monitor が手番の終わりを最初に観測した時刻
+    #: (wire の turn_ended_at・None = 手番の途中か run_to_completion / interactive)。
+    turn_ended_at_ms: int | None
 
 
 @dataclass(frozen=True)
@@ -325,7 +353,10 @@ class InFlightJob:
     profile: str
     model: str
     started_ms: int
-    #: 手番の始まりの transcript の offset(resume の時は前の手番の行を entries に混ぜない)。
+    #: この手番の始まりの下限(本文を送った時刻・拾い直しは行の createdAt)— 温かい session の
+    #: 手番の終わりは、これより後に付いた turn_ended_at だけを読む(前の手番の終わりと区別)。
+    turn_floor_ms: int
+    #: 手番の始まりの transcript の offset(send / resume の時は前の手番の行を entries に混ぜない)。
     start_offset: int
     transcript_offset: int
     delta_seq: int
@@ -352,6 +383,11 @@ class AgentdState:
     last_heartbeat_ms: int | None
     last_resync_ms: int | None
     node_missing_logged: bool
+    #: 片付けた session(Withdrawn の行が list に残る間、同じ session に cleanup を撃ち直さない
+    #: ための cache — 再起動で消えても器の現況(終端)から同じ答えに戻る)。
+    retired: tuple[str, ...]
+    #: claim を持ち越した job(会話の session が手番の途中)— log を 1 度にする cache。
+    deferred: tuple[str, ...]
 
 
 # ------------------------------------------------------------------ 要求(ACP)
@@ -452,15 +488,34 @@ class SessionResume(EffectBase):
 
 @dataclass(frozen=True)
 class SessionSend(EffectBase):
-    """``session.send``(本文を live の composer へ paste + Enter)。結果 = None。"""
+    """``session.send``(本文を live の composer へ paste + Enter)。結果 = None。
+
+    ``awaiting`` = 送った本文は agent への prompt で owed(host が awaiting latch を立て、正の
+    作業証拠が出るまで見かけの turn-end を評価しない — 温かい手番の始まりの印)。
+    """
 
     session_id: str
     text: str
+    awaiting: bool
 
 
 @dataclass(frozen=True)
 class SessionGet(EffectBase):
     """``session.get``。結果 = SessionView | None(未登記)。"""
+
+    session_id: str
+
+
+@dataclass(frozen=True)
+class SessionList(EffectBase):
+    """``session.list``(lifecycle で絞る)。結果 = tuple[SessionView, ...]。"""
+
+    lifecycle: str
+
+
+@dataclass(frozen=True)
+class SessionCleanup(EffectBase):
+    """``session.cleanup``(pane を消し、非終端なら stopped)。結果 = bool(host が受けたか)。"""
 
     session_id: str
 

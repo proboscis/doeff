@@ -67,7 +67,13 @@ def _state_home(env: Mapping[str, str]) -> str:
 
 def initial_state() -> AgentdState:
     return AgentdState(
-        since=0, jobs=(), last_heartbeat_ms=None, last_resync_ms=None, node_missing_logged=False
+        since=0,
+        jobs=(),
+        last_heartbeat_ms=None,
+        last_resync_ms=None,
+        node_missing_logged=False,
+        retired=(),
+        deferred=(),
     )
 
 

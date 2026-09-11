@@ -13,11 +13,20 @@
 ;;; aj-stage2-e2e-002(ACP の list が落ちて Running のまま孤児・Bound しか拾わないので戻らない)—
 ;;; から R7(job の進みは行から導く)・R8(capture の gone は終端の合図)・R9(tick の縁)を足す。
 ;;;
+;;; 改訂 2026-09-12(lane 2b-3・同 lane-2b3-warm-session.md): 段 2 の受入の計器「郵便から agent の
+;;; stdin まで p99 < 2 秒」に対し本番の実測は create → send の p50 11.0 秒 / p99 16.9 秒 — 内訳は
+;;; tmux で claude の tui を毎手番 cold に起こす約 10 秒(watch → claim → send は 1 秒台)。設計
+;;; 第 17.4 節の「温かい session」(会話の session を手番の間も生かし、次の手番は send だけ)を
+;;; R10 として足す。
+;;;
 ;;; 置き場 = packages/doeff-agents/src/doeff_agents/sessionhost/acp/(effects.py = 要求と値の
 ;;; 型・judgment.hy = 純粋な判断・agentd.hy = program・handlers.py = 実 I/O・fake.py = test の
 ;;; handler・valve.py = 弁・runtime.py = composition root・entry.py = console script の入口)。
-;;; agentd は host の socket の client なので host.hy / hostmain.py / impls / policy は
-;;; 1 行も変わらない(console script の向き先だけ entry.py へ)。
+;;; agentd は host の socket の client。段 2 の初版では host.hy / hostmain.py / impls / policy を
+;;; 1 行も変えなかったが、R10(温かい session)は host の公開 RPC の最小の追補を要した —
+;;; lifecycle の閉語彙に multi_turn(launch.hy)・turn-end の連言の結果を行に刻む turn_ended_at
+;;; (policy.hy の monitor 1 点・store の列・wire)・session.send の awaiting(host.hy)。弁と
+;;; agentd の腕は引き続き host の内側に無い(針 test-adr-doe-agents-012-valve-defaults-off)。
 
 (require doeff-adr.macros [defadr rule law])
 (require doeff-hy.macros [deftest])
@@ -27,8 +36,8 @@
 (import doeff [run])
 (import doeff_agents.sessionhost.acp.effects
         [AGENT-JOB-KIND AGENT-JOB-NAMESPACE AGORA-KINDS-NAMESPACE AcpRow AgentdSettings
-         AgentdState CaptureGone JSONObject NODE-KIND PHASE-BOUND PHASE-ENDED PHASE-RUNNING
-         TURN-RECORD-KIND])
+         AgentdState CaptureGone JSONObject MESSAGE-KIND NODE-KIND PHASE-BOUND PHASE-ENDED
+         PHASE-RUNNING TURN-RECORD-KIND])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeSessions])
 (import doeff_agents.sessionhost.acp.judgment [capture-verdict job-step-of])
 (import doeff_agents.sessionhost.acp.runtime [initial-state run-tick])
@@ -112,6 +121,45 @@
           :status status))
 
 
+(defn #^ AcpRow turn-row [#^ str job-id #^ str subject #^ str message-id #^ int created-at-ms]
+  "会話 subject の 1 手番の Bound の行(inputs = message-id・charter に lifecycle は無い =
+   agentd の既定 multi_turn)。"
+  (setv base (bound-row job-id "mac-1" None "claude" PHASE-BOUND))
+  (setv #^ JSONObject spec (dict base.spec))
+  (setv (get spec "subject") subject)
+  (setv (get spec "inputs") [message-id])
+  (AcpRow :namespace base.namespace :key base.key :kind base.kind :resource-id base.resource-id
+          :version base.version :generation base.generation :created-at-ms created-at-ms
+          :labels base.labels :payload base.payload :spec spec :status base.status))
+
+
+(defn #^ AcpRow message-row [#^ str message-id #^ str body]
+  (AcpRow :namespace AGORA-KINDS-NAMESPACE
+          :key f"{AGORA-KINDS-NAMESPACE}:{MESSAGE-KIND}:{message-id}"
+          :kind MESSAGE-KIND :resource-id message-id :version "v1" :generation 1
+          :created-at-ms 0 :labels {} :payload {}
+          :spec {"id" message-id "body" body}
+          :status {"state" "inbox"}))
+
+
+(defn #^ None run-warm-turn [#^ World world #^ str job-id #^ str subject #^ str body]
+  "1 手番を温かい session で回す: Bound を置く → 受け(launch か send)→ 記録が進む → host が
+   手番の終わりを刻む → Ended。"
+  (.put-row world.acp (message-row f"m-{job-id}" body))
+  (.put-row world.acp (turn-row job-id subject f"m-{job-id}" (- world.local.now-ms 300)))
+  (.tick world 1000)
+  (setv job (status-of (get world.acp.rows f"acp-system:agent-job:{job-id}")))
+  (setv session-id (str (get (object-at job "sessionHandle") "sessionId")))
+  (setv path f"/homes/claude/acct/projects/-work/{session-id}.jsonl")
+  (setv (get world.local.transcripts path)
+        (+ (.get world.local.transcripts path "")
+           "{\"type\": \"assistant\", \"message\": {\"role\": \"assistant\", \"id\": \"m\", \"content\": [{\"type\": \"text\", \"text\": \"ok\"}]}}\n"))
+  (.tick world 1000)
+  (.finish-turn world.sessions session-id (+ world.local.now-ms 100))
+  (.tick world 1000)
+  None)
+
+
 (defn #^ AcpRow running-row [#^ str job-id #^ str node #^ str owner]
   "agentd が claim した後の行(phase Running + sessionHandle{stream.owner})— 再起動後に
    list で映る形。"
@@ -148,7 +196,7 @@
 
 
 (defadr ADR-DOE-AGENTS-012
-  :title "sessionhost の agentd の腕: 出口は ACP と custody だけ・判断は『自分に結ばれた job か』の純関数 1 点だけ(binding は書かない)・弁の既定は off・購読 0 で capture が止まる・借りた札は家の中の auth file 以外の平文で disk に残さない・job の進みは行から導く(自分の Running は再起動後も拾い、次の 1 手は job-step-of の 1 点)・capture の gone は終端の合図で例外ではない・tick の縁は互いの失敗で止まらない"
+  :title "sessionhost の agentd の腕: 出口は ACP と custody だけ・判断は『自分に結ばれた job か』の純関数 1 点だけ(binding は書かない)・弁の既定は off・購読 0 で capture が止まる・借りた札は家の中の auth file 以外の平文で disk に残さない・job の進みは行から導く(自分の Running は再起動後も拾い、次の 1 手は job-step-of の 1 点)・capture の gone は終端の合図で例外ではない・tick の縁は互いの失敗で止まらない・session は会話の資源で job は手番(同じ会話の次の手番は launch せず send・判断は next-arm-for-job の 1 点・idle の寿命は値の宣言 1 点)"
   :status "accepted"
   :scope ["packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py"
           "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy"
@@ -158,7 +206,12 @@
           "packages/doeff-agents/src/doeff_agents/sessionhost/acp/valve.py"
           "packages/doeff-agents/src/doeff_agents/sessionhost/acp/runtime.py"
           "packages/doeff-agents/src/doeff_agents/sessionhost/acp/entry.py"
-          "packages/doeff-agents/tests/test_sessionhost_acp.py"]
+          "packages/doeff-agents/tests/test_sessionhost_acp.py"
+          "packages/doeff-agents/src/doeff_agents/sessionhost/launch.hy"
+          "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy"
+          "packages/doeff-agents/src/doeff_agents/sessionhost/effects.hy"
+          "packages/doeff-agents/src/doeff_agents/sessionhost/store.hy"
+          "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy"]
   :problem
     [(fact
        "今日の手番の配車は agora(herdr-hud daemon)の turn-jobs / turn-dispatcher / headless fleet が持ち、sessionhost は観測されるだけ(sessionhost-client.ts:56)で、agent-job を受ける腕も TurnRecord / TurnDelta を書く腕も custody から借りる腕も無い。"
@@ -180,7 +233,13 @@
        :evidence "agentd.log: `agentd: tick failed: AgentdClientError: tmux capture-pane failed: no server running` × 13 拍・lane-2b2-agentd-fix.md 実弾")
      (fact
        "job 002 は本番の pod の入れ替え中に ACP への list が Connection reset by peer で落ち、同じく tick ごと落ちて Running のまま孤児になった。agentd は bound-to-me(phase == Bound)しか拾わず、job の進みを process の memory(InFlightJob)にだけ持っていたので、再起動しても二度と戻らなかった。"
-       :evidence "agentd.log: `agentd: tick failed: RuntimeError: agentd: ACP list of agent-job failed: [Errno 54] Connection reset by peer`・旧 agentd.hy receive-bound-jobs(Bound のみ)")]
+       :evidence "agentd.log: `agentd: tick failed: RuntimeError: agentd: ACP list of agent-job failed: [Errno 54] Connection reset by peer`・旧 agentd.hy receive-bound-jobs(Bound のみ)")
+     (fact
+       "段 2 の受入の計器「郵便から agent の stdin まで p99 < 2 秒」に対し、本番の e2e(この Mac・2026-09-12 02:1x)の実測は create → send の p50 11.0 秒 / p99 16.9 秒。内訳は tmux で claude の tui を毎手番 cold に起こす時間(約 10 秒)で、watch → claim → send そのものは 1 秒台。1 job = 1 session(run_to_completion)で手番の終わりに sessionhost が session を片付け、affinity.predecessor があっても session.resume(cold)で起こし直していた。"
+       :evidence "~/.cache/acp-stage2-e2e/logs/agentd-2.log の計器 agent-job-to-send(ms 16880 / 11802 …)・lane-2b3-warm-session.md")
+     (fact
+       "sessionhost に『手番の終わりで片付けず、かつ手番の終わりを観測する』lifecycle は無かった: run_to_completion は turn-end で done へ倒れ cleanup で pane が消える、interactive は monitor の最初の腕(reap-exempt)で観測ごと素通りされ turn-end の連言が評価されない。turn_open / turn_close の hook の打刻は adopted の行にしか落ちない(turn.hy db-resolve-turn-target)ので agentd が起こす session には使えない。"
+       :evidence "policy.hy monitor-session-once(reap-exempt の腕・turn-ended の連言・is-run-to-completion の分岐)・turn.hy")]
   :context
     [(interpretation
        "agentd は sessionhost の隣の名前空間 acp/ に住み、host の socket の client として参加する。host.hy / hostmain.py / impls / policy は 1 行も変えない: 器の口(session.launch / send / capture / get)は公開の RPC で足りるので、腕を host の内側に生やす理由が無い。弁は console script の入口(acp/entry.py — 今日の hostmain.main を包む薄い殻)が持つ。")
@@ -195,7 +254,13 @@
      (interpretation
        "capture の gone は終端の合図: 片付いた session の pane は無く(唯一の window なら tmux の server も無い)、host は session.capture を RPC の error で断る。これは agentd にとって『実況の終わり』で、例外にして tick を落とす理由ではない。SessionCapture の答えは閉語彙 CaptureFrame | CaptureGone で、実 handler が host の断り(AgentdClientError)を gone に写す(host.hy は触らない)。gone の後は capture も購読の読み直しもせず、器の終端で記録の腕へ進む。器が終端の拍はそもそも capture を撃たない(判定を実況より先に読む)。")
      (interpretation
-       "tick の縁: heartbeat(参加の lease)・受け(list)・job ごとの観測は互いの I/O の失敗(RuntimeError | OSError = effects.IO_FAILURES)で止まらない。失敗は log して次の周期 / 次の拍へ持ち越す(heartbeat と受けは周期の刻印を進めて洪水を避ける)。lease の heartbeat が止まると段 3 の GC が node を gone と読むので、heartbeat は job の腕と独立に走る。I/O より広い例外(bug)は program では捕まえず runtime.run_loop の縁(log + 有界の backoff)へ。")]
+       "tick の縁: heartbeat(参加の lease)・受け(list)・job ごとの観測は互いの I/O の失敗(RuntimeError | OSError = effects.IO_FAILURES)で止まらない。失敗は log して次の周期 / 次の拍へ持ち越す(heartbeat と受けは周期の刻印を進めて洪水を避ける)。lease の heartbeat が止まると段 3 の GC が node を gone と読むので、heartbeat は job の腕と独立に走る。I/O より広い例外(bug)は program では捕まえず runtime.run_loop の縁(log + 有界の backoff)へ。")
+     (interpretation
+       "温かい session(R10): session は会話に紐づく資源で、job は手番。会話 → 生きている session の対応は行から導く — 自分が claim した同じ subject の agent-job の行(sessionHandle.sessionId)と器の現況(session.get)で、memory は要らない。Bound の job の起こし方は judgment.next-arm-for-job の 1 点: 候補(affinity.predecessor か会話の最後の手番の session)が生きて idle なら send(predecessor が生きていれば温かい resume)、手番の途中なら defer(claim せず次の list で読み直す — 走っている手番に本文を積まない)、predecessor が在るが生きていなければ session.resume(cold)、それ以外は launch。charter に lifecycle が無ければ agentd の既定は multi_turn(名指しは尊重 — run_to_completion の charter は今日どおり 1 手番で片付く)。")
+     (interpretation
+       "手番の終わりの検出は session の生死と切り離す: 器の lifecycle に multi_turn を足し、policy.hy の monitor が既存の turn-end の連言(idle ∧ ¬active ∧ stable ∧ 会話記録の静止 ∧ ¬awaiting)の結果を行の turn_ended_at に刻む(level-triggered・最初の観測時刻を保ち、次の手番が走ると None・writer は monitor だけ)。agentd は job-step-of の 1 点で『turn_ended_at がこの手番の始まりの下限(本文を送った時刻)より後 ∧ 記録が進んだ(送った本文が届いた証拠)』を turn-end と読み、turn-record を ended・job を Ended にして session は生かす。send は host の awaiting latch を立てる(送った本文は owed)ので、見かけの turn-end は正の作業証拠が出るまで評価されない — 第 2 の判定は作らない。")
+     (interpretation
+       "session の寿命: idle が AgentdSettings.session_idle_ttl_seconds(既定 600)を過ぎた温かい session は heartbeat の拍に sessions-to-retire(純関数・時計は effect)で選び session.cleanup で片付ける。agent-job の Withdrawn(取り下げ)と node の退役(行が無い)でも片付ける。multi_turn の器が終端(awaiting の期限で failed 等)になった手番は、host の掃き取り(run_to_completion の cleanup)の対象外なので agentd が記録の後に片付ける。GC の全体は段 3。")]
   :decision
     [(rule R1 "agentd の出口は ACP(GET /api/resources・POST /api/events・GET /api/watch/stream・POST /api/streams)と custody(POST /lease/*)だけ。agora の台帳 API(/api/state・turn-jobs・seat-*・headless・agmsg)の語を sessionhost の source に置かない。")
      (rule R2 "job を選ぶ判定は judgment.hy の bound-to-me(phase == Bound ∧ binding.node == 自分 — 受け)と running-on-me(phase == Running ∧ binding.node == 自分 ∧ sessionHandle.stream.owner == 自分 — 再起動後の拾い直し)の 2 つの述語だけで、どちらも binding.node == 自分の行に閉じる。それ以外に job を選ぶ・優先する code を置かない。agent-job の status.binding を agentd は書かない(写して返すだけ)。")
@@ -205,7 +270,8 @@
      (rule R6 "値の宣言は 1 点: lease の TTL と周期・watch の resync・frame の rate・購読の読み直しの周期は effects.AgentdSettings の既定値、URL と札の env の綴りは handlers.py / valve.py。")
      (rule R7 "job の進みは行から導く: 自分の Running(running-on-me)は memory に無くても resync の拍に拾い、次の 1 手は judgment.hy の job-step-of(器の現況 → observe | record-end | fail-missing・閉語彙 effects.JobStep)の 1 点で決める — memory に在る job の拍も同じ 1 点を通る。record-end は記録の腕(turn-record ended・result・phase Ended)だけを撃ち launch も send もし直さない。fail-missing は記録が在れば ended にし condition SessionFailed で Ended。終端の語彙(SESSION_TERMINAL_STATUSES)を読むのは judgment.hy だけ。")
      (rule R8 "capture の gone は終端の合図で例外ではない: SessionCapture の答えは閉語彙 CaptureFrame | CaptureGone、実 handler は host の断り(AgentdClientError)を CaptureGone に写す(host.hy / substrate は触らない)。gone の job は capturing = False・stream_gone = True で、以後 capture も購読の読み直しもせず、器の終端(同じ拍に読み直す)で記録の腕へ。器が終端の拍は capture を撃たない(job-step-of を実況より先に読む)。")
-     (rule R9 "tick の縁: heartbeat・受け・job ごとの観測は互いの I/O の失敗(effects.IO_FAILURES = RuntimeError | OSError)で止まらない — program の agentd-tick が 3 つの腕をそれぞれ捕まえ、log して次の周期 / 次の拍へ持ち越す(condition には写さない — 一時の失敗を job の結末にしない)。I/O より広い例外は捕まえない(runtime.run_loop の縁)。")]
+     (rule R9 "tick の縁: heartbeat・受け・job ごとの観測は互いの I/O の失敗(effects.IO_FAILURES = RuntimeError | OSError)で止まらない — program の agentd-tick が 3 つの腕をそれぞれ捕まえ、log して次の周期 / 次の拍へ持ち越す(condition には写さない — 一時の失敗を job の結末にしない)。I/O より広い例外は捕まえない(runtime.run_loop の縁)。")
+     (rule R10 "session は会話の資源・job は手番(温かい session・設計 17.4): 会話 → 生きている session の対応は行(自分が claim した同じ subject の agent-job の sessionHandle)と器の現況から導き、Bound の job の起こし方は judgment.hy の next-arm-for-job(閉語彙 effects.NextArm = launch | send | resume | defer)の 1 点で決める — 同じ会話の生きて idle な session が在れば launch せず session.send(awaiting)だけ、sessionHandle はその session を指し、turn-record は手番ごと。手番の終わりは器の lifecycle multi_turn(launch.hy の閉語彙に足した語)で policy.hy の monitor が既存の turn-end の連言から行の turn_ended_at に刻み、agentd は job-step-of の turn-end(turn_ended_at > 手番の始まりの下限 ∧ 記録の進み)で読む — status は倒さず session は生かす。idle の寿命は AgentdSettings.session_idle_ttl_seconds の 1 点で、超過・Withdrawn・node の退役で session.cleanup。計器 agent-job-to-send は create → send のまま(温かい path で p99 < 2 秒)。")]
   :laws
     [(law agentd-exits-only-to-acp-and-custody
        :statement "for_all source_file f in sessionhost/: agora_ledger_words(code_lines(f)) = ∅ — agentd(sessionhost)が話す相手は ACP と custody だけ"
@@ -238,7 +304,23 @@
        :statement "SessionCapture ∈ {CaptureFrame, CaptureGone}; CaptureGone ⇒ no exception escapes the job's tick ∧ capturing = False ∧ stream_gone = True ∧ no further SessionCapture ∧ the job ends by the record arm (turn-record ended・phase Ended) once the session is terminal; session terminal at the tick ⇒ SessionCapture is not issued at all"
        :counterexamples
          [(counterexample "片付いた session の capture を例外のまま tick に上げる — 器が done で result も在るのに tick ごと落ち、job は Running・turn-record は running のまま(実弾 003)")
-          (counterexample "gone の後も frame の capture や購読の読み直しを続ける — 無い pane への tmux capture の連打")])]
+          (counterexample "gone の後も frame の capture や購読の読み直しを続ける — 無い pane への tmux capture の連打")])
+     (law session-is-a-conversation-resource-and-a-job-is-a-turn
+       :statement "for_all Bound job j of conversation c on node n: exists session s of c alive ∧ idle (lifecycle = multi_turn ∧ turn_ended_at ≠ None) ⇒ claim(j) issues no session.launch / session.resume and exactly session.send(inputs(j)) to s ∧ sessionHandle(j) = s ∧ turn-record(j) is its own row; no such s ⇒ launch (or resume when affinity.predecessor); s mid-turn ⇒ j stays Bound (defer)"
+       :counterexamples
+         [(counterexample "同じ会話の次の手番を毎回 cold に launch する — tmux で claude の tui を起こす約 10 秒が create → send に毎手番乗り、段 2 の計器 p99 < 2 秒を構造的に満たせない(実測 p50 11.0 秒 / p99 16.9 秒)")
+          (counterexample "会話 → session の対応を process の memory にだけ持つ — 再起動で温かい session を見失い、生きている session を残したまま同じ会話をもう 1 つ起こす")
+          (counterexample "手番の途中の session に次の手番の本文を send で積む — 前の手番の終わりの turn_ended_at を次の手番の終わりと読み違え、turn-record の境界が壊れる")])
+     (law warm-send-is-decided-at-one-point
+       :statement "the only decision launch | send | resume | defer for a Bound job is judgment.next-arm-for-job; the only reading of a warm turn's end is judgment.job-step-of (turn-end ⇔ lifecycle = multi_turn ∧ turn_ended_at > floor ∧ progressed); agentd.hy neither compares lifecycle words nor reads turn_ended_at"
+       :counterexamples
+         [(counterexample "agentd.hy が『予め resume か launch か』を自分で分岐し、judgment にも同じ分岐を持つ — 判定点が 2 つになり memory の有無で起こし方が食い違う")
+          (counterexample "agentd が transcript の落ち着きを自分で数えて手番の終わりを宣言する — policy.hy の turn-end の連言(会話記録の鮮度窓・queued messages・awaiting)を持たない第 2 の判定で、走行中の手番を終わりと読む")])
+     (law idle-session-ttl-is-declared-once
+       :statement "the idle lifetime of a warm session is AgentdSettings.session_idle_ttl_seconds and nothing else; idle(s) ∧ now ≥ turn_ended_at(s) + ttl ⇒ session.cleanup(s) at the next heartbeat; the choice is judgment.sessions-to-retire (pure) and the clock is an effect"
+       :counterexamples
+         [(counterexample "TTL を agentd.hy や handlers.py の literal に散らす — 値を変えた時に片方だけ残り、片付けの拍と観測の拍で寿命が食い違う")
+          (counterexample "idle の session を永遠に生かす — 会話ごとの tmux の pane が増え続け、node の容量(capacity)が温かい session で埋まる")])]
   :enforcement
     [(deftest test-adr-doe-agents-012-no-agora-ledger-words-in-sessionhost
        ;; R1 の針: sessionhost の全 source(acp/ を含む)の code 行に agora の台帳 API の語が無い。
@@ -351,8 +433,8 @@
        (assert (= (len (lfor line judgment-lines
                              :if (re.search r"\((not-)?in view\.status SESSION-TERMINAL-STATUSES\)" line)
                              line))
-                  2)
-               "終端の語彙を読む述語は judgment.hy の job-outcome-of と job-step-of ちょうど")
+                  3)
+               "終端の語彙を読む述語は judgment.hy の job-outcome-of・job-step-of・session-alive ちょうど")
        (for [line agentd-lines]
          (assert (not-in "SESSION-TERMINAL-STATUSES" line)
                  f"agentd.hy は終端の語彙を直に読まない(ADR-DOE-AGENTS-012 R7): {line}")
@@ -389,7 +471,7 @@
        (assert (= (get gone "phase") PHASE-ENDED))
        (assert (= (last-condition-type gone) "SessionFailed"))
        ;; 純関数の閉語彙。
-       (assert (= (run (job-step-of None)) "fail-missing")))
+       (assert (= (run (job-step-of None 0 True)) "fail-missing")))
      (deftest test-adr-doe-agents-012-capture-gone-is-terminal-and-ticks-do-not-share-failure
        ;; R8 の針: SessionCapture の答えは閉語彙(agentd.hy の bind の型)・実 handler は host の
        ;; 断り(AgentdClientError)を CaptureGone に写す・R9 の縁は agentd-tick に 3 つ。
@@ -439,6 +521,63 @@
        (assert (= (get (object-at node "lease") "heartbeatAt") 31000))
        (assert (= (get (status-of (get shared.acp.rows "acp-system:agent-job:s-b")) "phase") PHASE-ENDED))
        (assert (= (get (status-of (get shared.acp.rows "acp-system:agent-job:s-a")) "phase") PHASE-RUNNING))
-       (assert (in "agentd: job s-a tick failed: RuntimeError: socket reset" shared.local.logs)))]
+       (assert (in "agentd: job s-a tick failed: RuntimeError: socket reset" shared.local.logs)))
+     (deftest test-adr-doe-agents-012-warm-session-send-instead-of-launch
+       ;; R10 の針: 起こし方の判定は judgment.hy の next-arm-for-job の 1 点、手番の終わりの読みは
+       ;; job-step-of の 1 点。agentd.hy は lifecycle の語を比較せず turn-ended-at を読まない
+       ;; (SessionList の絞りの引数だけ)。TTL の値は AgentdSettings の 1 点(既定 600)。
+       ;; host 側: lifecycle の閉語彙に multi_turn・turn_ended_at の書き点は policy.hy の 1 つ。
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk next-arm-for-job ") line)) 1))
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk sessions-to-retire ") line)) 1))
+       (assert (= (len (lfor line judgment-lines :if (in "JOB-STEP-TURN-END" line) line)) 2)
+               "turn-end を返す点は job-step-of ちょうど(import の項 + 1)")
+       (for [line agentd-lines]
+         (assert (not-in "turn-ended-at" line)
+                 f"agentd.hy は turn_ended_at を直に読まない(R10): {line}")
+         (assert (not (and (in "LIFECYCLE-MULTI-TURN" line) (in "(= " line)))
+                 f"agentd.hy は lifecycle の語を比較しない(R10): {line}")
+         (assert (not-in "NEXT-ARM-LAUNCH" line)
+                 f"agentd.hy は launch を自分で決めない(R10): {line}"))
+       (assert (= (. (AgentdSettings :node-name "x") session-idle-ttl-seconds) 600))
+       (assert (= (len (lfor line (code-lines (/ SESSIONHOST-DIR "policy.hy"))
+                             :if (in ":turn-ended-at" line) line))
+                  1)
+               "turn_ended_at の書き点は policy.hy の monitor の 1 つ")
+       (assert (any (gfor line (code-lines (/ SESSIONHOST-DIR "launch.hy"))
+                          (in "LIFECYCLE-MULTI-TURN \"multi_turn\"" line))))
+       ;; policy.hy は deff / defhandler の Hy で共通の品質検査の投影が無いので、ここでは
+       ;; import せず code 行で針を撃つ(挙動の反例は tests/sessionhost_policy_deftests.hy)。
+       (setv policy-lines (code-lines (/ SESSIONHOST-DIR "policy.hy")))
+       (assert (= (len (lfor line policy-lines :if (.startswith line "(deff is-multi-turn ") line)) 1))
+       (assert (any (gfor line policy-lines (in "(is-multi-turn row.lifecycle)))))" line)))
+               "reap-exempt は multi_turn を免除しない(監視される)")
+       ;; 反例(挙動): 同じ会話の 2 手番目は launch を呼ばず send、別会話は launch、
+       ;; TTL 超過で cleanup。
+       (setv world (World))
+       (run-warm-turn world "t-1" "conv-a" "first")
+       (assert (= (len world.sessions.launches) 1))
+       (assert (= world.sessions.cleanups []))
+       (run-warm-turn world "t-2" "conv-a" "second")
+       (assert (= (len world.sessions.launches) 1))
+       (assert (= world.sessions.resumes []))
+       (assert (= (get world.sessions.sends -1) #("t-1" "second" True)))
+       (setv second (status-of (get world.acp.rows "acp-system:agent-job:t-2")))
+       (assert (= (get second "phase") PHASE-ENDED))
+       (assert (= (get (object-at second "sessionHandle") "sessionId") "t-1"))
+       (assert (= (get (status-of (get world.acp.rows "default:turn-record:t-2")) "state") "ended"))
+       (setv warm-metrics (lfor m world.local.metrics
+                                :if (and (= (get m "metric") "agent-job-to-send") (= (get m "agentJobId") "t-2"))
+                                m))
+       (setv warm-ms (get (get warm-metrics 0) "ms"))
+       (assert (isinstance warm-ms int))
+       (assert (< warm-ms 2000))
+       (run-warm-turn world "t-3" "conv-b" "other")
+       (assert (= (len world.sessions.launches) 2))
+       (assert (= (get (get world.sessions.launches 1) "session_id") "t-3"))
+       (.tick world 700000)
+       (assert (= (sorted world.sessions.cleanups) ["t-1" "t-3"])))]
   :plans ["docs/impl-requests/stage2-lane-prompts/lane-2b-agentd.md(agora-redesign)"
-          "docs/impl-requests/stage2-lane-prompts/lane-2b2-agentd-fix.md(agora-redesign・改訂 R7〜R9)"])
+          "docs/impl-requests/stage2-lane-prompts/lane-2b2-agentd-fix.md(agora-redesign・改訂 R7〜R9)"
+          "docs/impl-requests/stage2-lane-prompts/lane-2b3-warm-session.md(agora-redesign・改訂 R10)"])

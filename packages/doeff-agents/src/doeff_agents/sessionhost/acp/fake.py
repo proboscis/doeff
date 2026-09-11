@@ -35,8 +35,10 @@ from doeff_agents.sessionhost.acp.effects import (
     Pushed,
     Refused,
     SessionCapture,
+    SessionCleanup,
     SessionGet,
     SessionLaunch,
+    SessionList,
     SessionRefused,
     SessionResume,
     SessionSend,
@@ -200,7 +202,10 @@ class FakeSessions:
         self.views: dict[str, SessionView] = {}
         self.launches: list[JSONObject] = []
         self.resumes: list[JSONObject] = []
-        self.sends: list[tuple[str, str]] = []
+        #: (session_id, 本文, awaiting)
+        self.sends: list[tuple[str, str, bool]] = []
+        #: session.cleanup を受けた session の順。
+        self.cleanups: list[str] = []
         self.captures: list[tuple[str, int]] = []
         self.capture_text: str = "❯ \n"
         #: None = 断面を返す / str = pane も server も無い(理由)— host が capture を断った形
@@ -216,24 +221,40 @@ class FakeSessions:
         self.config_dir: str = "/homes/claude/acct"
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
+        if isinstance(effect, (SessionLaunch, SessionResume, SessionSend, SessionCleanup)):
+            return Resume(k, self._act(effect))
+        if isinstance(effect, (SessionGet, SessionList, SessionCapture)):
+            return Resume(k, self._look(effect))
+        return Pass(effect, k)
+
+    def _act(self, effect: SessionLaunch | SessionResume | SessionSend | SessionCleanup) -> object:
         if isinstance(effect, (SessionLaunch, SessionResume)):
-            return Resume(k, self._incarnate(effect))
+            return self._incarnate(effect)
         if isinstance(effect, SessionSend):
-            self.sends.append((effect.session_id, effect.text))
-            return Resume(k, None)
+            self.sends.append((effect.session_id, effect.text, effect.awaiting))
+            return None
+        self.cleanups.append(effect.session_id)
+        if effect.session_id not in self.views:
+            return False
+        view = self.views[effect.session_id]
+        if view.status not in {"done", "failed", "exited", "stopped", "cancelled"}:
+            self.finish(effect.session_id, "stopped")
+        return True
+
+    def _look(self, effect: SessionGet | SessionList | SessionCapture) -> object:
         if isinstance(effect, SessionGet):
             failure = self.failures.get(effect.session_id)
             if failure is not None:
                 raise failure
-            return Resume(k, self.views.get(effect.session_id))
-        if isinstance(effect, SessionCapture):
-            self.captures.append((effect.session_id, effect.lines))
-            if self.capture_gone is not None:
-                if self.finish_on_capture is not None:
-                    self.finish(effect.session_id, *self.finish_on_capture)
-                return Resume(k, CaptureGone(self.capture_gone))
-            return Resume(k, CaptureFrame(self.capture_text))
-        return Pass(effect, k)
+            return self.views.get(effect.session_id)
+        if isinstance(effect, SessionList):
+            return tuple(view for view in self.views.values() if view.lifecycle == effect.lifecycle)
+        self.captures.append((effect.session_id, effect.lines))
+        if self.capture_gone is not None:
+            if self.finish_on_capture is not None:
+                self.finish(effect.session_id, *self.finish_on_capture)
+            return CaptureGone(self.capture_gone)
+        return CaptureFrame(self.capture_text)
 
     def _incarnate(self, effect: SessionLaunch | SessionResume) -> SessionView | SessionRefused:
         params = effect.params
@@ -253,22 +274,24 @@ class FakeSessions:
             declared = binding.get("config_dir")
             if isinstance(declared, str):
                 config_dir = declared
+        lifecycle = params.get("lifecycle")
         view = SessionView(
             session_id=session_id,
             agent_type=self.agent_type,
             status="running",
             work_dir=self.work_dir,
-            lifecycle="run_to_completion",
+            lifecycle=lifecycle if isinstance(lifecycle, str) else "run_to_completion",
             conversation={"session_id": session_id},
             effective_identity={"CLAUDE_CONFIG_DIR": config_dir},
             result_payload=None,
             terminal_cause=None,
+            turn_ended_at_ms=None,
         )
         self.views[session_id] = view
         return view
 
     def finish(self, session_id: str, status: str, result: JSONObject | None = None) -> None:
-        """test が手番の終わりを起こす(policy の turn-end が done へ倒すのと同じ意味)。"""
+        """test が器の終端を起こす(policy の turn-end が done へ倒す・死亡が exited 等)。"""
         view = self.views[session_id]
         self.views[session_id] = SessionView(
             session_id=view.session_id,
@@ -282,6 +305,24 @@ class FakeSessions:
             terminal_cause=None
             if status == "done"
             else {"category": "run_failed", "reason": status},
+            turn_ended_at_ms=view.turn_ended_at_ms,
+        )
+
+    def finish_turn(self, session_id: str, at_ms: int | None) -> None:
+        """test が温かい session の手番の終わりを起こす(host の monitor が turn_ended_at を
+        刻むのと同じ意味・None = 次の手番が走り出した)。status は running のまま。"""
+        view = self.views[session_id]
+        self.views[session_id] = SessionView(
+            session_id=view.session_id,
+            agent_type=view.agent_type,
+            status=view.status,
+            work_dir=view.work_dir,
+            lifecycle=view.lifecycle,
+            conversation=view.conversation,
+            effective_identity=view.effective_identity,
+            result_payload=view.result_payload,
+            terminal_cause=view.terminal_cause,
+            turn_ended_at_ms=at_ms,
         )
 
 

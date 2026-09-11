@@ -854,7 +854,9 @@ def test_warm_send_stays_under_two_seconds_across_turns() -> None:
         ms = metric["ms"]
         assert isinstance(ms, int)
         samples.append(ms)
-        world.local.transcripts[path] += transcript_line("assistant", [{"type": "text", "text": "x"}])
+        world.local.transcripts[path] += transcript_line(
+            "assistant", [{"type": "text", "text": "x"}]
+        )
         world.tick(advance_ms=1_000)
         world.sessions.finish_turn("j-1", world.local.now_ms + 100)
         world.tick(advance_ms=1_000)
