@@ -132,6 +132,7 @@ def initial_state() -> AgentdState:
         node_missing_logged=False,
         retired=(),
         deferred=(),
+        last_profile_observed_ms=None,
     )
 
 
