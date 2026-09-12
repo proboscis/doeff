@@ -22,7 +22,7 @@ from doeff_conductor.handlers.agent_handler import AgentdAgentBackend, AgentHand
 from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
 from doeff_conductor.types import Workspace
 
-from doeff import do
+from doeff import Pure, do
 
 IMPLEMENT_SCHEMA = {
     "type": "object",
@@ -233,8 +233,9 @@ def test_agent_handler_delegates_schema_agent_to_agentd_client(
         return tmp_path
 
     class AvailableAdapter:
-        def is_available(self) -> bool:
-            return True
+        def available(self):
+            # 段 7 lane 7c: adapter の可用性は program(I/O は handler が果たす)。
+            return Pure(True)
 
     fake_client = FakeAgentdClient()
     monkeypatch.setattr(
