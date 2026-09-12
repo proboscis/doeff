@@ -12,6 +12,9 @@ wire の綴り:
 - custody = ``POST /lease/{claude|codex}``(``{"account", "purpose"}``・身元 ``X-Borrower-Key``)、
   ``POST /lease/{id}/revoke``。
 - 器 = sessionhost の RPC(``doeff_agents.agentd_client.AgentdClient`` の JSON-lines)。
+- 所有の検(段 6 lane 6f)= GCE の metadata server ``GET http://metadata.google.internal/
+  computeMetadata/v1/project/project-id``(header ``Metadata-Flavor: Google``)。届かない機体
+  (Mac・GCE の外)は値 None — 判断(一致・不一致・読めない)は join.ownership-verdict。
 
 秘密の扱い: 借りた access token・auth.json は値として返すだけで log に出さない。
 """
@@ -39,6 +42,7 @@ from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.agentd_client import AgentdClient, AgentdClientError, launch_rpc_timeout_seconds
 from doeff_agents.sessionhost.acp.effects import (
     JSON,
+    OWNERSHIP_PROOF_GCE_PREFIX,
     AcpCreate,
     AcpEventWindow,
     AcpGet,
@@ -65,6 +69,8 @@ from doeff_agents.sessionhost.acp.effects import (
     LogLine,
     MetricLine,
     MintId,
+    OwnershipProbe,
+    ProbeAnswer,
     Pushed,
     PushOutcome,
     Refused,
@@ -89,13 +95,9 @@ from doeff_agents.sessionhost.acp.effects import (
 
 Dispatcher: TypeAlias = Callable[[EffectBase, K], "Resume | Pass"]
 
-#: ACP の URL(既定 = Mac の bridge が k3s へ透過する loopback)。
-ACP_URL_ENV = "ACP_DAEMON_URL"
+#: ACP の URL の既定(= Mac の bridge が k3s へ透過する loopback)— env の名は effects.py。
 ACP_URL_DEFAULT = "http://127.0.0.1:8868"
-#: 名簿の agentd の札の file。
-ACP_TOKEN_FILE_ENV = "ACP_AGENTD_TOKEN_FILE"
-#: custody の URL と借り手札(dotfiles agentcli/lease.py と同じ綴り)。
-CUSTODY_URL_ENV = "AGORA_CUSTODY_URL"
+#: custody の URL の既定(dotfiles agentcli/lease.py と同じ綴り)— env の名は effects.py。
 CUSTODY_URL_DEFAULT = "http://127.0.0.1:8320"
 BORROWER_KEY_PATH_DEFAULT = "~/.local/state/agora/borrower-key"
 #: agentd の書きが乗る source(ACP の cpSource — 登録の無い source は無制限)。
@@ -767,6 +769,8 @@ class LocalIo:
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(effect, MintId):
             return Resume(k, mint_ulid(int(time.time() * 1000), os.urandom(10)))
+        if isinstance(effect, OwnershipProbe):
+            return Resume(k, probe_ownership(effect.proof))
         if isinstance(effect, (ClockNowMs, MetricLine, LogLine)):
             return Resume(k, self._observe(effect))
         if isinstance(
@@ -847,6 +851,32 @@ def _write_private(path: str, text: str) -> None:
 
 
 # ------------------------------------------------------------------ 札の読み
+
+
+#: GCE の metadata server(機体の外の権威 — VM の project-id を名乗る)。
+GCE_METADATA_PROJECT_URL = "http://metadata.google.internal/computeMetadata/v1/project/project-id"
+GCE_METADATA_HEADER = ("Metadata-Flavor", "Google")
+GCE_METADATA_TIMEOUT_SECONDS = 3.0
+
+
+def probe_ownership(proof: str) -> ProbeAnswer:
+    """検の方法に従って所有の証拠を読む。gce-project = metadata server の project-id(届かない・
+    2xx でない・空 = None)。それ以外の綴りは読むものが無い(None — declared は判断の側で通す)。"""
+    if not proof.startswith(OWNERSHIP_PROOF_GCE_PREFIX):
+        return ProbeAnswer(value=None)
+    request = urllib.request.Request(GCE_METADATA_PROJECT_URL, method="GET")
+    request.add_header(*GCE_METADATA_HEADER)
+    try:
+        with urllib.request.urlopen(request, timeout=GCE_METADATA_TIMEOUT_SECONDS) as response:
+            raw = response.read()
+            status = int(response.status)
+    except (urllib.error.URLError, OSError, TimeoutError):
+        # HTTPError は URLError の子 — 2xx でない答えも「読めない」(値を発明しない)。
+        return ProbeAnswer(value=None)
+    if status < 200 or status >= 300:
+        return ProbeAnswer(value=None)
+    text = raw.decode("utf-8", errors="replace").strip()
+    return ProbeAnswer(value=text or None)
 
 
 def read_secret_file(path: str) -> str | None:

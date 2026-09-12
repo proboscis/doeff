@@ -651,16 +651,21 @@
   {:pre [(: row AcpRow) (: settings AgentdSettings) (: now-ms int) (: sessions list)]
    :post [(: % dict)]}
   "agentd が書く欄だけを更新した node の status: lease{owner, heartbeatAt, expiresAt} と
-   observations{streamCapability, sessions}(sessions = session-observations-of の列)。
-   state(scheduling の欄)は写すだけ。"
+   observations{streamCapability, sessions, ownership?}(sessions = session-observations-of の列・
+   ownership = 起動の前に検めた所有の等級 {grade, proof} — 宣言が無ければ欄ごと書かない = 未観測・
+   段 6 lane 6f)。state(scheduling の欄)は写すだけ。"
   (<- next dict (status-object-of row))
   (setv (get next "lease")
         {"owner" settings.principal
          "heartbeatAt" now-ms
          "expiresAt" (+ now-ms (* 1000 settings.node-lease-ttl-seconds))})
-  (setv (get next "observations")
+  (setv observations
         {"streamCapability" settings.stream-capability
          "sessions" sessions})
+  (when (is-not settings.ownership None)
+    (setv (get observations "ownership")
+          {"grade" settings.ownership.grade "proof" settings.ownership.proof}))
+  (setv (get next "observations") observations)
   next)
 
 
