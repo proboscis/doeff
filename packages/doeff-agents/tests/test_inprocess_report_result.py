@@ -49,7 +49,7 @@ from doeff_agents.tmux import SessionInfo
 from doeff_core_effects.handlers import lazy_ask, state
 from doeff_core_effects.scheduler import CreateExternalPromise, Wait, scheduled
 
-from doeff import do, run
+from doeff import Pure, do, run
 
 # Retired marker vocabulary (ADR-DOE-AGENTS-005 R3), reconstructed here only
 # to prove the await path ignores it. Concatenated so the ADR's semgrep
@@ -306,8 +306,8 @@ class _FakeAdapter:
     def __init__(self) -> None:
         self.params: list[LaunchParams] = []
 
-    def is_available(self) -> bool:
-        return True
+    def available(self):
+        return Pure(True)
 
     def launch_command(self, params: LaunchParams) -> list[str]:
         self.params.append(params)

@@ -6,10 +6,14 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from doeff_agents.adapters.base import InjectionMethod, LaunchParams
 from doeff_agents.adapters.claude import ClaudeAdapter
+
+from fake_io_support import FakeIoWorld, fake_io_root
 
 
 def test_claude_adapter_uses_tmux_prompt_injection() -> None:
@@ -108,26 +112,29 @@ def test_launch_command_includes_mcp_config_when_servers_provided() -> None:
     assert "ship it" not in command
 
 
-def test_pre_launch_reads_and_writes_claude_files_as_utf8(monkeypatch, tmp_path: Path) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    (home / ".claude.json").write_text('{"oauthAccount": {"name": "日本語"}}', encoding="utf-8")
+def test_pre_launch_requires_an_authenticated_claude_json() -> None:
+    """認証されていない home では pre-launch が typed に落ちる(黙って進まない)。"""
+    world = FakeIoWorld(home="/home/agent")
 
-    original_read_text = Path.read_text
-    original_write_text = Path.write_text
+    with pytest.raises(RuntimeError, match="not found"):
+        fake_io_root(world)(ClaudeAdapter().pre_launch())
 
-    def read_text(path: Path, *args, **kwargs):
-        if path.name == ".claude.json":
-            assert kwargs.get("encoding") == "utf-8"
-        return original_read_text(path, *args, **kwargs)
+    world.files["/home/agent/.claude.json"] = '{"projects": {}}'
+    with pytest.raises(RuntimeError, match="no oauthAccount"):
+        fake_io_root(world)(ClaudeAdapter().pre_launch())
 
-    def write_text(path: Path, data: str, *args, **kwargs):
-        if path.name in {"config.json", "settings.json"}:
-            assert kwargs.get("encoding") == "utf-8"
-        return original_write_text(path, data, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "home", lambda: home)
-    monkeypatch.setattr(Path, "read_text", read_text)
-    monkeypatch.setattr(Path, "write_text", write_text)
+def test_pre_launch_creates_supporting_config_from_authenticated_home() -> None:
+    world = FakeIoWorld(
+        home="/home/agent",
+        files={"/home/agent/.claude.json": '{"oauthAccount": {"name": "\u65e5\u672c\u8a9e"}}'},
+    )
 
-    ClaudeAdapter().pre_launch()
+    fake_io_root(world)(ClaudeAdapter().pre_launch())
+
+    assert world.files["/home/agent/.claude/config.json"] == '{"hasCompletedOnboarding": true}'
+    assert world.files["/home/agent/.claude/settings.json"] == "{}"
+    # 認証の file は書き換えない(認証は利用者の持ち物)。
+    assert world.files["/home/agent/.claude.json"] == (
+        '{"oauthAccount": {"name": "\u65e5\u672c\u8a9e"}}'
+    )

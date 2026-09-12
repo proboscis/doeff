@@ -33,7 +33,7 @@ from doeff_core_effects.scheduler import (
     scheduled,
 )
 
-from doeff import do, run
+from doeff import Pure, do, run
 from doeff.mcp import McpToolDef
 
 
@@ -41,8 +41,8 @@ class _FakeAdapter:
     def __init__(self) -> None:
         self.params: list[LaunchParams] = []
 
-    def is_available(self) -> bool:
-        return True
+    def available(self):
+        return Pure(True)
 
     def launch_command(self, params: LaunchParams) -> list[str]:
         self.params.append(params)

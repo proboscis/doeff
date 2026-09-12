@@ -1,20 +1,50 @@
-"""JSON-line client for the doeff-agentd Unix socket API."""
+"""JSON-line client for the doeff-agentd Unix socket API.
+
+段 7 lane 7c(agora-redesign・決定 1.3): protocol の組み立てと解釈・起動の
+判断はこの module に残り、socket の 1 往復・子 process・file・環境変数の
+読みは `doeff_agents.io_effects` の要求になった。実行する家は本番
+`doeff_agents.io_handlers` と検 `doeff_agents.io_fake` の 2 つで、どちらを
+当てるかは呼び手(composition root)が ``io_root`` で選ぶ。
+"""
 
 import json
-import os
+import posixpath
 import shlex
-import shutil
-import socket
-import subprocess
 import sys
 import threading
-import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import hy  # noqa: F401  # .hy import hook — the I/O effect vocabulary is a Hy module
+from doeff import do
+
 from doeff_agents.adapters.base import AgentType
+from doeff_agents.io_root import (
+    IoGenerator,
+    IoRoot,
+    as_bool,
+    as_float,
+    as_int,
+    as_optional_str,
+    as_process_outcome,
+    as_str,
+)
+from doeff_agents.io_effects import (
+    env_value,
+    home_path,
+    executable_at,
+    make_dirs,
+    monotonic_time,
+    read_text,
+    run_process,
+    sleep as io_sleep,
+    spawn_detached,
+    unix_connect_probe,
+    unix_line_request,
+    which_executable,
+)
 from doeff_agents.effects import (
     AgentSessionLifecycle,
     AgentSessionQuery,
@@ -23,6 +53,13 @@ from doeff_agents.effects import (
     AwaitStatus,
 )
 from doeff_agents.monitor import SessionStatus
+
+def _default_io_root() -> IoRoot:
+    """既定の composition root: 本番の I/O handler。"""
+    from doeff_agents.io_handlers import run_driver_io
+
+    return run_driver_io
+
 
 RPC_ERR_AWAIT_TIMEOUT = -32000
 RPC_ERR_NO_SUCH_SESSION = -32001
@@ -144,7 +181,11 @@ def launch_rpc_timeout_seconds() -> float:
     (2026-07-27 sessionhost wedge incident)。同じ knob を同じ解釈
     (env_positive_i64: 0 以下・parse 失敗は既定 120s)で毎呼び出し読む。
     """
-    raw = os.environ.get("DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS")
+    return as_float(_default_io_root()(launch_rpc_timeout_program()))
+
+
+def rpc_timeout_budget(raw: str | None) -> float:
+    """Pure judgment: the client read-timeout implied by the daemon's ready-gate knob."""
     budget = DAEMON_REPL_IDLE_MAX_WAIT_DEFAULT_SECONDS
     if raw is not None:
         try:
@@ -155,6 +196,13 @@ def launch_rpc_timeout_seconds() -> float:
         if parsed is not None and parsed > 0:
             budget = float(parsed)
     return budget + RPC_TIMEOUT_MARGIN_SECONDS
+
+
+@do
+def launch_rpc_timeout_program() -> IoGenerator[float]:
+    """Program reading the daemon ready-gate knob and answering the client budget."""
+    raw = as_optional_str((yield env_value("DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS")))
+    return rpc_timeout_budget(raw)
 # PURE TRANSPORT HEARTBEAT (L-K4-3).  This constant bounds ONE
 # session.await_result round-trip and carries no node semantics: expiry
 # means "renew the keep-alive and re-await", never a node failure and
@@ -186,9 +234,16 @@ AGENTD_BUSY_STATUS_TIMEOUT_SECONDS: float = 15.0
 class AgentdClient:
     """Synchronous client for the long-lived agent supervisor daemon."""
 
-    def __init__(self, socket_path: str | Path, *, timeout: float | None = 10.0) -> None:
+    def __init__(
+        self,
+        socket_path: str | Path,
+        *,
+        timeout: float | None = 10.0,
+        io_root: IoRoot | None = None,
+    ) -> None:
         self.socket_path = Path(socket_path)
         self.timeout = timeout
+        self._io: IoRoot = io_root if io_root is not None else _default_io_root()
         self._request_id = 0
         self._request_lock = threading.Lock()
 
@@ -445,50 +500,54 @@ class AgentdClient:
         *,
         read_timeout: float | None = None,
     ) -> Any:
-        request = {
-            "id": self._next_request_id(),
-            "method": method,
-            "params": dict(params or {}),
-        }
-        encoded = json.dumps(request, separators=(",", ":")).encode("utf-8") + b"\n"
-
+        request_id = self._next_request_id()
         effective_timeout = read_timeout if read_timeout is not None else self.timeout
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            if effective_timeout is not None:
-                sock.settimeout(effective_timeout)
-            sock.connect(str(self.socket_path))
-            sock.sendall(encoded)
-            with sock.makefile("r", encoding="utf-8") as reader:
-                line = reader.readline()
-
-        if not line:
-            raise AgentdProtocolError("doeff-agentd closed the connection without a response")
-        response = json.loads(line)
-        if not isinstance(response, Mapping):
-            raise AgentdProtocolError("doeff-agentd returned a non-object response")
-        if response.get("id") != request["id"]:
-            raise AgentdProtocolError("doeff-agentd response id did not match request id")
-        if not response.get("ok"):
-            error = response.get("error")
-            if not isinstance(error, str) or not error:
-                error = "doeff-agentd request failed"
-            error_code = response.get("error_code")
-            if error_code is not None and not isinstance(error_code, (int, str)):
-                raise AgentdProtocolError(
-                    "doeff-agentd error_code was not an integer or string"
+        line = as_str(
+            self._io(
+                unix_line_request(
+                    str(self.socket_path),
+                    request_line(request_id, method, params),
+                    timeout=effective_timeout,
                 )
-            raise AgentdClientError(error, error_code=error_code)
-        if "result" not in response:
-            raise AgentdProtocolError(
-                f"{method} response is missing result "
-                f"(response shape: {_mapping_shape(response)})"
             )
-        return response["result"]
+        )
+        return parse_response_line(line, request_id=request_id, method=method)
 
     def _next_request_id(self) -> int:
         with self._request_lock:
             self._request_id += 1
             return self._request_id
+
+
+def request_line(request_id: int, method: str, params: Mapping[str, Any] | None) -> str:
+    """Pure judgment: the one JSON line that carries this request."""
+    request = {"id": request_id, "method": method, "params": dict(params or {})}
+    return json.dumps(request, separators=(",", ":")) + "\n"
+
+
+def parse_response_line(line: str, *, request_id: int, method: str) -> Any:
+    """Pure judgment: the result carried by one response line, or a typed failure."""
+    if not line:
+        raise AgentdProtocolError("doeff-agentd closed the connection without a response")
+    response = json.loads(line)
+    if not isinstance(response, Mapping):
+        raise AgentdProtocolError("doeff-agentd returned a non-object response")
+    if response.get("id") != request_id:
+        raise AgentdProtocolError("doeff-agentd response id did not match request id")
+    if not response.get("ok"):
+        error = response.get("error")
+        if not isinstance(error, str) or not error:
+            error = "doeff-agentd request failed"
+        error_code = response.get("error_code")
+        if error_code is not None and not isinstance(error_code, (int, str)):
+            raise AgentdProtocolError("doeff-agentd error_code was not an integer or string")
+        raise AgentdClientError(error, error_code=error_code)
+    if "result" not in response:
+        raise AgentdProtocolError(
+            f"{method} response is missing result "
+            f"(response shape: {_mapping_shape(response)})"
+        )
+    return response["result"]
 
 
 class LazyAgentdClient:
@@ -603,26 +662,42 @@ class LazyAgentdClient:
         return self._resolve().cleanup_session(session_id)
 
 
-def default_agentd_paths() -> AgentdPaths:
-    """Return XDG-style default paths for doeff-agentd."""
-    state_home = (
-        Path(os.environ["XDG_STATE_HOME"])
-        if "XDG_STATE_HOME" in os.environ
-        else Path.home() / ".local" / "state"
-    )
-    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+def agentd_paths_from_env(
+    state_home: str | None, runtime_dir: str | None, user: str | None, home: str
+) -> AgentdPaths:
+    """Pure judgment: the XDG-style default paths implied by this environment."""
+    state_root = Path(state_home) if state_home else Path(home) / ".local" / "state"
     if runtime_dir:
         socket_path = Path(runtime_dir) / "doeff" / "agentd.sock"
     else:
-        user = os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown"
-        socket_path = Path("/tmp") / f"doeff-agentd-{user}.sock"
-    state_dir = state_home / "doeff"
+        socket_path = Path("/tmp") / f"doeff-agentd-{user or 'unknown'}.sock"
+    state_dir = state_root / "doeff"
     return AgentdPaths(
         db_path=state_dir / "agentd.sqlite",
         socket_path=socket_path,
         log_path=state_dir / "agentd.log",
         supervisor_path=state_dir / "agentd.supervisor.json",
     )
+
+
+@do
+def default_agentd_paths_program() -> IoGenerator[AgentdPaths]:
+    """Program reading the environment and answering the default paths."""
+    state_home = as_optional_str((yield env_value("XDG_STATE_HOME")))
+    runtime_dir = as_optional_str((yield env_value("XDG_RUNTIME_DIR")))
+    user = as_optional_str((yield env_value("USER")))
+    if not user:
+        user = as_optional_str((yield env_value("LOGNAME")))
+    home = as_str((yield home_path()))
+    return agentd_paths_from_env(state_home, runtime_dir, user, home)
+
+
+def default_agentd_paths(*, io_root: IoRoot | None = None) -> AgentdPaths:
+    """Return XDG-style default paths for doeff-agentd."""
+    paths = (io_root or _default_io_root())(default_agentd_paths_program())
+    if not isinstance(paths, AgentdPaths):
+        raise TypeError(f"agentd の既定の path の形が違う: {paths!r}")
+    return paths
 
 
 _SUPERVISOR_DECLARATION_KEYS = frozenset(
@@ -632,6 +707,8 @@ _SUPERVISOR_DECLARATION_KEYS = frozenset(
 
 def load_supervisor_declaration(
     declaration_path: Path,
+    *,
+    io_root: IoRoot | None = None,
 ) -> AgentdSupervisorDeclaration | None:
     """Load the supervisor declaration, or None when the file is absent.
 
@@ -641,9 +718,8 @@ def load_supervisor_declaration(
     in an existing file is a typed, loud config error — a typo must never
     silently re-enable the self-spawn path.
     """
-    try:
-        raw_text = declaration_path.read_text(encoding="utf-8")
-    except FileNotFoundError:
+    raw_text = as_optional_str((io_root or _default_io_root())(read_text(str(declaration_path))))
+    if raw_text is None:
         return None
     try:
         raw = json.loads(raw_text)
@@ -726,24 +802,31 @@ def ensure_agentd(
     timeout: float = 5.0,
     client_timeout: float = 1.0,
     max_running: int = 10,
+    io_root: IoRoot | None = None,
 ) -> AgentdClient:
-    """Return a client for the canonical daemon, starting it when necessary."""
-    paths = default_agentd_paths()
+    """Return a client for the canonical daemon, starting it when necessary.
+
+    ``io_root`` is the composition-root choice of I/O 家 — the production
+    handler by default, the in-memory fake in tests.
+    """
+    root: IoRoot = io_root if io_root is not None else _default_io_root()
+    paths = default_agentd_paths(io_root=root)
     active_db_path = Path(db_path) if db_path is not None else paths.db_path
     active_socket_path = Path(socket_path) if socket_path is not None else paths.socket_path
-    client = AgentdClient(active_socket_path, timeout=client_timeout)
+    client = AgentdClient(active_socket_path, timeout=client_timeout, io_root=root)
     command = _agentd_command(
         daemon_bin=daemon_bin,
         db_path=active_db_path,
         socket_path=active_socket_path,
         max_running=max_running,
+        io_root=root,
     )
-    _prepare_agentd_paths(active_db_path, active_socket_path, paths.log_path)
+    root(prepare_agentd_paths_program(active_db_path, active_socket_path, paths.log_path))
     # Loaded unconditionally so a malformed declaration is a loud, typed
     # config error on EVERY ensure call — not a surprise at the next
     # restart window.  An unparseable file might be declaring any socket,
     # so no call on this machine may treat it as absent.
-    declaration = load_supervisor_declaration(paths.supervisor_path)
+    declaration = load_supervisor_declaration(paths.supervisor_path, io_root=root)
     status = _agentd_status_if_ready(client)
     if status is not None:
         _validate_agentd_identity(
@@ -759,7 +842,7 @@ def ensure_agentd(
     # short status probe is alive-but-busy (slow != dead); starting a
     # competitor against it corrupts the lease and the store, so that
     # path retries with a long budget and then fails loudly instead.
-    if _socket_has_live_listener(active_socket_path):
+    if _socket_has_live_listener(active_socket_path, io_root=root):
         return _client_from_live_listener(
             client,
             active_db_path=active_db_path,
@@ -786,10 +869,11 @@ def ensure_agentd(
             command=command,
             log_path=paths.log_path,
             timeout=timeout,
+            io_root=root,
         )
 
     try:
-        _start_agentd_process(command, paths.log_path)
+        root(start_agentd_process_program(command, paths.log_path))
     except OSError as error:
         command_text = shlex.join(command)
         raise AgentdUnavailableError(
@@ -809,6 +893,7 @@ def ensure_agentd(
         expected_socket_path=active_socket_path,
         command=command,
         timeout=timeout,
+        io_root=root,
     ):
         return client
 
@@ -873,6 +958,7 @@ def _delegate_to_supervisor(
     command: list[str],
     log_path: Path,
     timeout: float,
+    io_root: IoRoot,
 ) -> AgentdClient:
     identity = _supervisor_identity(declaration)
     if declaration.kick_command is None:
@@ -889,15 +975,10 @@ def _delegate_to_supervisor(
 
     kick = list(declaration.kick_command)
     try:
-        outcome = subprocess.run(
-            kick,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            text=True,
-            timeout=AGENTD_SUPERVISOR_KICK_TIMEOUT_SECONDS,
-            check=False,
+        outcome = as_process_outcome(
+            io_root(run_process(tuple(kick), timeout=AGENTD_SUPERVISOR_KICK_TIMEOUT_SECONDS))
         )
-    except (OSError, subprocess.TimeoutExpired) as error:
+    except OSError as error:
         raise AgentdUnavailableError(
             f"doeff-agentd socket {active_socket_path} is supervisor-managed "
             f"({identity}) and its kick command failed to run: {error}.\n"
@@ -906,12 +987,12 @@ def _delegate_to_supervisor(
             socket_path=active_socket_path,
             start_command=declaration.kick_command,
         ) from error
-    if outcome.returncode != 0:
+    if outcome.timed_out or outcome.exit_code != 0:
         detail = outcome.stderr.strip() or outcome.stdout.strip()
         raise AgentdUnavailableError(
             f"doeff-agentd socket {active_socket_path} is supervisor-managed "
             f"({identity}) and its kick command exited with "
-            f"exit code {outcome.returncode}: {detail}\n"
+            f"exit code {outcome.exit_code}: {detail}\n"
             f"Kick command: {shlex.join(kick)}\n"
             f"Log path: {log_path}",
             socket_path=active_socket_path,
@@ -924,6 +1005,7 @@ def _delegate_to_supervisor(
         expected_socket_path=active_socket_path,
         command=command,
         timeout=timeout,
+        io_root=io_root,
     ):
         return client
 
@@ -939,9 +1021,12 @@ def _delegate_to_supervisor(
     )
 
 
-def _prepare_agentd_paths(db_path: Path, socket_path: Path, log_path: Path) -> None:
+@do
+def prepare_agentd_paths_program(db_path: Path, socket_path: Path, log_path: Path) -> IoGenerator[None]:
+    """Program creating the state directories the daemon writes into."""
     for directory in (db_path.parent, socket_path.parent, log_path.parent):
-        directory.mkdir(parents=True, exist_ok=True)
+        yield make_dirs(str(directory))
+    return None
 
 
 def _validate_agentd_identity(
@@ -968,17 +1053,12 @@ def _validate_agentd_identity(
         )
 
 
-def _start_agentd_process(command: list[str], log_path: Path) -> None:
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("ab") as log_file:
-        subprocess.Popen(
-            command,
-            stdin=subprocess.DEVNULL,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            close_fds=True,
-        )
+@do
+def start_agentd_process_program(command: list[str], log_path: Path) -> IoGenerator[int]:
+    """Program starting the daemon detached, with its output appended to the log."""
+    yield make_dirs(str(log_path.parent))
+    pid = as_int((yield spawn_detached(tuple(command), str(log_path))))
+    return pid
 
 
 def _wait_for_agentd_ready(
@@ -988,8 +1068,9 @@ def _wait_for_agentd_ready(
     expected_socket_path: Path,
     command: list[str],
     timeout: float,
+    io_root: IoRoot,
 ) -> bool:
-    deadline = time.monotonic() + timeout
+    deadline = as_float(io_root(monotonic_time())) + timeout
     while True:
         status = _agentd_status_if_ready(client)
         if status is not None:
@@ -1000,14 +1081,10 @@ def _wait_for_agentd_ready(
                 command=command,
             )
             return True
-        remaining = deadline - time.monotonic()
+        remaining = deadline - as_float(io_root(monotonic_time()))
         if remaining <= 0:
             return False
-        _sleep_for_agentd_start(min(AGENTD_START_POLL_SECONDS, remaining))
-
-
-def _sleep_for_agentd_start(seconds: float) -> None:
-    time.sleep(seconds)
+        io_root(io_sleep(min(AGENTD_START_POLL_SECONDS, remaining)))
 
 
 def _agentd_status_if_ready(client: AgentdClient) -> Mapping[str, Any] | None:
@@ -1019,26 +1096,29 @@ def _agentd_status_if_ready(client: AgentdClient) -> Mapping[str, Any] | None:
         return None
 
 
-def _socket_has_live_listener(socket_path: Path, *, connect_timeout: float = 1.0) -> bool:
-    """True iff something is accepting connections on the socket.
+def listener_present(verdict: str) -> bool:
+    """Pure judgment: only a proven refusal licenses "no listener".
 
     Only a missing path or ECONNREFUSED (stale socket file, no listener)
-    proves absence.  A successful connect proves presence, and any other
-    OSError (e.g. backlog-full timeout under load) is treated as
+    proves absence.  A successful connect proves presence, and an
+    unreachable probe (e.g. backlog-full timeout under load) is treated as
     presence too: the fail-safe direction is to never spawn a competing
     daemon on an unproven death.
     """
-    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    probe.settimeout(connect_timeout)
-    try:
-        probe.connect(str(socket_path))
-        return True
-    except (ConnectionRefusedError, FileNotFoundError):
-        return False
-    except OSError:
-        return True
-    finally:
-        probe.close()
+    return verdict != "refused"
+
+
+def _socket_has_live_listener(
+    socket_path: Path,
+    *,
+    connect_timeout: float = 1.0,
+    io_root: IoRoot | None = None,
+) -> bool:
+    """True iff something is accepting connections on the socket."""
+    verdict = as_str(
+        (io_root or _default_io_root())(unix_connect_probe(str(socket_path), connect_timeout))
+    )
+    return listener_present(verdict)
 
 
 def _agentd_status_from_live_listener(client: AgentdClient) -> Mapping[str, Any] | None:
@@ -1066,8 +1146,13 @@ def _agentd_command(
     db_path: Path,
     socket_path: Path,
     max_running: int,
+    io_root: IoRoot | None = None,
 ) -> list[str]:
-    prefix = [str(daemon_bin)] if daemon_bin is not None else [_resolve_agentd_binary()]
+    prefix = (
+        [str(daemon_bin)]
+        if daemon_bin is not None
+        else [as_str((io_root or _default_io_root())(resolve_agentd_binary_program()))]
+    )
     return [
         *prefix,
         "--db",
@@ -1080,8 +1165,9 @@ def _agentd_command(
     ]
 
 
-def _resolve_agentd_binary() -> str:
-    """Resolve the canonical agentd executable: the Hy session host.
+@do
+def resolve_agentd_binary_program() -> IoGenerator[str]:
+    """Program resolving the canonical agentd executable: the Hy session host.
 
     Retirement (DOE-004, user GO 2026-07-06): the Rust ``doeff-agentd``
     binary is no longer a spawn target — auto-(re)starting it silently
@@ -1091,12 +1177,15 @@ def _resolve_agentd_binary() -> str:
     deterministic default; ``DOEFF_AGENTD_BIN`` stays as the explicit
     override seam (tests, oracle runs).
     """
-    if env_bin := os.environ.get("DOEFF_AGENTD_BIN"):
+    env_bin = as_optional_str((yield env_value("DOEFF_AGENTD_BIN")))
+    if env_bin:
         return env_bin
-    sibling = Path(sys.executable).parent / "doeff-sessionhost"
-    if sibling.exists() and os.access(sibling, os.X_OK):
-        return str(sibling)
-    if path_bin := shutil.which("doeff-sessionhost"):
+    sibling = posixpath.join(posixpath.dirname(sys.executable), "doeff-sessionhost")
+    runnable = as_bool((yield executable_at(sibling)))
+    if runnable:
+        return sibling
+    path_bin = as_optional_str((yield which_executable("doeff-sessionhost")))
+    if path_bin:
         return path_bin
     return "doeff-sessionhost"
 

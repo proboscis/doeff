@@ -1,8 +1,8 @@
 """Adapter for Gemini CLI."""
 
-import shutil
+from doeff import Program
 
-from .base import AgentType, InjectionMethod, LaunchParams
+from .base import AgentType, InjectionMethod, LaunchParams, cli_available
 
 
 class GeminiAdapter:
@@ -16,8 +16,9 @@ class GeminiAdapter:
     def agent_type(self) -> AgentType:
         return AgentType.GEMINI
 
-    def is_available(self) -> bool:
-        return shutil.which("gemini") is not None
+    def available(self) -> Program:
+        """Program answering whether the Gemini CLI is on PATH."""
+        return cli_available("gemini")
 
     def launch_command(self, params: LaunchParams) -> list[str]:
         """Return argv list - caller will shlex.join() if needed."""

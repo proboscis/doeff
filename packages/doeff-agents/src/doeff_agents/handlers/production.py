@@ -5,6 +5,7 @@ import os
 import shlex
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,7 @@ from doeff_agents.adapters.codex import CodexAdapter, trust_workspace_in_codex_h
 from doeff_agents.adapters.gemini import GeminiAdapter
 from doeff_agents.agentd_client import DEFAULT_AWAIT_BUDGET_SECONDS
 from doeff_agents.claude_home import prepare_claude_home
+from doeff_agents.io_root import IoRoot
 from doeff_agents.effects import (
     AgentAttemptExhaustedError,
     AgentDeadlineExceededError,
@@ -551,9 +553,12 @@ class TmuxAgentHandler(AgentHandler):
         session_repository: AgentSessionRepository | None = None,
         claude_runtime_policy: ClaudeRuntimePolicy | None = None,
         codex_runtime_policy: CodexRuntimePolicy | None = None,
+        io_root: IoRoot | None = None,
     ) -> None:
         self._sessions: dict[str, SessionState] = {}
         self._backend = backend
+        # 段 7 lane 7c: driver 層の I/O を果たす家の選択点(本番 / 検)。
+        self._io: IoRoot = io_root if io_root is not None else _default_io_root()
         self._session_repository = session_repository or InMemoryAgentSessionRepository()
         self._claude_runtime_policy = claude_runtime_policy or ClaudeRuntimePolicy()
         self._codex_runtime_policy = codex_runtime_policy or CodexRuntimePolicy()
@@ -585,7 +590,7 @@ class TmuxAgentHandler(AgentHandler):
         """
         adapter = get_adapter(effect.agent_type)
 
-        if not adapter.is_available():
+        if not self._io(adapter.available()):
             raise AgentNotAvailableError(f"{effect.agent_type.value} CLI is not available")
 
         if self._backend.has_session(effect.session_name):
@@ -643,7 +648,7 @@ class TmuxAgentHandler(AgentHandler):
                 if policy_home is not None
                 else os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
             )
-            trust_workspace_in_codex_home(codex_home, effect.work_dir)
+            self._io(trust_workspace_in_codex_home(codex_home, effect.work_dir))
             agent_env_exports["CODEX_HOME"] = codex_home
 
         active_mcp_servers: dict[str, str] = dict(mcp_servers or {})
@@ -745,7 +750,7 @@ class TmuxAgentHandler(AgentHandler):
     def handle_claude_launch(self, effect: ClaudeLaunchEffect) -> SessionHandle:
         """Launch a Claude-specific task with dedicated home/bootstrap handling."""
         adapter = get_adapter(AgentType.CLAUDE)
-        if not adapter.is_available():
+        if not self._io(adapter.available()):
             raise AgentNotAvailableError("claude CLI is not available")
 
         if self._backend.has_session(effect.session_name):
@@ -1323,10 +1328,16 @@ class TmuxAgentHandler(AgentHandler):
         agent_home: Path,
         trusted_workspaces: tuple[Path, ...],
     ) -> None:
-        prepare_claude_home(agent_home, trusted_workspaces)
+        self._io(prepare_claude_home(agent_home, trusted_workspaces))
 
     def _wrap_with_shell_exports(self, command: str, env: dict[str, str]) -> str:
         return wrap_with_shell_exports(command, env)
+
+
+def _default_io_root() -> IoRoot:
+    from doeff_agents.io_handlers import run_driver_io
+
+    return run_driver_io
 
 
 __all__ = [

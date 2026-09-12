@@ -16,6 +16,7 @@ from typing import Any
 from doeff_agents.adapters.codex import trust_workspace_in_codex_home
 from doeff_agents.agentd_client import AgentdClient
 from doeff_agents.claude_home import prepare_claude_home
+from doeff_agents.io_handlers import run_driver_io
 from doeff_agents.effects import AgentSessionLifecycle, AwaitStatus
 from sessionhost_bin import resolve_sessionhost_bin
 
@@ -156,7 +157,7 @@ def _session_env(agent_type: str, _runtime_dir: Path, work_dir: Path) -> dict[st
         }
     if agent_type == "codex":
         codex_home = os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
-        trust_workspace_in_codex_home(codex_home, work_dir)
+        run_driver_io(trust_workspace_in_codex_home(codex_home, work_dir))
         return {"CODEX_HOME": codex_home}
     raise AssertionError(f"unsupported real agent type: {agent_type}")
 
@@ -170,7 +171,7 @@ def _prepare_real_claude_home(work_dir: Path) -> Path:
         f"Log in as {expected_email} before this E2E test."
     )
     _assert_real_claude_auth(claude_json, expected_email)
-    prepare_claude_home(claude_config_dir, (work_dir,))
+    run_driver_io(prepare_claude_home(claude_config_dir, (work_dir,)))
     for auth_path in (
         claude_config_dir / ".claude.json",
         claude_config_dir / ".claude" / ".claude.json",

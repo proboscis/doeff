@@ -4,14 +4,21 @@ import asyncio
 import re
 import shlex
 import time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 from . import tmux
-from .adapters.base import AgentAdapter, AgentType, InjectionMethod, LaunchConfig, LaunchParams
+from .adapters.base import (
+    AgentAdapter,
+    AgentType,
+    InjectionMethod,
+    LaunchConfig,
+    LaunchParams,
+    PreLaunchAdapter,
+)
 from .adapters.claude import ClaudeAdapter
 from .adapters.codex import CodexAdapter
 from .adapters.gemini import GeminiAdapter
@@ -24,6 +31,8 @@ from .monitor import (
     hash_content,
     is_waiting_for_input,
 )
+from doeff_agents.io_root import IoRoot
+
 from .session_backend import SessionBackend
 from .sessionhost.impls.ready_physics import has_claude_screen_reader_trust_prompt
 from .shell import (
@@ -94,6 +103,7 @@ def launch_session(
     ready_timeout: float = 120.0,
     dismiss_trust_dialog: bool = True,
     backend: SessionBackend | None = None,
+    io_root: IoRoot | None = None,
 ) -> AgentSession:
     """Launch a new agent session in tmux.
 
@@ -110,15 +120,17 @@ def launch_session(
         AgentReadyTimeoutError: If agent doesn't become ready within timeout
         tmux.SessionAlreadyExistsError: If session already exists
     """
+    # 段 7 lane 7c: driver 層の I/O を果たす家の選択点(本番 / 検)。
+    run_io: IoRoot = io_root if io_root is not None else _default_io_root()
     active_backend = backend or tmux.get_default_backend()
     adapter = get_adapter(config.agent_type)
 
-    if not adapter.is_available():
+    if not run_io(adapter.available()):
         raise AgentLaunchError(f"{config.agent_type.value} CLI is not available")
 
     # Pre-launch setup (e.g. .claude.json restore for Claude)
-    if hasattr(adapter, "pre_launch"):
-        adapter.pre_launch()
+    if isinstance(adapter, PreLaunchAdapter):
+        run_io(adapter.pre_launch())
     assert_no_forbidden_agent_env(
         config.session_env,
         context="LaunchConfig.session_env",
@@ -541,3 +553,9 @@ async def async_session_scope(
         yield session
     finally:
         stop_session(session)
+
+
+def _default_io_root() -> IoRoot:
+    from doeff_agents.io_handlers import run_driver_io
+
+    return run_driver_io
