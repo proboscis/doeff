@@ -4,7 +4,23 @@
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, runtime_checkable
+
+from doeff import Program, do
+
+from doeff_agents.io_effects import which_executable
+from doeff_agents.io_root import IoGenerator
+
+
+@do
+def cli_available(name: str) -> IoGenerator[bool]:
+    """Program answering whether ``name`` resolves on PATH.
+
+    段 7 lane 7c(決定 1.3): adapter は PATH を自分で引かない — 探索は
+    `doeff_agents.io_effects` の要求で、実行は handler(本番 / 検)が持つ。
+    """
+    found = yield which_executable(name)
+    return found is not None
 
 
 class AgentType(Enum):
@@ -75,6 +91,19 @@ class LaunchConfig:
     lifecycle: AgentSessionLifecycle = AgentSessionLifecycle.RUN_TO_COMPLETION
 
 
+@runtime_checkable
+class PreLaunchAdapter(Protocol):
+    """launch の前に自分の家を整える adapter だけが持つ面(Claude の認証の確認)。
+
+    全 adapter が持つ面ではないので `AgentAdapter` とは別の Protocol にする —
+    `hasattr` で探ると型が消えるので、isinstance で narrow する。
+    """
+
+    def pre_launch(self) -> Program:
+        """Program verifying and preparing this agent's own home."""
+        ...
+
+
 class AgentAdapter(Protocol):
     """Protocol for agent adapters."""
 
@@ -85,8 +114,8 @@ class AgentAdapter(Protocol):
         """Return the command as argv list (NOT a shell string)."""
         ...
 
-    def is_available(self) -> bool:
-        """Check if the agent CLI is installed."""
+    def available(self) -> Program:
+        """Program answering whether the agent CLI is installed."""
         ...
 
     @property

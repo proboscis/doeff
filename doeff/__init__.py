@@ -6,7 +6,7 @@ Backed by a Rust VM with OCaml 5-aligned effect handler architecture.
 
 # ruff: noqa: I001 - import order avoids doeff_core_effects circular imports.
 from collections.abc import Generator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from doeff_vm import Callable as Callable
 from doeff_vm import Callable as _VmCallable
@@ -117,12 +117,26 @@ class _DoExprMeta(type):
         return issubclass(subclass, _DOEXPR_TYPES)
 
 
-class DoExpr(metaclass=_DoExprMeta):
-    """Virtual base type for all doeff program nodes.
+if TYPE_CHECKING:
+    # 静的の読み手(pyright)にとって DoExpr は「program の node のどれか」の union。
+    # 実行時の DoExpr は下の virtual base class で、isinstance/issubclass の意味は
+    # 変わらない — 変わるのは型検査器が `-> Program` を verify できるかだけ。
+    # 段 7 lane 7c(agora-redesign 決定 1.3): driver 層が program を返す関数を
+    # 持つようになり、`Expand` を `Program` へ返せない静的な穴が実害になった。
+    DoExpr = (
+        Pure | Perform | Resume | Transfer | Apply | Expand | Pass
+        | WithHandlerType | WithObserveRaw | ResumeThrow | TransferThrow
+        | GetTraceback | GetExecutionContext | GetHandlers | GetBoundaries
+        | GetOuterHandlers
+    )
+else:
 
-    isinstance(x, DoExpr) returns True for any program node
-    (Pure, Expand, WithHandlerType, etc.).
-    """
+    class DoExpr(metaclass=_DoExprMeta):
+        """Virtual base type for all doeff program nodes.
+
+        isinstance(x, DoExpr) returns True for any program node
+        (Pure, Expand, WithHandlerType, etc.).
+        """
 
 
 Program = DoExpr

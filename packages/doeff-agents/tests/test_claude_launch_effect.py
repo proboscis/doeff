@@ -18,6 +18,7 @@ from doeff_agents import (
     TmuxAgentHandler,
 )
 from doeff_agents.adapters.base import AgentType, InjectionMethod, LaunchParams
+from doeff import Pure
 from doeff_agents.session_backend import SessionBackend
 
 
@@ -33,8 +34,8 @@ class FakeClaudeAdapter:
             args.extend(["--model", cfg.model])
         return args
 
-    def is_available(self) -> bool:
-        return True
+    def available(self):
+        return Pure(True)
 
 
 class FakeBackend(SessionBackend):

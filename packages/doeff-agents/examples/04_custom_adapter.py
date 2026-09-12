@@ -13,7 +13,6 @@ Key concepts:
 """
 
 import asyncio
-import shutil
 import time
 from pathlib import Path
 
@@ -32,10 +31,16 @@ from doeff_agents import (
     configure_mock_session,
     mock_agent_handlers,
 )
-from doeff_agents.adapters.base import AgentAdapter, InjectionMethod, LaunchParams
+from doeff_agents.adapters.base import (
+    AgentAdapter,
+    InjectionMethod,
+    LaunchParams,
+    cli_available,
+)
+from doeff_agents.io_handlers import run_driver_io
 from doeff_time import Delay
 
-from doeff import do, slog
+from doeff import Pure, do, slog
 
 # =============================================================================
 # Example 1: Simple Custom Adapter (terminal prompt injection)
@@ -55,9 +60,9 @@ class AiderAdapter(AgentAdapter):
     def agent_type(self) -> AgentType:
         return AgentType.CUSTOM
 
-    def is_available(self) -> bool:
-        """Check if aider is installed."""
-        return shutil.which("aider") is not None
+    def available(self):
+        """Program answering whether aider is installed."""
+        return cli_available("aider")
 
     def launch_command(self, params: LaunchParams) -> list[str]:
         """Build the command as an argv list."""
@@ -100,8 +105,8 @@ class ReplitAgentAdapter(AgentAdapter):
     def agent_type(self) -> AgentType:
         return AgentType.CUSTOM
 
-    def is_available(self) -> bool:
-        return shutil.which("replit-agent") is not None
+    def available(self):
+        return cli_available("replit-agent")
 
     def launch_command(self, params: LaunchParams) -> list[str]:
         """Launch command without the prompt (it's sent later via tmux)."""
@@ -158,8 +163,8 @@ class ContinueDevAdapter(AgentAdapter):
     def agent_type(self) -> AgentType:
         return AgentType.CUSTOM
 
-    def is_available(self) -> bool:
-        return shutil.which("continue") is not None
+    def available(self):
+        return cli_available("continue")
 
     def launch_command(self, params: LaunchParams) -> list[str]:
         args = ["continue", "chat"]
@@ -248,7 +253,7 @@ def demo_adapter_protocol() -> None:
     for name, adapter in adapters:
         print(f"\n{name} Adapter:")
         print(f"  Agent Type: {adapter.agent_type.value}")
-        print(f"  Available: {adapter.is_available()}")
+        print(f"  Available: {run_driver_io(adapter.available())}")
         print(f"  Injection: {adapter.injection_method.value}")
         print(f"  Ready Pattern: {adapter.ready_pattern}")
         print(f"  Status Bar Lines: {adapter.status_bar_lines}")
@@ -296,7 +301,7 @@ async def run_with_mock_handlers() -> None:
 
 async def run_with_real_tmux() -> None:
     """Run with real tmux (requires aider installed)."""
-    if not shutil.which("aider"):
+    if not run_driver_io(cli_available("aider")):
         print("Aider not installed, skipping real example")
         return
 

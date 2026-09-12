@@ -34,7 +34,38 @@ from doeff_agents import (
     ensure_agentd,
 )
 from doeff_agents.agentd_client import AgentdSessionList, AgentdSessionParseWarning
+from doeff_agents.io_fake import SpawnLedger, recorded_spawn_handler
+from doeff_agents.io_handlers import driver_io_handler
+from fake_io_support import FakeIoWorld, fake_io_root
+
+from doeff import Program, Pure, run
+from doeff_agents.io_root import IoRoot
+
+
 from doeff_agents.runtime import CodexRuntimePolicy
+
+
+
+def recording_io_root(starts: list) -> IoRoot:
+    """段 7 lane 7c: 常駐の起動と待ちだけ控え、socket と file は実世界のまま回す。
+
+    `ensure_agentd` の判断(起こすか・待つか・断るか)を実 socket に対して撃ちつつ、
+    本物の daemon process だけは起こさない — 層を重ねた handler 1 枚で足りる。
+    """
+    ledger = SpawnLedger()
+
+    class _Sink(list):
+        def append(self, item: tuple[tuple[str, ...], str, str | None]) -> None:
+            argv, log_path, _cwd = item
+            starts.append((argv, Path(log_path)))
+            list.append(self, item)
+
+    ledger.spawned = _Sink()
+
+    def root(program: Program) -> object:
+        return run(driver_io_handler(recorded_spawn_handler(ledger)(program)))
+
+    return root
 
 
 @pytest.fixture
@@ -300,12 +331,7 @@ def test_ensure_agentd_rejects_reachable_daemon_with_wrong_db(
     paths.socket_path.parent.mkdir(parents=True)
     stale_db = tmp_path / "stale" / "agentd.sqlite"
     starts: list[tuple[tuple[str, ...], Path]] = []
-    monkeypatch.setattr(
-        agentd_client,
-        "_start_agentd_process",
-        lambda command, log_path: starts.append((tuple(command), log_path)),
-        raising=False,
-    )
+    io_root = recording_io_root(starts)
 
     def handle(request: Mapping[str, Any]) -> Mapping[str, Any]:
         return {
@@ -368,20 +394,10 @@ def test_ensure_agentd_starts_daemon_when_canonical_socket_unreachable(
         return next(statuses)
 
     monkeypatch.setattr(agentd_client, "_agentd_status_if_ready", status_if_ready)
-    monkeypatch.setattr(
-        agentd_client,
-        "_start_agentd_process",
-        lambda command, log_path: starts.append((tuple(command), log_path)),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        agentd_client,
-        "_sleep_for_agentd_start",
-        lambda _seconds: None,
-        raising=False,
-    )
+    io_root = recording_io_root(starts)
 
     client = ensure_agentd(
+        io_root=io_root,
         daemon_bin="/usr/local/bin/doeff-agentd",
         max_running=7,
         client_timeout=2.0,
@@ -530,12 +546,7 @@ def test_ensure_agentd_never_spawns_against_live_but_slow_listener(
     paths = default_agentd_paths()
     paths.socket_path.parent.mkdir(parents=True)
     starts: list[tuple[tuple[str, ...], Path]] = []
-    monkeypatch.setattr(
-        agentd_client,
-        "_start_agentd_process",
-        lambda command, log_path: starts.append((tuple(command), log_path)),
-        raising=False,
-    )
+    io_root = recording_io_root(starts)
     monkeypatch.setattr(
         agentd_client,
         "AGENTD_BUSY_STATUS_TIMEOUT_SECONDS",
@@ -545,6 +556,7 @@ def test_ensure_agentd_never_spawns_against_live_but_slow_listener(
 
     with SilentListener(paths.socket_path), pytest.raises(AgentdUnavailableError) as error:
         ensure_agentd(
+        io_root=io_root,
             daemon_bin="/usr/local/bin/doeff-agentd",
             client_timeout=0.2,
         )
@@ -568,12 +580,7 @@ def test_ensure_agentd_waits_out_slow_status_from_live_listener(
     paths = default_agentd_paths()
     paths.socket_path.parent.mkdir(parents=True)
     starts: list[tuple[tuple[str, ...], Path]] = []
-    monkeypatch.setattr(
-        agentd_client,
-        "_start_agentd_process",
-        lambda command, log_path: starts.append((tuple(command), log_path)),
-        raising=False,
-    )
+    io_root = recording_io_root(starts)
 
     with BusyThenHealthyAgentdServer(paths.socket_path):
         client = ensure_agentd(client_timeout=0.5)
@@ -598,21 +605,11 @@ def test_ensure_agentd_spawns_when_socket_file_is_stale(
     stale.bind(str(paths.socket_path))
     stale.close()
     starts: list[tuple[tuple[str, ...], Path]] = []
-    monkeypatch.setattr(
-        agentd_client,
-        "_start_agentd_process",
-        lambda command, log_path: starts.append((tuple(command), log_path)),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        agentd_client,
-        "_sleep_for_agentd_start",
-        lambda _seconds: None,
-        raising=False,
-    )
+    io_root = recording_io_root(starts)
 
     with pytest.raises(AgentdUnavailableError) as error:
         ensure_agentd(
+        io_root=io_root,
             daemon_bin="/usr/local/bin/doeff-agentd",
             client_timeout=0.2,
             timeout=0.2,
@@ -667,12 +664,7 @@ def test_ensure_agentd_supervised_socket_refuses_self_spawn_without_kick(
         },
     )
     starts: list[tuple[tuple[str, ...], Path]] = []
-    monkeypatch.setattr(
-        agentd_client,
-        "_start_agentd_process",
-        lambda command, log_path: starts.append((tuple(command), log_path)),
-        raising=False,
-    )
+    io_root = recording_io_root(starts)
 
     with pytest.raises(AgentdUnavailableError) as error:
         ensure_agentd(daemon_bin="/usr/local/bin/doeff-agentd", client_timeout=0.2)
@@ -718,18 +710,7 @@ def test_ensure_agentd_supervised_socket_delegates_to_kick_command(
         "_agentd_status_if_ready",
         lambda _client: next(statuses),
     )
-    monkeypatch.setattr(
-        agentd_client,
-        "_start_agentd_process",
-        lambda command, log_path: starts.append((tuple(command), log_path)),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        agentd_client,
-        "_sleep_for_agentd_start",
-        lambda _seconds: None,
-        raising=False,
-    )
+    io_root = recording_io_root(starts)
 
     client = ensure_agentd(daemon_bin="/usr/local/bin/doeff-agentd", client_timeout=0.2)
 
@@ -755,12 +736,7 @@ def test_ensure_agentd_supervised_kick_failure_is_loud(
         },
     )
     starts: list[tuple[tuple[str, ...], Path]] = []
-    monkeypatch.setattr(
-        agentd_client,
-        "_start_agentd_process",
-        lambda command, log_path: starts.append((tuple(command), log_path)),
-        raising=False,
-    )
+    io_root = recording_io_root(starts)
 
     with pytest.raises(AgentdUnavailableError) as error:
         ensure_agentd(daemon_bin="/usr/local/bin/doeff-agentd", client_timeout=0.2)
@@ -790,21 +766,11 @@ def test_ensure_agentd_supervised_kick_then_still_dead_is_loud(
         },
     )
     starts: list[tuple[tuple[str, ...], Path]] = []
-    monkeypatch.setattr(
-        agentd_client,
-        "_start_agentd_process",
-        lambda command, log_path: starts.append((tuple(command), log_path)),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        agentd_client,
-        "_sleep_for_agentd_start",
-        lambda _seconds: None,
-        raising=False,
-    )
+    io_root = recording_io_root(starts)
 
     with pytest.raises(AgentdUnavailableError) as error:
         ensure_agentd(
+        io_root=io_root,
             daemon_bin="/usr/local/bin/doeff-agentd",
             client_timeout=0.2,
             timeout=0.2,
@@ -843,20 +809,11 @@ def test_ensure_agentd_supervisor_declaration_for_other_socket_is_inert(
         "_agentd_status_if_ready",
         lambda _client: next(statuses),
     )
-    monkeypatch.setattr(
-        agentd_client,
-        "_start_agentd_process",
-        lambda command, log_path: starts.append((tuple(command), log_path)),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        agentd_client,
-        "_sleep_for_agentd_start",
-        lambda _seconds: None,
-        raising=False,
-    )
+    io_root = recording_io_root(starts)
 
-    client = ensure_agentd(daemon_bin="/usr/local/bin/doeff-agentd", client_timeout=0.2)
+    client = ensure_agentd(
+        daemon_bin="/usr/local/bin/doeff-agentd", client_timeout=0.2, io_root=io_root
+    )
 
     assert client.socket_path == paths.socket_path
     assert len(starts) == 1
@@ -912,12 +869,7 @@ def test_ensure_agentd_malformed_supervisor_declaration_is_loud(
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
     paths = default_agentd_paths()
     starts: list[tuple[tuple[str, ...], Path]] = []
-    monkeypatch.setattr(
-        agentd_client,
-        "_start_agentd_process",
-        lambda command, log_path: starts.append((tuple(command), log_path)),
-        raising=False,
-    )
+    io_root = recording_io_root(starts)
 
     declaration_path = state_home / "doeff" / "agentd.supervisor.json"
     declaration_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1003,15 +955,15 @@ def test_agentd_command_never_resolves_the_retired_rust_binary(
 ) -> None:
     # No sibling script and nothing on PATH: the bare name is the Hy host,
     # never the retired Rust "doeff-agentd" (silent-rollback root cause).
-    monkeypatch.delenv("DOEFF_AGENTD_BIN", raising=False)
     monkeypatch.setattr(agentd_client.sys, "executable", str(tmp_path / "nowhere" / "python"))
-    monkeypatch.setattr(agentd_client.shutil, "which", lambda _name: None)
+    world = FakeIoWorld()  # DOEFF_AGENTD_BIN 未設定・sibling 無し・PATH 無し
 
     command = agentd_client._agentd_command(
         daemon_bin=None,
         db_path=tmp_path / "agentd.sqlite",
         socket_path=tmp_path / "agentd.sock",
         max_running=3,
+        io_root=fake_io_root(world),
     )
 
     assert command[0] == "doeff-sessionhost"
@@ -1231,8 +1183,8 @@ class FakeAdapter:
     def __init__(self) -> None:
         self.params = None
 
-    def is_available(self) -> bool:
-        return True
+    def available(self):
+        return Pure(True)
 
     def launch_command(self, params):
         self.params = params
