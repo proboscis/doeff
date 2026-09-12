@@ -1,7 +1,8 @@
 """agentd の弁 — `doeff-sessionhost serve --acp` / env ``DOEFF_AGENTD_ACP=on|off`` の判定(純関数)。
 
 既定は off(今日の sessionhost のまま — 法 agentd-valve-defaults-off)。値の宣言はこの
-file の 1 点: ``ACP_VALVE_ENV`` / ``ACP_VALVE_FLAG`` / ``ACP_VALVE_DEFAULT``。
+file の 1 点: ``ACP_VALVE_FLAG`` / ``ACP_VALVE_DEFAULT``(env と host の argv の綴りは
+effects.py が唯一持つ — 段 6 lane 6f の join も同じ綴りを組む)。
 語彙の外の env の値は黙って off に倒さず ``ValueError`` で名指す。
 """
 
@@ -9,16 +10,17 @@ file の 1 点: ``ACP_VALVE_ENV`` / ``ACP_VALVE_FLAG`` / ``ACP_VALVE_DEFAULT``�
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-ACP_VALVE_ENV = "DOEFF_AGENTD_ACP"
+from doeff_agents.sessionhost.acp.effects import (
+    ACP_VALVE_ENV,
+    HOST_BACKEND_DEFAULT,
+    HOST_BACKEND_ENV,
+    HOST_BACKEND_FLAG,
+    HOST_SOCKET_FLAG,
+)
+
 ACP_VALVE_FLAG = "--acp"
 ACP_VALVE_DEFAULT = False
 _VALVE_WORDS: dict[str, bool] = {"on": True, "off": False}
-#: host の socket の flag(oracle parse_args の綴り — 値が無い時は host と同じく既定へ)。
-HOST_SOCKET_FLAG = "--socket"
-#: host の backend の flag と env(host.hy parse-args と同じ綴り — flag が優先・既定 tmux)。
-HOST_BACKEND_FLAG = "--backend"
-HOST_BACKEND_ENV = "DOEFF_SESSIONHOST_BACKEND"
-HOST_BACKEND_DEFAULT = "tmux"
 
 
 @dataclass(frozen=True)
