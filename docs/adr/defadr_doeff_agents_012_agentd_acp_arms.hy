@@ -43,6 +43,15 @@
 ;;; lifecycle の閉語彙に multi_turn(launch.hy)・turn-end の連言の結果を行に刻む turn_ended_at
 ;;; (policy.hy の monitor 1 点・store の列・wire)・session.send の awaiting(host.hy)。弁と
 ;;; agentd の腕は引き続き host の内側に無い(針 test-adr-doe-agents-012-valve-defaults-off)。
+;;;
+;;; 段 6 lane 6f(agora-redesign #26・設計 第 12.6 節 決定 23)の追補 = R17: 機体を足す手順は
+;;; 1 命令 `doeff-sessionhost join --server <URL> --token-file <札>`(宣言 file `--config` は k3s の
+;;; config と同じ規律 — flag と同名の鍵・flag が優先)。判断は join.hy の 1 点(join-spec-of →
+;;; join-plan-of)で、今日の serve --acp の起動が読む env の束と host の argv を宣言から導く —
+;;; 読み手(runtime / valve / host.hy)は増やさない。所有の等級(ownership)は検の方法(proof)と対で
+;;; 宣言し、thread を起こす前に ownership-preflight(gce-project = metadata server の project-id・
+;;; declared = 検なし)で突合、不一致は参加しない(会社 profile の API 呼び出しは会社所有の機体だけ)。
+;;; 検めた等級は node の observations.ownership に名乗る(E の spec.labels.boundary との突合の材料)。
 
 (require doeff-adr.macros [defadr rule law])
 (require doeff-hy.macros [deftest])
@@ -52,11 +61,12 @@
 (import doeff [run])
 (import doeff_agents.sessionhost.acp.effects
         [AGENT-JOB-KIND AGENT-JOB-NAMESPACE AGORA-KINDS-NAMESPACE AcpRow AgentdSettings
-         AgentdState CaptureGone JSONObject MESSAGE-KIND NODE-KIND PHASE-BOUND PHASE-ENDED
-         PHASE-RUNNING TURN-RECORD-KIND])
+         AgentdState CaptureGone JSONObject JoinArgv JoinDeclaration JoinPlan JoinSpec MESSAGE-KIND
+         NODE-KIND Ownership PHASE-BOUND PHASE-ENDED PHASE-RUNNING TURN-RECORD-KIND])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeSessions])
+(import doeff_agents.sessionhost.acp.join [join-plan-of join-spec-of ownership-preflight])
 (import doeff_agents.sessionhost.acp.judgment [capture-verdict job-step-of stream-capability-of-backend])
-(import doeff_agents.sessionhost.acp.runtime [initial-state run-tick])
+(import doeff_agents.sessionhost.acp.runtime [initial-state install run-tick settings-from-env])
 (import doeff_agents.sessionhost.acp.valve [ACP-VALVE-DEFAULT ACP-VALVE-ENV acp-valve])
 
 
@@ -220,7 +230,7 @@
 
 
 (defadr ADR-DOE-AGENTS-012
-  :title "sessionhost の agentd の腕: 出口は ACP と custody だけ・判断は『自分に結ばれた job か』の純関数 1 点だけ(binding は書かない)・弁の既定は off・購読 0 で capture が止まる・借りた札は家の中の auth file 以外の平文で disk に残さない・job の進みは行から導く(自分の Running は再起動後も拾い、次の 1 手は job-step-of の 1 点)・capture の gone は終端の合図で例外ではない・tick の縁は互いの失敗で止まらない・session は会話の資源で job は手番(同じ会話の次の手番は launch せず send・判断は next-arm-for-job の 1 点・idle の寿命は値の宣言 1 点)・headless backend(print mode の家は 1 つ・events の写像は純関数・withdraw は中断の合図・watch の拍は差分の読み)"
+  :title "sessionhost の agentd の腕: 出口は ACP と custody だけ・判断は『自分に結ばれた job か』の純関数 1 点だけ(binding は書かない)・弁の既定は off・購読 0 で capture が止まる・借りた札は家の中の auth file 以外の平文で disk に残さない・job の進みは行から導く(自分の Running は再起動後も拾い、次の 1 手は job-step-of の 1 点)・capture の gone は終端の合図で例外ではない・tick の縁は互いの失敗で止まらない・session は会話の資源で job は手番(同じ会話の次の手番は launch せず send・判断は next-arm-for-job の 1 点・idle の寿命は値の宣言 1 点)・headless backend(print mode の家は 1 つ・events の写像は純関数・withdraw は中断の合図・watch の拍は差分の読み)・機体を足す手順は 1 命令 join(宣言 → env の束の座は 1 つ・所有の等級は検と対で名乗る)"
   :status "accepted"
   :scope ["packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py"
           "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy"
@@ -228,6 +238,7 @@
           "packages/doeff-agents/src/doeff_agents/sessionhost/acp/handlers.py"
           "packages/doeff-agents/src/doeff_agents/sessionhost/acp/fake.py"
           "packages/doeff-agents/src/doeff_agents/sessionhost/acp/valve.py"
+          "packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.hy"
           "packages/doeff-agents/src/doeff_agents/sessionhost/acp/runtime.py"
           "packages/doeff-agents/src/doeff_agents/sessionhost/acp/entry.py"
           "packages/doeff-agents/tests/test_sessionhost_acp.py"
@@ -276,7 +287,10 @@
        :evidence "agora-redesign issue #37・host.hy parse-args の backend の閉語彙・旧 agentd.hy withdraw-sessions")
      (fact
        "本番の温かい path の実測(2026-09-12): arm=send で create → send が p50 4.7 s / p99 5.3 s。agent-job の行の resourceCreatedAt は秒の粒度(`2026-09-11T18:42:10Z`)で、生まれの event(SpecApplied)の post-image の resourceLandedAt / envelope の eventObservedAt は ns 精度(`18:42:10.91213204Z`)。watch で起きた拍に agentd は agent-job と message を全量 list していた(GET /api/resources?kind= = loadCurrentState の全 state)。"
-       :evidence "計画の会話の追補 2026-09-12・ACP `GET /api/event-window?after=5215004&limit=1` の実測・src/Acp/App/Server.hs の event-window(cursor-only・postDeltas の post-image)")]
+       :evidence "計画の会話の追補 2026-09-12・ACP `GET /api/event-window?after=5215004&limit=1` の実測・src/Acp/App/Server.hs の event-window(cursor-only・postDeltas の post-image)")
+     (fact
+       "今日の agentd の起動は env の束(DOEFF_AGENTD_ACP・ACP_DAEMON_URL・ACP_AGENTD_TOKEN_FILE・DOEFF_AGENTD_NODE_NAME・DOEFF_SESSIONHOST_BACKEND・DOEFF_SESSIONHOST_HEADLESS_DIR・DOEFF_AGENTD_SESSION_HOOKS・AGORA_CUSTODY_URL・AGORA_BORROWER_KEY_PATH)と host の argv(--db / --socket / --max-running / serve)を宿(dotfiles の launchd の宣言 cron_management/acp-single-mac.toml)が 1 つずつ写す形で、宿ごとに同じ束を書き直す。設計 第 12.6 節の決定 23 は『機体を足す手順は 1 命令 `agentd --server --token`(k3s agent と同じ体験・Mac / Linux / GCP node / runner pod のどれでも同じ)』。会社 GCP node(herdr-hud deploy/company-node・k3s の node として参加する道具一式)には agentd を起こす宣言が無く、node の契約(agora-kinds.json)の observations に所有の等級を名乗る欄も無い。"
+       :evidence "agora-redesign docs/impl-requests/stage6-lane-prompts/lane-6f-gcp-node-join.md・dotfiles cron_management/acp-single-mac.toml [unit.agentd]・herdr-hud deploy/company-node/startup-script.sh(k3s agent の参加のみ)")]
   :context
     [(interpretation
        "agentd は sessionhost の隣の名前空間 acp/ に住み、host の socket の client として参加する。host.hy / hostmain.py / impls / policy は 1 行も変えない: 器の口(session.launch / send / capture / get)は公開の RPC で足りるので、腕を host の内側に生やす理由が無い。弁は console script の入口(acp/entry.py — 今日の hostmain.main を包む薄い殻)が持つ。")
@@ -307,14 +321,16 @@
      (interpretation
        "差分の読みと計器の始点(R14): watch で起きた拍は agent-job の全量 list ではなく ACP の event-window(cursor-only・(after, through] の post-image)で変わった行だけを読み、知っている行の cache(AgentdState.rows)に差し替える。全量 list は最初の拍・周期の保険(watch_resync_seconds)・gap・接続の張り直し・窓が retention の床の下(409)の時だけ。郵便の本文は鍵で 1 行ずつ読む。計器 agent-job-to-send の始点は行の生まれの着地(generation 1 の image の resourceLandedAt・ns 精度)で、欄が無ければ今日の値(秒の粒度の createdAt)。")
      (interpretation
-       "headless の 1 手番目(R16): headless の器は 1 手番 = 1 prompt(claude は 1 手番 1 process・codex は turn/start が手番)で、走っている手番の途中に次の本文を積めない。tui の launch → send(pane の paste は手番の途中でも積める)をそのまま撃つと、launch(charter の prompt)が 1 手番目を起こした直後の send が同じ名の --resume の process を起こそうとして落ちる(実弾 2026-09-12 agentd-4.log)。⇒ 起こす手番(launch / resume)の本文は charter の prompt(前置き)と inputs の郵便の本文を空行で 1 つに畳んだ文(judgment.first-turn-prompt-of)で、after-start は send を撃たない。畳むかの判定は judgment.first-turn-carries-inputs(host の backend が headless ∧ 腕が launch / resume)の 1 点で、backend は AgentdSettings.backend_kind(composition root が host の argv / env から導く — streamCapability と同じ源)。send の腕(温かい session)は今日どおり郵便の本文だけ。tui は今日どおり launch の後に send。")]
+       "headless の 1 手番目(R16): headless の器は 1 手番 = 1 prompt(claude は 1 手番 1 process・codex は turn/start が手番)で、走っている手番の途中に次の本文を積めない。tui の launch → send(pane の paste は手番の途中でも積める)をそのまま撃つと、launch(charter の prompt)が 1 手番目を起こした直後の send が同じ名の --resume の process を起こそうとして落ちる(実弾 2026-09-12 agentd-4.log)。⇒ 起こす手番(launch / resume)の本文は charter の prompt(前置き)と inputs の郵便の本文を空行で 1 つに畳んだ文(judgment.first-turn-prompt-of)で、after-start は send を撃たない。畳むかの判定は judgment.first-turn-carries-inputs(host の backend が headless ∧ 腕が launch / resume)の 1 点で、backend は AgentdSettings.backend_kind(composition root が host の argv / env から導く — streamCapability と同じ源)。send の腕(温かい session)は今日どおり郵便の本文だけ。tui は今日どおり launch の後に send。")
+     (interpretation
+       "1 命令の参加(R17): 既知の形は runner(kubelet / CI runner)の参加 — k3s の `k3s agent --server --token`(config.yaml は flag と同名の鍵・flag が優先)。`doeff-sessionhost join` は宣言(flag > toml `--config` > 既定)から JoinSpec を組み(join-spec-of)、そこから今日の serve --acp の起動が読む env の束と host の argv を導く(join-plan-of)。座は join.hy の 1 点で、読み手(runtime.settings_from_env / real_dispatchers・valve.acp_valve・host.hy parse-args)は増やさず変えない — env の名の綴りは effects.py が唯一持つ。宿(launchd / systemd)の宣言は『join を起こす 1 行』に縮み、3 つの宿で同じ宣言 file(schema doeff.agentd-join.v1)を読む。所有の等級(grade = company | personal)は検の方法(proof = gce-project:<project-id> | declared)と対で宣言し、thread を起こす前に ownership-preflight(gce-project = OwnershipProbe で GCE の metadata server の project-id を読み一致だけ通す・declared = 撃たない)で突合、不一致は AgentdPreflightError(参加しない — fail-closed)。検めた等級は node-status-with-lease の 1 点で observations.ownership{grade, proof} に名乗り(宣言が無ければ欄ごと書かない = 未観測)、配置の側(E)が spec.labels.boundary の宣言と突合する材料にする。CI runner の規律(登録 token と heartbeat・label で targeting)に反しない — 登録 token = 名簿の agentd の札(今日の 1 札・node ごとの札は別便)、label は E の宣言のまま、F は観測だけを報告する。")]
   :decision
     [(rule R1 "agentd の出口は ACP(GET /api/resources・POST /api/events・GET /api/watch/stream・POST /api/streams)と custody(POST /lease/*)だけ。agora の台帳 API(/api/state・turn-jobs・seat-*・headless・agmsg)の語を sessionhost の source に置かない。")
      (rule R2 "job を選ぶ判定は judgment.hy の bound-to-me(phase == Bound ∧ binding.node == 自分 — 受け)と running-on-me(phase == Running ∧ binding.node == 自分 ∧ sessionHandle.stream.owner == 自分 — 再起動後の拾い直し)の 2 つの述語だけで、どちらも binding.node == 自分の行に閉じる。それ以外に job を選ぶ・優先する code を置かない。agent-job の status.binding を agentd は書かない(写して返すだけ)。")
      (rule R3 "弁の既定は off(valve.py の ACP_VALVE_DEFAULT = False)。on は flag --acp か env DOEFF_AGENTD_ACP=on だけで、語彙の外の値は黙って off に倒さず断る。")
      (rule R4 "frame の capture は購読者が居る時だけ: push の応答の subscribers が 0(か不明)なら capture を止め、周期の status frame で読み直して再開する。判定は judgment.hy の capture-verdict の 1 点。")
      (rule R5 "借りた札は disk の平文に残さない — 例外は家の中の auth file(codex の <homes>/codex/<account>/auth.json・0600)だけ。claude の札は env CLAUDE_CODE_OAUTH_TOKEN で渡し、log と計器には載せない。")
-     (rule R6 "値の宣言は 1 点: lease の TTL と周期・watch の resync・frame の rate・購読の読み直しの周期は effects.AgentdSettings の既定値、URL と札の env の綴りは handlers.py / valve.py。")
+     (rule R6 "値の宣言は 1 点: lease の TTL と周期・watch の resync・frame の rate・購読の読み直しの周期は effects.AgentdSettings の既定値、env の名の綴り(URL・札・node の名・backend・所有)と host の argv の綴りは effects.py(R17 の join が同じ綴りを組む — 2026-09-12 改訂・以前は handlers.py / valve.py)、URL の既定値は handlers.py。")
      (rule R7 "job の進みは行から導く: 自分の Running(running-on-me)は memory に無くても resync の拍に拾い、次の 1 手は judgment.hy の job-step-of(器の現況 → observe | record-end | fail-missing・閉語彙 effects.JobStep)の 1 点で決める — memory に在る job の拍も同じ 1 点を通る。record-end は記録の腕(turn-record ended・result・phase Ended)だけを撃ち launch も send もし直さない。fail-missing は記録が在れば ended にし condition SessionFailed で Ended。終端の語彙(SESSION_TERMINAL_STATUSES)を読むのは judgment.hy だけ。")
      (rule R8 "capture の gone は終端の合図で例外ではない: SessionCapture の答えは閉語彙 CaptureFrame | CaptureGone、実 handler は host の断り(AgentdClientError)を CaptureGone に写す(host.hy / substrate は触らない)。gone の job は capturing = False・stream_gone = True で、以後 capture も購読の読み直しもせず、器の終端(同じ拍に読み直す)で記録の腕へ。器が終端の拍は capture を撃たない(job-step-of を実況より先に読む)。")
      (rule R9 "tick の縁: heartbeat・受け・job ごとの観測は互いの I/O の失敗(effects.IO_FAILURES = RuntimeError | OSError)で止まらない — program の agentd-tick が 3 つの腕をそれぞれ捕まえ、log して次の周期 / 次の拍へ持ち越す(condition には写さない — 一時の失敗を job の結末にしない)。I/O より広い例外は捕まえない(runtime.run_loop の縁)。")
@@ -324,6 +340,7 @@
      (rule R14 "watch の拍は差分の読み・計器の始点は生まれの着地: 行の読み直しの様式は judgment.list-mode-for の 1 点(full = 最初の拍・周期の保険・gap・接続の張り直し / window = watch で起きた拍 = GET /api/event-window の post-image で AgentdState.rows を差し替え・窓が読めなければ full に落ちる / none = idle)。郵便の本文は鍵で 1 行ずつ読む(全量 list しない)。計器 agent-job-to-send の createdAtMs は judgment.birth-ms-of の 1 点(生まれの表 → generation 1 の image の landed_at_ms → 今日の値 created_at_ms)。")
      (rule R15 "session の id は agentd が鋳造する: 起こす session の id(session_id と session_name・sessionHandle.sessionId・stream の name)は effect MintId(ULID・時刻と乱数は handler)の答えで、charter(Messaging が組む launch の params)の session_id / session_name は読まない(judgment.launch-plan-of が落とす・据えるのは charter-with-session-id の 1 点)。実弾 2026-09-12: 温かい session が idle TTL で片付いた後、charter の固定の id の launch が `session is already registered`(host は片付いた行を登記のまま残す)に落ちて LaunchFailed で Ended した。")
      (rule R16 "headless の起こす手番は郵便を 1 手番目の本文に畳む: host の backend が headless(AgentdSettings.backend_kind — runtime.settings_from_env が valve.backend_of から導く 1 点・streamCapability と同じ源)なら、launch / resume の腕は charter の prompt(前置き)と inputs の郵便の本文を judgment.first-turn-prompt-of(空行区切り・郵便が無ければ charter だけ)で 1 つに畳んで起こし、after-start は session.send を撃たない。判定は judgment.first-turn-carries-inputs(backend ∧ 腕)の 1 点。send の腕(温かい session)は郵便の本文だけを send。tui(tmux / herdr)は今日どおり launch の後に send。turn-record の create・計器 agent-job-to-send・in-flight の登記は腕に依らず同じ。実弾 2026-09-12: launch の直後の send が `headless session already exists` で tick ごと落ち、turn-record が作られず job は拾い直しの腕へ。")
+     (rule R17 "機体を足す手順は 1 命令 join: `doeff-sessionhost join --server <URL> --token-file <札> [--config <toml>] [--node-name] [--state-dir] [--backend] [--session-hooks] [--custody] [--borrower-key-file] [--ownership --ownership-proof]` の宣言は join.hy の join-spec-of(flag > toml(schema doeff.agentd-join.v1・flag と同名の鍵)> 既定)の 1 点で JoinSpec に組み、join-plan-of の 1 点で今日の起動が読む env の束(effects.py の *_ENV の綴り)と host の argv(--db / --socket / --max-running none / --backend / serve)に写す。entry.py は plan を process の env に据えて serve --acp と同じ経路を走る — env の名を entry / runtime が自分で組まない・読み手を増やさない。所有の等級 ownership(company | personal)は proof(gce-project:<project-id> | declared)と対でだけ宣言でき(片方だけは断る)、runtime.start_agentd_thread は thread を起こす前に join.ownership-preflight を撃ち(gce-project = OwnershipProbe の答え = metadata の project-id が一致する時だけ通す・declared = 撃たない)、不一致は AgentdPreflightError で参加しない。検めた等級は judgment.node-status-with-lease の 1 点で observations.ownership{grade, proof} に書く(宣言が無ければ欄ごと無い)。agentd.hy は ownership の語を比較しない。")
      (rule R10 "session は会話の資源・job は手番(温かい session・設計 17.4): 会話 → 生きている session の対応は行(自分が claim した同じ subject の agent-job の sessionHandle)と器の現況から導き、Bound の job の起こし方は judgment.hy の next-arm-for-job(閉語彙 effects.NextArm = launch | send | resume | defer)の 1 点で決める — 同じ会話の生きて idle な session が在れば launch せず session.send(awaiting)だけ、sessionHandle はその session を指し、turn-record は手番ごと。手番の終わりは器の lifecycle multi_turn(launch.hy の閉語彙に足した語)で policy.hy の monitor が既存の turn-end の連言から行の turn_ended_at に刻み、agentd は job-step-of の turn-end(turn_ended_at > 手番の始まりの下限 ∧ 記録の進み)で読む — status は倒さず session は生かす。idle の寿命は AgentdSettings.session_idle_ttl_seconds の 1 点で、超過・Withdrawn・node の退役で session.cleanup。計器 agent-job-to-send は create → send のまま(温かい path で p99 < 2 秒)。")]
   :laws
     [(law agentd-exits-only-to-acp-and-custody
@@ -397,6 +414,14 @@
        :counterexamples
          [(counterexample "watch で起きるたびに agent-job と message を全量 list する — loadCurrentState の全 state を 2 度読み、温かい path の p99 が 2 秒を超える(実測 p50 4.7 s)")
           (counterexample "createdAtMs を秒の粒度の resourceCreatedAt から取る — 計器が最大 1 秒ずれ、2 秒の受入を測れない")])
+     (law join-is-one-command-and-one-decision-point
+       :statement "for_all argv a and declaration d: the env bundle and host argv of `doeff-sessionhost join a` = join-plan-of(join-spec-of(a, d)) ∧ settings_from_env(env) / acp_valve(argv, env) read that bundle unchanged (the readers gain no second spelling); ownership declared ⇒ proof declared (grade without proof is refused) ∧ ownership-preflight(gce-project:p) admits iff OwnershipProbe answers p ∧ observations.ownership = {grade, proof} iff ownership is declared"
+       :counterexamples
+         [(counterexample "宿(launchd の plist / systemd の unit)が env の束を 1 つずつ写す — 名が 1 つ増えた日に Mac・Linux・GCP node の 3 つの宿で片方だけ直り、機体を足す手順が宿ごとに違う(決定 23 の反対)")
+          (counterexample "entry.py / runtime.py が env の名を自分で組む — 宣言 → env の写像点が join.hy と 2 つになり、既定(headless・inherit・置き場)が食い違う")
+          (counterexample "ownership=company を proof なしで名乗れる — 会社 profile の API 呼び出しの境界(CLAUDE.md)が自己申告だけになり、GCE の外の機体が会社 node を名乗る")
+          (counterexample "metadata の project-id が違っても参加する(log だけ)— 借りた GCP node や別 project の VM に会社 profile の job が結ばれる")
+          (counterexample "所有の等級を spec.labels に agentd が書く — labels の書き手は E(acp-scheduling)で 403 になるか、宣言と観測の区別(突合の材料)が消える")])
      (law session-id-is-minted-by-agentd
        :statement "for_all claim that launches or resumes: session_id(launch params) = MintId() ∧ session_id ∉ {charter.session_id, charter.session_name, agent-job id}; sessionHandle.sessionId = stream.name = that id; after a session was cleaned up (its row stays registered in the host) the next job of the conversation launches with a fresh id and is not refused"
        :counterexamples
@@ -842,9 +867,75 @@
        (.put-row tui.acp (turn-row "t-1" "conv-t" "m-t" 500))
        (.tick tui 0)
        (assert (= (get (get tui.sessions.launches -1) "prompt") "go"))
-       (assert (= tui.sessions.sends [#((sid-of tui "t-1") "hello" True)])))]
+       (assert (= tui.sessions.sends [#((sid-of tui "t-1") "hello" True)])))
+     (deftest test-adr-doe-agents-012-join-is-one-command-and-one-decision-point
+       ;; R17 の針: 宣言 → env の束の写像点は join.hy の join-plan-of ちょうど。entry.py / runtime.py
+       ;; は env の名の綴り(ACP_DAEMON_URL 等)を自分で組まない(綴りは effects.py の *_ENV)。
+       ;; agentd.hy は ownership の語を比較しない。observations の ownership を書く点は judgment の 1 つ。
+       (setv join-lines (code-lines (/ ACP-DIR "join.hy")))
+       (assert (= (len (lfor line join-lines :if (.startswith line "(defk join-spec-of ") line)) 1))
+       (assert (= (len (lfor line join-lines :if (.startswith line "(defk join-plan-of ") line)) 1))
+       (assert (= (len (lfor line join-lines :if (.startswith line "(defk ownership-preflight ") line)) 1))
+       (for [line (+ (code-lines (/ ACP-DIR "entry.py")) (code-lines (/ ACP-DIR "runtime.py")))]
+         (for [word ["\"ACP_DAEMON_URL\"" "\"ACP_AGENTD_TOKEN_FILE\"" "\"DOEFF_AGENTD_ACP\""
+                     "\"DOEFF_SESSIONHOST_BACKEND\"" "\"DOEFF_AGENTD_OWNERSHIP\""]]
+           (assert (not-in word line) f"entry / runtime は env の名を自分で綴らない(R17): {line}")))
+       (for [line (code-lines (/ ACP-DIR "agentd.hy"))]
+         (assert (not-in "ownership" line) f"agentd.hy は ownership の語を持たない(R17): {line}"))
+       (assert (= (len (lfor line (code-lines (/ ACP-DIR "judgment.hy")) :if (in "\"ownership\"" line) line)) 1)
+               "observations.ownership を書く点は node-status-with-lease の 1 つ(R17)")
+       ;; 反例(挙動): 宣言 → plan → 今日の読み手が同じ束を読む(第 2 の綴りが無い)。
+       (setv spec (run (join-spec-of
+                         (JoinArgv :items #("--server" "http://acp:8868" "--token-file" "/t/agentd.token"
+                                            "--ownership" "company" "--ownership-proof" "gce-project:p-1"))
+                         (JoinDeclaration :tables {"schema" "doeff.agentd-join.v1"
+                                                   "agentd" {"node_name" "gcp-0"}})
+                         "/state")))
+       (assert (isinstance spec JoinSpec))
+       (assert (= spec.node-name "gcp-0"))
+       (setv plan (run (join-plan-of spec)))
+       (assert (isinstance plan JoinPlan))
+       (setv env (dict plan.env))
+       (setv settings (settings-from-env env plan.host-argv))
+       (assert (= settings.node-name "gcp-0"))
+       (assert (= settings.backend-kind "headless"))
+       (assert (= settings.ownership (Ownership :grade "company" :proof "gce-project:p-1")))
+       (assert (is (. (acp-valve (list plan.host-argv) env) enabled) True))
+       ;; 等級だけ(proof なし)は断る。
+       (setv refused False)
+       (try
+         (run (join-spec-of (JoinArgv :items #("--server" "http://a" "--token-file" "/t" "--ownership" "company"))
+                            (JoinDeclaration :tables {}) "/state"))
+         (except [ValueError]
+           (setv refused True)))
+       (assert refused "ownership は proof と対でだけ宣言できる(R17)")
+       ;; 検: metadata の project-id が一致する時だけ通し、違えば ValueError(runtime が参加を断る)。
+       (setv local (FakeLocal :now-ms 0))
+       (setv (get local.probe-answers "gce-project:p-1") "p-1")
+       (assert (= (run (install (ownership-preflight (Ownership :grade "company" :proof "gce-project:p-1"))
+                                [local.dispatch]))
+                  (Ownership :grade "company" :proof "gce-project:p-1")))
+       (setv (get local.probe-answers "gce-project:p-1") "p-2")
+       (setv mismatched False)
+       (try
+         (run (install (ownership-preflight (Ownership :grade "company" :proof "gce-project:p-1"))
+                       [local.dispatch]))
+         (except [ValueError]
+           (setv mismatched True)))
+       (assert mismatched "project-id の不一致は参加しない(R17)")
+       ;; 観測: 宣言が在る時だけ observations.ownership が載る。
+       (setv owned (World))
+       (setv owned.settings (AgentdSettings :node-name "mac-1" :homes-root "/homes"
+                                            :ownership (Ownership :grade "company" :proof "declared")))
+       (.tick owned 0)
+       (setv observations (object-at (status-of (get owned.acp.rows "default:node:mac-1")) "observations"))
+       (assert (= (get observations "ownership") {"grade" "company" "proof" "declared"}))
+       (setv bare (World))
+       (.tick bare 0)
+       (assert (not-in "ownership" (object-at (status-of (get bare.acp.rows "default:node:mac-1")) "observations"))))]
   :plans ["docs/impl-requests/stage2-lane-prompts/lane-2b-agentd.md(agora-redesign)"
           "docs/impl-requests/stage2-lane-prompts/lane-2b2-agentd-fix.md(agora-redesign・改訂 R7〜R9)"
           "docs/impl-requests/stage2-lane-prompts/lane-2b3-warm-session.md(agora-redesign・改訂 R10)"
           "docs/impl-requests/stage2-lane-prompts/lane-2d-headless-backend.md(agora-redesign・改訂 R11〜R14)"
-          "docs/impl-requests/stage2-lane-prompts/lane-2d2-codex-headless-shim.md(agora-redesign・追補 R16)"])
+          "docs/impl-requests/stage2-lane-prompts/lane-2d2-codex-headless-shim.md(agora-redesign・追補 R16)"
+          "docs/impl-requests/stage6-lane-prompts/lane-6f-gcp-node-join.md(agora-redesign・追補 R17)"])

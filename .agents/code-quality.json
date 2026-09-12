@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "_comment": "共通の品質検査(dotfiles agent/code_quality.py)の module 契約。初回の登録は段 2 の agentd(sessionhost/acp/・agora-redesign #19 / #20)だけ — 既存の sessionhost(deff / defhandler を持つ Hy)は投影の対象外なので include に入れず、依存先としてだけ宣言する。 段 2 lane 2d(agora-redesign #37)で headless backend の Python の module(headless_protocol / headless_process)と検を足す — headless.hy / substrate_headless.hy / impls/headless_argv.hy は deff / defhandler を持つ Hy なので、既存の sessionhost と同じく投影の対象外(依存先としてだけ宣言)。",
+  "_comment": "共通の品質検査(dotfiles agent/code_quality.py)の module 契約。初回の登録は段 2 の agentd(sessionhost/acp/・agora-redesign #19 / #20)だけ — 既存の sessionhost(deff / defhandler を持つ Hy)は投影の対象外なので include に入れず、依存先としてだけ宣言する。 段 2 lane 2d(agora-redesign #37)で headless backend の Python の module(headless_protocol / headless_process)と検を足す — headless.hy / substrate_headless.hy / impls/headless_argv.hy は deff / defhandler を持つ Hy なので、既存の sessionhost と同じく投影の対象外(依存先としてだけ宣言)。 段 6 lane 6f(agora-redesign #26)で 1 命令の参加 join の判断(join.hy・pure)を足す — env の綴りは effects.py の 1 点へ寄せたので valve / entry も effects を読む。",
   "include": [
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/__init__.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py",
@@ -8,6 +8,8 @@
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.pyi",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.pyi",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.pyi",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.hy",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/handlers.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/fake.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/valve.py",
@@ -51,6 +53,23 @@
       "public": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy",
         "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.pyi"
+      ],
+      "allow": [
+        "agentd-effects"
+      ],
+      "typed": true
+    },
+    {
+      "name": "agentd-join",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.pyi"
+      ],
+      "responsibility": "1 命令の参加 `doeff-sessionhost join` の判断(defk・段 6 lane 6f): 宣言(flag > toml > 既定)→ JoinSpec → JoinPlan(host の argv と env の束)の 1 点と、所有の等級の検(宣言 × 機体の証拠 — OwnershipProbe を撃つ program と純関数の突合)。I/O の import なし",
+      "layer": "pure",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.pyi"
       ],
       "allow": [
         "agentd-effects"
@@ -111,12 +130,14 @@
       "paths": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/acp/valve.py"
       ],
-      "responsibility": "agentd の弁(--acp / DOEFF_AGENTD_ACP)の判定 — 既定 off の値の宣言の 1 点。純関数",
+      "responsibility": "agentd の弁(--acp / DOEFF_AGENTD_ACP)の判定 — 既定 off の値の宣言の 1 点。純関数(env と host の argv の綴りは effects.py を読む)",
       "layer": "pure",
       "public": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/acp/valve.py"
       ],
-      "allow": [],
+      "allow": [
+        "agentd-effects"
+      ],
       "typed": true
     },
     {
@@ -125,7 +146,7 @@
         "packages/doeff-agents/src/doeff_agents/sessionhost/acp/runtime.py",
         "packages/doeff-agents/src/doeff_agents/sessionhost/acp/__init__.py"
       ],
-      "responsibility": "agentd の composition root: env から値を読み、実 I/O の handler を選び、host の socket を待って tick の loop を daemon thread で回す。test は run_tick を fake の handler で呼ぶ。streamCapability は host の backend から導く(valve.backend_of → judgment.stream-capability-of-backend)",
+      "responsibility": "agentd の composition root: env から値を読み、実 I/O の handler を選び、host の socket を待って tick の loop を daemon thread で回す。test は run_tick を fake の handler で呼ぶ。streamCapability は host の backend から導く(valve.backend_of → judgment.stream-capability-of-backend)。join(段 6 lane 6f)は宣言 file の読みと env の据えだけ(判断は join.hy)・所有の等級は thread を起こす前に join.ownership-preflight で検める(不一致 = 参加しない)",
       "layer": "runtime",
       "public": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/acp/runtime.py",
@@ -137,7 +158,8 @@
         "agentd-handlers",
         "agentd-valve",
         "agentd-client",
-        "agentd-judgment"
+        "agentd-judgment",
+        "agentd-join"
       ],
       "typed": true
     },
@@ -146,12 +168,13 @@
       "paths": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/acp/entry.py"
       ],
-      "responsibility": "console script doeff-sessionhost の入口: 弁(serve --acp / DOEFF_AGENTD_ACP)が on なら agentd の thread を起こし、残りは今日の hostmain.main へ渡す",
+      "responsibility": "console script doeff-sessionhost の入口: 弁(serve --acp / DOEFF_AGENTD_ACP)が on なら agentd の thread を起こし、残りは今日の hostmain.main へ渡す。join(段 6 lane 6f)は宣言から env の束と host の argv を導いて同じ経路へ",
       "layer": "runtime",
       "public": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/acp/entry.py"
       ],
       "allow": [
+        "agentd-effects",
         "agentd-valve",
         "agentd-runtime",
         "sessionhost-hostmain",
@@ -183,6 +206,7 @@
       "allow": [
         "agentd-effects",
         "agentd-judgment",
+        "agentd-join",
         "agentd-fake",
         "agentd-runtime",
         "agentd-valve"
@@ -200,6 +224,7 @@
       "allow": [
         "agentd-effects",
         "agentd-judgment",
+        "agentd-join",
         "agentd-fake",
         "agentd-runtime",
         "agentd-valve"

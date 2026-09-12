@@ -122,6 +122,106 @@ SESSION_OBSERVED_BUSY: SessionObservationState = "busy"
 #: (RuntimeError の子)、socket / file = OSError。これより広い例外(bug)は runtime.run_loop の縁へ。
 IO_FAILURES: tuple[type[Exception], ...] = (RuntimeError, OSError)
 
+# ------------------------------------------------------------------ 起動の宣言の綴り(env の束・host の argv・所有)
+
+#: agentd の起動が読む env の名(段 6 lane 6f: 1 命令の参加 `join` はこの束を宣言から導く —
+#: join.hy join-plan-of の 1 点。読み手 = runtime.settings_from_env / real_dispatchers・valve.acp_valve・
+#: host.hy parse-args。名の綴りはここが唯一持つ)。
+ACP_VALVE_ENV = "DOEFF_AGENTD_ACP"
+ACP_URL_ENV = "ACP_DAEMON_URL"
+ACP_TOKEN_FILE_ENV = "ACP_AGENTD_TOKEN_FILE"
+NODE_NAME_ENV = "DOEFF_AGENTD_NODE_NAME"
+HOMES_ROOT_ENV = "DOEFF_AGENTD_HOMES_ROOT"
+CUSTODY_URL_ENV = "AGORA_CUSTODY_URL"
+BORROWER_KEY_PATH_ENV = "AGORA_BORROWER_KEY_PATH"
+HOST_BACKEND_ENV = "DOEFF_SESSIONHOST_BACKEND"
+HEADLESS_DIR_ENV = "DOEFF_SESSIONHOST_HEADLESS_DIR"
+SESSION_HOOKS_ENV = "DOEFF_AGENTD_SESSION_HOOKS"
+OWNERSHIP_ENV = "DOEFF_AGENTD_OWNERSHIP"
+OWNERSHIP_PROOF_ENV = "DOEFF_AGENTD_OWNERSHIP_PROOF"
+#: host(oracle parse_args / host.hy parse-args)の argv の綴り(join が組む・valve が読む)。
+HOST_DB_FLAG = "--db"
+HOST_SOCKET_FLAG = "--socket"
+HOST_MAX_RUNNING_FLAG = "--max-running"
+HOST_MAX_RUNNING_UNLIMITED = "none"
+HOST_BACKEND_FLAG = "--backend"
+HOST_SERVE_COMMAND = "serve"
+#: host の backend の閉語彙(host.hy parse-args と同じ 3 語)と agentd の既定(join の既定 = headless)。
+HOST_BACKENDS: frozenset[str] = frozenset({"tmux", "herdr", BACKEND_HEADLESS})
+HOST_BACKEND_DEFAULT = "tmux"
+#: 1 命令の参加の subcommand と宣言 file の schema(段 6 lane 6f・決定 23)。
+JOIN_SUBCOMMAND = "join"
+JOIN_SCHEMA = "doeff.agentd-join.v1"
+#: join の置き場(state_dir)の下の綴り(db・socket・headless の events)— 段 6c の宣言と同じ。
+JOIN_DB_FILE = "agentd.sqlite"
+JOIN_SOCKET_FILE = "agentd.sock"
+JOIN_HEADLESS_DIR = "headless-events"
+JOIN_STATE_DIR_DEFAULT = "doeff/acp-agentd"
+JOIN_SESSION_HOOKS_DEFAULT = "inherit"
+#: 機体の所有の等級(契約 agora-kinds.json node.status.observations.ownership.grade の閉語彙)と
+#: 検の方法(proof)の綴り: gce-project:<project-id> = GCE の metadata server の project-id が一致 /
+#: declared = 宣言のみ(検なし — 機体の所有の判定は別の座が持つ)。
+OwnershipGrade = Literal["company", "personal"]
+OWNERSHIP_GRADES: frozenset[OwnershipGrade] = frozenset({"company", "personal"})
+OWNERSHIP_PROOF_GCE_PREFIX = "gce-project:"
+OWNERSHIP_PROOF_DECLARED = "declared"
+
+# ------------------------------------------------------------------ 起動の宣言(join・所有)
+
+
+@dataclass(frozen=True)
+class Ownership:
+    """機体の所有の等級と、その検の方法(node の observations.ownership の写し)。"""
+
+    grade: OwnershipGrade
+    proof: str
+
+
+@dataclass(frozen=True)
+class JoinArgv:
+    """`join` の subcommand の後の argv(境界の入力 — 判断は join.hy が読む)。"""
+
+    items: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class JoinDeclaration:
+    """宣言 file(toml)を読んだ木(境界の入力・tables が空 = file なし)。検めるのは join.hy。"""
+
+    tables: dict[str, object]
+
+
+@dataclass(frozen=True)
+class JoinSpec:
+    """`doeff-sessionhost join` の宣言(flag > toml > 既定 — join.hy join-spec-of の 1 点で組む)。
+    None = 名乗らない(handler の既定に任せる・env に現れない)。"""
+
+    server: str
+    token_file: str
+    node_name: str | None
+    state_dir: str
+    backend: str
+    session_hooks: str
+    custody_url: str | None
+    borrower_key_file: str | None
+    ownership: Ownership | None
+
+
+@dataclass(frozen=True)
+class JoinPlan:
+    """宣言から導いた起動の形: host の argv と env の束(名と値の対の列・宣言の順)。"""
+
+    host_argv: tuple[str, ...]
+    env: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True)
+class ProbeAnswer:
+    """OwnershipProbe の答え: 検の材料の値(gce-project = metadata の project-id)。None = 読めない。"""
+
+    value: str | None
+
+
 # ------------------------------------------------------------------ 値の宣言(1 点)
 
 
@@ -162,6 +262,10 @@ class AgentdSettings:
     #: 過ぎた session は agentd が session.cleanup で片付ける(判断は judgment の純関数・時計は
     #: effect・掃きは heartbeat の拍)。値の宣言はここ 1 点。
     session_idle_ttl_seconds: int = 600
+    #: 機体の所有の等級と検の方法(段 6 lane 6f)。None = 名乗らない(observations に欄を書かない =
+    #: 未観測)。composition root(runtime.settings_from_env)が env から読み、起動の前に
+    #: join.ownership-preflight で検めた値だけがここに据わる(不一致 = 参加しない)。
+    ownership: Ownership | None = None
 
 
 # ------------------------------------------------------------------ ACP の値
@@ -682,3 +786,11 @@ class FsWritePrivateText(EffectBase):
 
     path: str
     text: str
+
+
+@dataclass(frozen=True)
+class OwnershipProbe(EffectBase):
+    """検の方法(proof)に従って機体の所有の証拠を読む(gce-project:<id> = GCE の metadata server の
+    project-id)。結果 = ProbeAnswer(読めなければ value None — 判断は join.ownership-verdict)。"""
+
+    proof: str

@@ -1,8 +1,11 @@
 """agentd の composition root — env から値を読み、handler を選び、loop を回す。
 
-`doeff-sessionhost serve --acp`(hostmain.py の弁)から 1 度だけ呼ばれる。agentd は
+`doeff-sessionhost serve --acp`(entry.py の弁)か `doeff-sessionhost join`(段 6 lane 6f の
+1 命令 — run_join が宣言から env の束を導いて同じ入口へ)から 1 度だけ呼ばれる。agentd は
 sessionhost の socket の client(公開の境界)として同じ process の daemon thread で走る:
 host の起動(socket の bind)を待ってから参加し、host が死ねば thread も消える。
+所有の等級(ownership)が宣言されていれば、thread を起こす前に join.ownership-preflight で
+機体の証拠と突合し、不一致は AgentdPreflightError(参加しない — fail-closed)。
 
 判断は持たない: 1 tick = agentd.hy の ``agentd-tick``(program)を、ここで選んだ handler の
 下で走らせる(実 I/O = handlers.py)。test は同じ program を fake.py の handler で走らせる。
@@ -14,21 +17,38 @@ import platform
 import sys
 import threading
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 
+import tomllib
 from doeff_vm import PyVM, WithHandler
 
 from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.agentd_client import default_agentd_paths
+from doeff_agents.sessionhost.acp import join
 from doeff_agents.sessionhost.acp.agentd import agentd_tick
-from doeff_agents.sessionhost.acp.effects import AgentdSettings, AgentdState, StreamCapability
-from doeff_agents.sessionhost.acp.handlers import (
+from doeff_agents.sessionhost.acp.effects import (
     ACP_TOKEN_FILE_ENV,
-    ACP_URL_DEFAULT,
     ACP_URL_ENV,
+    BORROWER_KEY_PATH_ENV,
+    CUSTODY_URL_ENV,
+    HOMES_ROOT_ENV,
+    NODE_NAME_ENV,
+    OWNERSHIP_ENV,
+    OWNERSHIP_GRADES,
+    OWNERSHIP_PROOF_ENV,
+    AgentdSettings,
+    AgentdState,
+    JoinArgv,
+    JoinDeclaration,
+    JoinPlan,
+    JoinSpec,
+    Ownership,
+    StreamCapability,
+)
+from doeff_agents.sessionhost.acp.handlers import (
+    ACP_URL_DEFAULT,
     BORROWER_KEY_PATH_DEFAULT,
     CUSTODY_URL_DEFAULT,
-    CUSTODY_URL_ENV,
     AcpHttp,
     CustodyHttp,
     LocalIo,
@@ -41,9 +61,6 @@ from doeff_agents.sessionhost.acp.valve import backend_of, socket_path_override
 
 Dispatcher = Callable[[EffectBase, K], "Resume | Pass"]
 
-NODE_NAME_ENV = "DOEFF_AGENTD_NODE_NAME"
-HOMES_ROOT_ENV = "DOEFF_AGENTD_HOMES_ROOT"
-BORROWER_KEY_PATH_ENV = "AGORA_BORROWER_KEY_PATH"
 #: host の socket が出るまで待つ上限と、tick が例外で落ちた時の待ち(有界の backoff)。
 HOST_WAIT_SECONDS = 120.0
 TICK_BACKOFF_SECONDS = 1.0
@@ -65,7 +82,26 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         homes_root=homes_root,
         backend_kind=backend,
         stream_capability=_stream_capability(backend),
+        ownership=_ownership_of_env(env),
     )
+
+
+def _ownership_of_env(env: Mapping[str, str]) -> Ownership | None:
+    """所有の等級と検の方法(段 6 lane 6f)。語彙と対の規則は join.ownership-of の 1 点。"""
+    grade = env.get(OWNERSHIP_ENV)
+    proof = env.get(OWNERSHIP_PROOF_ENV)
+    grade = grade.strip() if grade is not None and grade.strip() else None
+    proof = proof.strip() if proof is not None and proof.strip() else None
+    if grade is not None and grade not in OWNERSHIP_GRADES:
+        raise ValueError(
+            f"{OWNERSHIP_ENV} must be one of {'|'.join(sorted(OWNERSHIP_GRADES))}, got {grade!r}"
+        )
+    verdict: object = PyVM().run(join.ownership_of(grade, proof))
+    if verdict is None:
+        return None
+    if not isinstance(verdict, Ownership):
+        raise TypeError(f"ownership_of returned {type(verdict).__name__}")
+    return verdict
 
 
 def _stream_capability(backend: str) -> StreamCapability:
@@ -179,6 +215,18 @@ def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> thr
     settings = settings_from_env(env, host_argv)
     socket_path = host_socket_path(host_argv)
     dispatchers, close = real_dispatchers(env, socket_path)
+    if settings.ownership is not None:
+        try:
+            verified: object = PyVM().run(
+                install(join.ownership_preflight(settings.ownership), dispatchers)
+            )
+        except ValueError as error:
+            close()
+            raise AgentdPreflightError(f"agentd ownership check refused: {error}") from error
+        if not isinstance(verified, Ownership):
+            close()
+            raise TypeError(f"ownership_preflight returned {type(verified).__name__}")
+        _stderr(f"agentd: ownership {verified.grade} verified by {verified.proof}")
     stop = threading.Event()
 
     def body() -> None:
@@ -202,3 +250,51 @@ def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> thr
     thread = threading.Thread(target=body, name="sessionhost-agentd", daemon=True)
     thread.start()
     return thread
+
+
+# ------------------------------------------------------------------ 1 命令の参加(join・段 6 lane 6f)
+
+
+def read_join_declaration(path: str | None) -> JoinDeclaration:
+    """宣言 file(toml)を読む(composition root の I/O)。path が無ければ空 = 宣言 file なし。
+    無い file・壊れた toml は名指して断る(黙って空に倒さない)。"""
+    if path is None:
+        return JoinDeclaration(tables={})
+    try:
+        with open(path, "rb") as handle:
+            return JoinDeclaration(tables=tomllib.load(handle))
+    except OSError as error:
+        raise AgentdPreflightError(
+            f"join: cannot read the declaration file {path}: {error}"
+        ) from error
+    except tomllib.TOMLDecodeError as error:
+        raise AgentdPreflightError(
+            f"join: the declaration file {path} is not TOML: {error}"
+        ) from error
+
+
+def join_plan(argv: Sequence[str], env: Mapping[str, str]) -> JoinPlan:
+    """join の argv(subcommand の後の列)→ JoinPlan。宣言 file の読みはここ(I/O)、判断は join.hy。"""
+    items = JoinArgv(items=tuple(argv))
+    try:
+        config: object = PyVM().run(join.config_path_of(items))
+    except ValueError as error:
+        raise AgentdPreflightError(f"join: {error}") from error
+    declaration = read_join_declaration(config if isinstance(config, str) else None)
+    try:
+        spec: object = PyVM().run(join.join_spec_of(items, declaration, _state_home(env)))
+    except ValueError as error:
+        raise AgentdPreflightError(f"join: {error}") from error
+    if not isinstance(spec, JoinSpec):
+        raise TypeError(f"join_spec_of returned {type(spec).__name__}")
+    plan: object = PyVM().run(join.join_plan_of(spec))
+    if not isinstance(plan, JoinPlan):
+        raise TypeError(f"join_plan_of returned {type(plan).__name__}")
+    return plan
+
+
+def apply_join_env(plan: JoinPlan, environ: MutableMapping[str, str]) -> None:
+    """導いた env の束を process の env に据える(host.hy と agentd の読み手は今日どおり env を読む
+    — 座は join-plan-of の 1 点で、読み手は増やさない)。"""
+    for name, value in plan.env:
+        environ[name] = value

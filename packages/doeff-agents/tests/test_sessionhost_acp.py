@@ -1681,10 +1681,15 @@ def test_after_the_idle_ttl_the_next_job_launches_with_a_fresh_id_and_within_the
 # ---------------------------------------------------------------- 段 6 lane 6f: 1 命令の参加(join)と所有の等級
 
 
-def _join_spec(argv: list[str], declaration: JSONObject | None = None) -> object:
+def _join_spec(argv: list[str], declaration: dict[str, object] | None = None) -> object:
     from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import JoinArgv, JoinDeclaration
 
-    return run(join.join_spec_of(tuple(argv), declaration or {}, "/state"))
+    return run(
+        join.join_spec_of(
+            JoinArgv(items=tuple(argv)), JoinDeclaration(tables=declaration or {}), "/state"
+        )
+    )
 
 
 def test_join_spec_is_flags_over_declaration_over_defaults() -> None:
@@ -1705,7 +1710,7 @@ def test_join_spec_is_flags_over_declaration_over_defaults() -> None:
         borrower_key_file=None,
         ownership=None,
     )
-    declaration: JSONObject = {
+    declaration: dict[str, object] = {
         "schema": "doeff.agentd-join.v1",
         "agentd": {
             "server": "http://toml:1",
@@ -1732,8 +1737,18 @@ def test_join_spec_is_flags_over_declaration_over_defaults() -> None:
         ownership=Ownership(grade="company", proof="gce-project:cyberagent-050"),
     )
     flagged = _join_spec(
-        ["--server", "http://flag:2", "--node-name", "mac-9", "--ownership", "personal",
-         "--ownership-proof", "declared", "--backend", "headless"],
+        [
+            "--server",
+            "http://flag:2",
+            "--node-name",
+            "mac-9",
+            "--ownership",
+            "personal",
+            "--ownership-proof",
+            "declared",
+            "--backend",
+            "headless",
+        ],
         declaration,
     )
     assert isinstance(flagged, JoinSpec)
@@ -1762,8 +1777,16 @@ def test_join_spec_refuses_missing_server_or_token_unknown_flags_and_bad_words()
         _join_spec(["--server", "http://a", "--token-file", "/t", "--ownership", "company"])
     with pytest.raises(ValueError, match="ownership-proof"):
         _join_spec(
-            ["--server", "http://a", "--token-file", "/t", "--ownership", "company",
-             "--ownership-proof", "trust-me"]
+            [
+                "--server",
+                "http://a",
+                "--token-file",
+                "/t",
+                "--ownership",
+                "company",
+                "--ownership-proof",
+                "trust-me",
+            ]
         )
     with pytest.raises(ValueError, match="backend"):
         _join_spec(["--server", "http://a", "--token-file", "/t", "--backend", "docker"])
@@ -1784,11 +1807,14 @@ def test_join_spec_refuses_missing_server_or_token_unknown_flags_and_bad_words()
 
 def test_join_config_path_is_read_from_the_flag() -> None:
     from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import JoinArgv
 
-    assert run(join.config_path_of(("--config", "/etc/doeff/agentd.toml", "--server", "x"))) == (
-        "/etc/doeff/agentd.toml"
-    )
-    assert run(join.config_path_of(("--server", "x"))) is None
+    assert run(
+        join.config_path_of(JoinArgv(items=("--config", "/etc/doeff/agentd.toml", "--server", "x")))
+    ) == ("/etc/doeff/agentd.toml")
+    assert run(join.config_path_of(JoinArgv(items=("--server", "x")))) is None
+    with pytest.raises(ValueError, match="--config requires a value"):
+        run(join.config_path_of(JoinArgv(items=("--server", "x", "--config"))))
 
 
 def test_join_plan_derives_the_host_argv_and_the_env_bundle_from_the_spec() -> None:
@@ -1811,10 +1837,14 @@ def test_join_plan_derives_the_host_argv_and_the_env_bundle_from_the_spec() -> N
     plan = run(join.join_plan_of(spec))
     assert plan == JoinPlan(
         host_argv=(
-            "--db", "/var/lib/doeff/agentd/agentd.sqlite",
-            "--socket", "/var/lib/doeff/agentd/agentd.sock",
-            "--max-running", "none",
-            "--backend", "headless",
+            "--db",
+            "/var/lib/doeff/agentd/agentd.sqlite",
+            "--socket",
+            "/var/lib/doeff/agentd/agentd.sock",
+            "--max-running",
+            "none",
+            "--backend",
+            "headless",
             "serve",
         ),
         env=(
@@ -1854,7 +1884,9 @@ def test_join_plan_derives_the_host_argv_and_the_env_bundle_from_the_spec() -> N
     assert "DOEFF_AGENTD_OWNERSHIP" not in names
 
 
-def test_settings_from_env_reads_the_ownership_and_the_valve_and_runtime_agree_on_the_bundle() -> None:
+def test_settings_from_env_reads_the_ownership_and_the_valve_and_runtime_agree_on_the_bundle() -> (
+    None
+):
     """join の env の束を今日の serve --acp の読み(settings_from_env / acp_valve)がそのまま読める =
     座は 1 つ(join-plan-of)で、読み手は増えない。"""
     from doeff_agents.sessionhost.acp import join

@@ -35,6 +35,8 @@ from doeff_agents.sessionhost.acp.effects import (
     LogLine,
     MetricLine,
     MintId,
+    OwnershipProbe,
+    ProbeAnswer,
     Pushed,
     Refused,
     SessionCapture,
@@ -422,11 +424,17 @@ class FakeLocal:
         self.transcripts: dict[str, str] = {}
         #: 鋳造した session の id の数(id = sid-<n> — charter の id とは別の綴り)。
         self.minted: int = 0
+        #: 所有の検の答え(proof → 材料の値・無い proof は None = 読めない)と撃った proof の列。
+        self.probe_answers: dict[str, str | None] = {}
+        self.probes: list[str] = []
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(effect, MintId):
             self.minted += 1
             return Resume(k, f"sid-{self.minted}")
+        if isinstance(effect, OwnershipProbe):
+            self.probes.append(effect.proof)
+            return Resume(k, ProbeAnswer(value=self.probe_answers.get(effect.proof)))
         if isinstance(effect, (ClockNowMs, MetricLine, LogLine)):
             return Resume(k, self._observe(effect))
         if isinstance(
