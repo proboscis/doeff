@@ -39,7 +39,12 @@
     "packages/doeff-agents/src/doeff_agents/io_effects.pyi",
     "packages/doeff-agents/src/doeff_agents/io_handlers.pyi",
     "packages/doeff-agents/src/doeff_agents/io_fake.pyi",
-    "packages/doeff-agents/tests/fake_io_support.py"
+    "packages/doeff-agents/tests/fake_io_support.py",
+    "packages/doeff-hy/src/doeff_hy/typecheck.hy",
+    "packages/doeff-hy/src/doeff_hy/record.hy",
+    "docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy",
+    "packages/doeff-hy/src/doeff_hy/typecheck_handlers.hy",
+    "packages/doeff-hy/src/doeff_hy/typecheck_handlers.pyi"
   ],
   "exclude": [],
   "baseline": ".agents/code-quality-baseline.json",
@@ -406,7 +411,7 @@
       "allow": [],
       "responsibility": "driver 層の I/O の要求の語彙(effect と構築子)を所有する。実世界には触らない",
       "layer": "effects",
-      "typed": false
+      "typed": true
     },
     {
       "name": "driver-io-handlers",
@@ -421,7 +426,7 @@
       ],
       "responsibility": "driver 層の I/O を実世界で果たす唯一の家(本番)",
       "layer": "io",
-      "typed": false
+      "typed": true
     },
     {
       "name": "driver-io-fake",
@@ -436,7 +441,7 @@
       ],
       "responsibility": "driver 層の I/O を記憶の中の世界で果たす家(検)",
       "layer": "io",
-      "typed": false
+      "typed": true
     },
     {
       "name": "adr-agents-013",
@@ -452,7 +457,7 @@
       ],
       "responsibility": "driver 層の I/O が effect と handler を通ることを機械で撃つ",
       "layer": "runtime",
-      "typed": false
+      "typed": true
     },
     {
       "name": "driver-io-root",
@@ -662,6 +667,162 @@
       ],
       "responsibility": "検の I/O の家を組む助け",
       "layer": "runtime",
+      "typed": true
+    },
+    {
+      "name": "doeff-hy-typecheck",
+      "paths": [
+        "packages/doeff-hy/src/doeff_hy/typecheck.hy"
+      ],
+      "public": [
+        "packages/doeff-hy/src/doeff_hy/typecheck.hy"
+      ],
+      "allow": [
+        "adr-agents-012",
+        "adr-agents-013",
+        "adr-hy-005",
+        "agentd-client",
+        "agentd-effects",
+        "agentd-entry",
+        "agentd-fake",
+        "agentd-handlers",
+        "agentd-judgment",
+        "agentd-programs",
+        "agentd-runtime",
+        "agentd-tests",
+        "agentd-valve",
+        "doeff-hy-record",
+        "driver-io-effects",
+        "driver-io-effects-types",
+        "driver-io-fake",
+        "driver-io-fake-types",
+        "driver-io-handlers",
+        "driver-io-handlers-types",
+        "driver-io-root",
+        "driver-io-test-support",
+        "sessionhost-headless",
+        "sessionhost-headless-argv",
+        "sessionhost-headless-process",
+        "sessionhost-headless-protocol",
+        "sessionhost-headless-tests",
+        "sessionhost-host",
+        "sessionhost-hostmain",
+        "sessionhost-relaymain",
+        "sessionhost-store"
+      ],
+      "responsibility": "実行時の型検査の要求と、果たす 2 つの家(既定 off / 検 on)",
+      "layer": "effects",
+      "typed": true
+    },
+    {
+      "name": "doeff-hy-record",
+      "paths": [
+        "packages/doeff-hy/src/doeff_hy/record.hy"
+      ],
+      "public": [
+        "packages/doeff-hy/src/doeff_hy/record.hy"
+      ],
+      "allow": [
+        "adr-agents-012",
+        "adr-agents-013",
+        "adr-hy-005",
+        "agentd-client",
+        "agentd-effects",
+        "agentd-entry",
+        "agentd-fake",
+        "agentd-handlers",
+        "agentd-judgment",
+        "agentd-programs",
+        "agentd-runtime",
+        "agentd-tests",
+        "agentd-valve",
+        "doeff-hy-typecheck",
+        "driver-io-effects",
+        "driver-io-effects-types",
+        "driver-io-fake",
+        "driver-io-fake-types",
+        "driver-io-handlers",
+        "driver-io-handlers-types",
+        "driver-io-root",
+        "driver-io-test-support",
+        "sessionhost-headless",
+        "sessionhost-headless-argv",
+        "sessionhost-headless-process",
+        "sessionhost-headless-protocol",
+        "sessionhost-headless-tests",
+        "sessionhost-host",
+        "sessionhost-hostmain",
+        "sessionhost-relaymain",
+        "sessionhost-store"
+      ],
+      "responsibility": "記録の足場の macro(欄の名前と型を宣言した凍結 record を建てる)",
+      "layer": "domain",
+      "typed": true,
+      "macros": {
+        "defrecord": "template"
+      }
+    },
+    {
+      "name": "adr-hy-005",
+      "paths": [
+        "docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy"
+      ],
+      "public": [
+        "docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy"
+      ],
+      "allow": [
+        "adr-agents-012",
+        "adr-agents-013",
+        "agentd-client",
+        "agentd-effects",
+        "agentd-entry",
+        "agentd-fake",
+        "agentd-handlers",
+        "agentd-judgment",
+        "agentd-programs",
+        "agentd-runtime",
+        "agentd-tests",
+        "agentd-valve",
+        "doeff-hy-record",
+        "doeff-hy-typecheck",
+        "doeff-hy-typecheck-handlers",
+        "driver-io-effects",
+        "driver-io-effects-types",
+        "driver-io-fake",
+        "driver-io-fake-types",
+        "driver-io-handlers",
+        "driver-io-handlers-types",
+        "driver-io-root",
+        "driver-io-test-support",
+        "sessionhost-headless",
+        "sessionhost-headless-argv",
+        "sessionhost-headless-process",
+        "sessionhost-headless-protocol",
+        "sessionhost-headless-tests",
+        "sessionhost-host",
+        "sessionhost-hostmain",
+        "sessionhost-relaymain",
+        "sessionhost-store"
+      ],
+      "responsibility": "Hy の柵の残り 2 本を機械で撃つ",
+      "layer": "runtime",
+      "typed": true
+    },
+    {
+      "name": "doeff-hy-typecheck-handlers",
+      "paths": [
+        "packages/doeff-hy/src/doeff_hy/typecheck_handlers.hy",
+        "packages/doeff-hy/src/doeff_hy/typecheck_handlers.pyi"
+      ],
+      "public": [
+        "packages/doeff-hy/src/doeff_hy/typecheck_handlers.hy",
+        "packages/doeff-hy/src/doeff_hy/typecheck_handlers.pyi"
+      ],
+      "allow": [
+        "doeff-hy-typecheck"
+      ],
+      "responsibility": "TypeCheck を果たす 2 つの家(既定 off / 検 on)と composition root",
+      "layer": "io",
       "typed": true
     }
   ],
