@@ -19,7 +19,27 @@
     "docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy",
     "packages/doeff-agents/src/doeff_agents/sessionhost/headless_protocol.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/headless_process.py",
-    "packages/doeff-agents/tests/test_sessionhost_headless.py"
+    "packages/doeff-agents/tests/test_sessionhost_headless.py",
+    "packages/doeff-agents/src/doeff_agents/io_effects.hy",
+    "packages/doeff-agents/src/doeff_agents/io_handlers.hy",
+    "packages/doeff-agents/src/doeff_agents/io_fake.hy",
+    "docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/hostmain.py",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/relaymain.py",
+    "packages/doeff-agents/src/doeff_agents/agentd_client.py",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/host.pyi",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/headless.hy",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/headless.pyi",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/impls/headless_argv.hy",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/impls/headless_argv.pyi",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/store.hy",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/store.pyi",
+    "packages/doeff-agents/src/doeff_agents/io_root.py",
+    "packages/doeff-agents/src/doeff_agents/io_effects.pyi",
+    "packages/doeff-agents/src/doeff_agents/io_handlers.pyi",
+    "packages/doeff-agents/src/doeff_agents/io_fake.pyi",
+    "packages/doeff-agents/tests/fake_io_support.py"
   ],
   "exclude": [],
   "baseline": ".agents/code-quality-baseline.json",
@@ -254,7 +274,13 @@
       "public": [
         "packages/doeff-agents/src/doeff_agents/agentd_client.py"
       ],
-      "allow": [],
+      "allow": [
+        "driver-io-effects",
+        "driver-io-effects-types",
+        "driver-io-handlers",
+        "driver-io-handlers-types",
+        "driver-io-root"
+      ],
       "typed": false
     },
     {
@@ -368,6 +394,275 @@
       ],
       "allow": [],
       "typed": false
+    },
+    {
+      "name": "driver-io-effects",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/io_effects.hy"
+      ],
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/io_effects.hy"
+      ],
+      "allow": [],
+      "responsibility": "driver 層の I/O の要求の語彙(effect と構築子)を所有する。実世界には触らない",
+      "layer": "effects",
+      "typed": false
+    },
+    {
+      "name": "driver-io-handlers",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/io_handlers.hy"
+      ],
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/io_handlers.hy"
+      ],
+      "allow": [
+        "driver-io-effects"
+      ],
+      "responsibility": "driver 層の I/O を実世界で果たす唯一の家(本番)",
+      "layer": "io",
+      "typed": false
+    },
+    {
+      "name": "driver-io-fake",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/io_fake.hy"
+      ],
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/io_fake.hy"
+      ],
+      "allow": [
+        "driver-io-effects"
+      ],
+      "responsibility": "driver 層の I/O を記憶の中の世界で果たす家(検)",
+      "layer": "io",
+      "typed": false
+    },
+    {
+      "name": "adr-agents-013",
+      "paths": [
+        "docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy"
+      ],
+      "public": [
+        "docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy"
+      ],
+      "allow": [
+        "driver-io-effects",
+        "driver-io-fake"
+      ],
+      "responsibility": "driver 層の I/O が effect と handler を通ることを機械で撃つ",
+      "layer": "runtime",
+      "typed": false
+    },
+    {
+      "name": "driver-io-root",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/io_root.py"
+      ],
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/io_root.py"
+      ],
+      "allow": [
+        "adr-agents-012",
+        "adr-agents-013",
+        "agentd-client",
+        "agentd-effects",
+        "agentd-entry",
+        "agentd-fake",
+        "agentd-handlers",
+        "agentd-judgment",
+        "agentd-programs",
+        "agentd-runtime",
+        "agentd-tests",
+        "agentd-valve",
+        "driver-io-effects",
+        "driver-io-effects-types",
+        "driver-io-fake",
+        "driver-io-fake-types",
+        "driver-io-handlers",
+        "driver-io-handlers-types",
+        "driver-io-test-support",
+        "sessionhost-headless",
+        "sessionhost-headless-argv",
+        "sessionhost-headless-process",
+        "sessionhost-headless-protocol",
+        "sessionhost-headless-tests",
+        "sessionhost-host",
+        "sessionhost-hostmain",
+        "sessionhost-relaymain",
+        "sessionhost-store"
+      ],
+      "responsibility": "composition root が持つ I/O の家の型と、答えの型の絞り込み",
+      "layer": "domain",
+      "typed": true
+    },
+    {
+      "name": "driver-io-effects-types",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/io_effects.pyi"
+      ],
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/io_effects.pyi"
+      ],
+      "allow": [
+        "adr-agents-012",
+        "adr-agents-013",
+        "agentd-client",
+        "agentd-effects",
+        "agentd-entry",
+        "agentd-fake",
+        "agentd-handlers",
+        "agentd-judgment",
+        "agentd-programs",
+        "agentd-runtime",
+        "agentd-tests",
+        "agentd-valve",
+        "driver-io-effects",
+        "driver-io-fake",
+        "driver-io-fake-types",
+        "driver-io-handlers",
+        "driver-io-handlers-types",
+        "driver-io-root",
+        "driver-io-test-support",
+        "sessionhost-headless",
+        "sessionhost-headless-argv",
+        "sessionhost-headless-process",
+        "sessionhost-headless-protocol",
+        "sessionhost-headless-tests",
+        "sessionhost-host",
+        "sessionhost-hostmain",
+        "sessionhost-relaymain",
+        "sessionhost-store"
+      ],
+      "responsibility": "io_effects.hy の公開面の型",
+      "layer": "effects",
+      "typed": true
+    },
+    {
+      "name": "driver-io-handlers-types",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/io_handlers.pyi"
+      ],
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/io_handlers.pyi"
+      ],
+      "allow": [
+        "adr-agents-012",
+        "adr-agents-013",
+        "agentd-client",
+        "agentd-effects",
+        "agentd-entry",
+        "agentd-fake",
+        "agentd-handlers",
+        "agentd-judgment",
+        "agentd-programs",
+        "agentd-runtime",
+        "agentd-tests",
+        "agentd-valve",
+        "driver-io-effects",
+        "driver-io-effects-types",
+        "driver-io-fake",
+        "driver-io-fake-types",
+        "driver-io-handlers",
+        "driver-io-root",
+        "driver-io-test-support",
+        "sessionhost-headless",
+        "sessionhost-headless-argv",
+        "sessionhost-headless-process",
+        "sessionhost-headless-protocol",
+        "sessionhost-headless-tests",
+        "sessionhost-host",
+        "sessionhost-hostmain",
+        "sessionhost-relaymain",
+        "sessionhost-store"
+      ],
+      "responsibility": "io_handlers.hy の公開面の型",
+      "layer": "io",
+      "typed": true
+    },
+    {
+      "name": "driver-io-fake-types",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/io_fake.pyi"
+      ],
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/io_fake.pyi"
+      ],
+      "allow": [
+        "adr-agents-012",
+        "adr-agents-013",
+        "agentd-client",
+        "agentd-effects",
+        "agentd-entry",
+        "agentd-fake",
+        "agentd-handlers",
+        "agentd-judgment",
+        "agentd-programs",
+        "agentd-runtime",
+        "agentd-tests",
+        "agentd-valve",
+        "driver-io-effects",
+        "driver-io-effects-types",
+        "driver-io-fake",
+        "driver-io-handlers",
+        "driver-io-handlers-types",
+        "driver-io-root",
+        "driver-io-test-support",
+        "sessionhost-headless",
+        "sessionhost-headless-argv",
+        "sessionhost-headless-process",
+        "sessionhost-headless-protocol",
+        "sessionhost-headless-tests",
+        "sessionhost-host",
+        "sessionhost-hostmain",
+        "sessionhost-relaymain",
+        "sessionhost-store"
+      ],
+      "responsibility": "io_fake.hy の公開面の型",
+      "layer": "io",
+      "typed": true
+    },
+    {
+      "name": "driver-io-test-support",
+      "paths": [
+        "packages/doeff-agents/tests/fake_io_support.py"
+      ],
+      "public": [
+        "packages/doeff-agents/tests/fake_io_support.py"
+      ],
+      "allow": [
+        "adr-agents-012",
+        "adr-agents-013",
+        "agentd-client",
+        "agentd-effects",
+        "agentd-entry",
+        "agentd-fake",
+        "agentd-handlers",
+        "agentd-judgment",
+        "agentd-programs",
+        "agentd-runtime",
+        "agentd-tests",
+        "agentd-valve",
+        "driver-io-effects",
+        "driver-io-effects-types",
+        "driver-io-fake",
+        "driver-io-fake-types",
+        "driver-io-handlers",
+        "driver-io-handlers-types",
+        "driver-io-root",
+        "sessionhost-headless",
+        "sessionhost-headless-argv",
+        "sessionhost-headless-process",
+        "sessionhost-headless-protocol",
+        "sessionhost-headless-tests",
+        "sessionhost-host",
+        "sessionhost-hostmain",
+        "sessionhost-relaymain",
+        "sessionhost-store"
+      ],
+      "responsibility": "検の I/O の家を組む助け",
+      "layer": "runtime",
+      "typed": true
     }
   ],
   "tools": [

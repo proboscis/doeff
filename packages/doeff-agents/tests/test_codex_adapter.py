@@ -10,6 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from doeff_agents.adapters.base import InjectionMethod, LaunchParams
 from doeff_agents.adapters.codex import CodexAdapter, trust_workspace_in_codex_home
 
+from fake_io_support import FakeIoWorld, fake_io_root
+
 
 def test_launch_command_includes_model_when_provided() -> None:
     adapter = CodexAdapter()
@@ -83,12 +85,13 @@ def test_codex_adapter_uses_tmux_prompt_injection() -> None:
 def test_trust_workspace_persists_project_trust(tmp_path: Path) -> None:
     codex_home = tmp_path / "codex-home"
     work_dir = tmp_path / 'hypha "quoted" workspace'
+    world = FakeIoWorld()
 
-    config_path = trust_workspace_in_codex_home(codex_home, work_dir)
+    config_path = fake_io_root(world)(trust_workspace_in_codex_home(codex_home, work_dir))
     escaped_work_dir = str(work_dir).replace('"', '\\"')
 
     assert config_path == codex_home / "config.toml"
-    assert config_path.read_text(encoding="utf-8") == (
+    assert world.files[str(config_path)] == (
         f'[projects."{escaped_work_dir}"]\n'
         'trust_level = "trusted"\n'
     )
@@ -98,19 +101,21 @@ def test_trust_workspace_updates_existing_project_table(tmp_path: Path) -> None:
     codex_home = tmp_path / "codex-home"
     work_dir = tmp_path / "workspace"
     config_path = codex_home / "config.toml"
-    config_path.parent.mkdir(parents=True)
-    config_path.write_text(
-        f'[projects."{work_dir}"]\n'
-        'foo = "bar"\n'
-        'trust_level = "untrusted"\n'
-        "\n[notice]\n"
-        "hide_full_access_warning = true\n",
-        encoding="utf-8",
+    world = FakeIoWorld(
+        files={
+            str(config_path): (
+                f'[projects."{work_dir}"]\n'
+                'foo = "bar"\n'
+                'trust_level = "untrusted"\n'
+                "\n[notice]\n"
+                "hide_full_access_warning = true\n"
+            )
+        }
     )
 
-    trust_workspace_in_codex_home(codex_home, work_dir)
+    fake_io_root(world)(trust_workspace_in_codex_home(codex_home, work_dir))
 
-    assert config_path.read_text(encoding="utf-8") == (
+    assert world.files[str(config_path)] == (
         f'[projects."{work_dir}"]\n'
         'foo = "bar"\n'
         'trust_level = "trusted"\n'

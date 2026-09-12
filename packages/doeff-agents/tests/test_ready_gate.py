@@ -29,6 +29,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from doeff import Program, Pure
 from doeff_agents.adapters.base import AgentType, LaunchConfig
 from doeff_agents.adapters.claude import ClaudeAdapter
 from doeff_agents.adapters.codex import CodexAdapter
@@ -225,16 +226,16 @@ class ScriptedBackend(SessionBackend):
 
 
 class ReadyFakeCodexAdapter(CodexAdapter):
-    def is_available(self) -> bool:
-        return True
+    def available(self):
+        return Pure(True)
 
 
 class ReadyFakeClaudeAdapter(ClaudeAdapter):
-    def is_available(self) -> bool:
-        return True
+    def available(self) -> Program:
+        return Pure(True)
 
-    def pre_launch(self) -> None:
-        return None
+    def pre_launch(self) -> Program:
+        return Pure(None)
 
 
 PROMPT = "line one\nline two\n\nline four (multi-paragraph 規範文)"
@@ -605,28 +606,21 @@ def test_claude_hy_handler_pastes_prompt_only_after_ready_frame(tmp_path: Path) 
 MULTILINE_PROMPT = "line one\nline two\n\nline four"
 
 
-def test_tmux_paste_streams_buffer_via_stdin_and_bracketed_paste(monkeypatch) -> None:
-    import subprocess
-
+def test_tmux_paste_streams_buffer_via_stdin_and_bracketed_paste() -> None:
     from doeff_agents.tmux import TmuxSessionBackend
+    from fake_io_support import FakeIoWorld, ProcessOutcome, fake_io_root
 
-    calls: list[tuple[list[str], object]] = []
-
-    def fake_run(args, **kwargs):
-        calls.append((list(args), kwargs.get("input")))
-        if args[1] == "-V":
-            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
-        if args[1] == "capture-pane":
+    def script(argv):
+        if argv[1] == "capture-pane":
             # Composer is empty after submit: confirm loop exits immediately.
-            return subprocess.CompletedProcess(args, 0, stdout="\u276f\u00a0\n", stderr="")
-        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            return ProcessOutcome(exit_code=0, stdout="\u276f\u00a0\n", stderr="")
+        return ProcessOutcome(exit_code=0, stdout="", stderr="")
 
-    monkeypatch.setattr("doeff_agents.tmux.subprocess.run", fake_run)
-    monkeypatch.setattr("doeff_agents.tmux.time.sleep", lambda _seconds: None)
-
-    backend = TmuxSessionBackend()
+    world = FakeIoWorld(processes={"*": script})
+    backend = TmuxSessionBackend(io_root=fake_io_root(world))
     backend.send_keys("%42", MULTILINE_PROMPT, literal=True, enter=True)
 
+    calls = [(list(argv), stdin) for argv, stdin, _cwd in world.commands]
     command_names = [args[1] for args, _input in calls]
     # argv-passed set-buffer dies at ~16KB (tmux imsg framing) — the content
     # must stream through load-buffer's stdin (doeff-agentd oracle 33ab4bae).

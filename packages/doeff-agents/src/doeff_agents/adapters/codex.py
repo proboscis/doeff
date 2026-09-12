@@ -1,13 +1,16 @@
 """Adapter for OpenAI Codex CLI."""
 
-import shutil
+import posixpath
 from pathlib import Path
 
 import hy  # noqa: F401  # .hy import hook — the readiness physics home is a Hy module
+from doeff import Program, do
 
+from doeff_agents.io_effects import make_dirs, read_text, write_text
+from doeff_agents.io_root import IoGenerator, as_optional_str
 from doeff_agents.sessionhost.impls.ready_physics import CODEX_READY_PATTERN
 
-from .base import AgentType, InjectionMethod, LaunchParams
+from .base import AgentType, InjectionMethod, LaunchParams, cli_available
 
 
 class CodexAdapter:
@@ -23,8 +26,9 @@ class CodexAdapter:
     def agent_type(self) -> AgentType:
         return AgentType.CODEX
 
-    def is_available(self) -> bool:
-        return shutil.which("codex") is not None
+    def available(self) -> Program:
+        """Program answering whether the Codex CLI is on PATH."""
+        return cli_available("codex")
 
     def launch_command(self, params: LaunchParams) -> list[str]:
         """Return argv list - caller will shlex.join() if needed.
@@ -79,14 +83,20 @@ def toml_quoted_string(value: str) -> str:
     return f'"{escaped}"'
 
 
-def trust_workspace_in_codex_home(codex_home: str | Path, work_dir: str | Path) -> Path:
-    """Persist Codex project trust for a workspace and return the config path."""
-    config_path = Path(codex_home).expanduser() / "config.toml"
-    config_path.parent.mkdir(parents=True, exist_ok=True)
+def codex_config_path(codex_home: str | Path) -> str:
+    """Pure judgment: where Codex keeps the trust ledger for this home."""
+    return posixpath.join(str(Path(codex_home).expanduser()), "config.toml")
+
+
+def trusted_config_text(text: str, work_dir: str | Path) -> str:
+    """Pure judgment: ``config.toml`` text with this workspace marked trusted.
+
+    段 7 lane 7c(決定 1.3): 編集の判断はここ(入力 text → 出力 text)で、
+    file の読み書きは呼び手の program が要求する。
+    """
     workspace = str(Path(work_dir))
     header = f"[projects.{toml_quoted_key(workspace)}]"
     trust_line = 'trust_level = "trusted"'
-    text = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
     lines = text.splitlines()
 
     for index, line in enumerate(lines):
@@ -98,14 +108,21 @@ def trust_workspace_in_codex_home(codex_home: str | Path, work_dir: str | Path) 
         for trust_index in range(index + 1, end):
             if lines[trust_index].strip().startswith("trust_level"):
                 lines[trust_index] = trust_line
-                config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-                return config_path
+                return "\n".join(lines) + "\n"
         lines.insert(index + 1, trust_line)
-        config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        return config_path
+        return "\n".join(lines) + "\n"
 
     if lines and lines[-1] != "":
         lines.append("")
     lines.extend([header, trust_line])
-    config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return config_path
+    return "\n".join(lines) + "\n"
+
+
+@do
+def trust_workspace_in_codex_home(codex_home: str | Path, work_dir: str | Path) -> IoGenerator[Path]:
+    """Program persisting Codex project trust; returns the config path."""
+    config_path = codex_config_path(codex_home)
+    yield make_dirs(posixpath.dirname(config_path))
+    text = as_optional_str((yield read_text(config_path)))
+    yield write_text(config_path, trusted_config_text(text or "", work_dir))
+    return Path(config_path)

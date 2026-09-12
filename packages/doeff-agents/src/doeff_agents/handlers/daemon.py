@@ -2,13 +2,14 @@
 
 import os
 import shlex
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Protocol
 
 from doeff_agents.adapters.base import AgentType, LaunchParams
 from doeff_agents.agentd_client import RPC_ERR_NO_SUCH_SESSION, AgentdClientError
 from doeff_agents.claude_home import prepare_claude_home
+from doeff_agents.io_root import IoRoot
 from doeff_agents.effects import (
     AgentError,
     AgentLaunchError,
@@ -108,8 +109,11 @@ class DaemonAgentHandler(AgentHandler):
         client: AgentdSessionClient,
         claude_runtime_policy: ClaudeRuntimePolicy | None = None,
         codex_runtime_policy: CodexRuntimePolicy | None = None,
+        io_root: IoRoot | None = None,
     ) -> None:
         self._client = client
+        # 段 7 lane 7c: driver 層の I/O を果たす家の選択点(本番 / 検)。
+        self._io: IoRoot = io_root if io_root is not None else _default_io_root()
         self._claude_runtime_policy = claude_runtime_policy or ClaudeRuntimePolicy()
         self._codex_runtime_policy = codex_runtime_policy or CodexRuntimePolicy()
 
@@ -236,7 +240,7 @@ class DaemonAgentHandler(AgentHandler):
         session_env: Mapping[str, str] | None,
     ) -> SessionHandle:
         adapter = get_adapter(agent_type)
-        if not adapter.is_available():
+        if not self._io(adapter.available()):
             raise AgentNotAvailableError(f"{agent_type.value} CLI is not available")
 
         assert_no_forbidden_agent_env(
@@ -299,7 +303,7 @@ class DaemonAgentHandler(AgentHandler):
             return L2SessionHandle(session_id=session_id)
 
         adapter = get_adapter(effect.spec.agent_type)
-        if not adapter.is_available():
+        if not self._io(adapter.available()):
             raise AgentNotAvailableError(f"{effect.spec.agent_type.value} CLI is not available")
 
         assert_no_forbidden_agent_env(
@@ -421,7 +425,13 @@ class DaemonAgentHandler(AgentHandler):
         agent_home: Path,
         trusted_workspaces: tuple[Path, ...],
     ) -> None:
-        prepare_claude_home(agent_home, trusted_workspaces)
+        self._io(prepare_claude_home(agent_home, trusted_workspaces))
+
+
+def _default_io_root() -> IoRoot:
+    from doeff_agents.io_handlers import run_driver_io
+
+    return run_driver_io
 
 
 __all__ = [

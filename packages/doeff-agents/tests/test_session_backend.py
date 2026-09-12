@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from doeff_core_effects.handlers import lazy_ask, state
 
-from doeff import do, run
+from doeff import Pure, do, run
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -52,11 +52,21 @@ from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import InMemoryAgentSessionRepository
 from doeff_agents.tmux import TmuxSessionBackend, _output_has_unsubmitted_paste_input, strip_ansi
+from fake_io_support import FakeIoWorld, completed_process_script, fake_io_root
 
 from doeff.mcp import McpParamSchema, McpToolDef
 
 
-def test_session_api_import_does_not_load_doeff_core() -> None:
+def test_session_api_import_does_not_load_the_handler_layer() -> None:
+    """段 7 lane 7c(決定 1.3)で置き換わった不変条件。
+
+    旧: 命令形の session API は doeff の核を読み込まない。
+    新: driver 層の I/O は effect の要求になったので効果の語彙(= doeff の核)は
+        import される。代わりに守るのは「I/O を**果たす**側を引き込まない」こと —
+        本番の handler・agentd の client・MCP の server は、composition root が
+        呼ばれるまで読み込まれない。旧の不変条件は、決定 1.3(直接 I/O は
+        effect + handler へ)と両立しないので明示に退役させた。
+    """
     src_path = Path(__file__).resolve().parents[1] / "src"
     code = (
         "import sys\n"
@@ -67,7 +77,9 @@ def test_session_api_import_does_not_load_doeff_core() -> None:
         "print(launch_session.__name__)\n"
         "print(default_session_backend.__name__)\n"
         "print(TmuxSessionBackend.__name__)\n"
-        "print('doeff' in sys.modules)\n"
+        "print('doeff_agents.io_handlers' in sys.modules)\n"
+        "print('doeff_agents.handlers' in sys.modules)\n"
+        "print('doeff_agents.agentd_client' in sys.modules)\n"
     )
 
     result = subprocess.run(
@@ -82,30 +94,28 @@ def test_session_api_import_does_not_load_doeff_core() -> None:
         "default_session_backend",
         "TmuxSessionBackend",
         "False",
+        "False",
+        "False",
     ]
 
 
-def test_default_session_backend_resolves_stable_backend(monkeypatch) -> None:
-    monkeypatch.setattr(
-        session_backend_module.shutil,
-        "which",
-        lambda name: "/opt/homebrew/bin/tmux" if name == "tmux" else None,
-    )
+def test_default_session_backend_resolves_stable_backend() -> None:
+    world = FakeIoWorld(which={"tmux": "/opt/homebrew/bin/tmux"})
 
-    backend = session_backend_module.default_session_backend()
+    backend = session_backend_module.default_session_backend(io_root=fake_io_root(world))
 
     assert isinstance(backend, TmuxSessionBackend)
     assert backend.executable == "/opt/homebrew/bin/tmux"
 
 
-def test_default_session_backend_requires_available_default(monkeypatch) -> None:
-    monkeypatch.setattr(session_backend_module.shutil, "which", lambda _name: None)
+def test_default_session_backend_requires_available_default() -> None:
+    world = FakeIoWorld()
 
     with pytest.raises(RuntimeError, match="terminal session backend"):
-        session_backend_module.default_session_backend()
+        session_backend_module.default_session_backend(io_root=fake_io_root(world))
 
 
-def test_stable_default_session_backend_caches_availability(monkeypatch) -> None:
+def test_stable_default_session_backend_caches_availability() -> None:
     calls: list[list[str]] = []
 
     def fake_run(args, **_kwargs):
@@ -116,14 +126,12 @@ def test_stable_default_session_backend_caches_availability(monkeypatch) -> None
             return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
         raise AssertionError(f"unexpected tmux args: {args}")
 
-    monkeypatch.setattr(
-        session_backend_module.shutil,
-        "which",
-        lambda name: "/opt/homebrew/bin/tmux" if name == "tmux" else None,
+    world = FakeIoWorld(
+        which={"tmux": "/opt/homebrew/bin/tmux"},
+        processes={"*": completed_process_script(fake_run)},
     )
-    monkeypatch.setattr("doeff_agents.tmux.subprocess.run", fake_run)
 
-    backend = session_backend_module.default_session_backend()
+    backend = session_backend_module.default_session_backend(io_root=fake_io_root(world))
 
     assert not backend.has_session("missing")
     assert not backend.has_session("missing")
@@ -139,8 +147,8 @@ class FakeAdapter:
     def launch_command(self, _params: LaunchParams) -> list[str]:
         return ["fake-agent", "--run"]
 
-    def is_available(self) -> bool:
-        return True
+    def available(self):
+        return Pure(True)
 
 
 # Ready frame for FakeCodexAdapter launches: the ready gate must see the
@@ -149,8 +157,8 @@ CODEX_READY_BOOT_SCREEN = "\u203a Ready for input\n"
 
 
 class FakeCodexAdapter(CodexAdapter):
-    def is_available(self) -> bool:
-        return True
+    def available(self):
+        return Pure(True)
 
 
 class RecordingAdapter(FakeAdapter):
@@ -846,7 +854,7 @@ def test_default_agent_handler_accepts_claude_runtime_policy(
     assert f"export CLAUDE_HOME={tmp_path / '.claude'};" in command
 
 
-def test_tmux_backend_uses_injected_executable(monkeypatch, tmp_path: Path) -> None:
+def test_tmux_backend_uses_injected_executable(tmp_path: Path) -> None:
     calls: list[list[str]] = []
 
     def fake_run(args, **kwargs):
@@ -857,9 +865,11 @@ def test_tmux_backend_uses_injected_executable(monkeypatch, tmp_path: Path) -> N
             return subprocess.CompletedProcess(args, 0, stdout="%42\n", stderr="")
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("doeff_agents.tmux.subprocess.run", fake_run)
+    world = FakeIoWorld(processes={"*": completed_process_script(fake_run)})
 
-    backend = TmuxSessionBackend(executable=r"C:\msys64\usr\bin\tmux.exe")
+    backend = TmuxSessionBackend(
+        executable=r"C:\msys64\usr\bin\tmux.exe", io_root=fake_io_root(world)
+    )
     assert backend.is_available()
     info = backend.new_session(SessionConfig(session_name="worker", work_dir=tmp_path))
     backend.send_keys(info.pane_id, "hello")
@@ -875,10 +885,7 @@ def test_tmux_backend_uses_injected_executable(monkeypatch, tmp_path: Path) -> N
     assert all("-J" in call for call in capture_calls)
 
 
-def test_tmux_backend_captures_session_transcript_tail(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
+def test_tmux_backend_captures_session_transcript_tail(tmp_path: Path) -> None:
     calls: list[list[str]] = []
 
     def fake_run(args, **kwargs):
@@ -891,15 +898,15 @@ def test_tmux_backend_captures_session_transcript_tail(
             return subprocess.CompletedProcess(args, 0, stdout="%42\n", stderr="")
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("doeff_agents.tmux.subprocess.run", fake_run)
-    monkeypatch.setattr("doeff_agents.tmux.tempfile.gettempdir", lambda: str(tmp_path))
+    world = FakeIoWorld(
+        temp_root=str(tmp_path), processes={"*": completed_process_script(fake_run)}
+    )
 
-    backend = TmuxSessionBackend()
+    backend = TmuxSessionBackend(io_root=fake_io_root(world))
     info = backend.new_session(SessionConfig(session_name="worker"))
     path = backend._transcript_paths[info.pane_id]
-    path.write_text(
-        'one\nDOEFF_AGENT_RESULT_BEGIN\n{"status":"ok"}\nDOEFF_AGENT_RESULT_END\n',
-        encoding="utf-8",
+    world.files[path] = (
+        'one\nDOEFF_AGENT_RESULT_BEGIN\n{"status":"ok"}\nDOEFF_AGENT_RESULT_END\n'
     )
 
     transcript = backend.capture_transcript(info.pane_id, 3)
@@ -908,7 +915,7 @@ def test_tmux_backend_captures_session_transcript_tail(
     assert "DOEFF_AGENT_RESULT_END" in transcript
     pipe_calls = [call for call in calls if len(call) > 1 and call[1] == "pipe-pane"]
     assert pipe_calls
-    assert str(path) in pipe_calls[0][-1]
+    assert path in pipe_calls[0][-1]
 
 
 def test_tmux_strip_ansi_removes_osc_and_csi_controls() -> None:
@@ -943,9 +950,7 @@ def test_result_validation_pattern_rejects_wrapped_identity_fields() -> None:
     assert "pattern" in error
 
 
-def test_tmux_backend_pastes_literal_prompt_and_resubmits_collapsed_input(
-    monkeypatch,
-) -> None:
+def test_tmux_backend_pastes_literal_prompt_and_resubmits_collapsed_input() -> None:
     calls: list[list[str]] = []
 
     def fake_run(args, **kwargs):
@@ -967,10 +972,9 @@ def test_tmux_backend_pastes_literal_prompt_and_resubmits_collapsed_input(
             )
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("doeff_agents.tmux.subprocess.run", fake_run)
-    monkeypatch.setattr("doeff_agents.tmux.time.sleep", lambda _seconds: None)
+    world = FakeIoWorld(processes={"*": completed_process_script(fake_run)})
 
-    backend = TmuxSessionBackend()
+    backend = TmuxSessionBackend(io_root=fake_io_root(world))
     with pytest.raises(RuntimeError, match="never submitted"):
         backend.send_keys("%42", "long structured-result prompt", literal=True, enter=True)
 
@@ -986,9 +990,7 @@ def test_tmux_backend_pastes_literal_prompt_and_resubmits_collapsed_input(
     assert len(enter_calls) == 6
 
 
-def test_tmux_backend_rechecks_resubmitted_literal_prompt_until_clear(
-    monkeypatch,
-) -> None:
+def test_tmux_backend_rechecks_resubmitted_literal_prompt_until_clear() -> None:
     calls: list[list[str]] = []
     captures = [
         (
@@ -1011,14 +1013,13 @@ def test_tmux_backend_rechecks_resubmitted_literal_prompt_until_clear(
             return subprocess.CompletedProcess(args, 0, stdout=output, stderr="")
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("doeff_agents.tmux.subprocess.run", fake_run)
-    monkeypatch.setattr("doeff_agents.tmux.time.sleep", lambda _seconds: None)
+    world = FakeIoWorld(processes={"*": completed_process_script(fake_run)})
 
     sent_text = (
         "The kabuStation executor appeared to be waiting for input. "
         "Continue autonomously if safe, or return a blocked/error structured result."
     )
-    backend = TmuxSessionBackend()
+    backend = TmuxSessionBackend(io_root=fake_io_root(world))
     backend.send_keys("%42", sent_text, literal=True, enter=True)
 
     command_names = [call[1] for call in calls]
@@ -1130,22 +1131,22 @@ def test_unsubmitted_paste_detector_ignores_prior_submitted_text() -> None:
     assert not _output_has_unsubmitted_paste_input(output, sent_text)
 
 
-def test_tmux_backend_defaults_to_tmux(monkeypatch) -> None:
+def test_tmux_backend_defaults_to_tmux() -> None:
     calls: list[list[str]] = []
 
     def fake_run(args, **kwargs):
         calls.append(list(args))
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("doeff_agents.tmux.subprocess.run", fake_run)
+    world = FakeIoWorld(processes={"*": completed_process_script(fake_run)})
 
-    backend = TmuxSessionBackend()
+    backend = TmuxSessionBackend(io_root=fake_io_root(world))
     assert backend.is_available()
 
     assert calls == [["tmux", "-V"]]
 
 
-def test_tmux_backend_uses_legacy_format_tokens(monkeypatch) -> None:
+def test_tmux_backend_uses_legacy_format_tokens() -> None:
     calls: list[list[str]] = []
 
     def fake_run(args, **kwargs):
@@ -1158,9 +1159,9 @@ def test_tmux_backend_uses_legacy_format_tokens(monkeypatch) -> None:
             return subprocess.CompletedProcess(args, 0, stdout="worker\n", stderr="")
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("doeff_agents.tmux.subprocess.run", fake_run)
+    world = FakeIoWorld(processes={"*": completed_process_script(fake_run)})
 
-    backend = TmuxSessionBackend()
+    backend = TmuxSessionBackend(io_root=fake_io_root(world))
     info = backend.new_session(SessionConfig(session_name="worker"))
     sessions = backend.list_sessions()
 
@@ -1173,12 +1174,8 @@ def test_tmux_backend_uses_legacy_format_tokens(monkeypatch) -> None:
     assert list_sessions_call[list_sessions_call.index("-F") + 1] == "#S"
 
 
-def test_tmux_backend_decodes_text_output_as_utf8(monkeypatch) -> None:
-    text_calls: list[dict] = []
-
+def test_tmux_backend_decodes_text_output_as_utf8() -> None:
     def fake_run(args, **kwargs):
-        if kwargs.get("text"):
-            text_calls.append(kwargs)
         if args[1] == "has-session":
             return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
         if args[1] == "new-session":
@@ -1189,12 +1186,21 @@ def test_tmux_backend_decodes_text_output_as_utf8(monkeypatch) -> None:
             return subprocess.CompletedProcess(args, 0, stdout="worker\n", stderr="")
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("doeff_agents.tmux.subprocess.run", fake_run)
+    world = FakeIoWorld(processes={"*": completed_process_script(fake_run)})
 
-    backend = TmuxSessionBackend()
+    backend = TmuxSessionBackend(io_root=fake_io_root(world))
     info = backend.new_session(SessionConfig(session_name="worker"))
     assert backend.capture_pane(info.pane_id) == "日本語\n"
     assert backend.list_sessions() == ["worker"]
 
-    assert text_calls
-    assert all(call["encoding"] == "utf-8" for call in text_calls)
+
+def test_production_io_handler_decodes_child_output_as_utf8() -> None:
+    """段 7 lane 7c: utf-8 の復号の保証は本番の I/O handler 1 点が持つ。"""
+    from doeff_agents.io_effects import run_process
+    from doeff_agents.io_handlers import run_driver_io
+    from doeff_agents.io_root import as_process_outcome
+
+    outcome = as_process_outcome(run_driver_io(run_process(("python3", "-c", "print('日本語')"))))
+
+    assert outcome.exit_code == 0
+    assert outcome.stdout == "日本語\n"
