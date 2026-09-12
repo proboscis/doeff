@@ -1676,3 +1676,276 @@ def test_after_the_idle_ttl_the_next_job_launches_with_a_fresh_id_and_within_the
     assert world.sessions.sends[-1] == (third, "third", True)
     conditions = job.status["conditions"]
     assert conditions == []
+
+
+# ---------------------------------------------------------------- 段 6 lane 6f: 1 命令の参加(join)と所有の等級
+
+
+def _join_spec(argv: list[str], declaration: JSONObject | None = None) -> object:
+    from doeff_agents.sessionhost.acp import join
+
+    return run(join.join_spec_of(tuple(argv), declaration or {}, "/state"))
+
+
+def test_join_spec_is_flags_over_declaration_over_defaults() -> None:
+    """`doeff-sessionhost join` の宣言は flag > toml > 既定の 1 点(join.join-spec-of)で組む。
+    既定: node の名は無し(機体の名)・置き場は state の根の下・backend は headless・
+    hooks は inherit・custody は無し(既定の URL は handler)・所有は名乗らない。"""
+    from doeff_agents.sessionhost.acp.effects import JoinSpec, Ownership
+
+    bare = _join_spec(["--server", "http://acp:8868", "--token-file", "/t/agentd.token"])
+    assert bare == JoinSpec(
+        server="http://acp:8868",
+        token_file="/t/agentd.token",
+        node_name=None,
+        state_dir="/state/doeff/acp-agentd",
+        backend="headless",
+        session_hooks="inherit",
+        custody_url=None,
+        borrower_key_file=None,
+        ownership=None,
+    )
+    declaration: JSONObject = {
+        "schema": "doeff.agentd-join.v1",
+        "agentd": {
+            "server": "http://toml:1",
+            "token_file": "/toml/token",
+            "node_name": "gcp-0",
+            "state_dir": "/var/lib/doeff/agentd",
+            "backend": "tmux",
+            "session_hooks": "none",
+            "ownership": "company",
+            "ownership_proof": "gce-project:cyberagent-050",
+        },
+        "custody": {"url": "http://custody:8320", "borrower_key_file": "/toml/borrower"},
+    }
+    from_toml = _join_spec([], declaration)
+    assert from_toml == JoinSpec(
+        server="http://toml:1",
+        token_file="/toml/token",
+        node_name="gcp-0",
+        state_dir="/var/lib/doeff/agentd",
+        backend="tmux",
+        session_hooks="none",
+        custody_url="http://custody:8320",
+        borrower_key_file="/toml/borrower",
+        ownership=Ownership(grade="company", proof="gce-project:cyberagent-050"),
+    )
+    flagged = _join_spec(
+        ["--server", "http://flag:2", "--node-name", "mac-9", "--ownership", "personal",
+         "--ownership-proof", "declared", "--backend", "headless"],
+        declaration,
+    )
+    assert isinstance(flagged, JoinSpec)
+    assert flagged.server == "http://flag:2"
+    assert flagged.token_file == "/toml/token"
+    assert flagged.node_name == "mac-9"
+    assert flagged.backend == "headless"
+    assert flagged.ownership == Ownership(grade="personal", proof="declared")
+
+
+def test_join_spec_refuses_missing_server_or_token_unknown_flags_and_bad_words() -> None:
+    from doeff_agents.sessionhost.acp.effects import JoinSpec
+
+    with pytest.raises(ValueError, match="--server"):
+        _join_spec(["--token-file", "/t"])
+    with pytest.raises(ValueError, match="--token-file"):
+        _join_spec(["--server", "http://a"])
+    with pytest.raises(ValueError, match="unknown argument: --acp"):
+        _join_spec(["--server", "http://a", "--token-file", "/t", "--acp"])
+    with pytest.raises(ValueError, match="requires a value"):
+        _join_spec(["--server"])
+    with pytest.raises(ValueError, match="ownership"):
+        _join_spec(["--server", "http://a", "--token-file", "/t", "--ownership", "corporate"])
+    # 等級を名乗るなら検の方法も要る(検なしは declared と明示する)。
+    with pytest.raises(ValueError, match="ownership-proof"):
+        _join_spec(["--server", "http://a", "--token-file", "/t", "--ownership", "company"])
+    with pytest.raises(ValueError, match="ownership-proof"):
+        _join_spec(
+            ["--server", "http://a", "--token-file", "/t", "--ownership", "company",
+             "--ownership-proof", "trust-me"]
+        )
+    with pytest.raises(ValueError, match="backend"):
+        _join_spec(["--server", "http://a", "--token-file", "/t", "--backend", "docker"])
+    with pytest.raises(ValueError, match="schema"):
+        _join_spec(["--server", "http://a", "--token-file", "/t"], {"schema": "other.v9"})
+    with pytest.raises(ValueError, match=r"\[agentd\]\.node_name"):
+        _join_spec(
+            ["--server", "http://a", "--token-file", "/t"],
+            {"schema": "doeff.agentd-join.v1", "agentd": {"node_name": 7}},
+        )
+    with pytest.raises(ValueError, match=r"\[agentd\]\.colour"):
+        _join_spec(
+            ["--server", "http://a", "--token-file", "/t"],
+            {"schema": "doeff.agentd-join.v1", "agentd": {"colour": "red"}},
+        )
+    assert isinstance(_join_spec(["--server", "http://a", "--token-file", "/t"]), JoinSpec)
+
+
+def test_join_config_path_is_read_from_the_flag() -> None:
+    from doeff_agents.sessionhost.acp import join
+
+    assert run(join.config_path_of(("--config", "/etc/doeff/agentd.toml", "--server", "x"))) == (
+        "/etc/doeff/agentd.toml"
+    )
+    assert run(join.config_path_of(("--server", "x"))) is None
+
+
+def test_join_plan_derives_the_host_argv_and_the_env_bundle_from_the_spec() -> None:
+    """env の束(今日の serve --acp の起動が読む名)と host の argv は宣言から導く(join-plan-of の 1 点)。
+    弁は on・backend は argv と env の両方(host.hy は env・agentd は argv を読む)。"""
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import JoinPlan, JoinSpec, Ownership
+
+    spec = JoinSpec(
+        server="http://acp:8868",
+        token_file="/t/agentd.token",
+        node_name="gcp-0",
+        state_dir="/var/lib/doeff/agentd",
+        backend="headless",
+        session_hooks="inherit",
+        custody_url="http://custody:8320",
+        borrower_key_file="/etc/doeff/borrower-key",
+        ownership=Ownership(grade="company", proof="gce-project:cyberagent-050"),
+    )
+    plan = run(join.join_plan_of(spec))
+    assert plan == JoinPlan(
+        host_argv=(
+            "--db", "/var/lib/doeff/agentd/agentd.sqlite",
+            "--socket", "/var/lib/doeff/agentd/agentd.sock",
+            "--max-running", "none",
+            "--backend", "headless",
+            "serve",
+        ),
+        env=(
+            ("DOEFF_AGENTD_ACP", "on"),
+            ("ACP_DAEMON_URL", "http://acp:8868"),
+            ("ACP_AGENTD_TOKEN_FILE", "/t/agentd.token"),
+            ("DOEFF_AGENTD_NODE_NAME", "gcp-0"),
+            ("DOEFF_SESSIONHOST_BACKEND", "headless"),
+            ("DOEFF_SESSIONHOST_HEADLESS_DIR", "/var/lib/doeff/agentd/headless-events"),
+            ("DOEFF_AGENTD_SESSION_HOOKS", "inherit"),
+            ("AGORA_CUSTODY_URL", "http://custody:8320"),
+            ("AGORA_BORROWER_KEY_PATH", "/etc/doeff/borrower-key"),
+            ("DOEFF_AGENTD_OWNERSHIP", "company"),
+            ("DOEFF_AGENTD_OWNERSHIP_PROOF", "gce-project:cyberagent-050"),
+        ),
+    )
+    # 名乗らない値は env に現れない(handler の既定に任せる)。
+    bare = run(
+        join.join_plan_of(
+            JoinSpec(
+                server="http://acp:8868",
+                token_file="/t/agentd.token",
+                node_name=None,
+                state_dir="/s",
+                backend="headless",
+                session_hooks="inherit",
+                custody_url=None,
+                borrower_key_file=None,
+                ownership=None,
+            )
+        )
+    )
+    assert isinstance(bare, JoinPlan)
+    names = [name for name, _value in bare.env]
+    assert "DOEFF_AGENTD_NODE_NAME" not in names
+    assert "AGORA_CUSTODY_URL" not in names
+    assert "DOEFF_AGENTD_OWNERSHIP" not in names
+
+
+def test_settings_from_env_reads_the_ownership_and_the_valve_and_runtime_agree_on_the_bundle() -> None:
+    """join の env の束を今日の serve --acp の読み(settings_from_env / acp_valve)がそのまま読める =
+    座は 1 つ(join-plan-of)で、読み手は増えない。"""
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import JoinPlan, JoinSpec, Ownership
+    from doeff_agents.sessionhost.acp.runtime import settings_from_env
+
+    plan = run(
+        join.join_plan_of(
+            JoinSpec(
+                server="http://acp:8868",
+                token_file="/t/agentd.token",
+                node_name="gcp-0",
+                state_dir="/s",
+                backend="headless",
+                session_hooks="inherit",
+                custody_url=None,
+                borrower_key_file=None,
+                ownership=Ownership(grade="company", proof="gce-project:cyberagent-050"),
+            )
+        )
+    )
+    assert isinstance(plan, JoinPlan)
+    env = dict(plan.env)
+    settings = settings_from_env(env, plan.host_argv)
+    assert settings.node_name == "gcp-0"
+    assert settings.backend_kind == "headless"
+    assert settings.stream_capability == "events"
+    assert settings.ownership == Ownership(grade="company", proof="gce-project:cyberagent-050")
+    assert acp_valve(list(plan.host_argv), env).enabled is True
+    assert settings_from_env({"DOEFF_AGENTD_NODE_NAME": NODE}, ()).ownership is None
+    with pytest.raises(ValueError, match="DOEFF_AGENTD_OWNERSHIP"):
+        settings_from_env({"DOEFF_AGENTD_NODE_NAME": NODE, "DOEFF_AGENTD_OWNERSHIP": "corp"}, ())
+
+
+def test_ownership_verdict_gce_project_must_match_and_declared_is_taken_as_is() -> None:
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import Ownership, ProbeAnswer
+
+    gce = Ownership(grade="company", proof="gce-project:cyberagent-050")
+    assert run(join.ownership_verdict(gce, ProbeAnswer(value="cyberagent-050"))) == gce
+    with pytest.raises(ValueError, match="cyberagent-050"):
+        run(join.ownership_verdict(gce, ProbeAnswer(value="someone-else")))
+    with pytest.raises(ValueError, match="metadata"):
+        run(join.ownership_verdict(gce, ProbeAnswer(value=None)))
+    declared = Ownership(grade="personal", proof="declared")
+    assert run(join.ownership_verdict(declared, ProbeAnswer(value=None))) == declared
+
+
+def test_ownership_preflight_probes_gce_only_for_a_gce_proof_and_refuses_a_mismatch() -> None:
+    """検は起動の前(preflight)に 1 回: proof が gce-project なら OwnershipProbe を撃ち、declared なら
+    撃たない。不一致は ValueError(runtime が fail-closed に写す — 参加しない)。"""
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import Ownership
+    from doeff_agents.sessionhost.acp.runtime import install
+
+    gce = Ownership(grade="company", proof="gce-project:cyberagent-050")
+    local = FakeLocal()
+    local.probe_answers["gce-project:cyberagent-050"] = "cyberagent-050"
+    assert run(install(join.ownership_preflight(gce), [local.dispatch])) == gce
+    assert local.probes == ["gce-project:cyberagent-050"]
+    local.probe_answers["gce-project:cyberagent-050"] = None
+    with pytest.raises(ValueError, match="metadata"):
+        run(install(join.ownership_preflight(gce), [local.dispatch]))
+    declared = Ownership(grade="company", proof="declared")
+    before = list(local.probes)
+    assert run(install(join.ownership_preflight(declared), [local.dispatch])) == declared
+    assert local.probes == before
+
+
+def test_node_observations_carry_the_ownership_when_declared() -> None:
+    """node の status.observations.ownership = {grade, proof}(宣言が在る時だけ・無ければ欄ごと無い =
+    未観測)。書く点は judgment.node-status-with-lease の 1 点。"""
+    from dataclasses import replace
+
+    from doeff_agents.sessionhost.acp.effects import Ownership
+
+    world = World()
+    world.tick()
+    node = world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"]
+    assert node.status is not None
+    assert node.status["observations"] == {"streamCapability": "frames", "sessions": []}
+
+    owned = World()
+    owned.settings = replace(
+        owned.settings, ownership=Ownership(grade="company", proof="gce-project:cyberagent-050")
+    )
+    owned.tick()
+    node = owned.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"]
+    assert node.status is not None
+    assert node.status["observations"] == {
+        "streamCapability": "frames",
+        "sessions": [],
+        "ownership": {"grade": "company", "proof": "gce-project:cyberagent-050"},
+    }
